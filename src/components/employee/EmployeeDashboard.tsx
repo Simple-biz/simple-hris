@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { resolveFirstName } from '@/lib/name/first-name';
 import {
   Clock,
   AlertCircle,
@@ -1957,10 +1958,9 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
   }
 
   const _welcomeMsg = EMPLOYEE_MESSAGES[Math.floor(Date.now() / 86400000) % EMPLOYEE_MESSAGES.length]!;
-  const _rawFirst = email.includes('@')
-    ? email.split('@')[0]!.replace(/[._-]/g, ' ').split(' ')[0]!
-    : 'there';
-  const _greeting = _rawFirst.charAt(0).toUpperCase() + _rawFirst.slice(1);
+  // Prefer the employee's real name (already fetched into profileForShipping)
+  // so the greeting shows their actual first name, not the email local part.
+  const _greeting = resolveFirstName({ name: profileForShipping.name, email });
 
   return (
     <div className="box-border flex h-full min-h-0 flex-col gap-2 overflow-y-auto overscroll-y-contain bg-gradient-to-br from-white via-orange-50/30 to-blue-50/20 px-3 py-2 [scrollbar-gutter:stable] [@media(max-height:900px)]:gap-1.5 sm:px-4 sm:py-3 md:px-5 lg:gap-3 lg:py-3 dark:bg-none dark:bg-[#0d1117]">

@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useEffect, useMemo, useState } from 'react';
+import { resolveFirstName } from '@/lib/name/first-name';
 import { toast } from 'sonner';
 import AppFooter from '@/components/AppFooter';
 import { useRouter, useSearchParams } from 'next/navigation';
@@ -560,28 +561,12 @@ function Overview({
     };
   }, [viewerEmail]);
 
-  const firstName = useMemo(() => {
-    const full = realName?.trim() ?? '';
-    if (full) {
-      // HR/master names are stored "Last, First M." (sometimes "First Last").
-      // The given name is the first token AFTER the comma, or the first token
-      // when there's no comma. Strip any nickname quotes/parens.
-      const afterComma = full.includes(',') ? full.split(',')[1] ?? '' : full;
-      const token = afterComma.replace(/["'()]/g, '').trim().split(/\s+/)[0];
-      if (token) return token;
-    }
-    const local = viewerEmail?.includes('@')
-      ? viewerEmail.split('@')[0]!.replace(/[._-]/g, ' ').trim().split(/\s+/)[0]
-      : '';
-    return local || 'there';
-  }, [realName, viewerEmail]);
-
-  // Proper-case all-caps names (e.g. "KANER" → "Kaner") while leaving names
-  // that already carry lowercase letters untouched (preserves "McDonald").
-  const greeting = useMemo(() => {
-    const f = /[a-z]/.test(firstName) ? firstName : firstName.toLowerCase();
-    return f.charAt(0).toUpperCase() + f.slice(1);
-  }, [firstName]);
+  // Resolve the manager's display first name (real name → first token, with an
+  // email-local-part fallback and ALL-CAPS proper-casing). See resolveFirstName.
+  const greeting = useMemo(
+    () => resolveFirstName({ name: realName, email: viewerEmail }),
+    [realName, viewerEmail],
+  );
 
   // Warm, time-of-day welcome. Computed only after mount so the first client
   // render matches the server (UTC) and we don't trip the Manila-vs-UTC

@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useEffect, useLayoutEffect as useLayoutEffectImpl, useMemo, useState } from 'react';
+import { resolveFirstName } from '@/lib/name/first-name';
 
 // `useLayoutEffect` warns on the server (no DOM). Map to `useEffect` during SSR
 // so the warning stays silent; on the client both behave identically for our
@@ -316,6 +317,8 @@ interface OverviewProps {
   onViewRates?: (email: string) => void;
   onNavigate?: (tab: string) => void;
   initialData?: import('@/lib/accounting/prefetch').InitialAccountingData | null;
+  /** Signed-in viewer's email — used to greet them by their real first name. */
+  viewerEmail?: string | null;
 }
 
 interface SimpleViewProps {
@@ -383,6 +386,8 @@ interface SimpleViewProps {
   apiLatencyMs: number | null;
   /** Trigger a fresh API ping (used on pill hover) so the MS readout stays current. */
   onPingApi: () => void;
+  /** Signed-in viewer's email — used to greet them by their real first name. */
+  viewerEmail?: string | null;
 }
 
 /** PHP → USD FX rate used only for the informational subtitle under the total payout. */
@@ -456,6 +461,7 @@ function SimpleView({
   apiStatus,
   apiLatencyMs,
   onPingApi,
+  viewerEmail,
 }: SimpleViewProps) {
   // Hover state for the API status pill — drives the ping ripple + MS readout reveal.
   const [pillHovered, setPillHovered] = useState(false);
@@ -486,6 +492,24 @@ function SimpleView({
   const greeting = !greetingReady
     ? 'Welcome'
     : nowHour < 12 ? 'Good morning' : nowHour < 18 ? 'Good afternoon' : 'Good evening';
+
+  // Look up the viewer's real name so the hero greets them by their actual
+  // first name; falls back to "Accounting team" when the viewer is unknown.
+  const [viewerRealName, setViewerRealName] = useState<string | null>(null);
+  useEffect(() => {
+    if (!viewerEmail) return;
+    let alive = true;
+    fetch(`/api/employees?email=${encodeURIComponent(viewerEmail)}`, { cache: 'no-store' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => {
+        if (!alive) return;
+        const n = j?.employees?.[0]?.name;
+        if (typeof n === 'string' && n.trim()) setViewerRealName(n.trim());
+      })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, [viewerEmail]);
+  const viewerFirstName = resolveFirstName({ name: viewerRealName, email: viewerEmail, fallback: '' });
 
   // PAB is finalized once today is strictly past the period end date.
   const pabFinalizedForPayout = (() => {
@@ -744,11 +768,23 @@ function SimpleView({
                 </AnimatePresence>
               </motion.button>
               <p className="mb-2 text-[13px] text-zinc-600 [@media(max-height:900px)]:mb-1 lg:mb-3 dark:text-zinc-400">
-                {greeting}.{' '}
-                <span className="bg-gradient-to-r from-orange-600 to-rose-500 bg-clip-text font-semibold text-transparent dark:from-orange-400 dark:to-rose-400">
-                  Accounting team
-                </span>{' '}
-                dashboard.
+                {viewerFirstName ? (
+                  <>
+                    {greeting},{' '}
+                    <span className="bg-gradient-to-r from-orange-600 to-rose-500 bg-clip-text font-semibold text-transparent dark:from-orange-400 dark:to-rose-400">
+                      {viewerFirstName}
+                    </span>
+                    .
+                  </>
+                ) : (
+                  <>
+                    {greeting}.{' '}
+                    <span className="bg-gradient-to-r from-orange-600 to-rose-500 bg-clip-text font-semibold text-transparent dark:from-orange-400 dark:to-rose-400">
+                      Accounting team
+                    </span>{' '}
+                    dashboard.
+                  </>
+                )}
               </p>
               <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-orange-700/80 xl:mb-3 dark:text-orange-400/80">
                 Total payout · this accounting pay run
@@ -2056,7 +2092,7 @@ const pabMetricsCacheKey = (
 // seeds freely so the instant-paint behaviour is preserved.
 let hasMountedOnce = false;
 
-export default function Overview({ onViewRates, onNavigate, initialData }: OverviewProps = {}) {
+export default function Overview({ onViewRates, onNavigate, initialData, viewerEmail }: OverviewProps = {}) {
   React.useEffect(() => {
     hasMountedOnce = true;
   }, []);
@@ -3338,6 +3374,7 @@ export default function Overview({ onViewRates, onNavigate, initialData }: Overv
               }
               apiLatencyMs={apiLatencyMs}
               onPingApi={pingApiLatency}
+              viewerEmail={viewerEmail}
             />
           </motion.div>
         ) : (

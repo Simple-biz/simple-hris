@@ -41,6 +41,7 @@ import {
 } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { getSupabaseBrowserClient } from '@/lib/supabase/browser';
+import { getHrTabCache, hasHrTabCache, setHrTabCache, HR_TAB_CACHE_KEYS } from '@/lib/hr/tab-cache';
 import type {
   HrPendingEmployeeRow,
   HrPendingStatus,
@@ -112,8 +113,12 @@ export default function HrOnboarding() {
     },
     [],
   );
-  const [pending, setPending] = useState<HrPendingEmployeeRow[]>([]);
-  const [pendingLoading, setPendingLoading] = useState(true);
+  const [pending, setPending] = useState<HrPendingEmployeeRow[]>(
+    () => getHrTabCache<HrPendingEmployeeRow[]>(HR_TAB_CACHE_KEYS.pendingEmployees) ?? [],
+  );
+  const [pendingLoading, setPendingLoading] = useState(
+    () => !hasHrTabCache(HR_TAB_CACHE_KEYS.pendingEmployees),
+  );
 
   const [search, setSearch] = useState('');
   const [dept, setDept] = useState('');
@@ -153,6 +158,7 @@ export default function HrOnboarding() {
       };
       if (!res.ok || json.error) throw new Error(json.error ?? 'Failed to load');
       setPending(json.rows ?? []);
+      setHrTabCache(HR_TAB_CACHE_KEYS.pendingEmployees, json.rows ?? []);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Failed to load pending hires');
       setPending([]);
@@ -162,6 +168,10 @@ export default function HrOnboarding() {
   }, []);
 
   useEffect(() => {
+    // Seeded from the in-session cache on remount — skip the initial fetch when
+    // warm so switching back to this tab doesn't re-query / re-flash the table.
+    // Realtime (below) + mutations + the Refresh button keep the cache fresh.
+    if (hasHrTabCache(HR_TAB_CACHE_KEYS.pendingEmployees)) return;
     void fetchPending();
   }, [fetchPending]);
 
@@ -745,6 +755,7 @@ export default function HrOnboarding() {
                   <tr>
                     <th className="px-4 py-3 font-semibold">Name</th>
                     <th className="px-4 py-3 font-semibold">Department</th>
+                    <th className="px-4 py-3 font-semibold">Country</th>
                     <th className="px-4 py-3 font-semibold">Personal</th>
                     <th className="px-4 py-3 font-semibold">Work email</th>
                     <th className="px-4 py-3 font-semibold">Start</th>
@@ -760,6 +771,7 @@ export default function HrOnboarding() {
                         <Skeleton className="mt-1.5 h-3 w-20" />
                       </td>
                       <td className="px-4 py-3"><Skeleton className="h-3.5 w-20" /></td>
+                      <td className="px-4 py-3"><Skeleton className="h-3.5 w-16" /></td>
                       <td className="px-4 py-3"><Skeleton className="h-3.5 w-36" /></td>
                       <td className="px-4 py-3"><Skeleton className="h-3.5 w-36" /></td>
                       <td className="px-4 py-3"><Skeleton className="h-3.5 w-16" /></td>
@@ -806,6 +818,7 @@ export default function HrOnboarding() {
                     )}
                     <th className="px-4 py-3 font-semibold">Name</th>
                     <th className="px-4 py-3 font-semibold">Department</th>
+                    <th className="px-4 py-3 font-semibold">Country</th>
                     <th className="px-4 py-3 font-semibold">Personal</th>
                     <th className="px-4 py-3 font-semibold">Work email</th>
                     <th className="px-4 py-3 font-semibold">Start</th>
@@ -881,6 +894,9 @@ export default function HrOnboarding() {
                           </td>
                           <td data-label="Department" className="px-4 py-3 text-xs text-zinc-700 dark:text-zinc-300">
                             {row.department}
+                          </td>
+                          <td data-label="Country" className="px-4 py-3 text-xs text-zinc-700 dark:text-zinc-300">
+                            {row.country ?? '—'}
                           </td>
                           <td data-label="Personal" className="px-4 py-3 break-all font-mono text-xs text-zinc-600 dark:text-zinc-400">
                             {row.personal_email}

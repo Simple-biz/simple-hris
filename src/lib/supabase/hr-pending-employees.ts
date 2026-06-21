@@ -138,6 +138,11 @@ export type HrPendingEmployeeRow = {
   onboarding_submission_id: string | null;
   /** Hubstaff project names picked at staging; sent to the invite webhook on promote. */
   project_names: string[] | null;
+  /** DERIVED (not a column): the hire's country, pulled from their linked
+   *  onboarding submission (the pending table stores no country). Prefers the
+   *  country the hire selected, falling back to the invite country; null for
+   *  manually-added hires with no submission. Set by listHrPendingEmployees. */
+  country?: string | null;
 };
 
 export type CreateHrPendingInput = {
@@ -196,7 +201,44 @@ export async function listHrPendingEmployees(): Promise<{
     .order("created_at", { ascending: false })
     .range(0, 1999);
   if (error) return { rows: [], error: error.message };
-  return { rows: (data ?? []) as HrPendingEmployeeRow[], error: null };
+  const rows = (data ?? []) as HrPendingEmployeeRow[];
+
+  // Enrich each hire with the country from their linked onboarding submission
+  // (the pending table has no country column). Prefer the hire-selected country,
+  // fall back to the invite country. Best-effort: a lookup failure just leaves
+  // country null, and manually-added hires (no submission) stay null too.
+  const subIds = Array.from(
+    new Set(
+      rows
+        .map((r) => r.onboarding_submission_id)
+        .filter((v): v is string => !!v),
+    ),
+  );
+  if (subIds.length > 0) {
+    try {
+      const { data: subs } = await sb
+        .from("hr_onboarding_submissions")
+        .select("id, country, invite_country")
+        .in("id", subIds);
+      const byId = new Map<string, string | null>();
+      for (const s of (subs ?? []) as {
+        id: string;
+        country: string | null;
+        invite_country: string | null;
+      }[]) {
+        byId.set(s.id, s.country ?? s.invite_country ?? null);
+      }
+      for (const r of rows) {
+        r.country = r.onboarding_submission_id
+          ? byId.get(r.onboarding_submission_id) ?? null
+          : null;
+      }
+    } catch {
+      /* leave country null */
+    }
+  }
+
+  return { rows, error: null };
 }
 
 /**

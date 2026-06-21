@@ -179,7 +179,7 @@ export default function App({ initialData }: { initialData?: InitialAccountingDa
   const renderTabContent = () => {
     switch (activeTab) {
       case 'overview':
-        return <Overview onViewRates={handleViewRates} onNavigate={navigate} initialData={initialData} />;
+        return <Overview onViewRates={handleViewRates} onNavigate={navigate} initialData={initialData} viewerEmail={sessionEmail} />;
       case 'rates':
         return (
           <Rates
@@ -217,7 +217,7 @@ export default function App({ initialData }: { initialData?: InitialAccountingDa
           />
         );
       default:
-        return <Overview onViewRates={handleViewRates} onNavigate={navigate} initialData={initialData} />;
+        return <Overview onViewRates={handleViewRates} onNavigate={navigate} initialData={initialData} viewerEmail={sessionEmail} />;
     }
   };
 

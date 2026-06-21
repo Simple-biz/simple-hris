@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { resolveFirstName } from '@/lib/name/first-name';
 import { useRouter, useSearchParams } from 'next/navigation';
 import AppFooter from '@/components/AppFooter';
 import { AnimatePresence, motion } from 'motion/react';
@@ -224,13 +225,28 @@ const DIAMONDS = [
 ] as const;
 
 function CeoOverview({ viewerEmail }: { viewerEmail: string | null }) {
-  const msgIdx = Math.floor(Math.random() * CEO_MESSAGES.length);
+  // Pin the welcome message for this mount so it doesn't reshuffle when the
+  // real-name fetch below triggers a re-render.
+  const [msgIdx] = useState(() => Math.floor(Math.random() * CEO_MESSAGES.length));
   const welcomeMsg = CEO_MESSAGES[msgIdx]!;
 
-  const rawFirst = viewerEmail?.includes('@')
-    ? viewerEmail.split('@')[0]!.replace(/[._-]/g, ' ').split(' ')[0]
-    : 'there';
-  const greeting = rawFirst.charAt(0).toUpperCase() + rawFirst.slice(1);
+  // Look up the viewer's real name so the greeting shows their actual first
+  // name; the email local part alone is unreliable (e.g. "j.delacruz@…" → "J").
+  const [realName, setRealName] = useState<string | null>(null);
+  useEffect(() => {
+    if (!viewerEmail) return;
+    let alive = true;
+    fetch(`/api/employees?email=${encodeURIComponent(viewerEmail)}`, { cache: 'no-store' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => {
+        if (!alive) return;
+        const n = j?.employees?.[0]?.name;
+        if (typeof n === 'string' && n.trim()) setRealName(n.trim());
+      })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, [viewerEmail]);
+  const greeting = resolveFirstName({ name: realName, email: viewerEmail });
 
   return (
     <div className="flex flex-col gap-6 px-4 pb-10 pt-6 sm:px-6 lg:gap-8 lg:px-8 lg:pt-8">

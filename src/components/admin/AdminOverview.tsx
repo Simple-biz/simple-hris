@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
+import { resolveFirstName } from '@/lib/name/first-name';
 import {
   type LucideIcon,
   Activity,
@@ -104,15 +105,6 @@ function levelTag(kind: 'danger' | 'warn' | 'info' | 'ok'): string {
   }
 }
 
-function greetingFromEmail(email: string | null): string {
-  if (!email) return 'there';
-  const local = email.split('@')[0]?.trim() ?? '';
-  if (!local) return 'there';
-  const word = local.replace(/[._-]+/g, ' ').split(/\s+/)[0] ?? local;
-  if (!word) return 'there';
-  return word.slice(0, 1).toUpperCase() + word.slice(1).toLowerCase();
-}
-
 function coreTableIcon(id: string): LucideIcon {
   switch (id) {
     case 'global_master_list':
@@ -152,6 +144,23 @@ export default function AdminOverview({ userEmail, onNavigate }: AdminOverviewPr
   const masterFileInputRef = useRef<HTMLInputElement>(null);
   const [ratesUploading, setRatesUploading] = useState(false);
   const ratesFileInputRef = useRef<HTMLInputElement>(null);
+
+  // Resolve the admin's real name for the greeting; the email local part alone
+  // is unreliable (e.g. "j.delacruz@…" → "J"), so look up their record.
+  const [realName, setRealName] = useState<string | null>(null);
+  useEffect(() => {
+    if (!userEmail) return;
+    let alive = true;
+    fetch(`/api/employees?email=${encodeURIComponent(userEmail)}`, { cache: 'no-store' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => {
+        if (!alive) return;
+        const n = j?.employees?.[0]?.name;
+        if (typeof n === 'string' && n.trim()) setRealName(n.trim());
+      })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, [userEmail]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -431,7 +440,7 @@ export default function AdminOverview({ userEmail, onNavigate }: AdminOverviewPr
   const sessionChip = userEmail ?? 'anon';
   const activeWebhookCount = webhooks.filter((w) => w.active).length;
   const hookDenom = Math.max(webhooks.length, 1);
-  const greet = greetingFromEmail(userEmail);
+  const greet = resolveFirstName({ name: realName, email: userEmail });
 
   return (
     <div className="flex h-full min-h-0 w-full min-w-0 flex-1 flex-col overflow-hidden bg-zinc-50 font-sans text-sm text-zinc-800 antialiased dark:bg-zinc-950 dark:text-zinc-300">

@@ -75,7 +75,11 @@
       "Bash(rm -f /tmp/parsecheck.mjs)",
       "Bash(ls *.sql)",
       "Bash(find . -name \"*.sql\" -not -path \"./sql/*\")",
-      "Bash(ls -d migrations)"
+      "Bash(ls -d migrations)",
+      "Bash(grep -rl \"type in \\(\" references/sql)",
+      "Bash(grep -rln \"employee_notifications\" references/sql)",
+      "Bash(find references *)",
+      "Bash(echo \"---EXIT: $?---\")"
     ],
     "additionalDirectories": [
       "\\tmp"

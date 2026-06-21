@@ -39,6 +39,7 @@ import {
 import { Select as SelectPrimitive } from '@base-ui/react/select';
 import { splitFullName } from '@/lib/hr/work-email';
 import { getSupabaseBrowserClient } from '@/lib/supabase/browser';
+import { getHrTabCache, hasHrTabCache, setHrTabCache, HR_TAB_CACHE_KEYS } from '@/lib/hr/tab-cache';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -765,8 +766,12 @@ const GEN_NEON_CSS = `
 
 export default function HrOnboardingForm() {
   const reduceMotion = useReducedMotion();
-  const [rows, setRows] = useState<SubmissionRow[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [rows, setRows] = useState<SubmissionRow[]>(
+    () => getHrTabCache<SubmissionRow[]>(HR_TAB_CACHE_KEYS.onboardingSubmissions) ?? [],
+  );
+  const [loading, setLoading] = useState(
+    () => !hasHrTabCache(HR_TAB_CACHE_KEYS.onboardingSubmissions),
+  );
   const [filter, setFilter] = useState<StatusFilter>('all');
   const [search, setSearch] = useState('');
   // Submitted tab only: when on, hide rows whose work email is already set so HR
@@ -817,6 +822,7 @@ export default function HrOnboardingForm() {
       const json = (await res.json()) as { rows?: SubmissionRow[]; error?: string };
       if (!res.ok || json.error) throw new Error(json.error ?? 'Failed to load');
       setRows(json.rows ?? []);
+      setHrTabCache(HR_TAB_CACHE_KEYS.onboardingSubmissions, json.rows ?? []);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Failed to load submissions');
       setRows([]);
@@ -826,6 +832,9 @@ export default function HrOnboardingForm() {
   }, []);
 
   useEffect(() => {
+    // Skip the initial fetch when cached (tab revisit) so the table doesn't
+    // re-query / reload; mutations + the Refresh button keep the cache current.
+    if (hasHrTabCache(HR_TAB_CACHE_KEYS.onboardingSubmissions)) return;
     void load();
   }, [load]);
 
@@ -1461,6 +1470,7 @@ export default function HrOnboardingForm() {
                   <th className="w-10 px-4 py-3" />
                   <th className="px-4 py-3 font-semibold">Invitee</th>
                   <th className="px-4 py-3 font-semibold">Department</th>
+                  <th className="px-4 py-3 font-semibold">Country</th>
                   <th className="px-4 py-3 font-semibold">Status</th>
                   <th className="px-4 py-3 font-semibold">Created</th>
                   <th className="px-4 py-3 font-semibold">Submitted</th>
@@ -1479,6 +1489,7 @@ export default function HrOnboardingForm() {
                       <Skeleton className="mt-1.5 h-3 w-40" />
                     </td>
                     <td className="px-4 py-3"><Skeleton className="h-3.5 w-20" /></td>
+                    <td className="px-4 py-3"><Skeleton className="h-3.5 w-16" /></td>
                     <td className="px-4 py-3"><Skeleton className="h-5 w-20 rounded-full" /></td>
                     <td className="px-4 py-3"><Skeleton className="h-3.5 w-16" /></td>
                     <td className="px-4 py-3"><Skeleton className="h-3.5 w-16" /></td>
@@ -1518,6 +1529,7 @@ export default function HrOnboardingForm() {
                   </th>
                   <th className="px-4 py-3 font-semibold">Invitee</th>
                   <th className="px-4 py-3 font-semibold">Department</th>
+                  <th className="px-4 py-3 font-semibold">Country</th>
                   <th className="px-4 py-3 font-semibold">Status</th>
                   <th className="px-4 py-3 font-semibold">Created</th>
                   <th className="px-4 py-3 font-semibold">Submitted</th>
@@ -1559,6 +1571,9 @@ export default function HrOnboardingForm() {
                       </td>
                       <td data-label="Department" className="px-4 py-3 text-xs text-zinc-700 dark:text-zinc-300">
                         {r.invite_department ?? '—'}
+                      </td>
+                      <td data-label="Country" className="px-4 py-3 text-xs text-zinc-700 dark:text-zinc-300">
+                        {r.country ?? r.invite_country ?? '—'}
                       </td>
                       <td data-label="Status" className="px-4 py-3">
                         {(() => {

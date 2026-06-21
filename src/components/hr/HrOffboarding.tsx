@@ -32,6 +32,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { cn } from '@/lib/utils';
+import { getHrTabCache, hasHrTabCache, setHrTabCache, HR_TAB_CACHE_KEYS } from '@/lib/hr/tab-cache';
 import type { EmployeeRow } from '@/lib/supabase/employees';
 import DeptFilter from './DeptFilter';
 
@@ -125,15 +126,21 @@ type OffboardTab = 'active' | 'offboarded';
 export default function HrOffboarding() {
   const [activeTab, setActiveTab] = useState<OffboardTab>('active');
 
-  const [roster, setRoster] = useState<EmployeeRow[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [roster, setRoster] = useState<EmployeeRow[]>(
+    () => getHrTabCache<EmployeeRow[]>(HR_TAB_CACHE_KEYS.offboardRoster) ?? [],
+  );
+  const [loading, setLoading] = useState(() => !hasHrTabCache(HR_TAB_CACHE_KEYS.offboardRoster));
   const [search, setSearch] = useState('');
   const [rosterDept, setRosterDept] = useState('');
   const [rosterPage, setRosterPage] = useState(0);
   const [target, setTarget] = useState<EmployeeRow | null>(null);
 
-  const [history, setHistory] = useState<HistoryRow[]>([]);
-  const [historyLoading, setHistoryLoading] = useState(true);
+  const [history, setHistory] = useState<HistoryRow[]>(
+    () => getHrTabCache<HistoryRow[]>(HR_TAB_CACHE_KEYS.offboardHistory) ?? [],
+  );
+  const [historyLoading, setHistoryLoading] = useState(
+    () => !hasHrTabCache(HR_TAB_CACHE_KEYS.offboardHistory),
+  );
   const [historySearch, setHistorySearch] = useState('');
   const [historyDept, setHistoryDept] = useState('');
   const [historyPage, setHistoryPage] = useState(0);
@@ -155,6 +162,7 @@ export default function HrOffboarding() {
       };
       if (json.error) throw new Error(json.error);
       setRoster(json.employees ?? []);
+      setHrTabCache(HR_TAB_CACHE_KEYS.offboardRoster, json.employees ?? []);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Failed to load roster');
       setRoster([]);
@@ -170,6 +178,7 @@ export default function HrOffboarding() {
       const json = (await res.json()) as { rows?: HistoryRow[]; error?: string };
       if (json.error) throw new Error(json.error);
       setHistory(json.rows ?? []);
+      setHrTabCache(HR_TAB_CACHE_KEYS.offboardHistory, json.rows ?? []);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Failed to load offboard history');
       setHistory([]);
@@ -312,8 +321,11 @@ export default function HrOffboarding() {
   }, [deleteConfirm]);
 
   useEffect(() => {
-    void fetchRoster();
-    void fetchHistory();
+    // Skip the initial fetch for whichever data set is already cached (tab
+    // revisit) so the tables don't re-query / reload; Refresh buttons + actions
+    // still force a fresh fetch and update the cache.
+    if (!hasHrTabCache(HR_TAB_CACHE_KEYS.offboardRoster)) void fetchRoster();
+    if (!hasHrTabCache(HR_TAB_CACHE_KEYS.offboardHistory)) void fetchHistory();
   }, [fetchRoster, fetchHistory]);
 
   const filtered = useMemo(() => {

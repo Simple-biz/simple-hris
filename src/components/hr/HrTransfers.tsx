@@ -15,6 +15,7 @@ import {
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
+import { getHrTabCache, hasHrTabCache, setHrTabCache, HR_TAB_CACHE_KEYS } from '@/lib/hr/tab-cache';
 import type {
   DepartmentTransferRequestRow,
   TransferRequestStatus,
@@ -40,8 +41,10 @@ const STATUS_STYLE: Record<TransferRequestStatus, string> = {
 };
 
 export default function HrTransfers() {
-  const [rows, setRows] = useState<DepartmentTransferRequestRow[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [rows, setRows] = useState<DepartmentTransferRequestRow[]>(
+    () => getHrTabCache<DepartmentTransferRequestRow[]>(HR_TAB_CACHE_KEYS.transfers) ?? [],
+  );
+  const [loading, setLoading] = useState(() => !hasHrTabCache(HR_TAB_CACHE_KEYS.transfers));
   const [error, setError] = useState<string | null>(null);
   const [notes, setNotes] = useState<Record<string, string>>({});
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -54,6 +57,7 @@ export default function HrTransfers() {
       const json = (await res.json()) as { rows?: DepartmentTransferRequestRow[]; error?: string };
       if (!res.ok || json.error) throw new Error(json.error || `Request failed (${res.status})`);
       setRows(json.rows ?? []);
+      setHrTabCache(HR_TAB_CACHE_KEYS.transfers, json.rows ?? []);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load transfer requests');
     } finally {
@@ -62,6 +66,9 @@ export default function HrTransfers() {
   }, []);
 
   useEffect(() => {
+    // Skip the initial fetch when the cache is warm (tab revisit) so the table
+    // doesn't re-query / reload; mutations + Refresh keep the cache current.
+    if (hasHrTabCache(HR_TAB_CACHE_KEYS.transfers)) return;
     void fetchAll();
   }, [fetchAll]);
 

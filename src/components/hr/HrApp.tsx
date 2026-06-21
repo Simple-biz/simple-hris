@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { resolveFirstName } from '@/lib/name/first-name';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useSession } from 'next-auth/react';
 import AppFooter from '@/components/AppFooter';
@@ -12,12 +13,14 @@ import {
   ChevronRight,
   GraduationCap,
   HeartHandshake,
+  Hourglass,
   Loader2,
   Menu,
   RefreshCw,
   Search,
   Sparkles,
   TrendingUp,
+  UserCog,
   UserMinus,
   Users,
 } from 'lucide-react';
@@ -33,7 +36,6 @@ import { useFeaturePermissions } from '@/hooks/useFeaturePermissions';
 import { usePagesVisibility } from '@/hooks/usePagesVisibility';
 import { pageLabel } from '@/lib/pages/visibility';
 import UnderConstruction from '@/components/common/UnderConstruction';
-import { canViewNotificationType } from '@/lib/notifications/notification-views';
 import ReadOnlyTab from '@/components/rbac/ReadOnlyTab';
 import { cn } from '@/lib/utils';
 import HrSidebar, { type HrTab } from './HrSidebar';
@@ -48,6 +50,7 @@ import AnnouncementWall from '@/components/announcements/AnnouncementWall';
 import SWall from '@/components/swall/SWall';
 import NotificationsPanel from '@/components/notifications/NotificationsPanel';
 import type { EmployeeRow } from '@/lib/supabase/employees';
+import { getHrTabCache, hasHrTabCache, setHrTabCache, HR_TAB_CACHE_KEYS } from '@/lib/hr/tab-cache';
 import DeptFilter from './DeptFilter';
 
 function isPlausibleEmail(s: string): boolean {
@@ -66,21 +69,15 @@ export default function HrApp() {
   const [authChecked, setAuthChecked] = useState(false);
 
   // Per-tab feature-permission overlay (hidden until granted; admin bypasses).
-  const { roles, perms, ready: permsReady, allowedTabs, canEditTab } =
+  const { ready: permsReady, allowedTabs, canEditTab } =
     useFeaturePermissions(viewerEmail);
 
-  // Live HR alerts: chime + toast on any new notification (e.g. a hire
-  // submitting their onboarding form), and an unread badge on the sidebar.
-  // Gate the chime by feature visibility so an HR coordinator without the
-  // Onboarding grant isn't toasted about onboarding paperwork (the Realtime
-  // payload bypasses the server-side gate that filters the panel + badges).
-  const isAdmin = useMemo(() => roles.includes('admin'), [roles]);
-  const canChimeFor = useCallback(
-    (type: string | null | undefined) =>
-      canViewNotificationType(type, { isAdmin, perms }),
-    [isAdmin, perms],
-  );
-  useNotificationChime(viewerEmail, canChimeFor);
+  // Live HR alerts: chime + toast whenever a new notification arrives (e.g. a
+  // hire submitting their onboarding form), plus an unread badge on the sidebar.
+  // The chime is driven by the gated unread set (mount-fetch + Realtime + poll),
+  // so it self-heals dropped events and respects feature visibility server-side
+  // (the GET already hides types this viewer can't see — no client gate needed).
+  useNotificationChime(viewerEmail);
   const unreadNotifications = useEmployeeNotificationsUnread(viewerEmail);
   // Global Pages overlay (admin-controlled visible / construction / hidden).
   const { ready: pagesReady, visibilityOf } = usePagesVisibility();
@@ -283,13 +280,28 @@ const SPARKLES = [
 ] as const;
 
 function HrOverview({ viewerEmail }: { viewerEmail: string | null }) {
-  const msgIdx = Math.floor(Math.random() * HR_MESSAGES.length);
+  // Pin the welcome message for this mount so it doesn't reshuffle when the
+  // real-name fetch below triggers a re-render.
+  const [msgIdx] = useState(() => Math.floor(Math.random() * HR_MESSAGES.length));
   const welcomeMsg = HR_MESSAGES[msgIdx]!;
 
-  const rawFirst = viewerEmail?.includes('@')
-    ? viewerEmail.split('@')[0]!.replace(/[._-]/g, ' ').split(' ')[0]
-    : 'there';
-  const greeting = rawFirst.charAt(0).toUpperCase() + rawFirst.slice(1);
+  // Look up the viewer's real name so the greeting shows their actual first
+  // name; the email local part alone is unreliable (e.g. "j.delacruz@…" → "J").
+  const [realName, setRealName] = useState<string | null>(null);
+  useEffect(() => {
+    if (!viewerEmail) return;
+    let alive = true;
+    fetch(`/api/employees?email=${encodeURIComponent(viewerEmail)}`, { cache: 'no-store' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => {
+        if (!alive) return;
+        const n = j?.employees?.[0]?.name;
+        if (typeof n === 'string' && n.trim()) setRealName(n.trim());
+      })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, [viewerEmail]);
+  const greeting = resolveFirstName({ name: realName, email: viewerEmail });
 
   return (
     <div className="flex flex-col gap-6 px-4 pb-10 pt-6 sm:px-6 lg:gap-8 lg:px-8 lg:pt-8">
@@ -2519,23 +2531,51 @@ function AttritionByDeptCard({
 
 // ─────────────────────────────────────────────────────────────────────────────
 
+type OverviewAttrition = { separations: number; avgHeadcount: number; ratePct: number };
+type OverviewOffboardRow = { off_boarded_reason: string | null; Department: string | null; off_boarded_at: string | null };
+/** Everything the single offboard-history fetch derives, cached as one bundle so
+ *  the Overview KPI cards stay populated across tab switches. */
+type OverviewOffboardCache = {
+  attrition: OverviewAttrition | null;
+  attritionByDept: AttritionDeptRow[] | null;
+  offboardRawRows: OverviewOffboardRow[] | null;
+};
+
 function OverviewBody() {
-  const [roster, setRoster] = useState<EmployeeRow[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [roster, setRoster] = useState<EmployeeRow[]>(
+    () => getHrTabCache<EmployeeRow[]>(HR_TAB_CACHE_KEYS.overviewRoster) ?? [],
+  );
+  const [loading, setLoading] = useState(() => !hasHrTabCache(HR_TAB_CACHE_KEYS.overviewRoster));
+  // Every KPI-card value is seeded from the in-session cache so returning to the
+  // Overview shows the numbers instantly (no flash, no re-query); each effect
+  // below skips its fetch when its cache is warm. See [[project-hr-tab-cache]].
   /** Trailing-12-month attrition derived from offboard history + active roster. */
-  const [attrition, setAttrition] = useState<{
-    separations: number;
-    avgHeadcount: number;
-    ratePct: number;
-  } | null>(null);
+  const [attrition, setAttrition] = useState<OverviewAttrition | null>(
+    () => getHrTabCache<OverviewOffboardCache>(HR_TAB_CACHE_KEYS.overviewOffboard)?.attrition ?? null,
+  );
   /** Per-department attrition for the same 12-month window. */
-  const [attritionByDept, setAttritionByDept] = useState<AttritionDeptRow[] | null>(null);
+  const [attritionByDept, setAttritionByDept] = useState<AttritionDeptRow[] | null>(
+    () => getHrTabCache<OverviewOffboardCache>(HR_TAB_CACHE_KEYS.overviewOffboard)?.attritionByDept ?? null,
+  );
   /** MESA member count from employee_hourly_rates.mesa_member. */
-  const [mesaCount, setMesaCount] = useState<number | null>(null);
+  const [mesaCount, setMesaCount] = useState<number | null>(
+    () => getHrTabCache<number>(HR_TAB_CACHE_KEYS.overviewMesa) ?? null,
+  );
   /** Total FPU enrollment submissions, plus a "this month" slice for sub-line. */
-  const [fpuStats, setFpuStats] = useState<{ total: number; thisMonth: number } | null>(null);
+  const [fpuStats, setFpuStats] = useState<{ total: number; thisMonth: number } | null>(
+    () => getHrTabCache<{ total: number; thisMonth: number }>(HR_TAB_CACHE_KEYS.overviewFpu) ?? null,
+  );
   /** Raw offboard rows for the Exit Reasons tab. */
-  const [offboardRawRows, setOffboardRawRows] = useState<{ off_boarded_reason: string | null; Department: string | null; off_boarded_at: string | null }[] | null>(null);
+  const [offboardRawRows, setOffboardRawRows] = useState<OverviewOffboardRow[] | null>(
+    () => getHrTabCache<OverviewOffboardCache>(HR_TAB_CACHE_KEYS.overviewOffboard)?.offboardRawRows ?? null,
+  );
+  /** Onboarding pipeline counts for the Overview KPI strip. */
+  const [awaitingSubmission, setAwaitingSubmission] = useState<number | null>(
+    () => getHrTabCache<{ awaiting: number; needs: number }>(HR_TAB_CACHE_KEYS.overviewOnboardingCounts)?.awaiting ?? null,
+  );
+  const [needsAccountSetup, setNeedsAccountSetup] = useState<number | null>(
+    () => getHrTabCache<{ awaiting: number; needs: number }>(HR_TAB_CACHE_KEYS.overviewOnboardingCounts)?.needs ?? null,
+  );
 
   const fetchRoster = useCallback(async () => {
     setLoading(true);
@@ -2544,6 +2584,7 @@ function OverviewBody() {
       const json = (await res.json()) as { employees?: EmployeeRow[]; error?: string };
       if (json.error) throw new Error(json.error);
       setRoster(json.employees ?? []);
+      setHrTabCache(HR_TAB_CACHE_KEYS.overviewRoster, json.employees ?? []);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Failed to load roster');
     } finally {
@@ -2551,15 +2592,54 @@ function OverviewBody() {
     }
   }, []);
 
-  useEffect(() => { void fetchRoster(); }, [fetchRoster]);
+  // Skip the roster fetch when cached (tab revisit) so the Overview doesn't
+  // re-query / re-flash its skeleton; the Refresh action forces a fresh pull.
+  useEffect(() => {
+    if (hasHrTabCache(HR_TAB_CACHE_KEYS.overviewRoster)) return;
+    void fetchRoster();
+  }, [fetchRoster]);
+
+  // Onboarding pipeline: invites awaiting submission + submitted hires that
+  // still need their workspace account set up (mirrors the Onboarding tab's
+  // "Needs setup" counter: no work email yet, or account creation failed).
+  useEffect(() => {
+    if (hasHrTabCache(HR_TAB_CACHE_KEYS.overviewOnboardingCounts)) return; // warm → seeded
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch('/api/hr/onboarding-submissions', { cache: 'no-store' });
+        const json = (await res.json()) as {
+          rows?: { status?: string; work_email?: string | null; workspace_account_ok?: boolean | null }[];
+        };
+        const rows = json.rows ?? [];
+        const awaiting = rows.filter((r) => r.status === 'pending').length;
+        const needs = rows.filter(
+          (r) => r.status === 'submitted' && (!r.work_email || r.workspace_account_ok === false),
+        ).length;
+        if (!cancelled) {
+          setAwaitingSubmission(awaiting);
+          setNeedsAccountSetup(needs);
+          setHrTabCache(HR_TAB_CACHE_KEYS.overviewOnboardingCounts, { awaiting, needs });
+        }
+      } catch {
+        /* leave as null → shows an em dash */
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   useEffect(() => {
+    // Attrition is derived from the roster, so wait until it's loaded (avoids
+    // caching a roster=0 result on cold load), and skip entirely when the bundle
+    // is already cached (tab revisit) — the cards are seeded above.
+    if (roster.length === 0) return;
+    if (hasHrTabCache(HR_TAB_CACHE_KEYS.overviewOffboard)) return;
     let cancelled = false;
     (async () => {
       try {
         const res = await fetch('/api/hr/offboard-history', { cache: 'no-store' });
         const json = (await res.json()) as { rows?: { off_boarded_at: string | null; Department?: string | null; off_boarded_reason?: string | null }[] };
-        if (!cancelled) setOffboardRawRows((json.rows ?? []).map((r) => ({ off_boarded_reason: r.off_boarded_reason ?? null, Department: r.Department ?? null, off_boarded_at: r.off_boarded_at ?? null })));
+        const rawRows: OverviewOffboardRow[] = (json.rows ?? []).map((r) => ({ off_boarded_reason: r.off_boarded_reason ?? null, Department: r.Department ?? null, off_boarded_at: r.off_boarded_at ?? null }));
         const cutoff = Date.now() - 365 * 24 * 3600 * 1000;
         const recentRows = (json.rows ?? []).filter((r) => {
           const t = r.off_boarded_at ? new Date(r.off_boarded_at).getTime() : NaN;
@@ -2569,7 +2649,7 @@ function OverviewBody() {
         const active = roster.length;
         const avgHeadcount = active + separations / 2;
         const ratePct = avgHeadcount > 0 ? (separations / avgHeadcount) * 100 : 0;
-        if (!cancelled) setAttrition({ separations, avgHeadcount, ratePct });
+        const attritionVal: OverviewAttrition = { separations, avgHeadcount, ratePct };
 
         // Per-department breakdown using same 12-month window
         const deptSeps = new Map<string, number>();
@@ -2592,7 +2672,16 @@ function OverviewBody() {
           // Skip depts with no active headcount — name mismatch in source data produces nonsensical rates
           .filter((r) => r.active > 0)
           .sort((a, b) => b.ratePct - a.ratePct);
-        if (!cancelled) setAttritionByDept(byDept);
+        if (!cancelled) {
+          setOffboardRawRows(rawRows);
+          setAttrition(attritionVal);
+          setAttritionByDept(byDept);
+          setHrTabCache(HR_TAB_CACHE_KEYS.overviewOffboard, {
+            attrition: attritionVal,
+            attritionByDept: byDept,
+            offboardRawRows: rawRows,
+          } satisfies OverviewOffboardCache);
+        }
       } catch {
         if (!cancelled) {
           setAttrition(null);
@@ -2605,13 +2694,17 @@ function OverviewBody() {
 
   // MESA members — count rows where mesa_member is true on the rates table.
   useEffect(() => {
+    if (hasHrTabCache(HR_TAB_CACHE_KEYS.overviewMesa)) return; // warm → seeded
     let cancelled = false;
     (async () => {
       try {
         const res = await fetch('/api/employee-hourly-rates', { cache: 'no-store' });
         const json = (await res.json()) as { rows?: { mesa_member?: boolean | null }[] };
         const n = (json.rows ?? []).reduce((acc, r) => (r.mesa_member ? acc + 1 : acc), 0);
-        if (!cancelled) setMesaCount(n);
+        if (!cancelled) {
+          setMesaCount(n);
+          setHrTabCache(HR_TAB_CACHE_KEYS.overviewMesa, n);
+        }
       } catch {
         if (!cancelled) setMesaCount(null);
       }
@@ -2621,6 +2714,7 @@ function OverviewBody() {
 
   // FPU enrollments — total submissions plus a current-month count for the sub-line.
   useEffect(() => {
+    if (hasHrTabCache(HR_TAB_CACHE_KEYS.overviewFpu)) return; // warm → seeded
     let cancelled = false;
     (async () => {
       try {
@@ -2635,7 +2729,11 @@ function OverviewBody() {
             ? acc + 1
             : acc;
         }, 0);
-        if (!cancelled) setFpuStats({ total: (json.rows ?? []).length, thisMonth });
+        if (!cancelled) {
+          const stats = { total: (json.rows ?? []).length, thisMonth };
+          setFpuStats(stats);
+          setHrTabCache(HR_TAB_CACHE_KEYS.overviewFpu, stats);
+        }
       } catch {
         if (!cancelled) setFpuStats(null);
       }
@@ -2757,7 +2855,7 @@ function OverviewBody() {
   return (
     <>
       {/* KPI row */}
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7">
         {[
           { label: 'Active employees', value: roster.length, sub: 'on the master list',      icon: Users,     grad: 'from-emerald-500 to-teal-700' },
           { label: 'Departments',      value: deptStats.length, sub: 'with active headcount', icon: Building2, grad: 'from-teal-500 to-emerald-700' },
@@ -2798,6 +2896,26 @@ function OverviewBody() {
                 : `${fpuStats.thisMonth} this month`,
             icon: GraduationCap,
             grad: 'from-orange-500 to-amber-600',
+          },
+          {
+            label: 'Awaiting submission',
+            value: awaitingSubmission ?? '—',
+            sub:
+              awaitingSubmission == null
+                ? 'onboarding pipeline'
+                : `invite${awaitingSubmission === 1 ? '' : 's'} not yet filled`,
+            icon: Hourglass,
+            grad: 'from-amber-500 to-yellow-600',
+          },
+          {
+            label: 'Needs account setup',
+            value: needsAccountSetup ?? '—',
+            sub:
+              needsAccountSetup == null
+                ? 'onboarding pipeline'
+                : `workspace${needsAccountSetup === 1 ? '' : 's'} pending`,
+            icon: UserCog,
+            grad: 'from-teal-500 to-cyan-600',
           },
         ].map(({ label, value, sub, icon: Icon, grad }) => (
           <div key={label} className="flex items-center gap-3 rounded-xl border border-zinc-100 bg-white px-4 py-3.5 shadow-sm dark:border-zinc-800 dark:bg-zinc-950">
