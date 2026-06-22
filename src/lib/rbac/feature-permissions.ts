@@ -12,7 +12,7 @@ export type FeatureViewKey = "accounting" | "manager" | "hr" | "orphanage" | "ce
 export const FEATURE_CATALOG: Record<FeatureViewKey, readonly { key: string; label: string }[]> = {
   accounting: [
     { key: "overview",         label: "Overview" },
-    { key: "rates",            label: "Rates & Profiles" },
+    { key: "people",           label: "People" },
     { key: "payroll_wizard",   label: "Payroll Wizard" },
     { key: "bonus_catalog",    label: "Payment Catalog" },
     { key: "payment_dispatch", label: "Payment Dispatch" },
@@ -55,6 +55,7 @@ export const FEATURE_CATALOG: Record<FeatureViewKey, readonly { key: string; lab
   ],
   ceo: [
     { key: "overview",      label: "Overview" },
+    { key: "people",        label: "People" },
     { key: "announcements", label: "Announcements" },
     { key: "s_wall",        label: "S-Wall" },
     { key: "notifications", label: "Notifications" },

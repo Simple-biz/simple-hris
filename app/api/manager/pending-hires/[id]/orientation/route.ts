@@ -1,11 +1,12 @@
 import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth/auth-options';
-import { hasElevatedRole } from '@/lib/auth/elevated-roles';
+import { hasElevatedRole, hasRateVisibility } from '@/lib/auth/elevated-roles';
 import { listDepartmentsForManager } from '@/lib/supabase/department-managers';
 import {
   clearPendingHireOrientation,
   markPendingHireOrientation,
+  redactPendingRowRates,
 } from '@/lib/supabase/hr-pending-employees';
 import { createSupabaseServiceRoleClient } from '@/lib/supabase/server';
 import { requireFeatureEdit } from '@/lib/auth/authorize-feature';
@@ -105,7 +106,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     attendedOn: body.attendedOn ?? null,
   });
   if (error) return NextResponse.json({ error }, { status: 500 });
-  return NextResponse.json({ row });
+  // Managers must never receive the staged hire's pay rate.
+  return NextResponse.json({ row: redactPendingRowRates(row, hasRateVisibility(feat.roles)) });
 }
 
 /** DELETE — clears the orientation marker (manager changed their mind / typo). */
@@ -123,5 +125,6 @@ export async function DELETE(_req: Request, { params }: { params: Promise<{ id: 
 
   const { row, error } = await clearPendingHireOrientation(id);
   if (error) return NextResponse.json({ error }, { status: 500 });
-  return NextResponse.json({ row });
+  // Managers must never receive the staged hire's pay rate.
+  return NextResponse.json({ row: redactPendingRowRates(row, hasRateVisibility(feat.roles)) });
 }

@@ -55,7 +55,6 @@ const MAX_RAIL_AVATARS = 9;
 
 const SECTION_LABELS: Record<string, string> = {
   'overview': 'Overview',
-  'rates': 'Rates',
   'payroll-wizard': 'Payroll Wizard',
   'payment-dispatch': 'Payment Dispatch',
   'disputes': 'Issues',

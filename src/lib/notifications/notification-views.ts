@@ -21,6 +21,7 @@ export const NOTIFICATION_TYPE_TO_VIEWS: Record<string, AppView[]> = {
   'dispute.revoked': ['employee'],
   'time_adjustment.approved': ['employee'],
   'time_adjustment.denied': ['employee'],
+  'special_transfer.recorded': ['employee'],
   'payroll.processing_started': ['admin', 'hr', 'accounting'],
   'payroll.processing_stopped': ['admin', 'hr', 'accounting'],
 };

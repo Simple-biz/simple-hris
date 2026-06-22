@@ -38,38 +38,50 @@ export function TeamAvatar({
   size?: 'md' | 'xl';
 }) {
   const [failed, setFailed] = useState(false);
+  const [loaded, setLoaded] = useState(false);
   const seed = email ?? name;
   const px = size === 'xl' ? 88 : 44;
-  const sizeClass = size === 'xl' ? 'h-22 w-22 text-2xl' : 'h-11 w-11 text-sm';
+  const dimClass = size === 'xl' ? 'h-22 w-22' : 'h-11 w-11';
+  const dimStyle = size === 'xl' ? { height: 88, width: 88 } : undefined;
 
-  if (email && !failed) {
+  // No photo to fetch, or it failed — show the styled-initials fallback.
+  if (!email || failed) {
     return (
-      // eslint-disable-next-line @next/next/no-img-element -- internal photo proxy
+      <div
+        aria-hidden
+        className={cn(
+          'flex shrink-0 items-center justify-center rounded-full bg-gradient-to-br font-bold text-white shadow-sm',
+          dimClass,
+          size === 'xl' ? 'text-2xl' : 'text-sm',
+          gradientFor(seed),
+        )}
+        style={dimStyle}
+      >
+        {initialsOf(name, email)}
+      </div>
+    );
+  }
+
+  // Photo: hold a pulsing skeleton in place until it decodes, then crossfade in.
+  // Keeps the row from collapsing/popping and reads as "loading" rather than blank.
+  return (
+    <div className={cn('relative shrink-0 overflow-hidden rounded-full', dimClass)} style={dimStyle}>
+      {!loaded && (
+        <div className="absolute inset-0 animate-pulse rounded-full bg-zinc-200 dark:bg-zinc-800" aria-hidden />
+      )}
+      {/* eslint-disable-next-line @next/next/no-img-element -- internal photo proxy */}
       <img
         src={`/api/employee-profile-photo?email=${encodeURIComponent(email)}&_fmt=img`}
         alt=""
         width={px}
         height={px}
         className={cn(
-          'shrink-0 rounded-full object-cover',
-          size === 'xl' ? 'h-22 w-22' : 'h-11 w-11',
+          'h-full w-full rounded-full object-cover transition-opacity duration-300 ease-out motion-reduce:transition-none',
+          loaded ? 'opacity-100' : 'opacity-0',
         )}
-        style={size === 'xl' ? { height: 88, width: 88 } : undefined}
+        onLoad={() => setLoaded(true)}
         onError={() => setFailed(true)}
       />
-    );
-  }
-  return (
-    <div
-      aria-hidden
-      className={cn(
-        'flex shrink-0 items-center justify-center rounded-full bg-gradient-to-br font-bold text-white shadow-sm',
-        sizeClass,
-        gradientFor(seed),
-      )}
-      style={size === 'xl' ? { height: 88, width: 88 } : undefined}
-    >
-      {initialsOf(name, email)}
     </div>
   );
 }

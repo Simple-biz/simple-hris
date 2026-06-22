@@ -86,7 +86,15 @@
       "Bash(git -C \"c:/Users/Itachi/Desktop/simple-hris\" diff)",
       "Bash(git -C \"c:/Users/Itachi/Desktop/simple-hris\" status --short)",
       "Bash(git -C \"c:/Users/Itachi/Desktop/simple-hris\" log --oneline -3)",
-      "Bash(echo \"TSC EXIT: $?\")"
+      "Bash(echo \"TSC EXIT: $?\")",
+      "Bash(node -e \"console.log\\(require\\('./package.json'\\).dependencies.next\\)\")",
+      "Bash(echo \"=== EXIT: $? ===\")",
+      "Bash(echo \"=== tsc EXIT: $? ===\")",
+      "PowerShell(Get-NetTCPConnection -LocalPort 3000 -State Listen -ErrorAction SilentlyContinue | Select-Object LocalAddress, LocalPort, OwningProcess | ForEach-Object { $p = Get-Process -Id $_.OwningProcess -ErrorAction SilentlyContinue; [PSCustomObject]@{ Port=$_.LocalPort; PID=$_.OwningProcess; Name=$p.ProcessName; Path=$p.Path; Started=$p.StartTime } } | Format-List)",
+      "Bash(git mv *)",
+      "PowerShell($c = Get-NetTCPConnection -LocalPort 3000 -State Listen -ErrorAction SilentlyContinue; if \\($c\\) { $c.OwningProcess | Select-Object -Unique | ForEach-Object { Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue }; Start-Sleep -Milliseconds 600 }; if \\(Get-NetTCPConnection -LocalPort 3000 -State Listen -ErrorAction SilentlyContinue\\) { \"still in use\" } else { \"port 3000 free\" })",
+      "PowerShell($c = Get-NetTCPConnection -LocalPort 3000 -State Listen -ErrorAction SilentlyContinue; if \\($c\\) { $c.OwningProcess | Select-Object -Unique | ForEach-Object { Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue }; Start-Sleep -Milliseconds 600 }; if \\(Test-Path \"c:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris\\\\.next\"\\) { Remove-Item -Recurse -Force \"c:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris\\\\.next\"; \"cleared .next\" } else { \"no .next\" }; if \\(Get-NetTCPConnection -LocalPort 3000 -State Listen -ErrorAction SilentlyContinue\\) { \"port still in use\" } else { \"port 3000 free\" })",
+      "PowerShell($c = Get-NetTCPConnection -LocalPort 3000 -State Listen -ErrorAction SilentlyContinue; if \\($c\\) { $c.OwningProcess | Select-Object -Unique | ForEach-Object { Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue }; Start-Sleep -Milliseconds 600 }; if \\(Get-NetTCPConnection -LocalPort 3000 -State Listen -ErrorAction SilentlyContinue\\) { \"port 3000 STILL in use\" } else { \"port 3000 free\" })"
     ],
     "additionalDirectories": [
       "\\tmp"

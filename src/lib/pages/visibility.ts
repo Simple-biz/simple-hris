@@ -72,6 +72,7 @@ export const DASHBOARD_PAGES: DashboardPages[] = [
     accent: 'amber',
     pages: [
       { key: 'overview', label: 'Overview', home: true },
+      { key: 'people', label: 'People' },
       { key: 'announcements', label: 'Announcements' },
       { key: 'notifications', label: 'Notifications' },
       { key: 's-wall', label: 'S-Wall' },
@@ -100,7 +101,7 @@ export const DASHBOARD_PAGES: DashboardPages[] = [
     accent: 'orange',
     pages: [
       { key: 'overview', label: 'Overview', home: true },
-      { key: 'rates', label: 'Rates' },
+      { key: 'people', label: 'People' },
       { key: 'payroll-wizard', label: 'Payroll Wizard' },
       { key: 'bonus-catalog', label: 'Payment Catalog' },
       { key: 'payment-dispatch', label: 'Payment Dispatch' },

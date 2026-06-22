@@ -4,7 +4,7 @@ import React from 'react';
 import { useTheme } from 'next-themes';
 import { signOut } from 'next-auth/react';
 import { withViewTransition } from '@/lib/theme/with-view-transition';
-import { Bell, Crown, LayoutDashboard, LogOut, Megaphone, Moon, MoreHorizontal, Newspaper, Sun } from 'lucide-react';
+import { Bell, Crown, LayoutDashboard, LogOut, Megaphone, Moon, MoreHorizontal, Newspaper, Sun, Users } from 'lucide-react';
 import ConstructionMark from '@/components/common/ConstructionMark';
 import { SWallNavLabel } from '@/components/swall/SWall';
 import { cn } from '@/lib/utils';
@@ -16,7 +16,7 @@ import EmployeeAvatar from '@/components/employee/EmployeeAvatar';
 import { useViewerProfilePhoto } from '@/hooks/useViewerProfilePhoto';
 import { useDispatchLock } from '@/hooks/useDispatchLock';
 
-export type CeoTab = 'overview' | 'announcements' | 's-wall' | 'notifications';
+export type CeoTab = 'overview' | 'people' | 'announcements' | 's-wall' | 'notifications';
 
 interface CeoSidebarProps {
   activeTab: CeoTab;
@@ -134,6 +134,7 @@ export default function CeoSidebar({
           </p>
           <nav className="flex flex-col gap-px">
             {can('overview') && navBtn('overview', 'Overview', LayoutDashboard)}
+            {can('people') && navBtn('people', 'People', Users)}
             {can('announcements') && navBtn('announcements', 'Announcements', Megaphone)}
             {can('notifications') && navBtn(
               'notifications',

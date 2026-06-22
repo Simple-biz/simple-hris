@@ -796,6 +796,23 @@ function parseLocalIsoDate(iso: string | null | undefined): Date | null {
 }
 
 /**
+ * True only for a standard single-week Hubstaff payroll upload. Excludes the
+ * additive Sunday-overlap backfills (`backfill-*`), the multi-week
+ * `time-activity-report-*` export, and accidental duplicate re-uploads
+ * (`… (2).csv`) — none of which represent a payable weekly cycle, so none should
+ * ever seed a phantom cycle into `disbursement_records` (Reports tab + People
+ * payroll history).
+ */
+function isSeedableWeeklyUpload(sourceFile: string): boolean {
+  const name = sourceFile.toLowerCase();
+  if (/backfill|time-activity|\(\d+\)|copy/.test(name)) return false;
+  const range = parseDateRangeFromFilename(sourceFile);
+  if (!range) return false;
+  const days = Math.round((range.end.getTime() - range.start.getTime()) / 86_400_000) + 1;
+  return days >= 6 && days <= 8;
+}
+
+/**
  * Seeds `disbursement_records` for all `hubstaff_uploads` that have no records yet.
  *
  * Pay is computed with the **Payroll Wizard's authoritative calculator**
@@ -817,19 +834,31 @@ export async function seedMissingDisbursementRecords(): Promise<{
   const supabase = createSupabaseServiceRoleClient() ?? createSupabaseServerClient();
   if (!supabase) return { seeded: 0, error: "No Supabase client" };
 
-  // Which source_files are already in disbursement_records?
-  const { data: existingData, error: existingErr } = await supabase
-    .from("disbursement_records")
-    .select("source_file");
-  if (existingErr) return { seeded: 0, error: existingErr.message };
-  const seededFiles = new Set(
-    (existingData ?? []).map((r: { source_file: string }) => r.source_file),
-  );
+  // Which source_files are already in disbursement_records? Page through —
+  // PostgREST caps a single select at 1000 rows, and an incomplete set here would
+  // make the seed re-process (and recompute the pay of) already-seeded weeks.
+  const seededFiles = new Set<string>();
+  {
+    const PAGE = 1000;
+    let from = 0;
+    for (;;) {
+      const { data, error: pErr } = await supabase
+        .from("disbursement_records")
+        .select("source_file")
+        .range(from, from + PAGE - 1);
+      if (pErr) return { seeded: 0, error: pErr.message };
+      for (const r of (data ?? []) as { source_file: string }[]) seededFiles.add(r.source_file);
+      if (!data || data.length < PAGE) break;
+      from += PAGE;
+    }
+  }
 
-  // All uploads — find unseeded ones.
+  // Unseeded uploads worth seeding. Only a canonical single-week payroll file
+  // becomes a cycle (see {@link isSeedableWeeklyUpload}) — backfills, the
+  // time-activity export, and "(2)" re-uploads are skipped.
   const uploads = await safeListHubstaffUploads();
   const unseeded = uploads.filter(
-    (u) => u.source_file && !seededFiles.has(u.source_file),
+    (u) => u.source_file && !seededFiles.has(u.source_file) && isSeedableWeeklyUpload(u.source_file),
   );
   if (unseeded.length === 0) return { seeded: 0, error: null };
 

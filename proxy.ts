@@ -1,5 +1,5 @@
 /**
- * Auth middleware — gates the app behind Google SSO.
+ * Auth proxy (formerly middleware.ts; renamed for Next.js 16) — gates the app behind Google SSO.
  *
  * Runs on every non-static, non-auth route. If there's no valid NextAuth JWT the user is sent
  * to /login with the original URL preserved in ?callbackUrl so we can bounce them back after
@@ -135,7 +135,7 @@ const PUBLIC_PREFIXES = [
   // /onboarding/ and /api/onboarding/ are handled above with rate limiting.
 ];
 
-export async function middleware(req: NextRequest) {
+export async function proxy(req: NextRequest) {
   const { pathname, search } = req.nextUrl;
 
   if (PUBLIC_PATHS.has(pathname)) return NextResponse.next();

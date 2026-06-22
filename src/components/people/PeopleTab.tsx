@@ -1,0 +1,1195 @@
+'use client';
+
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
+import {
+  Search, Send, Eye, Clock, AlertTriangle, Users, Banknote, Loader2, Sparkles, RefreshCw,
+} from 'lucide-react';
+import { toast } from 'sonner';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import {
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
+} from '@/components/ui/dialog';
+import { TeamAvatar } from '@/components/team/team-ui';
+import { SmoothSelect } from '@/components/ui/smooth-select';
+import { Skeleton } from '@/components/ui/skeleton';
+import EmployeePabCalendar from '@/components/employee/EmployeePabCalendar';
+import { getTabCache, setTabCache, TAB_CACHE_KEYS } from '@/lib/accounting/tab-cache';
+import { cn } from '@/lib/utils';
+
+type Currency = 'PHP' | 'USD' | 'COP';
+
+interface Rate {
+  regular: number | null;
+  ot: number | null;
+  currency: Currency;
+  source: 'employee' | 'sheet' | 'department' | null;
+}
+interface Hours {
+  thisWeek: number;
+  ot: number;
+  weekStart: string | null;
+  weekEnd: string | null;
+  inProgress: boolean;
+  projectedHours: number | null;
+  projectedOt: number | null;
+}
+interface RosterRow {
+  employee_id: string | null;
+  name: string | null;
+  work_email: string | null;
+  department: string | null;
+  rate: Rate;
+  hours: Hours;
+  processor: string | null;
+  hasBanking: boolean;
+}
+interface Banking {
+  preferred_processor: string | null;
+  preferred_bank_slot: string | null;
+  bank_name: string | null;
+  account_holder_name: string | null;
+  account_number: string | null;
+  routing_number: string | null;
+  swift_code: string | null;
+  full_address: string | null;
+  alt_bank_name: string | null;
+  alt_account_holder_name: string | null;
+  alt_account_number: string | null;
+  alt_routing_number: string | null;
+  hurupay_email: string | null;
+  wepay_email: string | null;
+  higlobe_email: string | null;
+  higlobe_account_name: string | null;
+  wise_email: string | null;
+  wise_tag: string | null;
+  phone_number: string | null;
+  masked: boolean;
+}
+interface HistoryRow {
+  source_file: string | null;
+  kind: 'cycle' | 'special';
+  note: string | null;
+  period_start: string | null;
+  period_end: string | null;
+  total_hours: number | null;
+  regular_hours: number | null;
+  ot_hours: number | null;
+  amount_php: number | null;
+  amount_usd: number | null;
+  status: string | null;
+  paid_amount_usd: number | null;
+  paid_at: string | null;
+}
+
+function fmtMoney(amount: number | null | undefined, currency: Currency = 'PHP'): string {
+  if (amount == null) return '—';
+  const opts = { minimumFractionDigits: 2, maximumFractionDigits: 2 };
+  if (currency === 'USD') return `$${amount.toLocaleString('en-US', opts)}`;
+  if (currency === 'COP') return `COP ${amount.toLocaleString('en-US', { maximumFractionDigits: 0 })}`;
+  return `₱${amount.toLocaleString('en-PH', opts)}`;
+}
+
+function fmtHours(h: number | null | undefined): string {
+  if (h == null) return '—';
+  return `${h.toLocaleString('en-US', { maximumFractionDigits: 1 })}h`;
+}
+
+function todayIso(): string {
+  const d = new Date();
+  const p = (x: number) => String(x).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+
+/** Parse a "YYYY-MM-DD" string as a LOCAL calendar date (no UTC/TZ shift). */
+function parseIsoLocal(iso: string | null | undefined): Date | null {
+  if (!iso) return null;
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso);
+  if (!m) return null;
+  return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+}
+
+/** "2026-06-22" → "June 22, 2026". Falls back to the raw string if unparseable. */
+function formatDay(iso: string | null | undefined): string {
+  const d = parseIsoLocal(iso);
+  if (!d) return iso ?? '';
+  return d.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+}
+
+/**
+ * Friendly pay-period range:
+ *   same month  → "April 5 - 10, 2026"
+ *   cross month → "June 29 - July 5, 2026"
+ *   cross year  → "Dec 30, 2025 - Jan 5, 2026"
+ */
+function formatPeriodRange(startIso: string | null | undefined, endIso: string | null | undefined): string {
+  const s = parseIsoLocal(startIso);
+  const e = parseIsoLocal(endIso);
+  if (!s || !e) return [startIso, endIso].filter(Boolean).join(' - ');
+  const mLong = (d: Date) => d.toLocaleDateString('en-US', { month: 'long' });
+  if (s.getFullYear() !== e.getFullYear()) return `${formatDay(startIso)} - ${formatDay(endIso)}`;
+  if (s.getMonth() === e.getMonth()) return `${mLong(s)} ${s.getDate()} - ${e.getDate()}, ${s.getFullYear()}`;
+  return `${mLong(s)} ${s.getDate()} - ${mLong(e)} ${e.getDate()}, ${s.getFullYear()}`;
+}
+
+interface Accent {
+  ring: string;
+  chipBg: string;
+  chipText: string;
+  btn: string;
+  /** native accent-color for checkboxes/date pickers */
+  check: string;
+  /** solid color for the active tab underline */
+  bar: string;
+}
+
+export default function PeopleTab({
+  view,
+  viewerEmail,
+  canEdit,
+}: {
+  view: 'accounting' | 'ceo';
+  viewerEmail: string | null;
+  canEdit: boolean;
+}) {
+  void viewerEmail; // identity is derived server-side from the session
+  const accent: Accent =
+    view === 'ceo'
+      ? {
+          ring: 'focus-visible:ring-amber-500/40',
+          chipBg: 'bg-amber-50 dark:bg-amber-950/30',
+          chipText: 'text-amber-700 dark:text-amber-300',
+          btn: 'bg-gradient-to-r from-yellow-500 to-amber-600 hover:from-yellow-500 hover:to-amber-700 text-white',
+          check: 'accent-amber-600',
+          bar: 'bg-amber-500',
+        }
+      : {
+          ring: 'focus-visible:ring-orange-500/40',
+          chipBg: 'bg-orange-50 dark:bg-orange-950/30',
+          chipText: 'text-orange-700 dark:text-orange-300',
+          btn: 'bg-gradient-to-r from-orange-500 to-amber-600 hover:from-orange-600 hover:to-amber-700 text-white',
+          check: 'accent-orange-600',
+          bar: 'bg-orange-500',
+        };
+
+  const [rows, setRows] = useState<RosterRow[]>(() => getTabCache<RosterRow[]>(TAB_CACHE_KEYS.peopleRoster) ?? []);
+  const [loading, setLoading] = useState(rows.length === 0);
+  const [error, setError] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const [query, setQuery] = useState('');
+  const [selected, setSelected] = useState<RosterRow | null>(null);
+  const [transferFor, setTransferFor] = useState<RosterRow | null>(null);
+  const [deptFilter, setDeptFilter] = useState<string>('all');
+  const [page, setPage] = useState(1);
+  const PAGE_SIZE = 10;
+
+  const load = useMemo(
+    () => async (quiet: boolean) => {
+      if (!quiet) setLoading(true);
+      try {
+        const res = await fetch('/api/people', { cache: 'no-store' });
+        const json = (await res.json()) as { rows?: RosterRow[]; error?: string };
+        if (!res.ok) throw new Error(json.error || `Request failed (${res.status})`);
+        const next = json.rows ?? [];
+        setRows(next);
+        setTabCache(TAB_CACHE_KEYS.peopleRoster, next);
+        setError(json.error ?? null);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
+      } finally {
+        setLoading(false);
+      }
+    },
+    [],
+  );
+
+  // Manual refresh — pulls fresh hours/rates/payroll in place (no skeleton flash)
+  // so a change made in the Payroll Wizard shows up here without a full reload.
+  const refresh = async () => {
+    setRefreshing(true);
+    try {
+      await load(true);
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
+  useEffect(() => {
+    void load(rows.length > 0);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Distinct, alphabetised departments for the filter dropdown.
+  const departments = useMemo(
+    () =>
+      Array.from(new Set(rows.map((r) => (r.department ?? '').trim()).filter(Boolean))).sort((a, b) =>
+        a.localeCompare(b, undefined, { sensitivity: 'base' }),
+      ),
+    [rows],
+  );
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return rows.filter((r) => {
+      if (deptFilter !== 'all' && (r.department ?? '').trim() !== deptFilter) return false;
+      if (!q) return true;
+      const name = (r.name ?? '').toLowerCase();
+      const email = (r.work_email ?? '').toLowerCase();
+      const dept = (r.department ?? '').toLowerCase();
+      const id = (r.employee_id ?? '').toLowerCase();
+      return name.includes(q) || email.includes(q) || dept.includes(q) || id.includes(q);
+    });
+  }, [rows, query, deptFilter]);
+
+  // Reset to page 1 whenever the filters change so results never land on an
+  // out-of-range page.
+  useEffect(() => {
+    setPage(1);
+  }, [query, deptFilter]);
+
+  // Paginate — 10 rows per page. safePage clamps after the result set shrinks.
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const safePage = Math.min(page, totalPages);
+  const pageStart = (safePage - 1) * PAGE_SIZE;
+  const pageRows = filtered.slice(pageStart, pageStart + PAGE_SIZE);
+
+  const otWatch = useMemo(
+    () => rows.filter((r) => (r.hours.projectedOt ?? r.hours.ot) > 0).length,
+    [rows],
+  );
+
+  return (
+    // data-readonly-allow: People is a read surface (browse, search, reveal-banking
+    // is itself audited); the only mutation — special transfers — is gated on
+    // `canEdit` + the server, so we don't want ReadOnlyTab swallowing row clicks.
+    <div data-readonly-allow className="flex h-full min-h-0 flex-col">
+      <div className="shrink-0 border-b border-[#ececec] bg-white px-4 py-3 sm:px-6 sm:py-5 dark:border-zinc-800 dark:bg-zinc-950">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="min-w-0">
+            <h1 className="flex items-center gap-2 text-base font-semibold tracking-tight text-zinc-900 sm:text-xl dark:text-white">
+              <Users className="h-5 w-5 shrink-0 text-zinc-400" /> People
+            </h1>
+            <p className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-500">
+              Everyone, searchable — hours this week, pay rate, banking, and one-off transfers.
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className={cn('rounded-full px-2.5 py-1 text-[11px] font-medium', accent.chipBg, accent.chipText)}>
+              {rows.length} people
+            </span>
+            {otWatch > 0 && (
+              <span className="flex items-center gap-1 rounded-full bg-red-50 px-2.5 py-1 text-[11px] font-medium text-red-600 dark:bg-red-950/30 dark:text-red-300">
+                <AlertTriangle className="h-3 w-3" /> {otWatch} on track for OT
+              </span>
+            )}
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className="h-8 gap-1.5 px-2.5 text-[12px]"
+              onClick={refresh}
+              disabled={refreshing || (loading && rows.length === 0)}
+              aria-label="Refresh roster"
+              title="Pull the latest hours, rates, and payroll changes"
+            >
+              <RefreshCw className={cn('h-3.5 w-3.5', refreshing && 'animate-spin')} />
+              <span className="hidden sm:inline">Refresh</span>
+            </Button>
+          </div>
+        </div>
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <div className="relative min-w-0 flex-1 sm:max-w-md">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" />
+            <Input
+              type="search"
+              placeholder="Search name, work email, department, or ID…"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              className={cn('pl-9', accent.ring)}
+              aria-label="Search people"
+            />
+          </div>
+          <SmoothSelect
+            value={deptFilter}
+            onChange={setDeptFilter}
+            aria-label="Filter by department"
+            className="w-full shrink-0 sm:w-48"
+            options={[
+              { value: 'all', label: 'All departments' },
+              ...departments.map((d) => ({ value: d, label: d })),
+            ]}
+          />
+        </div>
+      </div>
+
+      <div className="min-h-0 flex-1 overflow-y-auto bg-[#fafaf8] px-3 py-4 sm:px-6 sm:py-6 dark:bg-[#0d1117]">
+        {error && (
+          <div className="mb-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-300">
+            {error}
+          </div>
+        )}
+
+        {loading && rows.length === 0 ? (
+          <RosterSkeleton />
+        ) : filtered.length === 0 ? (
+          <div className="py-20 text-center text-sm text-zinc-500">
+            {query.trim() || deptFilter !== 'all'
+              ? 'No people match the current filters.'
+              : 'No people to show.'}
+          </div>
+        ) : (
+          <>
+          <div className="overflow-x-auto rounded-xl border border-zinc-200 bg-white shadow-sm dark:border-zinc-800 dark:bg-zinc-950">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-zinc-200 text-left text-[11px] uppercase tracking-wide text-zinc-500 dark:border-zinc-800">
+                  <th className="px-3 py-2.5 font-medium">Person</th>
+                  <th className="px-3 py-2.5 font-medium">Department</th>
+                  <th className="px-3 py-2.5 font-medium">Hours this week</th>
+                  <th className="px-3 py-2.5 font-medium">Pay rate</th>
+                  <th className="px-3 py-2.5 font-medium">Payout</th>
+                  <th className="px-3 py-2.5 font-medium text-right">Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {pageRows.map((r) => (
+                  <tr
+                    key={`${r.work_email ?? r.employee_id ?? r.name ?? 'row'}|${r.name ?? ''}`}
+                    className="cursor-pointer border-b border-zinc-100 transition-colors last:border-0 hover:bg-zinc-50 dark:border-zinc-900 dark:hover:bg-zinc-900/50"
+                    onClick={() => setSelected(r)}
+                  >
+                    <td className="px-3 py-2.5" data-label="Person">
+                      <div className="flex items-center gap-2.5">
+                        <TeamAvatar name={r.name ?? ''} email={r.work_email} />
+                        <div className="min-w-0">
+                          <div className="truncate font-medium text-zinc-900 dark:text-zinc-100">{r.name ?? '—'}</div>
+                          <div className="truncate text-[11px] text-zinc-400">{r.work_email ?? r.employee_id ?? ''}</div>
+                        </div>
+                      </div>
+                    </td>
+                    <td className="px-3 py-2.5 text-zinc-600 dark:text-zinc-300" data-label="Department">
+                      {r.department ?? '—'}
+                    </td>
+                    <td className="px-3 py-2.5" data-label="Hours this week">
+                      <HoursCell hours={r.hours} />
+                    </td>
+                    <td className="px-3 py-2.5 text-zinc-700 dark:text-zinc-200" data-label="Pay rate">
+                      {r.rate.regular != null ? (
+                        <span>
+                          {fmtMoney(r.rate.regular, r.rate.currency)}
+                          <span className="text-[11px] text-zinc-400">/hr</span>
+                          {r.rate.ot != null && (
+                            <span className="ml-1 text-[11px] text-zinc-400">
+                              · OT {fmtMoney(r.rate.ot, r.rate.currency)}
+                            </span>
+                          )}
+                        </span>
+                      ) : (
+                        <span className="text-zinc-400">not set</span>
+                      )}
+                    </td>
+                    <td className="px-3 py-2.5" data-label="Payout">
+                      {r.processor ? (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-zinc-100 px-2 py-0.5 text-[11px] font-medium capitalize text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
+                          <Banknote className="h-3 w-3" /> {r.processor}
+                        </span>
+                      ) : (
+                        <span className="text-[11px] text-zinc-400">{r.hasBanking ? 'on file' : 'none'}</span>
+                      )}
+                    </td>
+                    <td className="px-3 py-2.5 text-right" data-label="">
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        className="h-7 px-2 text-[12px]"
+                        onClick={(e) => { e.stopPropagation(); setSelected(r); }}
+                      >
+                        View
+                      </Button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-[12px] text-zinc-500">
+            <span>
+              Showing {pageStart + 1}–{Math.min(pageStart + PAGE_SIZE, filtered.length)} of {filtered.length}
+            </span>
+            {totalPages > 1 && (
+              <div className="flex items-center gap-2">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="h-7 px-2 text-[12px]"
+                  disabled={safePage <= 1}
+                  onClick={() => setPage((p) => Math.max(1, p - 1))}
+                >
+                  Prev
+                </Button>
+                <span className="tabular-nums text-zinc-600 dark:text-zinc-300">
+                  Page {safePage} of {totalPages}
+                </span>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="h-7 px-2 text-[12px]"
+                  disabled={safePage >= totalPages}
+                  onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                >
+                  Next
+                </Button>
+              </div>
+            )}
+          </div>
+          </>
+        )}
+      </div>
+
+      {selected && (
+        <PersonDetailDialog
+          key={selected.work_email ?? selected.employee_id ?? selected.name ?? 'person'}
+          row={selected}
+          accent={accent}
+          canEdit={canEdit}
+          onClose={() => setSelected(null)}
+          onSendTransfer={() => setTransferFor(selected)}
+        />
+      )}
+
+      {transferFor && (
+        <SpecialTransferDialog
+          row={transferFor}
+          accent={accent}
+          onClose={() => setTransferFor(null)}
+          onDone={() => {
+            setTransferFor(null);
+            void load(true);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+function RosterSkeleton() {
+  return (
+    <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-sm dark:border-zinc-800 dark:bg-zinc-950">
+      {Array.from({ length: 8 }).map((_, i) => (
+        <div
+          key={i}
+          className="flex items-center gap-3 border-b border-zinc-100 px-3 py-3 last:border-0 dark:border-zinc-900"
+        >
+          <Skeleton className="h-11 w-11 shrink-0 rounded-full" />
+          <div className="min-w-0 flex-1 space-y-1.5">
+            <Skeleton className="h-3.5 w-36" />
+            <Skeleton className="h-2.5 w-52 max-w-[60%]" />
+          </div>
+          <Skeleton className="hidden h-3.5 w-24 sm:block" />
+          <Skeleton className="hidden h-3.5 w-20 md:block" />
+          <Skeleton className="h-7 w-14 rounded-md" />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function HoursCell({ hours }: { hours: Hours }) {
+  const ot = hours.projectedOt ?? hours.ot;
+  return (
+    <div className="flex flex-col gap-0.5">
+      <div className="flex items-center gap-1.5">
+        <span className="font-medium text-zinc-900 dark:text-zinc-100">{fmtHours(hours.thisWeek)}</span>
+        {hours.ot > 0 && (
+          <span className="rounded bg-red-50 px-1.5 py-0.5 text-[10px] font-semibold text-red-600 dark:bg-red-950/30 dark:text-red-300">
+            +{fmtHours(hours.ot)} OT
+          </span>
+        )}
+      </div>
+      {hours.inProgress && hours.projectedHours != null && (
+        <span className="flex items-center gap-1 text-[10.5px] text-zinc-400">
+          <Clock className="h-3 w-3" />
+          on track for {fmtHours(hours.projectedHours)}
+          {ot > 0 && <span className="text-red-500">({fmtHours(ot)} OT)</span>}
+        </span>
+      )}
+    </div>
+  );
+}
+
+/* ── Person detail (banking + payroll history) ──────────────────────────── */
+
+function PersonDetailDialog({
+  row,
+  accent,
+  canEdit,
+  onClose,
+  onSendTransfer,
+}: {
+  row: RosterRow;
+  accent: Accent;
+  canEdit: boolean;
+  onClose: () => void;
+  onSendTransfer: () => void;
+}) {
+  const [tab, setTab] = useState<'details' | 'pab'>('details');
+  // Mount the PAB calendar on first visit, then keep it mounted (hidden when
+  // inactive) so switching tabs never re-fetches its data.
+  const [pabVisited, setPabVisited] = useState(false);
+  const [pabLoading, setPabLoading] = useState(true);
+  const [pabProgress, setPabProgress] = useState(0);
+  const [showPabLoader, setShowPabLoader] = useState(true);
+  const handlePabLoaderDone = useCallback(() => setShowPabLoader(false), []);
+  const [banking, setBanking] = useState<Banking | null>(null);
+  const [history, setHistory] = useState<HistoryRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [revealing, setRevealing] = useState(false);
+  const isHsl = (row.department ?? '').trim().toLowerCase() === 'hsl';
+  const [histPage, setHistPage] = useState(1);
+  const histDirRef = useRef<1 | -1>(1);
+  const reduceMotion = useReducedMotion();
+  const HIST_PAGE_SIZE = 5;
+  const email = row.work_email ?? '';
+
+  useEffect(() => {
+    let alive = true;
+    setLoading(true);
+    fetch(`/api/people/${encodeURIComponent(email)}`, { cache: 'no-store' })
+      .then((r) => r.json())
+      .then((j: { banking?: Banking | null; history?: HistoryRow[] }) => {
+        if (!alive) return;
+        setBanking(j.banking ?? null);
+        setHistory(j.history ?? []);
+        setHistPage(1);
+      })
+      .catch(() => { if (alive) setBanking(null); })
+      .finally(() => { if (alive) setLoading(false); });
+    return () => { alive = false; };
+  }, [email]);
+
+  // Paginate the history list — 6 newest-first per page. safePage clamps if the
+  // set shrinks (e.g. after a reveal/refresh) so we never land out of range.
+  const histTotalPages = Math.max(1, Math.ceil(history.length / HIST_PAGE_SIZE));
+  const histSafePage = Math.min(histPage, histTotalPages);
+  const histStart = (histSafePage - 1) * HIST_PAGE_SIZE;
+  const pagedHistory = history.slice(histStart, histStart + HIST_PAGE_SIZE);
+
+  const goPage = (dir: 1 | -1) => {
+    histDirRef.current = dir;
+    setHistPage((p) => Math.min(histTotalPages, Math.max(1, p + dir)));
+  };
+
+  // Show only the bank the employee designated as preferred in their portal
+  // (primary vs alternative slot) — not both. The alternative slot has no
+  // SWIFT/address fields, so those collapse when it's the preferred one.
+  const prefAlt = banking?.preferred_bank_slot === 'alternative';
+  const prefBank = {
+    name: (prefAlt ? banking?.alt_bank_name : banking?.bank_name) ?? null,
+    holder: (prefAlt ? banking?.alt_account_holder_name : banking?.account_holder_name) ?? null,
+    account: (prefAlt ? banking?.alt_account_number : banking?.account_number) ?? null,
+    routing: (prefAlt ? banking?.alt_routing_number : banking?.routing_number) ?? null,
+    swift: (prefAlt ? null : banking?.swift_code) ?? null,
+    address: (prefAlt ? null : banking?.full_address) ?? null,
+  };
+  // Only the employee's CHOSEN processor's payout details are relevant. Other
+  // columns can hold stale/duplicated data (legacy seeds), so we never show a
+  // rail the employee didn't pick. `wires` → the preferred bank; otherwise the
+  // single processor field. Unknown/empty processor falls back to a bank if one
+  // exists, else nothing.
+  const proc = (banking?.preferred_processor ?? '').trim().toLowerCase();
+  const showBank = proc === 'wires' || (!proc && !!prefBank.name);
+
+  const reveal = async () => {
+    setRevealing(true);
+    try {
+      const res = await fetch(`/api/people/${encodeURIComponent(email)}/reveal-banking`, { method: 'POST' });
+      const j = (await res.json()) as { banking?: Banking | null; error?: string };
+      if (!res.ok) throw new Error(j.error || 'Reveal failed');
+      if (j.banking) setBanking(j.banking);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not reveal banking');
+    } finally {
+      setRevealing(false);
+    }
+  };
+
+  return (
+    <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent className="gap-0 overflow-hidden p-0 sm:max-w-2xl">
+        <div className="flex max-h-[88vh] flex-col">
+        <DialogHeader className="shrink-0 border-b border-zinc-200 px-5 py-4 dark:border-zinc-800">
+          <div className="flex items-center gap-3">
+            <TeamAvatar name={row.name ?? ''} email={row.work_email} size="xl" />
+            <div className="min-w-0">
+              <DialogTitle className="truncate text-lg">{row.name ?? '—'}</DialogTitle>
+              <DialogDescription className="truncate">
+                {row.department ?? '—'} · {row.work_email ?? row.employee_id ?? ''}
+              </DialogDescription>
+            </div>
+          </div>
+        </DialogHeader>
+
+        {/* Tabs */}
+        <div role="tablist" className="flex shrink-0 gap-1 border-b border-zinc-200 px-3 dark:border-zinc-800">
+          {([['details', 'Details'], ['pab', 'PAB Calendar']] as const).map(([id, label]) => (
+            <button
+              key={id}
+              type="button"
+              role="tab"
+              aria-selected={tab === id}
+              onClick={() => { setTab(id); if (id === 'pab') setPabVisited(true); }}
+              className={cn(
+                'relative px-3 py-2.5 text-[13px] font-medium transition-colors',
+                tab === id
+                  ? 'text-zinc-900 dark:text-zinc-100'
+                  : 'text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-200',
+              )}
+            >
+              {label}
+              {tab === id && <span className={cn('absolute inset-x-2 -bottom-px h-0.5 rounded-full', accent.bar)} />}
+            </button>
+          ))}
+        </div>
+
+        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+          {tab === 'details' && (
+          <>
+          {/* Snapshot cards */}
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+            <StatCard label="Hours this week" value={fmtHours(row.hours.thisWeek)} sub={row.hours.ot > 0 ? `+${fmtHours(row.hours.ot)} OT` : 'no OT'} />
+            <StatCard
+              label="On track for"
+              value={row.hours.inProgress && row.hours.projectedHours != null ? fmtHours(row.hours.projectedHours) : '—'}
+              sub={
+                row.hours.inProgress && (row.hours.projectedOt ?? 0) > 0
+                  ? `${fmtHours(row.hours.projectedOt)} projected OT`
+                  : row.hours.inProgress ? 'within 40h' : 'week complete'
+              }
+            />
+            <StatCard
+              label="Pay rate"
+              value={row.rate.regular != null ? `${fmtMoney(row.rate.regular, row.rate.currency)}/hr` : 'not set'}
+              sub={row.rate.ot != null ? `OT ${fmtMoney(row.rate.ot, row.rate.currency)}` : (row.rate.source ?? '')}
+            />
+          </div>
+
+          {/* Banking */}
+          <div className="mt-5">
+            <div className="mb-2 flex items-center justify-between">
+              <h3 className="text-xs font-semibold uppercase tracking-wide text-zinc-500">Banking & payout</h3>
+              {banking?.masked && (
+                <Button type="button" size="sm" variant="outline" className="h-7 gap-1.5 px-2 text-[12px]" onClick={reveal} disabled={revealing}>
+                  {revealing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Eye className="h-3.5 w-3.5" />}
+                  Reveal
+                </Button>
+              )}
+            </div>
+            {loading ? (
+              <div className="rounded-lg border border-zinc-200 bg-zinc-50/60 p-3 dark:border-zinc-800 dark:bg-zinc-900/40">
+                <div className="grid grid-cols-1 gap-x-6 gap-y-3 sm:grid-cols-2">
+                  {Array.from({ length: 6 }).map((_, i) => (
+                    <div key={i} className="space-y-1.5">
+                      <Skeleton className="h-2.5 w-16" />
+                      <Skeleton className="h-3.5 w-32" />
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : !banking ? (
+              <p className="py-3 text-xs text-zinc-400">No payout details on file.</p>
+            ) : (
+              <div className="rounded-lg border border-zinc-200 bg-zinc-50/60 p-3 text-[13px] dark:border-zinc-800 dark:bg-zinc-900/40">
+                {banking.masked && (
+                  <p className="mb-2 text-[11px] text-zinc-400">Sensitive fields are masked. Reveal is recorded in the audit log.</p>
+                )}
+                <dl className="grid grid-cols-1 gap-x-6 gap-y-1.5 sm:grid-cols-2">
+                  <Field label="Processor" value={banking.preferred_processor || 'Not set'} cap />
+                  {showBank && (
+                    <>
+                      <Field label={`Bank${prefAlt ? ' (alternative)' : ''}`} value={prefBank.name} />
+                      <Field label="Account holder" value={prefBank.holder} />
+                      <Field label="Account no." value={prefBank.account} mono />
+                      <Field label="SWIFT" value={prefBank.swift} mono />
+                      <Field label="Routing" value={prefBank.routing} mono />
+                      <Field label="Address" value={prefBank.address} wide />
+                    </>
+                  )}
+                  {proc === 'hurupay' && <Field label="Hurupay email" value={banking.hurupay_email} />}
+                  {proc === 'wepay' && <Field label="WePay email" value={banking.wepay_email} />}
+                  {proc === 'higlobe' && (
+                    <>
+                      <Field label="HiGlobe email" value={banking.higlobe_email} />
+                      <Field label="HiGlobe account" value={banking.higlobe_account_name} />
+                    </>
+                  )}
+                  {proc === 'wise' && (
+                    <>
+                      <Field label="Wise email" value={banking.wise_email} />
+                      <Field label="Wise tag" value={banking.wise_tag} />
+                    </>
+                  )}
+                  {proc === 'jeeves' && <Field label="Phone" value={banking.phone_number} mono />}
+                </dl>
+              </div>
+            )}
+          </div>
+
+          {/* Payroll history */}
+          <div className="mt-5">
+            <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-500">Payroll history</h3>
+            {loading ? (
+              <ul className="space-y-1.5">
+                {Array.from({ length: 3 }).map((_, i) => (
+                  <li key={i} className="flex items-center justify-between rounded-lg border border-zinc-200 px-3 py-2.5 dark:border-zinc-800">
+                    <div className="space-y-1.5">
+                      <Skeleton className="h-3.5 w-44" />
+                      <Skeleton className="h-2.5 w-24" />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Skeleton className="ml-auto h-3.5 w-20" />
+                      <Skeleton className="ml-auto h-2.5 w-12" />
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            ) : history.length === 0 ? (
+              <p className="py-3 text-xs text-zinc-400">No payroll records yet.</p>
+            ) : (
+              <>
+              <AnimatePresence mode="wait" custom={histDirRef.current} initial={false}>
+              <motion.ul
+                key={histSafePage}
+                custom={histDirRef.current}
+                variants={{
+                  enter: (d: number) => (reduceMotion ? { opacity: 0 } : { opacity: 0, x: d * 18 }),
+                  center: { opacity: 1, x: 0 },
+                  exit: (d: number) => (reduceMotion ? { opacity: 0 } : { opacity: 0, x: d * -18 }),
+                }}
+                initial="enter"
+                animate="center"
+                exit="exit"
+                transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
+                className="space-y-1.5"
+              >
+                {pagedHistory.map((h, i) => (
+                  <li
+                    key={`${h.source_file}-${histStart + i}`}
+                    className={cn(
+                      'flex items-center justify-between gap-3 rounded-lg border px-3 py-2 text-[13px]',
+                      h.kind === 'special'
+                        ? 'border-violet-200 bg-violet-50/60 dark:border-violet-900/40 dark:bg-violet-950/20'
+                        : 'border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950',
+                    )}
+                  >
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        {h.kind === 'special' && (
+                          <span className="inline-flex items-center gap-1 rounded bg-violet-100 px-1.5 py-0.5 text-[10px] font-semibold text-violet-700 dark:bg-violet-900/40 dark:text-violet-200">
+                            <Sparkles className="h-2.5 w-2.5" /> Special
+                          </span>
+                        )}
+                        <span className="truncate font-medium text-zinc-800 dark:text-zinc-100">
+                          {h.kind === 'special' ? (h.note || 'Special transfer') : formatPeriodRange(h.period_start, h.period_end)}
+                        </span>
+                      </div>
+                      <div className="mt-0.5 text-[11px] text-zinc-400">
+                        {h.kind === 'special'
+                          ? formatDay(h.paid_at ?? h.period_start)
+                          : `${fmtHours(h.total_hours)} · ${(h.status ?? 'pending')}`}
+                      </div>
+                    </div>
+                    <div className="shrink-0 text-right">
+                      <div className="font-semibold text-zinc-900 dark:text-zinc-100">{fmtMoney(h.amount_php, 'PHP')}</div>
+                      <div className={cn(
+                        'text-[10.5px] font-medium',
+                        h.status === 'paid' ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600 dark:text-amber-400',
+                      )}>
+                        {h.status ?? 'pending'}
+                      </div>
+                    </div>
+                  </li>
+                ))}
+              </motion.ul>
+              </AnimatePresence>
+              {histTotalPages > 1 && (
+                <div className="mt-2 flex items-center justify-between text-[11px] text-zinc-500">
+                  <span>
+                    Showing {histStart + 1}–{Math.min(histStart + HIST_PAGE_SIZE, history.length)} of {history.length}
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      className="h-7 px-2 text-[12px]"
+                      disabled={histSafePage <= 1}
+                      onClick={() => goPage(-1)}
+                    >
+                      Prev
+                    </Button>
+                    <span className="tabular-nums text-zinc-600 dark:text-zinc-300">
+                      {histSafePage} / {histTotalPages}
+                    </span>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      className="h-7 px-2 text-[12px]"
+                      disabled={histSafePage >= histTotalPages}
+                      onClick={() => goPage(1)}
+                    >
+                      Next
+                    </Button>
+                  </div>
+                </div>
+              )}
+              </>
+            )}
+          </div>
+          </>
+          )}
+
+          {pabVisited && (
+            <div className={cn('relative', tab === 'pab' ? '' : 'hidden')}>
+              {/* Progress bar sits INSIDE the calendar box, centered over the
+                  skeleton (which stays visible around it) — they load together,
+                  and the bar only completes once the data actually lands. */}
+              {showPabLoader && (
+                <PabLoader progress={pabProgress} done={!pabLoading} accent={accent} onDone={handlePabLoaderDone} />
+              )}
+              <EmployeePabCalendar
+                employeeEmail={email}
+                isHsl={isHsl}
+                trimToElapsedWeeks={false}
+                onLoadingChange={setPabLoading}
+                onProgress={setPabProgress}
+              />
+            </div>
+          )}
+        </div>
+
+        {/* Footer — a plain section (NOT DialogFooter, whose -mx-4/-mb-4 breakout
+            margins fight this p-0 + overflow-hidden dialog and clip the button
+            against the edge). Mirrors the header: full-bleed border-t, tinted bar,
+            helper text left + action right, stacking on mobile. */}
+        <div className="flex shrink-0 flex-col gap-3 border-t border-zinc-200 bg-zinc-50/70 px-5 py-3.5 sm:flex-row sm:items-center sm:justify-between sm:px-6 dark:border-zinc-800 dark:bg-zinc-900/40">
+          <p className="text-[11px] leading-snug text-zinc-500 dark:text-zinc-400">
+            {canEdit
+              ? 'One-off payment, recorded straight into payroll history.'
+              : 'View only — special transfers require edit access.'}
+          </p>
+          {canEdit && (
+            <Button
+              type="button"
+              onClick={onSendTransfer}
+              className={cn(
+                'h-10 shrink-0 gap-2 px-4 font-medium shadow-sm transition-transform active:scale-[0.98]',
+                accent.btn,
+              )}
+            >
+              <Send className="h-4 w-4" />
+              Send special transfer
+            </Button>
+          )}
+        </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/**
+ * Real-progress overlay for the PAB calendar's first load. Driven by the
+ * calendar's actual hours-fetch progress (`progress` 0→1, climbs as each file
+ * lands) so the bar genuinely TRAVELS instead of parking at a guessed ceiling. A
+ * tiny time-based floor (0→15%) only covers the brief startup gap before the
+ * fetch starts reporting. Snaps to 100% and fades once `done`. Live values flow
+ * through refs so the rAF loop never restarts.
+ */
+function PabLoader({
+  progress,
+  done,
+  accent,
+  onDone,
+}: {
+  progress: number;
+  done: boolean;
+  accent: Accent;
+  onDone: () => void;
+}) {
+  const reduce = useReducedMotion();
+  const [pct, setPct] = useState(0);
+  const progressRef = useRef(progress);
+  const doneRef = useRef(done);
+  const onDoneRef = useRef(onDone);
+  progressRef.current = progress;
+  doneRef.current = done;
+  onDoneRef.current = onDone;
+
+  useEffect(() => {
+    if (reduce) {
+      const id = window.setInterval(() => {
+        if (doneRef.current) {
+          setPct(100);
+          window.clearInterval(id);
+          window.setTimeout(() => onDoneRef.current(), 200);
+        } else {
+          setPct(Math.min(95, Math.round(progressRef.current * 95)));
+        }
+      }, 150);
+      return () => window.clearInterval(id);
+    }
+    let raf = 0;
+    let finished = false;
+    let doneSince = 0;
+    let last = performance.now();
+    const loop = (now: number) => {
+      const dt = Math.min(80, now - last);
+      last = now;
+      setPct((p) => {
+        const d = doneRef.current;
+        if (d && !doneSince) doneSince = now;
+        const stable = d && now - doneSince > 150;
+        let next: number;
+        if (stable) {
+          next = p + (100 - p) * 0.25;
+          if (next > 99.5) next = 100;
+        } else {
+          // Startup floor (→15%) keeps it moving before the hours fetch reports;
+          // after that REAL file progress (progress*95) leads the bar.
+          const floor = Math.min(15, p + dt * 0.03);
+          const target = Math.max(floor, progressRef.current * 95);
+          next = p + (target - p) * 0.16;
+          if (next < p) next = p; // never go backwards
+          else if (target > p && next - p < 0.06) next = p + 0.06; // a hair of motion
+          if (next > 98) next = 98;
+        }
+        if (next >= 100 && !finished) {
+          finished = true;
+          window.setTimeout(() => onDoneRef.current(), 180);
+        }
+        return next;
+      });
+      if (!finished) raf = requestAnimationFrame(loop);
+    };
+    raf = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(raf);
+  }, [reduce]);
+
+  return (
+    <div
+      className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center transition-opacity duration-300 motion-reduce:transition-none"
+      style={{ opacity: pct >= 100 ? 0 : 1 }}
+      aria-hidden
+    >
+      <div className="w-48 max-w-[70%] rounded-xl border border-zinc-200/80 bg-white/90 px-3.5 py-3 shadow-lg shadow-zinc-900/5 backdrop-blur-sm dark:border-zinc-800/80 dark:bg-zinc-950/90">
+        <div className="mb-1.5 flex items-baseline justify-between">
+          <span className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400">Loading…</span>
+          <span className="text-[13px] font-semibold tabular-nums text-zinc-700 dark:text-zinc-200">{Math.round(pct)}%</span>
+        </div>
+        <div className="h-1.5 w-full overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-800">
+          <div className={cn('h-full rounded-full', accent.bar)} style={{ width: `${pct}%` }} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function StatCard({ label, value, sub }: { label: string; value: string; sub?: string }) {
+  return (
+    <div className="rounded-lg border border-zinc-200 bg-white p-3 dark:border-zinc-800 dark:bg-zinc-950">
+      <div className="text-[10.5px] uppercase tracking-wide text-zinc-400">{label}</div>
+      <div className="mt-0.5 text-base font-semibold text-zinc-900 dark:text-zinc-100">{value}</div>
+      {sub && <div className="text-[11px] text-zinc-400">{sub}</div>}
+    </div>
+  );
+}
+
+function Field({ label, value, mono, cap, wide }: { label: string; value: string | null; mono?: boolean; cap?: boolean; wide?: boolean }) {
+  if (!value) return null;
+  return (
+    <div className={cn(wide && 'sm:col-span-2')}>
+      <dt className="text-[10.5px] uppercase tracking-wide text-zinc-400">{label}</dt>
+      <dd className={cn('text-zinc-800 dark:text-zinc-100', mono && 'font-mono', cap && 'capitalize')}>{value}</dd>
+    </div>
+  );
+}
+
+/* ── Special transfer modal ─────────────────────────────────────────────── */
+
+function SpecialTransferDialog({
+  row,
+  accent,
+  onClose,
+  onDone,
+}: {
+  row: RosterRow;
+  accent: Accent;
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const [amount, setAmount] = useState('');
+  const [date, setDate] = useState(todayIso());
+  const [reason, setReason] = useState('');
+  const [notify, setNotify] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
+  const [fx, setFx] = useState<number | null>(null);
+  const submittedRef = useRef(false);
+
+  useEffect(() => {
+    let alive = true;
+    fetch('/api/app-settings?keys=usd_to_php_rate', { cache: 'no-store' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j: { values?: Record<string, string | null> } | null) => {
+        if (!alive || !j?.values) return;
+        const n = parseFloat(String(j.values.usd_to_php_rate ?? ''));
+        if (Number.isFinite(n) && n > 0) setFx(n);
+      })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, []);
+
+  const amountNum = parseFloat(amount.replace(/[^\d.]/g, ''));
+  const usdPreview = fx && Number.isFinite(amountNum) && amountNum > 0 ? amountNum / fx : null;
+  const valid = Number.isFinite(amountNum) && amountNum > 0 && !!date && reason.trim().length > 0;
+
+  const submit = async () => {
+    if (!valid || submittedRef.current) return;
+    submittedRef.current = true;
+    setSubmitting(true);
+    try {
+      const res = await fetch('/api/people/special-transfer', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          recipient_email: row.work_email,
+          amount_php: amountNum,
+          sent_date: date,
+          reason: reason.trim(),
+          notify,
+        }),
+      });
+      const j = (await res.json()) as { ok?: boolean; error?: string; notified?: boolean };
+      if (!res.ok || !j.ok) throw new Error(j.error || 'Transfer failed');
+      toast.success(`Special transfer of ${fmtMoney(amountNum)} recorded for ${row.name ?? row.work_email}.`);
+      onDone();
+    } catch (e) {
+      submittedRef.current = false;
+      toast.error(e instanceof Error ? e.message : 'Could not record transfer');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <Dialog open onOpenChange={(o) => { if (!o && !submitting) onClose(); }}>
+      <DialogContent className="gap-0 p-0 sm:max-w-md">
+        <DialogHeader className="space-y-3 border-b border-zinc-200 px-5 py-4 dark:border-zinc-800">
+          <DialogTitle className="flex items-center gap-2 text-base">
+            <span className={cn('flex h-7 w-7 items-center justify-center rounded-full', accent.btn)}>
+              <Send className="h-3.5 w-3.5" />
+            </span>
+            Special transfer
+          </DialogTitle>
+          <DialogDescription className="sr-only">
+            Record a one-off payment to {row.name ?? row.work_email}.
+          </DialogDescription>
+          {/* Recipient context — confirm who's being paid before any numbers. */}
+          <div className="flex items-center gap-2.5 rounded-lg bg-zinc-50 px-3 py-2 dark:bg-zinc-900/50">
+            <TeamAvatar name={row.name ?? ''} email={row.work_email} />
+            <div className="min-w-0">
+              <div className="truncate text-sm font-medium text-zinc-900 dark:text-zinc-100">{row.name ?? row.work_email}</div>
+              <div className="truncate text-[11px] text-zinc-500">{row.department ?? row.work_email ?? ''}</div>
+            </div>
+          </div>
+        </DialogHeader>
+
+        <div className="space-y-4 px-5 py-4">
+          {/* Amount — the primary value, given the most visual weight. */}
+          <div>
+            <label htmlFor="st-amount" className="mb-1.5 block text-xs font-medium text-zinc-600 dark:text-zinc-300">Amount</label>
+            <div className="relative">
+              <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-base font-medium text-zinc-400">₱</span>
+              <Input
+                id="st-amount"
+                inputMode="decimal"
+                placeholder="0.00"
+                value={amount}
+                onChange={(e) => setAmount(e.target.value)}
+                className={cn('h-11 pl-8 text-lg font-semibold tabular-nums', accent.ring)}
+                autoFocus
+              />
+            </div>
+            {/* Fixed height so the preview appearing doesn't shift the form. */}
+            <p className="mt-1 h-4 text-[11px] text-zinc-400">
+              {usdPreview != null ? `≈ ${fmtMoney(usdPreview, 'USD')} at the current FX rate` : 'Philippine pesos'}
+            </p>
+          </div>
+
+          <div>
+            <label htmlFor="st-date" className="mb-1.5 block text-xs font-medium text-zinc-600 dark:text-zinc-300">Date sent</label>
+            <Input id="st-date" type="date" value={date} max={todayIso()} onChange={(e) => setDate(e.target.value)} className={accent.ring} />
+          </div>
+
+          <div>
+            <label htmlFor="st-reason" className="mb-1.5 block text-xs font-medium text-zinc-600 dark:text-zinc-300">Reason</label>
+            <textarea
+              id="st-reason"
+              rows={2}
+              placeholder="e.g. Reimbursement for client travel"
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              className={cn(
+                'w-full resize-none rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none ring-offset-2 placeholder:text-zinc-400 focus-visible:ring-2 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100',
+                accent.ring,
+              )}
+            />
+            <p className="mt-1 text-[11px] text-zinc-400">Shown on the employee&apos;s pay history and the audit log.</p>
+          </div>
+
+          <label htmlFor="st-notify" className="flex cursor-pointer items-center justify-between gap-3 rounded-lg border border-zinc-200 px-3 py-2.5 transition-colors hover:bg-zinc-50 dark:border-zinc-800 dark:hover:bg-zinc-900/50">
+            <span className="min-w-0">
+              <span className="block text-[13px] font-medium text-zinc-800 dark:text-zinc-100">
+                Notify {row.name?.split(' ')[0] ?? 'the employee'}
+              </span>
+              <span className="block text-[11px] text-zinc-500">Sends a notification to their portal.</span>
+            </span>
+            <input
+              id="st-notify"
+              type="checkbox"
+              checked={notify}
+              onChange={(e) => setNotify(e.target.checked)}
+              className={cn('h-4 w-4 shrink-0 rounded border-zinc-300', accent.check)}
+            />
+          </label>
+
+          {/* Plain-language confirmation, shown once the form is valid. */}
+          {valid && (
+            <div className={cn('rounded-lg px-3 py-2 text-[13px]', accent.chipBg, accent.chipText)}>
+              Recording <span className="font-semibold tabular-nums">{fmtMoney(amountNum)}</span> to{' '}
+              <span className="font-medium">{row.name?.split(' ')[0] ?? row.work_email}</span> on {formatDay(date)}.
+            </div>
+          )}
+        </div>
+
+        <div className="flex shrink-0 flex-col-reverse gap-2 border-t border-zinc-200 bg-zinc-50/70 px-5 py-3.5 sm:flex-row sm:justify-end sm:px-6 dark:border-zinc-800 dark:bg-zinc-900/40">
+          <Button type="button" variant="outline" onClick={onClose} disabled={submitting}>Cancel</Button>
+          <Button
+            type="button"
+            onClick={submit}
+            disabled={!valid || submitting}
+            className={cn('gap-2 font-medium shadow-sm transition-transform active:scale-[0.98]', accent.btn)}
+          >
+            {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+            Record transfer
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}

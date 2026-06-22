@@ -892,9 +892,9 @@ export default function PayrollWizard({
   const [sourceFileSearch, setSourceFileSearch] = useState('');
   const [deleteSourceFilePending, setDeleteSourceFilePending] = useState<string | null>(null);
   const [deleteSourceFileLoading, setDeleteSourceFileLoading] = useState(false);
-  /** Batch currently being renamed (the original filename), the editable prefix draft, and save state. */
+  /** Batch currently being renamed (the original filename), the editable full-name draft, and save state. */
   const [renameSourceFilePending, setRenameSourceFilePending] = useState<string | null>(null);
-  const [renamePrefixDraft, setRenamePrefixDraft] = useState('');
+  const [renameNameDraft, setRenameNameDraft] = useState('');
   const [renameSourceFileLoading, setRenameSourceFileLoading] = useState(false);
   /** Batch currently being promoted to the active source of truth (filename), for the loading animation. */
   const [initializingSourceFile, setInitializingSourceFile] = useState<string | null>(null);
@@ -4609,26 +4609,40 @@ export default function PayrollWizard({
         `/api/hubstaff-hours?source_file=${encodeURIComponent(deleteSourceFilePending)}&_=${Date.now()}`,
         { method: 'DELETE', cache: 'no-store' },
       );
-      const json = (await res.json()) as { success?: boolean; error?: string; deleted?: number };
+      const json = (await res.json()) as {
+        success?: boolean;
+        error?: string;
+        deleted?: number;
+        uploadsDeleted?: number;
+        repointedTo?: string | null;
+      };
       if (!res.ok || !json.success) {
         throw new Error(json.error || 'Delete failed');
       }
       const removed = json.deleted ?? 0;
+      const batchesRemoved = json.uploadsDeleted ?? 0;
       const label = deleteSourceFilePending;
-      if (removed === 0) {
+      if (removed === 0 && batchesRemoved === 0) {
         toast.warning('Nothing removed in Supabase', {
-          description: `No rows with source_file "${label}" were found. Older rows may lack source_file; add the column and re-upload, or remove rows in Supabase directly.`,
+          description: `No batch or rows matching "${label}" were found.`,
         });
       } else {
-        toast.success('Removed from Supabase', {
-          description: `${removed} row(s) deleted for ${label} in public.hubstaff_hours.`,
+        const parts: string[] = [];
+        if (removed) parts.push(`${removed} hour row(s)`);
+        if (batchesRemoved) parts.push(`${batchesRemoved} batch record(s)`);
+        toast.success('Batch deleted', {
+          description:
+            `Removed ${parts.join(' + ')} for ${label}.` +
+            (json.repointedTo ? ` Active week is now ${json.repointedTo}.` : ''),
         });
       }
       if (selectedSourceFile === deleteSourceFilePending) {
-        setSelectedSourceFile(null);
+        setSelectedSourceFile(json.repointedTo ?? null);
         setSourceFileRows(null);
         setSourceFileCols(null);
       }
+      // If the deleted batch was the calc target, follow the re-pointed week.
+      setCalcSourceFile((cur) => (cur === deleteSourceFilePending ? (json.repointedTo ?? cur) : cur));
       setDeleteSourceFilePending(null);
       await loadUploadedSourceFiles();
       await loadHubstaffPreview();
@@ -4640,27 +4654,29 @@ export default function PayrollWizard({
     }
   }, [deleteSourceFilePending, selectedSourceFile, loadUploadedSourceFiles, loadHubstaffPreview]);
 
-  // Splits a filename around the embedded YYYY-MM-DD_to_YYYY-MM-DD date block.
-  // The prefix (text before the dates) is editable; the date block and anything
-  // after it (e.g. ".csv") stay locked so period parsing can never break. When a
-  // name has no parseable date range, the whole name is editable (prefix only).
-  const splitRenameFilename = React.useCallback((name: string): { prefix: string; locked: string } => {
-    const m = /(\d{4})-(\d{2})-(\d{2})_to_(\d{4})-(\d{2})-(\d{2})/.exec(name);
-    if (!m || m.index === undefined) return { prefix: name, locked: '' };
-    return { prefix: name.slice(0, m.index), locked: name.slice(m.index) };
+  // Extracts the embedded YYYY-MM-DD_to_YYYY-MM-DD date block from a filename, if any.
+  // The whole filename is freely editable, but this is used to warn the operator when
+  // an edit changes (or removes) the date range, since period parsing keys off it.
+  const dateBlockOf = React.useCallback((name: string): string | null => {
+    const m = /(\d{4}-\d{2}-\d{2})_to_(\d{4}-\d{2}-\d{2})/.exec(name);
+    return m ? m[0] : null;
   }, []);
 
-  const renameTargetName = React.useMemo(() => {
-    if (renameSourceFilePending === null) return '';
-    const { locked } = splitRenameFilename(renameSourceFilePending);
-    return `${renamePrefixDraft}${locked}`;
-  }, [renameSourceFilePending, renamePrefixDraft, splitRenameFilename]);
+  const renameTargetName = renameNameDraft;
+
+  // True when the original carried a date range and the edited name no longer has the
+  // same one (changed or dropped) — surfaced as a warning, not a hard block.
+  const renameDateRangeChanged = React.useMemo(() => {
+    if (renameSourceFilePending === null) return false;
+    const orig = dateBlockOf(renameSourceFilePending);
+    if (!orig) return false;
+    return dateBlockOf(renameNameDraft) !== orig;
+  }, [renameSourceFilePending, renameNameDraft, dateBlockOf]);
 
   const openRenameSourceFile = React.useCallback((file: string) => {
-    const { prefix } = splitRenameFilename(file);
-    setRenamePrefixDraft(prefix);
+    setRenameNameDraft(file);
     setRenameSourceFilePending(file);
-  }, [splitRenameFilename]);
+  }, []);
 
   const confirmRenameSourceFile = React.useCallback(async () => {
     if (!renameSourceFilePending) return;
@@ -11150,9 +11166,11 @@ export default function PayrollWizard({
           <DialogHeader>
             <DialogTitle className="text-zinc-900 dark:text-white">Delete this upload?</DialogTitle>
             <DialogDescription className="text-zinc-600 dark:text-zinc-400">
-              This removes every row in{' '}
-              <span className="font-mono text-zinc-700 dark:text-zinc-300">public.hubstaff_hours</span> tagged with{' '}
-              <span className="font-mono">{deleteSourceFilePending ?? ''}</span>. Other CSV batches are not affected.
+              This removes the batch{' '}
+              <span className="font-mono">{deleteSourceFilePending ?? ''}</span> entirely &mdash; its
+              entry in the uploaded-batches list and every hourly row tagged with it. Dispatched
+              payments and Reports-tab history for the cycle are kept. If this was the active
+              week, the newest remaining batch becomes active. Other batches are not affected.
             </DialogDescription>
           </DialogHeader>
           <div className="flex justify-end gap-2 pt-2">
@@ -11198,54 +11216,51 @@ export default function PayrollWizard({
             <DialogDescription className="text-zinc-600 dark:text-zinc-400">
               This filename is the source of truth for the whole week. Renaming updates it
               everywhere &mdash; hourly rows, the Reports tab, dispatched payments, and the
-              employee take-home snapshot &mdash; so the week stays linked. The date range is
-              locked so payroll calculations never shift.
+              employee take-home snapshot &mdash; so the week stays linked. You can edit the
+              entire name, including the date range.
             </DialogDescription>
           </DialogHeader>
-          {renameSourceFilePending !== null && (() => {
-            const { locked } = splitRenameFilename(renameSourceFilePending);
-            return (
-              <div className="space-y-3 pt-1">
-                <div>
-                  <label className="mb-1 block text-xs font-medium text-zinc-500 dark:text-zinc-400">
-                    Name
-                  </label>
-                  <div className="flex items-stretch overflow-hidden rounded-md border border-zinc-200 focus-within:border-indigo-400 focus-within:ring-1 focus-within:ring-indigo-400 dark:border-zinc-800">
-                    <input
-                      type="text"
-                      autoFocus
-                      value={renamePrefixDraft}
-                      onChange={(e) => setRenamePrefixDraft(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter' && !renameSourceFileLoading) {
-                          e.preventDefault();
-                          void confirmRenameSourceFile();
-                        }
-                      }}
-                      placeholder="simple-biz_daily_report_"
-                      className="min-w-0 flex-1 bg-transparent px-2.5 py-2 font-mono text-sm text-zinc-900 outline-none dark:text-white"
-                    />
-                    {locked && (
-                      <span
-                        title="Date range is locked"
-                        className="flex shrink-0 items-center bg-zinc-100 px-2.5 font-mono text-sm text-zinc-500 dark:bg-zinc-900 dark:text-zinc-400"
-                      >
-                        {locked}
-                      </span>
-                    )}
-                  </div>
-                </div>
-                <div className="rounded-md bg-zinc-50 px-3 py-2 dark:bg-zinc-900/60">
-                  <p className="text-[10px] font-semibold uppercase tracking-wider text-zinc-400">
-                    New filename
-                  </p>
-                  <p className="mt-0.5 break-all font-mono text-sm text-zinc-700 dark:text-zinc-300">
-                    {renameTargetName || <span className="text-zinc-400">(empty)</span>}
-                  </p>
-                </div>
+          {renameSourceFilePending !== null && (
+            <div className="space-y-3 pt-1">
+              <div>
+                <label className="mb-1 block text-xs font-medium text-zinc-500 dark:text-zinc-400">
+                  Name
+                </label>
+                <input
+                  type="text"
+                  autoFocus
+                  value={renameNameDraft}
+                  onChange={(e) => setRenameNameDraft(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !renameSourceFileLoading) {
+                      e.preventDefault();
+                      void confirmRenameSourceFile();
+                    }
+                  }}
+                  placeholder="simple-biz_daily_report_2026-03-22_to_2026-03-28.csv"
+                  className="w-full rounded-md border border-zinc-200 bg-transparent px-2.5 py-2 font-mono text-sm text-zinc-900 outline-none focus:border-indigo-400 focus:ring-1 focus:ring-indigo-400 dark:border-zinc-800 dark:text-white"
+                />
               </div>
-            );
-          })()}
+              {renameDateRangeChanged && (
+                <div className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 dark:border-amber-500/40 dark:bg-amber-950/30">
+                  <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-600 dark:text-amber-400" />
+                  <p className="text-[11px] leading-snug text-amber-700 dark:text-amber-300">
+                    You changed the embedded date range. The payroll period is parsed from
+                    this <span className="font-mono">YYYY-MM-DD_to_YYYY-MM-DD</span> block, so
+                    only change it if you mean to re-date this batch.
+                  </p>
+                </div>
+              )}
+              <div className="rounded-md bg-zinc-50 px-3 py-2 dark:bg-zinc-900/60">
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-zinc-400">
+                  New filename
+                </p>
+                <p className="mt-0.5 break-all font-mono text-sm text-zinc-700 dark:text-zinc-300">
+                  {renameTargetName.trim() || <span className="text-zinc-400">(empty)</span>}
+                </p>
+              </div>
+            </div>
+          )}
           <div className="flex justify-end gap-2 pt-2">
             <Button
               type="button"

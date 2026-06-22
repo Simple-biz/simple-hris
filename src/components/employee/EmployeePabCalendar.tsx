@@ -13,7 +13,7 @@
  *   - Days that meet 7h on their own → ignored (nothing to dispute).
  */
 
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { CalendarDays, Hourglass, Loader2, RefreshCw } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { normEmail } from '@/lib/email/norm-email';
@@ -68,6 +68,12 @@ type EmployeePabCalendarProps = {
   pabMonthOverride?: { year: number; month: number } | null;
   /** HSL employees use 5-of-7 Mon–Sun rule; overnight shifts (today + tomorrow ≥ 7h) show green. */
   isHsl?: boolean;
+  /** Optional: notified whenever the initial-load state flips. Lets a host surface
+   *  (e.g. the People dialog) drive its own progress UI. */
+  onLoadingChange?: (loading: boolean) => void;
+  /** Optional: real load progress 0→1 as the (dominant) hours fetch completes.
+   *  Lets a host drive a genuine progress bar instead of a timed guess. */
+  onProgress?: (fraction: number) => void;
 };
 
 const NON_DATE_COLS = new Set([
@@ -164,7 +170,12 @@ export default function EmployeePabCalendar({
   trimToElapsedWeeks = true,
   pabMonthOverride = null,
   isHsl = false,
+  onLoadingChange,
+  onProgress,
 }: EmployeePabCalendarProps) {
+  // Live ref so fetchMerged can report progress without being recreated.
+  const onProgressRef = useRef(onProgress);
+  onProgressRef.current = onProgress;
   const [aliasEmails, setAliasEmails] = useState<string[]>([]);
   const [mergedRow, setMergedRow] = useState<Record<string, unknown> | null>(null);
   const [mergedColumns, setMergedColumns] = useState<string[]>([]);
@@ -299,6 +310,8 @@ export default function EmployeePabCalendar({
   // ── Source files → merged row + columns ─────────────────────────────────
   const fetchMerged = useCallback(async () => {
     if (aliasEmails.length === 0) return;
+    const report = (f: number) => onProgressRef.current?.(Math.max(0, Math.min(1, f)));
+    report(0.06);
     const filesRes = await fetch(`/api/hubstaff-hours?source_files=1&_=${Date.now()}`, {
       cache: 'no-store',
     });
@@ -307,10 +320,13 @@ export default function EmployeePabCalendar({
     if (files.length === 0) {
       setMergedRow(null);
       setMergedColumns([]);
+      report(1);
       return;
     }
 
     const employeeNorms = new Set(aliasEmails);
+    report(0.12);
+    let completed = 0;
     const responses = await Promise.all(
       files.map((file) =>
         fetch(`/api/hubstaff-hours?source_file=${encodeURIComponent(file)}&_=${Date.now()}`, {
@@ -323,7 +339,13 @@ export default function EmployeePabCalendar({
             };
             return { file, json };
           })
-          .catch(() => ({ file, json: { columns: null, rows: null } })),
+          .catch(() => ({ file, json: { columns: null, rows: null } }))
+          // Real per-file progress — files resolve over the wire, so the bar
+          // climbs as each one lands (0.12 → 0.95 across all files).
+          .finally(() => {
+            completed += 1;
+            report(0.12 + 0.83 * (completed / files.length));
+          }),
       ),
     );
 
@@ -360,6 +382,12 @@ export default function EmployeePabCalendar({
 
   // Initial load
   useEffect(() => {
+    // Wait until aliases are resolved before flipping `loading` off. fetchMerged
+    // early-returns with NO data while aliasEmails is still empty, so running on
+    // that first pass would briefly report "loaded" over an empty grid (and
+    // finish any host progress bar prematurely) before the real fetch reloads.
+    // aliasEmails always settles to at least [email], so this never hangs.
+    if (aliasEmails.length === 0) return;
     let cancelled = false;
     (async () => {
       setLoading(true);
@@ -372,7 +400,13 @@ export default function EmployeePabCalendar({
     return () => {
       cancelled = true;
     };
-  }, [fetchMerged, fetchDisputes]);
+  }, [aliasEmails, fetchMerged, fetchDisputes]);
+
+  // Surface the initial-load state to an optional host (e.g. the People dialog's
+  // 0–100% progress bar). No-op for callers that don't pass the prop.
+  useEffect(() => {
+    onLoadingChange?.(loading);
+  }, [loading, onLoadingChange]);
 
   // Re-fetch disputes only when refreshKey bumps (e.g. after submit)
   useEffect(() => {

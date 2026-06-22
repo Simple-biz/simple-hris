@@ -12,6 +12,7 @@ import { normEmail } from '@/lib/email/norm-email';
 import { SESSION_EMAIL_KEY, type Role } from '@/lib/rbac/views';
 import CeoSidebar, { type CeoTab } from './CeoSidebar';
 import CeoChatBubble from './CeoChatBubble';
+import PeopleTab from '@/components/people/PeopleTab';
 import AnnouncementWall from '@/components/announcements/AnnouncementWall';
 import AnnouncementComposer from '@/components/announcements/AnnouncementComposer';
 import SWall from '@/components/swall/SWall';
@@ -164,6 +165,9 @@ export default function CeoApp() {
               ) : (
               <ReadOnlyTab readOnly={permsReady && !canEditTab('ceo', activeTab)}>
               {activeTab === 'overview' && <CeoOverview viewerEmail={viewerEmail} />}
+              {activeTab === 'people' && (
+                <PeopleTab view="ceo" viewerEmail={viewerEmail} canEdit={canEditTab('ceo', 'people')} />
+              )}
               {activeTab === 'announcements' && (
                 <CeoAnnouncements viewerEmail={viewerEmail} />
               )}

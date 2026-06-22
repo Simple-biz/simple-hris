@@ -27,7 +27,7 @@ import type { FeatureAccess, FeaturePermissionsMap, FeatureViewKey } from '@/lib
 export const VIEW_TAB_IDS: Record<FeatureViewKey, readonly string[]> = {
   accounting: [
     'overview',
-    'rates',
+    'people',
     'payroll-wizard',
     'payment-dispatch',
     'disputes',
@@ -70,6 +70,7 @@ export const VIEW_TAB_IDS: Record<FeatureViewKey, readonly string[]> = {
   ],
   ceo: [
     'overview',
+    'people',
     'announcements',
     'notifications',
     's-wall',

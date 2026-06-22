@@ -4,7 +4,7 @@ import type { FeaturePermissionsMap } from '@/lib/rbac/feature-permissions';
 
 export const ACCOUNTING_TAB_IDS = [
   'overview',
-  'rates',
+  'people',
   'payroll-wizard',
   'bonus-catalog',
   'payment-dispatch',
@@ -21,7 +21,7 @@ export type AccountingTabId = (typeof ACCOUNTING_TAB_IDS)[number];
 /** UI tab id -> feature key stored in `employee_feature_permissions`. */
 const TAB_TO_FEATURE: Record<AccountingTabId, string> = {
   'overview': 'overview',
-  'rates': 'rates',
+  'people': 'people',
   'payroll-wizard': 'payroll_wizard',
   'bonus-catalog': 'bonus_catalog',
   'payment-dispatch': 'payment_dispatch',

@@ -249,7 +249,7 @@ export async function DELETE(req: NextRequest) {
       return NextResponse.json({ success: false, error: "Missing source_file query parameter." }, { status: 400 });
     }
 
-    const { deleted } = await deleteHubstaffRowsBySourceFile(sourceFile);
+    const { deleted, uploadsDeleted, repointedTo } = await deleteHubstaffRowsBySourceFile(sourceFile);
 
     const actor = await getSessionActor();
     void insertAuditLog({
@@ -258,11 +258,11 @@ export async function DELETE(req: NextRequest) {
       action:      'csv.delete',
       resource:    'hubstaff_hours',
       resource_id: sourceFile,
-      details:     { file: sourceFile, rows_deleted: deleted },
+      details:     { file: sourceFile, rows_deleted: deleted, uploads_deleted: uploadsDeleted, repointed_to: repointedTo },
       ip_address:  clientIp(req),
     });
 
-    return NextResponse.json({ success: true, deleted });
+    return NextResponse.json({ success: true, deleted, uploadsDeleted, repointedTo });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     console.error("[DELETE /api/hubstaff-hours]", msg);

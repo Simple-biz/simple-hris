@@ -717,31 +717,85 @@ export async function replaceHubstaffHoursFromCsvText(
 }
 
 /**
- * Deletes all rows whose `source_file` matches (for removing one uploaded CSV batch).
+ * Deletes an uploaded batch entirely: both the `hubstaff_uploads` archive row(s)
+ * (which is what the Payroll Wizard's "Uploaded batches" list is rendered from) and
+ * every `hubstaff_hours` data row tagged with that `source_file`. Deleting only the
+ * hours rows used to leave the archive row behind, so the batch never disappeared
+ * from the list — this removes both.
+ *
+ * If the deleted batch was the active source of truth (`is_current`), the newest
+ * remaining upload is promoted so the wizard never points at a now-empty batch.
+ * `repointedTo` is that batch's filename, or null when nothing was promoted.
+ *
+ * disbursement_records / payment_dispatches are intentionally NOT touched — those are
+ * payment history that must survive a timesheet re-upload.
  */
-export async function deleteHubstaffRowsBySourceFile(sourceFile: string): Promise<{ deleted: number }> {
+export async function deleteHubstaffRowsBySourceFile(sourceFile: string): Promise<{
+  deleted: number;
+  uploadsDeleted: number;
+  repointedTo: string | null;
+}> {
   const supabase = requireServiceRole();
   const table = getTableName();
+
+  // Was this batch the active source of truth? If so we'll re-point afterwards.
+  const { data: matchingUploads } = await supabase
+    .from(HUBSTAFF_UPLOADS_TABLE)
+    .select("id, is_current")
+    .eq("source_file", sourceFile);
+  const uploadRows = (matchingUploads ?? []) as { id: string; is_current: boolean }[];
+  const deletingCurrent = uploadRows.some((u) => u.is_current);
+
+  // Remove the archive row(s) so the batch leaves the "Uploaded batches" list.
+  let uploadsDeleted = 0;
+  if (uploadRows.length > 0) {
+    const { error: upDelErr } = await supabase
+      .from(HUBSTAFF_UPLOADS_TABLE)
+      .delete()
+      .eq("source_file", sourceFile);
+    if (upDelErr) throw new Error(`Failed to delete upload archive row: ${upDelErr.message}`);
+    uploadsDeleted = uploadRows.length;
+  }
+
+  // Remove the data rows (only if the table tracks source_file).
+  let deleted = 0;
   const specCols = await getTableColumnsFromSpec(table);
-  if (!specCols.includes("source_file")) {
+  if (specCols.includes("source_file")) {
+    const { count: nMatch, error: countErr } = await supabase
+      .from(table)
+      .select("*", { count: "exact", head: true })
+      .eq("source_file", sourceFile);
+    if (countErr) throw new Error(countErr.message);
+    const toDelete = nMatch ?? 0;
+    if (toDelete > 0) {
+      const { error: delErr } = await supabase.from(table).delete().eq("source_file", sourceFile);
+      if (delErr) throw new Error(delErr.message);
+      deleted = toDelete;
+    }
+  } else if (uploadsDeleted === 0) {
+    // Nothing to delete in either table and no source_file column to key on.
     throw new Error(
       "public.hubstaff_hours has no source_file column. Add a text column `source_file` in Supabase to track and delete uploads.",
     );
   }
 
-  const { count: nMatch, error: countErr } = await supabase
-    .from(table)
-    .select("*", { count: "exact", head: true })
-    .eq("source_file", sourceFile);
-  if (countErr) throw new Error(countErr.message);
-  const toDelete = nMatch ?? 0;
-  if (toDelete === 0) {
-    return { deleted: 0 };
+  // If we removed the live batch, promote the newest remaining upload.
+  let repointedTo: string | null = null;
+  if (deletingCurrent) {
+    const { data: next } = await supabase
+      .from(HUBSTAFF_UPLOADS_TABLE)
+      .select("id, source_file")
+      .order("uploaded_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    const nextRow = next as { id?: string; source_file?: string | null } | null;
+    if (nextRow?.id) {
+      await promoteHubstaffUploadToCurrent(supabase, nextRow.id);
+      repointedTo = (nextRow.source_file ?? "").trim() || null;
+    }
   }
 
-  const { error: delErr } = await supabase.from(table).delete().eq("source_file", sourceFile);
-  if (delErr) throw new Error(delErr.message);
-  return { deleted: toDelete };
+  return { deleted, uploadsDeleted, repointedTo };
 }
 
 /**

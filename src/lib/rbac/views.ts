@@ -13,12 +13,13 @@ export type Role =
   | 'contractor';
 
 // Roles that unlock the Accounting dashboard. `accounting` is the dedicated
-// dashboard role (renamed from the old `finance`); `hr_coordinator` keeps the
-// accounting access it had. The legacy payroll_coordinator / payroll_manager /
-// viewer roles were retired 2026-06-18 (roles are now strictly dashboard access).
+// dashboard role (renamed from the old `finance`). `hr_coordinator` was
+// decoupled from Accounting on 2026-06-22 — HR coordinators keep the HR
+// dashboard but no longer surface the Accounting view. The legacy
+// payroll_coordinator / payroll_manager / viewer roles were retired 2026-06-18
+// (roles are now strictly dashboard access).
 const ACCOUNTING_ROLES: Role[] = [
   'accounting',
-  'hr_coordinator',
 ];
 
 export const VIEW_ROUTES: Record<AppView, string> = {

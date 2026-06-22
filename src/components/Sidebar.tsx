@@ -9,7 +9,6 @@ import { withViewTransition } from '@/lib/theme/with-view-transition';
 import {
   Bell,
   LayoutDashboard,
-  DollarSign,
   Wand2,
   Wallet,
   AlertCircle,
@@ -22,6 +21,7 @@ import {
   Moon,
   Sun,
   HeartHandshake,
+  Users,
 } from 'lucide-react';
 import { SWallNavLabel } from '@/components/swall/SWall';
 import ConstructionMark from '@/components/common/ConstructionMark';
@@ -55,7 +55,7 @@ interface SidebarProps {
 
 const navItems = [
   { id: 'overview', label: 'Overview', icon: LayoutDashboard },
-  { id: 'rates', label: 'Rates', icon: DollarSign },
+  { id: 'people', label: 'People', icon: Users },
   { id: 'payroll-wizard', label: 'Payroll Wizard', icon: Wand2 },
   { id: 'bonus-catalog', label: 'Payment Catalog', icon: Wallet },
   { id: 'payment-dispatch', label: 'Payment Dispatch', icon: Send },

@@ -196,7 +196,27 @@ export async function buildPeopleRoster(): Promise<{
 
   const today = new Date();
 
-  const rows: PeopleRosterRow[] = employees.map((e) => {
+  // Collapse multiple global_master_list rows for the SAME person (e.g. someone
+  // listed under two departments because an old dept row was never removed) into
+  // ONE roster row. Identity key mirrors the Rates & Profiles card
+  // (`personCardKey`): work email, falling back to personal email then name, and
+  // qualified by name so a RECYCLED work email inherited by a different person
+  // stays a separate row. First occurrence wins. Without this, two rows share a
+  // work email and React throws a duplicate-key warning in the People table.
+  const seenPerson = new Set<string>();
+  const uniqueEmployees = employees.filter((e) => {
+    const w = normEmail(e.work_email ?? '');
+    const p = normEmail(e.personal_email ?? '');
+    const n = (e.name ?? '').trim().toLowerCase();
+    const base = w || p || n;
+    if (!base) return true; // no identity at all — keep (can't dedupe safely)
+    const key = `${base}|${n}`;
+    if (seenPerson.has(key)) return false;
+    seenPerson.add(key);
+    return true;
+  });
+
+  const rows: PeopleRosterRow[] = uniqueEmployees.map((e) => {
     const aliases = [e.work_email, e.personal_email, e.alternate_work_email, e.alternate_work_email_2]
       .map((a) => normEmail(a ?? ''))
       .filter(Boolean) as string[];

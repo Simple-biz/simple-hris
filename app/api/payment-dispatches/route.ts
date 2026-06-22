@@ -14,7 +14,7 @@ import { forwardPaystubDispatch } from "@/lib/payroll/paystub-dispatch";
 import { insertAuditLog } from "@/lib/supabase/audit-log";
 import { getSessionActor } from "@/lib/auth/session-actor";
 import { requireFeatureEdit } from "@/lib/auth/authorize-feature";
-import { deniedResponse } from "@/lib/auth/authorize-email";
+import { deniedResponse, requireRateVisibilitySession } from "@/lib/auth/authorize-email";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -22,6 +22,11 @@ export const runtime = "nodejs";
 interface PostBody extends Omit<InsertPaymentDispatchInput, "created_by"> {}
 
 export async function GET(req: NextRequest) {
+  // Dispatch rows carry snapshotted recipient banking, so reading them requires
+  // full rate visibility (admin / accounting / ceo) — not just any signed-in user.
+  const authz = await requireRateVisibilitySession();
+  if (!authz.ok) return deniedResponse(authz);
+
   const cycleIdRaw = req.nextUrl.searchParams.get("cycle_id");
   const cycleId = cycleIdRaw === "" ? undefined : cycleIdRaw ?? undefined;
   const emailRaw = req.nextUrl.searchParams.get("email");

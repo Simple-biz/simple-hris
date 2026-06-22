@@ -9,7 +9,6 @@ import { Menu } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import Sidebar from './components/Sidebar';
 import Overview from './components/Overview';
-import Rates from './components/Rates';
 import PayrollWizard from './components/PayrollWizard';
 import { Toaster } from '@/components/ui/sonner';
 import SystemSettings from './components/SystemSettings';
@@ -31,6 +30,7 @@ import NotificationsPanel from '@/components/notifications/NotificationsPanel';
 import AccountingMesa from '@/components/payroll/AccountingMesa';
 import AccountingCollabLayer from '@/components/accounting/AccountingCollabLayer';
 import BonusCatalog from '@/components/accounting/BonusCatalog';
+import PeopleTab from '@/components/people/PeopleTab';
 
 function isPlausibleEmail(s: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s.trim());
@@ -39,7 +39,6 @@ function isPlausibleEmail(s: string): boolean {
 export default function App({ initialData }: { initialData?: InitialAccountingData | null }) {
   const [activeTab, setActiveTab] = useState('overview');
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
-  const [focusRatesEmail, setFocusRatesEmail] = useState<string | null>(null);
   const [roles, setRoles] = useState<string[]>([]);
   const [featurePerms, setFeaturePerms] = useState<FeaturePermissionsMap>({});
   const [permsLoaded, setPermsLoaded] = useState(false);
@@ -139,9 +138,11 @@ export default function App({ initialData }: { initialData?: InitialAccountingDa
     setMobileNavOpen(false);
   };
 
-  const handleViewRates = (email: string) => {
-    setFocusRatesEmail(email);
-    navigate('rates');
+  // The standalone Rates/Profiles tab was removed; the People tab is its
+  // replacement (per-person rate, hours, banking, and payroll history). The
+  // Overview roster "View" buttons now open People instead.
+  const handleViewRates = (_email: string) => {
+    navigate('people');
   };
 
   useEffect(() => {
@@ -180,11 +181,12 @@ export default function App({ initialData }: { initialData?: InitialAccountingDa
     switch (activeTab) {
       case 'overview':
         return <Overview onViewRates={handleViewRates} onNavigate={navigate} initialData={initialData} viewerEmail={sessionEmail} />;
-      case 'rates':
+      case 'people':
         return (
-          <Rates
-            focusEmail={focusRatesEmail}
-            onFocusConsumed={() => setFocusRatesEmail(null)}
+          <PeopleTab
+            view="accounting"
+            viewerEmail={sessionEmail}
+            canEdit={canEditAccountingTab('people', roles, featurePerms)}
           />
         );
       case 'payroll-wizard':

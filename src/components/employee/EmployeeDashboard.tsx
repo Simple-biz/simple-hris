@@ -354,6 +354,60 @@ const SPARKLES_FLOAT = [
   { left: '93%', delay: '3.3s',  dur: '3.6s', size: '13px' },
 ] as const;
 
+/** One-off "special transfers" sent to this employee from the People tab. Self-
+ *  scoped — the endpoint resolves identity from the session, the `email` is just
+ *  a hint. Renders nothing until there's at least one transfer. */
+interface EmployeeSpecialTransferRow {
+  note: string | null;
+  amount_php: number | null;
+  paid_at: string | null;
+  period_start: string | null;
+  status: string | null;
+}
+
+function EmployeeSpecialTransfers({ employeeEmail }: { employeeEmail: string | null }) {
+  const [rows, setRows] = useState<EmployeeSpecialTransferRow[]>([]);
+  useEffect(() => {
+    if (!employeeEmail) return;
+    let alive = true;
+    fetch(`/api/people/special-transfers?email=${encodeURIComponent(employeeEmail)}`, { cache: 'no-store' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j: { transfers?: EmployeeSpecialTransferRow[] } | null) => {
+        if (alive && j?.transfers) setRows(j.transfers);
+      })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, [employeeEmail]);
+
+  if (rows.length === 0) return null;
+  const peso = (n: number | null) =>
+    n == null ? '—' : `₱${n.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+  return (
+    <Card className="shrink-0 border-violet-200/80 dark:border-violet-900/40">
+      <CardHeader className="pb-2">
+        <CardTitle className="flex items-center gap-2 text-sm">
+          <Sparkles className="h-4 w-4 text-violet-500" /> Special transfers
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-1.5">
+        {rows.map((t, i) => (
+          <div
+            key={i}
+            className="flex items-center justify-between gap-3 rounded-lg border border-violet-100 bg-violet-50/50 px-3 py-2 text-[13px] dark:border-violet-900/30 dark:bg-violet-950/20"
+          >
+            <div className="min-w-0">
+              <div className="truncate font-medium text-zinc-800 dark:text-zinc-100">{t.note || 'Special transfer'}</div>
+              <div className="text-[11px] text-zinc-400">{t.paid_at ?? t.period_start ?? ''}</div>
+            </div>
+            <div className="shrink-0 font-semibold text-zinc-900 dark:text-zinc-100">{peso(t.amount_php)}</div>
+          </div>
+        ))}
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, needsBank = false, needsSkillSet = false, onNavigateToProfile, onNavigateToNotifications, unreadNotifications = 0 }: EmployeeDashboardProps) {
   const [loading, setLoading] = useState(true);
   const [employeeStartDate, setEmployeeStartDate] = useState<Date | null>(null);
@@ -2020,6 +2074,9 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
           onGoToProfile={onNavigateToProfile}
         />
       )}
+
+      {/* One-off special transfers sent from the People tab (hidden when none). */}
+      <EmployeeSpecialTransfers employeeEmail={employeeEmail} />
 
       {/* Gift Tracker — 6-month milestone shipping form notification.
           Externally controlled so the header bell icon can also open the modal. */}

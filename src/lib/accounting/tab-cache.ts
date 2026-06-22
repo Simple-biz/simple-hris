@@ -76,4 +76,5 @@ export const TAB_CACHE_KEYS = {
   pabDisputes: (statusFilter: string) => `pab-disputes:${statusFilter}`,
   overviewPayouts: 'overview:payouts',
   overviewPabMetrics: 'overview:pab-metrics',
+  peopleRoster: 'people:list',
 } as const;

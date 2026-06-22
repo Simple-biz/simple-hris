@@ -29,9 +29,10 @@ export type InitialAccountingData = {
   systemBonuses: SystemBonus[];
 };
 
+// `hr_coordinator` was decoupled from Accounting on 2026-06-22 — HR coordinators
+// keep the HR dashboard but no longer prefetch/see the Accounting view.
 const ACCOUNTING_ROLES = new Set([
   'accounting',
-  'hr_coordinator',
   'admin',
 ]);
 
