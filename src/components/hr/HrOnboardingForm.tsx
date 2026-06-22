@@ -80,23 +80,20 @@ const CURRENCY_PESO = String.fromCharCode(0x20b1);
 // new hires complete, in a no-save "preview" mode. See app/onboarding/[token].
 const ONBOARDING_PAPERWORK_TEMPLATE_URL = '/onboarding/preview';
 
-/** Shape returned by GET /api/hr/department-rates. */
+/** Shape returned by GET /api/hr/department-rates. SECURITY: this endpoint never
+ *  ships pay-rate figures to the HR client — only whether Accounting has set an
+ *  authoritative Payment Catalog rate for the department (`ready`). The actual
+ *  rate is resolved server-side from the catalog at submit time. */
 type DeptRateApi = {
   department: string;
-  regular_rate: string | null;
-  ot_rate: string | null;
-  source?: 'catalog' | 'observed';
-  currency?: 'PHP' | 'USD' | null;
+  ready: boolean;
 };
 
-/** A department's prefill rate as held in the form's lookup map. `source`
- *  distinguishes an authoritative Payment Catalog rate from the observed mode;
- *  `currency` carries the catalog entry's currency for the hint symbol. */
+/** A department's compensation readiness as held in the form's lookup map.
+ *  `ready` is true once Accounting has set an authoritative Payment Catalog rate;
+ *  HR never sees the figure itself. */
 type DeptRate = {
-  regular_rate: string | null;
-  ot_rate: string | null;
-  source?: 'catalog' | 'observed';
-  currency?: 'PHP' | 'USD' | null;
+  ready: boolean;
 };
 
 // Runs `fn` over `items` with at most `limit` in-flight at once.
@@ -2560,10 +2557,8 @@ function SetOnboardingWorkEmailDialog({
   const [reclaimed, setReclaimed] = useState(false);
   const [busy, setBusy] = useState(false);
   // Compensation is owned by Accounting (Payment Catalog). HR never sees the
-  // figures — these are populated from the catalog only and used to gate save +
-  // send on submit. The UI shows only a readiness checkmark.
-  const [regularRate, setRegularRate] = useState('');
-  const [otRate, setOtRate] = useState('');
+  // figures and the client never sends them — the server resolves the rate from
+  // the catalog at submit time. We track only readiness (the checkmark).
   const [ratesRefreshing, setRatesRefreshing] = useState(false);
   const [projectNames, setProjectNames] = useState<string[]>([]);
   const [projectOptions, setProjectOptions] = useState<string[]>([]);
@@ -2609,8 +2604,6 @@ function SetOnboardingWorkEmailDialog({
     setWorkEmail('');
     setAvailable(null);
     setReclaimed(false);
-    setRegularRate('');
-    setOtRate('');
     setProjectNames([]);
     void reSuggest();
   }, [row, reSuggest]);
@@ -2630,12 +2623,7 @@ function SetOnboardingWorkEmailDialog({
       if (rj.error) throw new Error(rj.error);
       const m = new Map<string, DeptRate>();
       for (const d of rj.departments ?? []) {
-        m.set(d.department.trim().toLowerCase(), {
-          regular_rate: d.regular_rate,
-          ot_rate: d.ot_rate,
-          source: d.source,
-          currency: d.currency,
-        });
+        m.set(d.department.trim().toLowerCase(), { ready: d.ready });
       }
       setDeptRates(m);
     } catch (e) {
@@ -2681,22 +2669,6 @@ function SetOnboardingWorkEmailDialog({
       void supabase.removeChannel(channel);
     };
   }, [row, loadDeptRates]);
-
-  // Sync the hidden compensation from the Payment Catalog for the chosen dept.
-  // Only an authoritative catalog rate counts — the observed heuristic is
-  // ignored, so the figures stay blank (and save stays gated) until Accounting
-  // sets them.
-  useEffect(() => {
-    const key = dept.trim().toLowerCase();
-    const rates = key ? deptRates.get(key) : undefined;
-    if (rates && rates.source === 'catalog') {
-      setRegularRate(rates.regular_rate ?? '');
-      setOtRate(rates.ot_rate ?? '');
-    } else {
-      setRegularRate('');
-      setOtRate('');
-    }
-  }, [dept, deptRates]);
 
   // Hubstaff project list — from the secondary Supabase `hubstaff_projects` table.
   useEffect(() => {
@@ -2767,7 +2739,7 @@ function SetOnboardingWorkEmailDialog({
   const deptRate = deptKey ? deptRates.get(deptKey) : undefined;
   // HR never sees the figures — only whether Accounting has set an authoritative
   // Payment Catalog rate for this department. That readiness gates save.
-  const compReady = deptRate?.source === 'catalog';
+  const compReady = deptRate?.ready ?? false;
   // Compensation readiness is informational only — a hire can be staged before
   // Accounting sets the Payment Catalog (the rate stays null until they do).
   const canSave =
@@ -2791,8 +2763,6 @@ function SetOnboardingWorkEmailDialog({
             work_email: emailNorm,
             department: dept.trim(),
             project_names: projectNames,
-            regular_rate: regularRate.trim(),
-            ot_rate: otRate.trim() || null,
           }),
         },
       );
@@ -3153,12 +3123,7 @@ function BulkSetWorkEmailDialog({
       if (rj.error) throw new Error(rj.error);
       const m = new Map<string, BulkDeptRate>();
       for (const d of rj.departments ?? []) {
-        m.set(d.department.trim().toLowerCase(), {
-          regular_rate: d.regular_rate,
-          ot_rate: d.ot_rate,
-          source: d.source,
-          currency: d.currency,
-        });
+        m.set(d.department.trim().toLowerCase(), { ready: d.ready });
       }
       setDeptRates(m);
     } catch (e) {
@@ -3305,12 +3270,10 @@ function BulkSetWorkEmailDialog({
     args: {
       rows: SubmissionRow[];
       department: string;
-      regularRate: string;
-      otRate: string;
       projects: string[];
     },
   ) {
-    const { rows: targets, department, regularRate, otRate, projects } = args;
+    const { rows: targets, department, projects } = args;
     setGroupBusy((p) => ({ ...p, [groupKey]: true }));
 
     const newResults: Record<string, { ok: boolean; warn?: boolean; error?: string }> = {};
@@ -3331,8 +3294,6 @@ function BulkSetWorkEmailDialog({
               work_email: (emails[r.id] ?? '').trim().toLowerCase(),
               department,
               project_names: projects,
-              regular_rate: regularRate.trim(),
-              ot_rate: otRate.trim() || null,
             }),
           });
           const j = (await res.json().catch(() => ({}))) as {
@@ -3627,8 +3588,6 @@ function BulkDeptGroup({
   onSubmitGroup: (args: {
     rows: SubmissionRow[];
     department: string;
-    regularRate: string;
-    otRate: string;
     projects: string[];
   }) => void;
   busy: boolean;
@@ -3636,27 +3595,14 @@ function BulkDeptGroup({
 }) {
   const needsDept = groupKey === '__none__';
   const [dept, setDept] = useState(initialDept);
-  // Hidden compensation, sourced from the Payment Catalog only — HR never sees
-  // the figures; they're sent on submit and gate it via `compReady`.
-  const [regularRate, setRegularRate] = useState('');
-  const [otRate, setOtRate] = useState('');
   const [projects, setProjects] = useState<string[]>([]);
 
   const deptKey = dept.trim().toLowerCase();
   const typical = deptKey ? deptRates.get(deptKey) : undefined;
-  const compReady = typical?.source === 'catalog';
-
-  // Sync the hidden rate from the catalog for the chosen dept; blank unless an
-  // authoritative Payment Catalog rate exists (observed heuristic is ignored).
-  useEffect(() => {
-    if (typical && typical.source === 'catalog') {
-      setRegularRate(typical.regular_rate ?? '');
-      setOtRate(typical.ot_rate ?? '');
-    } else {
-      setRegularRate('');
-      setOtRate('');
-    }
-  }, [typical]);
+  // Compensation is owned by Accounting (Payment Catalog). HR never sees the
+  // figure and the client never sends it — the server resolves the rate from the
+  // catalog at submit time. We track only readiness for the checkmark.
+  const compReady = typical?.ready ?? false;
 
   // Compensation readiness is informational only — a group can be set before
   // Accounting fills the Payment Catalog (rate stays null until they do).
@@ -3855,8 +3801,6 @@ function BulkDeptGroup({
             onSubmitGroup({
               rows: usableRows,
               department: dept.trim(),
-              regularRate,
-              otRate,
               projects,
             })
           }

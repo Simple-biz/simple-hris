@@ -335,7 +335,7 @@ export default function NotificationsPanel({
                       {[
                         'Bank account changes',
                         'Leave request filing',
-                        'PAB dispute submissions',
+                        'PAB issue submissions',
                       ].map((item) => (
                         <li
                           key={item}
@@ -572,7 +572,7 @@ export default function NotificationsPanel({
                 All caught up
               </div>
               <p className="max-w-xs text-[13px] leading-relaxed text-zinc-500 dark:text-zinc-500">
-                No notifications right now. Approvals, disputes, and system alerts
+                No notifications right now. Approvals, issues, and system alerts
                 will appear here when they arrive.
               </p>
             </div>

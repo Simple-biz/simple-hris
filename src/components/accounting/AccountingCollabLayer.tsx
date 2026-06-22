@@ -58,7 +58,7 @@ const SECTION_LABELS: Record<string, string> = {
   'rates': 'Rates',
   'payroll-wizard': 'Payroll Wizard',
   'payment-dispatch': 'Payment Dispatch',
-  'disputes': 'Disputes',
+  'disputes': 'Issues',
   'mesa': 'MESA',
   'announcements': 'Announcements',
   'notifications': 'Notifications',

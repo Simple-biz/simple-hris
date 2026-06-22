@@ -1539,7 +1539,7 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
                             : inMonth && isFutureOrToday
                               ? ' — not yet'
                               : inMonth && day.hasData
-                                ? ' · needs 7h weekdays — tap to dispute'
+                                ? ' · needs 7h weekdays — tap to file an issue'
                                 : inMonth
                                   ? ' — no data'
                                   : '';
@@ -1600,7 +1600,7 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
                                       }}
                                       className="mt-1 w-full whitespace-nowrap rounded border border-zinc-200 px-1.5 py-0.5 text-[9.5px] font-medium text-zinc-600 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
                                     >
-                                      {dispute ? 'View PAB dispute' : 'File PAB dispute'}
+                                      {dispute ? 'View PAB issue' : 'File PAB issue'}
                                     </button>
                                   )}
                                 </div>

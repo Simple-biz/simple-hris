@@ -16,7 +16,7 @@ export const FEATURE_CATALOG: Record<FeatureViewKey, readonly { key: string; lab
     { key: "payroll_wizard",   label: "Payroll Wizard" },
     { key: "bonus_catalog",    label: "Payment Catalog" },
     { key: "payment_dispatch", label: "Payment Dispatch" },
-    { key: "disputes",         label: "Disputes" },
+    { key: "disputes",         label: "Issues" },
     { key: "announcements",    label: "Announcements" },
     { key: "notifications",    label: "Notifications" },
     { key: "s_wall",           label: "S-Wall" },

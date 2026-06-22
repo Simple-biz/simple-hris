@@ -358,7 +358,7 @@ function LoginPageInner() {
                     A cleaner front door for payroll, people, and approvals.
                   </h2>
                   <p className="max-w-xl text-sm leading-7 text-zinc-600">
-                    Secure access to employee records, payroll workflows, dispute handling, and operational dashboards in one place.
+                    Secure access to employee records, payroll workflows, issue handling, and operational dashboards in one place.
                   </p>
                 </div>
               </div>

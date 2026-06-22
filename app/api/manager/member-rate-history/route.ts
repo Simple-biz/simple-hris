@@ -1,19 +1,23 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createSupabaseServiceRoleClient, createSupabaseServerClient } from "@/lib/supabase/server";
 import { normEmail } from "@/lib/email/norm-email";
+import { deniedResponse, requireRateVisibilitySession } from "@/lib/auth/authorize-email";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 /**
- * Manager-namespaced rate-history read. Mirrors the auth model used by
- * `/api/manager/member-monthly-pay` (no extra check beyond a valid session
- * via middleware) so a manager can fetch a team member's rate history for
- * the per-day badge on the modal calendar. The generic
- * `/api/employee-rate-history` endpoint stays self-or-elevated — this one
- * is the manager-only door.
+ * Rate-history read for an arbitrary employee. This used to run with NO auth
+ * beyond a valid session (an IDOR: `?email=` was trusted raw, so any signed-in
+ * user could read anyone's compensation timeline). Pay rates are Accounting/CEO
+ * only, so it is now gated to full rate visibility. Managers no longer see rates
+ * anywhere, so they use the rate-free attendance surfaces instead; employees
+ * read their own history via the self-or-elevated `/api/employee-rate-history`.
  */
 export async function GET(req: NextRequest) {
+  const authz = await requireRateVisibilitySession();
+  if (!authz.ok) return deniedResponse(authz);
+
   const email = req.nextUrl.searchParams.get("email")?.trim();
   if (!email) {
     return NextResponse.json({ rows: [], error: "email is required" }, { status: 400 });

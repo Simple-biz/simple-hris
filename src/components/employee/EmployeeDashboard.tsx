@@ -2905,7 +2905,7 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
                               <div
                                 key={di}
                                 className={`relative flex h-10 flex-col overflow-hidden rounded-md border transition-all duration-300 ${cellBorder} ${cellClickable ? `cursor-pointer ${isHoliday ? 'hover:ring-2 hover:ring-sky-400/50' : 'hover:ring-2 hover:ring-orange-300/50'}` : ''}`}
-                                title={`${day.dayLabel} ${day.dateStr}${holidayName ? ` · ${holidayName} (holiday — click for details)` : ''}: ${secondsToDisplay(day.seconds)}${dispute ? ` (${dispute.status})` : day.passes ? ' ✓' : isToday ? ' — in progress' : isFutureOrToday ? ' — not yet' : stillProcessing ? ' — processing' : day.hasData ? ' ✗ needs 7h — click to dispute' : ' — no data'}${rateTooltipSuffix}`}
+                                title={`${day.dayLabel} ${day.dateStr}${holidayName ? ` · ${holidayName} (holiday — click for details)` : ''}: ${secondsToDisplay(day.seconds)}${dispute ? ` (${dispute.status})` : day.passes ? ' ✓' : isToday ? ' — in progress' : isFutureOrToday ? ' — not yet' : stillProcessing ? ' — processing' : day.hasData ? ' ✗ needs 7h — click to file an issue' : ' — no data'}${rateTooltipSuffix}`}
                                 style={{ animation: `pab-cell-in 0.3s ease-out ${wi * 80 + di * 40}ms both` }}
                                 onClick={cellClickable ? () => {
                                   if (isHoliday && holidayName) {
@@ -3198,7 +3198,7 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
                     })()}
                   </span>
                   <span className="block text-xs text-zinc-400 dark:text-zinc-500">
-                    This day is a recognised holiday. Your attendance requirement is automatically waived — no dispute needed.
+                    This day is a recognised holiday. Your attendance requirement is automatically waived — no issue needed.
                   </span>
                 </span>
               </DialogDescription>

@@ -104,7 +104,7 @@ export const DASHBOARD_PAGES: DashboardPages[] = [
       { key: 'payroll-wizard', label: 'Payroll Wizard' },
       { key: 'bonus-catalog', label: 'Payment Catalog' },
       { key: 'payment-dispatch', label: 'Payment Dispatch' },
-      { key: 'disputes', label: 'Disputes' },
+      { key: 'disputes', label: 'Issues' },
       { key: 'mesa', label: 'MESA' },
       { key: 'announcements', label: 'Announcements' },
       { key: 'notifications', label: 'Notifications' },

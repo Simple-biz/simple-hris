@@ -93,7 +93,7 @@ export default function PayrollLockBanner({ state }: PayrollLockBannerProps) {
                   Payroll is being processed
                 </span>
                 <span className="text-[11px] text-rose-700/80 dark:text-rose-300/80">
-                  Disputes are temporarily paused.
+                  Issues are temporarily paused.
                 </span>
               </div>
               {(operator || ago) && (

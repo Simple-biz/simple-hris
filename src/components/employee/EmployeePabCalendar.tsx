@@ -747,7 +747,7 @@ export default function EmployeePabCalendar({
                       <div
                         key={di}
                         className={`relative flex h-14 flex-col overflow-hidden rounded-md border transition-all duration-200 sm:h-16 ${cellBorder} ${cellClickable ? 'cursor-pointer hover:ring-2 hover:ring-orange-300/50' : ''}`}
-                        title={`${day.dayLabel} ${day.dateStr}: ${secondsToDisplay(day.seconds)}${isHoliday ? ` — ${holidayName}` : ''}${dispute ? ` (${dispute.status})` : day.passes ? ' ✓' : isToday ? ' — in progress' : isFutureOrToday ? ' — not yet' : stillProcessing ? ' — processing' : day.hasData ? ' ✗ needs 7h — click to dispute' : ' — no data'}${rateTooltip}`}
+                        title={`${day.dayLabel} ${day.dateStr}: ${secondsToDisplay(day.seconds)}${isHoliday ? ` — ${holidayName}` : ''}${dispute ? ` (${dispute.status})` : day.passes ? ' ✓' : isToday ? ' — in progress' : isFutureOrToday ? ' — not yet' : stillProcessing ? ' — processing' : day.hasData ? ' ✗ needs 7h — click to file an issue' : ' — no data'}${rateTooltip}`}
                         onClick={
                           cellClickable
                             ? () =>

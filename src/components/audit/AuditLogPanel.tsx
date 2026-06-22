@@ -159,8 +159,8 @@ const CATEGORIES: CategoryDef[] = [
   },
   {
     id: 'disputes',
-    label: 'PAB Disputes',
-    shortLabel: 'Disputes',
+    label: 'PAB Issues',
+    shortLabel: 'Issues',
     Icon: ClipboardList,
     tone: { dot: 'bg-amber-500', chip: 'bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300' },
     match: (a) => a.startsWith('pab_dispute.'),
@@ -312,21 +312,21 @@ export function formatActionLabel(action: string, details: Record<string, unknow
     case 'leave.cancelled':
       return `Leave cancelled: ${String(details?.employee_email ?? '?')}`;
     case 'pab_dispute.submitted':
-      return `PAB dispute filed: ${String(details?.employee ?? '?')} — ${String(details?.reason ?? '?')} on ${String(details?.dispute_date ?? '?')}`;
+      return `PAB issue filed: ${String(details?.employee ?? '?')} — ${String(details?.reason ?? '?')} on ${String(details?.dispute_date ?? '?')}`;
     case 'pab_dispute.approved':
-      return `PAB dispute approved: ${String(details?.employee ?? '?')} ${String(details?.dispute_date ?? '?')} by ${String(details?.decided_by ?? '?')}`;
+      return `PAB issue approved: ${String(details?.employee ?? '?')} ${String(details?.dispute_date ?? '?')} by ${String(details?.decided_by ?? '?')}`;
     case 'pab_dispute.denied':
-      return `PAB dispute denied: ${String(details?.employee ?? '?')} ${String(details?.dispute_date ?? '?')} by ${String(details?.decided_by ?? '?')}`;
+      return `PAB issue denied: ${String(details?.employee ?? '?')} ${String(details?.dispute_date ?? '?')} by ${String(details?.decided_by ?? '?')}`;
     case 'pab_dispute.orphanage_manager_approved':
-      return `Orphanage dispute verified (awaiting accounting): ${String(details?.employee ?? '?')} ${String(details?.dispute_date ?? '?')} by ${String(details?.decided_by ?? '?')}`;
+      return `Orphanage issue verified (awaiting accounting): ${String(details?.employee ?? '?')} ${String(details?.dispute_date ?? '?')} by ${String(details?.decided_by ?? '?')}`;
     case 'pab_dispute.orphanage_manager_denied':
-      return `Orphanage dispute denied by manager: ${String(details?.employee ?? '?')} ${String(details?.dispute_date ?? '?')} by ${String(details?.decided_by ?? '?')}`;
+      return `Orphanage issue denied by manager: ${String(details?.employee ?? '?')} ${String(details?.dispute_date ?? '?')} by ${String(details?.decided_by ?? '?')}`;
     case 'pab_dispute.orphanage_returned_to_manager':
-      return `Orphanage dispute returned to manager queue: ${String(details?.employee ?? '?')} ${String(details?.dispute_date ?? '?')} — by ${String(details?.returned_by ?? '?')}${details?.return_note ? ` (${String(details.return_note)})` : ''}`;
+      return `Orphanage issue returned to manager queue: ${String(details?.employee ?? '?')} ${String(details?.dispute_date ?? '?')} — by ${String(details?.returned_by ?? '?')}${details?.return_note ? ` (${String(details.return_note)})` : ''}`;
     case 'pab_dispute.edited':
-      return `PAB dispute edited: ${String(details?.employee ?? '?')} ${String(details?.dispute_date ?? '?')}`;
+      return `PAB issue edited: ${String(details?.employee ?? '?')} ${String(details?.dispute_date ?? '?')}`;
     case 'pab_dispute.withdrawn':
-      return `PAB dispute withdrawn: ${String(details?.employee ?? '?')} ${String(details?.dispute_date ?? '?')}`;
+      return `PAB issue withdrawn: ${String(details?.employee ?? '?')} ${String(details?.dispute_date ?? '?')}`;
     case 'payment.dispatched': {
       const recip = String(details?.recipient_email ?? '?');
       const proc = String(details?.processor ?? '?');
@@ -334,9 +334,9 @@ export function formatActionLabel(action: string, details: Record<string, unknow
       return `Payment dispatched: ${recip} via ${proc}${usd ? ` (${usd})` : ''}`;
     }
     case 'payroll.dispatch.locked':
-      return `Payroll dispatch started — disputes paused`;
+      return `Payroll dispatch started — issues paused`;
     case 'payroll.dispatch.unlocked':
-      return `Payroll dispatch ended — disputes re-opened`;
+      return `Payroll dispatch ended — issues re-opened`;
 
     // ── Employee rates / auth ───────────────────────────────────────────
     case 'employee.rates.revoke': {
@@ -376,9 +376,9 @@ export function formatActionLabel(action: string, details: Record<string, unknow
 
     // ── PAB disputes (revoke / admin delete) ────────────────────────────
     case 'pab_dispute.revoked':
-      return `PAB dispute revoked: ${String(details?.employee ?? '?')} ${String(details?.dispute_date ?? '?')} by ${String(details?.revoked_by ?? '?')}`;
+      return `PAB issue revoked: ${String(details?.employee ?? '?')} ${String(details?.dispute_date ?? '?')} by ${String(details?.revoked_by ?? '?')}`;
     case 'pab_dispute.admin_deleted':
-      return `PAB dispute deleted (admin): ${String(details?.employee ?? '?')} ${String(details?.dispute_date ?? '?')}`;
+      return `PAB issue deleted (admin): ${String(details?.employee ?? '?')} ${String(details?.dispute_date ?? '?')}`;
 
     // ── Misc ────────────────────────────────────────────────────────────
     case 'orphanage_budget.created':

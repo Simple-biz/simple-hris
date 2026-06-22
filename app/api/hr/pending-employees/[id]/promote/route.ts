@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
-import { promoteHrPendingEmployee } from "@/lib/supabase/hr-pending-employees";
+import {
+  promoteHrPendingEmployee,
+  redactPendingRowRates,
+} from "@/lib/supabase/hr-pending-employees";
 import { deniedResponse } from "@/lib/auth/authorize-email";
+import { hasRateVisibility } from "@/lib/auth/elevated-roles";
 import { requireFeatureEdit } from "@/lib/auth/authorize-feature";
 
 export const dynamic = "force-dynamic";
@@ -27,13 +31,15 @@ export async function POST(
   }
 
   const { row, masterId, error, sheet } = await promoteHrPendingEmployee(id);
+  // Never echo the staged hire's pay rate back to the HR client.
+  const safeRow = redactPendingRowRates(row, hasRateVisibility(authz.roles));
   if (error) {
     // Distinguish validation errors (missing work_email, already promoted) from server errors.
     const status =
       /work email|already promoted|cancelled|no current master|no_show/i.test(error)
         ? 400
         : 500;
-    return NextResponse.json({ row, masterId, error }, { status });
+    return NextResponse.json({ row: safeRow, masterId, error }, { status });
   }
-  return NextResponse.json({ row, masterId, sheet });
+  return NextResponse.json({ row: safeRow, masterId, sheet });
 }

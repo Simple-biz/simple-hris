@@ -196,7 +196,7 @@ const CEO_MESSAGES: { heading: (name: string) => string; body: string }[] = [
   },
   {
     heading: (name) => `Good to see you, ${name} — great companies are built one decision at a time. ◆`,
-    body: "Everything running through this system — payroll, disputes, attendance — traces back to the standards you set. Keep leading with intention.",
+    body: "Everything running through this system — payroll, issues, attendance — traces back to the standards you set. Keep leading with intention.",
   },
   {
     heading: (name) => `Hi ${name} — the best leaders stay informed. ◆`,

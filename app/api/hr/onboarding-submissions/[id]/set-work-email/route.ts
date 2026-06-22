@@ -52,8 +52,6 @@ export async function POST(
     work_email?: string;
     department?: string;
     project_names?: string[];
-    regular_rate?: string | number | null;
-    ot_rate?: string | number | null;
   };
   try {
     body = (await req.json()) as typeof body;
@@ -144,10 +142,14 @@ export async function POST(
   };
 
   // Resolve the AUTHORITATIVE compensation from Accounting's Payment Catalog
-  // (department-scoped pay structure). HR never sets/sees the figures, so the
-  // catalog is the source of truth — we look it up server-side and prefer it
-  // over anything the client sent. These flow to the pending hire's payroll
-  // rates AND to the webhook so Hubstaff gets a real Reg/OT rate (it rejects 0).
+  // (department-scoped pay structure). HR never sets/sees the figures and the
+  // client no longer sends a rate, so the catalog is the ONLY source of truth —
+  // we look it up server-side and never trust a client-supplied value (accepting
+  // one would reintroduce the rate-spoofing/leak path). These flow to the
+  // pending hire's payroll rates AND to the webhook so Hubstaff gets a real
+  // Reg/OT rate (it rejects 0). If the catalog has no department structure (or is
+  // unreachable) the rate stays null and the existing "compensation not set"
+  // handling applies — the hire can be re-set once Accounting fills the catalog.
   let catalogRegular: string | null = null;
   let catalogOt: string | null = null;
   try {
@@ -165,11 +167,11 @@ export async function POST(
       catalogOt = match.otRate != null ? String(match.otRate) : null;
     }
   } catch {
-    // Catalog unreachable — fall back to whatever the client sent (legacy).
+    // Catalog unreachable — leave the rate null rather than trusting the client.
   }
 
-  const regularRateStr = toRateStr(catalogRegular ?? body.regular_rate);
-  const otRateStr = toRateStr(catalogOt ?? body.ot_rate);
+  const regularRateStr = toRateStr(catalogRegular);
+  const otRateStr = toRateStr(catalogOt);
 
   const projectNames = Array.isArray(body.project_names)
     ? body.project_names.map((p) => String(p).trim()).filter(Boolean)

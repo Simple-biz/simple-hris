@@ -8,14 +8,25 @@ export const runtime = "nodejs";
 /**
  * GET /api/hr/department-rates
  *
- * Powers the department drop-down on the HR "Add person" form. Returns the
- * mode of `regular_rate` and `ot_rate` from `employee_hourly_rates`, grouped
- * by department, so picking a department pre-fills typical compensation.
+ * Powers the "compensation ready" badge on the HR "Add person" / onboarding
+ * form. Returns ONLY a per-department readiness flag — `ready` is true when an
+ * authoritative Payment Catalog pay structure exists for the department.
+ *
+ * SECURITY: pay rates are Accounting/CEO only. This endpoint is gated by
+ * `requireElevatedSession`, which also admits `hr_coordinator`, so it must NOT
+ * ship the numeric `regular_rate`/`ot_rate`/`currency` figures — HR only needs
+ * to know whether Accounting has set the rate. The server re-derives the actual
+ * rate from the catalog at submit time (set-work-email); the HR client never
+ * sees or sends a figure.
  */
 export async function GET() {
   const authz = await requireElevatedSession();
   if (!authz.ok) return deniedResponse(authz);
   const { departments, error } = await getDepartmentRateSummaries();
   if (error) return NextResponse.json({ departments: [], error }, { status: 500 });
-  return NextResponse.json({ departments });
+  const readiness = departments.map((d) => ({
+    department: d.department,
+    ready: d.source === "catalog",
+  }));
+  return NextResponse.json({ departments: readiness });
 }

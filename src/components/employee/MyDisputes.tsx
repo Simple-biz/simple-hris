@@ -166,10 +166,10 @@ export default function MyDisputes({
         { cache: 'no-store' },
       );
       const json = (await res.json()) as { rows?: PabDayDisputeRow[]; error?: string | null };
-      if (!res.ok) throw new Error(json.error ?? 'Failed to load disputes');
+      if (!res.ok) throw new Error(json.error ?? 'Failed to load issues');
       setDisputes(json.rows ?? []);
     } catch (e) {
-      setListError(e instanceof Error ? e.message : 'Failed to load disputes');
+      setListError(e instanceof Error ? e.message : 'Failed to load issues');
       setDisputes([]);
     }
   }, [employeeEmail]);
@@ -224,11 +224,11 @@ export default function MyDisputes({
     async (e: React.FormEvent) => {
       e.preventDefault();
       if (dispatchLocked) {
-        toast.error('Disputes are paused while accounting processes payroll');
+        toast.error('Issues are paused while accounting processes payroll');
         return;
       }
       if (!disputeDate) {
-        toast.error('Pick a date for the dispute');
+        toast.error('Pick a date for the issue');
         return;
       }
       if (!reason) {
@@ -240,7 +240,7 @@ export default function MyDisputes({
         return;
       }
       if (existingForSelectedDate) {
-        toast.error('A dispute for that date already exists');
+        toast.error('An issue for that date already exists');
         return;
       }
       setSubmitting(true);
@@ -257,16 +257,16 @@ export default function MyDisputes({
           }),
         });
         const json = (await res.json()) as { error?: string | null };
-        if (!res.ok) throw new Error(json.error ?? 'Failed to submit dispute');
-        toast.success('Dispute submitted', {
-          description: 'Your dispute is now pending review.',
+        if (!res.ok) throw new Error(json.error ?? 'Failed to submit issue');
+        toast.success('Issue submitted', {
+          description: 'Your issue is now pending review.',
         });
         setExplanation('');
         setPrefilledHours(null);
         setCalendarRefreshKey((k) => k + 1);
         await loadDisputes();
       } catch (err) {
-        toast.error(err instanceof Error ? err.message : 'Failed to submit dispute');
+        toast.error(err instanceof Error ? err.message : 'Failed to submit issue');
       } finally {
         setSubmitting(false);
       }
@@ -308,14 +308,14 @@ export default function MyDisputes({
           <p className="text-[10px] font-medium uppercase tracking-[0.18em] text-amber-700/80 dark:text-amber-500/70">
             Employee
             <span className="mx-1.5 text-zinc-300 dark:text-zinc-700">/</span>
-            PAB Day Disputes
+            PAB Day Issues
           </p>
           <h1 className="mt-1 font-mono text-2xl font-bold tracking-tight text-zinc-900 sm:text-3xl lg:text-[2.25rem] lg:leading-none dark:text-white">
-            My Disputes
+            My Issues
           </h1>
           <p className="mt-1.5 text-xs leading-snug text-zinc-500 dark:text-zinc-500">
-            File a dispute for any day where your hours fell below the 7-hour PAB threshold. Approved
-            disputes restore PAB eligibility for that day.
+            File an issue for any day where your hours fell below the 7-hour PAB threshold. Approved
+            issues restore PAB eligibility for that day.
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-2">
@@ -326,7 +326,7 @@ export default function MyDisputes({
             className="h-8 gap-1.5 border-zinc-200 bg-white/70 text-xs font-medium text-zinc-700 dark:border-zinc-800 dark:bg-zinc-900/60 dark:text-zinc-300"
             disabled={refreshing}
             onClick={() => void handleRefresh()}
-            aria-label="Refresh disputes"
+            aria-label="Refresh issues"
           >
             {refreshing ? (
               <Loader2 className="size-3.5 animate-spin" aria-hidden />
@@ -369,7 +369,7 @@ export default function MyDisputes({
           >
             <div>
               <p className="text-[10px] font-medium uppercase tracking-[0.16em] text-emerald-700 dark:text-emerald-400">
-                File a Dispute
+                File an Issue
               </p>
               <p className="mt-0.5 text-[11px] leading-snug text-zinc-500 dark:text-zinc-500">
                 Pick the date and explain why hours dipped below 7. Supervisors review every submission
@@ -390,8 +390,8 @@ export default function MyDisputes({
                   <div className="flex items-start gap-2 rounded-md border border-rose-300/70 bg-rose-50 px-2.5 py-2 text-[11px] text-rose-800 dark:border-rose-500/40 dark:bg-rose-950/40 dark:text-rose-300">
                     <Lock className="mt-0.5 size-3.5 shrink-0" aria-hidden />
                     <div className="leading-snug">
-                      <strong className="font-semibold">Disputes are temporarily paused.</strong>{' '}
-                      Accounting is processing payroll right now. New disputes will reopen as soon as
+                      <strong className="font-semibold">Issues are temporarily paused.</strong>{' '}
+                      Accounting is processing payroll right now. New issues will reopen as soon as
                       processing finishes — no action needed on your end.
                     </div>
                   </div>
@@ -424,7 +424,7 @@ export default function MyDisputes({
               )}
               {existingForSelectedDate && (
                 <p className="rounded-md border border-amber-300/70 bg-amber-50 px-2 py-1.5 text-[10px] text-amber-800 dark:border-amber-500/40 dark:bg-amber-950/40 dark:text-amber-300">
-                  A dispute already exists for this date — see the list on the right.
+                  An issue already exists for this date — see the list on the right.
                 </p>
               )}
             </div>
@@ -481,7 +481,7 @@ export default function MyDisputes({
                 size="sm"
                 className="h-8 gap-1.5 bg-emerald-600 text-xs font-medium text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
                 disabled={submitting || !!existingForSelectedDate || dispatchLocked}
-                title={dispatchLocked ? 'Disputes are paused — accounting is processing payroll' : undefined}
+                title={dispatchLocked ? 'Issues are paused — accounting is processing payroll' : undefined}
               >
                 {submitting ? (
                   <Loader2 className="size-3.5 animate-spin" aria-hidden />
@@ -536,14 +536,14 @@ export default function MyDisputes({
               History
             </p>
             <p className="font-mono text-[10px] text-zinc-400 dark:text-zinc-500">
-              {disputes.length} dispute{disputes.length === 1 ? '' : 's'}
+              {disputes.length} issue{disputes.length === 1 ? '' : 's'}
             </p>
           </div>
 
           {listLoading ? (
             <div className="flex flex-1 items-center justify-center gap-2 py-12 text-xs text-zinc-500">
               <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              Loading your disputes…
+              Loading your issues…
             </div>
           ) : listError ? (
             <div className="flex flex-1 items-start gap-3 rounded-lg border border-rose-200/70 bg-rose-50/40 p-3 text-xs text-rose-800 dark:border-rose-900/40 dark:bg-rose-950/20 dark:text-rose-300">
@@ -553,7 +553,7 @@ export default function MyDisputes({
           ) : disputes.length === 0 ? (
             <div className="flex flex-1 flex-col items-center justify-center gap-2 py-10 text-center text-xs text-zinc-400 dark:text-zinc-500">
               <FileText className="h-7 w-7 text-zinc-300 dark:text-zinc-700" />
-              <p>No disputes filed yet.</p>
+              <p>No issues filed yet.</p>
               <p className="max-w-sm text-[11px] leading-relaxed">
                 When a day in your PAB calendar dips under 7 hours, click it to come back here with the
                 date pre-filled.

@@ -193,7 +193,7 @@ export default function EmployeeSidebar({
                         ? 'border-rose-300 bg-rose-100 text-rose-800 dark:border-rose-500/40 dark:bg-rose-500/20 dark:text-rose-200'
                         : 'border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-300',
                     )}
-                    aria-label="Disputes paused — payroll is being processed"
+                    aria-label="Issues paused — payroll is being processed"
                   >
                     <Lock className="h-2.5 w-2.5" aria-hidden />
                     Paused

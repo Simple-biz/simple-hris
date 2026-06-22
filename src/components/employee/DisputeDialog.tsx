@@ -97,12 +97,12 @@ export default function DisputeDialog({
         }),
       });
       const json = await res.json();
-      if (!res.ok) throw new Error(json.error ?? 'Failed to submit dispute');
-      toast.success('Dispute submitted for HR review');
+      if (!res.ok) throw new Error(json.error ?? 'Failed to submit issue');
+      toast.success('Issue submitted for HR review');
       onOpenChange(false);
       onSubmitted?.();
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Failed to submit dispute');
+      toast.error(e instanceof Error ? e.message : 'Failed to submit issue');
     } finally {
       setSubmitting(false);
     }
@@ -131,10 +131,10 @@ export default function DisputeDialog({
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle className="text-sm">
-              Dispute: {dateDisplay} — {hours}h
+              Issue: {dateDisplay} — {hours}h
             </DialogTitle>
             <DialogDescription className="text-xs">
-              Submitted dispute details
+              Submitted issue details
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-3 text-sm">
@@ -181,7 +181,7 @@ export default function DisputeDialog({
       <DialogContent className="max-w-md">
         <DialogHeader>
           <DialogTitle className="text-sm">
-            Dispute: {dateDisplay} — {hours}h worked
+            Issue: {dateDisplay} — {hours}h worked
           </DialogTitle>
           <DialogDescription className="text-xs">
             This day is below the 7-hour threshold. Select a reason and submit for HR review.
@@ -229,7 +229,7 @@ export default function DisputeDialog({
           </div>
 
           <p className="rounded border border-blue-200 bg-blue-50 px-3 py-2 text-[11px] text-blue-700 dark:border-blue-800 dark:bg-blue-950/30 dark:text-blue-400">
-            This dispute covers <strong>{dateDisplay}</strong> and <strong>{nextDayDisplay}</strong> (day of or day after).
+            This issue covers <strong>{dateDisplay}</strong> and <strong>{nextDayDisplay}</strong> (day of or day after).
           </p>
         </div>
 
@@ -239,7 +239,7 @@ export default function DisputeDialog({
           </Button>
           <Button size="sm" onClick={handleSubmit} disabled={submitting || !selectedReason}>
             {submitting && <Loader2 className="mr-1.5 h-3 w-3 animate-spin" />}
-            Submit dispute
+            Submit issue
           </Button>
         </DialogFooter>
       </DialogContent>

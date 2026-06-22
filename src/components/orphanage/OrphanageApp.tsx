@@ -373,11 +373,11 @@ export default function OrphanageApp() {
           description: `Logged under ${viewerEmail} · ${formatVerifiedAt(new Date().toISOString())}`,
         });
       } else {
-        toast.success('Dispute denied.');
+        toast.success('Issue denied.');
       }
       await fetchRows();
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Could not update dispute');
+      toast.error(e instanceof Error ? e.message : 'Could not update issue');
     }
   }, [confirm, viewerEmail, decisionNote, fetchRows]);
 
@@ -480,7 +480,7 @@ export default function OrphanageApp() {
                 )}
               >
                 <HeartHandshake className={cn('h-[15px] w-[15px] shrink-0', activeTab === 'queue' ? 'text-white/85' : 'text-[#a1a1aa] dark:text-zinc-500')} />
-                <span className="truncate text-left">Dispute queue</span>
+                <span className="truncate text-left">Issue queue</span>
               </button>)}
               {canSeeOrphanageTab('budget') && (<button
                 type="button"
@@ -722,7 +722,7 @@ export default function OrphanageApp() {
                     onClick={() => setCreateDialogOpen(true)}
                   >
                     <Plus className="mr-2 shrink-0" />
-                    Create disputes
+                    Create issues
                   </Button>
                   <Button
                     variant="outline"
@@ -783,7 +783,7 @@ export default function OrphanageApp() {
                       </CardTitle>
                     </div>
                     <p className="mt-1.5 text-xs text-muted-foreground">
-                      Every dispute after manager review stays here — with Accounting pending, Accounting approved, or Accounting denied —
+                      Every issue after manager review stays here — with Accounting pending, Accounting approved, or Accounting denied —
                       newest activity first ({awaitingAccountingCount} still with Accounting).
                     </p>
                   </div>
@@ -811,7 +811,7 @@ export default function OrphanageApp() {
                   <div className="flex flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-pink-200/80 bg-white/70 py-10 text-center dark:border-pink-900/50 dark:bg-zinc-950/40">
                     <p className="text-sm text-zinc-600 dark:text-zinc-400">
                       {verifiedRows.length === 0
-                        ? 'No disputes in this log yet — approvals and Accounting decisions will appear here.'
+                        ? 'No issues in this log yet — approvals and Accounting decisions will appear here.'
                         : 'No rows match your search.'}
                     </p>
                   </div>
@@ -1147,7 +1147,7 @@ export default function OrphanageApp() {
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle className="text-sm">
-              {confirm?.action === 'deny' ? 'Deny orphanage dispute?' : 'Verify for Accounting?'}
+              {confirm?.action === 'deny' ? 'Deny orphanage issue?' : 'Verify for Accounting?'}
             </DialogTitle>
             <DialogDescription className="text-xs">
               {confirm && (
@@ -1369,7 +1369,7 @@ function OrphanageOverview({
           className="text-left transition-transform hover:-translate-y-0.5"
         >
           <OrphanStatTile
-            label="Dispute queue"
+            label="Issue queue"
             value={loading ? '…' : disputeQueueCount}
             hint={
               disputeQueueCount === 0
@@ -1443,7 +1443,7 @@ function OrphanageOverview({
                 Receipt log
               </div>
               <div className="truncate text-sm font-medium text-zinc-800 dark:text-zinc-200">
-                {verifiedCount} processed dispute{verifiedCount === 1 ? '' : 's'}
+                {verifiedCount} processed issue{verifiedCount === 1 ? '' : 's'}
               </div>
             </div>
           </div>

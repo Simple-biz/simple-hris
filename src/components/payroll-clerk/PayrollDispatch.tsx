@@ -533,8 +533,8 @@ export default function PayrollDispatch() {
       await setLocked(goingLocked);
       toast.success(
         goingLocked
-          ? 'Processing started — employee disputes are paused'
-          : 'Processing stopped — employees can dispute again',
+          ? 'Processing started — employee issues are paused'
+          : 'Processing stopped — employees can file issues again',
         { icon: goingLocked ? '🔒' : '🔓' },
       );
       // Close after success so the dialog gracefully animates out alongside
@@ -946,7 +946,7 @@ function ProcessingPill({ locked }: { locked: boolean }) {
           ? 'border-rose-200/80 bg-rose-50/80 text-rose-700 dark:border-rose-900/50 dark:bg-rose-950/30 dark:text-rose-300'
           : 'border-zinc-200/80 bg-zinc-50/80 text-zinc-600 dark:border-zinc-700 dark:bg-zinc-900/60 dark:text-zinc-300',
       )}
-      title={locked ? 'Disputes are paused for employees until you stop processing' : undefined}
+      title={locked ? 'Issues are paused for employees until you stop processing' : undefined}
     >
       {locked ? (
         <>
@@ -954,7 +954,7 @@ function ProcessingPill({ locked }: { locked: boolean }) {
             <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-rose-400 opacity-70" />
             <span className="relative inline-flex h-2 w-2 rounded-full bg-rose-500" />
           </span>
-          Processing · disputes paused
+          Processing · issues paused
         </>
       ) : (
         <>
@@ -1168,12 +1168,12 @@ function LockToggleConfirmDialog({
           <DialogDescription className="text-xs leading-relaxed">
             {isStarting ? (
               <>
-                Starts the dispatch run for this cycle. Employees&apos; <span className="font-medium">File a Dispute</span>{' '}
+                Starts the dispatch run for this cycle. Employees&apos; <span className="font-medium">File an Issue</span>{' '}
                 button will be disabled live across all dashboards while processing is active.
               </>
             ) : (
               <>
-                Ends processing for this cycle. Employees can file disputes again and the live banner will
+                Ends processing for this cycle. Employees can file issues again and the live banner will
                 clear from their dashboards.
               </>
             )}

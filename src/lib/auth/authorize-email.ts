@@ -3,7 +3,7 @@ import 'server-only';
 import { getServerSession } from 'next-auth/next';
 import { NextResponse } from 'next/server';
 import { authOptions } from './auth-options';
-import { hasElevatedRole } from './elevated-roles';
+import { hasElevatedRole, hasRateVisibility } from './elevated-roles';
 
 /**
  * Authorizes the current session to act on `requestedEmail`.
@@ -95,6 +95,53 @@ export async function requireElevatedSession(): Promise<AuthzResult> {
   const roles = user?.roles ?? [];
   const elevated = user?.elevated ?? hasElevatedRole(roles);
   if (!elevated) return { ok: false, status: 403, message: 'Forbidden' };
+  return {
+    ok: true,
+    sessionEmail,
+    effectiveEmail: sessionEmail,
+    elevated: true,
+    roles,
+  };
+}
+
+/**
+ * Resolve the current session's roles and whether it may see RAW pay rates,
+ * WITHOUT forcing a 401/403. For endpoints that return data to everyone but must
+ * project away the numeric rate columns for callers without rate visibility
+ * (HR, Managers, employees viewing a roster). Rate-bearing endpoints whose ENTIRE
+ * purpose is shipping figures should use {@link requireRateVisibilitySession}
+ * instead.
+ */
+export async function getSessionRateVisibility(): Promise<{
+  sessionEmail: string | null;
+  roles: string[];
+  rateVisible: boolean;
+}> {
+  const session = await getServerSession(authOptions);
+  const user = session?.user as
+    | { email?: string | null; roles?: string[] }
+    | undefined;
+  const sessionEmail = norm(user?.email) || null;
+  const roles = user?.roles ?? [];
+  return { sessionEmail, roles, rateVisible: hasRateVisibility(roles) };
+}
+
+/**
+ * Require that the current session has FULL rate visibility — i.e. holds one of
+ * {@link RATE_VISIBLE_ROLES} (`admin`, `accounting`, `ceo`). Stricter than
+ * {@link requireElevatedSession}, which also admits `hr_coordinator`. Use for
+ * endpoints whose response is raw pay-rate data (pay structures, rate history)
+ * so that HR/Manager clients are denied outright.
+ */
+export async function requireRateVisibilitySession(): Promise<AuthzResult> {
+  const session = await getServerSession(authOptions);
+  const user = session?.user as
+    | { email?: string | null; roles?: string[] }
+    | undefined;
+  const sessionEmail = norm(user?.email);
+  if (!sessionEmail) return { ok: false, status: 401, message: 'Not signed in' };
+  const roles = user?.roles ?? [];
+  if (!hasRateVisibility(roles)) return { ok: false, status: 403, message: 'Forbidden' };
   return {
     ok: true,
     sessionEmail,

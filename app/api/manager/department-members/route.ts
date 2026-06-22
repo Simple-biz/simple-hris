@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth/auth-options';
-import { hasElevatedRole } from '@/lib/auth/elevated-roles';
+import { hasElevatedRole, hasRateVisibility } from '@/lib/auth/elevated-roles';
 import { listDepartmentsForManager } from '@/lib/supabase/department-managers';
 import type { EmployeeRow } from '@/lib/supabase/employees';
 import { getEmployeesForAuthorizedServerRoute } from '@/lib/supabase/employees';
@@ -64,6 +64,11 @@ export async function GET() {
     }
 
     const elevated = hasElevatedRole(roles);
+    // Pay rates are Accounting/CEO only. Managers (the primary consumer of this
+    // My Team roster) must never receive a numeric rate over the wire — the UI
+    // doesn't render one. Attach rate figures only for full-rate-visibility
+    // sessions (admin/accounting/ceo); everyone else gets nulls.
+    const rateVisible = hasRateVisibility(roles);
 
     const { rows: assigns, error: dmErr } = await listDepartmentsForManager(sessionEmail);
     if (dmErr) {
@@ -115,10 +120,10 @@ export async function GET() {
       return {
         ...row,
         hsl_role: hit?.role ?? null,
-        hsl_hourly_rate: hit?.hourlyRate ?? null,
-        hsl_ot_rate: hit?.otRate ?? null,
-        regular_rate: toNumber(rateHit?.regular_rate),
-        ot_rate: toNumber(rateHit?.ot_rate),
+        hsl_hourly_rate: rateVisible ? (hit?.hourlyRate ?? null) : null,
+        hsl_ot_rate: rateVisible ? (hit?.otRate ?? null) : null,
+        regular_rate: rateVisible ? toNumber(rateHit?.regular_rate) : null,
+        ot_rate: rateVisible ? toNumber(rateHit?.ot_rate) : null,
         mesa_member: rateHit?.mesa_member ?? null,
       };
     };

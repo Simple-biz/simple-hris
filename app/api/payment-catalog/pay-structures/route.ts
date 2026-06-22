@@ -4,7 +4,7 @@ import {
   upsertPayStructure,
   deletePayStructure,
 } from '@/lib/supabase/pay-structures-db';
-import { deniedResponse } from '@/lib/auth/authorize-email';
+import { deniedResponse, requireRateVisibilitySession } from '@/lib/auth/authorize-email';
 import { requireFeatureEdit } from '@/lib/auth/authorize-feature';
 import { validatePayStructure, type PayStructure } from '@/lib/payment-catalog/pay-structure';
 import { insertRateHistoryRow } from '@/lib/payroll/rate-history';
@@ -124,6 +124,13 @@ async function syncRateHistory(s: PayStructure, actor: string, effectiveDateIso?
 }
 
 export async function GET() {
+  // Pay structures ARE the authoritative pay rates (regularRate/otRate per
+  // department/employee). Accounting/CEO only — the GET used to be ungated, so
+  // any authenticated user could read every structure's figures. Consumers are
+  // accounting surfaces (Payroll Wizard, Payment Catalog); the HR onboarding form
+  // only subscribes to realtime change events, it never GETs this list.
+  const authz = await requireRateVisibilitySession();
+  if (!authz.ok) return deniedResponse(authz);
   const { structures, error } = await listPayStructures();
   if (error) return NextResponse.json({ structures: [], error }, { status: 500 });
   return NextResponse.json({ structures, error: null });

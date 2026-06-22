@@ -236,7 +236,7 @@ export async function createDispute(params: {
 
   if (error) {
     if (error.code === '23505') {
-      return { id: null, error: 'A dispute already exists for this date' };
+      return { id: null, error: 'An issue already exists for this date' };
     }
     return { id: null, error: error.message };
   }
@@ -278,21 +278,21 @@ export async function decideDispute(
   const approver = params.decided_by.trim();
   const approverLower = approver.toLowerCase();
   if (!(await canActOnDisputes(approverLower))) {
-    return { error: 'Not authorized — only Accounting roles can decide disputes' };
+    return { error: 'Not authorized — only Accounting roles can decide issues' };
   }
 
   const { row, error: fetchErr } = await getDisputeById(id);
   if (fetchErr) return { error: fetchErr };
-  if (!row) return { error: 'Dispute not found' };
+  if (!row) return { error: 'Issue not found' };
   if (isOrphanageStyleReason(row.reason)) {
     if (row.status === 'pending_orphanage_manager') {
-      return { error: 'This dispute requires Orphanage Manager approval before Accounting can decide' };
+      return { error: 'This issue requires Orphanage Manager approval before Accounting can decide' };
     }
     if (row.status !== 'orphanage_manager_approved') {
-      return { error: 'Dispute is not awaiting Accounting review' };
+      return { error: 'Issue is not awaiting Accounting review' };
     }
   } else if (row.status !== 'pending') {
-    return { error: 'Dispute is no longer pending' };
+    return { error: 'Issue is no longer pending' };
   }
 
   const nowIso = new Date().toISOString();
@@ -352,18 +352,18 @@ export async function editDisputeDecision(
 
   const editorLower = params.decided_by.trim().toLowerCase();
   if (!(await canActOnDisputes(editorLower))) {
-    return { error: 'Not authorized — only Accounting roles can edit dispute decisions' };
+    return { error: 'Not authorized — only Accounting roles can edit issue decisions' };
   }
 
   const { row, error: fetchErr } = await getDisputeById(id);
   if (fetchErr) return { error: fetchErr };
-  if (!row) return { error: 'Dispute not found' };
+  if (!row) return { error: 'Issue not found' };
   if (
     row.status === 'pending' ||
     row.status === 'pending_orphanage_manager' ||
     row.status === 'orphanage_manager_approved'
   ) {
-    return { error: 'Use decide for disputes awaiting review' };
+    return { error: 'Use decide for issues awaiting review' };
   }
 
   const nowIso = new Date().toISOString();
@@ -439,16 +439,16 @@ export async function revokeDisputeDecision(
   const actor = params.revoked_by.trim();
   const actorLower = actor.toLowerCase();
   if (!(await canActOnDisputes(actorLower))) {
-    return { error: 'Not authorized — only Accounting roles can revoke dispute decisions' };
+    return { error: 'Not authorized — only Accounting roles can revoke issue decisions' };
   }
 
   const { row, error: fetchErr } = await getDisputeById(id);
   if (fetchErr) return { error: fetchErr };
-  if (!row) return { error: 'Dispute not found' };
+  if (!row) return { error: 'Issue not found' };
 
   const revokableStatuses: PabDisputeStatus[] = ['approved', 'accounting_approved'];
   if (!revokableStatuses.includes(row.status)) {
-    return { error: 'Only approved disputes can be revoked' };
+    return { error: 'Only approved issues can be revoked' };
   }
 
   // Orphanage disputes go back to awaiting Accounting review (manager already verified them).
@@ -506,15 +506,15 @@ export async function decideOrphanageManagerDispute(
   const manager = params.decided_by.trim();
   const managerLower = manager.toLowerCase();
   if (!(await canActOnOrphanageManagerQueue(managerLower))) {
-    return { error: 'Not authorized - only Orphanage Managers can verify orphanage disputes' };
+    return { error: 'Not authorized - only Orphanage Managers can verify orphanage issues' };
   }
 
   const { row, error: fetchErr } = await getDisputeById(id);
   if (fetchErr) return { error: fetchErr };
-  if (!row) return { error: 'Dispute not found' };
-  if (!isOrphanageStyleReason(row.reason)) return { error: 'Not an orphanage-style dispute' };
+  if (!row) return { error: 'Issue not found' };
+  if (!isOrphanageStyleReason(row.reason)) return { error: 'Not an orphanage-style issue' };
   if (row.status !== 'pending_orphanage_manager') {
-    return { error: 'Dispute is no longer pending Orphanage Manager review' };
+    return { error: 'Issue is no longer pending Orphanage Manager review' };
   }
 
   const nowIso = new Date().toISOString();
@@ -567,15 +567,15 @@ export async function returnOrphanageDisputeToManagerQueue(
   const actor = params.decided_by.trim();
   const actorLower = actor.toLowerCase();
   if (!(await canActOnDisputes(actorLower))) {
-    return { error: 'Not authorized — only Accounting roles can return orphanage disputes' };
+    return { error: 'Not authorized — only Accounting roles can return orphanage issues' };
   }
 
   const { row, error: fetchErr } = await getDisputeById(id);
   if (fetchErr) return { error: fetchErr };
-  if (!row) return { error: 'Dispute not found' };
-  if (!isOrphanageStyleReason(row.reason)) return { error: 'Not an orphanage-style dispute' };
+  if (!row) return { error: 'Issue not found' };
+  if (!isOrphanageStyleReason(row.reason)) return { error: 'Not an orphanage-style issue' };
   if (row.status !== 'orphanage_manager_approved') {
-    return { error: 'Dispute is not awaiting Accounting review' };
+    return { error: 'Issue is not awaiting Accounting review' };
   }
 
   const nowIso = new Date().toISOString();
@@ -841,12 +841,12 @@ export async function withdrawDispute(
 
   const { row, error: fetchErr } = await getDisputeById(id);
   if (fetchErr) return { error: fetchErr };
-  if (!row) return { error: 'Dispute not found' };
+  if (!row) return { error: 'Issue not found' };
 
   const em = normEmail(params.employee_email) ?? params.employee_email.trim().toLowerCase();
   if (normEmail(row.work_email) !== em) return { error: 'Forbidden' };
   if (row.status !== 'pending' && row.status !== 'pending_orphanage_manager') {
-    return { error: 'Only pending disputes can be withdrawn' };
+    return { error: 'Only pending issues can be withdrawn' };
   }
 
   const { error } = await supabase.from(TABLE).delete().eq('id', id);
@@ -889,7 +889,7 @@ export async function adminDeleteDispute(
 
   const { row, error: fetchErr } = await getDisputeById(id);
   if (fetchErr) return { error: fetchErr };
-  if (!row) return { error: 'Dispute not found' };
+  if (!row) return { error: 'Issue not found' };
 
   const { error } = await supabase.from(TABLE).delete().eq('id', id);
   if (error) return { error: error.message };

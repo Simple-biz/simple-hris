@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
-import { revertHrPendingEmployeeToReady } from "@/lib/supabase/hr-pending-employees";
+import {
+  redactPendingRowRates,
+  revertHrPendingEmployeeToReady,
+} from "@/lib/supabase/hr-pending-employees";
 import { deniedResponse } from "@/lib/auth/authorize-email";
+import { hasRateVisibility } from "@/lib/auth/elevated-roles";
 import { requireFeatureEdit } from "@/lib/auth/authorize-feature";
 
 export const dynamic = "force-dynamic";
@@ -32,5 +36,6 @@ export async function POST(
     const status = /only a promoted/i.test(error) ? 400 : 500;
     return NextResponse.json({ error }, { status });
   }
-  return NextResponse.json({ row });
+  // Never echo the staged hire's pay rate back to the HR client.
+  return NextResponse.json({ row: redactPendingRowRates(row, hasRateVisibility(authz.roles)) });
 }

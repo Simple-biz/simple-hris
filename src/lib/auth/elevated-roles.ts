@@ -24,3 +24,36 @@ export function isElevatedRole(role: string | null | undefined): boolean {
 export function hasElevatedRole(roles: readonly string[] | null | undefined): boolean {
   return !!roles && roles.some((r) => ELEVATED_SET.has(r));
 }
+
+/**
+ * Roles allowed to receive RAW PAY-RATE figures (regular/OT/hourly rates) over
+ * the wire — "full rate visibility". This is a STRICTER set than
+ * {@link ELEVATED_ROLES} on purpose:
+ *
+ *  - It EXCLUDES `hr_coordinator`. HR (and Managers, who are not elevated at all)
+ *    must never receive a numeric pay rate from any endpoint — rates are
+ *    Accounting/CEO only. HR confirms compensation through the Payment Catalog
+ *    and sees only a "ready/not set" status, never the figure.
+ *  - It INCLUDES `ceo` (which is absent from ELEVATED_ROLES) so CEO surfaces keep
+ *    full rate visibility alongside Accounting.
+ *
+ * Use this for endpoints whose response carries pay-rate numbers. Endpoints that
+ * return rates to accounting AND non-rate fields to others should branch on
+ * {@link hasRateVisibility} and project the rate columns away for everyone else.
+ *
+ * NOTE: a person who legitimately does Accounting work must hold the `accounting`
+ * role; holding only `hr_coordinator` no longer grants rate visibility.
+ */
+export const RATE_VISIBLE_ROLES = [
+  'admin',
+  'accounting',
+  'ceo',
+] as const;
+
+export type RateVisibleRole = (typeof RATE_VISIBLE_ROLES)[number];
+
+const RATE_VISIBLE_SET = new Set<string>(RATE_VISIBLE_ROLES);
+
+export function hasRateVisibility(roles: readonly string[] | null | undefined): boolean {
+  return !!roles && roles.some((r) => RATE_VISIBLE_SET.has(r));
+}

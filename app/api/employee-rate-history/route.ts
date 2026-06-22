@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createSupabaseServiceRoleClient, createSupabaseServerClient } from "@/lib/supabase/server";
 import { authorizeEmailAccess, deniedResponse } from "@/lib/auth/authorize-email";
+import { hasRateVisibility } from "@/lib/auth/elevated-roles";
 import { normEmail } from "@/lib/email/norm-email";
 
 export const dynamic = "force-dynamic";
@@ -23,6 +24,15 @@ export async function GET(req: NextRequest) {
 
   const authz = await authorizeEmailAccess(email);
   if (!authz.ok) return deniedResponse(authz);
+
+  // Pay rates are Accounting/CEO only. authorizeEmailAccess admits any elevated
+  // role (incl. hr_coordinator) for cross-user reads — restrict reading ANOTHER
+  // employee's rate history to full rate visibility. Self-view (own email) is
+  // always allowed, so employees keep their own per-day prorated pay.
+  const isSelf = authz.effectiveEmail.toLowerCase() === authz.sessionEmail.toLowerCase();
+  if (!isSelf && !hasRateVisibility(authz.roles)) {
+    return NextResponse.json({ rows: [], error: "Forbidden" }, { status: 403 });
+  }
 
   const target = normEmail(authz.effectiveEmail) ?? authz.effectiveEmail.toLowerCase();
 

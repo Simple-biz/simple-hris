@@ -2,7 +2,11 @@ import {
   getEmployeeHourlyRateRowByEmail,
   getEmployeeHourlyRatesRows,
 } from "@/lib/supabase/employee-hourly-rates";
-import { authorizeEmailAccess, deniedResponse } from "@/lib/auth/authorize-email";
+import {
+  authorizeEmailAccess,
+  deniedResponse,
+  getSessionRateVisibility,
+} from "@/lib/auth/authorize-email";
 import { NextRequest, NextResponse } from "next/server";
 import { listPayStructures } from "@/lib/supabase/pay-structures-db";
 import {
@@ -55,8 +59,18 @@ export async function GET(req: NextRequest) {
       }
       return NextResponse.json({ rows: outRow ? [outRow] : [], error });
     }
+    // Bulk (no ?email=): the whole rates table. Accounting (Payroll Wizard,
+    // Overview) needs the numeric rates; the payroll-clerk dispatch queue and
+    // HR (MESA enrollment) read only identity / mesa_member off these rows.
+    // SECURITY: pay rates are Accounting/CEO only — strip regular_rate/ot_rate
+    // for any caller without full rate visibility, keeping mesa_member, the
+    // dispatch fields and all identity columns intact.
+    const { rateVisible } = await getSessionRateVisibility();
     const { rows, error } = await getEmployeeHourlyRatesRows();
-    return NextResponse.json({ rows, error });
+    const safeRows = rateVisible
+      ? rows
+      : (rows ?? []).map((r) => ({ ...r, regular_rate: null, ot_rate: null }));
+    return NextResponse.json({ rows: safeRows, error });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     return NextResponse.json({ rows: [], error: msg });

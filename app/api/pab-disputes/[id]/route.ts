@@ -74,7 +74,7 @@ export async function PATCH(
         revoke_note: body.decision_note,
       });
       if (error) {
-        const code = error === 'Dispute not found'
+        const code = error === 'Issue not found'
           ? 404
           : error.includes('Not authorized')
             ? 403
@@ -90,8 +90,8 @@ export async function PATCH(
             recipient_email: disputeRow.work_email,
             type: 'dispute.revoked',
             tone: 'neutral',
-            title: 'Dispute Approval Revoked',
-            message: `The approval for your attendance dispute on ${disputeRow.dispute_date} has been revoked${body.decision_note ? `: "${body.decision_note}"` : '.'}`,
+            title: 'Issue Approval Revoked',
+            message: `The approval for your attendance issue on ${disputeRow.dispute_date} has been revoked${body.decision_note ? `: "${body.decision_note}"` : '.'}`,
             details: {
               dispute_date: disputeRow.dispute_date,
               reason: disputeRow.reason,
@@ -112,7 +112,7 @@ export async function PATCH(
         return_note: body.decision_note,
       });
       if (error) {
-        const code = error === 'Dispute not found'
+        const code = error === 'Issue not found'
           ? 404
           : error.includes('Not authorized')
             ? 403
@@ -134,7 +134,7 @@ export async function PATCH(
         decision_note: body.decision_note,
       });
       if (error) {
-        const code = error === 'Dispute not found'
+        const code = error === 'Issue not found'
           ? 404
           : error.includes('Not authorized')
             ? 403
@@ -160,7 +160,7 @@ export async function PATCH(
         override_hours: body.override_hours,
       });
       if (error) {
-        const code = error === 'Dispute not found' ? 404 : error.includes('pending') ? 400 : 500;
+        const code = error === 'Issue not found' ? 404 : error.includes('pending') ? 400 : 500;
         return NextResponse.json({ error }, { status: code });
       }
       return NextResponse.json({ success: true, error: null });
@@ -179,7 +179,7 @@ export async function PATCH(
     });
 
     if (error) {
-      const code = error === 'Dispute not found'
+      const code = error === 'Issue not found'
         ? 404
         : error.includes('Not authorized') || error.includes('already cast')
           ? 403
@@ -199,10 +199,10 @@ export async function PATCH(
           recipient_email: notifRow.work_email,
           type: isApproved ? 'dispute.approved' : 'dispute.denied',
           tone: isApproved ? 'positive' : 'neutral',
-          title: isApproved ? 'Dispute Approved' : 'Dispute Not Approved',
+          title: isApproved ? 'Issue Approved' : 'Issue Not Approved',
           message: isApproved
-            ? `Your attendance dispute for ${notifRow.dispute_date} was approved. This day now counts toward your PAB eligibility.`
-            : `Your attendance dispute for ${notifRow.dispute_date} was not approved${body.decision_note ? `: "${body.decision_note}"` : '.'}`,
+            ? `Your attendance issue for ${notifRow.dispute_date} was approved. This day now counts toward your PAB eligibility.`
+            : `Your attendance issue for ${notifRow.dispute_date} was not approved${body.decision_note ? `: "${body.decision_note}"` : '.'}`,
           details: {
             dispute_date: notifRow.dispute_date,
             reason: notifRow.reason,
@@ -268,7 +268,7 @@ export async function DELETE(
         actor_role: allowedRole,
       });
       if (error) {
-        const code = error === 'Dispute not found' ? 404 : 500;
+        const code = error === 'Issue not found' ? 404 : 500;
         return NextResponse.json({ error }, { status: code });
       }
       return NextResponse.json({ success: true, mode: 'admin', error: null });
@@ -286,7 +286,7 @@ export async function DELETE(
 
     const { error } = await withdrawDispute(id, { employee_email: authz.effectiveEmail });
     if (error) {
-      const code = error === 'Dispute not found' ? 404
+      const code = error === 'Issue not found' ? 404
         : error === 'Forbidden' ? 403
         : error.includes('pending') ? 400
         : 500;

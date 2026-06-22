@@ -259,7 +259,7 @@ const HR_MESSAGES: { heading: (name: string) => string; body: string }[] = [
   },
   {
     heading: (name) => `Welcome back, ${name} — people are the product. ✦`,
-    body: "Behind every dashboard, every payroll run, every dispute is a person you helped bring on board. Thank you for the work that makes the rest possible.",
+    body: "Behind every dashboard, every payroll run, every issue is a person you helped bring on board. Thank you for the work that makes the rest possible.",
   },
   {
     heading: (name) => `Hey ${name} — quietly making the company run. ✦`,

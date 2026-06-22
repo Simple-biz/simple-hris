@@ -1,9 +1,13 @@
 import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth/auth-options';
-import { hasElevatedRole } from '@/lib/auth/elevated-roles';
+import { hasElevatedRole, hasRateVisibility } from '@/lib/auth/elevated-roles';
 import { listDepartmentsForManager } from '@/lib/supabase/department-managers';
-import { listHrPendingEmployees, listManagerPendingHires } from '@/lib/supabase/hr-pending-employees';
+import {
+  listHrPendingEmployees,
+  listManagerPendingHires,
+  type HrPendingEmployeeRow,
+} from '@/lib/supabase/hr-pending-employees';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -30,13 +34,23 @@ export async function GET() {
     return NextResponse.json({ error: 'Manager or admin role required' }, { status: 403 });
   }
 
+  // Pay rates are Accounting/CEO only. Both managers (department branch) and HR
+  // (the elevated branch below) consume this Newly-Hired list but must never
+  // receive the staged hire's regular_rate/ot_rate — neither surface renders
+  // them. Strip the figures for any caller without full rate visibility.
+  const rateVisible = hasRateVisibility(roles);
+  const stripRates = (rows: HrPendingEmployeeRow[] | null | undefined): HrPendingEmployeeRow[] =>
+    rateVisible
+      ? (rows ?? [])
+      : (rows ?? []).map((r) => ({ ...r, regular_rate: null, ot_rate: null }));
+
   // Elevated viewers (HR / admin) bypass the department gate so they can audit
   // the same list. Keep the response shape identical to the scoped path.
   if (hasElevatedRole(roles)) {
     const { rows, error } = await listHrPendingEmployees();
     const actionable = rows.filter((r) => r.status === 'pending_work_email' || r.status === 'ready');
     return NextResponse.json(
-      { rows: actionable, scope: 'elevated', departments: [], error },
+      { rows: stripRates(actionable), scope: 'elevated', departments: [], error },
       { status: error ? 500 : 200 },
     );
   }
@@ -52,7 +66,7 @@ export async function GET() {
 
   const { rows, error } = await listManagerPendingHires(departments);
   return NextResponse.json(
-    { rows, scope: 'department', departments, error },
+    { rows: stripRates(rows), scope: 'department', departments, error },
     { status: error ? 500 : 200 },
   );
 }

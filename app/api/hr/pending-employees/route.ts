@@ -2,9 +2,11 @@ import { NextResponse } from "next/server";
 import {
   createHrPendingEmployee,
   listHrPendingEmployees,
+  redactPendingRowRates,
   type CreateHrPendingInput,
 } from "@/lib/supabase/hr-pending-employees";
 import { deniedResponse, requireElevatedSession } from "@/lib/auth/authorize-email";
+import { hasRateVisibility } from "@/lib/auth/elevated-roles";
 import { requireFeatureEdit } from "@/lib/auth/authorize-feature";
 
 export const dynamic = "force-dynamic";
@@ -16,7 +18,15 @@ export async function GET() {
   if (!authz.ok) return deniedResponse(authz);
   const { rows, error } = await listHrPendingEmployees();
   if (error) return NextResponse.json({ rows: [], error }, { status: 500 });
-  return NextResponse.json({ rows });
+  // SECURITY: a staged-hire row carries the catalog-resolved regular_rate/ot_rate.
+  // The HR onboarding UI (the only consumer) never renders them, and the gate
+  // here admits hr_coordinator — so strip the numeric figures for any caller
+  // without full rate visibility. Pay rates are Accounting/CEO only.
+  const rateVisible = hasRateVisibility(authz.roles);
+  const safeRows = rateVisible
+    ? rows
+    : (rows ?? []).map((r) => ({ ...r, regular_rate: null, ot_rate: null }));
+  return NextResponse.json({ rows: safeRows });
 }
 
 /** POST — Add Person form submission. */
@@ -57,5 +67,6 @@ export async function POST(req: Request) {
     created_by: authz.sessionEmail,
   });
   if (error) return NextResponse.json({ error }, { status: 500 });
-  return NextResponse.json({ row });
+  // Never echo the staged hire's pay rate back to the HR client.
+  return NextResponse.json({ row: redactPendingRowRates(row, hasRateVisibility(authz.roles)) });
 }

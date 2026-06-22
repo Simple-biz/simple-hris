@@ -145,6 +145,23 @@ export type HrPendingEmployeeRow = {
   country?: string | null;
 };
 
+/**
+ * SECURITY: a staged-hire row carries the catalog-resolved `regular_rate`/
+ * `ot_rate`. Those figures are needed server-side (the Hubstaff onboarding
+ * webhook rejects a 0 rate), but pay rates are Accounting/CEO only — they must
+ * never reach an HR or Manager client. Call this at every route boundary that
+ * returns a pending row to the browser, passing whether the caller has full rate
+ * visibility (admin/accounting/ceo via `hasRateVisibility`). Returns the row
+ * untouched for rate-visible callers; nulls the two figures otherwise.
+ */
+export function redactPendingRowRates(
+  row: HrPendingEmployeeRow | null,
+  rateVisible: boolean,
+): HrPendingEmployeeRow | null {
+  if (!row || rateVisible) return row;
+  return { ...row, regular_rate: null, ot_rate: null };
+}
+
 export type CreateHrPendingInput = {
   name: string;
   personal_email: string;

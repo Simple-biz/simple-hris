@@ -6,8 +6,9 @@ import { NextResponse } from "next/server";
 import {
   authorizeEmailAccess,
   deniedResponse,
-  requireElevatedSession,
+  requireRateVisibilitySession,
 } from "@/lib/auth/authorize-email";
+import { hasRateVisibility } from "@/lib/auth/elevated-roles";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -18,14 +19,24 @@ export async function GET(req: Request) {
     const emailQuery = url.searchParams.get("email")?.trim() ?? "";
     const idQuery = url.searchParams.get("id")?.trim() ?? "";
 
-    // Scoping rules:
-    //  - `?email=` present → self-or-elevated for that email.
-    //  - `?id=` present (opaque profile id, not tied to the session) or no query at all
-    //    (returns the full profile list) → elevated-only.
+    // Scoping rules (pay rates are Accounting/CEO only):
+    //  - `?email=` present → self-or-rate-visible: the person themselves, or a
+    //    full-rate-visibility session (admin/accounting/ceo) reading anyone.
+    //  - `?id=` present (opaque profile id) or no query (full profile list) →
+    //    full rate visibility only.
+    // NOTE: this used to admit any elevated role (incl. hr_coordinator); HR no
+    // longer receives rate figures from this endpoint.
     const authz = emailQuery
       ? await authorizeEmailAccess(emailQuery)
-      : await requireElevatedSession();
+      : await requireRateVisibilitySession();
     if (!authz.ok) return deniedResponse(authz);
+
+    if (emailQuery) {
+      const isSelf = authz.effectiveEmail.toLowerCase() === authz.sessionEmail.toLowerCase();
+      if (!isSelf && !hasRateVisibility(authz.roles)) {
+        return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+      }
+    }
 
     // ── Fast path: single-email lookup. Avoids the multi-second
     //    paginated load + full-org merge that the bulk path runs.

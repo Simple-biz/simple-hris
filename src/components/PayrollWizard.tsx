@@ -385,6 +385,11 @@ function buildFullCols(allCols: string[]): { key: string; label: string }[] {
  */
 function normalizeNameTokens(name: string): string {
   const tokens = name
+    // Fold "fancy" Unicode (math-italic/bold, full-width, etc.) to plain ASCII
+    // BEFORE lowercasing — otherwise a hire whose name was saved as styled
+    // glyphs (e.g. 𝐾𝑎𝑡ℎ𝑒𝑟𝑖𝑛𝑒) never token-matches a Hubstaff/master row and
+    // silently drops out of the payroll run.
+    .normalize('NFKC')
     .toLowerCase()
     .replace(/["'()]/g, '')
     .replace(/,/g, ' ')
@@ -5098,8 +5103,8 @@ export default function PayrollWizard({
       if (goingLocked) broadcastLockAcquired(currentStep);
       toast.success(
         goingLocked
-          ? 'Processing started — employee disputes are paused'
-          : 'Processing stopped — employees can dispute again',
+          ? 'Processing started — employee issues are paused'
+          : 'Processing stopped — employees can file issues again',
         { icon: goingLocked ? '🔒' : '🔓' },
       );
       setConfirmingLockToggle(false);
@@ -5769,7 +5774,7 @@ export default function PayrollWizard({
                         </span>
                         <div>
                           <p className="text-sm font-semibold text-rose-700 dark:text-rose-300">Processing active</p>
-                          <p className="text-xs text-rose-600/80 dark:text-rose-400/70">Employee disputes are paused</p>
+                          <p className="text-xs text-rose-600/80 dark:text-rose-400/70">Employee issues are paused</p>
                         </div>
                       </>
                     ) : (
@@ -5777,7 +5782,7 @@ export default function PayrollWizard({
                         <span className="flex h-2.5 w-2.5 rounded-full bg-zinc-300 dark:bg-zinc-600" />
                         <div>
                           <p className="text-sm font-semibold text-zinc-700 dark:text-zinc-300">Not processing</p>
-                          <p className="text-xs text-zinc-500 dark:text-zinc-500">Start to lock disputes and begin payroll</p>
+                          <p className="text-xs text-zinc-500 dark:text-zinc-500">Start to lock issues and begin payroll</p>
                         </div>
                       </>
                     )}
@@ -5825,8 +5830,8 @@ export default function PayrollWizard({
                       <DialogTitle>{lockState.locked ? 'Stop processing?' : 'Start processing?'}</DialogTitle>
                       <DialogDescription>
                         {lockState.locked
-                          ? 'This will unlock employee disputes. Employees will be able to file disputes again.'
-                          : 'This will lock employee disputes and signal that payroll is being processed. Employees will not be able to file disputes until you stop.'}
+                          ? 'This will unlock employee issues. Employees will be able to file issues again.'
+                          : 'This will lock employee issues and signal that payroll is being processed. Employees will not be able to file issues until you stop.'}
                       </DialogDescription>
                     </DialogHeader>
                     <div className="flex justify-end gap-2 pt-2">
@@ -8108,7 +8113,7 @@ export default function PayrollWizard({
                             {approvedCount}
                           </span>
                         )}
-                        <span className="text-[11px] font-semibold text-amber-800 dark:text-amber-300">Attendance Disputes</span>
+                        <span className="text-[11px] font-semibold text-amber-800 dark:text-amber-300">Attendance Issues</span>
                       </div>
                       <div className="divide-y divide-amber-100 dark:divide-amber-900/30">
                         {deptDisputes.map((r) => {
@@ -13315,7 +13320,7 @@ export default function PayrollWizard({
           const handleRevokeDay = async (iso: string) => {
             if (pabRevokeLoadingIso || !pabCalendarModalEmail) return;
             const disputeId = approvedDisputeIds.get(normModalEmail)?.get(iso);
-            if (!disputeId) { setPabRevokeError('Dispute ID not found — refresh and try again.'); return; }
+            if (!disputeId) { setPabRevokeError('Issue ID not found — refresh and try again.'); return; }
             setPabRevokeLoadingIso(iso);
             setPabRevokeError(null);
             try {
@@ -13364,7 +13369,7 @@ export default function PayrollWizard({
                 }),
               });
               const createData = await createRes.json();
-              if (!createRes.ok || !createData.id) throw new Error(createData.error ?? 'Failed to create dispute');
+              if (!createRes.ok || !createData.id) throw new Error(createData.error ?? 'Failed to create issue');
               // For days with < 4h raw hours the 4h floor inside disputeForgiven would reject a null
               // override, so we set a 5h credit to ensure the amber "forgiven" state activates.
               const overrideHours = rawSeconds < 4 * 3600 ? 5 : null;
@@ -13378,7 +13383,7 @@ export default function PayrollWizard({
                 }),
               });
               const approveData = await approveRes.json();
-              if (!approveRes.ok) throw new Error(approveData.error ?? 'Failed to approve dispute');
+              if (!approveRes.ok) throw new Error(approveData.error ?? 'Failed to approve issue');
               const em = pabCalendarModalEmail.trim().toLowerCase();
               setApprovedDisputeDates(prev => {
                 const next = new Map(prev);
@@ -13634,7 +13639,7 @@ export default function PayrollWizard({
                                             cell.holidayName
                                               ? ` · ${cell.holidayName} (US holiday)`
                                               : data.forgivenByDispute
-                                                ? ' · ★ forgiven by dispute'
+                                                ? ' · ★ forgiven by issue'
                                                 : state === 'overnight'
                                                   ? ' · → overnight shift (combined with next day)'
                                                   : state === 'reconciled'
@@ -13806,9 +13811,9 @@ export default function PayrollWizard({
                                     ? 'HSL rule: every Mon–Sun week needs ≥ 5 of 7 days at ≥ 7h. Sat and Sun each count independently toward the quota. Overnight shifts (hours split across midnight) are combined for the threshold check.'
                                     : 'No week has failed the 5-of-7 rule yet — verdict locks when the period ends.'
                                 : paStatus === 'eligible'
-                                  ? `Logged ≥ 7h on every Mon–Fri in the PAB period${forgivenDays > 0 ? ` (${forgivenDays} day${forgivenDays === 1 ? '' : 's'} forgiven by dispute)` : ''}.`
+                                  ? `Logged ≥ 7h on every Mon–Fri in the PAB period${forgivenDays > 0 ? ` (${forgivenDays} day${forgivenDays === 1 ? '' : 's'} forgiven by issue)` : ''}.`
                                   : paStatus === 'ineligible'
-                                    ? 'Every Mon–Fri in the PAB period must reach 7 h of logged time (or be forgiven via an approved dispute).'
+                                    ? 'Every Mon–Fri in the PAB period must reach 7 h of logged time (or be forgiven via an approved issue).'
                                     : 'No past weekdays failed yet — verdict locks once the period ends or the first sub-7h weekday is logged.'}
                             </div>
                           </div>
@@ -13978,7 +13983,7 @@ export default function PayrollWizard({
                                           className="mt-1 overflow-hidden rounded-md border border-red-300/60 bg-red-50/90 p-2.5 dark:border-red-700/40 dark:bg-red-950/30"
                                         >
                                           <div className="mb-2 text-[10px] text-red-800 dark:text-red-300">
-                                            Revoke forgiveness for <span className="font-semibold">{f.date ? f.date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }) : f.iso}</span>. The day will return to failed and the dispute will be marked revoked.
+                                            Revoke forgiveness for <span className="font-semibold">{f.date ? f.date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }) : f.iso}</span>. The day will return to failed and the issue will be marked revoked.
                                           </div>
                                           <div className="flex gap-1.5">
                                             <button

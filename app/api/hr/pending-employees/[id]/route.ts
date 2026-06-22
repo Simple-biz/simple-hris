@@ -3,11 +3,13 @@ import {
   cancelHrPendingEmployee,
   deleteHrPendingEmployee,
   getHrPendingEmployeeById,
+  redactPendingRowRates,
   updateHrPendingEmployee,
   type UpdateHrPendingInput,
 } from "@/lib/supabase/hr-pending-employees";
 import { archiveHrOnboardingSubmission } from "@/lib/supabase/hr-onboarding-submissions";
 import { deniedResponse } from "@/lib/auth/authorize-email";
+import { hasRateVisibility } from "@/lib/auth/elevated-roles";
 import { requireFeatureEdit } from "@/lib/auth/authorize-feature";
 import { splitFullName, gmailSurnameFromWorkEmail } from "@/lib/hr/work-email";
 import { createWorkspaceAccount } from "@/lib/hr/workspace-account";
@@ -93,7 +95,11 @@ export async function PATCH(
     }
   }
 
-  return NextResponse.json({ row, workspace });
+  // Never echo the staged hire's pay rate back to the HR client.
+  return NextResponse.json({
+    row: redactPendingRowRates(row, hasRateVisibility(authz.roles)),
+    workspace,
+  });
 }
 
 /**

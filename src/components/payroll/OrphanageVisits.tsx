@@ -291,7 +291,7 @@ export default function OrphanageVisits({ sessionEmail }: { sessionEmail?: strin
               Orphanage Visits
             </h2>
             <p className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">
-              Manager-submitted disputes (Orphanage Visit, CEO Visitation) awaiting Accounting approval. Each forgiven day is exactly the dates the manager listed — no automatic day-after extension.
+              Manager-submitted issues (Orphanage Visit, CEO Visitation) awaiting Accounting approval. Each forgiven day is exactly the dates the manager listed — no automatic day-after extension.
             </p>
           </div>
         </div>
@@ -302,7 +302,7 @@ export default function OrphanageVisits({ sessionEmail }: { sessionEmail?: strin
             className="bg-rose-600 text-white hover:bg-rose-700"
           >
             <Plus className="mr-1.5 h-3.5 w-3.5" />
-            Create disputes
+            Create issues
           </Button>
           <Button
             variant="outline"

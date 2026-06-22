@@ -59,7 +59,7 @@ const navItems = [
   { id: 'payroll-wizard', label: 'Payroll Wizard', icon: Wand2 },
   { id: 'bonus-catalog', label: 'Payment Catalog', icon: Wallet },
   { id: 'payment-dispatch', label: 'Payment Dispatch', icon: Send },
-  { id: 'disputes', label: 'Disputes', icon: AlertCircle },
+  { id: 'disputes', label: 'Issues', icon: AlertCircle },
   { id: 'mesa', label: 'MESA', icon: HeartHandshake },
   { id: 'announcements', label: 'Announcements', icon: Megaphone },
   { id: 'notifications', label: 'Notifications', icon: Bell },

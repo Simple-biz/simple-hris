@@ -895,8 +895,8 @@ function SimpleView({
             tone={pendingDisputes && pendingDisputes > 0 ? 'warn' : 'ok'}
             tag={disputeTag}
             value={pendingDisputes ?? 0}
-            unit={pendingDisputes === 1 ? 'dispute pending' : 'disputes pending'}
-            sub="Approve or deny short-day disputes"
+            unit={pendingDisputes === 1 ? 'issue pending' : 'issues pending'}
+            sub="Approve or deny short-day issues"
             cta="Review queue"
             onClick={onNavigate ? () => onNavigate('disputes') : undefined}
           />
@@ -3441,7 +3441,7 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
         <KpiTile
           label="Pending actions"
           value={String(totalPendingActions)}
-          sub={`${pendingDisputes ?? 0} disputes · ${pendingLeaves ?? 0} leaves`}
+          sub={`${pendingDisputes ?? 0} issues · ${pendingLeaves ?? 0} leaves`}
           tone={totalPendingActions > 0 ? 'warn' : 'normal'}
           icon={<AlertCircle className="h-3.5 w-3.5" />}
         />
@@ -4070,7 +4070,7 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
                             {name}
                           </div>
                           <div className="mt-0.5 truncate text-[11px] text-zinc-500 dark:text-zinc-400">
-                            Dispute · {row.dispute_date}
+                            Issue · {row.dispute_date}
                             {ageDays != null && (
                               <span className="ml-1.5 text-zinc-400">· {ageDays}d ago</span>
                             )}
@@ -4102,7 +4102,7 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
                       onClick={() => onNavigate?.('disputes')}
                       className="flex w-full items-center justify-center gap-1 rounded-md px-2 py-1.5 text-[11px] font-medium text-zinc-500 transition-colors hover:bg-zinc-50 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800/60 dark:hover:text-zinc-100"
                     >
-                      +{pendingDisputeRows.length - 6} more disputes
+                      +{pendingDisputeRows.length - 6} more issues
                       <ArrowRight className="h-3 w-3" />
                     </button>
                   )}

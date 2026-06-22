@@ -117,13 +117,13 @@ export default function EmployeeApp() {
       if (current) {
         toast.error('Payroll processing started', {
           icon: <Lock className="h-4 w-4 text-rose-500" />,
-          description: 'Disputes are temporarily paused while accounting runs payroll.',
+          description: 'Issues are temporarily paused while accounting runs payroll.',
           duration: 6000,
         });
       } else {
         toast.success('Payroll processing finished', {
           icon: <Unlock className="h-4 w-4 text-emerald-500" />,
-          description: 'You can file new disputes again.',
+          description: 'You can file new issues again.',
           duration: 5000,
         });
       }

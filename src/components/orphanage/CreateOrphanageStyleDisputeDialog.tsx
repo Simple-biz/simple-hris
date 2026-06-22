@@ -474,7 +474,7 @@ export default function CreateOrphanageStyleDisputeDialog({
         if (skippedCount > 0) desc.push(`${skippedCount} skipped (already on file)`);
         if (errorCount > 0) desc.push(`${errorCount} failed`);
         toast.success(
-          `${createdCount} ${createdCount === 1 ? 'dispute' : 'disputes'} sent to Accounting`,
+          `${createdCount} ${createdCount === 1 ? 'issue' : 'issues'} sent to Accounting`,
           desc.length > 0 ? { description: desc.join(' · ') } : undefined,
         );
         onSubmitSuccess?.();
@@ -482,7 +482,7 @@ export default function CreateOrphanageStyleDisputeDialog({
       } else if (skippedCount > 0 && errorCount === 0 && !topError) {
         toast.warning(`${skippedCount} already on file — nothing new to create`);
       } else {
-        toast.error(topError ?? 'No disputes created');
+        toast.error(topError ?? 'No issues created');
       }
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Network error');
@@ -495,7 +495,7 @@ export default function CreateOrphanageStyleDisputeDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[92vh] w-[95vw] max-w-[1200px] overflow-y-auto sm:!max-w-[1200px]">
         <DialogHeader>
-          <DialogTitle>Create disputes</DialogTitle>
+          <DialogTitle>Create issues</DialogTitle>
           <DialogDescription>
             Pick the people involved, then click the days they should be forgiven. Each row goes to
             Accounting for final approval. Hours stay as logged — the day flips green only after Accounting
@@ -657,10 +657,10 @@ export default function CreateOrphanageStyleDisputeDialog({
                 <span className="flex items-center gap-1 text-[10px] text-zinc-400">
                   <Loader2 className="h-3 w-3 animate-spin" />
                   {hubstaffLoading && disputesLoading
-                    ? 'loading hours + disputes…'
+                    ? 'loading hours + issues…'
                     : hubstaffLoading
                       ? 'loading hours…'
-                      : 'loading disputes…'}
+                      : 'loading issues…'}
                 </span>
               ) : null}
             </div>
@@ -878,7 +878,7 @@ export default function CreateOrphanageStyleDisputeDialog({
             ) : (
               <CheckCircle2 className="mr-1.5 h-3.5 w-3.5" />
             )}
-            Submit ({totalDisputes} {totalDisputes === 1 ? 'dispute' : 'disputes'})
+            Submit ({totalDisputes} {totalDisputes === 1 ? 'issue' : 'issues'})
           </Button>
         </DialogFooter>
       </DialogContent>

@@ -208,10 +208,10 @@ export default function PabDisputeQueue() {
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error ?? 'Failed');
-      toast.success('Dispute approved');
+      toast.success('Issue approved');
       fetchDisputes();
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Failed to approve dispute');
+      toast.error(e instanceof Error ? e.message : 'Failed to approve issue');
     } finally {
       setApprovingId(null);
     }
@@ -304,11 +304,11 @@ export default function PabDisputeQueue() {
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error ?? 'Failed');
-      toast.success('Dispute updated');
+      toast.success('Issue updated');
       setEditDialog(null);
       fetchDisputes();
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Failed to update dispute');
+      toast.error(e instanceof Error ? e.message : 'Failed to update issue');
     } finally {
       setEditing(false);
     }
@@ -331,7 +331,7 @@ export default function PabDisputeQueue() {
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error ?? 'Failed');
-      toast.success('PAB forgiveness revoked — dispute marked denied');
+      toast.success('PAB forgiveness revoked — issue marked denied');
       setRevokeForgivenessOpen(false);
       setEditDialog(null);
       fetchDisputes();
@@ -372,14 +372,14 @@ export default function PabDisputeQueue() {
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error ?? 'Failed');
-      toast.success(decideDialog.action === 'approve' ? 'Dispute approved' : 'Dispute denied');
+      toast.success(decideDialog.action === 'approve' ? 'Issue approved' : 'Issue denied');
       setDecideDialog(null);
       setDecisionNote('');
       setOverrideHrs('');
       setOverrideMins('');
       fetchDisputes();
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Failed to process dispute');
+      toast.error(e instanceof Error ? e.message : 'Failed to process issue');
     } finally {
       setDeciding(false);
     }
@@ -405,7 +405,7 @@ export default function PabDisputeQueue() {
       setReturnNote('');
       fetchDisputes();
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Failed to return dispute');
+      toast.error(e instanceof Error ? e.message : 'Failed to return issue');
     } finally {
       setReturning(false);
     }
@@ -420,11 +420,11 @@ export default function PabDisputeQueue() {
       });
       const json = (await res.json()) as { error?: string };
       if (!res.ok || json.error) throw new Error(json.error ?? 'Failed');
-      toast.success('Dispute deleted');
+      toast.success('Issue deleted');
       setDeleteTarget(null);
       fetchDisputes();
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Failed to delete dispute');
+      toast.error(e instanceof Error ? e.message : 'Failed to delete issue');
     } finally {
       setDeleting(false);
     }
@@ -439,10 +439,10 @@ export default function PabDisputeQueue() {
           </div>
           <div className="min-w-0">
             <h2 className="text-xl font-bold tracking-tight text-zinc-900 sm:text-2xl dark:text-white">
-              Disputes
+              Issues
             </h2>
             <p className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">
-              Approval queue for short-day disputes. Any Accounting user can approve or deny.
+              Approval queue for short-day issues. Any Accounting user can approve or deny.
             </p>
           </div>
         </div>
@@ -467,7 +467,7 @@ export default function PabDisputeQueue() {
           </>
         ) : (
           <>
-            You can review disputes but not act on them. Approve, Deny, Return, and Edit require accounting,
+            You can review issues but not act on them. Approve, Deny, Return, and Edit require accounting,
             hr_coordinator, or admin in employee_roles.
           </>
         )}
@@ -539,13 +539,13 @@ export default function PabDisputeQueue() {
       {/* Table */}
       {loading ? (
         <div className="flex flex-1 items-center justify-center gap-2 py-8 text-sm text-zinc-500">
-          <Loader2 className="h-4 w-4 animate-spin" /> Loading disputes...
+          <Loader2 className="h-4 w-4 animate-spin" /> Loading issues...
         </div>
       ) : filtered.length === 0 ? (
         <div className="flex flex-1 flex-col items-center justify-center gap-2 py-12 text-center">
           <AlertCircle className="h-8 w-8 text-zinc-300 dark:text-zinc-700" />
           <p className="text-sm text-zinc-500">
-            {disputes.length === 0 ? 'No disputes filed yet.' : 'No disputes match your filters.'}
+            {disputes.length === 0 ? 'No issues filed yet.' : 'No issues match your filters.'}
           </p>
         </div>
       ) : (
@@ -681,7 +681,7 @@ export default function PabDisputeQueue() {
                               size="sm"
                               variant="outline"
                               disabled
-                              title="Dispute must be approved before it can be revoked"
+                              title="Issue must be approved before it can be revoked"
                               className="h-7 border-zinc-200 px-2 text-[11px] text-zinc-400 opacity-50 dark:border-zinc-700 dark:text-zinc-600"
                             >
                               Revoke
@@ -704,7 +704,7 @@ export default function PabDisputeQueue() {
                               size="sm"
                               variant="outline"
                               disabled={!canDelete}
-                              title={!canDelete ? 'Requires admin or accounting' : 'Revoke this dispute'}
+                              title={!canDelete ? 'Requires admin or accounting' : 'Revoke this issue'}
                               className="h-7 border-rose-300 px-2 text-[11px] text-rose-700 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-rose-700 dark:text-rose-400"
                               onClick={() => setDeleteTarget(d)}
                             >
@@ -717,7 +717,7 @@ export default function PabDisputeQueue() {
                           <Button
                             size="sm"
                             variant="outline"
-                            title="Permanently delete this dispute (admin / accounting only)"
+                            title="Permanently delete this issue (admin / accounting only)"
                             className="h-7 w-7 border-zinc-200 p-0 text-rose-500 hover:border-rose-300 hover:bg-rose-50 hover:text-rose-600 dark:border-zinc-700 dark:text-rose-400 dark:hover:border-rose-800 dark:hover:bg-rose-950/40"
                             onClick={() => setDeleteTarget(d)}
                           >
@@ -740,13 +740,13 @@ export default function PabDisputeQueue() {
           <DialogContent className="max-w-sm">
             <DialogHeader>
               <DialogTitle className="text-sm">
-                {decideDialog.action === 'deny' ? 'Deny dispute' : 'Approve dispute'}
+                {decideDialog.action === 'deny' ? 'Deny issue' : 'Approve issue'}
               </DialogTitle>
               <DialogDescription className="text-xs">
                 {decideDialog.dispute.work_email} — {decideDialog.dispute.dispute_date} — {reasonLabel(decideDialog.dispute.reason)}
                 {isOrphanageStyleReason(decideDialog.dispute.reason) && decideDialog.action === 'approve' && (
                   <span className="mt-1 block text-[10px] text-zinc-500">
-                    Manager-submitted disputes keep Hubstaff hours — no manual hour entry. Final calendar forgiveness applies after Accounting approves.
+                    Manager-submitted issues keep Hubstaff hours — no manual hour entry. Final calendar forgiveness applies after Accounting approves.
                   </span>
                 )}
               </DialogDescription>
@@ -830,7 +830,7 @@ export default function PabDisputeQueue() {
         >
           <DialogContent className="max-w-sm">
             <DialogHeader>
-              <DialogTitle className="text-sm">Edit dispute decision</DialogTitle>
+              <DialogTitle className="text-sm">Edit issue decision</DialogTitle>
               <DialogDescription className="text-xs">
                 {editDialog.work_email} — {editDialog.dispute_date} — {reasonLabel(editDialog.reason)}
               </DialogDescription>
@@ -839,8 +839,8 @@ export default function PabDisputeQueue() {
               {disputeGrantsPabForgiveness(editDialog) && (
                 <div className="space-y-2 rounded-md border border-amber-200/90 bg-amber-50/80 px-3 py-2.5 dark:border-amber-900/60 dark:bg-amber-950/25">
                   <p className="text-[11px] leading-snug text-amber-950 dark:text-amber-100/95">
-                    This dispute currently <span className="font-semibold">forgives the PAB short-day</span> for this date.
-                    Revoking removes that forgiveness and marks the dispute <span className="font-medium">denied</span>.
+                    This issue currently <span className="font-semibold">forgives the PAB short-day</span> for this date.
+                    Revoking removes that forgiveness and marks the issue <span className="font-medium">denied</span>.
                   </p>
                   <Button
                     type="button"
@@ -971,7 +971,7 @@ export default function PabDisputeQueue() {
               })()}
               {editStatus === 'approved' && isOrphanageStyleReason(editDialog.reason) && (
                 <p className="rounded-md border border-zinc-200 bg-zinc-50/80 px-2.5 py-2 text-[10px] text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900/40 dark:text-zinc-400">
-                  Manager-submitted disputes ({reasonLabel(editDialog.reason)}) do not use hour overrides — PAB uses logged Hubstaff time, the day flips green on Accounting approval.
+                  Manager-submitted issues ({reasonLabel(editDialog.reason)}) do not use hour overrides — PAB uses logged Hubstaff time, the day flips green on Accounting approval.
                 </p>
               )}
               <div className="space-y-1.5">
@@ -1015,7 +1015,7 @@ export default function PabDisputeQueue() {
               <DialogTitle className="text-sm">Revoke PAB forgiveness?</DialogTitle>
               <DialogDescription className="text-xs">
                 {editDialog.work_email} — {editDialog.dispute_date}. The employee’s calendar will no longer treat this day
-                as forgiven; the dispute will be recorded as <span className="font-medium">denied</span>.
+                as forgiven; the issue will be recorded as <span className="font-medium">denied</span>.
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-1.5">
@@ -1060,7 +1060,7 @@ export default function PabDisputeQueue() {
             <DialogHeader>
               <DialogTitle className="text-sm">Return to Orphanage queue?</DialogTitle>
               <DialogDescription className="text-xs">
-                {returnToOrphanageRow.work_email} — {returnToOrphanageRow.dispute_date}. The dispute goes back to
+                {returnToOrphanageRow.work_email} — {returnToOrphanageRow.dispute_date}. The issue goes back to
                 Orphanage Manager review (not final denied). Use when documentation needs another pass.
               </DialogDescription>
             </DialogHeader>
@@ -1110,7 +1110,7 @@ export default function PabDisputeQueue() {
                   <Trash2 className="size-4 text-rose-600 dark:text-rose-400" />
                 </div>
                 <div className="min-w-0">
-                  <DialogTitle className="text-sm">Delete dispute</DialogTitle>
+                  <DialogTitle className="text-sm">Delete issue</DialogTitle>
                   <DialogDescription className="mt-0.5 text-xs">
                     This permanently removes the record. Cannot be undone.
                   </DialogDescription>
@@ -1138,7 +1138,7 @@ export default function PabDisputeQueue() {
               </p>
               {deleteTarget.decided_by && (
                 <p className="rounded-md border border-amber-200/60 bg-amber-50/70 px-2.5 py-1.5 text-[11.5px] leading-snug text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-200">
-                  This dispute was already decided by{' '}
+                  This issue was already decided by{' '}
                   <span className="font-medium">{deleteTarget.decided_by}</span>. Deleting it removes the audit trail
                   on the row itself; the deletion is logged separately as <code className="font-mono">pab_dispute.admin_deleted</code>.
                 </p>

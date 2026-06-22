@@ -202,15 +202,16 @@ function periodLabel(dept: DeptConfig, start: string): string {
   return new Date(y!, m! - 1, 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
 }
 
-// Canonical HSL roster row from `hsl_team_members` table
+// Canonical HSL roster row from `hsl_team_members` table.
+// NOTE: hourly_rate/ot_rate are intentionally NOT part of this shape — the
+// /api/hsl-bonus/team-members endpoint no longer ships pay rates to the client
+// (Accounting/CEO only) and the calculator never used them.
 interface HslMember {
   email: string;
   full_name: string | null;
   hsl_name: string | null;
   is_manager: boolean;
   sub_team: SubTeamName | null;
-  hourly_rate: number | null;
-  ot_rate: number | null;
 }
 
 // ── Props ─────────────────────────────────────────────────────────────────────

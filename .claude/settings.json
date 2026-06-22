@@ -79,7 +79,14 @@
       "Bash(grep -rl \"type in \\(\" references/sql)",
       "Bash(grep -rln \"employee_notifications\" references/sql)",
       "Bash(find references *)",
-      "Bash(echo \"---EXIT: $?---\")"
+      "Bash(echo \"---EXIT: $?---\")",
+      "PowerShell(git -C \"c:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris\" diff --stat)",
+      "PowerShell(npx tsc --noEmit 2>&1 | Select-Object -Last 40; \"EXIT: $LASTEXITCODE\")",
+      "Bash(git -C \"c:/Users/Itachi/Desktop/simple-hris\" diff --stat)",
+      "Bash(git -C \"c:/Users/Itachi/Desktop/simple-hris\" diff)",
+      "Bash(git -C \"c:/Users/Itachi/Desktop/simple-hris\" status --short)",
+      "Bash(git -C \"c:/Users/Itachi/Desktop/simple-hris\" log --oneline -3)",
+      "Bash(echo \"TSC EXIT: $?\")"
     ],
     "additionalDirectories": [
       "\\tmp"
