@@ -49,6 +49,13 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   const authz = await requireElevatedSession();
   if (!authz.ok) return deniedResponse(authz);
+  // Writing the feature-permission overlay is an ADMIN action: it grants/hides
+  // dashboard tabs and force-logs-out the target. requireElevatedSession also
+  // admits accounting/hr_coordinator, who must not be able to self-grant access
+  // or yank other users' sessions — mirror the admin gate on /api/employee-roles.
+  if (!authz.roles?.includes('admin')) {
+    return NextResponse.json({ error: 'Admin role required' }, { status: 403 });
+  }
 
   let body: { email?: string; view?: string; feature?: string; access?: string } = {};
   try { body = await req.json(); } catch { /* fall through */ }

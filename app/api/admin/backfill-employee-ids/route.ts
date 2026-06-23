@@ -16,7 +16,7 @@
  */
 
 import { NextResponse } from 'next/server';
-import { requireElevatedSession, deniedResponse } from '@/lib/auth/authorize-email';
+import { requireAdminSession, deniedResponse } from '@/lib/auth/authorize-email';
 import { createSupabaseServiceRoleClient } from '@/lib/supabase/server';
 import { backfillEmployeeIds } from '@/lib/supabase/backfill-employee-ids';
 
@@ -24,7 +24,8 @@ export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
 export async function POST() {
-  const authz = await requireElevatedSession();
+  // Admin-only (mutates persisted employee IDs); also gated at the edge.
+  const authz = await requireAdminSession();
   if (!authz.ok) return deniedResponse(authz);
 
   const supabase = createSupabaseServiceRoleClient();

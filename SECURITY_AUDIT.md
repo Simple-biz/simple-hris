@@ -347,3 +347,48 @@ export async function POST(req: NextRequest) {
 ---
 
 *Report generated: 2026-05-31 | 9 audit agents | 151 raw findings | 720 tool uses*
+
+---
+
+## Remediation Log
+
+### 2026-06-23 — Missing server-side route authorization on privileged dashboards
+
+**Severity:** Critical (Auth/AuthZ — Broken Access Control).
+**Reported:** a roleless employee (`alessandrob@simple.biz`) opened `/admin`
+directly by URL.
+
+**Root cause:** the edge gate (`proxy.ts`) only *authenticated* page requests; it
+never *authorized* by role, so any signed-in `@simple.biz` user could load any
+dashboard shell (`/admin`, `/accounting`, …). The admin page is a client component
+with no gate of its own. This is distinct from finding #25 (which is the
+*client-side* `setAuthChecked(true)` bug); this was the missing *server-side* gate.
+
+**Fix:** centralized, server-side, role-based route authorization.
+- `src/lib/auth/route-access.ts` — pure, unit-tested `evaluateRouteAccess()` +
+  `ROUTE_REQUIRED_ROLES` (single source of truth for route → role).
+- `proxy.ts` — delegates the access decision to it; `/api/admin/*` now 403s
+  non-admins at the edge (defense in depth on top of handler `requireAdminSession()`).
+- `app/admin/layout.tsx` + `src/lib/auth/require-page-roles.ts` — server guard so
+  the admin shell can't render for a non-admin even if the proxy matcher changes.
+- `src/lib/auth/route-access.test.ts` — 44 tests (`npm run test:authz`).
+
+Verified at runtime: a minted roleless session on `/admin`, `/admin/users`,
+`/admin?tab=roles` → 307 to `/employee`; admin → 200; roleless `/api/admin/*` →
+403; accounting still reaches `/accounting`. (`npm run test:authz` = 44 unit tests.)
+
+**Follow-up hardening (same day, from adversarial review):**
+- `DELETE /api/employee-roles` (role revoke) now calls `bumpForceLogoutFor()`
+  **server-side** (self-revoke skipped). Previously session invalidation depended
+  on a best-effort client `fetch` — a revoked admin could keep cookie-level access
+  until the throttled 60s refresh or JWT expiry. (Relates to finding #34.)
+- `POST /api/employee-feature-permissions` is now **admin-only** (was
+  `requireElevatedSession`, which admits accounting/hr_coordinator — they could
+  self-grant dashboard tabs and force-logout other users).
+- `/api/admin/{workspace-license-config,backfill-employee-ids,data-tables-status}`
+  in-handler gates aligned to `requireAdminSession` (data-tables-status previously
+  had **no** in-handler auth — relied solely on the edge). Resolves finding #23.
+- Server guard layout (Layer 2) extended from `/admin` to **all seven** privileged
+  dashboards, sourced from `requiredRolesFor()` so it can't drift from the map.
+
+Full writeup: `docs/features/route-authorization.md`.

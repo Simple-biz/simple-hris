@@ -4,7 +4,7 @@ import { normEmail } from '@/lib/email/norm-email';
 import { getEmployeesForAuthorizedServerRoute } from '@/lib/supabase/employees';
 import { getEmployeeIds } from '@/lib/supabase/employee-ids';
 import { createSupabaseServiceRoleClient, createSupabaseServerClient } from '@/lib/supabase/server';
-import { buildFxRates, type FxRates } from '@/lib/fx/currency-fx';
+import { buildFxRates, phpPerUnit, type FxRates } from '@/lib/fx/currency-fx';
 import { listPayStructures } from '@/lib/supabase/pay-structures-db';
 import {
   buildCatalogRateIndex,
@@ -46,6 +46,19 @@ export interface PeopleRosterRow {
   hours: PeopleHours;
   processor: string | null;
   hasBanking: boolean;
+}
+
+/** Week-level KPI rollups for the People tab cards (scoped to the resolved week). */
+export interface PeopleSummary {
+  /** Active employees with any overtime (>40h) this week. */
+  otEmployees: number;
+  /** Total overtime hours across everyone this week. */
+  otHours: number;
+  /** Estimated OT payout this week, PHP-equivalent (regular+OT engine parity not
+   *  applied — this is OT hours × resolved OT rate, summed). */
+  otPayoutPhp: number;
+  /** Same payout converted to USD at the current FX rate (null if FX missing). */
+  otPayoutUsd: number | null;
 }
 
 function parseRate(v: string | number | null | undefined): number | null {
@@ -135,14 +148,20 @@ interface HoursContext {
   payWeekNonHsl: { start: Date; end: Date } | null;
 }
 
-async function loadHoursContext(): Promise<HoursContext> {
+async function loadHoursContext(requestedSourceFile?: string | null): Promise<HoursContext> {
   let sourceFile: string | null = null;
-  try {
-    const uploads = await listHubstaffUploads();
-    const current = uploads.find((u) => u.is_current) ?? uploads[0];
-    sourceFile = current?.source_file ?? null;
-  } catch {
-    sourceFile = null;
+  const requested = (requestedSourceFile ?? '').trim();
+  if (requested) {
+    // Explicit week chosen via the CSV period selector.
+    sourceFile = requested;
+  } else {
+    try {
+      const uploads = await listHubstaffUploads();
+      const current = uploads.find((u) => u.is_current) ?? uploads[0];
+      sourceFile = current?.source_file ?? null;
+    } catch {
+      sourceFile = null;
+    }
   }
   if (!sourceFile) return { sourceFile: null, byEmail: new Map(), payWeekHsl: null, payWeekNonHsl: null };
 
@@ -167,18 +186,21 @@ async function loadHoursContext(): Promise<HoursContext> {
  * The full People roster: one row per active employee with rate, hours-this-week,
  * overtime projection, preferred processor, and a has-banking flag.
  */
-export async function buildPeopleRoster(): Promise<{
+const EMPTY_SUMMARY: PeopleSummary = { otEmployees: 0, otHours: 0, otPayoutPhp: 0, otPayoutUsd: 0 };
+
+export async function buildPeopleRoster(sourceFile?: string | null): Promise<{
   rows: PeopleRosterRow[];
   sourceFile: string | null;
+  summary: PeopleSummary;
   error: string | null;
 }> {
   const [{ employees, error }, rateCtx, hoursCtx, idsRes] = await Promise.all([
     getEmployeesForAuthorizedServerRoute(),
     loadPeopleRateContext(),
-    loadHoursContext(),
+    loadHoursContext(sourceFile),
     getEmployeeIds(),
   ]);
-  if (error) return { rows: [], sourceFile: null, error };
+  if (error) return { rows: [], sourceFile: null, summary: EMPTY_SUMMARY, error };
 
   // employee_ids → processor + has-banking, keyed by every known email.
   const idByEmail = new Map<string, { processor: string | null; hasBanking: boolean }>();
@@ -257,5 +279,27 @@ export async function buildPeopleRoster(): Promise<{
   // Stable, scannable order: by name.
   rows.sort((a, b) => (a.name ?? '').localeCompare(b.name ?? ''));
 
-  return { rows, sourceFile: hoursCtx.sourceFile, error: null };
+  // Week-level OT KPIs. Payout = OT hours × the resolved OT rate (converted to
+  // PHP-equivalent), summed — an estimate that mirrors the per-row rate display.
+  let otEmployees = 0;
+  let otHours = 0;
+  let otPayoutPhp = 0;
+  for (const r of rows) {
+    if (r.hours.ot > 0) {
+      otEmployees += 1;
+      otHours += r.hours.ot;
+      if (r.rate.ot != null) {
+        otPayoutPhp += r.hours.ot * r.rate.ot * phpPerUnit(r.rate.currency, rateCtx.fx);
+      }
+    }
+  }
+  const fxRate = rateCtx.fx.usdToPhp;
+  const summary: PeopleSummary = {
+    otEmployees,
+    otHours: Math.round(otHours * 10) / 10,
+    otPayoutPhp: Math.round(otPayoutPhp * 100) / 100,
+    otPayoutUsd: fxRate > 0 ? Math.round((otPayoutPhp / fxRate) * 100) / 100 : null,
+  };
+
+  return { rows, sourceFile: hoursCtx.sourceFile, summary, error: null };
 }

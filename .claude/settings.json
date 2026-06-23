@@ -94,7 +94,15 @@
       "Bash(git mv *)",
       "PowerShell($c = Get-NetTCPConnection -LocalPort 3000 -State Listen -ErrorAction SilentlyContinue; if \\($c\\) { $c.OwningProcess | Select-Object -Unique | ForEach-Object { Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue }; Start-Sleep -Milliseconds 600 }; if \\(Get-NetTCPConnection -LocalPort 3000 -State Listen -ErrorAction SilentlyContinue\\) { \"still in use\" } else { \"port 3000 free\" })",
       "PowerShell($c = Get-NetTCPConnection -LocalPort 3000 -State Listen -ErrorAction SilentlyContinue; if \\($c\\) { $c.OwningProcess | Select-Object -Unique | ForEach-Object { Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue }; Start-Sleep -Milliseconds 600 }; if \\(Test-Path \"c:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris\\\\.next\"\\) { Remove-Item -Recurse -Force \"c:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris\\\\.next\"; \"cleared .next\" } else { \"no .next\" }; if \\(Get-NetTCPConnection -LocalPort 3000 -State Listen -ErrorAction SilentlyContinue\\) { \"port still in use\" } else { \"port 3000 free\" })",
-      "PowerShell($c = Get-NetTCPConnection -LocalPort 3000 -State Listen -ErrorAction SilentlyContinue; if \\($c\\) { $c.OwningProcess | Select-Object -Unique | ForEach-Object { Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue }; Start-Sleep -Milliseconds 600 }; if \\(Get-NetTCPConnection -LocalPort 3000 -State Listen -ErrorAction SilentlyContinue\\) { \"port 3000 STILL in use\" } else { \"port 3000 free\" })"
+      "PowerShell($c = Get-NetTCPConnection -LocalPort 3000 -State Listen -ErrorAction SilentlyContinue; if \\($c\\) { $c.OwningProcess | Select-Object -Unique | ForEach-Object { Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue }; Start-Sleep -Milliseconds 600 }; if \\(Get-NetTCPConnection -LocalPort 3000 -State Listen -ErrorAction SilentlyContinue\\) { \"port 3000 STILL in use\" } else { \"port 3000 free\" })",
+      "Bash(echo \"---- exit: $? ----\")",
+      "Bash(ls -la proxy.ts middleware.ts)",
+      "Bash(ls next.config.*)",
+      "Bash(xargs -I{} dirname {})",
+      "Bash(head -60 app/page.tsx)",
+      "Bash(head -60 app/auth-callback/page.tsx)",
+      "Bash(xargs -n1 basename)",
+      "Bash(npx node *)"
     ],
     "additionalDirectories": [
       "\\tmp"

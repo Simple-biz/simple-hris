@@ -21,6 +21,7 @@
 
 import { getToken } from 'next-auth/jwt';
 import { NextResponse, type NextRequest } from 'next/server';
+import { evaluateRouteAccess } from '@/lib/auth/route-access';
 
 // ---------------------------------------------------------------------------
 // In-memory sliding-window rate limiter for public onboarding routes.
@@ -198,49 +199,29 @@ export async function proxy(req: NextRequest) {
     }
   }
 
-  // Contractors are not permitted to access the employee dashboard.
-  // If someone with the contractor role (and no other roles) navigates to /employee,
-  // redirect them to /contractor.
-  if (!pathname.startsWith('/api/')) {
-    const tokenRoles = ((token as { roles?: string[] }).roles ?? []) as string[];
-    const isContractorOnly =
-      tokenRoles.length > 0 && tokenRoles.every((r) => r === 'contractor');
-    const isEmployeePath = pathname === '/employee' || pathname.startsWith('/employee/');
-    if (isContractorOnly && isEmployeePath) {
-      const contractorUrl = req.nextUrl.clone();
-      contractorUrl.pathname = '/contractor';
-      return NextResponse.redirect(contractorUrl);
-    }
+  // -------------------------------------------------------------------------
+  // AUTHORIZATION. Authentication + force-logout are settled above; the access
+  // *decision* is delegated to the pure, unit-tested evaluateRouteAccess() in
+  // src/lib/auth/route-access.ts (the single source of truth for which role may
+  // open which route). We only translate its decision into a NextResponse here.
+  // -------------------------------------------------------------------------
+  const decision = evaluateRouteAccess({
+    pathname,
+    roles: ((token as { roles?: string[] }).roles ?? []) as string[],
+    sessionEmail: (token.email ?? '').toString().trim().toLowerCase(),
+    elevated: Boolean((token as { elevated?: boolean }).elevated),
+    requestedEmail: req.nextUrl.searchParams.get('email'),
+  });
+
+  if (decision.action === 'forbid') {
+    return NextResponse.json({ error: 'Forbidden — admin only' }, { status: 403 });
   }
-
-  // Prevent users from loading another employee's dashboard by hand-editing the `?email=`
-  // query param.
-  //
-  // Personal dashboards (/manager, /employee) are always scoped to the session owner —
-  // even elevated users (admin / payroll / finance / HR) are redirected back to their own
-  // copy. Those roles have dedicated elevated dashboards for cross-employee visibility.
-  //
-  // On other page routes elevated users are allowed through so they can legitimately view
-  // other employees' data (e.g. payroll-clerk, accounting, orphanage review queues).
-  //
-  // Scope: only page routes — `/api/*` already enforces ownership server-side.
-  if (!pathname.startsWith('/api/')) {
-    const rawEmailParam = req.nextUrl.searchParams.get('email');
-    const sessionEmail = (token.email ?? '').toString().trim().toLowerCase();
-    const requested = (rawEmailParam ?? '').trim().toLowerCase();
-    const elevated = Boolean((token as { elevated?: boolean }).elevated);
-
-    // /manager and /employee are strictly personal — no cross-email access regardless of role.
-    const PERSONAL_ROUTES = ['/manager', '/employee', '/ceo'];
-    const isPersonalRoute = PERSONAL_ROUTES.some(
-      (r) => pathname === r || pathname.startsWith(`${r}/`),
-    );
-
-    if (sessionEmail && requested && requested !== sessionEmail && (!elevated || isPersonalRoute)) {
-      const scoped = req.nextUrl.clone();
-      scoped.searchParams.set('email', sessionEmail);
-      return NextResponse.redirect(scoped);
-    }
+  if (decision.action === 'redirect') {
+    const url = req.nextUrl.clone();
+    url.pathname = decision.pathname;
+    if (decision.clearSearch) url.search = '';
+    if (decision.setEmail) url.searchParams.set('email', decision.setEmail);
+    return NextResponse.redirect(url);
   }
 
   return NextResponse.next();

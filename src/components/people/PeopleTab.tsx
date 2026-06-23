@@ -82,6 +82,12 @@ interface HistoryRow {
   paid_amount_usd: number | null;
   paid_at: string | null;
 }
+interface Summary {
+  otEmployees: number;
+  otHours: number;
+  otPayoutPhp: number;
+  otPayoutUsd: number | null;
+}
 
 function fmtMoney(amount: number | null | undefined, currency: Currency = 'PHP'): string {
   if (amount == null) return '—';
@@ -133,6 +139,13 @@ function formatPeriodRange(startIso: string | null | undefined, endIso: string |
   return `${mLong(s)} ${s.getDate()} - ${mLong(e)} ${e.getDate()}, ${s.getFullYear()}`;
 }
 
+/** A Hubstaff upload filename → friendly week label for the period selector. */
+function labelForSourceFile(file: string): string {
+  const m = file.match(/(\d{4}-\d{2}-\d{2}).*?(\d{4}-\d{2}-\d{2})/);
+  if (m) return formatPeriodRange(m[1], m[2]);
+  return file.replace(/\.csv$/i, '');
+}
+
 interface Accent {
   ring: string;
   chipBg: string;
@@ -182,41 +195,78 @@ export default function PeopleTab({
   const [transferFor, setTransferFor] = useState<RosterRow | null>(null);
   const [deptFilter, setDeptFilter] = useState<string>('all');
   const [page, setPage] = useState(1);
-  const PAGE_SIZE = 10;
+  const PAGE_SIZE = 15;
+  const [summary, setSummary] = useState<Summary | null>(null);
+  const [periods, setPeriods] = useState<{ file: string; label: string }[]>([]);
+  const [period, setPeriod] = useState('');
+  const periodRef = useRef('');
+  const defaultFileRef = useRef('');
 
-  const load = useMemo(
-    () => async (quiet: boolean) => {
-      if (!quiet) setLoading(true);
-      try {
-        const res = await fetch('/api/people', { cache: 'no-store' });
-        const json = (await res.json()) as { rows?: RosterRow[]; error?: string };
-        if (!res.ok) throw new Error(json.error || `Request failed (${res.status})`);
-        const next = json.rows ?? [];
-        setRows(next);
-        setTabCache(TAB_CACHE_KEYS.peopleRoster, next);
-        setError(json.error ?? null);
-      } catch (e) {
-        setError(e instanceof Error ? e.message : String(e));
-      } finally {
-        setLoading(false);
-      }
-    },
-    [],
-  );
+  // Fetch the roster for a given week (`src` = Hubstaff source_file; '' = current).
+  const loadFor = useCallback(async (src: string, quiet: boolean) => {
+    if (!quiet) setLoading(true);
+    try {
+      const url = src ? `/api/people?source_file=${encodeURIComponent(src)}` : '/api/people';
+      const res = await fetch(url, { cache: 'no-store' });
+      const json = (await res.json()) as {
+        rows?: RosterRow[]; sourceFile?: string; summary?: Summary; error?: string;
+      };
+      if (!res.ok) throw new Error(json.error || `Request failed (${res.status})`);
+      const next = json.rows ?? [];
+      setRows(next);
+      setSummary(json.summary ?? null);
+      setError(json.error ?? null);
+      // Cache only the current/default week so the next mount paints it instantly.
+      if (!src || src === defaultFileRef.current) setTabCache(TAB_CACHE_KEYS.peopleRoster, next);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
-  // Manual refresh — pulls fresh hours/rates/payroll in place (no skeleton flash)
-  // so a change made in the Payroll Wizard shows up here without a full reload.
+  const onPeriodChange = (v: string) => {
+    setPeriod(v);
+    periodRef.current = v;
+    void loadFor(v, false);
+  };
+
+  // Manual refresh — re-pull the SELECTED week in place (no skeleton flash) so a
+  // change made in the Payroll Wizard shows up here without a full reload.
   const refresh = async () => {
     setRefreshing(true);
     try {
-      await load(true);
+      await loadFor(periodRef.current, true);
     } finally {
       setRefreshing(false);
     }
   };
 
+  // On mount: populate the CSV period selector and load the current week.
   useEffect(() => {
-    void load(rows.length > 0);
+    let alive = true;
+    (async () => {
+      let defaultFile = '';
+      try {
+        const r = await fetch('/api/hubstaff-hours?source_files=1', { cache: 'no-store' });
+        const j = (await r.json()) as {
+          files?: string[];
+          uploads?: { source_file: string | null; is_current: boolean }[];
+        };
+        const ups = j.uploads ?? [];
+        const files = (j.files ?? ups.map((u) => u.source_file ?? '')).filter(Boolean) as string[];
+        defaultFile = ups.find((u) => u.is_current)?.source_file ?? files[0] ?? '';
+        if (alive) setPeriods(files.map((f) => ({ file: f, label: labelForSourceFile(f) })));
+      } catch {
+        /* selector stays empty; the roster still loads the current week below */
+      }
+      if (!alive) return;
+      defaultFileRef.current = defaultFile;
+      setPeriod(defaultFile);
+      periodRef.current = defaultFile;
+      void loadFor(defaultFile, rows.length > 0);
+    })();
+    return () => { alive = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -231,15 +281,18 @@ export default function PeopleTab({
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return rows.filter((r) => {
-      if (deptFilter !== 'all' && (r.department ?? '').trim() !== deptFilter) return false;
-      if (!q) return true;
-      const name = (r.name ?? '').toLowerCase();
-      const email = (r.work_email ?? '').toLowerCase();
-      const dept = (r.department ?? '').toLowerCase();
-      const id = (r.employee_id ?? '').toLowerCase();
-      return name.includes(q) || email.includes(q) || dept.includes(q) || id.includes(q);
-    });
+    return rows
+      .filter((r) => {
+        if (deptFilter !== 'all' && (r.department ?? '').trim() !== deptFilter) return false;
+        if (!q) return true;
+        const name = (r.name ?? '').toLowerCase();
+        const email = (r.work_email ?? '').toLowerCase();
+        const dept = (r.department ?? '').toLowerCase();
+        const id = (r.employee_id ?? '').toLowerCase();
+        return name.includes(q) || email.includes(q) || dept.includes(q) || id.includes(q);
+      })
+      // Always present names A→Z (case-insensitive), regardless of API order.
+      .sort((a, b) => (a.name ?? '').localeCompare(b.name ?? '', undefined, { sensitivity: 'base' }));
   }, [rows, query, deptFilter]);
 
   // Reset to page 1 whenever the filters change so results never land on an
@@ -320,6 +373,20 @@ export default function PeopleTab({
               ...departments.map((d) => ({ value: d, label: d })),
             ]}
           />
+          {/* CSV period selector — scopes hours / OT / KPIs to a chosen week. */}
+          <SmoothSelect
+            value={period}
+            onChange={onPeriodChange}
+            aria-label="Pay week"
+            className="w-full shrink-0 sm:w-56"
+            options={
+              periods.length
+                ? periods.map((p) => ({ value: p.file, label: p.label }))
+                : period
+                  ? [{ value: period, label: labelForSourceFile(period) }]
+                  : [{ value: '', label: 'Current week' }]
+            }
+          />
         </div>
       </div>
 
@@ -329,6 +396,35 @@ export default function PeopleTab({
             {error}
           </div>
         )}
+
+        {/* Week KPI cards — overtime headcount + estimated OT payout for the
+            selected week (USD primary, PHP small). */}
+        <div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-950">
+            <div className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-zinc-400">
+              <AlertTriangle className="h-3.5 w-3.5 text-amber-500" /> Employees with overtime
+            </div>
+            <div className="mt-1 flex items-baseline gap-2">
+              <span className="text-2xl font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">
+                {summary?.otEmployees ?? 0}
+              </span>
+              <span className="text-[12px] text-zinc-400">
+                of {rows.length} · {fmtHours(summary?.otHours ?? 0)} OT
+              </span>
+            </div>
+          </div>
+          <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-950">
+            <div className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-zinc-400">
+              <Banknote className="h-3.5 w-3.5 text-emerald-500" /> OT payout this week
+            </div>
+            <div className="mt-1 flex items-baseline gap-2">
+              <span className="text-2xl font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">
+                {fmtMoney(summary?.otPayoutUsd ?? 0, 'USD')}
+              </span>
+              <span className="text-[12px] tabular-nums text-zinc-400">{fmtMoney(summary?.otPayoutPhp ?? 0, 'PHP')}</span>
+            </div>
+          </div>
+        </div>
 
         {loading && rows.length === 0 ? (
           <RosterSkeleton />
@@ -469,7 +565,7 @@ export default function PeopleTab({
           onClose={() => setTransferFor(null)}
           onDone={() => {
             setTransferFor(null);
-            void load(true);
+            void loadFor(periodRef.current, true);
           }}
         />
       )}

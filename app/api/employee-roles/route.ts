@@ -6,6 +6,7 @@ import {
   deniedResponse,
   requireElevatedSession,
 } from '@/lib/auth/authorize-email';
+import { bumpForceLogoutFor } from '@/lib/auth/force-logout';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -247,6 +248,19 @@ export async function DELETE(request: Request) {
 
     // Tear down the dashboard's per-tab permissions so the access is fully gone.
     await deprovisionDashboardTabs(supabase, email, role);
+
+    // Invalidate the target's live session server-side. The proxy authorizes off
+    // the roles baked into the JWT cookie (getToken only DECODES it — it never
+    // re-reads the DB), so without this a revoked role lingers in an active
+    // cookie until the throttled 60s jwt-callback refresh (which may not run on a
+    // purely client-fetching dashboard) — up to JWT expiry. The Admin UI also
+    // fires a best-effort force-logout, but authoritative invalidation must not
+    // depend on a fire-and-forget browser request (closed tab / network blip /
+    // script / direct API call). Skip a self-revoke so an admin removing their
+    // own role isn't logged out mid-request.
+    if ((authz.sessionEmail ?? '').trim().toLowerCase() !== email) {
+      void bumpForceLogoutFor(email);
+    }
 
     const actor2 = await getSessionActor();
     void insertAuditLog({

@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createSupabaseServiceRoleClient } from '@/lib/supabase/server';
-import { requireElevatedSession } from '@/lib/auth/authorize-email';
+import { requireAdminSession } from '@/lib/auth/authorize-email';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -20,7 +20,10 @@ export const runtime = 'nodejs';
  * otherwise). Gated to elevated (admin only) sessions.
  */
 export async function POST(req: Request) {
-  const authz = await requireElevatedSession();
+  // Admin-only: the /api/admin/* namespace is admin-gated at the edge (proxy.ts);
+  // this in-handler check makes the proxy true defense-in-depth rather than the
+  // sole control, and matches the route's documented intent.
+  const authz = await requireAdminSession();
   if (!authz.ok) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 403 });
   }

@@ -9,7 +9,9 @@
     "build": "next build",
     "start": "next start --port 3000",
     "clean": "rm -rf .next",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "test": "node --import tsx --test \"src/**/*.test.ts\"",
+    "test:authz": "node --import tsx --test src/lib/auth/route-access.test.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.105.0",
