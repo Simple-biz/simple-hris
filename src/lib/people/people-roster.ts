@@ -303,3 +303,122 @@ export async function buildPeopleRoster(sourceFile?: string | null): Promise<{
 
   return { rows, sourceFile: hoursCtx.sourceFile, summary, error: null };
 }
+
+/** A single employee's OT for a week (for the hover "top renderers" list). */
+export interface PeopleStatsTopOt {
+  name: string | null;
+  otHours: number;
+  otPayoutUsd: number | null;
+}
+
+/** One week's point in the Statistics line graph. */
+export interface PeopleStatsPoint {
+  sourceFile: string;
+  weekStart: string;
+  weekEnd: string;
+  otEmployees: number;
+  otHours: number;
+  otPayoutPhp: number;
+  otPayoutUsd: number | null;
+  /** Top 5 OT renderers this week, most OT hours first. */
+  topOt: PeopleStatsTopOt[];
+}
+
+/**
+ * Weekly progression for the Statistics tab: OT payout + headcount-on-OT across
+ * the recent canonical payroll weeks (the same weeks the CSV period selector
+ * lists). Rate context is loaded once and the CURRENT resolved OT rate is used
+ * for every week (matching the roster's "current rate" model), so only each
+ * week's hours are fetched. Backfills / time-activity / duplicate uploads are
+ * excluded so the trend line uses one point per real week.
+ */
+export async function buildPeopleStats(maxWeeks = 16): Promise<{
+  points: PeopleStatsPoint[];
+  error: string | null;
+}> {
+  const [{ employees, error }, rateCtx] = await Promise.all([
+    getEmployeesForAuthorizedServerRoute(),
+    loadPeopleRateContext(),
+  ]);
+  if (error) return { points: [], error };
+
+  // email → OT rate (PHP-equivalent), resolved once for all weeks.
+  const otRateByEmail = new Map<string, number>();
+  for (const e of employees) {
+    const aliases = [e.work_email, e.personal_email, e.alternate_work_email, e.alternate_work_email_2]
+      .map((a) => normEmail(a ?? ''))
+      .filter(Boolean) as string[];
+    const rate = resolvePeopleRate(rateCtx, aliases, e.department ?? null);
+    const otPhp = rate.ot != null ? rate.ot * phpPerUnit(rate.currency, rateCtx.fx) : 0;
+    for (const em of aliases) if (!otRateByEmail.has(em)) otRateByEmail.set(em, otPhp);
+  }
+
+  // Canonical weekly uploads only, chronological, deduped by date range.
+  let uploads: Awaited<ReturnType<typeof listHubstaffUploads>> = [];
+  try {
+    uploads = await listHubstaffUploads();
+  } catch {
+    uploads = [];
+  }
+  const weeks: { file: string; start: Date; end: Date }[] = [];
+  const seenRange = new Set<string>();
+  for (const u of uploads) {
+    const file = (u.source_file ?? '').trim();
+    if (!file || /backfill|time-activity|\(\d+\)|copy/i.test(file)) continue;
+    const range = parseDateRangeFromFilename(file);
+    if (!range) continue;
+    const days = Math.round((range.end.getTime() - range.start.getTime()) / 86_400_000) + 1;
+    if (days < 6 || days > 8) continue;
+    const key = `${isoOf(range.start)}_${isoOf(range.end)}`;
+    if (seenRange.has(key)) continue;
+    seenRange.add(key);
+    weeks.push({ file, start: range.start, end: range.end });
+  }
+  weeks.sort((a, b) => a.start.getTime() - b.start.getTime());
+  const recent = weeks.slice(-maxWeeks);
+
+  const fxRate = rateCtx.fx.usdToPhp;
+  const points = await Promise.all(
+    recent.map(async (w) => {
+      let otEmployees = 0;
+      let otHours = 0;
+      let otPayoutPhp = 0;
+      const perPerson: { name: string | null; otHours: number; payoutPhp: number }[] = [];
+      try {
+        const { rows } = await fetchHubstaffRowsBySourceFile(w.file);
+        for (const pr of rowsToPayrollRows(rows)) {
+          const ot = pr.overtimeDecimal;
+          if (ot > 0) {
+            otEmployees += 1;
+            otHours += ot;
+            const payoutPhp = ot * (otRateByEmail.get(normEmail(pr.email ?? '') ?? '') ?? 0);
+            otPayoutPhp += payoutPhp;
+            perPerson.push({ name: pr.name ?? null, otHours: ot, payoutPhp });
+          }
+        }
+      } catch {
+        /* skip this week's data */
+      }
+      const topOt = perPerson
+        .sort((a, b) => b.otHours - a.otHours)
+        .slice(0, 5)
+        .map((p) => ({
+          name: p.name,
+          otHours: Math.round(p.otHours * 10) / 10,
+          otPayoutUsd: fxRate > 0 ? Math.round((p.payoutPhp / fxRate) * 100) / 100 : null,
+        }));
+      return {
+        sourceFile: w.file,
+        weekStart: isoOf(w.start) ?? '',
+        weekEnd: isoOf(w.end) ?? '',
+        otEmployees,
+        otHours: Math.round(otHours * 10) / 10,
+        otPayoutPhp: Math.round(otPayoutPhp * 100) / 100,
+        otPayoutUsd: fxRate > 0 ? Math.round((otPayoutPhp / fxRate) * 100) / 100 : null,
+        topOt,
+      };
+    }),
+  );
+
+  return { points, error: null };
+}

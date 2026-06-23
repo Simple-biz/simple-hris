@@ -102,7 +102,8 @@
       "Bash(head -60 app/page.tsx)",
       "Bash(head -60 app/auth-callback/page.tsx)",
       "Bash(xargs -n1 basename)",
-      "Bash(npx node *)"
+      "Bash(npx node *)",
+      "Bash(git -C c:/Users/Itachi/Desktop/simple-hris log -p -L1,42:app/api/admin/backfill-employee-ids/route.ts)"
     ],
     "additionalDirectories": [
       "\\tmp"

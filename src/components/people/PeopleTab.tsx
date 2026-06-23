@@ -88,6 +88,21 @@ interface Summary {
   otPayoutPhp: number;
   otPayoutUsd: number | null;
 }
+interface StatsTopOt {
+  name: string | null;
+  otHours: number;
+  otPayoutUsd: number | null;
+}
+interface StatsPoint {
+  sourceFile: string;
+  weekStart: string;
+  weekEnd: string;
+  otEmployees: number;
+  otHours: number;
+  otPayoutPhp: number;
+  otPayoutUsd: number | null;
+  topOt: StatsTopOt[];
+}
 
 function fmtMoney(amount: number | null | undefined, currency: Currency = 'PHP'): string {
   if (amount == null) return '—';
@@ -201,6 +216,12 @@ export default function PeopleTab({
   const [period, setPeriod] = useState('');
   const periodRef = useRef('');
   const defaultFileRef = useRef('');
+  // Top-level mode: the roster vs the weekly Statistics graph.
+  const [mode, setMode] = useState<'roster' | 'stats'>('roster');
+  const [stats, setStats] = useState<StatsPoint[] | null>(null);
+  const [statsLoading, setStatsLoading] = useState(false);
+  const [statsError, setStatsError] = useState<string | null>(null);
+  const statsFetchedRef = useRef(false);
 
   // Fetch the roster for a given week (`src` = Hubstaff source_file; '' = current).
   const loadFor = useCallback(async (src: string, quiet: boolean) => {
@@ -229,6 +250,22 @@ export default function PeopleTab({
     setPeriod(v);
     periodRef.current = v;
     void loadFor(v, false);
+  };
+
+  // Statistics tab — lazy-fetch the weekly trend on first open.
+  const openStats = () => {
+    setMode('stats');
+    if (statsFetchedRef.current) return;
+    statsFetchedRef.current = true;
+    setStatsLoading(true);
+    fetch('/api/people/stats', { cache: 'no-store' })
+      .then((r) => r.json())
+      .then((j: { points?: StatsPoint[]; error?: string }) => {
+        setStats(j.points ?? []);
+        setStatsError(j.error ?? null);
+      })
+      .catch((e) => setStatsError(e instanceof Error ? e.message : String(e)))
+      .finally(() => setStatsLoading(false));
   };
 
   // Manual refresh — re-pull the SELECTED week in place (no skeleton flash) so a
@@ -351,6 +388,29 @@ export default function PeopleTab({
             </Button>
           </div>
         </div>
+        {/* Top-level tabs: Roster vs the weekly Statistics graph. */}
+        <div role="tablist" className="mt-3 flex gap-1 border-b border-zinc-200 dark:border-zinc-800">
+          {([['roster', 'Roster'], ['stats', 'Statistics']] as const).map(([id, label]) => (
+            <button
+              key={id}
+              type="button"
+              role="tab"
+              aria-selected={mode === id}
+              onClick={() => (id === 'stats' ? openStats() : setMode('roster'))}
+              className={cn(
+                'relative px-3 py-2 text-[13px] font-medium transition-colors',
+                mode === id
+                  ? 'text-zinc-900 dark:text-zinc-100'
+                  : 'text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-200',
+              )}
+            >
+              {label}
+              {mode === id && <span className={cn('absolute inset-x-2 -bottom-px h-0.5 rounded-full', accent.bar)} />}
+            </button>
+          ))}
+        </div>
+
+        {mode === 'roster' && (
         <div className="mt-3 flex flex-wrap items-center gap-2">
           <div className="relative min-w-0 flex-1 sm:max-w-md">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" />
@@ -388,9 +448,14 @@ export default function PeopleTab({
             }
           />
         </div>
+        )}
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto bg-[#fafaf8] px-3 py-4 sm:px-6 sm:py-6 dark:bg-[#0d1117]">
+        {mode === 'stats' ? (
+          <PeopleStatsChart points={stats} loading={statsLoading} error={statsError} accent={accent} />
+        ) : (
+        <>
         {error && (
           <div className="mb-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-300">
             {error}
@@ -545,6 +610,8 @@ export default function PeopleTab({
           </div>
           </>
         )}
+        </>
+        )}
       </div>
 
       {selected && (
@@ -569,6 +636,204 @@ export default function PeopleTab({
           }}
         />
       )}
+    </div>
+  );
+}
+
+/** Round up to a clean axis maximum (1/2/5 × 10ⁿ). */
+function niceCeil(v: number): number {
+  if (v <= 0) return 1;
+  const mag = Math.pow(10, Math.floor(Math.log10(v)));
+  const norm = v / mag;
+  const step = norm <= 1 ? 1 : norm <= 2 ? 2 : norm <= 5 ? 5 : 10;
+  return step * mag;
+}
+
+function fmtUsdAxis(v: number): string {
+  if (v >= 1000) return `$${(v / 1000).toFixed(v % 1000 === 0 ? 0 : 1)}k`;
+  return `$${Math.round(v)}`;
+}
+
+/**
+ * Weekly OT trend — a self-contained dual-axis SVG line chart (no chart lib).
+ * Left axis + emerald line = OT payout (USD); right axis + amber line = number
+ * of people on overtime. One point per recent payroll week.
+ */
+function PeopleStatsChart({
+  points,
+  loading,
+  error,
+  accent,
+}: {
+  points: StatsPoint[] | null;
+  loading: boolean;
+  error: string | null;
+  accent: Accent;
+}) {
+  void accent;
+  const [hover, setHover] = useState<number | null>(null);
+  if (loading && !points) {
+    return (
+      <div className="flex items-center justify-center gap-2 py-24 text-sm text-zinc-500">
+        <Loader2 className="h-4 w-4 animate-spin" /> Building weekly trend…
+      </div>
+    );
+  }
+  if (error) {
+    return (
+      <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-300">
+        {error}
+      </div>
+    );
+  }
+  const data = points ?? [];
+  if (data.length === 0) {
+    return <div className="py-24 text-center text-sm text-zinc-500">No weekly payroll data to chart yet.</div>;
+  }
+
+  const W = 760;
+  const H = 300;
+  const padL = 56;
+  const padR = 48;
+  const padT = 16;
+  const padB = 42;
+  const plotW = W - padL - padR;
+  const plotH = H - padT - padB;
+  const n = data.length;
+  const xAt = (i: number) => (n === 1 ? padL + plotW / 2 : padL + (i * plotW) / (n - 1));
+
+  const usdTop = niceCeil(Math.max(1, ...data.map((d) => d.otPayoutUsd ?? 0)));
+  const cntTop = niceCeil(Math.max(1, ...data.map((d) => d.otEmployees)));
+  const yUsd = (v: number) => padT + plotH - (v / usdTop) * plotH;
+  const yCnt = (v: number) => padT + plotH - (v / cntTop) * plotH;
+
+  const payoutPts = data.map((d, i) => `${xAt(i)},${yUsd(d.otPayoutUsd ?? 0)}`).join(' ');
+  const countPts = data.map((d, i) => `${xAt(i)},${yCnt(d.otEmployees)}`).join(' ');
+  const grid = [0, 0.25, 0.5, 0.75, 1];
+  const labelEvery = Math.ceil(n / 8);
+  const latest = data[data.length - 1];
+  const shortDay = (iso: string) => {
+    const d = parseIsoLocal(iso);
+    return d ? d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : iso;
+  };
+
+  return (
+    <div className="space-y-4">
+      {/* Latest-week headline */}
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-950">
+          <div className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-zinc-400">
+            <Banknote className="h-3.5 w-3.5 text-emerald-500" /> Latest week OT payout
+          </div>
+          <div className="mt-1 flex items-baseline gap-2">
+            <span className="text-2xl font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">{fmtMoney(latest.otPayoutUsd ?? 0, 'USD')}</span>
+            <span className="text-[12px] tabular-nums text-zinc-400">{fmtMoney(latest.otPayoutPhp ?? 0, 'PHP')}</span>
+          </div>
+          <div className="mt-0.5 text-[11px] text-zinc-400">{shortDay(latest.weekStart)} – {shortDay(latest.weekEnd)}</div>
+        </div>
+        <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-950">
+          <div className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-zinc-400">
+            <AlertTriangle className="h-3.5 w-3.5 text-amber-500" /> Latest week on overtime
+          </div>
+          <div className="mt-1 flex items-baseline gap-2">
+            <span className="text-2xl font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">{latest.otEmployees}</span>
+            <span className="text-[12px] text-zinc-400">people · {fmtHours(latest.otHours)} OT</span>
+          </div>
+          <div className="mt-0.5 text-[11px] text-zinc-400">across {n} week{n === 1 ? '' : 's'}</div>
+        </div>
+      </div>
+
+      {/* Trend chart */}
+      <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-950">
+        <div className="mb-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] font-medium text-zinc-600 dark:text-zinc-300">
+          <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-emerald-500" /> OT payout (USD)</span>
+          <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-amber-500" /> Employees on OT</span>
+        </div>
+        <div className="relative">
+          <svg viewBox={`0 0 ${W} ${H}`} className="h-auto w-full" role="img" aria-label="Weekly overtime trend" onMouseLeave={() => setHover(null)}>
+            {grid.map((g, gi) => {
+              const y = padT + plotH - g * plotH;
+              return (
+                <g key={gi}>
+                  <line x1={padL} y1={y} x2={W - padR} y2={y} stroke="currentColor" className="text-zinc-200 dark:text-zinc-800" strokeWidth={1} />
+                  <text x={padL - 8} y={y + 3} textAnchor="end" className="fill-emerald-600 dark:fill-emerald-400" fontSize={10}>{fmtUsdAxis(g * usdTop)}</text>
+                  <text x={W - padR + 8} y={y + 3} textAnchor="start" className="fill-amber-600 dark:fill-amber-400" fontSize={10}>{Math.round(g * cntTop)}</text>
+                </g>
+              );
+            })}
+            {data.map((d, i) =>
+              i % labelEvery === 0 || i === n - 1 ? (
+                <text key={`x${i}`} x={xAt(i)} y={H - padB + 16} textAnchor="middle" className={cn('fill-zinc-400', hover === i && 'fill-zinc-700 dark:fill-zinc-200')} fontSize={9}>
+                  {shortDay(d.weekStart)}
+                </text>
+              ) : null,
+            )}
+            {/* hover guide */}
+            {hover != null && (
+              <line x1={xAt(hover)} y1={padT} x2={xAt(hover)} y2={padT + plotH} stroke="currentColor" className="text-zinc-300 dark:text-zinc-700" strokeWidth={1} strokeDasharray="3 3" />
+            )}
+            <polyline points={payoutPts} fill="none" stroke="currentColor" className="text-emerald-500" strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />
+            <polyline points={countPts} fill="none" stroke="currentColor" className="text-amber-500" strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />
+            {data.map((d, i) => (
+              <g key={`m${i}`}>
+                <circle cx={xAt(i)} cy={yUsd(d.otPayoutUsd ?? 0)} r={hover === i ? 4 : 2.5} className={cn('fill-emerald-500', hover === i && 'stroke-white dark:stroke-zinc-950')} strokeWidth={hover === i ? 1.5 : 0} />
+                <circle cx={xAt(i)} cy={yCnt(d.otEmployees)} r={hover === i ? 4 : 2.5} className={cn('fill-amber-500', hover === i && 'stroke-white dark:stroke-zinc-950')} strokeWidth={hover === i ? 1.5 : 0} />
+              </g>
+            ))}
+            {/* transparent per-week hit areas (on top) for hover detection */}
+            {data.map((d, i) => {
+              const band = n > 1 ? plotW / (n - 1) : plotW;
+              return (
+                <rect
+                  key={`hit${i}`}
+                  x={xAt(i) - band / 2}
+                  y={padT}
+                  width={band}
+                  height={plotH}
+                  fill="transparent"
+                  onMouseEnter={() => setHover(i)}
+                />
+              );
+            })}
+          </svg>
+
+          {/* Hover tooltip — week totals + top 5 OT renderers, tracking the point. */}
+          {hover != null && (
+            <div
+              className="pointer-events-none absolute top-1 z-20 w-52 -translate-x-1/2"
+              style={{ left: `${Math.min(84, Math.max(16, (xAt(hover) / W) * 100))}%` }}
+            >
+              <div className="rounded-lg border border-zinc-200 bg-white/95 p-2.5 text-[11px] shadow-lg backdrop-blur-sm dark:border-zinc-700 dark:bg-zinc-900/95">
+                <div className="font-semibold text-zinc-800 dark:text-zinc-100">
+                  {shortDay(data[hover].weekStart)} – {shortDay(data[hover].weekEnd)}
+                </div>
+                <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-zinc-500">
+                  <span className="font-medium text-emerald-600 dark:text-emerald-400">{fmtMoney(data[hover].otPayoutUsd ?? 0, 'USD')}</span>
+                  <span className="text-zinc-300 dark:text-zinc-600">·</span>
+                  <span className="font-medium text-amber-600 dark:text-amber-400">{data[hover].otEmployees} on OT</span>
+                </div>
+                {data[hover].topOt.length > 0 ? (
+                  <div className="mt-1.5 border-t border-zinc-100 pt-1.5 dark:border-zinc-800">
+                    <div className="mb-1 text-[10px] font-medium uppercase tracking-wide text-zinc-400">Top OT renderers</div>
+                    <ul className="space-y-0.5">
+                      {data[hover].topOt.map((t, ti) => (
+                        <li key={ti} className="flex items-center justify-between gap-2">
+                          <span className="min-w-0 truncate text-zinc-700 dark:text-zinc-200">
+                            <span className="text-zinc-400">{ti + 1}.</span> {t.name ?? '—'}
+                          </span>
+                          <span className="shrink-0 tabular-nums text-zinc-500 dark:text-zinc-400">{fmtHours(t.otHours)}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : (
+                  <div className="mt-1 text-[10px] text-zinc-400">No overtime this week.</div>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
