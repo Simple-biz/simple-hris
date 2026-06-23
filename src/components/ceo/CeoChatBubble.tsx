@@ -2,153 +2,43 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
-import { Send, X, Sparkles, Loader2, Trash2, ThumbsUp, ThumbsDown } from 'lucide-react';
-
-type Msg = {
-  id: number;
-  role: 'user' | 'assistant';
-  content: string;
-  /** Stable id for an assistant reply, used as the feedback upsert key. */
-  key?: string;
-  /** The viewer's rating of this reply, if any. */
-  rating?: 'up' | 'down' | null;
-};
-
-type Align = 'left' | 'right' | 'center';
-type Segment =
-  | { type: 'text'; text: string }
-  | { type: 'table'; headers: string[]; aligns: Align[]; rows: string[][] };
-
-/** Split a markdown table row into trimmed cells (tolerates missing outer pipes). */
-function splitRow(line: string): string[] {
-  let s = line.trim();
-  if (s.startsWith('|')) s = s.slice(1);
-  if (s.endsWith('|')) s = s.slice(0, -1);
-  return s.split('|').map((c) => c.trim());
-}
-
-const SEP_CELL = /^:?-{1,}:?$/;
-function isSeparator(line: string): boolean {
-  if (!line.includes('|') && !line.includes('-')) return false;
-  const cells = splitRow(line);
-  return cells.length > 0 && cells.every((c) => SEP_CELL.test(c.replace(/\s/g, '')));
-}
-
-/**
- * Parse assistant text into plain-text and GitHub-style-table segments. The
- * widget renders messages as plain text, so this is the ONLY markdown we
- * support — it turns pipe tables into real <table>s and leaves everything else
- * as text. Runs on every streamed update; a half-streamed table simply renders
- * as text until its separator row arrives, then snaps into a table.
- */
-function parseSegments(input: string): Segment[] {
-  const lines = input.split('\n');
-  const segs: Segment[] = [];
-  let buf: string[] = [];
-  const flush = () => {
-    if (!buf.length) return;
-    const text = buf.join('\n').replace(/\n{3,}/g, '\n\n').trim();
-    if (text) segs.push({ type: 'text', text });
-    buf = [];
-  };
-
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    const next = lines[i + 1];
-    if (line.includes('|') && next != null && isSeparator(next)) {
-      flush();
-      const headers = splitRow(line);
-      const aligns: Align[] = splitRow(next).map((c) => {
-        const t = c.trim();
-        const l = t.startsWith(':');
-        const r = t.endsWith(':');
-        return l && r ? 'center' : r ? 'right' : 'left';
-      });
-      const rows: string[][] = [];
-      let j = i + 2;
-      for (; j < lines.length; j++) {
-        if (!lines[j].includes('|') || isSeparator(lines[j])) break;
-        rows.push(splitRow(lines[j]));
-      }
-      segs.push({ type: 'table', headers, aligns, rows });
-      i = j - 1;
-    } else {
-      buf.push(line);
-    }
-  }
-  flush();
-  return segs;
-}
-
-const ALIGN_CLASS: Record<Align, string> = {
-  left: 'text-left',
-  right: 'text-right',
-  center: 'text-center',
-};
-
-/** Renders an assistant message: plain text, with pipe tables shown as real tables. */
-function AssistantContent({ text }: { text: string }) {
-  const segments = parseSegments(text);
-  return (
-    <div className="space-y-2">
-      {segments.map((seg, idx) =>
-        seg.type === 'text' ? (
-          <div key={idx} className="whitespace-pre-wrap break-words">
-            {seg.text}
-          </div>
-        ) : (
-          <div key={idx} className="-mx-2 overflow-x-auto">
-            <table className="w-full border-collapse text-[12px] leading-snug">
-              <thead>
-                <tr>
-                  {seg.headers.map((h, k) => (
-                    <th
-                      key={k}
-                      className={`whitespace-nowrap border-b border-amber-200/80 px-2 py-1 font-semibold text-zinc-600 dark:border-amber-900/50 dark:text-zinc-300 ${ALIGN_CLASS[seg.aligns[k] ?? 'left']}`}
-                    >
-                      {h}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {seg.rows.map((row, ri) => (
-                  <tr key={ri} className="odd:bg-amber-50/40 dark:odd:bg-white/[0.03]">
-                    {seg.headers.map((_, ci) => (
-                      <td
-                        key={ci}
-                        className={`whitespace-nowrap border-b border-zinc-100 px-2 py-1 text-zinc-700 dark:border-zinc-800 dark:text-zinc-200 ${ALIGN_CLASS[seg.aligns[ci] ?? 'left']}`}
-                      >
-                        {row[ci] ?? ''}
-                      </td>
-                    ))}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        ),
-      )}
-    </div>
-  );
-}
+import { Send, X, Sparkles, Loader2, Trash2, Heart } from 'lucide-react';
+import { AssistantContent, MessageFeedback } from './ceo-chat-message';
+import { useCeoChat } from './use-ceo-chat';
 
 const SUGGESTIONS = [
-  'Draft a company-wide announcement',
-  'Summarize this for me',
+  'Pull the latest payroll report',
+  'How much did we pay out last week?',
   'Help me think through a decision',
 ];
 
-export default function CeoChatBubble() {
+/**
+ * Floating CEO assistant — the always-available chat bubble. Shares its backend
+ * and logic with the full-page Penny AI tab via {@link useCeoChat}. When the CEO
+ * is on the Penny AI tab, `CeoApp` passes `hidden` so only one chat shows at once.
+ */
+export default function CeoChatBubble({ hidden = false }: { hidden?: boolean }) {
   const [open, setOpen] = useState(false);
-  const [messages, setMessages] = useState<Msg[]>([]);
-  const [input, setInput] = useState('');
-  const [busy, setBusy] = useState(false);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
-  const idRef = useRef(0);
-  const nextId = () => ++idRef.current;
+
+  const {
+    messages,
+    input,
+    setInput,
+    busy,
+    send,
+    clearChat,
+    rateMessage,
+    lastMsg,
+    awaitingFirstToken,
+  } = useCeoChat({ inputRef });
+
+  // Collapse the panel whenever the bubble is hidden (e.g. switched to Penny AI).
+  useEffect(() => {
+    if (hidden) setOpen(false);
+  }, [hidden]);
 
   // Keep the transcript pinned to the latest message as it streams in.
   useEffect(() => {
@@ -170,70 +60,6 @@ export default function CeoChatBubble() {
     };
   }, [open]);
 
-  async function send(text: string) {
-    const trimmed = text.trim();
-    if (!trimmed || busy) return;
-
-    const userMsg: Msg = { id: nextId(), role: 'user', content: trimmed };
-    const history = [...messages, userMsg];
-    setMessages(history);
-    setInput('');
-    setBusy(true);
-
-    const replyId = nextId();
-    const replyKey =
-      typeof crypto !== 'undefined' && 'randomUUID' in crypto
-        ? crypto.randomUUID()
-        : `r${replyId}-${Date.now()}`;
-    setMessages((m) => [...m, { id: replyId, role: 'assistant', content: '', key: replyKey }]);
-
-    try {
-      const res = await fetch('/api/ceo/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          messages: history.map(({ role, content }) => ({ role, content })),
-        }),
-      });
-
-      if (!res.ok || !res.body) {
-        const j = await res.json().catch(() => null);
-        const errText =
-          (j && typeof j.error === 'string' && j.error) ||
-          'Sorry — I could not reach the assistant just now.';
-        setMessages((m) =>
-          m.map((msg) => (msg.id === replyId ? { ...msg, content: errText } : msg)),
-        );
-        return;
-      }
-
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        const chunk = decoder.decode(value, { stream: true });
-        if (!chunk) continue;
-        setMessages((m) =>
-          m.map((msg) =>
-            msg.id === replyId ? { ...msg, content: msg.content + chunk } : msg,
-          ),
-        );
-      }
-    } catch {
-      setMessages((m) =>
-        m.map((msg) =>
-          msg.id === replyId
-            ? { ...msg, content: 'Sorry — something went wrong. Please try again.' }
-            : msg,
-        ),
-      );
-    } finally {
-      setBusy(false);
-      setTimeout(() => inputRef.current?.focus(), 0);
-    }
-  }
-
   function onComposerKey(e: React.KeyboardEvent<HTMLTextAreaElement>) {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
@@ -241,55 +67,8 @@ export default function CeoChatBubble() {
     }
   }
 
-  function clearChat() {
-    setMessages([]);
-    setInput('');
-    setCommentFor(null);
-    setCommentText('');
-  }
-
-  // Record a thumbs up/down (and optional comment) for one reply. Optimistic;
-  // the POST is best-effort so a network hiccup never disrupts the chat.
-  async function rateMessage(target: Msg, rating: 'up' | 'down', comment?: string) {
-    if (!target.key) return;
-    setMessages((m) => m.map((x) => (x.id === target.id ? { ...x, rating } : x)));
-
-    const idx = messages.findIndex((x) => x.id === target.id);
-    let userMessage = '';
-    for (let i = idx - 1; i >= 0; i--) {
-      if (messages[i]!.role === 'user') {
-        userMessage = messages[i]!.content;
-        break;
-      }
-    }
-    const context = (idx >= 0 ? messages.slice(Math.max(0, idx - 7), idx + 1) : []).map(
-      ({ role, content }) => ({ role, content }),
-    );
-
-    try {
-      await fetch('/api/ceo/chat/feedback', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          message_key: target.key,
-          rating,
-          assistant_message: target.content,
-          user_message: userMessage,
-          comment: comment ?? null,
-          context,
-        }),
-      });
-    } catch {
-      // best-effort — keep the optimistic UI state regardless
-    }
-  }
-
-  const [commentFor, setCommentFor] = useState<number | null>(null);
-  const [commentText, setCommentText] = useState('');
-
-  const lastMsg = messages[messages.length - 1];
-  const awaitingFirstToken =
-    busy && lastMsg?.role === 'assistant' && lastMsg.content.length === 0;
+  // On the Penny AI tab the dedicated chat takes over — don't render the bubble.
+  if (hidden) return null;
 
   return (
     <>
@@ -367,12 +146,14 @@ export default function CeoChatBubble() {
                 </div>
               ) : (
                 messages.map((m) => {
-                  const isStreaming =
-                    busy && m.id === lastMsg?.id && m.role === 'assistant';
+                  const isStreaming = busy && m.id === lastMsg?.id && m.role === 'assistant';
                   const showRating = m.role === 'assistant' && !!m.content && !isStreaming;
                   return (
-                    <div
+                    <motion.div
                       key={m.id}
+                      initial={{ opacity: 0, y: 8 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ duration: 0.24, ease: [0.22, 1, 0.36, 1] }}
                       className={
                         m.role === 'user' ? 'flex justify-end' : 'flex flex-col items-start gap-1'
                       }
@@ -387,7 +168,7 @@ export default function CeoChatBubble() {
                         {m.role === 'user' ? (
                           m.content
                         ) : m.content ? (
-                          <AssistantContent text={m.content} />
+                          <AssistantContent text={m.content} streaming={isStreaming} />
                         ) : awaitingFirstToken ? (
                           <span className="inline-flex items-center gap-1.5 text-zinc-400">
                             <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
@@ -397,74 +178,14 @@ export default function CeoChatBubble() {
                       </div>
 
                       {showRating && (
-                        <div className="flex flex-col gap-1 pl-1">
-                          <div className="flex items-center gap-1">
-                            <button
-                              type="button"
-                              onClick={() => {
-                                void rateMessage(m, 'up');
-                                if (commentFor === m.id) setCommentFor(null);
-                              }}
-                              aria-label="Good response"
-                              title="Good response"
-                              className={`flex h-6 w-6 items-center justify-center rounded-md transition ${
-                                m.rating === 'up'
-                                  ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300'
-                                  : 'text-zinc-400 hover:bg-zinc-100 hover:text-zinc-600 dark:hover:bg-zinc-800'
-                              }`}
-                            >
-                              <ThumbsUp className="h-3.5 w-3.5" aria-hidden />
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                void rateMessage(m, 'down');
-                                setCommentFor(m.id);
-                                setCommentText('');
-                              }}
-                              aria-label="Bad response"
-                              title="Bad response"
-                              className={`flex h-6 w-6 items-center justify-center rounded-md transition ${
-                                m.rating === 'down'
-                                  ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300'
-                                  : 'text-zinc-400 hover:bg-zinc-100 hover:text-zinc-600 dark:hover:bg-zinc-800'
-                              }`}
-                            >
-                              <ThumbsDown className="h-3.5 w-3.5" aria-hidden />
-                            </button>
-                          </div>
-
-                          {commentFor === m.id && (
-                            <div className="flex items-center gap-1">
-                              <input
-                                value={commentText}
-                                onChange={(e) => setCommentText(e.target.value)}
-                                onKeyDown={(e) => {
-                                  if (e.key === 'Enter') {
-                                    void rateMessage(m, 'down', commentText.trim() || undefined);
-                                    setCommentFor(null);
-                                  } else if (e.key === 'Escape') {
-                                    setCommentFor(null);
-                                  }
-                                }}
-                                placeholder="What was off? (optional)"
-                                className="w-48 rounded-md border border-zinc-200 bg-white px-2 py-1 text-[11.5px] text-zinc-700 outline-none focus:border-amber-400 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
-                              />
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  void rateMessage(m, 'down', commentText.trim() || undefined);
-                                  setCommentFor(null);
-                                }}
-                                className="rounded-md bg-amber-600 px-2 py-1 text-[11.5px] font-medium text-white transition hover:bg-amber-700"
-                              >
-                                Send
-                              </button>
-                            </div>
-                          )}
+                        <div className="pl-1">
+                          <MessageFeedback
+                            rating={m.rating}
+                            onRate={(rating, comment) => void rateMessage(m, rating, comment)}
+                          />
                         </div>
                       )}
-                    </div>
+                    </motion.div>
                   );
                 })
               )}
@@ -504,14 +225,30 @@ export default function CeoChatBubble() {
         )}
       </AnimatePresence>
 
-      {/* Floating bubble button */}
+      {/* Floating beating-heart button — an orange heart that beats (lub-dub)
+          with a pulsing halo. Becomes a close (X) while the panel is open. */}
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        aria-label={open ? 'Close assistant' : 'Open assistant'}
+        aria-label={open ? 'Close Penny AI' : 'Open Penny AI'}
         aria-expanded={open}
-        className="fixed bottom-5 right-4 z-50 flex h-14 w-14 items-center justify-center rounded-full border border-amber-200/70 bg-white shadow-lg shadow-amber-900/25 transition-transform duration-200 hover:scale-105 active:scale-95 dark:border-amber-900/40 dark:bg-zinc-900 sm:right-6"
+        className="group fixed bottom-5 right-4 z-50 flex h-14 w-14 items-center justify-center transition-transform active:scale-90 sm:right-6"
       >
+        <style>{`
+          @keyframes pennyHeartbeat {
+            0%, 28%, 70%, 100% { transform: scale(1); }
+            14% { transform: scale(1.22); }
+            42% { transform: scale(1.1); }
+          }
+          @keyframes pennyHeartHalo {
+            0%   { transform: scale(0.7);  opacity: 0.55; }
+            70%  { transform: scale(1.95); opacity: 0; }
+            100% { transform: scale(1.95); opacity: 0; }
+          }
+          @media (prefers-reduced-motion: reduce) {
+            .penny-heart, .penny-halo { animation: none !important; }
+          }
+        `}</style>
         <AnimatePresence mode="wait" initial={false}>
           {open ? (
             <motion.span
@@ -520,22 +257,38 @@ export default function CeoChatBubble() {
               animate={{ opacity: 1, rotate: 0 }}
               exit={{ opacity: 0, rotate: 90 }}
               transition={{ duration: 0.15 }}
-              className="flex items-center justify-center"
+              className="flex h-14 w-14 items-center justify-center rounded-full border border-orange-200/70 bg-white shadow-lg shadow-orange-900/25 dark:border-orange-900/40 dark:bg-zinc-900"
             >
-              <X className="h-6 w-6 text-amber-700 dark:text-amber-400" aria-hidden />
+              <X className="h-6 w-6 text-orange-600 dark:text-orange-400" aria-hidden />
             </motion.span>
           ) : (
-            <motion.img
-              key="bubble"
-              src="/chatbubble.png"
-              alt=""
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: 0.15 }}
-              className="h-8 w-8 object-contain"
-              draggable={false}
-            />
+            <motion.span
+              key="heart"
+              initial={{ opacity: 0, scale: 0.6 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.6 }}
+              transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
+              className="relative flex h-14 w-14 items-center justify-center"
+            >
+              {/* pulsing orange halo (two staggered rings → ripple) */}
+              <span
+                aria-hidden
+                className="penny-halo absolute h-11 w-11 rounded-full bg-orange-500/45 blur-md"
+                style={{ animation: 'pennyHeartHalo 1.5s ease-out infinite' }}
+              />
+              <span
+                aria-hidden
+                className="penny-halo absolute h-11 w-11 rounded-full bg-orange-400/40"
+                style={{ animation: 'pennyHeartHalo 1.5s ease-out infinite 0.35s' }}
+              />
+              {/* the beating heart */}
+              <Heart
+                aria-hidden
+                strokeWidth={1.5}
+                className="penny-heart relative h-9 w-9 fill-orange-500 text-orange-600 drop-shadow-md"
+                style={{ animation: 'pennyHeartbeat 1.3s ease-in-out infinite', transformOrigin: 'center' }}
+              />
+            </motion.span>
           )}
         </AnimatePresence>
       </button>

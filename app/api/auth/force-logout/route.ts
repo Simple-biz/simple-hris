@@ -50,7 +50,10 @@ export async function POST(req: NextRequest) {
 
   void insertAuditLog({
     user_name: authz.effectiveEmail,
-    user_role: "admin",
+    // Real role from the verified session — this route is gated at the elevated
+    // level (admits accounting/hr_coordinator), so a hardcoded "admin" would
+    // mis-attribute force-logouts performed by non-admin elevated users.
+    user_role: authz.roles?.[0] ?? "user",
     action: "auth.force_logout",
     resource: "session",
     resource_id: email.toLowerCase(),

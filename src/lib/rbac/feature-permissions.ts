@@ -55,6 +55,7 @@ export const FEATURE_CATALOG: Record<FeatureViewKey, readonly { key: string; lab
   ],
   ceo: [
     { key: "overview",      label: "Overview" },
+    { key: "biz_ai",        label: "Penny AI" },
     { key: "people",        label: "People" },
     { key: "announcements", label: "Announcements" },
     { key: "s_wall",        label: "S-Wall" },

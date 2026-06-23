@@ -12,6 +12,7 @@ import { normEmail } from '@/lib/email/norm-email';
 import { SESSION_EMAIL_KEY, type Role } from '@/lib/rbac/views';
 import CeoSidebar, { type CeoTab } from './CeoSidebar';
 import CeoChatBubble from './CeoChatBubble';
+import BizAiTab from './BizAiTab';
 import PeopleTab from '@/components/people/PeopleTab';
 import AnnouncementWall from '@/components/announcements/AnnouncementWall';
 import AnnouncementComposer from '@/components/announcements/AnnouncementComposer';
@@ -162,6 +163,11 @@ export default function CeoApp() {
             >
               {visibilityOf('ceo', activeTab) !== 'visible' ? (
                 <UnderConstruction title={pageLabel('ceo', activeTab)} />
+              ) : activeTab === 'biz-ai' ? (
+                // The assistant is read-only by nature (it only queries data and
+                // is server-gated to ceo/admin), so it stays fully interactive
+                // even for a view-only grant — not wrapped in ReadOnlyTab.
+                <BizAiTab />
               ) : (
               <ReadOnlyTab readOnly={permsReady && !canEditTab('ceo', activeTab)}>
               {activeTab === 'overview' && <CeoOverview viewerEmail={viewerEmail} />}
@@ -187,8 +193,9 @@ export default function CeoApp() {
 
       <Toaster richColors position="top-center" />
 
-      {/* Floating AI assistant — CEO dashboard only */}
-      <CeoChatBubble />
+      {/* Floating AI assistant — CEO dashboard only. Hidden on the Penny AI tab,
+          where the full-page chat takes over. */}
+      <CeoChatBubble hidden={activeTab === 'biz-ai'} />
     </div>
   );
 }

@@ -115,7 +115,10 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
 
   void insertAuditLog({
     user_name: authz.effectiveEmail,
-    user_role: "admin",
+    // Real role from the verified session, not a hardcoded "admin" — this route
+    // is gated at the elevated level (see DELETE handler), so the logged role
+    // must reflect whichever elevated user actually revoked the rate.
+    user_role: authz.roles?.[0] ?? "user",
     action: "employee.rates.revoke",
     resource: "employee_rate_history",
     resource_id: id,

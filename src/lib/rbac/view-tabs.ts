@@ -70,6 +70,7 @@ export const VIEW_TAB_IDS: Record<FeatureViewKey, readonly string[]> = {
   ],
   ceo: [
     'overview',
+    'biz-ai',
     'people',
     'announcements',
     'notifications',

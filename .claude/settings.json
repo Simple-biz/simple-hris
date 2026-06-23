@@ -103,7 +103,12 @@
       "Bash(head -60 app/auth-callback/page.tsx)",
       "Bash(xargs -n1 basename)",
       "Bash(npx node *)",
-      "Bash(git -C c:/Users/Itachi/Desktop/simple-hris log -p -L1,42:app/api/admin/backfill-employee-ids/route.ts)"
+      "Bash(git -C c:/Users/Itachi/Desktop/simple-hris log -p -L1,42:app/api/admin/backfill-employee-ids/route.ts)",
+      "PowerShell(npx tsc --noEmit 2>&1 | Select-Object -First 40; \"EXIT: $LASTEXITCODE\")",
+      "PowerShell(npx tsc --noEmit 2>&1 | Select-Object -First 30; \"EXIT: $LASTEXITCODE\")",
+      "Bash(mkdir -p node_modules/server-only)",
+      "Bash(printf '{\"name\":\"server-only\",\"version\":\"0.0.0\",\"main\":\"index.js\"}')",
+      "Bash(printf 'module.exports = {};')"
     ],
     "additionalDirectories": [
       "\\tmp"

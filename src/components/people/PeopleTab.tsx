@@ -88,10 +88,13 @@ interface Summary {
   otPayoutPhp: number;
   otPayoutUsd: number | null;
 }
-interface StatsTopOt {
+interface StatsLeader {
   name: string | null;
+  email: string | null;
   otHours: number;
+  otPayoutPhp: number;
   otPayoutUsd: number | null;
+  weeks: number;
 }
 interface StatsPoint {
   sourceFile: string;
@@ -101,8 +104,20 @@ interface StatsPoint {
   otHours: number;
   otPayoutPhp: number;
   otPayoutUsd: number | null;
-  topOt: StatsTopOt[];
+  /** Full ranked OT renderers for this week (top 5 feed the chart tooltip). */
+  leaders: StatsLeader[];
+  /** Per-department OT for this week — powers the department trend line graph. */
+  depts: StatsDept[];
 }
+interface StatsDept {
+  department: string;
+  otHours: number;
+  otPayoutPhp: number;
+  otPayoutUsd: number | null;
+  people: number;
+}
+type OtSort = 'hours' | 'pay';
+type OtTab = 'people' | 'department';
 
 function fmtMoney(amount: number | null | undefined, currency: Currency = 'PHP'): string {
   if (amount == null) return '—';
@@ -209,6 +224,8 @@ export default function PeopleTab({
   const [selected, setSelected] = useState<RosterRow | null>(null);
   const [transferFor, setTransferFor] = useState<RosterRow | null>(null);
   const [deptFilter, setDeptFilter] = useState<string>('all');
+  // Roster + stats share this: when on, only people who rendered OT are shown.
+  const [otOnly, setOtOnly] = useState(false);
   const [page, setPage] = useState(1);
   const PAGE_SIZE = 15;
   const [summary, setSummary] = useState<Summary | null>(null);
@@ -219,6 +236,8 @@ export default function PeopleTab({
   // Top-level mode: the roster vs the weekly Statistics graph.
   const [mode, setMode] = useState<'roster' | 'stats'>('roster');
   const [stats, setStats] = useState<StatsPoint[] | null>(null);
+  const [statsLeaders, setStatsLeaders] = useState<StatsLeader[] | null>(null);
+  const [statsDepts, setStatsDepts] = useState<StatsDept[] | null>(null);
   const [statsLoading, setStatsLoading] = useState(false);
   const [statsError, setStatsError] = useState<string | null>(null);
   const statsFetchedRef = useRef(false);
@@ -260,8 +279,10 @@ export default function PeopleTab({
     setStatsLoading(true);
     fetch('/api/people/stats', { cache: 'no-store' })
       .then((r) => r.json())
-      .then((j: { points?: StatsPoint[]; error?: string }) => {
+      .then((j: { points?: StatsPoint[]; otLeaders?: StatsLeader[]; otDepts?: StatsDept[]; error?: string }) => {
         setStats(j.points ?? []);
+        setStatsLeaders(j.otLeaders ?? []);
+        setStatsDepts(j.otDepts ?? []);
         setStatsError(j.error ?? null);
       })
       .catch((e) => setStatsError(e instanceof Error ? e.message : String(e)))
@@ -321,6 +342,7 @@ export default function PeopleTab({
     return rows
       .filter((r) => {
         if (deptFilter !== 'all' && (r.department ?? '').trim() !== deptFilter) return false;
+        if (otOnly && (r.hours.projectedOt ?? r.hours.ot) <= 0) return false;
         if (!q) return true;
         const name = (r.name ?? '').toLowerCase();
         const email = (r.work_email ?? '').toLowerCase();
@@ -330,13 +352,13 @@ export default function PeopleTab({
       })
       // Always present names A→Z (case-insensitive), regardless of API order.
       .sort((a, b) => (a.name ?? '').localeCompare(b.name ?? '', undefined, { sensitivity: 'base' }));
-  }, [rows, query, deptFilter]);
+  }, [rows, query, deptFilter, otOnly]);
 
   // Reset to page 1 whenever the filters change so results never land on an
   // out-of-range page.
   useEffect(() => {
     setPage(1);
-  }, [query, deptFilter]);
+  }, [query, deptFilter, otOnly]);
 
   // Paginate — 10 rows per page. safePage clamps after the result set shrinks.
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
@@ -433,6 +455,21 @@ export default function PeopleTab({
               ...departments.map((d) => ({ value: d, label: d })),
             ]}
           />
+          {/* Show only people who rendered (or are on track for) overtime. */}
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => setOtOnly((v) => !v)}
+            aria-pressed={otOnly}
+            title="Show only people with overtime this week"
+            className={cn(
+              'h-9 shrink-0 gap-1.5 px-3 text-[13px]',
+              otOnly &&
+                'border-amber-400 bg-amber-50 text-amber-700 hover:bg-amber-100 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-300 dark:hover:bg-amber-950/60',
+            )}
+          >
+            <AlertTriangle className="h-3.5 w-3.5" /> OT only
+          </Button>
           {/* CSV period selector — scopes hours / OT / KPIs to a chosen week. */}
           <SmoothSelect
             value={period}
@@ -453,7 +490,7 @@ export default function PeopleTab({
 
       <div className="min-h-0 flex-1 overflow-y-auto bg-[#fafaf8] px-3 py-4 sm:px-6 sm:py-6 dark:bg-[#0d1117]">
         {mode === 'stats' ? (
-          <PeopleStatsChart points={stats} loading={statsLoading} error={statsError} accent={accent} />
+          <PeopleStatsChart points={stats} leaders={statsLeaders} depts={statsDepts} periods={periods} loading={statsLoading} error={statsError} accent={accent} />
         ) : (
         <>
         {error && (
@@ -495,7 +532,7 @@ export default function PeopleTab({
           <RosterSkeleton />
         ) : filtered.length === 0 ? (
           <div className="py-20 text-center text-sm text-zinc-500">
-            {query.trim() || deptFilter !== 'all'
+            {query.trim() || deptFilter !== 'all' || otOnly
               ? 'No people match the current filters.'
               : 'No people to show.'}
           </div>
@@ -661,17 +698,49 @@ function fmtUsdAxis(v: number): string {
  */
 function PeopleStatsChart({
   points,
+  leaders,
+  depts,
+  periods,
   loading,
   error,
   accent,
 }: {
   points: StatsPoint[] | null;
+  leaders: StatsLeader[] | null;
+  depts: StatsDept[] | null;
+  periods: { file: string; label: string }[];
   loading: boolean;
   error: string | null;
   accent: Accent;
 }) {
-  void accent;
   const [hover, setHover] = useState<number | null>(null);
+  const [sort, setSort] = useState<OtSort>('hours');
+  const [tab, setTab] = useState<OtTab>('people');
+  const [leaderPage, setLeaderPage] = useState(1);
+  const [leaderQuery, setLeaderQuery] = useState('');
+  const LEADERS_PER_PAGE = 10;
+  // CSV period the leaderboard follows. '' = the cross-week aggregate ("All
+  // recent weeks"); any other value is a Hubstaff source_file fetched on demand
+  // so both tabs are authoritatively scoped to the selected week.
+  const [statsPeriod, setStatsPeriod] = useState('');
+  const [weekData, setWeekData] = useState<Record<string, { leaders: StatsLeader[]; depts: StatsDept[] }>>({});
+  const reduceMotion = useReducedMotion();
+
+  // Fetch the selected week's OT leaders + department rollup on demand (cached
+  // per file). '' uses the aggregates passed in, so it never fetches.
+  useEffect(() => {
+    const file = statsPeriod;
+    if (!file || weekData[file]) return;
+    let alive = true;
+    fetch(`/api/people/stats?source_file=${encodeURIComponent(file)}`, { cache: 'no-store' })
+      .then((r) => r.json())
+      .then((j: { leaders?: StatsLeader[]; depts?: StatsDept[] }) => {
+        if (alive) setWeekData((prev) => ({ ...prev, [file]: { leaders: j.leaders ?? [], depts: j.depts ?? [] } }));
+      })
+      .catch(() => { if (alive) setWeekData((prev) => ({ ...prev, [file]: { leaders: [], depts: [] } })); });
+    return () => { alive = false; };
+  }, [statsPeriod, weekData]);
+
   if (loading && !points) {
     return (
       <div className="flex items-center justify-center gap-2 py-24 text-sm text-zinc-500">
@@ -692,11 +761,11 @@ function PeopleStatsChart({
   }
 
   const W = 760;
-  const H = 300;
+  const H = 260;
   const padL = 56;
   const padR = 48;
-  const padT = 16;
-  const padB = 42;
+  const padT = 14;
+  const padB = 34;
   const plotW = W - padL - padR;
   const plotH = H - padT - padB;
   const n = data.length;
@@ -717,8 +786,54 @@ function PeopleStatsChart({
     return d ? d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : iso;
   };
 
+  // Both tabs follow the CSV period selector authoritatively: '' uses the
+  // cross-week aggregate; any other value is that week's server-fetched data.
+  // The selector lists the same CSV periods as the roster.
+  const isAggregate = statsPeriod === '';
+  const activeLeaders = isAggregate ? leaders ?? [] : weekData[statsPeriod]?.leaders ?? [];
+  const activeDepts = isAggregate ? depts ?? [] : weekData[statsPeriod]?.depts ?? [];
+  const weekPending = !isAggregate && weekData[statsPeriod] === undefined;
+  const statsPeriodOptions = [
+    { value: '', label: 'All recent weeks' },
+    ...periods.map((p) => ({ value: p.file, label: p.label })),
+  ];
+  const periodLabel = isAggregate
+    ? `last ${n} week${n === 1 ? '' : 's'}`
+    : periods.find((p) => p.file === statsPeriod)?.label ?? labelForSourceFile(statsPeriod);
+
+  // Both lists rank by the chosen key. otPayoutUsd is FX-normalised so it ranks
+  // correctly across currencies; fall back to PHP when no FX is available.
+  const byMetric = <T extends { otHours: number; otPayoutPhp: number; otPayoutUsd: number | null }>(a: T, b: T) =>
+    sort === 'pay'
+      ? (b.otPayoutUsd ?? b.otPayoutPhp ?? 0) - (a.otPayoutUsd ?? a.otPayoutPhp ?? 0)
+      : b.otHours - a.otHours;
+  const lq = leaderQuery.trim().toLowerCase();
+
+  const isPeople = tab === 'people';
+  const sortedLeaders = activeLeaders.slice().sort(byMetric);
+  const filteredLeaders = lq
+    ? sortedLeaders.filter(
+        (l) => (l.name ?? '').toLowerCase().includes(lq) || (l.email ?? '').toLowerCase().includes(lq),
+      )
+    : sortedLeaders;
+  const sortedDepts = activeDepts.slice().sort(byMetric);
+  const filteredDepts = lq ? sortedDepts.filter((d) => d.department.toLowerCase().includes(lq)) : sortedDepts;
+
+  const activeCount = isPeople ? activeLeaders.length : activeDepts.length;
+  const filteredCount = isPeople ? filteredLeaders.length : filteredDepts.length;
+  const leaderTotalPages = Math.max(1, Math.ceil(filteredCount / LEADERS_PER_PAGE));
+  const leaderSafePage = Math.min(leaderPage, leaderTotalPages);
+  const leaderStart = (leaderSafePage - 1) * LEADERS_PER_PAGE;
+  const pageLeaders = filteredLeaders.slice(leaderStart, leaderStart + LEADERS_PER_PAGE);
+  const pageDepts = filteredDepts.slice(leaderStart, leaderStart + LEADERS_PER_PAGE);
+  // Re-animate the standings body whenever the tab, period, sort, or page change
+  // (but NOT on each search keystroke — that would feel janky).
+  const contentKey = `${tab}|${statsPeriod}|${sort}|${leaderSafePage}`;
+
   return (
-    <div className="space-y-4">
+    <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 lg:items-start">
+      {/* LEFT column: KPIs + the OT-by-employee chart + the OT-by-department chart. */}
+      <div className="space-y-3 lg:space-y-4">
       {/* Latest-week headline */}
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-950">
@@ -812,11 +927,11 @@ function PeopleStatsChart({
                   <span className="text-zinc-300 dark:text-zinc-600">·</span>
                   <span className="font-medium text-amber-600 dark:text-amber-400">{data[hover].otEmployees} on OT</span>
                 </div>
-                {data[hover].topOt.length > 0 ? (
+                {(data[hover].leaders ?? []).length > 0 ? (
                   <div className="mt-1.5 border-t border-zinc-100 pt-1.5 dark:border-zinc-800">
                     <div className="mb-1 text-[10px] font-medium uppercase tracking-wide text-zinc-400">Top OT renderers</div>
                     <ul className="space-y-0.5">
-                      {data[hover].topOt.map((t, ti) => (
+                      {(data[hover].leaders ?? []).slice(0, 5).map((t, ti) => (
                         <li key={ti} className="flex items-center justify-between gap-2">
                           <span className="min-w-0 truncate text-zinc-700 dark:text-zinc-200">
                             <span className="text-zinc-400">{ti + 1}.</span> {t.name ?? '—'}
@@ -833,6 +948,377 @@ function PeopleStatsChart({
             </div>
           )}
         </div>
+      </div>
+      {/* OT by department over time — stacked directly under the employee chart. */}
+      <DeptTrendChart points={data} depts={depts} accent={accent} />
+      </div>{/* end LEFT column */}
+
+      {/* RIGHT column — OT leaderboard: everyone who rendered OT across the
+          recent weeks, ranked by total OT hours or total OT pay (paginated to
+          10). Only people with OT appear, so it is "OT only" by construction. */}
+      <div className="rounded-xl border border-zinc-200 bg-white shadow-sm dark:border-zinc-800 dark:bg-zinc-950">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-zinc-200 px-4 py-3 dark:border-zinc-800">
+          <div className="min-w-0">
+            <div className="text-[13px] font-semibold text-zinc-900 dark:text-zinc-100">OT standings</div>
+            <div className="text-[11px] text-zinc-400">
+              {weekPending ? '…' : activeCount}{' '}
+              {isPeople
+                ? activeCount === 1 ? 'person' : 'people'
+                : activeCount === 1 ? 'department' : 'departments'}{' '}
+              on overtime · {periodLabel}
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            {/* CSV period selector — same list as the roster; authoritatively
+                scopes the leaderboard to one week (or the recent aggregate). */}
+            <SmoothSelect
+              value={statsPeriod}
+              onChange={(v) => { setStatsPeriod(v); setLeaderPage(1); }}
+              aria-label="Leaderboard pay week"
+              className="w-full shrink-0 sm:w-52"
+              options={statsPeriodOptions}
+            />
+            {/* Sort toggle so the two rankings can be told apart. */}
+            <div className="inline-flex shrink-0 rounded-lg border border-zinc-200 bg-zinc-50 p-0.5 dark:border-zinc-800 dark:bg-zinc-900">
+              {([['hours', 'Top OT hours'], ['pay', 'Top OT pay']] as const).map(([key, label]) => (
+                <button
+                  key={key}
+                  type="button"
+                  onClick={() => { setSort(key); setLeaderPage(1); }}
+                  aria-pressed={sort === key}
+                  className={cn(
+                    'rounded-md px-2.5 py-1 text-[12px] font-medium transition-colors',
+                    sort === key
+                      ? cn('shadow-sm', accent.chipBg, accent.chipText)
+                      : 'text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-200',
+                  )}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+        {/* People | Department tabs + a search bar scoped to the active tab. */}
+        <div className="flex flex-col gap-2 border-b border-zinc-200 px-3 py-2 sm:flex-row sm:items-center dark:border-zinc-800">
+          <div className="inline-flex shrink-0 rounded-lg border border-zinc-200 bg-zinc-50 p-0.5 dark:border-zinc-800 dark:bg-zinc-900">
+            {([['people', 'People'], ['department', 'Department']] as const).map(([key, label]) => (
+              <button
+                key={key}
+                type="button"
+                onClick={() => { setTab(key); setLeaderPage(1); setLeaderQuery(''); }}
+                aria-pressed={tab === key}
+                className={cn(
+                  'rounded-md px-3 py-1 text-[12px] font-medium transition-colors',
+                  tab === key
+                    ? cn('shadow-sm', accent.chipBg, accent.chipText)
+                    : 'text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-200',
+                )}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          {!weekPending && activeCount > 0 && (
+            <div className="relative min-w-0 flex-1">
+              <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400" />
+              <Input
+                type="search"
+                placeholder={isPeople ? 'Search name or email…' : 'Search department…'}
+                value={leaderQuery}
+                onChange={(e) => { setLeaderQuery(e.target.value); setLeaderPage(1); }}
+                className={cn('h-8 pl-8 text-[13px]', accent.ring)}
+                aria-label={isPeople ? 'Search OT people' : 'Search OT departments'}
+              />
+            </div>
+          )}
+        </div>
+        <AnimatePresence mode="wait" initial={false}>
+        <motion.div
+          key={contentKey}
+          initial={reduceMotion ? false : { opacity: 0, y: 6 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={reduceMotion ? { opacity: 0 } : { opacity: 0, y: -6 }}
+          transition={{ duration: 0.18, ease: 'easeOut' }}
+        >
+        {weekPending ? (
+          <div className="flex items-center justify-center gap-2 py-12 text-sm text-zinc-500">
+            <Loader2 className="h-4 w-4 animate-spin" /> Loading {periodLabel}…
+          </div>
+        ) : activeCount === 0 ? (
+          <div className="py-12 text-center text-sm text-zinc-500">
+            {isAggregate ? 'No overtime in the recent weeks.' : 'No overtime this week.'}
+          </div>
+        ) : filteredCount === 0 ? (
+          <div className="py-12 text-center text-sm text-zinc-500">
+            No {isPeople ? 'one' : 'department'} matches “{leaderQuery.trim()}”.
+          </div>
+        ) : isPeople ? (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-zinc-200 text-left text-[11px] uppercase tracking-wide text-zinc-500 dark:border-zinc-800">
+                  <th className="px-4 py-2.5 font-medium">#</th>
+                  <th className="px-3 py-2.5 font-medium">Person</th>
+                  <th className="px-3 py-2.5 font-medium text-right">OT hours</th>
+                  <th className="px-4 py-2.5 font-medium text-right">OT pay</th>
+                </tr>
+              </thead>
+              <tbody>
+                {pageLeaders.map((l, i) => (
+                  <tr
+                    key={`${l.email ?? l.name ?? 'leader'}|${leaderStart + i}`}
+                    className="border-b border-zinc-100 transition-colors last:border-0 hover:bg-zinc-50 dark:border-zinc-900 dark:hover:bg-zinc-900/50"
+                  >
+                    <td className="px-4 py-2.5 tabular-nums text-zinc-400" data-label="#">{leaderStart + i + 1}</td>
+                    <td className="px-3 py-2.5" data-label="Person">
+                      <div className="flex items-center gap-2.5">
+                        <TeamAvatar name={l.name ?? ''} email={l.email} />
+                        <div className="min-w-0">
+                          <div className="truncate font-medium text-zinc-900 dark:text-zinc-100">{l.name ?? '—'}</div>
+                          <div className="truncate text-[11px] text-zinc-400">{l.email ?? ''}</div>
+                        </div>
+                      </div>
+                    </td>
+                    <td className="px-3 py-2.5 text-right tabular-nums font-medium text-amber-600 dark:text-amber-400" data-label="OT hours">
+                      {fmtHours(l.otHours)}
+                    </td>
+                    <td className="px-4 py-2.5 text-right" data-label="OT pay">
+                      <div className="tabular-nums font-medium text-emerald-600 dark:text-emerald-400">{fmtMoney(l.otPayoutUsd ?? 0, 'USD')}</div>
+                      <div className="text-[11px] tabular-nums text-zinc-400">{fmtMoney(l.otPayoutPhp ?? 0, 'PHP')}</div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-zinc-200 text-left text-[11px] uppercase tracking-wide text-zinc-500 dark:border-zinc-800">
+                  <th className="px-4 py-2.5 font-medium">#</th>
+                  <th className="px-3 py-2.5 font-medium">Department</th>
+                  <th className="px-3 py-2.5 font-medium text-right">People</th>
+                  <th className="px-3 py-2.5 font-medium text-right">OT hours</th>
+                  <th className="px-4 py-2.5 font-medium text-right">OT pay</th>
+                </tr>
+              </thead>
+              <tbody>
+                {pageDepts.map((d, i) => (
+                  <tr
+                    key={`${d.department}|${leaderStart + i}`}
+                    className="border-b border-zinc-100 transition-colors last:border-0 hover:bg-zinc-50 dark:border-zinc-900 dark:hover:bg-zinc-900/50"
+                  >
+                    <td className="px-4 py-2.5 tabular-nums text-zinc-400" data-label="#">{leaderStart + i + 1}</td>
+                    <td className="px-3 py-2.5 font-medium text-zinc-900 dark:text-zinc-100" data-label="Department">{d.department}</td>
+                    <td className="px-3 py-2.5 text-right tabular-nums text-zinc-600 dark:text-zinc-300" data-label="People">{d.people}</td>
+                    <td className="px-3 py-2.5 text-right tabular-nums font-medium text-amber-600 dark:text-amber-400" data-label="OT hours">
+                      {fmtHours(d.otHours)}
+                    </td>
+                    <td className="px-4 py-2.5 text-right" data-label="OT pay">
+                      <div className="tabular-nums font-medium text-emerald-600 dark:text-emerald-400">{fmtMoney(d.otPayoutUsd ?? 0, 'USD')}</div>
+                      <div className="text-[11px] tabular-nums text-zinc-400">{fmtMoney(d.otPayoutPhp ?? 0, 'PHP')}</div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+        </motion.div>
+        </AnimatePresence>
+        {leaderTotalPages > 1 && (
+          <div className="flex items-center justify-between gap-2 border-t border-zinc-200 px-4 py-2.5 text-[12px] text-zinc-500 dark:border-zinc-800">
+            <span className="tabular-nums">
+              {leaderStart + 1}–{Math.min(leaderStart + LEADERS_PER_PAGE, filteredCount)} of {filteredCount}
+            </span>
+            <div className="flex items-center gap-2">
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="h-7 px-2 text-[12px]"
+                disabled={leaderSafePage <= 1}
+                onClick={() => setLeaderPage((p) => Math.max(1, p - 1))}
+              >
+                Prev
+              </Button>
+              <span className="tabular-nums text-zinc-600 dark:text-zinc-300">Page {leaderSafePage} of {leaderTotalPages}</span>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="h-7 px-2 text-[12px]"
+                disabled={leaderSafePage >= leaderTotalPages}
+                onClick={() => setLeaderPage((p) => Math.min(leaderTotalPages, p + 1))}
+              >
+                Next
+              </Button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** Stroke + dot palette for the department trend lines (and legend). */
+const DEPT_COLORS = [
+  { line: 'text-emerald-500', dot: 'bg-emerald-500' },
+  { line: 'text-sky-500', dot: 'bg-sky-500' },
+  { line: 'text-amber-500', dot: 'bg-amber-500' },
+  { line: 'text-violet-500', dot: 'bg-violet-500' },
+  { line: 'text-rose-500', dot: 'bg-rose-500' },
+  { line: 'text-teal-500', dot: 'bg-teal-500' },
+];
+
+/**
+ * Department OT trend — a multi-line chart (one line per top department) showing
+ * how each department's OT pay or OT hours moves across the recent weeks. Sits
+ * below the headline trend chart so you can see which departments drive OT.
+ */
+function DeptTrendChart({
+  points,
+  depts,
+  accent,
+}: {
+  points: StatsPoint[];
+  depts: StatsDept[] | null;
+  accent: Accent;
+}) {
+  const [metric, setMetric] = useState<OtSort>('pay');
+  const [hover, setHover] = useState<number | null>(null);
+
+  const ranked = [...(depts ?? [])].sort((a, b) =>
+    metric === 'pay'
+      ? (b.otPayoutUsd ?? b.otPayoutPhp ?? 0) - (a.otPayoutUsd ?? a.otPayoutPhp ?? 0)
+      : b.otHours - a.otHours,
+  );
+  const top = ranked.slice(0, DEPT_COLORS.length);
+  if (points.length === 0 || top.length === 0) return null;
+
+  const valueFor = (p: StatsPoint, dept: string) => {
+    const d = (p.depts ?? []).find((x) => x.department === dept);
+    if (!d) return 0;
+    return metric === 'pay' ? d.otPayoutUsd ?? d.otPayoutPhp ?? 0 : d.otHours;
+  };
+  const series = top.map((d, idx) => ({
+    dept: d.department,
+    color: DEPT_COLORS[idx % DEPT_COLORS.length],
+    values: points.map((p) => valueFor(p, d.department)),
+  }));
+
+  const W = 760;
+  const H = 210;
+  const padL = 52;
+  const padR = 14;
+  const padT = 12;
+  const padB = 32;
+  const plotW = W - padL - padR;
+  const plotH = H - padT - padB;
+  const n = points.length;
+  const xAt = (i: number) => (n === 1 ? padL + plotW / 2 : padL + (i * plotW) / (n - 1));
+  const top0 = niceCeil(Math.max(1, ...series.flatMap((s) => s.values)));
+  const yAt = (v: number) => padT + plotH - (v / top0) * plotH;
+  const grid = [0, 0.25, 0.5, 0.75, 1];
+  const labelEvery = Math.ceil(n / 8);
+  const shortDay = (iso: string) => {
+    const d = parseIsoLocal(iso);
+    return d ? d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : iso;
+  };
+  const fmtVal = (v: number) => (metric === 'pay' ? fmtMoney(v, 'USD') : fmtHours(v));
+  const fmtAxis = (v: number) => (metric === 'pay' ? fmtUsdAxis(v) : String(Math.round(v)));
+
+  return (
+    <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-950">
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+        <div className="text-[13px] font-semibold text-zinc-900 dark:text-zinc-100">
+          OT by department over time
+          <span className="ml-2 text-[11px] font-normal text-zinc-400">
+            top {top.length} of {ranked.length}
+          </span>
+        </div>
+        <div className="inline-flex shrink-0 rounded-lg border border-zinc-200 bg-zinc-50 p-0.5 dark:border-zinc-800 dark:bg-zinc-900">
+          {([['pay', 'OT pay'], ['hours', 'OT hours']] as const).map(([key, label]) => (
+            <button
+              key={key}
+              type="button"
+              onClick={() => setMetric(key)}
+              aria-pressed={metric === key}
+              className={cn(
+                'rounded-md px-2.5 py-1 text-[12px] font-medium transition-colors',
+                metric === key
+                  ? cn('shadow-sm', accent.chipBg, accent.chipText)
+                  : 'text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-200',
+              )}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="mb-2 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-zinc-600 dark:text-zinc-300">
+        {series.map((s) => (
+          <span key={s.dept} className="flex items-center gap-1.5">
+            <span className={cn('h-2 w-2 shrink-0 rounded-full', s.color.dot)} />
+            <span className="max-w-[120px] truncate">{s.dept}</span>
+          </span>
+        ))}
+      </div>
+      <div className="relative">
+        <svg viewBox={`0 0 ${W} ${H}`} className="h-auto w-full" role="img" aria-label="Department overtime trend" onMouseLeave={() => setHover(null)}>
+          {grid.map((g, gi) => {
+            const y = padT + plotH - g * plotH;
+            return (
+              <g key={gi}>
+                <line x1={padL} y1={y} x2={W - padR} y2={y} stroke="currentColor" className="text-zinc-200 dark:text-zinc-800" strokeWidth={1} />
+                <text x={padL - 8} y={y + 3} textAnchor="end" className="fill-zinc-400" fontSize={10}>{fmtAxis(g * top0)}</text>
+              </g>
+            );
+          })}
+          {points.map((p, i) =>
+            i % labelEvery === 0 || i === n - 1 ? (
+              <text key={`x${i}`} x={xAt(i)} y={H - padB + 16} textAnchor="middle" className={cn('fill-zinc-400', hover === i && 'fill-zinc-700 dark:fill-zinc-200')} fontSize={9}>
+                {shortDay(p.weekStart)}
+              </text>
+            ) : null,
+          )}
+          {hover != null && (
+            <line x1={xAt(hover)} y1={padT} x2={xAt(hover)} y2={padT + plotH} stroke="currentColor" className="text-zinc-300 dark:text-zinc-700" strokeWidth={1} strokeDasharray="3 3" />
+          )}
+          {series.map((s) => (
+            <polyline key={s.dept} points={s.values.map((v, i) => `${xAt(i)},${yAt(v)}`).join(' ')} fill="none" stroke="currentColor" className={s.color.line} strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />
+          ))}
+          {hover != null &&
+            series.map((s) => (
+              <circle key={`dot-${s.dept}`} cx={xAt(hover)} cy={yAt(s.values[hover])} r={3.5} fill="currentColor" className={s.color.line} />
+            ))}
+          {points.map((p, i) => {
+            const band = n > 1 ? plotW / (n - 1) : plotW;
+            return <rect key={`hit${i}`} x={xAt(i) - band / 2} y={padT} width={band} height={plotH} fill="transparent" onMouseEnter={() => setHover(i)} />;
+          })}
+        </svg>
+        {hover != null && (
+          <div className="pointer-events-none absolute top-1 z-20 w-48 -translate-x-1/2" style={{ left: `${Math.min(86, Math.max(14, (xAt(hover) / W) * 100))}%` }}>
+            <div className="rounded-lg border border-zinc-200 bg-white/95 p-2.5 text-[11px] shadow-lg backdrop-blur-sm dark:border-zinc-700 dark:bg-zinc-900/95">
+              <div className="font-semibold text-zinc-800 dark:text-zinc-100">
+                {shortDay(points[hover].weekStart)} – {shortDay(points[hover].weekEnd)}
+              </div>
+              <ul className="mt-1 space-y-0.5">
+                {series.map((s) => (
+                  <li key={s.dept} className="flex items-center justify-between gap-2">
+                    <span className="flex min-w-0 items-center gap-1.5">
+                      <span className={cn('h-2 w-2 shrink-0 rounded-full', s.color.dot)} />
+                      <span className="truncate text-zinc-700 dark:text-zinc-200">{s.dept}</span>
+                    </span>
+                    <span className="shrink-0 tabular-nums text-zinc-500 dark:text-zinc-400">{fmtVal(s.values[hover])}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

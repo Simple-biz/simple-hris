@@ -11,12 +11,13 @@ import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import ViewSwitcher from '@/components/rbac/ViewSwitcher';
+import BizAiBadge from './BizAiBadge';
 import { SESSION_EMAIL_KEY } from '@/lib/rbac/views';
 import EmployeeAvatar from '@/components/employee/EmployeeAvatar';
 import { useViewerProfilePhoto } from '@/hooks/useViewerProfilePhoto';
 import { useDispatchLock } from '@/hooks/useDispatchLock';
 
-export type CeoTab = 'overview' | 'people' | 'announcements' | 's-wall' | 'notifications';
+export type CeoTab = 'overview' | 'biz-ai' | 'people' | 'announcements' | 's-wall' | 'notifications';
 
 interface CeoSidebarProps {
   activeTab: CeoTab;
@@ -134,6 +135,21 @@ export default function CeoSidebar({
           </p>
           <nav className="flex flex-col gap-px">
             {can('overview') && navBtn('overview', 'Overview', LayoutDashboard)}
+            {can('biz-ai') && <button
+              key="biz-ai"
+              type="button"
+              onClick={() => setActiveTab('biz-ai')}
+              className={cn(
+                'group/ai flex w-full items-center gap-2.5 rounded-md px-2.5 py-[7px] text-[13.5px] font-[450] transition-[color,background-color,box-shadow] duration-200 ease-out',
+                activeTab === 'biz-ai'
+                  ? 'bg-gradient-to-r from-violet-600 to-fuchsia-600 font-medium text-white shadow-sm shadow-fuchsia-600/25'
+                  : 'text-[#3f3f46] hover:bg-fuchsia-50 hover:text-fuchsia-900 dark:text-zinc-300 dark:hover:bg-fuchsia-950/40 dark:hover:text-fuchsia-100',
+              )}
+            >
+              <BizAiBadge size="sm" active={activeTab === 'biz-ai'} />
+              <span className="truncate text-left">Penny AI</span>
+              {isConstr('biz-ai') && <ConstructionMark active={activeTab === 'biz-ai'} />}
+            </button>}
             {can('people') && navBtn('people', 'People', Users)}
             {can('announcements') && navBtn('announcements', 'Announcements', Megaphone)}
             {can('notifications') && navBtn(

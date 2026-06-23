@@ -106,7 +106,11 @@ export async function POST(req: NextRequest) {
 
   void insertAuditLog({
     user_name: authz.effectiveEmail,
-    user_role: "admin",
+    // Log the caller's real role from the verified session — never a hardcoded
+    // "admin". The gate above guarantees an admin reached this point, but
+    // hardcoding would silently lie if that gate were ever relaxed. roles[0]
+    // matches the getSessionActor() convention used across the audit trail.
+    user_role: authz.roles?.[0] ?? "admin",
     action: access === "hidden" ? "feature_permission.revoke" : "feature_permission.grant",
     resource: "employee_feature_permissions",
     resource_id: `${email}:${view}:${feature}`,

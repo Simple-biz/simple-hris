@@ -72,6 +72,7 @@ export const DASHBOARD_PAGES: DashboardPages[] = [
     accent: 'amber',
     pages: [
       { key: 'overview', label: 'Overview', home: true },
+      { key: 'biz-ai', label: 'Penny AI' },
       { key: 'people', label: 'People' },
       { key: 'announcements', label: 'Announcements' },
       { key: 'notifications', label: 'Notifications' },
