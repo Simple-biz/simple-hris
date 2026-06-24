@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
-import { Send, X, Sparkles, Loader2, Trash2, Heart } from 'lucide-react';
+import { Send, X, Sparkles, Loader2, Trash2 } from 'lucide-react';
 import { AssistantContent, MessageFeedback } from './ceo-chat-message';
 import { useCeoChat } from './use-ceo-chat';
 
@@ -281,11 +281,13 @@ export default function CeoChatBubble({ hidden = false }: { hidden?: boolean }) 
                 className="penny-halo absolute h-11 w-11 rounded-full bg-orange-400/40"
                 style={{ animation: 'pennyHeartHalo 1.5s ease-out infinite 0.35s' }}
               />
-              {/* the beating heart */}
-              <Heart
+              {/* the beating heart — the Penny AI heart mark */}
+              <img
                 aria-hidden
-                strokeWidth={1.5}
-                className="penny-heart relative h-9 w-9 fill-orange-500 text-orange-600 drop-shadow-md"
+                src="/chatbubble.png"
+                alt=""
+                draggable={false}
+                className="penny-heart relative h-9 w-9 object-contain drop-shadow-md"
                 style={{ animation: 'pennyHeartbeat 1.3s ease-in-out infinite', transformOrigin: 'center' }}
               />
             </motion.span>

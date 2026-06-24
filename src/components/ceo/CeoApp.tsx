@@ -12,6 +12,7 @@ import { normEmail } from '@/lib/email/norm-email';
 import { SESSION_EMAIL_KEY, type Role } from '@/lib/rbac/views';
 import CeoSidebar, { type CeoTab } from './CeoSidebar';
 import CeoChatBubble from './CeoChatBubble';
+import CeoOverviewKpis from './CeoOverviewKpis';
 import BizAiTab from './BizAiTab';
 import PeopleTab from '@/components/people/PeopleTab';
 import AnnouncementWall from '@/components/announcements/AnnouncementWall';
@@ -320,16 +321,9 @@ function CeoOverview({ viewerEmail }: { viewerEmail: string | null }) {
         </div>
       </header>
 
-      {/* Placeholder content area */}
-      <div className="flex flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-yellow-200/60 bg-yellow-50/30 py-14 text-center dark:border-yellow-900/30 dark:bg-yellow-950/10">
-        <Crown className="h-8 w-8 text-yellow-400/60 dark:text-yellow-600/60" />
-        <p className="text-sm font-medium text-zinc-500 dark:text-zinc-400">
-          Executive analytics coming soon
-        </p>
-        <p className="max-w-xs text-xs text-zinc-400 dark:text-zinc-600">
-          KPIs, headcount, payroll summaries, and team health metrics will appear here.
-        </p>
-      </div>
+      {/* Executive KPIs — headcount by department, payments to send this week,
+          and unpaid workers from the last pay cycle (Karen's requests). */}
+      <CeoOverviewKpis />
     </div>
   );
 }

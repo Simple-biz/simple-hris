@@ -108,7 +108,8 @@
       "PowerShell(npx tsc --noEmit 2>&1 | Select-Object -First 30; \"EXIT: $LASTEXITCODE\")",
       "Bash(mkdir -p node_modules/server-only)",
       "Bash(printf '{\"name\":\"server-only\",\"version\":\"0.0.0\",\"main\":\"index.js\"}')",
-      "Bash(printf 'module.exports = {};')"
+      "Bash(printf 'module.exports = {};')",
+      "PowerShell($out = npx tsc --noEmit -p tsconfig.json 2>&1; $errs = $out | Select-String -Pattern \"error TS\"; if \\($errs\\) { \"TOTAL ERRORS: \" + $errs.Count; $errs | Select-Object -First 20 } else { \"No TypeScript errors.\" })"
     ],
     "additionalDirectories": [
       "\\tmp"

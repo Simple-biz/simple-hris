@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import {
-  Search, Send, Eye, Clock, AlertTriangle, Users, Banknote, Loader2, Sparkles, RefreshCw,
+  Search, Send, Eye, EyeOff, Clock, AlertTriangle, Users, Banknote, Loader2, Sparkles, RefreshCw, CalendarDays, ChevronRight,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
@@ -223,6 +223,7 @@ export default function PeopleTab({
   const [query, setQuery] = useState('');
   const [selected, setSelected] = useState<RosterRow | null>(null);
   const [transferFor, setTransferFor] = useState<RosterRow | null>(null);
+  const [showExcluded, setShowExcluded] = useState(false);
   const [deptFilter, setDeptFilter] = useState<string>('all');
   // Roster + stats share this: when on, only people who rendered OT are shown.
   const [otOnly, setOtOnly] = useState(false);
@@ -371,6 +372,19 @@ export default function PeopleTab({
     [rows],
   );
 
+  // Friendly label for the pay week chosen in the CSV period selector.
+  const periodLabel = useMemo(
+    () => periods.find((p) => p.file === period)?.label ?? (period ? labelForSourceFile(period) : 'Current week'),
+    [periods, period],
+  );
+
+  // Payouts to be sent this week = people who logged Hubstaff hours in the
+  // selected pay week AND are in the Global Master List. The roster is already
+  // built only from master-list employees, so "in master list" is implicit.
+  // The excluded set (no hours this week) powers the "Payouts to send" modal.
+  const excludedRows = useMemo(() => rows.filter((r) => !(r.hours.thisWeek > 0)), [rows]);
+  const payoutCount = rows.length - excludedRows.length;
+
   return (
     // data-readonly-allow: People is a read surface (browse, search, reveal-banking
     // is itself audited); the only mutation — special transfers — is gated on
@@ -501,7 +515,7 @@ export default function PeopleTab({
 
         {/* Week KPI cards — overtime headcount + estimated OT payout for the
             selected week (USD primary, PHP small). */}
-        <div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
           <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-950">
             <div className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-zinc-400">
               <AlertTriangle className="h-3.5 w-3.5 text-amber-500" /> Employees with overtime
@@ -526,6 +540,31 @@ export default function PeopleTab({
               <span className="text-[12px] tabular-nums text-zinc-400">{fmtMoney(summary?.otPayoutPhp ?? 0, 'PHP')}</span>
             </div>
           </div>
+          <button
+            type="button"
+            onClick={() => setShowExcluded(true)}
+            className="group rounded-xl border border-zinc-200 bg-white p-4 text-left shadow-sm transition-colors hover:border-sky-300 hover:bg-sky-50/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-400 dark:border-zinc-800 dark:bg-zinc-950 dark:hover:border-sky-800/70 dark:hover:bg-sky-950/20"
+            title="See who has no payout this week and why"
+          >
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-zinc-400">
+                <Send className="h-3.5 w-3.5 text-sky-500" /> Payouts to send
+              </div>
+              <span className="flex items-center gap-0.5 text-[11px] font-medium text-sky-600 dark:text-sky-400">
+                {excludedRows.length} excluded
+                <ChevronRight className="h-3 w-3 transition-transform group-hover:translate-x-0.5" />
+              </span>
+            </div>
+            <div className="mt-1 flex items-baseline gap-2">
+              <span className="text-2xl font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">
+                {payoutCount}
+              </span>
+              <span className="text-[12px] text-zinc-400">of {rows.length}</span>
+            </div>
+            <div className="mt-0.5 flex items-center gap-1 text-[11px] text-zinc-400">
+              <CalendarDays className="h-3 w-3 shrink-0" /> <span className="truncate">{periodLabel}</span>
+            </div>
+          </button>
         </div>
 
         {loading && rows.length === 0 ? (
@@ -673,7 +712,122 @@ export default function PeopleTab({
           }}
         />
       )}
+
+      {showExcluded && (
+        <ExcludedPayoutDialog
+          rows={excludedRows}
+          periodLabel={periodLabel}
+          onClose={() => setShowExcluded(false)}
+          onSelect={(r) => { setShowExcluded(false); setSelected(r); }}
+        />
+      )}
     </div>
+  );
+}
+
+/* ── Excluded-from-payout modal ─────────────────────────────────────────── */
+
+function ExcludedPayoutDialog({
+  rows,
+  periodLabel,
+  onClose,
+  onSelect,
+}: {
+  rows: RosterRow[];
+  periodLabel: string;
+  onClose: () => void;
+  onSelect: (r: RosterRow) => void;
+}) {
+  const [q, setQ] = useState('');
+  const list = useMemo(() => {
+    const term = q.trim().toLowerCase();
+    if (!term) return rows;
+    return rows.filter(
+      (r) =>
+        (r.name ?? '').toLowerCase().includes(term) ||
+        (r.work_email ?? '').toLowerCase().includes(term) ||
+        (r.department ?? '').toLowerCase().includes(term),
+    );
+  }, [rows, q]);
+
+  return (
+    <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent className="gap-0 overflow-hidden p-0 sm:max-w-2xl">
+        <div className="flex max-h-[88vh] flex-col">
+          <DialogHeader className="shrink-0 border-b border-zinc-200 px-5 py-4 dark:border-zinc-800">
+            <DialogTitle className="text-lg">Not in this week&apos;s payout</DialogTitle>
+            <DialogDescription>
+              {rows.length} {rows.length === 1 ? 'person is' : 'people are'} in the Global Master List but logged no
+              Hubstaff hours for {periodLabel}, so they have no payout to be sent this week.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="shrink-0 border-b border-zinc-200 px-5 py-3 dark:border-zinc-800">
+            <div className="relative">
+              <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400" />
+              <Input
+                value={q}
+                onChange={(e) => setQ(e.target.value)}
+                placeholder="Search name, email, or department…"
+                className="h-9 pl-8 text-[13px]"
+              />
+            </div>
+          </div>
+
+          <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+            {list.length === 0 ? (
+              <p className="py-12 text-center text-sm text-zinc-500">
+                {rows.length === 0
+                  ? 'Everyone in the Master List has Hubstaff hours this week.'
+                  : 'No one matches your search.'}
+              </p>
+            ) : (
+              <ul className="space-y-1.5">
+                {list.map((r) => {
+                  const noRate = r.rate.regular == null && r.rate.ot == null;
+                  return (
+                    <li key={`${r.work_email ?? r.employee_id ?? r.name ?? 'row'}|${r.name ?? ''}`}>
+                      <button
+                        type="button"
+                        onClick={() => onSelect(r)}
+                        className="flex w-full items-center gap-3 rounded-lg border border-zinc-200 px-3 py-2.5 text-left transition-colors hover:bg-zinc-50 dark:border-zinc-800 dark:hover:bg-zinc-900/50"
+                      >
+                        <TeamAvatar name={r.name ?? ''} email={r.work_email} />
+                        <div className="min-w-0 flex-1">
+                          <div className="truncate text-[13px] font-medium text-zinc-900 dark:text-zinc-100">{r.name ?? '—'}</div>
+                          <div className="truncate text-[11px] text-zinc-400">
+                            {r.department ?? '—'} · {r.work_email ?? r.employee_id ?? ''}
+                          </div>
+                        </div>
+                        <div className="flex shrink-0 flex-wrap items-center justify-end gap-1">
+                          <span className="inline-flex items-center rounded-full bg-amber-50 px-2 py-0.5 text-[10.5px] font-medium text-amber-700 dark:bg-amber-950/40 dark:text-amber-300">
+                            No hours this week
+                          </span>
+                          {noRate && (
+                            <span className="inline-flex items-center rounded-full bg-zinc-100 px-2 py-0.5 text-[10.5px] font-medium text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
+                              No pay rate
+                            </span>
+                          )}
+                          {!r.hasBanking && (
+                            <span className="inline-flex items-center rounded-full bg-zinc-100 px-2 py-0.5 text-[10.5px] font-medium text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
+                              No payout details
+                            </span>
+                          )}
+                        </div>
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </div>
+
+          <div className="shrink-0 border-t border-zinc-200 px-5 py-3 text-[11px] text-zinc-400 dark:border-zinc-800">
+            Showing {list.length} of {rows.length}. Click anyone to open their full record.
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -1396,6 +1550,8 @@ function PersonDetailDialog({
   const [history, setHistory] = useState<HistoryRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [revealing, setRevealing] = useState(false);
+  // Banking & payout stays hidden until the viewer explicitly reveals it.
+  const [showBanking, setShowBanking] = useState(false);
   const isHsl = (row.department ?? '').trim().toLowerCase() === 'hsl';
   const [histPage, setHistPage] = useState(1);
   const histDirRef = useRef<1 | -1>(1);
@@ -1458,11 +1614,24 @@ function PersonDetailDialog({
       const j = (await res.json()) as { banking?: Banking | null; error?: string };
       if (!res.ok) throw new Error(j.error || 'Reveal failed');
       if (j.banking) setBanking(j.banking);
+      return true;
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Could not reveal banking');
+      return false;
     } finally {
       setRevealing(false);
     }
+  };
+
+  // Toggle the Banking & payout block. Revealing masked records fetches the
+  // unmasked values first (audit-logged); hiding is purely visual.
+  const toggleBanking = async () => {
+    if (showBanking) { setShowBanking(false); return; }
+    if (banking?.masked) {
+      const ok = await reveal();
+      if (!ok) return; // keep hidden if the reveal failed
+    }
+    setShowBanking(true);
   };
 
   return (
@@ -1529,10 +1698,16 @@ function PersonDetailDialog({
           <div className="mt-5">
             <div className="mb-2 flex items-center justify-between">
               <h3 className="text-xs font-semibold uppercase tracking-wide text-zinc-500">Banking & payout</h3>
-              {banking?.masked && (
-                <Button type="button" size="sm" variant="outline" className="h-7 gap-1.5 px-2 text-[12px]" onClick={reveal} disabled={revealing}>
-                  {revealing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Eye className="h-3.5 w-3.5" />}
-                  Reveal
+              {!loading && (
+                <Button type="button" size="sm" variant="outline" className="h-7 gap-1.5 px-2 text-[12px]" onClick={toggleBanking} disabled={revealing}>
+                  {revealing ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : showBanking ? (
+                    <EyeOff className="h-3.5 w-3.5" />
+                  ) : (
+                    <Eye className="h-3.5 w-3.5" />
+                  )}
+                  {showBanking ? 'Hide' : 'Reveal'}
                 </Button>
               )}
             </div>
@@ -1547,16 +1722,43 @@ function PersonDetailDialog({
                   ))}
                 </div>
               </div>
-            ) : !banking ? (
-              <p className="py-3 text-xs text-zinc-400">No payout details on file.</p>
             ) : (
-              <div className="rounded-lg border border-zinc-200 bg-zinc-50/60 p-3 text-[13px] dark:border-zinc-800 dark:bg-zinc-900/40">
-                {banking.masked && (
+              <AnimatePresence mode="wait" initial={false}>
+              {!showBanking ? (
+                <motion.button
+                  key="hidden"
+                  type="button"
+                  onClick={toggleBanking}
+                  disabled={revealing}
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  transition={{ duration: reduceMotion ? 0 : 0.14 }}
+                  className="flex w-full items-center justify-center gap-2 rounded-lg border border-dashed border-zinc-300 bg-zinc-50/60 px-3 py-4 text-[12px] text-zinc-500 transition-colors hover:border-zinc-400 hover:text-zinc-700 disabled:opacity-60 dark:border-zinc-700 dark:bg-zinc-900/40 dark:text-zinc-400 dark:hover:border-zinc-600 dark:hover:text-zinc-200"
+                >
+                  <Eye className="h-3.5 w-3.5" />
+                  Payout details hidden — click to reveal
+                </motion.button>
+              ) : (
+                <motion.div
+                  key="shown"
+                  initial={reduceMotion ? { opacity: 0 } : { opacity: 0, height: 0 }}
+                  animate={reduceMotion ? { opacity: 1 } : { opacity: 1, height: 'auto' }}
+                  exit={reduceMotion ? { opacity: 0 } : { opacity: 0, height: 0 }}
+                  transition={{ duration: reduceMotion ? 0 : 0.3, ease: [0.22, 1, 0.36, 1] }}
+                  className="overflow-hidden"
+                >
+                <div className="rounded-lg border border-zinc-200 bg-zinc-50/60 p-3 text-[13px] dark:border-zinc-800 dark:bg-zinc-900/40">
+                {!banking ? (
+                  <p className="mb-2 text-[11px] text-zinc-400">No payout details on file yet — these fields will populate once the employee completes their payout setup.</p>
+                ) : banking.masked ? (
                   <p className="mb-2 text-[11px] text-zinc-400">Sensitive fields are masked. Reveal is recorded in the audit log.</p>
-                )}
+                ) : null}
                 <dl className="grid grid-cols-1 gap-x-6 gap-y-1.5 sm:grid-cols-2">
-                  <Field label="Processor" value={banking.preferred_processor || 'Not set'} cap />
-                  {showBank && (
+                  <Field label="Processor" value={banking ? (banking.preferred_processor || 'Not set') : null} cap />
+                  {/* No banking record → show the canonical bank/wires field set as
+                      placeholders so the CEO sees where details are expected. */}
+                  {(showBank || !banking) && (
                     <>
                       <Field label={`Bank${prefAlt ? ' (alternative)' : ''}`} value={prefBank.name} />
                       <Field label="Account holder" value={prefBank.holder} />
@@ -1566,23 +1768,26 @@ function PersonDetailDialog({
                       <Field label="Address" value={prefBank.address} wide />
                     </>
                   )}
-                  {proc === 'hurupay' && <Field label="Hurupay email" value={banking.hurupay_email} />}
-                  {proc === 'wepay' && <Field label="WePay email" value={banking.wepay_email} />}
+                  {proc === 'hurupay' && <Field label="Hurupay email" value={banking?.hurupay_email ?? null} />}
+                  {proc === 'wepay' && <Field label="WePay email" value={banking?.wepay_email ?? null} />}
                   {proc === 'higlobe' && (
                     <>
-                      <Field label="HiGlobe email" value={banking.higlobe_email} />
-                      <Field label="HiGlobe account" value={banking.higlobe_account_name} />
+                      <Field label="HiGlobe email" value={banking?.higlobe_email ?? null} />
+                      <Field label="HiGlobe account" value={banking?.higlobe_account_name ?? null} />
                     </>
                   )}
                   {proc === 'wise' && (
                     <>
-                      <Field label="Wise email" value={banking.wise_email} />
-                      <Field label="Wise tag" value={banking.wise_tag} />
+                      <Field label="Wise email" value={banking?.wise_email ?? null} />
+                      <Field label="Wise tag" value={banking?.wise_tag ?? null} />
                     </>
                   )}
-                  {proc === 'jeeves' && <Field label="Phone" value={banking.phone_number} mono />}
+                  {proc === 'jeeves' && <Field label="Phone" value={banking?.phone_number ?? null} mono />}
                 </dl>
-              </div>
+                </div>
+                </motion.div>
+              )}
+              </AnimatePresence>
             )}
           </div>
 
@@ -1858,11 +2063,19 @@ function StatCard({ label, value, sub }: { label: string; value: string; sub?: s
 }
 
 function Field({ label, value, mono, cap, wide }: { label: string; value: string | null; mono?: boolean; cap?: boolean; wide?: boolean }) {
-  if (!value) return null;
+  const empty = !value;
   return (
     <div className={cn(wide && 'sm:col-span-2')}>
       <dt className="text-[10.5px] uppercase tracking-wide text-zinc-400">{label}</dt>
-      <dd className={cn('text-zinc-800 dark:text-zinc-100', mono && 'font-mono', cap && 'capitalize')}>{value}</dd>
+      <dd
+        className={cn(
+          empty
+            ? 'italic text-zinc-400 dark:text-zinc-500'
+            : cn('text-zinc-800 dark:text-zinc-100', mono && 'font-mono', cap && 'capitalize'),
+        )}
+      >
+        {empty ? 'Not yet filled' : value}
+      </dd>
     </div>
   );
 }
