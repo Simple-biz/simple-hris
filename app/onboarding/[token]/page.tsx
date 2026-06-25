@@ -9,6 +9,8 @@ import {
   Check,
   CheckCircle2,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   CloudUpload,
   Eraser,
   FileText,
@@ -89,6 +91,11 @@ type LinkInfo = {
 
 type FormState = {
   first_name: string;
+  /** Read-only display name mirrored from {@link first_name}. When the hire has
+   *  more than one first name (e.g. "Mary Grace"), this holds whichever one they
+   *  stepped to with the arrow buttons, defaulting to the first. Display-only —
+   *  it is NOT part of the submit payload. */
+  nickname: string;
   last_name: string;
   /** Optional name extension / generational suffix (Jr., Sr., II, III, IV) shown
    *  beside the last name. Folded into the stored full_name for HR + contracts,
@@ -133,6 +140,7 @@ type FormState = {
 
 const emptyForm: FormState = {
   first_name: '',
+  nickname: '',
   last_name: '',
   extension: '',
   gmail_surname: '',
@@ -266,6 +274,7 @@ export default function OnboardingFormPage() {
           const priorName = splitName(prior.full_name);
           setForm({
             first_name: priorName.first,
+            nickname: priorName.first,
             last_name: priorName.last,
             extension: priorName.extension,
             gmail_surname: prior.gmail_surname ?? '',
@@ -313,6 +322,7 @@ export default function OnboardingFormPage() {
             setForm((f) => ({
               ...f,
               first_name: inviteName.first,
+              nickname: inviteName.first,
               last_name: inviteName.last,
               extension: inviteName.extension,
               // Pre-fill the IP document's name from the invite too.
@@ -402,6 +412,22 @@ export default function OnboardingFormPage() {
       clearTimeout(handle);
     };
   }, [form.first_name, form.last_name, token]);
+
+  // Keep the read-only "Nickname" mirrored to the first-name field. It defaults
+  // to the first of possibly several first names; if the hire had stepped to a
+  // later one with the arrows, that choice is kept as long as it still appears
+  // in the (re-typed / re-cased) first name — otherwise it falls back to the
+  // first. Case-insensitive match so blur-time title-casing doesn't reset it.
+  useEffect(() => {
+    const tokens = form.first_name.trim().split(/\s+/).filter(Boolean);
+    setForm((f) => {
+      const matchIdx = tokens.findIndex(
+        (t) => t.toLowerCase() === f.nickname.trim().toLowerCase(),
+      );
+      const desired = matchIdx >= 0 ? tokens[matchIdx] : tokens[0] ?? '';
+      return f.nickname === desired ? f : { ...f, nickname: desired };
+    });
+  }, [form.first_name]);
 
   const update = useCallback(<K extends keyof FormState>(k: K, v: FormState[K]) => {
     setForm((f) => ({ ...f, [k]: v }));
@@ -910,6 +936,21 @@ function Step1Welcome({
   // Currency is derived from the selected country (United States → USD,
   // Philippines → PHP, Colombia → COP) — knowing the country is how we know it.
   const selectedCurrency = currencyForCountry(form.country);
+
+  // The read-only Nickname mirrors the first-name field. When the hire typed
+  // more than one first name (e.g. "Mary Grace"), the arrows step through them;
+  // otherwise it's a plain copy of the single name.
+  const firstNameTokens = (form.first_name ?? '').trim().split(/\s+/).filter(Boolean);
+  const hasMultipleFirstNames = firstNameTokens.length > 1;
+  const nicknameIdx = Math.max(
+    0,
+    firstNameTokens.findIndex((t) => t.toLowerCase() === (form.nickname ?? '').trim().toLowerCase()),
+  );
+  const stepNickname = (delta: number) => {
+    const next = firstNameTokens[nicknameIdx + delta];
+    if (next) update('nickname', next);
+  };
+
   return (
     <div className="space-y-6 p-5 sm:p-7">
       <div>
@@ -956,6 +997,54 @@ function Step1Welcome({
             />
           </Field>
         </div>
+        <Field label="Nickname" className="sm:col-span-2">
+          <div className="flex items-center gap-2">
+            {hasMultipleFirstNames && (
+              <button
+                type="button"
+                onClick={() => stepNickname(-1)}
+                disabled={nicknameIdx <= 0}
+                aria-label="Previous first name"
+                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-zinc-300 bg-white text-zinc-600 shadow-sm transition-all hover:border-emerald-300 hover:text-emerald-700 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-zinc-300 disabled:hover:text-zinc-600"
+              >
+                <ChevronLeft className="h-4 w-4" />
+              </button>
+            )}
+            <Input
+              value={form.nickname ?? ''}
+              readOnly
+              tabIndex={-1}
+              aria-readonly
+              placeholder={form.first_name.trim() ? '' : 'Auto-filled from your first name'}
+              className="bg-zinc-50 text-zinc-700 cursor-default text-center font-medium"
+            />
+            {hasMultipleFirstNames && (
+              <button
+                type="button"
+                onClick={() => stepNickname(1)}
+                disabled={nicknameIdx >= firstNameTokens.length - 1}
+                aria-label="Next first name"
+                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-zinc-300 bg-white text-zinc-600 shadow-sm transition-all hover:border-emerald-300 hover:text-emerald-700 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-zinc-300 disabled:hover:text-zinc-600"
+              >
+                <ChevronRight className="h-4 w-4" />
+              </button>
+            )}
+          </div>
+          <p className="text-[11px] leading-relaxed text-zinc-500">
+            {hasMultipleFirstNames ? (
+              <>
+                Copied from your first name. You have more than one first name — use the arrows to pick the one you
+                go by{' '}
+                <span className="font-semibold text-zinc-600">
+                  ({nicknameIdx + 1} of {firstNameTokens.length})
+                </span>
+                .
+              </>
+            ) : (
+              'Automatically copied from your first name above.'
+            )}
+          </p>
+        </Field>
         <Field label="Gmail Surname" className="sm:col-span-2">
           <div className="relative">
             <Input

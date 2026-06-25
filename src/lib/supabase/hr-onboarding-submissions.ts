@@ -34,6 +34,12 @@ export type HrOnboardingSubmissionRow = {
   invite_note: string | null;
 
   full_name: string | null;
+  /** DERIVED surname-first display name — `Surname[ Suffix], Given... "GoBy"`
+   *  (e.g. "Jan Kane Reroma" → `Reroma, Jan Kane "Kane"`). Computed from
+   *  `full_name` by the `name_last_first_quoted()` DB trigger; null for rows
+   *  without a submitted name. Display only — `full_name` stays canonical for
+   *  payroll name-matching + work-email derivation. See migration #87. */
+  display_name: string | null;
   /** Surname for the @simple.biz Google account — sent to the workspace-account
    *  webhook in place of the legal last name (falls back to it when null). */
   gmail_surname: string | null;

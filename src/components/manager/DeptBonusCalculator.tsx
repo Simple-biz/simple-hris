@@ -123,11 +123,6 @@ interface DeptState {
 
 type AllState = Record<string, DeptState>;
 
-interface Wallpaper {
-  url: string | null;
-  position: string;
-}
-
 interface DeptBonusCalculatorProps {
   viewerEmail: string | null;
   teamMembers: EmployeeRow[];
@@ -256,9 +251,47 @@ function initials(name: string): string {
   return (parts[0]![0]! + parts[1]![0]!).toUpperCase();
 }
 
-/** Tileable film-grain noise, layered over the hero with mix-blend for depth. */
-const HERO_NOISE =
-  "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E\")";
+/** Build short, *unique* abbreviations for the department picker tiles. The base
+ *  form mirrors `initials()` — first letter of each of the first two words, or
+ *  the first two letters when the name is a single word. On a collision we walk
+ *  further into the name (and finally append a digit) so every department in the
+ *  view ends up with a distinct tag. */
+function uniqueDeptAbbrevs(items: { key: string; name: string }[]): Record<string, string> {
+  const used = new Set<string>();
+  const out: Record<string, string> = {};
+  for (const { key, name } of items) {
+    const cleaned = name.replace(/["']/g, '').replace(/[,/]/g, ' ').trim();
+    const words = cleaned.split(/\s+/).filter(Boolean);
+    const letters = cleaned.replace(/[^A-Za-z0-9]/g, '').toUpperCase();
+
+    // Candidate abbreviations, most-preferred first.
+    const cands: string[] = [];
+    const push = (s: string) => {
+      const u = (s ?? '').toUpperCase();
+      if (u.length >= 2 && !cands.includes(u)) cands.push(u);
+    };
+    push(initials(name)); // base, e.g. "LG"
+    if (words.length >= 2) {
+      for (let i = 2; i < words.length; i++) push(words[0]![0]! + words[i]![0]!); // first + later word
+      push(words[0]!.slice(0, 2)); // first word, two letters
+      push(words[0]![0]! + words[1]![0]! + (words[2]?.[0] ?? words[1]![1] ?? '')); // 3-letter
+    } else {
+      for (let i = 2; i < letters.length; i++) push(letters[0]! + letters[i]!); // first + later letter
+      push(letters.slice(0, 3)); // 3-letter
+    }
+
+    let chosen = cands.find((c) => !used.has(c));
+    if (!chosen) {
+      const base = cands[0] ?? (key.slice(0, 2).toUpperCase() || '?');
+      let n = 2;
+      chosen = `${base}${n}`;
+      while (used.has(chosen)) chosen = `${base}${++n}`;
+    }
+    used.add(chosen);
+    out[key] = chosen;
+  }
+  return out;
+}
 
 function rowEmail(r: EmployeeRow): string {
   return normEmail(r.personal_email ?? null) || normEmail(r.work_email ?? null) || '';
@@ -592,7 +625,6 @@ export default function DeptBonusCalculator({
   }, [isElevated, managedDepts, rosterByDept, commonByDept, individualByDept]);
 
   const [state, setState] = useState<AllState>({});
-  const [wallpapers, setWallpapers] = useState<Record<string, Wallpaper>>({});
   // Landing: filter the department cards by name.
   const [deptSearch, setDeptSearch] = useState('');
   // Per-department people search, used inside the open calculator panel.
@@ -875,26 +907,20 @@ export default function DeptBonusCalculator({
     })();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Fetch each department's team wallpaper (best-effort; falls back to a mesh).
-  useEffect(() => {
-    let cancelled = false;
-    void Promise.all(
-      visibleDeptKeys.map(async (key) => {
-        const name = deptLabelByKey[key] ?? DEPARTMENTS.find((d) => d.key === key)?.name ?? key;
-        try {
-          const res = await fetch(`/api/manager/team-wallpaper?department=${encodeURIComponent(name)}`, { cache: 'no-store' });
-          const json = (await res.json()) as { url?: string | null; position?: string };
-          if (cancelled) return;
-          setWallpapers((prev) => ({ ...prev, [key]: { url: json.url ?? null, position: json.position ?? '50% 50%' } }));
-        } catch {
-          /* fallback mesh is used */
-        }
-      }),
-    );
-    return () => {
-      cancelled = true;
-    };
-  }, [visibleDeptKeys, deptLabelByKey]);
+  // Short, unique abbreviation per visible department for the picker tiles
+  // (replaces the old wallpaper thumbnails). Computed over the whole visible set
+  // so collisions resolve deterministically and a dept's tag is stable as the
+  // landing search narrows.
+  const deptAbbrevByKey = useMemo<Record<string, string>>(
+    () =>
+      uniqueDeptAbbrevs(
+        visibleDeptKeys.map((key) => ({
+          key,
+          name: DEPARTMENTS.find((d) => d.key === key)?.name ?? deptLabelByKey[key] ?? key,
+        })),
+      ),
+    [visibleDeptKeys, deptLabelByKey],
+  );
 
   // -- Live bonus computation ----------------------------------------------------
 
@@ -935,7 +961,6 @@ export default function DeptBonusCalculator({
       const d = state[key];
       const dept = DEPARTMENTS.find((x) => x.key === key);
       const color = deptColor(key);
-      const wp = wallpapers[key];
       const readOnly = d ? d.status !== 'draft' : false;
       const total = deptTotal(key, d);
       const common = commonByDept.get(key) ?? [];
@@ -1021,7 +1046,7 @@ export default function DeptBonusCalculator({
       }
 
       return {
-        d, dept, color, wp, readOnly, total,
+        d, dept, color, readOnly, total,
         common, sharedSet, normalCommon, sharedCommon,
         allMembers, members, cq,
         hasIndividual, hasAnyBonus,
@@ -1030,7 +1055,7 @@ export default function DeptBonusCalculator({
       };
     },
     [
-      state, wallpapers, cardSearch, deptTotal, commonByDept, sharedCommonByDept,
+      state, cardSearch, deptTotal, commonByDept, sharedCommonByDept,
       individualByDept, applicableBonuses, fx, workEmailByIdentity,
     ],
   );
@@ -2269,8 +2294,7 @@ export default function DeptBonusCalculator({
                 name={v.dept?.name ?? key}
                 desc={DEPT_DESCRIPTION[key] ?? ''}
                 color={v.color}
-                wp={v.wp}
-                monogram={initials(v.dept?.name ?? key)}
+                monogram={deptAbbrevByKey[key] ?? initials(v.dept?.name ?? key)}
                 headcount={v.allMembers.length}
                 entered={v.entered}
                 status={v.d?.status ?? 'draft'}
@@ -2400,7 +2424,6 @@ function DeptSummaryCard({
   name,
   desc,
   color,
-  wp,
   monogram,
   headcount,
   entered,
@@ -2418,7 +2441,6 @@ function DeptSummaryCard({
   name: string;
   desc: string;
   color: string;
-  wp: Wallpaper | undefined;
   monogram: string;
   headcount: number;
   entered: number;
@@ -2453,27 +2475,15 @@ function DeptSummaryCard({
     >
       <div className="absolute inset-x-0 top-0 h-1" style={{ backgroundColor: color }} aria-hidden />
 
-      {/* Thumbnail / monogram tile */}
+      {/* Abbreviation tile */}
       <div className="relative h-16 w-16 shrink-0 overflow-hidden rounded-xl ring-1 ring-black/5 dark:ring-white/10">
-        {wp?.url ? (
-          <>
-            <div
-              className="absolute inset-0 bg-cover bg-center transition-transform duration-700 ease-out group-hover:scale-110"
-              style={{ backgroundImage: `url("${wp.url}")`, backgroundPosition: wp.position }}
-              aria-hidden
-            />
-            <div className="absolute inset-0 bg-gradient-to-t from-black/45 to-transparent" aria-hidden />
-            <div className="pointer-events-none absolute inset-0 opacity-[0.12] mix-blend-overlay" style={{ backgroundImage: HERO_NOISE }} aria-hidden />
-          </>
-        ) : (
-          <div
-            className="absolute inset-0 flex items-center justify-center font-mono text-lg font-bold"
-            style={{ backgroundColor: hexA(color, 0.14), color }}
-            aria-hidden
-          >
-            {monogram}
-          </div>
-        )}
+        <div
+          className="absolute inset-0 flex items-center justify-center font-mono text-lg font-bold"
+          style={{ backgroundColor: hexA(color, 0.14), color }}
+          aria-hidden
+        >
+          {monogram}
+        </div>
         <div className="absolute bottom-1 left-1 flex items-center gap-1 rounded-full bg-black/45 px-1.5 py-0.5 text-white/90 backdrop-blur-sm">
           <Users className="h-2.5 w-2.5" aria-hidden />
           {loading ? (

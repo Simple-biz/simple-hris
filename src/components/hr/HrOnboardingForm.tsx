@@ -146,6 +146,9 @@ type SubmissionRow = {
   invite_country: string | null;
   invite_note: string | null;
   full_name: string | null;
+  // DERIVED surname-first display name (`Surname, Given... "GoBy"`) from the DB
+  // trigger; null until a hire submits. Display only — see migration #87.
+  display_name: string | null;
   phone: string | null;
   email: string | null;
   location: string | null;
@@ -1581,7 +1584,10 @@ export default function HrOnboardingForm() {
                       </td>
                       <td data-label="Invitee" className="px-4 py-3">
                         <div className="font-medium text-zinc-900 dark:text-zinc-100">
-                          {r.invite_name ?? r.full_name ?? '—'}
+                          {/* Submitted hires show the surname-first display name
+                              (`Reroma, Jan Kane "Kane"`); pending rows have no
+                              full_name yet so they fall back to the invite name. */}
+                          {r.display_name ?? r.invite_name ?? r.full_name ?? '—'}
                         </div>
                         <div className="mt-0.5 break-all font-mono text-[11px] text-zinc-500">
                           {r.invite_personal_email ?? r.email ?? '—'}
