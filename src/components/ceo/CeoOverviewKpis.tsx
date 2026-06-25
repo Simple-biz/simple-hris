@@ -1,9 +1,13 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import { motion } from 'motion/react';
 import {
-  Building2, CalendarDays, Send, Wallet, ChevronRight, Loader2, Search,
+  Building2, CalendarDays, Send, Wallet, ChevronRight, Loader2, Search, Eye,
 } from 'lucide-react';
+import { usePaymentsLive } from '@/hooks/usePaymentsLive';
+import { useDispatchLock } from '@/hooks/useDispatchLock';
+import CeoPayrollLive from './CeoPayrollLive';
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
 } from '@/components/ui/dialog';
@@ -51,11 +55,18 @@ const STATUS_LABEL: Record<string, string> = {
   problem: 'Problem',
 };
 
-export default function CeoOverviewKpis() {
+export default function CeoOverviewKpis({ viewerEmail }: { viewerEmail: string | null }) {
   const [kpis, setKpis] = useState<OverviewKpis | null>(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
   const [showUnpaid, setShowUnpaid] = useState(false);
+  // Live "payments to send" — counts down as workers are paid (Supabase
+  // Realtime on payment_dispatches), independent of the one-shot KPI fetch.
+  const live = usePaymentsLive();
+  // Global dispatch lock drives the "processing live" beacon on the card; the
+  // card opens the live watch modal (who's driving the Wizard / Payment Dispatch).
+  const { state: lockState } = useDispatchLock();
+  const [liveOpen, setLiveOpen] = useState(false);
 
   useEffect(() => {
     let alive = true;
@@ -84,6 +95,7 @@ export default function CeoOverviewKpis() {
   const maxDept = Math.max(1, ...departments.map((d) => d.count));
   const lastCycle = kpis?.lastCycle ?? null;
   const hasUnpaid = !!lastCycle && lastCycle.unpaidCount > 0 && lastCycle.workers.length > 0;
+  const paidPct = live.total > 0 ? Math.min(100, Math.round((live.paid / live.total) * 100)) : 0;
 
   return (
     <div className="flex flex-col gap-4 lg:gap-5">
@@ -95,23 +107,82 @@ export default function CeoOverviewKpis() {
 
       {/* Cards 2 & 3 — pay week / payments to send, and last-cycle unpaid. */}
       <div className="grid gap-4 sm:grid-cols-2">
-        {/* Current pay week + payments to send */}
-        <div className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm dark:border-zinc-800 dark:bg-zinc-950">
-          <div className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-zinc-400">
-            <Send className="h-3.5 w-3.5 text-sky-500" /> Payments to send
+        {/* Current pay week + payments to send — LIVE: the headline number is
+            how many are LEFT to pay, counting down to zero as the payroll clerk
+            (or anyone) marks workers paid, via Supabase Realtime. CLICK to watch
+            the live driver POVs (Payroll Wizard / Payment Dispatch). */}
+        <button
+          type="button"
+          onClick={() => setLiveOpen(true)}
+          title="Watch live payroll processing"
+          className={cn(
+            'group rounded-2xl border bg-white p-5 text-left shadow-sm transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-400 dark:bg-zinc-950',
+            lockState.locked
+              ? 'border-rose-300/70 hover:border-rose-400 dark:border-rose-900/50 dark:hover:border-rose-800'
+              : 'border-zinc-200 hover:border-zinc-300 dark:border-zinc-800 dark:hover:border-zinc-700',
+          )}
+        >
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-zinc-400">
+              <Send className="h-3.5 w-3.5 text-sky-500" /> Payments to send
+            </div>
+            <span className="inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-emerald-600 dark:text-emerald-400">
+              <span className="relative flex h-2 w-2">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+                <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
+              </span>
+              Live
+            </span>
           </div>
           <div className="mt-2 flex items-baseline gap-2">
-            <span className="text-3xl font-bold tabular-nums text-zinc-900 dark:text-zinc-100">
-              {kpis?.payWeek.paymentsToSend ?? 0}
+            <motion.span
+              key={live.remaining}
+              initial={{ opacity: 0, y: 6 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
+              className="text-3xl font-bold tabular-nums text-zinc-900 dark:text-zinc-100"
+            >
+              {live.remaining}
+            </motion.span>
+            <span className="text-[13px] text-zinc-400">left of {live.total}</span>
+          </div>
+          {/* Progress — how much of the cycle is paid. */}
+          <div className="mt-2.5 h-2 w-full overflow-hidden rounded-full bg-zinc-100 dark:bg-zinc-900">
+            <motion.div
+              className="h-full rounded-full bg-gradient-to-r from-emerald-400 to-teal-500"
+              initial={false}
+              animate={{ width: `${paidPct}%` }}
+              transition={{ duration: 0.5, ease: 'easeOut' }}
+            />
+          </div>
+          <div className="mt-1.5 flex items-center justify-between gap-2 text-[12px] text-zinc-500 dark:text-zinc-400">
+            <span className="flex min-w-0 items-center gap-1.5">
+              <CalendarDays className="h-3.5 w-3.5 shrink-0 text-zinc-400" />
+              <span className="truncate font-medium text-zinc-700 dark:text-zinc-300">{live.label}</span>
             </span>
-            <span className="text-[13px] text-zinc-400">of {kpis?.payWeek.totalRoster ?? 0}</span>
+            <span className="shrink-0 tabular-nums">{live.paid} paid</span>
           </div>
-          <div className="mt-1.5 flex items-center gap-1.5 text-[12px] text-zinc-500 dark:text-zinc-400">
-            <CalendarDays className="h-3.5 w-3.5 shrink-0 text-zinc-400" />
-            Current pay week ·{' '}
-            <span className="truncate font-medium text-zinc-700 dark:text-zinc-300">{kpis?.payWeek.label}</span>
+          {/* Watch-live affordance — beacon when accounting is actively processing. */}
+          <div className="mt-3 flex items-center justify-between border-t border-zinc-100 pt-2.5 dark:border-zinc-800">
+            <span className="flex items-center gap-1.5 text-[11px] font-medium">
+              {lockState.locked ? (
+                <>
+                  <span className="relative flex h-2 w-2">
+                    <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-rose-500 opacity-75" />
+                    <span className="relative inline-flex h-2 w-2 rounded-full bg-rose-500" />
+                  </span>
+                  <span className="text-rose-600 dark:text-rose-400">Accounting is processing live</span>
+                </>
+              ) : (
+                <span className="text-zinc-400">No active processing</span>
+              )}
+            </span>
+            <span className="flex items-center gap-0.5 text-[11px] font-semibold text-zinc-500 group-hover:text-zinc-800 dark:text-zinc-400 dark:group-hover:text-zinc-200">
+              <Eye className="h-3.5 w-3.5" /> Watch
+              <ChevronRight className="h-3 w-3 transition-transform group-hover:translate-x-0.5" />
+            </span>
           </div>
-        </div>
+        </button>
 
         {/* Unpaid workers — last pay cycle (click to see who) */}
         <button
@@ -187,6 +258,14 @@ export default function CeoOverviewKpis() {
       {showUnpaid && lastCycle && (
         <UnpaidWorkersDialog cycle={lastCycle} onClose={() => setShowUnpaid(false)} />
       )}
+
+      {/* Live driver-watching modal, opened by the "Payments to send" card. */}
+      <CeoPayrollLive
+        viewerEmail={viewerEmail}
+        open={liveOpen}
+        onOpenChange={setLiveOpen}
+        locked={lockState.locked}
+      />
     </div>
   );
 }

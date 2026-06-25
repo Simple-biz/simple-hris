@@ -6,6 +6,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
   PROCESSOR_OPTIONS,
+  SELECTABLE_PROCESSOR_OPTIONS,
   isProcessorId,
   processorDescription,
   type ProcessorId,
@@ -18,12 +19,12 @@ const PH_BANK_GROUPS: { group: string; banks: string[] }[] = [
   {
     group: 'Universal & Commercial Banks',
     banks: [
-      'BDO Unibank', 'Land Bank of the Philippines (LandBank)', 'Bank of the Philippine Islands (BPI)',
+      'BDO Unibank', 'Bank of the Philippine Islands (BPI)',
       'Metrobank', 'China Bank', 'RCBC', 'Security Bank', 'Philippine National Bank (PNB)',
       'Development Bank of the Philippines (DBP)', 'UnionBank', 'EastWest Bank',
       'Asia United Bank (AUB)', 'Bank of Commerce', 'Philippine Bank of Communications (PBCOM)',
       'Philippine Trust Company (Philtrust Bank)', 'Philippine Veterans Bank',
-      'Maybank Philippines', 'CIMB Bank Philippines', 'Citibank Philippines',
+      'Maybank Philippines', 'Citibank Philippines',
       'HSBC Philippines', 'Standard Chartered Philippines', 'CTBC Bank Philippines',
       'MUFG Bank Manila', 'JPMorgan Chase Bank Manila', 'Deutsche Bank Manila',
       'Bank of America Manila', 'ING Bank Manila', 'Shinhan Bank Philippines',
@@ -37,8 +38,7 @@ const PH_BANK_GROUPS: { group: string; banks: string[] }[] = [
   {
     group: 'Digital Banks',
     banks: [
-      'Maya Bank', 'GoTyme Bank', 'Tonik Bank', 'UnionDigital Bank',
-      'UNO Digital Bank', 'OFBank', 'MariBank',
+      'Tonik Bank', 'UnionDigital Bank', 'OFBank',
     ],
   },
   {
@@ -328,7 +328,11 @@ export function PreferredPaymentMethodRadios({
           disabled && 'pointer-events-none opacity-60',
         )}
       >
-        {PROCESSOR_OPTIONS.map(({ id, label, blurb, Icon, ...rest }) => {
+        {SELECTABLE_PROCESSOR_OPTIONS
+          // Keep a retired processor visible only if it's the current selection,
+          // so existing employees aren't silently shown an empty picker.
+          .concat(PROCESSOR_OPTIONS.filter((p) => p.id === value && !SELECTABLE_PROCESSOR_OPTIONS.includes(p)))
+          .map(({ id, label, blurb, Icon, ...rest }) => {
           const logoSrc = 'logoSrc' in rest ? (rest as { logoSrc?: string }).logoSrc : undefined;
           const active = value === id;
           return (

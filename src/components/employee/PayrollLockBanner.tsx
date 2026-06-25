@@ -24,14 +24,6 @@ function relativeTime(iso: string | null): string | null {
   return `${days} day${days === 1 ? '' : 's'} ago`;
 }
 
-function startedByLabel(email: string | null): string | null {
-  if (!email) return null;
-  const local = email.split('@')[0] ?? '';
-  if (!local) return null;
-  const cleaned = local.replace(/[._-]+/g, ' ').trim();
-  return cleaned.replace(/\b\w/g, (c) => c.toUpperCase());
-}
-
 /**
  * Global "payroll being processed" banner mounted at the top of the employee
  * shell. Animates in when the lock flips on, animates out when it flips off.
@@ -54,7 +46,6 @@ export default function PayrollLockBanner({ state }: PayrollLockBannerProps) {
   }, [state.locked]);
 
   const ago = state.locked ? relativeTime(state.lockedAt) : null;
-  const operator = state.locked ? startedByLabel(state.lockedBy) : null;
   // tick is a no-op dep just to make the compiler aware we use it
   void tick;
 
@@ -96,16 +87,9 @@ export default function PayrollLockBanner({ state }: PayrollLockBannerProps) {
                   Issues are temporarily paused.
                 </span>
               </div>
-              {(operator || ago) && (
+              {ago && (
                 <div className="mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[11px] text-rose-800/80 dark:text-rose-300/70">
-                  {operator && (
-                    <span>
-                      Started by{' '}
-                      <span className="font-semibold text-rose-900 dark:text-rose-100">{operator}</span>
-                    </span>
-                  )}
-                  {operator && ago && <span aria-hidden>·</span>}
-                  {ago && <span>{ago}</span>}
+                  <span>{ago}</span>
                 </div>
               )}
             </div>

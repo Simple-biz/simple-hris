@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
-import { Send, X, Sparkles, Loader2, Trash2 } from 'lucide-react';
+import { Send, X, Sparkles, Loader2, Trash2, Maximize2 } from 'lucide-react';
 import { AssistantContent, MessageFeedback } from './ceo-chat-message';
 import { useCeoChat } from './use-ceo-chat';
 
@@ -17,7 +17,14 @@ const SUGGESTIONS = [
  * and logic with the full-page Penny AI tab via {@link useCeoChat}. When the CEO
  * is on the Penny AI tab, `CeoApp` passes `hidden` so only one chat shows at once.
  */
-export default function CeoChatBubble({ hidden = false }: { hidden?: boolean }) {
+export default function CeoChatBubble({
+  hidden = false,
+  onOpenFullView,
+}: {
+  hidden?: boolean;
+  /** When provided, shows an "expand" button that opens the full Penny AI tab. */
+  onOpenFullView?: () => void;
+}) {
   const [open, setOpen] = useState(false);
 
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -83,22 +90,36 @@ export default function CeoChatBubble({ hidden = false }: { hidden?: boolean }) 
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 16 }}
             transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
-            className="fixed bottom-24 right-4 z-50 flex h-[min(560px,calc(100dvh-7rem))] w-[min(380px,calc(100vw-2rem))] flex-col overflow-hidden rounded-2xl border border-amber-200/80 bg-white shadow-2xl shadow-amber-900/15 dark:border-amber-900/40 dark:bg-[#0d1117] sm:right-6"
+            className="fixed bottom-24 right-4 z-50 flex h-[min(560px,calc(100dvh-7rem))] w-[min(380px,calc(100vw-2rem))] flex-col overflow-hidden rounded-2xl border border-fuchsia-200/80 bg-white shadow-2xl shadow-fuchsia-900/15 dark:border-fuchsia-900/40 dark:bg-[#0d1117] sm:right-6"
           >
             {/* Header */}
-            <div className="flex shrink-0 items-center justify-between gap-3 bg-gradient-to-br from-yellow-500 via-amber-600 to-amber-700 px-4 py-3 text-white dark:from-yellow-600 dark:via-amber-800 dark:to-amber-900">
+            <div className="flex shrink-0 items-center justify-between gap-3 bg-gradient-to-br from-violet-600 via-fuchsia-600 to-fuchsia-700 px-4 py-3 text-white dark:from-violet-700 dark:via-fuchsia-800 dark:to-fuchsia-900">
               <div className="flex min-w-0 items-center gap-2.5">
                 <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white/15 backdrop-blur-sm">
                   <Sparkles className="h-4 w-4" aria-hidden />
                 </span>
                 <div className="min-w-0">
-                  <p className="truncate text-sm font-semibold leading-tight">Assistant</p>
-                  <p className="truncate text-[11px] leading-tight text-amber-50/80">
-                    Here to help, anytime
+                  <p className="truncate text-sm font-semibold leading-tight">Penny AI</p>
+                  <p className="truncate text-[11px] leading-tight text-fuchsia-50/80">
+                    Payroll &amp; reports assistant
                   </p>
                 </div>
               </div>
               <div className="flex shrink-0 items-center gap-1">
+                {onOpenFullView && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onOpenFullView();
+                      setOpen(false);
+                    }}
+                    aria-label="Open full Penny AI view"
+                    title="Open full view"
+                    className="flex h-8 w-8 items-center justify-center rounded-full text-white/90 transition hover:bg-white/20"
+                  >
+                    <Maximize2 className="h-4 w-4" aria-hidden />
+                  </button>
+                )}
                 {messages.length > 0 && (
                   <button
                     type="button"
@@ -124,7 +145,7 @@ export default function CeoChatBubble({ hidden = false }: { hidden?: boolean }) 
             {/* Messages */}
             <div
               ref={scrollRef}
-              className="flex-1 space-y-3 overflow-y-auto bg-amber-50/30 px-3.5 py-4 dark:bg-black/20"
+              className="flex-1 space-y-3 overflow-y-auto bg-fuchsia-50/30 px-3.5 py-4 dark:bg-black/20"
             >
               {messages.length === 0 ? (
                 <div className="flex flex-col gap-3 px-1 pt-2">
@@ -137,7 +158,7 @@ export default function CeoChatBubble({ hidden = false }: { hidden?: boolean }) 
                         key={s}
                         type="button"
                         onClick={() => void send(s)}
-                        className="rounded-xl border border-amber-200/70 bg-white px-3 py-2 text-left text-[13px] text-zinc-700 shadow-sm transition hover:border-amber-300 hover:bg-amber-50 dark:border-amber-900/40 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
+                        className="rounded-xl border border-fuchsia-200/70 bg-white px-3 py-2 text-left text-[13px] text-zinc-700 shadow-sm transition hover:border-fuchsia-300 hover:bg-fuchsia-50 dark:border-fuchsia-900/40 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
                       >
                         {s}
                       </button>
@@ -161,7 +182,7 @@ export default function CeoChatBubble({ hidden = false }: { hidden?: boolean }) 
                       <div
                         className={
                           m.role === 'user'
-                            ? 'max-w-[82%] whitespace-pre-wrap break-words rounded-2xl rounded-br-md bg-amber-600 px-3.5 py-2 text-[13.5px] leading-relaxed text-white shadow-sm'
+                            ? 'max-w-[82%] whitespace-pre-wrap break-words rounded-2xl rounded-br-md bg-gradient-to-br from-violet-600 to-fuchsia-600 px-3.5 py-2 text-[13.5px] leading-relaxed text-white shadow-sm'
                             : 'max-w-[92%] break-words rounded-2xl rounded-bl-md border border-zinc-200/80 bg-white px-3.5 py-2 text-[13.5px] leading-relaxed text-zinc-800 shadow-sm dark:border-zinc-700/60 dark:bg-zinc-900 dark:text-zinc-100'
                         }
                       >
@@ -193,7 +214,7 @@ export default function CeoChatBubble({ hidden = false }: { hidden?: boolean }) 
 
             {/* Composer */}
             <div className="shrink-0 border-t border-zinc-200/70 bg-white px-3 py-2.5 dark:border-zinc-800 dark:bg-[#0d1117]">
-              <div className="flex items-end gap-2 rounded-xl border border-zinc-200 bg-zinc-50 px-2.5 py-1.5 focus-within:border-amber-400 focus-within:ring-2 focus-within:ring-amber-400/30 dark:border-zinc-700 dark:bg-zinc-900">
+              <div className="flex items-end gap-2 rounded-xl border border-zinc-200 bg-zinc-50 px-2.5 py-1.5 focus-within:border-fuchsia-400 focus-within:ring-2 focus-within:ring-fuchsia-400/30 dark:border-zinc-700 dark:bg-zinc-900">
                 <textarea
                   ref={inputRef}
                   value={input}
@@ -208,7 +229,7 @@ export default function CeoChatBubble({ hidden = false }: { hidden?: boolean }) 
                   onClick={() => void send(input)}
                   disabled={busy || !input.trim()}
                   aria-label="Send message"
-                  className="mb-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-amber-600 text-white transition hover:bg-amber-700 disabled:cursor-not-allowed disabled:opacity-40"
+                  className="mb-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-violet-600 to-fuchsia-600 text-white transition hover:from-violet-700 hover:to-fuchsia-700 disabled:cursor-not-allowed disabled:opacity-40"
                 >
                   {busy ? (
                     <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
@@ -218,7 +239,7 @@ export default function CeoChatBubble({ hidden = false }: { hidden?: boolean }) 
                 </button>
               </div>
               <p className="mt-1 px-1 text-[10.5px] text-zinc-400">
-                Assistant can make mistakes. Verify important details.
+                Penny AI can make mistakes. Verify important details.
               </p>
             </div>
           </motion.div>

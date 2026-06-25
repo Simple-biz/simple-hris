@@ -29,6 +29,7 @@ import type { InitialAccountingData } from '@/lib/accounting/prefetch';
 import NotificationsPanel from '@/components/notifications/NotificationsPanel';
 import AccountingMesa from '@/components/payroll/AccountingMesa';
 import AccountingCollabLayer from '@/components/accounting/AccountingCollabLayer';
+import PayrollLivePublisher from '@/components/payroll-live/PayrollLivePublisher';
 import BonusCatalog from '@/components/accounting/BonusCatalog';
 import PeopleTab from '@/components/people/PeopleTab';
 
@@ -284,6 +285,16 @@ export default function App({ initialData }: { initialData?: InitialAccountingDa
           section={activeTab}
           containerRef={mainRef}
         />
+        {/* Advertise this accountant into the CEO's live payroll roster while
+            they're on a payroll surface. No cobrowse driver here — the collab
+            layer above already records this page over the shared channel. */}
+        {(activeTab === 'payroll-wizard' || activeTab === 'payment-dispatch') && (
+          <PayrollLivePublisher
+            selfEmail={sessionEmail}
+            surface={activeTab === 'payroll-wizard' ? 'wizard' : 'dispatch'}
+            activity={activeTab === 'payroll-wizard' ? 'In the Payroll Wizard' : 'In Payment Dispatch'}
+          />
+        )}
       </main>
       <Toaster position="top-right" theme={isDark ? 'dark' : 'light'} />
     </div>

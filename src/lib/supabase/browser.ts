@@ -19,7 +19,16 @@ export function getSupabaseBrowserClient(): SupabaseClient | null {
   }
   cached = createClient(url, key, {
     auth: { persistSession: false, autoRefreshToken: false },
-    realtime: { params: { eventsPerSecond: 5 } },
+    // eventsPerSecond is the client's outbound broadcast rate CAP (a token
+    // bucket — overflow is DROPPED, not queued). The old value of 5 silently
+    // killed the screen-mirror: the cobrowse recorder streams a page's initial
+    // rrweb snapshot as a burst of 28KB chunks (a heavy page like the Payroll
+    // Wizard is dozens of chunks at once), and live cursors fire ~30–60/sec — so
+    // at 5/sec most of those messages never left the sender and the CEO's live
+    // view stayed stuck on "waiting for their screen". 100 gives ample headroom
+    // for the snapshot burst + cursor stream; it's only a ceiling, so it never
+    // increases traffic on its own.
+    realtime: { params: { eventsPerSecond: 100 } },
   });
   return cached;
 }

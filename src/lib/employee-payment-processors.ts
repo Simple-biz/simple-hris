@@ -16,6 +16,19 @@ export const PROCESSOR_OPTIONS = [
 
 export type ProcessorId = (typeof PROCESSOR_OPTIONS)[number]['id'];
 
+/**
+ * Processors retired from the selection UI. They stay in PROCESSOR_OPTIONS /
+ * ProcessorId so existing records (and the dispatch pipeline) keep resolving
+ * their labels and detail fields — they're just no longer offered for new
+ * selections in the employee/contractor pickers.
+ */
+export const RETIRED_PROCESSOR_IDS: ProcessorId[] = ['wepay', 'wise'];
+
+/** PROCESSOR_OPTIONS minus retired ones — use this to render pickers. */
+export const SELECTABLE_PROCESSOR_OPTIONS = PROCESSOR_OPTIONS.filter(
+  (p) => !RETIRED_PROCESSOR_IDS.includes(p.id),
+);
+
 export type ProcessorOption = {
   id: ProcessorId;
   label: string;

@@ -15,6 +15,7 @@ import { insertAuditLog } from "@/lib/supabase/audit-log";
 import { getSessionActor } from "@/lib/auth/session-actor";
 import { requireFeatureEdit } from "@/lib/auth/authorize-feature";
 import { deniedResponse, requireRateVisibilitySession } from "@/lib/auth/authorize-email";
+import { pulsePaymentsLive } from "@/lib/supabase/app-settings";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -77,6 +78,10 @@ export async function POST(req: NextRequest) {
   if (error || !row) {
     return NextResponse.json({ row: null, error: error ?? "Insert failed" }, { status: 500 });
   }
+
+  // Nudge the CEO live "payments to send" counter to refetch (via app_settings
+  // Realtime — reliably reaches the browser, unlike payment_dispatches).
+  void pulsePaymentsLive();
 
   void insertAuditLog({
     user_name: createdBy ?? "unknown",

@@ -12,6 +12,7 @@ import { normEmail } from '@/lib/email/norm-email';
 import { normalizeCurrency, CONTRACTOR_CURRENCIES, type ContractorCurrency } from '@/lib/contractor-currency';
 import {
   PROCESSOR_OPTIONS,
+  SELECTABLE_PROCESSOR_OPTIONS,
   isProcessorId,
   processorDescription,
   type ProcessorId,
@@ -451,7 +452,10 @@ export default function ContractorProfile({
                       <div>
                         <p className="mb-3 text-xs font-medium text-zinc-500 dark:text-zinc-400">Select processor</p>
                         <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-                          {PROCESSOR_OPTIONS.map((opt) => {
+                          {SELECTABLE_PROCESSOR_OPTIONS
+                            // Keep a retired processor visible only if it's the current selection.
+                            .concat(PROCESSOR_OPTIONS.filter((p) => p.id === preferredProcessor && !SELECTABLE_PROCESSOR_OPTIONS.includes(p)))
+                            .map((opt) => {
                             const active = preferredProcessor === opt.id;
                             return (
                               <button

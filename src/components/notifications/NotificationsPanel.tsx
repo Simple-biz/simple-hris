@@ -347,22 +347,13 @@ export default function NotificationsPanel({
                       ))}
                     </ul>
 
-                    {/* Meta — locked by / time */}
-                    {(lockState.lockedBy || lockState.lockedAt) && (
+                    {/* Meta — time only. Operator identity is intentionally
+                        hidden so other roles can't see who started processing. */}
+                    {lockState.lockedAt && (
                       <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-zinc-100 pt-3 dark:border-zinc-800">
-                        {lockState.lockedBy && (
-                          <span className="text-[11.5px] text-zinc-400 dark:text-zinc-500">
-                            Started by{' '}
-                            <span className="font-medium text-zinc-600 dark:text-zinc-300">
-                              {lockState.lockedBy}
-                            </span>
-                          </span>
-                        )}
-                        {lockState.lockedAt && (
-                          <span className="text-[11.5px] text-zinc-400 dark:text-zinc-500">
-                            {formatLockedAt(lockState.lockedAt)}
-                          </span>
-                        )}
+                        <span className="text-[11.5px] text-zinc-400 dark:text-zinc-500">
+                          {formatLockedAt(lockState.lockedAt)}
+                        </span>
                       </div>
                     )}
                   </div>

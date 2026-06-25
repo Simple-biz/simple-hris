@@ -49,6 +49,7 @@ import ProcessorCard from './ProcessorCard';
 import AnimatedNumber from './AnimatedNumber';
 import DispatchLoader from './DispatchLoader';
 import { PROCESSORS, parseCyclePeriodFromFile, type ArrearsInfo, type ProcessorId, type QueueRow } from './mock-queue';
+import type { PaymentDispatchRow } from '@/lib/supabase/payment-dispatches';
 import { useDispatchQueue } from './useDispatchQueue';
 import NotificationsPanel from '@/components/notifications/NotificationsPanel';
 import { useDispatchLock } from '@/hooks/useDispatchLock';
@@ -250,6 +251,23 @@ export default function PayrollDispatch() {
   // logged with Threshold / Problem are excluded so the headline doesn't lie.
   const paidRows = useMemo(() => paid.filter((p) => p.status === 'paid'), [paid]);
   const totalSent = paidRows.length;
+  // Paid dispatches grouped by the processor they actually went through, so each
+  // processor tab can show its own "Paid" sub-view alongside the global Done tab.
+  const paidByProcessor = useMemo(() => {
+    const map: Record<ProcessorId, PaymentDispatchRow[]> = {
+      hurupay: [],
+      wepay: [],
+      higlobe: [],
+      wise: [],
+      jeeves: [],
+      wires: [],
+    };
+    for (const r of paidRows) {
+      const list = map[r.processor as ProcessorId];
+      if (list) list.push(r);
+    }
+    return map;
+  }, [paidRows]);
   const totalPaidUSD = useMemo(
     () => paidRows.reduce((sum, r) => sum + (r.amount_usd ?? 0), 0),
     [paidRows],
@@ -521,6 +539,7 @@ export default function PayrollDispatch() {
         periodStart={period.start}
         periodEnd={period.end}
         onRefresh={refresh}
+        paidRecords={activeTab === 'all' ? undefined : paidByProcessor[activeTab]}
       />
     );
   };

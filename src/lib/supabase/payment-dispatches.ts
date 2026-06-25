@@ -136,12 +136,32 @@ export async function deletePaymentDispatches(
   if (!supabase) return { deleted: 0, error: "Supabase client unavailable" };
   if (ids.length === 0) return { deleted: 0, error: null };
 
-  const { data, error } = await supabase
-    .from("payment_dispatches")
-    .delete()
-    .in("id", ids)
-    .select("id");
-
-  if (error) return { deleted: 0, error: error.message };
-  return { deleted: (data ?? []).length, error: null };
+  // supabase-js encodes `.in('id', ids)` into the request URL as
+  // `?id=in.(uuid1,uuid2,…)`. A large multi-select (e.g. "select all" → 100+
+  // UUIDs) overflows the gateway's URL-length limit and fails as a generic
+  // "bad request"/500. Deleting in batches keeps each request small and also
+  // isolates any single failing row to its own batch.
+  const CHUNK = 50;
+  let deleted = 0;
+  for (let i = 0; i < ids.length; i += CHUNK) {
+    const batch = ids.slice(i, i + CHUNK);
+    const { data, error } = await supabase
+      .from("payment_dispatches")
+      .delete()
+      .in("id", batch)
+      .select("id");
+    if (error) {
+      const detail = [error.message, error.details, error.hint, error.code]
+        .filter(Boolean)
+        .join(" · ");
+      console.error("[deletePaymentDispatches] batch delete failed", {
+        batchSize: batch.length,
+        deletedSoFar: deleted,
+        error,
+      });
+      return { deleted, error: detail || "Delete failed" };
+    }
+    deleted += (data ?? []).length;
+  }
+  return { deleted, error: null };
 }

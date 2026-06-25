@@ -85,9 +85,12 @@ export async function POST(req: NextRequest) {
       if (recipients.length === 0) return;
       const type = body.locked ? "payroll.processing_started" : "payroll.processing_stopped";
       const title = body.locked ? "Payroll Processing Started" : "Payroll Processing Stopped";
+      // Operator identity is intentionally omitted from the notification —
+      // other roles must not see WHO started/stopped processing. The actor is
+      // still captured in the admin-only audit log above for accountability.
       const message = body.locked
-        ? `${actor ?? "Accounting"} started payroll processing. Disputes, bank changes, and leave requests are temporarily paused.`
-        : `${actor ?? "Accounting"} stopped payroll processing. Normal operations have resumed.`;
+        ? `Payroll processing has started. Disputes, bank changes, and leave requests are temporarily paused.`
+        : `Payroll processing has stopped. Normal operations have resumed.`;
       await supabase.from("employee_notifications").insert(
         recipients.map((to) => ({
           recipient_email: to,
@@ -95,7 +98,7 @@ export async function POST(req: NextRequest) {
           tone: "neutral",
           title,
           message,
-          details: { locked: body.locked, actor, started_at: state.lockedAt },
+          details: { locked: body.locked, started_at: state.lockedAt },
         })),
       );
     } catch {

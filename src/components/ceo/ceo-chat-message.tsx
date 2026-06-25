@@ -197,7 +197,7 @@ export function AssistantContent({ text, streaming = false }: { text: string; st
                   {seg.headers.map((h, k) => (
                     <th
                       key={k}
-                      className={`whitespace-nowrap border-b border-amber-200/80 px-2.5 py-1.5 font-semibold text-zinc-600 dark:border-amber-900/50 dark:text-zinc-300 ${ALIGN_CLASS[seg.aligns[k] ?? 'left']}`}
+                      className={`whitespace-nowrap border-b border-fuchsia-200/80 px-2.5 py-1.5 font-semibold text-zinc-600 dark:border-fuchsia-900/50 dark:text-zinc-300 ${ALIGN_CLASS[seg.aligns[k] ?? 'left']}`}
                     >
                       {h}
                     </th>
@@ -206,7 +206,7 @@ export function AssistantContent({ text, streaming = false }: { text: string; st
               </thead>
               <tbody>
                 {seg.rows.map((row, ri) => (
-                  <tr key={ri} className="odd:bg-amber-50/40 dark:odd:bg-white/[0.03]">
+                  <tr key={ri} className="odd:bg-fuchsia-50/40 dark:odd:bg-white/[0.03]">
                     {seg.headers.map((_, ci) => (
                       <td
                         key={ci}
@@ -249,7 +249,7 @@ export function MessageFeedback({
   const btn = (active: boolean) =>
     `flex h-6 w-6 items-center justify-center rounded-md transition ${
       active
-        ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300'
+        ? 'bg-fuchsia-100 text-fuchsia-700 dark:bg-fuchsia-900/40 dark:text-fuchsia-300'
         : 'text-zinc-400 hover:bg-zinc-100 hover:text-zinc-600 dark:hover:bg-zinc-800'
     }`;
 
@@ -293,12 +293,12 @@ export function MessageFeedback({
               else if (e.key === 'Escape') setCommenting(false);
             }}
             placeholder="What was off? (optional)"
-            className="w-52 rounded-md border border-zinc-200 bg-white px-2 py-1 text-[11.5px] text-zinc-700 outline-none focus:border-amber-400 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
+            className="w-52 rounded-md border border-zinc-200 bg-white px-2 py-1 text-[11.5px] text-zinc-700 outline-none focus:border-fuchsia-400 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
           />
           <button
             type="button"
             onClick={submitDown}
-            className="rounded-md bg-amber-600 px-2 py-1 text-[11.5px] font-medium text-white transition hover:bg-amber-700"
+            className="rounded-md bg-fuchsia-600 px-2 py-1 text-[11.5px] font-medium text-white transition hover:bg-fuchsia-700"
           >
             Send
           </button>

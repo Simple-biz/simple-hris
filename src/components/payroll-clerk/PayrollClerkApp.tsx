@@ -22,6 +22,7 @@ import UrgentPaymentsQueue from './UrgentPaymentsQueue';
 import { PROCESSORS, type ProcessorId, type QueueRow } from './mock-queue';
 import { useDispatchQueue } from './useDispatchQueue';
 import { useWizardDispatchLock } from '@/hooks/useWizardDispatchLock';
+import PayrollLivePublisher from '@/components/payroll-live/PayrollLivePublisher';
 
 function isPlausibleEmail(s: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s.trim());
@@ -115,6 +116,16 @@ export default function PayrollClerkApp() {
     }
     return [];
   }, [pending, activeTab]);
+
+  // What to show the CEO in the live roster — a live "N left to pay" while on a
+  // queue tab, or what they're reviewing otherwise.
+  const liveActivity = useMemo(() => {
+    if (activeTab === 'reports') return 'Reviewing reports';
+    if (activeTab === 'urgent') return 'Urgent payments';
+    if (activeTab === 'history') return 'Reviewing paid records';
+    if (activeTab === 'excluded') return 'Reviewing excluded';
+    return `${pending.length} left to pay`;
+  }, [activeTab, pending.length]);
 
   // Stable refs so the memoized ProcessorQueue + rows don't re-render when
   // markPaidRow toggles.
@@ -307,6 +318,18 @@ export default function PayrollClerkApp() {
       </main>
 
       <MarkPaidDialog row={markPaidRow} onClose={handleCloseMarkPaid} onConfirm={handleConfirmPaid} />
+
+      {/* Advertise this clerk into the CEO's live payroll roster and run the
+          rrweb driver so the CEO can mirror this screen on demand. This is a
+          standalone dashboard with no AccountingCollabLayer, so it carries its
+          own recorder. */}
+      <PayrollLivePublisher
+        selfEmail={viewerEmail}
+        surface="dispatch"
+        activity={liveActivity}
+        withCobrowseDriver
+      />
+
       <Toaster position="top-right" theme={isDark ? 'dark' : 'light'} />
     </div>
   );

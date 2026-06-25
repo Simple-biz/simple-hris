@@ -4,6 +4,7 @@ import { insertAuditLog } from "@/lib/supabase/audit-log";
 import { getSessionActor } from "@/lib/auth/session-actor";
 import { requireFeatureEdit } from "@/lib/auth/authorize-feature";
 import { deniedResponse } from "@/lib/auth/authorize-email";
+import { pulsePaymentsLive } from "@/lib/supabase/app-settings";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -46,9 +47,18 @@ export async function POST(req: NextRequest) {
     /* ignore - audit trail is best-effort */
   }
 
-  const { deleted, error } = await deletePaymentDispatches(ids);
-  if (error) {
-    return NextResponse.json({ deleted: 0, error }, { status: 500 });
+  let deleted = 0;
+  try {
+    const result = await deletePaymentDispatches(ids);
+    if (result.error) {
+      console.error("[payment-dispatches/undo] delete returned error", result.error);
+      return NextResponse.json({ deleted: result.deleted, error: result.error }, { status: 500 });
+    }
+    deleted = result.deleted;
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.error("[payment-dispatches/undo] unexpected error", e);
+    return NextResponse.json({ deleted: 0, error: msg }, { status: 500 });
   }
 
   void insertAuditLog({
@@ -59,6 +69,9 @@ export async function POST(req: NextRequest) {
     resource_id: ids.join(","),
     details: { count: deleted, ids },
   });
+
+  // Nudge the CEO live "payments to send" counter to refetch (count goes back up).
+  void pulsePaymentsLive();
 
   return NextResponse.json({ deleted, error: null });
 }

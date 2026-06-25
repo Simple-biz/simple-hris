@@ -11,6 +11,8 @@ import { toast } from 'sonner';
 import { useDebouncedValue } from '@/hooks/useDebouncedValue';
 import { PROCESSORS, formatPHP, formatUSD, formatCOP, type ProcessorId, type QueueRow } from './mock-queue';
 import type { PayCurrency } from '@/lib/payment-catalog/pay-structure';
+import type { PaymentDispatchRow } from '@/lib/supabase/payment-dispatches';
+import PaidRecordsPanel from './PaidRecordsPanel';
 
 /** Primary (native) amount string for a row: COP people show COP, everyone else
  *  shows USD (the PHP-equivalent is always the secondary line). */
@@ -58,6 +60,14 @@ interface ProcessorQueueProps {
    *  anything else (default) shows the USD total. Per-row amounts always follow
    *  each row's own `payCurrency`. */
   nativeCurrency?: PayCurrency;
+  /**
+   * Paid dispatch rows for THIS processor. When provided, the queue shows a
+   * "Pending / Paid" toggle and a Paid sub-view (with multi-select bulk Undo)
+   * scoped to this processor. Omit (undefined) to hide the toggle entirely —
+   * e.g. on the "All pending" / currency tabs, where the global Done tab already
+   * covers everything paid.
+   */
+  paidRecords?: PaymentDispatchRow[];
 }
 
 const FIELD_LABELS: Record<string, string> = {
@@ -163,11 +173,16 @@ function initials(name: string) {
   return (parts[0]?.[0] || '?').toUpperCase();
 }
 
-function ProcessorQueue({ processor, rows, onMarkPaid, periodStart, periodEnd, onRefresh, allLabel, nativeCurrency }: ProcessorQueueProps) {
+function ProcessorQueue({ processor, rows, onMarkPaid, periodStart, periodEnd, onRefresh, allLabel, nativeCurrency, paidRecords }: ProcessorQueueProps) {
   const [query, setQuery] = useState('');
   const debouncedQuery = useDebouncedValue(query, 250);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  // Pending vs Paid sub-view. Only meaningful when `paidRecords` is provided
+  // (the per-processor tabs); the toggle is hidden otherwise.
+  const [view, setView] = useState<'pending' | 'paid'>('pending');
+  const hasPaidView = paidRecords != null;
+  const paidCount = paidRecords?.filter((r) => r.status === 'paid').length ?? 0;
 
   const handleRefresh = useCallback(async () => {
     if (!onRefresh || refreshing) return;
@@ -244,17 +259,30 @@ function ProcessorQueue({ processor, rows, onMarkPaid, periodStart, periodEnd, o
     <div className="flex h-full min-h-0 flex-col">
       {/* Header */}
       <div className="shrink-0 border-b border-orange-100/80 bg-gradient-to-r from-white via-orange-50/40 to-white px-4 py-3 sm:px-6 sm:py-4 dark:border-zinc-800 dark:from-zinc-950 dark:via-zinc-950 dark:to-zinc-950">
-        <div className="flex flex-wrap items-end justify-between gap-3">
-          <div>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0">
             <h2 className="text-base font-semibold tracking-tight text-zinc-900 dark:text-white">
               {processor ? meta?.label : allLabel?.title ?? 'All pending payments'}
             </h2>
             <p className="mt-0.5 text-[11px] text-zinc-500 dark:text-zinc-400">
-              {processor
-                ? `${meta?.blurb ?? ''} · send via ${meta?.label}, then mark paid`
-                : allLabel?.subtitle ?? 'Everything Lenny still has to dispatch this cycle.'}
+              {view === 'paid'
+                ? `Payments already sent via ${meta?.label ?? 'this processor'} this cycle. Undo sends them back to pending.`
+                : processor
+                  ? `${meta?.blurb ?? ''} · send via ${meta?.label}, then mark paid`
+                  : allLabel?.subtitle ?? 'Everything Lenny still has to dispatch this cycle.'}
             </p>
+            {hasPaidView && (
+              <div className="mt-2">
+                <PendingPaidToggle
+                  view={view}
+                  onChange={setView}
+                  pendingCount={rows.length}
+                  paidCount={paidCount}
+                />
+              </div>
+            )}
           </div>
+          {view === 'pending' && (
           <div className="flex flex-wrap items-center gap-2 text-xs sm:gap-3">
             <motion.span
               key={`count-${filtered.length}`}
@@ -322,18 +350,37 @@ function ProcessorQueue({ processor, rows, onMarkPaid, periodStart, periodEnd, o
               Export CSV
             </button>
           </div>
+          )}
         </div>
 
-        <div className="mt-3 flex items-center gap-2">
-          <SearchBar
-            value={query}
-            onChange={setQuery}
-            isSearching={isSearching}
-            resultCount={filtered.length}
-          />
-        </div>
+        {view === 'pending' && (
+          <div className="mt-3 flex items-center gap-2">
+            <SearchBar
+              value={query}
+              onChange={setQuery}
+              isSearching={isSearching}
+              resultCount={filtered.length}
+            />
+          </div>
+        )}
       </div>
 
+      {view === 'paid' ? (
+        <div className="min-h-0 flex-1">
+          <PaidRecordsPanel
+            records={paidRecords ?? []}
+            periodStart={periodStart}
+            periodEnd={periodEnd}
+            onRefresh={onRefresh ?? (() => {})}
+            showProcessorColumn={false}
+            csvPrefix="paid"
+            csvProcessor={processor ?? undefined}
+            emptyTitle={`No ${meta?.label ?? 'payments'} paid yet`}
+            emptyHint="Mark a row paid in the Pending tab to see it here."
+          />
+        </div>
+      ) : (
+      <>
       {/* List */}
       <div className="min-h-0 flex-1 overflow-y-auto bg-gradient-to-b from-white via-orange-50/10 to-white dark:from-[#0d1117] dark:via-[#0d1117] dark:to-[#0d1117]">
         {filtered.length > 0 && (
@@ -395,6 +442,8 @@ function ProcessorQueue({ processor, rows, onMarkPaid, periodStart, periodEnd, o
           label="people"
         />
       </div>
+      </>
+      )}
     </div>
   );
 }
@@ -714,6 +763,71 @@ const QueueRowItem = React.memo(function QueueRowItem({
     </motion.li>
   );
 });
+
+/**
+ * Compact segmented control switching a processor tab between its Pending queue
+ * and its Paid sub-view. Each segment carries a live count badge.
+ */
+function PendingPaidToggle({
+  view,
+  onChange,
+  pendingCount,
+  paidCount,
+}: {
+  view: 'pending' | 'paid';
+  onChange: (next: 'pending' | 'paid') => void;
+  pendingCount: number;
+  paidCount: number;
+}) {
+  const segments: { id: 'pending' | 'paid'; label: string; count: number }[] = [
+    { id: 'pending', label: 'Pending', count: pendingCount },
+    { id: 'paid', label: 'Paid', count: paidCount },
+  ];
+  return (
+    <div
+      role="tablist"
+      aria-label="Pending or paid"
+      className="inline-flex items-center gap-0.5 rounded-lg border border-orange-100 bg-orange-50/40 p-0.5 dark:border-zinc-800 dark:bg-zinc-900/60"
+    >
+      {segments.map((seg) => {
+        const active = view === seg.id;
+        const activeStyles =
+          seg.id === 'paid'
+            ? 'bg-white text-emerald-700 shadow-sm dark:bg-zinc-800 dark:text-emerald-300'
+            : 'bg-white text-orange-700 shadow-sm dark:bg-zinc-800 dark:text-orange-300';
+        return (
+          <button
+            key={seg.id}
+            type="button"
+            role="tab"
+            aria-selected={active}
+            onClick={() => onChange(seg.id)}
+            className={cn(
+              'inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[11px] font-semibold transition-colors',
+              active
+                ? activeStyles
+                : 'text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200',
+            )}
+          >
+            {seg.label}
+            <span
+              className={cn(
+                'rounded-full px-1.5 py-0.5 text-[10px] font-bold tabular-nums',
+                active
+                  ? seg.id === 'paid'
+                    ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300'
+                    : 'bg-orange-100 text-orange-700 dark:bg-orange-500/20 dark:text-orange-300'
+                  : 'bg-zinc-200/70 text-zinc-500 dark:bg-zinc-700/60 dark:text-zinc-400',
+              )}
+            >
+              {seg.count}
+            </span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
 
 function SearchBar({
   value,

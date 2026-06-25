@@ -42,3 +42,23 @@ export async function upsertAppSetting(key: string, value: string): Promise<{ er
     .upsert({ key, value, updated_at: new Date().toISOString() }, { onConflict: 'key' });
   return { error: error ? error.message : null };
 }
+
+/**
+ * Key whose value is bumped (to a fresh timestamp) every time a payment is
+ * recorded or undone. The CEO live "payments to send" counter subscribes to
+ * THIS key over Realtime — `app_settings` is already in the realtime
+ * publication and reliably reaches the browser (anon) client, whereas the
+ * sensitive `payment_dispatches` table may not. Keep this string in sync with
+ * the literal in `usePaymentsLive` (kept literal there to avoid pulling this
+ * server-only module into the client bundle).
+ */
+export const PAYMENTS_LIVE_PULSE_KEY = 'payroll.payments.pulse';
+
+/** Best-effort nudge so payments-live subscribers refetch instantly. Never throws. */
+export async function pulsePaymentsLive(): Promise<void> {
+  try {
+    await upsertAppSetting(PAYMENTS_LIVE_PULSE_KEY, new Date().toISOString());
+  } catch {
+    /* non-fatal — the periodic poll still reconciles the count */
+  }
+}

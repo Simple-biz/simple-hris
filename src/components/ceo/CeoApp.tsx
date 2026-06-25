@@ -195,8 +195,14 @@ export default function CeoApp() {
       <Toaster richColors position="top-center" />
 
       {/* Floating AI assistant — CEO dashboard only. Hidden on the Penny AI tab,
-          where the full-page chat takes over. */}
-      <CeoChatBubble hidden={activeTab === 'biz-ai'} />
+          where the full-page chat takes over. The expand button jumps to that
+          full view (only offered when the viewer can see the Penny AI tab). */}
+      <CeoChatBubble
+        hidden={activeTab === 'biz-ai'}
+        onOpenFullView={
+          visibleCeoTabs.includes('biz-ai') ? () => setActiveTab('biz-ai') : undefined
+        }
+      />
     </div>
   );
 }
@@ -321,9 +327,10 @@ function CeoOverview({ viewerEmail }: { viewerEmail: string | null }) {
         </div>
       </header>
 
-      {/* Executive KPIs — headcount by department, payments to send this week,
-          and unpaid workers from the last pay cycle (Karen's requests). */}
-      <CeoOverviewKpis />
+      {/* Executive KPIs — headcount, the LIVE "payments to send" count (click it
+          to watch the live Payroll Wizard / Payment Dispatch driver), and
+          unpaid workers from the last pay cycle. */}
+      <CeoOverviewKpis viewerEmail={viewerEmail} />
     </div>
   );
 }

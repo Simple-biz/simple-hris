@@ -172,7 +172,7 @@ export default function BizAiTab() {
                       <div
                         className={
                           m.role === 'user'
-                            ? 'whitespace-pre-wrap break-words rounded-2xl rounded-br-md bg-amber-600 px-4 py-2.5 text-[14px] leading-relaxed text-white shadow-sm'
+                            ? 'whitespace-pre-wrap break-words rounded-2xl rounded-br-md bg-gradient-to-br from-violet-600 to-fuchsia-600 px-4 py-2.5 text-[14px] leading-relaxed text-white shadow-sm'
                             : 'break-words rounded-2xl rounded-tl-md border border-zinc-200/80 bg-white px-4 py-3 text-[14px] leading-relaxed text-zinc-800 shadow-sm dark:border-zinc-700/60 dark:bg-zinc-900 dark:text-zinc-100'
                         }
                       >
