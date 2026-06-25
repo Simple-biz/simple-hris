@@ -37,6 +37,7 @@ import {
   todayLocalIso,
 } from '@/lib/onboarding/ip-assignment-text';
 import { ONBOARDING_COUNTRIES, currencyForCountry } from '@/lib/onboarding/countries';
+import { toTitleCaseName } from '@/lib/text/sanitize-name';
 
 type PriorData = {
   full_name: string | null;
@@ -811,6 +812,7 @@ function StepIpAssignment({
           <Input
             value={form.ip_agreement_name}
             onChange={(e) => update('ip_agreement_name', e.target.value)}
+            onBlur={(e) => update('ip_agreement_name', toTitleCaseName(e.target.value))}
             placeholder="Your full legal name"
             autoComplete="name"
           />
@@ -892,6 +894,7 @@ function Step1Welcome({
           <Input
             value={form.first_name ?? ''}
             onChange={(e) => update('first_name', e.target.value)}
+            onBlur={(e) => update('first_name', toTitleCaseName(e.target.value))}
             placeholder="Jane"
             autoComplete="given-name"
             autoFocus
@@ -901,6 +904,7 @@ function Step1Welcome({
           <Input
             value={form.last_name ?? ''}
             onChange={(e) => update('last_name', e.target.value)}
+            onBlur={(e) => update('last_name', toTitleCaseName(e.target.value))}
             placeholder="Dela Cruz"
             autoComplete="family-name"
           />

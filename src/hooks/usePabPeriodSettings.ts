@@ -17,6 +17,7 @@ export function usePabPeriodSettings() {
     start: null,
     end: null,
     overrides: new Map() as PabOverridesMap,
+    exclusions: new Map(),
     activeMonth: null,
   });
 

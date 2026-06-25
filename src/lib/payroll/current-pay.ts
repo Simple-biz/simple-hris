@@ -17,7 +17,9 @@
  */
 import {
   fetchHubstaffRowsOrdered,
+  fetchHubstaffRowsBySourceFile,
   getCurrentHubstaffUploadId,
+  getHubstaffUploadIdBySourceFile,
 } from "@/lib/supabase/hubstaff-hours-db";
 import { getEmployeeHourlyRatesRows } from "@/lib/supabase/employee-hourly-rates";
 import { mapHubstaffHoursRow } from "@/lib/supabase/hubstaff-hours";
@@ -38,7 +40,9 @@ import {
 } from "@/lib/hubstaff/calendar-column-dedupe";
 import {
   PAB_PERIOD_OVERRIDES_KEY,
+  PAB_PERIOD_EXCLUSIONS_KEY,
   parsePabPeriodOverrides,
+  parsePabPeriodExclusions,
   yearMonthKey,
 } from "@/lib/pab-period-settings";
 import {
@@ -423,11 +427,25 @@ function parseLocalIso(iso: string | null | undefined): Date | null {
   return Number.isNaN(d.getTime()) ? null : d;
 }
 
-export async function computeCurrentPay(): Promise<CurrentPayResult> {
+export async function computeCurrentPay(
+  opts?: { sourceFile?: string | null },
+): Promise<CurrentPayResult> {
   const supabase = createSupabaseServiceRoleClient() ?? createSupabaseServerClient();
-  const cycleIdPromise = supabase
-    ? getCurrentHubstaffUploadId(supabase)
-    : Promise.resolve(null);
+  // When an explicit source file is requested — Payment Dispatch (or anything
+  // else) operating on a PAST pay week rather than the live one — compute pay
+  // for THAT upload. With no arg the path is byte-identical to before: the
+  // current (`is_current`) cycle's rows + id.
+  const selectedSourceFile = opts?.sourceFile?.trim() || null;
+  const cycleIdPromise = selectedSourceFile
+    ? supabase
+      ? getHubstaffUploadIdBySourceFile(supabase, selectedSourceFile)
+      : Promise.resolve(null)
+    : supabase
+      ? getCurrentHubstaffUploadId(supabase)
+      : Promise.resolve(null);
+  const hubstaffPromise = selectedSourceFile
+    ? fetchHubstaffRowsBySourceFile(selectedSourceFile)
+    : fetchHubstaffRowsOrdered();
 
   const [
     hubstaff,
@@ -442,12 +460,13 @@ export async function computeCurrentPay(): Promise<CurrentPayResult> {
     payStructuresResult,
     systemBonusesResult,
   ] = await Promise.all([
-    fetchHubstaffRowsOrdered(),
+    hubstaffPromise,
     getEmployeeHourlyRatesRows(),
     getAppSettings([
       "usd_to_php_rate",
       USD_TO_COP_SETTINGS_KEY,
       PAB_PERIOD_OVERRIDES_KEY,
+      PAB_PERIOD_EXCLUSIONS_KEY,
       US_HOLIDAYS_ENABLED_KEY,
       US_HOLIDAYS_LIST_KEY,
     ]),
@@ -476,6 +495,7 @@ export async function computeCurrentPay(): Promise<CurrentPayResult> {
   let allHubstaffRows: Record<string, unknown>[] = [];
 
   const pabOverridesValue = appSettings[PAB_PERIOD_OVERRIDES_KEY];
+  const pabExclusionsValue = appSettings[PAB_PERIOD_EXCLUSIONS_KEY];
   const usHolidaysEnabledValue = appSettings[US_HOLIDAYS_ENABLED_KEY];
   const usHolidaysListValue = appSettings[US_HOLIDAYS_LIST_KEY];
 
@@ -549,6 +569,9 @@ export async function computeCurrentPay(): Promise<CurrentPayResult> {
   let weekIsFinalPab = false;
   let weekIsTechBonus = false;
   let weekMonday: Date | null = null;
+  // Accountant exclusions for the dispatch week's PAB month (set in the Payroll
+  // Wizard → PAB settings). Excluded emails get ₱0 PAB regardless of attendance.
+  let pabExcludedEmails = new Set<string>();
 
   // Per-department pay-week windows derived from the upload's start date.
   // An 8-day Sun→Sun upload yields two different 7-day weeks: HSL keeps Mon→Sun
@@ -563,12 +586,14 @@ export async function computeCurrentPay(): Promise<CurrentPayResult> {
     // for the whole dispatch regardless of whether the upload starts on Sunday.
     weekMonday = payWeekHsl!.start;
     const pabMonth = pabMonthFromWeekStart(weekMonday);
+    const monthKey = yearMonthKey(pabMonth.year, pabMonth.month);
     const overrides = parsePabPeriodOverrides(pabOverridesValue);
-    const overrideEntry = overrides.get(yearMonthKey(pabMonth.year, pabMonth.month));
+    const overrideEntry = overrides.get(monthKey);
     pabRange = overrideEntry
       ? { start: overrideEntry.start, end: overrideEntry.end }
       : getPabMonthRange(pabMonth.year, pabMonth.month);
     hslAdjustedEnd = getHslAdjustedEnd(pabRange.end);
+    pabExcludedEmails = parsePabPeriodExclusions(pabExclusionsValue).get(monthKey) ?? new Set<string>();
 
     if (periodEnd) {
       weekIsFinalPab = gateIsFinalPabWeek(periodEnd, pabRange.end);
@@ -781,7 +806,8 @@ export async function computeCurrentPay(): Promise<CurrentPayResult> {
     const bonus = computeEmployeeBonus({
       hasRates,
       isFinalPabWeek: weekIsFinalPab,
-      isPabEligible: pabEligible.has(em),
+      // Accountant-excluded emails forfeit PAB for this month even if they passed.
+      isPabEligible: pabEligible.has(em) && !pabExcludedEmails.has(em),
       isTechBonusWeek: weekIsTechBonus,
       hasThirtyDays: empHasThirtyDays,
       pabAmountPHP: sysBonuses.pab.amountPHP,

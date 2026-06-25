@@ -73,6 +73,19 @@ function isoOf(d: Date | null): string | null {
   return `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`;
 }
 
+/** Parse a "YYYY-MM-DD" string as a LOCAL calendar date (no UTC/TZ shift). */
+function parseIsoLocalDate(iso: string | null | undefined): Date | null {
+  if (!iso) return null;
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso.trim());
+  if (!m) return null;
+  const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  return isNaN(d.getTime()) ? null : d;
+}
+
+function round1(n: number): number {
+  return Math.round(n * 10) / 10;
+}
+
 /** Shared rate-resolution context — mirrors the live dispatch (current-pay.ts /
  *  disbursement-reports.ts) so the People tab shows the same rate payroll uses. */
 export interface PeopleRateContext {
@@ -183,24 +196,145 @@ async function loadHoursContext(requestedSourceFile?: string | null): Promise<Ho
 }
 
 /**
+ * Distinct, chronological canonical payroll weeks from the Hubstaff uploads:
+ * one {file, start, end} per real 6–8 day weekly report, with backfills /
+ * time-activity / duplicate re-uploads dropped and identical date ranges deduped.
+ * Shared by the weekly Statistics trend and the People roster's custom date range.
+ */
+function canonicalWeeksFromUploads(
+  uploads: Awaited<ReturnType<typeof listHubstaffUploads>>,
+): { file: string; start: Date; end: Date }[] {
+  const weeks: { file: string; start: Date; end: Date }[] = [];
+  const seenRange = new Set<string>();
+  for (const u of uploads) {
+    const file = (u.source_file ?? '').trim();
+    if (!file || /backfill|time-activity|\(\d+\)|copy/i.test(file)) continue;
+    const range = parseDateRangeFromFilename(file);
+    if (!range) continue;
+    const days = Math.round((range.end.getTime() - range.start.getTime()) / 86_400_000) + 1;
+    if (days < 6 || days > 8) continue;
+    const key = `${isoOf(range.start)}_${isoOf(range.end)}`;
+    if (seenRange.has(key)) continue;
+    seenRange.add(key);
+    weeks.push({ file, start: range.start, end: range.end });
+  }
+  weeks.sort((a, b) => a.start.getTime() - b.start.getTime());
+  return weeks;
+}
+
+/** Hours + OT summed across every payroll week overlapping a custom date range. */
+interface RangeHoursContext {
+  /** email → { hours, ot } aggregated across the included weeks. */
+  byEmail: Map<string, { hours: number; ot: number }>;
+  /** How many canonical payroll weeks were aggregated. */
+  weeks: number;
+  /** Actual covered span (first included week's start → last week's end). */
+  coveredStart: string | null;
+  coveredEnd: string | null;
+}
+
+/**
+ * Aggregate hours + overtime across every canonical payroll week that OVERLAPS
+ * the [startIso, endIso] range. Each week's overtime is its own 40h-capped figure
+ * (overtimeDecimal), so the per-person OT total is the sum of weekly OT — never a
+ * single 40h cap across the whole multi-week span. The grand-total summary row
+ * (see {@link MAX_PLAUSIBLE_WEEKLY_HOURS}) is dropped per week.
+ */
+async function loadRangeHoursContext(startIso: string, endIso: string): Promise<RangeHoursContext> {
+  const start = parseIsoLocalDate(startIso);
+  const end = parseIsoLocalDate(endIso);
+  const empty: RangeHoursContext = { byEmail: new Map(), weeks: 0, coveredStart: null, coveredEnd: null };
+  if (!start || !end || start.getTime() > end.getTime()) return empty;
+
+  let uploads: Awaited<ReturnType<typeof listHubstaffUploads>> = [];
+  try {
+    uploads = await listHubstaffUploads();
+  } catch {
+    return empty;
+  }
+  const sT = start.getTime();
+  const eT = end.getTime();
+  // A week is in scope if its [start, end] overlaps the requested range.
+  const included = canonicalWeeksFromUploads(uploads).filter(
+    (w) => w.start.getTime() <= eT && w.end.getTime() >= sT,
+  );
+
+  const byEmail = new Map<string, { hours: number; ot: number }>();
+  await Promise.all(
+    included.map(async (w) => {
+      try {
+        const { rows } = await fetchHubstaffRowsBySourceFile(w.file);
+        // No awaits below, so each week's accumulation runs atomically — safe to
+        // share `byEmail` across the parallel fetches.
+        for (const pr of rowsToPayrollRows(rows)) {
+          if (pr.hoursDecimal > MAX_PLAUSIBLE_WEEKLY_HOURS) continue;
+          const em = normEmail(pr.email ?? '');
+          if (!em) continue;
+          const cur = byEmail.get(em) ?? { hours: 0, ot: 0 };
+          cur.hours += pr.hoursDecimal;
+          cur.ot += pr.overtimeDecimal;
+          byEmail.set(em, cur);
+        }
+      } catch {
+        /* skip this week's data */
+      }
+    }),
+  );
+
+  return {
+    byEmail,
+    weeks: included.length,
+    coveredStart: included.length ? isoOf(included[0].start) : null,
+    coveredEnd: included.length ? isoOf(included[included.length - 1].end) : null,
+  };
+}
+
+/**
  * The full People roster: one row per active employee with rate, hours-this-week,
  * overtime projection, preferred processor, and a has-banking flag.
+ *
+ * Scope is EITHER a single payroll week (`sourceFile`, default = current week) OR
+ * a custom `rangeStart`→`rangeEnd` window. In range mode each row's hours/OT are
+ * summed across every payroll week overlapping the range, and the per-week OT
+ * projection ("on track for") is omitted — it only applies to the live week.
  */
 const EMPTY_SUMMARY: PeopleSummary = { otEmployees: 0, otHours: 0, otPayoutPhp: 0, otPayoutUsd: 0 };
 
-export async function buildPeopleRoster(sourceFile?: string | null): Promise<{
+export interface PeopleRosterScope {
+  /** Single payroll week (Hubstaff source_file). Ignored when a range is given. */
+  sourceFile?: string | null;
+  /** Inclusive custom range start (YYYY-MM-DD). Both ends required for range mode. */
+  rangeStart?: string | null;
+  /** Inclusive custom range end (YYYY-MM-DD). */
+  rangeEnd?: string | null;
+}
+
+/** Range coverage echoed back so the UI can show how many weeks were aggregated. */
+export interface PeopleRangeCoverage {
+  weeks: number;
+  start: string | null;
+  end: string | null;
+}
+
+export async function buildPeopleRoster(scope: PeopleRosterScope = {}): Promise<{
   rows: PeopleRosterRow[];
   sourceFile: string | null;
   summary: PeopleSummary;
+  range: PeopleRangeCoverage | null;
   error: string | null;
 }> {
-  const [{ employees, error }, rateCtx, hoursCtx, idsRes] = await Promise.all([
+  const rangeStart = (scope.rangeStart ?? '').trim();
+  const rangeEnd = (scope.rangeEnd ?? '').trim();
+  const rangeMode = !!(rangeStart && rangeEnd);
+
+  const [{ employees, error }, rateCtx, hoursCtx, rangeCtx, idsRes] = await Promise.all([
     getEmployeesForAuthorizedServerRoute(),
     loadPeopleRateContext(),
-    loadHoursContext(sourceFile),
+    rangeMode ? Promise.resolve(null) : loadHoursContext(scope.sourceFile),
+    rangeMode ? loadRangeHoursContext(rangeStart, rangeEnd) : Promise.resolve(null),
     getEmployeeIds(),
   ]);
-  if (error) return { rows: [], sourceFile: null, summary: EMPTY_SUMMARY, error };
+  if (error) return { rows: [], sourceFile: null, summary: EMPTY_SUMMARY, range: null, error };
 
   // employee_ids → processor + has-banking, keyed by every known email.
   const idByEmail = new Map<string, { processor: string | null; hasBanking: boolean }>();
@@ -246,13 +380,41 @@ export async function buildPeopleRoster(sourceFile?: string | null): Promise<{
     const isHsl = (e.department ?? '').trim().toLowerCase() === 'hsl';
     const rate = resolvePeopleRate(rateCtx, aliases, e.department ?? null);
 
-    let hoursThisWeek = 0;
-    for (const em of aliases) {
-      const h = hoursCtx.byEmail.get(em);
-      if (h != null) { hoursThisWeek = h; break; }
+    let hours: PeopleHours;
+    if (rangeMode) {
+      // Hours + OT summed across the range; no projection (historical aggregate).
+      let agg = { hours: 0, ot: 0 };
+      for (const em of aliases) {
+        const h = rangeCtx!.byEmail.get(em);
+        if (h) { agg = h; break; }
+      }
+      hours = {
+        thisWeek: round1(agg.hours),
+        ot: round1(agg.ot),
+        weekStart: rangeCtx!.coveredStart,
+        weekEnd: rangeCtx!.coveredEnd,
+        inProgress: false,
+        projectedHours: null,
+        projectedOt: null,
+      };
+    } else {
+      let hoursThisWeek = 0;
+      for (const em of aliases) {
+        const h = hoursCtx!.byEmail.get(em);
+        if (h != null) { hoursThisWeek = h; break; }
+      }
+      const payWeek = isHsl ? hoursCtx!.payWeekHsl : hoursCtx!.payWeekNonHsl;
+      const proj = projectOvertime(hoursThisWeek, payWeek?.start ?? null, payWeek?.end ?? null, today);
+      hours = {
+        thisWeek: proj.hoursSoFar,
+        ot: proj.otSoFar,
+        weekStart: isoOf(payWeek?.start ?? null),
+        weekEnd: isoOf(payWeek?.end ?? null),
+        inProgress: proj.inProgress,
+        projectedHours: proj.projectedHours,
+        projectedOt: proj.projectedOt,
+      };
     }
-    const payWeek = isHsl ? hoursCtx.payWeekHsl : hoursCtx.payWeekNonHsl;
-    const proj = projectOvertime(hoursThisWeek, payWeek?.start ?? null, payWeek?.end ?? null, today);
 
     const idInfo = aliases.map((em) => idByEmail.get(em)).find(Boolean) ?? null;
 
@@ -262,15 +424,7 @@ export async function buildPeopleRoster(sourceFile?: string | null): Promise<{
       work_email: e.work_email ?? null,
       department: e.department ?? null,
       rate,
-      hours: {
-        thisWeek: proj.hoursSoFar,
-        ot: proj.otSoFar,
-        weekStart: isoOf(payWeek?.start ?? null),
-        weekEnd: isoOf(payWeek?.end ?? null),
-        inProgress: proj.inProgress,
-        projectedHours: proj.projectedHours,
-        projectedOt: proj.projectedOt,
-      },
+      hours,
       processor: idInfo?.processor ?? null,
       hasBanking: idInfo?.hasBanking ?? false,
     };
@@ -301,7 +455,11 @@ export async function buildPeopleRoster(sourceFile?: string | null): Promise<{
     otPayoutUsd: fxRate > 0 ? Math.round((otPayoutPhp / fxRate) * 100) / 100 : null,
   };
 
-  return { rows, sourceFile: hoursCtx.sourceFile, summary, error: null };
+  const range: PeopleRangeCoverage | null = rangeMode
+    ? { weeks: rangeCtx!.weeks, start: rangeCtx!.coveredStart, end: rangeCtx!.coveredEnd }
+    : null;
+
+  return { rows, sourceFile: rangeMode ? null : hoursCtx!.sourceFile, summary, range, error: null };
 }
 
 /**
@@ -538,22 +696,7 @@ export async function buildPeopleStats(maxWeeks = 16): Promise<{
   } catch {
     uploads = [];
   }
-  const weeks: { file: string; start: Date; end: Date }[] = [];
-  const seenRange = new Set<string>();
-  for (const u of uploads) {
-    const file = (u.source_file ?? '').trim();
-    if (!file || /backfill|time-activity|\(\d+\)|copy/i.test(file)) continue;
-    const range = parseDateRangeFromFilename(file);
-    if (!range) continue;
-    const days = Math.round((range.end.getTime() - range.start.getTime()) / 86_400_000) + 1;
-    if (days < 6 || days > 8) continue;
-    const key = `${isoOf(range.start)}_${isoOf(range.end)}`;
-    if (seenRange.has(key)) continue;
-    seenRange.add(key);
-    weeks.push({ file, start: range.start, end: range.end });
-  }
-  weeks.sort((a, b) => a.start.getTime() - b.start.getTime());
-  const recent = weeks.slice(-maxWeeks);
+  const recent = canonicalWeeksFromUploads(uploads).slice(-maxWeeks);
 
   const fxRate = rateCtx.fx.usdToPhp;
   const weekResults = await Promise.all(

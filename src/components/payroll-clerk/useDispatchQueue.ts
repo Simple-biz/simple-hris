@@ -96,7 +96,10 @@ function parseLockedFlag(value: string | null | undefined): boolean {
   }
 }
 
-async function loadAll(signal?: AbortSignal): Promise<{
+async function loadAll(
+  signal?: AbortSignal,
+  selectedSourceFile?: string | null,
+): Promise<{
   rows: QueueRow[];
   excluded: ExcludedRow[];
   paid: PaymentDispatchRow[];
@@ -105,6 +108,12 @@ async function loadAll(signal?: AbortSignal): Promise<{
   wizardReady: boolean;
   error: string | null;
 }> {
+  // When the clerk picks a PAST week in the dispatch CSV selector, pay + cycle
+  // are computed for that source file instead of the live `is_current` cycle.
+  // Everything downstream already keys off the returned `period.sourceFile`, so
+  // only these two upstream fetches need the override.
+  const sel = selectedSourceFile?.trim() || null;
+  const q = sel ? `?source_file=${encodeURIComponent(sel)}` : '';
   // All four endpoints fire at once. Dispatches used to wait for
   // /api/payroll-current-pay (the slow one) just to learn the cycle id; the
   // cheap /api/current-cycle endpoint surfaces that id on its own so the
@@ -112,7 +121,7 @@ async function loadAll(signal?: AbortSignal): Promise<{
   // behind it. The dispatches fetch is chained off the cycle lookup only —
   // not off pay — so it overlaps the slowest endpoint instead of adding to it.
   const dispatchesPromise = (async (): Promise<PaymentDispatchRow[]> => {
-    const cycleRes = await fetch('/api/current-cycle', { cache: 'no-store', signal });
+    const cycleRes = await fetch(`/api/current-cycle${q}`, { cache: 'no-store', signal });
     const cycleJson = (await cycleRes.json()) as { cycleId?: string | null };
     const cycleId = cycleJson.cycleId ?? null;
     if (!cycleId) return [];
@@ -129,7 +138,7 @@ async function loadAll(signal?: AbortSignal): Promise<{
 
   const [ratesRes, payRes, idsRes, paid] = await Promise.all([
     fetch('/api/employee-hourly-rates', { cache: 'no-store', signal }),
-    fetch('/api/payroll-current-pay', { cache: 'no-store', signal }),
+    fetch(`/api/payroll-current-pay${q}`, { cache: 'no-store', signal }),
     fetch('/api/employee-ids', { cache: 'no-store', signal }),
     dispatchesPromise,
   ]);
@@ -429,11 +438,22 @@ async function loadAll(signal?: AbortSignal): Promise<{
  *
  * Returns a `refresh()` callback so callers can re-pull after Mark paid.
  */
-export function useDispatchQueue(): DispatchQueueState {
+/**
+ * @param sourceFile  Optional past pay-week to view instead of the live cycle
+ *   (the Payment Dispatch CSV selector sets this). `null`/undefined = current
+ *   `is_current` cycle. The cache is keyed per source file so switching weeks
+ *   never paints another week's queue.
+ */
+export function useDispatchQueue(sourceFile?: string | null): DispatchQueueState {
+  const sel = sourceFile?.trim() || null;
+  // Per-week cache key: the live cycle keeps the bare key (so the common path is
+  // unchanged); a selected past week gets its own slot.
+  const cacheKey = sel ? `${TAB_CACHE_KEYS.dispatchQueue}:${sel}` : TAB_CACHE_KEYS.dispatchQueue;
+
   // Seed from the in-session cache so switching back to the dispatch tab paints
   // the last-known queue instantly instead of a skeleton; we still revalidate.
   const [state, setState] = useState<Omit<DispatchQueueState, 'refresh'>>(() => {
-    const cached = getTabCache<CachedQueue>(TAB_CACHE_KEYS.dispatchQueue);
+    const cached = getTabCache<CachedQueue>(cacheKey);
     return {
       rows: cached?.rows ?? [],
       excluded: cached?.excluded ?? [],
@@ -452,11 +472,11 @@ export function useDispatchQueue(): DispatchQueueState {
     // re-mounted — no visible reload.
     if (!opts?.silent) setState((s) => ({ ...s, loading: true }));
     try {
-      const result = await loadAll(signal);
+      const result = await loadAll(signal, sel);
       if (signal?.aborted) return;
       // Only cache clean loads — an errored result shouldn't overwrite good data.
       if (!result.error) {
-        setTabCache<CachedQueue>(TAB_CACHE_KEYS.dispatchQueue, {
+        setTabCache<CachedQueue>(cacheKey, {
           rows: result.rows,
           excluded: result.excluded,
           paid: result.paid,
@@ -480,7 +500,7 @@ export function useDispatchQueue(): DispatchQueueState {
       if (e instanceof DOMException && e.name === 'AbortError') return;
       // A background revalidation that fails should keep the last good data on
       // screen rather than blanking the queue.
-      if (opts?.silent && hasTabCache(TAB_CACHE_KEYS.dispatchQueue)) {
+      if (opts?.silent && hasTabCache(cacheKey)) {
         setState((s) => ({ ...s, loading: false }));
         return;
       }
@@ -495,14 +515,15 @@ export function useDispatchQueue(): DispatchQueueState {
         error: e instanceof Error ? e.message : 'Failed to load dispatch queue',
       });
     }
-  }, []);
+  }, [sel, cacheKey]);
 
   useEffect(() => {
     const controller = new AbortController();
-    // If we already have a cached snapshot, revalidate silently (no skeleton).
-    void load(controller.signal, { silent: hasTabCache(TAB_CACHE_KEYS.dispatchQueue) });
+    // A week switch should show the skeleton (no stale cache for that week yet);
+    // a remount with a warm cache for THIS week revalidates silently.
+    void load(controller.signal, { silent: hasTabCache(cacheKey) });
     return () => controller.abort();
-  }, [load]);
+  }, [load, cacheKey]);
 
   const refresh = useCallback(async () => {
     await load(undefined, { silent: true });

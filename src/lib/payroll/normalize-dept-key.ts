@@ -35,6 +35,13 @@ export function normalizeDeptToKey(raw: string | null | undefined): string | nul
     sales: 'sales_assistant',
     'smart staff': 'smart_staff',
     smartstaff: 'smart_staff',
+    // Same team, labeled differently across sources: the master list (authoritative
+    // for identity) uses "SmartClicks/Sterling"; the old payroll dashboard uses
+    // "Smartclicks". All resolve to the Smart Staff department.
+    'smartclicks/sterling': 'smart_staff',
+    'smart clicks/sterling': 'smart_staff',
+    smartclicks: 'smart_staff',
+    'smart clicks': 'smart_staff',
     'hogan smith law': 'hogan_smith_law',
     hogan: 'hogan_smith_law',
     hsl: 'hogan_smith_law',

@@ -15,6 +15,7 @@ import { TeamAvatar } from '@/components/team/team-ui';
 import { SmoothSelect } from '@/components/ui/smooth-select';
 import { Skeleton } from '@/components/ui/skeleton';
 import EmployeePabCalendar from '@/components/employee/EmployeePabCalendar';
+import PeopleDateRangePicker, { type DateRange } from './PeopleDateRangePicker';
 import { getTabCache, setTabCache, TAB_CACHE_KEYS } from '@/lib/accounting/tab-cache';
 import { cn } from '@/lib/utils';
 
@@ -234,6 +235,12 @@ export default function PeopleTab({
   const [period, setPeriod] = useState('');
   const periodRef = useRef('');
   const defaultFileRef = useRef('');
+  // Custom date range — when set, the roster aggregates hours/OT across every
+  // payroll week overlapping [start, end] (overrides the single-week selector).
+  const [range, setRange] = useState<DateRange | null>(null);
+  const rangeRef = useRef<DateRange | null>(null);
+  const [rangeMeta, setRangeMeta] = useState<{ weeks: number; start: string | null; end: string | null } | null>(null);
+  const rangeMode = range != null;
   // Top-level mode: the roster vs the weekly Statistics graph.
   const [mode, setMode] = useState<'roster' | 'stats'>('roster');
   const [stats, setStats] = useState<StatsPoint[] | null>(null);
@@ -243,22 +250,33 @@ export default function PeopleTab({
   const [statsError, setStatsError] = useState<string | null>(null);
   const statsFetchedRef = useRef(false);
 
-  // Fetch the roster for a given week (`src` = Hubstaff source_file; '' = current).
-  const loadFor = useCallback(async (src: string, quiet: boolean) => {
+  // Fetch the roster for the CURRENT scope — a custom date range if one is set
+  // (aggregated across weeks), otherwise the selected single week (`periodRef`;
+  // '' = current week). Reads refs so refresh/realtime callers stay scope-aware.
+  const load = useCallback(async (quiet: boolean) => {
     if (!quiet) setLoading(true);
     try {
-      const url = src ? `/api/people?source_file=${encodeURIComponent(src)}` : '/api/people';
+      const rng = rangeRef.current;
+      const src = periodRef.current;
+      const url = rng
+        ? `/api/people?start=${encodeURIComponent(rng.start)}&end=${encodeURIComponent(rng.end)}`
+        : src
+          ? `/api/people?source_file=${encodeURIComponent(src)}`
+          : '/api/people';
       const res = await fetch(url, { cache: 'no-store' });
       const json = (await res.json()) as {
-        rows?: RosterRow[]; sourceFile?: string; summary?: Summary; error?: string;
+        rows?: RosterRow[]; sourceFile?: string; summary?: Summary;
+        range?: { weeks: number; start: string | null; end: string | null } | null; error?: string;
       };
       if (!res.ok) throw new Error(json.error || `Request failed (${res.status})`);
       const next = json.rows ?? [];
       setRows(next);
       setSummary(json.summary ?? null);
+      setRangeMeta(json.range ?? null);
       setError(json.error ?? null);
-      // Cache only the current/default week so the next mount paints it instantly.
-      if (!src || src === defaultFileRef.current) setTabCache(TAB_CACHE_KEYS.peopleRoster, next);
+      // Cache only the current/default single week so the next mount paints it
+      // instantly — never a custom range or a non-default week.
+      if (!rng && (!src || src === defaultFileRef.current)) setTabCache(TAB_CACHE_KEYS.peopleRoster, next);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -269,7 +287,16 @@ export default function PeopleTab({
   const onPeriodChange = (v: string) => {
     setPeriod(v);
     periodRef.current = v;
-    void loadFor(v, false);
+    void load(false);
+  };
+
+  // Selecting a custom range overrides the single-week selector; clearing it
+  // (null) reverts to whatever week is chosen in the dropdown.
+  const onRangeChange = (v: DateRange | null) => {
+    setRange(v);
+    rangeRef.current = v;
+    if (!v) setRangeMeta(null);
+    void load(false);
   };
 
   // Statistics tab — lazy-fetch the weekly trend on first open.
@@ -295,7 +322,7 @@ export default function PeopleTab({
   const refresh = async () => {
     setRefreshing(true);
     try {
-      await loadFor(periodRef.current, true);
+      await load(true);
     } finally {
       setRefreshing(false);
     }
@@ -323,7 +350,7 @@ export default function PeopleTab({
       defaultFileRef.current = defaultFile;
       setPeriod(defaultFile);
       periodRef.current = defaultFile;
-      void loadFor(defaultFile, rows.length > 0);
+      void load(rows.length > 0);
     })();
     return () => { alive = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -372,11 +399,30 @@ export default function PeopleTab({
     [rows],
   );
 
-  // Friendly label for the pay week chosen in the CSV period selector.
-  const periodLabel = useMemo(
-    () => periods.find((p) => p.file === period)?.label ?? (period ? labelForSourceFile(period) : 'Current week'),
-    [periods, period],
-  );
+  // Friendly label for the active scope — a custom range (with the number of
+  // payroll weeks it aggregated) or the single week chosen in the CSV selector.
+  const periodLabel = useMemo(() => {
+    if (range) {
+      const base = formatPeriodRange(rangeMeta?.start ?? range.start, rangeMeta?.end ?? range.end);
+      const wk = rangeMeta?.weeks;
+      return wk != null ? `${base} · ${wk} payroll week${wk === 1 ? '' : 's'}` : base;
+    }
+    return periods.find((p) => p.file === period)?.label ?? (period ? labelForSourceFile(period) : 'Current week');
+  }, [range, rangeMeta, periods, period]);
+
+  // Earliest / latest dates present in the uploaded weeks — bounds the calendar
+  // picker so the CEO can't range past the available data.
+  const dataBounds = useMemo(() => {
+    let min: string | null = null;
+    let max: string | null = null;
+    for (const p of periods) {
+      const m = p.file.match(/(\d{4}-\d{2}-\d{2}).*?(\d{4}-\d{2}-\d{2})/);
+      if (!m) continue;
+      if (!min || m[1] < min) min = m[1];
+      if (!max || m[2] > max) max = m[2];
+    }
+    return { min, max };
+  }, [periods]);
 
   // Payouts to be sent this week = people who logged Hubstaff hours in the
   // selected pay week AND are in the Global Master List. The roster is already
@@ -406,7 +452,7 @@ export default function PeopleTab({
             </span>
             {otWatch > 0 && (
               <span className="flex items-center gap-1 rounded-full bg-red-50 px-2.5 py-1 text-[11px] font-medium text-red-600 dark:bg-red-950/30 dark:text-red-300">
-                <AlertTriangle className="h-3 w-3" /> {otWatch} on track for OT
+                <AlertTriangle className="h-3 w-3" /> {otWatch} {rangeMode ? 'with overtime' : 'on track for OT'}
               </span>
             )}
             <Button
@@ -484,12 +530,14 @@ export default function PeopleTab({
           >
             <AlertTriangle className="h-3.5 w-3.5" /> OT only
           </Button>
-          {/* CSV period selector — scopes hours / OT / KPIs to a chosen week. */}
+          {/* CSV period selector — scopes hours / OT / KPIs to a chosen week.
+              Disabled while a custom range is active (the range overrides it). */}
           <SmoothSelect
             value={period}
             onChange={onPeriodChange}
+            disabled={rangeMode}
             aria-label="Pay week"
-            className="w-full shrink-0 sm:w-56"
+            className="w-full shrink-0 sm:w-52"
             options={
               periods.length
                 ? periods.map((p) => ({ value: p.file, label: p.label }))
@@ -498,7 +546,22 @@ export default function PeopleTab({
                   : [{ value: '', label: 'Current week' }]
             }
           />
+          {/* Custom date-range picker — aggregates hours/OT across the range. */}
+          <PeopleDateRangePicker
+            value={range}
+            onChange={onRangeChange}
+            accent={accent}
+            min={dataBounds.min}
+            max={dataBounds.max ?? todayIso()}
+            className="w-full shrink-0 sm:w-56"
+          />
         </div>
+        )}
+        {mode === 'roster' && rangeMode && (
+          <p className="mt-2 flex items-center gap-1.5 text-[11px] text-zinc-500 dark:text-zinc-400">
+            <CalendarDays className="h-3 w-3 shrink-0" />
+            Aggregating hours &amp; pay across <span className="font-medium text-zinc-700 dark:text-zinc-200">{periodLabel}</span>. Weekly OT projection is hidden in range mode.
+          </p>
         )}
       </div>
 
@@ -531,7 +594,7 @@ export default function PeopleTab({
           </div>
           <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-950">
             <div className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-zinc-400">
-              <Banknote className="h-3.5 w-3.5 text-emerald-500" /> OT payout this week
+              <Banknote className="h-3.5 w-3.5 text-emerald-500" /> {rangeMode ? 'OT payout in range' : 'OT payout this week'}
             </div>
             <div className="mt-1 flex items-baseline gap-2">
               <span className="text-2xl font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">
@@ -583,7 +646,7 @@ export default function PeopleTab({
                 <tr className="border-b border-zinc-200 text-left text-[11px] uppercase tracking-wide text-zinc-500 dark:border-zinc-800">
                   <th className="px-3 py-2.5 font-medium">Person</th>
                   <th className="px-3 py-2.5 font-medium">Department</th>
-                  <th className="px-3 py-2.5 font-medium">Hours this week</th>
+                  <th className="px-3 py-2.5 font-medium">{rangeMode ? 'Hours in range' : 'Hours this week'}</th>
                   <th className="px-3 py-2.5 font-medium">Pay rate</th>
                   <th className="px-3 py-2.5 font-medium">Payout</th>
                   <th className="px-3 py-2.5 font-medium text-right">Action</th>
@@ -608,7 +671,7 @@ export default function PeopleTab({
                     <td className="px-3 py-2.5 text-zinc-600 dark:text-zinc-300" data-label="Department">
                       {r.department ?? '—'}
                     </td>
-                    <td className="px-3 py-2.5" data-label="Hours this week">
+                    <td className="px-3 py-2.5" data-label={rangeMode ? 'Hours in range' : 'Hours this week'}>
                       <HoursCell hours={r.hours} />
                     </td>
                     <td className="px-3 py-2.5 text-zinc-700 dark:text-zinc-200" data-label="Pay rate">
@@ -708,7 +771,7 @@ export default function PeopleTab({
           onClose={() => setTransferFor(null)}
           onDone={() => {
             setTransferFor(null);
-            void loadFor(periodRef.current, true);
+            void load(true);
           }}
         />
       )}

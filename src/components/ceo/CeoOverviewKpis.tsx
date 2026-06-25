@@ -126,13 +126,23 @@ export default function CeoOverviewKpis({ viewerEmail }: { viewerEmail: string |
             <div className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-zinc-400">
               <Send className="h-3.5 w-3.5 text-sky-500" /> Payments to send
             </div>
-            <span className="inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-emerald-600 dark:text-emerald-400">
-              <span className="relative flex h-2 w-2">
-                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
-                <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
+            {/* "Live" blinks green ONLY while accounting is actively processing
+                (the dispatch lock is on). When no one has hit Start Processing
+                the counter is static, so we show a muted "Idle" instead. */}
+            {lockState.locked ? (
+              <span className="inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-emerald-600 dark:text-emerald-400">
+                <span className="relative flex h-2 w-2">
+                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+                  <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
+                </span>
+                Live
               </span>
-              Live
-            </span>
+            ) : (
+              <span className="inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-zinc-400">
+                <span className="relative inline-flex h-2 w-2 rounded-full bg-zinc-300 dark:bg-zinc-600" />
+                Idle
+              </span>
+            )}
           </div>
           <div className="mt-2 flex items-baseline gap-2">
             <motion.span

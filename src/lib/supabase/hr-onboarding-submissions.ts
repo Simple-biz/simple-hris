@@ -3,7 +3,11 @@ import {
   createSupabaseServerClient,
   createSupabaseServiceRoleClient,
 } from "./server";
-import { sanitizeName, sanitizeNameOrNull } from "../text/sanitize-name";
+import {
+  sanitizeNameOrNull,
+  toTitleCaseName,
+  toTitleCaseNameOrNull,
+} from "../text/sanitize-name";
 
 const TABLE = "hr_onboarding_submissions";
 export const HR_ONBOARDING_BUCKET = "hr-onboarding-files";
@@ -294,9 +298,11 @@ export async function createHrOnboardingLink(
   const payload = {
     token: generateOnboardingToken(),
     status: "pending" as HrOnboardingStatus,
-    // Fold styled/invisible Unicode (e.g. math-italic) so the hire is matchable
-    // by payroll/search from the very first write. See sanitize-name.ts.
-    invite_name: sanitizeNameOrNull(input.invite_name),
+    // Fold styled/invisible Unicode (e.g. math-italic) AND title-case a SHOUTED
+    // / all-lowercase name ("JAN KANE REROMA" -> "Jan Kane Reroma") so the hire
+    // is matchable and reads naturally from the very first write. Mixed-case
+    // names are preserved as typed. See sanitize-name.ts.
+    invite_name: toTitleCaseNameOrNull(input.invite_name),
     invite_personal_email:
       input.invite_personal_email?.trim().toLowerCase() || null,
     invite_department: input.invite_department?.trim() || null,
@@ -355,8 +361,12 @@ export async function submitHrOnboarding(
     status: "submitted" as HrOnboardingStatus,
     submitted_at: new Date().toISOString(),
     // Fold styled/invisible Unicode in human names (math-italic, full-width,
-    // zero-width chars, etc.) so the hire is matchable everywhere downstream.
-    full_name: sanitizeName(input.full_name),
+    // zero-width chars, etc.) AND title-case a SHOUTED / all-lowercase name so
+    // the hire is matchable everywhere downstream and reads naturally.
+    full_name: toTitleCaseName(input.full_name),
+    // gmail_surname is the @simple.biz Google account surname — kept verbatim
+    // (only Unicode-folded). It is NOT title-cased: it can legitimately be a
+    // short all-caps initial form and feeds account provisioning, not display.
     gmail_surname: sanitizeNameOrNull(input.gmail_surname),
     phone: input.phone.trim(),
     email: input.email.trim().toLowerCase(),
@@ -369,7 +379,7 @@ export async function submitHrOnboarding(
     address_region: input.address_region?.trim() || null,
     address_postal_code: input.address_postal_code?.trim() || null,
     ip_agreement_agreed: input.ip_agreement_agreed,
-    ip_agreement_name: sanitizeNameOrNull(input.ip_agreement_name),
+    ip_agreement_name: toTitleCaseNameOrNull(input.ip_agreement_name),
     ip_agreement_signature: input.ip_agreement_signature,
     ip_agreement_date: input.ip_agreement_date || null,
     // Only overwrite the stored PDF path when the route regenerated it on this

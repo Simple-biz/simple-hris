@@ -38,6 +38,7 @@ import {
 } from 'lucide-react';
 import { Select as SelectPrimitive } from '@base-ui/react/select';
 import { splitFullName } from '@/lib/hr/work-email';
+import { toTitleCaseNameOrNull } from '@/lib/text/sanitize-name';
 import { getSupabaseBrowserClient } from '@/lib/supabase/browser';
 import { getHrTabCache, hasHrTabCache, setHrTabCache, HR_TAB_CACHE_KEYS } from '@/lib/hr/tab-cache';
 import { Button } from '@/components/ui/button';
@@ -69,6 +70,22 @@ import { cn } from '@/lib/utils';
 
 function isPlausibleEmail(s: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s.trim());
+}
+
+// Title-case the identity name fields on each submission as it enters state, so
+// a SHOUTED / all-lowercase name ("JAN KANE REROMA") reads naturally
+// ("Jan Kane Reroma") everywhere it's shown — the Submitted table, the detail
+// drawer, the bulk dialogs and search — without touching every render site.
+// Mixed-case names are left exactly as typed (see toTitleCaseName). Banking and
+// gmail-surname fields are intentionally left alone. This is display-side only;
+// the data is title-cased at write time and via the backfill migration too.
+function withTitleCasedNames(rows: SubmissionRow[]): SubmissionRow[] {
+  return rows.map((r) => ({
+    ...r,
+    full_name: toTitleCaseNameOrNull(r.full_name),
+    invite_name: toTitleCaseNameOrNull(r.invite_name),
+    ip_agreement_name: toTitleCaseNameOrNull(r.ip_agreement_name),
+  }));
 }
 
 // Peso sign as a char code so this source stays ASCII (the editor on this box
@@ -764,7 +781,10 @@ const GEN_NEON_CSS = `
 export default function HrOnboardingForm() {
   const reduceMotion = useReducedMotion();
   const [rows, setRows] = useState<SubmissionRow[]>(
-    () => getHrTabCache<SubmissionRow[]>(HR_TAB_CACHE_KEYS.onboardingSubmissions) ?? [],
+    () =>
+      withTitleCasedNames(
+        getHrTabCache<SubmissionRow[]>(HR_TAB_CACHE_KEYS.onboardingSubmissions) ?? [],
+      ),
   );
   const [loading, setLoading] = useState(
     () => !hasHrTabCache(HR_TAB_CACHE_KEYS.onboardingSubmissions),
@@ -818,8 +838,9 @@ export default function HrOnboardingForm() {
       const res = await fetch('/api/hr/onboarding-submissions', { cache: 'no-store' });
       const json = (await res.json()) as { rows?: SubmissionRow[]; error?: string };
       if (!res.ok || json.error) throw new Error(json.error ?? 'Failed to load');
-      setRows(json.rows ?? []);
-      setHrTabCache(HR_TAB_CACHE_KEYS.onboardingSubmissions, json.rows ?? []);
+      const normalized = withTitleCasedNames(json.rows ?? []);
+      setRows(normalized);
+      setHrTabCache(HR_TAB_CACHE_KEYS.onboardingSubmissions, normalized);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Failed to load submissions');
       setRows([]);

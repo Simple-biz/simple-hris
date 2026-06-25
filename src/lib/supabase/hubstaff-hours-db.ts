@@ -434,6 +434,30 @@ export async function getCurrentHubstaffUploadId(supabase: SupabaseClient): Prom
 }
 
 /**
+ * Resolves the `hubstaff_uploads.id` (the pay-cycle id) for a specific source
+ * file. Used when Payment Dispatch / the pay engine operates on a PAST week
+ * picked from the CSV selector rather than the current `is_current` cycle.
+ * Newest matching upload wins if a filename was ever re-uploaded.
+ */
+export async function getHubstaffUploadIdBySourceFile(
+  supabase: SupabaseClient,
+  sourceFile: string,
+): Promise<string | null> {
+  const file = sourceFile.trim();
+  if (!file) return null;
+  const { data, error } = await supabase
+    .from(HUBSTAFF_UPLOADS_TABLE)
+    .select("id")
+    .eq("source_file", file)
+    .order("uploaded_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) return null;
+  const id = (data as { id?: string } | null)?.id;
+  return id ?? null;
+}
+
+/**
  * Creates a new `hubstaff_uploads` row (not yet current). Caller must later call
  * `promoteHubstaffUploadToCurrent` once the data rows are safely inserted.
  */

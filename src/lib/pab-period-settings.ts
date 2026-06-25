@@ -22,6 +22,8 @@ export const PAB_PERIOD_START_KEY = 'pab_period_start';
 export const PAB_PERIOD_END_KEY = 'pab_period_end';
 export const PAB_PERIOD_OVERRIDES_KEY = 'pab_period_overrides';
 export const PAB_PERIOD_ACTIVE_MONTH_KEY = 'pab_period_active_month';
+/** Per-month list of emails the accountant has excluded from that month's PAB. */
+export const PAB_PERIOD_EXCLUSIONS_KEY = 'pab_period_exclusions';
 
 /** Parse YYYY-MM-DD as a local calendar date (no UTC shift). */
 export function parseLocalDateFromIso(value: string | null | undefined): Date | null {
@@ -55,6 +57,8 @@ export function parseYearMonthKey(key: string | null | undefined): { year: numbe
 
 export type PabOverrideEntry = { start: Date; end: Date };
 export type PabOverridesMap = Map<string, PabOverrideEntry>;
+/** Per-month set of lower-cased emails excluded from that month's PAB. */
+export type PabExclusionsMap = Map<string, Set<string>>;
 
 export type PabPeriodFetchResult = {
   /** @deprecated kept for legacy consumers (employee dashboard). True when the legacy single-range toggle was on. */
@@ -65,6 +69,11 @@ export type PabPeriodFetchResult = {
   end: Date | null;
   /** Per-month PAB window overrides. Empty map when none saved. */
   overrides: PabOverridesMap;
+  /**
+   * Per-month accountant exclusions: a "YYYY-MM" key → set of lower-cased emails
+   * that get ₱0 PAB for that month regardless of attendance. Empty map when none.
+   */
+  exclusions: PabExclusionsMap;
   /** Which month the wizard is currently viewing (null → defaults to today's PAB month at resolution time). */
   activeMonth: { year: number; month: number } | null;
 };
@@ -102,6 +111,35 @@ export function parsePabPeriodOverrides(value: string | null | undefined): PabOv
       const mEnd = new Date(ym.year, ym.month + 1, 0);
       if (start.getTime() > mEnd.getTime() || end.getTime() < mStart.getTime()) continue;
       map.set(k, { start, end });
+    }
+  } catch {
+    // malformed JSON → empty map
+  }
+  return map;
+}
+
+/**
+ * Parse the `pab_period_exclusions` JSON blob into a month-keyed map of
+ * lower-cased excluded emails. Accepts the shape
+ * `{ "YYYY-MM": ["a@x.com", "b@y.com"] }`. Silently drops malformed entries
+ * and months whose list ends up empty.
+ */
+export function parsePabPeriodExclusions(value: string | null | undefined): PabExclusionsMap {
+  const map: PabExclusionsMap = new Map();
+  if (value == null || String(value).trim() === '') return map;
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return map;
+    for (const [k, v] of Object.entries(parsed as Record<string, unknown>)) {
+      if (!parseYearMonthKey(k)) continue;
+      if (!Array.isArray(v)) continue;
+      const emails = new Set<string>();
+      for (const e of v) {
+        if (typeof e !== 'string') continue;
+        const norm = e.trim().toLowerCase();
+        if (norm) emails.add(norm);
+      }
+      if (emails.size > 0) map.set(k, emails);
     }
   } catch {
     // malformed JSON → empty map
@@ -181,9 +219,10 @@ export async function fetchPabPeriodSettings(): Promise<PabPeriodFetchResult> {
     PAB_PERIOD_END_KEY,
     PAB_PERIOD_OVERRIDES_KEY,
     PAB_PERIOD_ACTIVE_MONTH_KEY,
+    PAB_PERIOD_EXCLUSIONS_KEY,
   ] as const;
 
-  const [mj, sj, ej, ov, am] = await Promise.all(
+  const [mj, sj, ej, ov, am, ex] = await Promise.all(
     keys.map((key) =>
       fetch(`/api/app-settings?key=${encodeURIComponent(key)}`, { cache: 'no-store' }).then(
         (res) => res.json() as Promise<{ value: string | null }>,
@@ -192,6 +231,7 @@ export async function fetchPabPeriodSettings(): Promise<PabPeriodFetchResult> {
   );
 
   const overrides = parsePabPeriodOverrides(ov.value);
+  const exclusions = parsePabPeriodExclusions(ex.value);
 
   // Legacy migration: when the new overrides map is empty but the legacy manual
   // keys are populated, synthesize a single override for the legacy range so
@@ -211,6 +251,7 @@ export async function fetchPabPeriodSettings(): Promise<PabPeriodFetchResult> {
     start: parseLocalDateFromIso(sj.value),
     end: parseLocalDateFromIso(ej.value),
     overrides,
+    exclusions,
     activeMonth: parseYearMonthKey(am.value),
   };
 }

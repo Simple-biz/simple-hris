@@ -45,6 +45,7 @@ import {
   Eye,
   Radio,
   Zap,
+  UserX,
 } from 'lucide-react';
 import { useDispatchLock } from '@/hooks/useDispatchLock';
 import { useWizardDispatchLock } from '@/hooks/useWizardDispatchLock';
@@ -126,7 +127,7 @@ import {
 } from '@/lib/audit/client-format';
 import { usePabPeriodSettings } from '@/hooks/usePabPeriodSettings';
 import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
-import { parseLocalDateFromIso, resolvePabRangeForMonth, yearMonthKey } from '@/lib/pab-period-settings';
+import { parseLocalDateFromIso, resolvePabRangeForMonth, yearMonthKey, PAB_PERIOD_EXCLUSIONS_KEY } from '@/lib/pab-period-settings';
 import {
   US_HOLIDAYS_ENABLED_KEY,
   US_HOLIDAYS_LIST_KEY,
@@ -450,6 +451,9 @@ type PayPeriodPayload = {
   week: { start: string; end: string } | null;
   /** ISO date (YYYY-MM-DD) when this paycheck is dispatched (Tuesday after the pay-period Sunday). */
   salary_date: string | null;
+  /** USD→PHP rate (PHP per $1) effective for this cycle — the paystub converts the
+   *  PHP total to USD with this "that-week" rate instead of a hardcoded fallback. */
+  fx_rate: number;
   pab_evaluation: { month_label: string; range_start: string; range_end: string };
 };
 
@@ -495,6 +499,45 @@ type ExcludedDispatchEntry = {
 
 function formatPHP(n: number): string {
   return '₱' + n.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+/** USD-equivalent of a PHP amount at the given rate, e.g. "$1,234.56". Empty
+ *  when the rate is unusable. USD is the org's conversion anchor (see currency-fx). */
+function formatUsdFromPhp(php: number, usdToPhp: number): string {
+  if (!Number.isFinite(php) || !(usdToPhp > 0)) return '';
+  return '$' + (php / usdToPhp).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+/**
+ * A PHP money figure stacked above its ≈USD equivalent — the two-line treatment
+ * used by the wizard's Initial Pay column. Reused for Total Pay (HSL), Final pay
+ * (Additions) and Net Pay (Reports) so every pay total surfaces both currencies.
+ * The USD line is omitted only when the rate is unusable.
+ */
+function PhpWithUsd({
+  php,
+  usdToPhp,
+  phpClassName,
+  usdClassName,
+  align = 'end',
+}: {
+  php: number;
+  usdToPhp: number;
+  phpClassName?: string;
+  usdClassName?: string;
+  align?: 'start' | 'end';
+}) {
+  const usd = formatUsdFromPhp(php, usdToPhp);
+  return (
+    <div className={cn('flex flex-col gap-0.5', align === 'end' ? 'items-end' : 'items-start')}>
+      <span className={phpClassName}>{formatPHP(php)}</span>
+      {usd && (
+        <span className={cn('font-mono text-[10px] font-normal text-blue-500 dark:text-blue-400', usdClassName)}>
+          ≈&nbsp;{usd}
+        </span>
+      )}
+    </div>
+  );
 }
 
 function parseRateField(v: string | null | undefined): number | null {
@@ -1024,6 +1067,10 @@ export default function PayrollWizard({
   const [pabHolSaveState, setPabHolSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [pabHolNewDate, setPabHolNewDate] = useState('');
   const [pabHolNewName, setPabHolNewName] = useState('');
+  /** Search text for the "Exclude from PAB" person picker inside the PAB settings modal. */
+  const [pabExclusionSearch, setPabExclusionSearch] = useState('');
+  /** Zero-based page for the "Exclude from PAB" list (5 people per page). */
+  const [pabExclusionPage, setPabExclusionPage] = useState(0);
   const [simpleMetricModal, setSimpleMetricModal] = useState<
     | null
     | {
@@ -1292,6 +1339,23 @@ export default function PayrollWizard({
     [fileMonth, pabPeriodSettings.activeMonthResolved.year, pabPeriodSettings.activeMonthResolved.month],
   );
   const effectiveMonthKey = yearMonthKey(effectiveMonth.year, effectiveMonth.month);
+  /**
+   * Lower-cased emails the accountant has excluded from the *evaluated* month's
+   * PAB. Drives the wizard's PAB display + (via `perfectAttendanceEligible`) the
+   * actual ₱0 payout, mirroring the dispatch path.
+   */
+  const pabExcludedActiveMonth = useMemo<Set<string>>(
+    () => new Set(pabPeriodSettings.exclusions.get(effectiveMonthKey) ?? []),
+    [pabPeriodSettings.exclusions, effectiveMonthKey],
+  );
+  const isPabExcluded = useCallback(
+    (email: string) => {
+      if (pabExcludedActiveMonth.size === 0) return false;
+      const norm = normEmail(email) ?? (email ?? '').toLowerCase();
+      return pabExcludedActiveMonth.has(norm);
+    },
+    [pabExcludedActiveMonth],
+  );
   /** Resolved date window for the effective month: saved override if present, else the default rule. */
   const effectiveMonthRange = useMemo(() => {
     const override = pabPeriodSettings.overrides.get(effectiveMonthKey);
@@ -1319,7 +1383,11 @@ export default function PayrollWizard({
   // Reset the modal's edit month to the effective month each time it opens, so it
   // always lands on the currently-evaluated month rather than a stale selection.
   useEffect(() => {
-    if (pabSettingsOpen) setPabEditMonth(null);
+    if (pabSettingsOpen) {
+      setPabEditMonth(null);
+      setPabExclusionSearch('');
+      setPabExclusionPage(0);
+    }
   }, [pabSettingsOpen]);
 
   /**
@@ -1480,6 +1548,52 @@ export default function PayrollWizard({
       setTimeout(() => setPabSaveState('idle'), 3000);
     }
   }, [writeOverridesBlob, pabPeriodSettings, editMonthKey, isReplay]);
+
+  /**
+   * Serialize the exclusions map back to the JSON shape stored in app_settings,
+   * patching a single month's email list. Empty lists are dropped so the blob
+   * stays compact.
+   */
+  const writeExclusionsBlob = React.useCallback(
+    async (patchKey: string, emails: Set<string>) => {
+      const next: Record<string, string[]> = {};
+      for (const [k, set] of pabPeriodSettings.exclusions.entries()) {
+        if (k === patchKey) continue;
+        if (set.size > 0) next[k] = Array.from(set);
+      }
+      if (emails.size > 0) next[patchKey] = Array.from(emails);
+      await savePabSetting(PAB_PERIOD_EXCLUSIONS_KEY, JSON.stringify(next));
+    },
+    [pabPeriodSettings.exclusions, savePabSetting],
+  );
+
+  /**
+   * Toggle a single person's PAB exclusion for the month the modal is editing.
+   * Excluded employees earn ₱0 PAB for that period regardless of attendance —
+   * the dispatch path (`current-pay.ts`) honors the same list.
+   */
+  const togglePabExclusion = React.useCallback(
+    async (email: string, excluded: boolean) => {
+      if (isReplay) { toast.error('Replaying a past period is view-only'); return; }
+      const norm = normEmail(email) ?? email.toLowerCase();
+      if (!norm) return;
+      const set = new Set(pabPeriodSettings.exclusions.get(editMonthKey) ?? []);
+      if (excluded) set.add(norm);
+      else set.delete(norm);
+      setPabSaveState('saving');
+      try {
+        await writeExclusionsBlob(editMonthKey, set);
+        await pabPeriodSettings.refresh();
+        setPabSaveState('saved');
+        setTimeout(() => setPabSaveState('idle'), 1500);
+      } catch (e) {
+        setPabSaveState('error');
+        toast.error('Save failed', { description: e instanceof Error ? e.message : 'Unknown error' });
+        setTimeout(() => setPabSaveState('idle'), 3000);
+      }
+    },
+    [pabPeriodSettings, writeExclusionsBlob, editMonthKey, isReplay],
+  );
 
   /** Switch which month the Additions tab evaluates. */
   const selectPabMonth = React.useCallback(
@@ -2704,6 +2818,12 @@ export default function PayrollWizard({
         if (perfect) eligible.add(email);
       }
     }
+    // Accountant exclusions for this month forfeit PAB regardless of attendance.
+    // Dropping them here cascades to the auto-applied `perfect_attendance` toggle
+    // (→ ₱0 in bonusTotals + dispatch), matching the authoritative pay path.
+    if (pabExcludedActiveMonth.size > 0) {
+      for (const ex of pabExcludedActiveMonth) eligible.delete(ex);
+    }
     return eligible;
   }, [
     hubstaffRowsForPab,
@@ -2716,6 +2836,7 @@ export default function PayrollWizard({
     effectiveOverrides,
     usHolidayDates,
     employeeDepts,
+    pabExcludedActiveMonth,
   ]);
 
   /**
@@ -2828,6 +2949,12 @@ export default function PayrollWizard({
     const periodEnded = today.getTime() > endDay.getTime();
 
     for (const [email, breakdown] of employeeWeekdayHours.entries()) {
+      // Accountant-excluded → locked ineligible for this month (the PA cell shows
+      // a distinct "Excluded" badge; this keeps the saved snapshot honest).
+      if (pabExcludedActiveMonth.has(email)) {
+        map.set(email, 'ineligible');
+        continue;
+      }
       // HSL uses Mon–Sun / 5-of-7 rule — Mon-Fri breakdown doesn't apply.
       // Use perfectAttendanceEligible (already computed with HSL logic) for the
       // period-ended verdict; show in_progress while the period is still open.
@@ -2865,7 +2992,7 @@ export default function PayrollWizard({
       }
     }
     return map;
-  }, [pabMonthRange, employeeWeekdayHours, perfectAttendanceEligible, employeeDepts]);
+  }, [pabMonthRange, employeeWeekdayHours, perfectAttendanceEligible, employeeDepts, pabExcludedActiveMonth]);
 
   // When a locked snapshot exists, use it so values don't change on refresh.
   const effectivePabStatus = useMemo<Map<string, 'eligible' | 'ineligible' | 'in_progress'>>(() => {
@@ -3963,6 +4090,7 @@ export default function PayrollWizard({
       hubstaff_source_file: calcSourceFile,
       week,
       salary_date: salaryDateIso,
+      fx_rate: usdToPhpRate,
       pab_evaluation: pabMonthRange
         ? {
             month_label: `${pabMonthRange.monthName} ${pabMonthRange.year}`,
@@ -4106,7 +4234,9 @@ export default function PayrollWizard({
       // assigned a bonus gets 0 regardless of attendance/service (e.g. US managers).
       const pabDeptOk = isPabDeptEligible(r.email);
       const techDeptOk = isTechDeptEligible(r.email);
-      const pabBonus = hasRates && isFinalPabWeek && toggles.perfect_attendance && pabDeptOk
+      // Accountant exclusion forfeits PAB for this month — explicit guard so a
+      // momentarily-stale perfect_attendance toggle can never leak the bonus.
+      const pabBonus = hasRates && isFinalPabWeek && toggles.perfect_attendance && pabDeptOk && !isPabExcluded(r.email)
         ? commonBonusPhp('perfect_attendance')
         : 0;
       // Tech Bonus: paid in the 3rd paycheck of the month, but only after the
@@ -4207,6 +4337,8 @@ export default function PayrollWizard({
     techAmountPhp,
     isPabDeptEligible,
     isTechDeptEligible,
+    isPabExcluded,
+    usdToPhpRate,
   ]);
 
   /**
@@ -7189,6 +7321,25 @@ export default function PayrollWizard({
                   activeRangeResolved.start,
                   activeRangeResolved.end,
                 );
+                // Only holidays whose date falls inside the edited month's PAB
+                // window are shown — they're the only ones that affect this PAB
+                // calendar. (Add/Seed/Toggle still operate on the full list.)
+                const pabRangeStartMs = new Date(
+                  activeRangeResolved.start.getFullYear(),
+                  activeRangeResolved.start.getMonth(),
+                  activeRangeResolved.start.getDate(),
+                ).getTime();
+                const pabRangeEndMs = new Date(
+                  activeRangeResolved.end.getFullYear(),
+                  activeRangeResolved.end.getMonth(),
+                  activeRangeResolved.end.getDate(),
+                ).getTime();
+                const holidaysInPab = usHolidaysListFull.filter((h) => {
+                  const d = parseLocalDateFromIso(h.date);
+                  if (!d) return false;
+                  const t = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+                  return t >= pabRangeStartMs && t <= pabRangeEndMs;
+                });
                 // Flag a saved override that lands entirely outside its own month
                 // (e.g. June's Jun 1–Jul 3 stored under May) so it can be reset.
                 const editMStart = new Date(editMonth.year, editMonth.month, 1);
@@ -7438,8 +7589,242 @@ export default function PayrollWizard({
                       </span>
                     </div>
 
+                    {/* Exclude + Holidays sit side by side on wide screens, stacking on mobile. */}
+                    <div className="mt-5 grid grid-cols-1 items-start gap-x-6 gap-y-5 lg:grid-cols-2">
+                    {/* ── Exclude people from this month's PAB ──────────────────────────
+                        Accounting can forfeit a person's PAB for the selected month via a
+                        tick box; excluded people earn ₱0 PAB regardless of attendance, and
+                        the dispatch path honors the same per-month list. */}
+                    {(() => {
+                      const monthExcluded = pabPeriodSettings.exclusions.get(editMonthKey) ?? new Set<string>();
+                      // Roster = everyone evaluated this period, de-duped by normalized email.
+                      const byNorm = new Map<string, { email: string; name: string; norm: string }>();
+                      for (const r of effectiveCalcResults) {
+                        const norm = normEmail(r.email) ?? (r.email ?? '').toLowerCase();
+                        if (!norm || byNorm.has(norm)) continue;
+                        byNorm.set(norm, { email: r.email, name: r.name, norm });
+                      }
+                      // Surface any already-excluded email no longer in the roster so it can be cleared.
+                      for (const norm of monthExcluded) {
+                        if (!byNorm.has(norm)) byNorm.set(norm, { email: norm, name: norm, norm });
+                      }
+                      const q = pabExclusionSearch.trim().toLowerCase();
+                      const people = Array.from(byNorm.values())
+                        .filter((p) => !q || (p.name ?? '').toLowerCase().includes(q) || p.norm.includes(q))
+                        .sort((a, b) => {
+                          // Excluded float to the top; then alphabetical by name.
+                          const ax = monthExcluded.has(a.norm) ? 0 : 1;
+                          const bx = monthExcluded.has(b.norm) ? 0 : 1;
+                          if (ax !== bx) return ax - bx;
+                          return (a.name || a.norm).localeCompare(b.name || b.norm);
+                        });
+                      const excludedCount = monthExcluded.size;
+                      const busy = pabSaveState === 'saving' || isReplay;
+                      // Paginate to 5 people per page. Clamp the page on the fly so
+                      // shrinking the list (un-excluding / searching) never strands us.
+                      const PAB_EXCL_PER_PAGE = 5;
+                      const totalPages = Math.max(1, Math.ceil(people.length / PAB_EXCL_PER_PAGE));
+                      const page = Math.min(pabExclusionPage, totalPages - 1);
+                      const pageStart = page * PAB_EXCL_PER_PAGE;
+                      const pageItems = people.slice(pageStart, pageStart + PAB_EXCL_PER_PAGE);
+                      return (
+                        <div className="border-t border-rose-200/60 pt-4 dark:border-rose-900/40">
+                          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                            <div className="flex items-center gap-2">
+                              <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg bg-rose-50 dark:bg-rose-950/30">
+                                <UserX className="h-3.5 w-3.5 text-rose-500" />
+                              </div>
+                              <div className="min-w-0">
+                                <p className="text-sm font-semibold text-zinc-800 dark:text-zinc-100">
+                                  Exclude from PAB
+                                </p>
+                                <p className="text-[10px] text-zinc-400 dark:text-zinc-500">
+                                  Ticked people earn ₱0 PAB for{' '}
+                                  <span className="font-semibold text-rose-600 dark:text-rose-400">
+                                    {MONTH_NAMES[editMonth.month]} {editMonth.year}
+                                  </span>{' '}
+                                  — regardless of attendance.
+                                </p>
+                              </div>
+                            </div>
+                            <AnimatePresence initial={false}>
+                              {excludedCount > 0 && (
+                                <motion.span
+                                  key="excl-count"
+                                  initial={{ opacity: 0, scale: 0.85 }}
+                                  animate={{ opacity: 1, scale: 1 }}
+                                  exit={{ opacity: 0, scale: 0.85 }}
+                                  transition={{ duration: 0.18 }}
+                                  className="inline-flex items-center gap-1 rounded-full bg-rose-100 px-2 py-0.5 text-[11px] font-bold text-rose-700 dark:bg-rose-950/60 dark:text-rose-300"
+                                >
+                                  <UserX className="h-3 w-3" />
+                                  {excludedCount} excluded
+                                </motion.span>
+                              )}
+                            </AnimatePresence>
+                          </div>
+
+                          {/* Search */}
+                          <div className="relative mb-2.5">
+                            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400" />
+                            <Input
+                              type="text"
+                              value={pabExclusionSearch}
+                              onChange={(e) => { setPabExclusionSearch(e.target.value); setPabExclusionPage(0); }}
+                              placeholder="Search a person by name or email…"
+                              className="h-9 pl-8 pr-8 text-xs"
+                            />
+                            <AnimatePresence>
+                              {pabExclusionSearch && (
+                                <motion.button
+                                  type="button"
+                                  initial={{ opacity: 0 }}
+                                  animate={{ opacity: 1 }}
+                                  exit={{ opacity: 0 }}
+                                  onClick={() => { setPabExclusionSearch(''); setPabExclusionPage(0); }}
+                                  className="absolute right-2 top-1/2 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded-full text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700 dark:hover:bg-zinc-800"
+                                  aria-label="Clear search"
+                                >
+                                  <X className="h-3 w-3" />
+                                </motion.button>
+                              )}
+                            </AnimatePresence>
+                          </div>
+
+                          {/* People list */}
+                          {people.length === 0 ? (
+                            <div className="flex items-center gap-2 rounded-lg border border-dashed border-zinc-200 bg-zinc-50 px-4 py-4 text-xs text-zinc-400 dark:border-zinc-800 dark:bg-zinc-900/40">
+                              <Users className="h-4 w-4 shrink-0" />
+                              {q
+                                ? `No one matches “${pabExclusionSearch}”.`
+                                : 'No employees in this period yet — load a Hubstaff report in Step 1.'}
+                            </div>
+                          ) : (
+                            <div className="space-y-1.5">
+                              <AnimatePresence initial={false}>
+                                {pageItems.map((p) => {
+                                  const isExcl = monthExcluded.has(p.norm);
+                                  return (
+                                    <motion.button
+                                      key={p.norm}
+                                      type="button"
+                                      layout
+                                      initial={{ opacity: 0, y: -4 }}
+                                      animate={{ opacity: 1, y: 0 }}
+                                      exit={{ opacity: 0, height: 0, marginBottom: 0 }}
+                                      transition={{ duration: 0.18, ease: 'easeOut' }}
+                                      onClick={() => { if (!busy) void togglePabExclusion(p.email, !isExcl); }}
+                                      disabled={busy}
+                                      title={isExcl ? 'Click to restore PAB for this person' : 'Click to exclude this person from PAB this month'}
+                                      className={cn(
+                                        'flex w-full items-center gap-3 rounded-lg border px-3 py-2 text-left transition-colors duration-200',
+                                        'disabled:cursor-not-allowed disabled:opacity-60',
+                                        isExcl
+                                          ? 'border-rose-300 bg-rose-50/70 dark:border-rose-900/50 dark:bg-rose-950/25'
+                                          : 'border-zinc-200 bg-white hover:border-rose-200 hover:bg-rose-50/40 dark:border-zinc-700 dark:bg-zinc-900 dark:hover:border-rose-900/40 dark:hover:bg-rose-950/15',
+                                      )}
+                                    >
+                                      {/* Tick box */}
+                                      <span
+                                        className={cn(
+                                          'flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded border transition-colors duration-200',
+                                          isExcl
+                                            ? 'border-rose-500 bg-rose-500 text-white'
+                                            : 'border-zinc-300 bg-white dark:border-zinc-600 dark:bg-zinc-800',
+                                        )}
+                                      >
+                                        <AnimatePresence initial={false}>
+                                          {isExcl && (
+                                            <motion.span
+                                              key="tick"
+                                              initial={{ scale: 0, opacity: 0 }}
+                                              animate={{ scale: 1, opacity: 1 }}
+                                              exit={{ scale: 0, opacity: 0 }}
+                                              transition={{ duration: 0.14 }}
+                                              className="flex items-center justify-center"
+                                            >
+                                              <Check className="h-3 w-3" strokeWidth={3} />
+                                            </motion.span>
+                                          )}
+                                        </AnimatePresence>
+                                      </span>
+                                      <span className="min-w-0 flex-1">
+                                        <span className={cn(
+                                          'block truncate text-xs font-semibold',
+                                          isExcl ? 'text-rose-700 dark:text-rose-300' : 'text-zinc-800 dark:text-zinc-100',
+                                        )}>
+                                          {p.name || p.norm}
+                                        </span>
+                                        <span className="block truncate font-mono text-[10px] text-zinc-400 dark:text-zinc-500">
+                                          {p.norm}
+                                        </span>
+                                      </span>
+                                      <span className={cn(
+                                        'shrink-0 text-[10px] font-bold uppercase tracking-wide transition-colors',
+                                        isExcl ? 'text-rose-600 dark:text-rose-400' : 'text-zinc-300 dark:text-zinc-600',
+                                      )}>
+                                        {isExcl ? 'Excluded' : 'Exclude'}
+                                      </span>
+                                    </motion.button>
+                                  );
+                                })}
+                              </AnimatePresence>
+                            </div>
+                          )}
+
+                          {/* Pager — 5 per page */}
+                          {totalPages > 1 && (
+                            <div className="mt-2.5 flex items-center justify-between gap-2">
+                              <button
+                                type="button"
+                                onClick={() => setPabExclusionPage((p) => Math.max(0, p - 1))}
+                                disabled={page === 0}
+                                className="inline-flex items-center gap-1 rounded-md border border-zinc-200 bg-white px-2 py-1 text-[11px] font-medium text-zinc-600 transition hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800"
+                              >
+                                <ChevronLeft className="h-3.5 w-3.5" />
+                                Prev
+                              </button>
+                              <div className="flex items-center gap-1">
+                                {Array.from({ length: totalPages }, (_, i) => (
+                                  <button
+                                    key={i}
+                                    type="button"
+                                    onClick={() => setPabExclusionPage(i)}
+                                    aria-label={`Page ${i + 1}`}
+                                    className={cn(
+                                      'h-1.5 rounded-full transition-all duration-200',
+                                      i === page
+                                        ? 'w-4 bg-rose-500 dark:bg-rose-400'
+                                        : 'w-1.5 bg-zinc-300 hover:bg-zinc-400 dark:bg-zinc-700 dark:hover:bg-zinc-600',
+                                    )}
+                                  />
+                                ))}
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => setPabExclusionPage((p) => Math.min(totalPages - 1, p + 1))}
+                                disabled={page >= totalPages - 1}
+                                className="inline-flex items-center gap-1 rounded-md border border-zinc-200 bg-white px-2 py-1 text-[11px] font-medium text-zinc-600 transition hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800"
+                              >
+                                Next
+                                <ChevronRight className="h-3.5 w-3.5" />
+                              </button>
+                            </div>
+                          )}
+                          <p className="mt-2 text-[10px] text-zinc-400 dark:text-zinc-500">
+                            {excludedCount > 0
+                              ? `${excludedCount} excluded from ${MONTH_NAMES[editMonth.month]} ${editMonth.year} PAB · `
+                              : `No one excluded from ${MONTH_NAMES[editMonth.month]} ${editMonth.year} PAB · `}
+                            {people.length > PAB_EXCL_PER_PAGE
+                              ? `showing ${pageStart + 1}–${pageStart + pageItems.length} of ${people.length}`
+                              : `${people.length} shown`}
+                          </p>
+                        </div>
+                      );
+                    })()}
+
                     {/* PAB Calendar — Holidays */}
-                    <div className="mt-5 border-t border-violet-200/60 pt-4 dark:border-violet-900/40">
+                    <div className="border-t border-violet-200/60 pt-4 dark:border-violet-900/40">
                       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
                         <div className="flex items-center gap-2">
                           <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg bg-violet-50 dark:bg-violet-950/30">
@@ -7447,7 +7832,9 @@ export default function PayrollWizard({
                           </div>
                           <div className="min-w-0">
                             <p className="text-sm font-semibold text-zinc-800 dark:text-zinc-100">PAB Calendar Holidays</p>
-                            <p className="text-[10px] text-zinc-400 dark:text-zinc-500">Shown in violet on the employee PAB calendar — attendance auto-forgiven on these dates</p>
+                            <p className="text-[10px] text-zinc-400 dark:text-zinc-500">
+                              Within {MONTH_NAMES[editMonth.month]} {editMonth.year}&apos;s PAB period ({fmtPab(activeRangeResolved.start)} – {fmtPab(activeRangeResolved.end)}) — shown in violet on the employee calendar, attendance auto-forgiven.
+                            </p>
                           </div>
                         </div>
                         <div className="flex items-center gap-2">
@@ -7517,15 +7904,17 @@ export default function PayrollWizard({
                         </div>
                       </div>
 
-                      {/* Holiday list */}
-                      {usHolidaysListFull.length === 0 ? (
+                      {/* Holiday list — scoped to the edited month's PAB period */}
+                      {holidaysInPab.length === 0 ? (
                         <div className="flex items-center gap-2 rounded-lg border border-dashed border-zinc-200 bg-zinc-50 px-4 py-4 text-xs text-zinc-400 dark:border-zinc-800 dark:bg-zinc-900/40">
                           <CalendarDays className="h-4 w-4 shrink-0" />
-                          No holidays configured. Add one above or click &quot;Seed {pabPickerYear}&quot; to load US federal holidays.
+                          {usHolidaysListFull.length === 0
+                            ? <>No holidays configured. Add one above or click &quot;Seed {pabPickerYear}&quot; to load US federal holidays.</>
+                            : <>No holidays fall within {MONTH_NAMES[editMonth.month]} {editMonth.year}&apos;s PAB period. {usHolidaysListFull.length} configured on other dates.</>}
                         </div>
                       ) : (
                         <div className="space-y-1.5">
-                          {usHolidaysListFull.map((h) => {
+                          {holidaysInPab.map((h) => {
                             const hd = new Date(h.date + 'T00:00:00');
                             const weekday = hd.toLocaleDateString('en-US', { weekday: 'short' });
                             const friendly = hd.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
@@ -7569,8 +7958,10 @@ export default function PayrollWizard({
                         </div>
                       )}
                       <p className="mt-2 text-[10px] text-zinc-400 dark:text-zinc-500">
-                        {usHolidaysListFull.filter(h => h.enabled).length} active · {usHolidaysListFull.length} total
+                        {holidaysInPab.filter(h => h.enabled).length} active · {holidaysInPab.length} in this PAB period · {usHolidaysListFull.length} total
                       </p>
+                    </div>
+                    {/* /grid: Exclude + Holidays */}
                     </div>
                       </div>
                     </DialogContent>
@@ -8444,6 +8835,26 @@ export default function PayrollWizard({
                                 {/* PAB — tri-state pill (Eligible / Ineligible / In Progress); click to open calendar modal */}
                                 {pabColShown && (() => {
                                   const normEmpEmail = normEmail(emp.email) ?? emp.email.toLowerCase();
+                                  // Accountant-excluded → distinct pill; ₱0 PAB regardless of attendance.
+                                  if (isPabExcluded(emp.email)) {
+                                    return (
+                                      <TableCell className="px-1 py-1.5 text-center">
+                                        <button
+                                          type="button"
+                                          onClick={() => setPabSettingsOpen(true)}
+                                          title="Excluded from PAB this month by Accounting — earns ₱0 PAB. Click to manage exclusions."
+                                          className={cn(
+                                            'group inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold leading-none transition-all duration-200',
+                                            'hover:scale-105 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-offset-1 dark:focus:ring-offset-zinc-900',
+                                            'bg-rose-100 text-rose-700 ring-1 ring-rose-400/40 hover:bg-rose-200 focus:ring-rose-400 dark:bg-rose-950/40 dark:text-rose-300 dark:ring-rose-500/30 dark:hover:bg-rose-950/60',
+                                          )}
+                                        >
+                                          <UserX className="h-3 w-3" />
+                                          <span>Excluded</span>
+                                        </button>
+                                      </TableCell>
+                                    );
+                                  }
                                   const status = effectivePabStatus.get(normEmpEmail) ?? 'in_progress';
                                   const label =
                                     status === 'eligible' ? '✓ Eligible'
@@ -8748,7 +9159,7 @@ export default function PayrollWizard({
                                   {isRecalcPending ? (
                                     <span className="inline-block h-3 w-16 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
                                   ) : (
-                                    formatPHP(finalPay)
+                                    <PhpWithUsd php={finalPay} usdToPhp={usdToPhpRate} />
                                   )}
                                 </TableCell>
                                 <TableCell className="px-0.5 py-1.5">
@@ -8842,6 +9253,11 @@ export default function PayrollWizard({
                               <span className="font-mono font-bold text-zinc-900 dark:text-white">
                                 {formatPHP(deptFinalTotal)}
                               </span>
+                              {usdToPhpRate > 0 && (
+                                <span className="ml-1.5 font-mono text-[10px] font-normal text-blue-500 dark:text-blue-400">
+                                  ≈&nbsp;{formatUsdFromPhp(deptFinalTotal, usdToPhpRate)}
+                                </span>
+                              )}
                             </span>
                           </div>
                         );
@@ -9460,9 +9876,10 @@ export default function PayrollWizard({
                             // Adj. is a signed delta added on top of the KPI bonus, never a replacement.
                             const effectiveBonus = kpiBonus + (override ?? 0);
                             const paStatus = effectivePabStatus.get(em) ?? 'in_progress';
+                            const pabExcluded = isPabExcluded(r.email);
                             const pabDeptOk = isPabDeptEligible(r.email);
                             const techDeptOk = isTechDeptEligible(r.email);
-                            const pabAmt = paStatus === 'eligible' && pabDeptOk ? pabAmountPhp : 0;
+                            const pabAmt = paStatus === 'eligible' && pabDeptOk && !pabExcluded ? pabAmountPhp : 0;
                             const techOn = techBonusEligible.has(r.email) && techDeptOk;
                             const techAmt = techOn ? techAmountPhp : 0;
                             // Orphanage pay — manual positive amount added on top of total pay.
@@ -9509,6 +9926,21 @@ export default function PayrollWizard({
                                 {/* PAB — tri-state pill, click opens calendar modal */}
                                 {pabColShownHsl && (
                                 <td className="px-3 py-3 text-center">
+                                  {pabExcluded ? (
+                                    <button
+                                      type="button"
+                                      onClick={() => setPabSettingsOpen(true)}
+                                      title="Excluded from PAB this month by Accounting — earns ₱0 PAB. Click to manage exclusions."
+                                      className={cn(
+                                        'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold leading-none transition-all duration-200',
+                                        'hover:scale-105 focus:outline-none focus:ring-2 focus:ring-offset-1 dark:focus:ring-offset-zinc-900',
+                                        'bg-rose-100 text-rose-700 ring-1 ring-rose-400/40 hover:bg-rose-200 focus:ring-rose-400 dark:bg-rose-950/40 dark:text-rose-300 dark:ring-rose-500/30 dark:hover:bg-rose-950/60',
+                                      )}
+                                    >
+                                      <UserX className="h-3 w-3" />
+                                      Excluded
+                                    </button>
+                                  ) : (
                                   <button
                                     type="button"
                                     onClick={() => setPabCalendarModalEmail(r.email)}
@@ -9529,6 +9961,7 @@ export default function PayrollWizard({
                                   >
                                     {paStatus === 'eligible' ? (pabDeptOk ? `+${formatPHP(pabAmountPhp)}` : '✓ Eligible') : paStatus === 'ineligible' ? '✗ Ineligible' : '⏳ In Progress'}
                                   </button>
+                                  )}
                                 </td>
                                 )}
                                 {/* Tech Bonus — auto-detected; accounting can manually grant */}
@@ -9630,9 +10063,11 @@ export default function PayrollWizard({
                                   )}
                                 </td>
                                 <td className="px-3 py-3 text-right">
-                                  <span className="font-mono text-sm font-bold tabular-nums text-zinc-900 dark:text-zinc-100">
-                                    {formatPHP(totalPay)}
-                                  </span>
+                                  <PhpWithUsd
+                                    php={totalPay}
+                                    usdToPhp={usdToPhpRate}
+                                    phpClassName="font-mono text-sm font-bold tabular-nums text-zinc-900 dark:text-zinc-100"
+                                  />
                                 </td>
                               </tr>
                             );
@@ -9648,7 +10083,7 @@ export default function PayrollWizard({
                               totalAdj += bonusOverrides[r.email] ?? 0;
                               totalOrphanage += orphanageAmounts[r.email] ?? 0;
                               const st = effectivePabStatus.get(em) ?? 'in_progress';
-                              if (st === 'eligible' && isPabDeptEligible(r.email)) totalPab += pabAmountPhp;
+                              if (st === 'eligible' && isPabDeptEligible(r.email) && !isPabExcluded(r.email)) totalPab += pabAmountPhp;
                               if (techBonusEligible.has(r.email) && isTechDeptEligible(r.email)) totalTech += techAmountPhp;
                               const wp = weekendPremiumByEmail.get(em);
                               if (wp) totalWkndPremium += wp.regPremiumPHP + wp.otPremiumPHP;
@@ -9683,8 +10118,12 @@ export default function PayrollWizard({
                                 <td className="px-3 py-2.5 text-right font-mono text-sm font-bold tabular-nums text-pink-600 dark:text-pink-400">
                                   {totalOrphanage > 0 ? `+${formatPHP(totalOrphanage)}` : <span className="text-zinc-400 dark:text-zinc-600">—</span>}
                                 </td>
-                                <td className="px-3 py-2.5 text-right font-mono text-sm font-bold tabular-nums text-zinc-900 dark:text-zinc-100">
-                                  {formatPHP(totalInitialPay + totalKpi + totalAdj + totalOrphanage + totalPab + totalTech)}
+                                <td className="px-3 py-2.5 text-right">
+                                  <PhpWithUsd
+                                    php={totalInitialPay + totalKpi + totalAdj + totalOrphanage + totalPab + totalTech}
+                                    usdToPhp={usdToPhpRate}
+                                    phpClassName="font-mono text-sm font-bold tabular-nums text-zinc-900 dark:text-zinc-100"
+                                  />
                                 </td>
                               </tr>
                             );
@@ -10945,7 +11384,7 @@ export default function PayrollWizard({
                 className="h-8 gap-2 border-emerald-300/70 text-emerald-700 hover:bg-emerald-50 dark:border-emerald-700/50 dark:text-emerald-300 dark:hover:bg-emerald-950/30"
                 onClick={async () => {
                   const salariesAoa: (string | number | null)[][] = [
-                    ['Employee', 'Email', 'Department', 'Hours', 'Regular', 'OT', 'Bonuses', 'MESA', 'Net Pay'],
+                    ['Employee', 'Email', 'Department', 'Hours', 'Regular', 'OT', 'Bonuses', 'MESA', 'Net Pay', 'Net Pay (USD)'],
                     ...snap.employees.map((e) => [
                       e.name ?? '',
                       e.email,
@@ -10956,6 +11395,7 @@ export default function PayrollWizard({
                       e.pay_php.bonuses_total,
                       (e.pay_php.mesa_disbursement ?? 0) - e.pay_php.mesa_deduction,
                       e.pay_php.final,
+                      snap.usdToPhpRate > 0 ? Math.round((e.pay_php.final / snap.usdToPhpRate) * 100) / 100 : null,
                     ]),
                   ];
                   // Fetch the audit trail for this cycle so it can be embedded
@@ -11033,14 +11473,18 @@ export default function PayrollWizard({
                             if (ded > 0) return <td className="px-3 py-2 font-mono tabular-nums text-rose-600 dark:text-rose-400">-{formatPHP(ded)}</td>;
                             return <td className="px-3 py-2 font-mono tabular-nums text-zinc-400">—</td>;
                           })()}
-                          <td className="px-3 py-2 font-mono tabular-nums font-semibold text-zinc-900 dark:text-zinc-100">{formatPHP(e.pay_php.final)}</td>
+                          <td className="px-3 py-2 font-mono tabular-nums font-semibold text-zinc-900 dark:text-zinc-100">
+                            <PhpWithUsd php={e.pay_php.final} usdToPhp={snap.usdToPhpRate} align="start" />
+                          </td>
                         </tr>
                       ))}
                     </tbody>
                     <tfoot>
                       <tr className="border-t-2 border-zinc-200 bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900">
                         <td colSpan={7} className="px-3 py-2.5 text-xs font-semibold text-zinc-600 dark:text-zinc-400">Total ({snap.employees.length} employees)</td>
-                        <td className="px-3 py-2.5 font-mono font-bold text-zinc-900 dark:text-zinc-100">{formatPHP(totalSalaries)}</td>
+                        <td className="px-3 py-2.5 font-mono font-bold text-zinc-900 dark:text-zinc-100">
+                          <PhpWithUsd php={totalSalaries} usdToPhp={snap.usdToPhpRate} align="start" />
+                        </td>
                       </tr>
                     </tfoot>
                   </table>
@@ -13119,6 +13563,7 @@ export default function PayrollWizard({
           const emp = calcResults.find((e) => e.email === pabCalendarModalEmail);
           const normEmpEmail = normEmail(pabCalendarModalEmail) ?? pabCalendarModalEmail.toLowerCase();
           const paEligible = perfectAttendanceEligible.has(normEmpEmail);
+          const paExcluded = isPabExcluded(pabCalendarModalEmail);
           const paStatus = effectivePabStatus.get(normEmpEmail) ?? (paEligible ? 'eligible' : 'ineligible');
           const isHsl =
             employeeDepts[pabCalendarModalEmail] === 'hogan_smith_law' ||
@@ -13459,15 +13904,19 @@ export default function PayrollWizard({
                         animate={{ scale: 1, opacity: 1 }}
                         transition={{ delay: 0.12, type: 'spring', stiffness: 400, damping: 22 }}
                         className={cn(
-                          'rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide',
-                          paStatus === 'eligible'
+                          'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide',
+                          paExcluded
+                            ? 'bg-rose-100 text-rose-700 ring-1 ring-rose-400/40 dark:bg-rose-950/50 dark:text-rose-300'
+                            : paStatus === 'eligible'
                             ? 'bg-emerald-100 text-emerald-700 ring-1 ring-emerald-400/40 dark:bg-emerald-900/40 dark:text-emerald-300'
                             : paStatus === 'ineligible'
                               ? 'bg-red-100 text-red-700 ring-1 ring-red-400/40 dark:bg-red-900/40 dark:text-red-300'
                               : 'bg-indigo-100 text-indigo-700 ring-1 ring-indigo-400/40 dark:bg-indigo-900/40 dark:text-indigo-300',
                         )}
                       >
-                        {paStatus === 'eligible' ? '✓ Eligible' : paStatus === 'ineligible' ? '✗ Ineligible' : '⏳ In Progress'}
+                        {paExcluded
+                          ? <><UserX className="h-3 w-3" /> Excluded</>
+                          : paStatus === 'eligible' ? '✓ Eligible' : paStatus === 'ineligible' ? '✗ Ineligible' : '⏳ In Progress'}
                       </motion.span>
                     </div>
                     <p className="mt-0.5 truncate text-xs font-medium text-zinc-800 dark:text-zinc-200">

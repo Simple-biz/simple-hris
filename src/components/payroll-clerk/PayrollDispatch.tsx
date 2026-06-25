@@ -7,7 +7,9 @@ import {
   AlertCircle,
   Banknote,
   CalendarRange,
+  Check,
   CheckCircle2,
+  ChevronDown,
   ClipboardCheck,
   ClipboardList,
   Coins,
@@ -15,6 +17,7 @@ import {
   FileSpreadsheet,
   Globe2,
   Heart,
+  History,
   Loader2,
   Lock,
   Play,
@@ -48,7 +51,7 @@ import {
 import ProcessorCard from './ProcessorCard';
 import AnimatedNumber from './AnimatedNumber';
 import DispatchLoader from './DispatchLoader';
-import { PROCESSORS, parseCyclePeriodFromFile, type ArrearsInfo, type ProcessorId, type QueueRow } from './mock-queue';
+import { PROCESSORS, parseCyclePeriodFromFile, formatCycleLabelFromFile, type ArrearsInfo, type ProcessorId, type QueueRow } from './mock-queue';
 import type { PaymentDispatchRow } from '@/lib/supabase/payment-dispatches';
 import { useDispatchQueue } from './useDispatchQueue';
 import NotificationsPanel from '@/components/notifications/NotificationsPanel';
@@ -178,7 +181,14 @@ export default function PayrollDispatch() {
     session?.user?.email,
   ]);
   const [activeTab, setActiveTab] = useState<TabId>('all');
-  const { rows: fetched, excluded, paid, period, wizardReady, loading, error, refresh } = useDispatchQueue();
+  // Which pay week the dispatch screen operates on. `null` = the live
+  // (`is_current`) cycle — the default. The CSV selector in the header sets a
+  // past week's source file so accounting can work historical data while not
+  // yet live; everything (queue, dispatches, paystubs) follows the chosen week.
+  const [selectedSourceFile, setSelectedSourceFile] = useState<string | null>(null);
+  const { rows: fetched, excluded, paid, period, wizardReady, loading, error, refresh } =
+    useDispatchQueue(selectedSourceFile);
+  const viewingPastWeek = selectedSourceFile != null;
   const { state: lockState, setLocked } = useDispatchLock();
   // Realtime "values locked" flag for this cycle — when the wizard locks/unlocks,
   // re-pull the queue so it appears/clears live (the queue's own `wizardReady`
@@ -613,7 +623,10 @@ export default function PayrollDispatch() {
           </div>
 
           <div className="flex w-full flex-row flex-wrap items-center gap-2 sm:w-auto sm:flex-col sm:items-end">
-            <PeriodPill period={period} />
+            <div className="flex items-center gap-2">
+              <PeriodPill period={period} />
+              <CycleSelector value={selectedSourceFile} onChange={setSelectedSourceFile} />
+            </div>
             <div className="flex items-center gap-2">
               <ProcessingPill locked={lockState.locked} />
               <ProcessingToggleButton
@@ -624,6 +637,28 @@ export default function PayrollDispatch() {
           </div>
         </motion.div>
       </div>
+
+      {/* Working a PAST week (CSV selector) — make it loud so the clerk never
+          mistakes historical data for the live cycle. */}
+      {viewingPastWeek && (
+        <div className="mx-4 mt-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-300 bg-amber-50 px-4 py-2.5 text-[12px] text-amber-900 sm:mx-8 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-200">
+          <span className="flex items-center gap-2">
+            <History className="h-4 w-4 shrink-0" />
+            <span>
+              Viewing a <strong>past pay week</strong>
+              {period.start && period.end ? <> — {formatPeriodLabel(period.start, period.end)}</> : null}. Anything you
+              log is recorded against this week, not the live cycle.
+            </span>
+          </span>
+          <button
+            type="button"
+            onClick={() => setSelectedSourceFile(null)}
+            className="inline-flex items-center gap-1 rounded-lg border border-amber-400/70 bg-white/70 px-2.5 py-1 font-semibold text-amber-800 transition-colors hover:bg-white dark:border-amber-800/60 dark:bg-amber-900/30 dark:text-amber-200 dark:hover:bg-amber-900/50"
+          >
+            <Wifi className="h-3.5 w-3.5 text-emerald-500" /> Back to current week
+          </button>
+        </div>
+      )}
 
       {/* ── Two-column layout: bank cards left, stats + table right ── */}
       <div
@@ -1282,6 +1317,158 @@ function PeriodPill({ period }: { period: { start: string | null; end: string | 
         </span>
       )}
     </motion.div>
+  );
+}
+
+interface CycleOption {
+  sourceFile: string;
+  label: string;
+  isCurrent: boolean;
+}
+
+/**
+ * Header dropdown that lets the payroll clerk point Payment Dispatch at a PAST
+ * pay week (so historical data can be worked while not yet live) or back at the
+ * current `is_current` cycle. `value === null` means the live cycle. The list of
+ * weeks comes from `/api/hubstaff-hours?source_files=1` (the same archive the
+ * Payroll Wizard's period picker uses); backfills / multi-week / duplicate
+ * uploads are filtered out so only real weekly cycles appear.
+ */
+function CycleSelector({
+  value,
+  onChange,
+}: {
+  value: string | null;
+  onChange: (file: string | null) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [options, setOptions] = useState<CycleOption[]>([]);
+  const [currentFile, setCurrentFile] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    fetch('/api/hubstaff-hours?source_files=1', { cache: 'no-store' })
+      .then((r) => r.json())
+      .then((j: {
+        uploads?: Array<{ source_file: string | null; is_current: boolean }>;
+        error?: string | null;
+      }) => {
+        if (!alive) return;
+        const seen = new Set<string>();
+        const opts: CycleOption[] = [];
+        let current: string | null = null;
+        for (const u of j.uploads ?? []) {
+          const f = (u.source_file ?? '').trim();
+          if (!f || seen.has(f)) continue;
+          if (/backfill|time-activity|\(\d+\)|copy/i.test(f)) continue;
+          seen.add(f);
+          if (u.is_current && !current) current = f;
+          opts.push({ sourceFile: f, label: formatCycleLabelFromFile(f), isCurrent: u.is_current });
+        }
+        setOptions(opts);
+        setCurrentFile(current);
+        setErr(j.error ?? null);
+      })
+      .catch((e) => { if (alive) setErr(e instanceof Error ? e.message : String(e)); })
+      .finally(() => { if (alive) setLoading(false); });
+    return () => { alive = false; };
+  }, []);
+
+  const isLive = value == null;
+  const buttonLabel = isLive ? 'Current week · live' : formatCycleLabelFromFile(value);
+  // "Past weeks" = everything except the live cycle (represented by the top option).
+  const pastOptions = options.filter((o) => o.sourceFile !== currentFile);
+
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className={cn(
+          'inline-flex items-center gap-1.5 rounded-xl border px-3 py-1.5 text-[11px] font-medium transition-colors',
+          isLive
+            ? 'border-zinc-200 bg-white/70 text-zinc-600 hover:border-zinc-300 dark:border-zinc-700 dark:bg-zinc-900/60 dark:text-zinc-300'
+            : 'border-amber-300 bg-amber-50 text-amber-800 hover:border-amber-400 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-300',
+        )}
+        title="Choose which pay week to dispatch"
+      >
+        {isLive ? <Wifi className="h-3.5 w-3.5 text-emerald-500" /> : <History className="h-3.5 w-3.5" />}
+        <span className="max-w-[160px] truncate">{loading ? 'Loading weeks…' : buttonLabel}</span>
+        <ChevronDown className={cn('h-3.5 w-3.5 transition-transform', open && 'rotate-180')} />
+      </button>
+
+      {open && (
+        <>
+          {/* Click-away backdrop. */}
+          <button
+            type="button"
+            aria-label="Close week selector"
+            className="fixed inset-0 z-40 cursor-default"
+            onClick={() => setOpen(false)}
+          />
+          <div className="absolute right-0 z-50 mt-1.5 max-h-[60vh] w-72 overflow-y-auto rounded-xl border border-zinc-200 bg-white p-1 shadow-xl dark:border-zinc-800 dark:bg-zinc-950">
+            <button
+              type="button"
+              onClick={() => { onChange(null); setOpen(false); }}
+              className={cn(
+                'flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[12px] transition-colors',
+                isLive
+                  ? 'bg-emerald-50 text-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-300'
+                  : 'hover:bg-zinc-100 dark:hover:bg-zinc-900',
+              )}
+            >
+              <Wifi className="h-4 w-4 shrink-0 text-emerald-500" />
+              <span className="min-w-0 flex-1">
+                <span className="block font-semibold">Current week · live</span>
+                {currentFile && (
+                  <span className="block truncate text-[10px] text-zinc-400">
+                    {formatCycleLabelFromFile(currentFile)}
+                  </span>
+                )}
+              </span>
+              {isLive && <Check className="h-4 w-4 shrink-0 text-emerald-500" />}
+            </button>
+
+            {pastOptions.length > 0 && (
+              <div className="px-2.5 pb-1 pt-2 text-[9px] font-semibold uppercase tracking-[0.14em] text-zinc-400">
+                Past weeks
+              </div>
+            )}
+            {pastOptions.map((o) => {
+              const selected = value === o.sourceFile;
+              return (
+                <button
+                  key={o.sourceFile}
+                  type="button"
+                  onClick={() => { onChange(o.sourceFile); setOpen(false); }}
+                  className={cn(
+                    'flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[12px] transition-colors',
+                    selected
+                      ? 'bg-amber-50 text-amber-800 dark:bg-amber-950/30 dark:text-amber-300'
+                      : 'hover:bg-zinc-100 dark:hover:bg-zinc-900',
+                  )}
+                >
+                  <CalendarRange className="h-4 w-4 shrink-0 text-zinc-400" />
+                  <span className="min-w-0 flex-1">
+                    <span className="block font-medium">{o.label}</span>
+                    <span className="block truncate font-mono text-[10px] text-zinc-400">
+                      {o.sourceFile.replace(/\.csv$/i, '')}
+                    </span>
+                  </span>
+                  {selected && <Check className="h-4 w-4 shrink-0 text-amber-500" />}
+                </button>
+              );
+            })}
+            {!loading && pastOptions.length === 0 && (
+              <p className="px-2.5 py-2 text-[11px] text-zinc-400">No earlier weeks on file.</p>
+            )}
+            {err && <p className="px-2.5 py-2 text-[10px] text-rose-500">{err}</p>}
+          </div>
+        </>
+      )}
+    </div>
   );
 }
 

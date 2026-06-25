@@ -52,3 +52,71 @@ export function hasNonAscii(input: string | null | undefined): boolean {
   // eslint-disable-next-line no-control-regex
   return !!input && /[^\x00-\x7F]/.test(input);
 }
+
+/**
+ * Re-case a SHOUTED or all-lowercase human name into "Title Case"
+ * ("JAN KANE REROMA" / "jan kane reroma" -> "Jan Kane Reroma"), so names read
+ * naturally everywhere they're shown (HR Onboarding Submitted column, the
+ * onboarding form, downstream records).
+ *
+ * Deliberately CONSERVATIVE — it only ever changes a name we're confident was
+ * mis-cased, and never re-cases something a human typed deliberately:
+ *
+ *   - Runs {@link sanitizeName} first (NFKC fold + strip invisibles + collapse
+ *     whitespace + trim), so this composes with the Unicode guardrail.
+ *   - Email-like strings (containing "@") are returned VERBATIM. Some legacy
+ *     `name` columns hold an address (e.g. "jan@simple.biz"); title-casing them
+ *     would corrupt the address.
+ *   - MIXED-case input is returned VERBATIM. If a string already has both upper
+ *     and lower letters it was cased on purpose — "McDonald", "de la Cruz",
+ *     "DeShawn", "O'Brien", "van der Berg" — and we must not flatten it.
+ *   - Only a string that is ENTIRELY one case (all-caps or all-lowercase) is
+ *     re-cased: lowercase it, then capitalize the first letter of every
+ *     word-part. A word-part starts at the string start or after any non-letter
+ *     (space, hyphen, apostrophe, period) so "anne-marie" -> "Anne-Marie",
+ *     "o'brien" -> "O'Brien", "kyle s. engalan" -> "Kyle S. Engalan".
+ *
+ * Two small refinements on top of plain title-casing:
+ *   - "Mc" prefix: "mcdonald" -> "McDonald" (no false positives — there is no
+ *     common English "Mc"+lowercase surname). "Mac" is intentionally left alone
+ *     ("Macey" must not become "MacEy").
+ *   - Generational suffix: a trailing "ii"/"iii"/"iv" token is upper-cased
+ *     ("Juan Dela Cruz Iii" -> "...III"). v/vi/ix/x are intentionally skipped so
+ *     real names like "Vi" or "Ix" aren't clobbered.
+ *
+ * NOTE: this does NOT try to detect initials, so "KC LYN ROPAL" becomes
+ * "Kc Lyn Ropal" — fixing the SHOUTING is the goal; perfect initial casing is
+ * out of scope (and undecidable from all-caps input).
+ */
+export function toTitleCaseName(input: string | null | undefined): string {
+  const s = sanitizeName(input);
+  if (!s) return "";
+  // An address parked in a name column — never re-case it.
+  if (s.includes("@")) return s;
+
+  const hasLower = /\p{Ll}/u.test(s);
+  const hasUpper = /\p{Lu}/u.test(s);
+  // Mixed case is intentional; no cased letters means nothing to do.
+  if (hasLower === hasUpper) return s;
+
+  let out = s
+    .toLowerCase()
+    // Capitalize the first letter of every word-part (start, or after any
+    // non-letter — space, hyphen, apostrophe, period).
+    .replace(/(^|[^\p{L}])(\p{L})/gu, (_, boundary, letter) => boundary + letter.toUpperCase());
+
+  // "Mcdonald" -> "McDonald".
+  out = out.replace(/\bMc(\p{Ll})/gu, (_, letter) => "Mc" + letter.toUpperCase());
+
+  // Trailing generational suffix ii/iii/iv -> uppercase.
+  out = out.replace(/(^|\s)(Ii|Iii|Iv)$/u, (_, lead, suffix) => lead + suffix.toUpperCase());
+
+  return out;
+}
+
+/** Nullable-column variant of {@link toTitleCaseName} (empty -> null). */
+export function toTitleCaseNameOrNull(
+  input: string | null | undefined,
+): string | null {
+  return toTitleCaseName(input) || null;
+}

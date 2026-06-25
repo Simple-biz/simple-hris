@@ -5,6 +5,7 @@ import {
   listDisbursementReports,
   loadDisbursementRecordsForCycle,
   formatDisbursementReportName,
+  type DisbursementReportSummary,
 } from '@/lib/payroll/disbursement-reports';
 
 /** One bar in the "headcount by department" graph. */
@@ -35,7 +36,8 @@ export interface CeoOverviewKpis {
     paymentsToSend: number;
     totalRoster: number;
   };
-  /** Unpaid workers from the most recent dispatched pay cycle (card 3). */
+  /** Unpaid workers from the most recent regular (non-Urgent) cycle whose period
+   *  starts strictly before the current `is_current` pay week (card 3). */
   lastCycle: {
     reportName: string;
     periodStart: string | null;
@@ -55,6 +57,18 @@ function labelFromSourceFile(file: string | null): string {
   const m = file.match(/(\d{4}-\d{2}-\d{2}).*?(\d{4}-\d{2}-\d{2})/);
   if (m) return formatDisbursementReportName(m[1]!, m[2]!, file.replace(/\.csv$/i, ''));
   return file.replace(/\.csv$/i, '');
+}
+
+/** The period START baked into a Hubstaff filename, e.g.
+ *  `…_2026-06-14_to_2026-06-21.csv` → `2026-06-14`. Anchored on the `_to_` range
+ *  (the SAME extraction `parseDateRangeFromFilename` and the disbursement seed
+ *  use), so it stays apples-to-apples with `reports[].periodStart` even when a
+ *  filename carries an earlier ISO-looking prefix (export date, "copy", …). Used
+ *  to anchor the current pay week so "last cycle" can be the week strictly before it. */
+function startIsoFromSourceFile(file: string | null): string | null {
+  if (!file) return null;
+  const m = file.match(/(\d{4}-\d{2}-\d{2})_to_\d{4}-\d{2}-\d{2}/);
+  return m ? m[1]! : null;
 }
 
 function toNum(v: number | string | null | undefined): number | null {
@@ -77,7 +91,7 @@ export async function buildCeoOverviewKpis(): Promise<CeoOverviewKpis> {
   const [roster, reportsRes] = await Promise.all([
     buildPeopleRoster(),
     listDisbursementReports().catch((e) => ({
-      reports: [],
+      reports: [] as DisbursementReportSummary[],
       error: e instanceof Error ? e.message : String(e),
       unseededCount: 0,
     })),
@@ -104,17 +118,35 @@ export async function buildCeoOverviewKpis(): Promise<CeoOverviewKpis> {
     totalRoster: rows.length,
   };
 
-  // 3) Unpaid workers from the last regular pay cycle. Reports are newest-first;
-  //    pick the most recent non-MESA cycle that's actually been dispatched, so
-  //    we surface a real completed cycle rather than an untouched current week.
+  // 3) Unpaid workers from the cycle BEFORE the current pay week. The current
+  //    week is whichever Hubstaff upload is `is_current` — the same week card 2
+  //    ("Payments to send") counts — so "last cycle" is the most recent regular
+  //    (non-Urgent) cycle whose period starts strictly before it. Example: when
+  //    the current week is Jun 14-21, the last cycle is Jun 7-14. Reports are
+  //    sorted newest-period-first, so the first match below is that prior week.
+  //    Date-driven on purpose: this stays correct whether or not the current
+  //    week has been seeded into `disbursement_records` or has already started
+  //    being dispatched (the old "most recent dispatched cycle" rule wrongly
+  //    surfaced the current week the moment its first payment went out).
   let lastCycle: CeoOverviewKpis['lastCycle'] = null;
   const cycles = (reportsRes.reports ?? []).filter(
     (rep) => rep.sourceFile && !/^Urgent/i.test(rep.reportName),
   );
-  const target =
-    cycles.find((rep) => rep.totals.paidCount > 0 || rep.totals.sentCount > 0) ??
-    cycles[0] ??
+  // Anchor the current pay week off the roster's source file; if that can't be
+  // parsed, fall back to whichever cycle carries the `is_current` flag (same
+  // signal the roster itself uses) so we still skip the in-flight week.
+  const currentStartIso =
+    startIsoFromSourceFile(sourceFile) ??
+    cycles.find((rep) => rep.isCurrent)?.periodStart ??
     null;
+  const target = currentStartIso
+    ? // Most recent regular cycle that ended before this week began.
+      cycles.find((rep) => (rep.periodStart ?? '') < currentStartIso) ?? null
+    : // No current-week signal at all — fall back to the most recent dispatched
+      // cycle, else the newest cycle on file.
+      cycles.find((rep) => rep.totals.paidCount > 0 || rep.totals.sentCount > 0) ??
+      cycles[0] ??
+      null;
 
   if (target?.sourceFile) {
     let workers: CeoUnpaidWorker[] = [];

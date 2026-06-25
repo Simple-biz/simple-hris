@@ -25,7 +25,9 @@ import {
 } from '@/lib/us-holidays';
 import {
   PAB_PERIOD_OVERRIDES_KEY,
+  PAB_PERIOD_EXCLUSIONS_KEY,
   parsePabPeriodOverrides,
+  parsePabPeriodExclusions,
   yearMonthKey,
 } from '@/lib/pab-period-settings';
 import {
@@ -455,11 +457,12 @@ export async function computeMemberMonthlyPay(args: {
 
   // Step 1: Fetch master + rates + PAB overrides in parallel. We need the master
   // row first to know this employee's alias emails before querying Hubstaff.
-  const [masterMin, rates, pabOverridesValue, rateHistory, holidaySettings, fxValues, payStructuresResult, systemBonusesResult] =
+  const [masterMin, rates, pabOverridesValue, pabExclusionsValue, rateHistory, holidaySettings, fxValues, payStructuresResult, systemBonusesResult] =
     await Promise.all([
       fetchMasterRowsForEmail(new Set([emailNorm])),
       getEmployeeHourlyRatesRows(),
       getAppSetting(PAB_PERIOD_OVERRIDES_KEY),
+      getAppSetting(PAB_PERIOD_EXCLUSIONS_KEY),
       fetchAllRateHistory(),
       getAppSettings([US_HOLIDAYS_ENABLED_KEY, US_HOLIDAYS_LIST_KEY]),
       getAppSettings(['usd_to_php_rate', USD_TO_COP_SETTINGS_KEY]),
@@ -585,6 +588,9 @@ export async function computeMemberMonthlyPay(args: {
   // every PAB month touched by these weeks once (eligibility is per-employee
   // per-PAB-month, not per-week).
   const overrides = parsePabPeriodOverrides(pabOverridesValue);
+  // Accountant exclusions (Payroll Wizard → PAB settings). An excluded month
+  // forfeits PAB for this employee even when attendance passes — mirror dispatch.
+  const exclusions = parsePabPeriodExclusions(pabExclusionsValue);
   const pabEligByMonthKey = new Map<string, boolean>();
 
   // Eligibility runs against a forgiveness-adjusted copy of the hours map —
@@ -597,6 +603,12 @@ export async function computeMemberMonthlyPay(args: {
   function computeEligibilityForPabMonth(year: number, month: number): boolean {
     const key = yearMonthKey(year, month);
     if (pabEligByMonthKey.has(key)) return pabEligByMonthKey.get(key)!;
+    // Excluded for this month (matched on any of the employee's alias emails) → ₱0 PAB.
+    const excludedThisMonth = exclusions.get(key);
+    if (excludedThisMonth && [...aliasNorms].some((a) => excludedThisMonth.has(a))) {
+      pabEligByMonthKey.set(key, false);
+      return false;
+    }
     const overrideEntry = overrides.get(key);
     const isHsl = hslEmails.has(emailNorm);
     const pabRange = overrideEntry
