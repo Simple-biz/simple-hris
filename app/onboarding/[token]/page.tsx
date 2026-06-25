@@ -940,16 +940,24 @@ function Step1Welcome({
   // The read-only Nickname mirrors the first-name field. When the hire typed
   // more than one first name (e.g. "Mary Grace"), the arrows step through them;
   // otherwise it's a plain copy of the single name.
+  const reduceMotion = useReducedMotion();
   const firstNameTokens = (form.first_name ?? '').trim().split(/\s+/).filter(Boolean);
   const hasMultipleFirstNames = firstNameTokens.length > 1;
   const nicknameIdx = Math.max(
     0,
     firstNameTokens.findIndex((t) => t.toLowerCase() === (form.nickname ?? '').trim().toLowerCase()),
   );
+  // The arrows pulse to advertise that the nickname is pickable — until the hire
+  // actually steps to another name (discovery achieved), then they go quiet.
+  const [nicknamePicked, setNicknamePicked] = useState(false);
   const stepNickname = (delta: number) => {
     const next = firstNameTokens[nicknameIdx + delta];
-    if (next) update('nickname', next);
+    if (next) {
+      update('nickname', next);
+      setNicknamePicked(true);
+    }
   };
+  const blinkNicknameNav = hasMultipleFirstNames && !nicknamePicked && !reduceMotion;
 
   return (
     <div className="space-y-6 p-5 sm:p-7">
@@ -1000,15 +1008,12 @@ function Step1Welcome({
         <Field label="Nickname" className="sm:col-span-2">
           <div className="flex items-center gap-2">
             {hasMultipleFirstNames && (
-              <button
-                type="button"
+              <NicknameNavButton
+                direction="prev"
                 onClick={() => stepNickname(-1)}
                 disabled={nicknameIdx <= 0}
-                aria-label="Previous first name"
-                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-zinc-300 bg-white text-zinc-600 shadow-sm transition-all hover:border-emerald-300 hover:text-emerald-700 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-zinc-300 disabled:hover:text-zinc-600"
-              >
-                <ChevronLeft className="h-4 w-4" />
-              </button>
+                blink={blinkNicknameNav && nicknameIdx > 0}
+              />
             )}
             <Input
               value={form.nickname ?? ''}
@@ -1019,15 +1024,12 @@ function Step1Welcome({
               className="bg-zinc-50 text-zinc-700 cursor-default text-center font-medium"
             />
             {hasMultipleFirstNames && (
-              <button
-                type="button"
+              <NicknameNavButton
+                direction="next"
                 onClick={() => stepNickname(1)}
                 disabled={nicknameIdx >= firstNameTokens.length - 1}
-                aria-label="Next first name"
-                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-zinc-300 bg-white text-zinc-600 shadow-sm transition-all hover:border-emerald-300 hover:text-emerald-700 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-zinc-300 disabled:hover:text-zinc-600"
-              >
-                <ChevronRight className="h-4 w-4" />
-              </button>
+                blink={blinkNicknameNav && nicknameIdx < firstNameTokens.length - 1}
+              />
             )}
           </div>
           <p className="text-[11px] leading-relaxed text-zinc-500">
@@ -1653,6 +1655,49 @@ function Field({
       </Label>
       {children}
     </div>
+  );
+}
+
+// Prev/next arrow for the read-only Nickname picker. Pulses an emerald ring
+// (`blink`) to advertise that the hire can choose which of their first names they
+// go by; the pulse stops once they've stepped to a different name. transform/
+// box-shadow only — no opacity/scale on the icon — so the glyph stays crisp.
+function NicknameNavButton({
+  direction,
+  onClick,
+  disabled,
+  blink,
+}: {
+  direction: 'prev' | 'next';
+  onClick: () => void;
+  disabled: boolean;
+  blink: boolean;
+}) {
+  const Icon = direction === 'prev' ? ChevronLeft : ChevronRight;
+  return (
+    <motion.button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      aria-label={direction === 'prev' ? 'Previous first name' : 'Next first name'}
+      className={cn(
+        'flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border shadow-sm transition-colors',
+        'border-emerald-300 bg-emerald-50 text-emerald-700 hover:border-emerald-400 hover:bg-emerald-100',
+        'disabled:cursor-not-allowed disabled:border-zinc-200 disabled:bg-white disabled:text-zinc-300 disabled:hover:border-zinc-200 disabled:hover:bg-white',
+      )}
+      animate={
+        blink
+          ? { boxShadow: ['0 0 0 0 rgba(16,185,129,0.5)', '0 0 0 7px rgba(16,185,129,0)'] }
+          : { boxShadow: '0 0 0 0 rgba(16,185,129,0)' }
+      }
+      transition={
+        blink
+          ? { duration: 1.25, repeat: Infinity, ease: 'easeOut' }
+          : { duration: 0.2 }
+      }
+    >
+      <Icon className="h-4 w-4" />
+    </motion.button>
   );
 }
 
