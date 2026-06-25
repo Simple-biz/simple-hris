@@ -861,7 +861,11 @@ export async function computeCurrentPay(
       const v = r.source_file;
       if (v != null && String(v).trim() !== "") return String(v).trim();
     }
-    return null;
+    // Fall back to the explicitly-requested file (past-week dispatch) when the
+    // rows don't carry a source_file column, so `period.sourceFile` stays
+    // authoritative for the selected week (drives wizardReady / staged paystubs).
+    // On the live path `selectedSourceFile` is null → unchanged behavior.
+    return selectedSourceFile;
   })();
 
   const approvedBudgetRequestsTotalPHP = (budgetRequestsResult.rows ?? []).reduce(

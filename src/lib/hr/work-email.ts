@@ -16,12 +16,40 @@
 
 export const WORK_EMAIL_DOMAIN = "simple.biz";
 
-/** First whitespace token = first name; last token = last name. */
+/**
+ * Generational name suffixes (Jr./Sr./II/III/IV, optional trailing period). The
+ * onboarding form captures these in a dedicated "Extension" box and folds them
+ * into the legal full_name, so any name-splitting that drives work-email /
+ * gmail-surname derivation must drop the suffix and key off the real surname —
+ * an account must never be minted off "Jr.". Deliberately conservative (matches
+ * toTitleCaseName's set; no single letters) so a real surname token is never
+ * mistaken for a suffix.
+ */
+export const NAME_EXTENSIONS = new Set([
+  "jr",
+  "jr.",
+  "sr",
+  "sr.",
+  "ii",
+  "iii",
+  "iv",
+]);
+
+/** True when `token` is a generational suffix we peel from a full name. */
+export function isNameExtension(token: string | null | undefined): boolean {
+  return NAME_EXTENSIONS.has((token ?? "").trim().toLowerCase());
+}
+
+/** First whitespace token = first name; last token = last name. A trailing
+ *  generational suffix is dropped first so `last` is always the real surname. */
 export function splitFullName(full: string | null | undefined): {
   first: string;
   last: string;
 } {
   const tokens = (full ?? "").trim().split(/\s+/).filter(Boolean);
+  // Peel a trailing suffix only when a first + last still remain (>= 3 tokens),
+  // so a two-token name is never stripped down to a bare first name.
+  if (tokens.length >= 3 && isNameExtension(tokens[tokens.length - 1])) tokens.pop();
   if (tokens.length === 0) return { first: "", last: "" };
   if (tokens.length === 1) return { first: tokens[0], last: "" };
   return { first: tokens[0], last: tokens[tokens.length - 1] };

@@ -65,7 +65,9 @@ import {
   pabDateKey,
   parseColDate,
   groupDateColumnsByCalendarDay,
+  parseDateRangeFromFilename,
 } from '@/lib/hubstaff/calendar-column-dedupe';
+import { HSL_DEPT_KEYS } from '@/lib/hsl-bonus/schema';
 import {
   fetchPabPeriodSettings,
   isValidManualPabRange,
@@ -326,8 +328,9 @@ interface SimpleViewProps {
   payoutLoading: boolean;
   payrollWorkerCount: number | null;
   masterTotal: number;
-  inPayrollNotMaster: number | null;
-  inMasterNotPayroll: number | null;
+  /** Bonuses keyed in (KPI Calculator → catalog + HSL entries) for the active
+   *  payroll week. null when no single week is selected or while resolving. */
+  bonusesKeyedIn: number | null;
   pendingDisputes: number | null;
   oldestDisputeDays: number | null;
   pendingLeaves: number | null;
@@ -422,8 +425,7 @@ function SimpleView({
   payoutLoading,
   payrollWorkerCount,
   masterTotal,
-  inPayrollNotMaster,
-  inMasterNotPayroll,
+  bonusesKeyedIn,
   pendingDisputes,
   oldestDisputeDays,
   pendingLeaves,
@@ -470,10 +472,6 @@ function SimpleView({
   const [pabCalEmail, setPabCalEmail] = useState<string | null>(null);
   const [pabCalIsHsl, setPabCalIsHsl] = useState(false);
 
-  const reconcileGaps =
-    inPayrollNotMaster != null && inMasterNotPayroll != null
-      ? inPayrollNotMaster + inMasterNotPayroll
-      : null;
   const pabTotal = pabMetrics.totalEmployees;
   const pabPct = pabTotal > 0 ? Math.round((pabMetrics.eligible / pabTotal) * 100) : 0;
   const techTotal = techBonusEligibility.total;
@@ -878,10 +876,10 @@ function SimpleView({
                 value={payrollWorkerCount ?? null}
               />
               <HeroStatRow
-                Icon={AlertTriangle}
-                tone={reconcileGaps && reconcileGaps > 0 ? 'warn' : 'ok'}
-                label="Reconcile gaps"
-                value={reconcileGaps ?? null}
+                Icon={Award}
+                tone="info"
+                label="Bonuses keyed in"
+                value={bonusesKeyedIn}
               />
             </motion.div>
           </motion.div>
@@ -2168,6 +2166,9 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
     Array<{ id: string; work_email: string; dispute_date: string; created_at?: string; reason: string }>
   >([]);
   const [pendingLeaves, setPendingLeaves] = useState<number | null>(null);
+  /** Bonuses keyed in (KPI Calculator → catalog-applied + HSL entries) for the
+   *  active payroll week. null when no single week is selected or while loading. */
+  const [bonusesKeyedIn, setBonusesKeyedIn] = useState<number | null>(null);
   /** Trailing-12-month attrition: separations + average headcount snapshot. */
   const [attrition, setAttrition] = useState<{
     separations: number;
@@ -2328,6 +2329,48 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
       cancelled = true;
     };
   }, []);
+
+  // Bonuses keyed in for the active payroll week. The week's `period_start` is
+  // the start date baked into the active Hubstaff filename — the SAME key the
+  // Payroll Wizard uses to read applied bonuses (`bonus_catalog_applied` for the
+  // KPI Calculator depts + `hsl_bonus_entries` for HSL depts). When no single
+  // file is selected (e.g. "All Time"), there's no one week to count, so we
+  // leave the count at "—".
+  useEffect(() => {
+    let cancelled = false;
+    const range = activeSourceFile ? parseDateRangeFromFilename(activeSourceFile) : null;
+    if (!range) {
+      setBonusesKeyedIn(null);
+      return;
+    }
+    const d = range.start;
+    const periodStart = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    (async () => {
+      try {
+        const [catRes, hslRes] = await Promise.all([
+          fetch(`/api/bonus-catalog-applied?period_start=${periodStart}`, { cache: 'no-store' }),
+          fetch(`/api/hsl-bonus/period-summary?depts=${HSL_DEPT_KEYS.join(',')}`, { cache: 'no-store' }),
+        ]);
+        const catJson = (await catRes.json()) as { rows?: unknown[] };
+        const hslJson = (await hslRes.json()) as {
+          rows?: { period_start: string; employee_count: number }[];
+        };
+        if (cancelled) return;
+        const catCount = Array.isArray(catJson.rows) ? catJson.rows.length : 0;
+        const hslCount = Array.isArray(hslJson.rows)
+          ? hslJson.rows
+              .filter((r) => r.period_start === periodStart)
+              .reduce((n, r) => n + (Number(r.employee_count) || 0), 0)
+          : 0;
+        setBonusesKeyedIn(catCount + hslCount);
+      } catch {
+        if (!cancelled) setBonusesKeyedIn(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeSourceFile]);
 
   /** PAB metrics — scoped to the currently selected source file (or merged across all when __all__). */
   const [pabMetrics, setPabMetrics] = useState<{
@@ -3329,8 +3372,7 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
               payoutLoading={payoutLoading}
               payrollWorkerCount={payrollWorkerCount}
               masterTotal={employees.length}
-              inPayrollNotMaster={inPayrollNotMaster}
-              inMasterNotPayroll={inMasterNotPayroll}
+              bonusesKeyedIn={bonusesKeyedIn}
               pendingDisputes={pendingDisputes}
               oldestDisputeDays={oldestDisputeDays}
               pendingLeaves={pendingLeaves}

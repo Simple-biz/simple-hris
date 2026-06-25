@@ -1,6 +1,7 @@
 import 'server-only';
 
 import { buildPeopleRoster } from '@/lib/people/people-roster';
+import { computeCurrentPay, type CurrentPayResult } from '@/lib/payroll/current-pay';
 import {
   listDisbursementReports,
   loadDisbursementRecordsForCycle,
@@ -24,10 +25,35 @@ export interface CeoUnpaidWorker {
   status: string;
 }
 
+/**
+ * System-level snapshot of the live pay run — mirrors the Accounting "System
+ * Overview" hero (total payout, master-list vs payroll headcount, reconcile
+ * gaps), surfaced on the CEO overview so the executive sees the same top-line
+ * numbers accounting works from. Null when the current cycle can't be computed.
+ */
+export interface CeoSystemOverview {
+  /** Total INITIAL pay (regular + OT, no bonuses) for the current cycle, PHP. */
+  totalPayoutPhp: number | null;
+  /** ≈ USD equivalent of the total payout at the cycle's FX rate. */
+  totalPayoutUsd: number | null;
+  /** People on the Global Master List (active employees). */
+  masterList: number;
+  /** Distinct people with Hubstaff hours in the current payroll cycle. */
+  inThisPayroll: number;
+  /** Master↔payroll email mismatches (in-payroll-not-master + in-master-not-payroll). */
+  reconcileGaps: number;
+  /** Pay-period label, e.g. "Jun 14 – 21, 2026". */
+  periodLabel: string;
+  /** ISO-week number of the period start (matches the Accounting period pill). */
+  periodWeek: number | null;
+}
+
 export interface CeoOverviewKpis {
   /** Headcount per department, largest first. Powers the bar graph (card 1). */
   departments: CeoDeptCount[];
   totalHeadcount: number;
+  /** Top-line system metrics for the current pay run (mirrors Accounting). */
+  systemOverview: CeoSystemOverview | null;
   /** Current pay week + how many people get a payout this week (card 2). */
   payWeek: {
     label: string;
@@ -77,6 +103,73 @@ function toNum(v: number | string | null | undefined): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+/** Two ISO dates → "Jun 14 – 21, 2026" + the ISO-week number of the start.
+ *  Mirrors the Accounting period pill (`parsePeriodFromFilename`) so the CEO
+ *  System Overview shows the same "· wk N" label. */
+function periodLabelAndWeek(
+  startIso: string | null,
+  endIso: string | null,
+): { label: string; week: number | null } {
+  const parse = (iso: string | null): Date | null => {
+    if (!iso) return null;
+    const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso.trim());
+    if (!m) return null;
+    const d = new Date(Date.UTC(+m[1]!, +m[2]! - 1, +m[3]!));
+    return isNaN(d.getTime()) ? null : d;
+  };
+  const start = parse(startIso);
+  const end = parse(endIso);
+  if (!start) return { label: 'Current week', week: null };
+  const mo = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  let label: string;
+  if (end) {
+    const sameMonth =
+      start.getUTCMonth() === end.getUTCMonth() && start.getUTCFullYear() === end.getUTCFullYear();
+    label = sameMonth
+      ? `${mo[start.getUTCMonth()]} ${start.getUTCDate()} – ${end.getUTCDate()}, ${end.getUTCFullYear()}`
+      : `${mo[start.getUTCMonth()]} ${start.getUTCDate()} – ${mo[end.getUTCMonth()]} ${end.getUTCDate()}, ${end.getUTCFullYear()}`;
+  } else {
+    label = `${mo[start.getUTCMonth()]} ${start.getUTCDate()}, ${start.getUTCFullYear()}`;
+  }
+  const firstOfYear = Date.UTC(start.getUTCFullYear(), 0, 1);
+  const week = Math.floor((start.getTime() - firstOfYear) / (7 * 24 * 3600 * 1000)) + 1;
+  return { label, week };
+}
+
+/** Derive the CEO System Overview block from a computed pay cycle. Email-based
+ *  reconcile gaps mirror the Accounting hero: payroll emails ∉ master + master
+ *  emails ∉ payroll. `masterListCount` is the deduped roster headcount (the same
+ *  number the CEO "Headcount by department" graph sums to). */
+function buildSystemOverview(
+  pay: CurrentPayResult,
+  masterListCount: number,
+): CeoSystemOverview {
+  const payrollEmails = new Set(Object.keys(pay.byEmail));
+  const masterEmailSet = new Set(pay.masterEmails);
+
+  let totalPayoutPhp: number | null = null;
+  for (const e of Object.values(pay.byEmail)) {
+    if (e.initialPayPHP != null) totalPayoutPhp = (totalPayoutPhp ?? 0) + e.initialPayPHP;
+  }
+
+  let inPayrollNotMaster = 0;
+  for (const em of payrollEmails) if (!masterEmailSet.has(em)) inPayrollNotMaster++;
+  let inMasterNotPayroll = 0;
+  for (const em of masterEmailSet) if (!payrollEmails.has(em)) inMasterNotPayroll++;
+
+  const period = periodLabelAndWeek(pay.period.start, pay.period.end);
+  return {
+    totalPayoutPhp: totalPayoutPhp != null ? Math.round(totalPayoutPhp * 100) / 100 : null,
+    totalPayoutUsd:
+      totalPayoutPhp != null && pay.fxRate > 0 ? totalPayoutPhp / pay.fxRate : null,
+    masterList: masterListCount,
+    inThisPayroll: payrollEmails.size,
+    reconcileGaps: inPayrollNotMaster + inMasterNotPayroll,
+    periodLabel: period.label,
+    periodWeek: period.week,
+  };
+}
+
 /**
  * The three executive metrics Karen asked for on the CEO overview:
  *   1. headcount per department
@@ -88,13 +181,20 @@ function toNum(v: number | string | null | undefined): number | null {
  * `disbursement_records` via the existing reports pipeline.
  */
 export async function buildCeoOverviewKpis(): Promise<CeoOverviewKpis> {
-  const [roster, reportsRes] = await Promise.all([
+  const [roster, reportsRes, payResult] = await Promise.all([
     buildPeopleRoster(),
     listDisbursementReports().catch((e) => ({
       reports: [] as DisbursementReportSummary[],
       error: e instanceof Error ? e.message : String(e),
       unseededCount: 0,
     })),
+    // Authoritative live-cycle pay engine — the same source Accounting's "System
+    // Overview" numbers derive from. Degrades to null (block hidden) on failure
+    // so a payroll-compute hiccup never breaks the other executive metrics.
+    computeCurrentPay().catch((e) => {
+      console.warn('[ceo-overview] computeCurrentPay failed:', e instanceof Error ? e.message : e);
+      return null;
+    }),
   ]);
 
   const { rows, sourceFile, error: rosterError } = roster;
@@ -190,6 +290,7 @@ export async function buildCeoOverviewKpis(): Promise<CeoOverviewKpis> {
   return {
     departments,
     totalHeadcount: rows.length,
+    systemOverview: payResult ? buildSystemOverview(payResult, rows.length) : null,
     payWeek,
     lastCycle,
     error: rosterError ?? reportsRes.error ?? null,

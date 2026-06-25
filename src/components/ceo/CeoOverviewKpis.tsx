@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { motion } from 'motion/react';
 import {
   Building2, CalendarDays, Send, Wallet, ChevronRight, Loader2, Search, Eye,
+  Users, Activity, AlertTriangle, LineChart,
 } from 'lucide-react';
 import { usePaymentsLive } from '@/hooks/usePaymentsLive';
 import { useDispatchLock } from '@/hooks/useDispatchLock';
@@ -35,9 +36,19 @@ interface LastCycle {
   totalRecipients: number;
   workers: UnpaidWorker[];
 }
+interface SystemOverview {
+  totalPayoutPhp: number | null;
+  totalPayoutUsd: number | null;
+  masterList: number;
+  inThisPayroll: number;
+  reconcileGaps: number;
+  periodLabel: string;
+  periodWeek: number | null;
+}
 interface OverviewKpis {
   departments: DeptCount[];
   totalHeadcount: number;
+  systemOverview: SystemOverview | null;
   payWeek: { label: string; sourceFile: string | null; paymentsToSend: number; totalRoster: number };
   lastCycle: LastCycle | null;
   error: string | null;
@@ -54,6 +65,57 @@ const STATUS_LABEL: Record<string, string> = {
   threshold: 'Below threshold',
   problem: 'Problem',
 };
+
+/* ── System Overview stat tiles ─────────────────────────────────────────── */
+
+type StatTone = 'neutral' | 'info' | 'warn' | 'ok';
+
+const STAT_TONES: Record<StatTone, { ring: string; iconTile: string; valueText: string }> = {
+  neutral: {
+    ring: 'border-zinc-200/80 dark:border-zinc-800/80',
+    iconTile: 'bg-gradient-to-br from-zinc-700 to-zinc-900 text-white shadow-sm shadow-zinc-900/30 dark:from-zinc-100 dark:to-zinc-300 dark:text-zinc-900',
+    valueText: 'text-zinc-900 dark:text-zinc-100',
+  },
+  info: {
+    ring: 'border-sky-200/70 dark:border-sky-900/40',
+    iconTile: 'bg-gradient-to-br from-sky-500 to-blue-600 text-white shadow-sm shadow-blue-500/40',
+    valueText: 'text-sky-900 dark:text-sky-100',
+  },
+  warn: {
+    ring: 'border-amber-200/70 dark:border-amber-900/40',
+    iconTile: 'bg-gradient-to-br from-amber-400 to-orange-500 text-white shadow-sm shadow-amber-500/40',
+    valueText: 'text-amber-900 dark:text-amber-100',
+  },
+  ok: {
+    ring: 'border-emerald-200/70 dark:border-emerald-900/40',
+    iconTile: 'bg-gradient-to-br from-emerald-500 to-teal-600 text-white shadow-sm shadow-emerald-500/40',
+    valueText: 'text-emerald-900 dark:text-emerald-100',
+  },
+};
+
+function SystemStatTile({
+  Icon, tone, label, value,
+}: {
+  Icon: React.ComponentType<{ className?: string }>;
+  tone: StatTone;
+  label: string;
+  value: number | null;
+}) {
+  const t = STAT_TONES[tone];
+  return (
+    <div className={cn('flex items-center gap-2.5 rounded-xl border bg-white/70 px-3 py-2.5 backdrop-blur-md dark:bg-zinc-900/50', t.ring)}>
+      <span className={cn('flex h-8 w-8 shrink-0 items-center justify-center rounded-lg [&_svg]:h-4 [&_svg]:w-4', t.iconTile)}>
+        <Icon />
+      </span>
+      <div className="min-w-0 flex-1">
+        <div className="truncate text-[11px] font-medium text-zinc-500 dark:text-zinc-400">{label}</div>
+        <div className={cn('font-mono text-base font-semibold leading-tight tabular-nums', t.valueText)}>
+          {value == null ? '—' : value.toLocaleString('en-US')}
+        </div>
+      </div>
+    </div>
+  );
+}
 
 export default function CeoOverviewKpis({ viewerEmail }: { viewerEmail: string | null }) {
   const [kpis, setKpis] = useState<OverviewKpis | null>(null);
@@ -96,6 +158,7 @@ export default function CeoOverviewKpis({ viewerEmail }: { viewerEmail: string |
   const lastCycle = kpis?.lastCycle ?? null;
   const hasUnpaid = !!lastCycle && lastCycle.unpaidCount > 0 && lastCycle.workers.length > 0;
   const paidPct = live.total > 0 ? Math.min(100, Math.round((live.paid / live.total) * 100)) : 0;
+  const sys = kpis?.systemOverview ?? null;
 
   return (
     <div className="flex flex-col gap-4 lg:gap-5">
@@ -104,6 +167,120 @@ export default function CeoOverviewKpis({ viewerEmail }: { viewerEmail: string |
           Some metrics may be incomplete: {err}
         </div>
       )}
+
+      {/* System Overview board (dominant, 3/4) + Headcount by department (1/4
+          sidebar). Mirrors the Accounting "System Overview" hero: total payout
+          for the live pay run, master-list vs payroll headcount, reconcile gaps. */}
+      <div className="grid gap-4 lg:grid-cols-4">
+        {/* ── System Overview board ── */}
+        <section className="relative overflow-hidden rounded-2xl border border-amber-200/70 bg-gradient-to-br from-stone-50 via-amber-50/40 to-white p-5 shadow-sm lg:col-span-3 dark:border-amber-900/30 dark:from-zinc-950 dark:via-amber-950/15 dark:to-zinc-950">
+          <div className="mb-3 flex items-center justify-between gap-2">
+            <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.16em] text-amber-700/90 dark:text-amber-400/90">
+              <LineChart className="h-3.5 w-3.5" /> System overview
+            </div>
+            {sys && (
+              <div className="inline-flex items-center gap-1.5 rounded-lg border border-amber-200/80 bg-white/70 px-2.5 py-1 text-[11px] backdrop-blur-md dark:border-amber-900/40 dark:bg-zinc-900/60">
+                <CalendarDays className="h-3.5 w-3.5 text-amber-500 dark:text-amber-400" />
+                <span className="font-semibold tracking-tight text-zinc-700 dark:text-zinc-200">
+                  {sys.periodLabel}
+                  {sys.periodWeek != null && (
+                    <span className="ml-1.5 text-zinc-400 dark:text-zinc-500">· wk {sys.periodWeek}</span>
+                  )}
+                </span>
+              </div>
+            )}
+          </div>
+
+          {sys ? (
+            <>
+              <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-zinc-400 dark:text-zinc-500">
+                Total payout · this pay run
+              </p>
+              <div className="mt-1 flex items-baseline">
+                <span className="mr-1.5 text-3xl font-medium text-zinc-400 sm:text-4xl dark:text-zinc-500">₱</span>
+                <span className="font-mono text-3xl font-bold tracking-tight text-zinc-900 sm:text-4xl xl:text-5xl dark:text-white">
+                  {sys.totalPayoutPhp != null
+                    ? sys.totalPayoutPhp.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                    : '—'}
+                </span>
+              </div>
+              <div className="mt-2 h-[2px] w-16 rounded-full bg-gradient-to-r from-amber-500 to-orange-500 dark:from-amber-400 dark:to-orange-400" />
+              <p className="mt-2.5 flex flex-wrap items-center gap-2.5 text-[13px] text-zinc-600 dark:text-zinc-400">
+                <span className="inline-flex items-center gap-1.5">
+                  <span className="inline-flex h-5 items-center justify-center rounded-full bg-emerald-100 px-1.5 text-[10px] font-semibold text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300">
+                    {sys.inThisPayroll.toLocaleString('en-US')}
+                  </span>
+                  active workers
+                </span>
+                {sys.totalPayoutUsd != null && (
+                  <>
+                    <span className="text-zinc-300 dark:text-zinc-700">·</span>
+                    <span>
+                      ≈{' '}
+                      <strong className="font-mono font-semibold text-zinc-900 dark:text-white">
+                        ${sys.totalPayoutUsd.toLocaleString('en-US', { maximumFractionDigits: 0 })}
+                      </strong>{' '}
+                      USD
+                    </span>
+                  </>
+                )}
+                <span className="text-zinc-300 dark:text-zinc-700">·</span>
+                <span>Initial pay · bonuses applied at payroll</span>
+              </p>
+
+              {/* Stat tiles — mirror the Accounting right rail. */}
+              <div className="mt-4 grid grid-cols-1 gap-2.5 border-t border-amber-100/80 pt-4 sm:grid-cols-3 dark:border-amber-900/20">
+                <SystemStatTile Icon={Users} tone="neutral" label="Master list" value={sys.masterList} />
+                <SystemStatTile Icon={Activity} tone="info" label="In this payroll" value={sys.inThisPayroll} />
+                <SystemStatTile
+                  Icon={AlertTriangle}
+                  tone={sys.reconcileGaps > 0 ? 'warn' : 'ok'}
+                  label="Reconcile gaps"
+                  value={sys.reconcileGaps}
+                />
+              </div>
+            </>
+          ) : (
+            <p className="py-8 text-center text-sm text-zinc-400">
+              No active pay cycle to summarize yet.
+            </p>
+          )}
+        </section>
+
+        {/* ── Headcount by department (1/4 sidebar) ── */}
+        <div className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm lg:col-span-1 dark:border-zinc-800 dark:bg-zinc-950">
+          <div className="mb-3.5 flex items-center justify-between gap-2">
+            <div className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-zinc-400">
+              <Building2 className="h-3.5 w-3.5 text-amber-500" /> Headcount
+            </div>
+            <span className="text-[12px] text-zinc-400">{kpis?.totalHeadcount ?? 0}</span>
+          </div>
+          {departments.length === 0 ? (
+            <p className="py-8 text-center text-sm text-zinc-400">No people to show.</p>
+          ) : (
+            <ul className="space-y-2.5">
+              {departments.map((d) => (
+                <li key={d.department} className="space-y-1">
+                  <div className="flex items-center justify-between gap-2 text-[12px]">
+                    <span className="min-w-0 truncate text-zinc-600 dark:text-zinc-300" title={d.department}>
+                      {d.department}
+                    </span>
+                    <span className="shrink-0 font-semibold tabular-nums text-zinc-800 dark:text-zinc-100">
+                      {d.count}
+                    </span>
+                  </div>
+                  <div className="h-1.5 w-full overflow-hidden rounded-full bg-zinc-100 dark:bg-zinc-900">
+                    <div
+                      className="h-full rounded-full bg-gradient-to-r from-amber-400 to-yellow-500 transition-[width] duration-500 ease-out"
+                      style={{ width: `${Math.max(3, (d.count / maxDept) * 100)}%` }}
+                    />
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </div>
 
       {/* Cards 2 & 3 — pay week / payments to send, and last-cycle unpaid. */}
       <div className="grid gap-4 sm:grid-cols-2">
@@ -228,41 +405,6 @@ export default function CeoOverviewKpis({ viewerEmail }: { viewerEmail: string |
             {lastCycle ? <span className="truncate">{lastCycle.reportName}</span> : 'No completed cycle yet'}
           </div>
         </button>
-      </div>
-
-      {/* Card 1 — headcount by department graph */}
-      <div className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm dark:border-zinc-800 dark:bg-zinc-950">
-        <div className="mb-4 flex items-center justify-between gap-2">
-          <div className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-zinc-400">
-            <Building2 className="h-3.5 w-3.5 text-amber-500" /> Headcount by department
-          </div>
-          <span className="text-[12px] text-zinc-400">{kpis?.totalHeadcount ?? 0} people</span>
-        </div>
-        {departments.length === 0 ? (
-          <p className="py-8 text-center text-sm text-zinc-400">No people to show.</p>
-        ) : (
-          <ul className="space-y-2.5">
-            {departments.map((d) => (
-              <li key={d.department} className="flex items-center gap-3">
-                <span
-                  className="w-28 shrink-0 truncate text-[12.5px] text-zinc-600 sm:w-44 dark:text-zinc-300"
-                  title={d.department}
-                >
-                  {d.department}
-                </span>
-                <div className="relative h-5 flex-1 overflow-hidden rounded-md bg-zinc-100 dark:bg-zinc-900">
-                  <div
-                    className="h-full rounded-md bg-gradient-to-r from-amber-400 to-yellow-500 transition-[width] duration-500 ease-out"
-                    style={{ width: `${Math.max(3, (d.count / maxDept) * 100)}%` }}
-                  />
-                </div>
-                <span className="w-9 shrink-0 text-right text-[13px] font-semibold tabular-nums text-zinc-800 dark:text-zinc-100">
-                  {d.count}
-                </span>
-              </li>
-            ))}
-          </ul>
-        )}
       </div>
 
       {showUnpaid && lastCycle && (

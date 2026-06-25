@@ -437,7 +437,12 @@ export async function getCurrentHubstaffUploadId(supabase: SupabaseClient): Prom
  * Resolves the `hubstaff_uploads.id` (the pay-cycle id) for a specific source
  * file. Used when Payment Dispatch / the pay engine operates on a PAST week
  * picked from the CSV selector rather than the current `is_current` cycle.
- * Newest matching upload wins if a filename was ever re-uploaded.
+ *
+ * If a filename was ever re-uploaded (duplicates do happen), the `is_current`
+ * row wins, then newest by `uploaded_at`. Preferring `is_current` is critical:
+ * when the selected file IS the live cycle, this MUST return the same id
+ * `getCurrentHubstaffUploadId` does — otherwise dispatches written under the
+ * live id wouldn't match this id and already-paid recipients could be paid twice.
  */
 export async function getHubstaffUploadIdBySourceFile(
   supabase: SupabaseClient,
@@ -449,6 +454,7 @@ export async function getHubstaffUploadIdBySourceFile(
     .from(HUBSTAFF_UPLOADS_TABLE)
     .select("id")
     .eq("source_file", file)
+    .order("is_current", { ascending: false })
     .order("uploaded_at", { ascending: false })
     .limit(1)
     .maybeSingle();

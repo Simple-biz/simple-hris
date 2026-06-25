@@ -632,6 +632,7 @@ export default function PayrollDispatch() {
               <ProcessingToggleButton
                 locked={lockState.locked}
                 onClick={() => setConfirmingLockToggle(true)}
+                disabled={viewingPastWeek}
               />
             </div>
           </div>
@@ -940,24 +941,37 @@ function BackgroundOrbs() {
 function ProcessingToggleButton({
   locked,
   onClick,
+  disabled = false,
 }: {
   locked: boolean;
   onClick: () => void;
+  /** Greyed-out + inert while viewing a past week — this control flips the GLOBAL
+   *  live-cycle issue lock, which is not scoped to a historical week. */
+  disabled?: boolean;
 }) {
   return (
     <motion.button
       type="button"
-      onClick={onClick}
-      whileHover={{ y: -1 }}
-      whileTap={{ scale: 0.95 }}
+      onClick={disabled ? undefined : onClick}
+      disabled={disabled}
+      title={
+        disabled
+          ? 'Processing controls apply to the live cycle only — switch back to the current week to start/stop.'
+          : undefined
+      }
+      whileHover={disabled ? undefined : { y: -1 }}
+      whileTap={disabled ? undefined : { scale: 0.95 }}
       transition={{ type: 'spring', stiffness: 380, damping: 26 }}
       className={cn(
         'relative inline-flex h-8 min-w-[7.25rem] items-center justify-center gap-1.5 overflow-hidden rounded-md px-3 text-[11px] font-semibold text-white shadow-sm transition-[box-shadow,background-image] duration-300',
-        locked
-          ? 'bg-gradient-to-br from-rose-500 to-red-600 shadow-rose-500/30 hover:from-rose-600 hover:to-red-700'
-          : 'bg-gradient-to-br from-emerald-500 to-teal-600 shadow-emerald-500/30 hover:from-emerald-600 hover:to-teal-700',
+        disabled
+          ? 'cursor-not-allowed bg-gradient-to-br from-zinc-400 to-zinc-500 opacity-60 dark:from-zinc-600 dark:to-zinc-700'
+          : locked
+            ? 'bg-gradient-to-br from-rose-500 to-red-600 shadow-rose-500/30 hover:from-rose-600 hover:to-red-700'
+            : 'bg-gradient-to-br from-emerald-500 to-teal-600 shadow-emerald-500/30 hover:from-emerald-600 hover:to-teal-700',
       )}
       aria-pressed={locked}
+      aria-disabled={disabled}
     >
       <AnimatePresence mode="popLayout" initial={false}>
         <motion.span

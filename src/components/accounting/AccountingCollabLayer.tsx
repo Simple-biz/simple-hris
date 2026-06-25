@@ -13,11 +13,13 @@ import {
   useMotionValue,
   useSpring,
   useTransform,
+  useAnimationControls,
 } from 'motion/react';
-import { Eye, EyeOff } from 'lucide-react';
+import { Eye, EyeOff, Send } from 'lucide-react';
 import { useSession } from 'next-auth/react';
 import { getSupabaseBrowserClient } from '@/lib/supabase/browser';
 import { normEmail } from '@/lib/email/norm-email';
+import { playPingChime, playPingSent } from '@/lib/sound/ping-chime';
 import CobrowseSurface from './CobrowseSurface';
 import { useCobrowse } from '@/hooks/useCobrowse';
 
@@ -44,11 +46,21 @@ import { useCobrowse } from '@/hooks/useCobrowse';
  * your `onNavigate`), the wizard's driver-mode analogue. Since you then sit on
  * the same section as them, the cursor broadcast above surfaces their pointer
  * automatically. A banner with a "Stop observing" opt-out is shown while active.
+ *
+ * There is also a lightweight "Ping" (a directed nudge): clicking Ping on a
+ * peer broadcasts a `ping` addressed to them. On the RECIPIENT's screen, the
+ * SENDER's avatar in the rail wiggles, fires an attention pulse, plays a chime,
+ * and pops a chat-head bubble ("waved at you") that auto-dismisses. Pings are
+ * NOT section-scoped — you can nudge anyone in Accounting from any tab — and
+ * ride the same Realtime broadcast as cursors, so no SQL/table is involved.
  */
 
 const CHANNEL = 'accounting-collab';
 const MOVE_THROTTLE_MS = 16; // ~60 fps
 const CURSOR_TTL_MS = 4500;
+// How long a ping's chat-head bubble lingers on the sender's avatar before it
+// floats away. A fresh ping from the same sender resets this window.
+const PING_TTL_MS = 5000;
 // Max avatars shown in the right-edge rail before collapsing the rest into a
 // "+N" chip. Keeps the (scrollbar-free) rail from running off short screens.
 const MAX_RAIL_AVATARS = 9;
@@ -126,7 +138,17 @@ interface ClickRipple {
 
 type CollabMsg =
   | { kind: 'move'; email: string; section: string; x: number; y: number }
-  | { kind: 'click'; email: string; section: string; x: number; y: number };
+  | { kind: 'click'; email: string; section: string; x: number; y: number }
+  // A directed nudge: `email` is the sender, `toEmail` the recipient. `text` is
+  // the short message shown in the chat-head bubble on the sender's avatar.
+  | { kind: 'ping'; email: string; toEmail: string; text: string };
+
+// An active incoming ping, keyed by sender email in the parent. `id` lets the
+// bubble + sound re-trigger cleanly when the same person pings again.
+interface PingState {
+  id: number;
+  text: string;
+}
 
 interface PresencePayload {
   email: string;
@@ -447,6 +469,8 @@ function RailAvatar({
   observing,
   onObserve,
   onStopObserve,
+  ping,
+  onPing,
   index,
 }: {
   peer: PeerMeta;
@@ -456,6 +480,8 @@ function RailAvatar({
   observing: boolean;
   onObserve: () => void;
   onStopObserve: () => void;
+  ping: PingState | null;
+  onPing: () => void;
   index: number;
 }) {
   const [imgFailed, setImgFailed] = useState(false);
@@ -465,6 +491,31 @@ function RailAvatar({
   const display = (peer.name && peer.name.trim()) || toLabel(peer.email);
 
   useEffect(() => { setImgFailed(false); }, [url]);
+
+  // --- Ping: incoming wiggle + outgoing "sent" confirmation ------------------
+  // Wiggle the avatar each time a NEW ping lands (re-keyed on ping.id so a
+  // repeat ping from the same person re-fires). The chime is played by the
+  // parent's receive handler, not here, so it can't double-fire.
+  const wiggle = useAnimationControls();
+  useEffect(() => {
+    if (!ping) return;
+    void wiggle.start({
+      rotate: [0, -12, 10, -7, 5, 0],
+      transition: { duration: 0.6, ease: 'easeInOut' },
+    });
+  }, [ping?.id, wiggle]);
+
+  // Brief "Pinged!" state on our own button after we nudge this peer.
+  const [pinged, setPinged] = useState(false);
+  const sentTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { if (sentTimerRef.current) clearTimeout(sentTimerRef.current); }, []);
+  const handlePing = () => {
+    if (pinged) return;
+    onPing();
+    setPinged(true);
+    if (sentTimerRef.current) clearTimeout(sentTimerRef.current);
+    sentTimerRef.current = setTimeout(() => setPinged(false), 1600);
+  };
 
   return (
     <motion.div
@@ -510,6 +561,18 @@ function RailAvatar({
             >
               {observing ? 'Stop observing' : 'Observe'}
             </button>
+            <button
+              type="button"
+              onClick={handlePing}
+              disabled={pinged}
+              className={
+                'mt-1.5 flex w-full items-center justify-center gap-1.5 rounded-md px-2.5 py-1.5 text-[11px] font-semibold text-white shadow transition-colors ' +
+                (pinged ? 'bg-emerald-500' : 'bg-sky-500 hover:bg-sky-400')
+              }
+            >
+              <Send className="h-3 w-3" />
+              {pinged ? 'Pinged!' : 'Ping'}
+            </button>
           </motion.div>
         )}
       </AnimatePresence>
@@ -526,12 +589,58 @@ function RailAvatar({
         </div>
       )}
 
+      {/* Incoming ping -> a chat-head speech bubble popping out of this person's
+          avatar, with a wiggling hand and a tail pointing back at the avatar. */}
+      <AnimatePresence>
+        {ping && (
+          <motion.div
+            key={ping.id}
+            className="pointer-events-none absolute right-full top-1/2 z-[70] mr-3 -translate-y-1/2"
+            initial={{ opacity: 0, x: 14, scale: 0.4 }}
+            animate={{ opacity: 1, x: 0, scale: 1 }}
+            exit={{ opacity: 0, x: 10, scale: 0.5, transition: { duration: 0.2 } }}
+            transition={{ type: 'spring', stiffness: 480, damping: 15, mass: 0.7 }}
+          >
+            <div className="relative flex items-center gap-2 whitespace-nowrap rounded-2xl bg-gradient-to-br from-orange-500 to-pink-500 px-3.5 py-2 text-white shadow-[0_8px_24px_rgba(236,72,153,0.45)] ring-1 ring-white/30">
+              <motion.span
+                className="text-base leading-none"
+                animate={{ rotate: [0, 20, -12, 16, 0] }}
+                transition={{ duration: 0.9, ease: 'easeInOut', repeat: Infinity, repeatDelay: 0.7 }}
+                style={{ transformOrigin: '70% 80%' }}
+              >
+                👋
+              </motion.span>
+              <span className="text-[12px] font-semibold leading-tight">
+                <span className="font-bold">{display}</span> {ping.text}
+              </span>
+              {/* tail: a small rotated square fused to the bubble, pointing right */}
+              <span className="absolute right-[-4px] top-1/2 h-2.5 w-2.5 -translate-y-1/2 rotate-45 rounded-[2px] bg-pink-500" />
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       <div className="relative">
+        {/* Attention pulse: radiating ring(s) from behind the avatar on a ping. */}
+        <AnimatePresence>
+          {ping && (
+            <motion.span
+              key={ping.id}
+              className="pointer-events-none absolute left-0 top-0 z-[-1] h-11 w-11 rounded-full"
+              style={{ boxShadow: '0 0 0 2.5px rgba(249,115,22,0.75)' }}
+              initial={{ opacity: 0.75, scale: 1 }}
+              animate={{ opacity: 0, scale: 2 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 1.05, ease: 'easeOut', repeat: 2 }}
+            />
+          )}
+        </AnimatePresence>
       <motion.button
         type="button"
         onClick={onToggle}
         aria-label={`Show ${display}`}
         aria-expanded={open}
+        animate={wiggle}
         whileHover={{ scale: 1.08 }}
         whileTap={{ scale: 0.94 }}
         transition={POP_SPRING}
@@ -630,6 +739,9 @@ export default function AccountingCollabLayer({ selfEmail, section, containerRef
   const [openPeer, setOpenPeer] = useState<string | null>(null);
   // Email of the peer currently being observed (driver-mode follow), or null.
   const [observedEmail, setObservedEmail] = useState<string | null>(null);
+  // Active incoming pings, keyed by SENDER email -> the bubble shown on that
+  // sender's avatar in our rail. One live bubble per sender at a time.
+  const [pings, setPings] = useState<Map<string, PingState>>(new Map());
 
   const selfName = session?.user?.name ?? (normSelf ? toLabel(normSelf) : null);
   const selfAvatarUrl = (uploadedPhoto && uploadedPhoto.trim()) || session?.user?.image || null;
@@ -640,7 +752,47 @@ export default function AccountingCollabLayer({ selfEmail, section, containerRef
   const sectionRef = useRef(section);
   const lastMoveRef = useRef(0);
   const idRef = useRef(0);
+  const pingIdRef = useRef(0);
+  const pingTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
   sectionRef.current = section;
+
+  // Show + sound an incoming ping on the sender's avatar; auto-clear after the
+  // TTL. A newer ping from the same sender resets the bubble and its timer.
+  const receivePing = useCallback((sender: string, text: string) => {
+    const id = ++pingIdRef.current;
+    setPings((prev) => {
+      const next = new Map(prev);
+      next.set(sender, { id, text });
+      return next;
+    });
+    playPingChime();
+    const timers = pingTimersRef.current;
+    const existing = timers.get(sender);
+    if (existing) clearTimeout(existing);
+    const t = setTimeout(() => {
+      setPings((prev) => {
+        const cur = prev.get(sender);
+        if (!cur || cur.id !== id) return prev; // a newer ping already replaced it
+        const next = new Map(prev);
+        next.delete(sender);
+        return next;
+      });
+      timers.delete(sender);
+    }, PING_TTL_MS);
+    timers.set(sender, t);
+  }, []);
+  // Ref so the (subscribe-once) broadcast handler always calls the latest fn.
+  const receivePingRef = useRef(receivePing);
+  receivePingRef.current = receivePing;
+
+  // Clear any pending ping timers on unmount.
+  useEffect(() => {
+    const timers = pingTimersRef.current;
+    return () => {
+      for (const t of timers.values()) clearTimeout(t);
+      timers.clear();
+    };
+  }, []);
 
   // Fetch the viewer's own uploaded profile photo once, so we can broadcast a
   // resolved avatar URL to peers (falls back to the Google SSO image above).
@@ -695,6 +847,16 @@ export default function AccountingCollabLayer({ selfEmail, section, containerRef
       if (!payload?.email) return;
       const sender = normEmail(payload.email) ?? payload.email.trim().toLowerCase();
       if (sender === normSelf) return;
+
+      // Pings are directed (not section-scoped): only react if addressed to us.
+      if (payload.kind === 'ping') {
+        const to = payload.toEmail
+          ? normEmail(payload.toEmail) ?? payload.toEmail.trim().toLowerCase()
+          : null;
+        if (to && to === normSelf) receivePingRef.current(sender, payload.text || 'waved at you');
+        return;
+      }
+
       // Section scoping: only observe peers on the SAME section as the viewer.
       if (payload.section !== sectionRef.current) return;
 
@@ -776,6 +938,14 @@ export default function AccountingCollabLayer({ selfEmail, section, containerRef
 
   // --- mouse + click listeners on the accounting container -------------------
   const sendMsg = useCallback((m: CollabMsg) => { sendRef.current?.(m); }, []);
+
+  // Nudge a peer: broadcast a directed ping (they hear/see it) + a soft local
+  // "sent" blip. `broadcast.self=false` means we never receive our own ping.
+  const sendPing = useCallback((toEmail: string) => {
+    if (!normSelf) return;
+    sendRef.current?.({ kind: 'ping', email: normSelf, toEmail, text: 'waved at you' });
+    playPingSent();
+  }, [normSelf]);
 
   useEffect(() => {
     const el = containerRef.current;
@@ -949,6 +1119,8 @@ export default function AccountingCollabLayer({ selfEmail, section, containerRef
                     setOpenPeer(null);
                   }}
                   onStopObserve={() => setObservedEmail(null)}
+                  ping={pings.get(p.email) ?? null}
+                  onPing={() => sendPing(p.email)}
                 />
               ))}
               {peers.length > MAX_RAIL_AVATARS && (

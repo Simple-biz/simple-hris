@@ -3,7 +3,7 @@ import 'server-only';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from './auth-options';
 import { hasElevatedRole } from './elevated-roles';
-import type { AuthzResult } from './authorize-email';
+import { requireRateVisibilitySession, type AuthzResult } from './authorize-email';
 import {
   fetchFeaturePermissionsForEmail,
   resolveFeatureAccess,
@@ -66,6 +66,31 @@ export async function requireFeatureAccess(
 
 export function requireFeatureEdit(view: FeatureViewKey, feature: string): Promise<AuthzResult> {
   return requireFeatureAccess(view, feature, 'edit');
+}
+
+/**
+ * Allow when the caller EITHER has role-based rate visibility (admin / accounting
+ * / ceo) OR an explicit `edit` grant on (view, feature). Used by the read
+ * endpoints behind Payment Dispatch: an admin-configured "Edit" on
+ * `payment_dispatch` confers access (admin bypasses inside `requireFeatureEdit`),
+ * alongside the rate-visible roles — without regressing anyone who already had
+ * access. Critically, the several endpoints the dispatch queue calls together
+ * (current-pay, current-cycle, payment-dispatches) all use this ONE gate, so a
+ * caller can never pass one and 403 another (which would hide already-paid rows
+ * and risk double-paying).
+ */
+export async function requireRateVisibilityOrFeatureEdit(
+  view: FeatureViewKey,
+  feature: string,
+): Promise<AuthzResult> {
+  // Rate-visibility is a zero-DB role check; try it first so rate-visible roles
+  // skip the feature-permission fetch entirely.
+  const rate = await requireRateVisibilitySession();
+  if (rate.ok) return rate;
+  // Otherwise fall back to the feature-edit grant (admin bypasses; explicit
+  // edit grants pass). Its denial message ("need edit access") is the more
+  // actionable one to surface.
+  return requireFeatureEdit(view, feature);
 }
 
 /**

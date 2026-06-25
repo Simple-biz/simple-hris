@@ -124,7 +124,7 @@ export const CEO_TOOLS: Anthropic.Tool[] = [
   {
     name: 'get_employee_profile',
     description:
-      "Get an employee's Profile-tab details (the same info they see on their Employee dashboard Profile tab): identity (name, department, employee ID, start date, work + personal email, home address), hourly rates (regular + OT, in PHP), their self-entered skill sets (role/title, skills, strengths, current projects), and recognition (commendation count + recent notes). Also returns has_profile_photo so you know whether a roster section will show their avatar. Requires the exact work_email from find_employee. Note: bank/payout details are intentionally NOT included.",
+      "Get an employee's profile for a fair, balanced read on them: identity (name, department, employee ID, start date, work + personal email, home address), hourly rates (regular + OT, in PHP), their self-entered skill sets (role/title, skills, strengths, current projects), recognition (commendation count + recent notes = positive praise) AND concerns (manager 'flag for review' count + recent notes = red flags, CEO-visible only). Use this whenever the CEO asks you to assess, evaluate, or give an opinion on a person — it gives you BOTH their strengths and any concerns so you don't answer with praise alone. Also returns has_profile_photo so you know whether a roster section will show their avatar. Requires the exact work_email from find_employee. Note: bank/payout details are intentionally NOT included.",
     input_schema: {
       type: 'object',
       properties: {
@@ -836,21 +836,37 @@ async function getEmployeeProfile(workEmailInput: string): Promise<ToolResult> {
     // skill sets are optional — ignore lookup failures
   }
 
-  // Recognition (public commendations).
+  // Recognition AND concerns. Managers award two kinds of medal: `commend`
+  // (green flag, positive) and `flag` (red flag / "flag for review", a concern).
+  // We surface BOTH so the assistant can give the CEO a fair, balanced read of a
+  // person instead of only their praise. Commendations are shown publicly, so we
+  // keep them public-only (mirrors the employee's own Profile tab). Flags are
+  // managers' private review notes — invisible to the employee — but the CEO is
+  // exactly who should see them, so we include private flags here.
   let commendationCount = 0;
   let recentCommendations: string[] = [];
+  let flagCount = 0;
+  let recentFlags: string[] = [];
   {
     const { data } = await supabase
       .from('employee_medals')
-      .select('note, awarded_at')
+      .select('medal_type, note, is_private, awarded_at')
       .in('employee_email', [...aliases])
-      .eq('medal_type', 'commend')
-      .eq('is_private', false)
+      .in('medal_type', ['commend', 'flag'])
       .order('awarded_at', { ascending: false })
-      .limit(50);
+      .limit(100);
     const rows = (data ?? []) as Array<Record<string, unknown>>;
-    commendationCount = rows.length;
-    recentCommendations = rows
+
+    const commends = rows.filter((r) => r.medal_type === 'commend' && r.is_private === false);
+    commendationCount = commends.length;
+    recentCommendations = commends
+      .slice(0, 3)
+      .map((r) => String(r.note ?? '').trim())
+      .filter(Boolean);
+
+    const flags = rows.filter((r) => r.medal_type === 'flag');
+    flagCount = flags.length;
+    recentFlags = flags
       .slice(0, 3)
       .map((r) => String(r.note ?? '').trim())
       .filter(Boolean);
@@ -858,7 +874,7 @@ async function getEmployeeProfile(workEmailInput: string): Promise<ToolResult> {
 
   const photoUrl = await getProfilePhotoUrlForEmail(email);
 
-  if (!employee && regularRate == null && !skillSet && commendationCount === 0) {
+  if (!employee && regularRate == null && !skillSet && commendationCount === 0 && flagCount === 0) {
     return { error: masterErr || 'No profile found for this email.' };
   }
 
@@ -881,8 +897,9 @@ async function getEmployeeProfile(workEmailInput: string): Promise<ToolResult> {
     compensation: { regular_rate_php: regularRate, ot_rate_php: otRate },
     skill_set: skillSet,
     recognition: { commendation_count: commendationCount, recent_notes: recentCommendations },
+    concerns: { flag_count: flagCount, recent_notes: recentFlags },
     field_notes:
-      "Mirrors the employee's Profile tab: identity + home address (HR master), hourly rates in PHP, self-entered skill sets, and recognition (public commendations). Bank/payout details are intentionally excluded. has_profile_photo = true means a roster section will render their uploaded/Google avatar.",
+      "Identity + home address (HR master), hourly rates in PHP, self-entered skill sets. recognition = PUBLIC commendations (green flags) the employee can see; these are opt-in praise, so few or none does NOT mean poor performance. concerns = manager 'flag for review' notes (red flags) — PRIVATE, the employee cannot see them, shown to the CEO only; they are concerns raised for review, not proven verdicts, so weigh them as one signal. For a fair read of a person, consider BOTH recognition and concerns (and their actual hours/pay) — do not present only the positives. Bank/payout details are intentionally excluded. has_profile_photo = true means a roster section will render their uploaded/Google avatar.",
   };
 }
 

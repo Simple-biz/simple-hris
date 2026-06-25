@@ -13,8 +13,8 @@ import {
 import { forwardPaystubDispatch } from "@/lib/payroll/paystub-dispatch";
 import { insertAuditLog } from "@/lib/supabase/audit-log";
 import { getSessionActor } from "@/lib/auth/session-actor";
-import { requireFeatureEdit } from "@/lib/auth/authorize-feature";
-import { deniedResponse, requireRateVisibilitySession } from "@/lib/auth/authorize-email";
+import { requireFeatureEdit, requireRateVisibilityOrFeatureEdit } from "@/lib/auth/authorize-feature";
+import { deniedResponse } from "@/lib/auth/authorize-email";
 import { pulsePaymentsLive } from "@/lib/supabase/app-settings";
 
 export const dynamic = "force-dynamic";
@@ -23,9 +23,13 @@ export const runtime = "nodejs";
 interface PostBody extends Omit<InsertPaymentDispatchInput, "created_by"> {}
 
 export async function GET(req: NextRequest) {
-  // Dispatch rows carry snapshotted recipient banking, so reading them requires
-  // full rate visibility (admin / accounting / ceo) — not just any signed-in user.
-  const authz = await requireRateVisibilitySession();
+  // Dispatch rows carry snapshotted recipient banking + amounts. Reading them
+  // requires rate visibility (admin / accounting / ceo) OR an admin-granted Edit
+  // on Payment Dispatch — the SAME gate as the other dispatch-queue reads
+  // (current-pay, current-cycle), so a feature-edit user who can load the queue
+  // can also see who's already paid (otherwise paid rows would reappear as
+  // pending and risk a double-pay).
+  const authz = await requireRateVisibilityOrFeatureEdit("accounting", "payment_dispatch");
   if (!authz.ok) return deniedResponse(authz);
 
   const cycleIdRaw = req.nextUrl.searchParams.get("cycle_id");

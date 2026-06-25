@@ -38,6 +38,7 @@ import {
 } from '@/lib/onboarding/ip-assignment-text';
 import { ONBOARDING_COUNTRIES, currencyForCountry } from '@/lib/onboarding/countries';
 import { toTitleCaseName } from '@/lib/text/sanitize-name';
+import { NAME_EXTENSIONS } from '@/lib/hr/work-email';
 
 type PriorData = {
   full_name: string | null;
@@ -89,6 +90,11 @@ type LinkInfo = {
 type FormState = {
   first_name: string;
   last_name: string;
+  /** Optional name extension / generational suffix (Jr., Sr., II, III, IV) shown
+   *  beside the last name. Folded into the stored full_name for HR + contracts,
+   *  but NEVER sent to the workspace-account automation (that webhook only ever
+   *  gets the first-name token + the work-email-derived gmail_surname). */
+  extension: string;
   /** Surname used for the @simple.biz Google (Gmail) account — sent to the
    *  workspace-account webhook in place of the legal last name. */
   gmail_surname: string;
@@ -128,6 +134,7 @@ type FormState = {
 const emptyForm: FormState = {
   first_name: '',
   last_name: '',
+  extension: '',
   gmail_surname: '',
   phone: '',
   email: '',
@@ -161,6 +168,26 @@ const emptyForm: FormState = {
   contract_signature: '',
   contract_date: '',
 };
+
+/** Split a full name into first / last / extension, peeling a trailing
+ *  generational suffix (the shared {@link NAME_EXTENSIONS} set) into its own
+ *  "Extension" box so re-editing a submission shows the suffix there instead of
+ *  glued onto the last name. Only peels when at least three tokens remain
+ *  (first + last + suffix), so a two-token name is never left without a last
+ *  name. Unlike work-email's splitFullName, `last` here is the WHOLE last name
+ *  ("Dela Cruz"), since it backs the form's last-name field. */
+function splitName(full: string | null | undefined): {
+  first: string;
+  last: string;
+  extension: string;
+} {
+  const tokens = (full ?? '').trim().split(/\s+/).filter(Boolean);
+  let extension = '';
+  if (tokens.length >= 3 && NAME_EXTENSIONS.has((tokens[tokens.length - 1] ?? '').toLowerCase())) {
+    extension = tokens.pop() ?? '';
+  }
+  return { first: tokens[0] ?? '', last: tokens.slice(1).join(' '), extension };
+}
 
 const STEP_TITLES = [
   'Intellectual Property',
@@ -236,10 +263,11 @@ export default function OnboardingFormPage() {
         const prior = json.row?.priorData;
         if (prior) {
           // Pre-fill from previous submission so the hire doesn't start from scratch.
-          const nameTokens = (prior.full_name ?? '').trim().split(/\s+/).filter(Boolean);
+          const priorName = splitName(prior.full_name);
           setForm({
-            first_name: nameTokens[0] ?? '',
-            last_name: nameTokens.slice(1).join(' '),
+            first_name: priorName.first,
+            last_name: priorName.last,
+            extension: priorName.extension,
             gmail_surname: prior.gmail_surname ?? '',
             phone: prior.phone ?? '',
             email: prior.email ?? '',
@@ -281,11 +309,12 @@ export default function OnboardingFormPage() {
         } else {
           // New submission — seed invite fields as hints.
           if (json.row?.invite_name) {
-            const tokens = (json.row.invite_name ?? '').trim().split(/\s+/).filter(Boolean);
+            const inviteName = splitName(json.row.invite_name);
             setForm((f) => ({
               ...f,
-              first_name: tokens[0] ?? '',
-              last_name: tokens.slice(1).join(' '),
+              first_name: inviteName.first,
+              last_name: inviteName.last,
+              extension: inviteName.extension,
               // Pre-fill the IP document's name from the invite too.
               ip_agreement_name: f.ip_agreement_name || (json.row!.invite_name ?? ''),
             }));
@@ -458,8 +487,8 @@ export default function OnboardingFormPage() {
     if (step === 0) {
       setForm((f) => {
         if (f.first_name.trim() || !f.ip_agreement_name.trim()) return f;
-        const tokens = f.ip_agreement_name.trim().split(/\s+/).filter(Boolean);
-        return { ...f, first_name: tokens[0] ?? '', last_name: tokens.slice(1).join(' ') };
+        const seeded = splitName(f.ip_agreement_name);
+        return { ...f, first_name: seeded.first, last_name: seeded.last, extension: seeded.extension };
       });
     }
     setDirection(1);
@@ -530,7 +559,14 @@ export default function OnboardingFormPage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          full_name: [form.first_name.trim(), form.last_name.trim()].filter(Boolean).join(' '),
+          // Extension (Jr./Sr./III) is folded into the legal full name here so HR
+          // + contracts read it whole. It is NOT sent to the workspace-account
+          // automation: that webhook derives first_name from the first token and
+          // last_name from the work-email-based gmail_surname, so the suffix never
+          // reaches it.
+          full_name: [form.first_name.trim(), form.last_name.trim(), form.extension.trim()]
+            .filter(Boolean)
+            .join(' '),
           gmail_surname: form.gmail_surname.trim() || null,
           phone: form.phone.trim(),
           email: form.email.trim(),
@@ -900,15 +936,26 @@ function Step1Welcome({
             autoFocus
           />
         </Field>
-        <Field label="Last name" required>
-          <Input
-            value={form.last_name ?? ''}
-            onChange={(e) => update('last_name', e.target.value)}
-            onBlur={(e) => update('last_name', toTitleCaseName(e.target.value))}
-            placeholder="Dela Cruz"
-            autoComplete="family-name"
-          />
-        </Field>
+        <div className="grid grid-cols-[1fr_5.5rem] gap-3">
+          <Field label="Last name" required>
+            <Input
+              value={form.last_name ?? ''}
+              onChange={(e) => update('last_name', e.target.value)}
+              onBlur={(e) => update('last_name', toTitleCaseName(e.target.value))}
+              placeholder="Dela Cruz"
+              autoComplete="family-name"
+            />
+          </Field>
+          <Field label="Extension">
+            <Input
+              value={form.extension ?? ''}
+              onChange={(e) => update('extension', e.target.value)}
+              onBlur={(e) => update('extension', toTitleCaseName(e.target.value))}
+              placeholder="Jr."
+              autoComplete="honorific-suffix"
+            />
+          </Field>
+        </div>
         <Field label="Gmail Surname" className="sm:col-span-2">
           <div className="relative">
             <Input

@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { EmployeeHourlyRateRow } from '@/lib/supabase/employee-hourly-rates';
 import type { EmployeeIdRow } from '@/lib/supabase/employee-ids';
 import type { CurrentPayResult, PayrollPeriod } from '@/lib/payroll/current-pay';
@@ -82,6 +82,22 @@ const EMPTY_PERIOD: PayrollPeriod = {
   end: null,
   sourceFile: null,
 };
+
+/** Build the visible state for a cache key — the last-known queue for that week
+ *  (instant paint) or a blank loading shell when the week hasn't been seen. */
+function seedState(cacheKey: string): Omit<DispatchQueueState, 'refresh'> {
+  const cached = getTabCache<CachedQueue>(cacheKey);
+  return {
+    rows: cached?.rows ?? [],
+    excluded: cached?.excluded ?? [],
+    paid: cached?.paid ?? [],
+    period: cached?.period ?? EMPTY_PERIOD,
+    fxRate: cached?.fxRate ?? 0,
+    wizardReady: cached?.wizardReady ?? true,
+    loading: cached === undefined,
+    error: null,
+  };
+}
 
 /** Read the cycle's "values locked" flag value (JSON, legacy bool, or null). */
 function parseLockedFlag(value: string | null | undefined): boolean {
@@ -452,19 +468,7 @@ export function useDispatchQueue(sourceFile?: string | null): DispatchQueueState
 
   // Seed from the in-session cache so switching back to the dispatch tab paints
   // the last-known queue instantly instead of a skeleton; we still revalidate.
-  const [state, setState] = useState<Omit<DispatchQueueState, 'refresh'>>(() => {
-    const cached = getTabCache<CachedQueue>(cacheKey);
-    return {
-      rows: cached?.rows ?? [],
-      excluded: cached?.excluded ?? [],
-      paid: cached?.paid ?? [],
-      period: cached?.period ?? EMPTY_PERIOD,
-      fxRate: cached?.fxRate ?? 0,
-      wizardReady: cached?.wizardReady ?? true,
-      loading: cached === undefined,
-      error: null,
-    };
-  });
+  const [state, setState] = useState<Omit<DispatchQueueState, 'refresh'>>(() => seedState(cacheKey));
 
   const load = useCallback(async (signal?: AbortSignal, opts?: { silent?: boolean }) => {
     // Silent refreshes (post-action reconciliation, or a cache-backed remount)
@@ -517,10 +521,15 @@ export function useDispatchQueue(sourceFile?: string | null): DispatchQueueState
     }
   }, [sel, cacheKey]);
 
+  const mountedRef = useRef(false);
   useEffect(() => {
     const controller = new AbortController();
-    // A week switch should show the skeleton (no stale cache for that week yet);
-    // a remount with a warm cache for THIS week revalidates silently.
+    // On a week SWITCH (cacheKey changed after mount), immediately re-seed the
+    // visible state from the NEW week's cache (or a blank shell) so the previous
+    // week's rows can never linger on screen while the async load runs — even on
+    // a silent warm-cache revalidate. Mount is already seeded by useState.
+    if (mountedRef.current) setState(seedState(cacheKey));
+    else mountedRef.current = true;
     void load(controller.signal, { silent: hasTabCache(cacheKey) });
     return () => controller.abort();
   }, [load, cacheKey]);
