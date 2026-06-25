@@ -7627,6 +7627,19 @@ export default function PayrollWizard({
                       const page = Math.min(pabExclusionPage, totalPages - 1);
                       const pageStart = page * PAB_EXCL_PER_PAGE;
                       const pageItems = people.slice(pageStart, pageStart + PAB_EXCL_PER_PAGE);
+                      // Condensed page tokens: always 1 + last, current ±1, with '…'
+                      // gaps — so 100 pages render as "1 … 49 50 51 … 100", never 100 dots.
+                      const cur1 = page + 1; // 1-based
+                      const pageTokens: (number | 'gap')[] = [];
+                      {
+                        const mid: number[] = [];
+                        for (let i = Math.max(2, cur1 - 1); i <= Math.min(totalPages - 1, cur1 + 1); i++) mid.push(i);
+                        pageTokens.push(1);
+                        if (mid.length && mid[0] > 2) pageTokens.push('gap');
+                        pageTokens.push(...mid);
+                        if (mid.length && mid[mid.length - 1] < totalPages - 1) pageTokens.push('gap');
+                        if (totalPages > 1) pageTokens.push(totalPages);
+                      }
                       return (
                         <div className="border-t border-rose-200/60 pt-4 dark:border-rose-900/40">
                           <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
@@ -7785,20 +7798,27 @@ export default function PayrollWizard({
                                 Prev
                               </button>
                               <div className="flex items-center gap-1">
-                                {Array.from({ length: totalPages }, (_, i) => (
-                                  <button
-                                    key={i}
-                                    type="button"
-                                    onClick={() => setPabExclusionPage(i)}
-                                    aria-label={`Page ${i + 1}`}
-                                    className={cn(
-                                      'h-1.5 rounded-full transition-all duration-200',
-                                      i === page
-                                        ? 'w-4 bg-rose-500 dark:bg-rose-400'
-                                        : 'w-1.5 bg-zinc-300 hover:bg-zinc-400 dark:bg-zinc-700 dark:hover:bg-zinc-600',
-                                    )}
-                                  />
-                                ))}
+                                {pageTokens.map((tok, i) =>
+                                  tok === 'gap' ? (
+                                    <span key={`gap-${i}`} className="px-0.5 text-[11px] leading-none text-zinc-400 dark:text-zinc-600">…</span>
+                                  ) : (
+                                    <button
+                                      key={tok}
+                                      type="button"
+                                      onClick={() => setPabExclusionPage(tok - 1)}
+                                      aria-label={`Page ${tok}`}
+                                      aria-current={tok - 1 === page ? 'page' : undefined}
+                                      className={cn(
+                                        'flex h-6 min-w-[24px] items-center justify-center rounded-md px-1.5 text-[11px] font-semibold tabular-nums transition-colors duration-200',
+                                        tok - 1 === page
+                                          ? 'bg-rose-500 text-white dark:bg-rose-500'
+                                          : 'border border-zinc-200 bg-white text-zinc-600 hover:bg-rose-50 hover:text-rose-600 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:bg-rose-950/30',
+                                      )}
+                                    >
+                                      {tok}
+                                    </button>
+                                  ),
+                                )}
                               </div>
                               <button
                                 type="button"
