@@ -39,6 +39,7 @@ import {
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import EmployeePabCalendar from './employee/EmployeePabCalendar';
+import { type AttentionTone, ATTENTION_PALETTE, HeroStatRow } from '@/components/accounting/hero-stat-row';
 import { X } from 'lucide-react';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';

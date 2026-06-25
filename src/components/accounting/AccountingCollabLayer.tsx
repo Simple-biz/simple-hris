@@ -61,6 +61,8 @@ const CURSOR_TTL_MS = 4500;
 // How long a ping's chat-head bubble lingers on the sender's avatar before it
 // floats away. A fresh ping from the same sender resets this window.
 const PING_TTL_MS = 5000;
+// One-tap canned messages offered alongside the free-text ping composer.
+const QUICK_PINGS = ['👋 Hi!', '👀 Look here', '✅ Done?', '🙏 Need you', '🔥 Urgent'];
 // Max avatars shown in the right-edge rail before collapsing the rest into a
 // "+N" chip. Keeps the (scrollbar-free) rail from running off short screens.
 const MAX_RAIL_AVATARS = 9;
@@ -481,7 +483,7 @@ function RailAvatar({
   onObserve: () => void;
   onStopObserve: () => void;
   ping: PingState | null;
-  onPing: () => void;
+  onPing: (text: string) => void;
   index: number;
 }) {
   const [imgFailed, setImgFailed] = useState(false);
@@ -505,13 +507,20 @@ function RailAvatar({
     });
   }, [ping?.id, wiggle]);
 
-  // Brief "Pinged!" state on our own button after we nudge this peer.
+  // Ping composer: a collapsed "Ping" button -> opens a small message box with
+  // quick canned replies; submitting fires the ping + a brief "Pinged!" state.
+  const [composing, setComposing] = useState(false);
+  const [draft, setDraft] = useState('');
   const [pinged, setPinged] = useState(false);
   const sentTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => () => { if (sentTimerRef.current) clearTimeout(sentTimerRef.current); }, []);
-  const handlePing = () => {
-    if (pinged) return;
-    onPing();
+  // Collapse + reset the composer whenever this peer's card closes.
+  useEffect(() => { if (!open) { setComposing(false); setDraft(''); } }, [open]);
+
+  const submitPing = (text: string) => {
+    onPing(text); // empty -> parent falls back to a friendly wave
+    setDraft('');
+    setComposing(false);
     setPinged(true);
     if (sentTimerRef.current) clearTimeout(sentTimerRef.current);
     sentTimerRef.current = setTimeout(() => setPinged(false), 1600);
@@ -561,18 +570,76 @@ function RailAvatar({
             >
               {observing ? 'Stop observing' : 'Observe'}
             </button>
-            <button
-              type="button"
-              onClick={handlePing}
-              disabled={pinged}
-              className={
-                'mt-1.5 flex w-full items-center justify-center gap-1.5 rounded-md px-2.5 py-1.5 text-[11px] font-semibold text-white shadow transition-colors ' +
-                (pinged ? 'bg-emerald-500' : 'bg-sky-500 hover:bg-sky-400')
-              }
-            >
-              <Send className="h-3 w-3" />
-              {pinged ? 'Pinged!' : 'Ping'}
-            </button>
+            <AnimatePresence mode="wait" initial={false}>
+              {pinged ? (
+                <motion.div
+                  key="pinged"
+                  initial={{ opacity: 0, y: 4 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0 }}
+                  className="mt-1.5 flex w-full items-center justify-center gap-1.5 rounded-md bg-emerald-500 px-2.5 py-1.5 text-[11px] font-semibold text-white shadow"
+                >
+                  <Send className="h-3 w-3" />
+                  Pinged!
+                </motion.div>
+              ) : composing ? (
+                <motion.form
+                  key="composer"
+                  initial={{ opacity: 0, height: 0 }}
+                  animate={{ opacity: 1, height: 'auto' }}
+                  exit={{ opacity: 0, height: 0 }}
+                  transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
+                  className="mt-2 overflow-hidden text-left"
+                  onSubmit={(e) => { e.preventDefault(); submitPing(draft); }}
+                >
+                  <div className="flex items-center gap-1.5">
+                    {/* eslint-disable-next-line jsx-a11y/no-autofocus */}
+                    <input
+                      autoFocus
+                      value={draft}
+                      onChange={(e) => setDraft(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === 'Escape') { setComposing(false); setDraft(''); } }}
+                      maxLength={200}
+                      placeholder="Type a message…"
+                      className="w-40 rounded-md bg-zinc-800 px-2 py-1.5 text-[11px] text-white placeholder:text-zinc-500 outline-none ring-1 ring-white/10 focus:ring-1 focus:ring-sky-400"
+                    />
+                    <button
+                      type="submit"
+                      title="Send ping"
+                      aria-label="Send ping"
+                      className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-sky-500 text-white shadow transition-colors hover:bg-sky-400"
+                    >
+                      <Send className="h-3 w-3" />
+                    </button>
+                  </div>
+                  <div className="mt-1.5 flex flex-wrap gap-1">
+                    {QUICK_PINGS.map((q) => (
+                      <button
+                        key={q}
+                        type="button"
+                        onClick={() => submitPing(q)}
+                        className="rounded-full bg-zinc-800 px-2 py-0.5 text-[10px] font-medium text-zinc-200 transition-colors hover:bg-zinc-700"
+                      >
+                        {q}
+                      </button>
+                    ))}
+                  </div>
+                </motion.form>
+              ) : (
+                <motion.button
+                  key="ping-btn"
+                  type="button"
+                  onClick={() => setComposing(true)}
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  className="mt-1.5 flex w-full items-center justify-center gap-1.5 rounded-md bg-sky-500 px-2.5 py-1.5 text-[11px] font-semibold text-white shadow transition-colors hover:bg-sky-400"
+                >
+                  <Send className="h-3 w-3" />
+                  Ping
+                </motion.button>
+              )}
+            </AnimatePresence>
           </motion.div>
         )}
       </AnimatePresence>
@@ -601,17 +668,18 @@ function RailAvatar({
             exit={{ opacity: 0, x: 10, scale: 0.5, transition: { duration: 0.2 } }}
             transition={{ type: 'spring', stiffness: 480, damping: 15, mass: 0.7 }}
           >
-            <div className="relative flex items-center gap-2 whitespace-nowrap rounded-2xl bg-gradient-to-br from-orange-500 to-pink-500 px-3.5 py-2 text-white shadow-[0_8px_24px_rgba(236,72,153,0.45)] ring-1 ring-white/30">
+            <div className="relative flex max-w-[240px] items-start gap-2 rounded-2xl bg-gradient-to-br from-orange-500 to-pink-500 px-3.5 py-2 text-left text-white shadow-[0_8px_24px_rgba(236,72,153,0.45)] ring-1 ring-white/30">
               <motion.span
-                className="text-base leading-none"
+                className="mt-0.5 shrink-0 text-base leading-none"
                 animate={{ rotate: [0, 20, -12, 16, 0] }}
                 transition={{ duration: 0.9, ease: 'easeInOut', repeat: Infinity, repeatDelay: 0.7 }}
                 style={{ transformOrigin: '70% 80%' }}
               >
                 👋
               </motion.span>
-              <span className="text-[12px] font-semibold leading-tight">
-                <span className="font-bold">{display}</span> {ping.text}
+              <span className="flex min-w-0 flex-col gap-0.5">
+                <span className="text-[9px] font-bold uppercase leading-none tracking-wide text-white/85">{display}</span>
+                <span className="break-words text-[12px] font-medium leading-snug">{ping.text}</span>
               </span>
               {/* tail: a small rotated square fused to the bubble, pointing right */}
               <span className="absolute right-[-4px] top-1/2 h-2.5 w-2.5 -translate-y-1/2 rotate-45 rounded-[2px] bg-pink-500" />
@@ -940,10 +1008,12 @@ export default function AccountingCollabLayer({ selfEmail, section, containerRef
   const sendMsg = useCallback((m: CollabMsg) => { sendRef.current?.(m); }, []);
 
   // Nudge a peer: broadcast a directed ping (they hear/see it) + a soft local
-  // "sent" blip. `broadcast.self=false` means we never receive our own ping.
-  const sendPing = useCallback((toEmail: string) => {
+  // "sent" blip. An empty message falls back to a friendly wave. `broadcast.self
+  // =false` means we never receive our own ping.
+  const sendPing = useCallback((toEmail: string, text?: string) => {
     if (!normSelf) return;
-    sendRef.current?.({ kind: 'ping', email: normSelf, toEmail, text: 'waved at you' });
+    const msg = (text ?? '').replace(/\s+/g, ' ').trim().slice(0, 200) || 'waved at you';
+    sendRef.current?.({ kind: 'ping', email: normSelf, toEmail, text: msg });
     playPingSent();
   }, [normSelf]);
 
@@ -1120,7 +1190,7 @@ export default function AccountingCollabLayer({ selfEmail, section, containerRef
                   }}
                   onStopObserve={() => setObservedEmail(null)}
                   ping={pings.get(p.email) ?? null}
-                  onPing={() => sendPing(p.email)}
+                  onPing={(text) => sendPing(p.email, text)}
                 />
               ))}
               {peers.length > MAX_RAIL_AVATARS && (
