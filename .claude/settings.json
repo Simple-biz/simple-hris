@@ -120,7 +120,9 @@
       "PowerShell(cd C:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris; \\(Get-Content src/components/payroll-clerk/PayrollClerkApp.tsx | Measure-Object -Line\\).Lines)",
       "Bash(git -C \"c:/Users/Itachi/Desktop/simple-hris\" --no-pager diff --stat)",
       "Bash(git -C \"c:/Users/Itachi/Desktop/simple-hris\" --no-pager diff -- \"app/onboarding/[token]/page.tsx\")",
-      "Bash(npx tsc *)"
+      "Bash(npx tsc *)",
+      "Bash(tee /tmp/tsc2.log)",
+      "Bash(tee /tmp/tsc3.log)"
     ],
     "additionalDirectories": [
       "\\tmp"

@@ -3,8 +3,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { motion } from 'motion/react';
 import {
-  Building2, CalendarDays, Send, Wallet, ChevronRight, Loader2, Search, Eye,
-  Users, Activity, AlertTriangle, LineChart,
+  Building2, CalendarDays, Send, Wallet, ChevronRight, ChevronLeft, Loader2, Search, Eye,
+  Users, Activity, AlertTriangle,
 } from 'lucide-react';
 import { usePaymentsLive } from '@/hooks/usePaymentsLive';
 import { useDispatchLock } from '@/hooks/useDispatchLock';
@@ -14,6 +14,7 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { TeamAvatar } from '@/components/team/team-ui';
+import { HeroStatRow } from '@/components/accounting/hero-stat-row';
 import { cn } from '@/lib/utils';
 
 interface DeptCount {
@@ -66,54 +67,74 @@ const STATUS_LABEL: Record<string, string> = {
   problem: 'Problem',
 };
 
-/* ── System Overview stat tiles ─────────────────────────────────────────── */
+/* ── Live status pill ───────────────────────────────────────────────────── */
 
-type StatTone = 'neutral' | 'info' | 'warn' | 'ok';
-
-const STAT_TONES: Record<StatTone, { ring: string; iconTile: string; valueText: string }> = {
-  neutral: {
-    ring: 'border-zinc-200/80 dark:border-zinc-800/80',
-    iconTile: 'bg-gradient-to-br from-zinc-700 to-zinc-900 text-white shadow-sm shadow-zinc-900/30 dark:from-zinc-100 dark:to-zinc-300 dark:text-zinc-900',
-    valueText: 'text-zinc-900 dark:text-zinc-100',
-  },
-  info: {
-    ring: 'border-sky-200/70 dark:border-sky-900/40',
-    iconTile: 'bg-gradient-to-br from-sky-500 to-blue-600 text-white shadow-sm shadow-blue-500/40',
-    valueText: 'text-sky-900 dark:text-sky-100',
-  },
-  warn: {
-    ring: 'border-amber-200/70 dark:border-amber-900/40',
-    iconTile: 'bg-gradient-to-br from-amber-400 to-orange-500 text-white shadow-sm shadow-amber-500/40',
-    valueText: 'text-amber-900 dark:text-amber-100',
-  },
-  ok: {
-    ring: 'border-emerald-200/70 dark:border-emerald-900/40',
-    iconTile: 'bg-gradient-to-br from-emerald-500 to-teal-600 text-white shadow-sm shadow-emerald-500/40',
-    valueText: 'text-emerald-900 dark:text-emerald-100',
-  },
-};
-
-function SystemStatTile({
-  Icon, tone, label, value,
-}: {
-  Icon: React.ComponentType<{ className?: string }>;
-  tone: StatTone;
-  label: string;
-  value: number | null;
-}) {
-  const t = STAT_TONES[tone];
+/**
+ * The "Dashboard · live" caption pill from the Accounting hero, replicated at
+ * its resting state (pulsing halos + ECG trace). Non-interactive here — the CEO
+ * board has no API-latency ping — so it's a span, not a hover button.
+ */
+function LiveStatusPill({ status }: { status: 'live' | 'error' }) {
+  const isErr = status === 'error';
   return (
-    <div className={cn('flex items-center gap-2.5 rounded-xl border bg-white/70 px-3 py-2.5 backdrop-blur-md dark:bg-zinc-900/50', t.ring)}>
-      <span className={cn('flex h-8 w-8 shrink-0 items-center justify-center rounded-lg [&_svg]:h-4 [&_svg]:w-4', t.iconTile)}>
-        <Icon />
+    <span
+      className={cn(
+        'relative mb-3 inline-flex items-center gap-1.5 overflow-visible rounded-full border px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.18em] backdrop-blur-md',
+        isErr
+          ? 'border-rose-200/80 bg-stone-50/70 text-rose-700 dark:border-rose-900/40 dark:bg-rose-950/30 dark:text-rose-300'
+          : 'border-orange-200/80 bg-stone-50/70 text-orange-700 dark:border-orange-900/40 dark:bg-orange-950/30 dark:text-orange-300',
+      )}
+    >
+      <span className="relative inline-flex h-3 w-3 items-center justify-center">
+        {/* Halo ring 1 — primary continuous ripple */}
+        <motion.span
+          aria-hidden
+          className={cn(
+            'absolute inset-[-4px] rounded-full',
+            isErr ? 'bg-rose-400/50 dark:bg-rose-500/45' : 'bg-orange-400/55 dark:bg-orange-500/45',
+          )}
+          animate={
+            isErr
+              ? { opacity: [0, 0.4, 0], scale: [0.6, 1.4, 1.6] }
+              : { opacity: [0, 0.65, 0], scale: [0.55, 1.7, 2.0] }
+          }
+          transition={{ duration: isErr ? 1.6 : 2.2, repeat: Infinity, ease: 'easeOut' }}
+        />
+        {/* Halo ring 2 — offset second ripple for an ECG-radar feel (live only) */}
+        {!isErr && (
+          <motion.span
+            aria-hidden
+            className="absolute inset-[-4px] rounded-full bg-orange-300/40 dark:bg-orange-400/35"
+            animate={{ opacity: [0, 0.45, 0], scale: [0.5, 1.9, 2.3] }}
+            transition={{ duration: 2.2, repeat: Infinity, ease: 'easeOut', delay: 1.1 }}
+          />
+        )}
+        {/* ECG-style pulse trace sweeping along a reversed Activity path. */}
+        <svg className="relative h-3 w-3" viewBox="0 0 24 24" fill="none" aria-hidden>
+          <path
+            d="M2 12h4l3 -9l6 18l3 -9h4"
+            stroke="currentColor"
+            strokeOpacity="0.32"
+            strokeWidth={2.5}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+          <motion.path
+            d="M2 12h4l3 -9l6 18l3 -9h4"
+            stroke="currentColor"
+            strokeWidth={2.85}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            pathLength={1}
+            strokeDasharray="0.26 0.74"
+            initial={{ strokeDashoffset: 0 }}
+            animate={{ strokeDashoffset: [0, -1] }}
+            transition={{ duration: isErr ? 2.2 : 1.5, repeat: Infinity, ease: 'linear' }}
+          />
+        </svg>
       </span>
-      <div className="min-w-0 flex-1">
-        <div className="truncate text-[11px] font-medium text-zinc-500 dark:text-zinc-400">{label}</div>
-        <div className={cn('font-mono text-base font-semibold leading-tight tabular-nums', t.valueText)}>
-          {value == null ? '—' : value.toLocaleString('en-US')}
-        </div>
-      </div>
-    </div>
+      <span>Dashboard · {isErr ? 'offline' : 'live'}</span>
+    </span>
   );
 }
 
@@ -122,6 +143,8 @@ export default function CeoOverviewKpis({ viewerEmail }: { viewerEmail: string |
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
   const [showUnpaid, setShowUnpaid] = useState(false);
+  // Headcount-by-department sidebar pagination (5 departments per page).
+  const [deptPage, setDeptPage] = useState(1);
   // Live "payments to send" — counts down as workers are paid (Supabase
   // Realtime on payment_dispatches), independent of the one-shot KPI fetch.
   const live = usePaymentsLive();
@@ -155,6 +178,15 @@ export default function CeoOverviewKpis({ viewerEmail }: { viewerEmail: string |
 
   const departments = kpis?.departments ?? [];
   const maxDept = Math.max(1, ...departments.map((d) => d.count));
+  // Paginate the department list 5-per-page; bar widths stay scaled to the
+  // global max so they're comparable across pages.
+  const DEPT_PAGE_SIZE = 5;
+  const deptTotalPages = Math.max(1, Math.ceil(departments.length / DEPT_PAGE_SIZE));
+  const safeDeptPage = Math.min(Math.max(1, deptPage), deptTotalPages);
+  const pagedDepartments = departments.slice(
+    (safeDeptPage - 1) * DEPT_PAGE_SIZE,
+    safeDeptPage * DEPT_PAGE_SIZE,
+  );
   const lastCycle = kpis?.lastCycle ?? null;
   const hasUnpaid = !!lastCycle && lastCycle.unpaidCount > 0 && lastCycle.workers.length > 0;
   const paidPct = live.total > 0 ? Math.min(100, Math.round((live.paid / live.total) * 100)) : 0;
@@ -167,120 +199,6 @@ export default function CeoOverviewKpis({ viewerEmail }: { viewerEmail: string |
           Some metrics may be incomplete: {err}
         </div>
       )}
-
-      {/* System Overview board (dominant, 3/4) + Headcount by department (1/4
-          sidebar). Mirrors the Accounting "System Overview" hero: total payout
-          for the live pay run, master-list vs payroll headcount, reconcile gaps. */}
-      <div className="grid gap-4 lg:grid-cols-4">
-        {/* ── System Overview board ── */}
-        <section className="relative overflow-hidden rounded-2xl border border-amber-200/70 bg-gradient-to-br from-stone-50 via-amber-50/40 to-white p-5 shadow-sm lg:col-span-3 dark:border-amber-900/30 dark:from-zinc-950 dark:via-amber-950/15 dark:to-zinc-950">
-          <div className="mb-3 flex items-center justify-between gap-2">
-            <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.16em] text-amber-700/90 dark:text-amber-400/90">
-              <LineChart className="h-3.5 w-3.5" /> System overview
-            </div>
-            {sys && (
-              <div className="inline-flex items-center gap-1.5 rounded-lg border border-amber-200/80 bg-white/70 px-2.5 py-1 text-[11px] backdrop-blur-md dark:border-amber-900/40 dark:bg-zinc-900/60">
-                <CalendarDays className="h-3.5 w-3.5 text-amber-500 dark:text-amber-400" />
-                <span className="font-semibold tracking-tight text-zinc-700 dark:text-zinc-200">
-                  {sys.periodLabel}
-                  {sys.periodWeek != null && (
-                    <span className="ml-1.5 text-zinc-400 dark:text-zinc-500">· wk {sys.periodWeek}</span>
-                  )}
-                </span>
-              </div>
-            )}
-          </div>
-
-          {sys ? (
-            <>
-              <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-zinc-400 dark:text-zinc-500">
-                Total payout · this pay run
-              </p>
-              <div className="mt-1 flex items-baseline">
-                <span className="mr-1.5 text-3xl font-medium text-zinc-400 sm:text-4xl dark:text-zinc-500">₱</span>
-                <span className="font-mono text-3xl font-bold tracking-tight text-zinc-900 sm:text-4xl xl:text-5xl dark:text-white">
-                  {sys.totalPayoutPhp != null
-                    ? sys.totalPayoutPhp.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-                    : '—'}
-                </span>
-              </div>
-              <div className="mt-2 h-[2px] w-16 rounded-full bg-gradient-to-r from-amber-500 to-orange-500 dark:from-amber-400 dark:to-orange-400" />
-              <p className="mt-2.5 flex flex-wrap items-center gap-2.5 text-[13px] text-zinc-600 dark:text-zinc-400">
-                <span className="inline-flex items-center gap-1.5">
-                  <span className="inline-flex h-5 items-center justify-center rounded-full bg-emerald-100 px-1.5 text-[10px] font-semibold text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300">
-                    {sys.inThisPayroll.toLocaleString('en-US')}
-                  </span>
-                  active workers
-                </span>
-                {sys.totalPayoutUsd != null && (
-                  <>
-                    <span className="text-zinc-300 dark:text-zinc-700">·</span>
-                    <span>
-                      ≈{' '}
-                      <strong className="font-mono font-semibold text-zinc-900 dark:text-white">
-                        ${sys.totalPayoutUsd.toLocaleString('en-US', { maximumFractionDigits: 0 })}
-                      </strong>{' '}
-                      USD
-                    </span>
-                  </>
-                )}
-                <span className="text-zinc-300 dark:text-zinc-700">·</span>
-                <span>Initial pay · bonuses applied at payroll</span>
-              </p>
-
-              {/* Stat tiles — mirror the Accounting right rail. */}
-              <div className="mt-4 grid grid-cols-1 gap-2.5 border-t border-amber-100/80 pt-4 sm:grid-cols-3 dark:border-amber-900/20">
-                <SystemStatTile Icon={Users} tone="neutral" label="Master list" value={sys.masterList} />
-                <SystemStatTile Icon={Activity} tone="info" label="In this payroll" value={sys.inThisPayroll} />
-                <SystemStatTile
-                  Icon={AlertTriangle}
-                  tone={sys.reconcileGaps > 0 ? 'warn' : 'ok'}
-                  label="Reconcile gaps"
-                  value={sys.reconcileGaps}
-                />
-              </div>
-            </>
-          ) : (
-            <p className="py-8 text-center text-sm text-zinc-400">
-              No active pay cycle to summarize yet.
-            </p>
-          )}
-        </section>
-
-        {/* ── Headcount by department (1/4 sidebar) ── */}
-        <div className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm lg:col-span-1 dark:border-zinc-800 dark:bg-zinc-950">
-          <div className="mb-3.5 flex items-center justify-between gap-2">
-            <div className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-zinc-400">
-              <Building2 className="h-3.5 w-3.5 text-amber-500" /> Headcount
-            </div>
-            <span className="text-[12px] text-zinc-400">{kpis?.totalHeadcount ?? 0}</span>
-          </div>
-          {departments.length === 0 ? (
-            <p className="py-8 text-center text-sm text-zinc-400">No people to show.</p>
-          ) : (
-            <ul className="space-y-2.5">
-              {departments.map((d) => (
-                <li key={d.department} className="space-y-1">
-                  <div className="flex items-center justify-between gap-2 text-[12px]">
-                    <span className="min-w-0 truncate text-zinc-600 dark:text-zinc-300" title={d.department}>
-                      {d.department}
-                    </span>
-                    <span className="shrink-0 font-semibold tabular-nums text-zinc-800 dark:text-zinc-100">
-                      {d.count}
-                    </span>
-                  </div>
-                  <div className="h-1.5 w-full overflow-hidden rounded-full bg-zinc-100 dark:bg-zinc-900">
-                    <div
-                      className="h-full rounded-full bg-gradient-to-r from-amber-400 to-yellow-500 transition-[width] duration-500 ease-out"
-                      style={{ width: `${Math.max(3, (d.count / maxDept) * 100)}%` }}
-                    />
-                  </div>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      </div>
 
       {/* Cards 2 & 3 — pay week / payments to send, and last-cycle unpaid. */}
       <div className="grid gap-4 sm:grid-cols-2">
@@ -405,6 +323,164 @@ export default function CeoOverviewKpis({ viewerEmail }: { viewerEmail: string |
             {lastCycle ? <span className="truncate">{lastCycle.reportName}</span> : 'No completed cycle yet'}
           </div>
         </button>
+      </div>
+
+      {/* System Overview — byte-identical to the Accounting hero (shared
+          HeroStatRow + the same gradient / orbs / pill / total-payout layout),
+          fed by the live pay cycle. Dominant 3/4 board; Headcount by department
+          becomes the 1/4 sidebar beside it. */}
+      <div className="grid gap-4 lg:grid-cols-4">
+        <section className="relative overflow-hidden rounded-3xl border border-orange-100/80 bg-gradient-to-br from-stone-50 via-orange-50/35 to-blue-50/25 p-5 shadow-[0_12px_32px_-16px_rgba(255,138,76,0.12)] lg:col-span-3 lg:p-7 xl:p-8 dark:border-orange-900/30 dark:from-zinc-950 dark:via-orange-950/15 dark:to-blue-950/15">
+          {/* Decorative orbs — pure dopamine (mirror Accounting). */}
+          <div aria-hidden className="pointer-events-none absolute inset-0 overflow-hidden">
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.9 }} className="absolute -left-24 -top-24 h-72 w-72 rounded-full bg-orange-300/30 blur-3xl dark:bg-orange-500/15" />
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 1.1, delay: 0.1 }} className="absolute -right-20 top-12 h-64 w-64 rounded-full bg-rose-300/25 blur-3xl dark:bg-rose-500/15" />
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 1.3, delay: 0.2 }} className="absolute bottom-0 left-1/3 h-56 w-56 rounded-full bg-blue-300/20 blur-3xl dark:bg-blue-500/15" />
+          </div>
+
+          {sys ? (
+            <motion.div
+              initial="hidden"
+              animate="visible"
+              variants={{
+                hidden: { opacity: 0 },
+                visible: { opacity: 1, transition: { staggerChildren: 0.06, delayChildren: 0.05 } },
+              }}
+              className="relative grid grid-cols-1 items-end gap-4 xl:grid-cols-[1fr_auto] xl:gap-8"
+            >
+              <motion.div variants={{ hidden: { opacity: 0, y: 8 }, visible: { opacity: 1, y: 0 } }}>
+                <LiveStatusPill status={err ? 'error' : 'live'} />
+                <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-orange-700/80 xl:mb-3 dark:text-orange-400/80">
+                  Total payout · this pay run
+                </p>
+                <div className="flex items-baseline">
+                  <span className="mr-1.5 text-4xl font-medium text-zinc-400 lg:text-5xl xl:text-6xl 2xl:text-7xl dark:text-zinc-500">₱</span>
+                  <span className="font-mono text-4xl font-bold tracking-tight text-zinc-900 lg:text-5xl xl:text-6xl 2xl:text-7xl dark:text-white">
+                    {sys.totalPayoutPhp != null
+                      ? sys.totalPayoutPhp.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                      : '—'}
+                  </span>
+                </div>
+                {/* Accent rule — orange→rose hairline under the hero number. */}
+                <div className="mt-2.5 h-[2px] w-16 rounded-full bg-gradient-to-r from-orange-500 to-rose-500 dark:from-orange-400 dark:to-rose-400" />
+                <p className="mt-3 flex flex-wrap items-center gap-3 text-[13px] text-zinc-600 dark:text-zinc-400">
+                  <span className="inline-flex items-center gap-1.5">
+                    <span className="inline-flex h-5 items-center justify-center rounded-full bg-emerald-100 px-1.5 text-[10px] font-semibold text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300">
+                      {sys.inThisPayroll.toLocaleString('en-US')}
+                    </span>
+                    active workers
+                  </span>
+                  {sys.totalPayoutUsd != null && (
+                    <>
+                      <span className="text-zinc-300 dark:text-zinc-700">·</span>
+                      <span>
+                        ≈{' '}
+                        <strong className="font-mono font-semibold text-zinc-900 dark:text-white">
+                          ${sys.totalPayoutUsd.toLocaleString('en-US', { maximumFractionDigits: 0 })}
+                        </strong>{' '}
+                        USD
+                      </span>
+                    </>
+                  )}
+                  <span className="text-zinc-300 dark:text-zinc-700">·</span>
+                  <span>Initial pay · bonuses applied at payroll</span>
+                </p>
+              </motion.div>
+
+              {/* Right rail — period pill + status pills with colored icon tiles. */}
+              <motion.div
+                variants={{ hidden: { opacity: 0, y: 8 }, visible: { opacity: 1, y: 0 } }}
+                className="flex w-full flex-col gap-2.5 xl:w-auto xl:min-w-[280px]"
+              >
+                <div className="inline-flex items-center gap-2 self-start rounded-xl border border-orange-200/80 bg-stone-50/80 px-3 py-1.5 text-[11.5px] backdrop-blur-md xl:self-end dark:border-orange-900/40 dark:bg-zinc-900/70">
+                  <CalendarDays className="h-3.5 w-3.5 text-orange-500 dark:text-orange-400" />
+                  <span className="flex flex-col leading-tight">
+                    <span className="text-[9px] font-semibold uppercase tracking-[0.16em] text-zinc-400 dark:text-zinc-500">
+                      Payroll period
+                    </span>
+                    <span className="font-semibold tracking-tight text-zinc-800 dark:text-zinc-100">
+                      {sys.periodLabel}
+                      {sys.periodWeek != null && (
+                        <span className="ml-1.5 text-zinc-400 dark:text-zinc-500">· wk {sys.periodWeek}</span>
+                      )}
+                    </span>
+                  </span>
+                </div>
+                <HeroStatRow Icon={Users} tone="neutral" label="Master list" value={sys.masterList} />
+                <HeroStatRow Icon={Activity} tone="info" label="In this payroll" value={sys.inThisPayroll} />
+                <HeroStatRow
+                  Icon={AlertTriangle}
+                  tone={sys.reconcileGaps > 0 ? 'warn' : 'ok'}
+                  label="Reconcile gaps"
+                  value={sys.reconcileGaps}
+                />
+              </motion.div>
+            </motion.div>
+          ) : (
+            <p className="relative py-10 text-center text-sm text-zinc-500 dark:text-zinc-400">
+              No active pay cycle to summarize yet.
+            </p>
+          )}
+        </section>
+
+        {/* Headcount by department — 1/4 sidebar beside the System Overview board. */}
+        <div className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm lg:col-span-1 dark:border-zinc-800 dark:bg-zinc-950">
+          <div className="mb-3.5 flex items-center justify-between gap-2">
+            <div className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-zinc-400">
+              <Building2 className="h-3.5 w-3.5 text-amber-500" /> Headcount
+            </div>
+            <span className="text-[12px] text-zinc-400">{kpis?.totalHeadcount ?? 0}</span>
+          </div>
+          {departments.length === 0 ? (
+            <p className="py-8 text-center text-sm text-zinc-400">No people to show.</p>
+          ) : (
+            <ul className="space-y-2.5">
+              {pagedDepartments.map((d) => (
+                <li key={d.department} className="space-y-1">
+                  <div className="flex items-center justify-between gap-2 text-[12px]">
+                    <span className="min-w-0 truncate text-zinc-600 dark:text-zinc-300" title={d.department}>
+                      {d.department}
+                    </span>
+                    <span className="shrink-0 font-semibold tabular-nums text-zinc-800 dark:text-zinc-100">
+                      {d.count}
+                    </span>
+                  </div>
+                  <div className="h-1.5 w-full overflow-hidden rounded-full bg-zinc-100 dark:bg-zinc-900">
+                    <div
+                      className="h-full rounded-full bg-gradient-to-r from-amber-400 to-yellow-500 transition-[width] duration-500 ease-out"
+                      style={{ width: `${Math.max(3, (d.count / maxDept) * 100)}%` }}
+                    />
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+          {deptTotalPages > 1 && (
+            <div className="mt-3.5 flex items-center justify-between border-t border-zinc-100 pt-3 dark:border-zinc-800">
+              <button
+                type="button"
+                onClick={() => setDeptPage((p) => Math.max(1, p - 1))}
+                disabled={safeDeptPage <= 1}
+                aria-label="Previous departments"
+                className="inline-flex h-6 w-6 items-center justify-center rounded-md border border-zinc-200 text-zinc-500 transition-colors hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-zinc-700 dark:hover:bg-zinc-900"
+              >
+                <ChevronLeft className="h-3.5 w-3.5" />
+              </button>
+              <span className="text-[11px] tabular-nums text-zinc-400">
+                {safeDeptPage} / {deptTotalPages}
+              </span>
+              <button
+                type="button"
+                onClick={() => setDeptPage((p) => Math.min(deptTotalPages, p + 1))}
+                disabled={safeDeptPage >= deptTotalPages}
+                aria-label="Next departments"
+                className="inline-flex h-6 w-6 items-center justify-center rounded-md border border-zinc-200 text-zinc-500 transition-colors hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-zinc-700 dark:hover:bg-zinc-900"
+              >
+                <ChevronRight className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          )}
+        </div>
       </div>
 
       {showUnpaid && lastCycle && (
