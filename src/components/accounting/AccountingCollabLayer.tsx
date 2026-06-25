@@ -14,6 +14,7 @@ import {
   useSpring,
   useTransform,
   useAnimationControls,
+  useReducedMotion,
 } from 'motion/react';
 import { Eye, EyeOff, Send } from 'lucide-react';
 import { useSession } from 'next-auth/react';
@@ -493,6 +494,7 @@ function RailAvatar({
   const display = (peer.name && peer.name.trim()) || toLabel(peer.email);
 
   useEffect(() => { setImgFailed(false); }, [url]);
+  const reduceMotion = useReducedMotion();
 
   // --- Ping: incoming wiggle + outgoing "sent" confirmation ------------------
   // Wiggle the avatar each time a NEW ping lands (re-keyed on ping.id so a
@@ -500,12 +502,12 @@ function RailAvatar({
   // parent's receive handler, not here, so it can't double-fire.
   const wiggle = useAnimationControls();
   useEffect(() => {
-    if (!ping) return;
+    if (!ping || reduceMotion) return;
     void wiggle.start({
       rotate: [0, -12, 10, -7, 5, 0],
       transition: { duration: 0.6, ease: 'easeInOut' },
     });
-  }, [ping?.id, wiggle]);
+  }, [ping?.id, wiggle, reduceMotion]);
 
   // Ping composer: a collapsed "Ping" button -> opens a small message box with
   // quick canned replies; submitting fires the ping + a brief "Pinged!" state.
@@ -656,47 +658,91 @@ function RailAvatar({
         </div>
       )}
 
-      {/* Incoming ping -> a chat-head speech bubble popping out of this person's
-          avatar, with a wiggling hand and a tail pointing back at the avatar. */}
+      {/* Incoming ping -> a chat-head bubble that emerges from this person's
+          avatar. Dark glass + their identity color + glow, matching the
+          floating cursor-label vocabulary used elsewhere in this layer (white
+          text on a bright gradient failed contrast). The bubble grows out of
+          the avatar's edge (transform-origin: right), with a waving hand and a
+          tail that points back at the avatar. */}
       <AnimatePresence>
         {ping && (
           <motion.div
             key={ping.id}
-            className="pointer-events-none absolute right-full top-1/2 z-[70] mr-3 -translate-y-1/2"
-            initial={{ opacity: 0, x: 14, scale: 0.4 }}
-            animate={{ opacity: 1, x: 0, scale: 1 }}
-            exit={{ opacity: 0, x: 10, scale: 0.5, transition: { duration: 0.2 } }}
-            transition={{ type: 'spring', stiffness: 480, damping: 15, mass: 0.7 }}
+            role="status"
+            aria-live="polite"
+            className="pointer-events-none absolute right-full top-1/2 z-[70] mr-3.5 -translate-y-1/2"
+            style={{ transformOrigin: 'right center' }}
+            initial={reduceMotion ? { opacity: 0 } : { opacity: 0, x: 10, scale: 0.6 }}
+            animate={reduceMotion ? { opacity: 1 } : { opacity: 1, x: 0, scale: 1 }}
+            exit={
+              reduceMotion
+                ? { opacity: 0, transition: { duration: 0.15 } }
+                : { opacity: 0, x: 8, scale: 0.7, transition: { duration: 0.2, ease: [0.4, 0, 1, 1] } }
+            }
+            transition={
+              reduceMotion
+                ? { duration: 0.15 }
+                : { type: 'spring', stiffness: 460, damping: 17, mass: 0.7 }
+            }
           >
-            <div className="relative flex max-w-[240px] items-start gap-2 rounded-2xl bg-gradient-to-br from-orange-500 to-pink-500 px-3.5 py-2 text-left text-white shadow-[0_8px_24px_rgba(236,72,153,0.45)] ring-1 ring-white/30">
+            <div
+              className="relative flex max-w-[230px] items-start gap-2.5 rounded-2xl px-3.5 py-2.5 text-left"
+              style={{
+                background: 'rgba(9,9,11,0.92)',
+                backdropFilter: 'blur(12px)',
+                WebkitBackdropFilter: 'blur(12px)',
+                border: `1px solid ${color}66`,
+                boxShadow: `0 0 18px ${glow}, 0 10px 28px rgba(0,0,0,0.45)`,
+              }}
+            >
               <motion.span
-                className="mt-0.5 shrink-0 text-base leading-none"
-                animate={{ rotate: [0, 20, -12, 16, 0] }}
-                transition={{ duration: 0.9, ease: 'easeInOut', repeat: Infinity, repeatDelay: 0.7 }}
-                style={{ transformOrigin: '70% 80%' }}
+                className="shrink-0 text-[17px] leading-none"
+                style={{ transformOrigin: '75% 85%' }}
+                animate={reduceMotion ? undefined : { rotate: [0, 18, -10, 14, -6, 0] }}
+                transition={
+                  reduceMotion
+                    ? undefined
+                    : { duration: 1, ease: 'easeInOut', repeat: Infinity, repeatDelay: 1.1, delay: 0.25 }
+                }
+                aria-hidden
               >
                 👋
               </motion.span>
-              <span className="flex min-w-0 flex-col gap-0.5">
-                <span className="text-[9px] font-bold uppercase leading-none tracking-wide text-white/85">{display}</span>
-                <span className="break-words text-[12px] font-medium leading-snug">{ping.text}</span>
+              <span className="flex min-w-0 flex-col gap-1">
+                <span
+                  className="text-[9.5px] font-bold uppercase leading-none tracking-[0.08em]"
+                  style={{ color }}
+                >
+                  {display}
+                </span>
+                <span className="break-words text-[12.5px] font-medium leading-snug text-zinc-50">
+                  {ping.text}
+                </span>
               </span>
-              {/* tail: a small rotated square fused to the bubble, pointing right */}
-              <span className="absolute right-[-4px] top-1/2 h-2.5 w-2.5 -translate-y-1/2 rotate-45 rounded-[2px] bg-pink-500" />
+              {/* tail: a small diamond fused to the bubble, pointing at the avatar */}
+              <span
+                className="absolute right-[-4.5px] top-1/2 h-2.5 w-2.5 -translate-y-1/2 rotate-45 rounded-[2px]"
+                style={{
+                  background: 'rgba(9,9,11,0.92)',
+                  borderTop: `1px solid ${color}66`,
+                  borderRight: `1px solid ${color}66`,
+                }}
+              />
             </div>
           </motion.div>
         )}
       </AnimatePresence>
 
       <div className="relative">
-        {/* Attention pulse: radiating ring(s) from behind the avatar on a ping. */}
+        {/* Attention pulse: ring(s) radiating from behind the avatar on a ping,
+            in the sender's own color. Skipped under reduced motion. */}
         <AnimatePresence>
-          {ping && (
+          {ping && !reduceMotion && (
             <motion.span
               key={ping.id}
               className="pointer-events-none absolute left-0 top-0 z-[-1] h-11 w-11 rounded-full"
-              style={{ boxShadow: '0 0 0 2.5px rgba(249,115,22,0.75)' }}
-              initial={{ opacity: 0.75, scale: 1 }}
+              style={{ boxShadow: `0 0 0 2.5px ${glow}` }}
+              initial={{ opacity: 0.8, scale: 1 }}
               animate={{ opacity: 0, scale: 2 }}
               exit={{ opacity: 0 }}
               transition={{ duration: 1.05, ease: 'easeOut', repeat: 2 }}

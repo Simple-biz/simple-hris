@@ -122,7 +122,9 @@
       "Bash(git -C \"c:/Users/Itachi/Desktop/simple-hris\" --no-pager diff -- \"app/onboarding/[token]/page.tsx\")",
       "Bash(npx tsc *)",
       "Bash(tee /tmp/tsc2.log)",
-      "Bash(tee /tmp/tsc3.log)"
+      "Bash(tee /tmp/tsc3.log)",
+      "Skill(artifact-design)",
+      "Skill(artifact-design:*)"
     ],
     "additionalDirectories": [
       "\\tmp"

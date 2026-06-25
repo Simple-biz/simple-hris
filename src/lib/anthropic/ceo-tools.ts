@@ -14,6 +14,17 @@ import { listDisbursementReports } from '@/lib/payroll/disbursement-reports';
 import { DEPARTMENTS } from '@/lib/payroll/department-bonus';
 import { getSkillSet } from '@/lib/supabase/employee-skill-sets';
 import { getProfilePhotoUrlForEmail } from '@/lib/supabase/employee-profile-photo';
+import { listDepartmentsForManager } from '@/lib/supabase/department-managers';
+import {
+  fetchFeaturePermissionsForEmail,
+  resolveFeatureAccess,
+  FEATURE_CATALOG,
+  ROLE_TO_FEATURE_VIEW,
+  type FeatureViewKey,
+  type FeaturePermissionsMap,
+} from '@/lib/rbac/feature-permissions';
+import { hasElevatedRole, hasRateVisibility } from '@/lib/auth/elevated-roles';
+import { ROUTE_REQUIRED_ROLES } from '@/lib/auth/route-access';
 
 /** Hubstaff exports append a ~30k-hour grand-total row that parses as a fake
  *  person; drop any row over this when aggregating across everyone. */
@@ -151,6 +162,21 @@ export const CEO_TOOLS: Anthropic.Tool[] = [
       required: [],
     },
   },
+  {
+    name: 'get_employee_access',
+    description:
+      "Get a person's ADMIN PROVISIONS — what they are allowed to access in the system. Use for any access/permission question: \"how much access does X have\", \"what can X see or edit\", \"is X an admin\", \"which dashboards can X open\", \"what departments does X manage\", \"can X see pay rates\". Returns their active roles, the staff dashboards their roles let them open, the per-tab permission overlay (hidden/view/edit) for each dashboard, the departments they manage (if a manager), and flags for admin, elevated (can act on other employees' data), and pay-rate visibility. Requires the exact work_email from find_employee. This is about ACCESS RIGHTS, not pay or attendance.",
+    input_schema: {
+      type: 'object',
+      properties: {
+        work_email: {
+          type: 'string',
+          description: "The employee's work email, exactly as returned by find_employee.",
+        },
+      },
+      required: ['work_email'],
+    },
+  },
 ];
 
 // ── execution ────────────────────────────────────────────────────────────────
@@ -175,6 +201,8 @@ export async function runCeoTool(
         return await getDepartmentBonuses(input.weeks, input.limit);
       case 'get_employee_profile':
         return await getEmployeeProfile(str(input.work_email));
+      case 'get_employee_access':
+        return await getEmployeeAccess(str(input.work_email));
       case 'get_financial_summary':
         return await getFinancialSummary(input.month);
       default:
@@ -900,6 +928,127 @@ async function getEmployeeProfile(workEmailInput: string): Promise<ToolResult> {
     concerns: { flag_count: flagCount, recent_notes: recentFlags },
     field_notes:
       "Identity + home address (HR master), hourly rates in PHP, self-entered skill sets. recognition = PUBLIC commendations (green flags) the employee can see; these are opt-in praise, so few or none does NOT mean poor performance. concerns = manager 'flag for review' notes (red flags) — PRIVATE, the employee cannot see them, shown to the CEO only; they are concerns raised for review, not proven verdicts, so weigh them as one signal. For a fair read of a person, consider BOTH recognition and concerns (and their actual hours/pay) — do not present only the positives. Bank/payout details are intentionally excluded. has_profile_photo = true means a roster section will render their uploaded/Google avatar.",
+  };
+}
+
+/**
+ * "How much access does <email> have?" — aggregates the three authorization
+ * layers into one read-only picture:
+ *   1. roles (employee_roles)            → which staff dashboards open
+ *   2. feature permissions (overlay)     → per-tab hidden/view/edit
+ *   3. department_managers               → which teams a manager oversees
+ * plus the derived admin / elevated / rate-visibility flags. Mirrors the same
+ * role + email-alias logic the live RBAC checks use, so it reflects reality.
+ */
+async function getEmployeeAccess(workEmailInput: string): Promise<ToolResult> {
+  const email = normEmail(workEmailInput);
+  if (!email || !isSafeEmail(email)) return { error: 'Missing or invalid work_email.' };
+
+  // Identity + any alternate emails this person may be keyed under.
+  const { employee } = await getEmployeeMasterRecord(email);
+  const aliases = new Set<string>([email]);
+  for (const a of [
+    employee?.work_email,
+    employee?.personal_email,
+    employee?.alternate_work_email,
+    employee?.alternate_work_email_2,
+  ]) {
+    const n = normEmail(a ?? '');
+    if (n && isSafeEmail(n)) aliases.add(n);
+  }
+
+  const supabase = createSupabaseServiceRoleClient() ?? createSupabaseServerClient();
+  if (!supabase) return { error: 'Database is not reachable.' };
+
+  // (1) Active roles across all of this person's emails.
+  const orFilter = [...aliases].map((a) => `work_email.ilike.${a}`).join(',');
+  const { data: roleRows, error: roleErr } = await supabase
+    .from('employee_roles')
+    .select('role')
+    .or(orFilter)
+    .is('revoked_at', null);
+  if (roleErr) return { error: roleErr.message };
+  const roles = [...new Set((roleRows ?? []).map((r) => String((r as { role: string }).role)))];
+
+  const isAdmin = roles.includes('admin');
+  const elevated = hasElevatedRole(roles);
+  const rateVisible = hasRateVisibility(roles);
+
+  // (2) Departments this person manages (only meaningful for a manager).
+  const deptSet = new Set<string>();
+  for (const a of aliases) {
+    const { rows } = await listDepartmentsForManager(a);
+    for (const r of rows) deptSet.add(r.department);
+  }
+  const managedDepartments = [...deptSet];
+
+  // (3) Privileged dashboards their roles can open. Everyone also has their own
+  //     /employee self-service portal, which is not role-gated.
+  const DASHBOARD_LABELS: Record<string, string> = {
+    '/admin': 'Admin',
+    '/ceo': 'CEO',
+    '/accounting': 'Accounting',
+    '/payroll-clerk': 'Payroll Clerk',
+    '/hr': 'HR',
+    '/orphanage': 'Orphanage',
+    '/manager': 'Manager',
+  };
+  const dashboards = ROUTE_REQUIRED_ROLES.filter((r) =>
+    r.roles.some((role) => roles.includes(role)),
+  ).map((r) => DASHBOARD_LABELS[r.prefix] ?? r.prefix);
+
+  // (4) Per-tab feature-permission overlay (hidden/view/edit) on top of roles.
+  const perms: FeaturePermissionsMap = {};
+  for (const a of aliases) {
+    const m = await fetchFeaturePermissionsForEmail(a);
+    for (const [view, tabs] of Object.entries(m)) {
+      const v = view as FeatureViewKey;
+      perms[v] = { ...(perms[v] ?? {}), ...(tabs ?? {}) };
+    }
+  }
+
+  // Report the views behind this person's roles, any view they hold explicit
+  // grants in, and — for an admin — every view (admins bypass tab gating).
+  const views = new Set<FeatureViewKey>();
+  for (const role of roles) {
+    const v = ROLE_TO_FEATURE_VIEW[role];
+    if (v) views.add(v);
+  }
+  for (const v of Object.keys(perms)) views.add(v as FeatureViewKey);
+  if (isAdmin) for (const v of Object.keys(FEATURE_CATALOG)) views.add(v as FeatureViewKey);
+
+  const featurePermissions: Record<string, Record<string, string>> = {};
+  for (const v of views) {
+    const catalog = FEATURE_CATALOG[v];
+    if (!catalog) continue;
+    const tabs: Record<string, string> = {};
+    for (const t of catalog) {
+      tabs[t.label] = isAdmin ? 'edit (admin bypass)' : resolveFeatureAccess(perms, v, t.key);
+    }
+    featurePermissions[v] = tabs;
+  }
+
+  const accessLevel = isAdmin
+    ? 'Administrator — full access to every dashboard and tab (bypasses all permission gating).'
+    : roles.length > 0
+      ? `Staff member with role(s): ${roles.join(', ')}.`
+      : 'Regular employee — only their own self-service portal (My Hours, pay, leave/requests). No staff dashboards.';
+
+  return {
+    work_email: employee?.work_email ?? email,
+    name: employee?.name ?? null,
+    department: employee?.department ?? null,
+    found_in_roster: !!employee,
+    access_level: accessLevel,
+    is_admin: isAdmin,
+    is_elevated: elevated,
+    can_see_pay_rates: rateVisible,
+    roles,
+    dashboards_can_open: dashboards,
+    managed_departments: managedDepartments,
+    feature_permissions: featurePermissions,
+    field_notes:
+      "ACCESS MODEL — three layers. (1) roles (from employee_roles) decide which staff DASHBOARDS a person can open (see dashboards_can_open); no role = a regular employee who only sees their own /employee self-service portal. (2) feature_permissions is a per-TAB overlay on top of the role: each tab is 'hidden' (not visible at all — the default for any tab without an explicit grant), 'view' (read-only), or 'edit' (can change things). (3) admin holds the keys to the castle: is_admin=true means every tab in every dashboard is effectively edit regardless of grants (shown as 'edit (admin bypass)'). is_elevated=true means they may view/act on OTHER employees' data (admin, accounting, hr_coordinator). can_see_pay_rates=true means they're allowed to see numeric pay rates (admin, accounting, ceo — NOT hr_coordinator). managed_departments lists the teams a manager oversees. This describes what the person CAN access, not what they have done.",
   };
 }
 
