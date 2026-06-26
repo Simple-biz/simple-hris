@@ -27,6 +27,7 @@ export const HR_NEW_HIRE_CHECKLIST_FIELDS = [
   "source",
   "hired_by",
   "department",
+  "country",
 ] as const;
 
 export type HrNewHireChecklistField =
@@ -44,6 +45,7 @@ export type HrNewHireChecklistRow = {
   source: string | null;
   hired_by: string | null;
   department: string | null;
+  country: string | null;
   created_by: string | null;
   created_at: string;
   updated_at: string;

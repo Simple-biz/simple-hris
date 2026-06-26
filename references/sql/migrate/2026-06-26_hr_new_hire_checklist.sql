@@ -30,10 +30,16 @@ CREATE TABLE IF NOT EXISTS public.hr_new_hire_checklist (
   source            text,
   hired_by          text,
   department        text,
+  country           text,
   created_by        text,
   created_at        timestamptz not null default now(),
   updated_at        timestamptz not null default now()
 );
+
+-- `country` segregates hires into per-country boxes in the onboarding Bulk
+-- Invite. Added via ALTER too so an already-created table picks it up on re-run.
+ALTER TABLE public.hr_new_hire_checklist
+  ADD COLUMN IF NOT EXISTS country text;
 
 -- Grid order is (position, created_at); department scoping powers Bulk Invite.
 CREATE INDEX IF NOT EXISTS hr_new_hire_checklist_position_idx

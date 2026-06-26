@@ -85,8 +85,8 @@ export const DASHBOARD_PAGES: DashboardPages[] = [
     accent: 'emerald',
     pages: [
       { key: 'overview', label: 'Overview', home: true },
-      { key: 'onboarding', label: 'Onboarding' },
       { key: 'new-hire-checklist', label: 'New Hire Checklist' },
+      { key: 'onboarding', label: 'Onboarding' },
       { key: 'offboarding', label: 'Offboarding' },
       { key: 'leaves', label: 'Leave Requests' },
       { key: 'transfers', label: 'Transfers' },

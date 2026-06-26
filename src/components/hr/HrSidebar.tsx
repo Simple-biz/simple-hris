@@ -154,8 +154,8 @@ export default function HrSidebar({
           </p>
           <nav className="flex flex-col gap-px">
             {can('overview') && navBtn('overview', 'Overview', LayoutDashboard)}
-            {can('onboarding') && navBtn('onboarding', 'Onboarding', LogIn)}
             {can('new-hire-checklist') && navBtn('new-hire-checklist', 'New Hire Checklist', ClipboardList)}
+            {can('onboarding') && navBtn('onboarding', 'Onboarding', LogIn)}
             {can('offboarding') && navBtn('offboarding', 'Offboarding', UserMinus)}
             {can('leaves') && navBtn('leaves', 'Leave Requests', CalendarDays)}
             {can('transfers') && navBtn('transfers', 'Transfers', ArrowRightLeft)}

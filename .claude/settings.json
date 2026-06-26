@@ -196,7 +196,11 @@
       "Bash(node scripts/_diag-jackie.mjs)",
       "Bash(rm -f scripts/_diag-jackie.mjs)",
       "Bash(ls src/lib/google-sheets/*.test.ts src/lib/supabase/*.test.ts)",
-      "Bash(grep -rl \"deleteMasterSheetRows\\\\|bulkRevertHrPending\\\\|revertHrPendingEmployee\" --include=\"*.test.ts\" src)"
+      "Bash(grep -rl \"deleteMasterSheetRows\\\\|bulkRevertHrPending\\\\|revertHrPendingEmployee\" --include=\"*.test.ts\" src)",
+      "Bash(git -C \"c:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris\" diff --stat)",
+      "Bash(git -C \"c:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris\" diff)",
+      "Bash(git -C \"c:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris\" diff -- src/components/hr/HrNewHireChecklist.tsx)",
+      "Bash(git -C \"c:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris\" diff -- src/components/hr/HrNewHireChecklist.tsx src/components/hr/HrSidebar.tsx src/components/hr/HrApp.tsx src/lib/rbac/feature-permissions.ts src/lib/rbac/view-tabs.ts src/lib/pages/visibility.ts)"
     ],
     "additionalDirectories": [
       "\\tmp"

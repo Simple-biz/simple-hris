@@ -58,7 +58,7 @@ import {
   PrivacyText,
 } from '@/components/onboarding/agreement-texts';
 import { formatLongDate } from '@/lib/onboarding/ip-assignment-text';
-import { currencyForCountry, ONBOARDING_COUNTRIES } from '@/lib/onboarding/countries';
+import { currencyForCountry, ONBOARDING_COUNTRIES, resolveOnboardingCountry } from '@/lib/onboarding/countries';
 import {
   Dialog,
   DialogContent,
@@ -2056,7 +2056,7 @@ function GenerateLinkDialog({
   // Prefill from the New Hire Checklist: pull a department's saved rows and drop
   // their emails into a chosen country box (the checklist stores no country).
   // Names ride along in `prefillNames` so each invite goes out pre-addressed.
-  const [checklistRows, setChecklistRows] = useState<{ name: string; email: string }[]>([]);
+  const [checklistRows, setChecklistRows] = useState<{ name: string; email: string; country: string }[]>([]);
   const [checklistLoading, setChecklistLoading] = useState(false);
   const [prefillCountry, setPrefillCountry] = useState('');
   const [prefillNames, setPrefillNames] = useState<Record<string, string>>({});
@@ -2149,11 +2149,15 @@ function GenerateLinkDialog({
     setChecklistLoading(true);
     fetch(`/api/hr/new-hire-checklist/departments?department=${encodeURIComponent(d)}`, { cache: 'no-store' })
       .then((r) => r.json())
-      .then((j: { rows?: { name: string | null; personal_email: string | null }[]; error?: string }) => {
+      .then((j: { rows?: { name: string | null; personal_email: string | null; country: string | null }[]; error?: string }) => {
         if (cancelled) return;
         if (j.error) throw new Error(j.error);
         const rows = (j.rows ?? [])
-          .map((r) => ({ name: (r.name ?? '').trim(), email: (r.personal_email ?? '').trim() }))
+          .map((r) => ({
+            name: (r.name ?? '').trim(),
+            email: (r.personal_email ?? '').trim(),
+            country: (r.country ?? '').trim(),
+          }))
           .filter((r) => r.email);
         setChecklistRows(rows);
       })
@@ -2191,36 +2195,62 @@ function GenerateLinkDialog({
     }
   }
 
-  // ── Load the department's checklist hires into a country box ──
-  // The checklist carries no country, so HR picks one country for the whole
-  // pulled batch (it selects the pay-plan PDF). Emails merge into that box,
-  // deduped against anything already pasted; names are stashed for invite_name.
+  // ── Load the department's checklist hires into their per-country boxes ──
+  // Each hire carries its own Country (the checklist's Country column), so they
+  // segregate automatically into the matching pay-plan box. A hire whose country
+  // is blank/unrecognized routes to the optional fallback picker, or is skipped
+  // (and reported) if no fallback is set. Emails dedupe against what's already
+  // pasted; names ride along for invite_name.
   function loadFromChecklist() {
-    const targetCountry = prefillCountry.trim();
-    if (!targetCountry) { toast.error('Pick a country for these hires first.'); return; }
     const valid = checklistRows.filter((r) => isPlausibleEmail(r.email));
-    const skipped = checklistRows.length - valid.length;
     if (valid.length === 0) {
       toast.error('No valid emails in the checklist for this department.');
       return;
     }
+    const fallback = resolveOnboardingCountry(prefillCountry)?.name ?? '';
+
+    // Dedupe by email (a person can appear once); bucket per resolved country.
+    const byEmail = new Map<string, { name: string; email: string; country: string }>();
+    for (const r of valid) {
+      const key = r.email.toLowerCase();
+      if (!byEmail.has(key)) byEmail.set(key, r);
+    }
+    const buckets: Record<string, string[]> = {};
+    const names: Record<string, string> = {};
+    let noCountry = 0;
+    for (const r of byEmail.values()) {
+      const email = r.email.toLowerCase();
+      if (r.name) names[email] = r.name;
+      const country = resolveOnboardingCountry(r.country)?.name ?? fallback;
+      if (!country) { noCountry += 1; continue; }
+      (buckets[country] ??= []).push(email);
+    }
+
+    const targets = Object.keys(buckets);
+    if (targets.length === 0) {
+      toast.error(
+        'None of these hires have a country set — set their Country in the checklist, or pick a fallback country here.',
+      );
+      return;
+    }
+
     setBulkByCountry((m) => {
-      const existing = m[targetCountry] ?? '';
-      const have = new Set(parseEmailList(existing).valid);
-      const additions = valid
-        .map((r) => r.email.toLowerCase())
-        .filter((e) => !have.has(e));
-      const merged = [existing.trim(), ...additions].filter(Boolean).join('\n');
-      return { ...m, [targetCountry]: merged };
-    });
-    setPrefillNames((prev) => {
-      const next = { ...prev };
-      for (const r of valid) if (r.name) next[r.email.toLowerCase()] = r.name;
+      const next = { ...m };
+      for (const [country, emails] of Object.entries(buckets)) {
+        const existing = next[country] ?? '';
+        const have = new Set(parseEmailList(existing).valid);
+        const additions = emails.filter((e) => !have.has(e));
+        next[country] = [existing.trim(), ...additions].filter(Boolean).join('\n');
+      }
       return next;
     });
+    setPrefillNames((prev) => ({ ...prev, ...names }));
+
+    const loaded = targets.reduce((sum, c) => sum + buckets[c]!.length, 0);
     toast.success(
-      `Loaded ${valid.length} hire${valid.length !== 1 ? 's' : ''} into ${targetCountry}` +
-        (skipped > 0 ? ` — ${skipped} skipped (no email)` : ''),
+      `Loaded ${loaded} hire${loaded !== 1 ? 's' : ''} across ${targets.length} ` +
+        `${targets.length === 1 ? 'country' : 'countries'}` +
+        (noCountry > 0 ? ` — ${noCountry} skipped (no country)` : ''),
     );
   }
 
@@ -2479,9 +2509,9 @@ function GenerateLinkDialog({
                         <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
                           <div className="flex-1">
                             <DialogField
-                              label="Country for these hires"
+                              label="Fallback country (optional)"
                               icon={<Globe className="h-3.5 w-3.5" />}
-                              hint="Picks the pay plan for the whole pulled batch — the checklist doesn't store a country."
+                              hint="Each hire routes by their own Country from the checklist. This only catches hires with no country set."
                             >
                               <CountrySelect value={prefillCountry} onChange={setPrefillCountry} />
                             </DialogField>
@@ -2490,15 +2520,21 @@ function GenerateLinkDialog({
                             type="button"
                             size="sm"
                             onClick={loadFromChecklist}
-                            disabled={busy || !prefillCountry.trim()}
+                            disabled={busy}
                             className="h-9 shrink-0 gap-1.5 bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50"
                           >
                             <Plus className="h-3.5 w-3.5" />
-                            Load {checklistRows.length} into {prefillCountry.trim() || 'a country'}
+                            Load {checklistRows.length} hire{checklistRows.length !== 1 ? 's' : ''}
                           </Button>
                         </div>
                         <p className="text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400">
-                          Their emails drop into the matching country box below (deduped), and each name rides along so the invite goes out pre-addressed.
+                          Each hire drops into their own country&apos;s box below (from the checklist&apos;s Country column), deduped, with their name riding along.
+                          {(() => {
+                            const noCountry = checklistRows.filter((r) => !resolveOnboardingCountry(r.country)).length;
+                            return noCountry > 0
+                              ? ` ${noCountry} ${noCountry === 1 ? 'hire has' : 'hires have'} no country — set a fallback above to include ${noCountry === 1 ? 'it' : 'them'}.`
+                              : '';
+                          })()}
                         </p>
                       </>
                     )}

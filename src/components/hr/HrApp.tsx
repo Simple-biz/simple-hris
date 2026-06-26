@@ -221,8 +221,8 @@ export default function HrApp() {
               ) : (
               <ReadOnlyTab readOnly={permsReady && !canEditTab('hr', activeTab)}>
               {activeTab === 'overview' && <HrOverview viewerEmail={viewerEmail} />}
-              {activeTab === 'onboarding' && <HrOnboarding />}
               {activeTab === 'new-hire-checklist' && <HrNewHireChecklist />}
+              {activeTab === 'onboarding' && <HrOnboarding />}
               {activeTab === 'offboarding' && <HrOffboarding />}
               {activeTab === 'leaves' && <LeaveRequestsPanel />}
               {activeTab === 'transfers' && <HrTransfers />}
