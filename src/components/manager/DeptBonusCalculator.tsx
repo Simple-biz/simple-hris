@@ -98,7 +98,7 @@ const EASE = [0.22, 1, 0.36, 1] as const;
 const PESO = '₱';
 
 /** Departments whose calculator table is paginated, and how many rows per page. */
-const PAGED_DEPTS: Record<string, number> = { lead_gen: 5 };
+const PAGED_DEPTS: Record<string, number> = { lead_gen: 8 };
 
 /** Per-member, per-bonus applied state. `vars` holds formula inputs as strings. */
 interface AppliedState {
@@ -420,7 +420,19 @@ interface QcLogAssignment { qc_officer_email: string; member_email: string; memb
 interface QcLogLock { qc_officer_email: string; status: 'draft' | 'locked'; member_count: number; locked_at: string | null }
 interface QcLogReview { department: string; status: 'pending' | 'accepted' | 'returned'; reviewed_by: string | null; reviewed_at: string | null; note: string | null }
 
-function QcOfficerLog({ deptKey, periodStart }: { deptKey: string; periodStart: string }) {
+function QcOfficerLog({
+  deptKey,
+  periodStart,
+  selectedOfficer = null,
+  onSelectOfficer,
+}: {
+  deptKey: string;
+  periodStart: string;
+  /** The officer whose people the table is currently filtered to (parent-owned). */
+  selectedOfficer?: string | null;
+  /** Click an officer to filter the table to the people they scored; null clears. */
+  onSelectOfficer?: (sel: { officer: string; emails: string[] } | null) => void;
+}) {
   const [data, setData] = useState<{
     officers: QcLogOfficer[];
     assignments: QcLogAssignment[];
@@ -429,8 +441,6 @@ function QcOfficerLog({ deptKey, periodStart }: { deptKey: string; periodStart: 
   } | null>(null);
   const [loading, setLoading] = useState(true);
   const [returning, setReturning] = useState(false);
-  // Which officer's scored-members list is expanded (click a name to toggle).
-  const [openOfficer, setOpenOfficer] = useState<string | null>(null);
   // Unique per mount so two QcOfficerLogs that briefly coexist during the
   // calculator's view-mode swap (AnimatePresence keeps the exiting panel mounted
   // while the new one enters) don't reuse the SAME realtime channel name — which
@@ -521,108 +531,111 @@ function QcOfficerLog({ deptKey, periodStart }: { deptKey: string; periodStart: 
   };
 
   return (
-    <div className="flex-none border-b border-orange-100 bg-orange-50/50 px-4 py-2.5 dark:border-orange-950/40 dark:bg-orange-950/10 sm:px-5">
-      <div className="flex items-center justify-between gap-2">
-        <span className="flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-[0.16em] text-orange-700 dark:text-orange-300">
+    <div className="flex h-full min-h-0 w-40 shrink-0 flex-col border-r border-orange-100 bg-orange-50/40 dark:border-orange-950/40 dark:bg-orange-950/10 sm:w-48">
+      {/* Header */}
+      <div className="flex-none border-b border-orange-100/70 px-3 py-2.5 dark:border-orange-950/40">
+        <div className="flex items-center gap-1.5 font-mono text-[10px] font-semibold uppercase tracking-[0.14em] text-orange-700 dark:text-orange-300">
           <Users className="h-3 w-3" /> QC first pass
-          {review?.status === 'returned' && (
-            <span className="ml-1 rounded bg-amber-200/70 px-1 py-px text-[9px] text-amber-800 dark:bg-amber-900/50 dark:text-amber-200">returned</span>
-          )}
-          {review?.status === 'accepted' && (
-            <span className="ml-1 rounded bg-emerald-200/70 px-1 py-px text-[9px] text-emerald-800 dark:bg-emerald-900/50 dark:text-emerald-200">accepted</span>
-          )}
-        </span>
-        {officerEmails.length > 0 && (
+        </div>
+        {(review?.status === 'returned' || review?.status === 'accepted') && (
+          <div className="mt-1">
+            {review?.status === 'returned' && (
+              <span className="rounded bg-amber-200/70 px-1 py-px text-[9px] text-amber-800 dark:bg-amber-900/50 dark:text-amber-200">returned</span>
+            )}
+            {review?.status === 'accepted' && (
+              <span className="rounded bg-emerald-200/70 px-1 py-px text-[9px] text-emerald-800 dark:bg-emerald-900/50 dark:text-emerald-200">accepted</span>
+            )}
+          </div>
+        )}
+        <p className="mt-1 text-[9.5px] leading-tight text-zinc-400 dark:text-zinc-500">
+          Click an officer to filter the table to who they scored.
+        </p>
+      </div>
+
+      {/* Officer list (scrolls) */}
+      <div className="min-h-0 flex-1 overflow-auto p-2">
+        {loading ? (
+          <div className="flex items-center gap-1.5 px-1 text-[11px] text-zinc-500">
+            <Loader2 className="h-3 w-3 animate-spin" /> Loading…
+          </div>
+        ) : officerEmails.length === 0 ? (
+          <p className="px-1 text-[11px] text-zinc-500 dark:text-zinc-400">
+            No QC officer is assigned to score this department yet.
+          </p>
+        ) : (
+          <>
+            {selectedOfficer && (
+              <button
+                type="button"
+                onClick={() => onSelectOfficer?.(null)}
+                className="mb-1.5 flex w-full items-center gap-1 rounded-md px-2 py-1 text-left text-[11px] font-medium text-orange-700 transition-colors hover:bg-orange-100/70 dark:text-orange-300 dark:hover:bg-orange-950/40"
+              >
+                <CornerUpLeft className="h-3 w-3" /> Show all people
+              </button>
+            )}
+            <ul className="space-y-1">
+              {officerEmails.map((email) => {
+                const lock = lockByOfficer.get(email);
+                const locked = lock?.status === 'locked';
+                const idx = indexByOfficer.get(email);
+                const count = countByOfficer.get(email) ?? 0;
+                const active = selectedOfficer === email;
+                return (
+                  <li key={email}>
+                    <button
+                      type="button"
+                      aria-pressed={active}
+                      onClick={() =>
+                        onSelectOfficer?.(
+                          active
+                            ? null
+                            : { officer: email, emails: (membersByOfficer.get(email) ?? []).map((m) => m.email) },
+                        )
+                      }
+                      title={email}
+                      className={cn(
+                        'w-full rounded-lg border px-2.5 py-1.5 text-left transition-colors',
+                        active
+                          ? 'border-orange-400 bg-white ring-1 ring-orange-300 dark:border-orange-600 dark:bg-zinc-900 dark:ring-orange-700'
+                          : locked
+                            ? 'border-emerald-200 bg-emerald-50/70 hover:bg-emerald-100/70 dark:border-emerald-900/50 dark:bg-emerald-950/20 dark:hover:bg-emerald-950/40'
+                            : 'border-zinc-200 bg-white hover:bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900/50 dark:hover:bg-zinc-800/60',
+                      )}
+                    >
+                      <div className="flex items-center justify-between gap-1">
+                        <span className="text-[12px] font-semibold text-zinc-800 dark:text-zinc-100">QC Officer {idx ?? '?'}</span>
+                        {locked ? (
+                          <Lock className="h-3 w-3 shrink-0 text-emerald-500" aria-label="locked" />
+                        ) : (
+                          <Clock className="h-3 w-3 shrink-0 text-zinc-400" aria-label="scoring" />
+                        )}
+                      </div>
+                      <div className="mt-0.5 truncate font-mono text-[9px] text-zinc-400" title={email}>{email}</div>
+                      <div className="mt-0.5 text-[10px] tabular-nums text-zinc-500 dark:text-zinc-400">
+                        {count} {count === 1 ? 'person' : 'people'}
+                        {locked && lock?.locked_at ? ` · ${fmtTime(lock.locked_at)}` : ''}
+                      </div>
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          </>
+        )}
+      </div>
+
+      {/* Footer: send back to QC */}
+      {officerEmails.length > 0 && (
+        <div className="flex-none border-t border-orange-100/70 p-2 dark:border-orange-950/40">
           <Button
             size="sm"
             variant="outline"
-            className="h-7 gap-1.5 text-[11px]"
+            className="h-7 w-full gap-1.5 text-[11px]"
             disabled={returning}
             onClick={() => void returnToQc()}
           >
             <CornerUpLeft className="h-3 w-3" /> Return to QC
           </Button>
-        )}
-      </div>
-      {loading ? (
-        <div className="mt-1.5 flex items-center gap-1.5 text-[11px] text-zinc-500">
-          <Loader2 className="h-3 w-3 animate-spin" /> Loading QC submissions…
-        </div>
-      ) : officerEmails.length === 0 ? (
-        <p className="mt-1.5 text-[11px] text-zinc-500 dark:text-zinc-400">
-          No QC officer is assigned to score this department yet.
-        </p>
-      ) : (
-        <div className="mt-2">
-          <div className="flex flex-wrap gap-1.5">
-            {officerEmails.map((email) => {
-              const lock = lockByOfficer.get(email);
-              const locked = lock?.status === 'locked';
-              const idx = indexByOfficer.get(email);
-              const open = openOfficer === email;
-              const count = countByOfficer.get(email) ?? 0;
-              return (
-                <button
-                  key={email}
-                  type="button"
-                  onClick={() => setOpenOfficer((cur) => (cur === email ? null : email))}
-                  aria-expanded={open}
-                  className={cn(
-                    'inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-[11px] transition-colors',
-                    open && 'ring-2 ring-orange-300 dark:ring-orange-700',
-                    locked
-                      ? 'border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100 dark:border-emerald-900/50 dark:bg-emerald-950/30 dark:text-emerald-200 dark:hover:bg-emerald-950/50'
-                      : 'border-zinc-200 bg-white text-zinc-600 hover:bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900/50 dark:text-zinc-300 dark:hover:bg-zinc-800/60',
-                  )}
-                  title={`${email} — click to see who they scored`}
-                >
-                  <span className="font-semibold">QC Officer {idx ?? '?'}</span>
-                  <span className="max-w-[10rem] truncate font-mono text-[10px] opacity-70">{email}</span>
-                  <span className="tabular-nums opacity-80">· {count} {count === 1 ? 'member' : 'members'}</span>
-                  {locked ? (
-                    <span className="inline-flex items-center gap-0.5 text-emerald-600 dark:text-emerald-400">
-                      <Lock className="h-2.5 w-2.5" /> {fmtTime(lock?.locked_at ?? null)}
-                    </span>
-                  ) : (
-                    <span className="inline-flex items-center gap-0.5 text-zinc-400">
-                      <Clock className="h-2.5 w-2.5" /> scoring…
-                    </span>
-                  )}
-                  <ChevronDown className={cn('h-3 w-3 opacity-60 transition-transform', open && 'rotate-180')} />
-                </button>
-              );
-            })}
-          </div>
-
-          {/* Expanded: the people the selected officer is scoring this period */}
-          {openOfficer && (() => {
-            const members = membersByOfficer.get(openOfficer) ?? [];
-            const idx = indexByOfficer.get(openOfficer);
-            const locked = lockByOfficer.get(openOfficer)?.status === 'locked';
-            return (
-              <div className="mt-2 rounded-lg border border-orange-200 bg-white px-3 py-2.5 dark:border-orange-950/50 dark:bg-zinc-900/50">
-                <p className="mb-1.5 flex items-center gap-1.5 text-[10.5px] font-semibold uppercase tracking-[0.12em] text-orange-700 dark:text-orange-300">
-                  <Users className="h-3 w-3" />
-                  QC Officer {idx ?? '?'} {locked ? 'scored' : 'is scoring'} — {members.length} {members.length === 1 ? 'person' : 'people'}
-                </p>
-                {members.length === 0 ? (
-                  <p className="text-[11px] text-zinc-500 dark:text-zinc-400">No members assigned.</p>
-                ) : (
-                  <div className="flex flex-wrap gap-1">
-                    {members.map((m) => (
-                      <span
-                        key={m.email}
-                        className="inline-flex max-w-[14rem] items-center truncate rounded border border-zinc-200 bg-zinc-50 px-1.5 py-0.5 text-[11px] text-zinc-700 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300"
-                        title={m.email}
-                      >
-                        {m.name}
-                      </span>
-                    ))}
-                  </div>
-                )}
-              </div>
-            );
-          })()}
         </div>
       )}
     </div>
@@ -947,6 +960,9 @@ export default function DeptBonusCalculator({
   // a right-side drawer, or a full-screen focus workspace with a dept rail.
   const [openId, setOpenId] = useState<string | null>(null);
   const [mode, setMode] = useState<OpenMode>('drawer');
+  // Manager QC review: when a QC officer is picked in the left rail, the table
+  // filters to the people they scored. Keyed by dept so it resets on dept switch.
+  const [qcOfficerFilter, setQcOfficerFilter] = useState<{ dept: string; officer: string; emails: string[] } | null>(null);
   // Portal guard: the fixed overlay only renders after mount (SSR-safe).
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
@@ -1708,9 +1724,11 @@ export default function DeptBonusCalculator({
     if (openId && !visibleDeptKeys.includes(openId)) setOpenId(null);
   }, [openId, visibleDeptKeys]);
 
-  // Reset the paginated table to its first page whenever the open dept changes.
+  // Reset the paginated table to its first page (and clear any QC officer filter)
+  // whenever the open dept changes.
   useEffect(() => {
     setLeadGenPage(0);
+    setQcOfficerFilter(null);
   }, [openId]);
 
   // Auto-dismiss the confirmation a moment after it succeeds (lock is lighter,
@@ -1784,8 +1802,21 @@ export default function DeptBonusCalculator({
     const {
       d, dept, color, total, common, sharedSet,
       colMeta, sharedMeta, indivSubtotal, hasIndividual, hasAnyBonus,
-      allMembers, members, cq, entered, toFill,
+      allMembers, cq, entered, toFill,
     } = v;
+    // QC officer filter (manager review): when an officer is picked in the left
+    // rail, show only the people they scored. Matched on the canonical
+    // (personal-first) identity key, same as the QC member_email join.
+    const officerFilter =
+      !isQc && qcOfficerFilter && qcOfficerFilter.dept === key
+        ? new Set(qcOfficerFilter.emails.map((e) => canonEmail(e)))
+        : null;
+    const members = officerFilter
+      ? v.members.filter((m) => officerFilter.has(canonEmail(m.email)))
+      : v.members;
+    // Re-keys the table ONLY when the QC officer filter toggles (not on search /
+    // pagination), so picking an officer cross-fades the table smoothly.
+    const tableAnimKey = officerFilter ? `off:${qcOfficerFilter!.officer}` : 'all';
     // Inputs freeze both after submission (status != draft) and once the
     // manager has locked the values locally ahead of submitting.
     const statusReadOnly = v.readOnly;
@@ -1868,12 +1899,6 @@ export default function DeptBonusCalculator({
           )}
         </div>
 
-        {/* Manager view of a QC department: who scored the first pass + when,
-            with a Return-to-QC action. Pre-filled values appear in the table. */}
-        {!isQc && isQcDeptKey(key) && (
-          <QcOfficerLog deptKey={key} periodStart={weekStart} />
-        )}
-
         {/* Toolbar: people search + progress */}
         {tableReady && (
           <div className="flex flex-none flex-col gap-2 border-b border-zinc-100 px-4 py-2.5 dark:border-zinc-800/70 sm:flex-row sm:items-center sm:justify-between sm:px-5">
@@ -1901,8 +1926,29 @@ export default function DeptBonusCalculator({
           </div>
         )}
 
-        {/* Body: the per-person table (scrolls; header + footer pinned) */}
-        <div className="min-h-0 flex-1 overflow-auto">
+        {/* Body: optional QC officer rail (left) + the per-person table. The rail
+            lets a manager filter the table to one QC officer's scored people. */}
+        <div className="flex min-h-0 flex-1">
+          {!isQc && isQcDeptKey(key) && (
+            <QcOfficerLog
+              deptKey={key}
+              periodStart={weekStart}
+              selectedOfficer={qcOfficerFilter?.dept === key ? qcOfficerFilter.officer : null}
+              onSelectOfficer={(sel) => {
+                setQcOfficerFilter(sel ? { dept: key, officer: sel.officer, emails: sel.emails } : null);
+                setLeadGenPage(0);
+              }}
+            />
+          )}
+          <div className="min-h-0 min-w-0 flex-1 overflow-auto">
+          <AnimatePresence mode="wait" initial={false}>
+          <motion.div
+            key={tableAnimKey}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.15, ease: EASE }}
+          >
           {!d || !d.loaded ? (
             <DeptTableSkeleton
               rows={Math.min(10, Math.max(3, (isQc ? qcRosterByDept.get(key)?.length : rosterByDept.get(key)?.length) ?? 6))}
@@ -1916,7 +1962,11 @@ export default function DeptBonusCalculator({
             </div>
           ) : members.length === 0 ? (
             <div className="px-5 py-10 text-center text-xs text-zinc-400">
-              {cq ? 'No one matches your search.' : 'No team members in this department.'}
+              {officerFilter
+                ? 'This QC officer has no matching people here.'
+                : cq
+                  ? 'No one matches your search.'
+                  : 'No team members in this department.'}
             </div>
           ) : (
             <table className="table-keep w-full border-collapse text-left">
@@ -2271,6 +2321,9 @@ export default function DeptBonusCalculator({
               </tfoot>
             </table>
           )}
+          </motion.div>
+          </AnimatePresence>
+          </div>
         </div>
 
         {/* Pager: only for paginated depts (Lead Gen) with more than one page */}
