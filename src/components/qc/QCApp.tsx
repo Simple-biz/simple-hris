@@ -237,7 +237,7 @@ export default function QCApp() {
       }
       try {
         const res = await fetch(
-          `/api/qc/submissions?depts=lead_gen,callback,discovery&period_start=${week}`,
+          `/api/qc/submissions?depts=${QC_DEPT_KEYS.join(',')}&period_start=${week}`,
           { cache: 'no-store' },
         );
         const json = (await res.json()) as {
@@ -434,11 +434,19 @@ export default function QCApp() {
 
 // ── Overview ──────────────────────────────────────────────────────────────────
 
-const DEPTS: { key: string; label: string; icon: typeof Target }[] = [
-  { key: 'lead_gen', label: 'Leadgen', icon: Target },
-  { key: 'callback', label: 'Callback', icon: PhoneCall },
-  { key: 'discovery', label: 'Discovery', icon: Compass },
-];
+/** Label + icon for every QC-scoreable department. The rendered set is derived
+ *  from QC_DEPT_KEYS, so a dept dropping out of QC scope (e.g. Discovery moving
+ *  to its manager) disappears here automatically — and re-adds just as easily. */
+const QC_DEPT_META: Record<string, { label: string; icon: typeof Target }> = {
+  lead_gen: { label: 'Leadgen', icon: Target },
+  callback: { label: 'Callback', icon: PhoneCall },
+  discovery: { label: 'Discovery', icon: Compass },
+};
+const DEPTS: { key: string; label: string; icon: typeof Target }[] = QC_DEPT_KEYS.map((key) => ({
+  key,
+  label: QC_DEPT_META[key]?.label ?? key,
+  icon: QC_DEPT_META[key]?.icon ?? Target,
+}));
 
 /** Orange-keyed welcome lines — mirrors HR's rotating greeting register. */
 const QC_MESSAGES: { heading: (name: string) => string; body: string }[] = [
@@ -448,7 +456,7 @@ const QC_MESSAGES: { heading: (name: string) => string; body: string }[] = [
   },
   {
     heading: (n) => `Ready when you are, ${n}.`,
-    body: 'Score the people assigned to you this period — Leadgen, Callback, Discovery — and the managers take it from there.',
+    body: 'Score the people assigned to you this period — Leadgen and Callback — and the managers take it from there.',
   },
   {
     heading: (n) => `Let’s get this period scored, ${n}.`,
@@ -779,7 +787,7 @@ function QcOverview({
           </h2>
           <Pipeline qcLocked={qcLocked} />
           <p className="mt-auto text-[11px] leading-relaxed text-zinc-400">
-            Lock your batch when you&rsquo;re done — the Leadgen, Callback, and Discovery managers review and finalize your
+            Lock your batch when you&rsquo;re done — the Leadgen and Callback managers review and finalize your
             first-pass scores before anything is paid.
           </p>
         </div>

@@ -26,7 +26,7 @@
 // Week = the latest Hubstaff upload (pinned, same key accounting processes).
 // Status (draft/ready/locked) lives in hsl_bonus_period_status (reused).
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import {
@@ -429,6 +429,13 @@ function QcOfficerLog({ deptKey, periodStart }: { deptKey: string; periodStart: 
   } | null>(null);
   const [loading, setLoading] = useState(true);
   const [returning, setReturning] = useState(false);
+  // Which officer's scored-members list is expanded (click a name to toggle).
+  const [openOfficer, setOpenOfficer] = useState<string | null>(null);
+  // Unique per mount so two QcOfficerLogs that briefly coexist during the
+  // calculator's view-mode swap (AnimatePresence keeps the exiting panel mounted
+  // while the new one enters) don't reuse the SAME realtime channel name — which
+  // throws "cannot add postgres_changes callbacks after subscribe()".
+  const channelUid = useId().replace(/[^a-z0-9]/gi, '');
 
   const load = useCallback(async () => {
     try {
@@ -459,22 +466,27 @@ function QcOfficerLog({ deptKey, periodStart }: { deptKey: string; periodStart: 
     const supabase = getSupabaseBrowserClient();
     if (!supabase) return;
     const channel = supabase
-      .channel(`qc-log-${deptKey}`)
+      .channel(`qc-log-${deptKey}-${channelUid}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'qc_officer_locks' }, () => void load())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'qc_kpi_submissions' }, () => void load())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'qc_score_assignments' }, () => void load())
       .subscribe();
     return () => { void supabase.removeChannel(channel); };
-  }, [deptKey, load]);
+  }, [deptKey, load, channelUid]);
 
   const deptAssignments = (data?.assignments ?? []).filter((a) => a.department === deptKey);
   const indexByOfficer = new Map((data?.officers ?? []).map((o) => [o.email.toLowerCase(), o.index]));
   const lockByOfficer = new Map((data?.locks ?? []).map((l) => [l.qc_officer_email.toLowerCase(), l]));
   const countByOfficer = new Map<string, number>();
+  const membersByOfficer = new Map<string, { email: string; name: string }[]>();
   for (const a of deptAssignments) {
     const e = a.qc_officer_email.toLowerCase();
     countByOfficer.set(e, (countByOfficer.get(e) ?? 0) + 1);
+    const list = membersByOfficer.get(e) ?? [];
+    list.push({ email: a.member_email, name: a.member_name ?? a.member_email });
+    membersByOfficer.set(e, list);
   }
+  for (const list of membersByOfficer.values()) list.sort((a, b) => a.name.localeCompare(b.name));
   const officerEmails = Array.from(countByOfficer.keys()).sort(
     (a, b) => (indexByOfficer.get(a) ?? 99) - (indexByOfficer.get(b) ?? 99),
   );
@@ -541,37 +553,76 @@ function QcOfficerLog({ deptKey, periodStart }: { deptKey: string; periodStart: 
           No QC officer is assigned to score this department yet.
         </p>
       ) : (
-        <div className="mt-2 flex flex-wrap gap-1.5">
-          {officerEmails.map((email) => {
-            const lock = lockByOfficer.get(email);
-            const locked = lock?.status === 'locked';
-            const idx = indexByOfficer.get(email);
+        <div className="mt-2">
+          <div className="flex flex-wrap gap-1.5">
+            {officerEmails.map((email) => {
+              const lock = lockByOfficer.get(email);
+              const locked = lock?.status === 'locked';
+              const idx = indexByOfficer.get(email);
+              const open = openOfficer === email;
+              const count = countByOfficer.get(email) ?? 0;
+              return (
+                <button
+                  key={email}
+                  type="button"
+                  onClick={() => setOpenOfficer((cur) => (cur === email ? null : email))}
+                  aria-expanded={open}
+                  className={cn(
+                    'inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-[11px] transition-colors',
+                    open && 'ring-2 ring-orange-300 dark:ring-orange-700',
+                    locked
+                      ? 'border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100 dark:border-emerald-900/50 dark:bg-emerald-950/30 dark:text-emerald-200 dark:hover:bg-emerald-950/50'
+                      : 'border-zinc-200 bg-white text-zinc-600 hover:bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900/50 dark:text-zinc-300 dark:hover:bg-zinc-800/60',
+                  )}
+                  title={`${email} — click to see who they scored`}
+                >
+                  <span className="font-semibold">QC Officer {idx ?? '?'}</span>
+                  <span className="max-w-[10rem] truncate font-mono text-[10px] opacity-70">{email}</span>
+                  <span className="tabular-nums opacity-80">· {count} {count === 1 ? 'member' : 'members'}</span>
+                  {locked ? (
+                    <span className="inline-flex items-center gap-0.5 text-emerald-600 dark:text-emerald-400">
+                      <Lock className="h-2.5 w-2.5" /> {fmtTime(lock?.locked_at ?? null)}
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-0.5 text-zinc-400">
+                      <Clock className="h-2.5 w-2.5" /> scoring…
+                    </span>
+                  )}
+                  <ChevronDown className={cn('h-3 w-3 opacity-60 transition-transform', open && 'rotate-180')} />
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Expanded: the people the selected officer is scoring this period */}
+          {openOfficer && (() => {
+            const members = membersByOfficer.get(openOfficer) ?? [];
+            const idx = indexByOfficer.get(openOfficer);
+            const locked = lockByOfficer.get(openOfficer)?.status === 'locked';
             return (
-              <span
-                key={email}
-                className={cn(
-                  'inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-[11px]',
-                  locked
-                    ? 'border-emerald-300 bg-emerald-50 text-emerald-800 dark:border-emerald-900/50 dark:bg-emerald-950/30 dark:text-emerald-200'
-                    : 'border-zinc-200 bg-white text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900/50 dark:text-zinc-300',
-                )}
-                title={email}
-              >
-                <span className="font-semibold">QC Officer {idx ?? '?'}</span>
-                <span className="max-w-[10rem] truncate font-mono text-[10px] opacity-70">{email}</span>
-                <span className="tabular-nums opacity-80">· {countByOfficer.get(email) ?? 0} {(countByOfficer.get(email) ?? 0) === 1 ? 'member' : 'members'}</span>
-                {locked ? (
-                  <span className="inline-flex items-center gap-0.5 text-emerald-600 dark:text-emerald-400">
-                    <Lock className="h-2.5 w-2.5" /> {fmtTime(lock?.locked_at ?? null)}
-                  </span>
+              <div className="mt-2 rounded-lg border border-orange-200 bg-white px-3 py-2.5 dark:border-orange-950/50 dark:bg-zinc-900/50">
+                <p className="mb-1.5 flex items-center gap-1.5 text-[10.5px] font-semibold uppercase tracking-[0.12em] text-orange-700 dark:text-orange-300">
+                  <Users className="h-3 w-3" />
+                  QC Officer {idx ?? '?'} {locked ? 'scored' : 'is scoring'} — {members.length} {members.length === 1 ? 'person' : 'people'}
+                </p>
+                {members.length === 0 ? (
+                  <p className="text-[11px] text-zinc-500 dark:text-zinc-400">No members assigned.</p>
                 ) : (
-                  <span className="inline-flex items-center gap-0.5 text-zinc-400">
-                    <Clock className="h-2.5 w-2.5" /> scoring…
-                  </span>
+                  <div className="flex flex-wrap gap-1">
+                    {members.map((m) => (
+                      <span
+                        key={m.email}
+                        className="inline-flex max-w-[14rem] items-center truncate rounded border border-zinc-200 bg-zinc-50 px-1.5 py-0.5 text-[11px] text-zinc-700 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300"
+                        title={m.email}
+                      >
+                        {m.name}
+                      </span>
+                    ))}
+                  </div>
                 )}
-              </span>
+              </div>
             );
-          })}
+          })()}
         </div>
       )}
     </div>

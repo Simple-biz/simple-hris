@@ -191,7 +191,10 @@
       "Bash(node ./scripts/_diag-qc.mjs)",
       "Bash(rm -f ./scripts/_diag-qc.mjs)",
       "Bash(node ./scripts/_reset-sessions.mjs)",
-      "Bash(rm -f ./scripts/_reset-sessions.mjs)"
+      "Bash(rm -f ./scripts/_reset-sessions.mjs)",
+      "Bash(node \"C:/Users/Itachi/AppData/Local/Temp/claude/c--Users-Itachi-Desktop-simple-hris/16970e24-6d1e-4797-a352-61a2e5b964eb/scratchpad/diag-jackie.mjs\")",
+      "Bash(node scripts/_diag-jackie.mjs)",
+      "Bash(rm -f scripts/_diag-jackie.mjs)"
     ],
     "additionalDirectories": [
       "\\tmp"

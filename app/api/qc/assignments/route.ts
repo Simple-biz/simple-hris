@@ -10,6 +10,7 @@ import {
   listQcReviewStatus,
   listManagedQcDepts,
 } from '@/lib/supabase/qc-db';
+import { isQcDeptKey } from '@/lib/qc/constants';
 import type { EmployeeRow } from '@/lib/supabase/employees';
 
 export const dynamic = 'force-dynamic';
@@ -45,8 +46,14 @@ export async function GET(request: Request) {
   const periodStart = searchParams.get('period_start');
   if (!periodStart) return NextResponse.json({ error: 'period_start required' }, { status: 400 });
 
-  const { officers, rows, error } = await ensureQcAssignmentsForPeriod(periodStart);
+  const { officers, rows: allRows, error } = await ensureQcAssignmentsForPeriod(periodStart);
   if (error) return NextResponse.json({ error }, { status: 500 });
+
+  // Only surface departments currently in QC scope. ensureQcAssignmentsForPeriod
+  // keeps sticky rows for departed slots (transfers), and legacy rows may exist
+  // for a dept since moved out of QC (e.g. Discovery → its manager) — filtering
+  // here keeps those out of the officer/manager view without deleting history.
+  const rows = allRows.filter((r) => isQcDeptKey(r.department));
 
   const [allLocks, allReview] = await Promise.all([
     listQcOfficerLocks(periodStart),

@@ -6,6 +6,7 @@ import {
 import { getCurrentMasterListUploadId } from "./global-master-list-db";
 import { getHrOnboardingSubmissionById } from "./hr-onboarding-submissions";
 import { normalizeDeptToKey } from "../payroll/normalize-dept-key";
+import { masterListDisplayName, nameLastFirstQuoted } from "../name/display-name";
 
 /**
  * Maps an onboarding submission's payment details onto the `employee_ids`
@@ -143,6 +144,12 @@ export type HrPendingEmployeeRow = {
    *  country the hire selected, falling back to the invite country; null for
    *  manually-added hires with no submission. Set by listHrPendingEmployees. */
   country?: string | null;
+  /** DERIVED (not a column): the surname-first, nickname-quoted display name
+   *  (`Surname[ Suffix], Given... "GoBy"`) re-derived from `name` so the Pending
+   *  Hires table shows the SAME format as the Onboarding "Submitted" tab and the
+   *  format promote posts to the master Google Sheet. Null when `name` yields
+   *  nothing to reorder. Set by listHrPendingEmployees. See ../name/display-name. */
+  display_name?: string | null;
 };
 
 /**
@@ -253,6 +260,13 @@ export async function listHrPendingEmployees(): Promise<{
     } catch {
       /* leave country null */
     }
+  }
+
+  // Surname-first, nickname-quoted display name (re-derived from the legal
+  // `name`) so the Pending Hires table reads the SAME way as the Onboarding
+  // "Submitted" tab and matches what promote writes to the master Google Sheet.
+  for (const r of rows) {
+    r.display_name = nameLastFirstQuoted(r.name);
   }
 
   return { rows, error: null };
@@ -614,7 +628,12 @@ export async function promoteHrPendingEmployee(
     // — see references/supabase_global_master_list.sql.
     const masterPayload: Record<string, unknown> = {
       "Department": row.department,
-      "Name": row.name,
+      // Surname-first, nickname-quoted form (e.g. `Reroma, Jan Kane "Kane"`) so
+      // the master list + Google Sheet carry the SAME format as the Onboarding
+      // "Submitted" tab. Safe for the payroll name-token matcher + first-name
+      // greetings (both strip the quotes / handle "Last, First"). See
+      // ../name/display-name.
+      "Name": masterListDisplayName(row.name),
       "Personal Email": row.personal_email,
       "Work Email": row.work_email,
       "Start Date": startDate,
@@ -792,7 +811,9 @@ export async function promoteHrPendingEmployee(
         "../google-sheets/append-master-sheet"
       );
       sheet = await appendMasterSheetRow({
-        name: row.name,
+        // Post the nickname-quoted form to the Sheet (mirrors the master "Name"
+        // insert above + the bulk-promote batch append).
+        name: masterListDisplayName(row.name),
         personalEmail: row.personal_email,
         workEmail: row.work_email,
         department: row.department,

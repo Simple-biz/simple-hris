@@ -208,7 +208,7 @@ export default function HrOnboarding() {
       }
       if (dept && (r.department ?? '').trim() !== dept) return false;
       if (!q) return true;
-      return [r.name, r.personal_email, r.work_email, r.department, r.source]
+      return [r.name, r.display_name, r.personal_email, r.work_email, r.department, r.source]
         .filter(Boolean)
         .some((s) => s!.toLowerCase().includes(q));
     });
@@ -884,7 +884,7 @@ export default function HrOnboarding() {
                           )}
                           <td data-label="Name" className="px-4 py-3">
                             <div className="font-medium text-zinc-900 dark:text-zinc-100">
-                              {row.name}
+                              {row.display_name ?? row.name}
                             </div>
                             {row.job_description && (
                               <div className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-500">
@@ -1331,7 +1331,7 @@ function BulkPromoteConfirmDialog({
             <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800">
               {(deptGroups.length === 1 ? (rows ?? []) : activeMembers).map((r) => (
                 <tr key={r.id} className="bg-white dark:bg-zinc-950">
-                  <td className="px-3 py-2 font-medium text-zinc-800 dark:text-zinc-100">{r.name}</td>
+                  <td className="px-3 py-2 font-medium text-zinc-800 dark:text-zinc-100">{r.display_name ?? r.name}</td>
                   {deptGroups.length === 1 && (
                     <td className="px-3 py-2 text-zinc-500 dark:text-zinc-400">{r.department ?? '—'}</td>
                   )}

@@ -26,6 +26,12 @@ export function normalizeDeptToKey(raw: string | null | undefined): string | nul
     'manager bonus': 'us_manager_bonus',
     callback: 'callback',
     'callback team': 'callback',
+    // The master list (synced from the Google Sheet) carries BOTH "Callback Team"
+    // and a stray plural "Callbacks" label. Map both to the single `callback`
+    // department key so a manager assigned to either label sees the Callback KPI
+    // calculator and the full team groups together (rather than splitting off the
+    // lone "Callbacks" person into an unrecognized, invisible department).
+    callbacks: 'callback',
     qc: 'qc',
     'quality control': 'qc',
     discovery: 'discovery',

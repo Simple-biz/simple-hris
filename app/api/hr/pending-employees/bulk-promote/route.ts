@@ -10,6 +10,7 @@ import {
   appendMasterSheetRows,
   type AppendMasterRowResult,
 } from "@/lib/google-sheets/append-master-sheet";
+import { masterListDisplayName } from "@/lib/name/display-name";
 import { createSupabaseServiceRoleClient } from "@/lib/supabase/server";
 import { deniedResponse } from "@/lib/auth/authorize-email";
 import { requireFeatureEdit } from "@/lib/auth/authorize-feature";
@@ -192,7 +193,10 @@ export async function POST(req: Request) {
     try {
       sheetResults = await appendMasterSheetRows(
         okPrepared.map((p) => ({
-          name: p.sheetInput.name,
+          // Surname-first, nickname-quoted form (e.g. `Reroma, Jan Kane "Kane"`)
+          // so the bulk batch posts the SAME format to the master Sheet that the
+          // master-list "Name" insert (inside promote) and the Submitted tab use.
+          name: masterListDisplayName(p.sheetInput.name),
           personalEmail: p.sheetInput.personalEmail,
           workEmail: p.sheetInput.workEmail,
           department: p.sheetInput.department,
