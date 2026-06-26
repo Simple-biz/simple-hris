@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createSupabaseServiceRoleClient, createSupabaseServerClient } from "@/lib/supabase/server";
-import { requireElevatedSession, deniedResponse } from "@/lib/auth/authorize-email";
+import { authorizeEmailAccess, requireElevatedSession, deniedResponse } from "@/lib/auth/authorize-email";
 import { insertAuditLog } from "@/lib/supabase/audit-log";
 import { bumpForceLogoutFor } from "@/lib/auth/force-logout";
 import { FEATURE_ACCESS_LEVELS, type FeatureAccess } from "@/lib/rbac/feature-permissions";
@@ -19,11 +19,19 @@ function getSb() {
 
 /** GET ?email=... — list every active feature permission for one user. */
 export async function GET(req: NextRequest) {
-  const authz = await requireElevatedSession();
-  if (!authz.ok) return deniedResponse(authz);
+  const emailParam = req.nextUrl.searchParams.get("email")?.trim().toLowerCase();
+  if (!emailParam) return NextResponse.json({ error: "email is required" }, { status: 400 });
 
-  const email = req.nextUrl.searchParams.get("email")?.trim().toLowerCase();
-  if (!email) return NextResponse.json({ error: "email is required" }, { status: 400 });
+  // Self-or-elevated. EVERY dashboard loads its OWN per-tab overlay client-side to
+  // know which tabs to show (see useFeaturePermissions). Managers, QC, orphanage,
+  // CEO and contractors are NOT elevated, so gating this read behind
+  // requireElevatedSession() made them 403 reading their own permissions — the
+  // overlay came back empty and every tab but Overview was hidden, regardless of
+  // the access an admin granted. Mirror GET /api/employee-roles?email=: a user may
+  // read their own overlay; listing anyone else's still requires an elevated role.
+  const authz = await authorizeEmailAccess(emailParam);
+  if (!authz.ok) return deniedResponse(authz);
+  const email = authz.effectiveEmail;
 
   const supabase = getSb();
   if (!supabase) return NextResponse.json({ rows: [], error: "supabase unavailable" });
