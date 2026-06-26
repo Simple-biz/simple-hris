@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { LayoutDashboard, ShieldCheck, Briefcase, ArrowLeftRight, Sparkles, UserCog, HeartHandshake, Crown, Users, HardHat } from 'lucide-react';
+import { LayoutDashboard, ShieldCheck, Briefcase, ArrowLeftRight, Sparkles, UserCog, HeartHandshake, Crown, Users, HardHat, ClipboardCheck } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { withViewTransition } from '@/lib/theme/with-view-transition';
 import { useNotificationCountsByView } from '@/hooks/useNotificationCountsByView';
@@ -28,6 +28,7 @@ const VIEW_ICONS: Record<AppView, React.ComponentType<{ className?: string }>> =
   ceo: Crown,
   hr: Users,
   contractor: HardHat,
+  qc: ClipboardCheck,
 };
 
 export default function ViewSwitcher({ email, currentView }: ViewSwitcherProps) {

@@ -13,7 +13,8 @@ import {
   type CatalogRateIndex,
 } from '@/lib/payroll/resolve-rate';
 import { listHubstaffUploads, fetchHubstaffRowsBySourceFile, rowsToPayrollRows } from '@/lib/supabase/hubstaff-hours-db';
-import { parseDateRangeFromFilename, payWeekFromUploadStart } from '@/lib/hubstaff/calendar-column-dedupe';
+import { parseHoursToDecimal, mapHubstaffHoursRow } from '@/lib/supabase/hubstaff-hours';
+import { parseDateRangeFromFilename, payWeekFromUploadStart, resolveCanonicalColumnsToIso } from '@/lib/hubstaff/calendar-column-dedupe';
 import { projectOvertime } from './overtime-projection';
 import type { PayCurrency } from '@/lib/payment-catalog/pay-structure';
 
@@ -665,31 +666,176 @@ export async function buildOtLeadersForFile(
   }
 }
 
+/* ──────────────────────────────────────────────────────────────────────────
+ * Granular OT trend (daily / weekly / monthly)
+ *
+ * Overtime is a WEEKLY concept (hours over 40 per person per pay week), so a
+ * daily view needs each week's OT attributed to specific days. We attribute it
+ * to the day on which the person's running weekly total crosses 40 ("the day
+ * that crosses 40h"): walking their days in order, the slice of each day's hours
+ * that sits above the 40h line is that day's OT. By construction the per-day OT
+ * sums back to the week's OT, so weekly/monthly rollups stay exact and the
+ * existing weekly numbers are unchanged. Daily attribution is then scaled to the
+ * authoritative Total-worked OT so a CSV whose day columns don't sum to the
+ * weekly total still reconciles to the penny.
+ * ────────────────────────────────────────────────────────────────────────── */
+
+/** The three time granularities offered by the People → Statistics trend toggle. */
+export type StatsGranularity = 'daily' | 'weekly' | 'monthly';
+
+/** One atomic OT contribution: a person's overtime landing on a single calendar day. */
+interface DailyOtRecord {
+  iso: string;
+  email: string;
+  name: string | null;
+  department: string;
+  otHours: number;
+  payoutPhp: number;
+}
+
+const ISO_DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
+
 /**
- * Weekly progression for the Statistics tab: OT payout + headcount-on-OT across
- * the recent canonical payroll weeks (the same weeks the CSV period selector
- * lists). Rate context is loaded once and the CURRENT resolved OT rate is used
- * for every week (matching the roster's "current rate" model), so only each
- * week's hours are fetched. Backfills / time-activity / duplicate uploads are
- * excluded so the trend line uses one point per real week.
+ * Per-day hours for one Hubstaff row. Canonical weekday columns (`monday`…) are
+ * first resolved to the ISO dates of the file's week; ISO date columns pass
+ * through. Returns `isoDate → hours` for the days the person actually logged.
  */
-export async function buildPeopleStats(maxWeeks = 16): Promise<{
-  points: PeopleStatsPoint[];
+function extractDayHours(row: Record<string, unknown>, filename: string): Map<string, number> {
+  const resolved = resolveCanonicalColumnsToIso(row, filename);
+  const out = new Map<string, number>();
+  for (const [key, value] of Object.entries(resolved)) {
+    const k = key.trim();
+    if (!ISO_DAY_RE.test(k)) continue;
+    const h = parseHoursToDecimal(value);
+    if (h > 0) out.set(k, h);
+  }
+  return out;
+}
+
+/**
+ * Attribute a person's authoritative weekly OT (`weeklyOt`, from Total worked)
+ * across their worked days using the "day that crosses 40h" rule, scaled so the
+ * per-day amounts sum exactly to `weeklyOt`. Falls back to the last worked day
+ * (or the week's end) when the row has no usable per-day columns.
+ */
+function attributeWeeklyOtToDays(
+  dayHours: Map<string, number>,
+  weeklyOt: number,
+  weekEndIso: string,
+): { iso: string; otHours: number }[] {
+  if (weeklyOt <= 0) return [];
+  const days = [...dayHours.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+
+  // Raw crossing-40 attribution from the day columns.
+  const raw: { iso: string; otHours: number }[] = [];
+  let cum = 0;
+  for (const [iso, h] of days) {
+    const before = cum;
+    cum += h;
+    const ot = Math.max(0, cum - 40) - Math.max(0, before - 40);
+    if (ot > 0) raw.push({ iso, otHours: ot });
+  }
+  const rawSum = raw.reduce((s, r) => s + r.otHours, 0);
+
+  if (rawSum > 0) {
+    const scale = weeklyOt / rawSum;
+    return raw.map((r) => ({ iso: r.iso, otHours: r.otHours * scale }));
+  }
+  // No day columns (or days summed ≤ 40 despite a Total > 40): put it all on the
+  // last worked day, else the week's end, so the daily series still reconciles.
+  const fallbackIso = days.length ? days[days.length - 1][0] : weekEndIso;
+  return [{ iso: fallbackIso, otHours: weeklyOt }];
+}
+
+/** Roll atomic daily-OT records into one trend point (distinct headcount, ranked leaders, dept rollup). */
+function pointFromRecords(
+  records: DailyOtRecord[],
+  start: string,
+  end: string,
+  fxRate: number,
+): PeopleStatsPoint {
+  const byPerson = new Map<string, PeopleOtPerPerson>();
+  let otHours = 0;
+  let otPayoutPhp = 0;
+  for (const r of records) {
+    otHours += r.otHours;
+    otPayoutPhp += r.payoutPhp;
+    const key = r.email || (r.name ?? '').trim().toLowerCase();
+    const cur = byPerson.get(key);
+    if (cur) {
+      cur.otHours += r.otHours;
+      cur.payoutPhp += r.payoutPhp;
+      if (!cur.name && r.name) cur.name = r.name;
+    } else {
+      byPerson.set(key, {
+        name: r.name,
+        email: r.email || null,
+        department: r.department,
+        otHours: r.otHours,
+        payoutPhp: r.payoutPhp,
+      });
+    }
+  }
+  const perPerson = [...byPerson.values()];
+  const leaders: PeopleStatsLeader[] = perPerson
+    .slice()
+    .sort((a, b) => b.otHours - a.otHours)
+    .map((p) => ({
+      name: p.name,
+      email: p.email,
+      otHours: Math.round(p.otHours * 10) / 10,
+      otPayoutPhp: Math.round(p.payoutPhp * 100) / 100,
+      otPayoutUsd: fxRate > 0 ? Math.round((p.payoutPhp / fxRate) * 100) / 100 : null,
+      weeks: 1,
+    }));
+  return {
+    sourceFile: '',
+    weekStart: start,
+    weekEnd: end,
+    otEmployees: perPerson.length,
+    otHours: Math.round(otHours * 10) / 10,
+    otPayoutPhp: Math.round(otPayoutPhp * 100) / 100,
+    otPayoutUsd: fxRate > 0 ? Math.round((otPayoutPhp / fxRate) * 100) / 100 : null,
+    leaders,
+    depts: aggregateDepts(perPerson, fxRate),
+  };
+}
+
+/** First / last calendar day of the month an ISO date belongs to (e.g. "2026-06-13" → 2026-06-01 / 2026-06-30). */
+function monthBounds(iso: string): { key: string; start: string; end: string } {
+  const y = Number(iso.slice(0, 4));
+  const m = Number(iso.slice(5, 7));
+  const p2 = (x: number) => String(x).padStart(2, '0');
+  const last = new Date(y, m, 0).getDate();
+  return { key: `${iso.slice(0, 7)}`, start: `${y}-${p2(m)}-01`, end: `${y}-${p2(m)}-${p2(last)}` };
+}
+
+/**
+ * OT trend at three granularities for the People → Statistics charts. One pass
+ * over the recent canonical payroll weeks produces atomic per-day OT records
+ * (see attribution note above); those are then bucketed by day, by pay week, and
+ * by calendar month. The cross-week leaderboard aggregate is returned alongside,
+ * unchanged, so the standings table keeps following its own period selector.
+ */
+export async function buildPeopleStatsSeries(maxWeeks = 26): Promise<{
+  daily: PeopleStatsPoint[];
+  weekly: PeopleStatsPoint[];
+  monthly: PeopleStatsPoint[];
   otLeaders: PeopleStatsLeader[];
   otDepts: PeopleStatsDept[];
   error: string | null;
 }> {
+  const empty = { daily: [], weekly: [], monthly: [], otLeaders: [], otDepts: [] };
   const [{ employees, error }, rateCtx] = await Promise.all([
     getEmployeesForAuthorizedServerRoute(),
     loadPeopleRateContext(),
   ]);
-  if (error) return { points: [], otLeaders: [], otDepts: [], error };
+  if (error) return { ...empty, error };
 
-  // email → OT rate (PHP-equivalent) and email → department, resolved once.
   const otRateByEmail = buildOtRateByEmail(employees, rateCtx);
   const deptByEmail = buildDeptByEmail(employees);
+  const fxRate = rateCtx.fx.usdToPhp;
 
-  // Canonical weekly uploads only, chronological, deduped by date range.
   let uploads: Awaited<ReturnType<typeof listHubstaffUploads>> = [];
   try {
     uploads = await listHubstaffUploads();
@@ -698,67 +844,96 @@ export async function buildPeopleStats(maxWeeks = 16): Promise<{
   }
   const recent = canonicalWeeksFromUploads(uploads).slice(-maxWeeks);
 
-  const fxRate = rateCtx.fx.usdToPhp;
-  const weekResults = await Promise.all(
+  // One bucket of atomic daily records per week, so weekly rollups can reuse the
+  // exact week window while daily/monthly bucket purely by the records' dates.
+  const perWeek = await Promise.all(
     recent.map(async (w) => {
-      let week = {
-        otEmployees: 0,
-        otHours: 0,
-        otPayoutPhp: 0,
-        perPerson: [] as PeopleOtPerPerson[],
-        leaders: [] as PeopleStatsLeader[],
-        depts: [] as PeopleStatsDept[],
-      };
+      const weekEndIso = isoOf(w.end) ?? '';
+      const records: DailyOtRecord[] = [];
       try {
         const { rows } = await fetchHubstaffRowsBySourceFile(w.file);
-        week = computeWeekOt(rows, otRateByEmail, deptByEmail, fxRate);
+        for (const row of rows) {
+          const mapped = mapHubstaffHoursRow(row);
+          if (mapped.hoursDecimal > MAX_PLAUSIBLE_WEEKLY_HOURS) continue;
+          const weeklyOt = mapped.overtimeDecimal;
+          if (weeklyOt <= 0) continue;
+          const em = normEmail(mapped.email ?? '') ?? '';
+          const otPhpRate = otRateByEmail.get(em) ?? 0;
+          const dept = deptByEmail.get(em) || (mapped.department ?? '').trim() || 'Unknown';
+          const dayHours = extractDayHours(row, w.file);
+          for (const part of attributeWeeklyOtToDays(dayHours, weeklyOt, weekEndIso)) {
+            records.push({
+              iso: part.iso,
+              email: em,
+              name: mapped.name ?? null,
+              department: dept,
+              otHours: part.otHours,
+              payoutPhp: part.otHours * otPhpRate,
+            });
+          }
+        }
       } catch {
         /* skip this week's data */
       }
-      const point: PeopleStatsPoint = {
-        sourceFile: w.file,
-        weekStart: isoOf(w.start) ?? '',
-        weekEnd: isoOf(w.end) ?? '',
-        otEmployees: week.otEmployees,
-        otHours: Math.round(week.otHours * 10) / 10,
-        otPayoutPhp: Math.round(week.otPayoutPhp * 100) / 100,
-        otPayoutUsd: fxRate > 0 ? Math.round((week.otPayoutPhp / fxRate) * 100) / 100 : null,
-        leaders: week.leaders,
-        depts: week.depts,
-      };
-      return { point, perPerson: week.perPerson };
+      return { start: isoOf(w.start) ?? '', end: weekEndIso, records };
     }),
   );
 
-  const points = weekResults.map((r) => r.point);
+  const allRecords = perWeek.flatMap((w) => w.records);
 
-  // Aggregate every person's OT across the recent weeks into one leaderboard
-  // row, keyed on a stable identity (work/personal email, falling back to name).
+  // Weekly: one point per pay week, using the week's own window.
+  const weekly = perWeek.map((w) => pointFromRecords(w.records, w.start, w.end, fxRate));
+
+  // Daily: one point per calendar day that had OT.
+  const byDay = new Map<string, DailyOtRecord[]>();
+  for (const r of allRecords) {
+    const bucket = byDay.get(r.iso);
+    if (bucket) bucket.push(r);
+    else byDay.set(r.iso, [r]);
+  }
+  const daily = [...byDay.keys()]
+    .sort((a, b) => a.localeCompare(b))
+    .map((iso) => pointFromRecords(byDay.get(iso)!, iso, iso, fxRate));
+
+  // Monthly: one point per calendar month.
+  const byMonth = new Map<string, { start: string; end: string; records: DailyOtRecord[] }>();
+  for (const r of allRecords) {
+    const mb = monthBounds(r.iso);
+    const bucket = byMonth.get(mb.key);
+    if (bucket) bucket.records.push(r);
+    else byMonth.set(mb.key, { start: mb.start, end: mb.end, records: [r] });
+  }
+  const monthly = [...byMonth.keys()]
+    .sort((a, b) => a.localeCompare(b))
+    .map((k) => {
+      const m = byMonth.get(k)!;
+      return pointFromRecords(m.records, m.start, m.end, fxRate);
+    });
+
+  // Cross-week leaderboard aggregate (unchanged from buildPeopleStats), so the
+  // standings table on the right stays scoped by its own week selector.
   const leaderMap = new Map<string, PeopleStatsLeader>();
-  for (const { perPerson } of weekResults) {
-    for (const p of perPerson) {
-      const key = normEmail(p.email ?? '') || (p.name ?? '').trim().toLowerCase();
-      if (!key) continue;
-      const existing = leaderMap.get(key);
-      if (existing) {
-        existing.otHours += p.otHours;
-        existing.otPayoutPhp += p.payoutPhp;
-        existing.weeks += 1;
-        if (!existing.name && p.name) existing.name = p.name;
-        if (!existing.email && p.email) existing.email = p.email;
-      } else {
-        leaderMap.set(key, {
-          name: p.name ?? null,
-          email: p.email ?? null,
-          otHours: p.otHours,
-          otPayoutPhp: p.payoutPhp,
-          otPayoutUsd: null, // filled below once the PHP total is final
-          weeks: 1,
-        });
-      }
+  for (const r of allRecords) {
+    const key = r.email || (r.name ?? '').trim().toLowerCase();
+    if (!key) continue;
+    const existing = leaderMap.get(key);
+    if (existing) {
+      existing.otHours += r.otHours;
+      existing.otPayoutPhp += r.payoutPhp;
+      if (!existing.name && r.name) existing.name = r.name;
+      if (!existing.email && r.email) existing.email = r.email;
+    } else {
+      leaderMap.set(key, {
+        name: r.name,
+        email: r.email || null,
+        otHours: r.otHours,
+        otPayoutPhp: r.payoutPhp,
+        otPayoutUsd: null,
+        weeks: 1,
+      });
     }
   }
-  const otLeaders: PeopleStatsLeader[] = Array.from(leaderMap.values())
+  const otLeaders = [...leaderMap.values()]
     .map((l) => ({
       ...l,
       otHours: Math.round(l.otHours * 10) / 10,
@@ -767,8 +942,7 @@ export async function buildPeopleStats(maxWeeks = 16): Promise<{
     }))
     .sort((a, b) => b.otHours - a.otHours);
 
-  // Cross-week department rollup (distinct headcount via aggregateDepts' id set).
-  const otDepts = aggregateDepts(weekResults.flatMap((r) => r.perPerson), fxRate);
+  const otDepts = aggregateDepts(allRecords, fxRate);
 
-  return { points, otLeaders, otDepts, error: null };
+  return { daily, weekly, monthly, otLeaders, otDepts, error: null };
 }

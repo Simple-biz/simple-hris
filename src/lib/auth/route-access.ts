@@ -39,6 +39,7 @@ export const ROUTE_REQUIRED_ROLES: ReadonlyArray<{ prefix: string; roles: readon
   { prefix: '/hr',            roles: ['hr_coordinator', 'admin'] },
   { prefix: '/orphanage',     roles: ['orphanage_manager', 'admin'] },
   { prefix: '/manager',       roles: ['manager', 'admin'] },
+  { prefix: '/qc',            roles: ['qc', 'admin'] },
 ];
 
 /**
@@ -117,7 +118,7 @@ export function evaluateRouteAccess(input: {
 
   // (4) `?email=` ownership pinning.
   const requested = (requestedEmail ?? '').trim().toLowerCase();
-  const PERSONAL_ROUTES = ['/manager', '/employee', '/ceo'];
+  const PERSONAL_ROUTES = ['/manager', '/employee', '/ceo', '/qc'];
   const isPersonalRoute = PERSONAL_ROUTES.some(
     (r) => pathname === r || pathname.startsWith(`${r}/`),
   );

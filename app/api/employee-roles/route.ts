@@ -19,6 +19,7 @@ const VALID_ROLES = [
   'orphanage_manager',
   'contractor',
   'ceo',
+  'qc',
 ] as const;
 type Role = (typeof VALID_ROLES)[number];
 

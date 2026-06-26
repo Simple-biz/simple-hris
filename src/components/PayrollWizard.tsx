@@ -1161,6 +1161,10 @@ export default function PayrollWizard({
    * in the Additions "KPI Sub." column; the accountant can still override per row.
    */
   const [managerBonusRaw, setManagerBonusRaw] = useState<Record<string, number>>({});
+  // Per-employee KPI amount BROKEN DOWN by source department, so the KPI Sub.
+  // column can show on hover where each part came from — important for people
+  // who were transferred mid-cycle and earned a KPI in two departments.
+  const [managerBonusByDeptRaw, setManagerBonusByDeptRaw] = useState<Record<string, Record<string, number>>>({});
   const [managerBonusMeta, setManagerBonusMeta] = useState<Record<string, { period_start: string; status: string }>>({});
 
   useEffect(() => {
@@ -1199,11 +1203,14 @@ export default function PayrollWizard({
 
         const meta: Record<string, { period_start: string; status: string }> = {};
         const raw: Record<string, number> = {};
+        const byDept: Record<string, Record<string, number>> = {};
         await Promise.all(
           Array.from(chosen.entries()).map(async ([dept, info]) => {
             meta[dept] = info;
             // Amounts come from the catalog-applied table; an employee may have
-            // several applied bonuses in the week, so sum them per email.
+            // several applied bonuses in the week, so sum them per email — and
+            // keep a per-department tally so the KPI Sub. hover can show the source
+            // (a transferred person can have a KPI in two departments).
             const res = await fetch(
               `/api/bonus-catalog-applied?dept=${dept}&period_start=${info.period_start}`,
               { cache: 'no-store' },
@@ -1216,12 +1223,15 @@ export default function PayrollWizard({
               if (!em) continue;
               const amt = r.amount == null ? 0 : Number(r.amount);
               raw[em] = Math.round((raw[em] ?? 0) + amt);
+              const bucket = (byDept[em] ??= {});
+              bucket[dept] = Math.round((bucket[dept] ?? 0) + amt);
             }
           }),
         );
         if (cancelled) return;
         setManagerBonusMeta(meta);
         setManagerBonusRaw(raw);
+        setManagerBonusByDeptRaw(byDept);
       } catch {
         // Silent — no manager submissions surface; depts fall back to local entry.
       }
@@ -3927,6 +3937,33 @@ export default function PayrollWizard({
     }
     return out;
   }, [managerBonusRaw, effectiveCalcResults, masterIndex]);
+
+  /** Same identity resolution as {@link resolvedManagerBonus}, but the per-source-
+   *  department breakdown so the KPI Sub. cell can show where each KPI came from
+   *  (e.g. a transferred person with a Leadgen AND a Callback KPI). */
+  const resolvedManagerBonusByDept = useMemo(() => {
+    const out: Record<string, Record<string, number>> = {};
+    if (Object.keys(managerBonusByDeptRaw).length === 0) return out;
+    for (const row of effectiveCalcResults) {
+      const e = normEmail(row.email);
+      let bd = e ? managerBonusByDeptRaw[e] : undefined;
+      if (bd === undefined) {
+        let master = e ? masterIndex.byWorkEmail.get(e) : undefined;
+        if (!master && e) master = masterIndex.byPersonalEmail.get(e);
+        if (!master && row.name) {
+          const toks = normalizeNameTokens(row.name);
+          if (toks) master = masterIndex.byNameTokens.get(toks);
+        }
+        if (master) {
+          const pe = normEmail(master.personal_email);
+          const we = normEmail(master.work_email);
+          bd = (pe ? managerBonusByDeptRaw[pe] : undefined) ?? (we ? managerBonusByDeptRaw[we] : undefined);
+        }
+      }
+      if (bd !== undefined) out[row.email] = bd;
+    }
+    return out;
+  }, [managerBonusByDeptRaw, effectiveCalcResults, masterIndex]);
 
   // PAB + Tech amounts + per-department allowlist come from the Payment Catalog
   // System Bonuses tab (prefetched into initialData). Falls back to the legacy
@@ -9026,14 +9063,33 @@ export default function PayrollWizard({
                                 {/* KPI Submission — manager-submitted per-employee bonus from the KPI Calculator */}
                                 {managerBonusMeta[activeDeptTab] && (() => {
                                   const kpiAmt = resolvedManagerBonus[emp.email];
+                                  // Per-source-department breakdown for the hover. When a person
+                                  // earned a KPI in more than one department (e.g. transferred
+                                  // mid-cycle), each source + amount is listed.
+                                  const breakdown = resolvedManagerBonusByDept[emp.email];
+                                  const parts = breakdown
+                                    ? Object.entries(breakdown)
+                                        .filter(([, v]) => v)
+                                        .map(([d, v]) => `${DEPARTMENTS.find((x) => x.key === d)?.name ?? d} — ${formatPHP(v)}`)
+                                    : [];
+                                  const multi = parts.length > 1;
+                                  const title = parts.length > 0
+                                    ? `KPI from ${parts.length === 1 ? 'department' : `${parts.length} departments`}:\n${parts.join('\n')}\n(submitted by manager · ${managerBonusMeta[activeDeptTab]!.status})`
+                                    : `Submitted by manager · ${managerBonusMeta[activeDeptTab]!.status}`;
                                   return (
                                     <TableCell className="px-1 py-1.5 text-center">
                                       {kpiAmt != null ? (
                                         <span
-                                          title={`Submitted by manager · ${managerBonusMeta[activeDeptTab]!.status}`}
-                                          className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold leading-none text-emerald-700 ring-1 ring-emerald-400/40 dark:bg-emerald-900/40 dark:text-emerald-300 dark:ring-emerald-500/30"
+                                          title={title}
+                                          className={cn(
+                                            'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold leading-none ring-1',
+                                            multi
+                                              ? 'cursor-help bg-amber-100 text-amber-800 ring-amber-400/50 dark:bg-amber-900/40 dark:text-amber-200 dark:ring-amber-500/30'
+                                              : 'bg-emerald-100 text-emerald-700 ring-emerald-400/40 dark:bg-emerald-900/40 dark:text-emerald-300 dark:ring-emerald-500/30',
+                                          )}
                                         >
                                           {formatPHP(kpiAmt)}
+                                          {multi && <span className="font-mono text-[8px] opacity-70">×{parts.length}</span>}
                                         </span>
                                       ) : (
                                         <span className="text-[9px] text-zinc-300 dark:text-zinc-700">—</span>

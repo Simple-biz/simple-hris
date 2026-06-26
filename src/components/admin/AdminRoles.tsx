@@ -2,10 +2,13 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import {
+  AlertTriangle,
+  ArrowLeftRight,
   AtSign,
   Briefcase,
   Building2,
   Check,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   Crown,
@@ -41,6 +44,7 @@ const ROLES = [
   { key: 'hr_coordinator', label: 'HR', blurb: 'Unlocks the HR dashboard.' },
   { key: 'accounting', label: 'Accounting', blurb: 'Unlocks the Accounting dashboard.' },
   { key: 'manager', label: 'Manager', blurb: 'Unlocks the Manager dashboard.' },
+  { key: 'qc', label: 'QC', blurb: 'Quality Control — first-pass KPI scoring for Leadgen/Callback/Discovery, sent to the manager for review.' },
   { key: 'orphanage_manager', label: 'Orphanage', blurb: 'Unlocks the Orphanage dashboard.' },
   { key: 'contractor', label: 'Contractor', blurb: 'Unlocks the Contractor dashboard (invoice management).' },
   { key: 'ceo', label: 'CEO', blurb: 'Unlocks the CEO dashboard, post company-wide announcements.' },
@@ -61,13 +65,23 @@ const ASSIGNABLE_ROLE_KEYS = [
   'orphanage_manager',
   'contractor',
   'manager',
+  'qc',
 ] as const satisfies readonly RoleKey[];
 
 const ROLE_GROUPS: { title: string; caption: string; keys: RoleKey[] }[] = [
   {
     title: 'Roles',
     caption: 'Each role unlocks the matching view in the top-right switcher.',
-    keys: [...ASSIGNABLE_ROLE_KEYS],
+    // Every assignable role EXCEPT qc (rendered on its own below, under Manager).
+    // `manager` sits last here so the QC "Manager's assistant" group reads as
+    // sitting directly beneath it.
+    keys: ASSIGNABLE_ROLE_KEYS.filter((k) => k !== 'qc'),
+  },
+  {
+    title: "Manager's assistant",
+    caption:
+      'QC officers do first-pass KPI scoring of Leadgen, Callback & Discovery for the department manager to review. QC has its own dashboard — assign it on its own (don’t also grant Manager).',
+    keys: ['qc'],
   },
 ];
 
@@ -79,6 +93,8 @@ function rolePillClasses(role: RoleKey): string {
       'border-sky-500/35 bg-sky-500/10 text-sky-900 dark:text-sky-200/95 dark:border-sky-600/40',
     manager:
       'border-indigo-500/35 bg-indigo-500/10 text-indigo-800 dark:text-indigo-300/95 dark:border-indigo-600/40',
+    qc:
+      'border-orange-500/35 bg-orange-500/10 text-orange-800 dark:text-orange-300/95 dark:border-orange-600/40',
     orphanage_manager:
       'border-pink-500/35 bg-pink-500/10 text-pink-800 dark:text-pink-300/95 dark:border-pink-600/40',
     contractor:
@@ -99,6 +115,7 @@ function roleRowAccent(role: RoleKey): string {
     hr_coordinator: 'border-l-emerald-500',
     accounting: 'border-l-sky-500',
     manager: 'border-l-indigo-500',
+    qc: 'border-l-orange-500',
     orphanage_manager: 'border-l-pink-500',
     contractor: 'border-l-blue-500',
     ceo: 'border-l-yellow-500',
@@ -161,6 +178,9 @@ export default function AdminRoles() {
   const [loading, setLoading] = useState(true);
   const [rolesLoading, setRolesLoading] = useState(false);
   const [mutating, setMutating] = useState<RoleKey | null>(null);
+  // When granting a role would create a QC↔Manager conflict, hold the pending
+  // role here to surface a warning modal (instead of a native confirm).
+  const [guardRole, setGuardRole] = useState<RoleKey | null>(null);
   const [forcingLogout, setForcingLogout] = useState(false);
   // Invoicing currency for the selected contractor (PHP/USD). Only meaningful
   // when the `contractor` role is granted.
@@ -168,6 +188,8 @@ export default function AdminRoles() {
   const [currencyMutating, setCurrencyMutating] = useState(false);
   const [page, setPage] = useState(1);
   const [viewFilter, setViewFilter] = useState<'all' | 'with_roles'>('all');
+  // Department picker for the People list. 'all' = no department filter.
+  const [deptFilter, setDeptFilter] = useState<string>('all');
   const [departments, setDepartments] = useState<string[]>([]);
   const [deptAssignments, setDeptAssignments] = useState<DepartmentManagerRow[]>([]);
   const [deptMutating, setDeptMutating] = useState<string | null>(null);
@@ -401,11 +423,17 @@ export default function AdminRoles() {
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     const withRolesOnly = viewFilter === 'with_roles';
+    const dept = deptFilter.trim().toLowerCase();
     const base = uniqueEmployees.filter((e) => {
       if (withRolesOnly) {
         const we = (e.work_email ?? '').trim().toLowerCase();
         const pe = (e.personal_email ?? '').trim().toLowerCase();
         if (!emailsWithRolesSet.has(we) && !emailsWithRolesSet.has(pe)) return false;
+      }
+      if (dept !== 'all') {
+        // Off-roster / custom emails have no department, so they drop out of
+        // any specific-department filter (only "All departments" shows them).
+        if ((e.department ?? '').trim().toLowerCase() !== dept) return false;
       }
       if (q) {
         const hay = [e.name, e.work_email, e.personal_email, e.department, e.employee_id, e.start_date]
@@ -417,11 +445,11 @@ export default function AdminRoles() {
       return true;
     });
     return [...base].sort((a, b) => (a.name ?? '').localeCompare(b.name ?? ''));
-  }, [uniqueEmployees, search, viewFilter, emailsWithRolesSet]);
+  }, [uniqueEmployees, search, viewFilter, deptFilter, emailsWithRolesSet]);
 
   useEffect(() => {
     setPage(1);
-  }, [search, viewFilter]);
+  }, [search, viewFilter, deptFilter]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const currentPage = Math.min(page, totalPages);
@@ -608,13 +636,27 @@ export default function AdminRoles() {
     }
   }
 
-  async function toggleRole(role: RoleKey) {
+  async function toggleRole(role: RoleKey, opts?: { bypassGuard?: boolean }) {
     const email = employeeIdentityEmail(selected);
     if (!email) {
       toast.error('This person has no email on file — add a work or personal email first.');
       return;
     }
     const currentlyHas = hasRole(role);
+
+    // QC is a manager's-assistant view that REPLACES the Manager dashboard in the
+    // switcher. Holding both `qc` and `manager` would surface both views and the
+    // QC guard rail (only the QC tab) would no longer hold. Surface a warning
+    // modal before granting that combination — the admin can still override.
+    if (
+      !opts?.bypassGuard &&
+      !currentlyHas &&
+      ((role === 'qc' && hasRole('manager')) || (role === 'manager' && hasRole('qc')))
+    ) {
+      setGuardRole(role);
+      return;
+    }
+
     setMutating(role);
     try {
       const res = await fetch(
@@ -871,6 +913,23 @@ export default function AdminRoles() {
                   className="h-10 rounded-lg border-zinc-200 bg-white pl-9 dark:border-zinc-800 dark:bg-zinc-950/50"
                 />
               </div>
+              <div className="relative shrink-0 sm:w-48">
+                <Building2 className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400" aria-hidden />
+                <select
+                  value={deptFilter}
+                  onChange={(e) => setDeptFilter(e.target.value)}
+                  aria-label="Filter by department"
+                  className="h-10 w-full appearance-none truncate rounded-lg border border-zinc-200 bg-white pl-8 pr-7 text-sm text-zinc-700 focus:outline-none focus:ring-2 focus:ring-orange-500/30 dark:border-zinc-800 dark:bg-zinc-950/50 dark:text-zinc-200"
+                >
+                  <option value="all">All departments</option>
+                  {departments.map((d) => (
+                    <option key={d} value={d}>
+                      {d}
+                    </option>
+                  ))}
+                </select>
+                <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" aria-hidden />
+              </div>
               <div className="flex shrink-0 items-center justify-center gap-1 rounded-lg border border-zinc-200 bg-zinc-50/80 p-0.5 dark:border-zinc-800 dark:bg-zinc-900/40">
                 <Button
                   type="button"
@@ -905,9 +964,10 @@ export default function AdminRoles() {
                 {filtered.length === 0 ? 0 : pageStart + 1}–{Math.min(pageStart + PAGE_SIZE, filtered.length)}
               </span>{' '}
               of <span className="font-mono font-medium text-zinc-700 dark:text-zinc-300">{filtered.length}</span>
-              {search.trim() && uniqueEmployees.length !== filtered.length && (
-                <span className="text-zinc-400"> · filtered from {uniqueEmployees.length}</span>
-              )}
+              {(search.trim() || deptFilter !== 'all' || viewFilter !== 'all') &&
+                uniqueEmployees.length !== filtered.length && (
+                  <span className="text-zinc-400"> · filtered from {uniqueEmployees.length}</span>
+                )}
             </p>
           </CardHeader>
           <CardContent className="min-h-0 flex-1 overflow-y-auto px-3 pb-4 pt-2 sm:px-4">
@@ -1368,6 +1428,126 @@ export default function AdminRoles() {
           </CardContent>
         </Card>
       </div>
+
+      <RoleConflictModal
+        role={guardRole}
+        personName={selected?.name?.trim() || 'This person'}
+        onCancel={() => setGuardRole(null)}
+        onConfirm={() => {
+          const r = guardRole;
+          setGuardRole(null);
+          if (r) void toggleRole(r, { bypassGuard: true });
+        }}
+      />
+    </div>
+  );
+}
+
+/**
+ * Warning modal shown before granting a QC↔Manager combination. QC is a
+ * manager's-assistant view that replaces the Manager dashboard; holding both
+ * surfaces two dashboards and defeats the QC guard rail. The admin can still
+ * override. Renders nothing until a pending `role` is set.
+ */
+function RoleConflictModal({
+  role,
+  personName,
+  onCancel,
+  onConfirm,
+}: {
+  role: RoleKey | null;
+  personName: string;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  useEffect(() => {
+    if (!role) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onCancel();
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [role, onCancel]);
+
+  if (!role) return null;
+  const addingLabel = ROLE_BY_KEY[role]?.label ?? role;
+  const existing: RoleKey = role === 'qc' ? 'manager' : 'qc';
+  const existingLabel = ROLE_BY_KEY[existing]?.label ?? existing;
+
+  return (
+    <div
+      className="fixed inset-0 z-[120] flex items-center justify-center p-4"
+      role="alertdialog"
+      aria-modal="true"
+      aria-labelledby="role-conflict-title"
+    >
+      <button
+        type="button"
+        aria-label="Cancel"
+        onClick={onCancel}
+        className="absolute inset-0 cursor-default bg-zinc-950/45 backdrop-blur-sm dark:bg-black/65"
+        style={{ animation: 'qc-guard-fade 160ms ease-out' }}
+      />
+      <div
+        className="relative w-full max-w-md overflow-hidden rounded-2xl border border-amber-200/80 bg-white shadow-2xl shadow-amber-900/10 dark:border-amber-900/50 dark:bg-[#16130c]"
+        style={{ animation: 'qc-guard-pop 220ms cubic-bezier(0.16,1,0.3,1)' }}
+      >
+        {/* amber header band */}
+        <div className="flex items-start gap-3 border-b border-amber-100 bg-gradient-to-br from-amber-50 to-orange-50/60 px-5 py-4 dark:border-amber-900/40 dark:from-amber-950/40 dark:to-orange-950/20">
+          <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-amber-100 text-amber-700 dark:bg-amber-900/50 dark:text-amber-300">
+            <AlertTriangle className="h-5 w-5" aria-hidden />
+          </span>
+          <div className="min-w-0">
+            <h2 id="role-conflict-title" className="text-[15px] font-bold tracking-tight text-amber-950 dark:text-amber-100">
+              Assign {addingLabel} alongside {existingLabel}?
+            </h2>
+            <p className="mt-0.5 text-[12.5px] text-amber-800/80 dark:text-amber-200/70">
+              {personName} already holds the {existingLabel} role.
+            </p>
+          </div>
+        </div>
+
+        <div className="space-y-3 px-5 py-4 text-[13px] leading-relaxed text-zinc-600 dark:text-zinc-300">
+          <p>
+            <span className="font-semibold text-zinc-800 dark:text-zinc-100">QC is a manager&rsquo;s-assistant view</span>{' '}
+            — it&rsquo;s meant to <span className="font-semibold">replace</span> the Manager dashboard, not run beside it.
+          </p>
+          <div className="flex items-start gap-2 rounded-lg border border-zinc-200/80 bg-zinc-50/70 px-3 py-2.5 dark:border-zinc-800 dark:bg-zinc-900/50">
+            <ArrowLeftRight className="mt-0.5 h-4 w-4 shrink-0 text-zinc-400" aria-hidden />
+            <p className="text-[12.5px] text-zinc-600 dark:text-zinc-400">
+              With both roles, {personName.split(' ')[0] || 'they'} will see <span className="font-medium text-zinc-800 dark:text-zinc-200">two dashboards</span> in the Switch View, and QC&rsquo;s guard rail (only the QC&nbsp;Calculator tab) no longer applies.
+            </p>
+          </div>
+          <p className="text-[12.5px] text-zinc-500 dark:text-zinc-400">
+            Assign QC on its own unless this person is genuinely both a department manager <em>and</em> a QC officer.
+          </p>
+        </div>
+
+        <div className="flex items-center justify-end gap-2 border-t border-zinc-100 bg-zinc-50/60 px-5 py-3.5 dark:border-zinc-800 dark:bg-zinc-900/40">
+          <Button variant="outline" size="sm" className="h-9" onClick={onCancel}>
+            Cancel
+          </Button>
+          <Button
+            size="sm"
+            className="h-9 gap-1.5 bg-amber-600 text-white hover:bg-amber-700"
+            onClick={onConfirm}
+          >
+            <AlertTriangle className="h-3.5 w-3.5" aria-hidden />
+            Assign anyway
+          </Button>
+        </div>
+      </div>
+
+      <style jsx global>{`
+        @keyframes qc-guard-fade {
+          from { opacity: 0; }
+          to { opacity: 1; }
+        }
+        @keyframes qc-guard-pop {
+          0% { opacity: 0; transform: translateY(10px) scale(0.97); }
+          100% { opacity: 1; transform: translateY(0) scale(1); }
+        }
+      `}</style>
     </div>
   );
 }

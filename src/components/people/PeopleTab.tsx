@@ -117,8 +117,26 @@ interface StatsDept {
   otPayoutUsd: number | null;
   people: number;
 }
+/** The OT trend at three time granularities — drives the trend-chart toggle. */
+interface StatsSeries {
+  daily: StatsPoint[];
+  weekly: StatsPoint[];
+  monthly: StatsPoint[];
+}
+type Granularity = 'daily' | 'weekly' | 'monthly';
 type OtSort = 'hours' | 'pay';
 type OtTab = 'people' | 'department';
+
+/** Per-granularity copy: the segmented-control label, singular bucket noun, and KPI prefix. */
+const GRANULARITY_META: Record<Granularity, { label: string; unit: string; latest: string }> = {
+  daily: { label: 'Daily', unit: 'day', latest: 'Latest day' },
+  weekly: { label: 'Weekly', unit: 'week', latest: 'Latest week' },
+  monthly: { label: 'Monthly', unit: 'month', latest: 'Latest month' },
+};
+const GRANULARITY_ORDER: Granularity[] = ['daily', 'weekly', 'monthly'];
+/** Ambient auto-cycle: begin after this much idle time, then hold each view this long. */
+const AUTOPLAY_IDLE_MS = 30_000;
+const AUTOPLAY_STEP_MS = 5_000;
 
 function fmtMoney(amount: number | null | undefined, currency: Currency = 'PHP'): string {
   if (amount == null) return '—';
@@ -243,7 +261,7 @@ export default function PeopleTab({
   const rangeMode = range != null;
   // Top-level mode: the roster vs the weekly Statistics graph.
   const [mode, setMode] = useState<'roster' | 'stats'>('roster');
-  const [stats, setStats] = useState<StatsPoint[] | null>(null);
+  const [statsSeries, setStatsSeries] = useState<StatsSeries | null>(null);
   const [statsLeaders, setStatsLeaders] = useState<StatsLeader[] | null>(null);
   const [statsDepts, setStatsDepts] = useState<StatsDept[] | null>(null);
   const [statsLoading, setStatsLoading] = useState(false);
@@ -307,8 +325,11 @@ export default function PeopleTab({
     setStatsLoading(true);
     fetch('/api/people/stats', { cache: 'no-store' })
       .then((r) => r.json())
-      .then((j: { points?: StatsPoint[]; otLeaders?: StatsLeader[]; otDepts?: StatsDept[]; error?: string }) => {
-        setStats(j.points ?? []);
+      .then((j: {
+        daily?: StatsPoint[]; weekly?: StatsPoint[]; monthly?: StatsPoint[];
+        otLeaders?: StatsLeader[]; otDepts?: StatsDept[]; error?: string;
+      }) => {
+        setStatsSeries({ daily: j.daily ?? [], weekly: j.weekly ?? [], monthly: j.monthly ?? [] });
         setStatsLeaders(j.otLeaders ?? []);
         setStatsDepts(j.otDepts ?? []);
         setStatsError(j.error ?? null);
@@ -567,7 +588,7 @@ export default function PeopleTab({
 
       <div className="min-h-0 flex-1 overflow-y-auto bg-[#fafaf8] px-3 py-4 sm:px-6 sm:py-6 dark:bg-[#0d1117]">
         {mode === 'stats' ? (
-          <PeopleStatsChart points={stats} leaders={statsLeaders} depts={statsDepts} periods={periods} loading={statsLoading} error={statsError} accent={accent} />
+          <PeopleStatsChart series={statsSeries} leaders={statsLeaders} depts={statsDepts} periods={periods} loading={statsLoading} error={statsError} accent={accent} />
         ) : (
         <>
         {error && (
@@ -908,13 +929,195 @@ function fmtUsdAxis(v: number): string {
   return `$${Math.round(v)}`;
 }
 
+/** "2026-06-22" → "Jun 22" (local, no TZ shift). */
+function shortDayLabel(iso: string): string {
+  const d = parseIsoLocal(iso);
+  return d ? d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : iso;
+}
+
 /**
- * Weekly OT trend — a self-contained dual-axis SVG line chart (no chart lib).
- * Left axis + emerald line = OT payout (USD); right axis + amber line = number
- * of people on overtime. One point per recent payroll week.
+ * An x-axis / tooltip label for one trend bucket, adapted to the granularity:
+ *   daily   → "Jun 22"        weekly  → "Jun 22"
+ *   monthly → "Jun" (or "Jun '26" when the series spans years)
+ */
+function bucketAxisLabel(iso: string, granularity: Granularity, multiYear: boolean): string {
+  const d = parseIsoLocal(iso);
+  if (!d) return iso;
+  if (granularity === 'monthly') {
+    return multiYear
+      ? d.toLocaleDateString('en-US', { month: 'short', year: '2-digit' })
+      : d.toLocaleDateString('en-US', { month: 'short' });
+  }
+  return shortDayLabel(iso);
+}
+
+/** Tooltip header for one bucket: a single day, a week range, or a named month. */
+function bucketRangeLabel(start: string, end: string, granularity: Granularity): string {
+  if (granularity === 'daily') return formatDay(start);
+  if (granularity === 'monthly') {
+    const d = parseIsoLocal(start);
+    return d ? d.toLocaleDateString('en-US', { month: 'long', year: 'numeric' }) : start;
+  }
+  return `${shortDayLabel(start)} – ${shortDayLabel(end)}`;
+}
+
+/**
+ * The Daily / Weekly / Monthly trend granularity control. A motion-driven pill
+ * slides under the active segment (a real state cue, not a colour swap); reduced
+ * motion collapses it to an instant move. Drives both trend charts.
+ */
+function GranularityToggle({
+  value,
+  onChange,
+  accent,
+  reduceMotion,
+}: {
+  value: Granularity;
+  onChange: (g: Granularity) => void;
+  accent: Accent;
+  reduceMotion: boolean;
+}) {
+  return (
+    <div
+      role="tablist"
+      aria-label="Trend granularity"
+      className="inline-flex shrink-0 rounded-lg border border-zinc-200 bg-zinc-50 p-0.5 dark:border-zinc-800 dark:bg-zinc-900"
+    >
+      {GRANULARITY_ORDER.map((g) => {
+        const active = value === g;
+        return (
+          <button
+            key={g}
+            type="button"
+            role="tab"
+            aria-selected={active}
+            onClick={() => onChange(g)}
+            className={cn(
+              'relative rounded-md px-2.5 py-1 text-[12px] font-medium transition-colors duration-150',
+              active
+                ? accent.chipText
+                : 'text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-200',
+            )}
+          >
+            {active && (
+              <motion.span
+                layoutId="ot-granularity-pill"
+                aria-hidden
+                className={cn('absolute inset-0 rounded-md shadow-sm', accent.chipBg)}
+                transition={reduceMotion ? { duration: 0 } : { duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+              />
+            )}
+            <span className="relative z-10">{GRANULARITY_META[g].label}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+/** A loading placeholder for one trend chart: faint gridlines + ghost lines that
+ *  pulse. Uses the SAME aspect ratio as the real SVG so nothing jumps on swap. */
+function ChartSkeleton({ aspectClass }: { aspectClass: string }) {
+  const grid = [0, 0.25, 0.5, 0.75, 1];
+  return (
+    <div className={cn('relative w-full', aspectClass)}>
+      {grid.map((g, i) => (
+        <div key={i} className="absolute inset-x-0 border-t border-zinc-100 dark:border-zinc-800/70" style={{ top: `${g * 100}%` }} />
+      ))}
+      <svg className="absolute inset-0 h-full w-full animate-pulse text-zinc-200 dark:text-zinc-700" preserveAspectRatio="none" viewBox="0 0 100 40" aria-hidden>
+        <polyline points="0,30 14,25 28,27 42,18 56,21 70,12 84,15 100,7" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
+        <polyline points="0,36 14,33 28,34 42,30 56,32 70,28 84,29 100,25" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
+      </svg>
+    </div>
+  );
+}
+
+/**
+ * Statistics-tab loading state — mirrors the real two-column layout (KPI cards +
+ * the two trend charts on the left, the OT-standings table on the right) so the
+ * transition to loaded content is seamless rather than a spinner-to-grid jump.
+ */
+function StatsSkeleton() {
+  const card = 'rounded-xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-950';
+  return (
+    <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 lg:items-start" aria-hidden>
+      {/* LEFT: KPIs + the two trend charts */}
+      <div className="space-y-3 lg:space-y-4">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          {[0, 1].map((i) => (
+            <div key={i} className={card}>
+              <Skeleton className="h-3 w-32" />
+              <Skeleton className="mt-2 h-7 w-24" />
+              <Skeleton className="mt-2 h-2.5 w-28" />
+            </div>
+          ))}
+        </div>
+        <div className={card}>
+          <div className="mb-3 flex items-center justify-between gap-2">
+            <Skeleton className="h-4 w-40" />
+            <Skeleton className="h-7 w-44 rounded-lg" />
+          </div>
+          <div className="mb-3 flex gap-4">
+            <Skeleton className="h-3 w-28" />
+            <Skeleton className="h-3 w-28" />
+          </div>
+          <ChartSkeleton aspectClass="aspect-[760/260]" />
+        </div>
+        <div className={card}>
+          <div className="mb-2 flex items-center justify-between gap-2">
+            <Skeleton className="h-4 w-52" />
+            <Skeleton className="h-7 w-36 rounded-lg" />
+          </div>
+          <div className="mb-2 flex flex-wrap gap-3">
+            {Array.from({ length: 5 }).map((_, i) => (
+              <Skeleton key={i} className="h-3 w-20" />
+            ))}
+          </div>
+          <ChartSkeleton aspectClass="aspect-[760/210]" />
+        </div>
+      </div>
+
+      {/* RIGHT: OT standings */}
+      <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-sm dark:border-zinc-800 dark:bg-zinc-950">
+        <div className="flex items-center justify-between gap-2 border-b border-zinc-200 px-4 py-3 dark:border-zinc-800">
+          <div className="space-y-1.5">
+            <Skeleton className="h-3.5 w-24" />
+            <Skeleton className="h-2.5 w-40" />
+          </div>
+          <Skeleton className="h-7 w-48 rounded-lg" />
+        </div>
+        <div className="flex items-center gap-2 border-b border-zinc-200 px-3 py-2 dark:border-zinc-800">
+          <Skeleton className="h-7 w-40 rounded-lg" />
+          <Skeleton className="h-7 flex-1 rounded-md" />
+        </div>
+        <div>
+          {Array.from({ length: 7 }).map((_, i) => (
+            <div key={i} className="flex items-center gap-3 border-b border-zinc-100 px-4 py-2.5 last:border-0 dark:border-zinc-900">
+              <Skeleton className="h-3 w-4 shrink-0" />
+              <Skeleton className="h-9 w-9 shrink-0 rounded-full" />
+              <div className="min-w-0 flex-1 space-y-1.5">
+                <Skeleton className="h-3.5 w-32" />
+                <Skeleton className="h-2.5 w-44 max-w-[70%]" />
+              </div>
+              <Skeleton className="h-3.5 w-12 shrink-0" />
+              <Skeleton className="h-3.5 w-16 shrink-0" />
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * OT trend — a self-contained dual-axis SVG line chart (no chart lib). Left axis
+ * + emerald line = OT payout (USD); right axis + amber line = number of people on
+ * overtime. A Daily / Weekly / Monthly toggle rebuckets the series; on change the
+ * line re-scales and draws on. The OT-by-department chart below follows the same
+ * granularity. The standings leaderboard on the right keeps its own week selector.
  */
 function PeopleStatsChart({
-  points,
+  series,
   leaders,
   depts,
   periods,
@@ -922,7 +1125,7 @@ function PeopleStatsChart({
   error,
   accent,
 }: {
-  points: StatsPoint[] | null;
+  series: StatsSeries | null;
   leaders: StatsLeader[] | null;
   depts: StatsDept[] | null;
   periods: { file: string; label: string }[];
@@ -930,6 +1133,7 @@ function PeopleStatsChart({
   error: string | null;
   accent: Accent;
 }) {
+  const [granularity, setGranularity] = useState<Granularity>('weekly');
   const [hover, setHover] = useState<number | null>(null);
   const [sort, setSort] = useState<OtSort>('hours');
   const [tab, setTab] = useState<OtTab>('people');
@@ -958,12 +1162,35 @@ function PeopleStatsChart({
     return () => { alive = false; };
   }, [statsPeriod, weekData]);
 
-  if (loading && !points) {
-    return (
-      <div className="flex items-center justify-center gap-2 py-24 text-sm text-zinc-500">
-        <Loader2 className="h-4 w-4 animate-spin" /> Building weekly trend…
-      </div>
-    );
+  // Bucket indices change meaning between granularities, so drop the hover guide.
+  useEffect(() => { setHover(null); }, [granularity]);
+
+  // Ambient auto-cycle: once the view sits idle for AUTOPLAY_IDLE_MS, step
+  // through Daily → Weekly → Monthly every AUTOPLAY_STEP_MS using the same
+  // smooth transitions. Any manual interaction (toggle click or touching a
+  // chart) stops it and restarts the idle wait. Skipped under reduced motion —
+  // auto-advancing content is exactly the motion those users opt out of.
+  const [autoPlay, setAutoPlay] = useState(false);
+  const [interactionNonce, setInteractionNonce] = useState(0);
+  const onUserInteract = useCallback(() => {
+    setAutoPlay(false);
+    setInteractionNonce((k) => k + 1);
+  }, []);
+  useEffect(() => {
+    if (reduceMotion || autoPlay) return;
+    const t = setTimeout(() => setAutoPlay(true), AUTOPLAY_IDLE_MS);
+    return () => clearTimeout(t);
+  }, [reduceMotion, autoPlay, interactionNonce]);
+  useEffect(() => {
+    if (!autoPlay) return;
+    const id = setInterval(() => {
+      setGranularity((g) => GRANULARITY_ORDER[(GRANULARITY_ORDER.indexOf(g) + 1) % GRANULARITY_ORDER.length]);
+    }, AUTOPLAY_STEP_MS);
+    return () => clearInterval(id);
+  }, [autoPlay]);
+
+  if (loading && !series) {
+    return <StatsSkeleton />;
   }
   if (error) {
     return (
@@ -972,9 +1199,13 @@ function PeopleStatsChart({
       </div>
     );
   }
-  const data = points ?? [];
-  if (data.length === 0) {
-    return <div className="py-24 text-center text-sm text-zinc-500">No weekly payroll data to chart yet.</div>;
+  // The selected granularity drives the two trend charts; the weekly count still
+  // labels the standings leaderboard's "All recent weeks" aggregate.
+  const data = series?.[granularity] ?? [];
+  const weeklyCount = series?.weekly.length ?? 0;
+  const hasAnyData = !!series && (series.daily.length + series.weekly.length + series.monthly.length) > 0;
+  if (!hasAnyData) {
+    return <div className="py-24 text-center text-sm text-zinc-500">No payroll data to chart yet.</div>;
   }
 
   const W = 760;
@@ -993,15 +1224,20 @@ function PeopleStatsChart({
   const yUsd = (v: number) => padT + plotH - (v / usdTop) * plotH;
   const yCnt = (v: number) => padT + plotH - (v / cntTop) * plotH;
 
-  const payoutPts = data.map((d, i) => `${xAt(i)},${yUsd(d.otPayoutUsd ?? 0)}`).join(' ');
-  const countPts = data.map((d, i) => `${xAt(i)},${yCnt(d.otEmployees)}`).join(' ');
+  // Paths (not polylines) so the line can draw on via motion's pathLength.
+  const toPathD = (yOf: (v: number) => number, valOf: (d: StatsPoint) => number) =>
+    data.map((d, i) => `${i === 0 ? 'M' : 'L'} ${xAt(i)} ${yOf(valOf(d))}`).join(' ');
+  const payoutPath = toPathD(yUsd, (d) => d.otPayoutUsd ?? 0);
+  const countPath = toPathD(yCnt, (d) => d.otEmployees);
   const grid = [0, 0.25, 0.5, 0.75, 1];
-  const labelEvery = Math.ceil(n / 8);
-  const latest = data[data.length - 1];
-  const shortDay = (iso: string) => {
-    const d = parseIsoLocal(iso);
-    return d ? d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : iso;
-  };
+  const labelEvery = Math.max(1, Math.ceil(n / 8));
+  const latest = data.length ? data[data.length - 1] : null;
+  const multiYear = new Set(data.map((d) => d.weekStart.slice(0, 4))).size > 1;
+  const axisLabel = (iso: string) => bucketAxisLabel(iso, granularity, multiYear);
+  // Re-mount + re-draw the line layer whenever the granularity (and thus the
+  // whole bucket set + axis scale) changes.
+  const lineKey = `${granularity}`;
+  const gran = GRANULARITY_META[granularity];
 
   // Both tabs follow the CSV period selector authoritatively: '' uses the
   // cross-week aggregate; any other value is that week's server-fetched data.
@@ -1015,7 +1251,7 @@ function PeopleStatsChart({
     ...periods.map((p) => ({ value: p.file, label: p.label })),
   ];
   const periodLabel = isAggregate
-    ? `last ${n} week${n === 1 ? '' : 's'}`
+    ? `last ${weeklyCount} week${weeklyCount === 1 ? '' : 's'}`
     : periods.find((p) => p.file === statsPeriod)?.label ?? labelForSourceFile(statsPeriod);
 
   // Both lists rank by the chosen key. otPayoutUsd is FX-normalised so it ranks
@@ -1051,38 +1287,74 @@ function PeopleStatsChart({
     <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 lg:items-start">
       {/* LEFT column: KPIs + the OT-by-employee chart + the OT-by-department chart. */}
       <div className="space-y-3 lg:space-y-4">
-      {/* Latest-week headline */}
+      {/* Latest-bucket headline — adapts to the selected granularity. */}
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-950">
           <div className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-zinc-400">
-            <Banknote className="h-3.5 w-3.5 text-emerald-500" /> Latest week OT payout
+            <Banknote className="h-3.5 w-3.5 text-emerald-500" /> {gran.latest} OT payout
           </div>
           <div className="mt-1 flex items-baseline gap-2">
-            <span className="text-2xl font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">{fmtMoney(latest.otPayoutUsd ?? 0, 'USD')}</span>
-            <span className="text-[12px] tabular-nums text-zinc-400">{fmtMoney(latest.otPayoutPhp ?? 0, 'PHP')}</span>
+            <span className="text-2xl font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">{fmtMoney(latest?.otPayoutUsd ?? 0, 'USD')}</span>
+            <span className="text-[12px] tabular-nums text-zinc-400">{fmtMoney(latest?.otPayoutPhp ?? 0, 'PHP')}</span>
           </div>
-          <div className="mt-0.5 text-[11px] text-zinc-400">{shortDay(latest.weekStart)} – {shortDay(latest.weekEnd)}</div>
+          <div className="mt-0.5 text-[11px] text-zinc-400">{latest ? bucketRangeLabel(latest.weekStart, latest.weekEnd, granularity) : '—'}</div>
         </div>
         <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-950">
           <div className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-zinc-400">
-            <AlertTriangle className="h-3.5 w-3.5 text-amber-500" /> Latest week on overtime
+            <AlertTriangle className="h-3.5 w-3.5 text-amber-500" /> {gran.latest} on overtime
           </div>
           <div className="mt-1 flex items-baseline gap-2">
-            <span className="text-2xl font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">{latest.otEmployees}</span>
-            <span className="text-[12px] text-zinc-400">people · {fmtHours(latest.otHours)} OT</span>
+            <span className="text-2xl font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">{latest?.otEmployees ?? 0}</span>
+            <span className="text-[12px] text-zinc-400">people · {fmtHours(latest?.otHours ?? 0)} OT</span>
           </div>
-          <div className="mt-0.5 text-[11px] text-zinc-400">across {n} week{n === 1 ? '' : 's'}</div>
+          <div className="mt-0.5 text-[11px] text-zinc-400">across {n} {n === 1 ? gran.unit : `${gran.unit}s`}</div>
         </div>
       </div>
 
       {/* Trend chart */}
       <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-950">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <div className="text-[13px] font-semibold text-zinc-900 dark:text-zinc-100">OT pay out over time</div>
+          <div className="flex items-center gap-2">
+            <AnimatePresence initial={false}>
+              {autoPlay && (
+                <motion.button
+                  type="button"
+                  onClick={onUserInteract}
+                  initial={reduceMotion ? false : { opacity: 0, scale: 0.9 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  exit={reduceMotion ? { opacity: 0 } : { opacity: 0, scale: 0.9 }}
+                  transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
+                  className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-zinc-100 px-2.5 py-1 text-[11px] font-medium text-zinc-500 transition-colors hover:bg-zinc-200 hover:text-zinc-700 dark:bg-zinc-800 dark:text-zinc-400 dark:hover:bg-zinc-700 dark:hover:text-zinc-200"
+                  title="Auto-cycling Daily / Weekly / Monthly — click to stop"
+                  aria-label="Stop auto-cycling the trend granularity"
+                >
+                  <span className="relative flex h-1.5 w-1.5">
+                    <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-current opacity-60" />
+                    <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-current" />
+                  </span>
+                  Auto
+                </motion.button>
+              )}
+            </AnimatePresence>
+            <GranularityToggle
+              value={granularity}
+              onChange={(g) => { onUserInteract(); setGranularity(g); }}
+              accent={accent}
+              reduceMotion={!!reduceMotion}
+            />
+          </div>
+        </div>
         <div className="mb-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] font-medium text-zinc-600 dark:text-zinc-300">
           <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-emerald-500" /> OT payout (USD)</span>
           <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-amber-500" /> Employees on OT</span>
         </div>
-        <div className="relative">
-          <svg viewBox={`0 0 ${W} ${H}`} className="h-auto w-full" role="img" aria-label="Weekly overtime trend" onMouseLeave={() => setHover(null)}>
+        <div className="relative" onMouseEnter={onUserInteract}>
+          {data.length === 0 ? (
+            <div className="py-16 text-center text-sm text-zinc-500">No overtime in this {gran.unit} view.</div>
+          ) : (
+          <>
+          <svg viewBox={`0 0 ${W} ${H}`} className="h-auto w-full" role="img" aria-label={`${gran.label} overtime trend`} onMouseLeave={() => setHover(null)}>
             {grid.map((g, gi) => {
               const y = padT + plotH - g * plotH;
               return (
@@ -1093,26 +1365,56 @@ function PeopleStatsChart({
                 </g>
               );
             })}
-            {data.map((d, i) =>
-              i % labelEvery === 0 || i === n - 1 ? (
-                <text key={`x${i}`} x={xAt(i)} y={H - padB + 16} textAnchor="middle" className={cn('fill-zinc-400', hover === i && 'fill-zinc-700 dark:fill-zinc-200')} fontSize={9}>
-                  {shortDay(d.weekStart)}
-                </text>
-              ) : null,
-            )}
+            {/* x-axis labels re-fade when the bucketing changes */}
+            <motion.g key={`xl-${lineKey}`} initial={reduceMotion ? false : { opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.25 }}>
+              {data.map((d, i) =>
+                i % labelEvery === 0 || i === n - 1 ? (
+                  <text key={`x${i}`} x={xAt(i)} y={H - padB + 16} textAnchor="middle" className={cn('fill-zinc-400', hover === i && 'fill-zinc-700 dark:fill-zinc-200')} fontSize={9}>
+                    {axisLabel(d.weekStart)}
+                  </text>
+                ) : null,
+              )}
+            </motion.g>
             {/* hover guide */}
             {hover != null && (
               <line x1={xAt(hover)} y1={padT} x2={xAt(hover)} y2={padT + plotH} stroke="currentColor" className="text-zinc-300 dark:text-zinc-700" strokeWidth={1} strokeDasharray="3 3" />
             )}
-            <polyline points={payoutPts} fill="none" stroke="currentColor" className="text-emerald-500" strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />
-            <polyline points={countPts} fill="none" stroke="currentColor" className="text-amber-500" strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />
-            {data.map((d, i) => (
-              <g key={`m${i}`}>
-                <circle cx={xAt(i)} cy={yUsd(d.otPayoutUsd ?? 0)} r={hover === i ? 4 : 2.5} className={cn('fill-emerald-500', hover === i && 'stroke-white dark:stroke-zinc-950')} strokeWidth={hover === i ? 1.5 : 0} />
-                <circle cx={xAt(i)} cy={yCnt(d.otEmployees)} r={hover === i ? 4 : 2.5} className={cn('fill-amber-500', hover === i && 'stroke-white dark:stroke-zinc-950')} strokeWidth={hover === i ? 1.5 : 0} />
-              </g>
-            ))}
-            {/* transparent per-week hit areas (on top) for hover detection */}
+            {/* lines draw on (pathLength) + fade so the rescale reads as a state change */}
+            <motion.path
+              key={`payout-${lineKey}`}
+              d={payoutPath}
+              fill="none"
+              stroke="currentColor"
+              className="text-emerald-500"
+              strokeWidth={2}
+              strokeLinejoin="round"
+              strokeLinecap="round"
+              initial={reduceMotion ? false : { pathLength: 0, opacity: 0 }}
+              animate={{ pathLength: 1, opacity: 1 }}
+              transition={{ pathLength: { duration: 0.55, ease: [0.16, 1, 0.3, 1] }, opacity: { duration: 0.2 } }}
+            />
+            <motion.path
+              key={`count-${lineKey}`}
+              d={countPath}
+              fill="none"
+              stroke="currentColor"
+              className="text-amber-500"
+              strokeWidth={2}
+              strokeLinejoin="round"
+              strokeLinecap="round"
+              initial={reduceMotion ? false : { pathLength: 0, opacity: 0 }}
+              animate={{ pathLength: 1, opacity: 1 }}
+              transition={{ pathLength: { duration: 0.55, ease: [0.16, 1, 0.3, 1] }, opacity: { duration: 0.2 } }}
+            />
+            <motion.g key={`m-${lineKey}`} initial={reduceMotion ? false : { opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.3, delay: reduceMotion ? 0 : 0.22 }}>
+              {data.map((d, i) => (
+                <g key={`m${i}`}>
+                  <circle cx={xAt(i)} cy={yUsd(d.otPayoutUsd ?? 0)} r={hover === i ? 4 : 2.5} className={cn('fill-emerald-500', hover === i && 'stroke-white dark:stroke-zinc-950')} strokeWidth={hover === i ? 1.5 : 0} />
+                  <circle cx={xAt(i)} cy={yCnt(d.otEmployees)} r={hover === i ? 4 : 2.5} className={cn('fill-amber-500', hover === i && 'stroke-white dark:stroke-zinc-950')} strokeWidth={hover === i ? 1.5 : 0} />
+                </g>
+              ))}
+            </motion.g>
+            {/* transparent per-bucket hit areas (on top) for hover detection */}
             {data.map((d, i) => {
               const band = n > 1 ? plotW / (n - 1) : plotW;
               return (
@@ -1129,15 +1431,15 @@ function PeopleStatsChart({
             })}
           </svg>
 
-          {/* Hover tooltip — week totals + top 5 OT renderers, tracking the point. */}
-          {hover != null && (
+          {/* Hover tooltip — bucket totals + top 5 OT renderers, tracking the point. */}
+          {hover != null && data[hover] && (
             <div
               className="pointer-events-none absolute top-1 z-20 w-52 -translate-x-1/2"
               style={{ left: `${Math.min(84, Math.max(16, (xAt(hover) / W) * 100))}%` }}
             >
               <div className="rounded-lg border border-zinc-200 bg-white/95 p-2.5 text-[11px] shadow-lg backdrop-blur-sm dark:border-zinc-700 dark:bg-zinc-900/95">
                 <div className="font-semibold text-zinc-800 dark:text-zinc-100">
-                  {shortDay(data[hover].weekStart)} – {shortDay(data[hover].weekEnd)}
+                  {bucketRangeLabel(data[hover].weekStart, data[hover].weekEnd, granularity)}
                 </div>
                 <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-zinc-500">
                   <span className="font-medium text-emerald-600 dark:text-emerald-400">{fmtMoney(data[hover].otPayoutUsd ?? 0, 'USD')}</span>
@@ -1159,15 +1461,17 @@ function PeopleStatsChart({
                     </ul>
                   </div>
                 ) : (
-                  <div className="mt-1 text-[10px] text-zinc-400">No overtime this week.</div>
+                  <div className="mt-1 text-[10px] text-zinc-400">No overtime this {gran.unit}.</div>
                 )}
               </div>
             </div>
           )}
+          </>
+          )}
         </div>
       </div>
-      {/* OT by department over time — stacked directly under the employee chart. */}
-      <DeptTrendChart points={data} depts={depts} accent={accent} />
+      {/* OT by department over time — follows the same granularity. */}
+      <DeptTrendChart points={data} depts={depts} accent={accent} granularity={granularity} reduceMotion={!!reduceMotion} onInteract={onUserInteract} />
       </div>{/* end LEFT column */}
 
       {/* RIGHT column — OT leaderboard: everyone who rendered OT across the
@@ -1392,20 +1696,30 @@ const DEPT_COLORS = [
 
 /**
  * Department OT trend — a multi-line chart (one line per top department) showing
- * how each department's OT pay or OT hours moves across the recent weeks. Sits
- * below the headline trend chart so you can see which departments drive OT.
+ * how each department's OT pay or OT hours moves over time. Follows the headline
+ * chart's Daily / Weekly / Monthly granularity; lines re-draw on every change.
  */
 function DeptTrendChart({
   points,
   depts,
   accent,
+  granularity,
+  reduceMotion,
+  onInteract,
 }: {
   points: StatsPoint[];
   depts: StatsDept[] | null;
   accent: Accent;
+  granularity: Granularity;
+  reduceMotion: boolean;
+  /** Notify the parent that the user touched this chart, so auto-cycling stops. */
+  onInteract: () => void;
 }) {
   const [metric, setMetric] = useState<OtSort>('pay');
   const [hover, setHover] = useState<number | null>(null);
+
+  // Bucket indices change meaning between granularities — drop the hover guide.
+  useEffect(() => { setHover(null); }, [granularity]);
 
   const ranked = [...(depts ?? [])].sort((a, b) =>
     metric === 'pay'
@@ -1439,13 +1753,14 @@ function DeptTrendChart({
   const top0 = niceCeil(Math.max(1, ...series.flatMap((s) => s.values)));
   const yAt = (v: number) => padT + plotH - (v / top0) * plotH;
   const grid = [0, 0.25, 0.5, 0.75, 1];
-  const labelEvery = Math.ceil(n / 8);
-  const shortDay = (iso: string) => {
-    const d = parseIsoLocal(iso);
-    return d ? d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : iso;
-  };
+  const labelEvery = Math.max(1, Math.ceil(n / 8));
+  const multiYear = new Set(points.map((p) => p.weekStart.slice(0, 4))).size > 1;
+  const axisLabel = (iso: string) => bucketAxisLabel(iso, granularity, multiYear);
   const fmtVal = (v: number) => (metric === 'pay' ? fmtMoney(v, 'USD') : fmtHours(v));
   const fmtAxis = (v: number) => (metric === 'pay' ? fmtUsdAxis(v) : String(Math.round(v)));
+  // Re-mount + re-draw the line layer when the bucketing or metric changes.
+  const lineKey = `${granularity}-${metric}`;
+  const gran = GRANULARITY_META[granularity];
 
   return (
     <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-950">
@@ -1453,7 +1768,7 @@ function DeptTrendChart({
         <div className="text-[13px] font-semibold text-zinc-900 dark:text-zinc-100">
           OT by department over time
           <span className="ml-2 text-[11px] font-normal text-zinc-400">
-            top {top.length} of {ranked.length}
+            {gran.label.toLowerCase()} · top {top.length} of {ranked.length}
           </span>
         </div>
         <div className="inline-flex shrink-0 rounded-lg border border-zinc-200 bg-zinc-50 p-0.5 dark:border-zinc-800 dark:bg-zinc-900">
@@ -1461,7 +1776,7 @@ function DeptTrendChart({
             <button
               key={key}
               type="button"
-              onClick={() => setMetric(key)}
+              onClick={() => { onInteract(); setMetric(key); }}
               aria-pressed={metric === key}
               className={cn(
                 'rounded-md px-2.5 py-1 text-[12px] font-medium transition-colors',
@@ -1483,8 +1798,8 @@ function DeptTrendChart({
           </span>
         ))}
       </div>
-      <div className="relative">
-        <svg viewBox={`0 0 ${W} ${H}`} className="h-auto w-full" role="img" aria-label="Department overtime trend" onMouseLeave={() => setHover(null)}>
+      <div className="relative" onMouseEnter={onInteract}>
+        <svg viewBox={`0 0 ${W} ${H}`} className="h-auto w-full" role="img" aria-label={`Department ${gran.label.toLowerCase()} overtime trend`} onMouseLeave={() => setHover(null)}>
           {grid.map((g, gi) => {
             const y = padT + plotH - g * plotH;
             return (
@@ -1494,18 +1809,32 @@ function DeptTrendChart({
               </g>
             );
           })}
-          {points.map((p, i) =>
-            i % labelEvery === 0 || i === n - 1 ? (
-              <text key={`x${i}`} x={xAt(i)} y={H - padB + 16} textAnchor="middle" className={cn('fill-zinc-400', hover === i && 'fill-zinc-700 dark:fill-zinc-200')} fontSize={9}>
-                {shortDay(p.weekStart)}
-              </text>
-            ) : null,
-          )}
+          <motion.g key={`xl-${lineKey}`} initial={reduceMotion ? false : { opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.25 }}>
+            {points.map((p, i) =>
+              i % labelEvery === 0 || i === n - 1 ? (
+                <text key={`x${i}`} x={xAt(i)} y={H - padB + 16} textAnchor="middle" className={cn('fill-zinc-400', hover === i && 'fill-zinc-700 dark:fill-zinc-200')} fontSize={9}>
+                  {axisLabel(p.weekStart)}
+                </text>
+              ) : null,
+            )}
+          </motion.g>
           {hover != null && (
             <line x1={xAt(hover)} y1={padT} x2={xAt(hover)} y2={padT + plotH} stroke="currentColor" className="text-zinc-300 dark:text-zinc-700" strokeWidth={1} strokeDasharray="3 3" />
           )}
-          {series.map((s) => (
-            <polyline key={s.dept} points={s.values.map((v, i) => `${xAt(i)},${yAt(v)}`).join(' ')} fill="none" stroke="currentColor" className={s.color.line} strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />
+          {series.map((s, idx) => (
+            <motion.path
+              key={`${s.dept}-${lineKey}`}
+              d={s.values.map((v, i) => `${i === 0 ? 'M' : 'L'} ${xAt(i)} ${yAt(v)}`).join(' ')}
+              fill="none"
+              stroke="currentColor"
+              className={s.color.line}
+              strokeWidth={2}
+              strokeLinejoin="round"
+              strokeLinecap="round"
+              initial={reduceMotion ? false : { pathLength: 0, opacity: 0 }}
+              animate={{ pathLength: 1, opacity: 1 }}
+              transition={{ pathLength: { duration: 0.5, ease: [0.16, 1, 0.3, 1], delay: reduceMotion ? 0 : idx * 0.05 }, opacity: { duration: 0.2 } }}
+            />
           ))}
           {hover != null &&
             series.map((s) => (
@@ -1516,11 +1845,11 @@ function DeptTrendChart({
             return <rect key={`hit${i}`} x={xAt(i) - band / 2} y={padT} width={band} height={plotH} fill="transparent" onMouseEnter={() => setHover(i)} />;
           })}
         </svg>
-        {hover != null && (
+        {hover != null && points[hover] && (
           <div className="pointer-events-none absolute top-1 z-20 w-48 -translate-x-1/2" style={{ left: `${Math.min(86, Math.max(14, (xAt(hover) / W) * 100))}%` }}>
             <div className="rounded-lg border border-zinc-200 bg-white/95 p-2.5 text-[11px] shadow-lg backdrop-blur-sm dark:border-zinc-700 dark:bg-zinc-900/95">
               <div className="font-semibold text-zinc-800 dark:text-zinc-100">
-                {shortDay(points[hover].weekStart)} – {shortDay(points[hover].weekEnd)}
+                {bucketRangeLabel(points[hover].weekStart, points[hover].weekEnd, granularity)}
               </div>
               <ul className="mt-1 space-y-0.5">
                 {series.map((s) => (

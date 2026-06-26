@@ -4,7 +4,7 @@ export const FEATURE_ACCESS_LEVELS = ["hidden", "view", "edit"] as const;
 export type FeatureAccess = (typeof FEATURE_ACCESS_LEVELS)[number];
 
 /** Every view that supports per-tab gating. */
-export type FeatureViewKey = "accounting" | "manager" | "hr" | "orphanage" | "ceo" | "contractor";
+export type FeatureViewKey = "accounting" | "manager" | "hr" | "orphanage" | "ceo" | "contractor" | "qc";
 
 /** Catalog of features per view — single source of truth for the admin grid
  *  and the runtime lookups. Adding a tab? Append it here and the AdminRoles
@@ -66,6 +66,11 @@ export const FEATURE_CATALOG: Record<FeatureViewKey, readonly { key: string; lab
     { key: "profile",  label: "Profile" },
     { key: "invoices", label: "Invoices" },
   ],
+  qc: [
+    { key: "overview",       label: "Overview" },
+    { key: "qc_calculator",  label: "QC Calculator" },
+    { key: "notifications",  label: "Notifications" },
+  ],
 };
 
 /** Maps each assignable role to the view its feature-permission catalog
@@ -78,6 +83,7 @@ export const ROLE_TO_FEATURE_VIEW: Record<string, FeatureViewKey> = {
   orphanage_manager:  "orphanage",
   ceo:                "ceo",
   contractor:         "contractor",
+  qc:                 "qc",
 };
 
 export type FeaturePermissionsMap = Partial<Record<FeatureViewKey, Record<string, FeatureAccess>>>;

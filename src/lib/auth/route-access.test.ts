@@ -70,6 +70,7 @@ const DASHBOARDS: Array<{ pathname: string; role: string }> = [
   { pathname: '/hr', role: 'hr_coordinator' },
   { pathname: '/orphanage', role: 'orphanage_manager' },
   { pathname: '/manager', role: 'manager' },
+  { pathname: '/qc', role: 'qc' },
 ];
 
 for (const { pathname, role } of DASHBOARDS) {
@@ -162,6 +163,14 @@ test('even an elevated user is pinned to self on personal routes (/ceo)', () => 
     requestedEmail: 'someone-else@simple.biz',
   });
   assert.deepEqual(d, { action: 'redirect', pathname: '/ceo', setEmail: 'me@simple.biz' });
+});
+
+test('a QC officer is pinned to self on the personal /qc route', () => {
+  const d = evaluateRouteAccess({
+    pathname: '/qc', roles: ['qc'], sessionEmail: 'me@simple.biz', elevated: false,
+    requestedEmail: 'someone-else@simple.biz',
+  });
+  assert.deepEqual(d, { action: 'redirect', pathname: '/qc', setEmail: 'me@simple.biz' });
 });
 
 // ---------------------------------------------------------------------------

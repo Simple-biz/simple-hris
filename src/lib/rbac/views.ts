@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 
-export type AppView = 'employee' | 'admin' | 'accounting' | 'manager' | 'orphanage' | 'ceo' | 'hr' | 'contractor';
+export type AppView = 'employee' | 'admin' | 'accounting' | 'manager' | 'orphanage' | 'ceo' | 'hr' | 'contractor' | 'qc';
 export type Role =
   | 'hr_coordinator'
   | 'accounting'
@@ -10,7 +10,8 @@ export type Role =
   | 'manager'
   | 'orphanage_manager'
   | 'ceo'
-  | 'contractor';
+  | 'contractor'
+  | 'qc';
 
 // Roles that unlock the Accounting dashboard. `accounting` is the dedicated
 // dashboard role (renamed from the old `finance`). `hr_coordinator` was
@@ -31,6 +32,7 @@ export const VIEW_ROUTES: Record<AppView, string> = {
   ceo: '/ceo',
   hr: '/hr',
   contractor: '/contractor',
+  qc: '/qc',
 };
 
 export const VIEW_LABELS: Record<AppView, string> = {
@@ -42,9 +44,10 @@ export const VIEW_LABELS: Record<AppView, string> = {
   ceo: 'CEO',
   hr: 'HR',
   contractor: 'Contractor',
+  qc: 'QC',
 };
 
-const VIEW_PRIORITY: AppView[] = ['admin', 'ceo', 'hr', 'accounting', 'orphanage', 'manager', 'contractor', 'employee'];
+const VIEW_PRIORITY: AppView[] = ['admin', 'ceo', 'hr', 'accounting', 'orphanage', 'qc', 'manager', 'contractor', 'employee'];
 
 export const ACTIVE_VIEW_KEY = 'active_view';
 export const SESSION_EMAIL_KEY = 'employee_session_email';
@@ -64,6 +67,10 @@ export function viewsForRoles(roles: Role[]): AppView[] {
   if (roles.some((r) => ACCOUNTING_ROLES.includes(r))) set.add('accounting');
   if (roles.includes('orphanage_manager')) set.add('orphanage');
   if (roles.includes('manager')) set.add('manager');
+  // QC is a manager's-assistant dashboard. A QC person normally holds ONLY the
+  // `qc` role (Admin warns against also granting `manager`), so the switcher
+  // shows just "QC" and the Manager view never appears for them.
+  if (roles.includes('qc')) set.add('qc');
   if (roles.includes('admin') || roles.includes('hr_coordinator')) set.add('hr');
   if (roles.includes('contractor')) set.add('contractor');
   return VIEW_PRIORITY.filter((v) => set.has(v));

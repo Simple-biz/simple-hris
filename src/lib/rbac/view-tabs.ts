@@ -81,6 +81,11 @@ export const VIEW_TAB_IDS: Record<FeatureViewKey, readonly string[]> = {
     'profile',
     'invoices',
   ],
+  qc: [
+    'overview',
+    'qc-calculator',
+    'notifications',
+  ],
 };
 
 /** Roles that bypass the per-tab overlay and always see/edit every tab. */

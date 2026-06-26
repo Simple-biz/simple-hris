@@ -39,6 +39,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Clock,
+  CornerUpLeft,
   Loader2,
   Lock,
   Maximize2,
@@ -62,6 +63,7 @@ import { normEmail } from '@/lib/email/norm-email';
 import type { EmployeeRow } from '@/lib/supabase/employees';
 import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
 import { DEPARTMENTS, DEPT_DESCRIPTION, MANAGER_BONUS_DEPT_KEYS } from '@/lib/payroll/department-bonus';
+import { QC_DEPT_KEYS, isQcDeptKey } from '@/lib/qc/constants';
 import { parseDateRangeFromFilename } from '@/lib/hubstaff/calendar-column-dedupe';
 import {
   pickCurrentSourceFile,
@@ -128,6 +130,31 @@ interface DeptBonusCalculatorProps {
   teamMembers: EmployeeRow[];
   managedDepts: string[];
   isElevated: boolean;
+  /**
+   * `manager` (default): the dept manager's calculator — writes the official
+   *  `bonus_catalog_applied` the Payroll Wizard pays, and (for QC depts) auto-
+   *  seeds from the QC first-pass + shows the QC officer log.
+   * `qc`: a QC officer's first-pass calculator — writes the staging table
+   *  `qc_kpi_submissions`, scoped to their assigned members, with one
+   *  officer-level "Lock & send to manager" action.
+   */
+  variant?: 'manager' | 'qc';
+  /** QC mode: the officer's assigned members per department (slot-aware, so a
+   *  transferred person appears under each dept they hold a slot in). This is the
+   *  authoritative roster in QC mode — replaces the live-department grouping. */
+  assignedByDept?: Record<string, Array<{ email: string; name: string }>>;
+  /** QC mode: whether this officer has locked their batch for the week. */
+  qcLocked?: boolean;
+  /** QC mode: persist a lock/reopen (QCApp POSTs /api/qc/lock); returns ok. */
+  onToggleQcLock?: (next: boolean) => Promise<boolean>;
+  /** QC mode: report the resolved pay-week so the shell can fetch that week's
+   *  assignment + lock state. Fires whenever the internal weekStart changes. */
+  onWeekChange?: (weekStart: string) => void;
+  /** QC mode: when provided, the shell owns the active pay-week (e.g. the QC
+   *  Overview's period selector drives it). The calculator follows this value
+   *  and reports its own WeekPicker changes back via `onWeekChange`. Leaving it
+   *  undefined keeps the calculator's self-managed week (the manager view). */
+  controlledWeek?: string;
 }
 
 // -- Per-department colour identity (hex; inline-styled to dodge Tailwind purge) --
@@ -382,14 +409,241 @@ function bonusVariables(bonus: BonusDef): string[] {
 
 // -- Component ------------------------------------------------------------------
 
+/**
+ * Manager-facing QC attribution strip, shown inside a Leadgen/Callback/Discovery
+ * panel. Surfaces which QC officer was responsible for the week's first pass,
+ * how many members each scored, whether they've locked, and a Return-to-QC
+ * action. The scored values themselves are pre-filled into the table by loadDept.
+ */
+interface QcLogOfficer { email: string; index: number; memberCount: number }
+interface QcLogAssignment { qc_officer_email: string; member_email: string; member_name: string | null; department: string }
+interface QcLogLock { qc_officer_email: string; status: 'draft' | 'locked'; member_count: number; locked_at: string | null }
+interface QcLogReview { department: string; status: 'pending' | 'accepted' | 'returned'; reviewed_by: string | null; reviewed_at: string | null; note: string | null }
+
+function QcOfficerLog({ deptKey, periodStart }: { deptKey: string; periodStart: string }) {
+  const [data, setData] = useState<{
+    officers: QcLogOfficer[];
+    assignments: QcLogAssignment[];
+    locks: QcLogLock[];
+    review: QcLogReview[];
+  } | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [returning, setReturning] = useState(false);
+
+  const load = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/qc/assignments?period_start=${periodStart}`, { cache: 'no-store' });
+      const json = (await res.json()) as {
+        officers?: QcLogOfficer[]; assignments?: QcLogAssignment[]; locks?: QcLogLock[]; review?: QcLogReview[];
+      };
+      setData({
+        officers: json.officers ?? [],
+        assignments: json.assignments ?? [],
+        locks: json.locks ?? [],
+        review: json.review ?? [],
+      });
+    } catch {
+      setData(null);
+    } finally {
+      setLoading(false);
+    }
+  }, [periodStart]);
+
+  useEffect(() => {
+    setLoading(true);
+    void load();
+  }, [load]);
+
+  // Live: reflect officer locks / re-splits as they happen.
+  useEffect(() => {
+    const supabase = getSupabaseBrowserClient();
+    if (!supabase) return;
+    const channel = supabase
+      .channel(`qc-log-${deptKey}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'qc_officer_locks' }, () => void load())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'qc_kpi_submissions' }, () => void load())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'qc_score_assignments' }, () => void load())
+      .subscribe();
+    return () => { void supabase.removeChannel(channel); };
+  }, [deptKey, load]);
+
+  const deptAssignments = (data?.assignments ?? []).filter((a) => a.department === deptKey);
+  const indexByOfficer = new Map((data?.officers ?? []).map((o) => [o.email.toLowerCase(), o.index]));
+  const lockByOfficer = new Map((data?.locks ?? []).map((l) => [l.qc_officer_email.toLowerCase(), l]));
+  const countByOfficer = new Map<string, number>();
+  for (const a of deptAssignments) {
+    const e = a.qc_officer_email.toLowerCase();
+    countByOfficer.set(e, (countByOfficer.get(e) ?? 0) + 1);
+  }
+  const officerEmails = Array.from(countByOfficer.keys()).sort(
+    (a, b) => (indexByOfficer.get(a) ?? 99) - (indexByOfficer.get(b) ?? 99),
+  );
+  const review = (data?.review ?? []).find((r) => r.department === deptKey);
+
+  async function returnToQc() {
+    const note = window.prompt('Optional note to the QC officer(s) on what to revise:') ?? '';
+    setReturning(true);
+    try {
+      const res = await fetch('/api/qc/review', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ period_start: periodStart, department: deptKey, status: 'returned', note }),
+      });
+      if (!res.ok) {
+        const j = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(j.error ?? 'Failed to return');
+      }
+      toast.success('Returned to QC for revision');
+      void load();
+    } catch (e) {
+      toast.error('Could not return to QC', { description: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setReturning(false);
+    }
+  }
+
+  const fmtTime = (iso: string | null) => {
+    if (!iso) return '';
+    const d = new Date(iso);
+    return d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+  };
+
+  return (
+    <div className="flex-none border-b border-orange-100 bg-orange-50/50 px-4 py-2.5 dark:border-orange-950/40 dark:bg-orange-950/10 sm:px-5">
+      <div className="flex items-center justify-between gap-2">
+        <span className="flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-[0.16em] text-orange-700 dark:text-orange-300">
+          <Users className="h-3 w-3" /> QC first pass
+          {review?.status === 'returned' && (
+            <span className="ml-1 rounded bg-amber-200/70 px-1 py-px text-[9px] text-amber-800 dark:bg-amber-900/50 dark:text-amber-200">returned</span>
+          )}
+          {review?.status === 'accepted' && (
+            <span className="ml-1 rounded bg-emerald-200/70 px-1 py-px text-[9px] text-emerald-800 dark:bg-emerald-900/50 dark:text-emerald-200">accepted</span>
+          )}
+        </span>
+        {officerEmails.length > 0 && (
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-7 gap-1.5 text-[11px]"
+            disabled={returning}
+            onClick={() => void returnToQc()}
+          >
+            <CornerUpLeft className="h-3 w-3" /> Return to QC
+          </Button>
+        )}
+      </div>
+      {loading ? (
+        <div className="mt-1.5 flex items-center gap-1.5 text-[11px] text-zinc-500">
+          <Loader2 className="h-3 w-3 animate-spin" /> Loading QC submissions…
+        </div>
+      ) : officerEmails.length === 0 ? (
+        <p className="mt-1.5 text-[11px] text-zinc-500 dark:text-zinc-400">
+          No QC officer is assigned to score this department yet.
+        </p>
+      ) : (
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {officerEmails.map((email) => {
+            const lock = lockByOfficer.get(email);
+            const locked = lock?.status === 'locked';
+            const idx = indexByOfficer.get(email);
+            return (
+              <span
+                key={email}
+                className={cn(
+                  'inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-[11px]',
+                  locked
+                    ? 'border-emerald-300 bg-emerald-50 text-emerald-800 dark:border-emerald-900/50 dark:bg-emerald-950/30 dark:text-emerald-200'
+                    : 'border-zinc-200 bg-white text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900/50 dark:text-zinc-300',
+                )}
+                title={email}
+              >
+                <span className="font-semibold">QC Officer {idx ?? '?'}</span>
+                <span className="max-w-[10rem] truncate font-mono text-[10px] opacity-70">{email}</span>
+                <span className="tabular-nums opacity-80">· {countByOfficer.get(email) ?? 0} {(countByOfficer.get(email) ?? 0) === 1 ? 'member' : 'members'}</span>
+                {locked ? (
+                  <span className="inline-flex items-center gap-0.5 text-emerald-600 dark:text-emerald-400">
+                    <Lock className="h-2.5 w-2.5" /> {fmtTime(lock?.locked_at ?? null)}
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-0.5 text-zinc-400">
+                    <Clock className="h-2.5 w-2.5" /> scoring…
+                  </span>
+                )}
+              </span>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function DeptBonusCalculator({
   viewerEmail,
   teamMembers,
   managedDepts,
   isElevated,
+  variant = 'manager',
+  assignedByDept,
+  qcLocked = false,
+  onToggleQcLock,
+  onWeekChange,
+  controlledWeek,
 }: DeptBonusCalculatorProps) {
-  const [weekStart, setWeekStart] = useState(() => isoWeekStart(new Date()));
+  // QC officer's first-pass calculator vs the manager's official one. QC writes
+  // a separate staging table and never touches `bonus_catalog_applied` /
+  // `hsl_bonus_period_status` (payroll) directly.
+  const isQc = variant === 'qc';
+  const appliedEndpoint = isQc ? '/api/qc/submissions' : '/api/bonus-catalog-applied';
+  // QC mode roster source: the officer's assigned members per department (the
+  // authoritative per-dept roster in QC mode), plus a per-dept email set for
+  // filtering saved rows. Built from the `assignedByDept` prop.
+  const qcRosterByDept = useMemo(() => {
+    const map = new Map<string, Array<{ email: string; name: string }>>();
+    for (const [dept, list] of Object.entries(assignedByDept ?? {})) {
+      const seen = new Set<string>();
+      const out: Array<{ email: string; name: string }> = [];
+      for (const m of list) {
+        const e = m.email.trim().toLowerCase();
+        if (!e || seen.has(e)) continue;
+        seen.add(e);
+        out.push({ email: e, name: m.name });
+      }
+      if (out.length > 0) map.set(dept, out.sort((a, b) => a.name.localeCompare(b.name)));
+    }
+    return map;
+  }, [assignedByDept]);
+  const qcEmailsByDept = useMemo(() => {
+    const map = new Map<string, Set<string>>();
+    for (const [dept, list] of qcRosterByDept) map.set(dept, new Set(list.map((m) => m.email)));
+    return map;
+  }, [qcRosterByDept]);
+  // The active pay-week. In *controlled* mode (the QC shell owns the week via
+  // `controlledWeek`) this DERIVES from the prop — a single source of truth, so
+  // there is no state-sync effect to ping-pong against `onWeekChange`. Otherwise
+  // the calculator manages it locally (the manager view).
+  const weekIsControlled = controlledWeek != null;
+  const [internalWeek, setInternalWeek] = useState(() => isoWeekStart(new Date()));
+  const weekStart = weekIsControlled ? (controlledWeek as string) : internalWeek;
   const weekEnd = useMemo(() => weekEndFromStart(weekStart), [weekStart]);
+
+  // Report the calculator's OWN week changes up to the shell. Skipped when the
+  // shell controls the week — it already knows (user picks route through
+  // `selectWeek` → `onWeekChange` directly), so firing here would only echo.
+  useEffect(() => {
+    if (!weekIsControlled) onWeekChange?.(weekStart);
+  }, [weekStart, onWeekChange, weekIsControlled]);
+
+  // A user-initiated week change. When the shell owns the week, route the pick up
+  // through `onWeekChange` (the shell updates `controlledWeek`, which flows back in
+  // as the derived `weekStart`); otherwise update local state.
+  const selectWeek = useCallback(
+    (w: string) => {
+      if (weekIsControlled) onWeekChange?.(w);
+      else setInternalWeek(w);
+    },
+    [weekIsControlled, onWeekChange],
+  );
 
   // Which weeks the manager can switch between (one per uploaded Hubstaff file)
   // and which one is the *live* payroll week (the Initialized / is_current batch).
@@ -608,6 +862,11 @@ export default function DeptBonusCalculator({
   }, [teamMembers, managedDepts]);
 
   const visibleDeptKeys = useMemo<string[]>(() => {
+    // QC officers only score the QC depts, and only the slots assigned to them
+    // (qcRosterByDept is the authoritative per-dept roster in QC mode).
+    if (isQc) {
+      return QC_DEPT_KEYS.filter((k) => (qcRosterByDept.get(k)?.length ?? 0) > 0);
+    }
     if (isElevated) {
       return MANAGER_BONUS_DEPT_KEYS.filter(
         (k) =>
@@ -622,7 +881,7 @@ export default function DeptBonusCalculator({
       if (k && MANAGER_BONUS_DEPT_KEYS.includes(k)) keys.add(k);
     }
     return Array.from(keys);
-  }, [isElevated, managedDepts, rosterByDept, commonByDept, individualByDept]);
+  }, [isQc, isElevated, managedDepts, rosterByDept, commonByDept, individualByDept, qcRosterByDept]);
 
   const [state, setState] = useState<AllState>({});
   // Landing: filter the department cards by name.
@@ -698,12 +957,16 @@ export default function DeptBonusCalculator({
 
   const loadDept = useCallback(
     async (key: string) => {
-      const roster = rosterByDept.get(key) ?? [];
+      // QC mode: the roster IS the officer's assigned slots for this dept (which
+      // includes transferred people under their old dept). Manager mode groups
+      // the live team roster by department as usual.
+      const roster = isQc ? (qcRosterByDept.get(key) ?? []) : (rosterByDept.get(key) ?? []);
+      const qcDeptEmails = isQc ? qcEmailsByDept.get(key) : undefined;
       try {
-        const [appliedRes, statusRes] = await Promise.all([
-          fetch(`/api/bonus-catalog-applied?dept=${key}&period_start=${weekStart}`, { cache: 'no-store' }),
-          fetch(`/api/hsl-bonus/period-status?dept=${key}&period_start=${weekStart}`, { cache: 'no-store' }),
-        ]);
+        // Manager mode reads the official applied rows + payroll status. QC mode
+        // reads its own staging table and has no payroll status (the officer's
+        // lock is a separate, officer-level concept).
+        const appliedRes = await fetch(`${appliedEndpoint}?dept=${key}&period_start=${weekStart}`, { cache: 'no-store' });
         const appliedJson = (await appliedRes.json()) as {
           rows?: {
             employee_email: string;
@@ -712,15 +975,39 @@ export default function DeptBonusCalculator({
             vars: Record<string, number> | null;
           }[];
         };
-        const statusJson = (await statusRes.json()) as { rows?: { status: BonusStatus }[] };
-        const savedRows = appliedJson.rows ?? [];
+        let savedRows = appliedJson.rows ?? [];
+
+        let status: BonusStatus = 'draft';
+        if (!isQc) {
+          const statusRes = await fetch(`/api/hsl-bonus/period-status?dept=${key}&period_start=${weekStart}`, { cache: 'no-store' });
+          const statusJson = (await statusRes.json()) as { rows?: { status: BonusStatus }[] };
+          status = statusJson.rows?.[0]?.status ?? 'draft';
+        }
+
+        // Manager mode, QC department, never-saved draft → pre-fill the manager's
+        // inputs from the QC officers' first-pass so they appear ready to review
+        // and finalize. Once the manager saves, their own rows are authoritative.
+        let seededFromQc = false;
+        if (!isQc && isQcDeptKey(key) && savedRows.length === 0 && status === 'draft') {
+          try {
+            const qcRes = await fetch(`/api/qc/submissions?dept=${key}&period_start=${weekStart}`, { cache: 'no-store' });
+            const qcJson = (await qcRes.json()) as { rows?: typeof savedRows };
+            if (qcJson.rows && qcJson.rows.length > 0) {
+              savedRows = qcJson.rows;
+              seededFromQc = true;
+            }
+          } catch {
+            /* ignore — fall back to the empty/pre-apply path */
+          }
+        }
 
         // Seed members from roster, then overlay anyone who has saved applied rows.
         const byEmail = new Map<string, MemberState>();
         for (const e of roster) byEmail.set(e.email, { email: e.email, name: e.name, applied: {} });
-        // Also include individually-assigned employees even if not in the roster fetch.
+        // Also include individually-assigned employees even if not in the roster
+        // fetch — but never in QC mode, where the roster is the assignment.
         const indivMap = individualByDept.get(key);
-        if (indivMap) {
+        if (indivMap && !isQc) {
           for (const email of indivMap.keys()) {
             if (!byEmail.has(email)) byEmail.set(email, { email, name: email, applied: {} });
           }
@@ -733,6 +1020,13 @@ export default function DeptBonusCalculator({
           // a prior dual-email save merge onto the single member card.
           const em = canonEmail(row.employee_email);
           if (!em) continue;
+          // QC mode: /api/qc/submissions returns ALL officers' rows for the dept;
+          // keep only members in THIS officer's assignment for the dept. Match on
+          // BOTH the canonical and the raw-normalized email — a transferred person
+          // isn't in the live roster so canonEmail can't alias their address, but
+          // their assignment + submission both key off the personal-first email.
+          const rawEm = (row.employee_email ?? '').trim().toLowerCase();
+          if (isQc && qcDeptEmails && !qcDeptEmails.has(em) && !qcDeptEmails.has(rawEm)) continue;
           const vars: Record<string, string> = {};
           if (row.vars) for (const [k, v] of Object.entries(row.vars)) vars[k] = String(v);
           // Team-effort bonuses are stored per-member but are identical across the
@@ -746,8 +1040,6 @@ export default function DeptBonusCalculator({
           if (!byEmail.has(em)) byEmail.set(em, member);
           member.applied[row.bonus_id] = { on: true, vars };
         }
-
-        const status: BonusStatus = statusJson.rows?.[0]?.status ?? 'draft';
 
         // Pre-apply common bonuses: on a fresh (never-saved, still-draft) week a
         // common bonus set to "everyone" should already be ticked, so the manager
@@ -775,12 +1067,17 @@ export default function DeptBonusCalculator({
           }
         }
 
-        const members = Array.from(byEmail.values()).sort((a, b) => a.name.localeCompare(b.name));
+        let members = Array.from(byEmail.values()).sort((a, b) => a.name.localeCompare(b.name));
+        // QC mode safety net: never surface a member outside this officer's assignment for the dept.
+        if (isQc && qcDeptEmails) {
+          members = members.filter((m) => qcDeptEmails.has(m.email.toLowerCase()));
+        }
         setState((prev) => ({
-          // Pre-applied defaults are unsaved -- mark dirty so Save (then Mark
-          // Ready) persists them into bonus_catalog_applied for the Wizard.
+          // Pre-applied defaults — and QC-seeded values — are unsaved, so mark
+          // dirty: manager Save (then Submit) persists into bonus_catalog_applied;
+          // QC Save persists into the staging table.
           ...prev,
-          [key]: { members, shared, status, dirty: preApplied, saving: false, loaded: true },
+          [key]: { members, shared, status, dirty: preApplied || seededFromQc, saving: false, loaded: true },
         }));
       } catch {
         setState((prev) => ({
@@ -796,7 +1093,7 @@ export default function DeptBonusCalculator({
         }));
       }
     },
-    [rosterByDept, individualByDept, commonByDept, commonExclusionsByDept, sharedCommonByDept, weekStart, canonEmail],
+    [rosterByDept, individualByDept, commonByDept, commonExclusionsByDept, sharedCommonByDept, weekStart, canonEmail, isQc, qcRosterByDept, qcEmailsByDept, appliedEndpoint],
   );
 
   useEffect(() => {
@@ -849,7 +1146,11 @@ export default function DeptBonusCalculator({
   // tables and re-pull (debounced). Falls back to a 30s poll + tab-focus refresh
   // when Realtime isn't available for these tables.
   useLiveRefresh({
-    tables: ['bonus_catalog_applied', 'hsl_bonus_period_status'],
+    // QC officers write the staging tables, not the payroll ones — watch those so
+    // a teammate's save / re-split / lock surfaces live (else only the 30s poll).
+    tables: isQc
+      ? ['qc_kpi_submissions', 'qc_score_assignments', 'qc_officer_locks']
+      : ['bonus_catalog_applied', 'hsl_bonus_period_status'],
     onRefresh: refreshAll,
     channel: 'dept-bonus-calc-live',
     enabled: catalogLoaded && visibleDeptKeys.length > 0,
@@ -899,7 +1200,9 @@ export default function DeptBonusCalculator({
           const iso = toIso(range.start);
           setCurrentWeekStart(iso);
           // Default the view to the live week (only while still on today's auto-week).
-          setWeekStart((cur) => (cur === isoWeekStart(new Date()) ? iso : cur));
+          // Skipped when the shell controls the week — it does its own defaulting,
+          // and overriding here would fight the controlled value on mount.
+          if (!weekIsControlled) setInternalWeek((cur) => (cur === isoWeekStart(new Date()) ? iso : cur));
         }
       } catch {
         // keep today's week on any error
@@ -961,7 +1264,9 @@ export default function DeptBonusCalculator({
       const d = state[key];
       const dept = DEPARTMENTS.find((x) => x.key === key);
       const color = deptColor(key);
-      const readOnly = d ? d.status !== 'draft' : false;
+      // QC mode freezes inputs once the officer has locked their week's batch;
+      // manager mode freezes once the dept is submitted (status != draft).
+      const readOnly = isQc ? !!qcLocked : d ? d.status !== 'draft' : false;
       const total = deptTotal(key, d);
       const common = commonByDept.get(key) ?? [];
       const sharedSet = sharedCommonByDept.get(key);
@@ -1056,7 +1361,7 @@ export default function DeptBonusCalculator({
     },
     [
       state, cardSearch, deptTotal, commonByDept, sharedCommonByDept,
-      individualByDept, applicableBonuses, fx, workEmailByIdentity,
+      individualByDept, applicableBonuses, fx, workEmailByIdentity, isQc, qcLocked,
     ],
   );
 
@@ -1172,7 +1477,9 @@ export default function DeptBonusCalculator({
           const numVars: Record<string, number> = {};
           for (const v of bonusVariables(bonus)) numVars[v] = Number(st.vars?.[v] ?? '') || 0;
           rows.push({
-            id: appliedId(key, weekStart, m.email, bonus.id),
+            // QC staged rows live in a separate table — prefix the id so they
+            // can never collide with the official applied rows.
+            id: (isQc ? 'qc:' : '') + appliedId(key, weekStart, m.email, bonus.id),
             periodStart: weekStart,
             periodEnd: weekEnd,
             department: key,
@@ -1191,7 +1498,7 @@ export default function DeptBonusCalculator({
           });
         }
       }
-      const res = await fetch('/api/bonus-catalog-applied', {
+      const res = await fetch(appliedEndpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ department: key, period_start: weekStart, period_end: weekEnd, rows }),
@@ -1202,7 +1509,11 @@ export default function DeptBonusCalculator({
       const stillDraft = d.status !== 'ready' && d.status !== 'locked';
       const applied = `${rows.length} bonus${rows.length === 1 ? '' : 'es'} applied`;
       toast.success(`${DEPARTMENTS.find((x) => x.key === key)?.name ?? key} saved`, {
-        description: stillDraft ? `${applied} · lock & submit before payroll` : applied,
+        description: isQc
+          ? `${applied} · lock & send to manager when done`
+          : stillDraft
+            ? `${applied} · lock & submit before payroll`
+            : applied,
       });
       ok = true;
     } catch (e) {
@@ -1274,9 +1585,54 @@ export default function DeptBonusCalculator({
     if (ok) {
       setLockedDepts((m) => ({ ...m, [key]: false }));
       setSubmit({ kind: 'submit', key, phase: 'done' });
+      // Finalizing a QC department accepts the QC officers' first-pass for the
+      // week (closes the review handoff). Best-effort — payroll submit succeeded.
+      if (isQcDeptKey(key)) {
+        void fetch('/api/qc/review', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ period_start: weekStart, department: key, status: 'accepted' }),
+        });
+      }
     } else {
       setSubmit({ kind: 'submit', key, phase: 'error', msg: 'Could not reach the server. Check your connection and try again.' });
     }
+  }
+
+  // -- QC mode: officer-level lock (covers all their assigned members) ----------
+
+  /** Save any dirty departments, then ask QCApp to persist the officer's lock
+   *  for the week. Reuses the centered submit modal for feedback. */
+  async function qcLockPeriod() {
+    if (!onToggleQcLock) return;
+    const firstKey = visibleDeptKeys[0] ?? 'qc';
+    setSubmit({ kind: 'submit', key: firstKey, phase: 'sending' });
+    const t0 = Date.now();
+    for (const k of visibleDeptKeys) {
+      if (state[k]?.dirty) {
+        const saved = await saveDept(k);
+        if (!saved) {
+          setSubmit({ kind: 'submit', key: firstKey, phase: 'error', msg: 'Could not save before locking. Check your connection and try again.' });
+          return;
+        }
+      }
+    }
+    const ok = await onToggleQcLock(true);
+    const wait = Math.max(0, 550 - (Date.now() - t0));
+    if (wait) await new Promise((r) => setTimeout(r, wait));
+    setSubmit(ok
+      ? { kind: 'submit', key: firstKey, phase: 'done' }
+      : { kind: 'submit', key: firstKey, phase: 'error', msg: 'Could not reach the server. Check your connection and try again.' });
+  }
+
+  async function qcReopen() {
+    if (!onToggleQcLock) return;
+    const firstKey = visibleDeptKeys[0] ?? 'qc';
+    setSubmit({ kind: 'submit', key: firstKey, phase: 'sending' });
+    const ok = await onToggleQcLock(false);
+    setSubmit(ok
+      ? { kind: 'submit', key: firstKey, phase: 'done' }
+      : { kind: 'submit', key: firstKey, phase: 'error', msg: 'Could not reach the server. Check your connection and try again.' });
   }
 
   // -- Overlay open / close / navigation -----------------------------------------
@@ -1461,6 +1817,12 @@ export default function DeptBonusCalculator({
           )}
         </div>
 
+        {/* Manager view of a QC department: who scored the first pass + when,
+            with a Return-to-QC action. Pre-filled values appear in the table. */}
+        {!isQc && isQcDeptKey(key) && (
+          <QcOfficerLog deptKey={key} periodStart={weekStart} />
+        )}
+
         {/* Toolbar: people search + progress */}
         {tableReady && (
           <div className="flex flex-none flex-col gap-2 border-b border-zinc-100 px-4 py-2.5 dark:border-zinc-800/70 sm:flex-row sm:items-center sm:justify-between sm:px-5">
@@ -1492,7 +1854,7 @@ export default function DeptBonusCalculator({
         <div className="min-h-0 flex-1 overflow-auto">
           {!d || !d.loaded ? (
             <DeptTableSkeleton
-              rows={Math.min(10, Math.max(3, rosterByDept.get(key)?.length ?? 6))}
+              rows={Math.min(10, Math.max(3, (isQc ? qcRosterByDept.get(key)?.length : rosterByDept.get(key)?.length) ?? 6))}
               cols={colMeta.length + sharedMeta.length + (hasIndividual ? 1 : 0)}
             />
           ) : !hasAnyBonus ? (
@@ -1905,7 +2267,17 @@ export default function DeptBonusCalculator({
                     : 'text-zinc-400',
               )}
             >
-              {statusReadOnly ? (
+              {isQc ? (
+                qcLocked ? (
+                  <>
+                    <Lock className="h-2.5 w-2.5" /> Locked · sent to manager
+                  </>
+                ) : d?.dirty ? (
+                  'Unsaved changes'
+                ) : (
+                  'Saved · lock to send'
+                )
+              ) : statusReadOnly ? (
                 'Sent to Accounting'
               ) : editLocked ? (
                 <>
@@ -1919,7 +2291,35 @@ export default function DeptBonusCalculator({
             </div>
           </div>
           <div className="flex shrink-0 items-center gap-2">
-            {statusReadOnly ? (
+            {isQc ? (
+              qcLocked ? (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-9 gap-1.5 text-xs"
+                  onClick={() => void qcReopen()}
+                >
+                  <Unlock className="h-3.5 w-3.5" /> Reopen
+                </Button>
+              ) : (
+                <>
+                  <Button size="sm" variant="outline" className="h-9 gap-1.5 text-xs" disabled={d?.saving} onClick={() => void saveDept(key)}>
+                    <Save className="h-3.5 w-3.5" /> {d?.saving ? 'Saving…' : 'Save'}
+                  </Button>
+                  <motion.div whileTap={reduceMotion ? undefined : { scale: 0.96 }}>
+                    <Button
+                      size="sm"
+                      className="h-9 gap-1.5 bg-orange-600 text-xs text-white hover:bg-orange-700 disabled:opacity-60"
+                      disabled={d?.saving}
+                      onClick={() => void qcLockPeriod()}
+                      title="Lock all your assigned members for the week and send to the manager"
+                    >
+                      <Lock className="h-3.5 w-3.5" /> Lock &amp; send to manager
+                    </Button>
+                  </motion.div>
+                </>
+              )
+            ) : statusReadOnly ? (
               <Button
                 size="sm"
                 variant="outline"
@@ -2139,8 +2539,9 @@ export default function DeptBonusCalculator({
               deptName={DEPARTMENTS.find((d) => d.key === submit.key)?.name ?? submit.key}
               msg={submit.msg}
               reduce={!!reduceMotion}
+              qc={isQc}
               onClose={() => submit.phase !== 'sending' && setSubmit(null)}
-              onRetry={() => void (submit.kind === 'lock' ? lockValues(submit.key) : submitToPayroll(submit.key))}
+              onRetry={() => void (submit.kind === 'lock' ? lockValues(submit.key) : isQc ? qcLockPeriod() : submitToPayroll(submit.key))}
             />
           )}
         </AnimatePresence>,
@@ -2188,7 +2589,7 @@ export default function DeptBonusCalculator({
                 weekEnd={weekEnd}
                 options={weekOptions}
                 currentWeekStart={currentWeekStart}
-                onChange={setWeekStart}
+                onChange={selectWeek}
               />
             </div>
           </div>
@@ -2231,7 +2632,7 @@ export default function DeptBonusCalculator({
             weekEnd={weekEnd}
             liveWeekStart={currentWeekStart}
             liveWeekEnd={currentWeekStart ? weekEndFromStart(currentWeekStart) : ''}
-            onJumpToLive={() => currentWeekStart && setWeekStart(currentWeekStart)}
+            onJumpToLive={() => currentWeekStart && selectWeek(currentWeekStart)}
           />
         )}
 
@@ -2276,7 +2677,13 @@ export default function DeptBonusCalculator({
       <motion.div
         className={cn(
           'relative grid gap-3.5 px-4 py-4 sm:px-6',
-          filteredDeptKeys.length <= 1 ? 'mx-auto w-full max-w-3xl grid-cols-1' : 'grid-cols-1 lg:grid-cols-2',
+          // QC mode keeps the calculator cards left-aligned (a focused work
+          // surface); the manager landing centers a lone card as before.
+          filteredDeptKeys.length <= 1
+            ? isQc
+              ? 'mr-auto w-full max-w-3xl grid-cols-1'
+              : 'mx-auto w-full max-w-3xl grid-cols-1'
+            : 'grid-cols-1 lg:grid-cols-2',
         )}
         initial={reduceMotion ? false : 'hidden'}
         animate="show"
@@ -2651,6 +3058,7 @@ function SubmitModal({
   onClose,
   onRetry,
   reduce,
+  qc = false,
 }: {
   kind: 'lock' | 'submit';
   phase: 'sending' | 'done' | 'error';
@@ -2659,6 +3067,8 @@ function SubmitModal({
   onClose: () => void;
   onRetry: () => void;
   reduce: boolean;
+  /** QC officer mode: the "submit" action locks + sends to the manager, not payroll. */
+  qc?: boolean;
 }) {
   useEffect(() => {
     if (phase === 'sending') return; // can't dismiss mid-action
@@ -2671,17 +3081,21 @@ function SubmitModal({
 
   const dept = <span className="font-semibold text-zinc-700 dark:text-zinc-300">{deptName}</span>;
   const copy = {
-    sendingTitle: kind === 'lock' ? 'Locking values…' : 'Sending to Payroll…',
+    sendingTitle: kind === 'lock' ? 'Locking values…' : qc ? 'Sending to manager…' : 'Sending to Payroll…',
     sendingBody:
       kind === 'lock' ? (
         <>Freezing {dept}&rsquo;s values so they&rsquo;re ready to submit.</>
+      ) : qc ? (
+        <>Locking your assigned members and notifying the manager to review. Please keep this window open.</>
       ) : (
         <>Submitting {dept}&rsquo;s values to Accounting. Please keep this window open.</>
       ),
-    doneTitle: kind === 'lock' ? 'Values locked' : 'Submitted to Payroll',
+    doneTitle: kind === 'lock' ? 'Values locked' : qc ? 'Sent to manager' : 'Submitted to Payroll',
     doneBody:
       kind === 'lock' ? (
         <>{dept} is locked. Submit to Payroll when you&rsquo;re ready.</>
+      ) : qc ? (
+        <>Locked. The manager has been notified to review your scores.</>
       ) : (
         <>{dept} is ready. Accounting can see it in the Payroll Wizard.</>
       ),
