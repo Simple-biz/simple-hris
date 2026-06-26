@@ -181,7 +181,17 @@
       "Bash(git --no-pager diff HEAD -- app/api/qc/assignments/route.ts)",
       "Bash(git --no-pager diff HEAD -- src/components/qc/QCApp.tsx)",
       "Bash(echo \"---exit:$?---\")",
-      "Bash(echo \"exit:$?\")"
+      "Bash(echo \"exit:$?\")",
+      "Bash(node \"C:/Users/Itachi/AppData/Local/Temp/claude/c--Users-Itachi-Desktop-simple-hris/ffd08ad0-4724-4051-9dfd-dc16f344c2a3/scratchpad/diag-jackie.mjs\")",
+      "Bash(cp \"C:/Users/Itachi/AppData/Local/Temp/claude/c--Users-Itachi-Desktop-simple-hris/ffd08ad0-4724-4051-9dfd-dc16f344c2a3/scratchpad/diag-jackie.mjs\" ./scripts/_diag-jackie.mjs)",
+      "Bash(node ./scripts/_diag-jackie.mjs)",
+      "Bash(rm -f ./scripts/_diag-jackie.mjs)",
+      "Bash(node ./scripts/_diag-orphan-roles.mjs)",
+      "Bash(rm -f ./scripts/_diag-orphan-roles.mjs)",
+      "Bash(node ./scripts/_diag-qc.mjs)",
+      "Bash(rm -f ./scripts/_diag-qc.mjs)",
+      "Bash(node ./scripts/_reset-sessions.mjs)",
+      "Bash(rm -f ./scripts/_reset-sessions.mjs)"
     ],
     "additionalDirectories": [
       "\\tmp"

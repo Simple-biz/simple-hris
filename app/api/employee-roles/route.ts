@@ -185,6 +185,19 @@ export async function POST(request: Request) {
     // Make the dashboard usable immediately by granting edit on all its tabs.
     await provisionDashboardTabs(supabase, email, role, actor.user_name);
 
+    // Invalidate the target's live session so the NEW role reaches their JWT on
+    // the next request. Every server-side gate (edge proxy + page layouts) reads
+    // roles from the JWT, and getToken() only DECODES the cookie — it never
+    // re-reads the DB. Without this, a freshly-granted dashboard role does not
+    // take effect until the user happens to re-login: the proxy keeps bouncing
+    // them off the new route using their stale token (even though the switcher,
+    // which is DB-driven, already offers the new view). The revoke path below
+    // already force-logs-out; granting must too. Skip a self-grant so an admin
+    // granting themselves a role isn't logged out mid-request.
+    if ((authz.sessionEmail ?? '').trim().toLowerCase() !== email) {
+      void bumpForceLogoutFor(email);
+    }
+
     void insertAuditLog({
       user_name: actor.user_name,
       user_role: actor.user_role,
