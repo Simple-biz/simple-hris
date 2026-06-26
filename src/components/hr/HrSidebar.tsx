@@ -8,6 +8,7 @@ import {
   ArrowRightLeft,
   Bell,
   CalendarDays,
+  ClipboardList,
   Gift,
   HeartHandshake,
   LayoutDashboard,
@@ -32,7 +33,7 @@ import EmployeeAvatar from '@/components/employee/EmployeeAvatar';
 import { useViewerProfilePhoto } from '@/hooks/useViewerProfilePhoto';
 import { useDispatchLock } from '@/hooks/useDispatchLock';
 
-export type HrTab = 'overview' | 'onboarding' | 'offboarding' | 'leaves' | 'transfers' | 'gift-tracker' | 'mesa' | 'announcements' | 's-wall' | 'notifications';
+export type HrTab = 'overview' | 'onboarding' | 'new-hire-checklist' | 'offboarding' | 'leaves' | 'transfers' | 'gift-tracker' | 'mesa' | 'announcements' | 's-wall' | 'notifications';
 
 interface HrSidebarProps {
   activeTab: HrTab;
@@ -154,6 +155,7 @@ export default function HrSidebar({
           <nav className="flex flex-col gap-px">
             {can('overview') && navBtn('overview', 'Overview', LayoutDashboard)}
             {can('onboarding') && navBtn('onboarding', 'Onboarding', LogIn)}
+            {can('new-hire-checklist') && navBtn('new-hire-checklist', 'New Hire Checklist', ClipboardList)}
             {can('offboarding') && navBtn('offboarding', 'Offboarding', UserMinus)}
             {can('leaves') && navBtn('leaves', 'Leave Requests', CalendarDays)}
             {can('transfers') && navBtn('transfers', 'Transfers', ArrowRightLeft)}

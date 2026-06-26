@@ -489,6 +489,160 @@ async function removeFromMasterList(
   }
 }
 
+/** Run `fn` over `items` with at most `limit` in flight at once. */
+async function mapWithConcurrency<T>(
+  items: T[],
+  limit: number,
+  fn: (item: T) => Promise<void>,
+): Promise<void> {
+  let next = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    for (;;) {
+      const i = next++;
+      if (i >= items.length) return;
+      await fn(items[i]!);
+    }
+  });
+  await Promise.all(workers);
+}
+
+/**
+ * Bulk "Back to Ready": sends many `promoted` staged hires back to `ready` in one
+ * call (the Promoted tab's multi-select). For each hire it flips the status,
+ * clears promoted_at + promoted_to_master_id, and removes the `global_master_list`
+ * DB row. The (heavier) master Google Sheet removal is hoisted OUT of the per-row
+ * loop and batched into a SINGLE read + delete — a per-row Sheet delete re-reads
+ * the whole sheet (O(N x sheet)), exactly what the bulk-promote route was
+ * refactored to avoid. The Sheet + master-DB cleanup is best-effort: a status
+ * flip that already landed isn't failed by a cleanup miss (it's logged).
+ *
+ * An ineligible id (not found / not `promoted`) comes back as a per-row failure,
+ * never throwing the whole batch.
+ */
+export async function bulkRevertHrPendingEmployeesToReady(
+  ids: number[],
+): Promise<{
+  results: Array<{ id: number; name: string; ok: boolean; error: string | null }>;
+  reverted: number;
+  failed: number;
+  total: number;
+}> {
+  const sb = client();
+  const uniqueIds = [...new Set(ids.filter((n) => Number.isFinite(n) && n > 0))];
+  if (uniqueIds.length === 0) {
+    return { results: [], reverted: 0, failed: 0, total: 0 };
+  }
+
+  const { data, error } = await sb.from(TABLE).select("*").in("id", uniqueIds);
+  if (error) {
+    return {
+      results: uniqueIds.map((id) => ({ id, name: `#${id}`, ok: false, error: error.message })),
+      reverted: 0,
+      failed: uniqueIds.length,
+      total: uniqueIds.length,
+    };
+  }
+  const byId = new Map(
+    ((data ?? []) as HrPendingEmployeeRow[]).map((r) => [r.id, r] as const),
+  );
+
+  type RowResult = { id: number; name: string; ok: boolean; error: string | null };
+  const resultById = new Map<number, RowResult>();
+  // Emails of every hire whose status flip landed — removed from the Sheet in one
+  // batched call after the loop.
+  const sheetTargets: Array<{ personalEmail: string; workEmail?: string | null }> = [];
+
+  await mapWithConcurrency(uniqueIds, 8, async (id) => {
+    const row = byId.get(id);
+    if (!row) {
+      resultById.set(id, { id, name: `#${id}`, ok: false, error: "Hire not found." });
+      return;
+    }
+    if (row.status !== "promoted") {
+      resultById.set(id, {
+        id,
+        name: row.name,
+        ok: false,
+        error: "Only a promoted hire can be sent back to Ready.",
+      });
+      return;
+    }
+
+    // Flip promoted -> ready, gated on status='promoted' so a concurrent change
+    // can't double-apply.
+    const { data: updated, error: updErr } = await sb
+      .from(TABLE)
+      .update({ status: "ready", promoted_at: null, promoted_to_master_id: null })
+      .eq("id", id)
+      .eq("status", "promoted")
+      .select("id")
+      .maybeSingle();
+    if (updErr) {
+      resultById.set(id, { id, name: row.name, ok: false, error: updErr.message });
+      return;
+    }
+    if (!updated) {
+      resultById.set(id, {
+        id,
+        name: row.name,
+        ok: false,
+        error: "Only a promoted hire can be sent back to Ready.",
+      });
+      return;
+    }
+
+    // Best-effort master-list DB delete (mirrors removeFromMasterList's DB half).
+    try {
+      if (row.promoted_to_master_id) {
+        await sb.from(MASTER_TABLE).delete().eq("id", row.promoted_to_master_id);
+      } else if (row.work_email) {
+        await sb
+          .from(MASTER_TABLE)
+          .delete()
+          .ilike("Work Email", row.work_email)
+          .ilike("Department", row.department);
+      }
+    } catch (e) {
+      console.warn(
+        `[bulkRevert] master DB delete skipped for #${id}: ${
+          e instanceof Error ? e.message : String(e)
+        }`,
+      );
+    }
+
+    sheetTargets.push({ personalEmail: row.personal_email, workEmail: row.work_email });
+    resultById.set(id, { id, name: row.name, ok: true, error: null });
+  });
+
+  // ONE batched master-sheet removal for every successfully reverted hire.
+  if (sheetTargets.length > 0) {
+    try {
+      const { deleteMasterSheetRowsByEmails } = await import(
+        "../google-sheets/delete-master-sheet-rows"
+      );
+      await deleteMasterSheetRowsByEmails(sheetTargets);
+    } catch (e) {
+      console.warn(
+        `[bulkRevert] batched master-sheet delete skipped: ${
+          e instanceof Error ? e.message : String(e)
+        }`,
+      );
+    }
+  }
+
+  const results = uniqueIds.map(
+    (id) =>
+      resultById.get(id) ?? {
+        id,
+        name: `#${id}`,
+        ok: false,
+        error: "No result recorded.",
+      },
+  );
+  const reverted = results.filter((r) => r.ok).length;
+  return { results, reverted, failed: results.length - reverted, total: results.length };
+}
+
 export async function deleteHrPendingEmployee(
   id: number,
 ): Promise<{ error: string | null }> {

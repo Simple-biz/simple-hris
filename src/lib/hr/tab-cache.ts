@@ -40,6 +40,7 @@ export function clearHrTabCache(key: string): void {
 export const HR_TAB_CACHE_KEYS = {
   pendingEmployees: 'hr:pending-employees',
   onboardingSubmissions: 'hr:onboarding-submissions',
+  newHireChecklist: 'hr:new-hire-checklist',
   overviewRoster: 'hr:overview-roster',
   overviewOffboard: 'hr:overview-offboard',
   overviewMesa: 'hr:overview-mesa',

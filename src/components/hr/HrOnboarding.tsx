@@ -136,6 +136,9 @@ export default function HrOnboarding() {
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [promotingSelected, setPromotingSelected] = useState(false);
   const [confirmPromoteRows, setConfirmPromoteRows] = useState<HrPendingEmployeeRow[] | null>(null);
+  // Multi-select "Back to Ready" (Promoted tab) — bulk unpromote.
+  const [unpromotingSelected, setUnpromotingSelected] = useState(false);
+  const [confirmBackToReadyRows, setConfirmBackToReadyRows] = useState<HrPendingEmployeeRow[] | null>(null);
   // Live state for the bulk-promote progress modal (null when closed). Updated
   // after every chunk so the bar + the Promoted/Failed KPI counters move in
   // real time as the batch lands.
@@ -189,10 +192,14 @@ export default function HrOnboarding() {
     return () => { void supabase.removeChannel(channel); };
   }, []);
 
-  // Drop any selection when leaving the multi-select tabs (Ready / Failed) so
-  // the bulk bar can't act on rows the user can no longer see.
+  // Drop any selection whenever the tab changes. Each tab's bulk action differs
+  // (Ready/Failed → Promote/Retry; Promoted → Back to Ready), so a selection must
+  // never carry into a tab where a different action would apply to it — or onto
+  // rows the user can no longer see. (Search / dept filter / page change keep the
+  // selection so bulk ticks survive narrowing, per the persistent-multiselect
+  // convention.)
   useEffect(() => {
-    if (tab !== 'ready' && tab !== 'failed') setSelected(new Set());
+    setSelected(new Set());
   }, [tab]);
 
   const filteredPending = useMemo(() => {
@@ -251,26 +258,29 @@ export default function HrOnboarding() {
       )
     : filteredPending;
 
-  // Rows in the current filter that can be promoted / re-promoted (orientation
-  // confirmed; both 'ready' and 'failed_to_promote' rows already have a work
-  // email + confirmed orientation). These are the only rows that get a tick box.
-  // The Failed tab reuses the same multi-select so a batch of failures can be
-  // retried in one click.
+  const isPromotedTab = tab === 'promoted';
+  // Rows in the CURRENT VIEW that can be ticked. On Ready/Failed that's any
+  // promotable row (orientation confirmed; both 'ready' and 'failed_to_promote'
+  // already have a work email). On Promoted, every promoted row is selectable for
+  // bulk "Back to Ready" — there's no orientation gate. Scoped to the visible
+  // rows (displayPending) so "select all" on the paged Promoted tab toggles just
+  // this page; individual ticks still persist across pages via the `selected` set.
   const selectableIds = useMemo(
     () =>
-      filteredPending
-        .filter(
-          (r) =>
-            (r.status === 'ready' || r.status === 'failed_to_promote') &&
-            !!r.orientation_attended_at,
+      displayPending
+        .filter((r) =>
+          isPromotedTab
+            ? r.status === 'promoted'
+            : (r.status === 'ready' || r.status === 'failed_to_promote') &&
+              !!r.orientation_attended_at,
         )
         .map((r) => r.id),
-    [filteredPending],
+    [displayPending, isPromotedTab],
   );
   const selectedCount = selectableIds.filter((id) => selected.has(id)).length;
   const allSelected = selectableIds.length > 0 && selectedCount === selectableIds.length;
   const someSelected = selectedCount > 0 && !allSelected;
-  const canMultiSelect = tab === 'ready' || tab === 'failed';
+  const canMultiSelect = tab === 'ready' || tab === 'failed' || isPromotedTab;
   const showSelect = canMultiSelect && selectableIds.length > 0;
 
   function toggleOne(id: number) {
@@ -283,9 +293,15 @@ export default function HrOnboarding() {
   }
   function toggleAll() {
     setSelected((prev) => {
-      // If everything selectable is already ticked, clear; otherwise select all.
-      const everything = selectableIds.every((id) => prev.has(id));
-      return everything ? new Set() : new Set(selectableIds);
+      const next = new Set(prev);
+      // If every selectable row in the current view is ticked, clear just those
+      // (keeping any ticks made on other paged views); otherwise add them all.
+      const everything = selectableIds.every((id) => next.has(id));
+      for (const id of selectableIds) {
+        if (everything) next.delete(id);
+        else next.add(id);
+      }
+      return next;
     });
   }
 
@@ -416,6 +432,51 @@ export default function HrOnboarding() {
       await fetchPending();
     } finally {
       setPromotingSelected(false);
+    }
+  }
+
+  async function backToReadySelected() {
+    const ids = pending
+      .filter((r) => selected.has(r.id) && r.status === 'promoted')
+      .map((r) => r.id);
+    if (ids.length === 0) return;
+    setUnpromotingSelected(true);
+    try {
+      const res = await fetch('/api/hr/pending-employees/bulk-unpromote', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids }),
+      });
+      const json = (await res.json()) as {
+        reverted?: number;
+        failed?: number;
+        total?: number;
+        results?: Array<{ id: number; name: string; ok: boolean; error: string | null }>;
+        error?: string;
+      };
+      if (!res.ok || json.error) throw new Error(json.error ?? 'Failed to send back to Ready');
+      const reverted = json.reverted ?? 0;
+      const failed = json.failed ?? 0;
+      if (failed === 0) {
+        toast.success(`${reverted} hire${reverted !== 1 ? 's' : ''} sent back to Ready`, {
+          description: 'Removed from the master list + Google Sheet; promote again after any fixes.',
+        });
+      } else {
+        const firstErr = json.results?.find((r) => !r.ok && r.error);
+        toast.warning(`${reverted} sent back, ${failed} failed`, {
+          description: firstErr
+            ? `${firstErr.name}: ${firstErr.error}`
+            : 'Some hires could not be sent back to Ready.',
+        });
+      }
+      setSelected(new Set());
+      // Table updates live via Realtime; this is a belt-and-braces refresh.
+      await fetchPending();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to send back to Ready');
+      await fetchPending();
+    } finally {
+      setUnpromotingSelected(false);
     }
   }
 
@@ -715,8 +776,22 @@ export default function HrOnboarding() {
 
         <CardContent className="pt-4">
           {canMultiSelect && selected.size > 0 && (
-            <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-emerald-200 bg-emerald-50/80 px-3 py-2 dark:border-emerald-800/60 dark:bg-emerald-950/30">
-              <span className="text-xs font-medium text-emerald-900 dark:text-emerald-100">
+            <div
+              className={cn(
+                'mb-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border px-3 py-2',
+                isPromotedTab
+                  ? 'border-amber-200 bg-amber-50/80 dark:border-amber-800/60 dark:bg-amber-950/30'
+                  : 'border-emerald-200 bg-emerald-50/80 dark:border-emerald-800/60 dark:bg-emerald-950/30',
+              )}
+            >
+              <span
+                className={cn(
+                  'text-xs font-medium',
+                  isPromotedTab
+                    ? 'text-amber-900 dark:text-amber-100'
+                    : 'text-emerald-900 dark:text-emerald-100',
+                )}
+              >
                 {selected.size} selected
               </span>
               <div className="flex items-center gap-2">
@@ -725,26 +800,49 @@ export default function HrOnboarding() {
                   size="sm"
                   className="h-7 px-2 text-xs"
                   onClick={() => setSelected(new Set())}
-                  disabled={promotingSelected}
+                  disabled={promotingSelected || unpromotingSelected}
                 >
                   Clear
                 </Button>
-                <Button
-                  size="sm"
-                  className="h-7 gap-1.5 bg-gradient-to-r from-emerald-500 to-teal-700 px-3 text-xs text-white hover:opacity-90"
-                  onClick={() => setConfirmPromoteRows(pending.filter((r) => selected.has(r.id)))}
-                  disabled={promotingSelected}
-                  title="Promote all selected hires to the master list"
-                >
-                  {promotingSelected ? (
-                    <Loader2 className="h-3 w-3 animate-spin" />
-                  ) : (
-                    <CheckCircle2 className="h-3 w-3" />
-                  )}
-                  {promotingSelected && promoteModal
-                    ? `${tab === 'failed' ? 'Retrying' : 'Promoting'} ${promoteModal.done}/${promoteModal.total}`
-                    : `${tab === 'failed' ? 'Retry' : 'Promote'} selected (${selected.size})`}
-                </Button>
+                {isPromotedTab ? (
+                  <Button
+                    size="sm"
+                    className="h-7 gap-1.5 bg-gradient-to-r from-amber-500 to-orange-600 px-3 text-xs text-white hover:opacity-90"
+                    onClick={() =>
+                      setConfirmBackToReadyRows(
+                        pending.filter((r) => selected.has(r.id) && r.status === 'promoted'),
+                      )
+                    }
+                    disabled={unpromotingSelected}
+                    title="Send all selected hires back to Ready (removes them from the master list + Google Sheet)"
+                  >
+                    {unpromotingSelected ? (
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                    ) : (
+                      <Undo2 className="h-3 w-3" />
+                    )}
+                    {unpromotingSelected
+                      ? 'Sending back…'
+                      : `Back to Ready (${selected.size})`}
+                  </Button>
+                ) : (
+                  <Button
+                    size="sm"
+                    className="h-7 gap-1.5 bg-gradient-to-r from-emerald-500 to-teal-700 px-3 text-xs text-white hover:opacity-90"
+                    onClick={() => setConfirmPromoteRows(pending.filter((r) => selected.has(r.id)))}
+                    disabled={promotingSelected}
+                    title="Promote all selected hires to the master list"
+                  >
+                    {promotingSelected ? (
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                    ) : (
+                      <CheckCircle2 className="h-3 w-3" />
+                    )}
+                    {promotingSelected && promoteModal
+                      ? `${tab === 'failed' ? 'Retrying' : 'Promoting'} ${promoteModal.done}/${promoteModal.total}`
+                      : `${tab === 'failed' ? 'Retry' : 'Promote'} selected (${selected.size})`}
+                  </Button>
+                )}
               </div>
             </div>
           )}
@@ -805,7 +903,7 @@ export default function HrOnboarding() {
                       <th className="w-10 px-4 py-3">
                         <input
                           type="checkbox"
-                          aria-label="Select all ready hires"
+                          aria-label={isPromotedTab ? 'Select all promoted hires on this page' : 'Select all ready hires'}
                           className="h-4 w-4 cursor-pointer accent-emerald-600 disabled:cursor-not-allowed disabled:opacity-40"
                           checked={allSelected}
                           ref={(el) => {
@@ -830,13 +928,16 @@ export default function HrOnboarding() {
                   <AnimatePresence initial={false}>
                     {displayPending.map((row, i) => {
                       const isBusy = busyId === row.id;
-                      // On the Ready tab, a promotable row (orientation confirmed)
-                      // can be ticked by clicking anywhere on the row, not just the
-                      // tiny checkbox.
+                      // A row can be ticked (and clicking anywhere on it toggles
+                      // the tick, not just the tiny checkbox). On Ready/Failed that
+                      // needs orientation confirmed; on Promoted every promoted row
+                      // is selectable for bulk "Back to Ready".
                       const rowSelectable =
                         canMultiSelect &&
-                        (row.status === 'ready' || row.status === 'failed_to_promote') &&
-                        !!row.orientation_attended_at;
+                        (isPromotedTab
+                          ? row.status === 'promoted'
+                          : (row.status === 'ready' || row.status === 'failed_to_promote') &&
+                            !!row.orientation_attended_at);
                       const isSelected = selected.has(row.id);
                       return (
                         <motion.tr
@@ -873,9 +974,9 @@ export default function HrOnboarding() {
                                 className="h-4 w-4 cursor-pointer accent-emerald-600 disabled:cursor-not-allowed disabled:opacity-40"
                                 checked={selected.has(row.id)}
                                 onChange={() => toggleOne(row.id)}
-                                disabled={!row.orientation_attended_at}
+                                disabled={!rowSelectable}
                                 title={
-                                  row.orientation_attended_at
+                                  rowSelectable
                                     ? undefined
                                     : 'Orientation must be confirmed before this hire can be promoted.'
                                 }
@@ -1215,13 +1316,24 @@ export default function HrOnboarding() {
       </Dialog>
 
       {/* Bulk-promote confirmation dialog */}
-      <BulkPromoteConfirmDialog
+      <BulkActionConfirmDialog
         rows={confirmPromoteRows}
-        isFailedTab={tab === 'failed'}
+        action={tab === 'failed' ? 'retry' : 'promote'}
         onClose={() => setConfirmPromoteRows(null)}
         onConfirm={() => {
           setConfirmPromoteRows(null);
           void promoteSelected();
+        }}
+      />
+
+      {/* Bulk "Back to Ready" confirmation dialog (Promoted tab) */}
+      <BulkActionConfirmDialog
+        rows={confirmBackToReadyRows}
+        action="backToReady"
+        onClose={() => setConfirmBackToReadyRows(null)}
+        onConfirm={() => {
+          setConfirmBackToReadyRows(null);
+          void backToReadySelected();
         }}
       />
 
@@ -1244,18 +1356,21 @@ export default function HrOnboarding() {
  * Rows are grouped by department; when more than one department is present
  * each gets its own tab so the reviewer can verify per-department before committing.
  */
-function BulkPromoteConfirmDialog({
+function BulkActionConfirmDialog({
   rows,
-  isFailedTab,
+  action,
   onClose,
   onConfirm,
 }: {
   rows: HrPendingEmployeeRow[] | null;
-  isFailedTab: boolean;
+  // 'promote' (Ready) + 'retry' (Failed) write to the master list; 'backToReady'
+  // (Promoted) removes from it. The verb, copy, and button colour follow the action.
+  action: 'promote' | 'retry' | 'backToReady';
   onClose: () => void;
   onConfirm: () => void;
 }) {
-  const verb = isFailedTab ? 'Retry' : 'Promote';
+  const isBack = action === 'backToReady';
+  const verb = action === 'retry' ? 'Retry' : isBack ? 'Send back' : 'Promote';
 
   const deptGroups = useMemo(() => {
     if (!rows) return [];
@@ -1282,11 +1397,19 @@ function BulkPromoteConfirmDialog({
       <DialogContent className="max-w-lg">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-base">
-            <CheckCircle2 className="h-4 w-4 text-emerald-600" />
-            {verb} {total} hire{total !== 1 ? 's' : ''}?
+            {isBack ? (
+              <Undo2 className="h-4 w-4 text-amber-600" />
+            ) : (
+              <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+            )}
+            {isBack
+              ? `Send ${total} hire${total !== 1 ? 's' : ''} back to Ready?`
+              : `${verb} ${total} hire${total !== 1 ? 's' : ''}?`}
           </DialogTitle>
           <DialogDescription className="text-xs">
-            Review the hires below, then confirm to write them to the master list and Google Sheet.
+            {isBack
+              ? 'These hires will be removed from the master list and the Google Sheet and returned to the Ready tab. You can promote them again afterward.'
+              : 'Review the hires below, then confirm to write them to the master list and Google Sheet.'}
           </DialogDescription>
         </DialogHeader>
 
@@ -1349,11 +1472,20 @@ function BulkPromoteConfirmDialog({
           </Button>
           <Button
             size="sm"
-            className="bg-gradient-to-r from-emerald-500 to-teal-700 text-white hover:opacity-90"
+            className={cn(
+              'text-white hover:opacity-90',
+              isBack
+                ? 'bg-gradient-to-r from-amber-500 to-orange-600'
+                : 'bg-gradient-to-r from-emerald-500 to-teal-700',
+            )}
             onClick={onConfirm}
           >
-            <CheckCircle2 className="mr-1.5 h-3.5 w-3.5" />
-            {verb} all {total}
+            {isBack ? (
+              <Undo2 className="mr-1.5 h-3.5 w-3.5" />
+            ) : (
+              <CheckCircle2 className="mr-1.5 h-3.5 w-3.5" />
+            )}
+            {isBack ? `Send all ${total} back` : `${verb} all ${total}`}
           </Button>
         </DialogFooter>
       </DialogContent>

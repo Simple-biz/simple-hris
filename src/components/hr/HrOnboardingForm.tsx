@@ -12,6 +12,7 @@ import {
   ChevronLeft,
   ChevronRight,
   ClipboardCopy,
+  ClipboardList,
   Download,
   ExternalLink,
   Eye,
@@ -2052,6 +2053,14 @@ function GenerateLinkDialog({
   const [bulkProgress, setBulkProgress] = useState<{ done: number; total: number } | null>(null);
   const [bulkResults, setBulkResults] = useState<BulkResult[] | null>(null);
 
+  // Prefill from the New Hire Checklist: pull a department's saved rows and drop
+  // their emails into a chosen country box (the checklist stores no country).
+  // Names ride along in `prefillNames` so each invite goes out pre-addressed.
+  const [checklistRows, setChecklistRows] = useState<{ name: string; email: string }[]>([]);
+  const [checklistLoading, setChecklistLoading] = useState(false);
+  const [prefillCountry, setPrefillCountry] = useState('');
+  const [prefillNames, setPrefillNames] = useState<Record<string, string>>({});
+
   const [departments, setDepartments] = useState<string[]>([]);
   const [deptsLoading, setDeptsLoading] = useState(false);
 
@@ -2125,8 +2134,33 @@ function GenerateLinkDialog({
       setEmail(''); setDept(''); setCountry(''); setNote('');
       setBulkByCountry({}); setBulkProgress(null); setBulkResults(null);
       setBulkMode(false);
+      setChecklistRows([]); setPrefillCountry(''); setPrefillNames({});
     }
   }, [open]);
+
+  // Pull the selected department's saved hires from the New Hire Checklist so
+  // they can be loaded into the batch with one click. Re-runs whenever the
+  // department changes while bulk mode is on.
+  useEffect(() => {
+    if (!open || !bulkMode) { setChecklistRows([]); return; }
+    const d = dept.trim();
+    if (!d) { setChecklistRows([]); return; }
+    let cancelled = false;
+    setChecklistLoading(true);
+    fetch(`/api/hr/new-hire-checklist/departments?department=${encodeURIComponent(d)}`, { cache: 'no-store' })
+      .then((r) => r.json())
+      .then((j: { rows?: { name: string | null; personal_email: string | null }[]; error?: string }) => {
+        if (cancelled) return;
+        if (j.error) throw new Error(j.error);
+        const rows = (j.rows ?? [])
+          .map((r) => ({ name: (r.name ?? '').trim(), email: (r.personal_email ?? '').trim() }))
+          .filter((r) => r.email);
+        setChecklistRows(rows);
+      })
+      .catch((e) => { if (!cancelled) toast.error(e instanceof Error ? e.message : 'Could not load the checklist'); })
+      .finally(() => { if (!cancelled) setChecklistLoading(false); });
+    return () => { cancelled = true; };
+  }, [open, bulkMode, dept]);
 
   const emailInvalid = !bulkMode && email.trim().length > 0 && !isPlausibleEmail(email);
 
@@ -2157,6 +2191,39 @@ function GenerateLinkDialog({
     }
   }
 
+  // ── Load the department's checklist hires into a country box ──
+  // The checklist carries no country, so HR picks one country for the whole
+  // pulled batch (it selects the pay-plan PDF). Emails merge into that box,
+  // deduped against anything already pasted; names are stashed for invite_name.
+  function loadFromChecklist() {
+    const targetCountry = prefillCountry.trim();
+    if (!targetCountry) { toast.error('Pick a country for these hires first.'); return; }
+    const valid = checklistRows.filter((r) => isPlausibleEmail(r.email));
+    const skipped = checklistRows.length - valid.length;
+    if (valid.length === 0) {
+      toast.error('No valid emails in the checklist for this department.');
+      return;
+    }
+    setBulkByCountry((m) => {
+      const existing = m[targetCountry] ?? '';
+      const have = new Set(parseEmailList(existing).valid);
+      const additions = valid
+        .map((r) => r.email.toLowerCase())
+        .filter((e) => !have.has(e));
+      const merged = [existing.trim(), ...additions].filter(Boolean).join('\n');
+      return { ...m, [targetCountry]: merged };
+    });
+    setPrefillNames((prev) => {
+      const next = { ...prev };
+      for (const r of valid) if (r.name) next[r.email.toLowerCase()] = r.name;
+      return next;
+    });
+    toast.success(
+      `Loaded ${valid.length} hire${valid.length !== 1 ? 's' : ''} into ${targetCountry}` +
+        (skipped > 0 ? ` — ${skipped} skipped (no email)` : ''),
+    );
+  }
+
   // ── Bulk submit: create + send for every parsed row ──
   // Each row carries the country of the paste box it was pasted into, so a mixed
   // batch emails each hire the pay plan for their country.
@@ -2176,7 +2243,9 @@ function GenerateLinkDialog({
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            invite_name: null,
+            // Pre-address the invite with the checklist name when this email was
+            // pulled from the New Hire Checklist; otherwise the hire types it.
+            invite_name: prefillNames[e.toLowerCase()] ?? null,
             invite_personal_email: e,
             invite_department: dept.trim(),
             invite_country: r.country || null,
@@ -2383,6 +2452,61 @@ function GenerateLinkDialog({
         {bulkMode ? (
           /* ── Bulk mode (any department) ── */
           <>
+            <DialogSection label="From New Hire Checklist">
+              <div className="rounded-xl border border-emerald-200 bg-emerald-50/50 p-3 dark:border-emerald-800/50 dark:bg-emerald-950/20">
+                {!dept.trim() ? (
+                  <p className="flex items-center gap-2 text-[12px] leading-relaxed text-zinc-500 dark:text-zinc-400">
+                    <ClipboardList className="h-4 w-4 shrink-0 text-emerald-500" />
+                    Pick a department above to pull its saved hires straight from the New Hire Checklist.
+                  </p>
+                ) : (
+                  <div className="space-y-2.5">
+                    <p className="flex items-center gap-2 text-[12px] leading-relaxed text-zinc-700 dark:text-zinc-300">
+                      <ClipboardList className="h-4 w-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
+                      {checklistLoading ? (
+                        <>Checking the checklist for <strong>{dept.trim()}</strong>…</>
+                      ) : checklistRows.length > 0 ? (
+                        <>
+                          <strong>{checklistRows.length}</strong> hire{checklistRows.length !== 1 ? 's' : ''} saved for{' '}
+                          <strong>{dept.trim()}</strong> in the checklist.
+                        </>
+                      ) : (
+                        <>No checklist hires saved for <strong>{dept.trim()}</strong> yet.</>
+                      )}
+                    </p>
+                    {checklistRows.length > 0 && (
+                      <>
+                        <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
+                          <div className="flex-1">
+                            <DialogField
+                              label="Country for these hires"
+                              icon={<Globe className="h-3.5 w-3.5" />}
+                              hint="Picks the pay plan for the whole pulled batch — the checklist doesn't store a country."
+                            >
+                              <CountrySelect value={prefillCountry} onChange={setPrefillCountry} />
+                            </DialogField>
+                          </div>
+                          <Button
+                            type="button"
+                            size="sm"
+                            onClick={loadFromChecklist}
+                            disabled={busy || !prefillCountry.trim()}
+                            className="h-9 shrink-0 gap-1.5 bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50"
+                          >
+                            <Plus className="h-3.5 w-3.5" />
+                            Load {checklistRows.length} into {prefillCountry.trim() || 'a country'}
+                          </Button>
+                        </div>
+                        <p className="text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400">
+                          Their emails drop into the matching country box below (deduped), and each name rides along so the invite goes out pre-addressed.
+                        </p>
+                      </>
+                    )}
+                  </div>
+                )}
+              </div>
+            </DialogSection>
+
             <DialogSection label="Paste hires by country">
               <p className="-mt-1 text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400">
                 Paste personal emails into the matching country — one per line (commas, tabs and spaces also work). Every email in a box is invited as that country, so there&apos;s no need to tag hires one-by-one.

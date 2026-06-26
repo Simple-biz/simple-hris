@@ -22,6 +22,12 @@ export type DeleteMasterSheetRowsResult = {
   reason?: string;
 };
 
+/** A hire to remove from the master sheet, matched by either email. */
+export type MasterSheetEmailTarget = {
+  personalEmail: string;
+  workEmail?: string | null;
+};
+
 function norm(v: unknown): string {
   return String(v ?? '').trim().toLowerCase();
 }
@@ -49,10 +55,39 @@ export async function deleteMasterSheetRowsByEmail(
   personalEmail: string,
   workEmail?: string,
 ): Promise<DeleteMasterSheetRowsResult> {
+  return deleteMasterSheetRowsByEmails([{ personalEmail, workEmail }]);
+}
+
+/**
+ * Batched variant of {@link deleteMasterSheetRowsByEmail}: removes every master
+ * Sheet row matching ANY of the given (personal/work) email targets, in a SINGLE
+ * read + a SINGLE batchUpdate. Used by the Promoted tab's bulk "Back to Ready" so
+ * sending N hires back doesn't re-read the whole sheet N times (the per-row path
+ * is O(N x sheet) — the same trap bulk-promote was refactored out of).
+ *
+ * Best-effort by contract — callers should surface the result but not block other
+ * operations on failure.
+ */
+export async function deleteMasterSheetRowsByEmails(
+  targets: MasterSheetEmailTarget[],
+): Promise<DeleteMasterSheetRowsResult> {
   const sheetId = process.env.GOOGLE_SHEETS_MASTER_SHEET_ID?.trim();
   const tabName = process.env.GOOGLE_SHEETS_MASTER_TAB_NAME?.trim();
   if (!sheetId || !tabName) {
     return { deleted: 0, reason: 'master sheet env not configured' };
+  }
+
+  // Build the lookup sets of emails to match. Empty strings never match.
+  const workTargets = new Set<string>();
+  const personalTargets = new Set<string>();
+  for (const t of targets) {
+    const w = norm(t.workEmail ?? '');
+    const p = norm(t.personalEmail);
+    if (w) workTargets.add(w);
+    if (p) personalTargets.add(p);
+  }
+  if (workTargets.size === 0 && personalTargets.size === 0) {
+    return { deleted: 0, reason: 'no email targets' };
   }
 
   const token = await getServiceAccountAccessToken(WRITE_SCOPE);
@@ -104,17 +139,14 @@ export async function deleteMasterSheetRowsByEmail(
     (h) => h === 'personal email' || h === 'personalemail',
   );
 
-  const targetWork = norm(workEmail ?? '');
-  const targetPersonal = norm(personalEmail);
-
   // Collect absolute 0-based sheet row indices for matching data rows.
   const rowsToDelete: number[] = [];
   for (let i = headerIdx + 1; i < values.length; i++) {
     const row = values[i] ?? [];
     const rowWork = workCol >= 0 ? norm(row[workCol]) : '';
     const rowPersonal = personalCol >= 0 ? norm(row[personalCol]) : '';
-    const matchWork = targetWork !== '' && rowWork === targetWork;
-    const matchPersonal = targetPersonal !== '' && rowPersonal === targetPersonal;
+    const matchWork = rowWork !== '' && workTargets.has(rowWork);
+    const matchPersonal = rowPersonal !== '' && personalTargets.has(rowPersonal);
     if (matchWork || matchPersonal) {
       rowsToDelete.push(i);
     }

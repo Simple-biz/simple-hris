@@ -40,6 +40,7 @@ import ReadOnlyTab from '@/components/rbac/ReadOnlyTab';
 import { cn } from '@/lib/utils';
 import HrSidebar, { type HrTab } from './HrSidebar';
 import HrOnboarding from './HrOnboarding';
+import HrNewHireChecklist from './HrNewHireChecklist';
 import HrOffboarding from './HrOffboarding';
 import HrMesa from './HrMesa';
 import GiftTracker from '@/components/orphanage/GiftTracker';
@@ -221,6 +222,7 @@ export default function HrApp() {
               <ReadOnlyTab readOnly={permsReady && !canEditTab('hr', activeTab)}>
               {activeTab === 'overview' && <HrOverview viewerEmail={viewerEmail} />}
               {activeTab === 'onboarding' && <HrOnboarding />}
+              {activeTab === 'new-hire-checklist' && <HrNewHireChecklist />}
               {activeTab === 'offboarding' && <HrOffboarding />}
               {activeTab === 'leaves' && <LeaveRequestsPanel />}
               {activeTab === 'transfers' && <HrTransfers />}
