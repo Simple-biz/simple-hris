@@ -35,6 +35,7 @@ import { normEmail } from '@/lib/email/norm-email';
 import { resolveFirstName } from '@/lib/name/first-name';
 import { SESSION_EMAIL_KEY } from '@/lib/rbac/views';
 import { usePayWeeks, weekEndFromStart, type PayWeek } from '@/lib/hubstaff/use-pay-weeks';
+import { QC_DEPT_KEYS } from '@/lib/qc/constants';
 import type { EmployeeRow } from '@/lib/supabase/employees';
 import DeptBonusCalculator from '@/components/manager/DeptBonusCalculator';
 import NotificationsPanel from '@/components/notifications/NotificationsPanel';
@@ -97,8 +98,9 @@ interface QcData {
 
 const EMPTY_MINE: QcMine = { memberEmails: [], byDept: {}, members: [] };
 
-/** The three departments QC scores, in display order (matches the dept bars). */
-const QC_DEPT_ORDER = ['lead_gen', 'callback', 'discovery'] as const;
+/** The departments QC scores, in display order (matches the dept bars). Sourced
+ *  from QC_DEPT_KEYS so adding/removing a QC dept updates the whole Overview. */
+const QC_DEPT_ORDER = QC_DEPT_KEYS;
 
 interface StagedProgress {
   /** Distinct members this officer has entered scores for, per department. */
