@@ -203,7 +203,9 @@
       "Bash(git -C \"c:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris\" diff -- src/components/hr/HrNewHireChecklist.tsx src/components/hr/HrSidebar.tsx src/components/hr/HrApp.tsx src/lib/rbac/feature-permissions.ts src/lib/rbac/view-tabs.ts src/lib/pages/visibility.ts)",
       "Bash(git -C \"c:/Users/Itachi/Desktop/simple-hris\" diff -- src/components/hr/HrNewHireChecklist.tsx)",
       "PowerShell(git -C \"c:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris\" diff --stat -- src/components/hr/HrNewHireChecklist.tsx)",
-      "Bash(git --no-pager diff src/components/hr/HrNewHireChecklist.tsx)"
+      "Bash(git --no-pager diff src/components/hr/HrNewHireChecklist.tsx)",
+      "Bash(grep -n \"\\\\\"tailwindcss\\\\\"\\\\|darkMode\" package.json tailwind.config.*)",
+      "Bash(ls tailwind.config.*)"
     ],
     "additionalDirectories": [
       "\\tmp"

@@ -3,10 +3,11 @@
 --
 -- A standalone, spreadsheet-style tracking grid for the HR dashboard's new
 -- "New Hire Checklist" tab. HR pastes columns of values straight from a
--- spreadsheet — one column at a time (Names, Personal Email, Start Date,
--- Location, Phone Number, Date of Interview, Source, Hired By, Department) —
--- locks them in with Save, and later drives a department-scoped "Bulk Invite"
--- in the onboarding Generate-link flow off these rows.
+-- spreadsheet — one column at a time (Names, Personal Email, Location, Phone
+-- Number, Date of Interview, Source, Hired By, Department, Country) — locks
+-- them in with Save, and later drives a department-scoped "Bulk Invite" in the
+-- onboarding Generate-link flow off these rows. (Start Date is intentionally
+-- omitted — it's owned by the Onboarding section.)
 --
 -- This is a FREE-FORM intake sheet, deliberately decoupled from
 -- hr_pending_employees / global_master_list. Every data column is plain TEXT so
@@ -23,7 +24,6 @@ CREATE TABLE IF NOT EXISTS public.hr_new_hire_checklist (
   position          int         not null default 0,
   name              text,
   personal_email    text,
-  start_date        text,
   location          text,
   phone_number      text,
   date_of_interview text,
@@ -40,6 +40,12 @@ CREATE TABLE IF NOT EXISTS public.hr_new_hire_checklist (
 -- Invite. Added via ALTER too so an already-created table picks it up on re-run.
 ALTER TABLE public.hr_new_hire_checklist
   ADD COLUMN IF NOT EXISTS country text;
+
+-- Start Date is owned by the Onboarding section, not this checklist. Drop it so
+-- a table created by an earlier version of this migration converges (no-op on a
+-- fresh create above, which never adds the column).
+ALTER TABLE public.hr_new_hire_checklist
+  DROP COLUMN IF EXISTS start_date;
 
 -- Grid order is (position, created_at); department scoping powers Bulk Invite.
 CREATE INDEX IF NOT EXISTS hr_new_hire_checklist_position_idx

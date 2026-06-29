@@ -5,6 +5,7 @@ import {
   Building2,
   Check,
   ClipboardList,
+  Eraser,
   Info,
   Loader2,
   Plus,
@@ -29,7 +30,6 @@ import { ONBOARDING_COUNTRIES, resolveOnboardingCountry } from '@/lib/onboarding
 const COLUMNS = [
   { key: 'name', label: 'Names' },
   { key: 'personal_email', label: 'Personal Email' },
-  { key: 'start_date', label: 'Start Date' },
   { key: 'location', label: 'Location' },
   { key: 'phone_number', label: 'Phone Number' },
   { key: 'date_of_interview', label: 'Date of Interview' },
@@ -262,6 +262,12 @@ export default function HrNewHireChecklist() {
   const addRows = useCallback((n: number) => {
     setRows((prev) => [...prev, ...seedBlank(n)]);
     setDirty(true);
+  }, []);
+
+  const clearColumn = useCallback((key: FieldKey, label: string) => {
+    setRows((prev) => prev.map((row) => ({ ...row, [key]: '' })));
+    setDirty(true);
+    toast.success(`Cleared the ${label} column`);
   }, []);
 
   const deleteRow = useCallback((r: number, key: string) => {
@@ -554,9 +560,20 @@ export default function HrNewHireChecklist() {
                       {COLUMNS.map((c) => (
                         <th
                           key={c.key}
-                          className="whitespace-nowrap border-b border-emerald-100/80 px-2.5 py-2 text-left text-[11.5px] font-semibold uppercase tracking-wide text-emerald-700 dark:border-emerald-950/40 dark:text-emerald-300"
+                          className="group/col whitespace-nowrap border-b border-emerald-100/80 px-2.5 py-2 text-left text-[11.5px] font-semibold uppercase tracking-wide text-emerald-700 dark:border-emerald-950/40 dark:text-emerald-300"
                         >
-                          {c.label}
+                          <div className="flex items-center justify-between gap-2">
+                            <span>{c.label}</span>
+                            <button
+                              type="button"
+                              onClick={() => clearColumn(c.key, c.label)}
+                              aria-label={`Clear the ${c.label} column`}
+                              title={`Clear the ${c.label} column`}
+                              className="shrink-0 rounded p-0.5 text-emerald-400 opacity-0 transition hover:bg-emerald-100 hover:text-emerald-700 focus:opacity-100 group-hover/col:opacity-100 dark:text-emerald-600 dark:hover:bg-emerald-900/40 dark:hover:text-emerald-200"
+                            >
+                              <Eraser className="h-3 w-3" />
+                            </button>
+                          </div>
                         </th>
                       ))}
                       <th className="w-10 border-b border-emerald-100/80 px-1 py-2 dark:border-emerald-950/40" />

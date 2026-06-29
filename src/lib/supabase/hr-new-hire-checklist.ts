@@ -20,7 +20,6 @@ const TABLE = "hr_new_hire_checklist";
 export const HR_NEW_HIRE_CHECKLIST_FIELDS = [
   "name",
   "personal_email",
-  "start_date",
   "location",
   "phone_number",
   "date_of_interview",
@@ -38,7 +37,6 @@ export type HrNewHireChecklistRow = {
   position: number;
   name: string | null;
   personal_email: string | null;
-  start_date: string | null;
   location: string | null;
   phone_number: string | null;
   date_of_interview: string | null;
