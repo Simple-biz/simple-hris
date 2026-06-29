@@ -28,6 +28,7 @@ export const HR_NEW_HIRE_CHECKLIST_FIELDS = [
   "hired_by",
   "department",
   "country",
+  "sources",
 ] as const;
 
 export type HrNewHireChecklistField =
@@ -47,6 +48,7 @@ export type HrNewHireChecklistRow = {
   hired_by: string | null;
   department: string | null;
   country: string | null;
+  sources: string | null;
   created_by: string | null;
   created_at: string;
   updated_at: string;
@@ -226,6 +228,36 @@ export async function listHrNewHireChecklistByDepartment(
     .range(0, 4999);
   if (error) return { rows: [], error: error.message };
   return { rows: (data ?? []) as HrNewHireChecklistRow[], error: null };
+}
+
+/**
+ * "Where did we hire people from" — counts hires per `sources` value across ALL
+ * weeks (case-insensitive de-dupe, first-seen casing), newest-biggest first.
+ * `total` is every tracked hire; `total - Σcount` is the unspecified remainder.
+ * Powers the HR Overview hiring-sources pie + table.
+ */
+export async function listHrNewHireChecklistSourceCounts(): Promise<{
+  sources: { source: string; count: number }[];
+  total: number;
+  error: string | null;
+}> {
+  const sb = client();
+  const { data, error } = await sb.from(TABLE).select("sources").range(0, 9999);
+  if (error) return { sources: [], total: 0, error: error.message };
+  const rows = (data ?? []) as { sources: string | null }[];
+  const byKey = new Map<string, { source: string; count: number }>();
+  for (const r of rows) {
+    const s = clean(r.sources);
+    if (!s) continue;
+    const key = s.toLowerCase();
+    const hit = byKey.get(key);
+    if (hit) hit.count += 1;
+    else byKey.set(key, { source: s, count: 1 });
+  }
+  const sources = [...byKey.values()].sort(
+    (a, b) => b.count - a.count || a.source.localeCompare(b.source),
+  );
+  return { sources, total: rows.length, error: null };
 }
 
 // ── Per-week lock ("Lock in" / "Reopen") — its own table, no bonus/payroll tie ─

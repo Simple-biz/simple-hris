@@ -42,6 +42,7 @@ const COLUMNS = [
   { key: 'hired_by', label: 'Hired By' },
   { key: 'department', label: 'Department' },
   { key: 'country', label: 'Country' },
+  { key: 'sources', label: 'Sources' },
 ] as const;
 
 /** The onboarding-supported countries — the Country cell is a dropdown of these

@@ -41,6 +41,7 @@ import { cn } from '@/lib/utils';
 import HrSidebar, { type HrTab } from './HrSidebar';
 import HrOnboarding from './HrOnboarding';
 import HrNewHireChecklist from './HrNewHireChecklist';
+import HiringSourcesCard from './HiringSourcesCard';
 import HrOffboarding from './HrOffboarding';
 import HrMesa from './HrMesa';
 import GiftTracker from '@/components/orphanage/GiftTracker';
@@ -2934,6 +2935,9 @@ function OverviewBody() {
           </div>
         ))}
       </div>
+
+      {/* Hiring sources — pie + table of where our hires came from */}
+      <HiringSourcesCard />
 
       {/* Editorial composition — headcount story + recent arrivals */}
       <OverviewEditorialSection

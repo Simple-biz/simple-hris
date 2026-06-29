@@ -206,7 +206,8 @@
       "Bash(git --no-pager diff src/components/hr/HrNewHireChecklist.tsx)",
       "Bash(grep -n \"\\\\\"tailwindcss\\\\\"\\\\|darkMode\" package.json tailwind.config.*)",
       "Bash(ls tailwind.config.*)",
-      "Bash(grep -E \"\\\\.\\(ts|tsx\\)$\")"
+      "Bash(grep -E \"\\\\.\\(ts|tsx\\)$\")",
+      "Bash(grep -E \"\\\\.tsx?$\")"
     ],
     "additionalDirectories": [
       "\\tmp"

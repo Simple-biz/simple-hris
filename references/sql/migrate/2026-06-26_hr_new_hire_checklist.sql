@@ -4,7 +4,7 @@
 -- A standalone, spreadsheet-style tracking grid for the HR dashboard's new
 -- "New Hire Checklist" tab. HR pastes columns of values straight from a
 -- spreadsheet — one column at a time (Names, Personal Email, Location, Phone
--- Number, Date of Interview, Source, Hired By, Department, Country) — locks
+-- Number, Date of Interview, Source, Hired By, Department, Country, Sources) — locks
 -- them in with Save, and later drives a department-scoped "Bulk Invite" in the
 -- onboarding Generate-link flow off these rows. (Start Date is intentionally
 -- omitted — it's owned by the Onboarding section.)
@@ -41,6 +41,7 @@ CREATE TABLE IF NOT EXISTS public.hr_new_hire_checklist (
   hired_by          text,
   department        text,
   country           text,
+  sources           text,
   created_by        text,
   created_at        timestamptz not null default now(),
   updated_at        timestamptz not null default now()
@@ -50,6 +51,12 @@ CREATE TABLE IF NOT EXISTS public.hr_new_hire_checklist (
 -- Invite. Added via ALTER too so an already-created table picks it up on re-run.
 ALTER TABLE public.hr_new_hire_checklist
   ADD COLUMN IF NOT EXISTS country text;
+
+-- `sources` — free-text "where did we get this hire from" (a separate column
+-- from the existing `source`). Added via ALTER so an already-created table
+-- picks it up on re-run.
+ALTER TABLE public.hr_new_hire_checklist
+  ADD COLUMN IF NOT EXISTS sources text;
 
 -- `period_start` scopes each row to a Sun–Sat week (added via ALTER too so an
 -- already-created table picks it up on re-run).
