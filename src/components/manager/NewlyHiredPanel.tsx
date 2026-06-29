@@ -101,6 +101,18 @@ export default function NewlyHiredPanel({ viewerEmail, teamGate }: NewlyHiredPan
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [bulkDate, setBulkDate] = useState<string>(manilaToday());
   const [bulkBusy, setBulkBusy] = useState(false);
+  // Live progress for the bulk "mark attended" run — drives a modal that shows,
+  // in real time, how many hires have actually been marked so far. null when no
+  // bulk run is in flight or awaiting review.
+  const [bulkProgress, setBulkProgress] = useState<{
+    total: number;
+    done: number;
+    ok: number;
+    fail: number;
+    current: string | null;
+    failures: { name: string; error: string }[];
+    finished: boolean;
+  } | null>(null);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -254,17 +266,25 @@ export default function NewlyHiredPanel({ viewerEmail, teamGate }: NewlyHiredPan
 
   // Apply the chosen date to every selected hire: marks orientation for those
   // not yet attended and updates the date for those already marked (the POST is
-  // idempotent). Runs sequentially so a partial failure is reportable.
+  // idempotent). Runs sequentially so we can publish a live tally to the progress
+  // modal and collect a per-hire failure list. The roster only refreshes once the
+  // manager dismisses the modal (see closeBulkProgress) — refreshing mid-run would
+  // flip `loading` true and unmount the modal along with its live counter.
   async function bulkApply() {
-    const ids = activeRows.filter((r) => selected.has(r.id)).map((r) => r.id);
-    if (ids.length === 0) return;
+    const targets = activeRows
+      .filter((r) => selected.has(r.id))
+      .map((r) => ({ id: r.id, name: r.name }));
+    if (targets.length === 0) return;
     setBulkBusy(true);
+    setBulkProgress({ total: targets.length, done: 0, ok: 0, fail: 0, current: null, failures: [], finished: false });
     let ok = 0;
     let fail = 0;
     let firstErr = '';
-    for (const id of ids) {
+    const failures: { name: string; error: string }[] = [];
+    for (const t of targets) {
+      setBulkProgress((p) => (p ? { ...p, current: t.name } : p));
       try {
-        const res = await fetch(`/api/manager/pending-hires/${id}/orientation`, {
+        const res = await fetch(`/api/manager/pending-hires/${t.id}/orientation`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ attendedOn: bulkDate }),
@@ -274,9 +294,13 @@ export default function NewlyHiredPanel({ viewerEmail, teamGate }: NewlyHiredPan
         ok += 1;
       } catch (e) {
         fail += 1;
-        if (!firstErr) firstErr = e instanceof Error ? e.message : String(e);
+        const msg = e instanceof Error ? e.message : String(e);
+        if (!firstErr) firstErr = msg;
+        failures.push({ name: t.name, error: msg });
       }
+      setBulkProgress((p) => (p ? { ...p, done: ok + fail, ok, fail, failures: [...failures] } : p));
     }
+    setBulkProgress((p) => (p ? { ...p, current: null, finished: true } : p));
     if (fail === 0) {
       toast.success(`Orientation set for ${ok} hire${ok !== 1 ? 's' : ''}`, {
         description: 'Start Date syncs for any already promoted.',
@@ -284,8 +308,14 @@ export default function NewlyHiredPanel({ viewerEmail, teamGate }: NewlyHiredPan
     } else {
       toast.warning(`${ok} updated, ${fail} failed`, { description: firstErr || undefined });
     }
-    setSelected(new Set());
     setBulkBusy(false);
+  }
+
+  // Dismiss the progress modal: clear the run, drop the selection, and only now
+  // refresh the roster (which swaps in the loading skeleton).
+  function closeBulkProgress() {
+    setBulkProgress(null);
+    setSelected(new Set());
     void refresh();
   }
 
@@ -528,7 +558,9 @@ export default function NewlyHiredPanel({ viewerEmail, teamGate }: NewlyHiredPan
                   title="Mark/update orientation for all selected hires to this date"
                 >
                   {bulkBusy ? <Loader2 className="h-3 w-3 animate-spin" /> : <ClipboardCheck className="h-3 w-3" />}
-                  Mark / update selected ({selectedActiveCount})
+                  {bulkBusy && bulkProgress
+                    ? `Marking… ${bulkProgress.done}/${bulkProgress.total}`
+                    : `Mark / update selected (${selectedActiveCount})`}
                 </Button>
                 <Button
                   type="button"
@@ -601,6 +633,103 @@ export default function NewlyHiredPanel({ viewerEmail, teamGate }: NewlyHiredPan
                   <XCircle className="h-3.5 w-3.5" />
                 )}
                 Confirm no-show
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Live bulk "mark attended" progress — real-time tally of how many hires
+          have actually been marked, with a per-hire failure list on completion. */}
+      {bulkProgress && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-sm rounded-2xl border border-blue-200 bg-white p-6 shadow-xl dark:border-blue-900/50 dark:bg-zinc-950">
+            <div className="flex items-center gap-3">
+              <div
+                className={cn(
+                  'flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-white',
+                  !bulkProgress.finished
+                    ? 'bg-gradient-to-br from-blue-500 to-blue-700'
+                    : bulkProgress.fail === 0
+                      ? 'bg-gradient-to-br from-emerald-500 to-emerald-700'
+                      : 'bg-gradient-to-br from-amber-500 to-amber-700',
+                )}
+              >
+                {!bulkProgress.finished ? (
+                  <Loader2 className="h-5 w-5 animate-spin" />
+                ) : bulkProgress.fail === 0 ? (
+                  <CheckCircle2 className="h-5 w-5" />
+                ) : (
+                  <AlertTriangle className="h-5 w-5" />
+                )}
+              </div>
+              <div className="min-w-0">
+                <p className="text-sm font-semibold text-zinc-900 dark:text-white">
+                  {bulkProgress.finished ? 'Orientation marking complete' : 'Marking orientation attended…'}
+                </p>
+                <p className="truncate text-xs text-zinc-500 dark:text-zinc-400">
+                  {bulkProgress.finished
+                    ? `${bulkProgress.ok} of ${bulkProgress.total} marked as attended`
+                    : bulkProgress.current
+                      ? `Now marking ${bulkProgress.current}`
+                      : 'Starting…'}
+                </p>
+              </div>
+            </div>
+
+            <div className="mt-4">
+              <div className="flex items-center justify-between text-[11px] font-medium text-zinc-600 dark:text-zinc-300">
+                <span>{bulkProgress.done} of {bulkProgress.total} processed</span>
+                <span>{Math.round((bulkProgress.done / bulkProgress.total) * 100)}%</span>
+              </div>
+              <div className="mt-1 h-2 w-full overflow-hidden rounded-full bg-zinc-100 dark:bg-zinc-800">
+                <div
+                  className={cn(
+                    'h-full rounded-full transition-all duration-300',
+                    bulkProgress.fail === 0
+                      ? 'bg-gradient-to-r from-blue-500 to-emerald-500'
+                      : 'bg-gradient-to-r from-blue-500 to-amber-500',
+                  )}
+                  style={{ width: `${(bulkProgress.done / bulkProgress.total) * 100}%` }}
+                />
+              </div>
+              <div className="mt-2 flex flex-wrap items-center gap-3 text-[11px]">
+                <span className="inline-flex items-center gap-1 font-medium text-emerald-700 dark:text-emerald-300">
+                  <CheckCircle2 className="h-3 w-3" /> {bulkProgress.ok} marked
+                </span>
+                {bulkProgress.fail > 0 && (
+                  <span className="inline-flex items-center gap-1 font-medium text-rose-700 dark:text-rose-300">
+                    <XCircle className="h-3 w-3" /> {bulkProgress.fail} failed
+                  </span>
+                )}
+              </div>
+            </div>
+
+            {bulkProgress.failures.length > 0 && (
+              <div className="mt-3 max-h-32 space-y-1 overflow-y-auto rounded-lg border border-rose-200 bg-rose-50/60 p-2 dark:border-rose-900/50 dark:bg-rose-950/20">
+                {bulkProgress.failures.map((f, i) => (
+                  <div key={i} className="text-[11px] text-rose-700 dark:text-rose-300">
+                    <span className="font-medium">{f.name}</span> — {f.error}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div className="mt-4 flex justify-end">
+              <Button
+                type="button"
+                size="sm"
+                className="gap-1.5 bg-gradient-to-br from-blue-600 to-blue-800 text-white hover:opacity-90 disabled:opacity-60"
+                onClick={closeBulkProgress}
+                disabled={!bulkProgress.finished}
+              >
+                {bulkProgress.finished ? (
+                  'Done'
+                ) : (
+                  <>
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" /> Working…
+                  </>
+                )}
               </Button>
             </div>
           </div>

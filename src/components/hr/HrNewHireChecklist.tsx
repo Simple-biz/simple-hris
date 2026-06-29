@@ -3,11 +3,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Building2,
+  CalendarDays,
   Check,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   ClipboardList,
   Eraser,
   Info,
   Loader2,
+  Lock,
+  LockOpen,
   Plus,
   RefreshCw,
   Save,
@@ -19,7 +25,6 @@ import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import {
   getHrTabCache,
-  hasHrTabCache,
   setHrTabCache,
   HR_TAB_CACHE_KEYS,
 } from '@/lib/hr/tab-cache';
@@ -56,7 +61,24 @@ type FieldKey = (typeof COLUMNS)[number]['key'];
  *  string per column (empty string = blank cell). */
 type GridRow = { _key: string; id: string | null } & Record<FieldKey, string>;
 
-type CacheVal = { rows: GridRow[]; dirty: boolean };
+type PeriodMeta = {
+  period_start: string;
+  period_end: string | null;
+  status: 'open' | 'locked';
+  locked_at: string | null;
+  locked_by: string | null;
+  row_count: number;
+};
+
+type CacheVal = {
+  period: string;
+  rows: GridRow[];
+  dirty: boolean;
+  locked: boolean;
+  lockedAt: string | null;
+  lockedBy: string | null;
+  loaded: boolean;
+};
 
 const CACHE_KEY = HR_TAB_CACHE_KEYS.newHireChecklist;
 
@@ -121,39 +143,108 @@ function canonicalizeCountry(value: string): string {
   return resolveOnboardingCountry(t)?.name ?? t;
 }
 
+// ── Week (period) math: Sun–Sat weeks anchored on their SUNDAY (YYYY-MM-DD) ───
+function toIso(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+/** The Sunday that starts the week containing `d`. */
+function sundayIso(d: Date): string {
+  const x = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  x.setDate(x.getDate() - x.getDay()); // getDay(): Sun=0 … Sat=6
+  return toIso(x);
+}
+
+/** Saturday end of the Sun-anchored week (start + 6 days). */
+function weekEndIso(startIso: string): string {
+  const [y, m, d] = startIso.split('-').map(Number);
+  return toIso(new Date(y!, m! - 1, d! + 6));
+}
+
+/** Shift a week start by `n` weeks (±). */
+function addWeeks(startIso: string, n: number): string {
+  const [y, m, d] = startIso.split('-').map(Number);
+  return toIso(new Date(y!, m! - 1, d! + n * 7));
+}
+
+/** "Jun 28 – Jul 4, 2026" for a Sun-anchored week start. */
+function formatWeekLabel(startIso: string): string {
+  if (!startIso) return '—';
+  const [y, m, d] = startIso.split('-').map(Number);
+  if (!y || !m || !d) return startIso;
+  const s = new Date(y, m - 1, d);
+  const e = new Date(y, m - 1, d + 6);
+  const f = (dt: Date) => dt.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  return `${f(s)} – ${f(e)}, ${e.getFullYear()}`;
+}
+
+function formatLockStamp(iso: string | null): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  return `${d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}, ${d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}`;
+}
+
+/** Newest-first list of week starts: `fwd` ahead of, through `back` behind, the
+ *  current week. */
+function rollingWeeks(currentSunday: string, back: number, fwd: number): string[] {
+  const out: string[] = [];
+  for (let i = fwd; i >= -back; i--) out.push(addWeeks(currentSunday, i));
+  return out;
+}
+
 export default function HrNewHireChecklist() {
+  // This tab only ever mounts client-side (HrApp gates it behind an auth check),
+  // so reading the cache / `new Date()` in initializers is hydration-safe.
   const cached = getHrTabCache<CacheVal>(CACHE_KEY);
+  const [currentSunday] = useState(() => sundayIso(new Date()));
+  const [period, setPeriod] = useState<string>(() => cached?.period ?? sundayIso(new Date()));
   const [rows, setRows] = useState<GridRow[]>(() => cached?.rows ?? []);
   const [dirty, setDirty] = useState<boolean>(() => cached?.dirty ?? false);
-  const [loading, setLoading] = useState<boolean>(() => !hasHrTabCache(CACHE_KEY));
+  const [locked, setLocked] = useState<boolean>(() => cached?.locked ?? false);
+  const [lockedAt, setLockedAt] = useState<string | null>(() => cached?.lockedAt ?? null);
+  const [lockedBy, setLockedBy] = useState<string | null>(() => cached?.lockedBy ?? null);
+  const [loaded, setLoaded] = useState<boolean>(() => cached?.loaded ?? false);
+  const [loading, setLoading] = useState<boolean>(() => !cached?.loaded);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // Pending focus target after a structural change (e.g. Enter adds a row).
   const [focusCell, setFocusCell] = useState<{ r: number; c: number } | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
-  // Department options for the constrained dropdown — same source as the
-  // onboarding Bulk Invite (/api/departments), so a picked department matches
-  // there exactly and the batch is detected.
   const [departments, setDepartments] = useState<string[]>([]);
-  // Row multiselect → bulk-apply one department to many people at once. Keyed by
-  // the stable row `_key` so selection survives edits/paste (a stale key just
-  // matches no row; cleared on save/refresh when rows get fresh keys).
   const [selectedKeys, setSelectedKeys] = useState<Set<string>>(() => new Set());
   const [bulkDept, setBulkDept] = useState('');
   const [bulkCountry, setBulkCountry] = useState('');
   const selectAllRef = useRef<HTMLInputElement>(null);
+  // Period selector
+  const [periodMetas, setPeriodMetas] = useState<PeriodMeta[]>([]);
+  const [periodMenuOpen, setPeriodMenuOpen] = useState(false);
+  const periodMenuRef = useRef<HTMLDivElement>(null);
 
-  const fetchAll = useCallback(async (opts: { silent?: boolean } = {}) => {
-    if (!opts.silent) setLoading(true);
+  // Mutators read the lock through a ref so a locked week can never be edited
+  // (even a paste on a readOnly input still fires our onPaste handler).
+  const lockedRef = useRef(locked);
+  useEffect(() => { lockedRef.current = locked; }, [locked]);
+
+  const fetchPeriod = useCallback(async (p: string) => {
+    setLoading(true);
     setError(null);
     try {
-      const res = await fetch('/api/hr/new-hire-checklist', { cache: 'no-store' });
-      const json = (await res.json()) as { rows?: HrNewHireChecklistRow[]; error?: string };
+      const res = await fetch(`/api/hr/new-hire-checklist?period=${encodeURIComponent(p)}`, { cache: 'no-store' });
+      const json = (await res.json()) as {
+        rows?: HrNewHireChecklistRow[];
+        period?: { status?: string; locked_at?: string | null; locked_by?: string | null };
+        error?: string;
+      };
       if (!res.ok || json.error) throw new Error(json.error || `Request failed (${res.status})`);
+      const isLocked = json.period?.status === 'locked';
       const fresh = (json.rows ?? []).map(fromServer);
-      setRows(fresh.length ? fresh : seedBlank(6));
+      setRows(fresh.length ? fresh : isLocked ? [] : seedBlank(6));
+      setLocked(isLocked);
+      setLockedAt(json.period?.locked_at ?? null);
+      setLockedBy(json.period?.locked_by ?? null);
       setDirty(false);
       setSelectedKeys(new Set());
+      setLoaded(true);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load the checklist');
     } finally {
@@ -161,37 +252,58 @@ export default function HrNewHireChecklist() {
     }
   }, []);
 
-  // Skip the initial fetch when the cache is warm so in-progress (unsaved) edits
-  // survive a tab switch; the manual Refresh button pulls fresh server state.
-  useEffect(() => {
-    if (hasHrTabCache(CACHE_KEY)) return;
-    void fetchAll();
-  }, [fetchAll]);
+  const loadPeriods = useCallback(async () => {
+    try {
+      const res = await fetch('/api/hr/new-hire-checklist/periods', { cache: 'no-store' });
+      const json = (await res.json()) as { periods?: PeriodMeta[] };
+      setPeriodMetas(json.periods ?? []);
+    } catch { /* selector still works off the generated rolling weeks */ }
+  }, []);
 
-  // Load the department dropdown options (best-effort; a failure just leaves the
-  // Department cell as a free-text input so entry is never blocked).
+  // Load the selected week's rows + lock state when it isn't already loaded
+  // (skipped on a warm cache so tab-switches keep in-progress edits).
+  useEffect(() => {
+    if (!period || loaded) return;
+    void fetchPeriod(period);
+  }, [period, loaded, fetchPeriod]);
+
+  useEffect(() => { void loadPeriods(); }, [loadPeriods]);
+
+  // Department dropdown options (best-effort; failure leaves Department as a
+  // plain text input so entry is never blocked).
   useEffect(() => {
     let cancelled = false;
     fetch('/api/departments', { cache: 'no-store' })
       .then((r) => r.json())
-      .then((j: { departments?: string[] }) => {
-        if (!cancelled) setDepartments(j.departments ?? []);
-      })
-      .catch(() => { /* leave departments empty → text-input fallback */ });
+      .then((j: { departments?: string[] }) => { if (!cancelled) setDepartments(j.departments ?? []); })
+      .catch(() => { /* text-input fallback */ });
     return () => { cancelled = true; };
   }, []);
 
-  // Mirror grid + dirty state into the per-session tab cache on every change.
+  // Mirror state into the per-session tab cache on every change.
   useEffect(() => {
-    setHrTabCache<CacheVal>(CACHE_KEY, { rows, dirty });
-  }, [rows, dirty]);
+    setHrTabCache<CacheVal>(CACHE_KEY, { period, rows, dirty, locked, lockedAt, lockedBy, loaded });
+  }, [period, rows, dirty, locked, lockedAt, lockedBy, loaded]);
+
+  // Close the period menu on outside click / Escape.
+  useEffect(() => {
+    if (!periodMenuOpen) return;
+    const onDown = (e: MouseEvent) => {
+      if (periodMenuRef.current && !periodMenuRef.current.contains(e.target as Node)) setPeriodMenuOpen(false);
+    };
+    const onEsc = (e: KeyboardEvent) => { if (e.key === 'Escape') setPeriodMenuOpen(false); };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onEsc);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onEsc);
+    };
+  }, [periodMenuOpen]);
 
   // Focus (and select) a cell after a structural change lands in the DOM.
   useEffect(() => {
     if (!focusCell) return;
-    const el = scrollRef.current?.querySelector<HTMLElement>(
-      `[data-cell="${focusCell.r}-${focusCell.c}"]`,
-    );
+    const el = scrollRef.current?.querySelector<HTMLElement>(`[data-cell="${focusCell.r}-${focusCell.c}"]`);
     if (el) {
       el.focus();
       if (el instanceof HTMLInputElement) el.select();
@@ -200,18 +312,18 @@ export default function HrNewHireChecklist() {
   }, [focusCell, rows.length]);
 
   const setCell = useCallback((r: number, key: FieldKey, value: string) => {
+    if (lockedRef.current) return;
     setRows((prev) => prev.map((row, i) => (i === r ? { ...row, [key]: value } : row)));
     setDirty(true);
   }, []);
 
   const handlePaste = useCallback(
     (e: React.ClipboardEvent<HTMLInputElement>, r: number, c: number) => {
+      if (lockedRef.current) return;
       const text = e.clipboardData?.getData('text/plain') ?? '';
       if (!text) return;
       const matrix = parseClipboard(text);
-      // A single value (no tabs/newlines) pastes natively into the one cell.
-      if (matrix.length === 1 && matrix[0]!.length === 1) return;
-
+      if (matrix.length === 1 && matrix[0]!.length === 1) return; // single value → native paste
       e.preventDefault();
       setRows((prev) => {
         const next = prev.map((row) => ({ ...row }));
@@ -221,7 +333,7 @@ export default function HrNewHireChecklist() {
           const cells = matrix[i]!;
           for (let j = 0; j < cells.length; j++) {
             const targetCol = c + j;
-            if (targetCol >= COLUMNS.length) break; // ignore overflow columns
+            if (targetCol >= COLUMNS.length) break;
             const key = COLUMNS[targetCol]!.key;
             const raw = cells[j]!.trim();
             next[targetRow]![key] =
@@ -240,18 +352,17 @@ export default function HrNewHireChecklist() {
   );
 
   const handleKeyDown = useCallback(
-    (e: React.KeyboardEvent<HTMLInputElement | HTMLSelectElement>, r: number, c: number) => {
-      // On a <select>, leave Arrow keys to their native option-cycling.
-      const isSelect = e.currentTarget.tagName === 'SELECT';
+    (e: React.KeyboardEvent<HTMLInputElement>, r: number, c: number) => {
       if (e.key === 'Enter') {
         e.preventDefault();
+        if (lockedRef.current) return;
         const nextR = r + 1;
         setRows((prev) => (nextR >= prev.length ? [...prev, blankRow()] : prev));
         setFocusCell({ r: nextR, c });
-      } else if (!isSelect && e.key === 'ArrowDown') {
+      } else if (e.key === 'ArrowDown') {
         e.preventDefault();
         setFocusCell({ r: Math.min(r + 1, rows.length - 1), c });
-      } else if (!isSelect && e.key === 'ArrowUp') {
+      } else if (e.key === 'ArrowUp') {
         e.preventDefault();
         setFocusCell({ r: Math.max(r - 1, 0), c });
       }
@@ -260,17 +371,20 @@ export default function HrNewHireChecklist() {
   );
 
   const addRows = useCallback((n: number) => {
+    if (lockedRef.current) return;
     setRows((prev) => [...prev, ...seedBlank(n)]);
     setDirty(true);
   }, []);
 
   const clearColumn = useCallback((key: FieldKey, label: string) => {
+    if (lockedRef.current) return;
     setRows((prev) => prev.map((row) => ({ ...row, [key]: '' })));
     setDirty(true);
     toast.success(`Cleared the ${label} column`);
   }, []);
 
   const deleteRow = useCallback((r: number, key: string) => {
+    if (lockedRef.current) return;
     setRows((prev) => {
       const next = prev.filter((_, i) => i !== r);
       return next.length ? next : seedBlank(1);
@@ -284,45 +398,99 @@ export default function HrNewHireChecklist() {
     setDirty(true);
   }, []);
 
+  const changePeriod = useCallback((p: string) => {
+    setPeriodMenuOpen(false);
+    if (p === period) return;
+    if (dirty && !window.confirm('Discard unsaved changes and switch weeks?')) return;
+    setPeriod(p);
+    setLoaded(false);
+  }, [period, dirty]);
+
   const refresh = useCallback(() => {
     if (dirty && !window.confirm('Discard unsaved changes and reload from the server?')) return;
-    void fetchAll();
-  }, [dirty, fetchAll]);
+    void fetchPeriod(period);
+    void loadPeriods();
+  }, [dirty, period, fetchPeriod, loadPeriods]);
 
-  const save = useCallback(async () => {
+  const persist = useCallback(async (action: 'save' | 'lock') => {
+    if (!period) return;
     setSaving(true);
     setError(null);
     try {
       const res = await fetch('/api/hr/new-hire-checklist', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ rows: toPayload(rows) }),
+        body: JSON.stringify({
+          period_start: period,
+          period_end: weekEndIso(period),
+          rows: toPayload(rows),
+          action,
+        }),
       });
-      const json = (await res.json()) as { rows?: HrNewHireChecklistRow[]; error?: string };
+      const json = (await res.json()) as {
+        rows?: HrNewHireChecklistRow[];
+        period?: { status?: string; locked_at?: string | null; locked_by?: string | null };
+        error?: string;
+      };
       if (!res.ok || json.error) throw new Error(json.error || `Save failed (${res.status})`);
+      const isLocked = json.period?.status === 'locked';
       const fresh = (json.rows ?? []).map(fromServer);
-      setRows(fresh.length ? fresh : seedBlank(6));
+      setRows(fresh.length ? fresh : isLocked ? [] : seedBlank(6));
+      setLocked(isLocked);
+      setLockedAt(json.period?.locked_at ?? null);
+      setLockedBy(json.period?.locked_by ?? null);
       setDirty(false);
       setSelectedKeys(new Set());
-      toast.success('New hire checklist saved');
+      setLoaded(true);
+      const filled = fresh.filter((r) => !rowIsBlank(r)).length;
+      toast.success(
+        action === 'lock'
+          ? `Locked in ${filled} ${filled === 1 ? 'hire' : 'hires'} for ${formatWeekLabel(period)}`
+          : `Saved ${filled} ${filled === 1 ? 'hire' : 'hires'} to ${formatWeekLabel(period)}`,
+      );
+      void loadPeriods();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Save failed');
     } finally {
       setSaving(false);
     }
-  }, [rows]);
+  }, [period, rows, loadPeriods]);
+
+  const reopen = useCallback(async () => {
+    if (!period) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const res = await fetch('/api/hr/new-hire-checklist', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ period_start: period, action: 'reopen' }),
+      });
+      const json = (await res.json()) as { rows?: HrNewHireChecklistRow[]; error?: string };
+      if (!res.ok || json.error) throw new Error(json.error || `Reopen failed (${res.status})`);
+      const fresh = (json.rows ?? []).map(fromServer);
+      setRows(fresh.length ? fresh : seedBlank(6));
+      setLocked(false);
+      setLockedAt(null);
+      setLockedBy(null);
+      setDirty(false);
+      toast.success(`Reopened ${formatWeekLabel(period)} for editing`);
+      void loadPeriods();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Reopen failed');
+    } finally {
+      setSaving(false);
+    }
+  }, [period, loadPeriods]);
 
   const filledCount = useMemo(() => rows.filter((r) => !rowIsBlank(r)).length, [rows]);
 
-  // ── Row multiselect → bulk-apply department / delete ──
+  // ── Row multiselect → bulk-apply department / country / delete ──
   const selectedCount = selectedKeys.size;
   const allSelected = rows.length > 0 && rows.every((r) => selectedKeys.has(r._key));
 
-  // Reflect "some but not all selected" on the header checkbox.
   useEffect(() => {
-    if (selectAllRef.current) {
-      selectAllRef.current.indeterminate = selectedCount > 0 && !allSelected;
-    }
+    if (selectAllRef.current) selectAllRef.current.indeterminate = selectedCount > 0 && !allSelected;
   }, [selectedCount, allSelected]);
 
   const toggleRow = useCallback((key: string) => {
@@ -345,12 +513,11 @@ export default function HrNewHireChecklist() {
 
   const applyToSelected = useCallback(
     (field: 'department' | 'country', value: string) => {
+      if (lockedRef.current) return;
       const v = value.trim();
       if (!v || selectedKeys.size === 0) return;
       const n = selectedKeys.size;
-      setRows((prev) =>
-        prev.map((row) => (selectedKeys.has(row._key) ? { ...row, [field]: v } : row)),
-      );
+      setRows((prev) => prev.map((row) => (selectedKeys.has(row._key) ? { ...row, [field]: v } : row)));
       setDirty(true);
       toast.success(`Set ${field} on ${n} ${n === 1 ? 'hire' : 'hires'} to ${v}`);
     },
@@ -358,6 +525,7 @@ export default function HrNewHireChecklist() {
   );
 
   const deleteSelected = useCallback(() => {
+    if (lockedRef.current) return;
     if (selectedKeys.size === 0) return;
     setRows((prev) => {
       const next = prev.filter((row) => !selectedKeys.has(row._key));
@@ -367,10 +535,22 @@ export default function HrNewHireChecklist() {
     setDirty(true);
   }, [selectedKeys]);
 
+  // Period options for the dropdown: generated rolling weeks unioned with weeks
+  // that already have saved rows / a lock (so historical data is always reachable).
+  const periodOptions = useMemo(() => {
+    const map = new Map<string, { start: string; locked: boolean; rowCount: number }>();
+    for (const s of rollingWeeks(currentSunday, 16, 1)) map.set(s, { start: s, locked: false, rowCount: 0 });
+    for (const p of periodMetas) {
+      map.set(p.period_start, { start: p.period_start, locked: p.status === 'locked', rowCount: p.row_count });
+    }
+    if (period && !map.has(period)) map.set(period, { start: period, locked, rowCount: 0 });
+    return [...map.values()].sort((a, b) => b.start.localeCompare(a.start));
+  }, [currentSunday, periodMetas, period, locked]);
+
   return (
     <div className="flex h-full min-h-0 flex-col">
       {/* Header */}
-      <div className="shrink-0 border-b border-emerald-100/70 bg-white px-4 py-3 sm:px-6 sm:py-5 dark:border-emerald-950/40 dark:bg-[#0d1117]">
+      <div className="shrink-0 border-b border-emerald-100/70 bg-white px-4 py-3 sm:px-6 sm:py-4 dark:border-emerald-950/40 dark:bg-[#0d1117]">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="min-w-0">
             <h1 className="flex items-center gap-2 text-base font-semibold tracking-tight text-zinc-900 sm:text-xl dark:text-white">
@@ -378,21 +558,98 @@ export default function HrNewHireChecklist() {
               New Hire Checklist
             </h1>
             <p className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-500">
-              Paste each column straight from your spreadsheet, then Save to lock it in.
+              Paste each column, pick the week, then Lock in to save these hires to that period.
               {filledCount > 0 && (
                 <span className="ml-1 font-medium text-emerald-700 dark:text-emerald-400">
-                  {filledCount} {filledCount === 1 ? 'hire' : 'hires'}.
+                  {filledCount} {filledCount === 1 ? 'hire' : 'hires'} this week.
                 </span>
               )}
             </p>
           </div>
-          <div className="flex items-center gap-2">
-            {dirty && (
+
+          <div className="flex flex-wrap items-center gap-2">
+            {/* Period (week) selector */}
+            <div className="relative" ref={periodMenuRef}>
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => changePeriod(addWeeks(period, -1))}
+                  disabled={saving}
+                  aria-label="Previous week"
+                  className="flex h-8 w-7 items-center justify-center rounded-lg border border-emerald-200 text-emerald-700 hover:bg-emerald-50 disabled:opacity-50 dark:border-emerald-800 dark:text-emerald-300 dark:hover:bg-emerald-950/40"
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPeriodMenuOpen((o) => !o)}
+                  disabled={saving}
+                  className={cn(
+                    'flex h-8 items-center gap-1.5 rounded-lg border px-2.5 text-[13px] font-medium transition-colors disabled:opacity-50',
+                    locked
+                      ? 'border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200'
+                      : 'border-emerald-200 bg-white text-zinc-800 hover:bg-emerald-50 dark:border-emerald-800 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-emerald-950/40',
+                  )}
+                >
+                  <CalendarDays className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
+                  <span className="tabular-nums">{formatWeekLabel(period)}</span>
+                  {period === currentSunday && (
+                    <span className="rounded-full bg-emerald-100 px-1.5 py-px text-[10px] font-semibold text-emerald-700 dark:bg-emerald-900/50 dark:text-emerald-300">
+                      this week
+                    </span>
+                  )}
+                  {locked && <Lock className="h-3 w-3 text-amber-500" />}
+                  <ChevronDown className="h-3.5 w-3.5 text-zinc-400" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => changePeriod(addWeeks(period, 1))}
+                  disabled={saving}
+                  aria-label="Next week"
+                  className="flex h-8 w-7 items-center justify-center rounded-lg border border-emerald-200 text-emerald-700 hover:bg-emerald-50 disabled:opacity-50 dark:border-emerald-800 dark:text-emerald-300 dark:hover:bg-emerald-950/40"
+                >
+                  <ChevronRight className="h-4 w-4" />
+                </button>
+              </div>
+              {periodMenuOpen && (
+                <div className="absolute right-0 z-30 mt-1 max-h-72 w-64 overflow-auto rounded-xl border border-zinc-200 bg-white py-1 shadow-lg shadow-black/10 dark:border-zinc-700 dark:bg-zinc-900">
+                  {periodOptions.map((o) => (
+                    <button
+                      key={o.start}
+                      type="button"
+                      onClick={() => changePeriod(o.start)}
+                      className={cn(
+                        'flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-[13px] hover:bg-emerald-50 dark:hover:bg-emerald-950/40',
+                        o.start === period
+                          ? 'bg-emerald-50 font-medium text-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-200'
+                          : 'text-zinc-700 dark:text-zinc-300',
+                      )}
+                    >
+                      <span className="flex items-center gap-2 tabular-nums">
+                        {formatWeekLabel(o.start)}
+                        {o.start === currentSunday && (
+                          <span className="rounded-full bg-emerald-100 px-1.5 py-px text-[10px] font-semibold text-emerald-700 dark:bg-emerald-900/50 dark:text-emerald-300">
+                            now
+                          </span>
+                        )}
+                      </span>
+                      <span className="flex items-center gap-1.5 text-[11px] text-zinc-400">
+                        {o.rowCount > 0 && <span className="tabular-nums">{o.rowCount}</span>}
+                        {o.locked && <Lock className="h-3 w-3 text-amber-500" />}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {dirty && !locked && (
               <span className="flex items-center gap-1.5 text-[11px] font-medium text-amber-600 dark:text-amber-400">
                 <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-amber-500" />
-                Unsaved changes
+                Unsaved
               </span>
             )}
+
             <Button
               type="button"
               variant="outline"
@@ -402,45 +659,95 @@ export default function HrNewHireChecklist() {
               className="h-8 gap-1.5 border-emerald-200 text-emerald-700 hover:bg-emerald-50 dark:border-emerald-800 dark:text-emerald-300"
             >
               <RefreshCw className={cn('h-3.5 w-3.5', loading && 'animate-spin')} />
-              Refresh
+              <span className="hidden sm:inline">Refresh</span>
             </Button>
-            <Button
-              type="button"
-              size="sm"
-              onClick={() => void save()}
-              disabled={saving || loading || !dirty}
-              className="h-8 gap-1.5 bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50"
-            >
-              {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
-              Save
-            </Button>
+
+            {locked ? (
+              <Button
+                type="button"
+                size="sm"
+                onClick={() => void reopen()}
+                disabled={saving || loading}
+                className="h-8 gap-1.5 bg-amber-500 text-white hover:bg-amber-600 disabled:opacity-50"
+              >
+                {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <LockOpen className="h-3.5 w-3.5" />}
+                Reopen
+              </Button>
+            ) : (
+              <>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => void persist('save')}
+                  disabled={saving || loading || !dirty}
+                  className="h-8 gap-1.5 border-emerald-200 text-emerald-700 hover:bg-emerald-50 disabled:opacity-50 dark:border-emerald-800 dark:text-emerald-300"
+                >
+                  {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+                  Save
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  onClick={() => void persist('lock')}
+                  disabled={saving || loading}
+                  className="h-8 gap-1.5 bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50"
+                >
+                  <Lock className="h-3.5 w-3.5" />
+                  Lock in
+                </Button>
+              </>
+            )}
           </div>
         </div>
       </div>
 
       <div className="min-h-0 flex-1 overflow-hidden bg-[#fafaf8] px-3 py-4 sm:px-6 sm:py-6 dark:bg-[#0d1117]">
         <div className="flex h-full min-h-0 flex-col gap-3">
-          {/* Paste hint */}
-          <div className="flex items-start gap-2 rounded-xl border border-emerald-200 bg-emerald-50/70 px-3.5 py-2.5 text-[12px] leading-snug text-emerald-800 dark:border-emerald-500/30 dark:bg-emerald-950/20 dark:text-emerald-300">
-            <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-            <span>
-              Copy a column from Excel / Google Sheets and paste it into any cell — it fills straight
-              down. <strong>Department</strong> and <strong>Country</strong> offer a dropdown but can also be
-              typed or pasted (they snap to a valid option). Tick rows and use the bulk bar to apply a
-              department / country to many at once. Press <strong>Enter</strong> to move down a row. Once
-              saved, these rows feed the per-country <strong>Bulk Invite</strong> in Onboarding.
-            </span>
-          </div>
+          {/* Locked banner */}
+          {locked && !loading && !error && (
+            <div className="flex flex-wrap items-center gap-2 rounded-xl border border-amber-300 bg-amber-50 px-3.5 py-2.5 text-[12px] text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200">
+              <Lock className="h-3.5 w-3.5 shrink-0" />
+              <span>
+                <strong>{formatWeekLabel(period)}</strong> is locked
+                {lockedBy ? <> by <strong>{lockedBy}</strong></> : null}
+                {lockedAt ? <> on {formatLockStamp(lockedAt)}</> : null}. Reopen to edit.
+              </span>
+              <Button
+                type="button"
+                size="sm"
+                onClick={() => void reopen()}
+                disabled={saving}
+                className="ml-auto h-7 gap-1.5 bg-amber-500 text-white hover:bg-amber-600"
+              >
+                <LockOpen className="h-3.5 w-3.5" />
+                Reopen to edit
+              </Button>
+            </div>
+          )}
 
-          {/* Bulk action bar — tick rows, then apply one department / country to all at once. */}
-          {!loading && !error && selectedCount > 0 && (
+          {/* Paste hint (editing only) */}
+          {!locked && (
+            <div className="flex items-start gap-2 rounded-xl border border-emerald-200 bg-emerald-50/70 px-3.5 py-2.5 text-[12px] leading-snug text-emerald-800 dark:border-emerald-500/30 dark:bg-emerald-950/20 dark:text-emerald-300">
+              <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+              <span>
+                Copy a column from Excel / Google Sheets and paste it into any cell — it fills straight
+                down. <strong>Department</strong> and <strong>Country</strong> offer a dropdown but can also be
+                typed or pasted. Tick rows to bulk-apply a department / country. <strong>Lock in</strong> saves
+                this week&apos;s hires to Supabase; they then feed the per-country <strong>Bulk Invite</strong> in
+                Onboarding. Reopen any week to edit.
+              </span>
+            </div>
+          )}
+
+          {/* Bulk action bar — editing only */}
+          {!locked && !loading && !error && selectedCount > 0 && (
             <div className="flex shrink-0 flex-wrap items-center gap-x-2 gap-y-2 rounded-xl border border-emerald-300 bg-emerald-50 px-3 py-2 shadow-sm dark:border-emerald-700 dark:bg-emerald-950/40">
               <span className="flex items-center gap-1.5 text-[12px] font-semibold text-emerald-800 dark:text-emerald-200">
                 <Building2 className="h-3.5 w-3.5" />
                 {selectedCount} selected
               </span>
 
-              {/* Apply a department to all selected */}
               <span className="ml-1 text-[11px] text-zinc-600 dark:text-zinc-400">Dept</span>
               {departments.length > 0 ? (
                 <select
@@ -454,9 +761,7 @@ export default function HrNewHireChecklist() {
                 >
                   <option value="" className={SELECT_OPTION_CLASS}>Choose…</option>
                   {departments.map((d) => (
-                    <option key={d} value={d} className={SELECT_OPTION_CLASS}>
-                      {d}
-                    </option>
+                    <option key={d} value={d} className={SELECT_OPTION_CLASS}>{d}</option>
                   ))}
                 </select>
               ) : (
@@ -479,7 +784,6 @@ export default function HrNewHireChecklist() {
                 Apply
               </Button>
 
-              {/* Apply a country to all selected */}
               <span className="ml-2 text-[11px] text-zinc-600 dark:text-zinc-400">Country</span>
               <select
                 value={bulkCountry}
@@ -492,9 +796,7 @@ export default function HrNewHireChecklist() {
               >
                 <option value="" className={SELECT_OPTION_CLASS}>Choose…</option>
                 {COUNTRY_OPTIONS.map((c) => (
-                  <option key={c} value={c} className={SELECT_OPTION_CLASS}>
-                    {c}
-                  </option>
+                  <option key={c} value={c} className={SELECT_OPTION_CLASS}>{c}</option>
                 ))}
               </select>
               <Button
@@ -532,7 +834,7 @@ export default function HrNewHireChecklist() {
           {loading ? (
             <div className="flex flex-1 items-center justify-center gap-2 text-sm text-zinc-500">
               <Loader2 className="h-4 w-4 animate-spin" />
-              Loading checklist…
+              Loading {formatWeekLabel(period)}…
             </div>
           ) : error ? (
             <div className="rounded-xl border border-dashed border-rose-200 bg-white py-10 text-center text-sm text-rose-600 dark:border-rose-500/30 dark:bg-[#0d1117]">
@@ -540,176 +842,186 @@ export default function HrNewHireChecklist() {
             </div>
           ) : (
             <>
-              {/* Dropdown sources for the Department + Country comboboxes (the
-                  cells are text inputs with `list=`, so they paste/type freely). */}
+              {/* Dropdown sources for the Department + Country comboboxes. */}
               <datalist id="nhc-departments">
-                {departments.map((d) => (
-                  <option key={d} value={d} />
-                ))}
+                {departments.map((d) => (<option key={d} value={d} />))}
               </datalist>
               <datalist id="nhc-countries">
-                {COUNTRY_OPTIONS.map((c) => (
-                  <option key={c} value={c} />
-                ))}
+                {COUNTRY_OPTIONS.map((c) => (<option key={c} value={c} />))}
               </datalist>
 
-              <div
-                ref={scrollRef}
-                className="min-h-0 flex-1 overflow-auto rounded-2xl border border-emerald-100/80 bg-white shadow-sm dark:border-emerald-950/40 dark:bg-zinc-950"
-              >
-                <table className="table-keep w-full border-collapse text-[13px]">
-                  <thead className="sticky top-0 z-10">
-                    <tr className="bg-emerald-50/90 backdrop-blur dark:bg-emerald-950/40">
-                      <th className="sticky left-0 z-20 w-14 border-b border-r border-emerald-100/80 bg-emerald-50/90 px-1 py-2 text-center backdrop-blur dark:border-emerald-950/40 dark:bg-emerald-950/40">
-                        <input
-                          ref={selectAllRef}
-                          type="checkbox"
-                          checked={allSelected}
-                          onChange={toggleAll}
-                          aria-label="Select all rows"
-                          className="h-3.5 w-3.5 cursor-pointer align-middle accent-emerald-600"
-                        />
-                      </th>
-                      {COLUMNS.map((c) => (
-                        <th
-                          key={c.key}
-                          className="group/col whitespace-nowrap border-b border-emerald-100/80 px-2.5 py-2 text-left text-[11.5px] font-semibold uppercase tracking-wide text-emerald-700 dark:border-emerald-950/40 dark:text-emerald-300"
-                        >
-                          <div className="flex items-center justify-between gap-2">
-                            <span>{c.label}</span>
-                            <button
-                              type="button"
-                              onClick={() => clearColumn(c.key, c.label)}
-                              aria-label={`Clear the ${c.label} column`}
-                              title={`Clear the ${c.label} column`}
-                              className="shrink-0 rounded p-0.5 text-emerald-400 opacity-0 transition hover:bg-emerald-100 hover:text-emerald-700 focus:opacity-100 group-hover/col:opacity-100 dark:text-emerald-600 dark:hover:bg-emerald-900/40 dark:hover:text-emerald-200"
-                            >
-                              <Eraser className="h-3 w-3" />
-                            </button>
-                          </div>
-                        </th>
-                      ))}
-                      <th className="w-10 border-b border-emerald-100/80 px-1 py-2 dark:border-emerald-950/40" />
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {rows.map((row, r) => {
-                      const isSelected = selectedKeys.has(row._key);
-                      return (
-                      <tr
-                        key={row._key}
-                        className={cn(
-                          'group/row hover:bg-emerald-50/40 dark:hover:bg-emerald-950/20',
-                          isSelected
-                            ? 'bg-emerald-50 dark:bg-emerald-950/30'
-                            : 'even:bg-zinc-50/40 dark:even:bg-zinc-900/30',
-                        )}
-                      >
-                        <td
-                          className={cn(
-                            'sticky left-0 z-[1] border-b border-r border-emerald-50 px-1.5 py-0 dark:border-zinc-800',
-                            isSelected
-                              ? 'bg-emerald-50 dark:bg-emerald-950/30'
-                              : 'bg-white group-even/row:bg-zinc-50/40 group-hover/row:bg-emerald-50/40 dark:bg-zinc-950 dark:group-even/row:bg-zinc-900/30',
-                          )}
-                        >
-                          <div className="flex items-center justify-center gap-1.5">
+              {rows.length === 0 ? (
+                <div className="flex flex-1 flex-col items-center justify-center gap-2 rounded-2xl border border-dashed border-emerald-200 bg-white py-12 text-center dark:border-emerald-950/40 dark:bg-[#0d1117]">
+                  <ClipboardList className="h-7 w-7 text-emerald-300 dark:text-emerald-800" />
+                  <p className="text-sm text-zinc-500">No hires saved for {formatWeekLabel(period)}.</p>
+                  {locked && (
+                    <Button type="button" size="sm" onClick={() => void reopen()} disabled={saving} className="mt-1 gap-1.5 bg-amber-500 text-white hover:bg-amber-600">
+                      <LockOpen className="h-3.5 w-3.5" /> Reopen to add hires
+                    </Button>
+                  )}
+                </div>
+              ) : (
+                <div
+                  ref={scrollRef}
+                  className="min-h-0 flex-1 overflow-auto rounded-2xl border border-emerald-100/80 bg-white shadow-sm dark:border-emerald-950/40 dark:bg-zinc-950"
+                >
+                  <table className="table-keep w-full border-collapse text-[13px]">
+                    <thead className="sticky top-0 z-10">
+                      <tr className="bg-emerald-50/90 backdrop-blur dark:bg-emerald-950/40">
+                        <th className="sticky left-0 z-20 w-14 border-b border-r border-emerald-100/80 bg-emerald-50/90 px-1 py-2 text-center backdrop-blur dark:border-emerald-950/40 dark:bg-emerald-950/40">
+                          {locked ? (
+                            <span className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-300">#</span>
+                          ) : (
                             <input
+                              ref={selectAllRef}
                               type="checkbox"
-                              checked={isSelected}
-                              onChange={() => toggleRow(row._key)}
-                              aria-label={`Select row ${r + 1}`}
-                              className="h-3.5 w-3.5 cursor-pointer accent-emerald-600"
+                              checked={allSelected}
+                              onChange={toggleAll}
+                              aria-label="Select all rows"
+                              className="h-3.5 w-3.5 cursor-pointer align-middle accent-emerald-600"
                             />
-                            <span className="tabular-nums text-[11px] text-zinc-400">{r + 1}</span>
-                          </div>
-                        </td>
-                        {COLUMNS.map((c, ci) => {
-                          const value = row[c.key];
-                          // Department + Country are comboboxes: a <datalist> dropdown
-                          // of valid values on a plain text input, so they can be
-                          // picked OR typed / pasted like every other column. A typed /
-                          // pasted value snaps to the canonical option on blur.
-                          // Department drops the dropdown (plain input) until
-                          // /api/departments loads.
-                          const listId =
-                            c.key === 'department'
-                              ? departments.length > 0
-                                ? 'nhc-departments'
-                                : undefined
-                              : c.key === 'country'
-                                ? 'nhc-countries'
-                                : undefined;
-                          return (
-                          <td
+                          )}
+                        </th>
+                        {COLUMNS.map((c) => (
+                          <th
                             key={c.key}
-                            className="border-b border-emerald-50/80 p-0 dark:border-zinc-800/80"
+                            className="group/col whitespace-nowrap border-b border-emerald-100/80 px-2.5 py-2 text-left text-[11.5px] font-semibold uppercase tracking-wide text-emerald-700 dark:border-emerald-950/40 dark:text-emerald-300"
                           >
-                            <input
-                              data-cell={`${r}-${ci}`}
-                              list={listId}
-                              value={value}
-                              onChange={(e) => setCell(r, c.key, e.target.value)}
-                              onPaste={(e) => handlePaste(e, r, ci)}
-                              onKeyDown={(e) => handleKeyDown(e, r, ci)}
-                              onBlur={
-                                listId
-                                  ? (e) => {
-                                      const canon =
-                                        c.key === 'department'
-                                          ? canonicalizeDept(e.target.value, departments)
-                                          : canonicalizeCountry(e.target.value);
-                                      if (canon !== e.target.value) setCell(r, c.key, canon);
-                                    }
-                                  : undefined
-                              }
-                              className={cn(
-                                'h-9 w-full bg-transparent px-2.5 text-[13px] text-zinc-800 outline-none placeholder:text-zinc-300 focus:bg-emerald-50/80 focus:ring-1 focus:ring-inset focus:ring-emerald-400 dark:text-zinc-100 dark:focus:bg-emerald-950/30',
-                                listId ? cn('min-w-[10rem]', SELECT_SCHEME_CLASS) : 'min-w-[8rem]',
+                            <div className="flex items-center justify-between gap-2">
+                              <span>{c.label}</span>
+                              {!locked && (
+                                <button
+                                  type="button"
+                                  onClick={() => clearColumn(c.key, c.label)}
+                                  aria-label={`Clear the ${c.label} column`}
+                                  title={`Clear the ${c.label} column`}
+                                  className="shrink-0 rounded p-0.5 text-emerald-400 opacity-0 transition hover:bg-emerald-100 hover:text-emerald-700 focus:opacity-100 group-hover/col:opacity-100 dark:text-emerald-600 dark:hover:bg-emerald-900/40 dark:hover:text-emerald-200"
+                                >
+                                  <Eraser className="h-3 w-3" />
+                                </button>
                               )}
-                            />
-                          </td>
-                          );
-                        })}
-                        <td className="border-b border-emerald-50/80 px-1 text-center dark:border-zinc-800/80">
-                          <button
-                            type="button"
-                            onClick={() => deleteRow(r, row._key)}
-                            aria-label={`Delete row ${r + 1}`}
-                            className="rounded p-1 text-zinc-300 opacity-0 transition hover:bg-rose-50 hover:text-rose-500 focus:opacity-100 group-hover/row:opacity-100 dark:hover:bg-rose-950/30"
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </button>
-                        </td>
+                            </div>
+                          </th>
+                        ))}
+                        {!locked && <th className="w-10 border-b border-emerald-100/80 px-1 py-2 dark:border-emerald-950/40" />}
                       </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
+                    </thead>
+                    <tbody>
+                      {rows.map((row, r) => {
+                        const isSelected = selectedKeys.has(row._key);
+                        return (
+                          <tr
+                            key={row._key}
+                            className={cn(
+                              'group/row hover:bg-emerald-50/40 dark:hover:bg-emerald-950/20',
+                              isSelected ? 'bg-emerald-50 dark:bg-emerald-950/30' : 'even:bg-zinc-50/40 dark:even:bg-zinc-900/30',
+                            )}
+                          >
+                            <td
+                              className={cn(
+                                'sticky left-0 z-[1] border-b border-r border-emerald-50 px-1.5 py-0 dark:border-zinc-800',
+                                isSelected
+                                  ? 'bg-emerald-50 dark:bg-emerald-950/30'
+                                  : 'bg-white group-even/row:bg-zinc-50/40 group-hover/row:bg-emerald-50/40 dark:bg-zinc-950 dark:group-even/row:bg-zinc-900/30',
+                              )}
+                            >
+                              <div className="flex items-center justify-center gap-1.5">
+                                {!locked && (
+                                  <input
+                                    type="checkbox"
+                                    checked={isSelected}
+                                    onChange={() => toggleRow(row._key)}
+                                    aria-label={`Select row ${r + 1}`}
+                                    className="h-3.5 w-3.5 cursor-pointer accent-emerald-600"
+                                  />
+                                )}
+                                <span className="tabular-nums text-[11px] text-zinc-400">{r + 1}</span>
+                              </div>
+                            </td>
+                            {COLUMNS.map((c, ci) => {
+                              const value = row[c.key];
+                              const listId =
+                                c.key === 'department'
+                                  ? departments.length > 0 ? 'nhc-departments' : undefined
+                                  : c.key === 'country'
+                                    ? 'nhc-countries'
+                                    : undefined;
+                              return (
+                                <td key={c.key} className="border-b border-emerald-50/80 p-0 dark:border-zinc-800/80">
+                                  <input
+                                    data-cell={`${r}-${ci}`}
+                                    list={locked ? undefined : listId}
+                                    value={value}
+                                    readOnly={locked}
+                                    onChange={(e) => setCell(r, c.key, e.target.value)}
+                                    onPaste={(e) => handlePaste(e, r, ci)}
+                                    onKeyDown={(e) => handleKeyDown(e, r, ci)}
+                                    onBlur={
+                                      listId && !locked
+                                        ? (e) => {
+                                            const canon =
+                                              c.key === 'department'
+                                                ? canonicalizeDept(e.target.value, departments)
+                                                : canonicalizeCountry(e.target.value);
+                                            if (canon !== e.target.value) setCell(r, c.key, canon);
+                                          }
+                                        : undefined
+                                    }
+                                    className={cn(
+                                      'h-9 w-full bg-transparent px-2.5 text-[13px] outline-none placeholder:text-zinc-300',
+                                      locked
+                                        ? 'cursor-default text-zinc-500 dark:text-zinc-400'
+                                        : 'text-zinc-800 focus:bg-emerald-50/80 focus:ring-1 focus:ring-inset focus:ring-emerald-400 dark:text-zinc-100 dark:focus:bg-emerald-950/30',
+                                      listId ? cn('min-w-[10rem]', SELECT_SCHEME_CLASS) : 'min-w-[8rem]',
+                                    )}
+                                  />
+                                </td>
+                              );
+                            })}
+                            {!locked && (
+                              <td className="border-b border-emerald-50/80 px-1 text-center dark:border-zinc-800/80">
+                                <button
+                                  type="button"
+                                  onClick={() => deleteRow(r, row._key)}
+                                  aria-label={`Delete row ${r + 1}`}
+                                  className="rounded p-1 text-zinc-300 opacity-0 transition hover:bg-rose-50 hover:text-rose-500 focus:opacity-100 group-hover/row:opacity-100 dark:hover:bg-rose-950/30"
+                                >
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                </button>
+                              </td>
+                            )}
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
 
-              <div className="flex shrink-0 flex-wrap items-center gap-2">
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={() => addRows(1)}
-                  className="h-8 gap-1.5 border-emerald-200 text-emerald-700 hover:bg-emerald-50 dark:border-emerald-800 dark:text-emerald-300"
-                >
-                  <Plus className="h-3.5 w-3.5" />
-                  Add row
-                </Button>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => addRows(10)}
-                  className="h-8 gap-1.5 text-emerald-700 hover:bg-emerald-50 dark:text-emerald-300"
-                >
-                  <Plus className="h-3.5 w-3.5" />
-                  Add 10 rows
-                </Button>
-              </div>
+              {!locked && (
+                <div className="flex shrink-0 flex-wrap items-center gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => addRows(1)}
+                    className="h-8 gap-1.5 border-emerald-200 text-emerald-700 hover:bg-emerald-50 dark:border-emerald-800 dark:text-emerald-300"
+                  >
+                    <Plus className="h-3.5 w-3.5" />
+                    Add row
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => addRows(10)}
+                    className="h-8 gap-1.5 text-emerald-700 hover:bg-emerald-50 dark:text-emerald-300"
+                  >
+                    <Plus className="h-3.5 w-3.5" />
+                    Add 10 rows
+                  </Button>
+                </div>
+              )}
             </>
           )}
         </div>

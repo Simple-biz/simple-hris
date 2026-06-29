@@ -205,7 +205,8 @@
       "PowerShell(git -C \"c:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris\" diff --stat -- src/components/hr/HrNewHireChecklist.tsx)",
       "Bash(git --no-pager diff src/components/hr/HrNewHireChecklist.tsx)",
       "Bash(grep -n \"\\\\\"tailwindcss\\\\\"\\\\|darkMode\" package.json tailwind.config.*)",
-      "Bash(ls tailwind.config.*)"
+      "Bash(ls tailwind.config.*)",
+      "Bash(grep -E \"\\\\.\\(ts|tsx\\)$\")"
     ],
     "additionalDirectories": [
       "\\tmp"
