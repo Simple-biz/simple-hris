@@ -5,7 +5,7 @@ import { PieChart, Loader2, RefreshCw } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 /**
- * HR Overview card: a donut + table of how many hires came from each `sources`
+ * HR Overview card: a donut + table of how many hires came from each `source`
  * value in the New Hire Checklist (aggregated across all weeks). Hand-rolled SVG
  * donut to match the house chart style (no chart dependency).
  */
@@ -22,11 +22,11 @@ const UNSPECIFIED_COLOR = '#d4d4d8';
 
 type Slice = { label: string; count: number; color: string; start: number; end: number; muted: boolean };
 
-const SIZE = 188;
+const SIZE = 150;
 const CX = SIZE / 2;
 const CY = SIZE / 2;
-const OUTER_R = 80;
-const INNER_R = 50;
+const OUTER_R = 64;
+const INNER_R = 40;
 
 function polar(deg: number, r: number) {
   const rad = ((deg - 90) * Math.PI) / 180;
@@ -133,12 +133,12 @@ export default function HiringSourcesCard() {
         <div className="flex flex-col items-center gap-2 px-6 py-14 text-center">
           <PieChart className="h-8 w-8 text-emerald-200 dark:text-emerald-900" />
           <p className="text-sm text-zinc-500 dark:text-zinc-400">
-            No hires recorded yet. Add hires (with a <strong>Sources</strong> value) in the New Hire
+            No hires recorded yet. Add hires (with a <strong>Source</strong> value) in the New Hire
             Checklist and they&apos;ll appear here.
           </p>
         </div>
       ) : (
-        <div className="flex flex-col items-center gap-6 px-5 py-6 sm:px-6 lg:flex-row lg:items-center lg:gap-8">
+        <div className="flex flex-col items-center gap-5 px-5 py-6 sm:flex-row sm:flex-wrap sm:items-center sm:justify-center sm:gap-6 sm:px-6">
           {/* Donut */}
           <div className="shrink-0">
             <svg width={SIZE} height={SIZE} viewBox={`0 0 ${SIZE} ${SIZE}`} role="img" aria-label="Hiring sources donut chart">
@@ -163,7 +163,7 @@ export default function HiringSourcesCard() {
           </div>
 
           {/* Table */}
-          <div className="w-full min-w-0 flex-1">
+          <div className="w-full min-w-[190px] flex-1">
             <div className="overflow-hidden rounded-xl border border-zinc-100 dark:border-zinc-800">
               <table className="table-keep w-full text-[13px]">
                 <thead>

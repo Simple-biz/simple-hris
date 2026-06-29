@@ -207,7 +207,8 @@
       "Bash(grep -n \"\\\\\"tailwindcss\\\\\"\\\\|darkMode\" package.json tailwind.config.*)",
       "Bash(ls tailwind.config.*)",
       "Bash(grep -E \"\\\\.\\(ts|tsx\\)$\")",
-      "Bash(grep -E \"\\\\.tsx?$\")"
+      "Bash(grep -E \"\\\\.tsx?$\")",
+      "PowerShell(npx tsc --noEmit -p tsconfig.json 2>&1)"
     ],
     "additionalDirectories": [
       "\\tmp"

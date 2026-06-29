@@ -9,8 +9,10 @@ import { AnimatePresence, motion } from 'motion/react';
 import { toast } from 'sonner';
 import {
   Building2,
+  Check,
   ChevronLeft,
   ChevronRight,
+  Copy,
   GraduationCap,
   HeartHandshake,
   Hourglass,
@@ -42,6 +44,7 @@ import HrSidebar, { type HrTab } from './HrSidebar';
 import HrOnboarding from './HrOnboarding';
 import HrNewHireChecklist from './HrNewHireChecklist';
 import HiringSourcesCard from './HiringSourcesCard';
+import HiringByRecruiterCard from './HiringByRecruiterCard';
 import HrOffboarding from './HrOffboarding';
 import HrMesa from './HrMesa';
 import GiftTracker from '@/components/orphanage/GiftTracker';
@@ -415,6 +418,29 @@ const TENURE_COHORT_DEFS: { key: TenureCohort['key']; label: string; range: stri
   { key: 'veteran',     label: 'Veterans',    range: '3+ years',    max: Number.POSITIVE_INFINITY },
 ];
 
+const TENURE_COHORT_LABEL: Record<TenureCohort['key'], string> = Object.fromEntries(
+  TENURE_COHORT_DEFS.map((d) => [d.key, d.label]),
+) as Record<TenureCohort['key'], string>;
+
+// Which cohort a start date falls into — mirrors the same day thresholds used in
+// the tenureCohorts aggregation. Returns null when the date is missing/invalid.
+function cohortKeyForStart(iso: string | null | undefined): TenureCohort['key'] | null {
+  if (!iso) return null;
+  const t = new Date(iso).getTime();
+  if (!Number.isFinite(t)) return null;
+  const days = (Date.now() - t) / 86400000;
+  if (days <= 30) return 'new';
+  if (days <= 365) return 'settling';
+  if (days <= 365 * 3) return 'established';
+  return 'veteran';
+}
+
+// RFC-4180-ish escaping: quote when the value carries a comma, quote, or newline.
+function csvCell(v: string | null | undefined): string {
+  const s = (v ?? '').toString();
+  return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
 const PAGE_SIZE = 15;
 
 // ─── Editorial Overview composition ──────────────────────────────────────────
@@ -587,7 +613,7 @@ function OverviewEditorialSection({
                     />
                   </div>
                   <div className="lg:col-span-2">
-                    <TenureCohortCard loading={loading} cohorts={tenureCohorts} monthBins={tenureMonthBins} totalActive={totalActive} />
+                    <TenureCohortCard loading={loading} cohorts={tenureCohorts} monthBins={tenureMonthBins} totalActive={totalActive} roster={roster} />
                   </div>
                 </div>
               </div>
@@ -1835,15 +1861,57 @@ function TenureCohortCard({
   cohorts,
   monthBins,
   totalActive,
+  roster,
 }: {
   loading: boolean;
   cohorts: TenureCohort[];
   monthBins: TenureMonthBin[];
   totalActive: number;
+  roster: EmployeeRow[];
 }) {
   const totalKnown = cohorts.reduce((s, c) => s + c.count, 0);
   const maxBinCount = Math.max(...monthBins.map((b) => b.count), 1);
   const LABEL_INDICES = new Set([0, 2, 5, 8, 11, 12, 13, 14]);
+  const [copied, setCopied] = useState(false);
+
+  // Build a CSV of every person with a known start date, ordered newcomers →
+  // veterans (most recent hire first), with a Cohort column so the buckets read
+  // clearly when pasted into a spreadsheet.
+  const copyCsv = useCallback(async () => {
+    const rows = roster
+      .map((r) => ({ r, key: cohortKeyForStart(r.start_date) }))
+      .filter((x): x is { r: EmployeeRow; key: TenureCohort['key'] } => x.key !== null)
+      .sort((a, b) => new Date(b.r.start_date!).getTime() - new Date(a.r.start_date!).getTime());
+
+    const header = ['Cohort', 'Name', 'Department', 'Work Email', 'Personal Email', 'Start Date', 'Tenure'];
+    const lines = [
+      header.join(','),
+      ...rows.map(({ r, key }) =>
+        [
+          TENURE_COHORT_LABEL[key],
+          r.name,
+          r.department,
+          r.work_email,
+          r.personal_email,
+          r.start_date,
+          tenure(r.start_date),
+        ]
+          .map(csvCell)
+          .join(','),
+      ),
+    ];
+    const csv = lines.join('\r\n');
+
+    try {
+      await navigator.clipboard.writeText(csv);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1800);
+      toast.success(`Copied ${rows.length} ${rows.length === 1 ? 'person' : 'people'} to clipboard`);
+    } catch {
+      toast.error('Could not copy to clipboard');
+    }
+  }, [roster]);
+
   return (
     <div className="flex h-full flex-col overflow-hidden rounded-xl border border-zinc-200/70 bg-white p-5 dark:border-zinc-800/80 dark:bg-zinc-950">
       <div className="flex items-start justify-between gap-3">
@@ -1856,6 +1924,23 @@ function TenureCohortCard({
             <span className="ml-1 text-xs font-normal text-zinc-400">with known start dates</span>
           </p>
         </div>
+        <button
+          type="button"
+          onClick={copyCsv}
+          disabled={loading || totalKnown === 0}
+          title="Copy everyone (newcomers → veterans) as CSV"
+          className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-zinc-600 transition-colors hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800"
+        >
+          {copied ? (
+            <>
+              <Check className="h-3.5 w-3.5 text-emerald-500" /> Copied
+            </>
+          ) : (
+            <>
+              <Copy className="h-3.5 w-3.5" /> Copy CSV
+            </>
+          )}
+        </button>
       </div>
 
       {/* Stacked bar */}
@@ -2936,8 +3021,11 @@ function OverviewBody() {
         ))}
       </div>
 
-      {/* Hiring sources — pie + table of where our hires came from */}
-      <HiringSourcesCard />
+      {/* Hiring sources + recruiter leaderboard — side by side on wider screens */}
+      <div className="grid gap-3 lg:grid-cols-2 lg:items-start">
+        <HiringSourcesCard />
+        <HiringByRecruiterCard />
+      </div>
 
       {/* Editorial composition — headcount story + recent arrivals */}
       <OverviewEditorialSection

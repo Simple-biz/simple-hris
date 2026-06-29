@@ -4,7 +4,7 @@
 -- A standalone, spreadsheet-style tracking grid for the HR dashboard's new
 -- "New Hire Checklist" tab. HR pastes columns of values straight from a
 -- spreadsheet — one column at a time (Names, Personal Email, Location, Phone
--- Number, Date of Interview, Source, Hired By, Department, Country, Sources) — locks
+-- Number, Date of Interview, Source, Hired By, Department, Country) — locks
 -- them in with Save, and later drives a department-scoped "Bulk Invite" in the
 -- onboarding Generate-link flow off these rows. (Start Date is intentionally
 -- omitted — it's owned by the Onboarding section.)
@@ -41,7 +41,6 @@ CREATE TABLE IF NOT EXISTS public.hr_new_hire_checklist (
   hired_by          text,
   department        text,
   country           text,
-  sources           text,
   created_by        text,
   created_at        timestamptz not null default now(),
   updated_at        timestamptz not null default now()
@@ -52,11 +51,13 @@ CREATE TABLE IF NOT EXISTS public.hr_new_hire_checklist (
 ALTER TABLE public.hr_new_hire_checklist
   ADD COLUMN IF NOT EXISTS country text;
 
--- `sources` — free-text "where did we get this hire from" (a separate column
--- from the existing `source`). Added via ALTER so an already-created table
--- picks it up on re-run.
+-- `sources` was a short-lived duplicate of `source` ("where did we get this
+-- hire from"). We standardized on the single `source` column — which now also
+-- powers the HR Overview "Hiring sources" pie — so drop `sources` here to
+-- converge any table created by an earlier version of this migration. No-op on
+-- a fresh create above (which never adds the column).
 ALTER TABLE public.hr_new_hire_checklist
-  ADD COLUMN IF NOT EXISTS sources text;
+  DROP COLUMN IF EXISTS sources;
 
 -- `period_start` scopes each row to a Sun–Sat week (added via ALTER too so an
 -- already-created table picks it up on re-run).

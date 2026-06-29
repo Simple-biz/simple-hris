@@ -28,7 +28,6 @@ export const HR_NEW_HIRE_CHECKLIST_FIELDS = [
   "hired_by",
   "department",
   "country",
-  "sources",
 ] as const;
 
 export type HrNewHireChecklistField =
@@ -48,7 +47,6 @@ export type HrNewHireChecklistRow = {
   hired_by: string | null;
   department: string | null;
   country: string | null;
-  sources: string | null;
   created_by: string | null;
   created_at: string;
   updated_at: string;
@@ -231,7 +229,7 @@ export async function listHrNewHireChecklistByDepartment(
 }
 
 /**
- * "Where did we hire people from" — counts hires per `sources` value across ALL
+ * "Where did we hire people from" — counts hires per `source` value across ALL
  * weeks (case-insensitive de-dupe, first-seen casing), newest-biggest first.
  * `total` is every tracked hire; `total - Σcount` is the unspecified remainder.
  * Powers the HR Overview hiring-sources pie + table.
@@ -242,12 +240,12 @@ export async function listHrNewHireChecklistSourceCounts(): Promise<{
   error: string | null;
 }> {
   const sb = client();
-  const { data, error } = await sb.from(TABLE).select("sources").range(0, 9999);
+  const { data, error } = await sb.from(TABLE).select("source").range(0, 9999);
   if (error) return { sources: [], total: 0, error: error.message };
-  const rows = (data ?? []) as { sources: string | null }[];
+  const rows = (data ?? []) as { source: string | null }[];
   const byKey = new Map<string, { source: string; count: number }>();
   for (const r of rows) {
-    const s = clean(r.sources);
+    const s = clean(r.source);
     if (!s) continue;
     const key = s.toLowerCase();
     const hit = byKey.get(key);
@@ -258,6 +256,53 @@ export async function listHrNewHireChecklistSourceCounts(): Promise<{
     (a, b) => b.count - a.count || a.source.localeCompare(b.source),
   );
   return { sources, total: rows.length, error: null };
+}
+
+/**
+ * Hires grouped by their `hired_by` value across every week — a recruiter
+ * scorecard. For each named recruiter:
+ *   • `hires`       = how many checklist rows they're credited on
+ *   • `interviewed` = how many of those rows carry a `date_of_interview`
+ * Rows with a blank `hired_by` are pooled under no recruiter and excluded from
+ * the list (but still counted toward `totalHires`). Powers the HR Overview
+ * "Hiring by recruiter" card.
+ */
+export async function listHrNewHireChecklistRecruiterCounts(): Promise<{
+  recruiters: { recruiter: string; hires: number; interviewed: number }[];
+  totalHires: number;
+  totalInterviewed: number;
+  error: string | null;
+}> {
+  const sb = client();
+  const { data, error } = await sb
+    .from(TABLE)
+    .select("hired_by, date_of_interview")
+    .range(0, 9999);
+  if (error)
+    return { recruiters: [], totalHires: 0, totalInterviewed: 0, error: error.message };
+  const rows = (data ?? []) as { hired_by: string | null; date_of_interview: string | null }[];
+  const byKey = new Map<string, { recruiter: string; hires: number; interviewed: number }>();
+  let totalHires = 0;
+  let totalInterviewed = 0;
+  for (const r of rows) {
+    const interviewed = clean(r.date_of_interview) !== null;
+    totalHires += 1;
+    if (interviewed) totalInterviewed += 1;
+    const who = clean(r.hired_by);
+    if (!who) continue;
+    const key = who.toLowerCase();
+    const hit = byKey.get(key);
+    if (hit) {
+      hit.hires += 1;
+      if (interviewed) hit.interviewed += 1;
+    } else {
+      byKey.set(key, { recruiter: who, hires: 1, interviewed: interviewed ? 1 : 0 });
+    }
+  }
+  const recruiters = [...byKey.values()].sort(
+    (a, b) => b.hires - a.hires || b.interviewed - a.interviewed || a.recruiter.localeCompare(b.recruiter),
+  );
+  return { recruiters, totalHires, totalInterviewed, error: null };
 }
 
 // ── Per-week lock ("Lock in" / "Reopen") — its own table, no bonus/payroll tie ─

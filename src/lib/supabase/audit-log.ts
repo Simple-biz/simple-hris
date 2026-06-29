@@ -24,7 +24,12 @@ export type AuditAction =
   | 'dispatch.lock_acquired'
   | 'dispatch.lock_released'
   | 'payment.dispatched'
-  | 'paystubs.dispatched';
+  | 'paystubs.dispatched'
+  // External bank-info self-update (public /update-bank-info link)
+  | 'bank_update.otp_requested'
+  | 'bank_update.otp_verified'
+  | 'bank_update.otp_verify_failed'
+  | 'bank_update.saved';
 
 /**
  * Cycle context attached to every payroll-wizard audit event so the Reports

@@ -37,8 +37,20 @@ const ONBOARDING_LIMITS: Record<string, { max: number; windowMs: number }> = {
   POST: { max: 5,  windowMs: 60_000 },
 };
 
-function onboardingRateLimited(req: NextRequest): boolean {
-  const limit = ONBOARDING_LIMITS[req.method];
+// Public bank-update flow (request-otp -> verify-otp -> save). The happy path is
+// 3 POSTs in quick succession (+ the odd code retry), so POST is a touch higher
+// than onboarding while still capping brute-force / email-bomb attempts.
+const BANK_UPDATE_LIMITS: Record<string, { max: number; windowMs: number }> = {
+  GET:  { max: 30, windowMs: 60_000 },
+  POST: { max: 10, windowMs: 60_000 },
+};
+
+function rateLimited(
+  req: NextRequest,
+  limits: Record<string, { max: number; windowMs: number }>,
+  bucket: string,
+): boolean {
+  const limit = limits[req.method];
   if (!limit) return false;
 
   const ip =
@@ -46,7 +58,8 @@ function onboardingRateLimited(req: NextRequest): boolean {
     req.headers.get('x-real-ip') ??
     'unknown';
 
-  const key = `${req.method}:${ip}`;
+  // Bucket prefix keeps onboarding and bank-update counts from colliding.
+  const key = `${bucket}:${req.method}:${ip}`;
   const now = Date.now();
   const entry = _rl.get(key);
 
@@ -57,6 +70,14 @@ function onboardingRateLimited(req: NextRequest): boolean {
   if (entry.count >= limit.max) return true;
   entry.count++;
   return false;
+}
+
+function onboardingRateLimited(req: NextRequest): boolean {
+  return rateLimited(req, ONBOARDING_LIMITS, 'onb');
+}
+
+function bankUpdateRateLimited(req: NextRequest): boolean {
+  return rateLimited(req, BANK_UPDATE_LIMITS, 'bank');
 }
 
 // ---------------------------------------------------------------------------
@@ -129,6 +150,7 @@ const SESSION_COOKIE_NAMES = [
 
 const PUBLIC_PATHS = new Set<string>([
   '/login',
+  '/update-bank-info', // public OTP-gated bank/payout self-update page
 ]);
 
 const PUBLIC_PREFIXES = [
@@ -155,6 +177,18 @@ export async function proxy(req: NextRequest) {
   // Rate-limit the public onboarding API before letting it through.
   if (pathname.startsWith('/api/onboarding/') || pathname.startsWith('/onboarding/')) {
     if (pathname.startsWith('/api/onboarding/') && onboardingRateLimited(req)) {
+      return NextResponse.json(
+        { error: 'Too many requests. Please wait a moment and try again.' },
+        { status: 429 },
+      );
+    }
+    return NextResponse.next();
+  }
+
+  // Public bank-update API (OTP request/verify/save). The page itself is in
+  // PUBLIC_PATHS above; here we rate-limit its endpoints and skip the JWT gate.
+  if (pathname.startsWith('/api/bank-update/')) {
+    if (bankUpdateRateLimited(req)) {
       return NextResponse.json(
         { error: 'Too many requests. Please wait a moment and try again.' },
         { status: 429 },

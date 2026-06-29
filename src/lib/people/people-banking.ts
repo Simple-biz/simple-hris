@@ -26,6 +26,8 @@ export interface PeopleBanking {
   wise_email: string | null;
   wise_tag: string | null;
   phone_number: string | null;
+  /** When the employee last self-updated these via the public /update-bank-info link (null = never / column absent). */
+  bank_last_self_updated_at: string | null;
   /** True when the sensitive fields below are redacted (the default). */
   masked: boolean;
 }
@@ -106,8 +108,34 @@ function toBanking(row: EmployeeIdRow): PeopleBanking {
     wise_email: row.wise_email,
     wise_tag: row.wise_tag,
     phone_number: row.phone_number,
+    bank_last_self_updated_at: null,
     masked: false,
   };
+}
+
+/**
+ * Best-effort read of the external-link self-update timestamp. Kept separate
+ * from the shared getEmployeeIdRowByEmail() select so a deployment whose DB
+ * predates the bank_last_self_updated_at column still loads banking normally
+ * (the column-missing error is swallowed and treated as "never").
+ */
+async function fetchBankSelfUpdatedAt(email: string): Promise<string | null> {
+  const target = normEmail(email);
+  if (!target) return null;
+  const supabase = createSupabaseServiceRoleClient() ?? createSupabaseServerClient();
+  if (!supabase) return null;
+  try {
+    const { data, error } = await supabase
+      .from('employee_ids')
+      .select('bank_last_self_updated_at')
+      .ilike('work_email', target)
+      .limit(1)
+      .maybeSingle();
+    if (error || !data) return null;
+    return (data as { bank_last_self_updated_at?: string | null }).bank_last_self_updated_at ?? null;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -123,6 +151,7 @@ export async function getPeopleBanking(
   if (error) return { banking: null, error };
   if (!row) return { banking: null, error: null };
   const full = toBanking(row);
+  full.bank_last_self_updated_at = await fetchBankSelfUpdatedAt(row.work_email ?? email);
   return { banking: reveal ? full : maskBanking(full), error: null };
 }
 
