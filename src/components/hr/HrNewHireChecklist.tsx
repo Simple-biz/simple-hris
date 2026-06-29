@@ -424,11 +424,11 @@ export default function HrNewHireChecklist() {
           <div className="flex items-start gap-2 rounded-xl border border-emerald-200 bg-emerald-50/70 px-3.5 py-2.5 text-[12px] leading-snug text-emerald-800 dark:border-emerald-500/30 dark:bg-emerald-950/20 dark:text-emerald-300">
             <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />
             <span>
-              Copy a column from Excel / Google Sheets and paste it into any text cell — it fills
-              straight down. Paste a whole block (Department + Country included) to fill the grid.{' '}
-              <strong>Department</strong> and <strong>Country</strong> are dropdowns — pick per row, or tick rows
-              and use the bulk bar to apply one to many at once. Press <strong>Enter</strong> to move down a
-              row. Once saved, these rows feed the per-country <strong>Bulk Invite</strong> in Onboarding.
+              Copy a column from Excel / Google Sheets and paste it into any cell — it fills straight
+              down. <strong>Department</strong> and <strong>Country</strong> offer a dropdown but can also be
+              typed or pasted (they snap to a valid option). Tick rows and use the bulk bar to apply a
+              department / country to many at once. Press <strong>Enter</strong> to move down a row. Once
+              saved, these rows feed the per-country <strong>Bulk Invite</strong> in Onboarding.
             </span>
           </div>
 
@@ -540,6 +540,19 @@ export default function HrNewHireChecklist() {
             </div>
           ) : (
             <>
+              {/* Dropdown sources for the Department + Country comboboxes (the
+                  cells are text inputs with `list=`, so they paste/type freely). */}
+              <datalist id="nhc-departments">
+                {departments.map((d) => (
+                  <option key={d} value={d} />
+                ))}
+              </datalist>
+              <datalist id="nhc-countries">
+                {COUNTRY_OPTIONS.map((c) => (
+                  <option key={c} value={c} />
+                ))}
+              </datalist>
+
               <div
                 ref={scrollRef}
                 className="min-h-0 flex-1 overflow-auto rounded-2xl border border-emerald-100/80 bg-white shadow-sm dark:border-emerald-950/40 dark:bg-zinc-950"
@@ -613,61 +626,48 @@ export default function HrNewHireChecklist() {
                         </td>
                         {COLUMNS.map((c, ci) => {
                           const value = row[c.key];
-                          // Department + Country are constrained dropdowns. Department
-                          // falls back to a text input until /api/departments loads.
-                          const options =
+                          // Department + Country are comboboxes: a <datalist> dropdown
+                          // of valid values on a plain text input, so they can be
+                          // picked OR typed / pasted like every other column. A typed /
+                          // pasted value snaps to the canonical option on blur.
+                          // Department drops the dropdown (plain input) until
+                          // /api/departments loads.
+                          const listId =
                             c.key === 'department'
                               ? departments.length > 0
-                                ? departments
-                                : null
+                                ? 'nhc-departments'
+                                : undefined
                               : c.key === 'country'
-                                ? COUNTRY_OPTIONS
-                                : null;
+                                ? 'nhc-countries'
+                                : undefined;
                           return (
                           <td
                             key={c.key}
                             className="border-b border-emerald-50/80 p-0 dark:border-zinc-800/80"
                           >
-                            {options ? (
-                              <select
-                                data-cell={`${r}-${ci}`}
-                                value={value}
-                                onChange={(e) => setCell(r, c.key, e.target.value)}
-                                onKeyDown={(e) => handleKeyDown(e, r, ci)}
-                                className={cn(
-                                  'h-9 w-full min-w-[10rem] cursor-pointer bg-transparent px-2 text-[13px] outline-none focus:bg-emerald-50/80 focus:ring-1 focus:ring-inset focus:ring-emerald-400 dark:bg-zinc-950 dark:focus:bg-emerald-950/30',
-                                  SELECT_SCHEME_CLASS,
-                                  value.trim() ? 'text-zinc-800 dark:text-zinc-100' : 'text-zinc-400',
-                                )}
-                              >
-                                <option value="" className={SELECT_OPTION_CLASS}>—</option>
-                                {/* Always carry the stored value as an exact-match
-                                    option so legacy / odd-casing values still show
-                                    (labelled "unlisted" only if truly unknown). */}
-                                {value.trim() !== '' && !options.includes(value) && (
-                                  <option value={value} className={SELECT_OPTION_CLASS}>
-                                    {value}
-                                    {options.some((o) => o.toLowerCase() === value.trim().toLowerCase())
-                                      ? ''
-                                      : ' (unlisted)'}
-                                  </option>
-                                )}
-                                {options.map((o) => (
-                                  <option key={o} value={o} className={SELECT_OPTION_CLASS}>
-                                    {o}
-                                  </option>
-                                ))}
-                              </select>
-                            ) : (
-                              <input
-                                data-cell={`${r}-${ci}`}
-                                value={value}
-                                onChange={(e) => setCell(r, c.key, e.target.value)}
-                                onPaste={(e) => handlePaste(e, r, ci)}
-                                onKeyDown={(e) => handleKeyDown(e, r, ci)}
-                                className="h-9 w-full min-w-[8rem] bg-transparent px-2.5 text-[13px] text-zinc-800 outline-none placeholder:text-zinc-300 focus:bg-emerald-50/80 focus:ring-1 focus:ring-inset focus:ring-emerald-400 dark:text-zinc-100 dark:focus:bg-emerald-950/30"
-                              />
-                            )}
+                            <input
+                              data-cell={`${r}-${ci}`}
+                              list={listId}
+                              value={value}
+                              onChange={(e) => setCell(r, c.key, e.target.value)}
+                              onPaste={(e) => handlePaste(e, r, ci)}
+                              onKeyDown={(e) => handleKeyDown(e, r, ci)}
+                              onBlur={
+                                listId
+                                  ? (e) => {
+                                      const canon =
+                                        c.key === 'department'
+                                          ? canonicalizeDept(e.target.value, departments)
+                                          : canonicalizeCountry(e.target.value);
+                                      if (canon !== e.target.value) setCell(r, c.key, canon);
+                                    }
+                                  : undefined
+                              }
+                              className={cn(
+                                'h-9 w-full bg-transparent px-2.5 text-[13px] text-zinc-800 outline-none placeholder:text-zinc-300 focus:bg-emerald-50/80 focus:ring-1 focus:ring-inset focus:ring-emerald-400 dark:text-zinc-100 dark:focus:bg-emerald-950/30',
+                                listId ? cn('min-w-[10rem]', SELECT_SCHEME_CLASS) : 'min-w-[8rem]',
+                              )}
+                            />
                           </td>
                           );
                         })}
