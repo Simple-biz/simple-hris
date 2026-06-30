@@ -20,18 +20,33 @@ const GENERIC = {
     "If that email belongs to an active employee, a 6-digit code is on its way to your work inbox.",
 };
 
+/**
+ * Strict-enough email shape that excludes LIKE/PostgREST metacharacters (`%`,
+ * quotes, parens, commas, whitespace) before any DB lookup. `_`/`.`/`+`/`-` stay
+ * allowed (valid in real addresses) and are escaped at the query layer.
+ */
+const EMAIL_OK = /^[^\s@%,"'()]+@[^\s@%,"'()]+\.[^\s@%,"'()]+$/;
+
 export async function POST(req: Request) {
   const body = (await req.json().catch(() => ({}))) as { email?: string };
   const email = normEmail(body.email) ?? "";
   if (!email) {
     return NextResponse.json({ error: "Enter your work email." }, { status: 400 });
   }
+  // Malformed input: answer generically (no DB hit) so it's indistinguishable
+  // from a valid-but-unknown email.
+  if (!EMAIL_OK.test(email)) {
+    return NextResponse.json(GENERIC);
+  }
 
   // Resolve the email channel first. A missing webhook is a deployment
   // misconfiguration (not email-specific), so reporting it leaks nothing and
-  // keeps the generic response below truly indistinguishable per-email.
+  // keeps the generic response below truly indistinguishable per-email. In
+  // local dev we allow proceeding without a webhook and print the code to the
+  // server console so the flow is testable without n8n.
   const webhook = await resolveOtpWebhookUrl();
-  if (!webhook) {
+  const isDev = process.env.NODE_ENV !== "production";
+  if (!webhook && !isDev) {
     return NextResponse.json(
       {
         error:
@@ -59,9 +74,15 @@ export async function POST(req: Request) {
 
   const code = await createOtpForEmail(match.workEmail, ip);
   if (code) {
-    // Soft-fail: the code row exists; the employee can request another if the
-    // mail hiccups. Never surface delivery state (would leak that the email exists).
-    await sendBankUpdateOtpEmail(match.workEmail, match.name, code).catch(() => ({ ok: false }));
+    if (webhook) {
+      // Soft-fail: the code row exists; the employee can request another if the
+      // mail hiccups. Never surface delivery state (would leak that the email exists).
+      await sendBankUpdateOtpEmail(match.workEmail, match.name, code).catch(() => ({ ok: false }));
+    } else if (isDev) {
+      // No email webhook configured (local dev only): expose the code in the
+      // server terminal so the flow can be tested end-to-end.
+      console.warn(`[bank-update] DEV verification code for ${match.workEmail}: ${code}`);
+    }
   }
 
   void insertAuditLog({

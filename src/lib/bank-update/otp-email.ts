@@ -6,22 +6,21 @@ import { resolveWebhookUrl } from "@/lib/webhooks/resolve-webhook";
  * Sends the /update-bank-info one-time code to an employee's work inbox.
  *
  * The app has no in-app mailer — all transactional email goes out through an
- * n8n webhook that accepts { to, subject, body, html }. We resolve a dedicated
- * `bank_update_otp` webhook first (configure it in Admin -> Webhooks, or via
- * N8N_OTP_WEBHOOK_URL), then fall back to the existing onboarding webhook which
- * already speaks the same to/subject/body/html contract — so the feature works
- * out of the box and can be split onto its own n8n flow later.
+ * n8n webhook that accepts { to, subject, body, html }. This needs its OWN
+ * webhook (a generic "send this email" flow) so it sends the 6-digit CODE — it
+ * must NOT reuse the onboarding webhook, whose flow renders the onboarding
+ * paperwork and ignores our subject/body. Configure it via Admin -> Webhooks
+ * (slug `bank_update_otp`) or the N8N_OTP_WEBHOOK_URL env var. With nothing
+ * configured this returns null and no email is sent (the route then 503s in
+ * production / logs the code to the server console in dev).
  */
 export const OTP_WEBHOOK_SLUG = "bank_update_otp";
 const OTP_WEBHOOK_LEGACY_KEY = "hr.otp_webhook_url";
-/** Last-resort default: the onboarding n8n flow (accepts to/subject/body/html). */
-const OTP_WEBHOOK_DEFAULT = "https://simpledotbiz.app.n8n.cloud/webhook/7cb7afed-ef97-4cb9-92d5-31938695df18";
 
 export function resolveOtpWebhookUrl(): Promise<string | null> {
   return resolveWebhookUrl(OTP_WEBHOOK_SLUG, {
     legacyKey: OTP_WEBHOOK_LEGACY_KEY,
     envVars: ["N8N_OTP_WEBHOOK_URL"],
-    defaultUrl: OTP_WEBHOOK_DEFAULT,
   });
 }
 

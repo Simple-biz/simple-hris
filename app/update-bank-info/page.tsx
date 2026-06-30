@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { motion } from 'motion/react';
 import { toast } from 'sonner';
 import { Loader2, Mail, ShieldCheck, ArrowLeft, CheckCircle2, Landmark } from 'lucide-react';
 import { Input } from '@/components/ui/input';
@@ -11,6 +12,7 @@ import {
   PayoutDetailsFields,
   emptyPayout,
   payoutDraftFromIdsRow,
+  isPayoutComplete,
   type PayoutFields,
 } from '@/components/employee/employee-payout-fields';
 import type { ProcessorId } from '@/lib/employee-payment-processors';
@@ -105,32 +107,39 @@ export default function UpdateBankInfoPage() {
       toast.error('Choose a payment method.');
       return;
     }
+    const payload = {
+      session_token: sessionToken,
+      preferred_processor: preferredProcessor || null,
+      preferred_bank_slot: payout.preferredBankSlot || null,
+      hurupay_email: payout.hurupayEmail,
+      wepay_email: payout.wepayEmail,
+      higlobe_email: payout.higlobeEmail,
+      higlobe_account_name: payout.higlobeAccountName,
+      wise_email: payout.wiseEmail,
+      wise_tag: payout.wiseTag,
+      phone_number: payout.phoneNumber,
+      full_address: payout.fullAddress,
+      bank_name: payout.bankName,
+      account_holder_name: payout.accountHolderName,
+      account_number: payout.accountNumber,
+      swift_code: payout.swiftCode,
+      alt_bank_name: payout.altBankName,
+      alt_account_holder_name: payout.altAccountHolderName,
+      alt_account_number: payout.altAccountNumber,
+      alt_routing_number: payout.altSwiftCode,
+    };
+    // Block a half-filled save (e.g. method chosen but its required field blank),
+    // which would otherwise overwrite good details with empties.
+    if (!isPayoutComplete(payload)) {
+      toast.error(`Fill in the required ${preferredProcessor} details before saving.`);
+      return;
+    }
     setBusy(true);
     try {
       const res = await fetch('/api/bank-update/save', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          session_token: sessionToken,
-          preferred_processor: preferredProcessor || null,
-          preferred_bank_slot: payout.preferredBankSlot || null,
-          hurupay_email: payout.hurupayEmail,
-          wepay_email: payout.wepayEmail,
-          higlobe_email: payout.higlobeEmail,
-          higlobe_account_name: payout.higlobeAccountName,
-          wise_email: payout.wiseEmail,
-          wise_tag: payout.wiseTag,
-          phone_number: payout.phoneNumber,
-          full_address: payout.fullAddress,
-          bank_name: payout.bankName,
-          account_holder_name: payout.accountHolderName,
-          account_number: payout.accountNumber,
-          swift_code: payout.swiftCode,
-          alt_bank_name: payout.altBankName,
-          alt_account_holder_name: payout.altAccountHolderName,
-          alt_account_number: payout.altAccountNumber,
-          alt_routing_number: payout.altSwiftCode,
-        }),
+        body: JSON.stringify(payload),
       });
       const json = (await res.json()) as { success?: boolean; error?: string };
       if (!res.ok || json.error) throw new Error(json.error ?? 'Could not save your details.');
@@ -143,17 +152,23 @@ export default function UpdateBankInfoPage() {
   };
 
   return (
-    <main className="min-h-dvh bg-gradient-to-b from-zinc-50 to-zinc-100 px-4 py-10 text-zinc-900 dark:from-zinc-950 dark:to-zinc-900 dark:text-zinc-100">
-      <div className="mx-auto w-full max-w-xl">
-        <div className="mb-6 flex flex-col items-center text-center">
-          <img src="/simple-logo.png" alt="Simple.biz" className="mb-4 h-9 w-auto" />
-          <h1 className="text-xl font-semibold tracking-tight">Update your bank details</h1>
-          <p className="mt-1 max-w-md text-sm text-zinc-500 dark:text-zinc-400">
-            Verify your work email, then review and update the payout details we use to pay you.
-          </p>
-        </div>
-
-        <div className="rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm dark:border-zinc-800 dark:bg-zinc-950 sm:p-7">
+    <main className="relative grid min-h-dvh place-items-center overflow-y-auto bg-gradient-to-br from-zinc-200 via-zinc-100 to-zinc-200 px-4 py-10 text-zinc-900 dark:from-black dark:via-zinc-950 dark:to-black dark:text-zinc-100">
+      {/* Frosted dim backdrop so the card reads as a modal on the otherwise-empty page. */}
+      <div className="pointer-events-none absolute inset-0 bg-black/10 backdrop-blur-sm dark:bg-black/50" />
+      <motion.div
+        initial={{ opacity: 0, y: 14, scale: 0.985 }}
+        animate={{ opacity: 1, y: 0, scale: 1 }}
+        transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
+        className="relative w-full max-w-xl"
+      >
+        <div className="max-h-[88vh] overflow-y-auto rounded-3xl border border-white/60 bg-white/95 p-7 shadow-[0_24px_70px_-20px_rgba(0,0,0,0.35)] ring-1 ring-black/5 backdrop-blur-xl dark:border-white/10 dark:bg-zinc-950/90 dark:ring-white/10 sm:p-9">
+          <div className="mb-6 flex flex-col items-center text-center">
+            <img src="/simple-logo.png" alt="Simple.biz" className="mb-3 h-9 w-auto" />
+            <h1 className="text-xl font-semibold tracking-tight">Update your bank details</h1>
+            <p className="mt-1.5 text-sm text-zinc-500 dark:text-zinc-400">
+              Verify your work email, then review and update your payout details.
+            </p>
+          </div>
           {step === 'email' && (
             <div className="space-y-5">
               <Stepline icon={<Mail className="h-4 w-4" />} title="Step 1 of 2 — Verify it's you">
@@ -285,7 +300,7 @@ export default function UpdateBankInfoPage() {
         <p className="mt-5 text-center text-[11px] text-zinc-400">
           Didn't request this? You can safely ignore it — nothing changes until a code is verified.
         </p>
-      </div>
+      </motion.div>
     </main>
   );
 }

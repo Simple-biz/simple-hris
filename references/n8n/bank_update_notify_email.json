@@ -1,0 +1,61 @@
+{
+  "name": "Bank Update Payroll Notification",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "bank-update-notify",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "33333333-3333-4333-8333-333333333333",
+      "name": "Webhook (bank-update-notify)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        260,
+        300
+      ],
+      "webhookId": "bank-update-notify"
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "send",
+        "sendTo": "={{ $json.body?.to ?? $json.to ?? 'payroll@simple.biz' }}",
+        "subject": "={{ $json.body?.subject ?? $json.subject ?? 'Bank details updated' }}",
+        "emailType": "html",
+        "message": "={{ $json.body?.html ?? $json.html ?? $json.body?.body ?? $json.body }}",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "id": "44444444-4444-4444-8444-444444444444",
+      "name": "Notify Payroll (Gmail)",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        560,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook (bank-update-notify)": {
+      "main": [
+        [
+          {
+            "node": "Notify Payroll (Gmail)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}

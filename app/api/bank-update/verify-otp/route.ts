@@ -1,11 +1,14 @@
 import { NextResponse } from "next/server";
-import { verifyOtp, findActiveEmployeeByEmail } from "@/lib/bank-update/otp";
+import { verifyOtp } from "@/lib/bank-update/otp";
 import { getPayoutPrefill } from "@/lib/bank-update/prefill";
 import { insertAuditLog } from "@/lib/supabase/audit-log";
 import { normEmail } from "@/lib/email/norm-email";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
+
+/** Mirrors request-otp: excludes LIKE/PostgREST metacharacters before any DB lookup. */
+const EMAIL_OK = /^[^\s@%,"'()]+@[^\s@%,"'()]+\.[^\s@%,"'()]+$/;
 
 function clientIp(req: Request): string | null {
   const xff = req.headers.get("x-forwarded-for");
@@ -19,7 +22,7 @@ export async function POST(req: Request) {
   const code = String(body.code ?? "").trim();
   const ip = clientIp(req);
 
-  if (!email || !/^\d{6}$/.test(code)) {
+  if (!email || !EMAIL_OK.test(email) || !/^\d{6}$/.test(code)) {
     return NextResponse.json(
       { error: "Enter the 6-digit code from your email." },
       { status: 400 },
@@ -37,18 +40,17 @@ export async function POST(req: Request) {
       details: { reason: result.reason },
       ip_address: ip,
     });
+    // Don't distinguish "wrong code" from "no live code / unknown email" —
+    // both map to one message so the response can't be used for enumeration.
     const error =
       result.reason === "locked"
         ? "Too many incorrect attempts. Request a new code."
-        : result.reason === "expired"
-          ? "That code has expired. Request a new one."
-          : "That code is incorrect. Check your email and try again.";
+        : "That code is invalid or expired. Request a new one.";
     return NextResponse.json({ error, reason: result.reason }, { status: 401 });
   }
 
-  // Pull the personal email for the onboarding-submission prefill fallback.
-  const match = await findActiveEmployeeByEmail(result.workEmail);
-  const payout = await getPayoutPrefill(result.workEmail, match?.personalEmail ?? null);
+  // verifyOtp already resolved the active employee — reuse it (no extra query).
+  const payout = await getPayoutPrefill(result.workEmail);
 
   void insertAuditLog({
     user_name: "external",
@@ -64,7 +66,7 @@ export async function POST(req: Request) {
     ok: true,
     session_token: result.sessionToken,
     work_email: result.workEmail,
-    name: match?.name ?? null,
+    name: result.name,
     payout: payout ?? {},
   });
 }

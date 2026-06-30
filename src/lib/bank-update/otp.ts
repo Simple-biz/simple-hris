@@ -3,6 +3,7 @@ import "server-only";
 import { createHash, randomBytes, randomInt, timingSafeEqual } from "crypto";
 import { createSupabaseServiceRoleClient } from "@/lib/supabase/server";
 import { normEmail } from "@/lib/email/norm-email";
+import { escapeLikePattern } from "@/lib/db/like-escape";
 
 /**
  * Server-side machinery for the public /update-bank-info flow.
@@ -45,6 +46,11 @@ function hashCode(code: string, workEmail: string): string {
   return createHash("sha256").update(`${code}.${workEmail}.${pepper()}`).digest("hex");
 }
 
+/** Hash a session token so a DB leak yields no replayable token (the raw token lives only in the client). */
+function hashSessionToken(token: string): string {
+  return createHash("sha256").update(`${token}.${pepper()}`).digest("hex");
+}
+
 function constantTimeEqualHex(a: string, b: string): boolean {
   const bufA = Buffer.from(a, "hex");
   const bufB = Buffer.from(b, "hex");
@@ -75,12 +81,15 @@ export async function findActiveEmployeeByEmail(
   if (!supabase) return null;
 
   // active_employees = global_master_list filtered to the current upload and
-  // not off-boarded. Select only columns guaranteed to exist.
+  // not off-boarded. Select only columns guaranteed to exist. Escape LIKE
+  // metacharacters so a value like "%" can't match an arbitrary employee
+  // (the master-list email columns aren't lowercased, so we keep ilike).
+  const pattern = escapeLikePattern(target);
   const tryColumn = async (col: string) =>
     supabase
       .from("active_employees")
       .select('"Name","Work Email","Personal Email"')
-      .ilike(col, target)
+      .ilike(col, pattern)
       .limit(1)
       .maybeSingle();
 
@@ -114,14 +123,16 @@ export async function createOtpForEmail(
   const supabase = createSupabaseServiceRoleClient();
   if (!supabase) return null;
 
-  // Throttle: how many codes were issued for this email recently?
+  // Throttle: how many codes were issued for this email recently? Fail CLOSED
+  // (treat a count error / null as "throttled") so a transient DB error can't be
+  // used to bypass the per-email send cap and email-bomb a victim's inbox.
   const sinceIso = new Date(Date.now() - THROTTLE_WINDOW_MS).toISOString();
-  const { count } = await supabase
+  const { count, error: countError } = await supabase
     .from(OTP_TABLE)
     .select("id", { count: "exact", head: true })
-    .ilike("work_email", target)
+    .ilike("work_email", escapeLikePattern(target))
     .gte("created_at", sinceIso);
-  if ((count ?? 0) >= MAX_SENDS_PER_WINDOW) return null;
+  if (countError || count == null || count >= MAX_SENDS_PER_WINDOW) return null;
 
   const code = generateOtpCode();
   const nowMs = Date.now();
@@ -138,7 +149,7 @@ export async function createOtpForEmail(
 }
 
 export type VerifyResult =
-  | { ok: true; workEmail: string; sessionToken: string }
+  | { ok: true; workEmail: string; sessionToken: string; name: string; personalEmail: string | null }
   | { ok: false; reason: "invalid" | "expired" | "locked" };
 
 /**
@@ -148,7 +159,9 @@ export type VerifyResult =
  */
 export async function verifyOtp(email: string, code: string): Promise<VerifyResult> {
   const match = await findActiveEmployeeByEmail(email);
-  if (!match) return { ok: false, reason: "invalid" };
+  // Report a non-employee identically to "no live code" so verify can't be used
+  // to distinguish real active employees from non-employees (enumeration).
+  if (!match) return { ok: false, reason: "expired" };
   const workEmail = match.workEmail;
 
   const supabase = createSupabaseServiceRoleClient();
@@ -158,7 +171,7 @@ export async function verifyOtp(email: string, code: string): Promise<VerifyResu
   const { data: row, error } = await supabase
     .from(OTP_TABLE)
     .select("id, code_hash, attempts, expires_at, consumed_at")
-    .ilike("work_email", workEmail)
+    .ilike("work_email", escapeLikePattern(workEmail))
     .is("consumed_at", null)
     .order("created_at", { ascending: false })
     .limit(1)
@@ -185,13 +198,14 @@ export async function verifyOtp(email: string, code: string): Promise<VerifyResu
     .from(OTP_TABLE)
     .update({
       consumed_at: new Date(nowMs).toISOString(),
-      session_token: sessionToken,
+      // Store only the HASH; the raw token is returned to the client once.
+      session_token: hashSessionToken(sessionToken),
       session_expires_at: new Date(nowMs + SESSION_TTL_MS).toISOString(),
     })
     .eq("id", row.id);
   if (consumeErr) return { ok: false, reason: "invalid" };
 
-  return { ok: true, workEmail, sessionToken };
+  return { ok: true, workEmail, sessionToken, name: match.name, personalEmail: match.personalEmail };
 }
 
 /**
@@ -209,7 +223,7 @@ export async function resolveSessionToken(token: string): Promise<string | null>
   const { data: row, error } = await supabase
     .from(OTP_TABLE)
     .select("work_email, session_expires_at, consumed_at")
-    .eq("session_token", t)
+    .eq("session_token", hashSessionToken(t))
     .limit(1)
     .maybeSingle();
 

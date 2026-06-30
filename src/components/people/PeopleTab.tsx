@@ -1998,7 +1998,8 @@ function PersonDetailDialog({
   // single processor field. Unknown/empty processor falls back to a bank if one
   // exists, else nothing.
   const proc = (banking?.preferred_processor ?? '').trim().toLowerCase();
-  const showBank = proc === 'wires' || (!proc && !!prefBank.name);
+  // wires AND jeeves both carry full bank/wire details (jeeves also shows phone).
+  const showBank = proc === 'wires' || proc === 'jeeves' || (!proc && !!prefBank.name);
 
   const reveal = async () => {
     setRevealing(true);

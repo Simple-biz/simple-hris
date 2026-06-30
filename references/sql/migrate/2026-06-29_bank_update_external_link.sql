@@ -65,6 +65,36 @@ CREATE INDEX IF NOT EXISTS bank_update_otps_session_idx
 ALTER TABLE public.employee_ids
   ADD COLUMN IF NOT EXISTS bank_last_self_updated_at timestamptz;
 
+-- ── employee_notifications: allow the People-tab self-update alert type ───────
+-- The save endpoint fires a `people.banking.self_updated` notification to
+-- accounting/admin/ceo. The table's CHECK constraint must list it or the INSERT
+-- is rejected (and silently swallowed by the route's try/catch) — so the alert
+-- would never fire. ADD CONSTRAINT re-validates existing rows, so we list the
+-- FULL set of types the app actually inserts (this also un-breaks
+-- `special_transfer.recorded` and the `qc.*` types, which were likewise missing
+-- from the latest constraint and being silently dropped).
+ALTER TABLE public.employee_notifications
+  DROP CONSTRAINT IF EXISTS employee_notifications_type_check;
+ALTER TABLE public.employee_notifications
+  ADD CONSTRAINT employee_notifications_type_check
+  CHECK (type IN (
+    'rate.change',
+    'promotion',
+    'dispute.approved',
+    'dispute.denied',
+    'dispute.revoked',
+    'onboarding.submitted',
+    'time_adjustment.approved',
+    'time_adjustment.denied',
+    'transfer.requested',
+    'payroll.processing_started',
+    'payroll.processing_stopped',
+    'special_transfer.recorded',
+    'qc.scores_submitted',
+    'qc.scores_returned',
+    'people.banking.self_updated'
+  ));
+
 COMMIT;
 
 -- Optional housekeeping — purge fully-expired, unused OTP rows (run anytime):

@@ -208,7 +208,8 @@
       "Bash(ls tailwind.config.*)",
       "Bash(grep -E \"\\\\.\\(ts|tsx\\)$\")",
       "Bash(grep -E \"\\\\.tsx?$\")",
-      "PowerShell(npx tsc --noEmit -p tsconfig.json 2>&1)"
+      "PowerShell(npx tsc --noEmit -p tsconfig.json 2>&1)",
+      "Bash(xargs -I{} grep -nE \"from '@/components/ui/dialog'\" {})"
     ],
     "additionalDirectories": [
       "\\tmp"

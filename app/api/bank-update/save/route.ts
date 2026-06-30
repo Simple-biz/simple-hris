@@ -4,7 +4,9 @@ import { createSupabaseServiceRoleClient } from "@/lib/supabase/server";
 import { getPayrollDispatchLock } from "@/lib/supabase/payroll-dispatch-lock";
 import { invalidateRateProfilesCache } from "@/lib/supabase/employee-rate-profiles";
 import { resolveSessionToken, findActiveEmployeeByEmail } from "@/lib/bank-update/otp";
+import { sendBankUpdatePayrollEmail } from "@/lib/bank-update/notify-email";
 import { insertAuditLog } from "@/lib/supabase/audit-log";
+import { escapeLikePattern } from "@/lib/db/like-escape";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -145,12 +147,16 @@ export async function POST(req: Request) {
     }
 
     const changedFields = Object.keys(update);
+    // Resolve the active employee once (reused for bootstrap, audit, notify).
+    const match = await findActiveEmployeeByEmail(workEmail);
+    // Escaped, case-insensitive exact match on the verified work email.
+    const emailPattern = escapeLikePattern(workEmail);
 
-    // Update the canonical employee_ids row (case-insensitive work-email match).
+    // Update the canonical employee_ids row.
     const { data: updatedRows, error: updateError } = await supabase
       .from("employee_ids")
       .update(update)
-      .ilike("work_email", workEmail)
+      .ilike("work_email", emailPattern)
       .select("employee_id");
 
     if (updateError) {
@@ -160,7 +166,6 @@ export async function POST(req: Request) {
     let created = false;
     if (!updatedRows || updatedRows.length === 0) {
       // Active employee without an employee_ids row yet — bootstrap one.
-      const match = await findActiveEmployeeByEmail(workEmail);
       const insertRow: Record<string, string | null> = {
         employee_id: `SELF-${randomUUID().replace(/-/g, "").slice(0, 14).toUpperCase()}`,
         name: match?.name || derivePlaceholderName(workEmail),
@@ -174,7 +179,7 @@ export async function POST(req: Request) {
         const { data: retry, error: retryErr } = await supabase
           .from("employee_ids")
           .update(update)
-          .ilike("work_email", workEmail)
+          .ilike("work_email", emailPattern)
           .select("employee_id");
         if (retryErr) return NextResponse.json({ error: explain(retryErr.message) }, { status: 500 });
         if (!retry || retry.length === 0) {
@@ -185,21 +190,23 @@ export async function POST(req: Request) {
       }
     }
 
-    // Best-effort: stamp the self-update time for the People tab. Swallow errors
-    // so an un-migrated env (column absent) still saves the bank details above.
-    try {
-      await supabase
-        .from("employee_ids")
-        .update({ bank_last_self_updated_at: new Date().toISOString() })
-        .ilike("work_email", workEmail);
-    } catch {
-      /* column may not exist yet — non-fatal */
+    // Best-effort: stamp the self-update time for the People tab. The query
+    // builder RESOLVES (doesn't throw) with { error } when the column is absent
+    // on an un-migrated env, so we capture and ignore it — the bank details
+    // above are already saved either way.
+    const { error: stampErr } = await supabase
+      .from("employee_ids")
+      .update({ bank_last_self_updated_at: new Date().toISOString() })
+      .ilike("work_email", emailPattern);
+    if (stampErr) {
+      /* column may not exist yet (pre-migration) — non-fatal */
     }
 
     invalidateRateProfilesCache();
 
-    const match = await findActiveEmployeeByEmail(workEmail);
-    void insertAuditLog({
+    // Await the audit write — a payout change must not be reported successful
+    // without leaving a trail.
+    await insertAuditLog({
       user_name: match?.name || workEmail,
       user_role: "employee (external link)",
       action: "bank_update.saved",
@@ -209,6 +216,15 @@ export async function POST(req: Request) {
       ip_address: ip,
     });
     await notifyReviewers(supabase, workEmail, match?.name ?? null, changedFields);
+
+    // Email the payroll team (field names only — never account values). Best-effort.
+    await sendBankUpdatePayrollEmail({
+      employeeName: match?.name ?? null,
+      workEmail,
+      fields: changedFields,
+      processor: update.preferred_processor ?? null,
+      createdNew: created,
+    }).catch(() => undefined);
 
     return NextResponse.json({ success: true, created });
   } catch (e) {

@@ -3,6 +3,7 @@ import "server-only";
 import { getEmployeeIdRowByEmail } from "@/lib/supabase/employee-ids";
 import { createSupabaseServiceRoleClient } from "@/lib/supabase/server";
 import { normEmail } from "@/lib/email/norm-email";
+import { escapeLikePattern } from "@/lib/db/like-escape";
 
 /**
  * Current payout details for the /update-bank-info form, shaped as an
@@ -14,14 +15,13 @@ import { normEmail } from "@/lib/email/norm-email";
  *      reads). For promoted hires this already holds their onboarding answers.
  *   2. hr_onboarding_submissions — best-effort fallback so "the details you
  *      filled in during onboarding" still appear for an active employee who has
- *      no employee_ids row yet.
+ *      no employee_ids row yet. Matched on WORK email only — never personal
+ *      email, which is documented as non-unique and could surface another
+ *      person's bank details.
  */
 export type PayoutPrefill = Record<string, string | null>;
 
-export async function getPayoutPrefill(
-  workEmail: string,
-  personalEmail: string | null,
-): Promise<PayoutPrefill | null> {
+export async function getPayoutPrefill(workEmail: string): Promise<PayoutPrefill | null> {
   const work = normEmail(workEmail);
   if (!work) return null;
 
@@ -50,34 +50,28 @@ export async function getPayoutPrefill(
     };
   }
 
-  return onboardingPrefill(work, personalEmail);
+  return onboardingPrefill(work);
 }
 
 /** Map a (non-archived) onboarding submission's bank fields to employee_ids keys. */
-async function onboardingPrefill(
-  workEmail: string,
-  personalEmail: string | null,
-): Promise<PayoutPrefill | null> {
+async function onboardingPrefill(workEmail: string): Promise<PayoutPrefill | null> {
   const supabase = createSupabaseServiceRoleClient();
   if (!supabase) return null;
 
   const sel =
     "payment_method, hurupay_email, bank_full_name, bank_account_name, bank_account_number, bank_swift_code, bank_full_address, status, created_at";
-  const tryColumn = async (col: string, val: string) =>
-    supabase
+
+  try {
+    // Match on WORK email only — personal email is non-unique (could be shared
+    // across people) so it must never key a sensitive-data prefill.
+    const res = await supabase
       .from("hr_onboarding_submissions")
       .select(sel)
-      .ilike(col, val)
+      .ilike("work_email", escapeLikePattern(workEmail))
       .neq("status", "archived")
       .order("created_at", { ascending: false })
       .limit(1)
       .maybeSingle();
-
-  try {
-    let res = await tryColumn("work_email", workEmail);
-    if (!res.data && !res.error && personalEmail) {
-      res = await tryColumn("invite_personal_email", personalEmail);
-    }
     if (res.error || !res.data) return null;
 
     const sub = res.data as Record<string, unknown>;
