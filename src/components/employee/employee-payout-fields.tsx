@@ -38,7 +38,7 @@ const PH_BANK_GROUPS: { group: string; banks: string[] }[] = [
   {
     group: 'Digital Banks',
     banks: [
-      'GoTyme Bank', 'MariBank', 'Tonik Bank', 'UnionDigital Bank', 'OFBank',
+      'GoTyme Bank', 'MariBank', 'CIMB Bank Philippines', 'Tonik Bank', 'UnionDigital Bank', 'OFBank',
     ],
   },
   {
