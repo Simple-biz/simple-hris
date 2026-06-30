@@ -6,6 +6,7 @@ import { invalidateRateProfilesCache } from "@/lib/supabase/employee-rate-profil
 import { resolveSessionToken, findActiveEmployeeByEmail } from "@/lib/bank-update/otp";
 import { sendBankUpdatePayrollEmail } from "@/lib/bank-update/notify-email";
 import { insertAuditLog } from "@/lib/supabase/audit-log";
+import { pulseBankChanges } from "@/lib/supabase/app-settings";
 import { escapeLikePattern } from "@/lib/db/like-escape";
 
 export const dynamic = "force-dynamic";
@@ -216,6 +217,9 @@ export async function POST(req: Request) {
       ip_address: ip,
     });
     await notifyReviewers(supabase, workEmail, match?.name ?? null, changedFields);
+    // Nudge the People-tab "Bank changes" live feed to refetch instantly. The
+    // audit row above is the feed's source; this pulse just makes it real-time.
+    await pulseBankChanges();
 
     // Email the payroll team (field names only — never account values). Best-effort.
     await sendBankUpdatePayrollEmail({

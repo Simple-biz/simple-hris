@@ -62,3 +62,22 @@ export async function pulsePaymentsLive(): Promise<void> {
     /* non-fatal — the periodic poll still reconciles the count */
   }
 }
+
+/**
+ * Key bumped (to a fresh timestamp) every time an employee self-updates their
+ * bank/payout details via the external link. The People-tab "Bank changes" feed
+ * subscribes to THIS key over Realtime — same rationale as the payments pulse:
+ * `app_settings` is in the realtime publication and reliably reaches the anon
+ * browser client, whereas `audit_log` (the actual source) may be RLS-gated from
+ * it. Keep this string in sync with the literal in `PeopleBankChanges`.
+ */
+export const BANK_CHANGES_PULSE_KEY = 'people.bank_changes.pulse';
+
+/** Best-effort nudge so the People "Bank changes" feed refetches instantly. Never throws. */
+export async function pulseBankChanges(): Promise<void> {
+  try {
+    await upsertAppSetting(BANK_CHANGES_PULSE_KEY, new Date().toISOString());
+  } catch {
+    /* non-fatal — the periodic poll still reconciles the feed */
+  }
+}

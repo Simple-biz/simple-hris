@@ -16,6 +16,7 @@ import { SmoothSelect } from '@/components/ui/smooth-select';
 import { Skeleton } from '@/components/ui/skeleton';
 import EmployeePabCalendar from '@/components/employee/EmployeePabCalendar';
 import PeopleDateRangePicker, { type DateRange } from './PeopleDateRangePicker';
+import PeopleBankChanges from './PeopleBankChanges';
 import { getTabCache, setTabCache, TAB_CACHE_KEYS } from '@/lib/accounting/tab-cache';
 import { cn } from '@/lib/utils';
 
@@ -196,7 +197,7 @@ function labelForSourceFile(file: string): string {
   return file.replace(/\.csv$/i, '');
 }
 
-interface Accent {
+export interface Accent {
   ring: string;
   chipBg: string;
   chipText: string;
@@ -260,8 +261,9 @@ export default function PeopleTab({
   const rangeRef = useRef<DateRange | null>(null);
   const [rangeMeta, setRangeMeta] = useState<{ weeks: number; start: string | null; end: string | null } | null>(null);
   const rangeMode = range != null;
-  // Top-level mode: the roster vs the weekly Statistics graph.
-  const [mode, setMode] = useState<'roster' | 'stats'>('roster');
+  // Top-level mode: the roster, the weekly Statistics graph, or the live
+  // Bank-changes feed (self-service payout edits via the external link).
+  const [mode, setMode] = useState<'roster' | 'stats' | 'changes'>('roster');
   const [statsSeries, setStatsSeries] = useState<StatsSeries | null>(null);
   const [statsLeaders, setStatsLeaders] = useState<StatsLeader[] | null>(null);
   const [statsDepts, setStatsDepts] = useState<StatsDept[] | null>(null);
@@ -492,15 +494,15 @@ export default function PeopleTab({
             </Button>
           </div>
         </div>
-        {/* Top-level tabs: Roster vs the weekly Statistics graph. */}
+        {/* Top-level tabs: Roster · Statistics · live Bank-changes feed. */}
         <div role="tablist" className="mt-3 flex gap-1 border-b border-zinc-200 dark:border-zinc-800">
-          {([['roster', 'Roster'], ['stats', 'Statistics']] as const).map(([id, label]) => (
+          {([['roster', 'Roster'], ['stats', 'Statistics'], ['changes', 'Bank changes']] as const).map(([id, label]) => (
             <button
               key={id}
               type="button"
               role="tab"
               aria-selected={mode === id}
-              onClick={() => (id === 'stats' ? openStats() : setMode('roster'))}
+              onClick={() => (id === 'stats' ? openStats() : setMode(id))}
               className={cn(
                 'relative px-3 py-2 text-[13px] font-medium transition-colors',
                 mode === id
@@ -590,6 +592,8 @@ export default function PeopleTab({
       <div className="min-h-0 flex-1 overflow-y-auto bg-[#fafaf8] px-3 py-4 sm:px-6 sm:py-6 dark:bg-[#0d1117]">
         {mode === 'stats' ? (
           <PeopleStatsChart series={statsSeries} leaders={statsLeaders} depts={statsDepts} periods={periods} loading={statsLoading} error={statsError} accent={accent} />
+        ) : mode === 'changes' ? (
+          <PeopleBankChanges accent={accent} />
         ) : (
         <>
         {error && (
