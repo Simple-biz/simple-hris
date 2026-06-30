@@ -175,6 +175,7 @@ export default function ContractorApp() {
         return (
           <ContractorOverview
             contractorEmail={contractorEmail}
+            contractorName={displayName}
             onNavigate={navigate}
           />
         );
@@ -186,6 +187,7 @@ export default function ContractorApp() {
         return (
           <ContractorOverview
             contractorEmail={contractorEmail}
+            contractorName={displayName}
             onNavigate={navigate}
           />
         );

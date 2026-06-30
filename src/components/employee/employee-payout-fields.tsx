@@ -19,7 +19,7 @@ const PH_BANK_GROUPS: { group: string; banks: string[] }[] = [
   {
     group: 'Universal & Commercial Banks',
     banks: [
-      'BDO Unibank', 'Bank of the Philippine Islands (BPI)',
+      'BDO Unibank', 'Land Bank of the Philippines (LandBank)', 'Bank of the Philippine Islands (BPI)',
       'Metrobank', 'China Bank', 'RCBC', 'Security Bank', 'Philippine National Bank (PNB)',
       'Development Bank of the Philippines (DBP)', 'UnionBank', 'EastWest Bank',
       'Asia United Bank (AUB)', 'Bank of Commerce', 'Philippine Bank of Communications (PBCOM)',
@@ -38,7 +38,13 @@ const PH_BANK_GROUPS: { group: string; banks: string[] }[] = [
   {
     group: 'Digital Banks',
     banks: [
-      'Tonik Bank', 'UnionDigital Bank', 'OFBank',
+      'GoTyme Bank', 'MariBank', 'Tonik Bank', 'UnionDigital Bank', 'OFBank',
+    ],
+  },
+  {
+    group: 'E-Wallets & Money Transfer',
+    banks: [
+      'GCash', 'Wise',
     ],
   },
   {
