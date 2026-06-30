@@ -5,6 +5,7 @@ import {
   ensureQcAssignmentsForPeriod,
   getQcRosterMembers,
   summarizeOfficers,
+  getQcOfficerNameMap,
   computeDeptTotals,
   listQcOfficerLocks,
   listQcReviewStatus,
@@ -97,9 +98,13 @@ export async function GET(request: Request) {
     members = roster.filter((e) => set.has(norm(e.personal_email) || norm(e.work_email)));
   }
 
+  // Resolve officer names from the master list so the first-pass rail can show
+  // each officer by name instead of "QC Officer N".
+  const officerNames = await getQcOfficerNameMap(officerEmails);
+
   return NextResponse.json({
     periodStart,
-    officers: summarizeOfficers(officerEmails, assignments),
+    officers: summarizeOfficers(officerEmails, assignments, officerNames),
     // Use the SCOPED officer set: a plain manager sees only the officers working
     // their departments, so the "÷ N QC → ~M each" split reflects their view.
     officerCount: officerEmails.length,

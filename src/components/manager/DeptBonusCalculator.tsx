@@ -415,7 +415,7 @@ function bonusVariables(bonus: BonusDef): string[] {
  * how many members each scored, whether they've locked, and a Return-to-QC
  * action. The scored values themselves are pre-filled into the table by loadDept.
  */
-interface QcLogOfficer { email: string; index: number; memberCount: number }
+interface QcLogOfficer { email: string; index: number; memberCount: number; name?: string | null }
 interface QcLogAssignment { qc_officer_email: string; member_email: string; member_name: string | null; department: string }
 interface QcLogLock { qc_officer_email: string; status: 'draft' | 'locked'; member_count: number; locked_at: string | null }
 interface QcLogReview { department: string; status: 'pending' | 'accepted' | 'returned'; reviewed_by: string | null; reviewed_at: string | null; note: string | null }
@@ -486,6 +486,11 @@ function QcOfficerLog({
 
   const deptAssignments = (data?.assignments ?? []).filter((a) => a.department === deptKey);
   const indexByOfficer = new Map((data?.officers ?? []).map((o) => [o.email.toLowerCase(), o.index]));
+  // First name (first whitespace-delimited token) for the rail label, falling
+  // back to "QC Officer N" when the officer's name can't be resolved.
+  const firstNameByOfficer = new Map(
+    (data?.officers ?? []).map((o) => [o.email.toLowerCase(), (o.name ?? '').trim().split(/\s+/)[0] || '']),
+  );
   const lockByOfficer = new Map((data?.locks ?? []).map((l) => [l.qc_officer_email.toLowerCase(), l]));
   const countByOfficer = new Map<string, number>();
   const membersByOfficer = new Map<string, { email: string; name: string }[]>();
@@ -578,6 +583,8 @@ function QcOfficerLog({
                 const lock = lockByOfficer.get(email);
                 const locked = lock?.status === 'locked';
                 const idx = indexByOfficer.get(email);
+                const firstName = firstNameByOfficer.get(email) ?? '';
+                const label = firstName || `QC Officer ${idx ?? '?'}`;
                 const count = countByOfficer.get(email) ?? 0;
                 const active = selectedOfficer === email;
                 return (
@@ -603,7 +610,7 @@ function QcOfficerLog({
                       )}
                     >
                       <div className="flex items-center justify-between gap-1">
-                        <span className="text-[12px] font-semibold text-zinc-800 dark:text-zinc-100">QC Officer {idx ?? '?'}</span>
+                        <span className="text-[12px] font-semibold text-zinc-800 dark:text-zinc-100" title={firstName ? `QC Officer ${idx ?? '?'}` : undefined}>{label}</span>
                         {locked ? (
                           <Lock className="h-3 w-3 shrink-0 text-emerald-500" aria-label="locked" />
                         ) : (

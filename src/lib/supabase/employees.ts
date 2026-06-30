@@ -404,6 +404,14 @@ export async function getEmployeeMasterRecord(
       .from('global_master_list')
       .select(sel)
       .ilike(column, target)
+      // NEVER resolve identity to an off-boarded row. Work emails are RECYCLED
+      // when someone leaves (HR reassigns e.g. johnc@ to a new hire), so an
+      // off-boarded row can carry an address that now belongs to a *different*,
+      // current person — returning it would surface the wrong account on login.
+      // Active people who merely fell off the latest sheet upload (internal
+      // devs/founders) are still off_boarded_at IS NULL, so the legitimate
+      // fallback keeps working; only historical/recycled rows are excluded.
+      .is('off_boarded_at', null)
       .order('last_seen_upload_id', { ascending: false, nullsFirst: false })
       .limit(1)
       .maybeSingle();

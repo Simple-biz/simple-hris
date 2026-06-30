@@ -240,7 +240,22 @@
       "Bash(rm -rf .next)",
       "Bash(node -e \"const m=require\\('./.next/server/middleware-manifest.json'\\); console.log\\('keys:',JSON.stringify\\(Object.keys\\(m.middleware||{}\\)\\), Object.keys\\(m.middleware||{}\\).length?'ACTIVE':'EMPTY'\\)\")",
       "Bash(node -e \"const m=require\\('./.next/server/middleware-manifest.json'\\); const k=Object.keys\\(m.middleware||{}\\); console.log\\('keys:',JSON.stringify\\(k\\), k.length?'ACTIVE ✓':'EMPTY ✗'\\)\")",
-      "PowerShell(npm run lint 2>&1 | Select-String -Pattern \"error TS\"; \"exit=$LASTEXITCODE\")"
+      "PowerShell(npm run lint 2>&1 | Select-String -Pattern \"error TS\"; \"exit=$LASTEXITCODE\")",
+      "Bash(node ./diag-johnc2-tmp.mjs)",
+      "Bash(node ./diag-johnc3-tmp.mjs)",
+      "Bash(node ./fix-johnc-tmp.mjs)",
+      "Bash(rm -f ./diag-recur-tmp.mjs)",
+      "Bash(node ./diag-collisions-tmp.mjs)",
+      "Bash(node ./diag-final-tmp.mjs)",
+      "Bash(grep -iA18 \"create.*view\")",
+      "Bash(node ./diag-uploads-tmp.mjs)",
+      "Bash(node ./diag-sheet-tmp.mjs)",
+      "Bash(node ./diag-cur-tmp.mjs)",
+      "Bash(node ./diag-pattern-tmp.mjs)",
+      "Bash(node ./diag-postsync-tmp.mjs)",
+      "Bash(node ./diag-dupes-tmp.mjs)",
+      "Bash(node ./diag-cleanup-plan.mjs)",
+      "Bash(node ./diag-cleanup-exec.mjs)"
     ],
     "additionalDirectories": [
       "\\tmp",

@@ -35,6 +35,9 @@ async function fetchMasterEmailsForLookup(
     .from(table)
     .select('"Work Email","Personal Email"')
     .ilike("Work Email", normalized)
+    // Recycled-email guard: never match an off-boarded row (its work email may
+    // now belong to a different current employee). See getEmployeeMasterRecord.
+    .is("off_boarded_at", null)
     .maybeSingle();
 
   if (byWork) {
@@ -49,6 +52,7 @@ async function fetchMasterEmailsForLookup(
     .from(table)
     .select('"Work Email","Personal Email"')
     .ilike("Personal Email", normalized)
+    .is("off_boarded_at", null)
     .maybeSingle();
 
   if (!byPersonal) return null;
@@ -87,6 +91,7 @@ export async function getProfilePhotoUrlForEmail(
     .from(table)
     .select('"Profile Photo URL", google_photo_url')
     .ilike("Work Email", n)
+    .is("off_boarded_at", null)
     .maybeSingle();
 
   const wUrl = pickUrl(byWork as Record<string, unknown> | null);
@@ -96,6 +101,7 @@ export async function getProfilePhotoUrlForEmail(
     .from(table)
     .select('"Profile Photo URL", google_photo_url')
     .ilike("Personal Email", n)
+    .is("off_boarded_at", null)
     .maybeSingle();
 
   return pickUrl(byPersonal as Record<string, unknown> | null);

@@ -87,6 +87,10 @@ export interface QcOfficer {
   email: string;
   index: number; // 1-based "QC Officer N", stable by assignment order
   memberCount: number;
+  /** The officer's full name from the master list, when resolvable from their
+   *  work/personal email; null when no roster row matches. The rail shows the
+   *  first name (falling back to "QC Officer N" when null). */
+  name: string | null;
 }
 
 /** Per-department roster size + the equal per-officer share, for the QC Overview. */
@@ -421,14 +425,46 @@ export async function listQcAssignments(periodStart: string): Promise<QcAssignme
 /** Officer summary (1-based index + active member/slot count) for a week.
  *  Counts only `active` slots so a transferred/removed person no longer inflates
  *  the officer's current workload. */
-export function summarizeOfficers(officers: string[], rows: QcAssignmentRow[]): QcOfficer[] {
+export function summarizeOfficers(
+  officers: string[],
+  rows: QcAssignmentRow[],
+  nameByEmail?: Map<string, string>,
+): QcOfficer[] {
   const counts = new Map<string, number>();
   for (const r of rows) {
     if (r.roster_status !== 'active') continue;
     const o = norm(r.qc_officer_email);
     counts.set(o, (counts.get(o) ?? 0) + 1);
   }
-  return officers.map((email, i) => ({ email, index: i + 1, memberCount: counts.get(email) ?? 0 }));
+  return officers.map((email, i) => ({
+    email,
+    index: i + 1,
+    memberCount: counts.get(email) ?? 0,
+    name: nameByEmail?.get(norm(email)) ?? null,
+  }));
+}
+
+/**
+ * Resolve QC officers' full names from the master list. Officers are keyed by
+ * `work_email` (in `employee_roles`), but a roster row may match on the work,
+ * personal, or either alternate work email — so we index every email a row
+ * exposes. Returns a Map keyed by lower-cased email → full name. Used to label
+ * the QC first-pass rail with each officer's name instead of "QC Officer N".
+ */
+export async function getQcOfficerNameMap(emails: string[]): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  const want = new Set(emails.map(norm).filter(Boolean));
+  if (want.size === 0) return out;
+  const { employees } = await getEmployeesForAuthorizedServerRoute();
+  for (const e of employees) {
+    const name = (e.name ?? '').trim();
+    if (!name) continue;
+    for (const addr of [e.work_email, e.personal_email, e.alternate_work_email, e.alternate_work_email_2]) {
+      const key = norm(addr);
+      if (key && want.has(key) && !out.has(key)) out.set(key, name);
+    }
+  }
+  return out;
 }
 
 // ── Submissions (staged scores) ───────────────────────────────────────────────
