@@ -252,10 +252,14 @@ export function getCurrentPabMonthSunSat(today: Date = new Date()): { year: numb
 export function payWeekFromUploadStart(
   uploadStart: Date,
   isHsl: boolean,
+  /** HSL only: 'mon_sun' (legacy) keeps Mon→Sun; 'sun_sat' (post-cutover) routes
+   *  HSL through the same Sun→Sat window as every other department. Defaults to
+   *  'mon_sun' so existing callers are byte-identical until they opt in. */
+  weekModel: 'mon_sun' | 'sun_sat' = 'mon_sun',
 ): { start: Date; end: Date } {
   const s = new Date(uploadStart.getFullYear(), uploadStart.getMonth(), uploadStart.getDate());
   const dow = s.getDay(); // Sun=0 … Sat=6
-  if (isHsl) {
+  if (isHsl && weekModel === 'mon_sun') {
     // First Monday on or after the upload start. Sun(0)→+1, Mon(1)→0, Tue(2)→+6, …
     const toMon = dow === 1 ? 0 : dow === 0 ? 1 : 8 - dow;
     const mon = new Date(s.getFullYear(), s.getMonth(), s.getDate() + toMon);
@@ -529,14 +533,28 @@ export function checkHslPabEligibility(
   pabStart: Date,
   pabEnd: Date,
   hoursByDateKey: Map<string, number>,
+  /** Week anchor: 'mon_sun' (legacy) walks Mon→Sun 7-day blocks; 'sun_sat'
+   *  (post-cutover) walks Sun→Sat blocks. The ≥5-of-7 quota, weekend credit and
+   *  overnight forward/backward logic are IDENTICAL in both — only the 7-day
+   *  grouping anchor moves. Defaults to 'mon_sun'. Callers must pass the matching
+   *  period end (closing Sunday for mon_sun, closing Saturday for sun_sat — see
+   *  getHslAdjustedEnd). */
+  weekModel: 'mon_sun' | 'sun_sat' = 'mon_sun',
 ): boolean {
   const endTime = new Date(pabEnd.getFullYear(), pabEnd.getMonth(), pabEnd.getDate()).getTime();
 
-  // Advance to the first Monday on or after pabStart
+  // Anchor to the first day of the first week. mon_sun → first Monday on/after
+  // pabStart; sun_sat → the Sunday on/before pabStart (so a boundary Sunday that
+  // opens the month's first Sun→Sat week is included, keeping PAB-month ownership
+  // Monday-based while the eligibility weeks run Sun→Sat).
   const cur = new Date(pabStart.getFullYear(), pabStart.getMonth(), pabStart.getDate());
   const dow = cur.getDay(); // Sun=0 … Sat=6
-  const daysToMon = dow === 0 ? 1 : dow === 1 ? 0 : 8 - dow;
-  cur.setDate(cur.getDate() + daysToMon);
+  if (weekModel === 'sun_sat') {
+    cur.setDate(cur.getDate() - dow); // back to Sunday on/before
+  } else {
+    const daysToMon = dow === 0 ? 1 : dow === 1 ? 0 : 8 - dow;
+    cur.setDate(cur.getDate() + daysToMon);
+  }
 
   if (cur.getTime() > endTime) return true; // nothing to evaluate
 

@@ -5,9 +5,18 @@ Live screen mirroring inside the Accounting dashboard. Building on the existing
 co-browse lets one accountant **Observe** another and watch their actual screen in
 real time -- modals opening, formulas being typed, scrolling -- not just cursors.
 
-Code: `src/hooks/useCobrowse.ts`, `src/components/accounting/CobrowseSurface.tsx`,
-integrated in `src/components/accounting/AccountingCollabLayer.tsx` (mounted from
-`src/App.tsx`).
+Code: `src/hooks/useCobrowse.ts`, `src/components/collab/CobrowseSurface.tsx`,
+integrated in the shared `src/components/collab/CollabLayer.tsx` engine. The
+Accounting dashboard mounts it via the thin wrapper
+`src/components/accounting/AccountingCollabLayer.tsx` (from `src/App.tsx`).
+
+**Now generalized (2026-06-30):** `CollabLayer` is dashboard-agnostic — it takes
+its Realtime channel names, section-label map, and accent as props. The HR
+dashboard has full parity via `src/components/hr/HrCollabLayer.tsx` (mounted from
+`HrApp.tsx`) on its **own** room (`hr-collab` / `hr-cobrowse`, emerald accent),
+so HR collaborators never mix with Accounting collaborators. `useCobrowse` takes
+an optional `channel` (default `accounting-cobrowse`), so the CEO live-payroll
+driver/observer and the standalone payroll-clerk driver are unaffected.
 
 ---
 

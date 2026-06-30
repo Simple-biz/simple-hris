@@ -187,6 +187,13 @@ export function computePabEligibleEmails(args: {
    * Matching days auto-pass the >= 7 h gate regardless of Hubstaff hours.
    */
   usHolidayDates?: Set<string>;
+  /**
+   * HSL week model for the period. 'sun_sat' (post-cutover) walks the ≥5/7
+   * eligibility over Sun→Sat weeks; 'mon_sun' (default/legacy) over Mon→Sun.
+   * Only affects HSL employees. The caller must compute `hslAdjustedEnd` with
+   * the matching model (see getHslAdjustedEnd).
+   */
+  weekModel?: 'mon_sun' | 'sun_sat';
 }): Set<string> {
   const { rows, pabRange, hslAdjustedEnd, hslEmails } = args;
   const nonHslRange = args.pabRangeSunSat ?? pabRange;
@@ -210,7 +217,12 @@ export function computePabEligibleEmails(args: {
 
     let passes: boolean;
     if (isHsl) {
-      passes = checkHslPabEligibility(pabRange.start, hslAdjustedEnd, hoursByDateKey);
+      passes = checkHslPabEligibility(
+        pabRange.start,
+        hslAdjustedEnd,
+        hoursByDateKey,
+        args.weekModel ?? 'mon_sun',
+      );
     } else {
       const weeks = buildPabCalendarWeeks(nonHslRange.start, nonHslRange.end, hoursByDateKey);
       const flat = weeks.flat();
@@ -227,10 +239,19 @@ export function computePabEligibleEmails(args: {
  * week so a full week is evaluated. Returns the original end if it's
  * already a Sunday.
  */
-export function getHslAdjustedEnd(pabEnd: Date): Date {
+export function getHslAdjustedEnd(
+  pabEnd: Date,
+  /** 'mon_sun' (legacy) snaps to the closing SUNDAY; 'sun_sat' (post-cutover)
+   *  snaps to the closing SATURDAY. Defaults to 'mon_sun'. */
+  weekModel: 'mon_sun' | 'sun_sat' = 'mon_sun',
+): Date {
   const d = new Date(pabEnd.getFullYear(), pabEnd.getMonth(), pabEnd.getDate());
   const dow = d.getDay(); // Sun=0 … Sat=6
-  if (dow !== 0) d.setDate(d.getDate() + (7 - dow));
+  if (weekModel === 'sun_sat') {
+    if (dow !== 6) d.setDate(d.getDate() + ((6 - dow + 7) % 7)); // forward to Saturday
+  } else {
+    if (dow !== 0) d.setDate(d.getDate() + (7 - dow)); // forward to Sunday
+  }
   return d;
 }
 

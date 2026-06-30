@@ -53,12 +53,13 @@ export const ACTIVE_VIEW_KEY = 'active_view';
 export const SESSION_EMAIL_KEY = 'employee_session_email';
 
 export function viewsForRoles(roles: Role[]): AppView[] {
-  // Admin = keys to the castle: every management dashboard plus their own
-  // employee portal. Contractor is an external-identity view (it replaces the
-  // employee portal for non-staff), not a management surface, so it's the one
-  // dashboard an admin is not dropped into.
+  // Admin = keys to the castle: EVERY dashboard, including their own employee
+  // portal AND the contractor view, available together. Contractor is normally
+  // an external-identity view that replaces the employee portal for non-staff,
+  // but an admin can switch into it (to preview/operate the contractor surface)
+  // without giving up the employee dashboard.
   if (roles.includes('admin')) {
-    return VIEW_PRIORITY.filter((v) => v !== 'contractor');
+    return [...VIEW_PRIORITY];
   }
   const set = new Set<AppView>();
   if (!roles.includes('contractor')) set.add('employee');

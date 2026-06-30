@@ -8,7 +8,7 @@ import {
 } from '@/components/ui/dialog';
 import type { PayrollLivePeer } from '@/hooks/usePayrollLivePresence';
 import { useCobrowse } from '@/hooks/useCobrowse';
-import CobrowseSurface from '@/components/accounting/CobrowseSurface';
+import CobrowseSurface from '@/components/collab/CobrowseSurface';
 import { getSupabaseBrowserClient } from '@/lib/supabase/browser';
 import { normEmail } from '@/lib/email/norm-email';
 

@@ -57,6 +57,7 @@ import NotificationsPanel from '@/components/notifications/NotificationsPanel';
 import type { EmployeeRow } from '@/lib/supabase/employees';
 import { getHrTabCache, hasHrTabCache, setHrTabCache, HR_TAB_CACHE_KEYS } from '@/lib/hr/tab-cache';
 import DeptFilter from './DeptFilter';
+import HrCollabLayer from './HrCollabLayer';
 
 function isPlausibleEmail(s: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s.trim());
@@ -72,6 +73,8 @@ export default function HrApp() {
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [viewerEmail, setViewerEmail] = useState<string | null>(null);
   const [authChecked, setAuthChecked] = useState(false);
+  // Container for the collaboration overlay (cursors map to this rect).
+  const mainRef = useRef<HTMLElement | null>(null);
 
   // Per-tab feature-permission overlay (hidden until granted; admin bypasses).
   const { ready: permsReady, allowedTabs, canEditTab } =
@@ -193,7 +196,7 @@ export default function HrApp() {
         constructionTabs={constructionHrTabs}
       />
 
-      <main className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+      <main ref={mainRef} className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
         <header className="flex shrink-0 items-center gap-3 border-b border-emerald-100/70 bg-white/95 px-3 py-2.5 backdrop-blur-md dark:border-emerald-950/40 dark:bg-[#0d1117]/95 md:hidden">
           <Button
             type="button"
@@ -243,6 +246,14 @@ export default function HrApp() {
           </AnimatePresence>
         </div>
         <AppFooter />
+        {/* Live "who's in HR" collaboration overlay — presence rail, cursors,
+            click ripples, Observe (live screen mirror), and Ping. Scoped to its
+            own Realtime room so it never mixes with Accounting collaborators. */}
+        <HrCollabLayer
+          selfEmail={viewerEmail}
+          section={activeTab}
+          containerRef={mainRef}
+        />
       </main>
 
       <Toaster richColors position="top-center" />

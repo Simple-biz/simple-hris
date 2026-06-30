@@ -26,7 +26,7 @@ import { normEmail } from '@/lib/email/norm-email';
  * is preserved.
  */
 
-const CHANNEL = 'accounting-cobrowse';
+const DEFAULT_CHANNEL = 'accounting-cobrowse';
 // Flip to false to silence the co-browse console diagnostics.
 const DEBUG = true;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -53,6 +53,13 @@ interface Args {
   selfEmail: string | null | undefined;
   /** The peer we want to watch right now, or null. */
   observedEmail: string | null;
+  /**
+   * Realtime channel for the rrweb stream. Dashboard-scoped so HR observers
+   * only ever stream/receive HR screens. Defaults to the Accounting channel so
+   * existing callers (Accounting collab layer, CEO live-payroll driver) are
+   * unaffected.
+   */
+  channel?: string;
 }
 
 interface Result {
@@ -68,7 +75,7 @@ type RrwebMod = typeof import('rrweb');
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyEvent = any;
 
-export function useCobrowse({ selfEmail, observedEmail }: Args): Result {
+export function useCobrowse({ selfEmail, observedEmail, channel = DEFAULT_CHANNEL }: Args): Result {
   const normSelf = selfEmail ? normEmail(selfEmail) ?? selfEmail.trim().toLowerCase() : null;
 
   const [status, setStatus] = useState<CobrowseStatus>('idle');
@@ -269,7 +276,7 @@ export function useCobrowse({ selfEmail, observedEmail }: Args): Result {
     const supabase = getSupabaseBrowserClient();
     if (!supabase || !normSelf) return;
 
-    const ch = supabase.channel(CHANNEL, { config: { broadcast: { self: false } } });
+    const ch = supabase.channel(channel, { config: { broadcast: { self: false } } });
     channelRef.current = ch;
     const send = (m: CbMsg) => ch.send({ type: 'broadcast', event: 'cb', payload: m });
     sendRef.current = send;
@@ -307,7 +314,7 @@ export function useCobrowse({ selfEmail, observedEmail }: Args): Result {
       channelRef.current = null;
       sendRef.current = null;
     };
-  }, [normSelf, noteWatcher, stopRecording, onChunk]);
+  }, [normSelf, channel, noteWatcher, stopRecording, onChunk]);
 
   // Prune stale watchers; stop recording once nobody is watching.
   useEffect(() => {

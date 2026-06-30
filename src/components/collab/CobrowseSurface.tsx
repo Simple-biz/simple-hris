@@ -22,12 +22,15 @@ export default function CobrowseSurface({
   status,
   setReplayContainer,
   onStop,
+  surfaceLabel = 'Accounting dashboard',
 }: {
   driverName: string;
   accent: { bg: string; glow: string };
   status: CobrowseStatus;
   setReplayContainer: (el: HTMLElement | null) => void;
   onStop: () => void;
+  /** Dashboard name shown in the "waiting" copy, e.g. "HR dashboard". */
+  surfaceLabel?: string;
 }) {
   return (
     <motion.div
@@ -83,7 +86,7 @@ export default function CobrowseSurface({
             <Loader2 className="h-7 w-7 animate-spin" style={{ color: accent.bg }} />
             <div className="text-sm font-medium">Waiting for {driverName}&apos;s screen…</div>
             <div className="max-w-xs text-center text-[11px] text-zinc-500">
-              They need to be online and active in the Accounting dashboard for the live mirror to start.
+              They need to be online and active in the {surfaceLabel} for the live mirror to start.
             </div>
           </div>
         )}
