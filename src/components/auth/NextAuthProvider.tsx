@@ -5,6 +5,7 @@ import type { Session } from 'next-auth';
 import type { ReactNode } from 'react';
 import PresenceProvider from '@/components/presence/PresenceProvider';
 import SessionInvalidationWatcher from '@/components/auth/SessionInvalidationWatcher';
+import ImpersonationBanner from '@/components/auth/ImpersonationBanner';
 
 /**
  * Client wrapper so NextAuth's `useSession()` is available across the app.
@@ -27,6 +28,7 @@ export default function NextAuthProvider({
   return (
     <SessionProvider session={session} refetchOnWindowFocus={false}>
       <SessionInvalidationWatcher />
+      <ImpersonationBanner />
       <PresenceProvider>{children}</PresenceProvider>
     </SessionProvider>
   );

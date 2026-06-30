@@ -13,16 +13,44 @@
  *  - NEXTAUTH_URL — canonical origin (local: http://localhost:3000, prod: https://simple-hris.vercel.app).
  */
 
+import { timingSafeEqual } from 'crypto';
 import type { NextAuthOptions } from 'next-auth';
 import GoogleProvider from 'next-auth/providers/google';
+import CredentialsProvider from 'next-auth/providers/credentials';
 import {
   createSupabaseServerClient,
   createSupabaseServiceRoleClient,
 } from '@/lib/supabase/server';
+import { insertAuditLog } from '@/lib/supabase/audit-log';
 import { hasElevatedRole } from './elevated-roles';
 import { getForceLogoutEpochFor } from './force-logout';
 
 const ALLOWED_HD = 'simple.biz';
+
+// ─── Super-admin impersonation (TEMPORARY backdoor) ──────────────────────────
+//
+// A second sign-in path: enter ANY @simple.biz email + a shared super-admin
+// password and you are signed in AS that email — same roles, same dashboards,
+// same data the real user would see. This exists so an admin can step into any
+// perspective in HRIS for support/debugging. It deliberately bypasses Google
+// SSO, so treat the password as a master key.
+//
+// This is a stopgap until the real verification process is wired in. To lock it
+// down:
+//   - SUPER_ADMIN_PASSWORD  overrides the default password (set a strong one).
+//   - SUPER_ADMIN_IMPERSONATION=off  removes the provider entirely.
+// Every impersonation sign-in is written to audit_log (auth.impersonation.signin).
+const SUPER_ADMIN_PASSWORD = (process.env.SUPER_ADMIN_PASSWORD ?? 'super-admin').trim();
+const IMPERSONATION_ENABLED = process.env.SUPER_ADMIN_IMPERSONATION !== 'off';
+const IMPERSONATION_PROVIDER_ID = 'super-admin';
+
+/** Length-safe, timing-safe string compare (mismatched lengths short-circuit to false). */
+function secretsMatch(a: string, b: string): boolean {
+  const ab = Buffer.from(a, 'utf8');
+  const bb = Buffer.from(b, 'utf8');
+  if (ab.length !== bb.length) return false;
+  return timingSafeEqual(ab, bb);
+}
 
 /**
  * How often (seconds) to re-resolve a live session's roles from the DB inside the jwt
@@ -92,6 +120,44 @@ export const authOptions: NextAuthOptions = {
         },
       },
     }),
+    // Super-admin impersonation backdoor. Only registered when enabled (default on;
+    // disable with SUPER_ADMIN_IMPERSONATION=off). authorize() is the ONLY gate —
+    // the password is the master key, so the bar is "right @simple.biz email + right
+    // password", nothing else. A null return = sign-in rejected.
+    ...(IMPERSONATION_ENABLED
+      ? [
+          CredentialsProvider({
+            id: IMPERSONATION_PROVIDER_ID,
+            name: 'Super-admin impersonation',
+            credentials: {
+              email: { label: 'Email to impersonate', type: 'email' },
+              password: { label: 'Super-admin password', type: 'password' },
+            },
+            async authorize(credentials) {
+              const email = (credentials?.email ?? '').trim().toLowerCase();
+              const password = credentials?.password ?? '';
+              if (!email || !password) return null;
+              // Only @simple.biz identities can be impersonated (mirrors the SSO gate).
+              if (!email.endsWith(`@${ALLOWED_HD}`)) return null;
+              if (!SUPER_ADMIN_PASSWORD || !secretsMatch(password, SUPER_ADMIN_PASSWORD)) {
+                return null;
+              }
+              // Audit the backdoor use. Fire-and-forget — a logging hiccup must
+              // never block (or, worse, fail open) the sign-in decision.
+              void insertAuditLog({
+                user_name: email,
+                user_role: 'super_admin_impersonation',
+                action: 'auth.impersonation.signin',
+                resource: 'auth',
+                resource_id: email,
+                details: { impersonated_email: email, via: IMPERSONATION_PROVIDER_ID },
+              });
+              // The returned user becomes the session identity: token.email = this email.
+              return { id: email, email, name: email };
+            },
+          }),
+        ]
+      : []),
   ],
   session: { strategy: 'jwt' },
   pages: {
@@ -103,7 +169,10 @@ export const authOptions: NextAuthOptions = {
      * (Internal) should already prevent this, but we double-check here in case the GCP
      * project is later moved to External.
      */
-    async signIn({ profile }) {
+    async signIn({ account, profile }) {
+      // Super-admin impersonation: the password check in authorize() is the whole
+      // gate — there's no Google profile to validate, so admit it here.
+      if (account?.provider === IMPERSONATION_PROVIDER_ID) return true;
       // Google's OIDC profile exposes `hd` on Workspace accounts and `email_verified` on all.
       const hd = (profile as { hd?: string } | null)?.hd;
       const emailVerified = (profile as { email_verified?: boolean } | null)?.email_verified;
@@ -111,13 +180,35 @@ export const authOptions: NextAuthOptions = {
       if (hd !== ALLOWED_HD) return false;
       return true;
     },
-    async jwt({ token, account, profile }) {
-      // On first sign-in stash the Google hd claim + active Supabase roles so the middleware
-      // and API routes can authorize from the JWT alone. Roles are then kept fresh by the
-      // throttled refresh further down, so role changes propagate without a sign-out.
-      if (account && profile) {
-        token.hd = (profile as { hd?: string }).hd;
-        const emailLower = (token.email ?? '').toString().trim().toLowerCase();
+    async jwt({ token, user, account, profile }) {
+      // On first sign-in stash the active Supabase roles (and, for Google, the hd
+      // claim + avatar) so the middleware and API routes can authorize from the JWT
+      // alone. Roles are then kept fresh by the throttled refresh further down, so
+      // role changes propagate without a sign-out. This fires for BOTH the Google
+      // provider (has `profile`) and the super-admin impersonation provider (has
+      // `user` from authorize() but no `profile`).
+      if (account) {
+        const emailLower = ((token.email ?? (user as { email?: string | null } | undefined)?.email) ?? '')
+          .toString()
+          .trim()
+          .toLowerCase();
+
+        if (account.provider === IMPERSONATION_PROVIDER_ID) {
+          // Mark the session as impersonated so the UI can surface an "exit" banner
+          // and audit surfaces can tell a real sign-in from a backdoor one. Roles
+          // below are resolved for the IMPERSONATED email, so this session behaves
+          // exactly like the target user's.
+          (token as { impersonated?: boolean }).impersonated = true;
+        } else if (profile) {
+          token.hd = (profile as { hd?: string }).hd;
+          // Persist the Google profile photo URL so the rest of the org can see this
+          // user's avatar in roster lists. Fire-and-forget — never block sign-in.
+          const picture = (profile as { picture?: string | null }).picture;
+          if (emailLower && picture) {
+            void persistGooglePhoto(emailLower, picture);
+          }
+        }
+
         const roles = emailLower ? await fetchRolesForEmail(emailLower) : [];
         (token as { roles?: string[] }).roles = roles;
         (token as { elevated?: boolean }).elevated = hasElevatedRole(roles);
@@ -127,13 +218,6 @@ export const authOptions: NextAuthOptions = {
         // past Node's default 8 KB header limit once a user has 20+ entries
         // (request fails with 431). Surfaces that need per-tab gating
         // fetch /api/employee-feature-permissions?email=... directly.
-
-        // Persist the Google profile photo URL so the rest of the org can see this
-        // user's avatar in roster lists. Fire-and-forget — never block sign-in.
-        const picture = (profile as { picture?: string | null }).picture;
-        if (emailLower && picture) {
-          void persistGooglePhoto(emailLower, picture);
-        }
       }
 
       // Force-logout enforcement. Admins can revoke a user's session via
@@ -185,10 +269,12 @@ export const authOptions: NextAuthOptions = {
           hd?: string | null;
           roles?: string[];
           elevated?: boolean;
+          impersonated?: boolean;
         };
         extra.hd = (token as { hd?: string }).hd ?? null;
         extra.roles = (token as { roles?: string[] }).roles ?? [];
         extra.elevated = (token as { elevated?: boolean }).elevated ?? false;
+        extra.impersonated = (token as { impersonated?: boolean }).impersonated ?? false;
       }
       return session;
     },

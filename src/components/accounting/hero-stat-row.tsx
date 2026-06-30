@@ -76,11 +76,15 @@ export function HeroStatRow({
   tone,
   label,
   value,
+  tooltip,
 }: {
   Icon: React.ComponentType<{ className?: string }>;
   tone: AttentionTone;
   label: string;
   value: number | null;
+  /** Optional rich hover explainer. When set, the row gains a "?"-style affordance
+   *  and reveals this content (hover or keyboard focus) in a floating card. */
+  tooltip?: React.ReactNode;
 }) {
   const palette = ATTENTION_PALETTE[tone];
   return (
@@ -89,7 +93,9 @@ export function HeroStatRow({
         'flex items-center gap-2.5 rounded-xl border bg-stone-50/70 px-3 py-2 backdrop-blur-md transition-colors',
         palette.ring,
         'dark:bg-zinc-900/60',
+        tooltip && 'group relative cursor-help focus:outline-none',
       )}
+      tabIndex={tooltip ? 0 : undefined}
     >
       <span
         className={cn(
@@ -110,6 +116,14 @@ export function HeroStatRow({
       >
         {value == null ? '—' : value.toLocaleString('en-US')}
       </span>
+      {tooltip && (
+        <div
+          role="tooltip"
+          className="pointer-events-none absolute bottom-full right-0 z-30 mb-2 w-[280px] origin-bottom-right scale-95 rounded-xl border border-zinc-200 bg-white p-3 text-left text-zinc-700 opacity-0 shadow-xl shadow-zinc-900/10 transition-all duration-150 group-hover:scale-100 group-hover:opacity-100 group-focus:scale-100 group-focus:opacity-100 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:shadow-black/40"
+        >
+          {tooltip}
+        </div>
+      )}
     </div>
   );
 }

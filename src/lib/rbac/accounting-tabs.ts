@@ -39,8 +39,10 @@ const TAB_TO_FEATURE: Record<AccountingTabId, string> = {
  */
 const BYPASS_PERMS_ROLES = new Set(['admin']);
 
-/** Always-visible tabs (read-only landing) so a dashboard is never blank. */
-const ALWAYS_VISIBLE_TABS = new Set<AccountingTabId>(['overview']);
+/** Read-only FALLBACK tabs: shown only when the overlay grants nothing else, so
+ *  a dashboard is never blank. NOT unconditionally visible — an admin can hide
+ *  these as long as the user still has at least one other granted tab. */
+const FALLBACK_TABS = new Set<AccountingTabId>(['overview']);
 
 /**
  * Role baseline. The accounting dashboard no longer restricts tabs by role --
@@ -56,9 +58,10 @@ export function allowedAccountingTabsForRoles(_roles: readonly string[]): Accoun
  * Visible accounting tabs after the per-user feature-permission overlay.
  *
  * Model: HIDDEN UNTIL GRANTED. A user sees a tab only if the admin granted it
- * `view` or `edit` (plus `overview`, always visible as a read-only landing).
- * The `admin` role bypasses the overlay entirely. There is no role-based tab
- * special-casing -- whatever the admin sets per tab is what shows.
+ * `view` or `edit`. `overview` is a read-only FALLBACK landing, shown only when
+ * the overlay grants no other tab — so an admin CAN hide it once the user has at
+ * least one other tab. The `admin` role bypasses the overlay entirely. There is
+ * no role-based tab special-casing -- whatever the admin sets per tab is what shows.
  */
 export function allowedAccountingTabsForUser(
   roles: readonly string[],
@@ -66,11 +69,15 @@ export function allowedAccountingTabsForUser(
 ): AccountingTabId[] {
   if (roles.some((r) => BYPASS_PERMS_ROLES.has(r))) return [...ACCOUNTING_TAB_IDS];
   const accountingPerms = perms?.accounting ?? {};
-  return ACCOUNTING_TAB_IDS.filter((tab) => {
-    if (ALWAYS_VISIBLE_TABS.has(tab)) return true;
+  const granted = ACCOUNTING_TAB_IDS.filter((tab) => {
     const access = accountingPerms[TAB_TO_FEATURE[tab]];
     return access === 'view' || access === 'edit';
   });
+  // Honor the overlay when it grants at least one tab (lets an admin hide
+  // `overview`); otherwise fall back to the read-only landing so the dashboard
+  // is never fully blank.
+  if (granted.length > 0) return granted;
+  return ACCOUNTING_TAB_IDS.filter((tab) => FALLBACK_TABS.has(tab));
 }
 
 /**

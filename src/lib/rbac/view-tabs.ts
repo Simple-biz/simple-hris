@@ -13,8 +13,12 @@ import type { FeatureAccess, FeaturePermissionsMap, FeatureViewKey } from '@/lib
  * route), so a freshly-assigned dashboard is instantly usable — the admin then
  * downgrades a tab to `view` or hides it. Two deliberate exceptions:
  *   - `admin` role bypasses gating entirely (sees + edits everything).
- *   - the `overview` tab is always visible (read-only landing) so a dashboard
- *     is never fully blank.
+ *   - the `overview` tab is a read-only FALLBACK landing: it shows only when the
+ *     overlay would otherwise grant the user NO tabs (legacy/unprovisioned
+ *     accounts), so a dashboard is never fully blank. Once the user has any other
+ *     granted tab, `overview` obeys the overlay like every other tab — so an
+ *     admin CAN hide it. (It is NOT an unconditional always-on tab; that made the
+ *     "hide Overview" grid setting a silent no-op.)
  *
  * Pure logic only (no runtime import of the server-side feature-permissions
  * module) so this is safe to use in client bundles. Types are imported with
@@ -92,8 +96,10 @@ export const VIEW_TAB_IDS: Record<FeatureViewKey, readonly string[]> = {
 /** Roles that bypass the per-tab overlay and always see/edit every tab. */
 const BYPASS_PERMS_ROLES = new Set(['admin']);
 
-/** Tabs that are always visible regardless of the overlay (read-only landing). */
-const ALWAYS_VISIBLE_TABS = new Set(['overview']);
+/** Read-only FALLBACK tabs: shown only when the overlay grants nothing else, so
+ *  a dashboard is never blank. NOT unconditionally visible — an admin can hide
+ *  these as long as the user still has at least one other granted tab. */
+const FALLBACK_TABS = new Set(['overview']);
 
 /** UI tab id -> feature key stored in `employee_feature_permissions`. */
 export function tabFeatureKey(tabId: string): string {
@@ -120,14 +126,20 @@ export function allowedTabsForUser(
 ): string[] {
   const ids = VIEW_TAB_IDS[view] ?? [];
   if (hasBypass(roles)) return [...ids];
-  return ids.filter((tabId) => {
-    if (ALWAYS_VISIBLE_TABS.has(tabId)) return true;
+  const granted = ids.filter((tabId) => {
     const access = resolve(perms, view, tabFeatureKey(tabId));
     return access === 'view' || access === 'edit';
   });
+  // Honor the overlay exactly when it grants at least one tab — this is what lets
+  // an admin hide `overview` (the user simply lands on their first other tab).
+  if (granted.length > 0) return granted;
+  // Overlay grants nothing (legacy/unprovisioned, or every tab hidden): fall back
+  // to the read-only landing so the dashboard is never fully blank.
+  return ids.filter((tabId) => FALLBACK_TABS.has(tabId));
 }
 
-/** Whether a tab is visible to a user. */
+/** Whether a tab is visible to a user. Delegates to {@link allowedTabsForUser}
+ *  so the fallback-landing rule for `overview` is applied consistently. */
 export function canAccessTabForUser(
   view: FeatureViewKey,
   tabId: string,
@@ -135,9 +147,7 @@ export function canAccessTabForUser(
   perms: FeaturePermissionsMap | null | undefined,
 ): boolean {
   if (hasBypass(roles)) return true;
-  if (ALWAYS_VISIBLE_TABS.has(tabId)) return true;
-  const access = resolve(perms, view, tabFeatureKey(tabId));
-  return access === 'view' || access === 'edit';
+  return allowedTabsForUser(view, roles, perms).includes(tabId);
 }
 
 /** Whether a user may edit (mutate) within a tab. Admin bypasses; otherwise

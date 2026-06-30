@@ -332,6 +332,15 @@ interface SimpleViewProps {
   /** Bonuses keyed in (KPI Calculator → catalog + HSL entries) for the active
    *  payroll week. null when no single week is selected or while resolving. */
   bonusesKeyedIn: number | null;
+  /** How many Hubstaff work emails for the active payroll scope also exist on
+   *  the Global Master List (set intersection). null while payroll is resolving. */
+  emailsMatched: number | null;
+  /** On the Global Master List but with NO Hubstaff hours this scope (directory
+   *  people who didn't work / aren't in this payroll). */
+  masterOnlyCount: number | null;
+  /** In Hubstaff but NOT on the Global Master List (worked but missing from the
+   *  directory — a data gap to reconcile). */
+  hubstaffOnlyCount: number | null;
   pendingDisputes: number | null;
   oldestDisputeDays: number | null;
   pendingLeaves: number | null;
@@ -427,6 +436,9 @@ function SimpleView({
   payrollWorkerCount,
   masterTotal,
   bonusesKeyedIn,
+  emailsMatched,
+  masterOnlyCount,
+  hubstaffOnlyCount,
   pendingDisputes,
   oldestDisputeDays,
   pendingLeaves,
@@ -881,6 +893,61 @@ function SimpleView({
                 tone="info"
                 label="Bonuses keyed in"
                 value={bonusesKeyedIn}
+              />
+              <HeroStatRow
+                Icon={CheckCircle2}
+                tone="ok"
+                label="Hubstaff ↔ Master matches"
+                value={emailsMatched}
+                tooltip={
+                  <div className="space-y-2">
+                    <div>
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-400">
+                        Master List ↔ Hubstaff
+                      </p>
+                      <p className="mt-0.5 text-[11px] leading-snug text-zinc-500 dark:text-zinc-400">
+                        The Global Master List is the employee directory. Hubstaff is the
+                        2nd pass — who actually logged hours this payroll.
+                      </p>
+                    </div>
+                    <ul className="space-y-1.5 text-[12px]">
+                      <li className="flex items-center justify-between gap-3">
+                        <span className="flex items-center gap-1.5 text-emerald-700 dark:text-emerald-300">
+                          <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                          On Master &amp; worked
+                        </span>
+                        <span className="font-mono font-semibold tabular-nums">
+                          {emailsMatched == null ? '—' : emailsMatched.toLocaleString('en-US')}
+                        </span>
+                      </li>
+                      <li className="flex items-center justify-between gap-3">
+                        <span className="flex items-center gap-1.5 text-zinc-600 dark:text-zinc-300">
+                          <span className="h-1.5 w-1.5 rounded-full bg-zinc-400" />
+                          On Master, no hours
+                        </span>
+                        <span className="font-mono font-semibold tabular-nums">
+                          {masterOnlyCount == null ? '—' : masterOnlyCount.toLocaleString('en-US')}
+                        </span>
+                      </li>
+                      <li className="flex items-center justify-between gap-3">
+                        <span className="flex items-center gap-1.5 text-rose-700 dark:text-rose-300">
+                          <span className="h-1.5 w-1.5 rounded-full bg-rose-500" />
+                          In Hubstaff, not on Master
+                        </span>
+                        <span className="font-mono font-semibold tabular-nums">
+                          {hubstaffOnlyCount == null ? '—' : hubstaffOnlyCount.toLocaleString('en-US')}
+                        </span>
+                      </li>
+                    </ul>
+                    {hubstaffOnlyCount != null && hubstaffOnlyCount > 0 && (
+                      <p className="border-t border-zinc-100 pt-2 text-[11px] leading-snug text-rose-600 dark:border-zinc-800 dark:text-rose-400">
+                        {hubstaffOnlyCount.toLocaleString('en-US')} worked but{' '}
+                        {hubstaffOnlyCount === 1 ? "isn't" : "aren't"} on the Master List —
+                        reconcile the directory.
+                      </p>
+                    )}
+                  </div>
+                }
               />
             </motion.div>
           </motion.div>
@@ -3008,14 +3075,20 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
     return filteredEmployees.slice(start, start + PAGE_SIZE);
   }, [filteredEmployees, safePage]);
 
-  const { inPayrollNotMaster, inMasterNotPayroll } = useMemo(() => {
+  const { inPayrollNotMaster, inMasterNotPayroll, emailsMatched } = useMemo(() => {
     const masterSet = buildMasterEmailSet(employees);
     if (payrollEmailsNorm === null) {
-      return { inPayrollNotMaster: null as number | null, inMasterNotPayroll: null as number | null };
+      return {
+        inPayrollNotMaster: null as number | null,
+        inMasterNotPayroll: null as number | null,
+        emailsMatched: null as number | null,
+      };
     }
     let inPayrollNotMasterCount = 0;
+    let matchedCount = 0;
     for (const em of payrollEmailsNorm) {
-      if (!masterSet.has(em)) inPayrollNotMasterCount++;
+      if (masterSet.has(em)) matchedCount++;
+      else inPayrollNotMasterCount++;
     }
     let inMasterNotPayrollCount = 0;
     for (const em of masterSet) {
@@ -3024,6 +3097,7 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
     return {
       inPayrollNotMaster: inPayrollNotMasterCount,
       inMasterNotPayroll: inMasterNotPayrollCount,
+      emailsMatched: matchedCount,
     };
   }, [employees, payrollEmailsNorm]);
 
@@ -3269,6 +3343,9 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
               payrollWorkerCount={payrollWorkerCount}
               masterTotal={employees.length}
               bonusesKeyedIn={bonusesKeyedIn}
+              emailsMatched={emailsMatched}
+              masterOnlyCount={inMasterNotPayroll}
+              hubstaffOnlyCount={inPayrollNotMaster}
               pendingDisputes={pendingDisputes}
               oldestDisputeDays={oldestDisputeDays}
               pendingLeaves={pendingLeaves}

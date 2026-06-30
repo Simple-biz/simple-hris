@@ -1,9 +1,9 @@
 'use client';
 
-import { Suspense, useEffect, useRef, useState } from 'react';
+import { Suspense, useEffect, useRef, useState, type FormEvent } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { signIn, signOut, useSession } from 'next-auth/react';
-import { Loader2, LogIn, AlertCircle, Volume2, VolumeX } from 'lucide-react';
+import { Loader2, LogIn, AlertCircle, Volume2, VolumeX, ShieldAlert, ArrowRight } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Toaster } from '@/components/ui/sonner';
@@ -78,6 +78,13 @@ function LoginPageInner() {
   const videoStartedRef = useRef(false);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const finishedRef = useRef(false);
+
+  // Super-admin impersonation form (email + shared password → sign in AS that email).
+  const [showSuperAdmin, setShowSuperAdmin] = useState(false);
+  const [saEmail, setSaEmail] = useState('');
+  const [saPassword, setSaPassword] = useState('');
+  const [saLoading, setSaLoading] = useState(false);
+  const [saError, setSaError] = useState<string | null>(null);
 
   const authError = searchParams?.get('error') ?? null;
 
@@ -237,6 +244,68 @@ function LoginPageInner() {
     }
     setVideoActive(true);
     window.setTimeout(finishTransition, 9000);
+  }
+
+  // Super-admin impersonation sign-in. Validates email + shared password via the
+  // NextAuth `super-admin` credentials provider, then — on success — resolves the
+  // impersonated user's landing view and hops straight there. We deliberately SKIP
+  // the cinematic transition video (it's an admin fast-path, not the front door):
+  // setting videoStartedRef true makes the authenticated-status effect early-return
+  // so no overlay ever mounts.
+  async function handleSuperAdminSignIn(e: FormEvent) {
+    e.preventDefault();
+    if (saLoading) return;
+    const email = saEmail.trim().toLowerCase();
+    if (!email || !saPassword) {
+      setSaError('Enter an email and the super-admin password.');
+      return;
+    }
+    setSaError(null);
+    setSaLoading(true);
+    videoStartedRef.current = true; // suppress the transition video for this path
+
+    try {
+      const res = (await signIn('super-admin', {
+        email,
+        password: saPassword,
+        redirect: false,
+      })) as { error?: string | null; ok?: boolean } | undefined;
+
+      if (!res || res.error || res.ok === false) {
+        setSaError('That email + super-admin password was not accepted.');
+        setSaLoading(false);
+        videoStartedRef.current = false; // re-arm the video for a later Google sign-in
+        return;
+      }
+
+      // Resolve the impersonated user's roles → landing view (mirrors the Google path).
+      let roles: Role[] = [];
+      try {
+        const r = await fetch(`/api/employee-roles?email=${encodeURIComponent(email)}`);
+        const j = (await r.json()) as { rows?: { role: Role }[] };
+        roles = (j.rows ?? []).map((row) => row.role);
+      } catch {
+        /* fall through to the employee view */
+      }
+      const views = viewsForRoles(roles);
+      const target: typeof views[number] = views.includes('employee')
+        ? 'employee'
+        : defaultViewFor(views);
+
+      try {
+        sessionStorage.setItem(SESSION_EMAIL_KEY, email);
+        sessionStorage.setItem(SESSION_ROLE_KEY, target);
+        sessionStorage.setItem(ACTIVE_VIEW_KEY, target);
+      } catch {
+        /* ignore */
+      }
+
+      router.replace(`${VIEW_ROUTES[target]}?email=${encodeURIComponent(email)}`);
+    } catch {
+      setSaError('Sign-in failed. Please try again.');
+      setSaLoading(false);
+      videoStartedRef.current = false;
+    }
   }
 
   // When the browser blocks autoplay-with-audio, add a one-shot document gesture listener so the
@@ -449,6 +518,101 @@ function LoginPageInner() {
               <span className="text-[10px] uppercase tracking-[0.22em] text-zinc-400">Secure Access</span>
               <div className="h-px flex-1 bg-zinc-200/80" />
             </div>
+
+            {status !== 'authenticated' && (
+              <div className="w-full">
+                {!showSuperAdmin ? (
+                  <button
+                    type="button"
+                    onClick={() => setShowSuperAdmin(true)}
+                    className="mx-auto flex items-center gap-1.5 text-[11px] font-medium text-zinc-400 transition hover:text-zinc-700"
+                  >
+                    <ShieldAlert className="h-3.5 w-3.5" />
+                    Super-admin access
+                  </button>
+                ) : (
+                  <form
+                    onSubmit={handleSuperAdminSignIn}
+                    className="w-full space-y-3 rounded-2xl border border-zinc-200/80 bg-white/70 p-4 text-left shadow-sm backdrop-blur-xl"
+                  >
+                    <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-zinc-500">
+                      <ShieldAlert className="h-3.5 w-3.5 text-orange-500" />
+                      Super-admin impersonation
+                    </div>
+                    <p className="text-[11px] leading-5 text-zinc-500">
+                      Sign in as any @simple.biz account to view HRIS from their perspective.
+                    </p>
+
+                    <div className="space-y-1">
+                      <label htmlFor="sa-email" className="text-[11px] font-medium text-zinc-600">
+                        Email to impersonate
+                      </label>
+                      <input
+                        id="sa-email"
+                        type="email"
+                        autoComplete="off"
+                        value={saEmail}
+                        onChange={(ev) => setSaEmail(ev.target.value)}
+                        placeholder="someone@simple.biz"
+                        className="w-full rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 shadow-sm outline-none transition focus:border-orange-400 focus:ring-2 focus:ring-orange-200"
+                      />
+                    </div>
+
+                    <div className="space-y-1">
+                      <label htmlFor="sa-password" className="text-[11px] font-medium text-zinc-600">
+                        Super-admin password
+                      </label>
+                      <input
+                        id="sa-password"
+                        type="password"
+                        autoComplete="off"
+                        value={saPassword}
+                        onChange={(ev) => setSaPassword(ev.target.value)}
+                        placeholder="••••••••••"
+                        className="w-full rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 shadow-sm outline-none transition focus:border-orange-400 focus:ring-2 focus:ring-orange-200"
+                      />
+                    </div>
+
+                    {saError && (
+                      <div className="flex items-start gap-2 rounded-xl border border-red-200/80 bg-red-50/70 px-3 py-2 text-[11px] text-red-700">
+                        <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                        <span>{saError}</span>
+                      </div>
+                    )}
+
+                    <div className="flex items-center gap-2 pt-1">
+                      <Button
+                        type="submit"
+                        size="sm"
+                        disabled={saLoading}
+                        className="flex-1 gap-2 rounded-xl bg-zinc-900 text-white hover:bg-zinc-800"
+                      >
+                        {saLoading ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <>
+                            Sign in as user
+                            <ArrowRight className="h-4 w-4" />
+                          </>
+                        )}
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        className="rounded-xl text-zinc-500 hover:text-zinc-800"
+                        onClick={() => {
+                          setShowSuperAdmin(false);
+                          setSaError(null);
+                        }}
+                      >
+                        Cancel
+                      </Button>
+                    </div>
+                  </form>
+                )}
+              </div>
+            )}
 
             <p className="text-center text-[10px] leading-relaxed text-zinc-400">
               By signing in you agree to the company's acceptable-use policy for HR data. Sessions
