@@ -161,6 +161,37 @@ const PUBLIC_PREFIXES = [
 export async function proxy(req: NextRequest) {
   const { pathname, search } = req.nextUrl;
 
+  // -------------------------------------------------------------------------
+  // Public bank-update host isolation. MUST run before the PUBLIC_PATHS
+  // allowlist below — otherwise /login (a public path) would be served on this
+  // host and leak the HRIS sign-in page.
+  //
+  // When the request arrives on the dedicated public hostname (set via the
+  // BANK_UPDATE_PUBLIC_HOST env var, e.g. "secure-bank-update.vercel.app"), we
+  // expose ONLY the OTP bank-update flow: the /update-bank-info page and its
+  // /api/bank-update/* endpoints. EVERYTHING else is turned away so the full
+  // HRIS (admin, login, dashboards) never surfaces on this domain — non-bank
+  // API paths 404; any other page path redirects to the form so even the bare
+  // host lands somewhere useful. Static assets bypass this via the matcher.
+  //
+  // Inert until the env var is set, and only fires when the host matches — so
+  // the normal HRIS domain is completely unaffected.
+  // -------------------------------------------------------------------------
+  const bankHost = process.env.BANK_UPDATE_PUBLIC_HOST?.trim().toLowerCase();
+  if (bankHost && req.headers.get('host')?.toLowerCase() === bankHost) {
+    if (pathname === '/update-bank-info') return NextResponse.next();
+    if (!pathname.startsWith('/api/bank-update/')) {
+      if (pathname.startsWith('/api/')) {
+        return new NextResponse(null, { status: 404 });
+      }
+      const url = req.nextUrl.clone();
+      url.pathname = '/update-bank-info';
+      url.search = '';
+      return NextResponse.redirect(url);
+    }
+    // /api/bank-update/* — fall through to the existing rate-limit handling below.
+  }
+
   if (PUBLIC_PATHS.has(pathname)) return NextResponse.next();
 
   // Vercel-scheduled (or external) cron callers carry no NextAuth cookie. Let
