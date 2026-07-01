@@ -788,10 +788,10 @@ export default function HrNewHireChecklist({
               <span>
                 Copy a column from Excel / Google Sheets and paste it into any cell — it fills straight
                 down. <strong>Department</strong> and <strong>Country</strong> offer a dropdown but can also be
-                typed or pasted. Tick rows to bulk-apply a department / country. A small dot in a cell&apos;s
-                corner means it&apos;s been edited before — hover it to see who and when. <strong>Lock in</strong>{' '}
-                saves this week&apos;s hires to Supabase; they then feed the per-country{' '}
-                <strong>Bulk Invite</strong> in Onboarding. Reopen any week to edit.
+                typed or pasted. Tick rows to bulk-apply a department / country. A green dot in a cell&apos;s
+                corner means it&apos;s been edited — click it to see the full history (who changed it, when, and
+                the old &rarr; new value). <strong>Lock in</strong> saves this week&apos;s hires to Supabase; they
+                then feed the per-country <strong>Bulk Invite</strong> in Onboarding. Reopen any week to edit.
               </span>
             </div>
           )}
@@ -996,7 +996,8 @@ export default function HrNewHireChecklist({
                             </td>
                             {COLUMNS.map((c, ci) => {
                               const value = row[c.key];
-                              const edit = row._editedBy?.[c.key];
+                              const edits = row._editedBy?.[c.key];
+                              const hasEdits = !!edits && edits.length > 0;
                               const listId =
                                 c.key === 'department'
                                   ? departments.length > 0 ? 'nhc-departments' : undefined
@@ -1007,13 +1008,31 @@ export default function HrNewHireChecklist({
                                 <td
                                   key={c.key}
                                   className="relative border-b border-emerald-50/80 p-0 dark:border-zinc-800/80"
-                                  title={edit ? `Last edited by ${edit.by} - ${formatLockStamp(edit.at)}` : undefined}
                                 >
-                                  {edit && (
-                                    <span
-                                      aria-hidden="true"
-                                      className="pointer-events-none absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-emerald-500/70 dark:bg-emerald-400/70"
-                                    />
+                                  {hasEdits && (
+                                    <button
+                                      type="button"
+                                      data-cell-history-dot
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        const rect = e.currentTarget.getBoundingClientRect();
+                                        const width = 300;
+                                        const maxH = 320; // matches max-h-80 below
+                                        setHistoryPopover({
+                                          label: c.label,
+                                          entries: [...(edits ?? [])].reverse(),
+                                          // Clamp within the viewport so a dot near the
+                                          // bottom edge can't push the popover off-screen.
+                                          top: Math.max(12, Math.min(rect.bottom + 6, window.innerHeight - maxH - 12)),
+                                          left: Math.max(12, Math.min(rect.left, window.innerWidth - width - 12)),
+                                        });
+                                      }}
+                                      title={`Edited ${edits!.length} ${edits!.length === 1 ? 'time' : 'times'} — view history`}
+                                      aria-label={`View edit history for ${c.label}, row ${r + 1}`}
+                                      className="absolute right-0.5 top-0.5 z-[3] flex h-3 w-3 items-center justify-center"
+                                    >
+                                      <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 ring-2 ring-white dark:bg-emerald-400 dark:ring-zinc-950" />
+                                    </button>
                                   )}
                                   <input
                                     data-cell={`${r}-${ci}`}
@@ -1093,6 +1112,52 @@ export default function HrNewHireChecklist({
           )}
         </div>
       </div>
+
+      {/* Per-cell edit-history popover (fixed portal, anchored to the clicked
+          dot; escapes the grid's scroll overflow so it's never clipped). */}
+      {historyPopover &&
+        typeof document !== 'undefined' &&
+        createPortal(
+          <div
+            data-cell-history-popover
+            style={{ position: 'fixed', top: historyPopover.top, left: historyPopover.left, width: 300 }}
+            className="z-[100] max-h-80 overflow-auto rounded-xl border border-zinc-200 bg-white shadow-xl shadow-black/10 dark:border-zinc-700 dark:bg-zinc-900"
+          >
+            <div className="sticky top-0 flex items-center justify-between gap-2 border-b border-zinc-100 bg-white px-3 py-2 dark:border-zinc-800 dark:bg-zinc-900">
+              <span className="text-[11px] font-semibold uppercase tracking-wide text-emerald-700 dark:text-emerald-300">
+                {historyPopover.label} &middot; edit history
+              </span>
+              <button
+                type="button"
+                onClick={() => setHistoryPopover(null)}
+                aria-label="Close edit history"
+                className="rounded p-0.5 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </div>
+            <ol className="space-y-1 p-1.5">
+              {historyPopover.entries.map((en, i) => (
+                <li key={i} className="rounded-lg bg-zinc-50 px-2.5 py-1.5 dark:bg-zinc-800/50">
+                  <div className="flex items-baseline justify-between gap-2">
+                    <span className="truncate text-[12px] font-medium text-zinc-800 dark:text-zinc-100">{en.by}</span>
+                    <span className="shrink-0 text-[10.5px] tabular-nums text-zinc-400">{formatLockStamp(en.at)}</span>
+                  </div>
+                  <div className="mt-1 flex items-center gap-1.5 text-[11.5px]">
+                    <span className="max-w-[45%] truncate rounded bg-rose-50 px-1 text-rose-700 line-through decoration-rose-300 dark:bg-rose-950/30 dark:text-rose-300">
+                      {en.from ?? 'blank'}
+                    </span>
+                    <span className="shrink-0 text-zinc-400">&rarr;</span>
+                    <span className="max-w-[45%] truncate rounded bg-emerald-50 px-1 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300">
+                      {en.to ?? 'blank'}
+                    </span>
+                  </div>
+                </li>
+              ))}
+            </ol>
+          </div>,
+          document.body,
+        )}
     </div>
   );
 }

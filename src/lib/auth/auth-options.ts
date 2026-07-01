@@ -84,13 +84,20 @@ async function fetchRolesForEmail(email: string): Promise<string[]> {
 
 /**
  * Persist the user's Google profile photo URL onto their `global_master_list` row so
- * roster surfaces (Rates & Profiles, payroll dispatch, etc.) can show their avatar
- * even when the viewer isn't them. Fire-and-forget — sign-in must not fail because
- * of a DB hiccup. Updates only when the URL has changed (cheap WHERE filter).
+ * roster surfaces (People tab, Rates & Profiles, payroll dispatch, etc.) can show
+ * their avatar even when the viewer isn't them. Fire-and-forget — sign-in must not
+ * fail because of a DB hiccup.
  *
- * Requires `references/seed_global_master_list_google_photo.sql` to have been run
- * (adds the `google_photo_url TEXT` column). When the column doesn't exist this
- * silently no-ops via the catch.
+ * The write is unconditional (fires ~once per sign-in, when NextAuth hands us an
+ * `account`). We deliberately do NOT add a `.neq('google_photo_url', photoUrl)`
+ * "only if changed" guard: the column starts NULL for everyone, and in SQL
+ * `NULL <> 'x'` is NULL (not true), so such a guard would filter out every
+ * never-populated row and the first-ever write would never land — leaving
+ * google_photo_url NULL forever and every avatar falling through to initials.
+ *
+ * Requires `references/sql/seed/seed_global_master_list_google_photo.sql` to have
+ * been run (adds the `google_photo_url TEXT` column). When the column doesn't exist
+ * this silently no-ops via the catch.
  */
 async function persistGooglePhoto(workEmail: string, photoUrl: string): Promise<void> {
   const supabase = createSupabaseServiceRoleClient();
@@ -99,8 +106,7 @@ async function persistGooglePhoto(workEmail: string, photoUrl: string): Promise<
     await supabase
       .from('global_master_list')
       .update({ google_photo_url: photoUrl })
-      .ilike('"Work Email"', workEmail)
-      .neq('google_photo_url', photoUrl);
+      .ilike('"Work Email"', workEmail);
   } catch {
     /* swallow — sign-in path must not fail if the column/migration is missing */
   }

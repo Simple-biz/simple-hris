@@ -296,7 +296,10 @@
       "Bash(node _tmp_restore_mesa_optin.mjs)",
       "Bash(echo \"exit code: $?\")",
       "Bash(npx eslint *)",
-      "Bash(echo \"---ESLINT EXIT: $?---\")"
+      "Bash(echo \"---ESLINT EXIT: $?---\")",
+      "Bash(git --no-pager log --oneline -8)",
+      "Bash(git --no-pager status --short)",
+      "Bash(git --no-pager diff --stat -- references/sql/migrate/2026-07-01_hr_new_hire_checklist_cell_edits.sql)"
     ],
     "additionalDirectories": [
       "\\tmp",

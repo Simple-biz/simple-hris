@@ -203,7 +203,8 @@ export async function syncHrNewHireChecklist(
           const before = prev[f] ?? null;
           const after = fields[f];
           if (after !== before) {
-            const log = (nextCellEdits[f] ?? []).concat({ by: editedBy, at: nowIso, from: before, to: after });
+            const priorLog = Array.isArray(nextCellEdits[f]) ? nextCellEdits[f]! : [];
+            const log = priorLog.concat({ by: editedBy, at: nowIso, from: before, to: after });
             nextCellEdits[f] = log.slice(-MAX_CELL_HISTORY);
             changed = true;
           }
