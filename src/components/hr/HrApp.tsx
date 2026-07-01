@@ -42,6 +42,7 @@ import ReadOnlyTab from '@/components/rbac/ReadOnlyTab';
 import { cn } from '@/lib/utils';
 import HrSidebar, { type HrTab } from './HrSidebar';
 import HrOnboarding from './HrOnboarding';
+import HrGlobalMasterList from './HrGlobalMasterList';
 import HrNewHireChecklist from './HrNewHireChecklist';
 import HiringSourcesCard from './HiringSourcesCard';
 import HiringByRecruiterCard from './HiringByRecruiterCard';
@@ -231,6 +232,7 @@ export default function HrApp() {
               ) : (
               <ReadOnlyTab readOnly={permsReady && !canEditTab('hr', activeTab)}>
               {activeTab === 'overview' && <HrOverview viewerEmail={viewerEmail} />}
+              {activeTab === 'global-master-list' && <HrGlobalMasterList />}
               {activeTab === 'new-hire-checklist' && (
                 <HrNewHireChecklist onScrollSurfaceChange={setNhcScrollSurface} />
               )}

@@ -43,6 +43,7 @@ export const VIEW_TAB_IDS: Record<FeatureViewKey, readonly string[]> = {
   ],
   hr: [
     'overview',
+    'global-master-list',
     'new-hire-checklist',
     'onboarding',
     'offboarding',

@@ -299,7 +299,22 @@
       "Bash(echo \"---ESLINT EXIT: $?---\")",
       "Bash(git --no-pager log --oneline -8)",
       "Bash(git --no-pager status --short)",
-      "Bash(git --no-pager diff --stat -- references/sql/migrate/2026-07-01_hr_new_hire_checklist_cell_edits.sql)"
+      "Bash(git --no-pager diff --stat -- references/sql/migrate/2026-07-01_hr_new_hire_checklist_cell_edits.sql)",
+      "Bash(node -e \"JSON.parse\\(require\\('fs'\\).readFileSync\\('references/n8n/Paystub Automation.json','utf8'\\)\\); console.log\\('JSON OK'\\)\")",
+      "Bash(grep -E \"\\\\.\\(tsx?|sql\\)$\")",
+      "Bash(grep -E \"\\\\.\\(sql|prisma|d\\\\.ts\\)$\")",
+      "Bash(ls -la \"C:/Users/Itachi/.claude/projects/c--Users-Itachi-Desktop-simple-hris/64c1a022-1902-45a7-b831-7028bfe8b839/subagents/workflows/wf_0d537b0c-03c\" 2>/dev/null | tail -20)",
+      "Read(//c/Users/Itachi/.claude/projects/c--Users-Itachi-Desktop-simple-hris/64c1a022-1902-45a7-b831-7028bfe8b839/subagents/workflows/wf_0d537b0c-03c/**)",
+      "Bash(tail -c 600 journal.jsonl)",
+      "Bash(node \"C:/Users/Itachi/AppData/Local/Temp/claude/c--Users-Itachi-Desktop-simple-hris/81f9f219-344e-40a2-8558-d67d1ca03f62/scratchpad/swap-paystub-template.js\")",
+      "Bash(node -e \"const w=JSON.parse\\(require\\('fs'\\).readFileSync\\('references/n8n/Paystub Automation.json','utf8'\\)\\); const g=[]; \\(function walk\\(o\\){if\\(!o||typeof o!=='object'\\)return; if\\(Array.isArray\\(o\\)\\){o.forEach\\(walk\\);return;} if\\(o.type&&o.type.includes\\('gmail'\\)\\)g.push\\(o.name\\); for\\(const k of Object.keys\\(o\\)\\)walk\\(o[k]\\);}\\)\\(w\\); console.log\\('JSON OK — gmail nodes:', g.join\\(', '\\)\\);\")",
+      "Bash(node -e \"const s=require\\('./package.json'\\).scripts; console.log\\(JSON.stringify\\(s,null,1\\)\\)\")",
+      "Skill(code-review)",
+      "Skill(code-review:*)",
+      "Bash(git log *)",
+      "Bash(node -e \"let s='';process.stdin.on\\('data',d=>s+=d\\);process.stdin.on\\('end',\\(\\)=>{const j=JSON.parse\\(s\\);const out=[];for\\(const x of \\(j.survivors||[]\\)\\){out.push\\({sev:x.verdict,file:x.file,line:x.line,summary:x.summary}\\);}console.log\\('SURVIVORS:'\\);console.log\\(JSON.stringify\\(out,null,1\\)\\);console.log\\('\\\\\\\\nSWEEP:'\\);console.log\\(JSON.stringify\\(\\(j.sweepFindings||[]\\).map\\(f=>\\({file:f.file,line:f.line,summary:f.summary}\\)\\),null,1\\)\\);}\\);\")",
+      "Bash(node -e \"const fs=require\\('fs'\\);const j=JSON.parse\\(fs.readFileSync\\('wu51njrua.output','utf8'\\)\\);const r=j.result||{};console.log\\('== SURVIVORS \\('+\\(r.survivors||[]\\).length+'\\) =='\\);for\\(const x of \\(r.survivors||[]\\)\\){console.log\\('['+x.verdict+'] '+x.file+':'+x.line+' — '+x.summary\\);}console.log\\('\\\\\\\\n== SWEEP \\('+\\(r.sweepFindings||[]\\).length+'\\) =='\\);for\\(const f of \\(r.sweepFindings||[]\\)\\){console.log\\(f.file+':'+f.line+' — '+f.summary\\);}\")",
+      "Bash(git --no-pager diff --stat HEAD -- src/)"
     ],
     "additionalDirectories": [
       "\\tmp",

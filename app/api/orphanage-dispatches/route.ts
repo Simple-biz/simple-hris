@@ -8,15 +8,23 @@ import {
 } from '@/lib/supabase/orphanage-dispatches';
 import { insertAuditLog } from '@/lib/supabase/audit-log';
 import { getSessionActor } from '@/lib/auth/session-actor';
-import { requireFeatureEdit } from '@/lib/auth/authorize-feature';
+import { requireFeatureAccess, requireFeatureEdit } from '@/lib/auth/authorize-feature';
 import { deniedResponse } from '@/lib/auth/authorize-email';
 
 /** GET /api/orphanage-dispatches
- *  ?pending=1  → pending items queue (budget requests + gift shippings awaiting payment)
+ *  ?pending=1  → pending items queue (budget requests, gift shippings, and worker
+ *                payments — carpenters/handymen/musicians — awaiting payment)
  *  ?paid=1     → paid dispatch records (for Reports tab)
  *  (no param)  → all dispatch records
+ *
+ *  View-gated: the response carries recipient bank details (budget/gift/worker
+ *  account numbers + holder names), so it isn't an open read for any signed-in
+ *  employee — only the Payment Dispatch audience (Lenny + accounting).
  */
 export async function GET(req: NextRequest) {
+  const authz = await requireFeatureAccess('accounting', 'payment_dispatch', 'view');
+  if (!authz.ok) return deniedResponse(authz);
+
   const { searchParams } = req.nextUrl;
   const wantPending = searchParams.get('pending') === '1';
   const wantPaid = searchParams.get('paid') === '1';
@@ -48,8 +56,8 @@ export async function POST(req: NextRequest) {
   const sourceType = body.source_type as OrphanageDispatchType | undefined;
   const sourceId = body.source_id as string | undefined;
 
-  if (!sourceType || !['budget_request', 'gift_shipping'].includes(sourceType)) {
-    return NextResponse.json({ error: 'source_type must be budget_request or gift_shipping' }, { status: 400 });
+  if (!sourceType || !['budget_request', 'gift_shipping', 'worker_payment'].includes(sourceType)) {
+    return NextResponse.json({ error: 'source_type must be budget_request, gift_shipping, or worker_payment' }, { status: 400 });
   }
   if (!sourceId) {
     return NextResponse.json({ error: 'source_id is required' }, { status: 400 });
@@ -65,6 +73,9 @@ export async function POST(req: NextRequest) {
     dispatch_type: sourceType,
     budget_request_id: sourceType === 'budget_request' ? sourceId : null,
     gift_shipping_id: sourceType === 'gift_shipping' ? sourceId : null,
+    worker_payment_id: sourceType === 'worker_payment' ? sourceId : null,
+    recipient_name: (body.recipient_name as string | null) ?? null,
+    worker_type: (body.worker_type as string | null) ?? null,
     label: String(body.label ?? ''),
     submitter_email: String(body.submitter_email ?? ''),
     bank_name: String(body.bank_name ?? ''),
@@ -95,6 +106,9 @@ export async function POST(req: NextRequest) {
         dispatch_type: row.dispatch_type,
         budget_request_id: row.budget_request_id,
         gift_shipping_id: row.gift_shipping_id,
+        worker_payment_id: row.worker_payment_id,
+        recipient_name: row.recipient_name,
+        worker_type: row.worker_type,
         label: row.label,
         submitter_email: row.submitter_email,
         amount_php: row.amount_php,

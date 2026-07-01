@@ -18,6 +18,7 @@ import {
   Moon,
   MoreHorizontal,
   Newspaper,
+  Sheet,
   Sun,
   UserMinus,
   Users,
@@ -33,7 +34,7 @@ import EmployeeAvatar from '@/components/employee/EmployeeAvatar';
 import { useViewerProfilePhoto } from '@/hooks/useViewerProfilePhoto';
 import { useDispatchLock } from '@/hooks/useDispatchLock';
 
-export type HrTab = 'overview' | 'onboarding' | 'new-hire-checklist' | 'offboarding' | 'leaves' | 'transfers' | 'gift-tracker' | 'mesa' | 'announcements' | 's-wall' | 'notifications';
+export type HrTab = 'overview' | 'global-master-list' | 'onboarding' | 'new-hire-checklist' | 'offboarding' | 'leaves' | 'transfers' | 'gift-tracker' | 'mesa' | 'announcements' | 's-wall' | 'notifications';
 
 interface HrSidebarProps {
   activeTab: HrTab;
@@ -154,6 +155,7 @@ export default function HrSidebar({
           </p>
           <nav className="flex flex-col gap-px">
             {can('overview') && navBtn('overview', 'Overview', LayoutDashboard)}
+            {can('global-master-list') && navBtn('global-master-list', 'Global Master List', Sheet)}
             {can('new-hire-checklist') && navBtn('new-hire-checklist', 'New Hire Checklist', ClipboardList)}
             {can('onboarding') && navBtn('onboarding', 'Onboarding', LogIn)}
             {can('offboarding') && navBtn('offboarding', 'Offboarding', UserMinus)}

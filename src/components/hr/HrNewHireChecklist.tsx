@@ -29,8 +29,10 @@ import {
   setHrTabCache,
   HR_TAB_CACHE_KEYS,
 } from '@/lib/hr/tab-cache';
+import { useSession } from 'next-auth/react';
 import type { CellEditEntry, HrNewHireChecklistRow } from '@/lib/supabase/hr-new-hire-checklist';
 import { ONBOARDING_COUNTRIES, resolveOnboardingCountry } from '@/lib/onboarding/countries';
+import { useLiveCells, type LiveCellPeer } from '@/hooks/useLiveCells';
 
 /** Grid columns, in display order. Keys match the DB / API field names 1:1. */
 const COLUMNS = [
@@ -57,6 +59,9 @@ const SELECT_OPTION_CLASS = 'bg-white text-zinc-900 dark:bg-zinc-900 dark:text-z
 const SELECT_SCHEME_CLASS = '[color-scheme:light] dark:[color-scheme:dark]';
 
 type FieldKey = (typeof COLUMNS)[number]['key'];
+
+/** Valid column keys, for validating a live-edit message from a peer. */
+const COLUMN_KEY_SET = new Set<string>(COLUMNS.map((c) => c.key));
 
 /** A grid row: a stable client `_key`, the DB `id` (null until saved), one
  *  string per column (empty string = blank cell), and `_editedBy` — the edit
@@ -88,6 +93,11 @@ type CacheVal = {
 };
 
 const CACHE_KEY = HR_TAB_CACHE_KEYS.newHireChecklist;
+
+// Cap how many pasted cells are mirrored live to co-editors in one batch. A
+// paste bigger than this still saves normally — it just doesn't stream live
+// (keeps the single broadcast payload well under Realtime's message-size limit).
+const MAX_PASTE_BROADCAST_CELLS = 2000;
 
 // Stable, render-safe row keys (no Math.random/Date during render — avoids SSR
 // hydration drift). Module-level so keys stay unique across tab remounts.
@@ -243,6 +253,74 @@ export default function HrNewHireChecklist({
   // (even a paste on a readOnly input still fires our onPaste handler).
   const lockedRef = useRef(locked);
   useEffect(() => { lockedRef.current = locked; }, [locked]);
+
+  // ── Live cell co-editing ────────────────────────────────────────────────
+  // Broadcast this viewer's cell focus/typing to everyone else on the same week,
+  // and merge peers' keystrokes into our grid in real time (Google-Sheets style).
+  const { data: session } = useSession();
+  const selfEmail = session?.user?.email ?? null;
+  const selfName = session?.user?.name ?? null;
+
+  // The cell the local user is actively editing, so an incoming peer edit can
+  // never overwrite it mid-keystroke (which would jump their caret).
+  const activeCellRef = useRef<{ r: number; col: FieldKey } | null>(null);
+  // Latest rows in a ref, so the paste handler can resolve target-row DB ids
+  // when broadcasting pasted cells without re-creating its callback each render.
+  const rowsRef = useRef(rows);
+  useEffect(() => { rowsRef.current = rows; }, [rows]);
+
+  // Merge a peer's keystroke into our own grid. Matches the row by its stable DB
+  // id when saved, falling back to the broadcast index for brand-new rows, and
+  // grows the grid so a peer's freshly-added row still lands. Skips the cell the
+  // local user is focused in so their own typing is never clobbered.
+  const applyRemoteEdit = useCallback(
+    (rowIdx: number, id: string | null, col: string, value: string) => {
+      if (lockedRef.current) return; // a locked week is read-only for everyone
+      if (!COLUMN_KEY_SET.has(col)) return;
+      const key = col as FieldKey;
+      setRows((prev) => {
+        let idx = id ? prev.findIndex((row) => row.id === id) : -1;
+        if (idx < 0) idx = rowIdx;
+        if (idx < 0) return prev;
+        const active = activeCellRef.current;
+        if (active && active.r === idx && active.col === key) return prev;
+        const next = prev.slice();
+        while (next.length <= idx) next.push(blankRow());
+        if ((next[idx]![key] ?? '') === value) return prev; // already in sync
+        next[idx] = { ...next[idx]!, [key]: value };
+        return next;
+      });
+      setDirty(true);
+    },
+    [],
+  );
+
+  const {
+    peers: livePeers,
+    sendFocus: liveFocus,
+    sendBlur: liveBlur,
+    sendEdit: liveEdit,
+    sendEdits: liveEdits,
+  } = useLiveCells({
+    selfEmail,
+    selfName,
+    channel: `hr-nhc-cells:${period}`,
+    enabled: !!selfEmail && !!period,
+    onRemoteEdit: applyRemoteEdit,
+  });
+
+  // Which peer (if any) occupies each rendered cell, keyed `${rowIndex}:${col}`.
+  // Resolves a peer's row the same way the merge does (DB id first, then index).
+  const peerByCell = useMemo(() => {
+    const m = new Map<string, LiveCellPeer>();
+    for (const p of livePeers) {
+      let idx = p.id ? rows.findIndex((row) => row.id === p.id) : -1;
+      if (idx < 0) idx = p.row;
+      if (idx < 0 || idx >= rows.length) continue;
+      m.set(`${idx}:${p.col}`, p);
+    }
+    return m;
+  }, [livePeers, rows]);
 
   // Callback ref for the scrollable grid box: keeps `scrollRef` (used for cell
   // focus) in sync AND registers the element with the HR collab layer so peer
@@ -402,8 +480,35 @@ export default function HrNewHireChecklist({
         return next;
       });
       setDirty(true);
+
+      // Mirror the paste to co-editors as one batch (same grow-on-demand path as
+      // typing), so a fill-down shows up live on their screens too. Skipped when
+      // over the cap — such a paste still syncs on Save.
+      const preRows = rowsRef.current;
+      const batch: { r: number; id: string | null; c: string; v: string }[] = [];
+      let overflow = false;
+      for (let i = 0; i < matrix.length && !overflow; i++) {
+        const targetRow = r + i;
+        const targetId = preRows[targetRow]?.id ?? null;
+        const cells = matrix[i]!;
+        for (let j = 0; j < cells.length; j++) {
+          const targetCol = c + j;
+          if (targetCol >= COLUMNS.length) break;
+          if (batch.length >= MAX_PASTE_BROADCAST_CELLS) { overflow = true; break; }
+          const key = COLUMNS[targetCol]!.key;
+          const raw = cells[j]!.trim();
+          const val =
+            key === 'department'
+              ? canonicalizeDept(raw, departments)
+              : key === 'country'
+                ? canonicalizeCountry(raw)
+                : raw;
+          batch.push({ r: targetRow, id: targetId, c: key, v: val });
+        }
+      }
+      if (!overflow) liveEdits(batch);
     },
-    [departments],
+    [departments, liveEdits],
   );
 
   const handleKeyDown = useCallback(
@@ -1004,6 +1109,7 @@ export default function HrNewHireChecklist({
                                   : c.key === 'country'
                                     ? 'nhc-countries'
                                     : undefined;
+                              const peerHere = peerByCell.get(`${r}:${c.key}`) ?? null;
                               return (
                                 <td
                                   key={c.key}
@@ -1039,20 +1145,35 @@ export default function HrNewHireChecklist({
                                     list={locked ? undefined : listId}
                                     value={value}
                                     readOnly={locked}
-                                    onChange={(e) => setCell(r, c.key, e.target.value)}
+                                    onFocus={() => {
+                                      if (locked) return;
+                                      activeCellRef.current = { r, col: c.key };
+                                      liveFocus(r, row.id, c.key);
+                                    }}
+                                    onChange={(e) => {
+                                      setCell(r, c.key, e.target.value);
+                                      if (!locked) liveEdit(r, row.id, c.key, e.target.value);
+                                    }}
                                     onPaste={(e) => handlePaste(e, r, ci)}
                                     onKeyDown={(e) => handleKeyDown(e, r, ci)}
-                                    onBlur={
-                                      listId && !locked
-                                        ? (e) => {
-                                            const canon =
-                                              c.key === 'department'
-                                                ? canonicalizeDept(e.target.value, departments)
-                                                : canonicalizeCountry(e.target.value);
-                                            if (canon !== e.target.value) setCell(r, c.key, canon);
+                                    onBlur={(e) => {
+                                      if (!locked) {
+                                        if (listId) {
+                                          const canon =
+                                            c.key === 'department'
+                                              ? canonicalizeDept(e.target.value, departments)
+                                              : canonicalizeCountry(e.target.value);
+                                          if (canon !== e.target.value) {
+                                            setCell(r, c.key, canon);
+                                            liveEdit(r, row.id, c.key, canon);
                                           }
-                                        : undefined
-                                    }
+                                        }
+                                        liveBlur(r, row.id, c.key);
+                                      }
+                                      if (activeCellRef.current?.r === r && activeCellRef.current?.col === c.key) {
+                                        activeCellRef.current = null;
+                                      }
+                                    }}
                                     className={cn(
                                       'h-9 w-full bg-transparent px-2.5 text-[13px] outline-none placeholder:text-zinc-300',
                                       locked
@@ -1061,6 +1182,29 @@ export default function HrNewHireChecklist({
                                       listId ? cn('min-w-[10rem]', SELECT_SCHEME_CLASS) : 'min-w-[8rem]',
                                     )}
                                   />
+                                  {/* Live co-editing: a peer is in this cell right
+                                      now — ring it in their identity color + tag
+                                      it with their name (their keystrokes stream
+                                      into the value above in real time). */}
+                                  {peerHere && (
+                                    <>
+                                      <span
+                                        aria-hidden
+                                        className="pointer-events-none absolute inset-0 z-[2] rounded-[2px]"
+                                        style={{ boxShadow: `inset 0 0 0 2px ${peerHere.color}` }}
+                                      />
+                                      <span
+                                        className={cn(
+                                          'pointer-events-none absolute left-0 z-[6] flex max-w-full items-center whitespace-nowrap rounded px-1 py-px text-[9px] font-semibold leading-none text-white shadow-sm',
+                                          r === 0 ? 'top-full mt-px' : 'bottom-full mb-px',
+                                        )}
+                                        style={{ background: peerHere.color }}
+                                        title={`${(peerHere.name && peerHere.name.trim()) || peerHere.email} is editing this cell`}
+                                      >
+                                        {(peerHere.name && peerHere.name.trim()) || peerHere.email.split('@')[0]}
+                                      </span>
+                                    </>
+                                  )}
                                 </td>
                               );
                             })}

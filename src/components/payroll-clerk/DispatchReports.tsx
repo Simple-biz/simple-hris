@@ -17,6 +17,7 @@ import {
   FileSpreadsheet,
   Gauge,
   Gift,
+  Hammer,
   Heart,
   Loader2,
   Search,
@@ -1436,11 +1437,15 @@ function OrphanageReportsPanel({
                       'inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide',
                       r.dispatch_type === 'budget_request'
                         ? 'bg-teal-100 text-teal-700 dark:bg-teal-900/30 dark:text-teal-300'
-                        : 'bg-pink-100 text-pink-700 dark:bg-pink-900/30 dark:text-pink-300',
+                        : r.dispatch_type === 'worker_payment'
+                          ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300'
+                          : 'bg-pink-100 text-pink-700 dark:bg-pink-900/30 dark:text-pink-300',
                     )}>
                       {r.dispatch_type === 'budget_request'
                         ? <><Banknote className="h-2.5 w-2.5" /> Budget</>
-                        : <><Gift className="h-2.5 w-2.5" /> Gift</>}
+                        : r.dispatch_type === 'worker_payment'
+                          ? <><Hammer className="h-2.5 w-2.5" /> Staff</>
+                          : <><Gift className="h-2.5 w-2.5" /> Gift</>}
                     </span>
                   </td>
                   <td className="px-3 py-2">

@@ -474,11 +474,15 @@ type DispatchEmployee = {
     perfect_attendance_bonus: number;
     tech_bonus: number;
     other_bonuses: number;
+    /** Accounting Adj. column — signed delta, itemized separately from other_bonuses. */
+    adjustment: number;
     mesa_deduction: number;
     mesa_disbursement: number;
     orphanage_pay: number;
     final: number;
   };
+  /** Free-text reason for the accounting Adj. delta (the Adj. column note), or null. */
+  adjustment_note: string | null;
 };
 
 /**
@@ -4299,11 +4303,13 @@ export default function PayrollWizard({
       const toggledTech = toggles.tech_bonus && techDeptOk ? commonBonusPhp('tech_bonus') : 0;
       const autoOtherBonuses = hasRates ? Math.max(0, rawBonusTotal - toggledPab - toggledTech) : 0;
       // Accounting Adj. is a signed delta added on top — it never replaces the auto
-      // bonuses, so PAB/Tech/KPI/dept amounts remain. Fold it into other_bonuses so
-      // bonuses_total stays equal to pab + tech + other.
+      // bonuses, so PAB/Tech/KPI/dept amounts remain. It's carried as its own
+      // `adjustment` field (kept OUT of other_bonuses) so the paystub can itemize it
+      // separately from earned KPI/dept "Performance" bonuses. bonuses_total still
+      // sums pab + tech + other + adjustment, so `final` is unchanged.
       const accountingAdj = hasRates ? (bonusOverrides[r.email] ?? 0) : 0;
-      const otherBonuses = autoOtherBonuses + accountingAdj;
-      const bonusTotal = pabBonus + techBonus + otherBonuses;
+      const otherBonuses = autoOtherBonuses;
+      const bonusTotal = pabBonus + techBonus + otherBonuses + accountingAdj;
 
       // MESA Program deduction — ₱100 per paycheck for enrolled members.
       const em = normEmail(r.email);
@@ -4336,11 +4342,13 @@ export default function PayrollWizard({
           perfect_attendance_bonus: pabBonus,
           tech_bonus: techBonus,
           other_bonuses: otherBonuses,
+          adjustment: accountingAdj,
           mesa_deduction: mesaDeduction,
           mesa_disbursement: mesaDisbursement,
           orphanage_pay: orphanagePay,
           final: finalPay,
         },
+        adjustment_note: accountingAdj !== 0 ? (bonusOverrideNotes[r.email]?.trim() || null) : null,
       };
 
       if (isExcluded) {
@@ -4370,6 +4378,7 @@ export default function PayrollWizard({
     employeeBonuses,
     bonusTotals,
     bonusOverrides,
+    bonusOverrideNotes,
     orphanageAmounts,
     mesaDisbursements,
     excludedEmails,
@@ -12137,6 +12146,14 @@ export default function PayrollWizard({
                                       {fmt(pp.other_bonuses)}
                                     </td>
                                   </tr>
+                                  {!!pp.adjustment && (
+                                    <tr>
+                                      <td className="py-[3px] text-[12px]" style={{ color: '#9a6b3f' }}>Adjustment</td>
+                                      <td className="py-[3px] text-right text-[13px] font-bold" style={{ color: '#7c3aed' }}>
+                                        {fmt(pp.adjustment)}
+                                      </td>
+                                    </tr>
+                                  )}
                                 </tbody>
                               </table>
                             </div>

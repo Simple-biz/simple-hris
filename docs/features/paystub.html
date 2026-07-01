@@ -25,7 +25,7 @@
       .statement-card { width: 100% !important; max-width: 100% !important; }
       .px { padding-left: 20px !important; padding-right: 20px !important; }
       .top-pad { padding-top: 24px !important; }
-      .brand-logo { width: 60px !important; }
+      .brand-logo { width: 92px !important; }
       .amount-main { font-size: 30px !important; line-height: 36px !important; }
       .stack-cell { display: block !important; width: 100% !important; text-align: left !important; padding-right: 0 !important; }
       .stack-cell + .stack-cell { padding-top: 12px !important; }
@@ -46,7 +46,7 @@
     <tr>
       <td align="center" valign="middle" style="vertical-align:middle;">
         <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="560" class="statement-card"
-          style="width:560px;max-width:560px;background-color:#fbfcfe;background-color:oklch(99% 0.004 248);border:1px solid #e6ebf1;border-radius:14px;box-shadow:0 20px 48px rgba(16, 32, 52, 0.14), 0 2px 6px rgba(16, 32, 52, 0.06);overflow:hidden;">
+          style="width:560px;max-width:560px;background-color:#fbfcfe;background-color:oklch(99% 0.004 248);border:2px solid #cbd5e1;border-radius:14px;box-shadow:0 20px 48px rgba(16, 32, 52, 0.16), 0 2px 6px rgba(16, 32, 52, 0.07);overflow:hidden;">
 
           <tr>
             <td style="height:6px;line-height:6px;font-size:0;background-color:#f97316;">&nbsp;</td>
@@ -54,13 +54,10 @@
 
           <tr>
             <td class="px top-pad" align="center" style="padding:34px 32px 26px 32px;background-color:#ffffff;border-bottom:1px solid #eef2f6;text-align:center;">
-              <img class="brand-logo" src="https://host.simple.biz/email/simplelogo.png" alt="Simple" width="72"
-                style="display:block;width:72px;height:auto;border:0;margin:0 auto 16px auto;" />
+              <img class="brand-logo" src="https://host.simple.biz/email/simplelogo.png" alt="Simple" width="112"
+                style="display:block;width:112px;height:auto;border:0;margin:0 auto 14px auto;" />
 
-              <div style="font-size:11px;line-height:14px;letter-spacing:0.14em;font-weight:700;text-transform:uppercase;color:#2563eb;text-align:center;">
-                Simple HRIS
-              </div>
-              <div style="font-size:26px;line-height:32px;font-weight:700;color:#102034;color:oklch(24% 0.035 248);margin-top:9px;letter-spacing:0;text-align:center;">
+              <div style="font-size:26px;line-height:32px;font-weight:700;color:#102034;color:oklch(24% 0.035 248);margin-top:0;letter-spacing:0;text-align:center;">
                 Pay Statement
               </div>
               <div style="font-size:13px;line-height:19px;color:#667789;color:oklch(52% 0.025 248);margin-top:6px;text-align:center;">
@@ -177,14 +174,25 @@
                   </td>
                 </tr>
                 <tr>
-                  <td class="line-label" style="width:44%;padding:12px 0;font-size:13px;line-height:18px;color:#26384d;color:oklch(32% 0.035 248);">
+                  <td class="line-label" style="width:44%;padding:12px 0;font-size:13px;line-height:18px;color:#26384d;color:oklch(32% 0.035 248);border-bottom:1px solid #edf2f7;">
                     Performance Bonus
                   </td>
-                  <td class="detail-col" style="width:28%;padding:12px 8px;font-size:12px;line-height:18px;color:#7b8796;color:oklch(59% 0.018 248);">
+                  <td class="detail-col" style="width:28%;padding:12px 8px;font-size:12px;line-height:18px;color:#7b8796;color:oklch(59% 0.018 248);border-bottom:1px solid #edf2f7;">
                     Bonus
                   </td>
-                  <td class="line-amount" align="right" style="width:28%;padding:12px 0;font-size:13px;line-height:18px;font-weight:700;color:#102034;color:oklch(24% 0.035 248);white-space:nowrap;">
+                  <td class="line-amount" align="right" style="width:28%;padding:12px 0;font-size:13px;line-height:18px;font-weight:700;color:#102034;color:oklch(24% 0.035 248);border-bottom:1px solid #edf2f7;white-space:nowrap;">
                     &#8369;{{ $('pay_vars').item.json.performance_bonus.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2}) }}
+                  </td>
+                </tr>
+                <tr>
+                  <td class="line-label" style="width:44%;padding:12px 0;font-size:13px;line-height:18px;color:#26384d;color:oklch(32% 0.035 248);">
+                    Adjustment
+                  </td>
+                  <td class="detail-col" style="width:28%;padding:12px 8px;font-size:12px;line-height:18px;color:#7b8796;color:oklch(59% 0.018 248);">
+                    {{ $('pay_vars').item.json.adjustment_note || 'Manual adjustment' }}
+                  </td>
+                  <td class="line-amount" align="right" style="width:28%;padding:12px 0;font-size:13px;line-height:18px;font-weight:700;color:#102034;color:oklch(24% 0.035 248);white-space:nowrap;">
+                    &#8369;{{ $('pay_vars').item.json.adjustment.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2}) }}
                   </td>
                 </tr>
               </table>

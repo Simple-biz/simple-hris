@@ -108,7 +108,7 @@ export function BankChangeDetailDialog({
   const changedCount = changedEntries.length;
   return (
     <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
-      <DialogContent className="gap-4 overflow-hidden p-4 sm:max-w-md">
+      <DialogContent className="gap-4 overflow-hidden p-4 sm:max-w-3xl">
         {/* ── Hero: who + at-a-glance status, bled to the dialog edges ───────── */}
         <div className="relative -mx-4 -mt-4 overflow-hidden border-b border-emerald-100/70 bg-gradient-to-br from-emerald-50 via-white to-teal-50/40 px-5 pb-4 pt-5 dark:border-emerald-900/40 dark:from-emerald-950/40 dark:via-[#0d1117] dark:to-[#0a1628]">
           {/* Decorative watermark */}
@@ -156,8 +156,11 @@ export function BankChangeDetailDialog({
           </div>
         </div>
 
+        {/* ── Body: meta + "what changed" side by side on wider screens ─────── */}
+        <div className="grid gap-4 sm:grid-cols-2">
+
         {/* ── Meta: when / type / source / IP ───────────────────────────────── */}
-        <div className="divide-y divide-zinc-100 overflow-hidden rounded-xl border border-zinc-200/80 bg-white/60 dark:divide-zinc-800/80 dark:border-zinc-800 dark:bg-zinc-900/40">
+        <div className="divide-y divide-zinc-100 self-start overflow-hidden rounded-xl border border-zinc-200/80 bg-white/60 dark:divide-zinc-800/80 dark:border-zinc-800 dark:bg-zinc-900/40">
           <MetaRow
             icon={<Clock className="h-3.5 w-3.5" />}
             tint="bg-emerald-50 text-emerald-600 dark:bg-emerald-950/50 dark:text-emerald-300"
@@ -258,6 +261,8 @@ export function BankChangeDetailDialog({
               ))}
             </div>
           )}
+        </div>
+
         </div>
 
         {/* ── Primary action: jump to this person's roster profile ──────────── */}

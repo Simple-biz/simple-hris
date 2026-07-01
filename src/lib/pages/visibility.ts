@@ -85,6 +85,7 @@ export const DASHBOARD_PAGES: DashboardPages[] = [
     accent: 'emerald',
     pages: [
       { key: 'overview', label: 'Overview', home: true },
+      { key: 'global-master-list', label: 'Global Master List' },
       { key: 'new-hire-checklist', label: 'New Hire Checklist' },
       { key: 'onboarding', label: 'Onboarding' },
       { key: 'offboarding', label: 'Offboarding' },

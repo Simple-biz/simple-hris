@@ -21,6 +21,7 @@ import { Eye, EyeOff, Send } from 'lucide-react';
 import { useSession } from 'next-auth/react';
 import { getSupabaseBrowserClient } from '@/lib/supabase/browser';
 import { normEmail } from '@/lib/email/norm-email';
+import { hashEmail } from '@/lib/collab/peer-color';
 import { playPingChime, playPingSent } from '@/lib/sound/ping-chime';
 import CobrowseSurface from './CobrowseSurface';
 import { useCobrowse } from '@/hooks/useCobrowse';
@@ -122,23 +123,6 @@ const DEFAULT_ACCENT: CollabAccent = {
   ringGlow: 'rgba(249,115,22,0.75)',
   cobrowseGlow: 'rgba(249,115,22,0.55)',
 };
-
-const PALETTE = [
-  { bg: '#f43f5e', glow: 'rgba(244,63,94,0.55)' },
-  { bg: '#f97316', glow: 'rgba(249,115,22,0.55)' },
-  { bg: '#eab308', glow: 'rgba(234,179,8,0.55)' },
-  { bg: '#10b981', glow: 'rgba(16,185,129,0.55)' },
-  { bg: '#06b6d4', glow: 'rgba(6,182,212,0.55)' },
-  { bg: '#3b82f6', glow: 'rgba(59,130,246,0.55)' },
-  { bg: '#a855f7', glow: 'rgba(168,85,247,0.55)' },
-  { bg: '#ec4899', glow: 'rgba(236,72,153,0.55)' },
-];
-
-function hashEmail(email: string) {
-  let h = 0;
-  for (let i = 0; i < email.length; i++) h = ((h << 5) - h + email.charCodeAt(i)) >>> 0;
-  return PALETTE[h % PALETTE.length];
-}
 
 function toLabel(email: string) {
   return (email.split('@')[0] ?? email).slice(0, 18);

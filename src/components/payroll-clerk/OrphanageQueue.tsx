@@ -12,17 +12,23 @@ import {
   ChevronDown,
   ChevronUp,
   Gift,
+  Hammer,
   Heart,
   Loader2,
   MapPin,
+  Pencil,
   Phone,
+  Plus,
   RefreshCw,
+  Trash2,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import OrphanageMarkPaidDialog, { type OrphanageMarkPaidPayload } from './OrphanageMarkPaidDialog';
+import OrphanageWorkerPaymentDialog from './OrphanageWorkerPaymentDialog';
 import type { OrphanagePendingItem } from '@/lib/supabase/orphanage-dispatches';
+import { workerTypeLabel } from '@/lib/orphanage/worker-payment';
 
 function formatPHP(v: number | null | undefined) {
   if (v == null) return '—';
@@ -43,23 +49,38 @@ function formatDate(iso: string | null | undefined) {
 function OrphanageItemCard({
   item,
   onMarkPaid,
+  onEdit,
+  onDelete,
 }: {
   item: OrphanagePendingItem;
   onMarkPaid: (item: OrphanagePendingItem) => void;
+  onEdit?: (item: OrphanagePendingItem) => void;
+  onDelete?: (item: OrphanagePendingItem) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const br = item.budgetRequest;
   const gs = item.giftShipping;
+  const wp = item.workerPayment;
 
   const isBudget = item.sourceType === 'budget_request';
-  const accentClass = isBudget
-    ? 'border-teal-200/80 dark:border-teal-900/40'
-    : 'border-pink-200/80 dark:border-pink-900/40';
-  const badgeClass = isBudget
-    ? 'bg-teal-100 text-teal-700 dark:bg-teal-900/30 dark:text-teal-300'
-    : 'bg-pink-100 text-pink-700 dark:bg-pink-900/30 dark:text-pink-300';
+  const isWorker = item.sourceType === 'worker_payment';
+  const accentClass = isWorker
+    ? 'border-emerald-200/80 dark:border-emerald-900/40'
+    : isBudget
+      ? 'border-teal-200/80 dark:border-teal-900/40'
+      : 'border-pink-200/80 dark:border-pink-900/40';
+  const badgeClass = isWorker
+    ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300'
+    : isBudget
+      ? 'bg-teal-100 text-teal-700 dark:bg-teal-900/30 dark:text-teal-300'
+      : 'bg-pink-100 text-pink-700 dark:bg-pink-900/30 dark:text-pink-300';
+  const badgeLabel = isWorker
+    ? (wp ? workerTypeLabel(wp) : 'Worker')
+    : isBudget
+      ? 'Budget Request'
+      : 'Gift';
 
-  const hasBankInfo = item.bankName || item.bankAccountNumber;
+  const hasBankInfo = item.bankName || item.bankAccountNumber || item.bankAccountName || item.swiftCode;
 
   return (
     <motion.div
@@ -77,7 +98,7 @@ function OrphanageItemCard({
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <span className={cn('rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider', badgeClass)}>
-              {isBudget ? 'Budget Request' : 'Gift'}
+              {badgeLabel}
             </span>
             <span className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
               {item.label}
@@ -92,12 +113,22 @@ function OrphanageItemCard({
             {gs && gs.decided_at && (
               <> · Approved {formatDate(gs.decided_at)}</>
             )}
+            {wp && (
+              <>{wp.created_by ? `Added by ${wp.created_by}` : 'Added'} · {formatDate(wp.created_at)}</>
+            )}
           </p>
 
           {/* Budget request extra info */}
           {br && br.notes && (
             <p className="mt-1 text-[11px] italic text-zinc-500 dark:text-zinc-400">
               &ldquo;{br.notes}&rdquo;
+            </p>
+          )}
+
+          {/* Worker payment note */}
+          {wp && wp.note && (
+            <p className="mt-1 text-[11px] italic text-zinc-500 dark:text-zinc-400">
+              &ldquo;{wp.note}&rdquo;
             </p>
           )}
 
@@ -178,7 +209,7 @@ function OrphanageItemCard({
             </div>
           )}
 
-          {!hasBankInfo && item.sourceType === 'gift_shipping' && (
+          {!hasBankInfo && (item.sourceType === 'gift_shipping' || isWorker) && (
             <p className="mt-2 text-[11px] text-zinc-400 dark:text-zinc-600">
               No bank on file — enter details in the payment dialog.
             </p>
@@ -195,14 +226,40 @@ function OrphanageItemCard({
             onClick={() => onMarkPaid(item)}
             className={cn(
               'h-8 gap-1.5 px-3 text-xs font-semibold text-white shadow-sm',
-              isBudget
-                ? 'bg-gradient-to-br from-teal-500 to-emerald-600 hover:brightness-110'
-                : 'bg-gradient-to-br from-pink-500 to-rose-600 hover:brightness-110',
+              isWorker
+                ? 'bg-gradient-to-br from-emerald-500 to-teal-600 hover:brightness-110'
+                : isBudget
+                  ? 'bg-gradient-to-br from-teal-500 to-emerald-600 hover:brightness-110'
+                  : 'bg-gradient-to-br from-pink-500 to-rose-600 hover:brightness-110',
             )}
           >
             <CheckCircle2 className="h-3.5 w-3.5" />
             Mark paid
           </Button>
+          {isWorker && (onEdit || onDelete) && (
+            <div className="flex items-center gap-1">
+              {onEdit && (
+                <button
+                  type="button"
+                  onClick={() => onEdit(item)}
+                  title="Edit payment"
+                  className="flex h-7 items-center gap-1 rounded-md border border-zinc-200 bg-white px-2 text-[11px] font-medium text-zinc-600 hover:bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-400 dark:hover:bg-zinc-900"
+                >
+                  <Pencil className="h-3 w-3" /> Edit
+                </button>
+              )}
+              {onDelete && (
+                <button
+                  type="button"
+                  onClick={() => onDelete(item)}
+                  title="Remove payment"
+                  className="flex h-7 items-center gap-1 rounded-md border border-rose-200 bg-white px-2 text-[11px] font-medium text-rose-600 hover:bg-rose-50 dark:border-rose-900/40 dark:bg-zinc-950 dark:text-rose-400 dark:hover:bg-rose-950/30"
+                >
+                  <Trash2 className="h-3 w-3" />
+                </button>
+              )}
+            </div>
+          )}
         </div>
       </div>
     </motion.div>
@@ -219,9 +276,15 @@ export default function OrphanageQueue() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [markPaidItem, setMarkPaidItem] = useState<OrphanagePendingItem | null>(null);
+  // Add/edit worker-payment dialog. `workerDialogOpen` gates visibility;
+  // `editingWorker` non-null = edit mode, null = add mode.
+  const [workerDialogOpen, setWorkerDialogOpen] = useState(false);
+  const [editingWorker, setEditingWorker] = useState<OrphanagePendingItem | null>(null);
 
-  const fetchItems = useCallback(async () => {
-    setLoading(true);
+  const fetchItems = useCallback(async (opts?: { silent?: boolean }) => {
+    // Silent refetches (after add/edit) skip the full-screen spinner so the tab
+    // doesn't blank out — the list just updates in place.
+    if (!opts?.silent) setLoading(true);
     setError(null);
     try {
       const res = await fetch('/api/orphanage-dispatches?pending=1', { cache: 'no-store' });
@@ -229,7 +292,15 @@ export default function OrphanageQueue() {
       if (!res.ok || json.error) throw new Error(json.error ?? 'Failed to load');
       setItems(json.items ?? []);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Could not load orphanage queue');
+      if (!opts?.silent) {
+        setError(e instanceof Error ? e.message : 'Could not load orphanage queue');
+      } else {
+        // A silent refetch (post add/edit) shouldn't blank the tab, but a failure
+        // still means the list is stale — tell the user to refresh rather than
+        // leaving them staring at out-of-date cards with no signal.
+        console.warn('[orphanage-queue] silent refresh failed', e);
+        toast.error('Saved, but the list may be out of date — hit Refresh.');
+      }
     } finally {
       setLoading(false);
     }
@@ -239,14 +310,18 @@ export default function OrphanageQueue() {
 
   const budgetItems = useMemo(() => items.filter((i) => i.sourceType === 'budget_request'), [items]);
   const giftItems = useMemo(() => items.filter((i) => i.sourceType === 'gift_shipping'), [items]);
+  const workerItems = useMemo(() => items.filter((i) => i.sourceType === 'worker_payment'), [items]);
 
   const PAGE_SIZE = 25;
   const [budgetPage, setBudgetPage] = useState(1);
   const [giftPage, setGiftPage] = useState(1);
+  const [workerPage, setWorkerPage] = useState(1);
   const budgetPageCount = Math.max(1, Math.ceil(budgetItems.length / PAGE_SIZE));
   const giftPageCount = Math.max(1, Math.ceil(giftItems.length / PAGE_SIZE));
+  const workerPageCount = Math.max(1, Math.ceil(workerItems.length / PAGE_SIZE));
   useEffect(() => { if (budgetPage > budgetPageCount) setBudgetPage(budgetPageCount); }, [budgetPage, budgetPageCount]);
   useEffect(() => { if (giftPage > giftPageCount) setGiftPage(giftPageCount); }, [giftPage, giftPageCount]);
+  useEffect(() => { if (workerPage > workerPageCount) setWorkerPage(workerPageCount); }, [workerPage, workerPageCount]);
   const pagedBudgetItems = useMemo(
     () => budgetItems.slice((budgetPage - 1) * PAGE_SIZE, budgetPage * PAGE_SIZE),
     [budgetItems, budgetPage],
@@ -254,6 +329,10 @@ export default function OrphanageQueue() {
   const pagedGiftItems = useMemo(
     () => giftItems.slice((giftPage - 1) * PAGE_SIZE, giftPage * PAGE_SIZE),
     [giftItems, giftPage],
+  );
+  const pagedWorkerItems = useMemo(
+    () => workerItems.slice((workerPage - 1) * PAGE_SIZE, workerPage * PAGE_SIZE),
+    [workerItems, workerPage],
   );
 
   const handleConfirmPaid = async (item: OrphanagePendingItem, payload: OrphanageMarkPaidPayload) => {
@@ -263,6 +342,10 @@ export default function OrphanageQueue() {
       body: JSON.stringify({
         source_type: item.sourceType,
         source_id: item.sourceId,
+        // Worker payments have no employee to join back to — snapshot the name +
+        // type onto the dispatch row so Reports can label it.
+        recipient_name: item.workerPayment?.recipient_name ?? null,
+        worker_type: item.workerPayment?.worker_type ?? null,
         label: item.label,
         submitter_email: item.submitterEmail,
         bank_name: payload.bankName,
@@ -294,6 +377,30 @@ export default function OrphanageQueue() {
     setItems((prev) => prev.filter((i) => i.sourceId !== item.sourceId));
   };
 
+  const handleAddWorker = () => {
+    setEditingWorker(null);
+    setWorkerDialogOpen(true);
+  };
+
+  const handleEditWorker = (item: OrphanagePendingItem) => {
+    setEditingWorker(item);
+    setWorkerDialogOpen(true);
+  };
+
+  const handleDeleteWorker = async (item: OrphanagePendingItem) => {
+    if (!window.confirm(`Remove the payment for "${item.workerPayment?.recipient_name ?? item.label}"?`)) return;
+    const res = await fetch(`/api/orphanage-worker-payments?id=${encodeURIComponent(item.sourceId)}`, {
+      method: 'DELETE',
+    });
+    const json = (await res.json()) as { ok?: boolean; error?: string };
+    if (!res.ok || json.error) {
+      toast.error(json.error ?? 'Could not remove payment');
+      return;
+    }
+    toast.success('Payment removed');
+    setItems((prev) => prev.filter((i) => i.sourceId !== item.sourceId));
+  };
+
   if (loading) {
     return (
       <div className="flex h-full items-center justify-center">
@@ -310,7 +417,7 @@ export default function OrphanageQueue() {
         </div>
         <h2 className="text-sm font-semibold text-zinc-900 dark:text-white">Couldn&apos;t load orphanage queue</h2>
         <p className="max-w-sm text-xs text-zinc-500 dark:text-zinc-400">{error}</p>
-        <Button size="sm" variant="outline" onClick={fetchItems}>
+        <Button size="sm" variant="outline" onClick={() => fetchItems()}>
           <RefreshCw className="mr-1.5 h-3.5 w-3.5" /> Retry
         </Button>
       </div>
@@ -327,7 +434,7 @@ export default function OrphanageQueue() {
               Orphanage payments
             </h1>
             <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-500">
-              Approved budget requests and gift purchases awaiting transfer.
+              Approved budget requests, gift purchases, and staff (carpenters &amp; musicians) awaiting transfer.
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -336,9 +443,17 @@ export default function OrphanageQueue() {
                 {items.length} pending
               </span>
             )}
+            <Button
+              size="sm"
+              onClick={handleAddWorker}
+              className="h-8 gap-1.5 bg-gradient-to-br from-emerald-500 to-teal-600 px-3 text-xs font-semibold text-white hover:brightness-110"
+            >
+              <Plus className="h-3.5 w-3.5" />
+              Add payment
+            </Button>
             <button
               type="button"
-              onClick={fetchItems}
+              onClick={() => fetchItems()}
               className="flex h-7 w-7 items-center justify-center rounded-full border border-zinc-200 bg-white text-zinc-500 hover:bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-400 dark:hover:bg-zinc-900"
               title="Refresh"
             >
@@ -358,7 +473,9 @@ export default function OrphanageQueue() {
             <div>
               <h2 className="text-sm font-semibold text-zinc-900 dark:text-white">All caught up!</h2>
               <p className="mt-1 max-w-xs text-xs text-zinc-500 dark:text-zinc-400">
-                No pending orphanage payments. Approved budget requests and gifts will appear here.
+                No pending orphanage payments. Approved budget requests and gifts appear here automatically —
+                or use <span className="font-semibold text-emerald-600 dark:text-emerald-400">Add payment</span> to
+                pay a carpenter, handyman, or musician.
               </p>
             </div>
           </div>
@@ -421,6 +538,41 @@ export default function OrphanageQueue() {
                 />
               </section>
             )}
+
+            {/* Orphanage staff (carpenters / handymen / musicians) */}
+            {workerItems.length > 0 && (
+              <section>
+                <h2 className="mb-3 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-400">
+                  <Hammer className="h-3.5 w-3.5 text-emerald-500" />
+                  Orphanage Staff
+                  <span className="ml-1 rounded-full bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300">
+                    {workerItems.length}
+                  </span>
+                </h2>
+                <AnimatePresence mode="popLayout">
+                  <div className="flex flex-col gap-3">
+                    {pagedWorkerItems.map((item) => (
+                      <OrphanageItemCard
+                        key={item.sourceId}
+                        item={item}
+                        onMarkPaid={setMarkPaidItem}
+                        onEdit={handleEditWorker}
+                        onDelete={handleDeleteWorker}
+                      />
+                    ))}
+                  </div>
+                </AnimatePresence>
+                <QueuePagination
+                  page={workerPage}
+                  pageCount={workerPageCount}
+                  total={workerItems.length}
+                  pageSize={PAGE_SIZE}
+                  onPageChange={setWorkerPage}
+                  label="staff"
+                  className="mt-2 border-0"
+                />
+              </section>
+            )}
           </div>
         )}
       </div>
@@ -429,6 +581,13 @@ export default function OrphanageQueue() {
         item={markPaidItem}
         onClose={() => setMarkPaidItem(null)}
         onConfirm={handleConfirmPaid}
+      />
+
+      <OrphanageWorkerPaymentDialog
+        open={workerDialogOpen}
+        editing={editingWorker?.workerPayment ?? null}
+        onClose={() => { setWorkerDialogOpen(false); setEditingWorker(null); }}
+        onSaved={() => { void fetchItems({ silent: true }); }}
       />
     </div>
   );

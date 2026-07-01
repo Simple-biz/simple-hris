@@ -13,6 +13,7 @@ import {
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import type { OrphanagePendingItem } from '@/lib/supabase/orphanage-dispatches';
+import { workerTypeLabel } from '@/lib/orphanage/worker-payment';
 
 export function formatOrphanagePHP(v: number | null | undefined) {
   if (v == null) return '—';
@@ -265,7 +266,11 @@ export default function OrphanageMarkPaidDialog({ item, onClose, onConfirm }: Ma
             {/* Right: type */}
             <div className="mt-0.5 shrink-0 text-right">
               <p className="text-[12px] font-semibold leading-tight text-white">
-                {item?.sourceType === 'gift_shipping' ? 'Gift' : 'Budget'}
+                {item?.sourceType === 'gift_shipping'
+                  ? 'Gift'
+                  : item?.sourceType === 'worker_payment'
+                    ? (item.workerPayment ? workerTypeLabel(item.workerPayment) : 'Worker')
+                    : 'Budget'}
               </p>
               <p className="mt-0.5 text-[9.5px] font-medium uppercase tracking-widest text-white/50">
                 Orphanage

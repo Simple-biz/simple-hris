@@ -24,6 +24,7 @@ export const FEATURE_CATALOG: Record<FeatureViewKey, readonly { key: string; lab
   ],
   hr: [
     { key: "overview",            label: "Overview" },
+    { key: "global_master_list",  label: "Global Master List" },
     { key: "new_hire_checklist",  label: "New Hire Checklist" },
     { key: "onboarding",          label: "Onboarding" },
     { key: "offboarding",         label: "Offboarding" },
