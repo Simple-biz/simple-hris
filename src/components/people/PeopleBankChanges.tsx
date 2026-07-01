@@ -1,14 +1,15 @@
 'use client';
 
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import {
-  Search, Clock, RefreshCw, Landmark, Inbox, ShieldCheck, ArrowUpRight, Eye, ChevronLeft, ChevronRight,
+  Search, Clock, RefreshCw, Landmark, Inbox, ShieldCheck, Eye, ChevronLeft, ChevronRight,
+  CreditCard, Globe, UserPlus, PencilLine, Link2, Sparkles,
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
+  Dialog, DialogContent, DialogTitle, DialogDescription,
 } from '@/components/ui/dialog';
 import { TeamAvatar } from '@/components/team/team-ui';
 import { getSupabaseBrowserClient } from '@/lib/supabase/browser';
@@ -501,79 +502,159 @@ function BankChangeDetailDialog({ row, onClose }: { row: BankChange; onClose: ()
   const changed = row.fields.filter((f) => f !== 'preferred_processor');
   return (
     <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
-      <DialogContent className="sm:max-w-md">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2 text-base">
-            <Landmark className="h-4 w-4 text-emerald-500" /> What changed
-          </DialogTitle>
-          <DialogDescription>
-            Self-service payout update — field names only. Account numbers aren&apos;t recorded here; review
-            the full audited values by opening this person in the roster.
-          </DialogDescription>
-        </DialogHeader>
+      <DialogContent className="gap-4 overflow-hidden p-4 sm:max-w-md">
+        {/* ── Hero: who + at-a-glance status, bled to the dialog edges ───────── */}
+        <div className="relative -mx-4 -mt-4 overflow-hidden border-b border-emerald-100/70 bg-gradient-to-br from-emerald-50 via-white to-teal-50/40 px-5 pb-4 pt-5 dark:border-emerald-900/40 dark:from-emerald-950/40 dark:via-[#0d1117] dark:to-[#0a1628]">
+          {/* Decorative watermark */}
+          <Landmark
+            aria-hidden
+            className="pointer-events-none absolute -right-4 -top-5 h-28 w-28 rotate-12 text-emerald-500/10 dark:text-emerald-400/[0.07]"
+          />
 
-        <div className="space-y-4">
-          {/* Who */}
-          <div className="flex items-center gap-3">
-            <TeamAvatar name={row.name ?? ''} email={row.email} />
-            <div className="min-w-0">
-              <div className="truncate text-sm font-medium text-zinc-900 dark:text-zinc-100">{row.name || '—'}</div>
-              <div className="truncate text-[11px] text-zinc-400">{row.email ?? ''}</div>
+          <DialogDescription className="relative inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-emerald-700 dark:text-emerald-300/90">
+            <span className="flex h-5 w-5 items-center justify-center rounded-md bg-emerald-500/15 text-emerald-600 dark:text-emerald-400">
+              <Landmark className="h-3 w-3" />
+            </span>
+            Self-service payout change
+          </DialogDescription>
+
+          <div className="relative mt-3 flex items-center gap-3">
+            <span className="shrink-0 rounded-full shadow-md ring-2 ring-white dark:ring-zinc-900/80">
+              <TeamAvatar name={row.name ?? ''} email={row.email} />
+            </span>
+            <div className="min-w-0 flex-1">
+              <DialogTitle className="truncate text-[15px] font-semibold text-zinc-900 dark:text-zinc-50">
+                {row.name || '—'}
+              </DialogTitle>
+              <div className="truncate text-[11.5px] text-zinc-500 dark:text-zinc-400">
+                {row.email ?? 'No email on file'}
+              </div>
             </div>
           </div>
 
-          {/* Meta */}
-          <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5 text-[12px]">
-            <dt className="text-zinc-400">When</dt>
-            <dd className="text-zinc-700 dark:text-zinc-200">
-              {absoluteTime(row.created_at)} <span className="text-zinc-400">· {timeAgo(row.created_at)}</span>
-            </dd>
-            <dt className="text-zinc-400">Type</dt>
-            <dd className="text-zinc-700 dark:text-zinc-200">
-              {row.createdNew ? 'First-time payout setup' : 'Updated existing details'}
-            </dd>
-            {row.processor && (
-              <>
-                <dt className="text-zinc-400">Method</dt>
-                <dd className="capitalize text-zinc-700 dark:text-zinc-200">{row.processor}</dd>
-              </>
-            )}
-            <dt className="text-zinc-400">Source</dt>
-            <dd className="flex items-center gap-1 text-zinc-700 dark:text-zinc-200">
-              <ArrowUpRight className="h-3 w-3 text-zinc-400" />
-              {row.via === 'external_link' ? 'External self-service link' : row.via || 'External link'}
-            </dd>
-            {row.ip_address && (
-              <>
-                <dt className="text-zinc-400">IP</dt>
-                <dd className="font-mono text-[11px] text-zinc-600 dark:text-zinc-300">{row.ip_address}</dd>
-              </>
-            )}
-          </dl>
-
-          {/* Exactly which fields changed */}
-          <div>
-            <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">
-              Fields changed ({changed.length})
-            </div>
-            {changed.length === 0 ? (
-              <p className="text-[12px] text-zinc-500 dark:text-zinc-400">Only the payment method was changed.</p>
+          <div className="relative mt-3 flex flex-wrap items-center gap-1.5">
+            {row.createdNew ? (
+              <span className="inline-flex items-center gap-1 rounded-full bg-sky-100 px-2.5 py-1 text-[11px] font-semibold text-sky-700 dark:bg-sky-950/50 dark:text-sky-300">
+                <Sparkles className="h-3 w-3" /> First-time setup
+              </span>
             ) : (
-              <div className="flex flex-wrap gap-1.5">
-                {changed.map((f) => (
-                  <span
-                    key={f}
-                    className="inline-flex items-center rounded-md bg-zinc-100 px-2 py-0.5 text-[11.5px] font-medium text-zinc-700 dark:bg-zinc-800 dark:text-zinc-200"
-                  >
-                    {fieldLabel(f)}
-                  </span>
-                ))}
-              </div>
+              <span className="inline-flex items-center gap-1 rounded-full bg-zinc-100 px-2.5 py-1 text-[11px] font-semibold text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
+                <PencilLine className="h-3 w-3" /> Updated details
+              </span>
+            )}
+            {row.processor && (
+              <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2.5 py-1 text-[11px] font-semibold capitalize text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300">
+                <CreditCard className="h-3 w-3" /> {row.processor}
+              </span>
             )}
           </div>
         </div>
+
+        {/* ── Meta: when / type / source / IP ───────────────────────────────── */}
+        <div className="divide-y divide-zinc-100 overflow-hidden rounded-xl border border-zinc-200/80 bg-white/60 dark:divide-zinc-800/80 dark:border-zinc-800 dark:bg-zinc-900/40">
+          <MetaRow
+            icon={<Clock className="h-3.5 w-3.5" />}
+            tint="bg-emerald-50 text-emerald-600 dark:bg-emerald-950/50 dark:text-emerald-300"
+            label="When"
+            value={
+              <>
+                {absoluteTime(row.created_at)}{' '}
+                <span className="text-zinc-400 dark:text-zinc-500">· {timeAgo(row.created_at)}</span>
+              </>
+            }
+          />
+          <MetaRow
+            icon={row.createdNew ? <UserPlus className="h-3.5 w-3.5" /> : <PencilLine className="h-3.5 w-3.5" />}
+            tint={
+              row.createdNew
+                ? 'bg-sky-50 text-sky-600 dark:bg-sky-950/50 dark:text-sky-300'
+                : 'bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400'
+            }
+            label="Type"
+            value={row.createdNew ? 'First-time payout setup' : 'Updated existing details'}
+          />
+          <MetaRow
+            icon={<Link2 className="h-3.5 w-3.5" />}
+            tint="bg-amber-50 text-amber-600 dark:bg-amber-950/40 dark:text-amber-300"
+            label="Source"
+            value={row.via === 'external_link' ? 'External self-service link' : row.via || 'External link'}
+          />
+          {row.ip_address && (
+            <MetaRow
+              icon={<Globe className="h-3.5 w-3.5" />}
+              tint="bg-violet-50 text-violet-600 dark:bg-violet-950/40 dark:text-violet-300"
+              label="IP address"
+              value={<span className="font-mono text-[11.5px]">{row.ip_address}</span>}
+            />
+          )}
+        </div>
+
+        {/* ── Exactly which fields changed ──────────────────────────────────── */}
+        <div>
+          <div className="mb-2 flex items-center gap-2">
+            <span className="text-[11px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
+              Fields updated
+            </span>
+            <span className="inline-flex h-5 min-w-[1.25rem] items-center justify-center rounded-full bg-emerald-100 px-1.5 text-[11px] font-bold tabular-nums text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300">
+              {changed.length}
+            </span>
+          </div>
+          {changed.length === 0 ? (
+            <p className="rounded-lg border border-dashed border-zinc-200 bg-zinc-50/60 px-3 py-2.5 text-[12px] text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900/40 dark:text-zinc-400">
+              Only the payment method was changed.
+            </p>
+          ) : (
+            <div className="flex flex-wrap gap-1.5">
+              {changed.map((f) => (
+                <span
+                  key={f}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-200/70 bg-emerald-50/70 px-2 py-1 text-[11.5px] font-medium text-emerald-800 dark:border-emerald-900/50 dark:bg-emerald-950/30 dark:text-emerald-200"
+                >
+                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                  {fieldLabel(f)}
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* ── Privacy footer, bled to the dialog edges ──────────────────────── */}
+        <div className="-mx-4 -mb-4 flex items-start gap-2 rounded-b-xl border-t border-zinc-100 bg-zinc-50/70 px-4 py-3 dark:border-zinc-800 dark:bg-zinc-900/40">
+          <ShieldCheck className="mt-px h-4 w-4 shrink-0 text-emerald-500" />
+          <p className="text-[11px] leading-snug text-zinc-500 dark:text-zinc-400">
+            Field names only — account numbers are never recorded here. Open this person in the roster to review
+            their audited details.
+          </p>
+        </div>
       </DialogContent>
     </Dialog>
+  );
+}
+
+/** One labelled detail row inside the dialog's meta card. */
+function MetaRow({
+  icon,
+  tint,
+  label,
+  value,
+}: {
+  icon: ReactNode;
+  tint: string;
+  label: string;
+  value: ReactNode;
+}) {
+  return (
+    <div className="flex items-start gap-3 px-3.5 py-2.5">
+      <span className={cn('mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg', tint)}>
+        {icon}
+      </span>
+      <div className="min-w-0 flex-1">
+        <div className="text-[10.5px] font-semibold uppercase tracking-wider text-zinc-400 dark:text-zinc-500">
+          {label}
+        </div>
+        <div className="mt-0.5 break-words text-[12.5px] text-zinc-700 dark:text-zinc-200">{value}</div>
+      </div>
+    </div>
   );
 }
 

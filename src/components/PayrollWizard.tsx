@@ -967,6 +967,7 @@ export default function PayrollWizard({
   const [replaySnapshotFinals, setReplaySnapshotFinals] = useState<Record<string, {
     final: number; regularPay: number | null; otPay: number | null;
     regularHours: number; otHours: number; totalHours: number; initial: number | null;
+    mesaDeduction?: number; mesaDisbursement?: number;
   }> | null>(null);
   /** True while fetching unfiltered hubstaff_hours (no source_file column / replace-only uploads). */
   const [unfilteredHubstaffLoading, setUnfilteredHubstaffLoading] = useState(false);
@@ -2626,8 +2627,14 @@ export default function PayrollWizard({
       .catch(() => setMesaDisbursements(new Map()));
   }, []);
 
+  // Load approved MESA disbursements as soon as the wizard mounts — and keep them fresh
+  // as accounting navigates — NOT only on the Additions step. The final-pay snapshot
+  // auto-publishes (debounced) from whatever step is active; gating this fetch on step 5
+  // meant a publish fired from any other step saw an empty map → it dropped the ₱100
+  // deduction + the disbursement, so the Employee dashboard showed the un-deducted figure
+  // even though the wizard's Additions step had it right. Loading it unconditionally keeps
+  // every published snapshot consistent with what the wizard computes.
   useEffect(() => {
-    if (currentStep !== 5) return;
     fetchMesaDisbursements();
   }, [currentStep, fetchMesaDisbursements]);
 
@@ -4404,6 +4411,8 @@ export default function PayrollWizard({
       otHours: number;
       totalHours: number;
       initial: number | null;
+      mesaDeduction: number;
+      mesaDisbursement: number;
     }> = {};
     for (const r of dispatchData.rows) {
       const entry = {
@@ -4414,6 +4423,11 @@ export default function PayrollWizard({
         otHours: r.hours.ot,
         totalHours: r.hours.total,
         initial: r.pay_php.initial,
+        // MESA breakdown so the Employee dashboard can itemize the ₱100 weekly
+        // contribution and surface an approved emergency disbursement separately
+        // (instead of the disbursement silently inflating the headline take-home).
+        mesaDeduction: r.pay_php.mesa_deduction ?? 0,
+        mesaDisbursement: r.pay_php.mesa_disbursement ?? 0,
       };
       const we = r.email?.trim().toLowerCase();
       const pe = r.personal_email?.trim().toLowerCase();

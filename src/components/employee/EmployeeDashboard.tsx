@@ -213,6 +213,14 @@ interface PayrollFinalEntry {
   otHours: number;
   totalHours: number;
   initial: number | null;
+  /** ₱100 weekly MESA contribution withheld this run (0 when none). Older snapshots
+   *  predate this field — treat `undefined` as "unknown", falling back to the
+   *  client-side membership-based estimate. */
+  mesaDeduction?: number | null;
+  /** Accounting-approved MESA emergency disbursement folded into `final` this run
+   *  (0 when none). Surfaced as its own payout line so it never silently inflates
+   *  the headline take-home. */
+  mesaDisbursement?: number | null;
 }
 
 interface EmployeeDashboardProps {
@@ -510,6 +518,40 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
     const id = window.setInterval(() => void fetchPayrollFinal(), 30_000);
     return () => { ctrl.abort(); window.removeEventListener('focus', onFocus); window.clearInterval(id); };
   }, [fetchPayrollFinal]);
+
+  /**
+   * The viewer's own approved MESA emergency disbursement — used only to annotate the
+   * separate payout card with its reason/explanation. The amount paid this run comes
+   * from the wizard snapshot (`mesaDisbursementPhp`), not this; this is best-effort
+   * context. Self-scoped: `/api/mesa-requests?email=` resolves identity server-side.
+   */
+  const [mesaDisbursementInfo, setMesaDisbursementInfo] = useState<{
+    reason: string | null;
+    explanation: string | null;
+    amount: number | null;
+  } | null>(null);
+  useEffect(() => {
+    if (!email) { setMesaDisbursementInfo(null); return; }
+    let cancelled = false;
+    fetch(
+      `/api/mesa-requests?email=${encodeURIComponent(email)}&request_type=disbursement&status=approved`,
+      { cache: 'no-store' },
+    )
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j: { rows?: Array<{ disbursement_reason: string | null; explanation: string | null; amount_needed: number | null; dispatched_at?: string | null }> } | null) => {
+        if (cancelled) return;
+        const rows = j?.rows ?? [];
+        // Prefer one still awaiting dispatch (the one a payroll run would pay out).
+        const pick = rows.find((r) => r.dispatched_at == null) ?? rows[0];
+        setMesaDisbursementInfo(
+          pick
+            ? { reason: pick.disbursement_reason, explanation: pick.explanation, amount: pick.amount_needed }
+            : null,
+        );
+      })
+      .catch(() => { if (!cancelled) setMesaDisbursementInfo(null); });
+    return () => { cancelled = true; };
+  }, [email]);
 
   // Fetch the viewer's rate history once per email change. Powers the per-day
   // rate badge on the inline PAB Calendar in the Overview tab.
@@ -1549,16 +1591,48 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
 
   const MESA_DEDUCTION_PHP = 100;
   const isMesaMember = !!rate?.mesa_member;
+  // Auto-estimate path (no published payroll snapshot): only enrolled members are
+  // charged the ₱100 contribution, and there is no disbursement to surface yet.
   const mesaDeductionAmount = isMesaMember && totalPay != null ? MESA_DEDUCTION_PHP : 0;
 
   // Client-side auto-estimate (initial + PAB + Tech − MESA). Used as the fallback.
   const autoTakeHomePhp =
     totalPay != null ? totalPay + pabBonusAmount + technologyBonusAmount - mesaDeductionAmount : null;
   // When the Payroll Wizard has published a final for this employee + file, that
-  // exact figure is the take-home (matches what accounting will pay). All-time view
-  // has no single payroll final, so it always uses the auto-estimate.
+  // exact figure is the authoritative pay (matches what accounting will pay). All-time
+  // view has no single payroll final, so it always uses the auto-estimate.
   const takeHomeFromPayroll = !isAllTime && payrollFinal != null;
-  const takeHomePhp = takeHomeFromPayroll ? payrollFinal!.final : autoTakeHomePhp;
+
+  // MESA contribution + emergency disbursement actually applied this run.
+  //  - Published snapshot → trust the wizard's figures. It deducts the ₱100 whenever
+  //    there's a disbursement OR active membership, independent of the dashboard's
+  //    possibly-stale `mesa_member` flag — so this surfaces the deduction even when
+  //    the rate-row flag hasn't flipped (e.g. opt-in still pending).
+  //  - Snapshots written before this field exists → fall back to the membership estimate.
+  //  - Auto-estimate path → membership estimate; disbursements only appear once payroll runs.
+  const mesaDeductionPhp = takeHomeFromPayroll
+    ? (payrollFinal!.mesaDeduction ?? mesaDeductionAmount)
+    : mesaDeductionAmount;
+  const mesaDisbursementPhp = takeHomeFromPayroll ? (payrollFinal!.mesaDisbursement ?? 0) : 0;
+
+  // Headline take-home = what payroll deposits MINUS the one-off emergency payout, so a
+  // disbursement reads as a separate windfall instead of silently inflating regular pay.
+  const takeHomePhp = takeHomeFromPayroll
+    ? payrollFinal!.final - mesaDisbursementPhp
+    : autoTakeHomePhp;
+  // Total cash hitting the account this run (headline + the emergency payout).
+  const totalDepositedPhp = takeHomeFromPayroll
+    ? payrollFinal!.final
+    : (autoTakeHomePhp != null ? autoTakeHomePhp + mesaDisbursementPhp : null);
+
+  // Whether to surface the weekly MESA contribution indicator (the "−₱100" rail row).
+  // Broader than an actual per-run deduction so a member reliably sees it: a flagged
+  // member, a real deduction this run, a disbursement folded in, OR an approved
+  // disbursement on file — the rate-row `mesa_member` flag can lag (e.g. opt-in still
+  // pending), and we don't want the contribution to silently disappear in that gap.
+  const isMesaParticipant =
+    isMesaMember || mesaDeductionPhp > 0 || mesaDisbursementPhp > 0 || mesaDisbursementInfo != null;
+  const mesaContributionPhp = mesaDeductionPhp > 0 ? mesaDeductionPhp : MESA_DEDUCTION_PHP;
 
   /** True when the NEXT pay-period week (refMonday + 7) is the tech bonus week. */
   const isTechBonusNextWeek = useMemo(() => {
@@ -2601,13 +2675,13 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
                   </span>
                 )}
               </div>
-              {isMesaMember && (
+              {isMesaParticipant && (
                 <div className="flex items-center justify-between gap-3 bg-teal-50/40 px-3.5 py-2 dark:bg-teal-950/20">
                   <span className="text-[10px] font-medium uppercase tracking-[0.14em] text-teal-700/80 dark:text-teal-500/80">
                     MESA
                   </span>
                   <span className="text-[11px] font-medium tabular-nums text-teal-800 dark:text-teal-300">
-                    −{formatPHP(MESA_DEDUCTION_PHP)}
+                    −{formatPHP(mesaContributionPhp)}
                   </span>
                 </div>
               )}
@@ -2625,6 +2699,53 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
               )}
             </motion.aside>
           </motion.section>
+
+          {/* MESA emergency disbursement — surfaced as its own payout so it never silently
+              inflates the headline take-home. The amount is the wizard's authoritative
+              figure (folded into payroll's final); the reason is best-effort context from
+              the employee's own approved request. */}
+          {mesaDisbursementPhp > 0 && (
+            <Card className="shrink-0 overflow-hidden border-teal-200/80 bg-teal-50/30 dark:border-teal-900/40 dark:bg-teal-950/20">
+              <CardHeader className="pb-2">
+                <CardTitle className="flex items-center gap-2 text-sm text-teal-800 dark:text-teal-300">
+                  <Sparkles className="h-4 w-4 text-teal-500" /> MESA emergency payout
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-2 text-[13px]">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="font-medium text-zinc-800 dark:text-zinc-100">Emergency disbursement</div>
+                    {(mesaDisbursementInfo?.reason || mesaDisbursementInfo?.explanation) && (
+                      <div className="mt-0.5 break-words text-[11px] text-zinc-500 dark:text-zinc-400">
+                        {mesaDisbursementInfo?.reason}
+                        {mesaDisbursementInfo?.reason && mesaDisbursementInfo?.explanation ? ' · ' : ''}
+                        {mesaDisbursementInfo?.explanation}
+                      </div>
+                    )}
+                  </div>
+                  <span className="shrink-0 font-semibold tabular-nums text-teal-700 dark:text-teal-300">
+                    +{formatPHP(mesaDisbursementPhp)}
+                  </span>
+                </div>
+                {mesaDeductionPhp > 0 && (
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-zinc-600 dark:text-zinc-300">Weekly contribution</span>
+                    <span className="shrink-0 tabular-nums text-teal-700 dark:text-teal-300">−{formatPHP(mesaDeductionPhp)}</span>
+                  </div>
+                )}
+                <div className="my-1 h-px bg-teal-200/70 dark:bg-teal-900/50" />
+                <div className="flex items-center justify-between gap-3">
+                  <span className="font-medium text-zinc-900 dark:text-white">Total deposited this run</span>
+                  <span className="shrink-0 text-sm font-bold tabular-nums text-emerald-700 dark:text-emerald-400">
+                    {totalDepositedPhp != null ? formatPHP(totalDepositedPhp) : '—'}
+                  </span>
+                </div>
+                <p className="text-[11px] leading-snug text-zinc-500 dark:text-zinc-400">
+                  The take-home above is your regular pay only. This one-time MESA payout is added on top when payroll runs.
+                </p>
+              </CardContent>
+            </Card>
+          )}
 
           {/* Daily Hours + PAB Calendar — fills remaining vertical space; side-by-side on lg+, stacked below */}
           <div className="flex shrink-0 flex-col gap-3 lg:flex-row lg:items-stretch lg:gap-3 xl:gap-4">
@@ -3178,21 +3299,40 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
                       {technologyBonusAmount > 0 ? `+${formatPHP(technologyBonusAmount)}` : formatPHP(0)}
                     </span>
                   </div>
-                  {isMesaMember && (
+                  {mesaDeductionPhp > 0 && (
                     <div className="flex justify-between gap-2">
-                      <span className="text-teal-600 dark:text-teal-400">MESA deduction</span>
+                      <span className="text-teal-600 dark:text-teal-400">MESA contribution</span>
                       <span className="tabular-nums text-teal-700 dark:text-teal-300">
-                        −{formatPHP(MESA_DEDUCTION_PHP)}
+                        −{formatPHP(mesaDeductionPhp)}
                       </span>
                     </div>
                   )}
                   <div className="my-1 h-px bg-zinc-200 dark:bg-zinc-800" />
                   <div className="flex justify-between gap-2">
-                    <span className="font-medium text-zinc-900 dark:text-white">Total</span>
+                    <span className="font-medium text-zinc-900 dark:text-white">
+                      {mesaDisbursementPhp > 0 ? 'Take-home' : 'Total'}
+                    </span>
                     <span className="text-sm font-bold tabular-nums text-emerald-700 dark:text-emerald-400">
                       {takeHomePhp != null ? formatPHP(takeHomePhp) : '—'}
                     </span>
                   </div>
+                  {mesaDisbursementPhp > 0 && (
+                    <>
+                      <div className="flex justify-between gap-2">
+                        <span className="text-teal-600 dark:text-teal-400">MESA emergency payout</span>
+                        <span className="tabular-nums text-teal-700 dark:text-teal-300">
+                          +{formatPHP(mesaDisbursementPhp)}
+                        </span>
+                      </div>
+                      <div className="my-1 h-px bg-zinc-200 dark:bg-zinc-800" />
+                      <div className="flex justify-between gap-2">
+                        <span className="font-medium text-zinc-900 dark:text-white">Total deposited</span>
+                        <span className="text-sm font-bold tabular-nums text-emerald-700 dark:text-emerald-400">
+                          {totalDepositedPhp != null ? formatPHP(totalDepositedPhp) : '—'}
+                        </span>
+                      </div>
+                    </>
+                  )}
                   {takeHomeFromPayroll && (
                     <p className="text-right text-[10px] text-zinc-500 dark:text-zinc-400">
                       Includes payroll-confirmed bonuses &amp; adjustments

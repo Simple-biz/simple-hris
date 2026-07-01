@@ -3,6 +3,7 @@
 import { Suspense, useEffect, useRef, useState, type FormEvent } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { signIn, signOut, useSession } from 'next-auth/react';
+import { AnimatePresence, motion, useReducedMotion, type Variants } from 'motion/react';
 import { Loader2, LogIn, AlertCircle, Volume2, VolumeX, ShieldAlert, ArrowRight } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -18,6 +19,48 @@ import {
 } from '@/lib/rbac/views';
 
 const SESSION_ROLE_KEY = 'employee_session_role';
+
+// Smooth reveal for the super-admin impersonation panel. The outer wrapper animates its
+// height (0 → auto) with overflow clipped, so the panel grows in place instead of popping;
+// the inner rows stagger in just behind the expansion for a layered feel. `*_REDUCED` are the
+// prefers-reduced-motion fallbacks: a quiet fade with no height/translate.
+const SA_PANEL_VARIANTS: Variants = {
+  hidden: { opacity: 0, height: 0 },
+  show: {
+    opacity: 1,
+    height: 'auto',
+    transition: {
+      height: { duration: 0.34, ease: [0.22, 1, 0.36, 1] },
+      opacity: { duration: 0.22, ease: 'easeOut' },
+      staggerChildren: 0.045,
+      delayChildren: 0.09,
+    },
+  },
+  exit: {
+    opacity: 0,
+    height: 0,
+    transition: {
+      height: { duration: 0.24, ease: [0.4, 0, 1, 1] },
+      opacity: { duration: 0.14 },
+    },
+  },
+};
+
+const SA_ROW_VARIANTS: Variants = {
+  hidden: { opacity: 0, y: 8 },
+  show: { opacity: 1, y: 0, transition: { duration: 0.28, ease: [0.22, 1, 0.36, 1] } },
+};
+
+const SA_PANEL_VARIANTS_REDUCED: Variants = {
+  hidden: { opacity: 0 },
+  show: { opacity: 1, transition: { duration: 0.15 } },
+  exit: { opacity: 0, transition: { duration: 0.1 } },
+};
+
+const SA_ROW_VARIANTS_REDUCED: Variants = {
+  hidden: { opacity: 1 },
+  show: { opacity: 1 },
+};
 
 /**
  * Google SSO sign-in screen.
@@ -85,6 +128,9 @@ function LoginPageInner() {
   const [saPassword, setSaPassword] = useState('');
   const [saLoading, setSaLoading] = useState(false);
   const [saError, setSaError] = useState<string | null>(null);
+  const saEmailRef = useRef<HTMLInputElement | null>(null);
+  // Honor the OS "reduce motion" setting — swap the staggered height-expand for a plain fade.
+  const reduceMotion = useReducedMotion();
 
   const authError = searchParams?.get('error') ?? null;
 
@@ -521,96 +567,141 @@ function LoginPageInner() {
 
             {status !== 'authenticated' && (
               <div className="w-full">
-                {!showSuperAdmin ? (
-                  <button
-                    type="button"
-                    onClick={() => setShowSuperAdmin(true)}
-                    className="mx-auto flex items-center gap-1.5 text-[11px] font-medium text-zinc-400 transition hover:text-zinc-700"
-                  >
-                    <ShieldAlert className="h-3.5 w-3.5" />
-                    Super-admin access
-                  </button>
-                ) : (
-                  <form
-                    onSubmit={handleSuperAdminSignIn}
-                    className="w-full space-y-3 rounded-2xl border border-zinc-200/80 bg-white/70 p-4 text-left shadow-sm backdrop-blur-xl"
-                  >
-                    <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-zinc-500">
-                      <ShieldAlert className="h-3.5 w-3.5 text-orange-500" />
-                      Super-admin impersonation
-                    </div>
-                    <p className="text-[11px] leading-5 text-zinc-500">
-                      Sign in as any @simple.biz account to view HRIS from their perspective.
-                    </p>
-
-                    <div className="space-y-1">
-                      <label htmlFor="sa-email" className="text-[11px] font-medium text-zinc-600">
-                        Email to impersonate
-                      </label>
-                      <input
-                        id="sa-email"
-                        type="email"
-                        autoComplete="off"
-                        value={saEmail}
-                        onChange={(ev) => setSaEmail(ev.target.value)}
-                        placeholder="someone@simple.biz"
-                        className="w-full rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 shadow-sm outline-none transition focus:border-orange-400 focus:ring-2 focus:ring-orange-200"
-                      />
-                    </div>
-
-                    <div className="space-y-1">
-                      <label htmlFor="sa-password" className="text-[11px] font-medium text-zinc-600">
-                        Super-admin password
-                      </label>
-                      <input
-                        id="sa-password"
-                        type="password"
-                        autoComplete="off"
-                        value={saPassword}
-                        onChange={(ev) => setSaPassword(ev.target.value)}
-                        placeholder="••••••••••"
-                        className="w-full rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 shadow-sm outline-none transition focus:border-orange-400 focus:ring-2 focus:ring-orange-200"
-                      />
-                    </div>
-
-                    {saError && (
-                      <div className="flex items-start gap-2 rounded-xl border border-red-200/80 bg-red-50/70 px-3 py-2 text-[11px] text-red-700">
-                        <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                        <span>{saError}</span>
-                      </div>
-                    )}
-
-                    <div className="flex items-center gap-2 pt-1">
-                      <Button
-                        type="submit"
-                        size="sm"
-                        disabled={saLoading}
-                        className="flex-1 gap-2 rounded-xl bg-zinc-900 text-white hover:bg-zinc-800"
-                      >
-                        {saLoading ? (
-                          <Loader2 className="h-4 w-4 animate-spin" />
-                        ) : (
-                          <>
-                            Sign in as user
-                            <ArrowRight className="h-4 w-4" />
-                          </>
-                        )}
-                      </Button>
-                      <Button
+                <AnimatePresence initial={false} mode="wait">
+                  {!showSuperAdmin ? (
+                    <motion.div
+                      key="sa-trigger"
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      exit={{ opacity: 0 }}
+                      transition={{ duration: reduceMotion ? 0.1 : 0.16, ease: 'easeOut' }}
+                    >
+                      <button
                         type="button"
-                        size="sm"
-                        variant="ghost"
-                        className="rounded-xl text-zinc-500 hover:text-zinc-800"
-                        onClick={() => {
-                          setShowSuperAdmin(false);
-                          setSaError(null);
-                        }}
+                        onClick={() => setShowSuperAdmin(true)}
+                        className="mx-auto flex items-center gap-1.5 text-[11px] font-medium text-zinc-400 transition hover:text-zinc-700"
                       >
-                        Cancel
-                      </Button>
-                    </div>
-                  </form>
-                )}
+                        <ShieldAlert className="h-3.5 w-3.5" />
+                        Super-admin access
+                      </button>
+                    </motion.div>
+                  ) : (
+                    <motion.div
+                      key="sa-form"
+                      variants={reduceMotion ? SA_PANEL_VARIANTS_REDUCED : SA_PANEL_VARIANTS}
+                      initial="hidden"
+                      animate="show"
+                      exit="exit"
+                      style={{ overflow: 'hidden' }}
+                      onAnimationComplete={(def) => {
+                        // Focus the email field only once the panel has finished expanding, so the
+                        // browser doesn't try to scroll it into view mid-animation.
+                        if (def === 'show') saEmailRef.current?.focus();
+                      }}
+                    >
+                      <form
+                        onSubmit={handleSuperAdminSignIn}
+                        className="w-full space-y-3 rounded-2xl border border-zinc-200/80 bg-white/70 p-4 text-left shadow-sm backdrop-blur-xl"
+                      >
+                        <motion.div
+                          variants={reduceMotion ? SA_ROW_VARIANTS_REDUCED : SA_ROW_VARIANTS}
+                          className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-zinc-500"
+                        >
+                          <ShieldAlert className="h-3.5 w-3.5 text-orange-500" />
+                          Super-admin impersonation
+                        </motion.div>
+                        <motion.p
+                          variants={reduceMotion ? SA_ROW_VARIANTS_REDUCED : SA_ROW_VARIANTS}
+                          className="text-[11px] leading-5 text-zinc-500"
+                        >
+                          Sign in as any @simple.biz account to view HRIS from their perspective.
+                        </motion.p>
+
+                        <motion.div
+                          variants={reduceMotion ? SA_ROW_VARIANTS_REDUCED : SA_ROW_VARIANTS}
+                          className="space-y-1"
+                        >
+                          <label htmlFor="sa-email" className="text-[11px] font-medium text-zinc-600">
+                            Email to impersonate
+                          </label>
+                          <input
+                            id="sa-email"
+                            ref={saEmailRef}
+                            type="email"
+                            autoComplete="off"
+                            value={saEmail}
+                            onChange={(ev) => setSaEmail(ev.target.value)}
+                            placeholder="someone@simple.biz"
+                            className="w-full rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 shadow-sm outline-none transition focus:border-orange-400 focus:ring-2 focus:ring-orange-200"
+                          />
+                        </motion.div>
+
+                        <motion.div
+                          variants={reduceMotion ? SA_ROW_VARIANTS_REDUCED : SA_ROW_VARIANTS}
+                          className="space-y-1"
+                        >
+                          <label htmlFor="sa-password" className="text-[11px] font-medium text-zinc-600">
+                            Super-admin password
+                          </label>
+                          <input
+                            id="sa-password"
+                            type="password"
+                            autoComplete="off"
+                            value={saPassword}
+                            onChange={(ev) => setSaPassword(ev.target.value)}
+                            placeholder="••••••••••"
+                            className="w-full rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 shadow-sm outline-none transition focus:border-orange-400 focus:ring-2 focus:ring-orange-200"
+                          />
+                        </motion.div>
+
+                        {saError && (
+                          <motion.div
+                            initial={reduceMotion ? false : { opacity: 0, y: -4 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            transition={{ duration: 0.2, ease: 'easeOut' }}
+                            className="flex items-start gap-2 rounded-xl border border-red-200/80 bg-red-50/70 px-3 py-2 text-[11px] text-red-700"
+                          >
+                            <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                            <span>{saError}</span>
+                          </motion.div>
+                        )}
+
+                        <motion.div
+                          variants={reduceMotion ? SA_ROW_VARIANTS_REDUCED : SA_ROW_VARIANTS}
+                          className="flex items-center gap-2 pt-1"
+                        >
+                          <Button
+                            type="submit"
+                            size="sm"
+                            disabled={saLoading}
+                            className="flex-1 gap-2 rounded-xl bg-zinc-900 text-white hover:bg-zinc-800"
+                          >
+                            {saLoading ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <>
+                                Sign in as user
+                                <ArrowRight className="h-4 w-4" />
+                              </>
+                            )}
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="ghost"
+                            className="rounded-xl text-zinc-500 hover:text-zinc-800"
+                            onClick={() => {
+                              setShowSuperAdmin(false);
+                              setSaError(null);
+                            }}
+                          >
+                            Cancel
+                          </Button>
+                        </motion.div>
+                      </form>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
               </div>
             )}
 
