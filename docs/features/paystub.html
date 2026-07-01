@@ -192,6 +192,39 @@
           </tr>
 
           <tr>
+            <td class="px" style="padding:14px 32px 8px 32px;">
+              <div style="font-size:11px;line-height:14px;font-weight:800;letter-spacing:0.12em;text-transform:uppercase;color:#596a7e;color:oklch(46% 0.025 248);margin-bottom:10px;text-align:center;">
+                MESA Adjustment
+              </div>
+              <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%"
+                style="border-top:1px solid #dbe4ee;border-bottom:1px solid #dbe4ee;">
+                <tr>
+                  <td class="line-label" style="width:44%;padding:12px 0;font-size:13px;line-height:18px;color:#26384d;color:oklch(32% 0.035 248);border-bottom:1px solid #edf2f7;">
+                    MESA Reimbursement
+                  </td>
+                  <td class="detail-col" style="width:28%;padding:12px 8px;font-size:12px;line-height:18px;color:#7b8796;color:oklch(59% 0.018 248);border-bottom:1px solid #edf2f7;">
+                    Payout
+                  </td>
+                  <td class="line-amount" align="right" style="width:28%;padding:12px 0;font-size:13px;line-height:18px;font-weight:700;color:#0f766e;color:oklch(48% 0.09 180);border-bottom:1px solid #edf2f7;white-space:nowrap;">
+                    +&#8369;{{ $('pay_vars').item.json.mesa_disbursement.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2}) }}
+                  </td>
+                </tr>
+                <tr>
+                  <td class="line-label" style="width:44%;padding:12px 0;font-size:13px;line-height:18px;color:#26384d;color:oklch(32% 0.035 248);">
+                    MESA Deduction
+                  </td>
+                  <td class="detail-col" style="width:28%;padding:12px 8px;font-size:12px;line-height:18px;color:#7b8796;color:oklch(59% 0.018 248);">
+                    Contribution
+                  </td>
+                  <td class="line-amount" align="right" style="width:28%;padding:12px 0;font-size:13px;line-height:18px;font-weight:700;color:#b3261e;color:oklch(52% 0.19 25);white-space:nowrap;">
+                    -&#8369;{{ $('pay_vars').item.json.mesa_deduction.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2}) }}
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <tr>
             <td class="px" style="padding:18px 32px 30px 32px;">
               <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%"
                 style="background-color:#f8fafc;background-color:oklch(98% 0.006 248);border:1px solid #dbe4ee;border-radius:10px;">

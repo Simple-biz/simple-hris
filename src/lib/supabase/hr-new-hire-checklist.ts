@@ -33,6 +33,13 @@ export const HR_NEW_HIRE_CHECKLIST_FIELDS = [
 export type HrNewHireChecklistField =
   (typeof HR_NEW_HIRE_CHECKLIST_FIELDS)[number];
 
+/** Who last changed one cell, and when. */
+export type CellEditStamp = { by: string; at: string };
+
+/** Per-column edit attribution for one row. Only columns that have actually
+ *  been edited at least once appear as keys. */
+export type CellEdits = Partial<Record<HrNewHireChecklistField, CellEditStamp>>;
+
 export type HrNewHireChecklistRow = {
   id: string;
   /** The Sun–Sat week this row belongs to, anchored on its Sunday (YYYY-MM-DD). */
@@ -47,6 +54,7 @@ export type HrNewHireChecklistRow = {
   hired_by: string | null;
   department: string | null;
   country: string | null;
+  cell_edits: CellEdits | null;
   created_by: string | null;
   created_at: string;
   updated_at: string;
@@ -106,30 +114,48 @@ export async function listHrNewHireChecklist(periodStart: string): Promise<{
  * deleted, and rows without an `id` are inserted into that week. Every row's
  * `position` is rewritten to its index. Completely-blank rows are dropped first.
  * Scoped to `periodStart` throughout, so saving one week never touches another.
+ *
+ * Per-cell "last edited by" attribution: each field is diffed against the
+ * value CURRENTLY IN THE DATABASE (not against whatever the client happened to
+ * have loaded) — so it stays correct even if two people have the grid open at
+ * once. Only fields whose value actually changes get re-stamped; untouched
+ * cells keep their prior attribution. The stamp uses `opts.editedBy`, falling
+ * back to `opts.createdBy` (the API route only ever has one acting session
+ * email to give); if neither is set, cell_edits is left untouched entirely —
+ * never stamp an unknown editor.
  */
 export async function syncHrNewHireChecklist(
   periodStart: string,
   inputRows: HrNewHireChecklistInput[],
-  opts: { createdBy?: string | null } = {},
+  opts: { createdBy?: string | null; editedBy?: string | null } = {},
 ): Promise<{ rows: HrNewHireChecklistRow[]; error: string | null }> {
   const period = clean(periodStart);
   if (!period) return { rows: [], error: "A period (week) is required to save." };
   const sb = client();
   const createdBy = clean(opts.createdBy)?.toLowerCase() ?? null;
+  const editedBy = clean(opts.editedBy ?? opts.createdBy)?.toLowerCase() ?? null;
+  const nowIso = new Date().toISOString();
 
   // Drop blank rows, then number what remains by its grid position.
   const ordered = inputRows.filter((r) => !isBlankRow(r));
 
   // Which DB rows of THIS week currently exist (so we delete only the ones the
-  // user removed from this week — never another week's rows).
+  // user removed from this week — never another week's rows). Fetches full
+  // field values + cell_edits too, so updates can diff against the DB's
+  // current state rather than trusting the client's copy.
+  type ExistingRow = { id: string; cell_edits: CellEdits | null } & Record<
+    HrNewHireChecklistField,
+    string | null
+  >;
   const { data: existing, error: existErr } = await sb
     .from(TABLE)
-    .select("id")
+    .select(["id", "cell_edits", ...HR_NEW_HIRE_CHECKLIST_FIELDS].join(", "))
     .eq("period_start", period);
   if (existErr) return { rows: [], error: existErr.message };
-  const existingIds = new Set(
-    ((existing ?? []) as { id: string }[]).map((r) => r.id),
+  const existingById = new Map<string, ExistingRow>(
+    ((existing ?? []) as unknown as ExistingRow[]).map((r) => [r.id, r]),
   );
+  const existingIds = new Set(existingById.keys());
 
   const keepIds = new Set(
     ordered
@@ -143,7 +169,7 @@ export async function syncHrNewHireChecklist(
   }
 
   const fieldsPayload = (r: HrNewHireChecklistInput) => {
-    const out: Record<string, unknown> = {};
+    const out: Record<string, string | null> = {};
     for (const f of HR_NEW_HIRE_CHECKLIST_FIELDS) out[f] = clean(r[f]);
     return out;
   };
@@ -152,19 +178,38 @@ export async function syncHrNewHireChecklist(
   for (let i = 0; i < ordered.length; i++) {
     const r = ordered[i]!;
     const id = (r.id ?? "").trim();
+    const fields = fieldsPayload(r);
     if (id && existingIds.has(id)) {
-      const { error: updErr } = await sb
-        .from(TABLE)
-        .update({ position: i, period_start: period, ...fieldsPayload(r) })
-        .eq("id", id);
+      const updatePayload: Record<string, unknown> = { position: i, period_start: period, ...fields };
+      if (editedBy) {
+        const prev = existingById.get(id)!;
+        const nextCellEdits: CellEdits = { ...(prev.cell_edits ?? {}) };
+        let changed = false;
+        for (const f of HR_NEW_HIRE_CHECKLIST_FIELDS) {
+          if (fields[f] !== (prev[f] ?? null)) {
+            nextCellEdits[f] = { by: editedBy, at: nowIso };
+            changed = true;
+          }
+        }
+        if (changed) updatePayload.cell_edits = nextCellEdits;
+      }
+      const { error: updErr } = await sb.from(TABLE).update(updatePayload).eq("id", id);
       if (updErr) return { rows: [], error: updErr.message };
     } else {
-      inserts.push({
+      const insertPayload: Record<string, unknown> = {
         position: i,
         period_start: period,
         created_by: createdBy,
-        ...fieldsPayload(r),
-      });
+        ...fields,
+      };
+      if (editedBy) {
+        const cellEdits: CellEdits = {};
+        for (const f of HR_NEW_HIRE_CHECKLIST_FIELDS) {
+          if (fields[f] != null) cellEdits[f] = { by: editedBy, at: nowIso };
+        }
+        if (Object.keys(cellEdits).length > 0) insertPayload.cell_edits = cellEdits;
+      }
+      inserts.push(insertPayload);
     }
   }
 

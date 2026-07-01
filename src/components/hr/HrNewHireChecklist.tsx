@@ -28,7 +28,7 @@ import {
   setHrTabCache,
   HR_TAB_CACHE_KEYS,
 } from '@/lib/hr/tab-cache';
-import type { HrNewHireChecklistRow } from '@/lib/supabase/hr-new-hire-checklist';
+import type { CellEditStamp, HrNewHireChecklistRow } from '@/lib/supabase/hr-new-hire-checklist';
 import { ONBOARDING_COUNTRIES, resolveOnboardingCountry } from '@/lib/onboarding/countries';
 
 /** Grid columns, in display order. Keys match the DB / API field names 1:1. */
@@ -57,9 +57,15 @@ const SELECT_SCHEME_CLASS = '[color-scheme:light] dark:[color-scheme:dark]';
 
 type FieldKey = (typeof COLUMNS)[number]['key'];
 
-/** A grid row: a stable client `_key`, the DB `id` (null until saved), and one
- *  string per column (empty string = blank cell). */
-type GridRow = { _key: string; id: string | null } & Record<FieldKey, string>;
+/** A grid row: a stable client `_key`, the DB `id` (null until saved), one
+ *  string per column (empty string = blank cell), and `_editedBy` — the last
+ *  edit stamp per column, as loaded from the server (never sent back on save;
+ *  the server recomputes it by diffing against its own current values). */
+type GridRow = {
+  _key: string;
+  id: string | null;
+  _editedBy?: Partial<Record<FieldKey, CellEditStamp>>;
+} & Record<FieldKey, string>;
 
 type PeriodMeta = {
   period_start: string;
@@ -98,7 +104,7 @@ function seedBlank(n: number): GridRow[] {
 }
 
 function fromServer(row: HrNewHireChecklistRow): GridRow {
-  const r = { _key: nextKey(), id: row.id } as GridRow;
+  const r = { _key: nextKey(), id: row.id, _editedBy: row.cell_edits ?? undefined } as GridRow;
   for (const c of COLUMNS) r[c.key] = (row[c.key] ?? '') as string;
   return r;
 }
@@ -733,9 +739,10 @@ export default function HrNewHireChecklist() {
               <span>
                 Copy a column from Excel / Google Sheets and paste it into any cell — it fills straight
                 down. <strong>Department</strong> and <strong>Country</strong> offer a dropdown but can also be
-                typed or pasted. Tick rows to bulk-apply a department / country. <strong>Lock in</strong> saves
-                this week&apos;s hires to Supabase; they then feed the per-country <strong>Bulk Invite</strong> in
-                Onboarding. Reopen any week to edit.
+                typed or pasted. Tick rows to bulk-apply a department / country. A small dot in a cell&apos;s
+                corner means it&apos;s been edited before — hover it to see who and when. <strong>Lock in</strong>{' '}
+                saves this week&apos;s hires to Supabase; they then feed the per-country{' '}
+                <strong>Bulk Invite</strong> in Onboarding. Reopen any week to edit.
               </span>
             </div>
           )}
@@ -940,6 +947,7 @@ export default function HrNewHireChecklist() {
                             </td>
                             {COLUMNS.map((c, ci) => {
                               const value = row[c.key];
+                              const edit = row._editedBy?.[c.key];
                               const listId =
                                 c.key === 'department'
                                   ? departments.length > 0 ? 'nhc-departments' : undefined
@@ -947,7 +955,17 @@ export default function HrNewHireChecklist() {
                                     ? 'nhc-countries'
                                     : undefined;
                               return (
-                                <td key={c.key} className="border-b border-emerald-50/80 p-0 dark:border-zinc-800/80">
+                                <td
+                                  key={c.key}
+                                  className="relative border-b border-emerald-50/80 p-0 dark:border-zinc-800/80"
+                                  title={edit ? `Last edited by ${edit.by} - ${formatLockStamp(edit.at)}` : undefined}
+                                >
+                                  {edit && (
+                                    <span
+                                      aria-hidden="true"
+                                      className="pointer-events-none absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-emerald-500/70 dark:bg-emerald-400/70"
+                                    />
+                                  )}
                                   <input
                                     data-cell={`${r}-${ci}`}
                                     list={locked ? undefined : listId}
