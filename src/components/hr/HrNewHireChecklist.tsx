@@ -32,7 +32,7 @@ import {
 import { useSession } from 'next-auth/react';
 import type { CellEditEntry, HrNewHireChecklistRow } from '@/lib/supabase/hr-new-hire-checklist';
 import { ONBOARDING_COUNTRIES, resolveOnboardingCountry } from '@/lib/onboarding/countries';
-import { useLiveCells, type LiveCellPeer } from '@/hooks/useLiveCells';
+import { useLiveCells, type LiveCellPeer, type LiveCellValue } from '@/hooks/useLiveCells';
 
 /** Grid columns, in display order. Keys match the DB / API field names 1:1. */
 const COLUMNS = [
@@ -63,12 +63,18 @@ type FieldKey = (typeof COLUMNS)[number]['key'];
 /** Valid column keys, for validating a live-edit message from a peer. */
 const COLUMN_KEY_SET = new Set<string>(COLUMNS.map((c) => c.key));
 
-/** A grid row: a stable client `_key`, the DB `id` (null until saved), one
- *  string per column (empty string = blank cell), and `_editedBy` — the edit
- *  history log per column, as loaded from the server (never sent back on save;
- *  the server recomputes it by diffing against its own current values). */
+/** A grid row: a stable client `_key`, the DB `id` (null until saved), a shared
+ *  cross-client identity `_cid` (used by live co-editing to line rows up between
+ *  clients regardless of position), one string per column (empty string = blank
+ *  cell), and `_editedBy` — the edit history log per column, as loaded from the
+ *  server (never sent back on save; the server recomputes it by diffing against
+ *  its own current values). */
 type GridRow = {
   _key: string;
+  /** Shared co-editing identity: the DB id once saved, a deterministic seed key
+   *  for a fresh week's blank rows (so two clients align), or a random client id
+   *  for rows added after that. Never sent to the server. */
+  _cid: string;
   id: string | null;
   _editedBy?: Partial<Record<FieldKey, CellEditEntry[]>>;
 } & Record<FieldKey, string>;
@@ -104,8 +110,17 @@ const MAX_PASTE_BROADCAST_CELLS = 2000;
 let keySeq = 0;
 const nextKey = () => `nhc-${++keySeq}`;
 
-function blankRow(): GridRow {
-  const r = { _key: nextKey(), id: null } as GridRow;
+/** A fresh shared co-editing id for a client-created row. Only ever called from
+ *  event handlers / effects (never during render), so `crypto` is safe here. */
+function newCid(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return `cid-${nextKey()}`;
+}
+
+function blankRow(cid?: string): GridRow {
+  const r = { _key: nextKey(), _cid: cid ?? newCid(), id: null } as GridRow;
   for (const c of COLUMNS) r[c.key] = '';
   return r;
 }
@@ -114,8 +129,17 @@ function seedBlank(n: number): GridRow[] {
   return Array.from({ length: n }, () => blankRow());
 }
 
+/** Deterministic blank seed for an EMPTY week, so two clients opening the same
+ *  fresh week share row identities (`seed:<week>:<i>`) and their live edits line
+ *  up cell-for-cell — even if one of them later deletes a blank row. */
+function emptyWeekSeed(period: string, n = 6): GridRow[] {
+  return Array.from({ length: n }, (_, i) => blankRow(`seed:${period}:${i}`));
+}
+
 function fromServer(row: HrNewHireChecklistRow): GridRow {
-  const r = { _key: nextKey(), id: row.id, _editedBy: row.cell_edits ?? undefined } as GridRow;
+  // A saved row's shared identity IS its DB id, so a peer editing it resolves to
+  // the same row on every client.
+  const r = { _key: nextKey(), _cid: row.id, id: row.id, _editedBy: row.cell_edits ?? undefined } as GridRow;
   for (const c of COLUMNS) r[c.key] = (row[c.key] ?? '') as string;
   return r;
 }
@@ -269,31 +293,47 @@ export default function HrNewHireChecklist({
   const rowsRef = useRef(rows);
   useEffect(() => { rowsRef.current = rows; }, [rows]);
 
-  // Merge a peer's keystroke into our own grid. Matches the row by its stable DB
-  // id when saved, falling back to the broadcast index for brand-new rows, and
-  // grows the grid so a peer's freshly-added row still lands. Skips the cell the
-  // local user is focused in so their own typing is never clobbered.
+  // Set when a co-editor announces they saved the week; drives the resync/nudge
+  // effect (declared after fetchPeriod so it can reload).
+  const [savedSignal, setSavedSignal] = useState<{ by: string } | null>(null);
+
+  // Merge a peer's keystroke into our own grid. Matches the row by its shared
+  // `_cid` (DB id once saved, else a deterministic seed / client id) so it lines
+  // up regardless of position, falling back to the broadcast index only when no
+  // cid matches. Grows the grid so a peer's freshly-added row still lands, and
+  // skips the cell the local user is focused in so their typing is never
+  // clobbered. On the index-only fallback it will ONLY fill a blank cell, so a
+  // structural drift can never destroy data the local user typed elsewhere.
   const applyRemoteEdit = useCallback(
-    (rowIdx: number, id: string | null, col: string, value: string) => {
+    (rowIdx: number, cid: string, col: string, value: string) => {
       if (lockedRef.current) return; // a locked week is read-only for everyone
       if (!COLUMN_KEY_SET.has(col)) return;
       const key = col as FieldKey;
+      let changed = false;
       setRows((prev) => {
-        let idx = id ? prev.findIndex((row) => row.id === id) : -1;
+        let idx = cid ? prev.findIndex((row) => row._cid === cid) : -1;
+        const matchedByCid = idx >= 0;
         if (idx < 0) idx = rowIdx;
         if (idx < 0) return prev;
         const active = activeCellRef.current;
         if (active && active.r === idx && active.col === key) return prev;
         const next = prev.slice();
         while (next.length <= idx) next.push(blankRow());
-        if ((next[idx]![key] ?? '') === value) return prev; // already in sync
+        const cur = next[idx]![key] ?? '';
+        if (cur === value) return prev; // already in sync
+        if (!matchedByCid && cur.trim() !== '') return prev; // don't clobber on index guess
         next[idx] = { ...next[idx]!, [key]: value };
+        changed = true;
         return next;
       });
-      setDirty(true);
+      if (changed) setDirty(true);
     },
     [],
   );
+
+  const handlePeerSaved = useCallback((byEmail: string, byName: string | null) => {
+    setSavedSignal({ by: (byName && byName.trim()) || byEmail.split('@')[0] || byEmail });
+  }, []);
 
   const {
     peers: livePeers,
@@ -301,20 +341,22 @@ export default function HrNewHireChecklist({
     sendBlur: liveBlur,
     sendEdit: liveEdit,
     sendEdits: liveEdits,
+    sendSaved: liveSaved,
   } = useLiveCells({
     selfEmail,
     selfName,
     channel: `hr-nhc-cells:${period}`,
     enabled: !!selfEmail && !!period,
     onRemoteEdit: applyRemoteEdit,
+    onSaved: handlePeerSaved,
   });
 
   // Which peer (if any) occupies each rendered cell, keyed `${rowIndex}:${col}`.
-  // Resolves a peer's row the same way the merge does (DB id first, then index).
+  // Resolves a peer's row the same way the merge does (shared cid, then index).
   const peerByCell = useMemo(() => {
     const m = new Map<string, LiveCellPeer>();
     for (const p of livePeers) {
-      let idx = p.id ? rows.findIndex((row) => row.id === p.id) : -1;
+      let idx = p.cid ? rows.findIndex((row) => row._cid === p.cid) : -1;
       if (idx < 0) idx = p.row;
       if (idx < 0 || idx >= rows.length) continue;
       m.set(`${idx}:${p.col}`, p);
@@ -350,7 +392,7 @@ export default function HrNewHireChecklist({
       if (!res.ok || json.error) throw new Error(json.error || `Request failed (${res.status})`);
       const isLocked = json.period?.status === 'locked';
       const fresh = (json.rows ?? []).map(fromServer);
-      setRows(fresh.length ? fresh : isLocked ? [] : seedBlank(6));
+      setRows(fresh.length ? fresh : isLocked ? [] : emptyWeekSeed(p));
       setLocked(isLocked);
       setLockedAt(json.period?.locked_at ?? null);
       setLockedBy(json.period?.locked_by ?? null);
@@ -380,6 +422,20 @@ export default function HrNewHireChecklist({
   }, [period, loaded, fetchPeriod]);
 
   useEffect(() => { void loadPeriods(); }, [loadPeriods]);
+
+  // A co-editor saved this week. With no local edits in flight, silently resync
+  // so we adopt the server row ids (a blind second save would otherwise insert a
+  // co-edited new row twice); mid-edit, just nudge to Refresh.
+  useEffect(() => {
+    if (!savedSignal) return;
+    setSavedSignal(null);
+    if (dirty || saving) {
+      toast.info(`${savedSignal.by} saved this week — Refresh to sync (avoids duplicate rows).`);
+    } else {
+      void fetchPeriod(period);
+      void loadPeriods();
+    }
+  }, [savedSignal, dirty, saving, period, fetchPeriod, loadPeriods]);
 
   // Department dropdown options (best-effort; failure leaves Department as a
   // plain text input so entry is never blocked).
@@ -458,11 +514,19 @@ export default function HrNewHireChecklist({
       const matrix = parseClipboard(text);
       if (matrix.length === 1 && matrix[0]!.length === 1) return; // single value → native paste
       e.preventDefault();
+      const preRows = rowsRef.current;
+      // Resolve a stable shared cid per target row up front, so the row we grow
+      // locally and the value we broadcast to peers share identity (an appended
+      // paste row gets a fresh cid that BOTH sides use).
+      const targetCids: string[] = [];
+      for (let i = 0; i < matrix.length; i++) targetCids[i] = preRows[r + i]?._cid ?? newCid();
+
       setRows((prev) => {
         const next = prev.map((row) => ({ ...row }));
         for (let i = 0; i < matrix.length; i++) {
           const targetRow = r + i;
           while (next.length <= targetRow) next.push(blankRow());
+          next[targetRow]!._cid = targetCids[i]!; // share identity with the broadcast
           const cells = matrix[i]!;
           for (let j = 0; j < cells.length; j++) {
             const targetCol = c + j;
@@ -484,12 +548,10 @@ export default function HrNewHireChecklist({
       // Mirror the paste to co-editors as one batch (same grow-on-demand path as
       // typing), so a fill-down shows up live on their screens too. Skipped when
       // over the cap — such a paste still syncs on Save.
-      const preRows = rowsRef.current;
-      const batch: { r: number; id: string | null; c: string; v: string }[] = [];
+      const batch: LiveCellValue[] = [];
       let overflow = false;
       for (let i = 0; i < matrix.length && !overflow; i++) {
         const targetRow = r + i;
-        const targetId = preRows[targetRow]?.id ?? null;
         const cells = matrix[i]!;
         for (let j = 0; j < cells.length; j++) {
           const targetCol = c + j;
@@ -503,7 +565,7 @@ export default function HrNewHireChecklist({
               : key === 'country'
                 ? canonicalizeCountry(raw)
                 : raw;
-          batch.push({ r: targetRow, id: targetId, c: key, v: val });
+          batch.push({ r: targetRow, cid: targetCids[i]!, c: key, v: val });
         }
       }
       if (!overflow) liveEdits(batch);
@@ -595,13 +657,14 @@ export default function HrNewHireChecklist({
       if (!res.ok || json.error) throw new Error(json.error || `Save failed (${res.status})`);
       const isLocked = json.period?.status === 'locked';
       const fresh = (json.rows ?? []).map(fromServer);
-      setRows(fresh.length ? fresh : isLocked ? [] : seedBlank(6));
+      setRows(fresh.length ? fresh : isLocked ? [] : emptyWeekSeed(period));
       setLocked(isLocked);
       setLockedAt(json.period?.locked_at ?? null);
       setLockedBy(json.period?.locked_by ?? null);
       setDirty(false);
       setSelectedKeys(new Set());
       setLoaded(true);
+      liveSaved(); // tell co-editors to resync (avoids a duplicate insert of a shared new row)
       const filled = fresh.filter((r) => !rowIsBlank(r)).length;
       toast.success(
         action === 'lock'
@@ -614,7 +677,7 @@ export default function HrNewHireChecklist({
     } finally {
       setSaving(false);
     }
-  }, [period, rows, loadPeriods]);
+  }, [period, rows, loadPeriods, liveSaved]);
 
   const reopen = useCallback(async () => {
     if (!period) return;
@@ -629,19 +692,20 @@ export default function HrNewHireChecklist({
       const json = (await res.json()) as { rows?: HrNewHireChecklistRow[]; error?: string };
       if (!res.ok || json.error) throw new Error(json.error || `Reopen failed (${res.status})`);
       const fresh = (json.rows ?? []).map(fromServer);
-      setRows(fresh.length ? fresh : seedBlank(6));
+      setRows(fresh.length ? fresh : emptyWeekSeed(period));
       setLocked(false);
       setLockedAt(null);
       setLockedBy(null);
       setDirty(false);
       toast.success(`Reopened ${formatWeekLabel(period)} for editing`);
+      liveSaved(); // reopen changes the shared grid too — nudge co-editors to resync
       void loadPeriods();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Reopen failed');
     } finally {
       setSaving(false);
     }
-  }, [period, loadPeriods]);
+  }, [period, loadPeriods, liveSaved]);
 
   const filledCount = useMemo(() => rows.filter((r) => !rowIsBlank(r)).length, [rows]);
 
@@ -1148,11 +1212,11 @@ export default function HrNewHireChecklist({
                                     onFocus={() => {
                                       if (locked) return;
                                       activeCellRef.current = { r, col: c.key };
-                                      liveFocus(r, row.id, c.key);
+                                      liveFocus(r, row._cid, c.key);
                                     }}
                                     onChange={(e) => {
                                       setCell(r, c.key, e.target.value);
-                                      if (!locked) liveEdit(r, row.id, c.key, e.target.value);
+                                      if (!locked) liveEdit(r, row._cid, c.key, e.target.value);
                                     }}
                                     onPaste={(e) => handlePaste(e, r, ci)}
                                     onKeyDown={(e) => handleKeyDown(e, r, ci)}
@@ -1165,10 +1229,10 @@ export default function HrNewHireChecklist({
                                               : canonicalizeCountry(e.target.value);
                                           if (canon !== e.target.value) {
                                             setCell(r, c.key, canon);
-                                            liveEdit(r, row.id, c.key, canon);
+                                            liveEdit(r, row._cid, c.key, canon);
                                           }
                                         }
-                                        liveBlur(r, row.id, c.key);
+                                        liveBlur(r, row._cid, c.key);
                                       }
                                       if (activeCellRef.current?.r === r && activeCellRef.current?.col === c.key) {
                                         activeCellRef.current = null;
@@ -1195,7 +1259,9 @@ export default function HrNewHireChecklist({
                                       />
                                       <span
                                         className={cn(
-                                          'pointer-events-none absolute left-0 z-[6] flex max-w-full items-center whitespace-nowrap rounded px-1 py-px text-[9px] font-semibold leading-none text-white shadow-sm',
+                                          // z above the sticky header (z-10) + sticky row-number cell (z-20)
+                                          // so the name isn't painted over at the header boundary.
+                                          'pointer-events-none absolute left-0 z-[21] flex max-w-full items-center whitespace-nowrap rounded px-1 py-px text-[9px] font-semibold leading-none text-white shadow-sm',
                                           r === 0 ? 'top-full mt-px' : 'bottom-full mb-px',
                                         )}
                                         style={{ background: peerHere.color }}

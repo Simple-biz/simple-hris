@@ -20,6 +20,9 @@
       -moz-osx-font-smoothing: grayscale;
     }
 
+    /* Align peso decimals down the amount column (financial-statement figures). */
+    .amount-main, .line-amount { font-variant-numeric: tabular-nums; font-feature-settings: "tnum" 1; }
+
     @media screen and (max-width: 600px) {
       .email-shell { padding: 18px 10px !important; }
       .statement-card { width: 100% !important; max-width: 100% !important; }
@@ -60,10 +63,10 @@
               <div style="font-size:26px;line-height:32px;font-weight:700;color:#102034;color:oklch(24% 0.035 248);margin-top:0;letter-spacing:0;text-align:center;">
                 Pay Statement
               </div>
-              <div style="font-size:13px;line-height:19px;color:#667789;color:oklch(52% 0.025 248);margin-top:6px;text-align:center;">
+              <div style="font-size:13px;line-height:19px;color:#556377;margin-top:6px;text-align:center;">
                 Period ending <span style="font-weight:700;color:#2563eb;">{{ $('pay_vars').item.json.week_human }}</span>
               </div>
-              <div style="font-size:11px;line-height:16px;color:#7b8796;color:oklch(59% 0.018 248);margin-top:10px;text-align:center;">
+              <div style="font-size:11px;line-height:16px;color:#556377;margin-top:10px;text-align:center;">
                 Confidential pay record
               </div>
             </td>
@@ -72,7 +75,7 @@
           <tr>
             <td class="px" style="padding:0 32px 24px 32px;">
               <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%"
-                style="background-color:#f8fafc;border:1px solid #e6ebf1;border-radius:10px;">
+                style="background-color:#f4f8fd;border:1px solid #d8e4f0;border-radius:10px;">
                 <tr>
                   <td style="padding:18px 20px 17px 20px;">
                     <div style="font-size:11px;line-height:14px;font-weight:700;letter-spacing:0.11em;text-transform:uppercase;color:#f97316;text-align:center;">
@@ -83,7 +86,7 @@
                     </div>
                     <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="margin-top:12px;border-top:1px solid #e6ebf1;">
                       <tr>
-                        <td style="padding-top:11px;font-size:12px;line-height:17px;color:#667789;color:oklch(52% 0.025 248);">
+                        <td style="padding-top:11px;font-size:12px;line-height:17px;color:#556377;">
                           USD equivalent
                         </td>
                         <td align="right" style="padding-top:11px;font-size:12px;line-height:17px;font-weight:700;color:#26384d;color:oklch(32% 0.035 248);white-space:nowrap;">
@@ -102,7 +105,7 @@
               <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">
                 <tr>
                   <td class="stack-cell" style="width:50%;vertical-align:top;padding-right:14px;">
-                    <div style="font-size:10px;line-height:13px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;color:#8a97a6;color:oklch(64% 0.018 248);">
+                    <div style="font-size:10px;line-height:13px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;color:#556377;">
                       Recipient
                     </div>
                     <div style="font-size:14px;line-height:20px;font-weight:700;color:#102034;color:oklch(24% 0.035 248);margin-top:5px;">
@@ -110,7 +113,7 @@
                     </div>
                   </td>
                   <td class="stack-cell" align="right" style="width:50%;vertical-align:top;text-align:right;">
-                    <div style="font-size:10px;line-height:13px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;color:#8a97a6;color:oklch(64% 0.018 248);">
+                    <div style="font-size:10px;line-height:13px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;color:#556377;">
                       Department
                     </div>
                     <div style="font-size:14px;line-height:20px;font-weight:700;color:#102034;color:oklch(24% 0.035 248);margin-top:5px;">
@@ -133,7 +136,7 @@
                   <td class="line-label" style="width:44%;padding:12px 0;font-size:13px;line-height:18px;color:#26384d;color:oklch(32% 0.035 248);border-bottom:1px solid #edf2f7;">
                     Regular Hours
                   </td>
-                  <td class="detail-col" style="width:28%;padding:12px 8px;font-size:12px;line-height:18px;color:#7b8796;color:oklch(59% 0.018 248);border-bottom:1px solid #edf2f7;white-space:nowrap;">
+                  <td class="detail-col" style="width:28%;padding:12px 8px;font-size:12px;line-height:18px;color:#556377;border-bottom:1px solid #edf2f7;white-space:nowrap;">
                     {{ $('pay_vars').item.json.mf_hours }}h x &#8369;{{ $('pay_vars').item.json.mf_rate }}
                   </td>
                   <td class="line-amount" align="right" style="width:28%;padding:12px 0;font-size:13px;line-height:18px;font-weight:700;color:#102034;color:oklch(24% 0.035 248);border-bottom:1px solid #edf2f7;white-space:nowrap;">
@@ -144,7 +147,7 @@
                   <td class="line-label" style="width:44%;padding:12px 0;font-size:13px;line-height:18px;color:#26384d;color:oklch(32% 0.035 248);border-bottom:1px solid #edf2f7;">
                     Overtime
                   </td>
-                  <td class="detail-col" style="width:28%;padding:12px 8px;font-size:12px;line-height:18px;color:#7b8796;color:oklch(59% 0.018 248);border-bottom:1px solid #edf2f7;white-space:nowrap;">
+                  <td class="detail-col" style="width:28%;padding:12px 8px;font-size:12px;line-height:18px;color:#556377;border-bottom:1px solid #edf2f7;white-space:nowrap;">
                     {{ $('pay_vars').item.json.mf_ot_hours }}h x &#8369;{{ $('pay_vars').item.json.ot_rate }}
                   </td>
                   <td class="line-amount" align="right" style="width:28%;padding:12px 0;font-size:13px;line-height:18px;font-weight:700;color:#102034;color:oklch(24% 0.035 248);border-bottom:1px solid #edf2f7;white-space:nowrap;">
@@ -155,7 +158,7 @@
                   <td class="line-label" style="width:44%;padding:12px 0;font-size:13px;line-height:18px;color:#26384d;color:oklch(32% 0.035 248);border-bottom:1px solid #edf2f7;">
                     Tech Allowance
                   </td>
-                  <td class="detail-col" style="width:28%;padding:12px 8px;font-size:12px;line-height:18px;color:#7b8796;color:oklch(59% 0.018 248);border-bottom:1px solid #edf2f7;">
+                  <td class="detail-col" style="width:28%;padding:12px 8px;font-size:12px;line-height:18px;color:#556377;border-bottom:1px solid #edf2f7;">
                     Bonus
                   </td>
                   <td class="line-amount" align="right" style="width:28%;padding:12px 0;font-size:13px;line-height:18px;font-weight:700;color:#102034;color:oklch(24% 0.035 248);border-bottom:1px solid #edf2f7;white-space:nowrap;">
@@ -166,7 +169,7 @@
                   <td class="line-label" style="width:44%;padding:12px 0;font-size:13px;line-height:18px;color:#26384d;color:oklch(32% 0.035 248);border-bottom:1px solid #edf2f7;">
                     Attendance Incentive
                   </td>
-                  <td class="detail-col" style="width:28%;padding:12px 8px;font-size:12px;line-height:18px;color:#7b8796;color:oklch(59% 0.018 248);border-bottom:1px solid #edf2f7;">
+                  <td class="detail-col" style="width:28%;padding:12px 8px;font-size:12px;line-height:18px;color:#556377;border-bottom:1px solid #edf2f7;">
                     Bonus
                   </td>
                   <td class="line-amount" align="right" style="width:28%;padding:12px 0;font-size:13px;line-height:18px;font-weight:700;color:#102034;color:oklch(24% 0.035 248);border-bottom:1px solid #edf2f7;white-space:nowrap;">
@@ -177,7 +180,7 @@
                   <td class="line-label" style="width:44%;padding:12px 0;font-size:13px;line-height:18px;color:#26384d;color:oklch(32% 0.035 248);border-bottom:1px solid #edf2f7;">
                     Performance Bonus
                   </td>
-                  <td class="detail-col" style="width:28%;padding:12px 8px;font-size:12px;line-height:18px;color:#7b8796;color:oklch(59% 0.018 248);border-bottom:1px solid #edf2f7;">
+                  <td class="detail-col" style="width:28%;padding:12px 8px;font-size:12px;line-height:18px;color:#556377;border-bottom:1px solid #edf2f7;">
                     Bonus
                   </td>
                   <td class="line-amount" align="right" style="width:28%;padding:12px 0;font-size:13px;line-height:18px;font-weight:700;color:#102034;color:oklch(24% 0.035 248);border-bottom:1px solid #edf2f7;white-space:nowrap;">
@@ -188,7 +191,7 @@
                   <td class="line-label" style="width:44%;padding:12px 0;font-size:13px;line-height:18px;color:#26384d;color:oklch(32% 0.035 248);">
                     Adjustment
                   </td>
-                  <td class="detail-col" style="width:28%;padding:12px 8px;font-size:12px;line-height:18px;color:#7b8796;color:oklch(59% 0.018 248);">
+                  <td class="detail-col" style="width:28%;padding:12px 8px;font-size:12px;line-height:18px;color:#556377;">
                     {{ $('pay_vars').item.json.adjustment_note || 'Manual adjustment' }}
                   </td>
                   <td class="line-amount" align="right" style="width:28%;padding:12px 0;font-size:13px;line-height:18px;font-weight:700;color:#102034;color:oklch(24% 0.035 248);white-space:nowrap;">
@@ -210,7 +213,7 @@
                   <td class="line-label" style="width:44%;padding:12px 0;font-size:13px;line-height:18px;color:#26384d;color:oklch(32% 0.035 248);border-bottom:1px solid #edf2f7;">
                     MESA Reimbursement
                   </td>
-                  <td class="detail-col" style="width:28%;padding:12px 8px;font-size:12px;line-height:18px;color:#7b8796;color:oklch(59% 0.018 248);border-bottom:1px solid #edf2f7;">
+                  <td class="detail-col" style="width:28%;padding:12px 8px;font-size:12px;line-height:18px;color:#556377;border-bottom:1px solid #edf2f7;">
                     Payout
                   </td>
                   <td class="line-amount" align="right" style="width:28%;padding:12px 0;font-size:13px;line-height:18px;font-weight:700;color:#0f766e;color:oklch(48% 0.09 180);border-bottom:1px solid #edf2f7;white-space:nowrap;">
@@ -221,7 +224,7 @@
                   <td class="line-label" style="width:44%;padding:12px 0;font-size:13px;line-height:18px;color:#26384d;color:oklch(32% 0.035 248);">
                     MESA Deduction
                   </td>
-                  <td class="detail-col" style="width:28%;padding:12px 8px;font-size:12px;line-height:18px;color:#7b8796;color:oklch(59% 0.018 248);">
+                  <td class="detail-col" style="width:28%;padding:12px 8px;font-size:12px;line-height:18px;color:#556377;">
                     Contribution
                   </td>
                   <td class="line-amount" align="right" style="width:28%;padding:12px 0;font-size:13px;line-height:18px;font-weight:700;color:#b3261e;color:oklch(52% 0.19 25);white-space:nowrap;">
@@ -235,10 +238,10 @@
           <tr>
             <td class="px" style="padding:18px 32px 30px 32px;">
               <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%"
-                style="background-color:#f8fafc;border:1px solid #e6ebf1;border-left:3px solid #f97316;border-radius:10px;">
+                style="background-color:#f8fafc;border:1px solid #e6ebf1;border-radius:10px;">
                 <tr>
-                  <td style="padding:12px 14px;font-size:11px;line-height:16px;color:#667789;color:oklch(52% 0.025 248);">
-                    <strong style="color:#f97316;">Confidential:</strong>
+                  <td style="padding:12px 14px;font-size:11px;line-height:16px;color:#556377;">
+                    <strong style="color:#26384d;">Confidential:</strong>
                     This statement is intended only for the recipient named above. Contact your payroll representative if any hours or totals need review.
                   </td>
                 </tr>
@@ -250,7 +253,7 @@
             <td class="px" style="background-color:#f8fafc;border-top:1px solid #eef2f6;padding:17px 32px;">
               <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">
                 <tr>
-                  <td style="font-size:11px;line-height:16px;color:#7b8796;color:oklch(59% 0.018 248);">
+                  <td style="font-size:11px;line-height:16px;color:#556377;">
                     Automated dispatch from Simple HRIS
                   </td>
                   <td align="right" style="font-size:11px;line-height:16px;font-weight:700;color:#2563eb;white-space:nowrap;">

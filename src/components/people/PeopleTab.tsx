@@ -246,6 +246,7 @@ export default function PeopleTab({
   const [selected, setSelected] = useState<RosterRow | null>(null);
   const [transferFor, setTransferFor] = useState<RosterRow | null>(null);
   const [showExcluded, setShowExcluded] = useState(false);
+  const [showNoBanking, setShowNoBanking] = useState(false);
   const [deptFilter, setDeptFilter] = useState<string>('all');
   // Roster + stats share this: when on, only people who rendered OT are shown.
   const [otOnly, setOtOnly] = useState(false);
@@ -477,6 +478,11 @@ export default function PeopleTab({
   const excludedRows = useMemo(() => rows.filter((r) => !(r.hours.thisWeek > 0)), [rows]);
   const payoutCount = rows.length - excludedRows.length;
 
+  // People in the roster with NO bank / payout method on file at all — powers the
+  // "Missing bank info" KPI card + its drill-down modal. Roster-wide (not scoped
+  // to the selected pay week), since payout details don't vary by period.
+  const noBankingRows = useMemo(() => rows.filter((r) => !r.hasBanking), [rows]);
+
   return (
     // data-readonly-allow: People is a read surface (browse, search, reveal-banking
     // is itself audited); the only mutation — special transfers — is gated on
@@ -626,7 +632,7 @@ export default function PeopleTab({
 
         {/* Week KPI cards — overtime headcount + estimated OT payout for the
             selected week (USD primary, PHP small). */}
-        <div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
+        <div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-950">
             <div className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-zinc-400">
               <AlertTriangle className="h-3.5 w-3.5 text-amber-500" /> Employees with overtime
@@ -674,6 +680,37 @@ export default function PeopleTab({
             </div>
             <div className="mt-0.5 flex items-center gap-1 text-[11px] text-zinc-400">
               <CalendarDays className="h-3 w-3 shrink-0" /> <span className="truncate">{periodLabel}</span>
+            </div>
+          </button>
+          {/* People with no bank / payout method on file — click to see who. */}
+          <button
+            type="button"
+            onClick={() => setShowNoBanking(true)}
+            className="group rounded-xl border border-zinc-200 bg-white p-4 text-left shadow-sm transition-colors hover:border-rose-300 hover:bg-rose-50/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-rose-400 dark:border-zinc-800 dark:bg-zinc-950 dark:hover:border-rose-800/70 dark:hover:bg-rose-950/20"
+            title="See who has no bank / payout details on file"
+          >
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-zinc-400">
+                <Landmark className="h-3.5 w-3.5 text-rose-500" /> Missing bank info
+              </div>
+              <span className="flex items-center gap-0.5 text-[11px] font-medium text-rose-600 dark:text-rose-400">
+                View
+                <ChevronRight className="h-3 w-3 transition-transform group-hover:translate-x-0.5" />
+              </span>
+            </div>
+            <div className="mt-1 flex items-baseline gap-2">
+              <span
+                className={cn(
+                  'text-2xl font-semibold tabular-nums',
+                  noBankingRows.length > 0 ? 'text-rose-600 dark:text-rose-400' : 'text-zinc-900 dark:text-zinc-100',
+                )}
+              >
+                {noBankingRows.length}
+              </span>
+              <span className="text-[12px] text-zinc-400">of {rows.length}</span>
+            </div>
+            <div className="mt-0.5 truncate text-[11px] text-zinc-400">
+              {noBankingRows.length === 0 ? 'Everyone has payout details' : 'No payout method on file yet'}
             </div>
           </button>
         </div>
@@ -832,6 +869,14 @@ export default function PeopleTab({
           onSelect={(r) => { setShowExcluded(false); setSelected(r); }}
         />
       )}
+
+      {showNoBanking && (
+        <MissingBankInfoDialog
+          rows={noBankingRows}
+          onClose={() => setShowNoBanking(false)}
+          onSelect={(r) => { setShowNoBanking(false); setSelected(r); }}
+        />
+      )}
     </div>
   );
 }
@@ -929,6 +974,110 @@ function ExcludedPayoutDialog({
                     </li>
                   );
                 })}
+              </ul>
+            )}
+          </div>
+
+          <div className="shrink-0 border-t border-zinc-200 px-5 py-3 text-[11px] text-zinc-400 dark:border-zinc-800">
+            Showing {list.length} of {rows.length}. Click anyone to open their full record.
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/* ── Missing-bank-info modal ────────────────────────────────────────────── */
+
+function MissingBankInfoDialog({
+  rows,
+  onClose,
+  onSelect,
+}: {
+  rows: RosterRow[];
+  onClose: () => void;
+  onSelect: (r: RosterRow) => void;
+}) {
+  const [q, setQ] = useState('');
+  const list = useMemo(() => {
+    const term = q.trim().toLowerCase();
+    if (!term) return rows;
+    return rows.filter(
+      (r) =>
+        (r.name ?? '').toLowerCase().includes(term) ||
+        (r.work_email ?? '').toLowerCase().includes(term) ||
+        (r.department ?? '').toLowerCase().includes(term),
+    );
+  }, [rows, q]);
+  // People with no payout method who ALSO logged hours this week are the urgent
+  // ones — they're owed a payout but there's nowhere to send it.
+  const owedNow = useMemo(() => rows.filter((r) => r.hours.thisWeek > 0).length, [rows]);
+
+  return (
+    <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent className="gap-0 overflow-hidden p-0 sm:max-w-2xl">
+        <div className="flex max-h-[88vh] flex-col">
+          <DialogHeader className="shrink-0 border-b border-zinc-200 px-5 py-4 dark:border-zinc-800">
+            <DialogTitle className="flex items-center gap-2 text-lg">
+              <Landmark className="h-5 w-5 text-rose-500" /> Missing bank information
+            </DialogTitle>
+            <DialogDescription>
+              {rows.length} {rows.length === 1 ? 'person has' : 'people have'} no bank or payout method on file
+              {owedNow > 0 && (
+                <> — <span className="font-medium text-amber-600 dark:text-amber-400">{owedNow} owed a payout this week</span></>
+              )}
+              . They can add details themselves via the bank-info self-update link.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="shrink-0 border-b border-zinc-200 px-5 py-3 dark:border-zinc-800">
+            <div className="relative">
+              <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400" />
+              <Input
+                value={q}
+                onChange={(e) => setQ(e.target.value)}
+                placeholder="Search name, email, or department…"
+                className="h-9 pl-8 text-[13px]"
+              />
+            </div>
+          </div>
+
+          <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+            {list.length === 0 ? (
+              <p className="py-12 text-center text-sm text-zinc-500">
+                {rows.length === 0
+                  ? 'Everyone in the roster has bank details on file.'
+                  : 'No one matches your search.'}
+              </p>
+            ) : (
+              <ul className="space-y-1.5">
+                {list.map((r) => (
+                  <li key={`${r.work_email ?? r.employee_id ?? r.name ?? 'row'}|${r.name ?? ''}`}>
+                    <button
+                      type="button"
+                      onClick={() => onSelect(r)}
+                      className="flex w-full items-center gap-3 rounded-lg border border-zinc-200 px-3 py-2.5 text-left transition-colors hover:bg-zinc-50 dark:border-zinc-800 dark:hover:bg-zinc-900/50"
+                    >
+                      <TeamAvatar name={r.name ?? ''} email={r.work_email} />
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate text-[13px] font-medium text-zinc-900 dark:text-zinc-100">{r.name ?? '—'}</div>
+                        <div className="truncate text-[11px] text-zinc-400">
+                          {r.department ?? '—'} · {r.work_email ?? r.employee_id ?? ''}
+                        </div>
+                      </div>
+                      <div className="flex shrink-0 flex-wrap items-center justify-end gap-1">
+                        <span className="inline-flex items-center rounded-full bg-rose-50 px-2 py-0.5 text-[10.5px] font-medium text-rose-700 dark:bg-rose-950/40 dark:text-rose-300">
+                          No payout details
+                        </span>
+                        {r.hours.thisWeek > 0 && (
+                          <span className="inline-flex items-center rounded-full bg-amber-50 px-2 py-0.5 text-[10.5px] font-medium text-amber-700 dark:bg-amber-950/40 dark:text-amber-300">
+                            Owed this week
+                          </span>
+                        )}
+                      </div>
+                    </button>
+                  </li>
+                ))}
               </ul>
             )}
           </div>
