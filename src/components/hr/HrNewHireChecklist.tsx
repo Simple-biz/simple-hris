@@ -199,7 +199,14 @@ function rollingWeeks(currentSunday: string, back: number, fwd: number): string[
   return out;
 }
 
-export default function HrNewHireChecklist() {
+export default function HrNewHireChecklist({
+  onScrollSurfaceChange,
+}: {
+  /** Registers the grid's scroll container with the HR collab layer so peer
+   *  cursors anchor to the actual rows (and clip when scrolled away). Called
+   *  with the element on mount and `null` on unmount. */
+  onScrollSurfaceChange?: (el: HTMLElement | null) => void;
+} = {}) {
   // This tab only ever mounts client-side (HrApp gates it behind an auth check),
   // so reading the cache / `new Date()` in initializers is hydration-safe.
   const cached = getHrTabCache<CacheVal>(CACHE_KEY);
@@ -230,6 +237,21 @@ export default function HrNewHireChecklist() {
   // (even a paste on a readOnly input still fires our onPaste handler).
   const lockedRef = useRef(locked);
   useEffect(() => { lockedRef.current = locked; }, [locked]);
+
+  // Callback ref for the scrollable grid box: keeps `scrollRef` (used for cell
+  // focus) in sync AND registers the element with the HR collab layer so peer
+  // cursors anchor to the rows. Fires with `null` when the box unmounts (empty
+  // state / tab switch), clearing the anchor.
+  const registerScrollSurface = useCallback(
+    (el: HTMLDivElement | null) => {
+      scrollRef.current = el;
+      onScrollSurfaceChange?.(el);
+    },
+    [onScrollSurfaceChange],
+  );
+
+  // Clear the anchor if this tab unmounts entirely.
+  useEffect(() => () => onScrollSurfaceChange?.(null), [onScrollSurfaceChange]);
 
   const fetchPeriod = useCallback(async (p: string) => {
     setLoading(true);
@@ -869,8 +891,8 @@ export default function HrNewHireChecklist() {
                 </div>
               ) : (
                 <div
-                  ref={scrollRef}
-                  className="min-h-0 flex-1 overflow-auto rounded-2xl border border-emerald-100/80 bg-white shadow-sm dark:border-emerald-950/40 dark:bg-zinc-950"
+                  ref={registerScrollSurface}
+                  className="relative min-h-0 flex-1 overflow-auto rounded-2xl border border-emerald-100/80 bg-white shadow-sm dark:border-emerald-950/40 dark:bg-zinc-950"
                 >
                   <table className="table-keep w-full border-collapse text-[13px]">
                     <thead className="sticky top-0 z-10">

@@ -71,6 +71,9 @@ export default function HrApp() {
 
   const [activeTab, setActiveTab] = useState<HrTab>('overview');
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  // The New Hire Checklist grid registers its scroll box here so the collab
+  // layer can anchor peer cursors to the rows (and clip them when scrolled away).
+  const [nhcScrollSurface, setNhcScrollSurface] = useState<HTMLElement | null>(null);
   const [viewerEmail, setViewerEmail] = useState<string | null>(null);
   const [authChecked, setAuthChecked] = useState(false);
   // Container for the collaboration overlay (cursors map to this rect).
@@ -228,7 +231,9 @@ export default function HrApp() {
               ) : (
               <ReadOnlyTab readOnly={permsReady && !canEditTab('hr', activeTab)}>
               {activeTab === 'overview' && <HrOverview viewerEmail={viewerEmail} />}
-              {activeTab === 'new-hire-checklist' && <HrNewHireChecklist />}
+              {activeTab === 'new-hire-checklist' && (
+                <HrNewHireChecklist onScrollSurfaceChange={setNhcScrollSurface} />
+              )}
               {activeTab === 'onboarding' && <HrOnboarding />}
               {activeTab === 'offboarding' && <HrOffboarding />}
               {activeTab === 'leaves' && <LeaveRequestsPanel />}
@@ -253,6 +258,7 @@ export default function HrApp() {
           selfEmail={viewerEmail}
           section={activeTab}
           containerRef={mainRef}
+          scrollSurface={activeTab === 'new-hire-checklist' ? nhcScrollSurface : null}
         />
       </main>
 

@@ -294,7 +294,9 @@
       "Bash(node _tmp_investigate_kaner.mjs)",
       "Bash(node _tmp_delete_mesa_test_request.mjs)",
       "Bash(node _tmp_restore_mesa_optin.mjs)",
-      "Bash(echo \"exit code: $?\")"
+      "Bash(echo \"exit code: $?\")",
+      "Bash(npx eslint *)",
+      "Bash(echo \"---ESLINT EXIT: $?---\")"
     ],
     "additionalDirectories": [
       "\\tmp",

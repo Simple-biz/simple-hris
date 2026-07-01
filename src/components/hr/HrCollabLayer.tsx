@@ -42,7 +42,7 @@ const HR_ACCENT: CollabAccent = {
   cobrowseGlow: 'rgba(16,185,129,0.55)',
 };
 
-type Props = Pick<CollabLayerProps, 'selfEmail' | 'section' | 'containerRef'>;
+type Props = Pick<CollabLayerProps, 'selfEmail' | 'section' | 'containerRef' | 'scrollSurface'>;
 
 export default function HrCollabLayer(props: Props) {
   return (

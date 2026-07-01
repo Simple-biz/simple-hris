@@ -16,6 +16,7 @@ import {
   useAnimationControls,
   useReducedMotion,
 } from 'motion/react';
+import { createPortal } from 'react-dom';
 import { Eye, EyeOff, Send } from 'lucide-react';
 import { useSession } from 'next-auth/react';
 import { getSupabaseBrowserClient } from '@/lib/supabase/browser';
@@ -895,6 +896,16 @@ export interface CollabLayerProps {
   accent?: CollabAccent;
   /** Dashboard name shown in the cobrowse "waiting" copy (e.g. "HR dashboard"). */
   surfaceLabel?: string;
+  /**
+   * Optional scrollable element (e.g. a big data grid) to anchor cursors to its
+   * CONTENT instead of the visible dashboard area. When set, a peer's cursor is
+   * broadcast as a fraction of the surface's full scroll size (so it maps to the
+   * same row/cell on every screen regardless of each viewer's scroll or window
+   * size) and rendered as a child of that surface — so it clips out of view when
+   * the local viewer is scrolled somewhere the peer isn't. Leave unset (the
+   * default for every other dashboard) to keep the visible-area behavior.
+   */
+  scrollSurface?: HTMLElement | null;
 }
 
 export default function CollabLayer({
@@ -906,6 +917,7 @@ export default function CollabLayer({
   sectionLabels = DEFAULT_SECTION_LABELS,
   accent = DEFAULT_ACCENT,
   surfaceLabel = 'Accounting dashboard',
+  scrollSurface = null,
 }: CollabLayerProps) {
   const { data: session } = useSession();
   const normSelf = useMemo(() => (selfEmail ? normEmail(selfEmail) ?? selfEmail.trim().toLowerCase() : null), [selfEmail]);
@@ -1128,44 +1140,89 @@ export default function CollabLayer({
     playPingSent();
   }, [normSelf]);
 
+  // Last pointer position (viewport px), so a scroll of the anchored surface can
+  // re-emit the cursor at its new content cell even when the mouse doesn't move.
+  const lastPointerRef = useRef<{ clientX: number; clientY: number } | null>(null);
+
   useEffect(() => {
-    const el = containerRef.current;
+    // Anchor to the scroll surface's CONTENT when one is provided (cursors then
+    // map to the same cell everywhere + clip when scrolled away); otherwise the
+    // visible dashboard area, as every other dashboard uses it.
+    const surf = scrollSurface;
+    const el = surf ?? containerRef.current;
     if (!el || !normSelf) return;
 
+    // Fraction (0..100) of the surface's full scroll size for a pointer event.
+    // Returns null when the surface has no measurable size yet.
+    const toContentPct = (clientX: number, clientY: number): { x: number; y: number } | null => {
+      if (surf) {
+        const r = surf.getBoundingClientRect();
+        const cw = surf.scrollWidth || r.width;
+        const ch = surf.scrollHeight || r.height;
+        if (!cw || !ch) return null;
+        return {
+          x: ((clientX - r.left + surf.scrollLeft) / cw) * 100,
+          y: ((clientY - r.top + surf.scrollTop) / ch) * 100,
+        };
+      }
+      const r = el.getBoundingClientRect();
+      if (r.width === 0 || r.height === 0) return null;
+      return { x: ((clientX - r.left) / r.width) * 100, y: ((clientY - r.top) / r.height) * 100 };
+    };
+
     const onMove = (e: MouseEvent) => {
+      lastPointerRef.current = { clientX: e.clientX, clientY: e.clientY };
       const now = Date.now();
       if (now - lastMoveRef.current < MOVE_THROTTLE_MS) return;
       lastMoveRef.current = now;
-      const r = el.getBoundingClientRect();
-      if (r.width === 0 || r.height === 0) return;
-      sendMsg({
-        kind: 'move',
-        email: normSelf,
-        section: sectionRef.current,
-        x: ((e.clientX - r.left) / r.width) * 100,
-        y: ((e.clientY - r.top) / r.height) * 100,
-      });
+      const c = toContentPct(e.clientX, e.clientY);
+      if (!c) return;
+      sendMsg({ kind: 'move', email: normSelf, section: sectionRef.current, x: c.x, y: c.y });
     };
 
     const onClick = (e: MouseEvent) => {
-      const r = el.getBoundingClientRect();
-      if (r.width === 0 || r.height === 0) return;
-      sendMsg({
-        kind: 'click',
-        email: normSelf,
-        section: sectionRef.current,
-        x: ((e.clientX - r.left) / r.width) * 100,
-        y: ((e.clientY - r.top) / r.height) * 100,
-      });
+      const c = toContentPct(e.clientX, e.clientY);
+      if (!c) return;
+      sendMsg({ kind: 'click', email: normSelf, section: sectionRef.current, x: c.x, y: c.y });
+    };
+
+    // When the anchored surface scrolls under a stationary mouse, the pointer is
+    // now over a different cell — re-broadcast so peers see it move there too.
+    const onScroll = () => {
+      const p = lastPointerRef.current;
+      if (!p) return;
+      const now = Date.now();
+      if (now - lastMoveRef.current < MOVE_THROTTLE_MS) return;
+      lastMoveRef.current = now;
+      const c = toContentPct(p.clientX, p.clientY);
+      if (!c) return;
+      sendMsg({ kind: 'move', email: normSelf, section: sectionRef.current, x: c.x, y: c.y });
     };
 
     el.addEventListener('mousemove', onMove as EventListener);
     el.addEventListener('click', onClick as EventListener);
+    if (surf) surf.addEventListener('scroll', onScroll as EventListener, { passive: true });
     return () => {
       el.removeEventListener('mousemove', onMove as EventListener);
       el.removeEventListener('click', onClick as EventListener);
+      if (surf) surf.removeEventListener('scroll', onScroll as EventListener);
     };
-  }, [normSelf, containerRef, sendMsg]);
+  }, [normSelf, containerRef, sendMsg, scrollSurface]);
+
+  // Track the anchored surface's full scroll size so the portalled cursor
+  // overlay can span the whole content (cursors positioned as a % of it, then
+  // clipped to the visible box by the surface's own overflow).
+  const [surfaceSize, setSurfaceSize] = useState<{ w: number; h: number } | null>(null);
+  useEffect(() => {
+    const surf = scrollSurface;
+    if (!surf) { setSurfaceSize(null); return; }
+    const measure = () => setSurfaceSize({ w: surf.scrollWidth, h: surf.scrollHeight });
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(surf);
+    if (surf.firstElementChild) ro.observe(surf.firstElementChild);
+    return () => ro.disconnect();
+  }, [scrollSurface]);
 
   // --- GC stale cursors ------------------------------------------------------
   useEffect(() => {
@@ -1222,54 +1279,79 @@ export default function CollabLayer({
 
   if (!normSelf) return null;
 
+  // Remote cursors + click ripples. Rendered either over the visible dashboard
+  // area (default) or, when a scroll surface is anchored, inside that surface's
+  // full-content box (below) so they track rows and clip when scrolled away.
+  const cursorNodes = (
+    <>
+      <AnimatePresence>
+        {Array.from(cursors.values()).map((c) => (
+          <RemoteCursor
+            key={c.email}
+            email={c.email}
+            name={c.name}
+            x={c.x}
+            y={c.y}
+            color={c.color}
+            glow={c.glow}
+          />
+        ))}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {ripples.map((r) => (
+          <div
+            key={r.id}
+            className="absolute"
+            style={{ left: `${r.x}%`, top: `${r.y}%`, transform: 'translate(-50%,-50%)' }}
+          >
+            {[0, 1, 2].map((i) => (
+              <motion.span
+                key={i}
+                className="absolute block rounded-full"
+                style={{
+                  left: '50%',
+                  top: '50%',
+                  transform: 'translate(-50%,-50%)',
+                  border: `${2 - i * 0.4}px solid ${r.color}`,
+                  boxShadow: i === 0 ? `0 0 6px ${r.glow}` : undefined,
+                }}
+                initial={{ width: 0, height: 0, opacity: 0.9 - i * 0.18 }}
+                animate={{ width: 40 + i * 28, height: 40 + i * 28, opacity: 0 }}
+                transition={{ duration: 0.48 + i * 0.1, delay: i * 0.06, ease: [0.22, 1, 0.36, 1] }}
+                onAnimationComplete={() => {
+                  if (i === 2) setRipples((prev) => prev.filter((p) => p.id !== r.id));
+                }}
+              />
+            ))}
+          </div>
+        ))}
+      </AnimatePresence>
+    </>
+  );
+
   return (
     <>
-      {/* Section-scoped cursor + click overlay */}
-      <div className="pointer-events-none absolute inset-0 z-50 select-none overflow-hidden">
-        <AnimatePresence>
-          {Array.from(cursors.values()).map((c) => (
-            <RemoteCursor
-              key={c.email}
-              email={c.email}
-              name={c.name}
-              x={c.x}
-              y={c.y}
-              color={c.color}
-              glow={c.glow}
-            />
-          ))}
-        </AnimatePresence>
-
-        <AnimatePresence>
-          {ripples.map((r) => (
+      {/* Cursor + click overlay. Anchored mode portals into the scroll surface,
+          sized to its full content, so cursors sit on the right row and are
+          clipped by the surface's own overflow when scrolled out of view. The
+          default mode overlays the visible dashboard area. */}
+      {scrollSurface
+        ? surfaceSize &&
+          createPortal(
             <div
-              key={r.id}
-              className="absolute"
-              style={{ left: `${r.x}%`, top: `${r.y}%`, transform: 'translate(-50%,-50%)' }}
+              className="pointer-events-none absolute left-0 top-0 z-50 select-none"
+              style={{ width: surfaceSize.w, height: surfaceSize.h }}
             >
-              {[0, 1, 2].map((i) => (
-                <motion.span
-                  key={i}
-                  className="absolute block rounded-full"
-                  style={{
-                    left: '50%',
-                    top: '50%',
-                    transform: 'translate(-50%,-50%)',
-                    border: `${2 - i * 0.4}px solid ${r.color}`,
-                    boxShadow: i === 0 ? `0 0 6px ${r.glow}` : undefined,
-                  }}
-                  initial={{ width: 0, height: 0, opacity: 0.9 - i * 0.18 }}
-                  animate={{ width: 40 + i * 28, height: 40 + i * 28, opacity: 0 }}
-                  transition={{ duration: 0.48 + i * 0.1, delay: i * 0.06, ease: [0.22, 1, 0.36, 1] }}
-                  onAnimationComplete={() => {
-                    if (i === 2) setRipples((prev) => prev.filter((p) => p.id !== r.id));
-                  }}
-                />
-              ))}
-            </div>
-          ))}
-        </AnimatePresence>
-      </div>
+              {cursorNodes}
+            </div>,
+            scrollSurface,
+          )
+        : (
+          <div className="pointer-events-none absolute inset-0 z-50 select-none overflow-hidden">
+            {cursorNodes}
+          </div>
+        )}
 
       {/* Floating right-edge avatar rail (everyone in Accounting).
           NOTE: the rail intentionally has NO overflow/scroll. `overflow-y-auto`
