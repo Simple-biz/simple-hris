@@ -24,6 +24,7 @@ import { Lock, Menu, Unlock } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useDispatchLock } from '@/hooks/useDispatchLock';
 import { useEmployeeNotificationsUnread } from '@/hooks/useEmployeeNotificationsUnread';
+import { useBankInfoRequest } from '@/hooks/useBankInfoRequest';
 import { usePagesVisibility } from '@/hooks/usePagesVisibility';
 import { dashboardPages, pageLabel } from '@/lib/pages/visibility';
 import UnderConstruction from '@/components/common/UnderConstruction';
@@ -99,6 +100,9 @@ export default function EmployeeApp() {
   // indicator, and one-time toast notifications when the state flips.
   const { state: lockState, loading: lockLoading } = useDispatchLock();
   const unreadNotifications = useEmployeeNotificationsUnread(employeeEmail);
+  // Did accounting/CEO ask this person (from the People tab) to add missing
+  // payout details? Escalates the Profile → Payment nudge from amber to rose.
+  const bankInfoRequested = useBankInfoRequest(employeeEmail);
 
   // Global Pages overlay (admin-controlled visible / construction / hidden).
   const { ready: pagesReady, visibilityOf } = usePagesVisibility();
@@ -277,6 +281,9 @@ export default function EmployeeApp() {
     skillSetComplete !== null &&
     (needsPhoto || needsBank || needsSkillSet);
   const profileSetupCount = [needsPhoto, needsBank, needsSkillSet].filter(Boolean).length;
+  // Loud rose escalation only while they were explicitly asked AND still have no
+  // payout method — it clears itself the moment they add their bank details.
+  const bankInfoNudge = bankInfoRequested && needsBank;
 
   // Keep-alive: once a tab has been visited we keep its component mounted and
   // just hide it, so its fetched data/state survive tab switches (no reload when
@@ -367,6 +374,7 @@ export default function EmployeeApp() {
             onPayoutCompletionChange={(complete) => setPayoutComplete(complete)}
             onSkillSetCompletionChange={(complete) => setSkillSetComplete(complete)}
             payrollLocked={lockState.locked}
+            escalatePayment={bankInfoNudge}
           />
         );
       case 'hours':
@@ -462,6 +470,7 @@ export default function EmployeeApp() {
 
         profileIncomplete={profileIncomplete}
         profileSetupCount={profileSetupCount}
+        bankInfoNudge={bankInfoNudge}
         hiddenTabs={hiddenEmployeeTabs}
         constructionTabs={constructionEmployeeTabs}
       />

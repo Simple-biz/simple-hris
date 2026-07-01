@@ -22,6 +22,7 @@ export const NOTIFICATION_TYPE_TO_VIEWS: Record<string, AppView[]> = {
   'time_adjustment.approved': ['employee'],
   'time_adjustment.denied': ['employee'],
   'special_transfer.recorded': ['employee'],
+  'bank_info.requested': ['employee'],
   'people.banking.self_updated': ['accounting', 'admin', 'ceo'],
   'payroll.processing_started': ['admin', 'hr', 'accounting'],
   'payroll.processing_stopped': ['admin', 'hr', 'accounting'],

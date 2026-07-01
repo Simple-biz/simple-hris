@@ -329,7 +329,15 @@
       "Read(//c/Users/app/**)",
       "Read(//c/Users/**)",
       "Bash(find . -name \"*.css\" -not -path \"*/node_modules/*\" -not -path \"*/.next/*\")",
-      "Bash(grep -n '\"@/\\\\*\"\\\\|paths' tsconfig.json)"
+      "Bash(grep -n '\"@/\\\\*\"\\\\|paths' tsconfig.json)",
+      "Bash(grep -E \"\\\\.\\(tsx?|jsx?\\)$\")",
+      "Bash(node -e \"const w=JSON.parse\\(require\\('fs'\\).readFileSync\\('references/n8n/Paystub Automation.json','utf8'\\)\\); let m=''; \\(function walk\\(o\\){if\\(!o||typeof o!=='object'\\)return; if\\(Array.isArray\\(o\\)\\){o.forEach\\(walk\\);return;} if\\(o.type&&o.type.includes\\('gmail'\\)\\)m=o.parameters.message; for\\(const k of Object.keys\\(o\\)\\)walk\\(o[k]\\);}\\)\\(w\\); console.log\\('JSON OK'\\); console.log\\('hours toFixed:', m.includes\\('mf_hours\\).toFixed\\(2\\)'\\)\\); console.log\\('orange border:', m.includes\\('2px solid #f97316'\\)\\);\")",
+      "Bash(node -e \"const w=JSON.parse\\(require\\('fs'\\).readFileSync\\('references/n8n/Paystub Automation.json','utf8'\\)\\); let m=''; \\(function walk\\(o\\){if\\(!o||typeof o!=='object'\\)return; if\\(Array.isArray\\(o\\)\\){o.forEach\\(walk\\);return;} if\\(o.type&&o.type.includes\\('gmail'\\)\\)m=o.parameters.message; for\\(const k of Object.keys\\(o\\)\\)walk\\(o[k]\\);}\\)\\(w\\); console.log\\('JSON OK'\\); console.log\\('orange frame:', m.includes\\('background-color:#f97316;border-radius:17px'\\)\\); console.log\\('box shades :', m.includes\\('#fff4e6'\\) && m.includes\\('#fffaf4'\\)\\);\")",
+      "Bash(find /c/Users/Itachi/Desktop/simple-hris -path '*people/request-bank-info/route.ts' 2>/dev/null; echo \"---\"; find /c/Users/Itachi/Desktop/gridlineanalyticsv2.2 -path '*people/request-bank-info/route.ts' 2>/dev/null)",
+      "Read(//c/Users/Itachi/Desktop/gridlineanalyticsv2.2/**)",
+      "Bash(git --no-pager diff --stat -- . ':\\(exclude\\)tsconfig.tsbuildinfo' ':\\(exclude\\).claude/settings.json' ':\\(exclude\\)docs/**' ':\\(exclude\\)references/n8n/**' ':\\(exclude\\)src/components/hr/HrNewHireChecklist.tsx' ':\\(exclude\\)src/hooks/useLiveCells.ts')",
+      "Bash(python3 -)",
+      "Bash(node -e \"const w=JSON.parse\\(require\\('fs'\\).readFileSync\\('references/n8n/Paystub Automation.json','utf8'\\)\\); let m=''; \\(function walk\\(o\\){if\\(!o||typeof o!=='object'\\)return; if\\(Array.isArray\\(o\\)\\){o.forEach\\(walk\\);return;} if\\(o.type&&o.type.includes\\('gmail'\\)\\)m=o.parameters.message; for\\(const k of Object.keys\\(o\\)\\)walk\\(o[k]\\);}\\)\\(w\\); console.log\\('JSON OK'\\); console.log\\('oklch in n8n message :', \\(m.match\\(/oklch\\\\\\(/g\\)||[]\\).length, '\\(must be 0\\)'\\); console.log\\('charcoal bands       :', \\(m.match\\(/#334155/g\\)||[]\\).length\\); console.log\\('n8n exprs intact     :', m.includes\\(\\\\\"pay_vars'\\).item.json.mf_pay\\\\\"\\) && m.includes\\(\\\\\"pay_vars'\\).item.json.adjustment\\\\\"\\)\\);\")"
     ],
     "additionalDirectories": [
       "\\tmp",

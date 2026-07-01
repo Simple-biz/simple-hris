@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import {
-  Search, Send, Eye, EyeOff, Clock, AlertTriangle, Users, Banknote, Loader2, Sparkles, RefreshCw, CalendarDays, ChevronRight, Landmark,
+  Search, Send, Eye, EyeOff, Clock, AlertTriangle, Users, Banknote, Loader2, Sparkles, RefreshCw, CalendarDays, ChevronRight, Landmark, Bell, Check,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
@@ -738,9 +738,9 @@ export default function PeopleTab({
                 </tr>
               </thead>
               <tbody>
-                {pageRows.map((r) => (
+                {pageRows.map((r, i) => (
                   <tr
-                    key={`${r.work_email ?? r.employee_id ?? r.name ?? 'row'}|${r.name ?? ''}`}
+                    key={`${r.work_email ?? r.employee_id ?? r.name ?? 'row'}|${r.name ?? ''}|${i}`}
                     className="cursor-pointer border-b border-zinc-100 transition-colors last:border-0 hover:bg-zinc-50 dark:border-zinc-900 dark:hover:bg-zinc-900/50"
                     onClick={() => setSelected(r)}
                   >
@@ -873,6 +873,9 @@ export default function PeopleTab({
       {showNoBanking && (
         <MissingBankInfoDialog
           rows={noBankingRows}
+          rangeMode={rangeMode}
+          periodLabel={periodLabel}
+          canEdit={canEdit}
           onClose={() => setShowNoBanking(false)}
           onSelect={(r) => { setShowNoBanking(false); setSelected(r); }}
         />
@@ -939,10 +942,10 @@ function ExcludedPayoutDialog({
               </p>
             ) : (
               <ul className="space-y-1.5">
-                {list.map((r) => {
+                {list.map((r, i) => {
                   const noRate = r.rate.regular == null && r.rate.ot == null;
                   return (
-                    <li key={`${r.work_email ?? r.employee_id ?? r.name ?? 'row'}|${r.name ?? ''}`}>
+                    <li key={`${r.work_email ?? r.employee_id ?? r.name ?? 'row'}|${r.name ?? ''}|${i}`}>
                       <button
                         type="button"
                         onClick={() => onSelect(r)}
@@ -991,14 +994,26 @@ function ExcludedPayoutDialog({
 
 function MissingBankInfoDialog({
   rows,
+  rangeMode,
+  periodLabel,
+  canEdit,
   onClose,
   onSelect,
 }: {
   rows: RosterRow[];
+  rangeMode: boolean;
+  periodLabel: string;
+  canEdit: boolean;
   onClose: () => void;
   onSelect: (r: RosterRow) => void;
 }) {
   const [q, setQ] = useState('');
+  // Emails notified this session (button flips to "Notified") and those with an
+  // in-flight request (spinner). Session-only — reopening the modal resets them.
+  const [notified, setNotified] = useState<Set<string>>(new Set());
+  const [busy, setBusy] = useState<Set<string>>(new Set());
+  const [notifyingAll, setNotifyingAll] = useState(false);
+
   const list = useMemo(() => {
     const term = q.trim().toLowerCase();
     if (!term) return rows;
@@ -1009,9 +1024,51 @@ function MissingBankInfoDialog({
         (r.department ?? '').toLowerCase().includes(term),
     );
   }, [rows, q]);
-  // People with no payout method who ALSO logged hours this week are the urgent
-  // ones — they're owed a payout but there's nowhere to send it.
+  // People with no payout method who ALSO logged hours in the current scope are
+  // the urgent ones — they're owed a payout but there's nowhere to send it.
   const owedNow = useMemo(() => rows.filter((r) => r.hours.thisWeek > 0).length, [rows]);
+  // Notifiable = currently-shown people with a work email we haven't notified yet.
+  const notifiable = useMemo(
+    () =>
+      list.filter((r) => {
+        const e = (r.work_email ?? '').trim().toLowerCase();
+        return !!e && !notified.has(e);
+      }),
+    [list, notified],
+  );
+
+  const notify = async (targets: RosterRow[]) => {
+    const emails = Array.from(
+      new Set(targets.map((t) => (t.work_email ?? '').trim().toLowerCase()).filter(Boolean)),
+    );
+    if (emails.length === 0) {
+      toast.error('No work email on file to notify.');
+      return;
+    }
+    setBusy((prev) => new Set([...prev, ...emails]));
+    try {
+      const res = await fetch('/api/people/request-bank-info', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ emails }),
+      });
+      const json = (await res.json()) as { ok?: boolean; notified?: number; error?: string };
+      if (!res.ok || !json.ok) throw new Error(json.error || `Request failed (${res.status})`);
+      setNotified((prev) => new Set([...prev, ...emails]));
+      const n = json.notified ?? emails.length;
+      toast.success(
+        n === 1 ? 'Notified them to add their bank details.' : `Notified ${n} people to add their bank details.`,
+      );
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not send the notification.');
+    } finally {
+      setBusy((prev) => {
+        const next = new Set(prev);
+        emails.forEach((x) => next.delete(x));
+        return next;
+      });
+    }
+  };
 
   return (
     <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
@@ -1024,14 +1081,14 @@ function MissingBankInfoDialog({
             <DialogDescription>
               {rows.length} {rows.length === 1 ? 'person has' : 'people have'} no bank or payout method on file
               {owedNow > 0 && (
-                <> — <span className="font-medium text-amber-600 dark:text-amber-400">{owedNow} owed a payout this week</span></>
+                <> — <span className="font-medium text-amber-600 dark:text-amber-400">{owedNow} owed a payout {rangeMode ? 'in the selected range' : 'this week'}</span></>
               )}
-              . They can add details themselves via the bank-info self-update link.
+              .{canEdit ? ' Notify anyone to blink their dashboard toward adding payout details.' : ''}
             </DialogDescription>
           </DialogHeader>
 
-          <div className="shrink-0 border-b border-zinc-200 px-5 py-3 dark:border-zinc-800">
-            <div className="relative">
+          <div className="flex shrink-0 items-center gap-2 border-b border-zinc-200 px-5 py-3 dark:border-zinc-800">
+            <div className="relative min-w-0 flex-1">
               <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400" />
               <Input
                 value={q}
@@ -1040,6 +1097,19 @@ function MissingBankInfoDialog({
                 className="h-9 pl-8 text-[13px]"
               />
             </div>
+            {canEdit && (
+              <Button
+                type="button"
+                size="sm"
+                disabled={notifiable.length === 0 || notifyingAll}
+                onClick={async () => { setNotifyingAll(true); await notify(notifiable); setNotifyingAll(false); }}
+                title={notifiable.length === 0 ? 'Everyone shown has already been notified' : 'Notify everyone shown to add their bank details'}
+                className="h-9 shrink-0 gap-1.5 bg-rose-600 px-3 text-[12px] text-white hover:bg-rose-700 dark:bg-rose-600 dark:hover:bg-rose-500"
+              >
+                {notifyingAll ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Bell className="h-3.5 w-3.5" />}
+                <span className="whitespace-nowrap">Notify all{notifiable.length > 0 ? ` (${notifiable.length})` : ''}</span>
+              </Button>
+            )}
           </div>
 
           <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
@@ -1051,39 +1121,75 @@ function MissingBankInfoDialog({
               </p>
             ) : (
               <ul className="space-y-1.5">
-                {list.map((r) => (
-                  <li key={`${r.work_email ?? r.employee_id ?? r.name ?? 'row'}|${r.name ?? ''}`}>
-                    <button
-                      type="button"
-                      onClick={() => onSelect(r)}
-                      className="flex w-full items-center gap-3 rounded-lg border border-zinc-200 px-3 py-2.5 text-left transition-colors hover:bg-zinc-50 dark:border-zinc-800 dark:hover:bg-zinc-900/50"
-                    >
-                      <TeamAvatar name={r.name ?? ''} email={r.work_email} />
-                      <div className="min-w-0 flex-1">
-                        <div className="truncate text-[13px] font-medium text-zinc-900 dark:text-zinc-100">{r.name ?? '—'}</div>
-                        <div className="truncate text-[11px] text-zinc-400">
-                          {r.department ?? '—'} · {r.work_email ?? r.employee_id ?? ''}
+                {list.map((r, i) => {
+                  const email = (r.work_email ?? '').trim().toLowerCase();
+                  const done = !!email && notified.has(email);
+                  const inFlight = !!email && busy.has(email);
+                  return (
+                    <li key={`${r.work_email ?? r.employee_id ?? r.name ?? 'row'}|${r.name ?? ''}|${i}`}>
+                      <div className="flex items-center gap-3 rounded-lg border border-zinc-200 px-3 py-2.5 transition-colors hover:bg-zinc-50 dark:border-zinc-800 dark:hover:bg-zinc-900/50">
+                        <button
+                          type="button"
+                          onClick={() => onSelect(r)}
+                          className="flex min-w-0 flex-1 items-center gap-3 text-left focus:outline-none focus-visible:rounded-md focus-visible:ring-2 focus-visible:ring-rose-400"
+                        >
+                          <TeamAvatar name={r.name ?? ''} email={r.work_email} />
+                          <div className="min-w-0 flex-1">
+                            <div className="truncate text-[13px] font-medium text-zinc-900 dark:text-zinc-100">{r.name ?? '—'}</div>
+                            <div className="truncate text-[11px] text-zinc-400">
+                              {r.department ?? '—'} · {r.work_email ?? r.employee_id ?? ''}
+                            </div>
+                          </div>
+                        </button>
+                        <div className="flex shrink-0 flex-wrap items-center justify-end gap-1.5">
+                          <span className="inline-flex items-center rounded-full bg-rose-50 px-2 py-0.5 text-[10.5px] font-medium text-rose-700 dark:bg-rose-950/40 dark:text-rose-300">
+                            No payout details
+                          </span>
+                          {r.hours.thisWeek > 0 && (
+                            <span className="inline-flex items-center rounded-full bg-amber-50 px-2 py-0.5 text-[10.5px] font-medium text-amber-700 dark:bg-amber-950/40 dark:text-amber-300">
+                              {rangeMode ? 'Owed in range' : 'Owed this week'}
+                            </span>
+                          )}
+                          {canEdit && (
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              disabled={!email || inFlight || done}
+                              onClick={() => notify([r])}
+                              title={
+                                !email
+                                  ? 'No work email on file to notify'
+                                  : done
+                                    ? 'Notified this session'
+                                    : 'Notify this person to add their bank details'
+                              }
+                              className={cn(
+                                'h-7 gap-1 px-2 text-[11.5px]',
+                                done && 'border-emerald-300 text-emerald-600 dark:border-emerald-800/70 dark:text-emerald-400',
+                              )}
+                            >
+                              {inFlight ? (
+                                <Loader2 className="h-3 w-3 animate-spin" />
+                              ) : done ? (
+                                <Check className="h-3 w-3" />
+                              ) : (
+                                <Bell className="h-3 w-3" />
+                              )}
+                              {done ? 'Notified' : 'Notify'}
+                            </Button>
+                          )}
                         </div>
                       </div>
-                      <div className="flex shrink-0 flex-wrap items-center justify-end gap-1">
-                        <span className="inline-flex items-center rounded-full bg-rose-50 px-2 py-0.5 text-[10.5px] font-medium text-rose-700 dark:bg-rose-950/40 dark:text-rose-300">
-                          No payout details
-                        </span>
-                        {r.hours.thisWeek > 0 && (
-                          <span className="inline-flex items-center rounded-full bg-amber-50 px-2 py-0.5 text-[10.5px] font-medium text-amber-700 dark:bg-amber-950/40 dark:text-amber-300">
-                            Owed this week
-                          </span>
-                        )}
-                      </div>
-                    </button>
-                  </li>
-                ))}
+                    </li>
+                  );
+                })}
               </ul>
             )}
           </div>
 
           <div className="shrink-0 border-t border-zinc-200 px-5 py-3 text-[11px] text-zinc-400 dark:border-zinc-800">
-            Showing {list.length} of {rows.length}. Click anyone to open their full record.
+            Showing {list.length} of {rows.length}. Click anyone to open their full record{canEdit ? ', or Notify to nudge them' : ''}.
           </div>
         </div>
       </DialogContent>

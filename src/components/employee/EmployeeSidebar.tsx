@@ -48,6 +48,9 @@ interface EmployeeSidebarProps {
   /** Profile photo and/or bank details still missing — flags the Profile nav item. */
   profileIncomplete?: boolean;
   profileSetupCount?: number;
+  /** Accounting/CEO asked this person to add missing payout details — escalates
+   *  the Profile nav flag to a rose "!" blink. */
+  bankInfoNudge?: boolean;
   /** Tab ids an admin hid in Pages settings — removed from the menu. */
   hiddenTabs?: readonly string[];
   /** Tab ids an admin marked "under construction" — shown with a badge. */
@@ -80,6 +83,7 @@ export default function EmployeeSidebar({
 
   profileIncomplete = false,
   profileSetupCount = 0,
+  bankInfoNudge = false,
   hiddenTabs = [],
   constructionTabs = [],
 }: EmployeeSidebarProps) {
@@ -174,12 +178,15 @@ export default function EmployeeSidebar({
                 {isConstr(item.id) && <ConstructionMark active={activeTab === item.id} />}
                 {item.id === 'profile' && profileIncomplete && activeTab !== 'profile' && (
                   <span
-                    className="relative ml-auto flex h-5 min-w-5 items-center justify-center rounded-full bg-amber-500 px-1.5 text-[10px] font-semibold leading-none text-white ring-2 ring-white dark:ring-[#0d1117]"
-                    aria-label="Profile setup incomplete"
-                    title="Finish profile photo, payment details, and Skill Sets"
+                    className={cn(
+                      'relative ml-auto flex h-5 min-w-5 items-center justify-center rounded-full px-1.5 text-[10px] font-semibold leading-none text-white ring-2 ring-white dark:ring-[#0d1117]',
+                      bankInfoNudge ? 'bg-rose-500' : 'bg-amber-500',
+                    )}
+                    aria-label={bankInfoNudge ? 'Payroll requested your bank details' : 'Profile setup incomplete'}
+                    title={bankInfoNudge ? 'Payroll asked you to add your bank / payout details' : 'Finish profile photo, payment details, and Skill Sets'}
                   >
-                    <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-amber-500/60" />
-                    <span className="relative">{profileSetupCount || 1}</span>
+                    <span className={cn('absolute inline-flex h-full w-full animate-ping rounded-full', bankInfoNudge ? 'bg-rose-500/60' : 'bg-amber-500/60')} />
+                    <span className="relative">{bankInfoNudge ? '!' : (profileSetupCount || 1)}</span>
                   </span>
                 )}
                 {item.id === 'disputes' && payrollLocked && (

@@ -15,6 +15,7 @@ import {
   ArrowUpRight,
   Plus,
   Briefcase,
+  Bell,
 } from 'lucide-react';
 import { motion, AnimatePresence, LayoutGroup } from 'motion/react';
 import { toast } from 'sonner';
@@ -54,6 +55,12 @@ interface EmployeeProfileProps {
   onSkillSetCompletionChange?: (complete: boolean) => void;
   /** When accounting starts payroll processing, bank / payout editing is disabled. */
   payrollLocked?: boolean;
+  /**
+   * Accounting/CEO explicitly asked this person (from the People tab) to add
+   * their missing payout details AND they still haven't. Escalates the Payment
+   * tab's ping to rose and shows a callout guiding them to fill it in.
+   */
+  escalatePayment?: boolean;
 }
 
 /* ───────── Pure helpers ───────── */
@@ -428,6 +435,7 @@ function TabBar({
   needsPhoto,
   needsBank,
   needsSkillSet,
+  paymentEscalated = false,
 }: {
   active: TabId;
   onChange: (id: TabId) => void;
@@ -435,6 +443,8 @@ function TabBar({
   needsPhoto: boolean;
   needsBank: boolean;
   needsSkillSet: boolean;
+  /** Escalate the Payment tab's ping to rose (accounting requested bank info). */
+  paymentEscalated?: boolean;
 }) {
   const tabs: { id: TabId; label: string; sub: string }[] = [
     { id: 'overview', label: 'Overview', sub: hasAddress ? 'Identity, employment, address' : 'Identity & employment' },
@@ -457,6 +467,7 @@ function TabBar({
             (t.id === 'overview' && needsPhoto) ||
             (t.id === 'payment' && needsBank) ||
             (t.id === 'skillsets' && needsSkillSet);
+          const escalated = t.id === 'payment' && paymentEscalated;
           return (
             <button
               key={t.id}
@@ -478,10 +489,10 @@ function TabBar({
               {hasIssue && (
                 <span
                   className="absolute right-1.5 top-2 flex h-2.5 w-2.5"
-                  aria-label={`${t.label} setup needed`}
+                  aria-label={escalated ? `${t.label} details requested` : `${t.label} setup needed`}
                 >
-                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-amber-500/70" />
-                  <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-amber-500 ring-2 ring-white dark:ring-[#0a0a0a]" />
+                  <span className={cn('absolute inline-flex h-full w-full animate-ping rounded-full', escalated ? 'bg-rose-500/70' : 'bg-amber-500/70')} />
+                  <span className={cn('relative inline-flex h-2.5 w-2.5 rounded-full ring-2 ring-white dark:ring-[#0a0a0a]', escalated ? 'bg-rose-500' : 'bg-amber-500')} />
                 </span>
               )}
               {isActive && (
@@ -557,6 +568,7 @@ export default function EmployeeProfile({
   onPayoutCompletionChange,
   onSkillSetCompletionChange,
   payrollLocked = false,
+  escalatePayment = false,
 }: EmployeeProfileProps) {
   const norm = normEmail(employeeEmail) ?? employeeEmail.toLowerCase();
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -1148,6 +1160,7 @@ export default function EmployeeProfile({
             needsPhoto={needsProfilePhoto}
             needsBank={needsPayoutSetup}
             needsSkillSet={needsSkillSetSetup}
+            paymentEscalated={escalatePayment && needsPayoutSetup}
           />
         </div>
 
@@ -1332,6 +1345,20 @@ export default function EmployeeProfile({
                             Payroll processing is in progress. Disbursement details are read-only
                             until accounting finishes the run.
                           </p>
+                        </div>
+                      )}
+                      {escalatePayment && needsPayoutSetup && !payrollLocked && (
+                        <div className="flex items-start gap-2.5 rounded-xl border border-rose-300 bg-rose-50 px-4 py-3 dark:border-rose-500/40 dark:bg-rose-950/30">
+                          <span className="relative mt-0.5 flex h-4 w-4 shrink-0">
+                            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-rose-500/50" />
+                            <Bell className="relative h-4 w-4 text-rose-600 dark:text-rose-400" />
+                          </span>
+                          <div className="min-w-0">
+                            <p className="text-[13px] font-semibold text-rose-800 dark:text-rose-200">Payroll needs your bank details</p>
+                            <p className="mt-0.5 text-[12px] leading-relaxed text-rose-700 dark:text-rose-300">
+                              Accounting asked you to add your payout details so they can send your pay. Please complete the fields below.
+                            </p>
+                          </div>
                         </div>
                       )}
                       {needsPayoutSetup && !payrollLocked && (

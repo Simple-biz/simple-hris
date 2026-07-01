@@ -3,6 +3,7 @@ import 'server-only';
 import { normEmail } from '@/lib/email/norm-email';
 import { getEmployeesForAuthorizedServerRoute } from '@/lib/supabase/employees';
 import { getEmployeeIds } from '@/lib/supabase/employee-ids';
+import { isPayoutComplete } from '@/lib/employee/payout-completeness';
 import { createSupabaseServiceRoleClient, createSupabaseServerClient } from '@/lib/supabase/server';
 import { buildFxRates, phpPerUnit, type FxRates } from '@/lib/fx/currency-fx';
 import { listPayStructures } from '@/lib/supabase/pay-structures-db';
@@ -340,10 +341,13 @@ export async function buildPeopleRoster(scope: PeopleRosterScope = {}): Promise<
   // employee_ids → processor + has-banking, keyed by every known email.
   const idByEmail = new Map<string, { processor: string | null; hasBanking: boolean }>();
   for (const r of idsRes.rows) {
-    const hasBanking = !!(
-      r.account_number || r.alt_account_number || r.hurupay_email || r.wepay_email ||
-      r.higlobe_email || r.wise_email || r.wise_tag || r.phone_number
-    );
+    // "Has banking" means the SAME thing payroll (and the employee's own portal
+    // nudge) means by payable: a preferred processor is set AND its required
+    // field(s) are filled — NOT merely "some field is non-empty". Reusing the
+    // shared isPayoutComplete keeps the People "Missing bank info" list exactly
+    // in sync with who payroll actually can't disburse to (a partial higlobe or
+    // no-processor-picked row correctly counts as missing).
+    const hasBanking = isPayoutComplete(r as unknown as Record<string, unknown>);
     const info = { processor: r.preferred_processor ?? null, hasBanking };
     for (const e of [r.work_email, r.personal_email]) {
       const em = normEmail(e ?? '');

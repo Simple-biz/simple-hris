@@ -94,9 +94,10 @@ export function useLiveCells(opts: {
   /** Realtime channel name; make it period-scoped so weeks stay isolated. */
   channel: string;
   enabled?: boolean;
-  /** Called when a peer edits a cell, so the grid can merge the value into its
-   *  own state (guarded against clobbering the locally-focused cell). */
-  onRemoteEdit?: (row: number, cid: string, col: string, value: string, byEmail: string) => void;
+  /** Called when a peer edits — always a list (one cell for a keystroke, many
+   *  for a paste) so the grid can merge them in a SINGLE state update (robust
+   *  dirty tracking + one re-render), guarded against the locally-focused cell. */
+  onRemoteEdits?: (cells: LiveCellValue[], byEmail: string) => void;
   /** Called when a peer announces they saved the week. */
   onSaved?: (byEmail: string, byName: string | null) => void;
 }): UseLiveCellsResult {
@@ -112,11 +113,11 @@ export function useLiveCells(opts: {
   const chRef = useRef<any>(null);
   const selfRef = useRef(self);
   const nameRef = useRef(selfName ?? null);
-  const onEditRef = useRef(opts.onRemoteEdit);
+  const onEditsRef = useRef(opts.onRemoteEdits);
   const onSavedRef = useRef(opts.onSaved);
   selfRef.current = self;
   nameRef.current = selfName ?? null;
-  onEditRef.current = opts.onRemoteEdit;
+  onEditsRef.current = opts.onRemoteEdits;
   onSavedRef.current = opts.onSaved;
 
   // Coalesced edit send: keep only the latest pending edit, flush once per frame.
@@ -172,11 +173,9 @@ export function useLiveCells(opts: {
         setPeer({ email, name: payload.n, color, row: payload.r, cid: payload.cid, col: payload.c, value: null, lastSeen: Date.now() });
       } else if (payload.t === 'e') {
         setPeer({ email, name: payload.n, color, row: payload.r, cid: payload.cid, col: payload.c, value: payload.v, lastSeen: Date.now() });
-        onEditRef.current?.(payload.r, payload.cid, payload.c, payload.v, email);
+        onEditsRef.current?.([{ r: payload.r, cid: payload.cid, c: payload.c, v: payload.v }], email);
       } else if (payload.t === 'x') {
-        for (const cell of payload.cells) {
-          onEditRef.current?.(cell.r, cell.cid, cell.c, cell.v, email);
-        }
+        onEditsRef.current?.(payload.cells, email);
         const last = payload.cells[payload.cells.length - 1];
         if (last) {
           setPeer({ email, name: payload.n, color, row: last.r, cid: last.cid, col: last.c, value: last.v, lastSeen: Date.now() });

@@ -297,39 +297,51 @@ export default function HrNewHireChecklist({
   // effect (declared after fetchPeriod so it can reload).
   const [savedSignal, setSavedSignal] = useState<{ by: string } | null>(null);
 
-  // Merge a peer's keystroke into our own grid. Matches the row by its shared
-  // `_cid` (DB id once saved, else a deterministic seed / client id) so it lines
-  // up regardless of position, falling back to the broadcast index only when no
-  // cid matches. Grows the grid so a peer's freshly-added row still lands, and
-  // skips the cell the local user is focused in so their typing is never
-  // clobbered. On the index-only fallback it will ONLY fill a blank cell, so a
-  // structural drift can never destroy data the local user typed elsewhere.
-  const applyRemoteEdit = useCallback(
-    (rowIdx: number, cid: string, col: string, value: string) => {
-      if (lockedRef.current) return; // a locked week is read-only for everyone
-      if (!COLUMN_KEY_SET.has(col)) return;
-      const key = col as FieldKey;
-      let changed = false;
-      setRows((prev) => {
-        let idx = cid ? prev.findIndex((row) => row._cid === cid) : -1;
+  // Merge a peer's edits (one cell for a keystroke, many for a paste) into our
+  // own grid in ONE state update. Each cell matches its row by the shared `_cid`
+  // (DB id once saved, else a deterministic seed / client id) so it lines up
+  // regardless of position, falling back to the broadcast index only when no cid
+  // matches. Grows the grid so a peer's freshly-added row still lands (adopting
+  // the sender's cid so later edits keep matching), skips the cell the local
+  // user is focused in so their typing is never clobbered, and on the index-only
+  // fallback will ONLY fill a blank cell — so a structural drift can never
+  // destroy data the local user typed elsewhere. `dirty` flips only if a cell
+  // actually changed (read after the single setRows, whose updater React runs
+  // eagerly for this empty-queue async dispatch).
+  const applyRemoteEdits = useCallback((cells: LiveCellValue[]) => {
+    if (lockedRef.current) return; // a locked week is read-only for everyone
+    let changed = false;
+    setRows((prev) => {
+      const active = activeCellRef.current;
+      const origLen = prev.length;
+      let next = prev;
+      for (const cell of cells) {
+        if (!COLUMN_KEY_SET.has(cell.c)) continue;
+        const key = cell.c as FieldKey;
+        let idx = cell.cid ? next.findIndex((row) => row._cid === cell.cid) : -1;
         const matchedByCid = idx >= 0;
-        if (idx < 0) idx = rowIdx;
-        if (idx < 0) return prev;
-        const active = activeCellRef.current;
-        if (active && active.r === idx && active.col === key) return prev;
-        const next = prev.slice();
+        if (idx < 0) idx = cell.r;
+        if (idx < 0) continue;
+        if (active && active.r === idx && active.col === key) continue;
+        // Don't grow the grid just to write a blank into a row we don't have yet
+        // (a paste batch can carry empty trailing cells); clearing an existing
+        // cell still works because that row is already present.
+        if (idx >= next.length && cell.v.trim() === '') continue;
+        if (next === prev) next = prev.slice();
         while (next.length <= idx) next.push(blankRow());
+        // A brand-new row we just grew to reach the peer's row adopts their cid,
+        // so their subsequent edits to it keep cid-matching instead of drifting.
+        if (cell.cid && idx >= origLen) next[idx] = { ...next[idx]!, _cid: cell.cid };
         const cur = next[idx]![key] ?? '';
-        if (cur === value) return prev; // already in sync
-        if (!matchedByCid && cur.trim() !== '') return prev; // don't clobber on index guess
-        next[idx] = { ...next[idx]!, [key]: value };
+        if (cur === cell.v) continue; // already in sync
+        if (!matchedByCid && cur.trim() !== '') continue; // don't clobber on index guess
+        next[idx] = { ...next[idx]!, [key]: cell.v };
         changed = true;
-        return next;
-      });
-      if (changed) setDirty(true);
-    },
-    [],
-  );
+      }
+      return changed ? next : prev;
+    });
+    if (changed) setDirty(true);
+  }, []);
 
   const handlePeerSaved = useCallback((byEmail: string, byName: string | null) => {
     setSavedSignal({ by: (byName && byName.trim()) || byEmail.split('@')[0] || byEmail });
@@ -347,7 +359,7 @@ export default function HrNewHireChecklist({
     selfName,
     channel: `hr-nhc-cells:${period}`,
     enabled: !!selfEmail && !!period,
-    onRemoteEdit: applyRemoteEdit,
+    onRemoteEdits: applyRemoteEdits,
     onSaved: handlePeerSaved,
   });
 
@@ -626,6 +638,7 @@ export default function HrNewHireChecklist({
     if (dirty && !window.confirm('Discard unsaved changes and switch weeks?')) return;
     setPeriod(p);
     setLoaded(false);
+    setSavedSignal(null); // drop any pending peer-save nudge from the week we're leaving
   }, [period, dirty]);
 
   const refresh = useCallback(() => {
