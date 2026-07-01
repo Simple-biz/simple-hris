@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Building2,
   CalendarDays,
@@ -28,7 +29,7 @@ import {
   setHrTabCache,
   HR_TAB_CACHE_KEYS,
 } from '@/lib/hr/tab-cache';
-import type { CellEditStamp, HrNewHireChecklistRow } from '@/lib/supabase/hr-new-hire-checklist';
+import type { CellEditEntry, HrNewHireChecklistRow } from '@/lib/supabase/hr-new-hire-checklist';
 import { ONBOARDING_COUNTRIES, resolveOnboardingCountry } from '@/lib/onboarding/countries';
 
 /** Grid columns, in display order. Keys match the DB / API field names 1:1. */
@@ -58,13 +59,13 @@ const SELECT_SCHEME_CLASS = '[color-scheme:light] dark:[color-scheme:dark]';
 type FieldKey = (typeof COLUMNS)[number]['key'];
 
 /** A grid row: a stable client `_key`, the DB `id` (null until saved), one
- *  string per column (empty string = blank cell), and `_editedBy` — the last
- *  edit stamp per column, as loaded from the server (never sent back on save;
+ *  string per column (empty string = blank cell), and `_editedBy` — the edit
+ *  history log per column, as loaded from the server (never sent back on save;
  *  the server recomputes it by diffing against its own current values). */
 type GridRow = {
   _key: string;
   id: string | null;
-  _editedBy?: Partial<Record<FieldKey, CellEditStamp>>;
+  _editedBy?: Partial<Record<FieldKey, CellEditEntry[]>>;
 } & Record<FieldKey, string>;
 
 type PeriodMeta = {
@@ -232,6 +233,11 @@ export default function HrNewHireChecklist({
   const [periodMetas, setPeriodMetas] = useState<PeriodMeta[]>([]);
   const [periodMenuOpen, setPeriodMenuOpen] = useState(false);
   const periodMenuRef = useRef<HTMLDivElement>(null);
+  // Per-cell edit-history popover, anchored to the clicked dot via a fixed
+  // portal so the grid's scroll overflow never clips it.
+  const [historyPopover, setHistoryPopover] = useState<
+    { label: string; entries: CellEditEntry[]; top: number; left: number } | null
+  >(null);
 
   // Mutators read the lock through a ref so a locked week can never be edited
   // (even a paste on a readOnly input still fires our onPaste handler).
@@ -312,6 +318,27 @@ export default function HrNewHireChecklist({
   useEffect(() => {
     setHrTabCache<CacheVal>(CACHE_KEY, { period, rows, dirty, locked, lockedAt, lockedBy, loaded });
   }, [period, rows, dirty, locked, lockedAt, lockedBy, loaded]);
+
+  // Close the edit-history popover on outside click, Escape, or any scroll
+  // (its fixed position would otherwise drift away from the anchor cell).
+  useEffect(() => {
+    if (!historyPopover) return;
+    const onDown = (e: MouseEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (t?.closest('[data-cell-history-popover]') || t?.closest('[data-cell-history-dot]')) return;
+      setHistoryPopover(null);
+    };
+    const onEsc = (e: KeyboardEvent) => { if (e.key === 'Escape') setHistoryPopover(null); };
+    const onScroll = () => setHistoryPopover(null);
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onEsc);
+    window.addEventListener('scroll', onScroll, true);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onEsc);
+      window.removeEventListener('scroll', onScroll, true);
+    };
+  }, [historyPopover]);
 
   // Close the period menu on outside click / Escape.
   useEffect(() => {

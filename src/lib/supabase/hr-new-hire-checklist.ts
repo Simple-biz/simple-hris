@@ -33,12 +33,25 @@ export const HR_NEW_HIRE_CHECKLIST_FIELDS = [
 export type HrNewHireChecklistField =
   (typeof HR_NEW_HIRE_CHECKLIST_FIELDS)[number];
 
-/** Who last changed one cell, and when. */
-export type CellEditStamp = { by: string; at: string };
+/** One entry in a cell's edit history: who changed it, when, and old -> new. */
+export type CellEditEntry = {
+  /** Editor's (lowercased) email. */
+  by: string;
+  /** ISO timestamp of the save that made this change. */
+  at: string;
+  /** Value before this edit (null = cell was blank / row was new). */
+  from: string | null;
+  /** Value after this edit (null = cell was cleared). */
+  to: string | null;
+};
 
-/** Per-column edit attribution for one row. Only columns that have actually
- *  been edited at least once appear as keys. */
-export type CellEdits = Partial<Record<HrNewHireChecklistField, CellEditStamp>>;
+/** Append-only edit history per column for one row (oldest first). Only columns
+ *  that have actually changed at least once appear as keys. */
+export type CellEdits = Partial<Record<HrNewHireChecklistField, CellEditEntry[]>>;
+
+/** Cap each cell's stored history so an endlessly-edited cell can't grow the
+ *  row's JSONB without bound. Keeps the most recent N changes. */
+const MAX_CELL_HISTORY = 50;
 
 export type HrNewHireChecklistRow = {
   id: string;
@@ -115,14 +128,15 @@ export async function listHrNewHireChecklist(periodStart: string): Promise<{
  * `position` is rewritten to its index. Completely-blank rows are dropped first.
  * Scoped to `periodStart` throughout, so saving one week never touches another.
  *
- * Per-cell "last edited by" attribution: each field is diffed against the
- * value CURRENTLY IN THE DATABASE (not against whatever the client happened to
- * have loaded) — so it stays correct even if two people have the grid open at
- * once. Only fields whose value actually changes get re-stamped; untouched
- * cells keep their prior attribution. The stamp uses `opts.editedBy`, falling
+ * Per-cell EDIT HISTORY: each field is diffed against the value CURRENTLY IN
+ * THE DATABASE (not against whatever the client happened to have loaded) — so
+ * the log stays correct even if two people have the grid open at once. Every
+ * field whose value actually changes APPENDS a `{by, at, from, to}` entry to
+ * that column's log (capped to the most recent MAX_CELL_HISTORY); untouched
+ * cells keep their prior log verbatim. The editor is `opts.editedBy`, falling
  * back to `opts.createdBy` (the API route only ever has one acting session
  * email to give); if neither is set, cell_edits is left untouched entirely —
- * never stamp an unknown editor.
+ * never attribute an edit to an unknown editor.
  */
 export async function syncHrNewHireChecklist(
   periodStart: string,
@@ -186,8 +200,11 @@ export async function syncHrNewHireChecklist(
         const nextCellEdits: CellEdits = { ...(prev.cell_edits ?? {}) };
         let changed = false;
         for (const f of HR_NEW_HIRE_CHECKLIST_FIELDS) {
-          if (fields[f] !== (prev[f] ?? null)) {
-            nextCellEdits[f] = { by: editedBy, at: nowIso };
+          const before = prev[f] ?? null;
+          const after = fields[f];
+          if (after !== before) {
+            const log = (nextCellEdits[f] ?? []).concat({ by: editedBy, at: nowIso, from: before, to: after });
+            nextCellEdits[f] = log.slice(-MAX_CELL_HISTORY);
             changed = true;
           }
         }
@@ -205,7 +222,7 @@ export async function syncHrNewHireChecklist(
       if (editedBy) {
         const cellEdits: CellEdits = {};
         for (const f of HR_NEW_HIRE_CHECKLIST_FIELDS) {
-          if (fields[f] != null) cellEdits[f] = { by: editedBy, at: nowIso };
+          if (fields[f] != null) cellEdits[f] = [{ by: editedBy, at: nowIso, from: null, to: fields[f] }];
         }
         if (Object.keys(cellEdits).length > 0) insertPayload.cell_edits = cellEdits;
       }
