@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import {
-  Search, Send, Eye, EyeOff, Clock, AlertTriangle, Users, Banknote, Loader2, Sparkles, RefreshCw, CalendarDays, ChevronRight,
+  Search, Send, Eye, EyeOff, Clock, AlertTriangle, Users, Banknote, Loader2, Sparkles, RefreshCw, CalendarDays, ChevronRight, Landmark,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
@@ -17,6 +17,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import EmployeePabCalendar from '@/components/employee/EmployeePabCalendar';
 import PeopleDateRangePicker, { type DateRange } from './PeopleDateRangePicker';
 import PeopleBankChanges from './PeopleBankChanges';
+import { BankChangeDetailDialog, timeAgo, type BankChangeEntry } from './bank-change-detail';
 import { getTabCache, setTabCache, TAB_CACHE_KEYS } from '@/lib/accounting/tab-cache';
 import { cn } from '@/lib/utils';
 
@@ -341,6 +342,27 @@ export default function PeopleTab({
       .finally(() => setStatsLoading(false));
   };
 
+  // Jump from the Bank-changes feed straight to a person's roster profile:
+  // switch to the roster and open their detail dialog. If they aren't in the
+  // current roster scope (a different pay week, offboarded, etc.), still land on
+  // the roster filtered to them so it's clear who we were after.
+  const openProfileByEmail = useCallback(
+    (email: string | null) => {
+      const target = (email ?? '').trim().toLowerCase();
+      setMode('roster');
+      if (!target) return;
+      const match = rows.find((r) => (r.work_email ?? '').trim().toLowerCase() === target);
+      if (match) {
+        setShowExcluded(false);
+        setSelected(match);
+      } else {
+        setQuery(email ?? '');
+        toast.message(`${email} isn't in the current roster view — showing the roster.`);
+      }
+    },
+    [rows],
+  );
+
   // Manual refresh — re-pull the SELECTED week in place (no skeleton flash) so a
   // change made in the Payroll Wizard shows up here without a full reload.
   const refresh = async () => {
@@ -593,7 +615,7 @@ export default function PeopleTab({
         {mode === 'stats' ? (
           <PeopleStatsChart series={statsSeries} leaders={statsLeaders} depts={statsDepts} periods={periods} loading={statsLoading} error={statsError} accent={accent} />
         ) : mode === 'changes' ? (
-          <PeopleBankChanges accent={accent} />
+          <PeopleBankChanges accent={accent} onOpenProfile={openProfileByEmail} />
         ) : (
         <>
         {error && (
@@ -1945,6 +1967,7 @@ function PersonDetailDialog({
   const handlePabLoaderDone = useCallback(() => setShowPabLoader(false), []);
   const [banking, setBanking] = useState<Banking | null>(null);
   const [history, setHistory] = useState<HistoryRow[]>([]);
+  const [bankHistory, setBankHistory] = useState<BankChangeEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [revealing, setRevealing] = useState(false);
   // Banking & payout stays hidden until the viewer explicitly reveals it.
@@ -1952,6 +1975,8 @@ function PersonDetailDialog({
   const isHsl = (row.department ?? '').trim().toLowerCase() === 'hsl';
   const [histPage, setHistPage] = useState(1);
   const histDirRef = useRef<1 | -1>(1);
+  const [bankHistPage, setBankHistPage] = useState(1);
+  const [bankHistDetail, setBankHistDetail] = useState<BankChangeEntry | null>(null);
   const reduceMotion = useReducedMotion();
   const HIST_PAGE_SIZE = 5;
   const email = row.work_email ?? '';
@@ -1961,16 +1986,25 @@ function PersonDetailDialog({
     setLoading(true);
     fetch(`/api/people/${encodeURIComponent(email)}`, { cache: 'no-store' })
       .then((r) => r.json())
-      .then((j: { banking?: Banking | null; history?: HistoryRow[] }) => {
+      .then((j: { banking?: Banking | null; history?: HistoryRow[]; bankHistory?: BankChangeEntry[] }) => {
         if (!alive) return;
         setBanking(j.banking ?? null);
         setHistory(j.history ?? []);
+        setBankHistory(j.bankHistory ?? []);
         setHistPage(1);
+        setBankHistPage(1);
       })
       .catch(() => { if (alive) setBanking(null); })
       .finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
   }, [email]);
+
+  // Paginate the bank-change history — 5 newest-first per page, same pattern as
+  // the payroll history list below.
+  const bankHistTotalPages = Math.max(1, Math.ceil(bankHistory.length / HIST_PAGE_SIZE));
+  const bankHistSafePage = Math.min(bankHistPage, bankHistTotalPages);
+  const bankHistStart = (bankHistSafePage - 1) * HIST_PAGE_SIZE;
+  const pagedBankHistory = bankHistory.slice(bankHistStart, bankHistStart + HIST_PAGE_SIZE);
 
   // Paginate the history list — 6 newest-first per page. safePage clamps if the
   // set shrinks (e.g. after a reveal/refresh) so we never land out of range.
@@ -2033,6 +2067,7 @@ function PersonDetailDialog({
   };
 
   return (
+    <>
     <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
       <DialogContent className="gap-0 overflow-hidden p-0 sm:max-w-2xl">
         <div className="flex max-h-[88vh] flex-col">
@@ -2192,6 +2227,105 @@ function PersonDetailDialog({
                 </motion.div>
               )}
               </AnimatePresence>
+            )}
+          </div>
+
+          {/* Bank change history — masked before→after per self-service edit,
+              sourced from the dedicated bank_update_history table (not
+              audit_log, which any admin can clear). Shares its detail dialog
+              with the People-tab global "Recent bank changes" feed. */}
+          <div className="mt-5">
+            <h3 className="mb-2 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-zinc-500">
+              <Landmark className="h-3.5 w-3.5 text-emerald-500" />
+              Bank change history
+            </h3>
+            {loading ? (
+              <ul className="space-y-1.5">
+                {Array.from({ length: 2 }).map((_, i) => (
+                  <li key={i} className="flex items-center justify-between rounded-lg border border-zinc-200 px-3 py-2.5 dark:border-zinc-800">
+                    <div className="space-y-1.5">
+                      <Skeleton className="h-3.5 w-40" />
+                      <Skeleton className="h-2.5 w-24" />
+                    </div>
+                    <Skeleton className="h-7 w-14" />
+                  </li>
+                ))}
+              </ul>
+            ) : bankHistory.length === 0 ? (
+              <p className="py-3 text-xs text-zinc-400">No self-service payout changes yet.</p>
+            ) : (
+              <>
+              <ul className="space-y-1.5">
+                {pagedBankHistory.map((h) => {
+                  const changedCount = h.changes.length > 0
+                    ? h.changes.filter((c) => c.changed && c.field !== 'preferred_processor').length
+                    : h.fields.filter((f) => f !== 'preferred_processor').length;
+                  return (
+                    <li
+                      key={h.id}
+                      className="flex items-center justify-between gap-3 rounded-lg border border-zinc-200 bg-white px-3 py-2.5 text-[13px] dark:border-zinc-800 dark:bg-zinc-950"
+                    >
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium text-zinc-800 dark:text-zinc-100">
+                            {h.createdNew ? 'First-time setup' : 'Updated details'}
+                          </span>
+                          {h.processor && (
+                            <span className="inline-flex items-center rounded-md bg-emerald-50 px-1.5 py-0.5 text-[10.5px] font-medium capitalize text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300">
+                              {h.processor}
+                            </span>
+                          )}
+                        </div>
+                        <div className="mt-0.5 text-[11px] text-zinc-400">
+                          {timeAgo(h.created_at)} · {changedCount > 0 ? `${changedCount} field${changedCount === 1 ? '' : 's'} changed` : 'no values changed'}
+                        </div>
+                      </div>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        className="h-7 shrink-0 gap-1 px-2 text-[12px]"
+                        onClick={() => setBankHistDetail(h)}
+                      >
+                        <Eye className="h-3.5 w-3.5" /> View
+                      </Button>
+                    </li>
+                  );
+                })}
+              </ul>
+              {bankHistTotalPages > 1 && (
+                <div className="mt-2 flex items-center justify-between text-[11px] text-zinc-500">
+                  <span>
+                    Showing {bankHistStart + 1}–{Math.min(bankHistStart + HIST_PAGE_SIZE, bankHistory.length)} of {bankHistory.length}
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      className="h-7 px-2 text-[12px]"
+                      disabled={bankHistSafePage <= 1}
+                      onClick={() => setBankHistPage((p) => Math.max(1, p - 1))}
+                    >
+                      Prev
+                    </Button>
+                    <span className="tabular-nums text-zinc-600 dark:text-zinc-300">
+                      {bankHistSafePage} / {bankHistTotalPages}
+                    </span>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      className="h-7 px-2 text-[12px]"
+                      disabled={bankHistSafePage >= bankHistTotalPages}
+                      onClick={() => setBankHistPage((p) => Math.min(bankHistTotalPages, p + 1))}
+                    >
+                      Next
+                    </Button>
+                  </div>
+                </div>
+              )}
+              </>
             )}
           </div>
 
@@ -2356,6 +2490,10 @@ function PersonDetailDialog({
         </div>
       </DialogContent>
     </Dialog>
+    {bankHistDetail && (
+      <BankChangeDetailDialog row={bankHistDetail} onClose={() => setBankHistDetail(null)} />
+    )}
+    </>
   );
 }
 

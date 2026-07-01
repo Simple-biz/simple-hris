@@ -6,8 +6,10 @@ import { invalidateRateProfilesCache } from "@/lib/supabase/employee-rate-profil
 import { resolveSessionToken, findActiveEmployeeByEmail } from "@/lib/bank-update/otp";
 import { sendBankUpdatePayrollEmail } from "@/lib/bank-update/notify-email";
 import { insertAuditLog } from "@/lib/supabase/audit-log";
+import { insertBankUpdateHistory } from "@/lib/supabase/bank-update-history";
 import { pulseBankChanges } from "@/lib/supabase/app-settings";
 import { escapeLikePattern } from "@/lib/db/like-escape";
+import { maskFieldValue } from "@/lib/bank-update/mask-field";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -153,6 +155,20 @@ export async function POST(req: Request) {
     // Escaped, case-insensitive exact match on the verified work email.
     const emailPattern = escapeLikePattern(workEmail);
 
+    // Snapshot the CURRENT value of just the fields being written, BEFORE the
+    // update overwrites them — so the People-tab feed can show a masked
+    // before→after. Best-effort: on an un-migrated env (missing column) or a
+    // first-time setup (no row) this resolves empty and every "before" is null.
+    // `.limit(1)` (not maybeSingle) tolerates the known same-email row collisions.
+    const beforeRow: Record<string, unknown> = await (async () => {
+      const { data } = await supabase
+        .from("employee_ids")
+        .select(changedFields.join(", "))
+        .ilike("work_email", emailPattern)
+        .limit(1);
+      return (Array.isArray(data) && data[0] ? data[0] : {}) as Record<string, unknown>;
+    })();
+
     // Update the canonical employee_ids row.
     const { data: updatedRows, error: updateError } = await supabase
       .from("employee_ids")
@@ -205,6 +221,20 @@ export async function POST(req: Request) {
 
     invalidateRateProfilesCache();
 
+    // Masked before→after for each written field (values are masked HERE, so the
+    // audit trail never stores a full account number). `changed` is computed on
+    // the RAW values so it stays accurate even if two distinct values mask alike.
+    const changes = changedFields.map((field) => {
+      const rawBefore = beforeRow[field] != null ? String(beforeRow[field]) : null;
+      const rawAfter = update[field];
+      return {
+        field,
+        before: maskFieldValue(field, rawBefore),
+        after: maskFieldValue(field, rawAfter),
+        changed: (rawBefore ?? "").trim() !== (rawAfter ?? "").trim(),
+      };
+    });
+
     // Await the audit write — a payout change must not be reported successful
     // without leaving a trail.
     await insertAuditLog({
@@ -213,9 +243,27 @@ export async function POST(req: Request) {
       action: "bank_update.saved",
       resource: "employee_ids",
       resource_id: workEmail,
-      details: { via: "external_link", fields: changedFields, processor: update.preferred_processor ?? null, created },
+      details: {
+        via: "external_link",
+        fields: changedFields,
+        processor: update.preferred_processor ?? null,
+        created,
+        changes,
+      },
       ip_address: ip,
     });
+    // Best-effort: the dedicated, non-clearable history table (unlike audit_log,
+    // which any admin can truncate). Must not fail the save on an un-migrated env.
+    await insertBankUpdateHistory({
+      work_email: workEmail,
+      employee_name: match?.name ?? null,
+      fields: changedFields,
+      changes,
+      processor: (update.preferred_processor as string | null) ?? null,
+      created_new: created,
+      via: "external_link",
+      ip_address: ip,
+    }).catch(() => undefined);
     await notifyReviewers(supabase, workEmail, match?.name ?? null, changedFields);
     // Nudge the People-tab "Bank changes" live feed to refetch instantly. The
     // audit row above is the feed's source; this pulse just makes it real-time.

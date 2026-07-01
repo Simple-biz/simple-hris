@@ -1,16 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireRateVisibilitySession, deniedResponse } from '@/lib/auth/authorize-email';
-import { fetchRecentBankChanges } from '@/lib/supabase/audit-log';
+import { fetchRecentBankChanges } from '@/lib/supabase/bank-update-history';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
 /**
  * Recent self-service bank/payout changes for the People-tab "Bank changes" feed
- * (Accounting + CEO). Newest first. Sourced from the append-only audit_log
- * (`bank_update.saved` events) — carries WHO + WHEN + WHICH FIELD NAMES +
- * processor, never the account values. Gated to RATE_VISIBLE_ROLES (admin /
- * accounting / ceo), matching the rest of the People surface (`/api/people`).
+ * (Accounting + CEO). Newest first. Sourced from the dedicated `bank_update_history`
+ * table (not audit_log — that one is clearable) — carries WHO + WHEN + WHICH
+ * FIELD NAMES + processor, never the account values. Gated to RATE_VISIBLE_ROLES
+ * (admin / accounting / ceo), matching the rest of the People surface (`/api/people`).
  */
 export async function GET(req: NextRequest) {
   const authz = await requireRateVisibilitySession();

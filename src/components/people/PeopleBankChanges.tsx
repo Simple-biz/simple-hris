@@ -1,33 +1,17 @@
 'use client';
 
-import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
-import {
-  Search, Clock, RefreshCw, Landmark, Inbox, ShieldCheck, Eye, ChevronLeft, ChevronRight,
-  CreditCard, Globe, UserPlus, PencilLine, Link2, Sparkles,
-} from 'lucide-react';
+import { Search, Clock, RefreshCw, Landmark, Inbox, ShieldCheck, Eye, ChevronLeft, ChevronRight } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
-import {
-  Dialog, DialogContent, DialogTitle, DialogDescription,
-} from '@/components/ui/dialog';
 import { TeamAvatar } from '@/components/team/team-ui';
 import { getSupabaseBrowserClient } from '@/lib/supabase/browser';
 import { cn } from '@/lib/utils';
 import type { Accent } from './PeopleTab';
-
-/** One self-service payout change. Mirrors `BankChangeEntry` from the API. */
-interface BankChange {
-  id: string;
-  name: string;
-  email: string | null;
-  fields: string[];
-  processor: string | null;
-  createdNew: boolean;
-  via: string | null;
-  ip_address: string | null;
-  created_at: string;
-}
+import {
+  BankChangeDetailDialog, fieldLabel, timeAgo, absoluteTime, type BankChangeEntry as BankChange,
+} from './bank-change-detail';
 
 // Kept literal to avoid pulling the server-only app-settings module into the
 // client bundle — must match BANK_CHANGES_PULSE_KEY in src/lib/supabase/app-settings.ts.
@@ -37,72 +21,34 @@ const DEBOUNCE_MS = 450;
 const FRESH_HIGHLIGHT_MS = 2600;
 const PAGE_SIZE = 20;
 
-const FIELD_LABELS: Record<string, string> = {
-  preferred_processor: 'Payment method',
-  preferred_bank_slot: 'Preferred bank',
-  bank_name: 'Bank',
-  account_holder_name: 'Account holder',
-  account_number: 'Account number',
-  routing_number: 'Routing number',
-  swift_code: 'SWIFT / BIC',
-  full_address: 'Address',
-  phone_number: 'Phone',
-  alt_bank_name: 'Alt bank',
-  alt_account_holder_name: 'Alt account holder',
-  alt_account_number: 'Alt account number',
-  alt_routing_number: 'Alt routing',
-  hurupay_email: 'Hurupay email',
-  wepay_email: 'Wepay email',
-  higlobe_email: 'HiGlobe email',
-  higlobe_account_name: 'HiGlobe name',
-  wise_email: 'Wise email',
-  wise_tag: 'Wise tag',
-};
-
-function fieldLabel(key: string): string {
-  return FIELD_LABELS[key] ?? key.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
-}
-
-function timeAgo(iso: string): string {
-  const then = new Date(iso).getTime();
-  if (!Number.isFinite(then)) return '';
-  const s = Math.max(0, Math.floor((Date.now() - then) / 1000));
-  if (s < 45) return 'just now';
-  const m = Math.floor(s / 60);
-  if (m < 60) return `${m}m ago`;
-  const h = Math.floor(m / 60);
-  if (h < 24) return `${h}h ago`;
-  const d = Math.floor(h / 24);
-  if (d < 7) return `${d}d ago`;
-  return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-}
-
-function absoluteTime(iso: string): string {
-  const d = new Date(iso);
-  return Number.isFinite(d.getTime()) ? d.toLocaleString('en-US') : iso;
-}
-
 /**
  * People-tab "Bank changes" feed (Accounting + CEO). A live, newest-first list of
  * self-service payout edits made via the external /update-bank-info link, sourced
- * from /api/people/bank-changes (the audit_log `bank_update.saved` events — field
- * NAMES only, never account values).
+ * from /api/people/bank-changes (the `bank_update_history` table — field NAMES
+ * only, never account values).
  *
  * Stays live two ways (mirrors usePaymentsLive, minus the sensitive-table channel):
  *   1. Supabase Realtime on the `people.bank_changes.pulse` app_settings key —
  *      bumped by the save route, so the feed updates the instant a change lands.
  *      Only a TIMESTAMP rides this channel; the PII (name / work email / IP) is
  *      fetched from the auth-gated /api/people/bank-changes endpoint. We
- *      deliberately do NOT subscribe to `audit_log` directly: that table carries
- *      PII, and the browser's anon Supabase client has no user JWT, so RLS can't
- *      scope it to Accounting/CEO — a direct subscription could leak audit rows
- *      to any anon websocket client.
+ *      deliberately do NOT subscribe to the PII-bearing table directly: the
+ *      browser's anon Supabase client has no user JWT, so RLS can't scope it to
+ *      Accounting/CEO — a direct subscription could leak rows to any anon
+ *      websocket client.
  *   2. A 30s poll + tab-focus refetch as the always-works fallback.
  *
  * New arrivals slide in and flash an emerald highlight that fades; all motion
  * collapses under prefers-reduced-motion.
  */
-export default function PeopleBankChanges({ accent }: { accent: Accent }) {
+export default function PeopleBankChanges({
+  accent,
+  onOpenProfile,
+}: {
+  accent: Accent;
+  /** Jump to this person's roster profile (switches to the roster + opens their dialog). */
+  onOpenProfile?: (email: string | null) => void;
+}) {
   const reduce = useReducedMotion();
   const instanceId = useId();
   const [rows, setRows] = useState<BankChange[]>([]);
@@ -173,7 +119,7 @@ export default function PeopleBankChanges({ accent }: { accent: Accent }) {
 
   // Realtime — subscribe ONLY to the app_settings pulse key (a timestamp, no
   // PII). The save route bumps it on every change, and app_settings reliably
-  // reaches the anon client over Realtime. The PII-bearing audit_log is never
+  // reaches the anon client over Realtime. The PII-bearing table is never
   // subscribed to directly (see the file header) — the poll + focus below cover
   // the case where this pulse channel can't bind.
   useEffect(() => {
@@ -378,7 +324,13 @@ export default function PeopleBankChanges({ accent }: { accent: Accent }) {
         Account numbers are never shown here — open a person in the roster to review their audited details.
       </p>
 
-      {detail && <BankChangeDetailDialog row={detail} onClose={() => setDetail(null)} />}
+      {detail && (
+        <BankChangeDetailDialog
+          row={detail}
+          onClose={() => setDetail(null)}
+          onOpenProfile={onOpenProfile}
+        />
+      )}
     </div>
   );
 }
@@ -396,8 +348,12 @@ function ChangeCard({
   reduce: boolean;
   onView: () => void;
 }) {
-  // Compact summary only — the full field breakdown lives behind "View".
-  const changedCount = row.fields.filter((f) => f !== 'preferred_processor').length;
+  // Compact summary only — the full field breakdown lives behind "View". Prefer
+  // the real changed-value count when we have it; legacy rows (no snapshot) fall
+  // back to the submitted-field count, same caveat as the dialog's legacy note.
+  const changedCount = row.changes.length > 0
+    ? row.changes.filter((c) => c.changed && c.field !== 'preferred_processor').length
+    : row.fields.filter((f) => f !== 'preferred_processor').length;
   return (
     <li>
       <div
@@ -493,168 +449,6 @@ function ChangeCard({
         </div>
       </div>
     </li>
-  );
-}
-
-/* ── "What changed" detail dialog ────────────────────────────────────────── */
-
-function BankChangeDetailDialog({ row, onClose }: { row: BankChange; onClose: () => void }) {
-  const changed = row.fields.filter((f) => f !== 'preferred_processor');
-  return (
-    <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
-      <DialogContent className="gap-4 overflow-hidden p-4 sm:max-w-md">
-        {/* ── Hero: who + at-a-glance status, bled to the dialog edges ───────── */}
-        <div className="relative -mx-4 -mt-4 overflow-hidden border-b border-emerald-100/70 bg-gradient-to-br from-emerald-50 via-white to-teal-50/40 px-5 pb-4 pt-5 dark:border-emerald-900/40 dark:from-emerald-950/40 dark:via-[#0d1117] dark:to-[#0a1628]">
-          {/* Decorative watermark */}
-          <Landmark
-            aria-hidden
-            className="pointer-events-none absolute -right-4 -top-5 h-28 w-28 rotate-12 text-emerald-500/10 dark:text-emerald-400/[0.07]"
-          />
-
-          <DialogDescription className="relative inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-emerald-700 dark:text-emerald-300/90">
-            <span className="flex h-5 w-5 items-center justify-center rounded-md bg-emerald-500/15 text-emerald-600 dark:text-emerald-400">
-              <Landmark className="h-3 w-3" />
-            </span>
-            Self-service payout change
-          </DialogDescription>
-
-          <div className="relative mt-3 flex items-center gap-3">
-            <span className="shrink-0 rounded-full shadow-md ring-2 ring-white dark:ring-zinc-900/80">
-              <TeamAvatar name={row.name ?? ''} email={row.email} />
-            </span>
-            <div className="min-w-0 flex-1">
-              <DialogTitle className="truncate text-[15px] font-semibold text-zinc-900 dark:text-zinc-50">
-                {row.name || '—'}
-              </DialogTitle>
-              <div className="truncate text-[11.5px] text-zinc-500 dark:text-zinc-400">
-                {row.email ?? 'No email on file'}
-              </div>
-            </div>
-          </div>
-
-          <div className="relative mt-3 flex flex-wrap items-center gap-1.5">
-            {row.createdNew ? (
-              <span className="inline-flex items-center gap-1 rounded-full bg-sky-100 px-2.5 py-1 text-[11px] font-semibold text-sky-700 dark:bg-sky-950/50 dark:text-sky-300">
-                <Sparkles className="h-3 w-3" /> First-time setup
-              </span>
-            ) : (
-              <span className="inline-flex items-center gap-1 rounded-full bg-zinc-100 px-2.5 py-1 text-[11px] font-semibold text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
-                <PencilLine className="h-3 w-3" /> Updated details
-              </span>
-            )}
-            {row.processor && (
-              <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2.5 py-1 text-[11px] font-semibold capitalize text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300">
-                <CreditCard className="h-3 w-3" /> {row.processor}
-              </span>
-            )}
-          </div>
-        </div>
-
-        {/* ── Meta: when / type / source / IP ───────────────────────────────── */}
-        <div className="divide-y divide-zinc-100 overflow-hidden rounded-xl border border-zinc-200/80 bg-white/60 dark:divide-zinc-800/80 dark:border-zinc-800 dark:bg-zinc-900/40">
-          <MetaRow
-            icon={<Clock className="h-3.5 w-3.5" />}
-            tint="bg-emerald-50 text-emerald-600 dark:bg-emerald-950/50 dark:text-emerald-300"
-            label="When"
-            value={
-              <>
-                {absoluteTime(row.created_at)}{' '}
-                <span className="text-zinc-400 dark:text-zinc-500">· {timeAgo(row.created_at)}</span>
-              </>
-            }
-          />
-          <MetaRow
-            icon={row.createdNew ? <UserPlus className="h-3.5 w-3.5" /> : <PencilLine className="h-3.5 w-3.5" />}
-            tint={
-              row.createdNew
-                ? 'bg-sky-50 text-sky-600 dark:bg-sky-950/50 dark:text-sky-300'
-                : 'bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400'
-            }
-            label="Type"
-            value={row.createdNew ? 'First-time payout setup' : 'Updated existing details'}
-          />
-          <MetaRow
-            icon={<Link2 className="h-3.5 w-3.5" />}
-            tint="bg-amber-50 text-amber-600 dark:bg-amber-950/40 dark:text-amber-300"
-            label="Source"
-            value={row.via === 'external_link' ? 'External self-service link' : row.via || 'External link'}
-          />
-          {row.ip_address && (
-            <MetaRow
-              icon={<Globe className="h-3.5 w-3.5" />}
-              tint="bg-violet-50 text-violet-600 dark:bg-violet-950/40 dark:text-violet-300"
-              label="IP address"
-              value={<span className="font-mono text-[11.5px]">{row.ip_address}</span>}
-            />
-          )}
-        </div>
-
-        {/* ── Exactly which fields changed ──────────────────────────────────── */}
-        <div>
-          <div className="mb-2 flex items-center gap-2">
-            <span className="text-[11px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
-              Fields updated
-            </span>
-            <span className="inline-flex h-5 min-w-[1.25rem] items-center justify-center rounded-full bg-emerald-100 px-1.5 text-[11px] font-bold tabular-nums text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300">
-              {changed.length}
-            </span>
-          </div>
-          {changed.length === 0 ? (
-            <p className="rounded-lg border border-dashed border-zinc-200 bg-zinc-50/60 px-3 py-2.5 text-[12px] text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900/40 dark:text-zinc-400">
-              Only the payment method was changed.
-            </p>
-          ) : (
-            <div className="flex flex-wrap gap-1.5">
-              {changed.map((f) => (
-                <span
-                  key={f}
-                  className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-200/70 bg-emerald-50/70 px-2 py-1 text-[11.5px] font-medium text-emerald-800 dark:border-emerald-900/50 dark:bg-emerald-950/30 dark:text-emerald-200"
-                >
-                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-                  {fieldLabel(f)}
-                </span>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {/* ── Privacy footer, bled to the dialog edges ──────────────────────── */}
-        <div className="-mx-4 -mb-4 flex items-start gap-2 rounded-b-xl border-t border-zinc-100 bg-zinc-50/70 px-4 py-3 dark:border-zinc-800 dark:bg-zinc-900/40">
-          <ShieldCheck className="mt-px h-4 w-4 shrink-0 text-emerald-500" />
-          <p className="text-[11px] leading-snug text-zinc-500 dark:text-zinc-400">
-            Field names only — account numbers are never recorded here. Open this person in the roster to review
-            their audited details.
-          </p>
-        </div>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-/** One labelled detail row inside the dialog's meta card. */
-function MetaRow({
-  icon,
-  tint,
-  label,
-  value,
-}: {
-  icon: ReactNode;
-  tint: string;
-  label: string;
-  value: ReactNode;
-}) {
-  return (
-    <div className="flex items-start gap-3 px-3.5 py-2.5">
-      <span className={cn('mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg', tint)}>
-        {icon}
-      </span>
-      <div className="min-w-0 flex-1">
-        <div className="text-[10.5px] font-semibold uppercase tracking-wider text-zinc-400 dark:text-zinc-500">
-          {label}
-        </div>
-        <div className="mt-0.5 break-words text-[12.5px] text-zinc-700 dark:text-zinc-200">{value}</div>
-      </div>
-    </div>
   );
 }
 

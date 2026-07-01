@@ -305,7 +305,12 @@ Template JSON lives at `references/n8n_paystub_dispatch.json`. Key nodes:
 
 ### HTML template
 
-The paystub body uses inline-styled tables for email-client compatibility. Diagonal `linear-gradient(to top right, …)` (blue → white → orange) on the page background, header band, section accent bars, card backgrounds, and total bar. Logo + "© Simple · Confidential" in a centered footer row. All data comes from `$('pay_vars').item.json.*`. Fits a ~500px card width.
+The paystub body lives in `docs/features/paystub.html` and uses inline-styled tables for
+email-client compatibility. The current design is a restrained light statement: logo + pay
+period header, net-pay-first summary, recipient metadata, scan-friendly earnings rows, and a
+compact confidentiality notice. All data comes from `$('pay_vars').item.json.*`, so the n8n
+field mapping stays unchanged. It fits a 560px desktop card and includes mobile fallbacks for
+narrow email clients.
 
 ### Known limits
 

@@ -289,7 +289,9 @@
       "Bash(node __probe-mesa.mjs)",
       "Bash(node __probe2.mjs)",
       "Bash(node -e ' *)",
-      "Bash(node __probe3.mjs)"
+      "Bash(node __probe3.mjs)",
+      "Bash(echo \"EXIT_CODE=$?\")",
+      "Bash(node _tmp_investigate_kaner.mjs)"
     ],
     "additionalDirectories": [
       "\\tmp",
