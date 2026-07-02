@@ -292,18 +292,22 @@ export async function listHrNewHireChecklistByDepartment(
 }
 
 /**
- * "Where did we hire people from" — counts hires per `source` value across ALL
- * weeks (case-insensitive de-dupe, first-seen casing), newest-biggest first.
- * `total` is every tracked hire; `total - Σcount` is the unspecified remainder.
+ * "Where did we hire people from" — counts hires per `source` value (case-
+ * insensitive de-dupe, first-seen casing), newest-biggest first. `total` is
+ * every tracked hire; `total - Σcount` is the unspecified remainder. Scoped to
+ * ALL weeks by default, or one Sun-anchored week when `periodStart` is given.
  * Powers the HR Overview hiring-sources pie + table.
  */
-export async function listHrNewHireChecklistSourceCounts(): Promise<{
+export async function listHrNewHireChecklistSourceCounts(periodStart?: string): Promise<{
   sources: { source: string; count: number }[];
   total: number;
   error: string | null;
 }> {
   const sb = client();
-  const { data, error } = await sb.from(TABLE).select("source").range(0, 9999);
+  const period = clean(periodStart ?? null);
+  let query = sb.from(TABLE).select("source").range(0, 9999);
+  if (period) query = query.eq("period_start", period);
+  const { data, error } = await query;
   if (error) return { sources: [], total: 0, error: error.message };
   const rows = (data ?? []) as { source: string | null }[];
   const byKey = new Map<string, { source: string; count: number }>();
@@ -322,25 +326,26 @@ export async function listHrNewHireChecklistSourceCounts(): Promise<{
 }
 
 /**
- * Hires grouped by their `hired_by` value across every week — a recruiter
- * scorecard. For each named recruiter:
+ * Hires grouped by their `hired_by` value — a recruiter scorecard. For each
+ * named recruiter:
  *   • `hires`       = how many checklist rows they're credited on
  *   • `interviewed` = how many of those rows carry a `date_of_interview`
  * Rows with a blank `hired_by` are pooled under no recruiter and excluded from
- * the list (but still counted toward `totalHires`). Powers the HR Overview
- * "Hiring by recruiter" card.
+ * the list (but still counted toward `totalHires`). Scoped to ALL weeks by
+ * default, or one Sun-anchored week when `periodStart` is given. Powers the HR
+ * Overview "Hiring by recruiter" card.
  */
-export async function listHrNewHireChecklistRecruiterCounts(): Promise<{
+export async function listHrNewHireChecklistRecruiterCounts(periodStart?: string): Promise<{
   recruiters: { recruiter: string; hires: number; interviewed: number }[];
   totalHires: number;
   totalInterviewed: number;
   error: string | null;
 }> {
   const sb = client();
-  const { data, error } = await sb
-    .from(TABLE)
-    .select("hired_by, date_of_interview")
-    .range(0, 9999);
+  const period = clean(periodStart ?? null);
+  let query = sb.from(TABLE).select("hired_by, date_of_interview").range(0, 9999);
+  if (period) query = query.eq("period_start", period);
+  const { data, error } = await query;
   if (error)
     return { recruiters: [], totalHires: 0, totalInterviewed: 0, error: error.message };
   const rows = (data ?? []) as { hired_by: string | null; date_of_interview: string | null }[];

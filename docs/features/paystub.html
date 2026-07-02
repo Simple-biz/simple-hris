@@ -1,307 +1,186 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <meta name="color-scheme" content="light" />
-  <meta name="supported-color-schemes" content="light" />
-  <title>Pay Statement</title>
-  <style>
-    body, table, td, a { -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%; }
-    table, td { mso-table-lspace: 0pt; mso-table-rspace: 0pt; }
-    img { -ms-interpolation-mode: bicubic; border: 0; height: auto; line-height: 100%; outline: none; text-decoration: none; }
-    table { border-collapse: collapse !important; }
-    html { height: 100% !important; }
-    body { height: 100% !important; margin: 0 !important; padding: 0 !important; width: 100% !important; }
-
-    body, table, td, div, p, a {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-      -webkit-font-smoothing: antialiased;
-      -moz-osx-font-smoothing: grayscale;
-    }
-
-    /* Align peso decimals down the amount column (financial-statement figures). */
-    .amount-main, .line-amount { font-variant-numeric: tabular-nums; font-feature-settings: "tnum" 1; }
-
-    @media screen and (max-width: 600px) {
-      .email-shell { padding: 18px 10px !important; }
-      .statement-card { width: 100% !important; max-width: 100% !important; }
-      .px { padding-left: 20px !important; padding-right: 20px !important; }
-      .top-pad { padding-top: 24px !important; }
-      .brand-logo { width: 92px !important; }
-      .amount-main { font-size: 30px !important; line-height: 36px !important; }
-      .stack-cell { display: block !important; width: 100% !important; text-align: left !important; padding-right: 0 !important; }
-      .stack-cell + .stack-cell { padding-top: 12px !important; }
-      .detail-col { display: none !important; }
-      .line-label { width: 65% !important; }
-      .line-amount { width: 35% !important; }
-    }
-  </style>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="color-scheme" content="light" />
+<meta name="supported-color-schemes" content="light" />
+<title>Pay Statement</title>
+<style>
+body,table,td,a{-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%;}
+table,td{mso-table-lspace:0pt;mso-table-rspace:0pt;}
+img{-ms-interpolation-mode:bicubic;border:0;height:auto;line-height:100%;outline:none;text-decoration:none;}
+table{border-collapse:collapse !important;}
+html{height:100% !important;}
+body{height:100% !important;margin:0 !important;padding:0 !important;width:100% !important;}
+body,table,td,div,p,a{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;}
+.amount-main,.line-amount{font-variant-numeric:tabular-nums;font-feature-settings:"tnum" 1;}
+.sec-head{background-color:#334155;padding:5px 12px;font-size:11px;line-height:13px;font-weight:800;letter-spacing:0.12em;text-transform:uppercase;color:#fff;mso-line-height-rule:exactly;}
+.line-label{width:44%;padding:6px 0;font-size:13px;line-height:15px;color:#26384d;border-bottom:1px solid #edf2f7;}
+.detail-col{width:28%;padding:6px 8px;font-size:12px;line-height:15px;color:#556377;border-bottom:1px solid #edf2f7;white-space:nowrap;}
+.line-amount{width:28%;padding:6px 0;font-size:13px;line-height:15px;font-weight:700;color:#102034;border-bottom:1px solid #edf2f7;white-space:nowrap;}
+@media screen and (max-width:600px){
+.email-shell{padding:18px 10px !important;}
+.statement-card{width:100% !important;max-width:100% !important;}
+.px{padding-left:20px !important;padding-right:20px !important;}
+.top-pad{padding-top:14px !important;}
+.brand-logo{width:92px !important;}
+.amount-main{font-size:30px !important;line-height:36px !important;}
+.stack-cell{display:block !important;width:100% !important;text-align:left !important;padding-right:0 !important;}
+.stack-cell+.stack-cell{padding-top:12px !important;}
+.detail-col{display:none !important;}
+.line-label{width:65% !important;}
+.line-amount{width:35% !important;}
+}
+</style>
 </head>
 
 <body style="margin:0;padding:0;height:100%;background-color:#f4f7fb;">
-  <div style="display:none;max-height:0;overflow:hidden;opacity:0;color:transparent;font-size:1px;line-height:1px;">
-    Pay statement for {{ $('pay_vars').item.json.week_human }}
-  </div>
+<div style="display:none;max-height:0;overflow:hidden;opacity:0;color:transparent;font-size:1px;line-height:1px;">Pay statement for {{ $('pay_vars').item.json.week_human }}</div>
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" height="100%" class="email-shell" style="height:100vh;background-color:#f4f7fb;padding:20px 16px;">
+<tr>
+<td align="center" valign="middle" style="vertical-align:middle;">
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="560" class="statement-card" style="width:560px;max-width:560px;background-color:#f97316;border-radius:17px;box-shadow:0 20px 48px rgba(16, 32, 52, 0.16), 0 2px 6px rgba(16, 32, 52, 0.07);overflow:hidden;">
+<tr>
+<td style="padding:3px;font-size:0;line-height:0;">
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="width:100%;background-color:#fbfcfe;border-radius:14px;overflow:hidden;">
 
-  <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" height="100%" class="email-shell"
-    style="height:100vh;background-color:#f4f7fb;padding:40px 16px;">
-    <tr>
-      <td align="center" valign="middle" style="vertical-align:middle;">
-        <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="560" class="statement-card"
-          style="width:560px;max-width:560px;background-color:#f97316;border-radius:17px;box-shadow:0 20px 48px rgba(16, 32, 52, 0.16), 0 2px 6px rgba(16, 32, 52, 0.07);overflow:hidden;">
-          <tr>
-            <td style="padding:3px;font-size:0;line-height:0;">
-              <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%"
-                style="width:100%;background-color:#fbfcfe;border-radius:14px;overflow:hidden;">
+<tr>
+<td class="px top-pad" align="center" style="padding:18px 32px 14px 32px;background-color:#fff;border-bottom:1px solid #eef2f6;text-align:center;">
+<img class="brand-logo" src="https://host.simple.biz/email/simplelogo.png" alt="Simple" width="112" style="display:block;width:112px;height:auto;border:0;margin:0 auto 8px auto;" />
+<div style="font-size:26px;line-height:32px;font-weight:700;color:#102034;margin-top:0;letter-spacing:0;text-align:center;">Pay Statement</div>
+<div style="font-size:13px;line-height:19px;color:#556377;margin-top:3px;text-align:center;">Period ending <span style="font-weight:700;color:#334155;">{{ $('pay_vars').item.json.week_human }}</span></div>
+<div style="font-size:11px;line-height:16px;color:#556377;margin-top:5px;text-align:center;">Confidential pay record</div>
+</td>
+</tr>
 
-          <tr>
-            <td class="px top-pad" align="center" style="padding:34px 32px 26px 32px;background-color:#ffffff;border-bottom:1px solid #eef2f6;text-align:center;">
-              <img class="brand-logo" src="https://host.simple.biz/email/simplelogo.png" alt="Simple" width="112"
-                style="display:block;width:112px;height:auto;border:0;margin:0 auto 14px auto;" />
+<tr>
+<td class="px" style="padding:0 32px 12px 32px;">
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="background-color:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;overflow:hidden;">
+<tr><td class="sec-head" style="padding:5px 20px;letter-spacing:0.11em;">Total Net Pay</td></tr>
+<tr>
+<td style="padding:9px 20px 10px 20px;">
+<div class="amount-main" style="font-size:34px;line-height:40px;font-weight:800;color:#102034;margin-top:0;letter-spacing:0;white-space:nowrap;text-align:left;">&#8369;{{ $('pay_vars').item.json.total_pay_php.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2}) }}</div>
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="margin-top:6px;border-top:1px solid #e2e8f0;">
+<tr>
+<td style="padding-top:6px;font-size:12px;line-height:17px;color:#556377;">USD equivalent</td>
+<td align="right" style="padding-top:6px;font-size:12px;line-height:17px;font-weight:700;color:#26384d;white-space:nowrap;">${{ $('pay_vars').item.json.total_pay_usd }} USD</td>
+</tr>
+</table>
+</td>
+</tr>
+</table>
+</td>
+</tr>
 
-              <div style="font-size:26px;line-height:32px;font-weight:700;color:#102034;margin-top:0;letter-spacing:0;text-align:center;">
-                Pay Statement
-              </div>
-              <div style="font-size:13px;line-height:19px;color:#556377;margin-top:6px;text-align:center;">
-                Period ending <span style="font-weight:700;color:#334155;">{{ $('pay_vars').item.json.week_human }}</span>
-              </div>
-              <div style="font-size:11px;line-height:16px;color:#556377;margin-top:10px;text-align:center;">
-                Confidential pay record
-              </div>
-            </td>
-          </tr>
+<tr>
+<td class="px" style="padding:0 32px 10px 32px;">
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="width:100%;">
+<tr><td colspan="2" class="sec-head">Employee</td></tr>
+<tr>
+<td class="stack-cell" style="width:50%;vertical-align:top;padding:8px 14px 8px 0;border-bottom:1px solid #e2e8f0;">
+<div style="font-size:10px;line-height:13px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;color:#556377;">Recipient</div>
+<div style="font-size:14px;line-height:20px;font-weight:700;color:#102034;margin-top:3px;">{{ $('pay_vars').item.json.name }}</div>
+</td>
+<td class="stack-cell" align="right" style="width:50%;vertical-align:top;text-align:right;padding:8px 0 8px 0;border-bottom:1px solid #e2e8f0;">
+<div style="font-size:10px;line-height:13px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;color:#556377;">Department</div>
+<div style="font-size:14px;line-height:20px;font-weight:700;color:#102034;margin-top:3px;">{{ $('pay_vars').item.json.department }}</div>
+</td>
+</tr>
+</table>
+</td>
+</tr>
 
-          <tr>
-            <td class="px" style="padding:0 32px 24px 32px;">
-              <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%"
-                style="background-color:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;overflow:hidden;">
-                <tr>
-                  <td style="background-color:#334155;padding:9px 20px;font-size:11px;line-height:14px;font-weight:800;letter-spacing:0.11em;text-transform:uppercase;color:#ffffff;mso-line-height-rule:exactly;">
-                    Total Net Pay
-                  </td>
-                </tr>
-                <tr>
-                  <td style="padding:16px 20px 17px 20px;">
-                    <div class="amount-main" style="font-size:34px;line-height:40px;font-weight:800;color:#102034;margin-top:0;letter-spacing:0;white-space:nowrap;text-align:left;">
-                      &#8369;{{ $('pay_vars').item.json.total_pay_php.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2}) }}
-                    </div>
-                    <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="margin-top:12px;border-top:1px solid #e2e8f0;">
-                      <tr>
-                        <td style="padding-top:11px;font-size:12px;line-height:17px;color:#556377;">
-                          USD equivalent
-                        </td>
-                        <td align="right" style="padding-top:11px;font-size:12px;line-height:17px;font-weight:700;color:#26384d;white-space:nowrap;">
-                          ${{ $('pay_vars').item.json.total_pay_usd }} USD
-                        </td>
-                      </tr>
-                    </table>
-                  </td>
-                </tr>
-              </table>
-            </td>
-          </tr>
+<tr>
+<td class="px" style="padding:0 32px 5px 32px;">
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="width:100%;border-bottom:1px solid #e2e8f0;">
+<tr><td colspan="3" class="sec-head">Earnings</td></tr>
+<tr>
+<td class="line-label" style="background-color:#f1f5f9;padding:4px 0;font-size:10px;line-height:12px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:#334155;border-bottom:1px solid #cbd5e1;">Description</td>
+<td class="detail-col" style="background-color:#f1f5f9;padding:4px 8px;font-size:10px;line-height:12px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:#334155;border-bottom:1px solid #cbd5e1;">Hours &#215; Rate</td>
+<td class="line-amount" align="right" style="background-color:#f1f5f9;padding:4px 0;font-size:10px;line-height:12px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:#334155;border-bottom:1px solid #cbd5e1;">Amount</td>
+</tr>
+<tr>
+<td class="line-label">Regular Hours</td>
+<td class="detail-col">{{ Number($('pay_vars').item.json.mf_hours).toFixed(2) }}h x &#8369;{{ Number($('pay_vars').item.json.mf_rate).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2}) }}</td>
+<td class="line-amount" align="right">&#8369;{{ $('pay_vars').item.json.mf_pay.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2}) }}</td>
+</tr>
+<tr>
+<td class="line-label">Overtime</td>
+<td class="detail-col">{{ Number($('pay_vars').item.json.mf_ot_hours).toFixed(2) }}h x &#8369;{{ Number($('pay_vars').item.json.ot_rate).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2}) }}</td>
+<td class="line-amount" align="right">&#8369;{{ $('pay_vars').item.json.ot_pay.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2}) }}</td>
+</tr>
+<tr>
+<td class="line-label">Tech Allowance</td>
+<td class="detail-col">Bonus</td>
+<td class="line-amount" align="right">&#8369;{{ $('pay_vars').item.json.tech_bonus.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2}) }}</td>
+</tr>
+<tr>
+<td class="line-label">Attendance Incentive</td>
+<td class="detail-col">Bonus</td>
+<td class="line-amount" align="right">&#8369;{{ $('pay_vars').item.json.attendance_bonus.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2}) }}</td>
+</tr>
+<tr>
+<td class="line-label">Performance Bonus</td>
+<td class="detail-col">Bonus</td>
+<td class="line-amount" align="right">&#8369;{{ $('pay_vars').item.json.performance_bonus.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2}) }}</td>
+</tr>
+<tr>
+<td class="line-label" style="border-bottom:0;">Adjustment</td>
+<td class="detail-col" style="border-bottom:0;">{{ $('pay_vars').item.json.adjustment_note || 'Manual adjustment' }}</td>
+<td class="line-amount" align="right" style="border-bottom:0;">&#8369;{{ $('pay_vars').item.json.adjustment.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2}) }}</td>
+</tr>
+</table>
+</td>
+</tr>
 
-          <tr>
-            <td class="px" style="padding:0 32px 22px 32px;">
-              <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="width:100%;">
-                <tr>
-                  <td colspan="2" style="background-color:#334155;padding:9px 12px;font-size:11px;line-height:14px;font-weight:800;letter-spacing:0.12em;text-transform:uppercase;color:#ffffff;mso-line-height-rule:exactly;">
-                    Employee
-                  </td>
-                </tr>
-                <tr>
-                  <td class="stack-cell" style="width:50%;vertical-align:top;padding:13px 14px 13px 0;border-bottom:1px solid #e2e8f0;">
-                    <div style="font-size:10px;line-height:13px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;color:#556377;">
-                      Recipient
-                    </div>
-                    <div style="font-size:14px;line-height:20px;font-weight:700;color:#102034;margin-top:5px;">
-                      {{ $('pay_vars').item.json.name }}
-                    </div>
-                  </td>
-                  <td class="stack-cell" align="right" style="width:50%;vertical-align:top;text-align:right;padding:13px 0 13px 0;border-bottom:1px solid #e2e8f0;">
-                    <div style="font-size:10px;line-height:13px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;color:#556377;">
-                      Department
-                    </div>
-                    <div style="font-size:14px;line-height:20px;font-weight:700;color:#102034;margin-top:5px;">
-                      {{ $('pay_vars').item.json.department }}
-                    </div>
-                  </td>
-                </tr>
-              </table>
-            </td>
-          </tr>
+<tr>
+<td class="px" style="padding:8px 32px 5px 32px;">
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="width:100%;border-bottom:1px solid #e2e8f0;">
+<tr><td colspan="3" class="sec-head">MESA Adjustment</td></tr>
+<tr>
+<td class="line-label" style="background-color:#f1f5f9;padding:4px 0;font-size:10px;line-height:12px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:#334155;border-bottom:1px solid #cbd5e1;">Description</td>
+<td class="detail-col" style="background-color:#f1f5f9;padding:4px 8px;font-size:10px;line-height:12px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:#334155;border-bottom:1px solid #cbd5e1;">Type</td>
+<td class="line-amount" align="right" style="background-color:#f1f5f9;padding:4px 0;font-size:10px;line-height:12px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:#334155;border-bottom:1px solid #cbd5e1;">Amount</td>
+</tr>
+<tr>
+<td class="line-label">MESA Reimbursement</td>
+<td class="detail-col">Payout</td>
+<td class="line-amount" align="right" style="color:#0f766e;">+&#8369;{{ $('pay_vars').item.json.mesa_disbursement.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2}) }}</td>
+</tr>
+<tr>
+<td class="line-label" style="border-bottom:0;">MESA Deduction</td>
+<td class="detail-col" style="border-bottom:0;">Contribution</td>
+<td class="line-amount" align="right" style="color:#b3261e;border-bottom:0;">-&#8369;{{ $('pay_vars').item.json.mesa_deduction.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2}) }}</td>
+</tr>
+</table>
+</td>
+</tr>
 
-          <tr>
-            <td class="px" style="padding:0 32px 8px 32px;">
-              <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%"
-                style="width:100%;border-bottom:1px solid #e2e8f0;">
-                <tr>
-                  <td colspan="3" style="background-color:#334155;padding:9px 12px;font-size:11px;line-height:14px;font-weight:800;letter-spacing:0.12em;text-transform:uppercase;color:#ffffff;mso-line-height-rule:exactly;">
-                    Earnings
-                  </td>
-                </tr>
-                <tr>
-                  <td class="line-label" style="width:44%;background-color:#f1f5f9;padding:6px 0;font-size:10px;line-height:13px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:#334155;border-bottom:1px solid #cbd5e1;">
-                    Description
-                  </td>
-                  <td class="detail-col" style="width:28%;background-color:#f1f5f9;padding:6px 8px;font-size:10px;line-height:13px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:#334155;border-bottom:1px solid #cbd5e1;white-space:nowrap;">
-                    Hours &#215; Rate
-                  </td>
-                  <td class="line-amount" align="right" style="width:28%;background-color:#f1f5f9;padding:6px 0;font-size:10px;line-height:13px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:#334155;border-bottom:1px solid #cbd5e1;white-space:nowrap;">
-                    Amount
-                  </td>
-                </tr>
-                <tr>
-                  <td class="line-label" style="width:44%;padding:12px 0;font-size:13px;line-height:18px;color:#26384d;border-bottom:1px solid #edf2f7;">
-                    Regular Hours
-                  </td>
-                  <td class="detail-col" style="width:28%;padding:12px 8px;font-size:12px;line-height:18px;color:#556377;border-bottom:1px solid #edf2f7;white-space:nowrap;">
-                    {{ Number($('pay_vars').item.json.mf_hours).toFixed(2) }}h x &#8369;{{ Number($('pay_vars').item.json.mf_rate).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2}) }}
-                  </td>
-                  <td class="line-amount" align="right" style="width:28%;padding:12px 0;font-size:13px;line-height:18px;font-weight:700;color:#102034;border-bottom:1px solid #edf2f7;white-space:nowrap;">
-                    &#8369;{{ $('pay_vars').item.json.mf_pay.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2}) }}
-                  </td>
-                </tr>
-                <tr>
-                  <td class="line-label" style="width:44%;padding:12px 0;font-size:13px;line-height:18px;color:#26384d;border-bottom:1px solid #edf2f7;">
-                    Overtime
-                  </td>
-                  <td class="detail-col" style="width:28%;padding:12px 8px;font-size:12px;line-height:18px;color:#556377;border-bottom:1px solid #edf2f7;white-space:nowrap;">
-                    {{ Number($('pay_vars').item.json.mf_ot_hours).toFixed(2) }}h x &#8369;{{ Number($('pay_vars').item.json.ot_rate).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2}) }}
-                  </td>
-                  <td class="line-amount" align="right" style="width:28%;padding:12px 0;font-size:13px;line-height:18px;font-weight:700;color:#102034;border-bottom:1px solid #edf2f7;white-space:nowrap;">
-                    &#8369;{{ $('pay_vars').item.json.ot_pay.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2}) }}
-                  </td>
-                </tr>
-                <tr>
-                  <td class="line-label" style="width:44%;padding:12px 0;font-size:13px;line-height:18px;color:#26384d;border-bottom:1px solid #edf2f7;">
-                    Tech Allowance
-                  </td>
-                  <td class="detail-col" style="width:28%;padding:12px 8px;font-size:12px;line-height:18px;color:#556377;border-bottom:1px solid #edf2f7;">
-                    Bonus
-                  </td>
-                  <td class="line-amount" align="right" style="width:28%;padding:12px 0;font-size:13px;line-height:18px;font-weight:700;color:#102034;border-bottom:1px solid #edf2f7;white-space:nowrap;">
-                    &#8369;{{ $('pay_vars').item.json.tech_bonus.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2}) }}
-                  </td>
-                </tr>
-                <tr>
-                  <td class="line-label" style="width:44%;padding:12px 0;font-size:13px;line-height:18px;color:#26384d;border-bottom:1px solid #edf2f7;">
-                    Attendance Incentive
-                  </td>
-                  <td class="detail-col" style="width:28%;padding:12px 8px;font-size:12px;line-height:18px;color:#556377;border-bottom:1px solid #edf2f7;">
-                    Bonus
-                  </td>
-                  <td class="line-amount" align="right" style="width:28%;padding:12px 0;font-size:13px;line-height:18px;font-weight:700;color:#102034;border-bottom:1px solid #edf2f7;white-space:nowrap;">
-                    &#8369;{{ $('pay_vars').item.json.attendance_bonus.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2}) }}
-                  </td>
-                </tr>
-                <tr>
-                  <td class="line-label" style="width:44%;padding:12px 0;font-size:13px;line-height:18px;color:#26384d;border-bottom:1px solid #edf2f7;">
-                    Performance Bonus
-                  </td>
-                  <td class="detail-col" style="width:28%;padding:12px 8px;font-size:12px;line-height:18px;color:#556377;border-bottom:1px solid #edf2f7;">
-                    Bonus
-                  </td>
-                  <td class="line-amount" align="right" style="width:28%;padding:12px 0;font-size:13px;line-height:18px;font-weight:700;color:#102034;border-bottom:1px solid #edf2f7;white-space:nowrap;">
-                    &#8369;{{ $('pay_vars').item.json.performance_bonus.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2}) }}
-                  </td>
-                </tr>
-                <tr>
-                  <td class="line-label" style="width:44%;padding:12px 0;font-size:13px;line-height:18px;color:#26384d;">
-                    Adjustment
-                  </td>
-                  <td class="detail-col" style="width:28%;padding:12px 8px;font-size:12px;line-height:18px;color:#556377;">
-                    {{ $('pay_vars').item.json.adjustment_note || 'Manual adjustment' }}
-                  </td>
-                  <td class="line-amount" align="right" style="width:28%;padding:12px 0;font-size:13px;line-height:18px;font-weight:700;color:#102034;white-space:nowrap;">
-                    &#8369;{{ $('pay_vars').item.json.adjustment.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2}) }}
-                  </td>
-                </tr>
-              </table>
-            </td>
-          </tr>
+<tr>
+<td class="px" style="padding:10px 32px 16px 32px;">
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="background-color:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;">
+<tr><td style="padding:8px 14px;font-size:11px;line-height:16px;color:#556377;"><strong style="color:#334155;">Confidential:</strong> This statement is intended only for the recipient named above. Contact your payroll representative if any hours or totals need review.</td></tr>
+</table>
+</td>
+</tr>
 
-          <tr>
-            <td class="px" style="padding:14px 32px 8px 32px;">
-              <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%"
-                style="width:100%;border-bottom:1px solid #e2e8f0;">
-                <tr>
-                  <td colspan="3" style="background-color:#334155;padding:9px 12px;font-size:11px;line-height:14px;font-weight:800;letter-spacing:0.12em;text-transform:uppercase;color:#ffffff;mso-line-height-rule:exactly;">
-                    MESA Adjustment
-                  </td>
-                </tr>
-                <tr>
-                  <td class="line-label" style="width:44%;background-color:#f1f5f9;padding:6px 0;font-size:10px;line-height:13px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:#334155;border-bottom:1px solid #cbd5e1;">
-                    Description
-                  </td>
-                  <td class="detail-col" style="width:28%;background-color:#f1f5f9;padding:6px 8px;font-size:10px;line-height:13px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:#334155;border-bottom:1px solid #cbd5e1;white-space:nowrap;">
-                    Type
-                  </td>
-                  <td class="line-amount" align="right" style="width:28%;background-color:#f1f5f9;padding:6px 0;font-size:10px;line-height:13px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:#334155;border-bottom:1px solid #cbd5e1;white-space:nowrap;">
-                    Amount
-                  </td>
-                </tr>
-                <tr>
-                  <td class="line-label" style="width:44%;padding:12px 0;font-size:13px;line-height:18px;color:#26384d;border-bottom:1px solid #edf2f7;">
-                    MESA Reimbursement
-                  </td>
-                  <td class="detail-col" style="width:28%;padding:12px 8px;font-size:12px;line-height:18px;color:#556377;border-bottom:1px solid #edf2f7;">
-                    Payout
-                  </td>
-                  <td class="line-amount" align="right" style="width:28%;padding:12px 0;font-size:13px;line-height:18px;font-weight:700;color:#0f766e;border-bottom:1px solid #edf2f7;white-space:nowrap;">
-                    +&#8369;{{ $('pay_vars').item.json.mesa_disbursement.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2}) }}
-                  </td>
-                </tr>
-                <tr>
-                  <td class="line-label" style="width:44%;padding:12px 0;font-size:13px;line-height:18px;color:#26384d;">
-                    MESA Deduction
-                  </td>
-                  <td class="detail-col" style="width:28%;padding:12px 8px;font-size:12px;line-height:18px;color:#556377;">
-                    Contribution
-                  </td>
-                  <td class="line-amount" align="right" style="width:28%;padding:12px 0;font-size:13px;line-height:18px;font-weight:700;color:#b3261e;white-space:nowrap;">
-                    -&#8369;{{ $('pay_vars').item.json.mesa_deduction.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2}) }}
-                  </td>
-                </tr>
-              </table>
-            </td>
-          </tr>
-
-          <tr>
-            <td class="px" style="padding:18px 32px 30px 32px;">
-              <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%"
-                style="background-color:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;">
-                <tr>
-                  <td style="padding:12px 14px;font-size:11px;line-height:16px;color:#556377;">
-                    <strong style="color:#334155;">Confidential:</strong>
-                    This statement is intended only for the recipient named above. Contact your payroll representative if any hours or totals need review.
-                  </td>
-                </tr>
-              </table>
-            </td>
-          </tr>
-
-          <tr>
-            <td class="px" style="background-color:#f8fafc;border-top:1px solid #eef2f6;padding:17px 32px;">
-              <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">
-                <tr>
-                  <td style="font-size:11px;line-height:16px;color:#556377;">
-                    Automated dispatch from Simple HRIS
-                  </td>
-                  <td align="right" style="font-size:11px;line-height:16px;font-weight:700;color:#334155;white-space:nowrap;">
-                    Simple Payroll
-                  </td>
-                </tr>
-              </table>
-            </td>
-          </tr>
-              </table>
-            </td>
-          </tr>
-        </table>
-      </td>
-    </tr>
-  </table>
+<tr>
+<td class="px" style="background-color:#f8fafc;border-top:1px solid #eef2f6;padding:10px 32px;">
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">
+<tr>
+<td style="font-size:11px;line-height:16px;color:#556377;">Automated dispatch from Simple HRIS</td>
+<td align="right" style="font-size:11px;line-height:16px;font-weight:700;color:#334155;white-space:nowrap;">Simple Payroll</td>
+</tr>
+</table>
+</td>
+</tr>
+</table>
+</td>
+</tr>
+</table>
+</td>
+</tr>
+</table>
 </body>
 </html>

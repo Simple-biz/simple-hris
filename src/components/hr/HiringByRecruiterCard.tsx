@@ -1,15 +1,18 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { Check, Copy, Loader2, RefreshCw, Users } from 'lucide-react';
+import { Check, Copy, RefreshCw, Users } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
+import { formatWeekLabel } from '@/lib/hr/hiring-week';
 
 /**
  * HR Overview card: a leaderboard of who hired how many people (from the New
- * Hire Checklist `hired_by` column, across all weeks) and how many of those
- * hires they interviewed (rows carrying a `date_of_interview`). A Copy CSV
- * button drops the whole table on the clipboard for a spreadsheet.
+ * Hire Checklist `hired_by` column) and how many of those hires they
+ * interviewed (rows carrying a `date_of_interview`). Aggregated across all
+ * weeks by default, or scoped to one Sun-anchored week when `periodStart`
+ * (YYYY-MM-DD) is passed. A Copy CSV button drops the whole table on the
+ * clipboard for a spreadsheet.
  */
 
 type Recruiter = { recruiter: string; hires: number; interviewed: number };
@@ -20,7 +23,7 @@ function csvCell(v: string | number | null | undefined): string {
   return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 
-export default function HiringByRecruiterCard() {
+export default function HiringByRecruiterCard({ periodStart }: { periodStart?: string } = {}) {
   const [recruiters, setRecruiters] = useState<Recruiter[]>([]);
   const [totalHires, setTotalHires] = useState(0);
   const [totalInterviewed, setTotalInterviewed] = useState(0);
@@ -31,7 +34,10 @@ export default function HiringByRecruiterCard() {
   const load = () => {
     setLoading(true);
     setError(null);
-    fetch('/api/hr/new-hire-checklist/recruiters', { cache: 'no-store' })
+    const url = periodStart
+      ? `/api/hr/new-hire-checklist/recruiters?period=${encodeURIComponent(periodStart)}`
+      : '/api/hr/new-hire-checklist/recruiters';
+    fetch(url, { cache: 'no-store' })
       .then((r) => r.json())
       .then((j: { recruiters?: Recruiter[]; totalHires?: number; totalInterviewed?: number; error?: string }) => {
         if (j.error) throw new Error(j.error);
@@ -43,7 +49,7 @@ export default function HiringByRecruiterCard() {
       .finally(() => setLoading(false));
   };
 
-  useEffect(load, []);
+  useEffect(load, [periodStart]);
 
   const maxHires = useMemo(() => Math.max(1, ...recruiters.map((r) => r.hires)), [recruiters]);
   const namedHires = useMemo(() => recruiters.reduce((s, r) => s + r.hires, 0), [recruiters]);
@@ -77,7 +83,8 @@ export default function HiringByRecruiterCard() {
             Hiring by recruiter
           </h2>
           <p className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">
-            Who hired how many — and how many they interviewed.
+            Who hired how many — and how many they interviewed
+            {periodStart ? ` — ${formatWeekLabel(periodStart)}.` : ', across all weeks.'}
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-2">
@@ -111,9 +118,21 @@ export default function HiringByRecruiterCard() {
       </div>
 
       {loading ? (
-        <div className="flex items-center justify-center gap-2 py-16 text-sm text-zinc-500">
-          <Loader2 className="h-4 w-4 animate-spin" />
-          Loading hiring by recruiter…
+        <div className="px-5 py-4 sm:px-6">
+          <div className="overflow-hidden rounded-xl border border-zinc-100 dark:border-zinc-800">
+            <div className="space-y-0 divide-y divide-zinc-100 dark:divide-zinc-800">
+              {Array.from({ length: 5 }).map((_, i) => (
+                <div key={i} className="flex items-center gap-3 px-3 py-2.5">
+                  <div className="flex-1 space-y-1.5">
+                    <span className="block h-3 w-1/3 animate-pulse rounded bg-zinc-100 dark:bg-zinc-800" />
+                    <span className="block h-1.5 w-full animate-pulse rounded-full bg-zinc-100 dark:bg-zinc-800" />
+                  </div>
+                  <span className="h-3 w-6 shrink-0 animate-pulse rounded bg-zinc-100 dark:bg-zinc-800" />
+                  <span className="h-3 w-10 shrink-0 animate-pulse rounded bg-zinc-100 dark:bg-zinc-800" />
+                </div>
+              ))}
+            </div>
+          </div>
         </div>
       ) : error ? (
         <div className="px-6 py-12 text-center text-sm text-rose-600">{error}</div>

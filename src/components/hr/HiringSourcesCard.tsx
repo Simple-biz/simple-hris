@@ -1,13 +1,15 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { PieChart, Loader2, RefreshCw } from 'lucide-react';
+import { PieChart, RefreshCw } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { formatWeekLabel } from '@/lib/hr/hiring-week';
 
 /**
  * HR Overview card: a donut + table of how many hires came from each `source`
- * value in the New Hire Checklist (aggregated across all weeks). Hand-rolled SVG
- * donut to match the house chart style (no chart dependency).
+ * value in the New Hire Checklist. Aggregated across all weeks by default, or
+ * scoped to one Sun-anchored week when `periodStart` (YYYY-MM-DD) is passed.
+ * Hand-rolled SVG donut to match the house chart style (no chart dependency).
  */
 
 type SourceCount = { source: string; count: number };
@@ -45,7 +47,7 @@ function slicePath(s: number, e: number) {
   return `M ${s1.x} ${s1.y} A ${OUTER_R} ${OUTER_R} 0 ${large} 1 ${e1.x} ${e1.y} L ${s2.x} ${s2.y} A ${INNER_R} ${INNER_R} 0 ${large} 0 ${e2.x} ${e2.y} Z`;
 }
 
-export default function HiringSourcesCard() {
+export default function HiringSourcesCard({ periodStart }: { periodStart?: string } = {}) {
   const [sources, setSources] = useState<SourceCount[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -55,7 +57,10 @@ export default function HiringSourcesCard() {
   const load = () => {
     setLoading(true);
     setError(null);
-    fetch('/api/hr/new-hire-checklist/sources', { cache: 'no-store' })
+    const url = periodStart
+      ? `/api/hr/new-hire-checklist/sources?period=${encodeURIComponent(periodStart)}`
+      : '/api/hr/new-hire-checklist/sources';
+    fetch(url, { cache: 'no-store' })
       .then((r) => r.json())
       .then((j: { sources?: SourceCount[]; total?: number; error?: string }) => {
         if (j.error) throw new Error(j.error);
@@ -66,7 +71,7 @@ export default function HiringSourcesCard() {
       .finally(() => setLoading(false));
   };
 
-  useEffect(load, []);
+  useEffect(load, [periodStart]);
 
   // Build slices: each named source + an "Unspecified" remainder so counts
   // reconcile with the total tracked hires.
@@ -108,7 +113,7 @@ export default function HiringSourcesCard() {
             Hiring sources
           </h2>
           <p className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">
-            Where our hires came from — across all weeks.
+            Where our hires came from — {periodStart ? formatWeekLabel(periodStart) : 'across all weeks'}.
           </p>
         </div>
         <button
@@ -123,9 +128,17 @@ export default function HiringSourcesCard() {
       </div>
 
       {loading ? (
-        <div className="flex items-center justify-center gap-2 py-16 text-sm text-zinc-500">
-          <Loader2 className="h-4 w-4 animate-spin" />
-          Loading hiring sources…
+        <div className="flex flex-col items-center gap-5 px-5 py-6 sm:flex-row sm:flex-wrap sm:items-center sm:justify-center sm:gap-6 sm:px-6">
+          <div className="h-[150px] w-[150px] shrink-0 animate-pulse rounded-full bg-zinc-100 dark:bg-zinc-800" />
+          <div className="w-full min-w-[190px] flex-1 space-y-2">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <div key={i} className="flex items-center gap-2 rounded-lg border border-zinc-100 px-3 py-2.5 dark:border-zinc-800">
+                <span className="h-2.5 w-2.5 shrink-0 animate-pulse rounded-full bg-zinc-200 dark:bg-zinc-700" />
+                <span className="h-3 flex-1 animate-pulse rounded bg-zinc-100 dark:bg-zinc-800" />
+                <span className="h-3 w-8 animate-pulse rounded bg-zinc-100 dark:bg-zinc-800" />
+              </div>
+            ))}
+          </div>
         </div>
       ) : error ? (
         <div className="px-6 py-12 text-center text-sm text-rose-600">{error}</div>

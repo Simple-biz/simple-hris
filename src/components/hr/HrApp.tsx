@@ -44,8 +44,7 @@ import HrSidebar, { type HrTab } from './HrSidebar';
 import HrOnboarding from './HrOnboarding';
 import HrGlobalMasterList from './HrGlobalMasterList';
 import HrNewHireChecklist from './HrNewHireChecklist';
-import HiringSourcesCard from './HiringSourcesCard';
-import HiringByRecruiterCard from './HiringByRecruiterCard';
+import HiringWeekOverviewSection from './HiringWeekOverviewSection';
 import HrOffboarding from './HrOffboarding';
 import HrMesa from './HrMesa';
 import GiftTracker from '@/components/orphanage/GiftTracker';
@@ -3040,11 +3039,8 @@ function OverviewBody() {
         ))}
       </div>
 
-      {/* Hiring sources + recruiter leaderboard — side by side on wider screens */}
-      <div className="grid gap-3 lg:grid-cols-2 lg:items-start">
-        <HiringSourcesCard />
-        <HiringByRecruiterCard />
-      </div>
+      {/* Hiring sources + recruiter leaderboard, toggle between all-time and a single week */}
+      <HiringWeekOverviewSection />
 
       {/* Editorial composition — headcount story + recent arrivals */}
       <OverviewEditorialSection

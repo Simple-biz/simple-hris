@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { motion } from 'motion/react';
 import {
   Building2,
   CalendarDays,
@@ -363,18 +364,39 @@ export default function HrNewHireChecklist({
     onSaved: handlePeerSaved,
   });
 
-  // Which peer (if any) occupies each rendered cell, keyed `${rowIndex}:${col}`.
-  // Resolves a peer's row the same way the merge does (shared cid, then index).
-  const peerByCell = useMemo(() => {
-    const m = new Map<string, LiveCellPeer>();
+  // Resolve each peer's row index once (shared cid, then broadcast index) so
+  // `peerByCell` (exact cell) and `peersByRow` (anywhere in the row) can't
+  // disagree on which row a peer is in.
+  const resolvedPeers = useMemo(() => {
+    const out: Array<{ peer: LiveCellPeer; idx: number }> = [];
     for (const p of livePeers) {
       let idx = p.cid ? rows.findIndex((row) => row._cid === p.cid) : -1;
       if (idx < 0) idx = p.row;
       if (idx < 0 || idx >= rows.length) continue;
-      m.set(`${idx}:${p.col}`, p);
+      out.push({ peer: p, idx });
+    }
+    return out;
+  }, [livePeers, rows]);
+
+  // Which peer (if any) occupies each rendered cell, keyed `${rowIndex}:${col}`.
+  const peerByCell = useMemo(() => {
+    const m = new Map<string, LiveCellPeer>();
+    for (const { peer, idx } of resolvedPeers) m.set(`${idx}:${peer.col}`, peer);
+    return m;
+  }, [resolvedPeers]);
+
+  // Which peer(s) are anywhere in a row, regardless of column — drives a
+  // row-level "someone's already in here" indicator so a second person can
+  // see a row is occupied before they've focused any specific cell in it.
+  const peersByRow = useMemo(() => {
+    const m = new Map<number, LiveCellPeer[]>();
+    for (const { peer, idx } of resolvedPeers) {
+      const arr = m.get(idx);
+      if (arr) arr.push(peer);
+      else m.set(idx, [peer]);
     }
     return m;
-  }, [livePeers, rows]);
+  }, [resolvedPeers]);
 
   // Callback ref for the scrollable grid box: keeps `scrollRef` (used for cell
   // focus) in sync AND registers the element with the HR collab layer so peer
@@ -1147,6 +1169,11 @@ export default function HrNewHireChecklist({
                     <tbody>
                       {rows.map((row, r) => {
                         const isSelected = selectedKeys.has(row._key);
+                        const rowPeers = peersByRow.get(r) ?? [];
+                        const rowPeerColor = rowPeers[0]?.color;
+                        const rowPeerNames = rowPeers
+                          .map((p) => p.name?.trim() || p.email.split('@')[0])
+                          .join(', ');
                         return (
                           <tr
                             key={row._key}
@@ -1154,6 +1181,7 @@ export default function HrNewHireChecklist({
                               'group/row hover:bg-emerald-50/40 dark:hover:bg-emerald-950/20',
                               isSelected ? 'bg-emerald-50 dark:bg-emerald-950/30' : 'even:bg-zinc-50/40 dark:even:bg-zinc-900/30',
                             )}
+                            style={rowPeerColor ? { boxShadow: `inset 3px 0 0 0 ${rowPeerColor}` } : undefined}
                           >
                             <td
                               className={cn(
@@ -1163,7 +1191,14 @@ export default function HrNewHireChecklist({
                                   : 'bg-white group-even/row:bg-zinc-50/40 group-hover/row:bg-emerald-50/40 dark:bg-zinc-950 dark:group-even/row:bg-zinc-900/30',
                               )}
                             >
-                              <div className="flex items-center justify-center gap-1.5">
+                              <div
+                                className="flex items-center justify-center gap-1.5"
+                                title={
+                                  rowPeers.length > 0
+                                    ? `${rowPeerNames} ${rowPeers.length > 1 ? 'are' : 'is'} already in this row`
+                                    : undefined
+                                }
+                              >
                                 {!locked && (
                                   <input
                                     type="checkbox"
@@ -1173,7 +1208,18 @@ export default function HrNewHireChecklist({
                                     className="h-3.5 w-3.5 cursor-pointer accent-emerald-600"
                                   />
                                 )}
-                                <span className="tabular-nums text-[11px] text-zinc-400">{r + 1}</span>
+                                <span className="relative tabular-nums text-[11px] text-zinc-400">
+                                  {r + 1}
+                                  {rowPeerColor && (
+                                    <motion.span
+                                      aria-hidden
+                                      className="absolute -right-1.5 top-0 h-2.5 w-[2px] rounded-full"
+                                      style={{ background: rowPeerColor }}
+                                      animate={{ opacity: [1, 0.15, 1] }}
+                                      transition={{ duration: 0.9, repeat: Infinity, ease: 'linear' }}
+                                    />
+                                  )}
+                                </span>
                               </div>
                             </td>
                             {COLUMNS.map((c, ci) => {
