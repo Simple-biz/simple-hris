@@ -16,6 +16,7 @@ import {
   Search,
   ShieldOff,
   Trash2,
+  Undo2,
   UserMinus,
   UserX,
 } from 'lucide-react';
@@ -165,6 +166,8 @@ export default function HrOffboarding() {
   const [queuePage, setQueuePage] = useState(0);
   // Rows fed to the 1-by-1 processor (bulk = all pending, or a single row).
   const [processTargets, setProcessTargets] = useState<OffboardingQueueRow[] | null>(null);
+  // The queue row being returned to its manager (quick per-row action).
+  const [returnTarget, setReturnTarget] = useState<OffboardingQueueRow | null>(null);
 
   const fetchRoster = useCallback(async () => {
     setLoading(true);
@@ -649,6 +652,7 @@ export default function HrOffboarding() {
                           case 'processing': return { label: 'Processing', cls: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300' };
                           case 'completed': return { label: 'Offboarded', cls: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300' };
                           case 'dismissed': return { label: 'Dismissed', cls: 'bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-300' };
+                          case 'returned': return { label: 'Returned to manager', cls: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300' };
                           default: return { label: 'Cancelled', cls: 'bg-zinc-200 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300' };
                         }
                       })();
@@ -675,17 +679,25 @@ export default function HrOffboarding() {
                             <span className={cn('inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium', statusPill.cls)}>
                               {statusPill.label}
                             </span>
-                            {r.status === 'dismissed' && r.processed_note && (
+                            {(r.status === 'dismissed' || r.status === 'returned') && r.processed_note && (
                               <p className="mt-0.5 max-w-[160px] truncate text-[10px] text-zinc-500" title={r.processed_note}>{r.processed_note}</p>
                             )}
                           </td>
                           <td data-label="Action" className="px-4 py-2.5">
-                            <div className="flex items-center justify-end">
+                            <div className="flex flex-wrap items-center justify-end gap-1.5">
                               {actionable ? (
-                                <Button size="sm" onClick={() => setProcessTargets([r])}
-                                  className="h-7 gap-1 bg-rose-600 text-white hover:bg-rose-700">
-                                  <UserMinus className="h-3 w-3" /> Process
-                                </Button>
+                                <>
+                                  <Button size="sm" variant="outline" onClick={() => setReturnTarget(r)}
+                                    title="Send this request back to the manager for revision"
+                                    className="h-7 gap-1 border-amber-300 text-amber-700 hover:bg-amber-50 hover:text-amber-800 dark:border-amber-700/50 dark:text-amber-300 dark:hover:bg-amber-950/30">
+                                    <Undo2 className="h-3 w-3" /> Return
+                                  </Button>
+                                  <Button size="sm" onClick={() => setProcessTargets([r])}
+                                    title="Off-board this person (triggers the account-teardown automation)"
+                                    className="h-7 gap-1 bg-rose-600 text-white hover:bg-rose-700">
+                                    <UserMinus className="h-3 w-3" /> Process
+                                  </Button>
+                                </>
                               ) : (
                                 <span className="text-[11px] text-zinc-400">
                                   {r.processed_by ? `by ${r.processed_by}` : '—'}
@@ -880,7 +892,123 @@ export default function HrOffboarding() {
           void fetchHistory();
         }}
       />
+
+      <OffboardReturnDialog
+        target={returnTarget}
+        onClose={() => setReturnTarget(null)}
+        onSuccess={() => {
+          setReturnTarget(null);
+          void fetchQueue();
+        }}
+      />
     </div>
+  );
+}
+
+/** Quick "send back to manager" dialog for a single queued request. */
+function OffboardReturnDialog({
+  target,
+  onClose,
+  onSuccess,
+}: {
+  target: OffboardingQueueRow | null;
+  onClose: () => void;
+  onSuccess: () => void;
+}) {
+  const [reason, setReason] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const open = !!target;
+
+  useEffect(() => {
+    setReason('');
+  }, [target?.id]);
+
+  async function handleSubmit(e: FormEvent) {
+    e.preventDefault();
+    if (!target || !reason.trim() || submitting) return;
+    setSubmitting(true);
+    try {
+      const res = await fetch(`/api/offboarding-queue/${target.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ decision: 'returned', note: reason.trim() }),
+      });
+      const json = (await res.json()) as { success?: boolean; error?: string };
+      if (!res.ok || !json.success) throw new Error(json.error ?? 'Failed to return request');
+      toast.success(`Sent ${target.employee_name ?? target.employee_email} back to ${target.requested_by_name ?? target.requested_by}`, {
+        description: 'The manager is notified and can revise & re-queue.',
+      });
+      onSuccess();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to return request');
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => !o && !submitting && onClose()}>
+      <DialogContent showCloseButton={false} className="overflow-hidden p-0 sm:max-w-[440px]">
+        <div className="relative overflow-hidden bg-[#1a1206] px-5 pb-4 pt-5">
+          <div className="absolute inset-x-0 top-0 h-[2px] bg-gradient-to-r from-amber-700 via-amber-400 to-amber-700" />
+          <div className="relative flex items-start gap-3.5">
+            <div className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-amber-900/50 text-amber-200 ring-1 ring-amber-700/50">
+              <Undo2 className="h-5 w-5" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-amber-500/80">
+                Return to manager
+              </p>
+              <p className="mt-0.5 truncate text-[15px] font-semibold leading-snug text-zinc-100">
+                {target?.employee_name ?? target?.employee_work_email ?? target?.employee_email ?? '—'}
+              </p>
+              <p className="mt-0.5 truncate text-[11px] text-zinc-500">
+                back to {target?.requested_by_name ?? target?.requested_by}
+              </p>
+            </div>
+          </div>
+          <p className="relative mt-3 text-[11px] leading-relaxed text-zinc-500">
+            The request is sent back for revision (not offboarded). The manager is notified with your
+            note and can adjust the reason and re-queue.
+          </p>
+        </div>
+
+        <form onSubmit={handleSubmit} className="space-y-3.5 bg-zinc-950/60 p-5">
+          <div className="space-y-1.5">
+            <label className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-zinc-500">
+              Reason for returning<span className="text-amber-500">*</span>
+            </label>
+            <textarea
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              rows={3}
+              autoFocus
+              placeholder="What should the manager fix or reconsider?"
+              className="w-full resize-none rounded-lg border border-amber-900/50 bg-zinc-900/80 px-3 py-2 text-sm text-zinc-200 placeholder:text-zinc-600 transition-colors focus:border-amber-600 focus:outline-none"
+            />
+          </div>
+          <div className="flex gap-2 pt-0.5">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={onClose}
+              disabled={submitting}
+              className="flex-1 border-zinc-800 bg-transparent text-zinc-400 hover:border-zinc-700 hover:bg-zinc-800/50 hover:text-zinc-200"
+            >
+              Cancel
+            </Button>
+            <Button
+              type="submit"
+              disabled={!reason.trim() || submitting}
+              className="flex-1 gap-1.5 border-0 bg-amber-600 text-white hover:bg-amber-500 disabled:bg-zinc-800 disabled:text-zinc-600"
+            >
+              {submitting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Undo2 className="h-3.5 w-3.5" />}
+              {submitting ? 'Sending…' : 'Send back'}
+            </Button>
+          </div>
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }
 

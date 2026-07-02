@@ -5,6 +5,7 @@ export type OffboardingQueueStatus =
   | 'processing'
   | 'completed'
   | 'dismissed'
+  | 'returned'
   | 'cancelled';
 
 export type OffboardingQueueRow = {
@@ -39,7 +40,16 @@ export type NewOffboardingQueueEntry = {
 
 const TABLE = 'offboarding_queue';
 
-/** Statuses that occupy a person — a second request for them is a dupe. */
+/**
+ * Statuses that occupy a person — a second request for them is a dupe.
+ *
+ * Deliberately EXCLUDES 'returned' (and the other terminal states): once HR
+ * returns a request, the manager is meant to revise and RE-QUEUE it, which
+ * creates a fresh 'pending' row while the old 'returned' row stays as history.
+ * Only one *active* (pending/processing) row can exist per person at a time,
+ * which is the dedup guarantee we actually care about. `isMemberLocked` in the
+ * manager UI matches this — it locks pending/processing but not 'returned'.
+ */
 const ACTIVE_STATUSES: OffboardingQueueStatus[] = ['pending', 'processing'];
 
 function norm(s: string | null | undefined): string {
@@ -167,7 +177,8 @@ export async function setOffboardingQueueBatchStatus(params: {
 }
 
 /**
- * HR completes (offboarded) or dismisses (rejected) a single request.
+ * HR completes (offboarded), dismisses (rejected), or returns (sends back to the
+ * manager for revision) a single request.
  *
  * The `.in('status', ['pending','processing'])` guard makes the transition
  * ATOMIC — if a concurrent request already marked the row terminal, this update
@@ -177,7 +188,7 @@ export async function setOffboardingQueueBatchStatus(params: {
  */
 export async function decideOffboardingQueueEntry(params: {
   id: string;
-  status: Extract<OffboardingQueueStatus, 'completed' | 'dismissed'>;
+  status: Extract<OffboardingQueueStatus, 'completed' | 'dismissed' | 'returned'>;
   processed_by: string;
   processed_note: string | null;
   offboard_reason: string | null;

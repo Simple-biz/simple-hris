@@ -13,7 +13,8 @@
 -- completion/dismissal and sees the live status back on their My Team list.
 --
 -- Lifecycle: pending → processing (HR is working the batch) → completed
---                     ↘ dismissed (HR rejected)
+--                     ↘ dismissed (HR rejected outright)
+--                     ↘ returned  (HR sent it back to the manager for revision)
 --                     ↘ cancelled (manager withdrew their own pending request)
 --
 -- Mirrors public.department_transfer_requests (same manager→HR request shape).
@@ -33,12 +34,12 @@ CREATE TABLE IF NOT EXISTS public.offboarding_queue (
   reason                  text         NOT NULL,
   note                    text,
   status                  text         NOT NULL DEFAULT 'pending'
-                            CHECK (status IN ('pending','processing','completed','dismissed','cancelled')),
+                            CHECK (status IN ('pending','processing','completed','dismissed','returned','cancelled')),
   requested_by            text         NOT NULL,   -- manager email
   requested_by_name       text,
-  -- HR side, stamped when the row is completed/dismissed
+  -- HR side, stamped when the row is completed/dismissed/returned
   processed_by            text,                    -- HR email
-  processed_note          text,                    -- HR note, or the dismiss reason
+  processed_note          text,                    -- HR note, or the dismiss/return reason
   offboard_reason         text,                    -- the reason HR actually used at offboard time
   decided_at              timestamptz,
   created_at              timestamptz  NOT NULL DEFAULT now(),
@@ -57,12 +58,22 @@ CREATE INDEX IF NOT EXISTS offboarding_queue_requested_by_idx
 CREATE INDEX IF NOT EXISTS offboarding_queue_employee_email_idx
   ON public.offboarding_queue (lower(employee_email));
 
+-- Converge the status CHECK for an already-created table (re-runs after the
+-- 'returned' status was added). The inline CHECK above only applies on first
+-- CREATE; this DROP/ADD updates a table made by an earlier version.
+ALTER TABLE public.offboarding_queue
+  DROP CONSTRAINT IF EXISTS offboarding_queue_status_check;
+ALTER TABLE public.offboarding_queue
+  ADD CONSTRAINT offboarding_queue_status_check
+  CHECK (status IN ('pending','processing','completed','dismissed','returned','cancelled'));
+
 -- ---------------------------------------------------------------------------
--- Widen employee_notifications.type CHECK to allow the 3 offboarding-queue
+-- Widen employee_notifications.type CHECK to allow the 4 offboarding-queue
 -- notification types:
 --   offboarding.requested          → to HR/admin when a manager submits
 --   offboarding.request_completed  → to the manager when HR offboards the person
 --   offboarding.request_dismissed  → to the manager when HR dismisses the request
+--   offboarding.request_returned   → to the manager when HR sends it back for revision
 --
 -- ADD CONSTRAINT re-validates existing rows, so we restate the FULL allowed set
 -- (this supersedes migration #96's widening — the whole list is repeated here).
@@ -92,7 +103,8 @@ ALTER TABLE public.employee_notifications
     'bank_info.requested',
     'offboarding.requested',
     'offboarding.request_completed',
-    'offboarding.request_dismissed'
+    'offboarding.request_dismissed',
+    'offboarding.request_returned'
   ));
 
 COMMIT;

@@ -18,6 +18,7 @@ export const NOTIFICATION_TYPE_TO_VIEWS: Record<string, AppView[]> = {
   'offboarding.requested': ['hr', 'admin'],
   'offboarding.request_completed': ['manager'],
   'offboarding.request_dismissed': ['manager'],
+  'offboarding.request_returned': ['manager'],
   'rate.change': ['employee'],
   'dispute.approved': ['employee'],
   'dispute.denied': ['employee'],

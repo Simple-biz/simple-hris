@@ -2125,31 +2125,39 @@ function TeamPanelInner({ members, teamGate, viewerEmail, focusEmail, onFocusCon
   const [viewMode, setViewMode] = useState<'cards' | 'list'>('cards');
   const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
   const [offboardOpen, setOffboardOpen] = useState(false);
-  // The manager's own outbox → per-email offboarding status for the badges.
+  // The manager's own outbox → per-email offboarding status for the badges,
+  // plus the HR note for a returned request (shown as a tooltip on the badge).
   const [offboardStatus, setOffboardStatus] = useState<Record<string, OffboardingQueueStatus>>({});
+  const [offboardNote, setOffboardNote] = useState<Record<string, string>>({});
 
   const memberKey = (m: EmployeeRow): string =>
     (m.work_email ?? m.personal_email ?? m.name ?? '').trim().toLowerCase();
 
   // Most-relevant status wins if a person appears under more than one email.
   const STATUS_RANK: Record<OffboardingQueueStatus, number> = useMemo(
-    () => ({ processing: 5, pending: 4, completed: 3, dismissed: 2, cancelled: 1 }),
+    () => ({ processing: 6, pending: 5, returned: 4, completed: 3, dismissed: 2, cancelled: 1 }),
     [],
   );
   const loadOffboardOutbox = React.useCallback(() => {
     fetch('/api/offboarding-queue', { cache: 'no-store' })
       .then((r) => (r.ok ? r.json() : { rows: [] }))
-      .then((j: { rows?: Array<{ employee_email: string | null; employee_work_email: string | null; employee_personal_email: string | null; status: OffboardingQueueStatus }> }) => {
+      .then((j: { rows?: Array<{ employee_email: string | null; employee_work_email: string | null; employee_personal_email: string | null; status: OffboardingQueueStatus; processed_note: string | null }> }) => {
         const map: Record<string, OffboardingQueueStatus> = {};
+        const notes: Record<string, string> = {};
         for (const row of j.rows ?? []) {
           for (const e of [row.employee_email, row.employee_work_email, row.employee_personal_email]) {
             const k = normEmail(e ?? '') ?? '';
             if (!k) continue;
             const prev = map[k];
-            if (!prev || STATUS_RANK[row.status] > STATUS_RANK[prev]) map[k] = row.status;
+            if (!prev || STATUS_RANK[row.status] > STATUS_RANK[prev]) {
+              map[k] = row.status;
+              if (row.status === 'returned' && row.processed_note) notes[k] = row.processed_note;
+              else delete notes[k];
+            }
           }
         }
         setOffboardStatus(map);
+        setOffboardNote(notes);
       })
       .catch(() => {
         /* non-fatal — badges just won't show */
@@ -2158,6 +2166,12 @@ function TeamPanelInner({ members, teamGate, viewerEmail, focusEmail, onFocusCon
   useEffect(() => {
     loadOffboardOutbox();
   }, [loadOffboardOutbox]);
+
+  const memberReturnNote = (m: EmployeeRow): string | null => {
+    const w = normEmail(m.work_email ?? '') ?? '';
+    const p = normEmail(m.personal_email ?? '') ?? '';
+    return (w && offboardNote[w]) || (p && offboardNote[p]) || null;
+  };
 
   // Active (in-flight) status for a member, checking both of their emails.
   const memberOffboardStatus = (m: EmployeeRow): OffboardingQueueStatus | null => {
@@ -2684,6 +2698,10 @@ function TeamPanelInner({ members, teamGate, viewerEmail, focusEmail, onFocusCon
                     return { label: 'Offboarded', cls: 'bg-zinc-200 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300' };
                   case 'dismissed':
                     return { label: 'Dismissed', cls: 'bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-300' };
+                  case 'returned':
+                    // HR sent it back for revision — amber, and the person stays
+                    // re-selectable so the manager can fix the reason and re-queue.
+                    return { label: 'Returned', cls: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300' };
                   case 'cancelled':
                     // A withdrawn request leaves no trace — the person is back to
                     // normal and re-selectable (isMemberLocked ignores 'cancelled'),
@@ -2826,7 +2844,10 @@ function TeamPanelInner({ members, teamGate, viewerEmail, focusEmail, onFocusCon
                                   </td>
                                   <td data-label="Status" className="px-3 py-2.5 text-right">
                                     {badge ? (
-                                      <span className={cn('inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium', badge.cls)}>
+                                      <span
+                                        className={cn('inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium', badge.cls)}
+                                        title={memberOffboardStatus(m) === 'returned' ? (memberReturnNote(m) ?? 'HR sent this back — check your notifications') : undefined}
+                                      >
                                         {badge.label}
                                       </span>
                                     ) : (

@@ -78,20 +78,29 @@ export async function PATCH(
       return NextResponse.json({ success: true, error: null });
     }
 
-    // ── HR decision (dismiss / complete) ──
+    // ── HR decision (complete / dismiss / return) ──
     const authz = await requireFeatureEdit('hr', 'offboarding');
     if (!authz.ok) return deniedResponse(authz);
-    if (decision !== 'dismissed' && decision !== 'completed') {
+    if (decision !== 'dismissed' && decision !== 'completed' && decision !== 'returned') {
       return NextResponse.json(
-        { error: "decision must be 'completed', 'dismissed', or 'cancelled'" },
+        { error: "decision must be 'completed', 'dismissed', 'returned', or 'cancelled'" },
         { status: 400 },
       );
     }
-    // A dismiss requires a reason; completion is only recorded after offboard ran.
-    if (decision === 'dismissed' && !note) {
-      return NextResponse.json({ error: 'A dismissal reason is required' }, { status: 400 });
+    // Dismiss + return both need a reason (the manager is told why); completion
+    // is only recorded after the offboard actually ran.
+    if ((decision === 'dismissed' || decision === 'returned') && !note) {
+      return NextResponse.json(
+        { error: decision === 'dismissed' ? 'A dismissal reason is required' : 'A reason for returning is required' },
+        { status: 400 },
+      );
     }
-    if (row.status === 'completed' || row.status === 'dismissed' || row.status === 'cancelled') {
+    if (
+      row.status === 'completed' ||
+      row.status === 'dismissed' ||
+      row.status === 'returned' ||
+      row.status === 'cancelled'
+    ) {
       return NextResponse.json({ error: `Request is already ${row.status}` }, { status: 409 });
     }
 
@@ -112,17 +121,32 @@ export async function PATCH(
     const supabase = createSupabaseServiceRoleClient();
     if (supabase && row.requested_by) {
       const who = row.employee_name ?? row.employee_email;
-      const completed = decision === 'completed';
+      const notif =
+        decision === 'completed'
+          ? {
+              type: 'offboarding.request_completed',
+              title: 'Offboarding Completed',
+              message: `${who} has been offboarded by HR${
+                body.offboard_reason ? ` (${offboardReasonLabel(body.offboard_reason)})` : ''
+              }.`,
+            }
+          : decision === 'returned'
+            ? {
+                type: 'offboarding.request_returned',
+                title: 'Offboarding Request Returned',
+                message: `HR sent your request to offboard ${who} back for another look${note ? `: "${note}"` : '.'}`,
+              }
+            : {
+                type: 'offboarding.request_dismissed',
+                title: 'Offboarding Request Dismissed',
+                message: `Your request to offboard ${who} was dismissed by HR${note ? `: "${note}"` : '.'}`,
+              };
       await supabase.from('employee_notifications').insert({
         recipient_email: row.requested_by,
-        type: completed ? 'offboarding.request_completed' : 'offboarding.request_dismissed',
-        tone: completed ? 'neutral' : 'neutral',
-        title: completed ? 'Offboarding Completed' : 'Offboarding Request Dismissed',
-        message: completed
-          ? `${who} has been offboarded by HR${
-              body.offboard_reason ? ` (${offboardReasonLabel(body.offboard_reason)})` : ''
-            }.`
-          : `Your request to offboard ${who} was dismissed by HR${note ? `: "${note}"` : '.'}`,
+        type: notif.type,
+        tone: 'neutral',
+        title: notif.title,
+        message: notif.message,
         details: {
           request_id: id,
           employee_email: row.employee_email,
@@ -136,7 +160,12 @@ export async function PATCH(
     void insertAuditLog({
       user_name: sessionEmail,
       user_role: roles.includes('admin') ? 'Admin' : 'HR',
-      action: decision === 'completed' ? 'offboarding.request_completed' : 'offboarding.request_dismissed',
+      action:
+        decision === 'completed'
+          ? 'offboarding.request_completed'
+          : decision === 'returned'
+            ? 'offboarding.request_returned'
+            : 'offboarding.request_dismissed',
       resource: 'offboarding_queue',
       resource_id: id,
       details: {

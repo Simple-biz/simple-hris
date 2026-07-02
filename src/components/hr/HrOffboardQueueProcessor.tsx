@@ -9,6 +9,7 @@ import {
   CheckCircle2,
   Loader2,
   SkipForward,
+  Undo2,
   UserMinus,
 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -36,16 +37,17 @@ interface Props {
   onFinished: () => void;
 }
 
-type Outcome = 'completed' | 'dismissed' | 'skipped';
+type Outcome = 'completed' | 'dismissed' | 'returned' | 'skipped';
 
 export default function HrOffboardQueueProcessor({ open, items, onOpenChange, onFinished }: Props) {
   const [idx, setIdx] = useState(0);
   const [outcomes, setOutcomes] = useState<Record<string, Outcome>>({});
   const [reasonById, setReasonById] = useState<Record<string, OffboardReason | ''>>({});
   const [noteById, setNoteById] = useState<Record<string, string>>({});
-  const [busy, setBusy] = useState<null | 'offboard' | 'dismiss'>(null);
-  const [dismissing, setDismissing] = useState(false); // showing the dismiss-reason box
-  const [dismissReason, setDismissReason] = useState('');
+  const [busy, setBusy] = useState<null | 'offboard' | 'dismiss' | 'return'>(null);
+  // When set, the reason box is shown for a dismiss (reject) or return (send back).
+  const [actionMode, setActionMode] = useState<null | 'dismiss' | 'return'>(null);
+  const [actionReason, setActionReason] = useState('');
   const claimedRef = useRef<string[]>([]);
 
   const itemsKey = useMemo(() => items.map((i) => i.id).join(','), [items]);
@@ -57,8 +59,8 @@ export default function HrOffboardQueueProcessor({ open, items, onOpenChange, on
     claimedRef.current = ids;
     setIdx(0);
     setOutcomes({});
-    setDismissing(false);
-    setDismissReason('');
+    setActionMode(null);
+    setActionReason('');
     const r: Record<string, OffboardReason | ''> = {};
     const n: Record<string, string> = {};
     for (const it of items) {
@@ -83,8 +85,8 @@ export default function HrOffboardQueueProcessor({ open, items, onOpenChange, on
   const finished = doneCount >= total;
 
   const advance = useCallback(() => {
-    setDismissing(false);
-    setDismissReason('');
+    setActionMode(null);
+    setActionReason('');
     setIdx((i) => Math.min(i + 1, total));
   }, [total]);
 
@@ -95,7 +97,10 @@ export default function HrOffboardQueueProcessor({ open, items, onOpenChange, on
     const handled = new Set(Object.keys(outcomes));
     const toRelease = claimedRef.current.filter((id) => {
       const o = outcomes[id];
-      // completed/dismissed are terminal; skipped or never-reached go back to pending.
+      // completed / dismissed / returned are terminal (they carry a non-skip
+      // outcome, so they're retained); only skipped or never-reached rows go
+      // back to pending. (The server release also only flips 'processing' rows,
+      // so a terminal row could never be reverted even if it slipped through.)
       return !handled.has(id) || o === 'skipped';
     });
     if (toRelease.length > 0) {
@@ -180,27 +185,36 @@ export default function HrOffboardQueueProcessor({ open, items, onOpenChange, on
     }
   };
 
-  const handleDismiss = async () => {
+  // Dismiss (reject outright) or Return (send back to the manager for revision).
+  // Both need a reason and notify the requesting manager.
+  const handleReasonedDecision = async (mode: 'dismiss' | 'return') => {
     if (!current) return;
-    const note = dismissReason.trim();
+    const note = actionReason.trim();
     if (!note) {
-      toast.error('A dismissal reason is required');
+      toast.error(mode === 'dismiss' ? 'A dismissal reason is required' : 'A reason for returning is required');
       return;
     }
-    setBusy('dismiss');
+    setBusy(mode);
     try {
+      const decision = mode === 'dismiss' ? 'dismissed' : 'returned';
       const res = await fetch(`/api/offboarding-queue/${current.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ decision: 'dismissed', note }),
+        body: JSON.stringify({ decision, note }),
       });
       const json = (await res.json()) as { success?: boolean; error?: string };
-      if (!res.ok || !json.success) throw new Error(json.error ?? 'Failed to dismiss');
-      toast.success(`Request for ${current.employee_name ?? current.employee_email} dismissed`);
-      markOutcome(current.id, 'dismissed');
+      if (!res.ok || !json.success) throw new Error(json.error ?? 'Request failed');
+      const who = current.employee_name ?? current.employee_email;
+      if (mode === 'dismiss') {
+        toast.success(`Request for ${who} dismissed`);
+        markOutcome(current.id, 'dismissed');
+      } else {
+        toast.success(`Sent ${who} back to ${current.requested_by_name ?? current.requested_by}`);
+        markOutcome(current.id, 'returned');
+      }
       advance();
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Failed to dismiss');
+      toast.error(e instanceof Error ? e.message : `Failed to ${mode}`);
     } finally {
       setBusy(null);
     }
@@ -219,6 +233,7 @@ export default function HrOffboardQueueProcessor({ open, items, onOpenChange, on
 
   const completedCount = Object.values(outcomes).filter((o) => o === 'completed').length;
   const dismissedCount = Object.values(outcomes).filter((o) => o === 'dismissed').length;
+  const returnedCount = Object.values(outcomes).filter((o) => o === 'returned').length;
   const skippedCount = Object.values(outcomes).filter((o) => o === 'skipped').length;
 
   const showDone = finished || (idx >= total && total > 0);
@@ -278,7 +293,7 @@ export default function HrOffboardQueueProcessor({ open, items, onOpenChange, on
                 </div>
                 <p className="text-sm font-semibold text-zinc-100">Queue processed</p>
                 <p className="text-xs text-zinc-400">
-                  {completedCount} offboarded · {dismissedCount} dismissed · {skippedCount} left pending
+                  {completedCount} offboarded · {dismissedCount} dismissed · {returnedCount} returned · {skippedCount} left pending
                 </p>
                 <Button
                   type="button"
@@ -329,7 +344,7 @@ export default function HrOffboardQueueProcessor({ open, items, onOpenChange, on
                   </p>
                 )}
 
-                {!dismissing ? (
+                {!actionMode ? (
                   <>
                     {/* Reason (pre-filled from the manager's request) */}
                     <div className="space-y-1.5">
@@ -369,18 +384,27 @@ export default function HrOffboardQueueProcessor({ open, items, onOpenChange, on
                     </div>
                   </>
                 ) : (
-                  /* Dismiss reason box */
+                  /* Dismiss / Return reason box */
                   <div className="space-y-1.5">
                     <label className="text-[10px] font-semibold uppercase tracking-[0.16em] text-zinc-500">
-                      Dismissal reason <span className="text-rose-500">*</span>
+                      {actionMode === 'dismiss' ? 'Dismissal reason' : 'Reason for returning'} <span className="text-rose-500">*</span>
                     </label>
                     <textarea
-                      value={dismissReason}
-                      onChange={(e) => setDismissReason(e.target.value)}
+                      value={actionReason}
+                      onChange={(e) => setActionReason(e.target.value)}
                       rows={2}
                       autoFocus
-                      placeholder="Why are you dismissing this request? (the manager is notified)"
-                      className="w-full resize-none rounded-lg border border-rose-900/50 bg-zinc-900/80 px-3 py-2 text-sm text-zinc-200 placeholder:text-zinc-600 focus:border-rose-700 focus:outline-none"
+                      placeholder={
+                        actionMode === 'dismiss'
+                          ? 'Why are you dismissing this request? (the manager is notified)'
+                          : 'What should the manager fix or reconsider? (sent back to them)'
+                      }
+                      className={cn(
+                        'w-full resize-none rounded-lg bg-zinc-900/80 px-3 py-2 text-sm text-zinc-200 placeholder:text-zinc-600 focus:outline-none',
+                        actionMode === 'dismiss'
+                          ? 'border border-rose-900/50 focus:border-rose-700'
+                          : 'border border-amber-900/50 focus:border-amber-600',
+                      )}
                     />
                   </div>
                 )}
@@ -391,17 +415,27 @@ export default function HrOffboardQueueProcessor({ open, items, onOpenChange, on
 
         {/* Footer actions */}
         {!showDone && current && (
-          <div className="flex items-center gap-2 border-t border-zinc-800 bg-zinc-950/80 p-4">
-            {!dismissing ? (
+          <div className="flex flex-wrap items-center gap-2 border-t border-zinc-800 bg-zinc-950/80 p-4">
+            {!actionMode ? (
               <>
                 <Button
                   type="button"
                   variant="outline"
-                  onClick={() => setDismissing(true)}
+                  onClick={() => setActionMode('dismiss')}
                   disabled={!!busy}
                   className="gap-1.5 border-zinc-800 bg-transparent text-zinc-400 hover:border-rose-800/60 hover:bg-rose-950/20 hover:text-rose-300"
                 >
                   <Ban className="h-3.5 w-3.5" /> Dismiss
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setActionMode('return')}
+                  disabled={!!busy}
+                  title="Send this request back to the manager for revision"
+                  className="gap-1.5 border-zinc-800 bg-transparent text-zinc-400 hover:border-amber-800/60 hover:bg-amber-950/20 hover:text-amber-300"
+                >
+                  <Undo2 className="h-3.5 w-3.5" /> Return
                 </Button>
                 <Button
                   type="button"
@@ -416,10 +450,11 @@ export default function HrOffboardQueueProcessor({ open, items, onOpenChange, on
                   type="button"
                   onClick={handleOffboard}
                   disabled={!!busy || !current.employee_work_email}
+                  title="Off-boards the person and triggers the account-teardown automation"
                   className="gap-1.5 border-0 bg-rose-700 text-white hover:bg-rose-600 disabled:bg-zinc-800 disabled:text-zinc-600"
                 >
                   {busy === 'offboard' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <UserMinus className="h-3.5 w-3.5" />}
-                  {idx + 1 >= total ? 'Offboard' : 'Offboard'}
+                  Offboard
                   {idx + 1 < total && <ArrowRight className="h-3.5 w-3.5" />}
                 </Button>
               </>
@@ -428,7 +463,7 @@ export default function HrOffboardQueueProcessor({ open, items, onOpenChange, on
                 <Button
                   type="button"
                   variant="outline"
-                  onClick={() => { setDismissing(false); setDismissReason(''); }}
+                  onClick={() => { setActionMode(null); setActionReason(''); }}
                   disabled={!!busy}
                   className="border-zinc-800 bg-transparent text-zinc-400 hover:border-zinc-700 hover:bg-zinc-800/50 hover:text-zinc-200"
                 >
@@ -436,12 +471,21 @@ export default function HrOffboardQueueProcessor({ open, items, onOpenChange, on
                 </Button>
                 <Button
                   type="button"
-                  onClick={handleDismiss}
-                  disabled={!!busy || !dismissReason.trim()}
-                  className="ml-auto gap-1.5 border-0 bg-rose-700 text-white hover:bg-rose-600 disabled:bg-zinc-800 disabled:text-zinc-600"
+                  onClick={() => void handleReasonedDecision(actionMode)}
+                  disabled={!!busy || !actionReason.trim()}
+                  className={cn(
+                    'ml-auto gap-1.5 border-0 text-white disabled:bg-zinc-800 disabled:text-zinc-600',
+                    actionMode === 'dismiss' ? 'bg-rose-700 hover:bg-rose-600' : 'bg-amber-600 hover:bg-amber-500',
+                  )}
                 >
-                  {busy === 'dismiss' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Ban className="h-3.5 w-3.5" />}
-                  Confirm dismiss
+                  {busy ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : actionMode === 'dismiss' ? (
+                    <Ban className="h-3.5 w-3.5" />
+                  ) : (
+                    <Undo2 className="h-3.5 w-3.5" />
+                  )}
+                  {actionMode === 'dismiss' ? 'Confirm dismiss' : 'Send back to manager'}
                 </Button>
               </>
             )}
