@@ -49,5 +49,6 @@ export const HR_TAB_CACHE_KEYS = {
   transfers: 'hr:transfers',
   offboardRoster: 'hr:offboard-roster',
   offboardHistory: 'hr:offboard-history',
+  offboardQueue: 'hr:offboard-queue',
   globalMasterList: 'hr:global-master-list',
 } as const;

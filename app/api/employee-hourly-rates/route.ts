@@ -49,23 +49,45 @@ export async function GET(req: NextRequest) {
       // as PHP-equivalent. Historical per-day pay still resolves from rate
       // history elsewhere ("live cycle only").
       let outRow = row;
-      if (row) {
-        const fx = buildFxRates(fxValues);
-        const catIdx = buildCatalogRateIndex(payStructures.structures);
-        const emails = [authz.effectiveEmail, row.work_email ?? "", row.personal_email ?? ""];
-        const empCat = resolveEmployeeCatalogRate(catIdx, emails, fx);
-        const hasSheet =
-          (row.regular_rate != null && row.regular_rate !== "") ||
-          (row.ot_rate != null && row.ot_rate !== "");
-        const deptCat = hasSheet ? null : resolveDeptCatalogRate(catIdx, row.department, fx);
-        const applied = empCat ?? deptCat;
-        if (applied) {
-          outRow = {
-            ...row,
-            regular_rate: String(applied.regPhp),
-            ot_rate: String(applied.otPhp),
-          };
-        }
+      const fx = buildFxRates(fxValues);
+      const catIdx = buildCatalogRateIndex(payStructures.structures);
+      const emails = [authz.effectiveEmail, row?.work_email ?? "", row?.personal_email ?? ""];
+      const empCat = resolveEmployeeCatalogRate(catIdx, emails, fx);
+      const hasSheet =
+        !!row &&
+        ((row.regular_rate != null && row.regular_rate !== "") ||
+          (row.ot_rate != null && row.ot_rate !== ""));
+      // Department base needs a department. Use the sheet row's when present,
+      // otherwise resolve it from the master record — a catalog-only employee has
+      // no rate row to carry it.
+      let deptForFallback = row?.department ?? null;
+      if (!hasSheet && !empCat && !deptForFallback) {
+        const { employee } = await getEmployeeMasterRecord(authz.effectiveEmail);
+        deptForFallback = employee?.department ?? null;
+      }
+      const deptCat = hasSheet ? null : resolveDeptCatalogRate(catIdx, deptForFallback, fx);
+      const applied = empCat ?? deptCat;
+      // The catalog is the source of truth: an individual/department structure
+      // resolves a rate even when the employee has NO legacy sheet-cache row
+      // (e.g. anyone onboarded after the Google-Sheet rates sync was disabled).
+      // Without this a catalog-only employee saw "No rate" on their dashboard.
+      if (applied) {
+        outRow = {
+          work_email: row?.work_email ?? null,
+          personal_email: row?.personal_email ?? null,
+          department: row?.department ?? deptForFallback ?? null,
+          bank_preferred: row?.bank_preferred ?? null,
+          hurupay_email: row?.hurupay_email ?? null,
+          higlobe_email: row?.higlobe_email ?? null,
+          higlobe_account_name: row?.higlobe_account_name ?? null,
+          phone_number: row?.phone_number ?? null,
+          full_address: row?.full_address ?? null,
+          city: row?.city ?? null,
+          province_state: row?.province_state ?? null,
+          mesa_member: row?.mesa_member ?? null,
+          regular_rate: String(applied.regPhp),
+          ot_rate: String(applied.otPhp),
+        };
       }
       return NextResponse.json({ rows: outRow ? [outRow] : [], error });
     }

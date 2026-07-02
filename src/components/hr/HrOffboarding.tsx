@@ -8,7 +8,9 @@ import {
   ChevronRight,
   Clock,
   FileX,
+  Inbox,
   Loader2,
+  Play,
   RefreshCw,
   RotateCcw,
   Search,
@@ -34,6 +36,8 @@ import {
 import { cn } from '@/lib/utils';
 import { getHrTabCache, hasHrTabCache, setHrTabCache, HR_TAB_CACHE_KEYS } from '@/lib/hr/tab-cache';
 import type { EmployeeRow } from '@/lib/supabase/employees';
+import type { OffboardingQueueRow } from '@/lib/supabase/offboarding-queue';
+import HrOffboardQueueProcessor from './HrOffboardQueueProcessor';
 import DeptFilter from './DeptFilter';
 
 type HistoryRow = {
@@ -121,10 +125,10 @@ function PaginationBar({
   );
 }
 
-type OffboardTab = 'active' | 'offboarded';
+type OffboardTab = 'queue' | 'active' | 'offboarded';
 
 export default function HrOffboarding() {
-  const [activeTab, setActiveTab] = useState<OffboardTab>('active');
+  const [activeTab, setActiveTab] = useState<OffboardTab>('queue');
 
   const [roster, setRoster] = useState<EmployeeRow[]>(
     () => getHrTabCache<EmployeeRow[]>(HR_TAB_CACHE_KEYS.offboardRoster) ?? [],
@@ -151,6 +155,16 @@ export default function HrOffboarding() {
   // deleteConfirm tracks which email is in the "click again to confirm" state
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
   const deleteConfirmTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // ── Manager-request queue (default sub-tab) ──
+  const [queue, setQueue] = useState<OffboardingQueueRow[]>(
+    () => getHrTabCache<OffboardingQueueRow[]>(HR_TAB_CACHE_KEYS.offboardQueue) ?? [],
+  );
+  const [queueLoading, setQueueLoading] = useState(() => !hasHrTabCache(HR_TAB_CACHE_KEYS.offboardQueue));
+  const [queueSearch, setQueueSearch] = useState('');
+  const [queuePage, setQueuePage] = useState(0);
+  // Rows fed to the 1-by-1 processor (bulk = all pending, or a single row).
+  const [processTargets, setProcessTargets] = useState<OffboardingQueueRow[] | null>(null);
 
   const fetchRoster = useCallback(async () => {
     setLoading(true);
@@ -184,6 +198,22 @@ export default function HrOffboarding() {
       setHistory([]);
     } finally {
       setHistoryLoading(false);
+    }
+  }, []);
+
+  const fetchQueue = useCallback(async () => {
+    setQueueLoading(true);
+    try {
+      const res = await fetch('/api/offboarding-queue', { cache: 'no-store' });
+      const json = (await res.json()) as { rows?: OffboardingQueueRow[]; error?: string };
+      if (json.error) throw new Error(json.error);
+      setQueue(json.rows ?? []);
+      setHrTabCache(HR_TAB_CACHE_KEYS.offboardQueue, json.rows ?? []);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to load offboarding queue');
+      setQueue([]);
+    } finally {
+      setQueueLoading(false);
     }
   }, []);
 
@@ -326,7 +356,8 @@ export default function HrOffboarding() {
     // still force a fresh fetch and update the cache.
     if (!hasHrTabCache(HR_TAB_CACHE_KEYS.offboardRoster)) void fetchRoster();
     if (!hasHrTabCache(HR_TAB_CACHE_KEYS.offboardHistory)) void fetchHistory();
-  }, [fetchRoster, fetchHistory]);
+    if (!hasHrTabCache(HR_TAB_CACHE_KEYS.offboardQueue)) void fetchQueue();
+  }, [fetchRoster, fetchHistory, fetchQueue]);
 
   const filtered = useMemo(() => {
     setRosterPage(0);
@@ -359,6 +390,26 @@ export default function HrOffboarding() {
   const historyTotalPages = Math.max(1, Math.ceil(filteredHistory.length / PAGE_SIZE));
   const safeHistoryPage = Math.min(historyPage, historyTotalPages - 1);
   const historyPageRows = filteredHistory.slice(safeHistoryPage * PAGE_SIZE, (safeHistoryPage + 1) * PAGE_SIZE);
+
+  // Queue: pending/processing rows are actionable; the rest are recent history.
+  const pendingQueue = useMemo(
+    () => queue.filter((r) => r.status === 'pending' || r.status === 'processing'),
+    [queue],
+  );
+  const filteredQueue = useMemo(() => {
+    setQueuePage(0);
+    const q = queueSearch.trim().toLowerCase();
+    return queue.filter((r) => {
+      if (!q) return true;
+      return [r.employee_name, r.employee_work_email, r.employee_email, r.department, r.requested_by, r.reason]
+        .filter(Boolean)
+        .some((s) => s!.toLowerCase().includes(q));
+    });
+  }, [queue, queueSearch]);
+  const queueTotalPages = Math.max(1, Math.ceil(filteredQueue.length / PAGE_SIZE));
+  const safeQueuePage = Math.min(queuePage, queueTotalPages - 1);
+  const queuePageRows = filteredQueue.slice(safeQueuePage * PAGE_SIZE, (safeQueuePage + 1) * PAGE_SIZE);
+  const pendingCount = pendingQueue.length;
 
   // Dedupe by Personal Email so the tab badge / subline reflect unique people,
   // not raw rows. global_master_list keys on (personal_email, department), so
@@ -411,6 +462,31 @@ export default function HrOffboarding() {
             <div className="flex items-center gap-1 rounded-lg border border-emerald-100/80 bg-emerald-50/60 p-1 dark:border-emerald-900/50 dark:bg-emerald-950/30">
               <button
                 type="button"
+                onClick={() => setActiveTab('queue')}
+                className={cn(
+                  'relative flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors',
+                  activeTab === 'queue' ? 'text-white' : 'text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100',
+                )}
+              >
+                {activeTab === 'queue' && (
+                  <motion.span
+                    layoutId="offboardTabPill"
+                    className="absolute inset-0 rounded-md bg-gradient-to-r from-rose-500 to-rose-700 shadow-sm"
+                    transition={{ type: 'spring', stiffness: 400, damping: 32 }}
+                  />
+                )}
+                <span className="relative flex items-center gap-1.5">
+                  <Inbox className="h-3.5 w-3.5" />
+                  Queue
+                  {pendingCount > 0 && (
+                    <span className={cn('rounded-full px-1.5 py-0.5 text-[10px] tabular-nums', activeTab === 'queue' ? 'bg-white/20' : 'bg-rose-500 text-white')}>
+                      {pendingCount}
+                    </span>
+                  )}
+                </span>
+              </button>
+              <button
+                type="button"
                 onClick={() => setActiveTab('active')}
                 className={cn(
                   'relative flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors',
@@ -426,7 +502,7 @@ export default function HrOffboarding() {
                 )}
                 <span className="relative flex items-center gap-1.5">
                   <UserX className="h-3.5 w-3.5" />
-                  Active employees
+                  All employees
                   <span className={cn('rounded-full px-1.5 py-0.5 text-[10px] tabular-nums', activeTab === 'active' ? 'bg-white/20' : 'bg-zinc-200/80 text-zinc-600 dark:bg-zinc-700 dark:text-zinc-300')}>
                     {roster.length}
                   </span>
@@ -467,7 +543,28 @@ export default function HrOffboarding() {
                 transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
                 className="flex items-center gap-2"
               >
-                {activeTab === 'active' ? (
+                {activeTab === 'queue' ? (
+                  <>
+                    <div className="relative w-full sm:w-64">
+                      <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" />
+                      <Input value={queueSearch} onChange={(e) => setQueueSearch(e.target.value)} placeholder="Search name, manager…" className="border-emerald-100/70 bg-white pl-9 dark:border-emerald-900/50 dark:bg-zinc-900" />
+                    </div>
+                    {pendingCount > 0 && (
+                      <Button
+                        size="sm"
+                        onClick={() => setProcessTargets(pendingQueue)}
+                        className="shrink-0 gap-1.5 bg-rose-600 text-white hover:bg-rose-700"
+                        title="Step through all pending requests one by one"
+                      >
+                        <Play className="h-3.5 w-3.5" />
+                        Process pending ({pendingCount})
+                      </Button>
+                    )}
+                    <Button variant="outline" size="sm" onClick={() => void fetchQueue()} disabled={queueLoading} className="shrink-0">
+                      <RefreshCw className={cn('h-3.5 w-3.5', queueLoading && 'animate-spin')} />
+                    </Button>
+                  </>
+                ) : activeTab === 'active' ? (
                   <>
                     <div className="relative w-full sm:w-64">
                       <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" />
@@ -496,7 +593,9 @@ export default function HrOffboarding() {
 
           {/* Sub-label */}
           <p className="text-xs text-muted-foreground">
-            {activeTab === 'active'
+            {activeTab === 'queue'
+              ? queueLoading ? 'Loading queue…' : `${pendingCount} pending · ${queue.length} total request${queue.length === 1 ? '' : 's'} from managers`
+              : activeTab === 'active'
               ? loading ? 'Loading roster…' : `${filtered.length} of ${roster.length} shown`
               : historyLoading ? 'Loading…' : `${historyUniqueFiltered} of ${historyUniqueTotal} off-boarded`}
           </p>
@@ -511,8 +610,99 @@ export default function HrOffboarding() {
               exit={{ opacity: 0, y: -6 }}
               transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
             >
-          {activeTab === 'active' ? (
-            /* ── Active employees ── */
+          {activeTab === 'queue' ? (
+            /* ── Manager-request Queue ── */
+            queueLoading ? (
+              <div className="flex items-center justify-center py-10 text-zinc-500">
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Loading…
+              </div>
+            ) : filteredQueue.length === 0 ? (
+              <div className="flex flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-rose-200/80 bg-white/70 py-10 text-center dark:border-rose-900/50 dark:bg-zinc-950/40">
+                <Inbox className="h-8 w-8 text-rose-300 dark:text-rose-700" />
+                <p className="text-sm text-zinc-600 dark:text-zinc-400">
+                  {queue.length === 0 ? 'No offboarding requests from managers yet.' : 'No rows match your search.'}
+                </p>
+                <p className="max-w-md text-xs text-zinc-400">
+                  Managers send people here from <span className="font-medium">My Team → List view</span>. You process them one at a time.
+                </p>
+              </div>
+            ) : (
+              <div className="overflow-x-auto rounded-xl border border-rose-100/90 ring-1 ring-rose-500/10 dark:border-rose-900/60 dark:ring-rose-400/10">
+                <table className="w-full text-left text-sm sm:min-w-[820px]">
+                  <thead className="sticky top-0 z-[1] bg-gradient-to-r from-rose-50 via-white to-rose-50/80 text-xs text-zinc-600 dark:from-rose-950/40 dark:via-zinc-950 dark:to-rose-950/30 dark:text-zinc-400">
+                    <tr>
+                      <th className="px-4 py-3 font-semibold">Employee</th>
+                      <th className="px-4 py-3 font-semibold">Department</th>
+                      <th className="px-4 py-3 font-semibold">Reason</th>
+                      <th className="px-4 py-3 font-semibold">Requested by</th>
+                      <th className="px-4 py-3 font-semibold">Requested</th>
+                      <th className="px-4 py-3 font-semibold">Status</th>
+                      <th className="px-4 py-3 font-semibold text-right">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-rose-100/70 bg-white/85 dark:divide-rose-900/35 dark:bg-zinc-950/40">
+                    {queuePageRows.map((r) => {
+                      const actionable = r.status === 'pending' || r.status === 'processing';
+                      const statusPill = (() => {
+                        switch (r.status) {
+                          case 'pending': return { label: 'Pending', cls: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300' };
+                          case 'processing': return { label: 'Processing', cls: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300' };
+                          case 'completed': return { label: 'Offboarded', cls: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300' };
+                          case 'dismissed': return { label: 'Dismissed', cls: 'bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-300' };
+                          default: return { label: 'Cancelled', cls: 'bg-zinc-200 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300' };
+                        }
+                      })();
+                      return (
+                        <tr key={r.id} className="align-middle hover:bg-rose-50/30 dark:hover:bg-rose-950/20">
+                          <td data-label="Employee" className="px-4 py-2.5">
+                            <div className="font-medium text-zinc-900 dark:text-zinc-100">{r.employee_name ?? '—'}</div>
+                            <div className="break-all font-mono text-[11px] text-zinc-500">{r.employee_work_email ?? r.employee_email}</div>
+                          </td>
+                          <td data-label="Department" className="px-4 py-2.5 text-xs text-zinc-700 dark:text-zinc-300">{r.department ?? '—'}</td>
+                          <td data-label="Reason" className="px-4 py-2.5">
+                            <span className="inline-flex items-center rounded-full bg-rose-100 px-2 py-0.5 text-[11px] font-medium text-rose-700 dark:bg-rose-900/30 dark:text-rose-300">
+                              {REASON_LABELS[r.reason] ?? r.reason}
+                            </span>
+                            {r.note && (
+                              <p className="mt-0.5 max-w-[200px] truncate text-[11px] text-zinc-500" title={r.note}>{r.note}</p>
+                            )}
+                          </td>
+                          <td data-label="Requested by" className="px-4 py-2.5 font-mono text-[11px] text-zinc-500">{r.requested_by_name ?? r.requested_by}</td>
+                          <td data-label="Requested" className="px-4 py-2.5 text-xs text-zinc-600 dark:text-zinc-400">
+                            {r.created_at ? new Date(r.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '—'}
+                          </td>
+                          <td data-label="Status" className="px-4 py-2.5">
+                            <span className={cn('inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium', statusPill.cls)}>
+                              {statusPill.label}
+                            </span>
+                            {r.status === 'dismissed' && r.processed_note && (
+                              <p className="mt-0.5 max-w-[160px] truncate text-[10px] text-zinc-500" title={r.processed_note}>{r.processed_note}</p>
+                            )}
+                          </td>
+                          <td data-label="Action" className="px-4 py-2.5">
+                            <div className="flex items-center justify-end">
+                              {actionable ? (
+                                <Button size="sm" onClick={() => setProcessTargets([r])}
+                                  className="h-7 gap-1 bg-rose-600 text-white hover:bg-rose-700">
+                                  <UserMinus className="h-3 w-3" /> Process
+                                </Button>
+                              ) : (
+                                <span className="text-[11px] text-zinc-400">
+                                  {r.processed_by ? `by ${r.processed_by}` : '—'}
+                                </span>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+                <PaginationBar page={safeQueuePage} totalPages={queueTotalPages} setPage={setQueuePage} total={queue.length} filtered={filteredQueue.length} />
+              </div>
+            )
+          ) : activeTab === 'active' ? (
+            /* ── All employees (direct offboard) ── */
             loading ? (
               <div className="flex items-center justify-center py-10 text-zinc-500">
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Loading…
@@ -675,6 +865,17 @@ export default function HrOffboarding() {
         onClose={() => setTarget(null)}
         onSuccess={() => {
           setTarget(null);
+          void fetchRoster();
+          void fetchHistory();
+        }}
+      />
+
+      <HrOffboardQueueProcessor
+        open={!!processTargets && processTargets.length > 0}
+        items={processTargets ?? []}
+        onOpenChange={(o) => { if (!o) setProcessTargets(null); }}
+        onFinished={() => {
+          void fetchQueue();
           void fetchRoster();
           void fetchHistory();
         }}

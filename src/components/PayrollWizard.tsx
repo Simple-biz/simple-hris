@@ -2254,6 +2254,9 @@ export default function PayrollWizard({
     // only").
     if (!isReplay && payStructures.length > 0) {
       const catIdx = buildCatalogRateIndex(payStructures);
+      // 1) Overlay onto employees who ALREADY have a sheet-cache rate row: the
+      //    individual catalog rate overrides the sheet; the department base only
+      //    fills in when the row carries no sheet rate at all.
       for (const [em, row] of idx) {
         const empCat = resolveEmployeeCatalogRate(
           catIdx,
@@ -2268,6 +2271,43 @@ export default function PayrollWizard({
         if (applied) {
           idx.set(em, { ...row, regular_rate: String(applied.regPhp), ot_rate: String(applied.otPhp) });
         }
+      }
+      // 2) Catalog-only employees. Someone can be paid entirely from the Payment
+      //    Catalog (an individual structure, or their department's base) with NO
+      //    legacy `employee_hourly_rates` row — e.g. anyone onboarded after the
+      //    Google-Sheet rates sync was disabled. Step 1 never created an `idx`
+      //    entry for them, so the overlay above skipped them and the wizard
+      //    showed "No rate". Synthesize a rate row from the catalog, keyed on all
+      //    of their aliases, so they compute + pay correctly. The catalog is the
+      //    source of truth: individual structure wins, department base is the
+      //    fallback.
+      for (const e of masterEmployees) {
+        const emails = [e.work_email, e.personal_email, e.alternate_work_email, e.alternate_work_email_2]
+          .map((x) => normEmail(x ?? ''))
+          .filter((x): x is string => !!x);
+        if (emails.length === 0) continue;
+        if (emails.some((em) => idx.has(em))) continue; // already covered by a (possibly overlaid) sheet row
+        const empCat = resolveEmployeeCatalogRate(catIdx, emails, fxRates);
+        const deptCat = empCat ? null : resolveDeptCatalogRate(catIdx, e.department, fxRates);
+        const applied = empCat ?? deptCat;
+        if (!applied) continue;
+        const synthetic: EmployeeHourlyRateRow = {
+          work_email: e.work_email ?? null,
+          personal_email: e.personal_email ?? null,
+          regular_rate: String(applied.regPhp),
+          ot_rate: String(applied.otPhp),
+          department: e.department ?? null,
+          bank_preferred: null,
+          hurupay_email: null,
+          higlobe_email: null,
+          higlobe_account_name: null,
+          phone_number: null,
+          full_address: null,
+          city: null,
+          province_state: null,
+          mesa_member: null,
+        };
+        for (const em of emails) idx.set(em, synthetic);
       }
     }
     return idx;
@@ -12423,7 +12463,13 @@ export default function PayrollWizard({
 
       <div className="mb-3 flex items-start justify-between gap-2 sm:mb-6 md:mb-8">
         <div className="min-w-0">
-          <h2 className="text-lg font-bold tracking-tight text-zinc-900 sm:text-xl md:text-2xl dark:text-white">Payroll Wizard</h2>
+          <h2 className="flex items-center gap-2.5 text-lg font-bold tracking-tight text-zinc-900 sm:text-xl md:text-2xl dark:text-white">
+            <span className="relative inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 via-violet-500 to-fuchsia-500 text-white shadow-md shadow-violet-500/30 sm:h-8 sm:w-8 md:h-9 md:w-9">
+              <Sparkles className="h-4 w-4 md:h-[18px] md:w-[18px]" />
+              <span aria-hidden className="pointer-events-none absolute inset-0 rounded-xl ring-1 ring-inset ring-white/25" />
+            </span>
+            Payroll Wizard
+          </h2>
           <p className="hidden text-xs text-zinc-600 sm:block sm:text-sm dark:text-zinc-500">The &quot;Friday Path&quot; Automated Workflow</p>
           <p className="text-[10px] text-zinc-500 sm:hidden dark:text-zinc-500">
             Step {currentStep} of {steps.length} · {steps.find((s) => s.id === currentStep)?.label}
@@ -12575,16 +12621,28 @@ export default function PayrollWizard({
                     </span>
                   </div>
                 </div>
-                <div className="relative h-2.5 w-full overflow-hidden rounded-full bg-zinc-200/80 ring-1 ring-inset ring-zinc-300/60 dark:bg-zinc-800 dark:ring-zinc-700/60">
+                <div className="relative h-2.5 w-full overflow-hidden rounded-full bg-zinc-200/70 ring-1 ring-inset ring-zinc-300/50 dark:bg-zinc-800/80 dark:ring-zinc-700/50">
                   <div
-                    className="progress-stripe h-full rounded-full"
+                    className={cn(
+                      'relative h-full min-w-[0.625rem] overflow-hidden rounded-full transition-[width] duration-700 ease-out',
+                      complete
+                        ? 'bg-gradient-to-r from-emerald-400 via-emerald-500 to-teal-500 shadow-[0_0_14px_-2px_rgba(16,185,129,0.65)]'
+                        : 'bg-gradient-to-r from-indigo-500 via-violet-500 to-fuchsia-500 shadow-[0_0_14px_-2px_rgba(139,92,246,0.6)]',
+                    )}
                     style={{ width: `${pct}%` }}
                     role="progressbar"
                     aria-valuenow={pct}
                     aria-valuemin={0}
                     aria-valuemax={100}
                     aria-label={`Wizard step ${currentStep} of ${totalSteps}`}
-                  />
+                  >
+                    {/* Glass top-highlight — a soft sheen along the upper half of the fill. */}
+                    <span aria-hidden className="pointer-events-none absolute inset-x-0 top-0 h-1/2 rounded-full bg-white/25" />
+                    {/* Light streak that sweeps across the filled portion (transform-only). */}
+                    <span aria-hidden className="progress-sheen pointer-events-none absolute inset-y-0 left-0 w-2/5 bg-gradient-to-r from-transparent via-white/60 to-transparent" />
+                    {/* Bright leading edge so the fill head reads as a glowing tip. */}
+                    <span aria-hidden className="pointer-events-none absolute inset-y-0 right-0 w-1 rounded-full bg-white/80 blur-[0.5px]" />
+                  </div>
                 </div>
               </div>
             );

@@ -714,50 +714,6 @@ export async function probeRateHistory(): Promise<ProbeResult> {
   }
 }
 
-/** manager_team_wallpapers: per-department "My Team" banner. Optional table. */
-export async function probeManagerWallpapers(): Promise<ProbeResult> {
-  const supabase = createSupabaseServiceRoleClient() ?? createSupabaseServerClient();
-  if (!supabase) {
-    return { status: 'unknown', summary: 'No Supabase client.', details: [], suggestedChecks: [] };
-  }
-  try {
-    const { count, error } = await supabase
-      .from('manager_team_wallpapers')
-      .select('*', { head: true, count: 'exact' });
-    if (error) {
-      return {
-        status: 'warning',
-        summary: 'manager_team_wallpapers not reachable.',
-        details: [
-          trimError(error),
-          'Department banners fall back to default styling when this table is missing.',
-        ],
-        suggestedChecks: [
-          'Apply references/create_manager_team_wallpapers.sql.',
-        ],
-      };
-    }
-    return {
-      status: 'healthy',
-      summary: `${count ?? 0} department banner${count === 1 ? '' : 's'} on file.`,
-      details: [
-        'Inline data-URL image per department; capped ~10 MB by the API.',
-        'background_position column added via idempotent ALTER.',
-      ],
-      suggestedChecks: [
-        'Spot-check a banner renders for one department.',
-      ],
-    };
-  } catch (e) {
-    return {
-      status: 'unknown',
-      summary: 'Wallpapers probe error.',
-      details: [trimError(e)],
-      suggestedChecks: [],
-    };
-  }
-}
-
 /** HR Onboarding pipeline — form submissions + pending employee staging table. */
 export async function probeHrOnboarding(): Promise<ProbeResult> {
   const supabase = createSupabaseServiceRoleClient() ?? createSupabaseServerClient();

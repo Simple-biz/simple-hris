@@ -597,21 +597,6 @@ function buildMockDiagnostics(now = new Date()): DiagnosticsHealthResponse {
       lastChecked: iso,
     },
     {
-      id: 'manager-wallpapers',
-      label: 'Manager Team Wallpapers',
-      category: 'manager',
-      status: 'healthy',
-      summary: 'Per-department banner table reachable.',
-      details: [
-        'Inline data-URL images (~10 MB cap per row).',
-        'background_position column added via idempotent ALTER.',
-      ],
-      suggestedChecks: [
-        'Spot-check one banner renders for the corresponding department.',
-      ],
-      lastChecked: iso,
-    },
-    {
       id: 'hr-onboarding',
       label: 'HR Onboarding Pipeline',
       category: 'hr-onboarding',
@@ -722,7 +707,6 @@ const NODE_POSITIONS: Record<string, { x: number; y: number }> = {
   'audit-log':             { x: 1100, y: 880  },
   'app-settings':          { x: 1460, y: 60   },
   'rate-history':          { x: 1100, y: 600  },
-  'manager-wallpapers':    { x: 40,   y: 600  },
 };
 
 const EDGES: { source: string; target: string }[] = [
@@ -750,7 +734,6 @@ const EDGES: { source: string; target: string }[] = [
   { source: 'auth-login', target: 'app-settings' },
   { source: 'rates', target: 'rate-history' },
   { source: 'rate-history', target: 'supabase-client' },
-  { source: 'manager-wallpapers', target: 'supabase-client' },
 ];
 
 const POSITIONS_STORAGE_KEY = 'system-diagnostics-positions-v1';

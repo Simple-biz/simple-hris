@@ -29,7 +29,6 @@ import {
   probeHrOffboarding,
   probeHrOnboarding,
   probeHubstaffCsv,
-  probeManagerWallpapers,
   probeMasterList,
   probePgPool,
   probeRateHistory,
@@ -135,7 +134,6 @@ export async function GET() {
     appSettingsProbe,
     sheetsSyncProbe,
     rateHistoryProbe,
-    wallpapersProbe,
     hrOnboardingProbe,
     hrOffboardingProbe,
   ] = await Promise.all([
@@ -151,7 +149,6 @@ export async function GET() {
     withProbeTimeout(probeAppSettings(), fallback),
     withProbeTimeout(probeGoogleSheetsSync(), fallback),
     withProbeTimeout(probeRateHistory(), fallback),
-    withProbeTimeout(probeManagerWallpapers(), fallback),
     withProbeTimeout(probeHrOnboarding(), fallback),
     withProbeTimeout(probeHrOffboarding(), fallback),
   ]);
@@ -232,7 +229,6 @@ export async function GET() {
     node('app-settings', 'App Settings (config bag)', 'config', appSettingsProbe),
     node('google-sheet-sync', 'Google Sheet Sync', 'integration', sheetsSyncProbe),
     node('rate-history', 'Rate History', 'rates', rateHistoryProbe),
-    node('manager-wallpapers', 'Manager Team Wallpapers', 'manager', wallpapersProbe),
     node('hr-onboarding', 'HR Onboarding Pipeline', 'hr-onboarding', hrOnboardingProbe),
     node('hr-offboarding', 'HR Offboarding Pipeline', 'hr-offboarding', hrOffboardingProbe),
   ];

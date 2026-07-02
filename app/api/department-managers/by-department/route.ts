@@ -10,7 +10,7 @@ export const runtime = 'nodejs';
  * GET /api/department-managers/by-department?department=X
  *
  * Returns the active manager emails for a single department. Readable by any
- * authenticated session (mirrors the team-list / team-wallpaper visibility) so
+ * authenticated session (mirrors the team-list visibility) so
  * the employee "My Team" roster can surface its department's manager(s) even
  * when the manager's own profile department differs. Read-only — assigning and
  * revoking still goes through the admin-only `/api/department-managers`.

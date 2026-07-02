@@ -615,12 +615,27 @@ export async function computeCurrentPay(
   // email → department NAME from the master list (identity source of truth);
   // preferred over the rates-row department for system-bonus dept eligibility.
   const masterDeptByEmail = new Map<string, string>();
+  // Any of a person's emails → all of their emails (work / personal / alternates),
+  // so a Hubstaff row keyed on ANY alias can resolve a Payment Catalog structure
+  // keyed on a DIFFERENT alias. The Global Master List is the identity source of
+  // truth for which addresses belong to one human (mirrors the wizard's
+  // ratesByEmail alias bridging).
+  const aliasesByEmail = new Map<string, string[]>();
   for (const m of masterRows) {
     const we = normEmail(m.work_email);
     const pe = normEmail(m.personal_email);
     const altA = normEmail(m.alternate_work_email);
     const altB = normEmail(m.alternate_work_email_2);
     for (const e of [we, pe, altA, altB]) if (e) masterEmailSet.add(e);
+    const rowEmails = [we, pe, altA, altB].filter((x): x is string => !!x);
+    for (const e of rowEmails) {
+      const existing = aliasesByEmail.get(e);
+      if (existing) {
+        for (const x of rowEmails) if (!existing.includes(x)) existing.push(x);
+      } else {
+        aliasesByEmail.set(e, [...rowEmails]);
+      }
+    }
     if (m.department && m.department.trim()) {
       for (const e of [we, pe, altA, altB]) {
         if (e && !masterDeptByEmail.has(e)) masterDeptByEmail.set(e, m.department);
@@ -718,8 +733,12 @@ export async function computeCurrentPay(
     // PHP-equivalent (USD converted at fx). The individual catalog rate is the
     // only one that OVERRIDES the per-day history; the department rate is purely
     // a fallback for employees with no sheet rate at all.
-    const empCat = resolveEmployeeCatalogRate(catalogIndex, em, fx);
-    const deptCat = resolveDeptCatalogRate(catalogIndex, deptByEmail.get(em) ?? null, fx);
+    const empCat = resolveEmployeeCatalogRate(catalogIndex, aliasesByEmail.get(em) ?? [em], fx);
+    const deptCat = resolveDeptCatalogRate(
+      catalogIndex,
+      deptByEmail.get(em) ?? masterDeptByEmail.get(em) ?? null,
+      fx,
+    );
     const catalogOverride = empCat ? { reg: empCat.regPhp, ot: empCat.otPhp } : null;
     const hasSheet = sheetRate != null && (sheetRate.reg != null || sheetRate.ot != null);
     const baseRate = hasSheet

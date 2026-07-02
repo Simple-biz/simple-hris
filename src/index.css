@@ -478,31 +478,6 @@
 }
 
 /* ────────────────────────────────────────────────────────────────────────
-   Manager → My Team wallpaper banner — futuristic loader keyframes used
-   while a new image is uploading or a department wallpaper is being
-   fetched. Combined in `ManagerApp.tsx`:
-     - `wallpaper-scan` drives a thin cyan scan-line that sweeps top→bottom.
-     - `wallpaper-shimmer` drives a diagonal gradient sweep over the panel.
-     - `wallpaper-pulse` softly breathes the placeholder grid.
-   ──────────────────────────────────────────────────────────────────── */
-@keyframes wallpaper-scan {
-  0%   { transform: translateY(-100%); opacity: 0; }
-  10%  { opacity: 1; }
-  90%  { opacity: 1; }
-  100% { transform: translateY(100%); opacity: 0; }
-}
-
-@keyframes wallpaper-shimmer {
-  0%   { transform: translateX(-100%); }
-  100% { transform: translateX(100%); }
-}
-
-@keyframes wallpaper-pulse {
-  0%, 100% { opacity: 0.35; }
-  50%      { opacity: 0.75; }
-}
-
-/* ────────────────────────────────────────────────────────────────────────
    Global responsive tables — below the sm breakpoint (<640px) every
    <table> collapses into a vertical stack of "card" rows. Each <tr>
    becomes a bordered card and each <td> becomes a label/value pair.
@@ -640,6 +615,42 @@
   .progress-stripe,
   .candy-cane-stripe {
     animation: none;
+  }
+}
+
+/* ────────────────────────────────────────────────────────────────────────
+   Modern progress sheen — a soft, skewed light streak that sweeps across
+   the filled portion of the Payroll Wizard progress bar and fades out.
+   Transform/opacity only (GPU-friendly); no permanent will-change. It rests
+   off the left edge so it stays hidden until the sweep begins.
+   ──────────────────────────────────────────────────────────────────────── */
+.progress-sheen {
+  transform: translateX(-100%) skewX(-20deg);
+  animation: progress-sheen-sweep 2.6s ease-in-out infinite;
+}
+
+@keyframes progress-sheen-sweep {
+  0% {
+    transform: translateX(-100%) skewX(-20deg);
+    opacity: 0;
+  }
+  20% {
+    opacity: 1;
+  }
+  75% {
+    transform: translateX(260%) skewX(-20deg);
+    opacity: 1;
+  }
+  100% {
+    transform: translateX(260%) skewX(-20deg);
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .progress-sheen {
+    animation: none;
+    opacity: 0;
   }
 }
 

@@ -865,6 +865,125 @@ function RailAvatar({
   );
 }
 
+// --- overflow popover row -----------------------------------------------------
+// A compact one-line entry for a peer the right-edge rail couldn't fit. Shown
+// inside the "+N" chip's popover with the same core actions as a rail avatar
+// (Observe + Ping), so nobody online is ever hidden from view.
+function OverflowRow({
+  peer,
+  sameSection,
+  observing,
+  onObserve,
+  onStopObserve,
+  onPing,
+  ping,
+  accent,
+  sectionLabels,
+}: {
+  peer: PeerMeta;
+  sameSection: boolean;
+  observing: boolean;
+  onObserve: () => void;
+  onStopObserve: () => void;
+  onPing: (text: string) => void;
+  ping: PingState | null;
+  accent: CollabAccent;
+  sectionLabels: Record<string, string>;
+}) {
+  const [imgFailed, setImgFailed] = useState(false);
+  const { bg: color, glow } = hashEmail(peer.email);
+  const url = peer.avatarUrl?.trim();
+  const showImg = !!url && !imgFailed;
+  const display = (peer.name && peer.name.trim()) || toLabel(peer.email);
+  const [pinged, setPinged] = useState(false);
+  const sentTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => { setImgFailed(false); }, [url]);
+  useEffect(() => () => { if (sentTimerRef.current) clearTimeout(sentTimerRef.current); }, []);
+
+  const doPing = () => {
+    onPing('👋 Hi!');
+    setPinged(true);
+    if (sentTimerRef.current) clearTimeout(sentTimerRef.current);
+    sentTimerRef.current = setTimeout(() => setPinged(false), 1600);
+  };
+
+  return (
+    <div className="flex items-center gap-2.5 rounded-xl px-2 py-1.5 transition-colors hover:bg-white/5">
+      <div className="relative shrink-0">
+        <div
+          className="h-9 w-9 overflow-hidden rounded-full bg-zinc-800"
+          style={{
+            boxShadow: observing
+              ? `0 0 0 2px ${accent.hex}, 0 0 10px ${accent.ringGlow}`
+              : sameSection
+                ? `0 0 0 2px ${color}, 0 0 8px ${glow}`
+                : '0 0 0 1.5px rgba(255,255,255,0.25)',
+          }}
+        >
+          {showImg ? (
+            // eslint-disable-next-line @next/next/no-img-element -- Supabase / Google avatar URL
+            <img
+              src={url}
+              alt=""
+              referrerPolicy="no-referrer"
+              className="h-full w-full object-cover"
+              onError={() => setImgFailed(true)}
+            />
+          ) : (
+            <div
+              className="flex h-full w-full items-center justify-center text-[11px] font-bold text-white"
+              style={{ background: `linear-gradient(135deg, ${color}, #1e3a8a)` }}
+              aria-hidden
+            >
+              {initialsFor(peer.name, peer.email)}
+            </div>
+          )}
+        </div>
+        <span className="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-zinc-900 bg-emerald-500" />
+      </div>
+      <div className="min-w-0 flex-1">
+        <div className="truncate text-[12px] font-semibold leading-tight text-white">{display}</div>
+        <div
+          className="truncate text-[9px] uppercase leading-tight tracking-wider"
+          style={{ color: sameSection ? color : '#a1a1aa' }}
+        >
+          {ping
+            ? `👋 ${ping.text}`
+            : sameSection
+              ? `Here - ${sectionLabel(peer.section, sectionLabels)}`
+              : sectionLabel(peer.section, sectionLabels)}
+        </div>
+      </div>
+      <button
+        type="button"
+        onClick={doPing}
+        title={`Ping ${display}`}
+        aria-label={`Ping ${display}`}
+        className={
+          `flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-white shadow transition-colors ` +
+          (pinged ? 'bg-emerald-500' : 'bg-sky-500 hover:bg-sky-400')
+        }
+      >
+        <Send className="h-3 w-3" />
+      </button>
+      <button
+        type="button"
+        onClick={observing ? onStopObserve : onObserve}
+        title={observing ? `Stop observing ${display}` : `Observe ${display}`}
+        aria-label={observing ? `Stop observing ${display}` : `Observe ${display}`}
+        aria-pressed={observing}
+        className={
+          `flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-white shadow transition-colors ` +
+          (observing ? 'bg-rose-500 hover:bg-rose-400' : accent.observeBtn)
+        }
+      >
+        {observing ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
+      </button>
+    </div>
+  );
+}
+
 // --- main layer ---------------------------------------------------------------
 export interface CollabLayerProps {
   selfEmail: string | null | undefined;
@@ -912,6 +1031,8 @@ export default function CollabLayer({
   const [ripples, setRipples] = useState<ClickRipple[]>([]);
   // Which rail avatar has its name card pinned open (one at a time).
   const [openPeer, setOpenPeer] = useState<string | null>(null);
+  // Whether the "+N" overflow popover (the peers the rail couldn't fit) is open.
+  const [overflowOpen, setOverflowOpen] = useState(false);
   // Email of the peer currently being observed (driver-mode follow), or null.
   const [observedEmail, setObservedEmail] = useState<string | null>(null);
   // Active incoming pings, keyed by SENDER email -> the bubble shown on that
@@ -925,6 +1046,7 @@ export default function CollabLayer({
   const channelRef = useRef<any>(null);
   const sendRef = useRef<((m: CollabMsg) => void) | null>(null);
   const sectionRef = useRef(section);
+  const overflowRef = useRef<HTMLDivElement | null>(null);
   const lastMoveRef = useRef(0);
   const idRef = useRef(0);
   const pingIdRef = useRef(0);
@@ -1227,6 +1349,28 @@ export default function CollabLayer({
     return () => clearInterval(t);
   }, []);
 
+  // --- overflow popover: close on outside-click / Escape --------------------
+  useEffect(() => {
+    if (!overflowOpen) return;
+    const onDocMouseDown = (e: MouseEvent) => {
+      if (overflowRef.current && !overflowRef.current.contains(e.target as Node)) {
+        setOverflowOpen(false);
+      }
+    };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOverflowOpen(false); };
+    document.addEventListener('mousedown', onDocMouseDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDocMouseDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [overflowOpen]);
+
+  // The roster shrank back to what the rail can show -> no chip, so close it.
+  useEffect(() => {
+    if (peers.length <= MAX_RAIL_AVATARS) setOverflowOpen(false);
+  }, [peers.length]);
+
   // --- Observe (live screen mirror) -----------------------------------------
   // The peer we're observing, resolved from the live presence roster.
   const observedPeer = useMemo(
@@ -1262,6 +1406,12 @@ export default function CollabLayer({
   });
 
   if (!normSelf) return null;
+
+  // Peers the rail couldn't fit -> surfaced behind the "+N" chip's popover.
+  const overflowPeers = peers.slice(MAX_RAIL_AVATARS);
+  // A hidden peer pinged us: the wiggle/bubble lands on their avatar, which is
+  // off the rail, so flag the chip so the chime isn't left unexplained.
+  const overflowHasPing = overflowPeers.some((p) => pings.has(p.email));
 
   // Remote cursors + click ripples. Rendered either over the visible dashboard
   // area (default) or, when a scroll surface is anchored, inside that surface's
@@ -1374,17 +1524,67 @@ export default function CollabLayer({
                   sectionLabels={sectionLabels}
                 />
               ))}
-              {peers.length > MAX_RAIL_AVATARS && (
+              {overflowPeers.length > 0 && (
                 <motion.div
                   key="rail-overflow"
+                  ref={overflowRef}
                   layout="position"
                   initial={{ opacity: 0, scale: 0.2, x: 24 }}
                   animate={{ opacity: 1, scale: 1, x: 0, transition: POP_SPRING }}
                   exit={{ opacity: 0, scale: 0.2, x: 24, transition: { duration: 0.18 } }}
-                  className="pointer-events-auto flex h-11 w-11 items-center justify-center rounded-full bg-zinc-900/90 text-[12px] font-bold text-white shadow-md ring-2 ring-white/70 backdrop-blur-md dark:ring-zinc-700/70"
-                  title={`${peers.length - MAX_RAIL_AVATARS} more in ${surfaceLabel}`}
+                  className="pointer-events-auto relative"
                 >
-                  +{peers.length - MAX_RAIL_AVATARS}
+                  {/* Popover: everyone the rail couldn't fit, with the same
+                      Observe + Ping actions as the visible avatars. */}
+                  <AnimatePresence>
+                    {overflowOpen && (
+                      <motion.div
+                        className="absolute bottom-0 right-full mr-3 flex max-h-[70vh] w-64 flex-col overflow-hidden rounded-2xl bg-zinc-900/95 shadow-2xl ring-1 ring-white/10 backdrop-blur-md"
+                        initial={{ opacity: 0, x: 8, scale: 0.96 }}
+                        animate={{ opacity: 1, x: 0, scale: 1 }}
+                        exit={{ opacity: 0, x: 8, scale: 0.96 }}
+                        transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
+                      >
+                        <div className="shrink-0 border-b border-white/10 px-3.5 py-2.5">
+                          <div className="text-[12px] font-semibold text-white">
+                            {overflowPeers.length} more {overflowPeers.length === 1 ? 'person' : 'people'} here
+                          </div>
+                          <div className="text-[10px] text-zinc-400">Also in {surfaceLabel}</div>
+                        </div>
+                        <div className="flex-1 space-y-0.5 overflow-y-auto p-1.5">
+                          {overflowPeers.map((p) => (
+                            <OverflowRow
+                              key={p.email}
+                              peer={p}
+                              sameSection={p.section === section}
+                              observing={observedEmail === p.email}
+                              onObserve={() => { setObservedEmail(p.email); setOverflowOpen(false); }}
+                              onStopObserve={() => setObservedEmail(null)}
+                              onPing={(text) => sendPing(p.email, text)}
+                              ping={pings.get(p.email) ?? null}
+                              accent={accent}
+                              sectionLabels={sectionLabels}
+                            />
+                          ))}
+                        </div>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                  <button
+                    type="button"
+                    onClick={() => setOverflowOpen((v) => !v)}
+                    aria-expanded={overflowOpen}
+                    aria-label={`Show ${overflowPeers.length} more ${overflowPeers.length === 1 ? 'person' : 'people'} in ${surfaceLabel}`}
+                    className={`relative flex h-11 w-11 items-center justify-center rounded-full bg-zinc-900/90 text-[12px] font-bold text-white shadow-md outline-none ring-2 ring-white/70 backdrop-blur-md transition-transform hover:scale-105 focus-visible:ring-2 dark:ring-zinc-700/70 ${accent.focusRing}`}
+                  >
+                    +{overflowPeers.length}
+                    {overflowHasPing && !overflowOpen && (
+                      <span className="absolute -right-0.5 -top-0.5 flex h-3.5 w-3.5">
+                        <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-sky-400 opacity-75" />
+                        <span className="relative inline-flex h-3.5 w-3.5 rounded-full border-2 border-zinc-900 bg-sky-500" />
+                      </span>
+                    )}
+                  </button>
                 </motion.div>
               )}
             </AnimatePresence>

@@ -353,13 +353,22 @@
       "Bash(node scripts/_tmp-check-alt.mjs)",
       "Bash(node scripts/_tmp-scan-onboard.mjs)",
       "Bash(node scripts/_tmp-archive-angelof.mjs)",
-      "Bash(rm -f scripts/_tmp-scan-onboard.mjs scripts/_tmp-archive-angelof.mjs)"
+      "Bash(rm -f scripts/_tmp-scan-onboard.mjs scripts/_tmp-archive-angelof.mjs)",
+      "Bash(node -e 'let d=\"\";process.stdin.on\\(\"data\",c=>d+=c\\);process.stdin.on\\(\"end\",\\(\\)=>{const p=JSON.parse\\(d\\);console.log\\(JSON.stringify\\(p.scripts,null,2\\)\\)}\\)')",
+      "Bash(python -c \"import sys,json; d=json.load\\(sys.stdin\\); r=d.get\\('result',d\\); print\\('CONFIRMED:',r.get\\('confirmed_count'\\),'UNCERTAIN:',r.get\\('uncertain_count'\\)\\); print\\(json.dumps\\(r.get\\('confirmed',[]\\),indent=2\\)\\); print\\('--- UNCERTAIN ---'\\); print\\(json.dumps\\(r.get\\('uncertain',[]\\),indent=2\\)\\)\")",
+      "Read(//c/Users/Itachi/.claude/projects/c--Users-Itachi-Desktop-simple-hris/eb5f504b-959d-4419-be73-dcb87f221f27/subagents/workflows/wf_d0735af0-664/**)",
+      "Bash(python - C:/Users/Itachi/.claude/projects/c--Users-Itachi-Desktop-simple-hris/eb5f504b-959d-4419-be73-dcb87f221f27/subagents/workflows/wf_d0735af0-664/journal.jsonl)",
+      "Bash(node \"C:/Users/Itachi/AppData/Local/Temp/claude/c--Users-Itachi-Desktop-simple-hris/88e16757-41a1-48df-9803-a168926b2141/scratchpad/diag-cristinev.mjs\")",
+      "Bash(cp \"C:/Users/Itachi/AppData/Local/Temp/claude/c--Users-Itachi-Desktop-simple-hris/88e16757-41a1-48df-9803-a168926b2141/scratchpad/diag-cristinev.mjs\" \"c:/Users/Itachi/Desktop/simple-hris/scripts/diag-cristinev.mjs\")",
+      "Bash(node scripts/diag-cristinev.mjs)",
+      "Bash(rm -f \"c:/Users/Itachi/Desktop/simple-hris/scripts/diag-cristinev.mjs\" && echo \"removed\")"
     ],
     "additionalDirectories": [
       "\\tmp",
       "C:\\Users\\Itachi\\Desktop\\simple-hris",
       "c:\\Users\\Itachi\\.claude\\projects\\c--Users-Itachi-Desktop-simple-hris\\memory",
-      "c:\\Users\\Itachi\\Desktop\\simple-hris"
+      "c:\\Users\\Itachi\\Desktop\\simple-hris",
+      "c:\\Users\\Itachi\\Desktop\\simple-hris\\scripts"
     ]
   }
 }

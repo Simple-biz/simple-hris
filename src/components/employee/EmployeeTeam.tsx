@@ -71,8 +71,7 @@ export default function EmployeeTeam({ employeeEmail, department }: Props) {
   };
 
   // Department picker. Scoped to the viewer's own department (the only option),
-  // but kept as a dropdown so the selection drives both the roster filter and
-  // the wallpaper banner. Wallpaper is read-only here — managers set it.
+  // but kept as a dropdown so the selection drives the roster filter.
   const ownDept = department?.trim() || '';
   const [selectedDept, setSelectedDept] = useState(ownDept);
   useEffect(() => {
@@ -81,41 +80,6 @@ export default function EmployeeTeam({ employeeEmail, department }: Props) {
 
   // Department options the employee may pick from. Own department only.
   const deptOptions = useMemo(() => (ownDept ? [ownDept] : []), [ownDept]);
-
-  // Read-only wallpaper banner for the selected department (shared system with
-  // the Manager My Team view: manager_team_wallpapers / /api/manager/team-wallpaper).
-  const [wallpaperUrl, setWallpaperUrl] = useState<string | null>(null);
-  const [wallpaperPos, setWallpaperPos] = useState('50% 50%');
-  const [wallpaperLoading, setWallpaperLoading] = useState(true);
-
-  useEffect(() => {
-    if (!selectedDept) {
-      setWallpaperUrl(null);
-      setWallpaperPos('50% 50%');
-      setWallpaperLoading(false);
-      return;
-    }
-    let cancelled = false;
-    setWallpaperLoading(true);
-    fetch(`/api/manager/team-wallpaper?department=${encodeURIComponent(selectedDept)}`, {
-      cache: 'no-store',
-    })
-      .then((r) => r.json())
-      .then((j: { url?: string | null; position?: string | null }) => {
-        if (cancelled) return;
-        setWallpaperUrl(j.url ?? null);
-        setWallpaperPos(j.position?.trim() || '50% 50%');
-      })
-      .catch(() => {
-        if (!cancelled) setWallpaperUrl(null);
-      })
-      .finally(() => {
-        if (!cancelled) setWallpaperLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [selectedDept]);
 
   const onlineEmails = useOnlineEmails();
   const selfNorm = normEmail(employeeEmail ?? '') ?? employeeEmail?.trim().toLowerCase() ?? null;
@@ -313,72 +277,6 @@ export default function EmployeeTeam({ employeeEmail, department }: Props) {
   return (
     <div className="flex h-full min-h-0 flex-col overflow-y-auto bg-gradient-to-br from-white via-orange-50/30 to-blue-50/20 p-4 sm:p-6 dark:bg-none dark:bg-[#0d1117]">
       <div className="w-full space-y-6">
-        {/* Department wallpaper banner — read-only. Managers assign it; here we
-            just display the image saved for the selected department. */}
-        <div
-          className={cn(
-            'relative h-32 overflow-hidden rounded-2xl border border-orange-100/80 sm:h-40',
-            'dark:border-blue-950/60',
-          )}
-          style={
-            wallpaperUrl
-              ? {
-                  backgroundImage: `url(${wallpaperUrl})`,
-                  backgroundSize: 'cover',
-                  backgroundPosition: wallpaperPos,
-                  backgroundRepeat: 'no-repeat',
-                }
-              : undefined
-          }
-        >
-          {!wallpaperUrl && (
-            <div className="absolute inset-0 bg-gradient-to-br from-orange-100 via-amber-50 to-blue-50 dark:from-blue-950/60 dark:via-indigo-950/30 dark:to-zinc-950" />
-          )}
-          {/* Bottom fade keeps the scope label legible over busy images */}
-          <div className="pointer-events-none absolute inset-x-0 bottom-0 h-1/2 bg-gradient-to-t from-black/30 to-transparent" />
-
-          {/* Loading overlay while the wallpaper is fetched (department switch / mount) */}
-          {wallpaperLoading && (
-            <div
-              className="pointer-events-none absolute inset-0 z-10 overflow-hidden"
-              aria-live="polite"
-              aria-busy="true"
-            >
-              <div className="absolute inset-0 bg-gradient-to-br from-slate-950/85 via-blue-950/80 to-cyan-950/80" />
-              <div
-                className="absolute inset-0 opacity-30 mix-blend-screen"
-                style={{
-                  backgroundImage:
-                    'linear-gradient(rgba(34,211,238,0.15) 1px, transparent 1px), linear-gradient(90deg, rgba(34,211,238,0.15) 1px, transparent 1px)',
-                  backgroundSize: '32px 32px',
-                  animation: 'wallpaper-pulse 2.2s ease-in-out infinite',
-                }}
-              />
-              <div
-                className="absolute inset-0 opacity-50"
-                style={{
-                  background:
-                    'linear-gradient(115deg, transparent 30%, rgba(34,211,238,0.35) 50%, transparent 70%)',
-                  animation: 'wallpaper-shimmer 2.4s linear infinite',
-                  width: '200%',
-                  left: '-50%',
-                }}
-              />
-              <div
-                className="absolute inset-x-0 top-0 h-0.5 bg-gradient-to-r from-transparent via-cyan-300 to-transparent shadow-[0_0_18px_4px_rgba(34,211,238,0.7)]"
-                style={{ animation: 'wallpaper-scan 1.8s ease-in-out infinite' }}
-              />
-            </div>
-          )}
-
-          {/* Scope label */}
-          <div className="pointer-events-none absolute bottom-2 left-3 inline-flex items-center gap-1.5 rounded-md bg-white/70 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-zinc-700 backdrop-blur dark:bg-zinc-900/60 dark:text-zinc-300">
-            <span className="opacity-70">Team</span>
-            <span className="text-zinc-300 dark:text-zinc-600">&middot;</span>
-            <span>{deptLabel}</span>
-          </div>
-        </div>
-
         {/* Header */}
         <div>
           <div className="flex flex-wrap items-center gap-2">

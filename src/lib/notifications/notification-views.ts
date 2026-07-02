@@ -15,6 +15,9 @@ import type { FeatureViewKey, FeaturePermissionsMap } from '@/lib/rbac/feature-p
 export const NOTIFICATION_TYPE_TO_VIEWS: Record<string, AppView[]> = {
   'onboarding.submitted': ['hr', 'admin'],
   'transfer.requested': ['hr', 'admin'],
+  'offboarding.requested': ['hr', 'admin'],
+  'offboarding.request_completed': ['manager'],
+  'offboarding.request_dismissed': ['manager'],
   'rate.change': ['employee'],
   'dispute.approved': ['employee'],
   'dispute.denied': ['employee'],
@@ -55,6 +58,10 @@ export const NOTIFICATION_TYPE_FEATURE_GATE: Record<
   { view: FeatureViewKey; feature: string }
 > = {
   'onboarding.submitted': { view: 'hr', feature: 'onboarding' },
+  // Only HR users with offboarding access should see the "new offboarding
+  // request" alert; the manager-facing outcome notifications stay ungated so
+  // the requesting manager always learns what happened to their request.
+  'offboarding.requested': { view: 'hr', feature: 'offboarding' },
 };
 
 /**
