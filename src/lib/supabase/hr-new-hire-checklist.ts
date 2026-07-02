@@ -273,17 +273,21 @@ export async function listHrNewHireChecklistDepartments(): Promise<{
 /**
  * Every checklist row for one department (case-insensitive match), in grid
  * order. Used by Bulk Invite to fan out one onboarding invite per row.
+ * When `periodStart` (a Sun-anchored week, YYYY-MM-DD) is given, the result is
+ * scoped to just that week — Bulk Invite passes next week's Sunday so it only
+ * pulls the upcoming start cohort. Omitted = every week (legacy all-weeks read).
  */
 export async function listHrNewHireChecklistByDepartment(
   department: string,
+  periodStart?: string | null,
 ): Promise<{ rows: HrNewHireChecklistRow[]; error: string | null }> {
   const dept = clean(department);
   if (!dept) return { rows: [], error: null };
   const sb = client();
-  const { data, error } = await sb
-    .from(TABLE)
-    .select("*")
-    .ilike("department", dept)
+  let query = sb.from(TABLE).select("*").ilike("department", dept);
+  const period = clean(periodStart ?? null);
+  if (period) query = query.eq("period_start", period);
+  const { data, error } = await query
     .order("position", { ascending: true })
     .order("created_at", { ascending: true })
     .range(0, 4999);

@@ -59,6 +59,7 @@ import {
 } from '@/components/onboarding/agreement-texts';
 import { formatLongDate } from '@/lib/onboarding/ip-assignment-text';
 import { currencyForCountry, ONBOARDING_COUNTRIES, resolveOnboardingCountry } from '@/lib/onboarding/countries';
+import { addWeeks, formatWeekLabel, sundayIso } from '@/lib/hr/hiring-week';
 import {
   Dialog,
   DialogContent,
@@ -2060,6 +2061,11 @@ function GenerateLinkDialog({
   const [checklistLoading, setChecklistLoading] = useState(false);
   const [prefillCountry, setPrefillCountry] = useState('');
   const [prefillNames, setPrefillNames] = useState<Record<string, string>>({});
+  // Next week's Sunday (the upcoming start cohort) — Bulk Invite only pulls
+  // checklist hires filed under this week. Computed in an effect (never during
+  // render) so `new Date()` can't cause SSR hydration drift.
+  const [nextWeekStart, setNextWeekStart] = useState<string | null>(null);
+  useEffect(() => { setNextWeekStart(addWeeks(sundayIso(new Date()), 1)); }, []);
 
   const [departments, setDepartments] = useState<string[]>([]);
   const [deptsLoading, setDeptsLoading] = useState(false);
@@ -2138,16 +2144,16 @@ function GenerateLinkDialog({
     }
   }, [open]);
 
-  // Pull the selected department's saved hires from the New Hire Checklist so
-  // they can be loaded into the batch with one click. Re-runs whenever the
-  // department changes while bulk mode is on.
+  // Pull the selected department's NEXT-WEEK hires from the New Hire Checklist
+  // (the upcoming start cohort) so they can be loaded into the batch with one
+  // click. Re-runs whenever the department changes while bulk mode is on.
   useEffect(() => {
     if (!open || !bulkMode) { setChecklistRows([]); return; }
     const d = dept.trim();
-    if (!d) { setChecklistRows([]); return; }
+    if (!d || !nextWeekStart) { setChecklistRows([]); return; }
     let cancelled = false;
     setChecklistLoading(true);
-    fetch(`/api/hr/new-hire-checklist/departments?department=${encodeURIComponent(d)}`, { cache: 'no-store' })
+    fetch(`/api/hr/new-hire-checklist/departments?department=${encodeURIComponent(d)}&period=${encodeURIComponent(nextWeekStart)}`, { cache: 'no-store' })
       .then((r) => r.json())
       .then((j: { rows?: { name: string | null; personal_email: string | null; country: string | null }[]; error?: string }) => {
         if (cancelled) return;
@@ -2164,7 +2170,7 @@ function GenerateLinkDialog({
       .catch((e) => { if (!cancelled) toast.error(e instanceof Error ? e.message : 'Could not load the checklist'); })
       .finally(() => { if (!cancelled) setChecklistLoading(false); });
     return () => { cancelled = true; };
-  }, [open, bulkMode, dept]);
+  }, [open, bulkMode, dept, nextWeekStart]);
 
   const emailInvalid = !bulkMode && email.trim().length > 0 && !isPlausibleEmail(email);
 
@@ -2487,21 +2493,24 @@ function GenerateLinkDialog({
                 {!dept.trim() ? (
                   <p className="flex items-center gap-2 text-[12px] leading-relaxed text-zinc-500 dark:text-zinc-400">
                     <ClipboardList className="h-4 w-4 shrink-0 text-emerald-500" />
-                    Pick a department above to pull its saved hires straight from the New Hire Checklist.
+                    Pick a department above to pull its <strong>next-week</strong> hires
+                    {nextWeekStart ? <> (<span className="tabular-nums">{formatWeekLabel(nextWeekStart)}</span>)</> : null} straight from the New Hire Checklist.
                   </p>
                 ) : (
                   <div className="space-y-2.5">
                     <p className="flex items-center gap-2 text-[12px] leading-relaxed text-zinc-700 dark:text-zinc-300">
                       <ClipboardList className="h-4 w-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
                       {checklistLoading ? (
-                        <>Checking the checklist for <strong>{dept.trim()}</strong>…</>
+                        <>Checking next week&apos;s checklist for <strong>{dept.trim()}</strong>…</>
                       ) : checklistRows.length > 0 ? (
                         <>
-                          <strong>{checklistRows.length}</strong> hire{checklistRows.length !== 1 ? 's' : ''} saved for{' '}
-                          <strong>{dept.trim()}</strong> in the checklist.
+                          <strong>{checklistRows.length}</strong> hire{checklistRows.length !== 1 ? 's' : ''} starting next week
+                          {nextWeekStart ? <> (<span className="tabular-nums">{formatWeekLabel(nextWeekStart)}</span>)</> : null} for{' '}
+                          <strong>{dept.trim()}</strong>.
                         </>
                       ) : (
-                        <>No checklist hires saved for <strong>{dept.trim()}</strong> yet.</>
+                        <>No hires filed for <strong>{dept.trim()}</strong> next week
+                          {nextWeekStart ? <> (<span className="tabular-nums">{formatWeekLabel(nextWeekStart)}</span>)</> : null} yet.</>
                       )}
                     </p>
                     {checklistRows.length > 0 && (

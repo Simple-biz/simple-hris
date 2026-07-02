@@ -854,7 +854,7 @@ export default function HrNewHireChecklist({
                   <span className="tabular-nums">{formatWeekLabel(period)}</span>
                   {period === currentSunday && (
                     <span className="rounded-full bg-emerald-100 px-1.5 py-px text-[10px] font-semibold text-emerald-700 dark:bg-emerald-900/50 dark:text-emerald-300">
-                      this week
+                      Start Week
                     </span>
                   )}
                   {locked && <Lock className="h-3 w-3 text-amber-500" />}
