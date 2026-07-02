@@ -15,6 +15,9 @@ import {
   LogOut,
   ChevronRight,
 } from 'lucide-react';
+import CollapsibleSidebarShell from '@/components/common/CollapsibleSidebarShell';
+import SidebarBrandMark from '@/components/common/SidebarBrandMark';
+import { useSidebarCollapsed } from '@/hooks/useSidebarCollapsed';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -52,6 +55,7 @@ export default function ContractorSidebar({
 }: ContractorSidebarProps) {
   const visibleNavItems = navItems.filter((item) => allowedTabs.includes(item.id));
   const { resolvedTheme, setTheme } = useTheme();
+  const { collapsed, toggle } = useSidebarCollapsed();
   const [mounted, setMounted] = React.useState(false);
   React.useEffect(() => setMounted(true), []);
   const isDark = mounted ? resolvedTheme === 'dark' : false;
@@ -72,18 +76,21 @@ export default function ContractorSidebar({
     .slice(0, 2);
 
   return (
-    <aside
+    <CollapsibleSidebarShell
+      collapsed={collapsed}
+      onToggle={toggle}
+      innerWidthClassName="md:w-64"
+      accentClassName="border-blue-200/80 hover:text-blue-600 focus-visible:ring-blue-400 dark:border-blue-950/70 dark:hover:text-blue-300"
+      id="contractor-sidebar-nav"
+      ariaLabel="Contractor navigation"
       className={cn(
         'flex h-dvh w-[85vw] max-w-[20rem] shrink-0 flex-col border-r border-blue-100 bg-gradient-to-b from-white to-blue-50/40 text-zinc-600 dark:border-blue-950/60 dark:from-[#0d1117] dark:to-[#0f1729] dark:text-zinc-400 md:w-64 md:max-w-none md:shadow-none',
         'fixed inset-y-0 left-0 z-50 will-change-transform md:static md:z-auto md:translate-x-0',
-        'transition-[transform,box-shadow] duration-[360ms] ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none',
+        'transition-[transform,box-shadow,width] duration-[360ms] ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none',
         mobileOpen
           ? 'translate-x-0 shadow-2xl shadow-black/25'
           : '-translate-x-full shadow-none md:translate-x-0',
       )}
-      id="contractor-sidebar-nav"
-      role="navigation"
-      aria-label="Contractor navigation"
     >
       <div className="flex min-h-0 flex-1 flex-col p-6">
         <div className="mb-8">
@@ -98,9 +105,12 @@ export default function ContractorSidebar({
               <img
                 src="/simple-logo.png"
                 alt="Simple HRIS"
-                className={cn('h-10 w-full object-contain', logoBeat && 'logo-heartbeat')}
+                className={cn('h-10 w-full object-contain transition-opacity duration-[var(--sb-collapse-ms)] ease-[var(--sb-collapse-ease)]', collapsed && 'md:opacity-0', logoBeat && 'logo-heartbeat')}
                 onAnimationEnd={() => setLogoBeat(false)}
               />
+              <SidebarBrandMark
+              className={cn('pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 opacity-0 transition-opacity duration-[var(--sb-collapse-ms)] ease-[var(--sb-collapse-ease)] from-blue-500 to-blue-700', collapsed && 'md:opacity-100')}
+            />
             </div>
           </a>
         </div>
@@ -111,6 +121,7 @@ export default function ContractorSidebar({
               <button
                 key={item.id}
                 onClick={() => setActiveTab(item.id)}
+                title={collapsed ? item.label : undefined}
                 style={{
                   transitionDelay: mobileOpen ? `${60 + index * 35}ms` : '0ms',
                 }}
@@ -132,7 +143,7 @@ export default function ContractorSidebar({
                       : 'text-zinc-500 group-hover:text-blue-500 dark:text-zinc-500 dark:group-hover:text-blue-400',
                   )}
                 />
-                {item.label}
+                <span className={cn('truncate text-left transition-opacity duration-[var(--sb-collapse-ms)] ease-[var(--sb-collapse-ease)]', collapsed && 'md:opacity-0')}>{item.label}</span>
                 {activeTab === item.id && (
                   <ChevronRight className="ml-auto h-3 w-3 text-blue-400 dark:text-blue-500/70" />
                 )}
@@ -151,17 +162,20 @@ export default function ContractorSidebar({
           mobileOpen ? 'translate-x-0' : '-translate-x-8 md:translate-x-0',
         )}
       >
-        <ViewSwitcher email={contractorEmail} currentView="contractor" />
+        <div className={cn('transition-opacity duration-[var(--sb-collapse-ms)] ease-[var(--sb-collapse-ease)]', collapsed && 'md:opacity-0')}>
+          <ViewSwitcher email={contractorEmail} currentView="contractor" />
+        </div>
         <button
           onClick={() => withViewTransition(() => setTheme(isDark ? 'light' : 'dark'))}
+          title={collapsed ? (isDark ? 'Dark mode' : 'Light mode') : undefined}
           className="mb-2 flex w-full items-center justify-between rounded-md border border-blue-100 bg-blue-50/60 px-3 py-2 transition-colors hover:bg-blue-100/80 dark:border-blue-950/60 dark:bg-blue-950/20 dark:hover:bg-blue-950/40"
           aria-label="Toggle dark mode"
         >
           <div className="flex items-center gap-2 text-zinc-700 dark:text-zinc-300">
-            {isDark ? <Moon className="h-4 w-4" /> : <Sun className="h-4 w-4" />}
-            <span className="text-xs font-medium">{isDark ? 'Dark mode' : 'Light mode'}</span>
+            {isDark ? <Moon className="h-4 w-4 shrink-0" /> : <Sun className="h-4 w-4 shrink-0" />}
+            <span className={cn('text-xs font-medium transition-opacity duration-[var(--sb-collapse-ms)] ease-[var(--sb-collapse-ease)]', collapsed && 'md:opacity-0')}>{isDark ? 'Dark mode' : 'Light mode'}</span>
           </div>
-          <div className="flex h-6 w-6 items-center justify-center rounded-md bg-white shadow-sm dark:bg-blue-950/60">
+          <div className={cn('flex h-6 w-6 items-center justify-center rounded-md bg-white shadow-sm transition-opacity duration-[var(--sb-collapse-ms)] ease-[var(--sb-collapse-ease)] dark:bg-blue-950/60', collapsed && 'md:opacity-0')}>
             {isDark ? (
               <Sun className="h-3.5 w-3.5 text-blue-400" />
             ) : (
@@ -178,7 +192,7 @@ export default function ContractorSidebar({
             className="h-9 w-9 text-xs"
             pixelSize={72}
           />
-          <div className="flex min-w-0 flex-col overflow-hidden">
+          <div className={cn('flex min-w-0 flex-col overflow-hidden transition-opacity duration-[var(--sb-collapse-ms)] ease-[var(--sb-collapse-ease)]', collapsed && 'md:opacity-0')}>
             <span className="truncate text-sm font-medium text-zinc-900 dark:text-zinc-200">
               {contractorName}
             </span>
@@ -189,6 +203,7 @@ export default function ContractorSidebar({
         </div>
         <Button
           variant="ghost"
+          title={collapsed ? 'Sign Out' : undefined}
           className="w-full justify-start gap-3 text-zinc-600 hover:bg-red-500/10 hover:text-red-600 dark:text-zinc-500 dark:hover:text-red-400"
           onClick={() => {
             try {
@@ -198,10 +213,10 @@ export default function ContractorSidebar({
             void signOut({ callbackUrl: '/login' });
           }}
         >
-          <LogOut className="h-4 w-4" />
-          Log Out
+          <LogOut className="h-4 w-4 shrink-0" />
+          <span className={cn('transition-opacity duration-[var(--sb-collapse-ms)] ease-[var(--sb-collapse-ease)]', collapsed && 'md:opacity-0')}>Log Out</span>
         </Button>
       </div>
-    </aside>
+    </CollapsibleSidebarShell>
   );
 }

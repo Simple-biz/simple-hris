@@ -11,6 +11,7 @@ import {
   requireElevatedSession,
 } from "@/lib/auth/authorize-email";
 import { requireFeatureEdit } from "@/lib/auth/authorize-feature";
+import { insertAuditLog } from "@/lib/supabase/audit-log";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -49,9 +50,25 @@ export async function DELETE(
   if (!authz.ok) return deniedResponse(authz);
   const { id } = await context.params;
   const hard = new URL(req.url).searchParams.get("hard") === "true";
+  // Capture identity for the audit trail before the row is archived/removed.
+  const { row: existing } = await getHrOnboardingSubmissionById(id);
   const { error } = hard
     ? await deleteHrOnboardingSubmission(id)
     : await archiveHrOnboardingSubmission(id);
   if (error) return NextResponse.json({ error }, { status: 500 });
+
+  void insertAuditLog({
+    user_name: authz.sessionEmail,
+    user_role: authz.roles[0] ?? "hr",
+    action: hard ? "hr.onboarding.deleted" : "hr.onboarding.archived",
+    resource: "hr_onboarding_submissions",
+    resource_id: id,
+    details: {
+      name: existing?.full_name ?? existing?.invite_name ?? null,
+      personal_email: existing?.email ?? existing?.invite_personal_email ?? null,
+      hard,
+    },
+  });
+
   return NextResponse.json({ ok: true });
 }

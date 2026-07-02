@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="color-scheme" content="light" />
+<meta name="supported-color-schemes" content="light" />
+<title>Welcome to Simple</title>
+<!--
+  Onboarding / welcome email. Same email-safe scaffold as paystub.html
+  (table layout, inline styles, MSO fixes, orange Simple card).
+
+  Populated by n8n from the "Lock in" webhook, after a Split Out on body.rows
+  so each field sits at the item root. Placeholder fields used below:
+    first_name           greeting name    e.g. Maria
+    start_date           MM/DD/YYYY       e.g. 06/29/2026
+    orientation_weekday  weekday name     e.g. Monday
+    orientation_date     MM/DD/YYYY       e.g. 06/29/2026
+    zoom_link            full Zoom join URL
+  The hire's personal_email is the Gmail node's "To" field, not used in the body.
+
+  WARNING: never put a literal double-brace placeholder in this HTML comment.
+  n8n evaluates EVERY double-brace block in the message as an expression, and an
+  empty one (or bad syntax) makes the whole send fail with "invalid syntax".
+-->
+<style>
+body,table,td,a{-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%;}
+table,td{mso-table-lspace:0pt;mso-table-rspace:0pt;}
+img{-ms-interpolation-mode:bicubic;border:0;height:auto;line-height:100%;outline:none;text-decoration:none;}
+table{border-collapse:collapse !important;}
+html{height:100% !important;}
+body{height:100% !important;margin:0 !important;padding:0 !important;width:100% !important;}
+body,table,td,div,p,a{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;}
+.mono{font-family:"SFMono-Regular",Consolas,"Liberation Mono",Menlo,monospace;font-variant-numeric:tabular-nums;letter-spacing:0.04em;}
+.sec-head{background-color:#334155;padding:5px 12px;font-size:11px;line-height:13px;font-weight:800;letter-spacing:0.12em;text-transform:uppercase;color:#fff;mso-line-height-rule:exactly;}
+.body-p{font-size:14px;line-height:22px;color:#334155;margin:0;}
+.sched-when{width:38%;padding:8px 8px 8px 0;font-size:13px;line-height:18px;font-weight:700;color:#102034;border-bottom:1px solid #edf2f7;vertical-align:top;}
+.sched-what{width:62%;padding:8px 0;font-size:13px;line-height:18px;color:#556377;border-bottom:1px solid #edf2f7;vertical-align:top;}
+@media screen and (max-width:600px){
+.email-shell{padding:18px 10px !important;}
+.statement-card{width:100% !important;max-width:100% !important;}
+.px{padding-left:20px !important;padding-right:20px !important;}
+.top-pad{padding-top:14px !important;}
+.brand-logo{width:92px !important;}
+.stack-cell{display:block !important;width:100% !important;text-align:left !important;padding-right:0 !important;}
+.stack-cell+.stack-cell{padding-top:6px !important;}
+.sched-when,.sched-what{display:block !important;width:100% !important;}
+.sched-when{padding-bottom:0 !important;border-bottom:0 !important;}
+.sched-what{padding-top:2px !important;}
+}
+</style>
+</head>
+
+<body style="margin:0;padding:0;height:100%;background-color:#f4f7fb;">
+<div style="display:none;max-height:0;overflow:hidden;opacity:0;color:transparent;font-size:1px;line-height:1px;">We're thrilled to have you joining us here at Simple &#8212; your start date is {{ $json.body?.start_date || $json.start_date }}.</div>
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" height="100%" class="email-shell" style="height:100vh;background-color:#f4f7fb;padding:20px 16px;">
+<tr>
+<td align="center" valign="middle" style="vertical-align:middle;">
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="560" class="statement-card" style="width:560px;max-width:560px;background-color:#f97316;border-radius:17px;box-shadow:0 20px 48px rgba(16, 32, 52, 0.16), 0 2px 6px rgba(16, 32, 52, 0.07);overflow:hidden;">
+<tr>
+<td style="padding:3px;font-size:0;line-height:0;">
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="width:100%;background-color:#fbfcfe;border-radius:14px;overflow:hidden;">
+
+<!-- HEADER -->
+<tr>
+<td class="px top-pad" align="center" style="padding:18px 32px 16px 32px;background-color:#fff;border-bottom:1px solid #eef2f6;text-align:center;">
+<img class="brand-logo" src="https://host.simple.biz/email/simplelogo.png" alt="Simple" width="112" style="display:block;width:112px;height:auto;border:0;margin:0 auto 10px auto;" />
+<div style="font-size:26px;line-height:32px;font-weight:700;color:#102034;margin-top:0;letter-spacing:0;text-align:center;">Welcome to Simple</div>
+<div style="font-size:13px;line-height:19px;color:#556377;margin-top:4px;text-align:center;">Your official start date is <span style="font-weight:700;color:#f97316;">{{ $json.body?.start_date || $json.start_date }}</span></div>
+</td>
+</tr>
+
+<!-- INTRO -->
+<tr>
+<td class="px" style="padding:20px 32px 4px 32px;">
+<p class="body-p" style="font-size:15px;line-height:23px;color:#102034;font-weight:600;margin:0 0 8px 0;">Hello {{ $json.body?.first_name || $json.first_name || 'there' }},</p>
+<p class="body-p">We&#8217;re thrilled to have you joining us here at Simple! We can&#8217;t wait for you to get started. Here is everything you need for your first day.</p>
+</td>
+</tr>
+
+<!-- PAPERWORK -->
+<tr>
+<td class="px" style="padding:16px 32px 0 32px;">
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="width:100%;">
+<tr><td class="sec-head">Onboarding Paperwork</td></tr>
+</table>
+</td>
+</tr>
+<tr>
+<td class="px" style="padding:12px 32px 4px 32px;">
+<p class="body-p">You&#8217;ll receive an email from <a href="mailto:payroll@simple.biz" style="color:#c2410c;font-weight:700;text-decoration:none;">payroll@simple.biz</a> with your onboarding paperwork. Please complete it as soon as you receive it &#8212; otherwise you won&#8217;t have the essential tools to work with.</p>
+<p class="body-p" style="margin-top:10px;">Once your paperwork is complete, you&#8217;ll receive:</p>
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="width:100%;margin-top:8px;">
+<tr>
+<td valign="top" style="width:22px;padding:3px 0;font-size:14px;line-height:20px;color:#f97316;font-weight:800;">&#8226;</td>
+<td style="padding:3px 0;font-size:14px;line-height:20px;color:#334155;">Your new <strong style="color:#102034;">work email</strong></td>
+</tr>
+<tr>
+<td valign="top" style="width:22px;padding:3px 0;font-size:14px;line-height:20px;color:#f97316;font-weight:800;">&#8226;</td>
+<td style="padding:3px 0;font-size:14px;line-height:20px;color:#334155;">A <strong style="color:#102034;">Hubstaff</strong> invitation</td>
+</tr>
+<tr>
+<td valign="top" style="width:22px;padding:3px 0;font-size:14px;line-height:20px;color:#f97316;font-weight:800;">&#8226;</td>
+<td style="padding:3px 0;font-size:14px;line-height:20px;color:#334155;">A <strong style="color:#102034;">Roboform</strong> invitation</td>
+</tr>
+</table>
+<p class="body-p" style="margin-top:8px;font-size:12px;line-height:18px;color:#556377;">These are sent automatically later in the day.</p>
+</td>
+</tr>
+
+<!-- ORIENTATION SCHEDULE -->
+<tr>
+<td class="px" style="padding:20px 32px 0 32px;">
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="width:100%;">
+<tr><td class="sec-head">Orientation &amp; Training</td></tr>
+</table>
+</td>
+</tr>
+<tr>
+<td class="px" style="padding:10px 32px 0 32px;">
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="width:100%;background-color:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;">
+<tr>
+<td style="padding:12px 16px 4px 16px;">
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="width:100%;">
+<tr>
+<td class="sched-when">Orientation</td>
+<td class="sched-what">{{ $json.body?.orientation_weekday || $json.orientation_weekday }}, {{ $json.body?.orientation_date || $json.orientation_date }}<br /><strong style="color:#102034;">10:00 AM EST</strong> &#160;&#183;&#160; 10:00 PM Manila</td>
+</tr>
+<tr>
+<td class="sched-when" style="border-bottom:0;">Training</td>
+<td class="sched-what" style="border-bottom:0;">Immediately after, until<br /><strong style="color:#102034;">4:00 PM EST</strong> &#160;&#183;&#160; 4:00 AM Manila</td>
+</tr>
+</table>
+</td>
+</tr>
+</table>
+</td>
+</tr>
+<tr>
+<td class="px" style="padding:12px 32px 0 32px;">
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="width:100%;background-color:#fff7ed;border:1px solid #fed7aa;border-radius:10px;">
+<tr>
+<td style="padding:10px 16px;font-size:13px;line-height:19px;color:#9a3412;"><strong style="color:#7c2d12;">Please bring:</strong> your work device and your USB headset.</td>
+</tr>
+</table>
+</td>
+</tr>
+
+<!-- ZOOM DETAILS -->
+<tr>
+<td class="px" style="padding:20px 32px 0 32px;">
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="width:100%;">
+<tr><td class="sec-head">Join the Zoom Meeting</td></tr>
+</table>
+</td>
+</tr>
+<tr>
+<td class="px" align="center" style="padding:14px 32px 0 32px;text-align:center;">
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:0 auto;">
+<tr>
+<td align="center" bgcolor="#f97316" style="border-radius:9px;">
+<a href="{{ $json.body?.zoom_link || $json.zoom_link || 'https://zoom.us/j/3136183188' }}" target="_blank" style="display:inline-block;padding:13px 34px;font-size:14px;line-height:18px;font-weight:700;color:#ffffff;text-decoration:none;border-radius:9px;">Join Zoom Meeting</a>
+</td>
+</tr>
+</table>
+</td>
+</tr>
+<tr>
+<td class="px" style="padding:14px 32px 0 32px;">
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="width:100%;background-color:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;">
+<tr>
+<td class="stack-cell" style="width:50%;padding:11px 16px;border-right:1px solid #e2e8f0;">
+<div style="font-size:10px;line-height:13px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;color:#556377;">Meeting ID</div>
+<div class="mono" style="font-size:16px;line-height:22px;font-weight:700;color:#102034;margin-top:3px;">313 618 3188</div>
+</td>
+<td class="stack-cell" style="width:50%;padding:11px 16px;">
+<div style="font-size:10px;line-height:13px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;color:#556377;">Passcode</div>
+<div class="mono" style="font-size:16px;line-height:22px;font-weight:700;color:#102034;margin-top:3px;">dsZeA8</div>
+</td>
+</tr>
+</table>
+</td>
+</tr>
+
+<!-- RESOURCES -->
+<tr>
+<td class="px" style="padding:20px 32px 0 32px;">
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="width:100%;">
+<tr><td class="sec-head">Helpful Resources</td></tr>
+</table>
+</td>
+</tr>
+<tr>
+<td class="px" style="padding:12px 32px 4px 32px;">
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="width:100%;">
+<tr>
+<td valign="top" style="width:22px;padding:4px 0;font-size:14px;line-height:20px;color:#f97316;font-weight:800;">&#8226;</td>
+<td style="padding:4px 0;font-size:14px;line-height:20px;color:#334155;"><a href="https://drive.google.com/file/d/1Mm-9KcU6698vL1wAjJA0m9t5Js7LcbNs/view" target="_blank" style="color:#c2410c;font-weight:700;text-decoration:underline;">Review this document</a> for more information.</td>
+</tr>
+<tr>
+<td valign="top" style="width:22px;padding:4px 0;font-size:14px;line-height:20px;color:#f97316;font-weight:800;">&#8226;</td>
+<td style="padding:4px 0;font-size:14px;line-height:20px;color:#334155;"><a href="https://drive.google.com/file/d/144sqMdR5D3MdKolAYUEcF1-VaOTIyZpz/view" target="_blank" style="color:#c2410c;font-weight:700;text-decoration:underline;">Watch this short video</a> from our team on why they work at Simple and how we help orphans in the Philippines.</td>
+</tr>
+</table>
+</td>
+</tr>
+
+<!-- CLOSING -->
+<tr>
+<td class="px" style="padding:18px 32px 16px 32px;">
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="background-color:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;">
+<tr><td style="padding:10px 14px;font-size:12px;line-height:18px;color:#556377;">Have a question before your first day? Just reply to this email &#8212; we&#8217;re happy to help.</td></tr>
+</table>
+</td>
+</tr>
+
+<!-- FOOTER -->
+<tr>
+<td class="px" style="background-color:#f8fafc;border-top:1px solid #eef2f6;padding:10px 32px;">
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">
+<tr>
+<td style="font-size:11px;line-height:16px;color:#556377;">Automated dispatch from Simple HRIS</td>
+<td align="right" style="font-size:11px;line-height:16px;font-weight:700;color:#334155;white-space:nowrap;">Simple Onboarding</td>
+</tr>
+</table>
+</td>
+</tr>
+</table>
+</td>
+</tr>
+</table>
+</td>
+</tr>
+</table>
+</body>
+</html>

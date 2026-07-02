@@ -15,10 +15,13 @@ import {
   Clock,
   FileSpreadsheet,
   FolderSync,
+  Gift,
   KeyRound,
   Layers,
   Loader2,
+  Megaphone,
   Network,
+  PiggyBank,
   RefreshCw,
   Search,
   Settings,
@@ -42,6 +45,9 @@ type CategoryId =
   | 'settings'
   | 'sync'
   | 'csv'
+  | 'mesa'
+  | 'gift'
+  | 'announcement'
   | 'employees'
   | 'hr'
   | 'teams'
@@ -104,15 +110,44 @@ const CATEGORIES: CategoryDef[] = [
     match: (a) => a.startsWith('csv.'),
   },
   {
+    // MESA opt-in / disbursement decisions. Listed before `employees` so
+    // `employee.mesa.*` lands here rather than in generic Employee Management.
+    id: 'mesa',
+    label: 'MESA',
+    shortLabel: 'MESA',
+    Icon: PiggyBank,
+    tone: { dot: 'bg-green-500', chip: 'bg-green-50 text-green-700 dark:bg-green-950/40 dark:text-green-300' },
+    match: (a) => a.startsWith('mesa.') || a.startsWith('employee.mesa.'),
+  },
+  {
+    // Gift tracker: catalog, notes, shipping decisions, and gift payments.
+    id: 'gift',
+    label: 'Gift Tracker',
+    shortLabel: 'Gifts',
+    Icon: Gift,
+    tone: { dot: 'bg-pink-500', chip: 'bg-pink-50 text-pink-700 dark:bg-pink-950/40 dark:text-pink-300' },
+    match: (a) => a.startsWith('gift.') || a.startsWith('employee_gift_shipping.'),
+  },
+  {
+    id: 'announcement',
+    label: 'Announcements',
+    shortLabel: 'Posts',
+    Icon: Megaphone,
+    tone: { dot: 'bg-yellow-500', chip: 'bg-yellow-50 text-yellow-700 dark:bg-yellow-950/40 dark:text-yellow-300' },
+    match: (a) => a.startsWith('announcement.'),
+  },
+  {
     id: 'employees',
     label: 'Employee Management',
     shortLabel: 'Employees',
     Icon: Users,
     tone: { dot: 'bg-emerald-500', chip: 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300' },
     match: (a) =>
-      a.startsWith('employee.') &&
-      !a.startsWith('employee.login') &&
-      !a.startsWith('employee.password_reset'),
+      (a.startsWith('employee.') &&
+        !a.startsWith('employee.login') &&
+        !a.startsWith('employee.password_reset') &&
+        !a.startsWith('employee.mesa.')) ||
+      a.startsWith('master.'),
   },
   {
     id: 'hr',
@@ -120,7 +155,7 @@ const CATEGORIES: CategoryDef[] = [
     shortLabel: 'HR',
     Icon: Building2,
     tone: { dot: 'bg-rose-500', chip: 'bg-rose-50 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300' },
-    match: (a) => a.startsWith('hr.'),
+    match: (a) => a.startsWith('hr.') || a.startsWith('offboarding.'),
   },
   {
     id: 'teams',
@@ -392,6 +427,119 @@ export function formatActionLabel(action: string, details: Record<string, unknow
     case 'employee_gift_shipping.deleted':
       return `Gift shipping deleted: ${String(details?.resource_id ?? details?.personal_email ?? '?')}`;
 
+    // ── HR: pending hires / onboarding pipeline ─────────────────────────
+    case 'hr.pending.bulk_promoted': {
+      const promoted = String(details?.promoted ?? '?');
+      const total = String(details?.total ?? '?');
+      const failed = Number(details?.failed ?? 0);
+      const mode = details?.mode === 'lead_gen' ? 'Lead Gen batch' : 'selected';
+      return `Bulk promote (${mode}): ${promoted}/${total} promoted${failed > 0 ? `, ${failed} failed` : ''}`;
+    }
+    case 'hr.pending.bulk_unpromoted': {
+      const reverted = String(details?.reverted ?? '?');
+      const total = String(details?.total ?? '?');
+      return `Bulk unpromote: ${reverted}/${total} sent back to Ready`;
+    }
+    case 'hr.pending.promoted':
+      return `Hire promoted: ${String(pick(details, 'name', 'work_email') ?? '?')}${details?.department ? ` (${String(details.department)})` : ''}`;
+    case 'hr.pending.unpromoted':
+      return `Hire sent back to Ready: ${String(pick(details, 'name', 'work_email') ?? '?')}`;
+    case 'hr.pending.updated': {
+      const who = String(pick(details, 'name', 'work_email') ?? '?');
+      const fields = (details?.fields_changed as string[] | undefined)?.join(', ');
+      return `Hire updated: ${who}${fields ? ` (${fields})` : ''}`;
+    }
+    case 'hr.pending.retry_workspace':
+      return `Workspace setup retried: ${String(pick(details, 'work_email', 'target_email', 'name', 'resource_id') ?? '?')}`;
+    case 'hr.hire.cancelled':
+      return `Hire cancelled: ${String(pick(details, 'target_email', 'work_email', 'name') ?? '?')}${details?.department ? ` (${String(details.department)})` : ''}`;
+    case 'hr.hire.deleted':
+      return `Hire permanently deleted: ${String(pick(details, 'name', 'work_email', 'target_email') ?? '?')}`;
+    case 'hr.onboarding.link_created':
+      return `Onboarding link created: ${String(pick(details, 'invite_name', 'invite_personal_email') ?? '?')}${details?.department ? ` (${String(details.department)})` : ''}`;
+    case 'hr.onboarding.archived':
+      return `Onboarding submission archived: ${String(pick(details, 'name', 'personal_email') ?? '?')}`;
+    case 'hr.onboarding.deleted':
+      return `Onboarding submission deleted: ${String(pick(details, 'name', 'personal_email') ?? '?')}`;
+    case 'hr.onboarding.set_workspace_status':
+      return `Workspace status set: ${String(pick(details, 'work_email', 'target_email') ?? '?')}${details?.status ? ` → ${String(details.status)}` : ''}`;
+    case 'hr.pay_plan.uploaded':
+      return `Pay plan uploaded: ${String(details?.department ?? '?')}${details?.country ? ` (${String(details.country)})` : ''}`;
+    case 'hr.pay_plan.deleted':
+      return `Pay plan deleted${details?.id ? ` (#${String(details.id)})` : ''}`;
+
+    // ── HR: New Hire Checklist ──────────────────────────────────────────
+    case 'hr.new_hire_checklist.saved':
+      return `New-hire checklist saved: week ${String(details?.period ?? '?')}${details?.row_count != null ? ` (${String(details.row_count)} rows)` : ''}`;
+    case 'hr.new_hire_checklist.locked':
+      return `New-hire checklist locked: week ${String(details?.period ?? '?')}`;
+    case 'hr.new_hire_checklist.reopened':
+      return `New-hire checklist reopened: week ${String(details?.period ?? '?')}`;
+
+    // ── HR: offboarding queue + webhooks + sheet ────────────────────────
+    case 'hr.employee.webhook_fired.deactivate':
+      return `Offboard webhook (deactivate): ${String(pick(details, 'work_email', 'target_email', 'name') ?? '?')}`;
+    case 'hr.employee.webhook_fired.delete':
+      return `Offboard webhook (delete): ${String(pick(details, 'work_email', 'target_email', 'name') ?? '?')}`;
+    case 'hr.employee.removed_from_offboarded_sheet':
+      return `Removed from Offboarded sheet: ${String(pick(details, 'work_email', 'personal_email', 'name') ?? '?')}`;
+    case 'offboarding.requested':
+      return `Offboarding requested: ${String(pick(details, 'work_email', 'target_email', 'employee_email', 'name') ?? '?')}`;
+    case 'offboarding.request_returned':
+      return `Offboarding sent back to manager: ${String(pick(details, 'work_email', 'target_email', 'employee_email', 'name') ?? '?')}`;
+    case 'offboarding.request_dismissed':
+      return `Offboarding request dismissed: ${String(pick(details, 'work_email', 'target_email', 'employee_email', 'name') ?? '?')}`;
+    case 'offboarding.request_completed':
+      return `Offboarding request completed: ${String(pick(details, 'work_email', 'target_email', 'employee_email', 'name') ?? '?')}`;
+    case 'offboarding.request_cancelled':
+      return `Offboarding request cancelled: ${String(pick(details, 'work_email', 'target_email', 'employee_email', 'name') ?? '?')}`;
+
+    // ── Global Master List ──────────────────────────────────────────────
+    case 'master.add':
+      return `Employee added to master list: ${String(pick(details, 'name', 'work_email') ?? '?')}${details?.department ? ` (${String(details.department)})` : ''}`;
+
+    // ── MESA ────────────────────────────────────────────────────────────
+    case 'mesa.request.approved':
+      return `MESA request approved: ${String(pick(details, 'employee_email', 'name', 'personal_email') ?? '?')}`;
+    case 'mesa.request.denied':
+      return `MESA request denied: ${String(pick(details, 'employee_email', 'name', 'personal_email') ?? '?')}`;
+    case 'mesa.request.revoked':
+      return `MESA request revoked: ${String(pick(details, 'employee_email', 'name', 'personal_email') ?? '?')}`;
+    case 'mesa.request.deleted':
+      return `MESA request deleted: ${String(pick(details, 'employee_email', 'name', 'personal_email', 'resource_id') ?? '?')}`;
+    case 'employee.mesa.enroll':
+      return `MESA enrolled: ${String(pick(details, 'work_email', 'email', 'name') ?? '?')}`;
+    case 'employee.mesa.unenroll':
+      return `MESA removed: ${String(pick(details, 'work_email', 'email', 'name') ?? '?')}`;
+
+    // ── Gift Tracker ────────────────────────────────────────────────────
+    case 'employee_gift_shipping.approved':
+      return `Gift shipping approved: ${String(pick(details, 'personal_email', 'name', 'resource_id') ?? '?')}`;
+    case 'employee_gift_shipping.rejected':
+      return `Gift shipping returned: ${String(pick(details, 'personal_email', 'name', 'resource_id') ?? '?')}`;
+    case 'gift.payment_edited':
+      return `Gift payments saved${details?.count != null ? ` — ${String(details.count)} records` : ''}`;
+    case 'gift.tracker_note_saved':
+      return `Gift note saved: ${String(details?.employee_email ?? '?')}`;
+    case 'gift.catalog_saved':
+      return `Gift catalog updated`;
+
+    // ── Transfers (approve / reject) ────────────────────────────────────
+    case 'department_transfer.approved':
+      return `Transfer approved: ${String(details?.employee_email ?? '?')}${details?.to_department ? ` → ${String(details.to_department)}` : ''}`;
+    case 'department_transfer.rejected':
+      return `Transfer rejected: ${String(details?.employee_email ?? '?')}`;
+
+    // ── Announcements ───────────────────────────────────────────────────
+    case 'announcement.posted': {
+      const where = details?.scope === 'department' ? String(details?.department ?? 'a department') : 'general';
+      return `Announcement posted: “${String(details?.title ?? 'Untitled')}” (${where})`;
+    }
+    case 'announcement.pin_toggled':
+      return `Announcement ${details?.pinned ? 'pinned' : 'unpinned'}`;
+    case 'announcement.deleted':
+      return `Announcement deleted${details?.author_email ? ` (by ${String(details.author_email)})` : ''}`;
+
     default:
       return action;
   }
@@ -453,6 +601,65 @@ function actionDot(action: string): string {
   if (action === 'fpu.enroll') return 'bg-emerald-500';
   if (action === 'employee_gift_shipping.edited') return 'bg-yellow-500';
   if (action === 'employee_gift_shipping.deleted') return 'bg-rose-500';
+
+  // ── HR: pending hires / onboarding pipeline ──────────────────────────
+  if (action === 'hr.pending.bulk_promoted') return 'bg-emerald-600';
+  if (action === 'hr.pending.bulk_unpromoted') return 'bg-amber-500';
+  if (action === 'hr.pending.promoted') return 'bg-emerald-500';
+  if (action === 'hr.pending.unpromoted') return 'bg-amber-500';
+  if (action === 'hr.pending.updated') return 'bg-sky-500';
+  if (action === 'hr.pending.retry_workspace') return 'bg-indigo-400';
+  if (action === 'hr.hire.cancelled') return 'bg-orange-600';
+  if (action === 'hr.hire.deleted') return 'bg-red-600';
+  if (action === 'hr.onboarding.link_created') return 'bg-teal-500';
+  if (action === 'hr.onboarding.archived') return 'bg-zinc-500';
+  if (action === 'hr.onboarding.deleted') return 'bg-red-600';
+  if (action === 'hr.onboarding.set_workspace_status') return 'bg-sky-500';
+  if (action === 'hr.pay_plan.uploaded') return 'bg-sky-600';
+  if (action === 'hr.pay_plan.deleted') return 'bg-rose-500';
+
+  // ── HR: New Hire Checklist ───────────────────────────────────────────
+  if (action === 'hr.new_hire_checklist.saved') return 'bg-emerald-500';
+  if (action === 'hr.new_hire_checklist.locked') return 'bg-rose-500';
+  if (action === 'hr.new_hire_checklist.reopened') return 'bg-amber-500';
+
+  // ── HR: offboarding queue + webhooks + sheet ─────────────────────────
+  if (action === 'hr.employee.webhook_fired.deactivate') return 'bg-orange-500';
+  if (action === 'hr.employee.webhook_fired.delete') return 'bg-red-600';
+  if (action === 'hr.employee.removed_from_offboarded_sheet') return 'bg-zinc-500';
+  if (action === 'offboarding.requested') return 'bg-rose-400';
+  if (action === 'offboarding.request_returned') return 'bg-amber-500';
+  if (action === 'offboarding.request_dismissed') return 'bg-zinc-500';
+  if (action === 'offboarding.request_completed') return 'bg-emerald-500';
+  if (action === 'offboarding.request_cancelled') return 'bg-zinc-500';
+
+  // ── Global Master List ───────────────────────────────────────────────
+  if (action === 'master.add') return 'bg-emerald-500';
+
+  // ── MESA ─────────────────────────────────────────────────────────────
+  if (action === 'mesa.request.approved') return 'bg-green-600';
+  if (action === 'mesa.request.denied') return 'bg-rose-600';
+  if (action === 'mesa.request.revoked') return 'bg-amber-600';
+  if (action === 'mesa.request.deleted') return 'bg-red-600';
+  if (action === 'employee.mesa.enroll') return 'bg-green-500';
+  if (action === 'employee.mesa.unenroll') return 'bg-zinc-500';
+
+  // ── Gift Tracker ─────────────────────────────────────────────────────
+  if (action === 'employee_gift_shipping.approved') return 'bg-green-600';
+  if (action === 'employee_gift_shipping.rejected') return 'bg-rose-500';
+  if (action === 'gift.payment_edited') return 'bg-pink-500';
+  if (action === 'gift.tracker_note_saved') return 'bg-pink-400';
+  if (action === 'gift.catalog_saved') return 'bg-pink-500';
+
+  // ── Transfers (approve / reject) ─────────────────────────────────────
+  if (action === 'department_transfer.approved') return 'bg-green-600';
+  if (action === 'department_transfer.rejected') return 'bg-rose-600';
+
+  // ── Announcements ────────────────────────────────────────────────────
+  if (action === 'announcement.posted') return 'bg-yellow-500';
+  if (action === 'announcement.pin_toggled') return 'bg-amber-500';
+  if (action === 'announcement.deleted') return 'bg-rose-500';
+
   return 'bg-zinc-400';
 }
 
@@ -545,6 +752,9 @@ export default function AuditLogPanel({ onNavigateToOtSettings, className }: Aud
       settings: 0,
       sync: 0,
       csv: 0,
+      mesa: 0,
+      gift: 0,
+      announcement: 0,
       employees: 0,
       hr: 0,
       teams: 0,

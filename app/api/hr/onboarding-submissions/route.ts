@@ -10,6 +10,7 @@ import {
   requireElevatedSession,
 } from "@/lib/auth/authorize-email";
 import { requireFeatureEdit } from "@/lib/auth/authorize-feature";
+import { insertAuditLog } from "@/lib/supabase/audit-log";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -57,5 +58,20 @@ export async function POST(req: Request) {
     created_by: authz.sessionEmail,
   });
   if (error) return NextResponse.json({ error }, { status: 500 });
+
+  void insertAuditLog({
+    user_name: authz.sessionEmail,
+    user_role: authz.roles[0] ?? "hr",
+    action: "hr.onboarding.link_created",
+    resource: "hr_onboarding_submissions",
+    resource_id: row?.id ?? null,
+    details: {
+      invite_name: body.invite_name ?? null,
+      invite_personal_email: inviteEmail || null,
+      department: body.invite_department ?? null,
+      country: body.invite_country ?? null,
+    },
+  });
+
   return NextResponse.json({ row });
 }

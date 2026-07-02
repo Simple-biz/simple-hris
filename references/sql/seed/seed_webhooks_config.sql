@@ -25,6 +25,7 @@
 --   onboarding_send           -> HR Onboarding "Send" (invite email + dept+country pay-plan PDF)
 --   offboarding_deactivate    -> Offboard (non-Lead-Gen): suspend account + email + Hubstaff removal
 --   offboarding_delete        -> Offboard (Lead Gen now / others after 14d): permanently delete account
+--   new_hire_checklist_lock   -> HR New Hire Checklist "Lock in": full locked-week payload
 --
 -- NOTE: the legacy single 'offboarding' slug is retired. If an existing config
 -- still has it, it becomes dead config (code requests the two slugs above);
@@ -98,6 +99,13 @@ BEGIN
       'url', 'https://simpledotbiz.app.n8n.cloud/webhook/offboarding-delete',
       'active', false,
       'description', 'Permanently deletes the Workspace account. Fired immediately for Lead Gen; fired by the scheduled-deletion cron 14 days after deactivation for other departments.'
+    ),
+    jsonb_build_object(
+      'slug', 'new_hire_checklist_lock',
+      'label', 'New Hire Checklist - Lock in (n8n)',
+      'url', 'https://simpledotbiz.app.n8n.cloud/webhook-test/609dd382-6214-41c7-8a16-ed94a0b84110',
+      'active', false,
+      'description', 'Fired by the HR New Hire Checklist "Lock in" button. POSTs the locked week''s full payload (every row + all fields + lock metadata) to n8n.'
     )
   );
 

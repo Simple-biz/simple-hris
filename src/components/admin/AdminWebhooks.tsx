@@ -75,6 +75,12 @@ const KNOWN_SLUGS: Array<{ slug: string; label: string; description: string }> =
     description:
       'Permanently deletes the Workspace account. Fired immediately for Lead Gen; fired by the scheduled-deletion cron 14 days after deactivation for other departments.',
   },
+  {
+    slug: 'new_hire_checklist_lock',
+    label: 'New Hire Checklist - Lock in (n8n)',
+    description:
+      'Fired by the HR New Hire Checklist "Lock in" button. POSTs the locked week\'s full payload (every row + all fields + lock metadata) to n8n.',
+  },
 ];
 
 function uid() {

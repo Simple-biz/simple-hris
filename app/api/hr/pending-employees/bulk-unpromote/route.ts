@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { bulkRevertHrPendingEmployeesToReady } from "@/lib/supabase/hr-pending-employees";
 import { deniedResponse } from "@/lib/auth/authorize-email";
 import { requireFeatureEdit } from "@/lib/auth/authorize-feature";
+import { insertAuditLog } from "@/lib/supabase/audit-log";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -46,5 +47,20 @@ export async function POST(req: Request) {
   }
 
   const out = await bulkRevertHrPendingEmployeesToReady(ids);
+
+  void insertAuditLog({
+    user_name: authz.sessionEmail,
+    user_role: authz.roles[0] ?? "hr",
+    action: "hr.pending.bulk_unpromoted",
+    resource: "hr_pending_employees",
+    resource_id: null,
+    details: {
+      total: out.total,
+      reverted: out.reverted,
+      failed: out.failed,
+      ids,
+    },
+  });
+
   return NextResponse.json(out);
 }

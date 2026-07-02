@@ -5,6 +5,7 @@ import {
 } from '@/lib/supabase/gift-tracker-notes';
 import { requireFeatureEdit } from '@/lib/auth/authorize-feature';
 import { deniedResponse } from '@/lib/auth/authorize-email';
+import { insertAuditLog } from '@/lib/supabase/audit-log';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -34,6 +35,19 @@ export async function PUT(request: Request) {
       body.updated_by ?? null,
     );
     if (error) return NextResponse.json({ error }, { status: 500 });
+
+    void insertAuditLog({
+      user_name: authz.sessionEmail,
+      user_role: authz.roles[0] ?? 'hr',
+      action: 'gift.tracker_note_saved',
+      resource: 'gift_tracker_notes',
+      resource_id: email,
+      details: {
+        employee_email: email,
+        has_note: !!(body.note && body.note.trim()),
+      },
+    });
+
     return NextResponse.json({ error: null });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);

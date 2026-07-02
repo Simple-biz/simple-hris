@@ -8,6 +8,8 @@ import {
 } from "@/lib/supabase/hr-new-hire-checklist";
 import { deniedResponse, requireElevatedSession } from "@/lib/auth/authorize-email";
 import { requireFeatureEdit } from "@/lib/auth/authorize-feature";
+import { fireNewHireChecklistLockWebhook } from "@/lib/hr/new-hire-checklist-webhook";
+import { insertAuditLog } from "@/lib/supabase/audit-log";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -70,6 +72,14 @@ export async function PUT(req: Request) {
     });
     if (error) return NextResponse.json({ error }, { status: 500 });
     const { rows } = await listHrNewHireChecklist(period);
+    void insertAuditLog({
+      user_name: authz.sessionEmail,
+      user_role: authz.roles[0] ?? "hr",
+      action: "hr.new_hire_checklist.reopened",
+      resource: "hr_new_hire_checklist",
+      resource_id: period,
+      details: { period },
+    });
     return NextResponse.json({ rows, period: periodState });
   }
 
@@ -95,6 +105,7 @@ export async function PUT(req: Request) {
   if (error) return NextResponse.json({ error }, { status: 500 });
 
   let periodState = current.period;
+  let webhook: Awaited<ReturnType<typeof fireNewHireChecklistLockWebhook>> | undefined;
   if (action === "lock") {
     const locked = await setHrChecklistPeriodStatus(period, {
       status: "locked",
@@ -103,6 +114,16 @@ export async function PUT(req: Request) {
     });
     if (locked.error) return NextResponse.json({ error: locked.error }, { status: 500 });
     periodState = locked.period;
+
+    // Push the locked week's full payload to n8n (best-effort — the DB write
+    // above is the source of truth, so a webhook failure never fails the lock).
+    webhook = await fireNewHireChecklistLockWebhook({
+      period: periodState,
+      periodStart: period,
+      periodEnd: body.period_end ?? null,
+      rows,
+      lockedBy: authz.sessionEmail,
+    });
   } else if (body.period_end && !current.period?.period_end) {
     // First save of a brand-new week — record its end date (best-effort).
     const saved = await setHrChecklistPeriodStatus(period, {
@@ -113,5 +134,20 @@ export async function PUT(req: Request) {
     if (!saved.error) periodState = saved.period;
   }
 
-  return NextResponse.json({ rows, period: periodState });
+  void insertAuditLog({
+    user_name: authz.sessionEmail,
+    user_role: authz.roles[0] ?? "hr",
+    action: action === "lock" ? "hr.new_hire_checklist.locked" : "hr.new_hire_checklist.saved",
+    resource: "hr_new_hire_checklist",
+    resource_id: period,
+    details: {
+      period,
+      row_count: Array.isArray(rows) ? rows.length : null,
+      ...(action === "lock"
+        ? { webhook_fired: webhook ? webhook.fired && webhook.error == null : false }
+        : {}),
+    },
+  });
+
+  return NextResponse.json({ rows, period: periodState, ...(webhook ? { webhook } : {}) });
 }

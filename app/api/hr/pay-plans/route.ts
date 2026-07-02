@@ -8,6 +8,7 @@ import {
 import { resolveOnboardingCountry } from "@/lib/onboarding/countries";
 import { deniedResponse } from "@/lib/auth/authorize-email";
 import { requireFeatureAccess, requireFeatureEdit } from "@/lib/auth/authorize-feature";
+import { insertAuditLog } from "@/lib/supabase/audit-log";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -99,5 +100,20 @@ export async function POST(req: Request) {
   if (error || !row) {
     return NextResponse.json({ error: error ?? "Failed to save pay plan." }, { status: 500 });
   }
+
+  void insertAuditLog({
+    user_name: authz.sessionEmail,
+    user_role: authz.roles[0] ?? "hr",
+    action: "hr.pay_plan.uploaded",
+    resource: "onboarding_pay_plans",
+    resource_id: row.id != null ? String(row.id) : null,
+    details: {
+      department,
+      country: countryRaw,
+      file_name: file.name || null,
+      file_size: file.size,
+    },
+  });
+
   return NextResponse.json({ row });
 }

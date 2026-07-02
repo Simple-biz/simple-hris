@@ -6,6 +6,7 @@ import {
 } from '@/lib/supabase/gift-catalog';
 import { requireFeatureEdit } from '@/lib/auth/authorize-feature';
 import { deniedResponse } from '@/lib/auth/authorize-email';
+import { insertAuditLog } from '@/lib/supabase/audit-log';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -29,6 +30,16 @@ export async function PUT(request: Request) {
     }
     const { error } = await upsertGiftCatalog(body.catalog, body.updated_by ?? null);
     if (error) return NextResponse.json({ error }, { status: 500 });
+
+    void insertAuditLog({
+      user_name: authz.sessionEmail,
+      user_role: authz.roles[0] ?? 'hr',
+      action: 'gift.catalog_saved',
+      resource: 'gift_catalog',
+      resource_id: null,
+      details: { sections: Object.keys(body.catalog ?? {}) },
+    });
+
     return NextResponse.json({ error: null });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);

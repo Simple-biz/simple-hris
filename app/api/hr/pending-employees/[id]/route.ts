@@ -95,6 +95,20 @@ export async function PATCH(
     }
   }
 
+  void insertAuditLog({
+    user_name: authz.sessionEmail,
+    user_role: authz.roles[0] ?? "admin",
+    action: "hr.pending.updated",
+    resource: "hr_pending_employees",
+    resource_id: String(id),
+    details: {
+      name: row?.name ?? null,
+      fields_changed: Object.keys(body ?? {}),
+      work_email: workEmailInBody ? (row?.work_email ?? null) : null,
+      workspace_account_created: workspace ? workspace.ok : null,
+    },
+  });
+
   // Never echo the staged hire's pay rate back to the HR client.
   return NextResponse.json({
     row: redactPendingRowRates(row, hasRateVisibility(authz.roles)),
@@ -132,8 +146,23 @@ export async function DELETE(
 
   // Hard delete = permanent DB removal (UI exposes this for Cancelled/No-show rows only).
   if (hard) {
+    // Capture identity for the audit trail before the row is gone (best-effort).
+    const { row: existing } = await getHrPendingEmployeeById(id);
     const { error } = await deleteHrPendingEmployee(id);
     if (error) return NextResponse.json({ error }, { status: 500 });
+    void insertAuditLog({
+      user_name: authz.sessionEmail,
+      user_role: authz.roles[0] ?? "admin",
+      action: "hr.hire.deleted",
+      resource: "hr_pending_employees",
+      resource_id: String(id),
+      details: {
+        name: existing?.name ?? null,
+        work_email: existing?.work_email ?? null,
+        department: existing?.department ?? null,
+        prior_status: existing?.status ?? null,
+      },
+    });
     return NextResponse.json({ ok: true });
   }
 

@@ -23,6 +23,8 @@ import {
   Users,
   Webhook,
 } from 'lucide-react';
+import CollapsibleSidebarShell from '@/components/common/CollapsibleSidebarShell';
+import SidebarBrandMark from '@/components/common/SidebarBrandMark';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -32,6 +34,7 @@ import { normEmail } from '@/lib/email/norm-email';
 import EmployeeAvatar from '@/components/employee/EmployeeAvatar';
 import { useViewerProfilePhoto } from '@/hooks/useViewerProfilePhoto';
 import { useDispatchLock } from '@/hooks/useDispatchLock';
+import { useSidebarCollapsed } from '@/hooks/useSidebarCollapsed';
 
 function isPlausibleEmail(s: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s.trim());
@@ -113,6 +116,7 @@ export default function AdminSidebar({
 
   const isDark = mounted ? resolvedTheme === 'dark' : false;
   const { state: lockState } = useDispatchLock();
+  const { collapsed, toggle } = useSidebarCollapsed();
 
   const [logoBeat, setLogoBeat] = React.useState(false);
   React.useEffect(() => {
@@ -140,6 +144,7 @@ export default function AdminSidebar({
       key={id}
       type="button"
       onClick={() => setActiveTab(id)}
+      title={collapsed ? label : undefined}
       className={cn(
         'flex w-full items-center gap-2.5 rounded-md px-2.5 py-[7px] text-[13.5px] font-[450] text-[#3f3f46] transition-colors',
         activeTab === id ? 'bg-[#18181b] font-medium text-white' : 'hover:bg-[#f3f3f3] hover:text-[#18181b]',
@@ -151,21 +156,24 @@ export default function AdminSidebar({
           activeTab === id ? 'text-white/75' : 'text-[#a1a1aa]',
         )}
       />
-      <span className="truncate text-left">{label}</span>
+      <span className={cn('truncate text-left transition-opacity duration-[var(--sb-collapse-ms)] ease-[var(--sb-collapse-ease)]', collapsed && 'md:opacity-0')}>{label}</span>
       {extra}
     </button>
   );
 
   return (
-    <aside
+    <CollapsibleSidebarShell
+      collapsed={collapsed}
+      onToggle={toggle}
+      innerWidthClassName="md:w-[220px]"
+      accentClassName="border-[#e4e4e7] hover:text-[#18181b] focus-visible:ring-zinc-400 dark:border-zinc-800 dark:hover:text-zinc-100"
+      id="admin-sidebar-nav"
+      ariaLabel="Admin navigation"
       className={cn(
         'flex h-dvh w-[220px] max-w-[min(100vw,220px)] shrink-0 flex-col border-r border-[#ececec] bg-white shadow-xl dark:border-zinc-800 dark:bg-zinc-950 md:max-w-none md:shadow-none',
-        'fixed inset-y-0 left-0 z-50 transition-transform duration-300 ease-out md:static md:z-auto md:translate-x-0',
+        'fixed inset-y-0 left-0 z-50 transition-[transform,width] duration-300 ease-out md:static md:z-auto md:translate-x-0',
         mobileOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0',
       )}
-      id="admin-sidebar-nav"
-      role="navigation"
-      aria-label="Admin navigation"
     >
       {/* Brand — anchored at the top */}
       <div className="shrink-0 px-5 pb-2 pt-7">
@@ -180,8 +188,11 @@ export default function AdminSidebar({
             <img
               src="/simple-logo.png"
               alt="Simple HRIS"
-              className={cn('h-10 w-full object-contain', logoBeat && 'logo-heartbeat')}
+              className={cn('h-10 w-full object-contain transition-opacity duration-[var(--sb-collapse-ms)] ease-[var(--sb-collapse-ease)]', collapsed && 'md:opacity-0', logoBeat && 'logo-heartbeat')}
               onAnimationEnd={() => setLogoBeat(false)}
+            />
+            <SidebarBrandMark
+              className={cn('pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 opacity-0 transition-opacity duration-[var(--sb-collapse-ms)] ease-[var(--sb-collapse-ease)] from-zinc-700 to-zinc-900', collapsed && 'md:opacity-100')}
             />
           </div>
         </a>
@@ -191,7 +202,7 @@ export default function AdminSidebar({
           Brand at top and Sign Out at bottom stay anchored regardless of viewport height. */}
       <ScrollArea className="min-h-0 flex-1">
         <div className="px-5 pb-4 pr-3">
-          <p className="mb-1.5 px-2.5 text-[10.5px] font-medium uppercase tracking-[0.06em] text-[#a1a1aa]">
+          <p className={cn('mb-1.5 px-2.5 text-[10.5px] font-medium uppercase tracking-[0.06em] text-[#a1a1aa] transition-opacity duration-[var(--sb-collapse-ms)] ease-[var(--sb-collapse-ease)]', collapsed && 'md:opacity-0')}>
             System
           </p>
           <nav className="flex flex-col gap-px">
@@ -248,7 +259,7 @@ export default function AdminSidebar({
 
           <div className="my-5 mx-2.5 h-px bg-[#ececec] dark:bg-zinc-800" />
 
-          <p className="mb-1.5 px-2.5 text-[10.5px] font-medium uppercase tracking-[0.06em] text-[#a1a1aa]">
+          <p className={cn('mb-1.5 px-2.5 text-[10.5px] font-medium uppercase tracking-[0.06em] text-[#a1a1aa] transition-opacity duration-[var(--sb-collapse-ms)] ease-[var(--sb-collapse-ease)]', collapsed && 'md:opacity-0')}>
             Security
           </p>
           <nav className="flex flex-col gap-px">
@@ -262,18 +273,21 @@ export default function AdminSidebar({
           {/* ViewSwitcher + theme toggle — moved INSIDE the scroll area so they're
               reachable via the same scrollbar when the viewport is short. */}
           <div className="mt-5 border-t border-[#ececec] pt-4 dark:border-zinc-800">
-            <ViewSwitcher email={email} currentView="admin" />
+            <div className={cn('transition-opacity duration-[var(--sb-collapse-ms)] ease-[var(--sb-collapse-ease)]', collapsed && 'md:opacity-0')}>
+              <ViewSwitcher email={email} currentView="admin" />
+            </div>
             <button
               type="button"
               onClick={() => withViewTransition(() => setTheme(isDark ? 'light' : 'dark'))}
+              title={collapsed ? (isDark ? 'Dark mode' : 'Light mode') : undefined}
               className="mb-1 mt-3 flex w-full items-center justify-between rounded-md border border-[#ececec] bg-[#fafaf8] px-3 py-2 text-left transition-colors hover:bg-[#f3f3f3] dark:border-zinc-800 dark:bg-zinc-900 dark:hover:bg-zinc-800"
               aria-label="Toggle dark mode"
             >
               <div className="flex items-center gap-2 text-xs font-medium text-[#3f3f46] dark:text-zinc-300">
-                {isDark ? <Moon className="h-4 w-4" /> : <Sun className="h-4 w-4" />}
-                {isDark ? 'Dark' : 'Light'}
+                {isDark ? <Moon className="h-4 w-4 shrink-0" /> : <Sun className="h-4 w-4 shrink-0" />}
+                <span className={cn('transition-opacity duration-[var(--sb-collapse-ms)] ease-[var(--sb-collapse-ease)]', collapsed && 'md:opacity-0')}>{isDark ? 'Dark' : 'Light'}</span>
               </div>
-              <span className="text-[#a1a1aa]">{isDark ? '☀' : '☾'}</span>
+              <span className={cn('text-[#a1a1aa] transition-opacity duration-[var(--sb-collapse-ms)] ease-[var(--sb-collapse-ease)]', collapsed && 'md:opacity-0')}>{isDark ? '☀' : '☾'}</span>
             </button>
           </div>
         </div>
@@ -290,7 +304,7 @@ export default function AdminSidebar({
             className="h-7 w-7 text-[11px]"
             pixelSize={56}
           />
-          <div className="min-w-0 flex-1">
+          <div className={cn('min-w-0 flex-1 transition-opacity duration-[var(--sb-collapse-ms)] ease-[var(--sb-collapse-ease)]', collapsed && 'md:opacity-0')}>
             <div className="truncate text-[13px] font-medium leading-tight text-[#18181b] dark:text-zinc-100">
               {titleName}
             </div>
@@ -298,10 +312,11 @@ export default function AdminSidebar({
               Admin · root
             </div>
           </div>
-          <MoreHorizontal className="h-4 w-4 shrink-0 cursor-pointer text-[#a1a1aa]" aria-hidden />
+          <MoreHorizontal className={cn('h-4 w-4 shrink-0 cursor-pointer text-[#a1a1aa] transition-opacity duration-[var(--sb-collapse-ms)] ease-[var(--sb-collapse-ease)]', collapsed && 'md:opacity-0')} aria-hidden />
         </div>
         <Button
           variant="ghost"
+          title={collapsed ? 'Sign Out' : undefined}
           className="mt-3 w-full justify-start gap-3 text-[#71717a] hover:bg-red-500/10 hover:text-red-600 dark:text-zinc-500 dark:hover:text-red-400"
           onClick={() => {
             try {
@@ -310,10 +325,10 @@ export default function AdminSidebar({
             void signOut({ callbackUrl: '/login' });
           }}
         >
-          <LogOut className="h-4 w-4" />
-          Sign Out
+          <LogOut className="h-4 w-4 shrink-0" />
+          <span className={cn('transition-opacity duration-[var(--sb-collapse-ms)] ease-[var(--sb-collapse-ease)]', collapsed && 'md:opacity-0')}>Sign Out</span>
         </Button>
       </div>
-    </aside>
+    </CollapsibleSidebarShell>
   );
 }

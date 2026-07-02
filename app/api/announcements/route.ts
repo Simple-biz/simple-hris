@@ -9,6 +9,7 @@ import {
   insertAnnouncement,
   lookupFullNameForEmail,
 } from '@/lib/supabase/announcements';
+import { insertAuditLog } from '@/lib/supabase/audit-log';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -126,6 +127,20 @@ export async function POST(req: NextRequest) {
       title: body.title,
       body: body.body,
       pinned,
+    });
+
+    void insertAuditLog({
+      user_name: email || 'anonymous',
+      user_role: roles[0] ?? 'user',
+      action: 'announcement.posted',
+      resource: 'announcements',
+      resource_id: (row as { id?: string | number } | null)?.id != null ? String((row as { id: string | number }).id) : null,
+      details: {
+        scope: body.scope,
+        department: body.scope === 'department' ? (body.department ?? null) : null,
+        pinned,
+        title: body.title,
+      },
     });
 
     return NextResponse.json({ announcement: row });

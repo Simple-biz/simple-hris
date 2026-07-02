@@ -4,6 +4,31 @@
 
 @variant dark (&:is(.dark *));
 
+/* ── Collapsible sidebar rail — single source of truth for the collapse feel ──
+   Both the rail's width slide and every label/logo fade read these, so the
+   whole collapse/expand experience is tuned in exactly one place. Long, gently
+   eased-in-and-out so it glides rather than snaps. */
+:root {
+  --sb-collapse-ms: 560ms;
+  --sb-collapse-ease: cubic-bezier(0.65, 0, 0.35, 1);
+}
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --sb-collapse-ms: 0.01ms;
+  }
+}
+
+/* The rail's width slide is driven here (not via Tailwind duration utilities)
+   so Tailwind v4's transition-utility cascade can never out-order it and make
+   the collapse snap. Desktop only — the mobile drawer keeps its own transition. */
+@media (min-width: 768px) {
+  [data-collapsible-rail] {
+    transition-property: width, transform !important;
+    transition-duration: var(--sb-collapse-ms) !important;
+    transition-timing-function: var(--sb-collapse-ease) !important;
+  }
+}
+
 @keyframes hero-loading-border {
   0%   { border-color: rgba(239, 68, 68, 0.70);  box-shadow: 0 12px 32px -16px rgba(239, 68, 68, 0.25); }
   30%  { border-color: rgba(249, 115, 22, 0.70); box-shadow: 0 12px 32px -16px rgba(249, 115, 22, 0.25); }

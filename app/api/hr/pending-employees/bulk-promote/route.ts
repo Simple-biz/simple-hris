@@ -14,6 +14,7 @@ import { masterListDisplayName } from "@/lib/name/display-name";
 import { createSupabaseServiceRoleClient } from "@/lib/supabase/server";
 import { deniedResponse } from "@/lib/auth/authorize-email";
 import { requireFeatureEdit } from "@/lib/auth/authorize-feature";
+import { insertAuditLog } from "@/lib/supabase/audit-log";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -262,6 +263,24 @@ export async function POST(req: Request) {
       },
   );
   const promotedCount = results.filter((r) => r.ok).length;
+
+  void insertAuditLog({
+    user_name: authz.sessionEmail,
+    user_role: authz.roles[0] ?? "hr",
+    action: "hr.pending.bulk_promoted",
+    resource: "hr_pending_employees",
+    resource_id: null,
+    details: {
+      mode: ids !== null ? "selected" : "lead_gen",
+      total: results.length,
+      promoted: promotedCount,
+      failed: results.length - promotedCount,
+      ids: results.map((r) => r.id),
+      failures: results
+        .filter((r) => !r.ok)
+        .map((r) => ({ id: r.id, name: r.name, error: r.error })),
+    },
+  });
 
   return NextResponse.json({
     promoted: promotedCount,

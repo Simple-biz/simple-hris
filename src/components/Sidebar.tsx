@@ -25,6 +25,8 @@ import {
 } from 'lucide-react';
 import { SWallNavLabel } from '@/components/swall/SWall';
 import ConstructionMark from '@/components/common/ConstructionMark';
+import CollapsibleSidebarShell from '@/components/common/CollapsibleSidebarShell';
+import SidebarBrandMark from '@/components/common/SidebarBrandMark';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -35,6 +37,7 @@ import EmployeeAvatar from '@/components/employee/EmployeeAvatar';
 import { useViewerProfilePhoto } from '@/hooks/useViewerProfilePhoto';
 import { useDispatchLock } from '@/hooks/useDispatchLock';
 import { useEmployeeNotificationsUnread } from '@/hooks/useEmployeeNotificationsUnread';
+import { useSidebarCollapsed } from '@/hooks/useSidebarCollapsed';
 
 function isPlausibleEmail(s: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s.trim());
@@ -114,6 +117,7 @@ export default function Sidebar({ activeTab, setActiveTab, mobileOpen, allowedTa
 
   const { profilePhotoUrl, googlePhotoUrl } = useViewerProfilePhoto(email);
   const { state: lockState } = useDispatchLock();
+  const { collapsed, toggle } = useSidebarCollapsed();
   const unreadNotifications = useEmployeeNotificationsUnread(email);
   const allowedTabSet = React.useMemo(() => new Set<string>(allowedTabs), [allowedTabs]);
   const visibleNavItems = React.useMemo(
@@ -122,15 +126,19 @@ export default function Sidebar({ activeTab, setActiveTab, mobileOpen, allowedTa
   );
 
   return (
-    <div
+    <CollapsibleSidebarShell
+      as="div"
+      collapsed={collapsed}
+      onToggle={toggle}
+      innerWidthClassName="md:w-64"
+      accentClassName="border-orange-200/80 hover:text-orange-600 focus-visible:ring-orange-400 dark:border-blue-950/70 dark:hover:text-orange-300"
+      id="accounting-sidebar-nav"
+      ariaLabel="Accounting navigation"
       className={cn(
         'flex h-dvh w-64 max-w-[min(100vw,16rem)] shrink-0 flex-col border-r border-orange-100 bg-gradient-to-b from-white to-orange-50/40 text-zinc-600 shadow-xl dark:border-blue-950/60 dark:from-[#0d1117] dark:to-[#0f1729] dark:text-zinc-400 md:max-w-none md:shadow-none',
-        'fixed inset-y-0 left-0 z-50 transition-transform duration-300 ease-out md:static md:z-auto md:translate-x-0',
+        'fixed inset-y-0 left-0 z-50 transition-[transform,width] duration-300 ease-out md:static md:z-auto md:translate-x-0',
         mobileOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0',
       )}
-      id="accounting-sidebar-nav"
-      role="navigation"
-      aria-label="Accounting navigation"
     >
       <div className="flex min-h-0 flex-1 flex-col p-6">
         <div className="mb-8 shrink-0">
@@ -145,9 +153,12 @@ export default function Sidebar({ activeTab, setActiveTab, mobileOpen, allowedTa
               <img
                 src="/simple-logo.png"
                 alt="Simple Accounting HRIS"
-                className={cn('h-10 w-full object-contain', logoBeat && 'logo-heartbeat')}
+                className={cn('h-10 w-full object-contain transition-opacity duration-[var(--sb-collapse-ms)] ease-[var(--sb-collapse-ease)]', collapsed && 'md:opacity-0', logoBeat && 'logo-heartbeat')}
                 onAnimationEnd={() => setLogoBeat(false)}
               />
+              <SidebarBrandMark
+              className={cn('pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 opacity-0 transition-opacity duration-[var(--sb-collapse-ms)] ease-[var(--sb-collapse-ease)] from-orange-500 to-amber-600', collapsed && 'md:opacity-100')}
+            />
             </div>
           </a>
         </div>
@@ -158,6 +169,7 @@ export default function Sidebar({ activeTab, setActiveTab, mobileOpen, allowedTa
               <button
                 key={item.id}
                 onClick={() => setActiveTab(item.id)}
+                title={collapsed ? item.label : undefined}
                 className={cn(
                   'group flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-all duration-200',
                   activeTab === item.id
@@ -167,14 +179,14 @@ export default function Sidebar({ activeTab, setActiveTab, mobileOpen, allowedTa
               >
                 <item.icon
                   className={cn(
-                    'h-4 w-4',
+                    'h-4 w-4 shrink-0',
                     activeTab === item.id
                       ? 'text-orange-500 dark:text-orange-400'
                       : 'text-zinc-500 group-hover:text-orange-500 dark:text-zinc-500 dark:group-hover:text-orange-400',
                   )}
                 />
-                {item.label}
-                {isConstr(item.id) && <ConstructionMark active={activeTab === item.id} />}
+                <span className={cn('truncate transition-opacity duration-[var(--sb-collapse-ms)] ease-[var(--sb-collapse-ease)]', collapsed && 'md:opacity-0')}>{item.label}</span>
+                {isConstr(item.id) && <span className={cn('transition-opacity duration-[var(--sb-collapse-ms)] ease-[var(--sb-collapse-ease)]', collapsed && 'md:opacity-0')}><ConstructionMark active={activeTab === item.id} /></span>}
                 {item.id === 'notifications' && unreadNotifications > 0 && activeTab !== 'notifications'
                   ? (
                     <span className="relative ml-auto inline-flex">
@@ -209,6 +221,7 @@ export default function Sidebar({ activeTab, setActiveTab, mobileOpen, allowedTa
             {allowedTabSet.has('s-wall') && (
               <button
                 onClick={() => setActiveTab('s-wall')}
+                title={collapsed ? 'S-Wall' : undefined}
                 className={cn(
                   'group/sw flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-all duration-200',
                   activeTab === 's-wall'
@@ -224,8 +237,8 @@ export default function Sidebar({ activeTab, setActiveTab, mobileOpen, allowedTa
                       : 'text-zinc-500 group-hover/sw:text-violet-500 dark:text-zinc-500 dark:group-hover/sw:text-violet-400',
                   )}
                 />
-                <SWallNavLabel />
-                {isConstr('s-wall') && <ConstructionMark active={activeTab === 's-wall'} />}
+                <span className={cn('transition-opacity duration-[var(--sb-collapse-ms)] ease-[var(--sb-collapse-ease)]', collapsed && 'md:opacity-0')}><SWallNavLabel /></span>
+                {isConstr('s-wall') && <span className={cn('transition-opacity duration-[var(--sb-collapse-ms)] ease-[var(--sb-collapse-ease)]', collapsed && 'md:opacity-0')}><ConstructionMark active={activeTab === 's-wall'} /></span>}
                 {activeTab === 's-wall' && (
                   <ChevronRight className="ml-auto h-3 w-3 text-violet-400 dark:text-violet-500/70" />
                 )}
@@ -236,17 +249,20 @@ export default function Sidebar({ activeTab, setActiveTab, mobileOpen, allowedTa
       </div>
 
       <div className="mt-auto border-t border-orange-100 p-4 dark:border-blue-950/60">
-        <ViewSwitcher email={email} currentView="accounting" />
+        <div className={cn('transition-opacity duration-[var(--sb-collapse-ms)] ease-[var(--sb-collapse-ease)]', collapsed && 'md:opacity-0')}>
+          <ViewSwitcher email={email} currentView="accounting" />
+        </div>
         <button
           onClick={() => withViewTransition(() => setTheme(isDark ? 'light' : 'dark'))}
+          title={collapsed ? (isDark ? 'Dark mode' : 'Light mode') : undefined}
           className="mb-2 flex w-full items-center justify-between rounded-md border border-orange-100 bg-orange-50/60 px-3 py-2 transition-colors hover:bg-orange-100/80 dark:border-blue-950/60 dark:bg-blue-950/20 dark:hover:bg-blue-950/40"
           aria-label="Toggle dark mode"
         >
           <div className="flex items-center gap-2 text-zinc-700 dark:text-zinc-300">
-            {isDark ? <Moon className="h-4 w-4" /> : <Sun className="h-4 w-4" />}
-            <span className="text-xs font-medium">{isDark ? 'Dark mode' : 'Light mode'}</span>
+            {isDark ? <Moon className="h-4 w-4 shrink-0" /> : <Sun className="h-4 w-4 shrink-0" />}
+            <span className={cn('text-xs font-medium transition-opacity duration-[var(--sb-collapse-ms)] ease-[var(--sb-collapse-ease)]', collapsed && 'md:opacity-0')}>{isDark ? 'Dark mode' : 'Light mode'}</span>
           </div>
-          <div className="flex h-6 w-6 items-center justify-center rounded-md bg-white shadow-sm dark:bg-blue-950/60">
+          <div className={cn('flex h-6 w-6 items-center justify-center rounded-md bg-white shadow-sm transition-opacity duration-[var(--sb-collapse-ms)] ease-[var(--sb-collapse-ease)] dark:bg-blue-950/60', collapsed && 'md:opacity-0')}>
             {isDark ? (
               <Sun className="h-3.5 w-3.5 text-orange-400" />
             ) : (
@@ -263,7 +279,7 @@ export default function Sidebar({ activeTab, setActiveTab, mobileOpen, allowedTa
             className="h-7 w-7 shrink-0 text-[11px]"
             pixelSize={56}
           />
-          <div className="flex min-w-0 flex-col overflow-hidden">
+          <div className={cn('flex min-w-0 flex-col overflow-hidden transition-opacity duration-[var(--sb-collapse-ms)] ease-[var(--sb-collapse-ease)]', collapsed && 'md:opacity-0')}>
             <span className="truncate text-[13px] font-medium leading-tight text-zinc-900 dark:text-zinc-200" title={email ?? undefined}>{email || 'Not signed in'}</span>
             <span className="truncate text-[11px] leading-tight text-zinc-500 dark:text-zinc-500">
               Accounting
@@ -275,6 +291,7 @@ export default function Sidebar({ activeTab, setActiveTab, mobileOpen, allowedTa
         </div>
         <Button
           variant="ghost"
+          title={collapsed ? 'Sign Out' : undefined}
           className="w-full justify-start gap-3 text-zinc-600 hover:bg-red-500/10 hover:text-red-600 dark:text-zinc-500 dark:hover:text-red-400"
           onClick={() => {
             try {
@@ -283,10 +300,10 @@ export default function Sidebar({ activeTab, setActiveTab, mobileOpen, allowedTa
             void signOut({ callbackUrl: '/login' });
           }}
         >
-          <LogOut className="h-4 w-4" />
-          Sign Out
+          <LogOut className="h-4 w-4 shrink-0" />
+          <span className={cn('transition-opacity duration-[var(--sb-collapse-ms)] ease-[var(--sb-collapse-ease)]', collapsed && 'md:opacity-0')}>Sign Out</span>
         </Button>
       </div>
-    </div>
+    </CollapsibleSidebarShell>
   );
 }

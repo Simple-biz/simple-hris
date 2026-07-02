@@ -6,6 +6,7 @@ import {
 import { deniedResponse } from "@/lib/auth/authorize-email";
 import { hasRateVisibility } from "@/lib/auth/elevated-roles";
 import { requireFeatureEdit } from "@/lib/auth/authorize-feature";
+import { insertAuditLog } from "@/lib/supabase/audit-log";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -41,5 +42,20 @@ export async function POST(
         : 500;
     return NextResponse.json({ row: safeRow, masterId, error }, { status });
   }
+
+  void insertAuditLog({
+    user_name: authz.sessionEmail,
+    user_role: authz.roles[0] ?? "hr",
+    action: "hr.pending.promoted",
+    resource: "hr_pending_employees",
+    resource_id: String(id),
+    details: {
+      name: row?.name ?? null,
+      work_email: row?.work_email ?? null,
+      department: row?.department ?? null,
+      master_id: masterId ?? null,
+    },
+  });
+
   return NextResponse.json({ row: safeRow, masterId, sheet });
 }

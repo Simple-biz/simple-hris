@@ -29,7 +29,30 @@ export type AuditAction =
   | 'bank_update.otp_requested'
   | 'bank_update.otp_verified'
   | 'bank_update.otp_verify_failed'
-  | 'bank_update.saved';
+  | 'bank_update.saved'
+  // HR Dashboard — pending hires / onboarding pipeline
+  | 'hr.pending.bulk_promoted'
+  | 'hr.pending.bulk_unpromoted'
+  | 'hr.pending.promoted'
+  | 'hr.pending.unpromoted'
+  | 'hr.pending.updated'
+  | 'hr.hire.deleted'
+  | 'hr.onboarding.link_created'
+  | 'hr.onboarding.archived'
+  | 'hr.onboarding.deleted'
+  | 'hr.pay_plan.uploaded'
+  | 'hr.pay_plan.deleted'
+  // HR Dashboard — New Hire Checklist
+  | 'hr.new_hire_checklist.saved'
+  | 'hr.new_hire_checklist.locked'
+  | 'hr.new_hire_checklist.reopened'
+  // HR Dashboard — Gift Tracker
+  | 'gift.tracker_note_saved'
+  | 'gift.catalog_saved'
+  // HR Dashboard — Announcements
+  | 'announcement.posted'
+  | 'announcement.pin_toggled'
+  | 'announcement.deleted';
 
 /**
  * Cycle context attached to every payroll-wizard audit event so the Reports

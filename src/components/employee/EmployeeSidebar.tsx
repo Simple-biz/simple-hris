@@ -26,8 +26,11 @@ import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import ConstructionMark from '@/components/common/ConstructionMark';
+import CollapsibleSidebarShell from '@/components/common/CollapsibleSidebarShell';
+import SidebarBrandMark from '@/components/common/SidebarBrandMark';
 import EmployeeAvatar from './EmployeeAvatar';
 import ViewSwitcher from '@/components/rbac/ViewSwitcher';
+import { useSidebarCollapsed } from '@/hooks/useSidebarCollapsed';
 
 interface EmployeeSidebarProps {
   activeTab: string;
@@ -93,6 +96,7 @@ export default function EmployeeSidebar({
   const [mounted, setMounted] = React.useState(false);
   React.useEffect(() => setMounted(true), []);
   const isDark = mounted ? resolvedTheme === 'dark' : false;
+  const { collapsed, toggle } = useSidebarCollapsed();
 
   const [logoBeat, setLogoBeat] = React.useState(false);
   React.useEffect(() => {
@@ -110,20 +114,23 @@ export default function EmployeeSidebar({
     .slice(0, 2);
 
   return (
-    <aside
+    <CollapsibleSidebarShell
+      collapsed={collapsed}
+      onToggle={toggle}
+      innerWidthClassName="md:w-64"
+      accentClassName="border-orange-200/80 hover:text-orange-600 focus-visible:ring-orange-400 dark:border-blue-950/70 dark:hover:text-orange-300"
+      id="employee-sidebar-nav"
+      ariaLabel="Employee navigation"
       className={cn(
         // Base shell — drawer on mobile, static column on md+.
         'flex h-dvh w-[85vw] max-w-[20rem] shrink-0 flex-col border-r border-orange-100 bg-gradient-to-b from-white to-orange-50/40 text-zinc-600 dark:border-blue-950/60 dark:from-[#0d1117] dark:to-[#0f1729] dark:text-zinc-400 md:w-64 md:max-w-none md:shadow-none',
         // Off-canvas positioning and slide transition.
         'fixed inset-y-0 left-0 z-50 transform-gpu will-change-transform md:static md:z-auto md:translate-x-0 md:opacity-100',
-        'transition-[transform,opacity,box-shadow] duration-[360ms] ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none',
+        'transition-[transform,opacity,box-shadow,width] duration-[360ms] ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none',
         mobileOpen
           ? 'translate-x-0 opacity-100 shadow-2xl shadow-black/25'
           : '-translate-x-full opacity-0 shadow-none md:translate-x-0 md:opacity-100',
       )}
-      id="employee-sidebar-nav"
-      role="navigation"
-      aria-label="Employee navigation"
     >
       <div className="flex min-h-0 flex-1 flex-col p-6">
         <div className="mb-8">
@@ -138,9 +145,12 @@ export default function EmployeeSidebar({
               <img
                 src="/simple-logo.png"
                 alt="Simple HRIS"
-                className={cn('h-10 w-full object-contain', logoBeat && 'logo-heartbeat')}
+                className={cn('h-10 w-full object-contain transition-opacity duration-[var(--sb-collapse-ms)] ease-[var(--sb-collapse-ease)]', collapsed && 'md:opacity-0', logoBeat && 'logo-heartbeat')}
                 onAnimationEnd={() => setLogoBeat(false)}
               />
+              <SidebarBrandMark
+              className={cn('pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 opacity-0 transition-opacity duration-[var(--sb-collapse-ms)] ease-[var(--sb-collapse-ease)] from-orange-500 to-amber-600', collapsed && 'md:opacity-100')}
+            />
             </div>
           </a>
         </div>
@@ -151,6 +161,7 @@ export default function EmployeeSidebar({
               <button
                 key={item.id}
                 onClick={() => setActiveTab(item.id)}
+                title={collapsed ? item.label : undefined}
                 style={{
                   // Stagger each nav item on mobile drawer open — no-op on desktop because
                   // md: utilities pin opacity/translate to the visible state.
@@ -174,8 +185,8 @@ export default function EmployeeSidebar({
                       : 'text-zinc-500 group-hover:text-orange-500 dark:text-zinc-500 dark:group-hover:text-orange-400',
                   )}
                 />
-                {item.label}
-                {isConstr(item.id) && <ConstructionMark active={activeTab === item.id} />}
+                <span className={cn('truncate text-left transition-opacity duration-[var(--sb-collapse-ms)] ease-[var(--sb-collapse-ease)]', collapsed && 'md:opacity-0')}>{item.label}</span>
+                {isConstr(item.id) && <span className={cn('transition-opacity duration-[var(--sb-collapse-ms)] ease-[var(--sb-collapse-ease)]', collapsed && 'md:opacity-0')}><ConstructionMark active={activeTab === item.id} /></span>}
                 {item.id === 'profile' && profileIncomplete && activeTab !== 'profile' && (
                   <span
                     className={cn(
@@ -216,6 +227,7 @@ export default function EmployeeSidebar({
             {!isHidden('s-wall') && (
             <button
               onClick={() => setActiveTab('s-wall')}
+              title={collapsed ? 'S-Wall' : undefined}
               style={{ transitionDelay: mobileOpen ? `${60 + navItems.length * 35}ms` : '0ms' }}
               className={cn(
                 'group flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-[background-color,color,transform,box-shadow,opacity] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none',
@@ -233,8 +245,8 @@ export default function EmployeeSidebar({
                     : 'text-zinc-500 group-hover:text-violet-500 dark:text-zinc-500 dark:group-hover:text-violet-400',
                 )}
               />
-              S-Wall
-              {isConstr('s-wall') && <ConstructionMark active={activeTab === 's-wall'} />}
+              <span className={cn('truncate text-left transition-opacity duration-[var(--sb-collapse-ms)] ease-[var(--sb-collapse-ease)]', collapsed && 'md:opacity-0')}>S-Wall</span>
+              {isConstr('s-wall') && <span className={cn('transition-opacity duration-[var(--sb-collapse-ms)] ease-[var(--sb-collapse-ease)]', collapsed && 'md:opacity-0')}><ConstructionMark active={activeTab === 's-wall'} /></span>}
               {activeTab === 's-wall' && (
                 <ChevronRight className="ml-auto h-3 w-3 text-violet-400 dark:text-violet-500/70" />
               )}
@@ -254,22 +266,25 @@ export default function EmployeeSidebar({
         )}
       >
         {payrollLocked && (
-          <p className="mb-2 flex items-center gap-1.5 rounded-md border border-amber-200/80 bg-amber-50/90 px-2.5 py-1.5 text-[10px] leading-tight text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-100/90">
+          <p className={cn('mb-2 flex items-center gap-1.5 rounded-md border border-amber-200/80 bg-amber-50/90 px-2.5 py-1.5 text-[10px] leading-tight text-amber-900 transition-opacity duration-[var(--sb-collapse-ms)] ease-[var(--sb-collapse-ease)] dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-100/90', collapsed && 'md:opacity-0')}>
             <Lock className="h-3 w-3 shrink-0" aria-hidden />
             Payroll is being processed. Some changes may be unavailable.
           </p>
         )}
-        <ViewSwitcher email={employeeEmail} currentView="employee" />
+        <div className={cn('transition-opacity duration-[var(--sb-collapse-ms)] ease-[var(--sb-collapse-ease)]', collapsed && 'md:opacity-0')}>
+          <ViewSwitcher email={employeeEmail} currentView="employee" />
+        </div>
         <button
           onClick={() => withViewTransition(() => setTheme(isDark ? 'light' : 'dark'))}
+          title={collapsed ? (isDark ? 'Dark mode' : 'Light mode') : undefined}
           className="mb-2 flex w-full items-center justify-between rounded-md border border-orange-100 bg-orange-50/60 px-3 py-2 transition-colors hover:bg-orange-100/80 dark:border-blue-950/60 dark:bg-blue-950/20 dark:hover:bg-blue-950/40"
           aria-label="Toggle dark mode"
         >
           <div className="flex items-center gap-2 text-zinc-700 dark:text-zinc-300">
-            {isDark ? <Moon className="h-4 w-4" /> : <Sun className="h-4 w-4" />}
-            <span className="text-xs font-medium">{isDark ? 'Dark mode' : 'Light mode'}</span>
+            {isDark ? <Moon className="h-4 w-4 shrink-0" /> : <Sun className="h-4 w-4 shrink-0" />}
+            <span className={cn('text-xs font-medium transition-opacity duration-[var(--sb-collapse-ms)] ease-[var(--sb-collapse-ease)]', collapsed && 'md:opacity-0')}>{isDark ? 'Dark mode' : 'Light mode'}</span>
           </div>
-          <div className="flex h-6 w-6 items-center justify-center rounded-md bg-white shadow-sm dark:bg-blue-950/60">
+          <div className={cn('flex h-6 w-6 items-center justify-center rounded-md bg-white shadow-sm transition-opacity duration-[var(--sb-collapse-ms)] ease-[var(--sb-collapse-ease)] dark:bg-blue-950/60', collapsed && 'md:opacity-0')}>
             {isDark ? (
               <Sun className="h-3.5 w-3.5 text-orange-400" />
             ) : (
@@ -286,7 +301,7 @@ export default function EmployeeSidebar({
             className="h-9 w-9 text-xs"
             pixelSize={72}
           />
-          <div className="flex min-w-0 flex-col overflow-hidden">
+          <div className={cn('flex min-w-0 flex-col overflow-hidden transition-opacity duration-[var(--sb-collapse-ms)] ease-[var(--sb-collapse-ease)]', collapsed && 'md:opacity-0')}>
             <span className="truncate text-sm font-medium text-zinc-900 dark:text-zinc-200">
               {employeeName}
             </span>
@@ -299,6 +314,7 @@ export default function EmployeeSidebar({
         </div>
         <Button
           variant="ghost"
+          title={collapsed ? 'Sign Out' : undefined}
           className="w-full justify-start gap-3 text-zinc-600 hover:bg-red-500/10 hover:text-red-600 dark:text-zinc-500 dark:hover:text-red-400"
           onClick={() => {
             try {
@@ -307,10 +323,10 @@ export default function EmployeeSidebar({
             void signOut({ callbackUrl: '/login' });
           }}
         >
-          <LogOut className="h-4 w-4" />
-          Log Out
+          <LogOut className="h-4 w-4 shrink-0" />
+          <span className={cn('transition-opacity duration-[var(--sb-collapse-ms)] ease-[var(--sb-collapse-ease)]', collapsed && 'md:opacity-0')}>Log Out</span>
         </Button>
       </div>
-    </aside>
+    </CollapsibleSidebarShell>
   );
 }

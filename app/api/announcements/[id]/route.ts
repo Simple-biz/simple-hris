@@ -3,6 +3,7 @@ import { getToken } from 'next-auth/jwt';
 import { type NextRequest } from 'next/server';
 import { createSupabaseServiceRoleClient } from '@/lib/supabase/server';
 import { deleteAnnouncement, togglePinAnnouncement } from '@/lib/supabase/announcements';
+import { insertAuditLog } from '@/lib/supabase/audit-log';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -47,6 +48,14 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
 
   try {
     await deleteAnnouncement(id);
+    void insertAuditLog({
+      user_name: email || 'anonymous',
+      user_role: roles[0] ?? 'user',
+      action: 'announcement.deleted',
+      resource: 'announcements',
+      resource_id: id,
+      details: { author_email: ann.author_email ?? null },
+    });
     return NextResponse.json({ success: true });
   } catch (e) {
     return NextResponse.json({ error: (e as Error).message }, { status: 500 });
@@ -73,6 +82,14 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
   try {
     await togglePinAnnouncement(id, pinned);
+    void insertAuditLog({
+      user_name: email || 'anonymous',
+      user_role: roles[0] ?? 'user',
+      action: 'announcement.pin_toggled',
+      resource: 'announcements',
+      resource_id: id,
+      details: { pinned },
+    });
     return NextResponse.json({ success: true });
   } catch (e) {
     return NextResponse.json({ error: (e as Error).message }, { status: 500 });
