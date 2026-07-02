@@ -109,8 +109,8 @@ export default function CeoSidebar({
       role="navigation"
       aria-label="CEO navigation"
     >
-      <div className="flex flex-1 flex-col px-5 pb-4 pt-7">
-        <div className="mb-8">
+      <div className="flex min-h-0 flex-1 flex-col px-5 pb-4 pt-7">
+        <div className="mb-8 shrink-0">
           <a
             href="https://www.simple.biz/"
             target="_blank"

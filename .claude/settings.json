@@ -349,7 +349,11 @@
       "Bash(node scripts/_tmp-sample-empids.mjs)",
       "Bash(node scripts/_tmp-insert-angelof.mjs)",
       "Bash(rm -f scripts/_tmp-lookup-angelof.mjs scripts/_tmp-lookup-angelof2.mjs scripts/_tmp-sample-empids.mjs scripts/_tmp-insert-angelof.mjs)",
-      "Bash(ls scripts/_tmp-*)"
+      "Bash(ls scripts/_tmp-*)",
+      "Bash(node scripts/_tmp-check-alt.mjs)",
+      "Bash(node scripts/_tmp-scan-onboard.mjs)",
+      "Bash(node scripts/_tmp-archive-angelof.mjs)",
+      "Bash(rm -f scripts/_tmp-scan-onboard.mjs scripts/_tmp-archive-angelof.mjs)"
     ],
     "additionalDirectories": [
       "\\tmp",
