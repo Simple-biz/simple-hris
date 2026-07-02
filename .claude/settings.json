@@ -341,7 +341,15 @@
       "Bash(curl -s -i \"http://localhost:3000/api/hr/onboarding-submissions\")",
       "Bash(curl -s -L \"http://localhost:3000/api/hr/onboarding-submissions\")",
       "Bash(curl -s -i \"http://localhost:3000/hr\")",
-      "Bash(curl -s -o /dev/null -w \"status=%{http_code}\\\\n\" \"http://localhost:3000/api/onboarding/preview\")"
+      "Bash(curl -s -o /dev/null -w \"status=%{http_code}\\\\n\" \"http://localhost:3000/api/onboarding/preview\")",
+      "Bash(sed 's/=//')",
+      "Bash(node \"C:\\\\Users\\\\Itachi\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-Itachi-Desktop-simple-hris\\\\83490b4c-6015-4d23-9ef4-105b62b410a1\\\\scratchpad\\\\lookup-angelof.mjs\")",
+      "Bash(node scripts/_tmp-lookup-angelof.mjs)",
+      "Bash(node scripts/_tmp-lookup-angelof2.mjs)",
+      "Bash(node scripts/_tmp-sample-empids.mjs)",
+      "Bash(node scripts/_tmp-insert-angelof.mjs)",
+      "Bash(rm -f scripts/_tmp-lookup-angelof.mjs scripts/_tmp-lookup-angelof2.mjs scripts/_tmp-sample-empids.mjs scripts/_tmp-insert-angelof.mjs)",
+      "Bash(ls scripts/_tmp-*)"
     ],
     "additionalDirectories": [
       "\\tmp",

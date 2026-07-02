@@ -21,7 +21,6 @@ import {
   Sheet,
   Sun,
   UserMinus,
-  Users,
 } from 'lucide-react';
 import { SWallNavLabel } from '@/components/swall/SWall';
 import ConstructionMark from '@/components/common/ConstructionMark';
@@ -129,27 +128,30 @@ export default function HrSidebar({
       role="navigation"
       aria-label="HR navigation"
     >
-      <div className="flex flex-1 flex-col px-5 pb-4 pt-7">
-        <div className="mb-8">
-          <a
-            href="https://www.simple.biz/"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="logo-neon"
-            onMouseEnter={() => { if (!logoBeat) setLogoBeat(true); }}
-          >
-            <div className="logo-neon__inner relative overflow-hidden px-3 py-2 border border-zinc-200 dark:border-black dark:ring-1 dark:ring-white">
-              <img
-                src="/simple-logo.png"
-                alt="Simple HRIS"
-                className={cn('h-10 w-full object-contain', logoBeat && 'logo-heartbeat')}
-                onAnimationEnd={() => setLogoBeat(false)}
-              />
-            </div>
-          </a>
-        </div>
+      {/* Brand — anchored at the top */}
+      <div className="shrink-0 px-5 pb-2 pt-7">
+        <a
+          href="https://www.simple.biz/"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="logo-neon"
+          onMouseEnter={() => { if (!logoBeat) setLogoBeat(true); }}
+        >
+          <div className="logo-neon__inner relative overflow-hidden px-3 py-2 border border-zinc-200 dark:border-black dark:ring-1 dark:ring-white">
+            <img
+              src="/simple-logo.png"
+              alt="Simple HRIS"
+              className={cn('h-10 w-full object-contain', logoBeat && 'logo-heartbeat')}
+              onAnimationEnd={() => setLogoBeat(false)}
+            />
+          </div>
+        </a>
+      </div>
 
-        <ScrollArea className="min-h-0 flex-1 pr-2">
+      {/* Middle column — single scroll surface for nav + view switcher + theme toggle.
+          Brand at top and Sign Out at bottom stay anchored regardless of viewport height. */}
+      <ScrollArea className="min-h-0 flex-1">
+        <div className="px-5 pb-4 pr-3">
           <p className="mb-1.5 px-2.5 text-[10.5px] font-medium uppercase tracking-[0.06em] text-[#a1a1aa]">
             Workspace
           </p>
@@ -210,12 +212,14 @@ export default function HrSidebar({
             </button>}
           </nav>
 
-          <div className="mt-6 border-t border-emerald-100/60 pt-4 dark:border-emerald-950/40">
+          {/* ViewSwitcher + theme toggle — kept INSIDE the scroll area so they're
+              reachable via the same scrollbar when the viewport is short. */}
+          <div className="mt-5 border-t border-emerald-100/60 pt-4 dark:border-emerald-950/40">
             <ViewSwitcher email={viewerEmail} currentView="hr" />
             <button
               type="button"
               onClick={() => withViewTransition(() => setTheme(isDark ? 'light' : 'dark'))}
-              className="mb-2 mt-3 flex w-full items-center justify-between rounded-md border border-emerald-100/70 bg-gradient-to-br from-white to-emerald-50/60 px-3 py-2 text-left transition-colors hover:from-emerald-50 hover:to-emerald-100/60 dark:border-emerald-950/40 dark:from-zinc-950 dark:to-emerald-950/15 dark:hover:from-emerald-950/25 dark:hover:to-emerald-950/35"
+              className="mb-1 mt-3 flex w-full items-center justify-between rounded-md border border-emerald-100/70 bg-gradient-to-br from-white to-emerald-50/60 px-3 py-2 text-left transition-colors hover:from-emerald-50 hover:to-emerald-100/60 dark:border-emerald-950/40 dark:from-zinc-950 dark:to-emerald-950/15 dark:hover:from-emerald-950/25 dark:hover:to-emerald-950/35"
               aria-label="Toggle dark mode"
             >
               <div className="flex items-center gap-2 text-xs font-medium text-[#3f3f46] dark:text-zinc-300">
@@ -225,10 +229,11 @@ export default function HrSidebar({
               <span className="text-[#a1a1aa]">{isDark ? '☀' : '☾'}</span>
             </button>
           </div>
-        </ScrollArea>
-      </div>
+        </div>
+      </ScrollArea>
 
-      <div className="mt-auto border-t border-emerald-100/60 p-5 dark:border-emerald-950/40">
+      {/* Identity + Sign Out — anchored at the bottom, always reachable */}
+      <div className="shrink-0 border-t border-emerald-100/60 p-5 dark:border-emerald-950/40">
         <div className="flex items-center gap-2.5 rounded-md border border-emerald-100/70 bg-gradient-to-br from-white to-emerald-50/60 px-2.5 py-2 dark:border-emerald-950/40 dark:from-zinc-950 dark:to-emerald-950/15">
           <EmployeeAvatar
             photoUrl={profilePhotoUrl}
