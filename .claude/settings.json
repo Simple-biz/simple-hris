@@ -337,7 +337,11 @@
       "Read(//c/Users/Itachi/Desktop/gridlineanalyticsv2.2/**)",
       "Bash(git --no-pager diff --stat -- . ':\\(exclude\\)tsconfig.tsbuildinfo' ':\\(exclude\\).claude/settings.json' ':\\(exclude\\)docs/**' ':\\(exclude\\)references/n8n/**' ':\\(exclude\\)src/components/hr/HrNewHireChecklist.tsx' ':\\(exclude\\)src/hooks/useLiveCells.ts')",
       "Bash(python3 -)",
-      "Bash(node -e \"const w=JSON.parse\\(require\\('fs'\\).readFileSync\\('references/n8n/Paystub Automation.json','utf8'\\)\\); let m=''; \\(function walk\\(o\\){if\\(!o||typeof o!=='object'\\)return; if\\(Array.isArray\\(o\\)\\){o.forEach\\(walk\\);return;} if\\(o.type&&o.type.includes\\('gmail'\\)\\)m=o.parameters.message; for\\(const k of Object.keys\\(o\\)\\)walk\\(o[k]\\);}\\)\\(w\\); console.log\\('JSON OK'\\); console.log\\('oklch in n8n message :', \\(m.match\\(/oklch\\\\\\(/g\\)||[]\\).length, '\\(must be 0\\)'\\); console.log\\('charcoal bands       :', \\(m.match\\(/#334155/g\\)||[]\\).length\\); console.log\\('n8n exprs intact     :', m.includes\\(\\\\\"pay_vars'\\).item.json.mf_pay\\\\\"\\) && m.includes\\(\\\\\"pay_vars'\\).item.json.adjustment\\\\\"\\)\\);\")"
+      "Bash(node -e \"const w=JSON.parse\\(require\\('fs'\\).readFileSync\\('references/n8n/Paystub Automation.json','utf8'\\)\\); let m=''; \\(function walk\\(o\\){if\\(!o||typeof o!=='object'\\)return; if\\(Array.isArray\\(o\\)\\){o.forEach\\(walk\\);return;} if\\(o.type&&o.type.includes\\('gmail'\\)\\)m=o.parameters.message; for\\(const k of Object.keys\\(o\\)\\)walk\\(o[k]\\);}\\)\\(w\\); console.log\\('JSON OK'\\); console.log\\('oklch in n8n message :', \\(m.match\\(/oklch\\\\\\(/g\\)||[]\\).length, '\\(must be 0\\)'\\); console.log\\('charcoal bands       :', \\(m.match\\(/#334155/g\\)||[]\\).length\\); console.log\\('n8n exprs intact     :', m.includes\\(\\\\\"pay_vars'\\).item.json.mf_pay\\\\\"\\) && m.includes\\(\\\\\"pay_vars'\\).item.json.adjustment\\\\\"\\)\\);\")",
+      "Bash(curl -s -i \"http://localhost:3000/api/hr/onboarding-submissions\")",
+      "Bash(curl -s -L \"http://localhost:3000/api/hr/onboarding-submissions\")",
+      "Bash(curl -s -i \"http://localhost:3000/hr\")",
+      "Bash(curl -s -o /dev/null -w \"status=%{http_code}\\\\n\" \"http://localhost:3000/api/onboarding/preview\")"
     ],
     "additionalDirectories": [
       "\\tmp",

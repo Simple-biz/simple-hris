@@ -90,5 +90,53 @@ export default function SessionInvalidationWatcher() {
     };
   }, [status, email, check]);
 
+  // Instant re-validate when one of our own /api/* calls comes back 401. The
+  // edge proxy hands XHRs a JSON 401 (code auth_required / session_revoked) for
+  // a missing / expired / force-logged-out session instead of 307'ing them to
+  // the HTML /login page (which made res.json() throw "Unexpected token '<'" and
+  // left tabs stuck loading). Catching that 401 here closes the window between a
+  // session dying and the poll/realtime/focus path noticing: the first bounced
+  // fetch triggers check(), which signs out ONLY if session-status confirms the
+  // session is really gone (it fails open, so a stray 401 won't yank a live user).
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof window.fetch !== 'function') return;
+    const origFetch = window.fetch.bind(window);
+    const patched: typeof window.fetch = async (...args) => {
+      const res = await origFetch(...args);
+      try {
+        if (res.status === 401 && !signingOutRef.current) {
+          const input = args[0];
+          const href =
+            typeof input === 'string'
+              ? input
+              : input instanceof URL
+                ? input.href
+                : input instanceof Request
+                  ? input.url
+                  : '';
+          const url = new URL(href, window.location.origin);
+          if (
+            url.origin === window.location.origin &&
+            url.pathname.startsWith('/api/') &&
+            // NextAuth's own routes handle their session lifecycle; skipping
+            // them also rules out any signOut()/session-status feedback loop.
+            !url.pathname.startsWith('/api/auth/')
+          ) {
+            void check();
+          }
+        }
+      } catch {
+        /* never let the interceptor interfere with a real request */
+      }
+      return res;
+    };
+    window.fetch = patched;
+    return () => {
+      // Only un-patch if nobody re-wrapped after us, so we don't clobber a
+      // later interceptor.
+      if (window.fetch === patched) window.fetch = origFetch;
+    };
+  }, [check]);
+
   return null;
 }

@@ -232,16 +232,34 @@ export async function proxy(req: NextRequest) {
 
   const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET });
 
+  // API/XHR callers (fetch) must NEVER be 307'd to the HTML /login page: the
+  // browser transparently follows the redirect, so the caller receives the
+  // login page's "<!DOCTYPE html>..." with a 200 status and its res.json()
+  // throws "Unexpected token '<' ... is not valid JSON" — a broken, unhandled
+  // failure (skeletons that never resolve, mystery parse errors) instead of a
+  // clean auth signal. So for /api/* we hand back a JSON 401 the client can act
+  // on; only real page navigations get the visible redirect to /login.
+  const isApiRequest = pathname.startsWith('/api/');
+  const redirectToLogin = (): NextResponse => {
+    const loginUrl = req.nextUrl.clone();
+    loginUrl.pathname = '/login';
+    loginUrl.search = `?callbackUrl=${encodeURIComponent(pathname + search)}`;
+    return NextResponse.redirect(loginUrl);
+  };
+
   // A force-logout neutralized this token (jwt callback returned `{}` because
   // an admin called bumpForceLogoutFor for the user). The cookie still
   // decodes to *something* — but with no email/sub — so check those too.
   const tokenEmail = (token as { email?: string | null } | null)?.email ?? null;
   const tokenSub = (token as { sub?: string | null } | null)?.sub ?? null;
   if (!token || (!tokenEmail && !tokenSub)) {
-    const loginUrl = req.nextUrl.clone();
-    loginUrl.pathname = '/login';
-    loginUrl.search = `?callbackUrl=${encodeURIComponent(pathname + search)}`;
-    return NextResponse.redirect(loginUrl);
+    if (isApiRequest) {
+      return NextResponse.json(
+        { error: 'Not signed in', code: 'auth_required' },
+        { status: 401 },
+      );
+    }
+    return redirectToLogin();
   }
 
   // Force-logout enforcement: if an admin reset this person's session, reject
@@ -253,10 +271,15 @@ export async function proxy(req: NextRequest) {
       ? (token as { iat: number }).iat
       : 0;
     if (await isForceLoggedOut(emailLower, issuedAt)) {
-      const loginUrl = req.nextUrl.clone();
-      loginUrl.pathname = '/login';
-      loginUrl.search = `?callbackUrl=${encodeURIComponent(pathname + search)}`;
-      const res = NextResponse.redirect(loginUrl);
+      // Clear the revoked session cookie either way. API callers get a JSON 401
+      // (distinct code so the client can force a full re-auth); page navigations
+      // get the redirect to /login. See the isApiRequest note above.
+      const res = isApiRequest
+        ? NextResponse.json(
+            { error: 'Session ended', code: 'session_revoked' },
+            { status: 401 },
+          )
+        : redirectToLogin();
       for (const name of SESSION_COOKIE_NAMES) {
         res.cookies.set(name, '', { path: '/', maxAge: 0 });
       }
