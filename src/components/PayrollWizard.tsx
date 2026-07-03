@@ -1348,6 +1348,39 @@ export default function PayrollWizard({
     return { year: mon.getFullYear(), month: mon.getMonth() };
   }, [calcSourceFile]);
 
+  /**
+   * ISO date window (YYYY-MM-DD keys) covered by the active/initialized Hubstaff
+   * batch, parsed from its filename. The wizard is initialized on one batch
+   * (`calcSourceFile`, the `is_current` upload); its filename encodes the pay
+   * period. Null when no batch is selected or the filename has no parseable
+   * range — callers then fall back to showing everything.
+   */
+  const activeBatchDateRange = useMemo(() => {
+    if (!calcSourceFile) return null;
+    const r = parseDateRangeFromFilename(calcSourceFile);
+    if (!r) return null;
+    const key = (d: Date) =>
+      `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    return { startKey: key(r.start), endKey: key(r.end) };
+  }, [calcSourceFile]);
+
+  /**
+   * Contractor invoices whose billing date falls inside the active batch's pay
+   * period — the only invoices that belong to this payroll run. Matches on
+   * `invoice_date` (falling back to `created_at` when a contractor left the date
+   * blank), compared as YYYY-MM-DD strings to sidestep timezone drift. Falls
+   * back to the full list when the active batch has no parseable date range.
+   */
+  const contractorInvoicesInPeriod = useMemo(() => {
+    if (!activeBatchDateRange) return contractorInvoices;
+    const { startKey, endKey } = activeBatchDateRange;
+    return contractorInvoices.filter((inv) => {
+      const key = (inv.invoice_date || inv.created_at || '').slice(0, 10);
+      if (!key) return false;
+      return key >= startKey && key <= endKey;
+    });
+  }, [contractorInvoices, activeBatchDateRange]);
+
   /** {year, month} actually in effect: the file's month when one is selected, else the picker's. */
   const effectiveMonth = useMemo(
     () => fileMonth ?? { year: pabPeriodSettings.activeMonthResolved.year, month: pabPeriodSettings.activeMonthResolved.month },
@@ -10376,9 +10409,9 @@ export default function PayrollWizard({
           }
         };
 
-        const pendingInvoices  = contractorInvoices.filter((i) => i.status === 'pending');
-        const approvedInvoices = contractorInvoices.filter((i) => i.status === 'approved');
-        const rejectedInvoices = contractorInvoices.filter((i) => i.status === 'rejected');
+        const pendingInvoices  = contractorInvoicesInPeriod.filter((i) => i.status === 'pending');
+        const approvedInvoices = contractorInvoicesInPeriod.filter((i) => i.status === 'approved');
+        const rejectedInvoices = contractorInvoicesInPeriod.filter((i) => i.status === 'rejected');
         const approvedByCurrency = sumByCurrency(approvedInvoices);
 
         const monthLabelContractors = pabMonthRange
@@ -10419,10 +10452,14 @@ export default function PayrollWizard({
                 <Loader2 className="h-5 w-5 animate-spin" />
                 <span className="text-sm">Loading invoices…</span>
               </div>
-            ) : contractorInvoices.length === 0 ? (
+            ) : contractorInvoicesInPeriod.length === 0 ? (
               <div className="flex flex-col items-center gap-3 py-16 text-center text-zinc-500 dark:text-zinc-400">
                 <HardHat className="h-10 w-10 opacity-25" />
-                <p className="text-sm">No contractor invoices have been submitted yet.</p>
+                <p className="text-sm">
+                  {contractorInvoices.length === 0
+                    ? 'No contractor invoices have been submitted yet.'
+                    : 'No contractor invoices fall within this pay period.'}
+                </p>
               </div>
             ) : (
               <div className="overflow-hidden rounded-xl border border-emerald-200/70 ring-1 ring-emerald-500/8 dark:border-emerald-900/50 dark:ring-emerald-400/10">
@@ -10438,7 +10475,7 @@ export default function PayrollWizard({
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-emerald-50 bg-white dark:divide-emerald-950/30 dark:bg-zinc-950/40">
-                    {contractorInvoices.map((inv) => (
+                    {contractorInvoicesInPeriod.map((inv) => (
                       <tr key={inv.id} className="transition-colors hover:bg-emerald-50/40 dark:hover:bg-emerald-950/15">
                         <td className="px-4 py-3">
                           <div className="font-medium text-zinc-900 dark:text-white">{inv.from_entity_name || inv.from_name || '—'}</div>
@@ -10556,7 +10593,7 @@ export default function PayrollWizard({
         // NOT converted into the peso outflow. Only PHP invoices feed the peso
         // total; USD is surfaced separately.
         const approvedContractorsByCurrency = sumByCurrency(
-          contractorInvoices.filter((i) => i.status === 'approved'),
+          contractorInvoicesInPeriod.filter((i) => i.status === 'approved'),
         );
         const stepContractorsPHP = approvedContractorsByCurrency.PHP;
         const stepContractorsUSD = approvedContractorsByCurrency.USD;
@@ -11083,8 +11120,8 @@ export default function PayrollWizard({
                   },
                   { label: 'Cycle Separation (Standard vs Hogan)', pass: true },
                   {
-                    label: `Contractor Invoices Reviewed (${contractorInvoices.filter(i => i.status === 'pending').length} pending)`,
-                    pass: contractorInvoices.filter(i => i.status === 'pending').length === 0,
+                    label: `Contractor Invoices Reviewed (${contractorInvoicesInPeriod.filter(i => i.status === 'pending').length} pending)`,
+                    pass: contractorInvoicesInPeriod.filter(i => i.status === 'pending').length === 0,
                   },
                 ].map((check, i) => (
                   <div
@@ -12256,7 +12293,7 @@ export default function PayrollWizard({
                     e.personal_email.toLowerCase().includes(needle),
                 )
               : dispatchData.rows;
-            const approvedContractors = contractorInvoices.filter((i) => i.status === 'approved');
+            const approvedContractors = contractorInvoicesInPeriod.filter((i) => i.status === 'approved');
             const filteredContractors = needle
               ? approvedContractors.filter((inv) =>
                   [inv.contractor_email, inv.from_entity_name, inv.from_name, inv.invoice_number]
@@ -12287,7 +12324,7 @@ export default function PayrollWizard({
                   <DialogDescription className="text-zinc-600 dark:text-zinc-400">
                     {previewTab === 'paystubs'
                       ? `${dispatchData.rows.length} paystub${dispatchData.rows.length === 1 ? '' : 's'} queued for this batch.`
-                      : `${contractorInvoices.filter(i => i.status === 'approved').length} approved contractor invoice${contractorInvoices.filter(i => i.status === 'approved').length === 1 ? '' : 's'} queued.`}
+                      : `${approvedContractors.length} approved contractor invoice${approvedContractors.length === 1 ? '' : 's'} queued.`}
                     {' '}Click View to inspect the email.
                   </DialogDescription>
                 </DialogHeader>
@@ -12320,7 +12357,7 @@ export default function PayrollWizard({
                     >
                       Contractors
                       <span className="ml-1.5 rounded bg-zinc-200 px-1 text-[10px] font-medium text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400">
-                        {contractorInvoices.filter(i => i.status === 'approved').length}
+                        {approvedContractors.length}
                       </span>
                     </button>
                   </div>
@@ -12622,14 +12659,16 @@ export default function PayrollWizard({
                   </div>
                 </div>
                 <div className="relative h-2.5 w-full overflow-hidden rounded-full bg-zinc-200/70 ring-1 ring-inset ring-zinc-300/50 dark:bg-zinc-800/80 dark:ring-zinc-700/50">
-                  <div
+                  <motion.div
                     className={cn(
-                      'relative h-full min-w-[0.625rem] overflow-hidden rounded-full transition-[width] duration-700 ease-out',
+                      'relative h-full min-w-[0.625rem] overflow-hidden rounded-full',
                       complete
                         ? 'bg-gradient-to-r from-emerald-400 via-emerald-500 to-teal-500 shadow-[0_0_14px_-2px_rgba(16,185,129,0.65)]'
                         : 'bg-gradient-to-r from-indigo-500 via-violet-500 to-fuchsia-500 shadow-[0_0_14px_-2px_rgba(139,92,246,0.6)]',
                     )}
-                    style={{ width: `${pct}%` }}
+                    initial={false}
+                    animate={{ width: `${pct}%` }}
+                    transition={{ duration: 0.55, ease: [0.22, 1, 0.36, 1] }}
                     role="progressbar"
                     aria-valuenow={pct}
                     aria-valuemin={0}
@@ -12642,7 +12681,7 @@ export default function PayrollWizard({
                     <span aria-hidden className="progress-sheen pointer-events-none absolute inset-y-0 left-0 w-2/5 bg-gradient-to-r from-transparent via-white/60 to-transparent" />
                     {/* Bright leading edge so the fill head reads as a glowing tip. */}
                     <span aria-hidden className="pointer-events-none absolute inset-y-0 right-0 w-1 rounded-full bg-white/80 blur-[0.5px]" />
-                  </div>
+                  </motion.div>
                 </div>
               </div>
             );

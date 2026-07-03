@@ -14,29 +14,19 @@ import {
   RefreshCw,
   RotateCcw,
   Search,
-  ShieldOff,
   Trash2,
   Undo2,
   UserMinus,
-  UserX,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import {
   Dialog,
   DialogContent,
 } from '@/components/ui/dialog';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
 import { cn } from '@/lib/utils';
 import { getHrTabCache, hasHrTabCache, setHrTabCache, HR_TAB_CACHE_KEYS } from '@/lib/hr/tab-cache';
-import type { EmployeeRow } from '@/lib/supabase/employees';
 import type { OffboardingQueueRow } from '@/lib/supabase/offboarding-queue';
 import HrOffboardQueueProcessor from './HrOffboardQueueProcessor';
 import DeptFilter from './DeptFilter';
@@ -75,36 +65,20 @@ const REASON_LABELS: Record<string, string> = {
   sheet_sync: 'From Offboarded sheet',
 };
 
-type OffboardReason =
-  | 'resigned'
-  | 'performance'
-  | 'time_manipulation'
-  | 'attendance'
-  | 'end_of_contract'
-  | 'other';
-
-const REASON_OPTIONS: { value: OffboardReason; label: string }[] = [
-  { value: 'resigned', label: 'Resigned' },
-  { value: 'end_of_contract', label: 'End of contract' },
-  { value: 'performance', label: 'Performance' },
-  { value: 'attendance', label: 'Attendance' },
-  { value: 'time_manipulation', label: 'Time manipulation' },
-  { value: 'other', label: 'Other (note required)' },
-];
-
 const PAGE_SIZE = 10;
+const QUEUE_PAGE_SIZE = 20;
 
 function PaginationBar({
-  page, totalPages, setPage, total, filtered,
+  page, totalPages, setPage, total, filtered, pageSize = PAGE_SIZE,
 }: {
   page: number; totalPages: number;
   setPage: React.Dispatch<React.SetStateAction<number>>;
-  total: number; filtered: number;
+  total: number; filtered: number; pageSize?: number;
 }) {
   return (
     <div className="flex items-center justify-between border-t border-emerald-100/60 px-4 py-2.5 dark:border-emerald-900/40">
       <p className="text-[11px] text-zinc-400">
-        {filtered === 0 ? '0' : `${page * PAGE_SIZE + 1}–${Math.min((page + 1) * PAGE_SIZE, filtered)}`} of {filtered}
+        {filtered === 0 ? '0' : `${page * pageSize + 1}–${Math.min((page + 1) * pageSize, filtered)}`} of {filtered}
         {filtered < total && <span className="text-zinc-300 dark:text-zinc-600"> (filtered from {total})</span>}
       </p>
       <div className="flex items-center gap-1">
@@ -126,19 +100,10 @@ function PaginationBar({
   );
 }
 
-type OffboardTab = 'queue' | 'active' | 'offboarded';
+type OffboardTab = 'queue' | 'offboarded';
 
 export default function HrOffboarding() {
   const [activeTab, setActiveTab] = useState<OffboardTab>('queue');
-
-  const [roster, setRoster] = useState<EmployeeRow[]>(
-    () => getHrTabCache<EmployeeRow[]>(HR_TAB_CACHE_KEYS.offboardRoster) ?? [],
-  );
-  const [loading, setLoading] = useState(() => !hasHrTabCache(HR_TAB_CACHE_KEYS.offboardRoster));
-  const [search, setSearch] = useState('');
-  const [rosterDept, setRosterDept] = useState('');
-  const [rosterPage, setRosterPage] = useState(0);
-  const [target, setTarget] = useState<EmployeeRow | null>(null);
 
   const [history, setHistory] = useState<HistoryRow[]>(
     () => getHrTabCache<HistoryRow[]>(HR_TAB_CACHE_KEYS.offboardHistory) ?? [],
@@ -151,11 +116,6 @@ export default function HrOffboarding() {
   const [historyPage, setHistoryPage] = useState(0);
   const [restoring, setRestoring] = useState<string | null>(null);
   const [removingFromSheet, setRemovingFromSheet] = useState<string | null>(null);
-  // firingWebhook tracks which email+action is in-flight: `${email}::deactivate` or `${email}::delete`
-  const [firingWebhook, setFiringWebhook] = useState<string | null>(null);
-  // deleteConfirm tracks which email is in the "click again to confirm" state
-  const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
-  const deleteConfirmTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // ── Manager-request queue (default sub-tab) ──
   const [queue, setQueue] = useState<OffboardingQueueRow[]>(
@@ -168,25 +128,8 @@ export default function HrOffboarding() {
   const [processTargets, setProcessTargets] = useState<OffboardingQueueRow[] | null>(null);
   // The queue row being returned to its manager (quick per-row action).
   const [returnTarget, setReturnTarget] = useState<OffboardingQueueRow | null>(null);
-
-  const fetchRoster = useCallback(async () => {
-    setLoading(true);
-    try {
-      const res = await fetch('/api/employees', { cache: 'no-store' });
-      const json = (await res.json()) as {
-        employees?: EmployeeRow[];
-        error?: string;
-      };
-      if (json.error) throw new Error(json.error);
-      setRoster(json.employees ?? []);
-      setHrTabCache(HR_TAB_CACHE_KEYS.offboardRoster, json.employees ?? []);
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Failed to load roster');
-      setRoster([]);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  // The queue row being permanently deleted (HR cleanup, any status).
+  const [deleteTarget, setDeleteTarget] = useState<OffboardingQueueRow | null>(null);
 
   const fetchHistory = useCallback(async () => {
     setHistoryLoading(true);
@@ -244,13 +187,13 @@ export default function HrOffboarding() {
             ? `Re-granted ${rb!.roles} role${rb!.roles === 1 ? '' : 's'}, ${rb!.departments} managed dept${rb!.departments === 1 ? '' : 's'}, ${rb!.features} feature permission${rb!.features === 1 ? '' : 's'}.`
             : undefined,
       });
-      await Promise.all([fetchRoster(), fetchHistory()]);
+      await fetchHistory();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Failed to restore');
     } finally {
       setRestoring(null);
     }
-  }, [fetchRoster, fetchHistory]);
+  }, [fetchHistory]);
 
   const handleRemoveFromSheet = useCallback(async (row: HistoryRow) => {
     const email = row['Work Email'] ?? '';
@@ -293,86 +236,13 @@ export default function HrOffboarding() {
     }
   }, [fetchHistory]);
 
-  const handleFireWebhook = useCallback(async (
-    employee: { workEmail: string; name?: string | null },
-    action: 'deactivate' | 'delete',
-  ) => {
-    const email = employee.workEmail;
-    if (!email) return;
-
-    // Delete requires a second click to confirm.
-    if (action === 'delete') {
-      if (deleteConfirm !== email) {
-        setDeleteConfirm(email);
-        if (deleteConfirmTimer.current) clearTimeout(deleteConfirmTimer.current);
-        deleteConfirmTimer.current = setTimeout(() => setDeleteConfirm(null), 4000);
-        return;
-      }
-      if (deleteConfirmTimer.current) clearTimeout(deleteConfirmTimer.current);
-      setDeleteConfirm(null);
-    }
-
-    const key = `${email}::${action}`;
-    setFiringWebhook(key);
-    try {
-      const res = await fetch('/api/hr/offboard-fire-webhook', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ work_email: email, action }),
-      });
-      const json = (await res.json()) as {
-        success?: boolean;
-        webhook?: { fired: boolean; status: number | null; error: string | null };
-        sheet_delete?: { deleted: number; reason?: string; error?: string } | null;
-        error?: string;
-      };
-      if (!res.ok || !json.success) throw new Error(json.error ?? 'Request failed');
-      const wh = json.webhook;
-      const sd = json.sheet_delete;
-      if (wh?.error == null && wh?.fired) {
-        const sheetNote = action === 'delete'
-          ? sd?.error
-            ? ` Sheet removal failed: ${sd.error}`
-            : sd?.deleted
-              ? ` Removed ${sd.deleted} row${sd.deleted === 1 ? '' : 's'} from Master List sheet.`
-              : ' Not found in Master List sheet.'
-          : '';
-        toast.success(`${action === 'deactivate' ? 'Deactivation' : 'Deletion'} webhook fired for ${employee.name ?? email}`, {
-          description: sheetNote || undefined,
-        });
-      } else {
-        toast.warning(`Webhook fired but returned an error`, {
-          description: `HTTP ${wh?.status ?? '?'}: ${wh?.error ?? 'unknown error'}`,
-          duration: 7000,
-        });
-      }
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Failed to fire webhook');
-    } finally {
-      setFiringWebhook(null);
-    }
-  }, [deleteConfirm]);
-
   useEffect(() => {
     // Skip the initial fetch for whichever data set is already cached (tab
     // revisit) so the tables don't re-query / reload; Refresh buttons + actions
     // still force a fresh fetch and update the cache.
-    if (!hasHrTabCache(HR_TAB_CACHE_KEYS.offboardRoster)) void fetchRoster();
     if (!hasHrTabCache(HR_TAB_CACHE_KEYS.offboardHistory)) void fetchHistory();
     if (!hasHrTabCache(HR_TAB_CACHE_KEYS.offboardQueue)) void fetchQueue();
-  }, [fetchRoster, fetchHistory, fetchQueue]);
-
-  const filtered = useMemo(() => {
-    setRosterPage(0);
-    const q = search.trim().toLowerCase();
-    return roster.filter((r) => {
-      if (rosterDept && (r.department ?? '').trim() !== rosterDept) return false;
-      if (!q) return true;
-      return [r.name, r.work_email, r.personal_email, r.department, r.employee_id]
-        .filter(Boolean)
-        .some((s) => s!.toLowerCase().includes(q));
-    });
-  }, [roster, search, rosterDept]);
+  }, [fetchHistory, fetchQueue]);
 
   const filteredHistory = useMemo(() => {
     setHistoryPage(0);
@@ -385,10 +255,6 @@ export default function HrOffboarding() {
         .some((s) => s!.toLowerCase().includes(q));
     });
   }, [history, historySearch, historyDept]);
-
-  const rosterTotalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
-  const safeRosterPage = Math.min(rosterPage, rosterTotalPages - 1);
-  const rosterPageRows = filtered.slice(safeRosterPage * PAGE_SIZE, (safeRosterPage + 1) * PAGE_SIZE);
 
   const historyTotalPages = Math.max(1, Math.ceil(filteredHistory.length / PAGE_SIZE));
   const safeHistoryPage = Math.min(historyPage, historyTotalPages - 1);
@@ -409,9 +275,9 @@ export default function HrOffboarding() {
         .some((s) => s!.toLowerCase().includes(q));
     });
   }, [queue, queueSearch]);
-  const queueTotalPages = Math.max(1, Math.ceil(filteredQueue.length / PAGE_SIZE));
+  const queueTotalPages = Math.max(1, Math.ceil(filteredQueue.length / QUEUE_PAGE_SIZE));
   const safeQueuePage = Math.min(queuePage, queueTotalPages - 1);
-  const queuePageRows = filteredQueue.slice(safeQueuePage * PAGE_SIZE, (safeQueuePage + 1) * PAGE_SIZE);
+  const queuePageRows = filteredQueue.slice(safeQueuePage * QUEUE_PAGE_SIZE, (safeQueuePage + 1) * QUEUE_PAGE_SIZE);
   const pendingCount = pendingQueue.length;
 
   // Dedupe by Personal Email so the tab badge / subline reflect unique people,
@@ -449,9 +315,10 @@ export default function HrOffboarding() {
             Wrap up cleanly when people move on.
           </h1>
           <p className="max-w-2xl text-sm leading-relaxed text-emerald-100/85">
-            Find an employee, click <span className="font-semibold">Offboard</span>,
-            pick a reason. Their record is retained for reporting; they drop from
-            payroll and manager dashboards immediately.
+            Managers send people here from <span className="font-semibold">My Team</span>.
+            Click <span className="font-semibold">Process</span> to work through each
+            request. Records are retained for reporting; people drop from payroll and
+            manager dashboards immediately.
           </p>
         </div>
       </header>
@@ -486,29 +353,6 @@ export default function HrOffboarding() {
                       {pendingCount}
                     </span>
                   )}
-                </span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setActiveTab('active')}
-                className={cn(
-                  'relative flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors',
-                  activeTab === 'active' ? 'text-white' : 'text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100',
-                )}
-              >
-                {activeTab === 'active' && (
-                  <motion.span
-                    layoutId="offboardTabPill"
-                    className="absolute inset-0 rounded-md bg-gradient-to-r from-emerald-500 to-teal-700 shadow-sm"
-                    transition={{ type: 'spring', stiffness: 400, damping: 32 }}
-                  />
-                )}
-                <span className="relative flex items-center gap-1.5">
-                  <UserX className="h-3.5 w-3.5" />
-                  All employees
-                  <span className={cn('rounded-full px-1.5 py-0.5 text-[10px] tabular-nums', activeTab === 'active' ? 'bg-white/20' : 'bg-zinc-200/80 text-zinc-600 dark:bg-zinc-700 dark:text-zinc-300')}>
-                    {roster.length}
-                  </span>
                 </span>
               </button>
               <button
@@ -567,17 +411,6 @@ export default function HrOffboarding() {
                       <RefreshCw className={cn('h-3.5 w-3.5', queueLoading && 'animate-spin')} />
                     </Button>
                   </>
-                ) : activeTab === 'active' ? (
-                  <>
-                    <div className="relative w-full sm:w-64">
-                      <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" />
-                      <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search name, email…" className="border-emerald-100/70 bg-white pl-9 dark:border-emerald-900/50 dark:bg-zinc-900" />
-                    </div>
-                    <DeptFilter rows={roster} getDept={(r) => r.department} value={rosterDept} onChange={setRosterDept} />
-                    <Button variant="outline" size="sm" onClick={() => void fetchRoster()} disabled={loading} className="shrink-0">
-                      <RefreshCw className={cn('h-3.5 w-3.5', loading && 'animate-spin')} />
-                    </Button>
-                  </>
                 ) : (
                   <>
                     <div className="relative w-full sm:w-56">
@@ -598,8 +431,6 @@ export default function HrOffboarding() {
           <p className="text-xs text-muted-foreground">
             {activeTab === 'queue'
               ? queueLoading ? 'Loading queue…' : `${pendingCount} pending · ${queue.length} total request${queue.length === 1 ? '' : 's'} from managers`
-              : activeTab === 'active'
-              ? loading ? 'Loading roster…' : `${filtered.length} of ${roster.length} shown`
               : historyLoading ? 'Loading…' : `${historyUniqueFiltered} of ${historyUniqueTotal} off-boarded`}
           </p>
         </CardHeader>
@@ -658,12 +489,12 @@ export default function HrOffboarding() {
                       })();
                       return (
                         <tr key={r.id} className="align-middle hover:bg-rose-50/30 dark:hover:bg-rose-950/20">
-                          <td data-label="Employee" className="px-4 py-2.5">
+                          <td data-label="Employee" className="px-4 py-4">
                             <div className="font-medium text-zinc-900 dark:text-zinc-100">{r.employee_name ?? '—'}</div>
                             <div className="break-all font-mono text-[11px] text-zinc-500">{r.employee_work_email ?? r.employee_email}</div>
                           </td>
-                          <td data-label="Department" className="px-4 py-2.5 text-xs text-zinc-700 dark:text-zinc-300">{r.department ?? '—'}</td>
-                          <td data-label="Reason" className="px-4 py-2.5">
+                          <td data-label="Department" className="px-4 py-4 text-xs text-zinc-700 dark:text-zinc-300">{r.department ?? '—'}</td>
+                          <td data-label="Reason" className="px-4 py-4">
                             <span className="inline-flex items-center rounded-full bg-rose-100 px-2 py-0.5 text-[11px] font-medium text-rose-700 dark:bg-rose-900/30 dark:text-rose-300">
                               {REASON_LABELS[r.reason] ?? r.reason}
                             </span>
@@ -671,11 +502,11 @@ export default function HrOffboarding() {
                               <p className="mt-0.5 max-w-[200px] truncate text-[11px] text-zinc-500" title={r.note}>{r.note}</p>
                             )}
                           </td>
-                          <td data-label="Requested by" className="px-4 py-2.5 font-mono text-[11px] text-zinc-500">{r.requested_by_name ?? r.requested_by}</td>
-                          <td data-label="Requested" className="px-4 py-2.5 text-xs text-zinc-600 dark:text-zinc-400">
+                          <td data-label="Requested by" className="px-4 py-4 font-mono text-[11px] text-zinc-500">{r.requested_by_name ?? r.requested_by}</td>
+                          <td data-label="Requested" className="px-4 py-4 text-xs text-zinc-600 dark:text-zinc-400">
                             {r.created_at ? new Date(r.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '—'}
                           </td>
-                          <td data-label="Status" className="px-4 py-2.5">
+                          <td data-label="Status" className="px-4 py-4">
                             <span className={cn('inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium', statusPill.cls)}>
                               {statusPill.label}
                             </span>
@@ -683,7 +514,7 @@ export default function HrOffboarding() {
                               <p className="mt-0.5 max-w-[160px] truncate text-[10px] text-zinc-500" title={r.processed_note}>{r.processed_note}</p>
                             )}
                           </td>
-                          <td data-label="Action" className="px-4 py-2.5">
+                          <td data-label="Action" className="px-4 py-4">
                             <div className="flex flex-wrap items-center justify-end gap-1.5">
                               {actionable ? (
                                 <>
@@ -703,6 +534,11 @@ export default function HrOffboarding() {
                                   {r.processed_by ? `by ${r.processed_by}` : '—'}
                                 </span>
                               )}
+                              <Button size="sm" variant="outline" onClick={() => setDeleteTarget(r)}
+                                title="Permanently remove this request from the queue"
+                                className="h-7 gap-1 border-rose-300 text-rose-700 hover:bg-rose-50 hover:text-rose-800 dark:border-rose-700/50 dark:text-rose-300 dark:hover:bg-rose-950/30">
+                                <Trash2 className="h-3 w-3" /> Delete
+                              </Button>
                             </div>
                           </td>
                         </tr>
@@ -710,85 +546,7 @@ export default function HrOffboarding() {
                     })}
                   </tbody>
                 </table>
-                <PaginationBar page={safeQueuePage} totalPages={queueTotalPages} setPage={setQueuePage} total={queue.length} filtered={filteredQueue.length} />
-              </div>
-            )
-          ) : activeTab === 'active' ? (
-            /* ── All employees (direct offboard) ── */
-            loading ? (
-              <div className="flex items-center justify-center py-10 text-zinc-500">
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Loading…
-              </div>
-            ) : filtered.length === 0 ? (
-              <div className="flex flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-emerald-200/80 bg-white/70 py-10 text-center dark:border-emerald-900/50 dark:bg-zinc-950/40">
-                <UserX className="h-8 w-8 text-emerald-400/60" />
-                <p className="text-sm text-zinc-600 dark:text-zinc-400">
-                  {roster.length === 0 ? 'No active employees on file.' : 'No rows match your search.'}
-                </p>
-              </div>
-            ) : (
-              <div className="overflow-x-auto rounded-xl border border-emerald-100/90 ring-1 ring-emerald-500/10 dark:border-emerald-900/60 dark:ring-emerald-400/10">
-                <table className="w-full text-left text-sm sm:min-w-[720px]">
-                  <thead className="sticky top-0 z-[1] bg-gradient-to-r from-emerald-50 via-white to-emerald-50/80 text-xs text-zinc-600 dark:from-emerald-950/50 dark:via-zinc-950 dark:to-emerald-950/40 dark:text-zinc-400">
-                    <tr>
-                      <th className="px-4 py-3 font-semibold">Employee ID</th>
-                      <th className="px-4 py-3 font-semibold">Name</th>
-                      <th className="px-4 py-3 font-semibold">Department</th>
-                      <th className="px-4 py-3 font-semibold">Work email</th>
-                      <th className="px-4 py-3 font-semibold">Start</th>
-                      <th className="px-4 py-3 font-semibold text-right">Action</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-emerald-100/70 bg-white/85 dark:divide-emerald-900/35 dark:bg-zinc-950/40">
-                    {rosterPageRows.map((r, i) => {
-                      const rEmail = r.work_email ?? '';
-                      const isDeactivating = firingWebhook === `${rEmail}::deactivate`;
-                      const isDeleting = firingWebhook === `${rEmail}::delete`;
-                      const awaitingDeleteConfirm = deleteConfirm === rEmail;
-                      const webhookBusy = isDeactivating || isDeleting;
-                      return (
-                      <tr key={`${r.employee_id ?? r.work_email ?? r.personal_email ?? 'row'}-${i}`} className="align-middle hover:bg-emerald-50/30 dark:hover:bg-emerald-950/20">
-                        <td data-label="Employee ID" className="px-4 py-2.5 font-mono text-xs text-zinc-600 dark:text-zinc-400">{r.employee_id ?? '—'}</td>
-                        <td data-label="Name" className="px-4 py-2.5 text-zinc-900 dark:text-zinc-100">{r.name ?? '—'}</td>
-                        <td data-label="Department" className="px-4 py-2.5 text-xs text-zinc-700 dark:text-zinc-300">{r.department ?? '—'}</td>
-                        <td data-label="Work email" className="break-all px-4 py-2.5 font-mono text-xs text-zinc-700 dark:text-zinc-300">{r.work_email ?? '—'}</td>
-                        <td data-label="Start" className="px-4 py-2.5 text-xs text-zinc-600 dark:text-zinc-400">{r.start_date ? (() => { const d = new Date(r.start_date); return isNaN(d.getTime()) ? r.start_date : d.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }); })() : '—'}</td>
-                        <td data-label="Action" className="px-4 py-2.5">
-                          <div className="flex flex-wrap items-center justify-end gap-1.5">
-                            <Button size="sm" variant="outline" onClick={() => setTarget(r)} disabled={webhookBusy || !r.work_email}
-                              className="h-7 gap-1 border-rose-300 text-rose-700 hover:bg-rose-50 hover:text-rose-800 disabled:opacity-50 dark:border-rose-700/50 dark:text-rose-300 dark:hover:bg-rose-950/30"
-                              title={r.work_email ? `Off-board ${r.name ?? r.work_email}` : 'No work email — cannot off-board'}>
-                              <UserMinus className="h-3 w-3" /> Offboard
-                            </Button>
-                            <Button size="sm" variant="outline"
-                              onClick={() => void handleFireWebhook({ workEmail: rEmail, name: r.name }, 'deactivate')}
-                              disabled={webhookBusy || !rEmail}
-                              title="Fire the offboarding-deactivate webhook (suspends Workspace account)"
-                              className="h-7 gap-1 border-amber-300 text-amber-700 hover:bg-amber-50 hover:text-amber-800 disabled:opacity-50 dark:border-amber-700/50 dark:text-amber-300 dark:hover:bg-amber-950/30">
-                              {isDeactivating ? <Loader2 className="h-3 w-3 animate-spin" /> : <ShieldOff className="h-3 w-3" />}
-                              Deactivate
-                            </Button>
-                            <Button size="sm" variant="outline"
-                              onClick={() => void handleFireWebhook({ workEmail: rEmail, name: r.name }, 'delete')}
-                              disabled={webhookBusy || !rEmail}
-                              title={awaitingDeleteConfirm ? 'Click again to confirm deletion' : 'Fire the offboarding-delete webhook (removes Workspace account)'}
-                              className={cn(
-                                'h-7 gap-1 disabled:opacity-50',
-                                awaitingDeleteConfirm
-                                  ? 'border-red-500 bg-red-50 text-red-700 hover:bg-red-100 dark:border-red-500/70 dark:bg-red-950/40 dark:text-red-300'
-                                  : 'border-rose-300 text-rose-700 hover:bg-rose-50 hover:text-rose-800 dark:border-rose-700/50 dark:text-rose-300 dark:hover:bg-rose-950/30',
-                              )}>
-                              {isDeleting ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 className="h-3 w-3" />}
-                              {awaitingDeleteConfirm ? 'Confirm?' : 'Delete'}
-                            </Button>
-                          </div>
-                        </td>
-                      </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-                <PaginationBar page={safeRosterPage} totalPages={rosterTotalPages} setPage={setRosterPage} total={roster.length} filtered={filtered.length} />
+                <PaginationBar page={safeQueuePage} totalPages={queueTotalPages} setPage={setQueuePage} total={queue.length} filtered={filteredQueue.length} pageSize={QUEUE_PAGE_SIZE} />
               </div>
             )
           ) : (
@@ -872,23 +630,12 @@ export default function HrOffboarding() {
         </CardContent>
       </Card>
 
-      <OffboardConfirmDialog
-        target={target}
-        onClose={() => setTarget(null)}
-        onSuccess={() => {
-          setTarget(null);
-          void fetchRoster();
-          void fetchHistory();
-        }}
-      />
-
       <HrOffboardQueueProcessor
         open={!!processTargets && processTargets.length > 0}
         items={processTargets ?? []}
         onOpenChange={(o) => { if (!o) setProcessTargets(null); }}
         onFinished={() => {
           void fetchQueue();
-          void fetchRoster();
           void fetchHistory();
         }}
       />
@@ -898,6 +645,15 @@ export default function HrOffboarding() {
         onClose={() => setReturnTarget(null)}
         onSuccess={() => {
           setReturnTarget(null);
+          void fetchQueue();
+        }}
+      />
+
+      <OffboardQueueDeleteDialog
+        target={deleteTarget}
+        onClose={() => setDeleteTarget(null)}
+        onSuccess={() => {
+          setDeleteTarget(null);
           void fetchQueue();
         }}
       />
@@ -1012,243 +768,88 @@ function OffboardReturnDialog({
   );
 }
 
-function OffboardConfirmDialog({
+/** Confirm dialog for permanently removing a single queue row (HR cleanup). */
+function OffboardQueueDeleteDialog({
   target,
   onClose,
   onSuccess,
 }: {
-  target: EmployeeRow | null;
+  target: OffboardingQueueRow | null;
   onClose: () => void;
   onSuccess: () => void;
 }) {
-  const [reason, setReason] = useState<OffboardReason | ''>('');
-  const [note, setNote] = useState('');
   const [submitting, setSubmitting] = useState(false);
-
-  // Reset form whenever the target changes (incl. close).
-  useEffect(() => {
-    setReason('');
-    setNote('');
-  }, [target?.work_email]);
-
   const open = !!target;
-  const noteRequired = reason === 'other';
-  const isValid = reason && (!noteRequired || note.trim().length > 0);
+  const isPending = target?.status === 'pending' || target?.status === 'processing';
 
-  async function handleSubmit(e: FormEvent) {
-    e.preventDefault();
-    if (!target?.work_email || !isValid) return;
+  async function handleDelete() {
+    if (!target || submitting) return;
     setSubmitting(true);
     try {
-      const res = await fetch('/api/hr/offboard', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          work_email: target.work_email,
-          reason,
-          note: note.trim() || null,
-        }),
-      });
-      const json = (await res.json()) as {
-        success?: boolean;
-        error?: string;
-        webhook?: { fired: boolean; status: number | null; error: string | null };
-        rbac_revoked?: { roles: number; departments: number; features: number };
-      };
-      if (!res.ok || !json.success) {
-        throw new Error(json.error ?? 'Failed to off-board');
-      }
-      const rb = json.rbac_revoked;
-      const revokedTotal = rb ? rb.roles + rb.departments + rb.features : 0;
-      const rbacNote =
-        revokedTotal > 0
-          ? ` Revoked ${revokedTotal} access grant${revokedTotal === 1 ? '' : 's'} (restorable on re-onboard).`
-          : '';
-      const webhookOk = json.webhook?.error == null && json.webhook?.fired;
-      if (webhookOk) {
-        toast.success(`${target.name ?? target.work_email} off-boarded`, {
-          description:
-            `Removed from active rosters. Account-deactivation workflow triggered.${rbacNote}`,
-        });
-      } else {
-        // DB update committed; only the n8n webhook hiccupped. Surface that
-        // explicitly so HR knows the @simple.biz account may not be deactivated
-        // yet and can re-fire / call Drew if needed.
-        toast.warning(`${target.name ?? target.work_email} off-boarded — but workflow didn't fire`, {
-          description: `Roster updated, but the offboarding webhook returned: ${json.webhook?.error ?? 'unknown error'}. Their account may still be active — re-run when n8n is available.`,
-          duration: 8000,
-        });
-      }
+      const res = await fetch(`/api/offboarding-queue/${target.id}`, { method: 'DELETE' });
+      const json = (await res.json()) as { success?: boolean; error?: string };
+      if (!res.ok || !json.success) throw new Error(json.error ?? 'Failed to delete request');
+      toast.success(
+        `Removed ${target.employee_name ?? target.employee_work_email ?? target.employee_email} from the queue`,
+      );
       onSuccess();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Failed to off-board');
+      toast.error(err instanceof Error ? err.message : 'Failed to delete request');
     } finally {
       setSubmitting(false);
     }
   }
 
-  const initials = target?.name
-    ? target.name.split(/[\s,]+/).filter(Boolean).slice(0, 2).map((w) => w[0]?.toUpperCase() ?? '').join('')
-    : (target?.work_email?.[0]?.toUpperCase() ?? '?');
-
   return (
-    <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent
-        showCloseButton={false}
-        className="overflow-hidden p-0 sm:max-w-[460px]"
-      >
-        {/* ── Header ── */}
-        <div className="relative overflow-hidden bg-[#1a0a0a] px-5 pb-5 pt-5">
-          {/* subtle grid texture */}
-          <div
-            className="pointer-events-none absolute inset-0"
-            style={{
-              backgroundImage:
-                'linear-gradient(rgba(220,38,38,0.06) 1px, transparent 1px), linear-gradient(90deg, rgba(220,38,38,0.06) 1px, transparent 1px)',
-              backgroundSize: '24px 24px',
-            }}
-          />
-          {/* top accent bar */}
+    <Dialog open={open} onOpenChange={(o) => !o && !submitting && onClose()}>
+      <DialogContent showCloseButton={false} className="overflow-hidden p-0 sm:max-w-[440px]">
+        <div className="relative overflow-hidden bg-[#1a0a0a] px-5 pb-4 pt-5">
           <div className="absolute inset-x-0 top-0 h-[2px] bg-gradient-to-r from-rose-700 via-rose-400 to-rose-700" />
-
           <div className="relative flex items-start gap-3.5">
-            {/* initials badge */}
-            <div className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-rose-900/60 text-sm font-bold tracking-wider text-rose-200 ring-1 ring-rose-700/50">
-              {initials}
+            <div className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-rose-900/50 text-rose-200 ring-1 ring-rose-700/50">
+              <Trash2 className="h-5 w-5" />
             </div>
-
             <div className="min-w-0 flex-1">
               <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-rose-500/80">
-                Offboard employee
+                Delete request
               </p>
               <p className="mt-0.5 truncate text-[15px] font-semibold leading-snug text-zinc-100">
-                {target?.name ?? target?.work_email ?? '—'}
+                {target?.employee_name ?? target?.employee_work_email ?? target?.employee_email ?? '—'}
               </p>
-              {target?.name && target?.work_email && (
-                <p className="mt-0.5 truncate font-mono text-[11px] text-zinc-500">
-                  {target.work_email}
-                </p>
-              )}
-              {target?.department && (
-                <span className="mt-1.5 inline-block rounded-full bg-zinc-800/80 px-2 py-0.5 text-[10px] font-medium text-zinc-400 ring-1 ring-zinc-700/50">
-                  {target.department}
-                </span>
-              )}
+              <p className="mt-0.5 truncate text-[11px] text-zinc-500">
+                requested by {target?.requested_by_name ?? target?.requested_by}
+              </p>
             </div>
-
-            {/* close button */}
-            <button
-              type="button"
-              onClick={onClose}
-              disabled={submitting}
-              className="mt-0.5 shrink-0 rounded-md p-1 text-zinc-600 transition-colors hover:bg-zinc-800/60 hover:text-zinc-300 disabled:opacity-40"
-              aria-label="Close"
-            >
-              <svg className="h-4 w-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-                <path d="M3 3l10 10M13 3L3 13" />
-              </svg>
-            </button>
           </div>
-
-          <p className="relative mt-3.5 text-[11px] leading-relaxed text-zinc-500">
-            This employee will be removed from active rosters. Their record is
-            retained for reporting and auditing purposes.
+          <p className="relative mt-3 text-[11px] leading-relaxed text-zinc-500">
+            This permanently removes the request from the queue and cannot be undone. It does
+            not off-board anyone
+            {isPending
+              ? " — and the manager isn't notified, so use Return or Process instead if this person still needs handling."
+              : '.'}
           </p>
         </div>
 
-        {/* ── Form ── */}
-        <form onSubmit={handleSubmit} noValidate className="space-y-3.5 bg-zinc-950/60 p-5">
-          {/* Reason */}
-          <div className="space-y-1.5">
-            <label className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-zinc-500">
-              Reason
-              <span className="text-rose-500">*</span>
-            </label>
-            <Select
-              value={reason}
-              onValueChange={(v) => v && setReason(v as OffboardReason)}
-            >
-              <SelectTrigger
-                className={cn(
-                  'w-full border-zinc-800 bg-zinc-900/80 text-sm text-zinc-200',
-                  'data-placeholder:text-zinc-600',
-                  'hover:border-zinc-700 hover:bg-zinc-900',
-                  'focus-visible:border-rose-700/60 focus-visible:ring-rose-700/20',
-                  'data-[size=default]:h-9',
-                )}
-              >
-                <SelectValue placeholder="Select a reason" />
-              </SelectTrigger>
-              <SelectContent
-                side="bottom"
-                alignItemWithTrigger={false}
-                className="border-zinc-800 bg-zinc-900 duration-[200ms] ease-[cubic-bezier(0.16,1,0.3,1)]"
-              >
-                {REASON_OPTIONS.map((r) => (
-                  <SelectItem
-                    key={r.value}
-                    value={r.value}
-                    className="text-zinc-300 focus:bg-zinc-800 focus:text-zinc-100"
-                  >
-                    {r.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-
-          {/* Note */}
-          <div className="space-y-1.5">
-            <label className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-zinc-500">
-              Note
-              {noteRequired && <span className="text-rose-500">*</span>}
-            </label>
-            <textarea
-              value={note}
-              onChange={(e) => setNote(e.target.value)}
-              rows={2}
-              placeholder={
-                noteRequired
-                  ? 'Required — describe the situation'
-                  : 'Optional — anything HR should remember'
-              }
-              className={cn(
-                'w-full resize-none rounded-lg border border-zinc-800 bg-zinc-900/80 px-3 py-2',
-                'text-sm text-zinc-200 placeholder:text-zinc-600',
-                'transition-colors focus:border-zinc-600 focus:bg-zinc-900 focus:outline-none',
-              )}
-            />
-          </div>
-
-          {/* Actions */}
-          <div className="flex gap-2 pt-0.5">
-            <Button
-              type="button"
-              variant="outline"
-              onClick={onClose}
-              disabled={submitting}
-              className="flex-1 border-zinc-800 bg-transparent text-zinc-400 hover:border-zinc-700 hover:bg-zinc-800/50 hover:text-zinc-200"
-            >
-              Cancel
-            </Button>
-            <Button
-              type="submit"
-              disabled={!isValid || submitting}
-              className={cn(
-                'flex-1 gap-1.5 border-0 bg-rose-700 text-white',
-                'hover:bg-rose-600 disabled:bg-zinc-800 disabled:text-zinc-600',
-                'transition-all',
-              )}
-            >
-              {submitting ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              ) : (
-                <UserMinus className="h-3.5 w-3.5" />
-              )}
-              {submitting ? 'Off-boarding...' : 'Confirm offboard'}
-            </Button>
-          </div>
-        </form>
+        <div className="flex gap-2 bg-zinc-950/60 p-5">
+          <Button
+            type="button"
+            variant="outline"
+            onClick={onClose}
+            disabled={submitting}
+            className="flex-1 border-zinc-800 bg-transparent text-zinc-400 hover:border-zinc-700 hover:bg-zinc-800/50 hover:text-zinc-200"
+          >
+            Cancel
+          </Button>
+          <Button
+            type="button"
+            onClick={() => void handleDelete()}
+            disabled={submitting}
+            className="flex-1 gap-1.5 border-0 bg-rose-700 text-white hover:bg-rose-600 disabled:bg-zinc-800 disabled:text-zinc-600"
+          >
+            {submitting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+            {submitting ? 'Deleting…' : 'Delete request'}
+          </Button>
+        </div>
       </DialogContent>
     </Dialog>
   );

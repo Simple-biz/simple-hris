@@ -34,6 +34,7 @@ import { useSession } from 'next-auth/react';
 import type { CellEditEntry, HrNewHireChecklistRow } from '@/lib/supabase/hr-new-hire-checklist';
 import { ONBOARDING_COUNTRIES, resolveOnboardingCountry } from '@/lib/onboarding/countries';
 import { useLiveCells, type LiveCellPeer, type LiveCellValue } from '@/hooks/useLiveCells';
+import NewHireChecklistLockDialog, { type LockDialogMode } from './NewHireChecklistLockDialog';
 
 /** Grid columns, in display order. Keys match the DB / API field names 1:1. */
 const COLUMNS = [
@@ -220,6 +221,23 @@ function formatWeekLabel(startIso: string): string {
   return `${f(s)} – ${f(e)}, ${e.getFullYear()}`;
 }
 
+/** The orientation day for a Sun-anchored week: the MONDAY (start + 1 day),
+ *  formatted "Monday, Jul 6, 2026". Mirrors the webhook's ORIENT_OFFSET_DAYS=1
+ *  (src/lib/hr/new-hire-checklist-webhook.ts) so the dialog shows the exact date
+ *  each hire is emailed. */
+function formatOrientationLabel(startIso: string): string {
+  if (!startIso) return '—';
+  const [y, m, d] = startIso.split('-').map(Number);
+  if (!y || !m || !d) return startIso;
+  const orient = new Date(y, m - 1, d + 1);
+  return orient.toLocaleDateString(undefined, {
+    weekday: 'long',
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  });
+}
+
 function formatLockStamp(iso: string | null): string {
   if (!iso) return '';
   const d = new Date(iso);
@@ -257,7 +275,26 @@ export default function HrNewHireChecklist({
   const [loading, setLoading] = useState<boolean>(() => !cached?.loaded);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [focusCell, setFocusCell] = useState<{ r: number; c: number } | null>(null);
+  // ── Spreadsheet-style cell selection ──────────────────────────────────────
+  // Google-Sheets feel: a single click selects a cell (drag or Shift-click
+  // extends a rectangular range); editing only begins on double-click, Enter, or
+  // by typing. `sel` is the anchor→head range; `editing` is the single cell in
+  // edit mode (its <input> is live), null while the grid is in select mode.
+  const [sel, setSel] = useState<{ ar: number; ac: number; hr: number; hc: number } | null>(null);
+  const [editing, setEditing] = useState<{ r: number; c: number } | null>(null);
+  const draggingRef = useRef(false);
+  const selRef = useRef(sel);
+  const editingRef = useRef(editing);
+  const escapingRef = useRef(false); // Escape reverts the in-flight edit on blur
+  const preEditRef = useRef<{ r: number; c: number; value: string } | null>(null);
+  const editSelectAllRef = useRef(false); // select-all vs caret-at-end on edit start
+  // Which password-gated action is being confirmed (null = no dialog). Locking
+  // fires the orientation automation and reopening lets a locked week be edited
+  // (and re-locked), so both go through the HR-Manager passphrase dialog.
+  const [actionDialog, setActionDialog] = useState<LockDialogMode | null>(null);
+  // A lock/reopen requested from the week dropdown for a week that first has to
+  // load: we switch to it, then this effect fires the dialog once it's in view.
+  const [pendingAction, setPendingAction] = useState<{ period: string; mode: LockDialogMode } | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const [departments, setDepartments] = useState<string[]>([]);
   const [selectedKeys, setSelectedKeys] = useState<Set<string>>(() => new Set());
@@ -278,6 +315,10 @@ export default function HrNewHireChecklist({
   // (even a paste on a readOnly input still fires our onPaste handler).
   const lockedRef = useRef(locked);
   useEffect(() => { lockedRef.current = locked; }, [locked]);
+  // Latest selection / editing cell in refs so global (window / grid) handlers
+  // read them without being recreated every keystroke.
+  useEffect(() => { selRef.current = sel; }, [sel]);
+  useEffect(() => { editingRef.current = editing; }, [editing]);
 
   // ── Live cell co-editing ────────────────────────────────────────────────
   // Broadcast this viewer's cell focus/typing to everyone else on the same week,
@@ -432,6 +473,12 @@ export default function HrNewHireChecklist({
       setLockedBy(json.period?.locked_by ?? null);
       setDirty(false);
       setSelectedKeys(new Set());
+      setSel(null);
+      setEditing(null);
+      // A resync (e.g. a peer's save) can drop the editing cell without a blur,
+      // so clear the live-edit cursor here too — otherwise a stale activeCellRef
+      // would make one cell ignore incoming peer edits until the next focus.
+      activeCellRef.current = null;
       setLoaded(true);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load the checklist');
@@ -523,16 +570,30 @@ export default function HrNewHireChecklist({
     };
   }, [periodMenuOpen]);
 
-  // Focus (and select) a cell after a structural change lands in the DOM.
+  // When a cell enters edit mode, focus its freshly-mounted <input> and either
+  // select all (double-click / Enter) or drop the caret at the end (F2 / typing).
   useEffect(() => {
-    if (!focusCell) return;
-    const el = scrollRef.current?.querySelector<HTMLElement>(`[data-cell="${focusCell.r}-${focusCell.c}"]`);
-    if (el) {
-      el.focus();
-      if (el instanceof HTMLInputElement) el.select();
+    if (!editing) return;
+    const el = scrollRef.current?.querySelector<HTMLInputElement>(`[data-cell="${editing.r}-${editing.c}"]`);
+    if (!el) return;
+    el.focus();
+    if (editSelectAllRef.current) {
+      el.select();
+    } else {
+      const n = el.value.length;
+      el.setSelectionRange(n, n);
     }
-    setFocusCell(null);
-  }, [focusCell, rows.length]);
+  }, [editing]);
+
+  // Drag-select ends whenever the mouse is released anywhere.
+  useEffect(() => {
+    const up = () => { draggingRef.current = false; };
+    window.addEventListener('mouseup', up);
+    return () => window.removeEventListener('mouseup', up);
+  }, []);
+
+  // Switching weeks invalidates row indices — drop any selection / edit.
+  useEffect(() => { setSel(null); setEditing(null); }, [period]);
 
   const setCell = useCallback((r: number, key: FieldKey, value: string) => {
     if (lockedRef.current) return;
@@ -540,14 +601,12 @@ export default function HrNewHireChecklist({
     setDirty(true);
   }, []);
 
-  const handlePaste = useCallback(
-    (e: React.ClipboardEvent<HTMLInputElement>, r: number, c: number) => {
+  // Core fill logic shared by the editing cell's onPaste (fill-down) and a
+  // range paste from select mode: writes `matrix` into the grid starting at
+  // (r, c), growing rows as needed, and mirrors it live to co-editors.
+  const pasteMatrixAt = useCallback(
+    (matrix: string[][], r: number, c: number) => {
       if (lockedRef.current) return;
-      const text = e.clipboardData?.getData('text/plain') ?? '';
-      if (!text) return;
-      const matrix = parseClipboard(text);
-      if (matrix.length === 1 && matrix[0]!.length === 1) return; // single value → native paste
-      e.preventDefault();
       const preRows = rowsRef.current;
       // Resolve a stable shared cid per target row up front, so the row we grow
       // locally and the value we broadcast to peers share identity (an appended
@@ -607,24 +666,191 @@ export default function HrNewHireChecklist({
     [departments, liveEdits],
   );
 
-  const handleKeyDown = useCallback(
-    (e: React.KeyboardEvent<HTMLInputElement>, r: number, c: number) => {
-      if (e.key === 'Enter') {
+  // The editing cell's paste = fill-down from that cell (a single value falls
+  // through to the browser's native paste into the input).
+  const handlePaste = useCallback(
+    (e: React.ClipboardEvent<HTMLInputElement>, r: number, c: number) => {
+      if (lockedRef.current) return;
+      const text = e.clipboardData?.getData('text/plain') ?? '';
+      if (!text) return;
+      const matrix = parseClipboard(text);
+      if (matrix.length === 1 && matrix[0]!.length === 1) return; // single value → native paste
+      e.preventDefault();
+      pasteMatrixAt(matrix, r, c);
+    },
+    [pasteMatrixAt],
+  );
+
+  // ── Cell selection + edit-mode handlers ───────────────────────────────────
+  const beginEdit = useCallback(
+    (r: number, c: number, opts?: { selectAll?: boolean; initial?: string }) => {
+      if (lockedRef.current) return;
+      const key = COLUMNS[c]!.key;
+      const cid = rowsRef.current[r]?._cid ?? '';
+      preEditRef.current = { r, c, value: rowsRef.current[r]?.[key] ?? '' };
+      editSelectAllRef.current = !!opts?.selectAll;
+      if (opts?.initial !== undefined) {
+        setCell(r, key, opts.initial);
+        if (cid) liveEdit(r, cid, key, opts.initial);
+      }
+      setSel({ ar: r, ac: c, hr: r, hc: c });
+      setEditing({ r, c });
+    },
+    [setCell, liveEdit],
+  );
+
+  const cellMouseDown = useCallback((e: React.MouseEvent, r: number, c: number) => {
+    if (e.button !== 0) return;
+    // Clicking inside the cell already being edited: let the input place its own
+    // caret / drag a text selection.
+    if (editingRef.current?.r === r && editingRef.current?.c === c) return;
+    e.preventDefault(); // suppress native text-selection while range-selecting
+    setSel((prev) => (e.shiftKey && prev ? { ...prev, hr: r, hc: c } : { ar: r, ac: c, hr: r, hc: c }));
+    draggingRef.current = true;
+    // Move focus off any open editor (commits it via onBlur) onto the grid so
+    // keyboard nav / copy / type-to-edit work.
+    scrollRef.current?.focus();
+  }, []);
+
+  const cellMouseEnter = useCallback((r: number, c: number) => {
+    if (!draggingRef.current) return;
+    setSel((prev) => (prev ? { ...prev, hr: r, hc: c } : prev));
+  }, []);
+
+  const clearRange = useCallback(() => {
+    if (lockedRef.current) return;
+    const s = selRef.current;
+    if (!s) return;
+    const r0 = Math.min(s.ar, s.hr), r1 = Math.max(s.ar, s.hr);
+    const c0 = Math.min(s.ac, s.hc), c1 = Math.max(s.ac, s.hc);
+    const batch: LiveCellValue[] = [];
+    setRows((prev) =>
+      prev.map((row, ri) => {
+        if (ri < r0 || ri > r1) return row;
+        let changed = false;
+        const next = { ...row };
+        for (let ci = c0; ci <= c1; ci++) {
+          const key = COLUMNS[ci]!.key;
+          if ((next[key] ?? '') !== '') {
+            next[key] = '';
+            changed = true;
+            batch.push({ r: ri, cid: row._cid, c: key, v: '' });
+          }
+        }
+        return changed ? next : row;
+      }),
+    );
+    if (batch.length) { liveEdits(batch); setDirty(true); }
+  }, [liveEdits]);
+
+  // Keyboard while a cell/range is selected (not editing). Attached to the grid
+  // container; bails while editing so the <input> keeps its own keys.
+  const gridKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLDivElement>) => {
+      // Only handle keys aimed at the container itself — never hijack Space /
+      // Enter etc. bubbling up from a focused checkbox / delete / history button.
+      if (e.target !== e.currentTarget) return;
+      if (editingRef.current) return;
+      const k = e.key;
+      const isNav =
+        k === 'ArrowUp' || k === 'ArrowDown' || k === 'ArrowLeft' || k === 'ArrowRight' || k === 'Enter' || k === 'F2';
+      const isPrintable = !e.ctrlKey && !e.metaKey && !e.altKey && k.length === 1;
+      const s = selRef.current;
+      // Keyboard bootstrap: a user who Tabs into the grid (no prior click) has no
+      // selection yet — the first navigation / edit / type key seeds cell A1, and
+      // subsequent keys operate normally.
+      if (!s) {
+        if ((isNav || isPrintable) && rowsRef.current.length > 0) {
+          e.preventDefault();
+          setSel({ ar: 0, ac: 0, hr: 0, hc: 0 });
+        }
+        return;
+      }
+      const maxR = rowsRef.current.length - 1;
+      const maxC = COLUMNS.length - 1;
+      if (k === 'ArrowUp' || k === 'ArrowDown' || k === 'ArrowLeft' || k === 'ArrowRight') {
         e.preventDefault();
+        const dr = k === 'ArrowDown' ? 1 : k === 'ArrowUp' ? -1 : 0;
+        const dc = k === 'ArrowRight' ? 1 : k === 'ArrowLeft' ? -1 : 0;
+        const nr = Math.min(Math.max(s.hr + dr, 0), maxR);
+        const nc = Math.min(Math.max(s.hc + dc, 0), maxC);
+        setSel((prev) => (prev && e.shiftKey ? { ...prev, hr: nr, hc: nc } : { ar: nr, ac: nc, hr: nr, hc: nc }));
+        return;
+      }
+      if (k === 'Enter' || k === 'F2') {
+        e.preventDefault();
+        beginEdit(s.hr, s.hc, { selectAll: k === 'Enter' });
+        return;
+      }
+      if (k === 'Escape') { e.preventDefault(); setSel(null); return; }
+      if (k === 'Delete' || k === 'Backspace') {
         if (lockedRef.current) return;
-        const nextR = r + 1;
-        setRows((prev) => (nextR >= prev.length ? [...prev, blankRow()] : prev));
-        setFocusCell({ r: nextR, c });
-      } else if (e.key === 'ArrowDown') {
         e.preventDefault();
-        setFocusCell({ r: Math.min(r + 1, rows.length - 1), c });
-      } else if (e.key === 'ArrowUp') {
+        clearRange();
+        return;
+      }
+      // Type-to-edit: a lone printable character replaces the cell and edits it.
+      if (!e.ctrlKey && !e.metaKey && !e.altKey && k.length === 1) {
+        if (lockedRef.current) return;
         e.preventDefault();
-        setFocusCell({ r: Math.max(r - 1, 0), c });
+        beginEdit(s.hr, s.hc, { initial: k });
       }
     },
-    [rows.length],
+    [beginEdit, clearRange],
   );
+
+  // Keys inside the editing <input>: commit + move (Enter/Tab) or revert (Esc).
+  const editingKeyDown = useCallback((e: React.KeyboardEvent<HTMLInputElement>, r: number, c: number) => {
+    const k = e.key;
+    if (k === 'Enter') {
+      e.preventDefault();
+      if (r + 1 >= rowsRef.current.length) setRows((prev) => [...prev, blankRow()]);
+      setSel({ ar: r + 1, ac: c, hr: r + 1, hc: c });
+      scrollRef.current?.focus(); // blurs the input → commit via onBlur
+    } else if (k === 'Tab') {
+      e.preventDefault();
+      const nc = Math.min(Math.max(c + (e.shiftKey ? -1 : 1), 0), COLUMNS.length - 1);
+      setSel({ ar: r, ac: nc, hr: r, hc: nc });
+      scrollRef.current?.focus();
+    } else if (k === 'Escape') {
+      e.preventDefault();
+      escapingRef.current = true; // onBlur restores the pre-edit value
+      setSel({ ar: r, ac: c, hr: r, hc: c });
+      scrollRef.current?.focus();
+    }
+  }, []);
+
+  // Copy the selected range as TSV (so it pastes cleanly into Sheets / Excel).
+  const gridCopy = useCallback((e: React.ClipboardEvent<HTMLDivElement>) => {
+    if (e.target !== e.currentTarget) return; // only when the grid itself is focused
+    if (editingRef.current) return; // let the input copy its own text selection
+    const s = selRef.current;
+    if (!s) return;
+    const r0 = Math.min(s.ar, s.hr), r1 = Math.max(s.ar, s.hr);
+    const c0 = Math.min(s.ac, s.hc), c1 = Math.max(s.ac, s.hc);
+    const rowsNow = rowsRef.current;
+    const lines: string[] = [];
+    for (let ri = r0; ri <= r1; ri++) {
+      const cells: string[] = [];
+      for (let ci = c0; ci <= c1; ci++) cells.push(rowsNow[ri]?.[COLUMNS[ci]!.key] ?? '');
+      lines.push(cells.join('\t'));
+    }
+    e.preventDefault();
+    e.clipboardData.setData('text/plain', lines.join('\n'));
+  }, []);
+
+  // Paste into the grid from select mode (starts at the range's top-left).
+  const gridPaste = useCallback((e: React.ClipboardEvent<HTMLDivElement>) => {
+    if (e.target !== e.currentTarget) return; // only when the grid itself is focused
+    if (editingRef.current) return; // the input's own onPaste handles fill-down
+    if (lockedRef.current) return;
+    const s = selRef.current;
+    if (!s) return;
+    const text = e.clipboardData?.getData('text/plain') ?? '';
+    if (!text) return;
+    e.preventDefault();
+    pasteMatrixAt(parseClipboard(text), Math.min(s.ar, s.hr), Math.min(s.ac, s.hc));
+  }, [pasteMatrixAt]);
 
   const addRows = useCallback((n: number) => {
     if (lockedRef.current) return;
@@ -651,6 +877,8 @@ export default function HrNewHireChecklist({
       next.delete(key);
       return next;
     });
+    setSel(null); // row indices shifted — drop the cell selection
+    setEditing(null);
     setDirty(true);
   }, []);
 
@@ -669,8 +897,8 @@ export default function HrNewHireChecklist({
     void loadPeriods();
   }, [dirty, period, fetchPeriod, loadPeriods]);
 
-  const persist = useCallback(async (action: 'save' | 'lock') => {
-    if (!period) return;
+  const persist = useCallback(async (action: 'save' | 'lock'): Promise<boolean> => {
+    if (!period) return false;
     setSaving(true);
     setError(null);
     try {
@@ -698,6 +926,8 @@ export default function HrNewHireChecklist({
       setLockedBy(json.period?.locked_by ?? null);
       setDirty(false);
       setSelectedKeys(new Set());
+      setSel(null);
+      setEditing(null);
       setLoaded(true);
       liveSaved(); // tell co-editors to resync (avoids a duplicate insert of a shared new row)
       const filled = fresh.filter((r) => !rowIsBlank(r)).length;
@@ -707,15 +937,17 @@ export default function HrNewHireChecklist({
           : `Saved ${filled} ${filled === 1 ? 'hire' : 'hires'} to ${formatWeekLabel(period)}`,
       );
       void loadPeriods();
+      return true;
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Save failed');
+      return false;
     } finally {
       setSaving(false);
     }
   }, [period, rows, loadPeriods, liveSaved]);
 
-  const reopen = useCallback(async () => {
-    if (!period) return;
+  const reopen = useCallback(async (): Promise<boolean> => {
+    if (!period) return false;
     setSaving(true);
     setError(null);
     try {
@@ -735,14 +967,64 @@ export default function HrNewHireChecklist({
       toast.success(`Reopened ${formatWeekLabel(period)} for editing`);
       liveSaved(); // reopen changes the shared grid too — nudge co-editors to resync
       void loadPeriods();
+      return true;
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Reopen failed');
+      return false;
     } finally {
       setSaving(false);
     }
   }, [period, loadPeriods, liveSaved]);
 
+  // Run the password-gated action the dialog just confirmed; close the dialog
+  // only on success (a failure keeps it open so the passphrase can be retried).
+  const runGatedAction = useCallback(async (): Promise<boolean> => {
+    const ok = actionDialog === 'lock' ? await persist('lock') : await reopen();
+    if (ok) setActionDialog(null);
+    return ok;
+  }, [actionDialog, persist, reopen]);
+
+  // Lock / reopen a specific week straight from the dropdown. Locking requires
+  // that week's rows loaded (the server sends the whole grid + fires the
+  // orientation emails), and it's safest to always show the HR Manager the week
+  // they're about to act on — so if it isn't the active week we switch to it
+  // first and let the effect below open the dialog once it's loaded.
+  const startPeriodAction = useCallback((targetPeriod: string, mode: LockDialogMode) => {
+    setPeriodMenuOpen(false);
+    if (targetPeriod === period && loaded && !loading) {
+      setActionDialog(mode);
+      return;
+    }
+    if (targetPeriod !== period) {
+      if (dirty && !window.confirm('Discard unsaved changes and switch weeks?')) return;
+      setPeriod(targetPeriod);
+      setLoaded(false);
+      setSavedSignal(null);
+    }
+    setPendingAction({ period: targetPeriod, mode });
+  }, [period, loaded, loading, dirty]);
+
+  // Once the week a dropdown action asked for is in view (loaded, not loading),
+  // pop its dialog. A failed load leaves `loaded` false so nothing opens.
+  useEffect(() => {
+    if (!pendingAction) return;
+    if (pendingAction.period !== period || loading || !loaded) return;
+    setActionDialog(pendingAction.mode);
+    setPendingAction(null);
+  }, [pendingAction, period, loading, loaded]);
+
   const filledCount = useMemo(() => rows.filter((r) => !rowIsBlank(r)).length, [rows]);
+
+  // Normalised (min→max) selection rectangle for highlighting cells.
+  const selBounds = useMemo(() => {
+    if (!sel) return null;
+    return {
+      r0: Math.min(sel.ar, sel.hr),
+      r1: Math.max(sel.ar, sel.hr),
+      c0: Math.min(sel.ac, sel.hc),
+      c1: Math.max(sel.ac, sel.hc),
+    };
+  }, [sel]);
 
   // ── Row multiselect → bulk-apply department / country / delete ──
   const selectedCount = selectedKeys.size;
@@ -791,6 +1073,8 @@ export default function HrNewHireChecklist({
       return next.length ? next : seedBlank(1);
     });
     setSelectedKeys(new Set());
+    setSel(null); // row indices shifted — drop the cell selection
+    setEditing(null);
     setDirty(true);
   }, [selectedKeys]);
 
@@ -871,33 +1155,67 @@ export default function HrNewHireChecklist({
                 </button>
               </div>
               {periodMenuOpen && (
-                <div className="absolute right-0 z-30 mt-1 max-h-72 w-64 overflow-auto rounded-xl border border-zinc-200 bg-white py-1 shadow-lg shadow-black/10 dark:border-zinc-700 dark:bg-zinc-900">
-                  {periodOptions.map((o) => (
-                    <button
-                      key={o.start}
-                      type="button"
-                      onClick={() => changePeriod(o.start)}
-                      className={cn(
-                        'flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-[13px] hover:bg-emerald-50 dark:hover:bg-emerald-950/40',
-                        o.start === period
-                          ? 'bg-emerald-50 font-medium text-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-200'
-                          : 'text-zinc-700 dark:text-zinc-300',
-                      )}
-                    >
-                      <span className="flex items-center gap-2 tabular-nums">
-                        {formatWeekLabel(o.start)}
-                        {o.start === currentSunday && (
-                          <span className="rounded-full bg-emerald-100 px-1.5 py-px text-[10px] font-semibold text-emerald-700 dark:bg-emerald-900/50 dark:text-emerald-300">
-                            now
-                          </span>
+                <div className="absolute right-0 z-30 mt-1 max-h-80 w-72 overflow-auto rounded-xl border border-zinc-200 bg-white py-1 shadow-lg shadow-black/10 dark:border-zinc-700 dark:bg-zinc-900">
+                  {periodOptions.map((o) => {
+                    const isActive = o.start === period;
+                    return (
+                      <div
+                        key={o.start}
+                        className={cn(
+                          'flex items-center gap-1 px-1.5 py-0.5',
+                          isActive && 'bg-emerald-50 dark:bg-emerald-950/40',
                         )}
-                      </span>
-                      <span className="flex items-center gap-1.5 text-[11px] text-zinc-400">
-                        {o.rowCount > 0 && <span className="tabular-nums">{o.rowCount}</span>}
-                        {o.locked && <Lock className="h-3 w-3 text-amber-500" />}
-                      </span>
-                    </button>
-                  ))}
+                      >
+                        <button
+                          type="button"
+                          onClick={() => changePeriod(o.start)}
+                          className={cn(
+                            'flex min-w-0 flex-1 items-center gap-2 rounded-lg px-1.5 py-1.5 text-left text-[13px] hover:bg-emerald-50 dark:hover:bg-emerald-950/40',
+                            isActive
+                              ? 'font-medium text-emerald-800 dark:text-emerald-200'
+                              : 'text-zinc-700 dark:text-zinc-300',
+                          )}
+                        >
+                          <span className="flex min-w-0 items-center gap-1.5 tabular-nums">
+                            <span className="truncate">{formatWeekLabel(o.start)}</span>
+                            {o.start === currentSunday && (
+                              <span className="shrink-0 rounded-full bg-emerald-100 px-1.5 py-px text-[10px] font-semibold text-emerald-700 dark:bg-emerald-900/50 dark:text-emerald-300">
+                                now
+                              </span>
+                            )}
+                          </span>
+                          {o.rowCount > 0 && (
+                            <span className="ml-auto shrink-0 tabular-nums text-[11px] text-zinc-400">{o.rowCount}</span>
+                          )}
+                        </button>
+                        {o.locked ? (
+                          <button
+                            type="button"
+                            onClick={() => startPeriodAction(o.start, 'reopen')}
+                            disabled={saving}
+                            title={`Reopen ${formatWeekLabel(o.start)} for editing`}
+                            aria-label={`Reopen ${formatWeekLabel(o.start)} for editing`}
+                            className="flex shrink-0 items-center gap-1 rounded-lg border border-amber-300 bg-amber-50 px-2 py-1 text-[11px] font-semibold text-amber-700 transition hover:bg-amber-100 disabled:opacity-50 dark:border-amber-500/40 dark:bg-amber-950/30 dark:text-amber-300 dark:hover:bg-amber-950/50"
+                          >
+                            <LockOpen className="h-3 w-3" />
+                            Reopen
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => startPeriodAction(o.start, 'lock')}
+                            disabled={saving}
+                            title={`Lock in ${formatWeekLabel(o.start)} & send orientation invites`}
+                            aria-label={`Lock in ${formatWeekLabel(o.start)}`}
+                            className="flex shrink-0 items-center gap-1 rounded-lg border border-emerald-300 bg-emerald-50 px-2 py-1 text-[11px] font-semibold text-emerald-700 transition hover:bg-emerald-100 disabled:opacity-50 dark:border-emerald-500/40 dark:bg-emerald-950/30 dark:text-emerald-300 dark:hover:bg-emerald-950/50"
+                          >
+                            <Lock className="h-3 w-3" />
+                            Lock in
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               )}
             </div>
@@ -925,7 +1243,7 @@ export default function HrNewHireChecklist({
               <Button
                 type="button"
                 size="sm"
-                onClick={() => void reopen()}
+                onClick={() => setActionDialog('reopen')}
                 disabled={saving || loading}
                 className="h-8 gap-1.5 bg-amber-500 text-white hover:bg-amber-600 disabled:opacity-50"
               >
@@ -948,7 +1266,7 @@ export default function HrNewHireChecklist({
                 <Button
                   type="button"
                   size="sm"
-                  onClick={() => void persist('lock')}
+                  onClick={() => setActionDialog('lock')}
                   disabled={saving || loading}
                   className="h-8 gap-1.5 bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50"
                 >
@@ -975,7 +1293,7 @@ export default function HrNewHireChecklist({
               <Button
                 type="button"
                 size="sm"
-                onClick={() => void reopen()}
+                onClick={() => setActionDialog('reopen')}
                 disabled={saving}
                 className="ml-auto h-7 gap-1.5 bg-amber-500 text-white hover:bg-amber-600"
               >
@@ -990,12 +1308,14 @@ export default function HrNewHireChecklist({
             <div className="flex items-start gap-2 rounded-xl border border-emerald-200 bg-emerald-50/70 px-3.5 py-2.5 text-[12px] leading-snug text-emerald-800 dark:border-emerald-500/30 dark:bg-emerald-950/20 dark:text-emerald-300">
               <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />
               <span>
-                Copy a column from Excel / Google Sheets and paste it into any cell — it fills straight
-                down. <strong>Department</strong> and <strong>Country</strong> offer a dropdown but can also be
-                typed or pasted. Tick rows to bulk-apply a department / country. A green dot in a cell&apos;s
-                corner means it&apos;s been edited — click it to see the full history (who changed it, when, and
-                the old &rarr; new value). <strong>Lock in</strong> saves this week&apos;s hires to Supabase; they
-                then feed the per-country <strong>Bulk Invite</strong> in Onboarding. Reopen any week to edit.
+                Works like a spreadsheet: <strong>click</strong> a cell to select it, <strong>drag</strong> or{' '}
+                <strong>Shift-click</strong> to highlight a range, then <strong>double-click</strong> (or just start
+                typing / press Enter) to edit. <strong>Ctrl/Cmd+C</strong> copies the highlighted range and{' '}
+                <strong>Delete</strong> clears it. Paste a column from Excel / Google Sheets into any cell and it fills
+                straight down. <strong>Department</strong> and <strong>Country</strong> offer a dropdown while editing.
+                Tick rows to bulk-apply a department / country. A green dot in a cell&apos;s corner means it&apos;s been
+                edited — click it for the full history. <strong>Lock in</strong> saves this week&apos;s hires and feeds
+                the per-country <strong>Bulk Invite</strong> in Onboarding. Reopen any week to edit.
               </span>
             </div>
           )}
@@ -1115,7 +1435,7 @@ export default function HrNewHireChecklist({
                   <ClipboardList className="h-7 w-7 text-emerald-300 dark:text-emerald-800" />
                   <p className="text-sm text-zinc-500">No hires saved for {formatWeekLabel(period)}.</p>
                   {locked && (
-                    <Button type="button" size="sm" onClick={() => void reopen()} disabled={saving} className="mt-1 gap-1.5 bg-amber-500 text-white hover:bg-amber-600">
+                    <Button type="button" size="sm" onClick={() => setActionDialog('reopen')} disabled={saving} className="mt-1 gap-1.5 bg-amber-500 text-white hover:bg-amber-600">
                       <LockOpen className="h-3.5 w-3.5" /> Reopen to add hires
                     </Button>
                   )}
@@ -1123,7 +1443,12 @@ export default function HrNewHireChecklist({
               ) : (
                 <div
                   ref={registerScrollSurface}
-                  className="relative min-h-0 flex-1 overflow-auto rounded-2xl border border-emerald-100/80 bg-white shadow-sm dark:border-emerald-950/40 dark:bg-zinc-950"
+                  tabIndex={0}
+                  aria-label="New hire checklist grid — click or use arrow keys to select cells; Enter, F2, or double-click to edit; Ctrl+C to copy, Delete to clear"
+                  onKeyDown={gridKeyDown}
+                  onCopy={gridCopy}
+                  onPaste={gridPaste}
+                  className="relative min-h-0 flex-1 overflow-auto rounded-2xl border border-emerald-100/80 bg-white shadow-sm outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/40 dark:border-emerald-950/40 dark:bg-zinc-950"
                 >
                   <table className="table-keep w-full border-collapse text-[13px]">
                     <thead className="sticky top-0 z-10">
@@ -1233,15 +1558,28 @@ export default function HrNewHireChecklist({
                                     ? 'nhc-countries'
                                     : undefined;
                               const peerHere = peerByCell.get(`${r}:${c.key}`) ?? null;
+                              const isEditing = editing?.r === r && editing?.c === ci;
+                              const inSel =
+                                !!selBounds && r >= selBounds.r0 && r <= selBounds.r1 && ci >= selBounds.c0 && ci <= selBounds.c1;
+                              const isHead = sel?.hr === r && sel?.hc === ci;
+                              const widthClass = listId ? 'min-w-[10rem]' : 'min-w-[8rem]';
                               return (
                                 <td
                                   key={c.key}
-                                  className="relative border-b border-emerald-50/80 p-0 dark:border-zinc-800/80"
+                                  onMouseDown={(e) => cellMouseDown(e, r, ci)}
+                                  onMouseEnter={() => cellMouseEnter(r, ci)}
+                                  onDoubleClick={() => beginEdit(r, ci, { selectAll: true })}
+                                  className={cn(
+                                    'relative border-b border-emerald-50/80 p-0 dark:border-zinc-800/80',
+                                    !isEditing && 'cursor-cell',
+                                    inSel && !isEditing && 'bg-emerald-200/70 dark:bg-emerald-700/40',
+                                  )}
                                 >
                                   {hasEdits && (
                                     <button
                                       type="button"
                                       data-cell-history-dot
+                                      onMouseDown={(e) => e.stopPropagation()}
                                       onClick={(e) => {
                                         e.stopPropagation();
                                         const rect = e.currentTarget.getBoundingClientRect();
@@ -1258,30 +1596,35 @@ export default function HrNewHireChecklist({
                                       }}
                                       title={`Edited ${edits!.length} ${edits!.length === 1 ? 'time' : 'times'} — view history`}
                                       aria-label={`View edit history for ${c.label}, row ${r + 1}`}
-                                      className="absolute right-0.5 top-0.5 z-[3] flex h-3 w-3 items-center justify-center"
+                                      className="absolute right-0.5 top-0.5 z-[4] flex h-3 w-3 items-center justify-center"
                                     >
                                       <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 ring-2 ring-white dark:bg-emerald-400 dark:ring-zinc-950" />
                                     </button>
                                   )}
-                                  <input
-                                    data-cell={`${r}-${ci}`}
-                                    list={locked ? undefined : listId}
-                                    value={value}
-                                    readOnly={locked}
-                                    onFocus={() => {
-                                      if (locked) return;
-                                      activeCellRef.current = { r, col: c.key };
-                                      liveFocus(r, row._cid, c.key);
-                                    }}
-                                    onChange={(e) => {
-                                      setCell(r, c.key, e.target.value);
-                                      if (!locked) liveEdit(r, row._cid, c.key, e.target.value);
-                                    }}
-                                    onPaste={(e) => handlePaste(e, r, ci)}
-                                    onKeyDown={(e) => handleKeyDown(e, r, ci)}
-                                    onBlur={(e) => {
-                                      if (!locked) {
-                                        if (listId) {
+                                  {isEditing ? (
+                                    <input
+                                      data-cell={`${r}-${ci}`}
+                                      list={listId}
+                                      value={value}
+                                      onFocus={() => {
+                                        activeCellRef.current = { r, col: c.key };
+                                        liveFocus(r, row._cid, c.key);
+                                      }}
+                                      onChange={(e) => {
+                                        setCell(r, c.key, e.target.value);
+                                        liveEdit(r, row._cid, c.key, e.target.value);
+                                      }}
+                                      onPaste={(e) => handlePaste(e, r, ci)}
+                                      onKeyDown={(e) => editingKeyDown(e, r, ci)}
+                                      onBlur={(e) => {
+                                        if (escapingRef.current) {
+                                          escapingRef.current = false;
+                                          const pre = preEditRef.current;
+                                          if (pre && pre.r === r && pre.c === ci) {
+                                            setCell(r, c.key, pre.value);
+                                            liveEdit(r, row._cid, c.key, pre.value);
+                                          }
+                                        } else if (listId) {
                                           const canon =
                                             c.key === 'department'
                                               ? canonicalizeDept(e.target.value, departments)
@@ -1292,19 +1635,34 @@ export default function HrNewHireChecklist({
                                           }
                                         }
                                         liveBlur(r, row._cid, c.key);
-                                      }
-                                      if (activeCellRef.current?.r === r && activeCellRef.current?.col === c.key) {
-                                        activeCellRef.current = null;
-                                      }
-                                    }}
-                                    className={cn(
-                                      'h-9 w-full bg-transparent px-2.5 text-[13px] outline-none placeholder:text-zinc-300',
-                                      locked
-                                        ? 'cursor-default text-zinc-500 dark:text-zinc-400'
-                                        : 'text-zinc-800 focus:bg-emerald-50/80 focus:ring-1 focus:ring-inset focus:ring-emerald-400 dark:text-zinc-100 dark:focus:bg-emerald-950/30',
-                                      listId ? cn('min-w-[10rem]', SELECT_SCHEME_CLASS) : 'min-w-[8rem]',
-                                    )}
-                                  />
+                                        if (activeCellRef.current?.r === r && activeCellRef.current?.col === c.key) {
+                                          activeCellRef.current = null;
+                                        }
+                                        setEditing((cur) => (cur?.r === r && cur?.c === ci ? null : cur));
+                                      }}
+                                      className={cn(
+                                        'relative z-[3] h-9 w-full bg-emerald-50/90 px-2.5 text-[13px] text-zinc-800 outline-none ring-2 ring-inset ring-emerald-500 placeholder:text-zinc-300 dark:bg-emerald-950/50 dark:text-zinc-100',
+                                        listId ? cn(widthClass, SELECT_SCHEME_CLASS) : widthClass,
+                                      )}
+                                    />
+                                  ) : (
+                                    <div
+                                      className={cn(
+                                        'flex h-9 select-none items-center whitespace-nowrap px-2.5 text-[13px]',
+                                        value ? 'text-zinc-800 dark:text-zinc-100' : 'text-zinc-400',
+                                        widthClass,
+                                      )}
+                                    >
+                                      {value}
+                                    </div>
+                                  )}
+                                  {/* Active-cell outline for the current selection head. */}
+                                  {isHead && !isEditing && (
+                                    <span
+                                      aria-hidden
+                                      className="pointer-events-none absolute inset-0 z-[2] rounded-[1px] ring-2 ring-inset ring-emerald-500"
+                                    />
+                                  )}
                                   {/* Live co-editing: a peer is in this cell right
                                       now — ring it in their identity color + tag
                                       it with their name (their keystrokes stream
@@ -1427,6 +1785,19 @@ export default function HrNewHireChecklist({
           </div>,
           document.body,
         )}
+
+      {/* Password-gated Lock in / Reopen (fires / warns about the orientation
+          automation) — restricted to the HR Manager passphrase. */}
+      <NewHireChecklistLockDialog
+        mode={actionDialog}
+        weekLabel={formatWeekLabel(period)}
+        orientationLabel={formatOrientationLabel(period)}
+        hireCount={filledCount}
+        lockedBy={lockedBy}
+        lockedStamp={formatLockStamp(lockedAt) || null}
+        onCancel={() => setActionDialog(null)}
+        onConfirm={runGatedAction}
+      />
     </div>
   );
 }

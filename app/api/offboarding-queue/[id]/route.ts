@@ -11,6 +11,7 @@ import {
   getOffboardingQueueById,
   decideOffboardingQueueEntry,
   cancelOffboardingQueueIfOwned,
+  deleteOffboardingQueueEntry,
 } from '@/lib/supabase/offboarding-queue';
 
 export const dynamic = 'force-dynamic';
@@ -173,6 +174,59 @@ export async function PATCH(
         requested_by: row.requested_by,
         offboard_reason: decision === 'completed' ? (body.offboard_reason?.trim() || row.reason) : null,
         note,
+      },
+      ip_address: clientIp(request),
+    });
+
+    return NextResponse.json({ success: true, error: null });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return NextResponse.json({ error: msg }, { status: 500 });
+  }
+}
+
+/**
+ * DELETE — permanently remove a queue row (HR cleanup of stale/mistaken
+ * entries, any status). Gated on HR/admin offboarding edit rights and audited.
+ */
+export async function DELETE(
+  request: Request,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  try {
+    const { id } = await params;
+    if (!id) return NextResponse.json({ error: 'Missing id' }, { status: 400 });
+
+    const session = (await getServerSession(authOptions)) as SessionLike;
+    const sessionEmail = normEmail(session?.user?.email ?? '') ?? '';
+    if (!sessionEmail) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
+    const roles = (session?.user?.roles ?? []) as string[];
+
+    const authz = await requireFeatureEdit('hr', 'offboarding');
+    if (!authz.ok) return deniedResponse(authz);
+
+    const { row, error: fetchErr } = await getOffboardingQueueById(id);
+    if (fetchErr) return NextResponse.json({ error: fetchErr }, { status: 500 });
+    if (!row) return NextResponse.json({ error: 'Request not found' }, { status: 404 });
+
+    const { deleted, error } = await deleteOffboardingQueueEntry(id);
+    if (error) return NextResponse.json({ error }, { status: 500 });
+    // A concurrent delete already removed the row — don't log a phantom action.
+    if (deleted === 0) {
+      return NextResponse.json({ error: 'Request was already removed' }, { status: 409 });
+    }
+
+    void insertAuditLog({
+      user_name: sessionEmail,
+      user_role: roles.includes('admin') ? 'Admin' : 'HR',
+      action: 'offboarding.request_deleted',
+      resource: 'offboarding_queue',
+      resource_id: id,
+      details: {
+        employee_email: row.employee_email,
+        employee_name: row.employee_name,
+        requested_by: row.requested_by,
+        status: row.status,
       },
       ip_address: clientIp(request),
     });

@@ -1,35 +1,38 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
+import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import {
   ChevronLeft,
   ChevronRight,
   Loader2,
-  Plus,
   RefreshCw,
   Search,
   Sheet,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from '@/components/ui/dialog';
 import type { EmployeeRow } from '@/lib/supabase/employees';
 import { useLiveRefresh } from '@/hooks/useLiveRefresh';
 import { getHrTabCache, hasHrTabCache, setHrTabCache, HR_TAB_CACHE_KEYS } from '@/lib/hr/tab-cache';
 import DeptFilter from './DeptFilter';
 
-const PAGE_SIZE = 20;
+const PAGE_SIZE = 10;
+
+const listVariants = {
+  hidden: { opacity: 0 },
+  show: {
+    opacity: 1,
+    transition: { staggerChildren: 0.035, delayChildren: 0.02 },
+  },
+};
+
+const rowVariants = {
+  hidden: { opacity: 0, y: 8 },
+  show: { opacity: 1, y: 0, transition: { duration: 0.24, ease: [0.22, 1, 0.36, 1] as const } },
+};
 
 function fmtDate(iso: string | null | undefined): string {
   if (!iso) return '—';
@@ -53,26 +56,6 @@ function tenure(iso: string | null | undefined): string {
   return days <= 0 ? 'New' : `${days}d`;
 }
 
-type AddForm = {
-  name: string;
-  department: string;
-  workEmail: string;
-  personalEmail: string;
-  startDate: string;
-  location: string;
-  phoneNumber: string;
-};
-
-const EMPTY_FORM: AddForm = {
-  name: '',
-  department: '',
-  workEmail: '',
-  personalEmail: '',
-  startDate: '',
-  location: '',
-  phoneNumber: '',
-};
-
 export default function HrGlobalMasterList() {
   const [roster, setRoster] = useState<EmployeeRow[]>(
     () => getHrTabCache<EmployeeRow[]>(HR_TAB_CACHE_KEYS.globalMasterList) ?? [],
@@ -82,12 +65,21 @@ export default function HrGlobalMasterList() {
   const [search, setSearch] = useState('');
   const [dept, setDept] = useState('');
   const [page, setPage] = useState(0);
+  const reduceMotion = useReducedMotion();
 
-  const [addOpen, setAddOpen] = useState(false);
-  const [form, setForm] = useState<AddForm>(EMPTY_FORM);
-  const [adding, setAdding] = useState(false);
+  // `/api/employees` returns the full ~1000-row active roster and is expensive
+  // (paginated view reads + an employee_ids query + a global_master_list scan +
+  // in-JS id generation). The liveness triggers below (30s poll, window focus,
+  // visibilitychange, Realtime) can otherwise fire it repeatedly and CONCURRENTLY
+  // — and concurrent calls starve each other, so latency balloons and requests
+  // pile up faster than they drain (the tab appears to "load forever", worst on
+  // Vercel where per-call latency is higher). This in-flight guard coalesces all
+  // of those triggers so at most ONE roster fetch is ever outstanding.
+  const inFlight = useRef(false);
 
   const fetchRoster = useCallback(async (mode: 'initial' | 'quiet' = 'quiet') => {
+    if (inFlight.current) return;
+    inFlight.current = true;
     if (mode === 'initial') setLoading(true);
     try {
       const res = await fetch('/api/employees', { cache: 'no-store' });
@@ -99,6 +91,7 @@ export default function HrGlobalMasterList() {
     } catch (e) {
       if (mode === 'initial') toast.error(e instanceof Error ? e.message : 'Failed to load master list');
     } finally {
+      inFlight.current = false;
       if (mode === 'initial') setLoading(false);
     }
   }, []);
@@ -144,44 +137,6 @@ export default function HrGlobalMasterList() {
     }
   }, [fetchRoster]);
 
-  const handleAdd = useCallback(async () => {
-    if (!form.name.trim()) {
-      toast.error('Name is required');
-      return;
-    }
-    if (!form.workEmail.trim() && !form.personalEmail.trim()) {
-      toast.error('Enter at least one email (work or personal)');
-      return;
-    }
-    setAdding(true);
-    try {
-      const res = await fetch('/api/hr/global-master-list', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(form),
-      });
-      const json = (await res.json()) as {
-        success?: boolean;
-        error?: string;
-        sheetAppended?: boolean;
-        sheetReason?: string;
-      };
-      if (!res.ok || !json.success) throw new Error(json.error || 'Could not add employee');
-      toast.success(
-        json.sheetAppended
-          ? `${form.name.trim()} added — mirrored to the Google Sheet`
-          : `${form.name.trim()} added to the master list${json.sheetReason ? ` (Sheet: ${json.sheetReason})` : ' (not written to the Sheet)'}`,
-      );
-      setForm(EMPTY_FORM);
-      setAddOpen(false);
-      await fetchRoster('quiet');
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Could not add employee');
-    } finally {
-      setAdding(false);
-    }
-  }, [form, fetchRoster]);
-
   const filtered = useMemo(() => {
     setPage(0);
     const q = search.trim().toLowerCase();
@@ -198,8 +153,11 @@ export default function HrGlobalMasterList() {
   const safePage = Math.min(page, totalPages - 1);
   const pageRows = filtered.slice(safePage * PAGE_SIZE, (safePage + 1) * PAGE_SIZE);
 
-  const setField = (k: keyof AddForm) => (e: React.ChangeEvent<HTMLInputElement>) =>
-    setForm((f) => ({ ...f, [k]: e.target.value }));
+  // Re-key the tbody on the visible row set so the staggered fade-in replays
+  // whenever the search filters the results or the page changes.
+  const listKey = `${safePage}::${pageRows
+    .map((r) => r.work_email ?? r.personal_email ?? r.employee_id ?? '')
+    .join('|')}`;
 
   return (
     <div className="flex flex-col gap-6 px-4 pb-10 pt-6 sm:px-6 lg:px-8 lg:pt-8">
@@ -217,8 +175,8 @@ export default function HrGlobalMasterList() {
             </h1>
             <p className="mt-1 max-w-2xl text-sm leading-relaxed text-emerald-100/85">
               Mirrors the Google Sheet master list. Pull the latest with{' '}
-              <span className="font-semibold">Sync from Google Sheet</span>; anyone you{' '}
-              <span className="font-semibold">Add</span> here is written straight back to the Sheet.
+              <span className="font-semibold">Sync from Google Sheet</span>. New hires are added
+              through the New Hire Checklist and onboarding, not here.
             </p>
           </div>
           <div className="flex shrink-0 flex-wrap items-center gap-2">
@@ -231,90 +189,29 @@ export default function HrGlobalMasterList() {
               {syncing ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
               {syncing ? 'Syncing…' : 'Sync from Google Sheet'}
             </Button>
-
-            <Dialog open={addOpen} onOpenChange={setAddOpen}>
-              <DialogTrigger
-                render={<Button type="button" className="gap-2 bg-white text-emerald-800 hover:bg-emerald-50" />}
-              >
-                <Plus className="h-4 w-4" />
-                Add employee
-              </DialogTrigger>
-              <DialogContent className="sm:max-w-lg">
-                <DialogHeader>
-                  <DialogTitle>Add to the Global Master List</DialogTitle>
-                  <DialogDescription>
-                    Creates a roster row and mirrors it into the Google Sheet. Pay rates are set
-                    separately in Accounting.
-                  </DialogDescription>
-                </DialogHeader>
-                <div className="grid gap-3 py-2 sm:grid-cols-2">
-                  <div className="sm:col-span-2">
-                    <Label htmlFor="gml-name" className="text-xs">Name <span className="text-red-500">*</span></Label>
-                    <Input id="gml-name" value={form.name} onChange={setField('name')} placeholder="Full name" className="mt-1" />
-                  </div>
-                  <div>
-                    <Label htmlFor="gml-dept" className="text-xs">Department</Label>
-                    <Input id="gml-dept" value={form.department} onChange={setField('department')} placeholder="e.g. Lead Gen" className="mt-1" />
-                  </div>
-                  <div>
-                    <Label htmlFor="gml-start" className="text-xs">Start date</Label>
-                    <Input id="gml-start" type="date" value={form.startDate} onChange={setField('startDate')} className="mt-1" />
-                  </div>
-                  <div>
-                    <Label htmlFor="gml-work" className="text-xs">Work email</Label>
-                    <Input id="gml-work" type="email" value={form.workEmail} onChange={setField('workEmail')} placeholder="name@simple.biz" className="mt-1" />
-                  </div>
-                  <div>
-                    <Label htmlFor="gml-personal" className="text-xs">Personal email</Label>
-                    <Input id="gml-personal" type="email" value={form.personalEmail} onChange={setField('personalEmail')} placeholder="name@gmail.com" className="mt-1" />
-                  </div>
-                  <div>
-                    <Label htmlFor="gml-location" className="text-xs">Location</Label>
-                    <Input id="gml-location" value={form.location} onChange={setField('location')} placeholder="City / province" className="mt-1" />
-                  </div>
-                  <div>
-                    <Label htmlFor="gml-phone" className="text-xs">Contact number</Label>
-                    <Input id="gml-phone" value={form.phoneNumber} onChange={setField('phoneNumber')} placeholder="+63…" className="mt-1" />
-                  </div>
-                </div>
-                <p className="text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400">
-                  At least one email is required. Identity is keyed on (Personal Email, Department) —
-                  a work email already in use by an active employee is rejected.
-                </p>
-                <DialogFooter>
-                  <Button type="button" variant="outline" onClick={() => setAddOpen(false)} disabled={adding}>
-                    Cancel
-                  </Button>
-                  <Button type="button" onClick={handleAdd} disabled={adding} className="gap-2 bg-emerald-600 text-white hover:bg-emerald-700">
-                    {adding ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
-                    {adding ? 'Adding…' : 'Add & mirror to Sheet'}
-                  </Button>
-                </DialogFooter>
-              </DialogContent>
-            </Dialog>
           </div>
         </div>
       </header>
 
       {/* Table */}
       <Card className="border-zinc-100 shadow-sm dark:border-zinc-800">
-        <CardHeader className="border-b border-zinc-100 px-4 py-3 dark:border-zinc-800">
+        <CardHeader className="border-b border-zinc-100 px-4 py-2.5dark:border-zinc-800">
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
             <div>
-              <CardTitle className="text-sm font-semibold">Active roster</CardTitle>
-              <p className="mt-0.5 text-[11px] text-muted-foreground">
+              <CardTitle className="text-lg font-semibold text-zinc-900 dark:text-white">Active roster</CardTitle>
+              <p className="mt-0.5 text-sm text-zinc-600 dark:text-white">
                 {loading ? 'Loading…' : `${filtered.length} of ${roster.length} shown`}
               </p>
             </div>
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
               <DeptFilter rows={roster} getDept={(r) => r.department} value={dept} onChange={setDept} />
-              <div className="relative w-full sm:w-48 sm:shrink-0">
+              <div className="relative w-full sm:w-96 sm:shrink-0">
                 <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400" />
                 <Input
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
                   placeholder="Search name, email, ID…"
-                  className="h-9 border-zinc-200 pl-8 text-xs dark:border-zinc-700"
+                  className="h-9 border-zinc-200 pl-8 text-xs text-zinc-900 dark:border-zinc-700 dark:text-white"
                 />
               </div>
             </div>
@@ -333,56 +230,74 @@ export default function HrGlobalMasterList() {
             </p>
           ) : (
             <>
-              <table className="w-full text-left text-xs">
-                <thead className="border-b border-zinc-100 bg-zinc-50/90 text-[11px] font-semibold text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900/90 dark:text-zinc-400">
+              <table className="w-full text-left text-base">
+                <thead className="border-b border-zinc-100 bg-zinc-50/90 text-sm font-semibold text-zinc-700 dark:border-zinc-800 dark:bg-zinc-900/90 dark:text-white">
                   <tr>
-                    <th className="px-4 py-2.5">Employee ID</th>
-                    <th className="px-4 py-2.5">Name</th>
-                    <th className="px-4 py-2.5">Dept</th>
-                    <th className="px-4 py-2.5">Work email</th>
-                    <th className="px-4 py-2.5">Personal email</th>
-                    <th className="px-4 py-2.5">Start date</th>
-                    <th className="px-4 py-2.5">Tenure</th>
+                    <th className="px-4 py-2">Employee ID</th>
+                    <th className="px-4 py-2">Name</th>
+                    <th className="px-4 py-2">Dept</th>
+                    <th className="px-4 py-2">Work email</th>
+                    <th className="px-4 py-2">Personal email</th>
+                    <th className="px-4 py-2">Start date</th>
+                    <th className="px-4 py-2">Tenure</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-zinc-50 dark:divide-zinc-800/60">
+                <motion.tbody
+                  key={listKey}
+                  className="divide-y divide-zinc-50 dark:divide-zinc-800/60"
+                  variants={listVariants}
+                  initial={reduceMotion ? false : 'hidden'}
+                  animate="show"
+                >
                   {pageRows.map((r, i) => (
-                    <tr
+                    <motion.tr
                       key={`${r.work_email ?? r.personal_email ?? r.employee_id ?? i}`}
+                      variants={rowVariants}
                       className="hover:bg-zinc-50/60 dark:hover:bg-zinc-800/30"
                     >
-                      <td data-label="Employee ID" className="px-4 py-2 font-mono text-[11px] text-zinc-500 dark:text-zinc-400">{r.employee_id ?? '—'}</td>
-                      <td data-label="Name" className="px-4 py-2 font-medium text-zinc-800 dark:text-zinc-200">{r.name ?? '—'}</td>
-                      <td data-label="Dept" className="px-4 py-2 text-zinc-500 dark:text-zinc-400">{r.department ?? '—'}</td>
-                      <td data-label="Work email" className="px-4 py-2 font-mono text-zinc-500 dark:text-zinc-400">{r.work_email ?? '—'}</td>
-                      <td data-label="Personal email" className="px-4 py-2 font-mono text-zinc-500 dark:text-zinc-400">{r.personal_email ?? '—'}</td>
-                      <td data-label="Start date" className="px-4 py-2 text-zinc-400">{fmtDate(r.start_date)}</td>
-                      <td data-label="Tenure" className="px-4 py-2 tabular-nums text-zinc-400">{tenure(r.start_date)}</td>
-                    </tr>
+                      <td data-label="Employee ID" className="px-4 py-2.5 font-mono text-sm text-zinc-700 dark:text-white">{r.employee_id ?? '—'}</td>
+                      <td data-label="Name" className="px-4 py-2.5 text-base font-medium text-zinc-900 dark:text-white">{r.name ?? '—'}</td>
+                      <td data-label="Dept" className="px-4 py-2.5 text-base text-zinc-700 dark:text-white">{r.department ?? '—'}</td>
+                      <td data-label="Work email" className="px-4 py-2.5 font-mono text-sm text-zinc-700 dark:text-white">{r.work_email ?? '—'}</td>
+                      <td data-label="Personal email" className="px-4 py-2.5 font-mono text-sm text-zinc-700 dark:text-white">{r.personal_email ?? '—'}</td>
+                      <td data-label="Start date" className="px-4 py-2.5 text-base text-zinc-700 dark:text-white">{fmtDate(r.start_date)}</td>
+                      <td data-label="Tenure" className="px-4 py-2.5 text-base tabular-nums text-zinc-700 dark:text-white">{tenure(r.start_date)}</td>
+                    </motion.tr>
                   ))}
-                </tbody>
+                </motion.tbody>
               </table>
               <div className="flex items-center justify-between border-t border-zinc-100 px-4 py-2.5 dark:border-zinc-800">
-                <p className="text-[11px] text-zinc-400">
+                <p className="text-sm text-zinc-600 dark:text-white">
                   {filtered.length === 0
                     ? '0'
                     : `${safePage * PAGE_SIZE + 1}–${Math.min((safePage + 1) * PAGE_SIZE, filtered.length)}`}{' '}
                   of {filtered.length}
                 </p>
                 <div className="flex items-center gap-1">
-                  <Button variant="outline" size="icon" className="h-7 w-7" disabled={safePage === 0} onClick={() => setPage(0)}>
+                  <Button variant="outline" size="icon" className="h-7 w-7 transition-transform duration-150 hover:scale-110 active:scale-90 disabled:hover:scale-100" disabled={safePage === 0} onClick={() => setPage(0)}>
                     <ChevronLeft className="h-3 w-3" /><ChevronLeft className="-ml-2 h-3 w-3" />
                   </Button>
-                  <Button variant="outline" size="icon" className="h-7 w-7" disabled={safePage === 0} onClick={() => setPage((p) => Math.max(0, p - 1))}>
+                  <Button variant="outline" size="icon" className="h-7 w-7 transition-transform duration-150 hover:scale-110 active:scale-90 disabled:hover:scale-100" disabled={safePage === 0} onClick={() => setPage((p) => Math.max(0, p - 1))}>
                     <ChevronLeft className="h-3 w-3" />
                   </Button>
-                  <span className="min-w-[4rem] text-center text-[11px] text-zinc-500">
-                    {safePage + 1} / {totalPages}
-                  </span>
-                  <Button variant="outline" size="icon" className="h-7 w-7" disabled={safePage >= totalPages - 1} onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}>
+                  <div className="relative min-w-[4rem] overflow-hidden text-center">
+                    <AnimatePresence mode="wait" initial={false}>
+                      <motion.span
+                        key={safePage}
+                        initial={reduceMotion ? false : { opacity: 0, y: -6 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={reduceMotion ? { opacity: 0 } : { opacity: 0, y: 6 }}
+                        transition={{ duration: 0.15, ease: 'easeOut' }}
+                        className="block text-sm text-zinc-600 dark:text-white"
+                      >
+                        {safePage + 1} / {totalPages}
+                      </motion.span>
+                    </AnimatePresence>
+                  </div>
+                  <Button variant="outline" size="icon" className="h-7 w-7 transition-transform duration-150 hover:scale-110 active:scale-90 disabled:hover:scale-100" disabled={safePage >= totalPages - 1} onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}>
                     <ChevronRight className="h-3 w-3" />
                   </Button>
-                  <Button variant="outline" size="icon" className="h-7 w-7" disabled={safePage >= totalPages - 1} onClick={() => setPage(totalPages - 1)}>
+                  <Button variant="outline" size="icon" className="h-7 w-7 transition-transform duration-150 hover:scale-110 active:scale-90 disabled:hover:scale-100" disabled={safePage >= totalPages - 1} onClick={() => setPage(totalPages - 1)}>
                     <ChevronRight className="h-3 w-3" /><ChevronRight className="-ml-2 h-3 w-3" />
                   </Button>
                 </div>

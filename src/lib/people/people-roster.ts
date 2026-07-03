@@ -43,7 +43,17 @@ export interface PeopleRosterRow {
   employee_id: string | null;
   name: string | null;
   work_email: string | null;
+  /** Secondary contact email (from the master list). Directory / profile only. */
+  personal_email: string | null;
+  /** Extra gsuite aliases for the same human (non-empty, deduped). */
+  alternate_work_emails: string[];
   department: string | null;
+  /** Hire date (YYYY-MM-DD) — powers the tenure display in the profile. */
+  start_date: string | null;
+  /** Home location — city/province for the directory, full address in the profile. */
+  city: string | null;
+  province: string | null;
+  full_address: string | null;
   rate: PeopleRate;
   hours: PeopleHours;
   processor: string | null;
@@ -423,11 +433,30 @@ export async function buildPeopleRoster(scope: PeopleRosterScope = {}): Promise<
 
     const idInfo = aliases.map((em) => idByEmail.get(em)).find(Boolean) ?? null;
 
+    // Extra work-email aliases (deduped, non-empty) minus the primary — for the
+    // profile "cabinet" view. All of these come from the employee record already
+    // loaded above, so surfacing them costs no extra query.
+    const primaryWork = normEmail(e.work_email ?? '');
+    const altEmails = Array.from(
+      new Set(
+        [e.alternate_work_email, e.alternate_work_email_2]
+          .map((a) => (a ?? '').trim())
+          .filter(Boolean)
+          .filter((a) => normEmail(a) !== primaryWork),
+      ),
+    );
+
     return {
       employee_id: e.employee_id ?? null,
       name: e.name ?? null,
       work_email: e.work_email ?? null,
+      personal_email: e.personal_email ?? null,
+      alternate_work_emails: altEmails,
       department: e.department ?? null,
+      start_date: e.start_date ?? null,
+      city: e.city ?? null,
+      province: e.province ?? null,
+      full_address: e.full_address ?? null,
       rate,
       hours,
       processor: idInfo?.processor ?? null,

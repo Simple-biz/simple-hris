@@ -8,13 +8,11 @@ import AppFooter from '@/components/AppFooter';
 import { AnimatePresence, motion } from 'motion/react';
 import { toast } from 'sonner';
 import {
-  Building2,
   Check,
   ChevronLeft,
   ChevronRight,
+  ClipboardCheck,
   Copy,
-  GraduationCap,
-  HeartHandshake,
   Hourglass,
   Loader2,
   Menu,
@@ -56,6 +54,7 @@ import SWall from '@/components/swall/SWall';
 import NotificationsPanel from '@/components/notifications/NotificationsPanel';
 import type { EmployeeRow } from '@/lib/supabase/employees';
 import { getHrTabCache, hasHrTabCache, setHrTabCache, HR_TAB_CACHE_KEYS } from '@/lib/hr/tab-cache';
+import { sundayIso } from '@/lib/hr/hiring-week';
 import DeptFilter from './DeptFilter';
 import HrCollabLayer from './HrCollabLayer';
 
@@ -485,164 +484,113 @@ function initialsFromName(name: string | null | undefined): string {
   return ((parts[0][0] ?? '') + (parts[parts.length - 1][0] ?? '')).toUpperCase() || '··';
 }
 
-type OverviewTab = 'arrivals' | 'map' | 'departments' | 'roster' | 'tenure' | 'offboard-reasons';
-
-const OVERVIEW_TABS: { id: OverviewTab; label: string }[] = [
-  { id: 'tenure', label: 'Tenure' },
-  { id: 'arrivals', label: 'Recent Arrivals' },
-  { id: 'map', label: 'Province Map' },
-  { id: 'departments', label: 'Departments' },
-  { id: 'roster', label: 'Active Roster' },
-  { id: 'offboard-reasons', label: 'Exit Reasons' },
-];
-
-interface OverviewEditorialSectionProps {
+interface TenureCohortsSectionProps {
   loading: boolean;
   roster: EmployeeRow[];
-  deptStats: DeptStat[];
-  headcountSeries: { points: { label: string; value: number; year: number; month: number }[]; netDelta: number };
   tenureCohorts: TenureCohort[];
   tenureMonthBins: TenureMonthBin[];
-  recentHires: { row: EmployeeRow; days: number; t: number }[];
-  attritionByDept: AttritionDeptRow[] | null;
-  offboardRawRows: { off_boarded_reason: string | null; Department: string | null; off_boarded_at: string | null }[] | null;
 }
 
-function OverviewEditorialSection({
+function TenureCohortsSection({
   loading,
   roster,
-  deptStats,
-  headcountSeries,
   tenureCohorts,
   tenureMonthBins,
-  recentHires,
-  attritionByDept,
-  offboardRawRows,
-}: OverviewEditorialSectionProps) {
-  const [activeTab, setActiveTab] = useState<OverviewTab>('tenure');
+}: TenureCohortsSectionProps) {
   const totalActive = roster.length;
-  const newcomersThisMonth = useMemo(() => {
-    const now = new Date();
-    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
-    return roster.filter((r) => {
-      if (!r.start_date) return false;
-      const t = new Date(r.start_date).getTime();
-      return Number.isFinite(t) && t >= monthStart;
-    }).length;
-  }, [roster]);
 
   return (
-    <section className="relative overflow-hidden rounded-2xl border border-emerald-100/70 bg-white shadow-sm dark:border-emerald-950/40 dark:bg-zinc-950">
-      {/* Decorative grain / shape */}
-      <div
-        aria-hidden
-        className="pointer-events-none absolute -right-24 -top-24 h-72 w-72 rounded-full bg-gradient-to-br from-emerald-100/60 via-teal-100/30 to-transparent blur-3xl dark:from-emerald-900/30 dark:via-teal-900/20"
+    <div className="grid gap-5 lg:grid-cols-2 lg:gap-6">
+      <TenureCohortCard
+        loading={loading}
+        cohorts={tenureCohorts}
+        monthBins={tenureMonthBins}
+        totalActive={totalActive}
+        roster={roster}
       />
-      <div
-        aria-hidden
-        className="pointer-events-none absolute -bottom-32 -left-16 h-64 w-64 rounded-full bg-gradient-to-tr from-emerald-50/80 via-transparent to-transparent blur-3xl dark:from-emerald-950/30"
-      />
+      <TenureCohortTable loading={loading} cohorts={tenureCohorts} totalActive={totalActive} />
+    </div>
+  );
+}
 
-      {/* Header + tab nav */}
-      <div className="relative border-b border-zinc-100 px-5 pt-5 dark:border-zinc-900 sm:px-6 lg:px-8">
-        <div className="flex flex-col gap-2 pb-5 sm:flex-row sm:items-end sm:justify-between">
-          <div>
-            <p className="text-[10px] font-semibold uppercase tracking-[0.32em] text-emerald-700/80 dark:text-emerald-400/70">
-              Workforce &middot; Issue No. {String(new Date().getFullYear()).slice(-2)}/{String(new Date().getMonth() + 1).padStart(2, '0')}
-            </p>
-            <h2 className="mt-1 text-2xl font-semibold leading-tight tracking-tight text-zinc-900 dark:text-zinc-50 sm:text-3xl">
-              The people behind the payroll.
-            </h2>
-          </div>
-          <p className="max-w-sm text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">
-            A monthly readout of headcount, tenure, and who just joined us &mdash; derived directly from the master list.
-          </p>
-        </div>
-        <div className="flex" role="tablist">
-          {OVERVIEW_TABS.map((tab) => (
-            <button
-              key={tab.id}
-              role="tab"
-              aria-selected={activeTab === tab.id}
-              onClick={() => setActiveTab(tab.id)}
-              className={cn(
-                'relative px-4 py-2.5 text-[13px] font-medium transition-colors duration-150',
-                activeTab === tab.id
-                  ? 'text-zinc-900 dark:text-zinc-50'
-                  : 'text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200',
-              )}
-            >
-              {tab.label}
-              {activeTab === tab.id && (
-                <motion.span
-                  layoutId="overview-tab-indicator"
-                  className="absolute bottom-0 left-0 right-0 h-0.5 rounded-t-full bg-emerald-500"
-                />
-              )}
-            </button>
-          ))}
-        </div>
+// ─── Tenure cohort breakdown table ───────────────────────────────────────────
+
+function TenureCohortTable({
+  loading,
+  cohorts,
+  totalActive,
+}: {
+  loading: boolean;
+  cohorts: TenureCohort[];
+  totalActive: number;
+}) {
+  const totalKnown = cohorts.reduce((s, c) => s + c.count, 0);
+
+  return (
+    <div className="flex h-full flex-col overflow-hidden rounded-xl border border-zinc-200/70 bg-white p-5 dark:border-zinc-800/80 dark:bg-zinc-950">
+      <div>
+        <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-zinc-400 dark:text-zinc-500">
+          Cohort breakdown
+        </p>
+        <p className="mt-1 text-xl font-semibold leading-tight text-zinc-900 dark:text-zinc-50">
+          {loading ? '—' : totalActive}
+          <span className="ml-1 text-xs font-normal text-zinc-400">active employees</span>
+        </p>
       </div>
 
-      {/* Tab panels */}
-      <div className="relative p-5 sm:p-6 lg:p-8">
-        <AnimatePresence mode="wait" initial={false}>
-          <motion.div
-            key={activeTab}
-            initial={{ opacity: 0, y: 8 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -6 }}
-            transition={{ duration: 0.15, ease: 'easeOut' }}
-          >
-            {activeTab === 'arrivals' && (
-              <RecentHiresCard loading={loading} hires={recentHires} fullGrid />
-            )}
-            {activeTab === 'map' && (
-              <div className="h-[600px]">
-                <PhilippinesMapCard loading={loading} roster={roster} />
-              </div>
-            )}
-            {activeTab === 'departments' && (
-              <div className="space-y-5">
-                <div className="grid gap-5 lg:grid-cols-3 lg:gap-6">
-                  <div className="lg:col-span-2">
-                    <DepartmentBarsCard loading={loading} deptStats={deptStats} totalActive={totalActive} showAll />
+      <div className="mt-5 overflow-x-auto">
+        <table className="table-keep w-full text-left text-sm">
+          <thead>
+            <tr className="border-b border-zinc-100 dark:border-zinc-800/80">
+              <th className="pb-2 pr-2 text-[10px] font-semibold uppercase tracking-wider text-zinc-400 dark:text-zinc-500">Cohort</th>
+              <th className="pb-2 pr-2 text-[10px] font-semibold uppercase tracking-wider text-zinc-400 dark:text-zinc-500">Tenure</th>
+              <th className="pb-2 pr-2 text-right text-[10px] font-semibold uppercase tracking-wider text-zinc-400 dark:text-zinc-500">People</th>
+              <th className="pb-2 text-right text-[10px] font-semibold uppercase tracking-wider text-zinc-400 dark:text-zinc-500">Share</th>
+            </tr>
+          </thead>
+          <tbody>
+            {cohorts.map((c) => (
+              <tr key={c.key} className="border-b border-zinc-50 last:border-0 dark:border-zinc-900/80">
+                <td className="py-2.5 pr-2">
+                  <span className="inline-flex items-center gap-2">
+                    <span className={cn('h-2 w-2 shrink-0 rounded-full', TENURE_PALETTE[c.key].dot)} aria-hidden />
+                    <span className="font-medium text-zinc-800 dark:text-zinc-200">{c.label}</span>
+                  </span>
+                </td>
+                <td className="py-2.5 pr-2 text-zinc-500 dark:text-zinc-400">{c.range}</td>
+                <td className="py-2.5 pr-2 text-right text-base font-semibold tabular-nums text-zinc-900 dark:text-zinc-50">
+                  {loading ? '—' : c.count}
+                </td>
+                <td className="py-2.5">
+                  <div className="flex items-center justify-end gap-2">
+                    <span className="hidden h-1.5 w-12 overflow-hidden rounded-full bg-zinc-100 dark:bg-zinc-800 sm:block">
+                      <span className={cn('block h-full rounded-full', TENURE_PALETTE[c.key].bg)} style={{ width: `${c.pct}%` }} />
+                    </span>
+                    <span className="w-9 text-right tabular-nums text-zinc-500 dark:text-zinc-400">{c.pct.toFixed(0)}%</span>
                   </div>
-                  <div>
-                    <DeptSummaryCard loading={loading} deptStats={deptStats} totalActive={totalActive} newcomersThisMonth={newcomersThisMonth} />
-                  </div>
-                </div>
-                <AttritionByDeptCard loading={loading} rows={attritionByDept} />
-              </div>
-            )}
-            {activeTab === 'roster' && (
-              <RosterCard loading={loading} roster={roster} />
-            )}
-            {activeTab === 'tenure' && (
-              <div className="space-y-5">
-                <div className="grid gap-5 lg:grid-cols-5 lg:gap-6">
-                  <div className="lg:col-span-3">
-                    <HeadcountStoryCard
-                      loading={loading}
-                      totalActive={totalActive}
-                      netDelta={headcountSeries.netDelta}
-                      newcomersThisMonth={newcomersThisMonth}
-                      points={headcountSeries.points}
-                    />
-                  </div>
-                  <div className="lg:col-span-2">
-                    <TenureCohortCard loading={loading} cohorts={tenureCohorts} monthBins={tenureMonthBins} totalActive={totalActive} roster={roster} />
-                  </div>
-                </div>
-              </div>
-            )}
-            {activeTab === 'offboard-reasons' && (
-              <OffboardReasonsCard loading={loading} rows={offboardRawRows} />
-            )}
-          </motion.div>
-        </AnimatePresence>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+          <tfoot>
+            <tr className="border-t-2 border-zinc-100 dark:border-zinc-800">
+              <td className="pr-2 pt-2.5 font-semibold text-zinc-700 dark:text-zinc-300">Total</td>
+              <td className="pr-2 pt-2.5 text-zinc-400 dark:text-zinc-500">with start dates</td>
+              <td className="pr-2 pt-2.5 text-right text-base font-bold tabular-nums text-zinc-900 dark:text-zinc-50">
+                {loading ? '—' : totalKnown}
+              </td>
+              <td className="pt-2.5 text-right tabular-nums text-zinc-400 dark:text-zinc-500">100%</td>
+            </tr>
+          </tfoot>
+        </table>
       </div>
-    </section>
+
+      <p className="mt-auto pt-4 text-[10px] leading-relaxed text-zinc-400 dark:text-zinc-500">
+        {loading
+          ? 'Loading roster…'
+          : `${totalKnown} of ${totalActive} active employees have a recorded start date.`}
+      </p>
+    </div>
   );
 }
 
@@ -1961,7 +1909,7 @@ function TenureCohortCard({
         </button>
       </div>
 
-      {/* Stacked bar */}
+      {/* Stacked bar + legend */}
       <div className="mt-5">
         <div className="flex h-1.5 w-full overflow-hidden rounded-full bg-zinc-100 ring-1 ring-inset ring-zinc-200/60 dark:bg-zinc-900 dark:ring-zinc-800/80">
           {cohorts.map((c) => (
@@ -1971,6 +1919,15 @@ function TenureCohortCard({
               style={{ width: `${c.pct}%` }}
               title={`${c.label}: ${c.count}`}
             />
+          ))}
+        </div>
+        <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1.5">
+          {cohorts.map((c) => (
+            <span key={c.key} className="inline-flex items-center gap-1.5 text-[11px] text-zinc-500 dark:text-zinc-400">
+              <span className={cn('h-2 w-2 rounded-full', TENURE_PALETTE[c.key].dot)} aria-hidden />
+              {c.label}
+              <span className="font-semibold tabular-nums text-zinc-700 dark:text-zinc-300">{c.count}</span>
+            </span>
           ))}
         </div>
       </div>
@@ -2008,29 +1965,6 @@ function TenureCohortCard({
             </p>
           ))}
         </div>
-      </div>
-
-      {/* Cohort cards */}
-      <div className="mt-4 grid grid-cols-2 gap-2.5">
-        {cohorts.map((c) => (
-          <div
-            key={c.key}
-            className="group relative overflow-hidden rounded-lg border border-zinc-100 bg-zinc-50/60 px-3 py-2.5 transition-colors hover:bg-zinc-50 dark:border-zinc-800/60 dark:bg-zinc-900/40 dark:hover:bg-zinc-900/70"
-          >
-            <div className="flex items-center gap-1.5">
-              <span className={cn('h-1.5 w-1.5 rounded-full', TENURE_PALETTE[c.key].dot)} aria-hidden />
-              <p className="text-[10.5px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
-                {c.label}
-              </p>
-            </div>
-            <p className="mt-1.5 text-2xl font-bold tabular-nums leading-none text-zinc-900 dark:text-zinc-50">
-              {c.count}
-            </p>
-            <p className="mt-1 text-[10px] text-zinc-400 dark:text-zinc-500">
-              {c.range} · {c.pct.toFixed(0)}%
-            </p>
-          </div>
-        ))}
       </div>
     </div>
   );
@@ -2647,6 +2581,15 @@ type OverviewOffboardCache = {
   offboardRawRows: OverviewOffboardRow[] | null;
 };
 
+/** Cached onboarding-pipeline counts for the Overview KPI strip. */
+type OnboardingCountsCache = {
+  awaiting: number;
+  needs: number;
+  /** Latest invite batch — null when there are no live invites yet. */
+  batchSubmitted: number | null;
+  batchTotal: number | null;
+};
+
 function OverviewBody() {
   const [roster, setRoster] = useState<EmployeeRow[]>(
     () => getHrTabCache<EmployeeRow[]>(HR_TAB_CACHE_KEYS.overviewRoster) ?? [],
@@ -2663,25 +2606,24 @@ function OverviewBody() {
   const [attritionByDept, setAttritionByDept] = useState<AttritionDeptRow[] | null>(
     () => getHrTabCache<OverviewOffboardCache>(HR_TAB_CACHE_KEYS.overviewOffboard)?.attritionByDept ?? null,
   );
-  /** MESA member count from employee_hourly_rates.mesa_member. */
-  const [mesaCount, setMesaCount] = useState<number | null>(
-    () => getHrTabCache<number>(HR_TAB_CACHE_KEYS.overviewMesa) ?? null,
-  );
-  /** Total FPU enrollment submissions, plus a "this month" slice for sub-line. */
-  const [fpuStats, setFpuStats] = useState<{ total: number; thisMonth: number } | null>(
-    () => getHrTabCache<{ total: number; thisMonth: number }>(HR_TAB_CACHE_KEYS.overviewFpu) ?? null,
-  );
   /** Raw offboard rows for the Exit Reasons tab. */
   const [offboardRawRows, setOffboardRawRows] = useState<OverviewOffboardRow[] | null>(
     () => getHrTabCache<OverviewOffboardCache>(HR_TAB_CACHE_KEYS.overviewOffboard)?.offboardRawRows ?? null,
   );
   /** Onboarding pipeline counts for the Overview KPI strip. */
   const [awaitingSubmission, setAwaitingSubmission] = useState<number | null>(
-    () => getHrTabCache<{ awaiting: number; needs: number }>(HR_TAB_CACHE_KEYS.overviewOnboardingCounts)?.awaiting ?? null,
+    () => getHrTabCache<OnboardingCountsCache>(HR_TAB_CACHE_KEYS.overviewOnboardingCounts)?.awaiting ?? null,
   );
   const [needsAccountSetup, setNeedsAccountSetup] = useState<number | null>(
-    () => getHrTabCache<{ awaiting: number; needs: number }>(HR_TAB_CACHE_KEYS.overviewOnboardingCounts)?.needs ?? null,
+    () => getHrTabCache<OnboardingCountsCache>(HR_TAB_CACHE_KEYS.overviewOnboardingCounts)?.needs ?? null,
   );
+  /** Latest invite batch: how many of that week's cohort have submitted paperwork. */
+  const [batchSubmission, setBatchSubmission] = useState<{ submitted: number; total: number } | null>(() => {
+    const c = getHrTabCache<OnboardingCountsCache>(HR_TAB_CACHE_KEYS.overviewOnboardingCounts);
+    return c && c.batchSubmitted != null && c.batchTotal != null
+      ? { submitted: c.batchSubmitted, total: c.batchTotal }
+      : null;
+  });
 
   const fetchRoster = useCallback(async () => {
     setLoading(true);
@@ -2715,17 +2657,47 @@ function OverviewBody() {
       try {
         const res = await fetch('/api/hr/onboarding-submissions', { cache: 'no-store' });
         const json = (await res.json()) as {
-          rows?: { status?: string; work_email?: string | null; workspace_account_ok?: boolean | null }[];
+          rows?: {
+            status?: string;
+            work_email?: string | null;
+            workspace_account_ok?: boolean | null;
+            created_at?: string | null;
+          }[];
         };
         const rows = json.rows ?? [];
         const awaiting = rows.filter((r) => r.status === 'pending').length;
         const needs = rows.filter(
           (r) => r.status === 'submitted' && (!r.work_email || r.workspace_account_ok === false),
         ).length;
+
+        // Latest invite batch: bucket live invites by the Sun-anchored week
+        // they were created (Bulk Invite stamps a whole cohort together),
+        // take the most recent week, and score how many of that batch have
+        // submitted their paperwork. Archived invites aren't part of a batch.
+        const byWeek = new Map<string, { submitted: number; total: number }>();
+        for (const r of rows) {
+          if (r.status === 'archived' || !r.created_at) continue;
+          const d = new Date(r.created_at);
+          if (Number.isNaN(d.getTime())) continue;
+          const wk = sundayIso(d);
+          const bucket = byWeek.get(wk) ?? { submitted: 0, total: 0 };
+          bucket.total += 1;
+          if (r.status === 'submitted') bucket.submitted += 1;
+          byWeek.set(wk, bucket);
+        }
+        const latestWeek = Array.from(byWeek.keys()).sort().pop();
+        const batch = latestWeek ? byWeek.get(latestWeek)! : null;
+
         if (!cancelled) {
           setAwaitingSubmission(awaiting);
           setNeedsAccountSetup(needs);
-          setHrTabCache(HR_TAB_CACHE_KEYS.overviewOnboardingCounts, { awaiting, needs });
+          setBatchSubmission(batch);
+          setHrTabCache(HR_TAB_CACHE_KEYS.overviewOnboardingCounts, {
+            awaiting,
+            needs,
+            batchSubmitted: batch?.submitted ?? null,
+            batchTotal: batch?.total ?? null,
+          } satisfies OnboardingCountsCache);
         }
       } catch {
         /* leave as null → shows an em dash */
@@ -2797,55 +2769,6 @@ function OverviewBody() {
     })();
     return () => { cancelled = true; };
   }, [roster]);
-
-  // MESA members — count rows where mesa_member is true on the rates table.
-  useEffect(() => {
-    if (hasHrTabCache(HR_TAB_CACHE_KEYS.overviewMesa)) return; // warm → seeded
-    let cancelled = false;
-    (async () => {
-      try {
-        const res = await fetch('/api/employee-hourly-rates', { cache: 'no-store' });
-        const json = (await res.json()) as { rows?: { mesa_member?: boolean | null }[] };
-        const n = (json.rows ?? []).reduce((acc, r) => (r.mesa_member ? acc + 1 : acc), 0);
-        if (!cancelled) {
-          setMesaCount(n);
-          setHrTabCache(HR_TAB_CACHE_KEYS.overviewMesa, n);
-        }
-      } catch {
-        if (!cancelled) setMesaCount(null);
-      }
-    })();
-    return () => { cancelled = true; };
-  }, []);
-
-  // FPU enrollments — total submissions plus a current-month count for the sub-line.
-  useEffect(() => {
-    if (hasHrTabCache(HR_TAB_CACHE_KEYS.overviewFpu)) return; // warm → seeded
-    let cancelled = false;
-    (async () => {
-      try {
-        const res = await fetch('/api/hr/fpu-enrollments', { cache: 'no-store' });
-        const json = (await res.json()) as { rows?: { created_at?: string }[] };
-        const now = new Date();
-        const thisMonth = (json.rows ?? []).reduce((acc, r) => {
-          if (!r.created_at) return acc;
-          const d = new Date(r.created_at);
-          if (Number.isNaN(d.getTime())) return acc;
-          return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth()
-            ? acc + 1
-            : acc;
-        }, 0);
-        if (!cancelled) {
-          const stats = { total: (json.rows ?? []).length, thisMonth };
-          setFpuStats(stats);
-          setHrTabCache(HR_TAB_CACHE_KEYS.overviewFpu, stats);
-        }
-      } catch {
-        if (!cancelled) setFpuStats(null);
-      }
-    })();
-    return () => { cancelled = true; };
-  }, []);
 
   const deptStats: DeptStat[] = useMemo(() => {
     const map = new Map<string, number>();
@@ -2961,10 +2884,24 @@ function OverviewBody() {
   return (
     <>
       {/* KPI row */}
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7">
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
         {[
           { label: 'Active employees', value: roster.length, sub: 'on the master list',      icon: Users,     grad: 'from-emerald-500 to-teal-700' },
-          { label: 'Departments',      value: deptStats.length, sub: 'with active headcount', icon: Building2, grad: 'from-teal-500 to-emerald-700' },
+          {
+            label: 'Submitted paperwork',
+            value: batchSubmission == null ? '—' : `${batchSubmission.submitted}/${batchSubmission.total}`,
+            sub:
+              batchSubmission == null
+                ? 'latest invite batch'
+                : batchSubmission.submitted >= batchSubmission.total
+                  ? 'all submitted · latest batch'
+                  : `${batchSubmission.total - batchSubmission.submitted} awaiting · latest batch`,
+            icon: ClipboardCheck,
+            grad:
+              batchSubmission != null && batchSubmission.total > 0 && batchSubmission.submitted >= batchSubmission.total
+                ? 'from-emerald-500 to-emerald-700'
+                : 'from-teal-500 to-emerald-700',
+          },
           {
             label: 'Attrition · 12mo',
             value: attrition == null ? '—' : `${Math.round(attrition.ratePct)}%`,
@@ -2980,28 +2917,6 @@ function OverviewBody() {
                   : attrition.ratePct >= 5
                     ? 'from-amber-500 to-orange-700'
                     : 'from-emerald-500 to-emerald-700',
-          },
-          {
-            label: 'MESA members',
-            value: mesaCount ?? '—',
-            sub:
-              mesaCount == null
-                ? 'awaiting rates data'
-                : roster.length > 0
-                  ? `${Math.round((mesaCount / Math.max(1, roster.length)) * 100)}% of active`
-                  : 'enrolled in the savings account',
-            icon: HeartHandshake,
-            grad: 'from-teal-500 to-emerald-600',
-          },
-          {
-            label: 'FPU enrollments',
-            value: fpuStats?.total ?? '—',
-            sub:
-              fpuStats == null
-                ? 'awaiting submissions'
-                : `${fpuStats.thisMonth} this month`,
-            icon: GraduationCap,
-            grad: 'from-orange-500 to-amber-600',
           },
           {
             label: 'Awaiting submission',
@@ -3030,7 +2945,7 @@ function OverviewBody() {
             </div>
             <div className="min-w-0">
               <p className="text-[10px] font-semibold uppercase tracking-widest text-zinc-400 dark:text-zinc-500">{label}</p>
-              <p className={cn('mt-0.5 truncate font-bold tabular-nums text-zinc-900 dark:text-zinc-100', typeof value === 'number' ? 'text-2xl' : 'text-base leading-tight')}>
+              <p className="mt-0.5 truncate text-3xl font-bold leading-tight tabular-nums text-zinc-900 dark:text-zinc-100">
                 {loading ? <span className="inline-block h-5 w-12 animate-pulse rounded bg-zinc-100 dark:bg-zinc-800" /> : String(value)}
               </p>
               <p className="text-[10px] text-zinc-400 dark:text-zinc-500">{sub}</p>
@@ -3042,17 +2957,12 @@ function OverviewBody() {
       {/* Hiring sources + recruiter leaderboard, toggle between all-time and a single week */}
       <HiringWeekOverviewSection />
 
-      {/* Editorial composition — headcount story + recent arrivals */}
-      <OverviewEditorialSection
+      {/* Tenure cohorts — distribution visualization + breakdown table */}
+      <TenureCohortsSection
         loading={loading}
         roster={roster}
-        deptStats={deptStats}
-        headcountSeries={headcountSeries}
         tenureCohorts={tenureCohorts}
         tenureMonthBins={tenureMonthBins}
-        recentHires={recentHires}
-        attritionByDept={attritionByDept}
-        offboardRawRows={offboardRawRows}
       />
     </>
   );

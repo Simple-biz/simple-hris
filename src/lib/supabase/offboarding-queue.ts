@@ -213,6 +213,24 @@ export async function decideOffboardingQueueEntry(params: {
   return { updated: (data ?? []).length, error: null };
 }
 
+/**
+ * Permanently remove a queue row (HR cleanup). Unlike dismiss/cancel this drops
+ * the record entirely — used to tidy the queue of stale or mistaken entries in
+ * any status. Callers gate this behind HR/admin edit rights + an audit log.
+ */
+export async function deleteOffboardingQueueEntry(
+  id: string,
+): Promise<{ deleted: number; error: string | null }> {
+  const supabase = createSupabaseServiceRoleClient();
+  if (!supabase) return { deleted: 0, error: 'Supabase not configured' };
+  // .select('id') so the caller learns how many rows were actually removed — a
+  // concurrent second delete matches 0 rows (idempotent), which the route turns
+  // into a 409 rather than a spurious success + audit entry.
+  const { data, error } = await supabase.from(TABLE).delete().eq('id', id).select('id');
+  if (error) return { deleted: 0, error: error.message };
+  return { deleted: (data ?? []).length, error: null };
+}
+
 /** Manager withdraws their own still-pending request. */
 export async function cancelOffboardingQueueIfOwned(params: {
   id: string;

@@ -106,16 +106,30 @@ export async function getEmployeeIds(): Promise<{
     return { rows: [], error: "Supabase client not initialised." };
   }
 
-  const { data, error } = await supabase
-    .from("employee_ids")
-    .select("employee_id, name, work_email, personal_email, preferred_bank_slot, bank_name, account_holder_name, account_number, routing_number, alt_bank_name, alt_account_holder_name, alt_account_number, alt_routing_number, preferred_processor, hurupay_email, wepay_email, higlobe_email, higlobe_account_name, wise_email, wise_tag, phone_number, swift_code, full_address")
-    .order("employee_id");
+  // Paginate — PostgREST caps a single response at db.max-rows (1000 on this
+  // project), so a bare select silently drops every row past 1000 once the
+  // roster grows beyond it (People's banking/processor + has-banking flags all
+  // key off these rows; missing rows read as a false "missing bank info"). Loop
+  // until a short page, mirroring fetchActiveEmployees.
+  const PAGE = 1000;
+  const cols =
+    "employee_id, name, work_email, personal_email, preferred_bank_slot, bank_name, account_holder_name, account_number, routing_number, alt_bank_name, alt_account_holder_name, alt_account_number, alt_routing_number, preferred_processor, hurupay_email, wepay_email, higlobe_email, higlobe_account_name, wise_email, wise_tag, phone_number, swift_code, full_address";
+  const collected: EmployeeIdRow[] = [];
+  let from = 0;
+  while (true) {
+    const { data, error } = await supabase
+      .from("employee_ids")
+      .select(cols)
+      .order("employee_id")
+      .range(from, from + PAGE - 1);
+    if (error) return { rows: [], error: explainEmployeeIdsReadError(error.message) };
+    const page = (data ?? []) as EmployeeIdRow[];
+    collected.push(...page);
+    if (page.length < PAGE) break;
+    from += PAGE;
+  }
 
-  if (error) return { rows: [], error: explainEmployeeIdsReadError(error.message) };
-
-  const rows = ((data ?? []) as EmployeeIdRow[]).filter(
-    (r) => r.employee_id && r.name,
-  );
+  const rows = collected.filter((r) => r.employee_id && r.name);
   return { rows, error: null };
 }
 

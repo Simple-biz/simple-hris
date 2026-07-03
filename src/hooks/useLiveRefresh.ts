@@ -94,16 +94,21 @@ export function useLiveRefresh({
   }, [enabled, pollMs]);
 
   // Refresh whenever the tab regains focus — covers changes made while away.
+  // Route through the debounced `fire()` (not cbRef.current() directly): a single
+  // alt-tab back typically emits BOTH a window 'focus' and a document
+  // 'visibilitychange', so calling directly would fire onRefresh twice. Debouncing
+  // coalesces them into one refresh — important when onRefresh hits an expensive
+  // endpoint, where duplicate concurrent calls only slow each other down.
   useEffect(() => {
     if (!enabled) return;
-    const onFocus = () => cbRef.current();
+    const onFocus = () => fire();
     window.addEventListener('focus', onFocus);
     document.addEventListener('visibilitychange', onFocus);
     return () => {
       window.removeEventListener('focus', onFocus);
       document.removeEventListener('visibilitychange', onFocus);
     };
-  }, [enabled]);
+  }, [enabled, fire]);
 
   // Drop any pending debounced refresh on unmount.
   useEffect(

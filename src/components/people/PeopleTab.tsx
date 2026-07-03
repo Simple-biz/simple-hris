@@ -42,7 +42,13 @@ interface RosterRow {
   employee_id: string | null;
   name: string | null;
   work_email: string | null;
+  personal_email: string | null;
+  alternate_work_emails: string[];
   department: string | null;
+  start_date: string | null;
+  city: string | null;
+  province: string | null;
+  full_address: string | null;
   rate: Rate;
   hours: Hours;
   processor: string | null;
@@ -173,6 +179,38 @@ function formatDay(iso: string | null | undefined): string {
   const d = parseIsoLocal(iso);
   if (!d) return iso ?? '';
   return d.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+}
+
+/** Hire date → "Jun 22, 2026". null when absent; raw string if unparseable.
+ *  Lenient (`new Date`) so any master-list format renders — start dates arrive in
+ *  whatever shape was typed into the sheet, not guaranteed ISO. Matches fmtDate on
+ *  the Global Master List. */
+function formatHireDate(raw: string | null | undefined): string | null {
+  if (!raw?.trim()) return null;
+  const d = new Date(raw.trim());
+  if (Number.isNaN(d.getTime())) return raw.trim();
+  return d.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+}
+
+/** Tenure = start date compared to the current date → "2y 3m" / "5mo" / "12d" /
+ *  "New". null when there's no start date or it can't be parsed. Mirrors the
+ *  Global Master List's tenure() exactly (lenient `new Date` parsing, same
+ *  bucketing) so both surfaces agree for the same person. Client-only (runs inside
+ *  the profile dialog after a click), so the `new Date()` never hits SSR hydration. */
+function tenureFrom(raw: string | null | undefined): string | null {
+  if (!raw?.trim()) return null;
+  const start = new Date(raw.trim());
+  if (Number.isNaN(start.getTime())) return null;
+  const now = new Date();
+  let years = now.getFullYear() - start.getFullYear();
+  let months = now.getMonth() - start.getMonth();
+  if (months < 0) { years -= 1; months += 12; }
+  if (years < 0) return null;
+  if (years > 0 && months > 0) return `${years}y ${months}m`;
+  if (years > 0) return `${years}y`;
+  if (months > 0) return `${months}mo`;
+  const days = Math.floor((now.getTime() - start.getTime()) / 86400000);
+  return days <= 0 ? 'New' : `${days}d`;
 }
 
 /**
@@ -730,6 +768,7 @@ export default function PeopleTab({
               <thead>
                 <tr className="border-b border-zinc-200 text-left text-[11px] uppercase tracking-wide text-zinc-500 dark:border-zinc-800">
                   <th className="px-3 py-2.5 font-medium">Person</th>
+                  <th className="px-3 py-2.5 font-medium">Employee ID</th>
                   <th className="px-3 py-2.5 font-medium">Department</th>
                   <th className="px-3 py-2.5 font-medium">{rangeMode ? 'Hours in range' : 'Hours this week'}</th>
                   <th className="px-3 py-2.5 font-medium">Pay rate</th>
@@ -752,6 +791,13 @@ export default function PeopleTab({
                           <div className="truncate text-[11px] text-zinc-400">{r.work_email ?? r.employee_id ?? ''}</div>
                         </div>
                       </div>
+                    </td>
+                    <td className="px-3 py-2.5" data-label="Employee ID">
+                      {r.employee_id ? (
+                        <span className="font-mono text-[12px] text-zinc-600 dark:text-zinc-300">{r.employee_id}</span>
+                      ) : (
+                        <span className="text-[11px] text-zinc-400">—</span>
+                      )}
                     </td>
                     <td className="px-3 py-2.5 text-zinc-600 dark:text-zinc-300" data-label="Department">
                       {r.department ?? '—'}
@@ -2199,6 +2245,8 @@ function HoursCell({ hours }: { hours: Hours }) {
 
 /* ── Person detail (banking + payroll history) ──────────────────────────── */
 
+type PersonTab = 'profile' | 'banking' | 'payroll' | 'pab';
+
 function PersonDetailDialog({
   row,
   accent,
@@ -2212,7 +2260,10 @@ function PersonDetailDialog({
   onClose: () => void;
   onSendTransfer: () => void;
 }) {
-  const [tab, setTab] = useState<'details' | 'pab'>('details');
+  const [tab, setTab] = useState<PersonTab>('profile');
+  // The scroll viewport for the tab panels — reset to the top on every switch so
+  // a new tab always opens at its start, not wherever the last one was scrolled.
+  const scrollRef = useRef<HTMLDivElement | null>(null);
   // Mount the PAB calendar on first visit, then keep it mounted (hidden when
   // inactive) so switching tabs never re-fetches its data.
   const [pabVisited, setPabVisited] = useState(false);
@@ -2235,6 +2286,14 @@ function PersonDetailDialog({
   const reduceMotion = useReducedMotion();
   const HIST_PAGE_SIZE = 5;
   const email = row.work_email ?? '';
+
+  const changeTab = (next: PersonTab) => {
+    if (next === tab) return;
+    setTab(next);
+    if (next === 'pab') setPabVisited(true);
+    // Land the incoming panel at the top of the scroll viewport.
+    if (scrollRef.current) scrollRef.current.scrollTop = 0;
+  };
 
   useEffect(() => {
     let alive = true;
@@ -2339,29 +2398,48 @@ function PersonDetailDialog({
         </DialogHeader>
 
         {/* Tabs */}
-        <div role="tablist" className="flex shrink-0 gap-1 border-b border-zinc-200 px-3 dark:border-zinc-800">
-          {([['details', 'Details'], ['pab', 'PAB Calendar']] as const).map(([id, label]) => (
+        <div role="tablist" className="flex shrink-0 gap-1 overflow-x-auto border-b border-zinc-200 px-3 dark:border-zinc-800">
+          {([['profile', 'Profile'], ['banking', 'Banking'], ['payroll', 'Payroll'], ['pab', 'PAB Calendar']] as const).map(([id, label]) => (
             <button
               key={id}
               type="button"
               role="tab"
               aria-selected={tab === id}
-              onClick={() => { setTab(id); if (id === 'pab') setPabVisited(true); }}
+              onClick={() => changeTab(id)}
               className={cn(
-                'relative px-3 py-2.5 text-[13px] font-medium transition-colors',
+                'relative shrink-0 whitespace-nowrap px-3 py-2.5 text-[13px] font-medium transition-colors',
                 tab === id
                   ? 'text-zinc-900 dark:text-zinc-100'
                   : 'text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-200',
               )}
             >
               {label}
-              {tab === id && <span className={cn('absolute inset-x-2 -bottom-px h-0.5 rounded-full', accent.bar)} />}
+              {tab === id && (
+                <motion.span
+                  layoutId="person-tab-underline"
+                  className={cn('absolute inset-x-2 -bottom-px h-0.5 rounded-full', accent.bar)}
+                  transition={reduceMotion ? { duration: 0 } : { duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
+                />
+              )}
             </button>
           ))}
         </div>
 
-        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
-          {tab === 'details' && (
+        <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+          {/* Light tabs cross-fade with a subtle rise on switch (mode="wait" so
+              the outgoing panel finishes before the incoming one enters). The PAB
+              tab is NOT in here — it stays persistently mounted below so it never
+              re-fetches; this animates only profile / banking / payroll. */}
+          <AnimatePresence mode="wait" initial={false}>
+          {tab !== 'pab' && (
+          <motion.div
+            key={tab}
+            initial={{ opacity: 0, y: reduceMotion ? 0 : 6 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: reduceMotion ? 0 : -4 }}
+            transition={{ duration: reduceMotion ? 0 : 0.22, ease: [0.22, 1, 0.36, 1] }}
+          >
+          {tab === 'profile' && (
           <>
           {/* Snapshot cards */}
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
@@ -2382,6 +2460,39 @@ function PersonDetailDialog({
             />
           </div>
 
+          {/* Identity & contact — the "cabinet" profile fields. All sourced from
+              the roster row already in memory, so this adds no fetch. Non-sensitive
+              (unlike Banking), so it's always visible. */}
+          <div className="mt-5">
+            <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-500">Identity &amp; contact</h3>
+            <div className="rounded-lg border border-zinc-200 bg-zinc-50/60 p-3 text-[13px] dark:border-zinc-800 dark:bg-zinc-900/40">
+              <dl className="grid grid-cols-1 gap-x-6 gap-y-1.5 sm:grid-cols-2">
+                <Field label="Employee ID" value={row.employee_id} mono />
+                <Field label="Department" value={row.department} />
+                <Field label="Work email" value={row.work_email} />
+                <Field label="Personal email" value={row.personal_email} />
+                {(row.alternate_work_emails ?? []).length > 0 && (
+                  <Field label="Alternate work emails" value={(row.alternate_work_emails ?? []).join(', ')} wide />
+                )}
+                <Field label="Start date" value={formatHireDate(row.start_date)} />
+                <Field label="Tenure" value={tenureFrom(row.start_date)} />
+                <Field
+                  label="Home address"
+                  value={
+                    row.full_address?.trim() ||
+                    [row.city, row.province].map((x) => (x ?? '').trim()).filter(Boolean).join(', ') ||
+                    null
+                  }
+                  wide
+                />
+              </dl>
+            </div>
+          </div>
+          </>
+          )}
+
+          {tab === 'banking' && (
+          <>
           {/* Banking */}
           <div className="mt-5">
             <div className="mb-2 flex items-center justify-between">
@@ -2584,6 +2695,11 @@ function PersonDetailDialog({
             )}
           </div>
 
+          </>
+          )}
+
+          {tab === 'payroll' && (
+          <>
           {/* Payroll history */}
           <div className="mt-5">
             <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-500">Payroll history</h3>
@@ -2698,6 +2814,9 @@ function PersonDetailDialog({
           </div>
           </>
           )}
+          </motion.div>
+          )}
+          </AnimatePresence>
 
           {pabVisited && (
             <div className={cn('relative', tab === 'pab' ? '' : 'hidden')}>
