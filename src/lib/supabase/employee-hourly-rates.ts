@@ -19,6 +19,12 @@ export type EmployeeHourlyRateRow = {
   province_state: string | null;
   /** MESA Program member — ₱100 deducted from every paycheck when true. */
   mesa_member: boolean | null;
+  /**
+   * MESA enrollment effective date (YYYY-MM-DD). The ₱100 weekly contribution
+   * applies only to pay weeks ending on/after this date. NULL = legacy member
+   * (enrolled before we tracked the date) → treated as always contributing.
+   */
+  mesa_member_since: string | null;
 };
 
 type RawRow = Record<string, unknown>;
@@ -145,6 +151,7 @@ export function mapEmployeeHourlyRateRow(row: RawRow): EmployeeHourlyRateRow {
   ]);
 
   const mesa_member_raw = getField(idx, ['mesa_member', 'Mesa Member', 'MESA Member', 'mesa member']);
+  const mesa_member_since = getField(idx, ['mesa_member_since', 'MESA Member Since', 'mesa member since', 'Mesa Member Since']);
 
   return {
     work_email: toStr(work_email),
@@ -163,6 +170,12 @@ export function mapEmployeeHourlyRateRow(row: RawRow): EmployeeHourlyRateRow {
     mesa_member: mesa_member_raw === true || mesa_member_raw === 'true' ? true
       : mesa_member_raw === false || mesa_member_raw === 'false' ? false
       : null,
+    // Normalize a possible timestamp/date to the YYYY-MM-DD prefix so lexical
+    // date comparisons in the Wizard / History are stable.
+    mesa_member_since: (() => {
+      const s = toStr(mesa_member_since);
+      return s ? s.slice(0, 10) : null;
+    })(),
   };
 }
 

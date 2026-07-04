@@ -85,6 +85,7 @@ export async function GET(req: NextRequest) {
           city: row?.city ?? null,
           province_state: row?.province_state ?? null,
           mesa_member: row?.mesa_member ?? null,
+          mesa_member_since: row?.mesa_member_since ?? null,
           regular_rate: String(applied.regPhp),
           ot_rate: String(applied.otPhp),
         };

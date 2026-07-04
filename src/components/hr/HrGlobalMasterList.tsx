@@ -195,7 +195,7 @@ export default function HrGlobalMasterList() {
 
       {/* Table */}
       <Card className="border-zinc-100 shadow-sm dark:border-zinc-800">
-        <CardHeader className="border-b border-zinc-100 px-4 py-2.5dark:border-zinc-800">
+        <CardHeader className="border-b border-zinc-100 px-4 py-2.5 dark:border-zinc-800">
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
             <div>
               <CardTitle className="text-lg font-semibold text-zinc-900 dark:text-white">Active roster</CardTitle>

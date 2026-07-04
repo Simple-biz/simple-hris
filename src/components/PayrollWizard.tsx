@@ -2339,6 +2339,7 @@ export default function PayrollWizard({
           city: null,
           province_state: null,
           mesa_member: null,
+          mesa_member_since: null,
         };
         for (const em of emails) idx.set(em, synthetic);
       }
@@ -4389,8 +4390,16 @@ export default function PayrollWizard({
       const rateRowForMesa = em ? ratesByEmail.get(em) : undefined;
       // Accounting-approved disbursement (not yet paid via Urgent Payments) — paid out this run.
       const mesaDisbursement = em ? (mesaDisbursements.get(em) ?? 0) : 0;
-      // Always deduct the ₱100 contribution when enrolled OR when a disbursement is being paid out.
-      const mesaDeduction = (hasRates && (rateRowForMesa?.mesa_member || mesaDisbursement > 0)) ? 100 : 0;
+      // A member only contributes for pay weeks on/after their enrollment date —
+      // so back weeks (and replayed periods before they joined) are NOT charged.
+      // A null enrollment date = legacy member (enrolled before we tracked it) →
+      // treated as always contributing, preserving prior behavior. `week.end` and
+      // `mesa_member_since` are both YYYY-MM-DD, so the compare is lexical.
+      const mesaSince = rateRowForMesa?.mesa_member_since ?? null;
+      const enrolledForThisWeek =
+        !!rateRowForMesa?.mesa_member && (!mesaSince || !week?.end || mesaSince <= week.end);
+      // Always deduct the ₱100 contribution when enrolled (for this week) OR when a disbursement is being paid out.
+      const mesaDeduction = (hasRates && (enrolledForThisWeek || mesaDisbursement > 0)) ? 100 : 0;
 
       // Accounting Orphanage pay — a positive amount added on top of final pay,
       // shown as its own paystub line (not folded into bonuses).
@@ -11189,12 +11198,12 @@ export default function PayrollWizard({
             <div className="space-y-2">
               <h3 className="text-2xl font-bold text-zinc-900 dark:text-white">Lock in Values &amp; Send to Payment Dispatch</h3>
               <p className="max-w-md text-zinc-600 dark:text-zinc-400">
-                Locks this cycle&apos;s computed pay and stages each paystub to Payment Dispatch.{' '}
+                Locks this cycle&apos;s pay and stages each paystub to Payment Dispatch.{' '}
                 <span className="font-semibold text-zinc-800 dark:text-zinc-200">{dispatchData.rows.length}</span> payable
                 {dispatchData.excludedRows.length > 0 && (
                   <> · <span className="font-semibold text-rose-600 dark:text-rose-400">{dispatchData.excludedRows.length}</span> excluded (do not pay)</>
                 )}.
-                Paystub emails are no longer sent in a batch here — Lenny sends each one as she marks the person Paid. An audit log will be created for this session.
+                The Dispatch office emails each paystub as it marks the person Paid.
               </p>
             </div>
             <a
@@ -11202,7 +11211,7 @@ export default function PayrollWizard({
               target="_blank"
               rel="noopener noreferrer"
               className="inline-flex items-center gap-2 rounded-full border border-[#ea4b71]/30 bg-[#ea4b71]/10 px-3.5 py-1.5 text-xs font-medium text-[#ea4b71] transition hover:bg-[#ea4b71]/15 hover:shadow-[0_0_12px_rgba(234,75,113,0.25)]"
-              title="Paystub emails fire one-by-one as Lenny marks each person Paid in Payment Dispatch"
+              title="Paystub emails fire one-by-one as the Dispatch office marks each person Paid in Payment Dispatch"
             >
               <img
                 src="https://n8n.io/favicon.ico"
@@ -11223,7 +11232,7 @@ export default function PayrollWizard({
                     Locked — Payment Dispatch is live for this cycle
                   </div>
                   <p className="text-center text-xs text-emerald-700/80 dark:text-emerald-300/70">
-                    Lenny can pay + email paystubs now. Unlock to pull the values back —
+                    The Dispatch office can pay + email paystubs now. Unlock to pull the values back —
                     Payment Dispatch clears in real time.
                   </p>
                   <Button
@@ -11310,7 +11319,7 @@ export default function PayrollWizard({
                   }
                   // Stage each employee's AUTHORITATIVE paystub payload (payable +
                   // excluded). No batch emails — Payment Dispatch fires each one as
-                  // Lenny marks the person Paid.
+                  // the Dispatch office marks the person Paid.
                   const entries = [
                     ...employees.map((e) => ({
                       recipient_email: e.email,
@@ -11985,10 +11994,14 @@ export default function PayrollWizard({
         <DialogContent
           className={cn(
             'overflow-hidden rounded-2xl border-zinc-200 bg-white p-0 dark:border-zinc-800 dark:bg-zinc-950',
-            // Narrow column for the single-email preview (it renders like an
-            // email); wide horizontal layout for the recipient list.
+            // Animate the width morph so switching between the recipient list and
+            // the single-email preview glides instead of snapping. Only max-width
+            // transitions (the open/close keyframes drive transform + opacity).
+            'transition-[max-width] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]',
+            // Single-email preview hugs the (zoomed-down) statement so the dialog
+            // itself is small; wide horizontal layout for the recipient list.
             previewSelectedEmail
-              ? 'sm:max-w-md'
+              ? 'w-[95vw] sm:max-w-[510px]'
               : 'w-[95vw] sm:max-w-3xl',
           )}
         >
@@ -12020,262 +12033,175 @@ export default function PayrollWizard({
                     <DialogTitle>Paystub Preview · {selected.name}</DialogTitle>
                     <DialogDescription>{selected.personal_email}</DialogDescription>
                   </DialogHeader>
-                  <div className="paystub-body relative flex flex-col bg-white">
-                    <style>{`
-                      .paystub-body::before {
-                        content: "";
-                        position: absolute;
-                        top: 110px; left: 0; right: 0; bottom: 70px;
-                        overflow: hidden;
-                        background-image:
-                          url('https://host.simple.biz/email/simplelogo.png'),
-                          url('https://host.simple.biz/email/simplelogo.png'),
-                          url('https://host.simple.biz/email/simplelogo.png'),
-                          url('https://host.simple.biz/email/simplelogo.png'),
-                          url('https://host.simple.biz/email/simplelogo.png'),
-                          url('https://host.simple.biz/email/simplelogo.png'),
-                          url('https://host.simple.biz/email/simplelogo.png'),
-                          url('https://host.simple.biz/email/simplelogo.png'),
-                          url('https://host.simple.biz/email/simplelogo.png'),
-                          url('https://host.simple.biz/email/simplelogo.png'),
-                          url('https://host.simple.biz/email/simplelogo.png'),
-                          url('https://host.simple.biz/email/simplelogo.png');
-                        background-repeat: no-repeat;
-                        background-size:
-                          120px, 120px, 120px, 120px,
-                          70px, 70px, 70px, 70px,
-                          40px, 40px, 40px, 40px;
-                        background-position:
-                          10% 8%, 75% 22%, 25% 55%, 85% 78%,
-                          50% 12%, 12% 38%, 65% 48%, 38% 85%,
-                          90% 10%, 5% 72%, 55% 30%, 92% 55%;
-                        transform: rotate(-28deg);
-                        opacity: 0.08;
-                        pointer-events: none;
-                        z-index: 2;
-                      }
-                    `}</style>
-                    <div className="flex shrink-0 items-center justify-between border-b border-zinc-100 bg-white/80 px-4 py-2 backdrop-blur">
+                  <div className="relative flex max-h-[90vh] flex-col overflow-hidden bg-[#f4f7fb] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] animate-in fade-in-0 zoom-in-95">
+                    <div className="flex shrink-0 items-center justify-between border-b border-zinc-200 bg-white/90 px-4 py-2.5 backdrop-blur">
                       <Button
                         variant="ghost"
                         size="sm"
-                        className="h-7 px-2 text-xs text-zinc-700"
+                        className="h-7 gap-1 px-2 text-xs text-zinc-700"
                         onClick={() => setPreviewSelectedEmail(null)}
                       >
-                        ← Back
+                        <ChevronLeft className="h-4 w-4" />
+                        Back
                       </Button>
-                      <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-orange-700">
+                      <span className="pr-8 text-[10px] font-semibold uppercase tracking-[0.14em] text-orange-600">
                         Preview · Not yet sent
                       </span>
                     </div>
-                    <div
-                      className="min-h-0 flex-1 overflow-hidden"
-                      style={{
-                        background:
-                          'linear-gradient(to top right, #c7d2fe 0%, #ffffff 50%, #ffedd5 100%)',
-                      }}
-                    >
-                      <div className="px-4 py-4 sm:px-6">
-                        <div
-                          className="mx-auto max-w-[480px] overflow-hidden rounded-xl bg-white"
-                          style={{ boxShadow: '0 4px 20px rgba(59,130,246,0.15)' }}
-                        >
+                    {/* Faithful in-app render of docs/features/paystub.html — the exact
+                        email the recipient receives (orange card, slate section bars,
+                        Total Net Pay hero, Earnings + MESA tables). */}
+                    <div className="flex min-h-0 flex-1 justify-center overflow-y-auto px-4 py-4">
+                      {/* Full-size statement (matches paystub.html proportions exactly),
+                          scaled down as a whole via CSS zoom — a true resize, not a
+                          per-element squash — so it fits the small dialog with no
+                          scrollbar on a normal viewport. */}
+                      <div
+                        className="w-[560px] shrink-0 overflow-hidden rounded-[17px] bg-[#f97316] p-[3px]"
+                        style={{ zoom: 0.84, boxShadow: '0 20px 48px rgba(16,32,52,0.16), 0 2px 6px rgba(16,32,52,0.07)' }}
+                      >
+                        <div className="overflow-hidden rounded-[14px] bg-[#fbfcfe]">
                           {/* Header */}
-                          <div
-                            className="px-7 py-6 text-center"
-                            style={{
-                              background:
-                                'linear-gradient(to top right, #4338ca 0%, #ffffff 50%, #f97316 100%)',
-                            }}
-                          >
-                            <div className="text-[11px] font-bold uppercase tracking-[0.15em] text-slate-800">
-                              Simple HRIS · Paystub · {weekHuman}
+                          <div className="border-b border-[#eef2f6] bg-white px-8 py-5 text-center">
+                            <img
+                              src="https://host.simple.biz/email/simplelogo.png"
+                              alt="Simple"
+                              className="mx-auto mb-2 block h-auto w-[112px]"
+                            />
+                            <div className="text-[26px] font-bold leading-8 tracking-tight text-[#102034]">
+                              Pay Statement
                             </div>
-                            <div className="mt-2 text-xl font-bold tracking-tight text-slate-900">
-                              Hi {selected.name},
+                            <div className="mt-1 text-[13px] leading-[19px] text-[#556377]">
+                              Period ending{' '}
+                              <span className="font-bold text-[#334155]">{weekHuman}</span>
                             </div>
-                            <div className="mt-1 text-[12px] text-slate-700">
-                              Pay period: <strong>{weekHuman}</strong>
+                            <div className="mt-1.5 text-[11px] leading-4 text-[#556377]">
+                              Confidential pay record
                             </div>
                           </div>
 
-                          {/* Recipient */}
-                          <div className="px-6 pt-4">
-                            <div className="text-[11px] font-bold uppercase tracking-[0.12em] text-orange-600">
-                              Recipient
+                          {/* Total Net Pay */}
+                          <div className="px-8 pb-3 pt-3">
+                            <div className="overflow-hidden rounded-[10px] border border-[#e2e8f0] bg-[#f8fafc]">
+                              <div className="bg-[#334155] px-5 py-[5px] text-[11px] font-extrabold uppercase leading-[13px] tracking-[0.11em] text-white">
+                                Total Net Pay
+                              </div>
+                              <div className="px-5 pb-2.5 pt-2">
+                                <div className="text-[34px] font-extrabold leading-10 tracking-tight text-[#102034] tabular-nums">
+                                  {fmt(pp.final)}
+                                </div>
+                                <div className="mt-1.5 flex items-center justify-between border-t border-[#e2e8f0] pt-1.5">
+                                  <span className="text-[12px] leading-[17px] text-[#556377]">USD equivalent</span>
+                                  <span className="text-[12px] font-bold leading-[17px] text-[#26384d] tabular-nums">
+                                    {pp.final != null && selected.pay_period.fx_rate > 0
+                                      ? `$${(pp.final / selected.pay_period.fx_rate).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD`
+                                      : '—'}
+                                  </span>
+                                </div>
+                              </div>
                             </div>
-                            <div
-                              className="mt-1.5 h-[3px] w-[60px] rounded-sm"
-                              style={{
-                                background:
-                                  'linear-gradient(to top right, #4338ca 0%, #ffffff 50%, #f97316 100%)',
-                              }}
-                            />
                           </div>
-                          <div className="px-6 pt-2">
-                            <div
-                              className="rounded-lg border px-4 py-3"
-                              style={{
-                                background:
-                                  'linear-gradient(to top right, #eff6ff 0%, #ffffff 50%, #fffaf3 100%)',
-                                borderColor: '#fde4cb',
-                              }}
-                            >
-                              <table className="w-full border-collapse">
-                                <tbody>
-                                  <tr>
-                                    <td className="w-[110px] py-[3px] text-[12px]" style={{ color: '#9a6b3f' }}>Name</td>
-                                    <td className="py-[3px] text-[13px] font-semibold text-zinc-900">{selected.name}</td>
-                                  </tr>
-                                  <tr>
-                                    <td className="py-[3px] text-[12px]" style={{ color: '#9a6b3f' }}>Department</td>
-                                    <td className="py-[3px] text-[13px] font-semibold text-zinc-900">{selected.department_name ?? '—'}</td>
-                                  </tr>
-                                </tbody>
-                              </table>
+
+                          {/* Employee */}
+                          <div className="px-8 pb-2.5">
+                            <div className="bg-[#334155] px-3 py-[5px] text-[11px] font-extrabold uppercase leading-[13px] tracking-[0.12em] text-white">
+                              Employee
+                            </div>
+                            <div className="flex items-start justify-between gap-4 border-b border-[#e2e8f0] py-2">
+                              <div>
+                                <div className="text-[10px] font-bold uppercase leading-[13px] tracking-[0.12em] text-[#556377]">Recipient</div>
+                                <div className="mt-0.5 text-[14px] font-bold leading-5 text-[#102034]">{selected.name}</div>
+                              </div>
+                              <div className="text-right">
+                                <div className="text-[10px] font-bold uppercase leading-[13px] tracking-[0.12em] text-[#556377]">Department</div>
+                                <div className="mt-0.5 text-[14px] font-bold leading-5 text-[#102034]">{selected.department_name ?? '—'}</div>
+                              </div>
                             </div>
                           </div>
 
                           {/* Earnings */}
-                          <div className="px-6 pt-4">
-                            <div className="text-[11px] font-bold uppercase tracking-[0.12em] text-orange-600">
+                          <div className="px-8 pb-1">
+                            <div className="bg-[#334155] px-3 py-[5px] text-[11px] font-extrabold uppercase leading-[13px] tracking-[0.12em] text-white">
                               Earnings
                             </div>
-                            <div
-                              className="mt-1.5 h-[3px] w-[60px] rounded-sm"
-                              style={{
-                                background:
-                                  'linear-gradient(to top right, #4338ca 0%, #ffffff 50%, #f97316 100%)',
-                              }}
-                            />
-                          </div>
-                          <div className="px-6 pt-2">
-                            <div
-                              className="rounded-lg border px-4 py-3"
-                              style={{
-                                background:
-                                  'linear-gradient(to top right, #eff6ff 0%, #ffffff 50%, #fffaf3 100%)',
-                                borderColor: '#fde4cb',
-                              }}
-                            >
-                              <table className="w-full border-collapse">
-                                <tbody>
-                                  <tr>
-                                    <td className="py-[3px] text-[12px]" style={{ color: '#9a6b3f' }}>
-                                      Regular ({selected.hours.regular.toFixed(2)}h × ₱{fmtRate(selected.rates_php.regular)})
-                                    </td>
-                                    <td className="py-[3px] text-right text-[13px] font-bold" style={{ color: '#2563eb' }}>
-                                      {fmt(pp.regular)}
-                                    </td>
-                                  </tr>
-                                  <tr>
-                                    <td className="py-[3px] text-[12px]" style={{ color: '#9a6b3f' }}>
-                                      OT ({selected.hours.ot.toFixed(2)}h × ₱{fmtRate(selected.rates_php.ot)})
-                                    </td>
-                                    <td className="py-[3px] text-right text-[13px] font-bold" style={{ color: '#2563eb' }}>
-                                      {fmt(pp.ot)}
-                                    </td>
-                                  </tr>
-                                </tbody>
-                              </table>
-                            </div>
-                          </div>
-
-                          {/* Bonuses */}
-                          <div className="px-6 pt-4">
-                            <div className="text-[11px] font-bold uppercase tracking-[0.12em]" style={{ color: '#7c3aed' }}>
-                              Bonuses
-                            </div>
-                            <div
-                              className="mt-1.5 h-[3px] w-[60px] rounded-sm"
-                              style={{
-                                background:
-                                  'linear-gradient(to top right, #4338ca 0%, #ffffff 50%, #f97316 100%)',
-                              }}
-                            />
-                          </div>
-                          <div className="px-6 pt-2">
-                            <div
-                              className="rounded-lg border px-4 py-3"
-                              style={{
-                                background:
-                                  'linear-gradient(to top right, #eff6ff 0%, #ffffff 50%, #fffaf3 100%)',
-                                borderColor: '#fde4cb',
-                              }}
-                            >
-                              <table className="w-full border-collapse">
-                                <tbody>
-                                  <tr>
-                                    <td className="w-[150px] py-[3px] text-[12px]" style={{ color: '#9a6b3f' }}>Tech Bonus</td>
-                                    <td className="py-[3px] text-right text-[13px] font-bold" style={{ color: '#7c3aed' }}>
-                                      {fmt(pp.tech_bonus)}
-                                    </td>
-                                  </tr>
-                                  <tr>
-                                    <td className="py-[3px] text-[12px]" style={{ color: '#9a6b3f' }}>Attendance Bonus</td>
-                                    <td className="py-[3px] text-right text-[13px] font-bold" style={{ color: '#7c3aed' }}>
-                                      {fmt(pp.perfect_attendance_bonus)}
-                                    </td>
-                                  </tr>
-                                  <tr>
-                                    <td className="py-[3px] text-[12px]" style={{ color: '#9a6b3f' }}>Performance Bonus</td>
-                                    <td className="py-[3px] text-right text-[13px] font-bold" style={{ color: '#7c3aed' }}>
-                                      {fmt(pp.other_bonuses)}
-                                    </td>
-                                  </tr>
-                                  {!!pp.adjustment && (
-                                    <tr>
-                                      <td className="py-[3px] text-[12px]" style={{ color: '#9a6b3f' }}>Adjustment</td>
-                                      <td className="py-[3px] text-right text-[13px] font-bold" style={{ color: '#7c3aed' }}>
-                                        {fmt(pp.adjustment)}
-                                      </td>
-                                    </tr>
-                                  )}
-                                </tbody>
-                              </table>
-                            </div>
+                            <table className="table-keep w-full border-collapse tabular-nums">
+                              <tbody>
+                                <tr>
+                                  <td className="border-b border-[#cbd5e1] bg-[#f1f5f9] py-1 text-[10px] font-bold uppercase leading-3 tracking-[0.06em] text-[#334155]">Description</td>
+                                  <td className="border-b border-[#cbd5e1] bg-[#f1f5f9] px-2 py-1 text-[10px] font-bold uppercase leading-3 tracking-[0.06em] text-[#334155]">Hours × Rate</td>
+                                  <td className="border-b border-[#cbd5e1] bg-[#f1f5f9] py-1 text-right text-[10px] font-bold uppercase leading-3 tracking-[0.06em] text-[#334155]">Amount</td>
+                                </tr>
+                                <tr>
+                                  <td className="border-b border-[#edf2f7] py-1.5 text-[13px] leading-[15px] text-[#26384d]">Regular Hours</td>
+                                  <td className="whitespace-nowrap border-b border-[#edf2f7] px-2 py-1.5 text-[12px] leading-[15px] text-[#556377]">{selected.hours.regular.toFixed(2)}h × ₱{fmtRate(selected.rates_php.regular)}</td>
+                                  <td className="whitespace-nowrap border-b border-[#edf2f7] py-1.5 text-right text-[13px] font-bold leading-[15px] text-[#102034]">{fmt(pp.regular)}</td>
+                                </tr>
+                                <tr>
+                                  <td className="border-b border-[#edf2f7] py-1.5 text-[13px] leading-[15px] text-[#26384d]">Overtime</td>
+                                  <td className="whitespace-nowrap border-b border-[#edf2f7] px-2 py-1.5 text-[12px] leading-[15px] text-[#556377]">{selected.hours.ot.toFixed(2)}h × ₱{fmtRate(selected.rates_php.ot)}</td>
+                                  <td className="whitespace-nowrap border-b border-[#edf2f7] py-1.5 text-right text-[13px] font-bold leading-[15px] text-[#102034]">{fmt(pp.ot)}</td>
+                                </tr>
+                                <tr>
+                                  <td className="border-b border-[#edf2f7] py-1.5 text-[13px] leading-[15px] text-[#26384d]">Tech Allowance</td>
+                                  <td className="border-b border-[#edf2f7] px-2 py-1.5 text-[12px] leading-[15px] text-[#556377]">Bonus</td>
+                                  <td className="whitespace-nowrap border-b border-[#edf2f7] py-1.5 text-right text-[13px] font-bold leading-[15px] text-[#102034]">{fmt(pp.tech_bonus)}</td>
+                                </tr>
+                                <tr>
+                                  <td className="border-b border-[#edf2f7] py-1.5 text-[13px] leading-[15px] text-[#26384d]">Attendance Incentive</td>
+                                  <td className="border-b border-[#edf2f7] px-2 py-1.5 text-[12px] leading-[15px] text-[#556377]">Bonus</td>
+                                  <td className="whitespace-nowrap border-b border-[#edf2f7] py-1.5 text-right text-[13px] font-bold leading-[15px] text-[#102034]">{fmt(pp.perfect_attendance_bonus)}</td>
+                                </tr>
+                                <tr>
+                                  <td className="border-b border-[#edf2f7] py-1.5 text-[13px] leading-[15px] text-[#26384d]">Performance Bonus</td>
+                                  <td className="border-b border-[#edf2f7] px-2 py-1.5 text-[12px] leading-[15px] text-[#556377]">Bonus</td>
+                                  <td className="whitespace-nowrap border-b border-[#edf2f7] py-1.5 text-right text-[13px] font-bold leading-[15px] text-[#102034]">{fmt(pp.other_bonuses)}</td>
+                                </tr>
+                                <tr>
+                                  <td className="py-1.5 text-[13px] leading-[15px] text-[#26384d]">Adjustment</td>
+                                  <td className="px-2 py-1.5 text-[12px] leading-[15px] text-[#556377]">{selected.adjustment_note || 'Manual adjustment'}</td>
+                                  <td className="whitespace-nowrap py-1.5 text-right text-[13px] font-bold leading-[15px] text-[#102034]">{fmt(pp.adjustment)}</td>
+                                </tr>
+                              </tbody>
+                            </table>
                           </div>
 
-                          {/* Total bar */}
-                          <div className="px-6 pt-4 pb-2">
-                            <div
-                              className="rounded-[10px] px-5 py-4"
-                              style={{
-                                background:
-                                  'linear-gradient(to top right, #3730a3 0%, #ffffff 50%, #ea580c 100%)',
-                              }}
-                            >
-                              <div className="flex items-center justify-between">
-                                <span className="text-[11px] font-bold uppercase tracking-[0.12em] text-slate-800">
-                                  Total Pay
-                                </span>
-                                <span className="text-[22px] font-extrabold tracking-tight text-slate-900">
-                                  {fmt(pp.final)}{' '}
-                                  <span className="text-[12px] font-semibold text-slate-600">PHP</span>
-                                </span>
-                              </div>
+                          {/* MESA Adjustment */}
+                          <div className="px-8 pb-1 pt-2">
+                            <div className="bg-[#334155] px-3 py-[5px] text-[11px] font-extrabold uppercase leading-[13px] tracking-[0.12em] text-white">
+                              MESA Adjustment
+                            </div>
+                            <table className="table-keep w-full border-collapse tabular-nums">
+                              <tbody>
+                                <tr>
+                                  <td className="border-b border-[#cbd5e1] bg-[#f1f5f9] py-1 text-[10px] font-bold uppercase leading-3 tracking-[0.06em] text-[#334155]">Description</td>
+                                  <td className="border-b border-[#cbd5e1] bg-[#f1f5f9] px-2 py-1 text-[10px] font-bold uppercase leading-3 tracking-[0.06em] text-[#334155]">Type</td>
+                                  <td className="border-b border-[#cbd5e1] bg-[#f1f5f9] py-1 text-right text-[10px] font-bold uppercase leading-3 tracking-[0.06em] text-[#334155]">Amount</td>
+                                </tr>
+                                <tr>
+                                  <td className="border-b border-[#edf2f7] py-1.5 text-[13px] leading-[15px] text-[#26384d]">MESA Reimbursement</td>
+                                  <td className="border-b border-[#edf2f7] px-2 py-1.5 text-[12px] leading-[15px] text-[#556377]">Payout</td>
+                                  <td className="whitespace-nowrap border-b border-[#edf2f7] py-1.5 text-right text-[13px] font-bold leading-[15px] text-[#0f766e]">+{fmt(pp.mesa_disbursement)}</td>
+                                </tr>
+                                <tr>
+                                  <td className="py-1.5 text-[13px] leading-[15px] text-[#26384d]">MESA Deduction</td>
+                                  <td className="px-2 py-1.5 text-[12px] leading-[15px] text-[#556377]">Contribution</td>
+                                  <td className="whitespace-nowrap py-1.5 text-right text-[13px] font-bold leading-[15px] text-[#b3261e]">-{fmt(pp.mesa_deduction)}</td>
+                                </tr>
+                              </tbody>
+                            </table>
+                          </div>
+
+                          {/* Confidential note */}
+                          <div className="px-8 pb-4 pt-3">
+                            <div className="rounded-[10px] border border-[#e2e8f0] bg-[#f8fafc] px-3.5 py-2 text-[11px] leading-4 text-[#556377]">
+                              <strong className="text-[#334155]">Confidential:</strong> This statement is intended only for the recipient named above. Contact your payroll representative if any hours or totals need review.
                             </div>
                           </div>
 
                           {/* Footer */}
-                          <div
-                            className="px-6 py-3.5"
-                            style={{
-                              background:
-                                'linear-gradient(to top right, #eff6ff 0%, #ffffff 50%, #fffaf3 100%)',
-                            }}
-                          >
-                            <div className="flex items-center justify-between">
-                              <img
-                                src="https://host.simple.biz/email/simplelogo.png"
-                                alt="Simple"
-                                className="block h-auto w-[42px]"
-                              />
-                              <div className="pl-3 text-right">
-                                <div className="text-[12px] font-bold text-slate-800">Simple · Confidential</div>
-                                <div className="text-[10px] text-slate-400">Automated dispatch from Simple HRIS</div>
-                              </div>
-                            </div>
+                          <div className="flex items-center justify-between border-t border-[#eef2f6] bg-[#f8fafc] px-8 py-2.5">
+                            <span className="text-[11px] leading-4 text-[#556377]">Automated dispatch from Simple HRIS</span>
+                            <span className="whitespace-nowrap text-[11px] font-bold leading-4 text-[#334155]">Simple Payroll</span>
                           </div>
                         </div>
                       </div>

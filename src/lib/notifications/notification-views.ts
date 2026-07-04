@@ -19,6 +19,11 @@ export const NOTIFICATION_TYPE_TO_VIEWS: Record<string, AppView[]> = {
   'offboarding.request_completed': ['manager'],
   'offboarding.request_dismissed': ['manager'],
   'offboarding.request_returned': ['manager'],
+  // Employee resigns → their department manager reviews it in My Team; the
+  // employee is told the outcome. (submitted → manager; approved/rejected → employee)
+  'resignation.submitted': ['manager'],
+  'resignation.approved': ['employee'],
+  'resignation.rejected': ['employee'],
   'rate.change': ['employee'],
   'dispute.approved': ['employee'],
   'dispute.denied': ['employee'],

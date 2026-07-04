@@ -77,6 +77,7 @@ export function HeroStatRow({
   label,
   value,
   tooltip,
+  action,
 }: {
   Icon: React.ComponentType<{ className?: string }>;
   tone: AttentionTone;
@@ -85,6 +86,8 @@ export function HeroStatRow({
   /** Optional rich hover explainer. When set, the row gains a "?"-style affordance
    *  and reveals this content (hover or keyboard focus) in a floating card. */
   tooltip?: React.ReactNode;
+  /** Optional trailing control (e.g. an export button) rendered after the value. */
+  action?: React.ReactNode;
 }) {
   const palette = ATTENTION_PALETTE[tone];
   return (
@@ -116,6 +119,7 @@ export function HeroStatRow({
       >
         {value == null ? '—' : value.toLocaleString('en-US')}
       </span>
+      {action}
       {tooltip && (
         <div
           role="tooltip"

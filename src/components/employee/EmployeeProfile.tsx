@@ -16,6 +16,12 @@ import {
   Plus,
   Briefcase,
   Bell,
+  DoorOpen,
+  Send,
+  CalendarDays,
+  AlertTriangle,
+  Clock,
+  XCircle,
 } from 'lucide-react';
 import { motion, AnimatePresence, LayoutGroup } from 'motion/react';
 import { toast } from 'sonner';
@@ -32,6 +38,7 @@ import { compressProfilePhotoForUpload } from '@/lib/images/compress-profile-pho
 import type { EmployeeRow } from '@/lib/supabase/employees';
 import type { EmployeeHourlyRateRow } from '@/lib/supabase/employee-hourly-rates';
 import type { EmployeeIdRow } from '@/lib/supabase/employee-ids';
+import type { ResignationRequestRow } from '@/lib/supabase/resignation-requests';
 import { PROCESSOR_OPTIONS, type ProcessorId } from '@/lib/employee-payment-processors';
 import { getTitlesForDepartment, hasAnySkillSetContent } from '@/lib/skill-set-titles';
 import {
@@ -93,7 +100,7 @@ function matchesEmployeeEmail(emp: EmployeeRow, n: string): boolean {
 
 /* ───────── Visual primitives ───────── */
 
-type TabId = 'overview' | 'compensation' | 'payment' | 'skillsets' | 'reports';
+type TabId = 'overview' | 'compensation' | 'payment' | 'skillsets' | 'reports' | 'resign';
 
 interface SkillSetFields {
   role_title: string;
@@ -436,6 +443,7 @@ function TabBar({
   needsBank,
   needsSkillSet,
   paymentEscalated = false,
+  resignPending = false,
 }: {
   active: TabId;
   onChange: (id: TabId) => void;
@@ -445,6 +453,8 @@ function TabBar({
   needsSkillSet: boolean;
   /** Escalate the Payment tab's ping to rose (accounting requested bank info). */
   paymentEscalated?: boolean;
+  /** A resignation request is awaiting the manager — show a rose dot on Resign. */
+  resignPending?: boolean;
 }) {
   const tabs: { id: TabId; label: string; sub: string }[] = [
     { id: 'overview', label: 'Overview', sub: hasAddress ? 'Identity, employment, address' : 'Identity & employment' },
@@ -452,6 +462,7 @@ function TabBar({
     { id: 'payment', label: 'Payment', sub: 'Disbursement details' },
     { id: 'skillsets', label: 'Skill Sets', sub: 'Visible to teammates' },
     { id: 'reports', label: 'Reports', sub: 'Commendations & recognition' },
+    { id: 'resign', label: 'Resign', sub: 'End your employment' },
   ];
 
   return (
@@ -466,8 +477,10 @@ function TabBar({
           const hasIssue =
             (t.id === 'overview' && needsPhoto) ||
             (t.id === 'payment' && needsBank) ||
-            (t.id === 'skillsets' && needsSkillSet);
-          const escalated = t.id === 'payment' && paymentEscalated;
+            (t.id === 'skillsets' && needsSkillSet) ||
+            (t.id === 'resign' && resignPending);
+          const escalated =
+            (t.id === 'payment' && paymentEscalated) || (t.id === 'resign' && resignPending);
           return (
             <button
               key={t.id}
@@ -593,6 +606,95 @@ export default function EmployeeProfile({
   useEffect(() => {
     setActiveTab(focusTab);
   }, [focusTab]);
+
+  // ── Resignation (Profile → Resign) ──
+  // The employee's own current/last resignation request. A `pending` one shows a
+  // status card + Withdraw; anything else falls back to the file-a-resignation form.
+  const [resignation, setResignation] = useState<ResignationRequestRow | null>(null);
+  const [resignEffectiveDate, setResignEffectiveDate] = useState('');
+  const [resignMessage, setResignMessage] = useState('');
+  const [resignConfirmOpen, setResignConfirmOpen] = useState(false);
+  const [resignSubmitting, setResignSubmitting] = useState(false);
+  const [resignWithdrawing, setResignWithdrawing] = useState(false);
+
+  const refreshResignation = React.useCallback(async () => {
+    try {
+      const res = await fetch(
+        `/api/resignation-requests?employee_email=${encodeURIComponent(employeeEmail)}`,
+        { cache: 'no-store' },
+      );
+      const json = (await res.json()) as { rows?: ResignationRequestRow[] };
+      const rows = json.rows ?? [];
+      // Prefer an active pending request; else show the most recent (approved/rejected/cancelled).
+      const pending = rows.find((r) => r.status === 'pending');
+      setResignation(pending ?? rows[0] ?? null);
+    } catch {
+      /* non-fatal — the form still renders */
+    }
+  }, [employeeEmail]);
+
+  useEffect(() => {
+    void refreshResignation();
+  }, [refreshResignation]);
+
+  const submitResignation = async () => {
+    if (!resignEffectiveDate) {
+      toast.error('Choose your effective date.');
+      return;
+    }
+    setResignSubmitting(true);
+    try {
+      const res = await fetch('/api/resignation-requests', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          employee_email: norm,
+          employee_name: displayName && displayName !== '—' ? displayName : null,
+          employee_work_email: workEmail,
+          employee_personal_email: personalEmail,
+          department: employmentDepartment,
+          effective_date: resignEffectiveDate,
+          message: resignMessage.trim() || null,
+        }),
+      });
+      const json = (await res.json()) as { error?: string; manager_emails?: string[] | null };
+      if (!res.ok) throw new Error(json.error || 'Submit failed');
+      const managers = (json.manager_emails ?? []).filter(Boolean);
+      toast.success('Resignation submitted', {
+        description: managers.length
+          ? 'Sent to your department manager for approval.'
+          : 'No department manager is configured yet — HR will follow up.',
+      });
+      setResignConfirmOpen(false);
+      setResignMessage('');
+      setResignEffectiveDate('');
+      await refreshResignation();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not submit resignation');
+    } finally {
+      setResignSubmitting(false);
+    }
+  };
+
+  const withdrawResignation = async () => {
+    if (!resignation) return;
+    setResignWithdrawing(true);
+    try {
+      const res = await fetch(`/api/resignation-requests/${resignation.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'cancel' }),
+      });
+      const json = (await res.json()) as { error?: string };
+      if (!res.ok) throw new Error(json.error || 'Withdraw failed');
+      toast.success('Resignation withdrawn');
+      await refreshResignation();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not withdraw resignation');
+    } finally {
+      setResignWithdrawing(false);
+    }
+  };
 
   interface Commendation { id: string; note: string | null; awarded_by: string; awarded_at: string; }
   const [commendations, setCommendations] = useState<Commendation[]>([]);
@@ -1161,6 +1263,7 @@ export default function EmployeeProfile({
             needsBank={needsPayoutSetup}
             needsSkillSet={needsSkillSetSetup}
             paymentEscalated={escalatePayment && needsPayoutSetup}
+            resignPending={resignation?.status === 'pending'}
           />
         </div>
 
@@ -1594,10 +1697,243 @@ export default function EmployeeProfile({
                   )}
                 </>
               )}
+
+              {activeTab === 'resign' && (
+                <>
+                  {resignation?.status === 'pending' ? (
+                    <Section
+                      title="Resignation submitted"
+                      description="Awaiting your department manager's approval"
+                    >
+                      <div className="space-y-4 py-4">
+                        <div className="flex items-start gap-2.5 rounded-xl border border-amber-200/80 bg-amber-50/70 px-4 py-3 text-[12.5px] dark:border-amber-900/40 dark:bg-amber-950/30">
+                          <Clock className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
+                          <div className="min-w-0">
+                            <p className="font-semibold text-amber-950 dark:text-amber-100">
+                              Pending manager approval
+                            </p>
+                            <p className="mt-0.5 leading-relaxed text-amber-900/80 dark:text-amber-100/75">
+                              Once your manager approves, HR will handle your offboarding. You can
+                              withdraw this request any time before it's approved.
+                            </p>
+                          </div>
+                        </div>
+                        <Row
+                          label="Effective date"
+                          value={formatStartDate(resignation.effective_date) ?? resignation.effective_date}
+                        />
+                        {resignation.manager_email && (
+                          <Row label="Awaiting" value={resignation.manager_email} mono />
+                        )}
+                        {resignation.message && (
+                          <div className="border-b border-zinc-100 py-3.5 dark:border-zinc-800/40">
+                            <div className="text-[12px] font-medium text-zinc-500 dark:text-zinc-400">
+                              Your message
+                            </div>
+                            <p className="mt-1 whitespace-pre-wrap break-words text-[14px] leading-relaxed text-zinc-900 dark:text-zinc-100">
+                              {resignation.message}
+                            </p>
+                          </div>
+                        )}
+                        <div className="flex justify-end pt-1">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            disabled={resignWithdrawing}
+                            onClick={withdrawResignation}
+                            className="h-9 gap-1.5 rounded-lg border-zinc-300 text-zinc-700 hover:border-rose-300 hover:bg-rose-50 hover:text-rose-700 dark:border-zinc-700 dark:text-zinc-300 dark:hover:border-rose-800 dark:hover:bg-rose-950/30 dark:hover:text-rose-300"
+                          >
+                            {resignWithdrawing ? (
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            ) : (
+                              <X className="h-3.5 w-3.5" />
+                            )}
+                            Withdraw request
+                          </Button>
+                        </div>
+                      </div>
+                    </Section>
+                  ) : resignation?.status === 'approved' ? (
+                    <Section
+                      title="Resignation approved"
+                      description="Your manager approved your resignation"
+                    >
+                      <div className="space-y-4 py-4">
+                        <div className="flex items-start gap-2.5 rounded-xl border border-rose-200/80 bg-rose-50/70 px-4 py-3 text-[12.5px] dark:border-rose-900/40 dark:bg-rose-950/30">
+                          <CheckCircle className="mt-0.5 h-4 w-4 shrink-0 text-rose-600 dark:text-rose-400" />
+                          <div className="min-w-0">
+                            <p className="font-semibold text-rose-950 dark:text-rose-100">
+                              Approved — HR will process your offboarding
+                            </p>
+                            <p className="mt-0.5 leading-relaxed text-rose-900/80 dark:text-rose-100/75">
+                              Your resignation is now with HR. Reach out to them for any questions
+                              about your final pay and handover.
+                            </p>
+                          </div>
+                        </div>
+                        <Row
+                          label="Effective date"
+                          value={formatStartDate(resignation.effective_date) ?? resignation.effective_date}
+                        />
+                        {resignation.approver_email && (
+                          <Row label="Approved by" value={resignation.approver_email} mono />
+                        )}
+                        {resignation.message && (
+                          <div className="py-3.5">
+                            <div className="text-[12px] font-medium text-zinc-500 dark:text-zinc-400">
+                              Your message
+                            </div>
+                            <p className="mt-1 whitespace-pre-wrap break-words text-[14px] leading-relaxed text-zinc-900 dark:text-zinc-100">
+                              {resignation.message}
+                            </p>
+                          </div>
+                        )}
+                      </div>
+                    </Section>
+                  ) : (
+                    <>
+                      {resignation?.status === 'rejected' && (
+                        <div className="mb-4 flex items-start gap-2.5 rounded-xl border border-rose-200/80 bg-rose-50/70 px-4 py-3 text-[12.5px] dark:border-rose-900/40 dark:bg-rose-950/30">
+                          <XCircle className="mt-0.5 h-4 w-4 shrink-0 text-rose-600 dark:text-rose-400" />
+                          <div className="min-w-0">
+                            <p className="font-semibold text-rose-950 dark:text-rose-100">
+                              A previous resignation was declined
+                            </p>
+                            {resignation.approver_note && (
+                              <p className="mt-0.5 leading-relaxed text-rose-900/80 dark:text-rose-100/75">
+                                Manager's note: &ldquo;{resignation.approver_note}&rdquo;
+                              </p>
+                            )}
+                            <p className="mt-0.5 leading-relaxed text-rose-900/70 dark:text-rose-100/65">
+                              You can submit a new resignation below.
+                            </p>
+                          </div>
+                        </div>
+                      )}
+                      <Section
+                        title="Resign"
+                        description="Notify your department manager that you intend to resign"
+                      >
+                        <div className="space-y-5 py-4">
+                          <div className="flex items-start gap-2.5 rounded-xl border border-rose-200/80 bg-rose-50/60 px-4 py-3 text-[12.5px] dark:border-rose-900/40 dark:bg-rose-950/20">
+                            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-rose-600 dark:text-rose-400" />
+                            <p className="leading-relaxed text-rose-900/90 dark:text-rose-100/80">
+                              Submitting sends a resignation request to your
+                              {employmentDepartment ? ` ${employmentDepartment}` : ''} manager. Once
+                              they approve it, HR begins your offboarding. You choose your effective
+                              (last working) date.
+                            </p>
+                          </div>
+
+                          <label className="block">
+                            <div className="mb-1.5 flex items-center gap-1.5 text-[12px] font-medium text-zinc-700 dark:text-zinc-200">
+                              <CalendarDays className="h-3.5 w-3.5 text-zinc-400" />
+                              Effective date
+                            </div>
+                            <input
+                              type="date"
+                              value={resignEffectiveDate}
+                              min={new Date().toISOString().slice(0, 10)}
+                              onChange={(e) => setResignEffectiveDate(e.target.value)}
+                              className="w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-[14px] text-zinc-900 transition-colors focus:border-rose-300 focus:outline-none focus:ring-1 focus:ring-rose-200 dark:border-zinc-800 dark:bg-zinc-950/60 dark:text-zinc-100 dark:focus:border-rose-500/40 dark:focus:ring-rose-500/20 sm:max-w-[16rem]"
+                            />
+                          </label>
+
+                          <label className="block">
+                            <div className="mb-1.5 text-[12px] font-medium text-zinc-700 dark:text-zinc-200">
+                              Message to your manager{' '}
+                              <span className="font-normal text-zinc-400 dark:text-zinc-500">(optional)</span>
+                            </div>
+                            <textarea
+                              value={resignMessage}
+                              onChange={(e) => setResignMessage(e.target.value)}
+                              rows={4}
+                              maxLength={2000}
+                              placeholder="Share your reason for leaving, a note of thanks, or anything your manager should know."
+                              className="w-full resize-y rounded-lg border border-zinc-200 bg-white px-3 py-2 text-[13.5px] leading-relaxed text-zinc-900 placeholder:text-zinc-400 transition-colors focus:border-rose-300 focus:outline-none focus:ring-1 focus:ring-rose-200 dark:border-zinc-800 dark:bg-zinc-950/60 dark:text-zinc-100 dark:focus:border-rose-500/40 dark:focus:ring-rose-500/20"
+                            />
+                          </label>
+
+                          <Button
+                            type="button"
+                            onClick={() => setResignConfirmOpen(true)}
+                            disabled={!resignEffectiveDate}
+                            className="h-12 w-full gap-2 rounded-xl bg-red-600 text-base font-semibold text-white shadow-sm shadow-red-600/20 transition-colors hover:bg-red-700 disabled:opacity-50 dark:bg-red-600 dark:hover:bg-red-500"
+                          >
+                            <DoorOpen className="h-5 w-5" />
+                            Resign
+                          </Button>
+                        </div>
+                      </Section>
+                    </>
+                  )}
+                </>
+              )}
             </motion.div>
           </AnimatePresence>
         </div>
       </div>
+
+      {/* Resignation confirmation modal */}
+      {resignConfirmOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-[2px]">
+          <div className="w-full max-w-md rounded-2xl border border-zinc-200 bg-white shadow-2xl dark:border-zinc-800 dark:bg-zinc-950">
+            <div className="flex items-start gap-3 border-b border-zinc-200 px-5 py-4 dark:border-zinc-800">
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-red-100 dark:bg-red-950/60">
+                <DoorOpen className="h-4 w-4 text-red-600 dark:text-red-400" />
+              </div>
+              <div className="min-w-0">
+                <h3 className="text-base font-bold text-zinc-900 dark:text-white">Submit your resignation?</h3>
+                <p className="mt-0.5 text-[12.5px] leading-relaxed text-zinc-500 dark:text-zinc-400">
+                  This notifies your{employmentDepartment ? ` ${employmentDepartment}` : ''} manager. After
+                  they approve it, HR will begin your offboarding.
+                </p>
+              </div>
+            </div>
+            <div className="space-y-2 px-5 py-4 text-[13px]">
+              <div className="flex items-center justify-between gap-4">
+                <span className="text-zinc-500 dark:text-zinc-400">Effective date</span>
+                <span className="font-medium text-zinc-900 dark:text-zinc-100">
+                  {formatStartDate(resignEffectiveDate) ?? resignEffectiveDate}
+                </span>
+              </div>
+              {resignMessage.trim() && (
+                <div className="rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 dark:border-zinc-800 dark:bg-zinc-900/50">
+                  <p className="whitespace-pre-wrap break-words text-[12.5px] leading-relaxed text-zinc-700 dark:text-zinc-300">
+                    {resignMessage.trim()}
+                  </p>
+                </div>
+              )}
+            </div>
+            <div className="flex items-center justify-end gap-2 border-t border-zinc-200 px-5 py-4 dark:border-zinc-800">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={resignSubmitting}
+                onClick={() => setResignConfirmOpen(false)}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                disabled={resignSubmitting}
+                onClick={submitResignation}
+                className="gap-1.5 bg-red-600 text-white hover:bg-red-700 dark:bg-red-600 dark:hover:bg-red-500"
+              >
+                {resignSubmitting ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Send className="h-3.5 w-3.5" />
+                )}
+                Submit resignation
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

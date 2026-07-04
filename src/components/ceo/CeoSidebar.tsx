@@ -7,7 +7,7 @@ import { withViewTransition } from '@/lib/theme/with-view-transition';
 import { Bell, Crown, LayoutDashboard, LogOut, Megaphone, Moon, MoreHorizontal, Newspaper, Sun, Users } from 'lucide-react';
 import ConstructionMark from '@/components/common/ConstructionMark';
 import CollapsibleSidebarShell from '@/components/common/CollapsibleSidebarShell';
-import SidebarBrandMark from '@/components/common/SidebarBrandMark';
+import SidebarLogoHeader from '@/components/common/SidebarLogoHeader';
 import { SWallNavLabel } from '@/components/swall/SWall';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -51,14 +51,6 @@ export default function CeoSidebar({
   const { state: lockState } = useDispatchLock();
   const { collapsed, toggle } = useSidebarCollapsed();
 
-  const [logoBeat, setLogoBeat] = React.useState(false);
-  React.useEffect(() => {
-    const fire = () => setLogoBeat(true);
-    const first = setTimeout(fire, 1000);
-    const interval = setInterval(fire, 12000);
-    return () => { clearTimeout(first); clearInterval(interval); };
-  }, []);
-
   const displayName = viewerEmail?.includes('@')
     ? viewerEmail.split('@')[0]!.replace(/[._-]/g, ' ')
     : viewerEmail || 'CEO';
@@ -97,8 +89,8 @@ export default function CeoSidebar({
           activeTab === id ? 'text-white/85' : 'text-[#a1a1aa] dark:text-zinc-500',
         )}
       />
-      <span className={cn('truncate text-left transition-opacity duration-[var(--sb-collapse-ms)] ease-[var(--sb-collapse-ease)]', collapsed && 'md:opacity-0')}>{label}</span>
-      {isConstr(id) && <span className={cn('transition-opacity duration-[var(--sb-collapse-ms)] ease-[var(--sb-collapse-ease)]', collapsed && 'md:opacity-0')}><ConstructionMark active={activeTab === id} /></span>}
+      <span className={cn('truncate text-left sb-collapse-fade')}>{label}</span>
+      {isConstr(id) && <span className={cn('sb-collapse-fade')}><ConstructionMark active={activeTab === id} /></span>}
       {badge}
     </button>
   );
@@ -119,29 +111,11 @@ export default function CeoSidebar({
     >
       <div className="flex min-h-0 flex-1 flex-col px-5 pb-4 pt-7">
         <div className="mb-8 shrink-0">
-          <a
-            href="https://www.simple.biz/"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="logo-neon"
-            onMouseEnter={() => { if (!logoBeat) setLogoBeat(true); }}
-          >
-            <div className="logo-neon__inner relative overflow-hidden px-3 py-2 border border-zinc-200 dark:border-black dark:ring-1 dark:ring-white">
-              <img
-                src="/simple-logo.png"
-                alt="Simple HRIS"
-                className={cn('h-10 w-full object-contain transition-opacity duration-[var(--sb-collapse-ms)] ease-[var(--sb-collapse-ease)]', collapsed && 'md:opacity-0', logoBeat && 'logo-heartbeat')}
-                onAnimationEnd={() => setLogoBeat(false)}
-              />
-              <SidebarBrandMark
-              className={cn('pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 opacity-0 transition-opacity duration-[var(--sb-collapse-ms)] ease-[var(--sb-collapse-ease)] from-yellow-500 to-amber-600', collapsed && 'md:opacity-100')}
-            />
-            </div>
-          </a>
+          <SidebarLogoHeader collapsed={collapsed} accentClassName="from-yellow-500 to-amber-600" />
         </div>
 
         <ScrollArea className="min-h-0 flex-1 pr-2">
-          <p className={cn('mb-1.5 px-2.5 text-[10.5px] font-medium uppercase tracking-[0.06em] text-[#a1a1aa] transition-opacity duration-[var(--sb-collapse-ms)] ease-[var(--sb-collapse-ease)]', collapsed && 'md:opacity-0')}>
+          <p className={cn('mb-1.5 px-2.5 text-[10.5px] font-medium uppercase tracking-[0.06em] text-[#a1a1aa] sb-collapse-fade')}>
             Workspace
           </p>
           <nav className="flex flex-col gap-px">
@@ -159,8 +133,8 @@ export default function CeoSidebar({
               )}
             >
               <BizAiBadge size="sm" active={activeTab === 'biz-ai'} />
-              <span className={cn('truncate text-left transition-opacity duration-[var(--sb-collapse-ms)] ease-[var(--sb-collapse-ease)]', collapsed && 'md:opacity-0')}>Penny AI</span>
-              {isConstr('biz-ai') && <span className={cn('transition-opacity duration-[var(--sb-collapse-ms)] ease-[var(--sb-collapse-ease)]', collapsed && 'md:opacity-0')}><ConstructionMark active={activeTab === 'biz-ai'} /></span>}
+              <span className={cn('truncate text-left sb-collapse-fade')}>Penny AI</span>
+              {isConstr('biz-ai') && <span className={cn('sb-collapse-fade')}><ConstructionMark active={activeTab === 'biz-ai'} /></span>}
             </button>}
             {can('people') && navBtn('people', 'People', Users)}
             {can('announcements') && navBtn('announcements', 'Announcements', Megaphone)}
@@ -190,13 +164,13 @@ export default function CeoSidebar({
                   activeTab === 's-wall' ? 'text-white/85' : 'text-[#a1a1aa] dark:text-zinc-500',
                 )}
               />
-              <span className={cn('transition-opacity duration-[var(--sb-collapse-ms)] ease-[var(--sb-collapse-ease)]', collapsed && 'md:opacity-0')}><SWallNavLabel /></span>
-              {isConstr('s-wall') && <span className={cn('transition-opacity duration-[var(--sb-collapse-ms)] ease-[var(--sb-collapse-ease)]', collapsed && 'md:opacity-0')}><ConstructionMark active={activeTab === 's-wall'} /></span>}
+              <span className={cn('sb-collapse-fade')}><SWallNavLabel /></span>
+              {isConstr('s-wall') && <span className={cn('sb-collapse-fade')}><ConstructionMark active={activeTab === 's-wall'} /></span>}
             </button>}
           </nav>
 
           <div className="mt-6 border-t border-yellow-100/60 pt-4 dark:border-yellow-950/40">
-            <div className={cn('transition-opacity duration-[var(--sb-collapse-ms)] ease-[var(--sb-collapse-ease)]', collapsed && 'md:opacity-0')}>
+            <div className={cn('sb-collapse-fade')}>
               <ViewSwitcher email={viewerEmail} currentView="ceo" />
             </div>
             <button
@@ -208,9 +182,9 @@ export default function CeoSidebar({
             >
               <div className="flex items-center gap-2 text-xs font-medium text-[#3f3f46] dark:text-zinc-300">
                 {isDark ? <Moon className="h-4 w-4 shrink-0" /> : <Sun className="h-4 w-4 shrink-0" />}
-                <span className={cn('transition-opacity duration-[var(--sb-collapse-ms)] ease-[var(--sb-collapse-ease)]', collapsed && 'md:opacity-0')}>{isDark ? 'Dark' : 'Light'}</span>
+                <span className={cn('sb-collapse-fade')}>{isDark ? 'Dark' : 'Light'}</span>
               </div>
-              <span className={cn('text-[#a1a1aa] transition-opacity duration-[var(--sb-collapse-ms)] ease-[var(--sb-collapse-ease)]', collapsed && 'md:opacity-0')}>{isDark ? '☀' : '☾'}</span>
+              <span className={cn('text-[#a1a1aa] sb-collapse-fade')}>{isDark ? '☀' : '☾'}</span>
             </button>
           </div>
         </ScrollArea>
@@ -226,7 +200,7 @@ export default function CeoSidebar({
             className="h-7 w-7 text-[11px]"
             pixelSize={56}
           />
-          <div className={cn('min-w-0 flex-1 transition-opacity duration-[var(--sb-collapse-ms)] ease-[var(--sb-collapse-ease)]', collapsed && 'md:opacity-0')}>
+          <div className={cn('min-w-0 flex-1 sb-collapse-fade')}>
             <div className="truncate text-[13px] font-medium leading-tight text-[#18181b] dark:text-zinc-100">
               {titleName}
             </div>
@@ -234,7 +208,7 @@ export default function CeoSidebar({
               CEO
             </div>
           </div>
-          <MoreHorizontal className={cn('h-4 w-4 shrink-0 cursor-pointer text-yellow-400/70 transition-opacity duration-[var(--sb-collapse-ms)] ease-[var(--sb-collapse-ease)]', collapsed && 'md:opacity-0')} aria-hidden />
+          <MoreHorizontal className={cn('h-4 w-4 shrink-0 cursor-pointer text-yellow-400/70 sb-collapse-fade')} aria-hidden />
         </div>
         <Button
           variant="ghost"
@@ -246,7 +220,7 @@ export default function CeoSidebar({
           }}
         >
           <LogOut className="h-4 w-4 shrink-0" />
-          <span className={cn('transition-opacity duration-[var(--sb-collapse-ms)] ease-[var(--sb-collapse-ease)]', collapsed && 'md:opacity-0')}>Sign Out</span>
+          <span className={cn('sb-collapse-fade')}>Sign Out</span>
         </Button>
       </div>
     </CollapsibleSidebarShell>

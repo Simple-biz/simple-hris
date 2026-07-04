@@ -22,7 +22,7 @@ import {
 import { SWallNavLabel } from '@/components/swall/SWall';
 import ConstructionMark from '@/components/common/ConstructionMark';
 import CollapsibleSidebarShell from '@/components/common/CollapsibleSidebarShell';
-import SidebarBrandMark from '@/components/common/SidebarBrandMark';
+import SidebarLogoHeader from '@/components/common/SidebarLogoHeader';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -68,14 +68,6 @@ export default function ManagerSidebar({
   const { state: lockState } = useDispatchLock();
   const { collapsed, toggle } = useSidebarCollapsed();
 
-  const [logoBeat, setLogoBeat] = React.useState(false);
-  React.useEffect(() => {
-    const fire = () => setLogoBeat(true);
-    const first = setTimeout(fire, 1000);
-    const interval = setInterval(fire, 12000);
-    return () => { clearTimeout(first); clearInterval(interval); };
-  }, []);
-
   const displayName = viewerEmail?.includes('@')
     ? viewerEmail.split('@')[0]!.replace(/[._-]/g, ' ')
     : viewerEmail || 'Manager';
@@ -116,8 +108,8 @@ export default function ManagerSidebar({
             : 'text-[#a1a1aa] dark:text-zinc-500',
         )}
       />
-      <span className={cn('truncate text-left transition-opacity duration-[var(--sb-collapse-ms)] ease-[var(--sb-collapse-ease)]', collapsed && 'md:opacity-0')}>{label}</span>
-      {isConstr(id) && <span className={cn('transition-opacity duration-[var(--sb-collapse-ms)] ease-[var(--sb-collapse-ease)]', collapsed && 'md:opacity-0')}><ConstructionMark active={activeTab === id} /></span>}
+      <span className={cn('truncate text-left sb-collapse-fade')}>{label}</span>
+      {isConstr(id) && <span className={cn('sb-collapse-fade')}><ConstructionMark active={activeTab === id} /></span>}
       {badge}
     </button>
   );
@@ -153,30 +145,12 @@ export default function ManagerSidebar({
       )}
     >
       <div className="shrink-0 px-5 pt-7 pb-5">
-        <a
-          href="https://www.simple.biz/"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="logo-neon"
-          onMouseEnter={() => { if (!logoBeat) setLogoBeat(true); }}
-        >
-          <div className="logo-neon__inner relative overflow-hidden px-3 py-2 border border-zinc-200 dark:border-black dark:ring-1 dark:ring-white">
-            <img
-              src="/simple-logo.png"
-              alt="Simple HRIS"
-              className={cn('h-10 w-full object-contain transition-opacity duration-[var(--sb-collapse-ms)] ease-[var(--sb-collapse-ease)]', collapsed && 'md:opacity-0', logoBeat && 'logo-heartbeat')}
-              onAnimationEnd={() => setLogoBeat(false)}
-            />
-            <SidebarBrandMark
-              className={cn('pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 opacity-0 transition-opacity duration-[var(--sb-collapse-ms)] ease-[var(--sb-collapse-ease)] from-blue-500 to-blue-700', collapsed && 'md:opacity-100')}
-            />
-          </div>
-        </a>
+        <SidebarLogoHeader collapsed={collapsed} accentClassName="from-blue-500 to-blue-700" />
       </div>
 
       <ScrollArea className="min-h-0 flex-1 px-5">
         <div className="pr-2 pb-4">
-          <p className={cn('mb-1.5 px-2.5 text-[10.5px] font-medium uppercase tracking-[0.06em] text-[#a1a1aa] transition-opacity duration-[var(--sb-collapse-ms)] ease-[var(--sb-collapse-ease)]', collapsed && 'md:opacity-0')}>
+          <p className={cn('mb-1.5 px-2.5 text-[10.5px] font-medium uppercase tracking-[0.06em] text-[#a1a1aa] sb-collapse-fade')}>
             Workspace
           </p>
           <nav className="flex flex-col gap-px">
@@ -213,8 +187,8 @@ export default function ManagerSidebar({
                   activeTab === 's-wall' ? 'text-white/85' : 'text-[#a1a1aa] dark:text-zinc-500',
                 )}
               />
-              <span className={cn('transition-opacity duration-[var(--sb-collapse-ms)] ease-[var(--sb-collapse-ease)]', collapsed && 'md:opacity-0')}><SWallNavLabel /></span>
-              {isConstr('s-wall') && <span className={cn('transition-opacity duration-[var(--sb-collapse-ms)] ease-[var(--sb-collapse-ease)]', collapsed && 'md:opacity-0')}><ConstructionMark active={activeTab === 's-wall'} /></span>}
+              <span className={cn('sb-collapse-fade')}><SWallNavLabel /></span>
+              {isConstr('s-wall') && <span className={cn('sb-collapse-fade')}><ConstructionMark active={activeTab === 's-wall'} /></span>}
             </button>}
           </nav>
 
@@ -223,7 +197,7 @@ export default function ManagerSidebar({
           )}
 
           {(can('hsl-bonus') || can('bonus-history')) && (
-            <p className={cn('mb-1.5 px-2.5 text-[10.5px] font-medium uppercase tracking-[0.06em] text-[#a1a1aa] transition-opacity duration-[var(--sb-collapse-ms)] ease-[var(--sb-collapse-ease)]', collapsed && 'md:opacity-0')}>
+            <p className={cn('mb-1.5 px-2.5 text-[10.5px] font-medium uppercase tracking-[0.06em] text-[#a1a1aa] sb-collapse-fade')}>
               Bonuses
             </p>
           )}
@@ -241,7 +215,7 @@ export default function ManagerSidebar({
           </nav>
 
           <div className="mt-6 border-t border-blue-100/60 pt-4 dark:border-blue-950/40">
-            <div className={cn('transition-opacity duration-[var(--sb-collapse-ms)] ease-[var(--sb-collapse-ease)]', collapsed && 'md:opacity-0')}>
+            <div className={cn('sb-collapse-fade')}>
               <ViewSwitcher email={viewerEmail} currentView="manager" />
             </div>
             <button
@@ -253,9 +227,9 @@ export default function ManagerSidebar({
             >
               <div className="flex items-center gap-2 text-xs font-medium text-[#3f3f46] dark:text-zinc-300">
                 {isDark ? <Moon className="h-4 w-4 shrink-0" /> : <Sun className="h-4 w-4 shrink-0" />}
-                <span className={cn('transition-opacity duration-[var(--sb-collapse-ms)] ease-[var(--sb-collapse-ease)]', collapsed && 'md:opacity-0')}>{isDark ? 'Dark' : 'Light'}</span>
+                <span className={cn('sb-collapse-fade')}>{isDark ? 'Dark' : 'Light'}</span>
               </div>
-              <span className={cn('text-[#a1a1aa] transition-opacity duration-[var(--sb-collapse-ms)] ease-[var(--sb-collapse-ease)]', collapsed && 'md:opacity-0')}>{isDark ? '☀' : '☾'}</span>
+              <span className={cn('text-[#a1a1aa] sb-collapse-fade')}>{isDark ? '☀' : '☾'}</span>
             </button>
           </div>
         </div>
@@ -271,7 +245,7 @@ export default function ManagerSidebar({
             className="h-7 w-7 text-[11px]"
             pixelSize={56}
           />
-          <div className={cn('min-w-0 flex-1 transition-opacity duration-[var(--sb-collapse-ms)] ease-[var(--sb-collapse-ease)]', collapsed && 'md:opacity-0')}>
+          <div className={cn('min-w-0 flex-1 sb-collapse-fade')}>
             <div className="truncate text-[13px] font-medium leading-tight text-[#18181b] dark:text-zinc-100">
               {titleName}
             </div>
@@ -295,7 +269,7 @@ export default function ManagerSidebar({
           }}
         >
           <LogOut className="h-4 w-4 shrink-0" />
-          <span className={cn('transition-opacity duration-[var(--sb-collapse-ms)] ease-[var(--sb-collapse-ease)]', collapsed && 'md:opacity-0')}>Sign Out</span>
+          <span className={cn('sb-collapse-fade')}>Sign Out</span>
         </Button>
       </div>
     </CollapsibleSidebarShell>

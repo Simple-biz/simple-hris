@@ -17,11 +17,13 @@ import {
   ChevronRight,
   ClipboardCheck,
   Clock,
+  DoorOpen,
   Eye,
   EyeOff,
   Inbox,
   LayoutGrid,
   List,
+  Loader2,
   Mail,
   Undo2,
   UserMinus,
@@ -57,6 +59,7 @@ import ManagerOffboardQueueDialog, {
 } from '@/components/manager/ManagerOffboardQueueDialog';
 import { Checkbox } from '@/components/ui/checkbox';
 import type { OffboardingQueueStatus } from '@/lib/supabase/offboarding-queue';
+import type { ResignationRequestRow } from '@/lib/supabase/resignation-requests';
 import { offboardReasonLabel } from '@/lib/hr/offboard-reasons';
 import NewlyHiredPanel from '@/components/manager/NewlyHiredPanel';
 import NotificationsPanel from '@/components/notifications/NotificationsPanel';
@@ -1669,7 +1672,7 @@ function ManagerTimeAdjustments({ onCountChange }: { onCountChange: (n: number) 
   );
 }
 
-import { Loader2, ImageOff, Image as ImageIcon } from 'lucide-react';
+import { ImageOff, Image as ImageIcon } from 'lucide-react';
 
 // Evidence <img> that shows an animated skeleton until the image actually
 // decodes. Keyed on `src` so switching the featured image re-shows the
@@ -2173,6 +2176,90 @@ function TeamPanelInner({ members, teamGate, viewerEmail, focusEmail, onFocusCon
     return (w && offboardNote[w]) || (p && offboardNote[p]) || null;
   };
 
+  // ── Resignations (employee-initiated) ──
+  // A pending resignation floats its person to the TOP of the roster (cards +
+  // list) with the person's message shown inline; the manager approves (→ the
+  // person is queued for offboarding, reason "resigned") or declines right here.
+  const [resignations, setResignations] = useState<Record<string, ResignationRequestRow>>({});
+  const [resignDecision, setResignDecision] = useState<{
+    row: ResignationRequestRow;
+    action: 'approve' | 'reject';
+  } | null>(null);
+  const [resignNote, setResignNote] = useState('');
+  const [resignSaving, setResignSaving] = useState(false);
+
+  const loadResignations = React.useCallback(() => {
+    fetch('/api/resignation-requests?scope=all', { cache: 'no-store' })
+      .then((r) => (r.ok ? r.json() : { rows: [] }))
+      .then((j: { rows?: ResignationRequestRow[] }) => {
+        const map: Record<string, ResignationRequestRow> = {};
+        for (const row of j.rows ?? []) {
+          if (row.status !== 'pending') continue;
+          for (const e of [row.employee_work_email, row.employee_personal_email, row.employee_email]) {
+            const k = normEmail(e ?? '') ?? '';
+            if (k && !map[k]) map[k] = row;
+          }
+        }
+        setResignations(map);
+      })
+      .catch(() => {
+        /* non-fatal — the roster just won't float resigning people */
+      });
+  }, []);
+  useEffect(() => {
+    loadResignations();
+  }, [loadResignations]);
+
+  const memberResignation = (m: EmployeeRow): ResignationRequestRow | null => {
+    const w = normEmail(m.work_email ?? '') ?? '';
+    const p = normEmail(m.personal_email ?? '') ?? '';
+    return (w && resignations[w]) || (p && resignations[p]) || null;
+  };
+
+  const openResignDecision = (row: ResignationRequestRow, action: 'approve' | 'reject') => {
+    setResignNote('');
+    setResignDecision({ row, action });
+  };
+
+  const submitResignDecision = async () => {
+    if (!resignDecision) return;
+    const { row, action } = resignDecision;
+    if (action === 'reject' && !resignNote.trim()) {
+      toast.error('Add a reason for declining.');
+      return;
+    }
+    setResignSaving(true);
+    try {
+      const res = await fetch(`/api/resignation-requests/${row.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action, note: resignNote.trim() || null }),
+      });
+      const json = (await res.json()) as { error?: string };
+      if (!res.ok) throw new Error(json.error || 'Failed');
+      toast.success(
+        action === 'approve'
+          ? 'Resignation approved — queued for offboarding'
+          : 'Resignation declined',
+      );
+      setResignDecision(null);
+      setResignNote('');
+      loadResignations();
+      // Approval created an offboarding-queue entry → refresh the queue badges.
+      loadOffboardOutbox();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to record decision');
+    } finally {
+      setResignSaving(false);
+    }
+  };
+
+  const fmtEffective = (iso: string): string => {
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return iso;
+    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
+  };
+
   // Active (in-flight) status for a member, checking both of their emails.
   const memberOffboardStatus = (m: EmployeeRow): OffboardingQueueStatus | null => {
     const w = normEmail(m.work_email ?? '') ?? '';
@@ -2316,12 +2403,21 @@ function TeamPanelInner({ members, teamGate, viewerEmail, focusEmail, onFocusCon
   // The list view renders far more per row than a card, and an unpaginated
   // roster of hundreds of rows is what made it laggy — so both views paginate,
   // list at 20/page (denser) and cards at 8.
+  // Float anyone with a pending resignation to the TOP of the roster (stable
+  // sort keeps the rest in place), so the person the manager must action leads
+  // the list in both card and list views — then paginate the sorted result.
+  const sortedMembers = useMemo(() => {
+    const hasResig = (m: EmployeeRow) => (memberResignation(m) ? 0 : 1);
+    return [...filteredMembers].sort((a, b) => hasResig(a) - hasResig(b));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filteredMembers, resignations]);
+
   const pageSize = viewMode === 'list' ? TEAM_LIST_PAGE_SIZE : TEAM_PAGE_SIZE;
   const totalPages = Math.max(1, Math.ceil(filteredMembers.length / pageSize));
   const currentPage = Math.min(page, totalPages);
   const pageStart = (currentPage - 1) * pageSize;
   const pageEnd = Math.min(pageStart + pageSize, filteredMembers.length);
-  const pageSlice = filteredMembers.slice(pageStart, pageEnd);
+  const pageSlice = sortedMembers.slice(pageStart, pageEnd);
 
   // Selected people resolved back to rows (from the FULL roster, so a selection
   // survives filtering + paging) — feeds the offboarding dialog + selection bar.
@@ -2754,8 +2850,16 @@ function TeamPanelInner({ members, teamGate, viewerEmail, focusEmail, onFocusCon
                     )}
                   </AnimatePresence>
 
+                  <AnimatePresence mode="wait" initial={false}>
                   {viewMode === 'list' ? (
-                    <div className="overflow-x-auto">
+                    <motion.div
+                      key="view-list"
+                      initial={{ opacity: 0, y: 6 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: -6 }}
+                      transition={{ duration: 0.16, ease: 'easeOut' }}
+                      className="overflow-x-auto"
+                    >
                       <div>
                         <table className="w-full text-left text-sm">
                           <thead className="sticky top-0 z-[1] bg-gradient-to-r from-blue-50 via-white to-blue-50/80 text-xs text-zinc-600 dark:from-blue-950/50 dark:via-zinc-950 dark:to-blue-950/40 dark:text-zinc-400">
@@ -2785,14 +2889,17 @@ function TeamPanelInner({ members, teamGate, viewerEmail, focusEmail, onFocusCon
                               const roleLine = ss?.role_title?.trim() || m.hsl_role?.trim() || null;
                               const badge = offboardBadge(memberOffboardStatus(m));
                               const avatarEmail = m.work_email ?? m.personal_email ?? null;
+                              const resig = memberResignation(m);
                               return (
+                                <React.Fragment key={`${m.work_email ?? m.personal_email ?? m.name}-${idx}`}>
                                 <tr
-                                  key={`${m.work_email ?? m.personal_email ?? m.name}-${idx}`}
                                   className={cn(
                                     'align-middle transition-colors',
-                                    checked
-                                      ? 'bg-rose-50/60 dark:bg-rose-950/15'
-                                      : 'hover:bg-blue-50/40 dark:hover:bg-blue-950/20',
+                                    resig
+                                      ? 'bg-rose-50/70 dark:bg-rose-950/20'
+                                      : checked
+                                        ? 'bg-rose-50/60 dark:bg-rose-950/15'
+                                        : 'hover:bg-blue-50/40 dark:hover:bg-blue-950/20',
                                   )}
                                 >
                                   <td className="px-3 py-2.5">
@@ -2843,7 +2950,12 @@ function TeamPanelInner({ members, teamGate, viewerEmail, focusEmail, onFocusCon
                                     <span className="line-clamp-1" title={roleLine ?? undefined}>{roleLine ?? '—'}</span>
                                   </td>
                                   <td data-label="Status" className="px-3 py-2.5 text-right">
-                                    {badge ? (
+                                    {resig ? (
+                                      <span className="inline-flex items-center gap-1 rounded-full bg-rose-100 px-2 py-0.5 text-[10px] font-semibold text-rose-700 dark:bg-rose-900/30 dark:text-rose-300">
+                                        <DoorOpen className="h-3 w-3" />
+                                        Resigning
+                                      </span>
+                                    ) : badge ? (
                                       <span
                                         className={cn('inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium', badge.cls)}
                                         title={memberOffboardStatus(m) === 'returned' ? (memberReturnNote(m) ?? 'HR sent this back — check your notifications') : undefined}
@@ -2855,6 +2967,55 @@ function TeamPanelInner({ members, teamGate, viewerEmail, focusEmail, onFocusCon
                                     )}
                                   </td>
                                 </tr>
+                                {resig && (
+                                  <tr className="bg-rose-50/40 dark:bg-rose-950/10">
+                                    <td />
+                                    <td colSpan={4} className="px-3 pb-3 pt-0">
+                                      <div className="rounded-lg border border-rose-200/80 bg-white/70 p-3 dark:border-rose-900/40 dark:bg-zinc-950/40">
+                                        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] font-semibold uppercase tracking-wide text-rose-700 dark:text-rose-300">
+                                          <DoorOpen className="h-3.5 w-3.5" />
+                                          Resignation
+                                          <span className="font-mono text-[10.5px] font-medium normal-case text-rose-600/80 dark:text-rose-300/70">
+                                            · effective {fmtEffective(resig.effective_date)}
+                                          </span>
+                                        </div>
+                                        {resig.message ? (
+                                          <p className="mt-1.5 whitespace-pre-wrap break-words text-[12.5px] leading-relaxed text-zinc-700 dark:text-zinc-300">
+                                            &ldquo;{resig.message}&rdquo;
+                                          </p>
+                                        ) : (
+                                          <p className="mt-1.5 text-[12px] italic text-zinc-400 dark:text-zinc-600">
+                                            No message left.
+                                          </p>
+                                        )}
+                                        <div className="mt-2.5 flex flex-wrap items-center gap-2">
+                                          <Button
+                                            type="button"
+                                            size="sm"
+                                            onClick={() => openResignDecision(resig, 'approve')}
+                                            className="h-7 gap-1.5 bg-emerald-600 px-2.5 text-[11px] font-semibold text-white hover:bg-emerald-700"
+                                            title="Approve — queues this person for offboarding (reason: Resigned)"
+                                          >
+                                            <CheckCircle2 className="h-3.5 w-3.5" />
+                                            Approve
+                                          </Button>
+                                          <Button
+                                            type="button"
+                                            size="sm"
+                                            variant="outline"
+                                            onClick={() => openResignDecision(resig, 'reject')}
+                                            className="h-7 gap-1.5 border-rose-200 px-2.5 text-[11px] font-semibold text-rose-700 hover:bg-rose-50 dark:border-rose-700/50 dark:text-rose-300 dark:hover:bg-rose-950/40"
+                                            title="Decline this resignation"
+                                          >
+                                            <X className="h-3.5 w-3.5" />
+                                            Decline
+                                          </Button>
+                                        </div>
+                                      </div>
+                                    </td>
+                                  </tr>
+                                )}
+                                </React.Fragment>
                               );
                             })}
                           </tbody>
@@ -2899,9 +3060,15 @@ function TeamPanelInner({ members, teamGate, viewerEmail, focusEmail, onFocusCon
                           </div>
                         )}
                       </div>
-                    </div>
+                    </motion.div>
                   ) : (
-                  <>
+                  <motion.div
+                    key="view-cards"
+                    initial={{ opacity: 0, y: 6 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -6 }}
+                    transition={{ duration: 0.16, ease: 'easeOut' }}
+                  >
                   <motion.div
                     key={filterKey}
                     initial={{ opacity: 0, y: 6 }}
@@ -2942,6 +3109,7 @@ function TeamPanelInner({ members, teamGate, viewerEmail, focusEmail, onFocusCon
                       const roleLine = ss?.role_title?.trim() || m.hsl_role?.trim() || null;
                       const workingOn = formatCurrentProjects(ss?.current_projects, ss?.currently_working_on);
                       const seenIso = online ? null : lastSeenFor(m);
+                      const resig = memberResignation(m);
                       return (
                         <motion.div
                           key={`${m.work_email ?? m.personal_email ?? m.name}-${idx}`}
@@ -2953,6 +3121,7 @@ function TeamPanelInner({ members, teamGate, viewerEmail, focusEmail, onFocusCon
                           className={cn(
                             'group relative flex min-h-[232px] flex-col overflow-hidden rounded-2xl border border-blue-100/70 bg-white shadow-sm ring-1 ring-blue-500/5 transition-[transform,box-shadow,border-color] duration-300 hover:-translate-y-0.5 hover:border-blue-200 hover:shadow-md dark:border-blue-950/50 dark:bg-zinc-950/80 dark:ring-blue-400/10 dark:hover:border-blue-900',
                             isOver && 'bg-amber-50/50 ring-2 ring-amber-400/70 dark:bg-amber-950/10',
+                            resig && 'border-rose-200 ring-2 ring-rose-400/60 dark:border-rose-900/60 dark:ring-rose-500/30',
                           )}
                         >
                           <div
@@ -3009,22 +3178,44 @@ function TeamPanelInner({ members, teamGate, viewerEmail, focusEmail, onFocusCon
                               </div>
                             </div>
 
-                            {/* Currently working on — the primary card content */}
-                            <div className="mt-3 rounded-lg border border-zinc-100 bg-zinc-50/70 px-3 py-2 dark:border-zinc-800/70 dark:bg-zinc-900/40">
-                              <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
-                                <Briefcase className="h-3 w-3" />
-                                Currently working on
+                            {/* Primary card content — a pending resignation takes over
+                                the slot so the manager sees the message + effective date. */}
+                            {resig ? (
+                              <div className="mt-3 rounded-lg border border-rose-200/80 bg-rose-50/70 px-3 py-2 dark:border-rose-900/40 dark:bg-rose-950/25">
+                                <div className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[10px] font-semibold uppercase tracking-wider text-rose-700 dark:text-rose-300">
+                                  <DoorOpen className="h-3 w-3" />
+                                  Resigning
+                                  <span className="font-mono text-[10px] font-medium normal-case text-rose-600/80 dark:text-rose-300/70">
+                                    · effective {fmtEffective(resig.effective_date)}
+                                  </span>
+                                </div>
+                                {resig.message ? (
+                                  <p className="mt-1 line-clamp-3 text-[13px] leading-relaxed text-zinc-800 dark:text-zinc-200" title={resig.message}>
+                                    &ldquo;{resig.message}&rdquo;
+                                  </p>
+                                ) : (
+                                  <p className="mt-1 text-[12.5px] italic text-zinc-400 dark:text-zinc-600">
+                                    No message left.
+                                  </p>
+                                )}
                               </div>
-                              {workingOn ? (
-                                <p className="mt-1 line-clamp-3 text-[13px] leading-relaxed text-zinc-800 dark:text-zinc-200" title={workingOn}>
-                                  {workingOn}
-                                </p>
-                              ) : (
-                                <p className="mt-1 text-[12.5px] italic text-zinc-400 dark:text-zinc-600">
-                                  Nothing shared yet
-                                </p>
-                              )}
-                            </div>
+                            ) : (
+                              <div className="mt-3 rounded-lg border border-zinc-100 bg-zinc-50/70 px-3 py-2 dark:border-zinc-800/70 dark:bg-zinc-900/40">
+                                <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
+                                  <Briefcase className="h-3 w-3" />
+                                  Currently working on
+                                </div>
+                                {workingOn ? (
+                                  <p className="mt-1 line-clamp-3 text-[13px] leading-relaxed text-zinc-800 dark:text-zinc-200" title={workingOn}>
+                                    {workingOn}
+                                  </p>
+                                ) : (
+                                  <p className="mt-1 text-[12.5px] italic text-zinc-400 dark:text-zinc-600">
+                                    Nothing shared yet
+                                  </p>
+                                )}
+                              </div>
+                            )}
                           </div>
 
                           {/* Subtle footer detail line — email kept quiet (rates
@@ -3038,7 +3229,8 @@ function TeamPanelInner({ members, teamGate, viewerEmail, focusEmail, onFocusCon
                             </span>
                           </div>
 
-                          {/* Actions */}
+                          {/* Actions — a resigning member gets Approve/Decline in place
+                              of Transfer so the manager acts right from the card. */}
                           <div className="flex items-center justify-end gap-1.5 border-t border-zinc-100 px-4 py-2.5 dark:border-zinc-800/60">
                             <Button
                               type="button"
@@ -3051,17 +3243,43 @@ function TeamPanelInner({ members, teamGate, viewerEmail, focusEmail, onFocusCon
                               <UserRound className="h-3.5 w-3.5" />
                               View
                             </Button>
-                            <Button
-                              type="button"
-                              size="sm"
-                              variant="outline"
-                              onClick={() => setTransferMember(m)}
-                              className="h-7 gap-1.5 border-amber-200 text-xs text-amber-700 hover:bg-amber-50 dark:border-amber-800 dark:text-amber-300 dark:hover:bg-amber-950/40"
-                              title="Request a department transfer (HR approval required)"
-                            >
-                              <ArrowRightLeft className="h-3.5 w-3.5" />
-                              Transfer
-                            </Button>
+                            {resig ? (
+                              <>
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => openResignDecision(resig, 'reject')}
+                                  className="h-7 gap-1.5 border-rose-200 text-xs text-rose-700 hover:bg-rose-50 dark:border-rose-700/50 dark:text-rose-300 dark:hover:bg-rose-950/40"
+                                  title="Decline this resignation"
+                                >
+                                  <X className="h-3.5 w-3.5" />
+                                  Decline
+                                </Button>
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  onClick={() => openResignDecision(resig, 'approve')}
+                                  className="h-7 gap-1.5 bg-emerald-600 text-xs text-white hover:bg-emerald-700"
+                                  title="Approve — queues this person for offboarding (reason: Resigned)"
+                                >
+                                  <CheckCircle2 className="h-3.5 w-3.5" />
+                                  Approve
+                                </Button>
+                              </>
+                            ) : (
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                onClick={() => setTransferMember(m)}
+                                className="h-7 gap-1.5 border-amber-200 text-xs text-amber-700 hover:bg-amber-50 dark:border-amber-800 dark:text-amber-300 dark:hover:bg-amber-950/40"
+                                title="Request a department transfer (HR approval required)"
+                              >
+                                <ArrowRightLeft className="h-3.5 w-3.5" />
+                                Transfer
+                              </Button>
+                            )}
                           </div>
                         </motion.div>
                       );
@@ -3113,8 +3331,9 @@ function TeamPanelInner({ members, teamGate, viewerEmail, focusEmail, onFocusCon
                       </div>
                     </div>
                   )}
-                  </>
+                  </motion.div>
                   )}
+                  </AnimatePresence>
                 </>
               );
             })()
@@ -3167,6 +3386,129 @@ function TeamPanelInner({ members, teamGate, viewerEmail, focusEmail, onFocusCon
           loadOffboardOutbox();
         }}
       />
+
+      {/* Resignation decision modal (approve → offboarding queue, or decline) */}
+      {resignDecision && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-[2px]">
+          <div className="w-full max-w-md rounded-2xl border border-zinc-200 bg-white shadow-2xl dark:border-zinc-800 dark:bg-zinc-950">
+            <div className="flex items-start justify-between gap-2 border-b border-zinc-200 px-5 py-4 dark:border-zinc-800">
+              <div className="min-w-0">
+                <p
+                  className={cn(
+                    'text-[11px] font-semibold uppercase tracking-wide',
+                    resignDecision.action === 'approve'
+                      ? 'text-emerald-600 dark:text-emerald-400'
+                      : 'text-rose-600 dark:text-rose-400',
+                  )}
+                >
+                  {resignDecision.action === 'approve' ? 'Approve resignation' : 'Decline resignation'}
+                </p>
+                <h3 className="mt-0.5 truncate text-base font-bold text-zinc-900 dark:text-white">
+                  {resignDecision.row.employee_name ?? resignDecision.row.employee_email}
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setResignDecision(null)}
+                className="rounded-md p-1.5 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-600 dark:hover:bg-zinc-800 dark:hover:text-zinc-300"
+                aria-label="Close"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="space-y-3 px-5 py-4">
+              <div className="flex items-center justify-between gap-4 text-[13px]">
+                <span className="text-zinc-500 dark:text-zinc-400">Effective date</span>
+                <span className="font-medium text-zinc-900 dark:text-zinc-100">
+                  {fmtEffective(resignDecision.row.effective_date)}
+                </span>
+              </div>
+              {resignDecision.row.message && (
+                <div className="rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 dark:border-zinc-800 dark:bg-zinc-900/50">
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-zinc-400 dark:text-zinc-500">
+                    Their message
+                  </p>
+                  <p className="mt-1 whitespace-pre-wrap break-words text-[13px] leading-relaxed text-zinc-700 dark:text-zinc-300">
+                    {resignDecision.row.message}
+                  </p>
+                </div>
+              )}
+              {resignDecision.action === 'approve' ? (
+                <div className="flex items-start gap-2 rounded-lg border border-emerald-200/70 bg-emerald-50/60 px-3 py-2 text-[12px] leading-relaxed text-emerald-900 dark:border-emerald-900/40 dark:bg-emerald-950/20 dark:text-emerald-200">
+                  <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                  <span>
+                    Approving sends this person to HR&apos;s offboarding queue with the reason{' '}
+                    <strong>Resigned</strong>. HR handles the rest.
+                  </span>
+                </div>
+              ) : null}
+              <div>
+                <label
+                  htmlFor="resign-note"
+                  className="text-[11px] font-semibold uppercase tracking-wide text-zinc-400 dark:text-zinc-500"
+                >
+                  Note {resignDecision.action === 'reject' ? '(required)' : '(optional)'}
+                </label>
+                <textarea
+                  id="resign-note"
+                  value={resignNote}
+                  onChange={(e) => setResignNote(e.target.value)}
+                  rows={3}
+                  placeholder={
+                    resignDecision.action === 'approve'
+                      ? 'Optional note (kept for the record)…'
+                      : 'Explain why you’re declining — the employee sees this…'
+                  }
+                  className="mt-1 w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 placeholder-zinc-400 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
+                />
+              </div>
+            </div>
+            <div className="flex items-center justify-end gap-2 border-t border-zinc-200 px-5 py-4 dark:border-zinc-800">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={resignSaving}
+                onClick={() => setResignDecision(null)}
+              >
+                Cancel
+              </Button>
+              {resignDecision.action === 'approve' ? (
+                <Button
+                  type="button"
+                  size="sm"
+                  disabled={resignSaving}
+                  onClick={submitResignDecision}
+                  className="gap-1.5 bg-emerald-600 text-white hover:bg-emerald-700"
+                >
+                  {resignSaving ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <CheckCircle2 className="h-3.5 w-3.5" />
+                  )}
+                  Approve &amp; queue offboarding
+                </Button>
+              ) : (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  disabled={resignSaving}
+                  onClick={submitResignDecision}
+                  className="gap-1.5 border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100 dark:border-rose-700/50 dark:bg-rose-950/30 dark:text-rose-300 dark:hover:bg-rose-950/60"
+                >
+                  {resignSaving ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <X className="h-3.5 w-3.5" />
+                  )}
+                  Decline
+                </Button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

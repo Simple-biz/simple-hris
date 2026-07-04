@@ -2,13 +2,14 @@
 
 // Payment Catalog -- Overview tab ("Live Standings").
 //
-// A live, auto-rotating compensation command board. Four pinned KPI cards
-// answer "who is the highest paid" at a glance and never move; below them a
-// single stage card rotates every 15 seconds through six leaderboard "scenes"
-// (Top 10 departments, Top 10 people, a podium, most valuable bonuses, bonus
-// reach, and a system-bonus / pay map). A hairline shot-clock rides the top
-// edge of the stage as a literal 15-second countdown -- it freezes on hover and
-// resumes mid-sweep.
+// A live, auto-rotating compensation command board. On large screens five
+// pinned KPI cards form a left rail that answers "who is the highest paid" at a
+// glance and never moves; beside it (to the right) a single stage card rotates
+// every 15 seconds through six leaderboard "scenes" (Top 10 departments, Top 10
+// people, a podium, most valuable bonuses, bonus reach, and a system-bonus / pay
+// map). On mobile the rail collapses to a 2x2 grid above the stage. A hairline
+// shot-clock rides the top edge of the stage as a literal 15-second countdown --
+// it freezes on hover and resumes mid-sweep.
 //
 // Design notes that matter for future edits:
 //   - ALL motion is transform/opacity only; big figures animate in once and
@@ -754,9 +755,11 @@ const DURATION = 15000;
 // KPI band (Region A) -- always visible, never rotates.
 // ---------------------------------------------------------------------------
 
-function KpiCard({ children }: { children: React.ReactNode }) {
+function KpiCard({ children, className = '' }: { children: React.ReactNode; className?: string }) {
   return (
-    <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-950">
+    <div
+      className={`rounded-xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-950 ${className}`}
+    >
       {children}
     </div>
   );
@@ -773,10 +776,14 @@ function KpiLabel({ children }: { children: React.ReactNode }) {
 function KpiBand({ o, animate }: { o: CatalogOverview; animate: boolean }) {
   const topDept = o.topDepartments[0] ?? null;
   const topPerson = o.topPeople[0] ?? null;
-  const { coverage } = o;
+  const { coverage, ot } = o;
+  // Left rail on large screens (2-col grid on mobile). Each card is an equal
+  // flex-1 slice with its content vertically centered, so the five cards fill
+  // the rail's full height with no leftover gaps next to the stage.
+  const cardFill = 'lg:flex lg:flex-1 lg:flex-col lg:justify-center';
   return (
-    <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-      <KpiCard>
+    <div className="grid grid-cols-2 gap-3 lg:flex lg:h-full lg:flex-col lg:gap-3">
+      <KpiCard className={cardFill}>
         <KpiLabel>Highest-paid department</KpiLabel>
         <div className="mt-1 text-2xl font-semibold tracking-tight tabular-nums text-zinc-900 sm:text-[26px] dark:text-white">
           {topDept ? <CountMoney value={topDept.regularNative} currency={topDept.currency} animate={animate} /> : '—'}
@@ -788,7 +795,7 @@ function KpiBand({ o, animate }: { o: CatalogOverview; animate: boolean }) {
         </div>
       </KpiCard>
 
-      <KpiCard>
+      <KpiCard className={cardFill}>
         <KpiLabel>Top earner</KpiLabel>
         <div className="mt-1 text-2xl font-semibold tracking-tight tabular-nums text-zinc-900 sm:text-[26px] dark:text-white">
           {topPerson ? <CountMoney value={topPerson.regularNative} currency={topPerson.currency} animate={animate} /> : '—'}
@@ -798,7 +805,7 @@ function KpiBand({ o, animate }: { o: CatalogOverview; animate: boolean }) {
         </div>
       </KpiCard>
 
-      <KpiCard>
+      <KpiCard className={cardFill}>
         <KpiLabel>Base-rate coverage</KpiLabel>
         <div className="mt-1 text-2xl font-semibold tracking-tight tabular-nums text-zinc-900 sm:text-[26px] dark:text-white">
           <CountInt value={coverage.deptsWithBase} animate={animate} />
@@ -816,7 +823,7 @@ function KpiBand({ o, animate }: { o: CatalogOverview; animate: boolean }) {
         </div>
       </KpiCard>
 
-      <KpiCard>
+      <KpiCard className={cardFill}>
         <KpiLabel>Bonus library</KpiLabel>
         <div className="mt-1 flex items-center gap-2">
           <div className="text-2xl font-semibold tracking-tight tabular-nums text-zinc-900 sm:text-[26px] dark:text-white">
@@ -830,6 +837,34 @@ function KpiBand({ o, animate }: { o: CatalogOverview; animate: boolean }) {
           {coverage.totalAssignments} assignment{coverage.totalAssignments === 1 ? '' : 's'} · {coverage.formulaCount} formula-based
           {coverage.starredBonuses > 0 ? ` · ${coverage.starredBonuses} starred` : ''}
         </div>
+      </KpiCard>
+
+      {/* col-span-2 keeps the odd 5th card full-width on the 2-col mobile grid
+          (grid-column is ignored once the rail switches to flex at lg). */}
+      <KpiCard className={`col-span-2 ${cardFill}`}>
+        <KpiLabel>Overtime premium</KpiLabel>
+        {ot.avgMultiplier != null ? (
+          <>
+            <div className="mt-1 flex items-baseline gap-1.5">
+              <div className="text-2xl font-semibold tracking-tight tabular-nums text-zinc-900 sm:text-[26px] dark:text-white">
+                ×<CountDecimal value={ot.avgMultiplier} animate={animate} />
+              </div>
+              <span className="text-xs text-zinc-400">avg multiplier</span>
+            </div>
+            <div className="mt-1 truncate text-xs text-zinc-400">
+              {ot.highest
+                ? `Highest ${money(ot.highest.rateNative, ot.highest.currency)}/hr · ${ot.highest.label}`
+                : 'Applied to overtime hours'}
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="mt-1 text-2xl font-semibold tracking-tight tabular-nums text-zinc-400 sm:text-[26px]">
+              —
+            </div>
+            <div className="mt-1 truncate text-xs text-zinc-400">No overtime rates set yet</div>
+          </>
+        )}
       </KpiCard>
     </div>
   );
@@ -1008,21 +1043,23 @@ export default function PaymentCatalogOverview({
         </span>
       </div>
 
-      <KpiBand o={o} animate={!reduced} />
+      {/* KPI rail (left) + rotating stage (right); stacks on mobile */}
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,19rem)_1fr] lg:items-stretch">
+        <KpiBand o={o} animate={!reduced} />
 
-      {/* Region B: rotating stage */}
-      <div
-        className="relative mt-4 overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-sm outline-none focus-visible:ring-2 focus-visible:ring-orange-500 focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:border-zinc-800 dark:bg-zinc-950 dark:focus-visible:ring-blue-500 dark:focus-visible:ring-offset-zinc-950"
-        style={{ minHeight: 'clamp(360px, 46vh, 500px)' }}
-        tabIndex={0}
-        role="region"
-        aria-label="Compensation live standings"
-        onMouseEnter={() => setHovered(true)}
-        onMouseLeave={() => setHovered(false)}
-        onFocusCapture={() => setFocused(true)}
-        onBlurCapture={() => setFocused(false)}
-        onKeyDown={onKeyDown}
-      >
+        {/* Region B: rotating stage */}
+        <div
+          className="relative h-full overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-sm outline-none focus-visible:ring-2 focus-visible:ring-orange-500 focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:border-zinc-800 dark:bg-zinc-950 dark:focus-visible:ring-blue-500 dark:focus-visible:ring-offset-zinc-950"
+          style={{ minHeight: 'clamp(360px, 46vh, 500px)' }}
+          tabIndex={0}
+          role="region"
+          aria-label="Compensation live standings"
+          onMouseEnter={() => setHovered(true)}
+          onMouseLeave={() => setHovered(false)}
+          onFocusCapture={() => setFocused(true)}
+          onBlurCapture={() => setFocused(false)}
+          onKeyDown={onKeyDown}
+        >
         {/* Shot-clock countdown hairline (top edge) */}
         <div className="absolute inset-x-0 top-0 z-10 h-[3px] bg-zinc-100 dark:bg-zinc-800">
           <motion.div
@@ -1120,6 +1157,7 @@ export default function PaymentCatalogOverview({
               {renderScene()}
             </motion.div>
           </AnimatePresence>
+        </div>
         </div>
       </div>
     </div>

@@ -550,6 +550,7 @@ function MesaOptInQueue() {
   const [refreshing, setRefreshing] = useState(false);
   const [query, setQuery] = useState('');
   const [filterStatus, setFilterStatus] = useState('');
+  const [page, setPage] = useState(0);
   const [reviewTarget, setReviewTarget] = useState<OptInRequest | null>(null);
   const [reviewNotes, setReviewNotes] = useState('');
   const [reviewing, setReviewing] = useState(false);
@@ -594,6 +595,13 @@ function MesaOptInQueue() {
     pending: rows.filter((r) => r.status === 'pending').length,
     approved: rows.filter((r) => r.status === 'approved').length,
   }), [rows]);
+
+  // Reset to the first page whenever the search/filter narrows the list.
+  useEffect(() => { setPage(0); }, [query, filterStatus]);
+
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const safePage = Math.min(page, totalPages - 1);
+  const pageRows = filtered.slice(safePage * PAGE_SIZE, (safePage + 1) * PAGE_SIZE);
 
   const openReview = (r: OptInRequest) => {
     setReviewTarget(r);
@@ -721,7 +729,7 @@ function MesaOptInQueue() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-teal-100/60 dark:divide-teal-900/40">
-                  {filtered.map((r) => (
+                  {pageRows.map((r) => (
                     <tr key={r.id} className="transition-colors hover:bg-teal-50/40 dark:hover:bg-teal-950/20">
                       <td className="px-4 py-3" data-label="Employee">
                         <div className="font-medium text-zinc-900 dark:text-zinc-100">{r.full_name}</div>
@@ -772,6 +780,29 @@ function MesaOptInQueue() {
                   ))}
                 </tbody>
               </table>
+            </div>
+          )}
+          {!loading && filtered.length > PAGE_SIZE && (
+            <div className="flex items-center justify-between border-t border-teal-100/80 px-5 py-2.5 dark:border-teal-900/40">
+              <p className="text-[11px] text-zinc-400">
+                {safePage * PAGE_SIZE + 1}–{Math.min((safePage + 1) * PAGE_SIZE, filtered.length)} of{' '}
+                {filtered.length}
+              </p>
+              <div className="flex items-center gap-1">
+                <Button variant="outline" size="icon" className="h-7 w-7" disabled={safePage === 0} onClick={() => setPage(0)} aria-label="First page">
+                  <ChevronLeft className="h-3 w-3" /><ChevronLeft className="-ml-2 h-3 w-3" />
+                </Button>
+                <Button variant="outline" size="icon" className="h-7 w-7" disabled={safePage === 0} onClick={() => setPage((p) => Math.max(0, p - 1))} aria-label="Previous page">
+                  <ChevronLeft className="h-3 w-3" />
+                </Button>
+                <span className="min-w-[4rem] text-center text-[11px] text-zinc-500">{safePage + 1} / {totalPages}</span>
+                <Button variant="outline" size="icon" className="h-7 w-7" disabled={safePage >= totalPages - 1} onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))} aria-label="Next page">
+                  <ChevronRight className="h-3 w-3" />
+                </Button>
+                <Button variant="outline" size="icon" className="h-7 w-7" disabled={safePage >= totalPages - 1} onClick={() => setPage(totalPages - 1)} aria-label="Last page">
+                  <ChevronRight className="h-3 w-3" /><ChevronRight className="-ml-2 h-3 w-3" />
+                </Button>
+              </div>
             </div>
           )}
         </CardContent>

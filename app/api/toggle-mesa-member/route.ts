@@ -17,11 +17,13 @@ export async function POST(req: Request) {
   const authz = await requireFeatureEditAnyView('mesa');
   if (!authz.ok) return deniedResponse(authz);
   try {
-    const { workEmail, personalEmail, mesaMember, name } = (await req.json()) as {
+    const { workEmail, personalEmail, mesaMember, name, since } = (await req.json()) as {
       workEmail?: string;
       personalEmail?: string;
       mesaMember: boolean;
       name?: string;
+      /** Optional enrollment effective date (YYYY-MM-DD). Defaults to today (Manila). */
+      since?: string | null;
     };
 
     if (!workEmail && !personalEmail) {
@@ -39,9 +41,27 @@ export async function POST(req: Request) {
     const matchCol = workEmail ? 'Work Email' : 'Personal Email';
     const matchVal = (workEmail || personalEmail)!;
 
+    // On enroll, stamp the enrollment effective date so the Payroll Wizard only
+    // deducts ₱100 for pay weeks on/after it (and the employee's MESA History
+    // counts contributions from enrollment, not hire). Default to today in
+    // Manila (the office timezone) — never the server's UTC "today", which can
+    // roll a day off. On unenroll we leave the date in place; the deduction is
+    // gated on `mesa_member` anyway, and keeping it preserves tenure if HR
+    // revokes an opt-out and re-enrolls.
+    const manilaToday = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Manila',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(new Date());
+    const sinceIso = (since ?? '').trim().slice(0, 10) || manilaToday;
+
+    const update: Record<string, unknown> = { mesa_member: mesaMember };
+    if (mesaMember) update.mesa_member_since = sinceIso;
+
     const { error } = await supabase
       .from(RATES_TABLE)
-      .update({ mesa_member: mesaMember })
+      .update(update)
       .eq(matchCol, matchVal);
 
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
@@ -55,7 +75,7 @@ export async function POST(req: Request) {
       action: mesaMember ? 'employee.mesa.enroll' : 'employee.mesa.unenroll',
       resource: 'employee_hourly_rates',
       resource_id: workEmail || personalEmail,
-      details: { name: name ?? null, work_email: workEmail ?? null, personal_email: personalEmail ?? null, mesa_member: mesaMember },
+      details: { name: name ?? null, work_email: workEmail ?? null, personal_email: personalEmail ?? null, mesa_member: mesaMember, mesa_member_since: mesaMember ? sinceIso : null },
     });
 
     return NextResponse.json({ success: true });

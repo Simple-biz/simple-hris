@@ -56,6 +56,7 @@ export default function EmployeeMesa({
   startDate,
 }: Props) {
   const [isMember, setIsMember] = useState<boolean | null>(null);
+  const [enrolledSince, setEnrolledSince] = useState<string | null>(null);
   const [subTab, setSubTab] = useState<SubTab>('about');
 
   // Look up the current user's mesa_member flag — server-side ?email= filter
@@ -74,7 +75,10 @@ export default function EmployeeMesa({
         }
         const json = (await res.json()) as { rows?: EmployeeHourlyRateRow[] };
         const mine = (json.rows ?? [])[0];
-        if (!cancelled) setIsMember(!!mine?.mesa_member);
+        if (!cancelled) {
+          setIsMember(!!mine?.mesa_member);
+          setEnrolledSince(mine?.mesa_member_since ?? null);
+        }
       } catch {
         if (!cancelled) setIsMember(false);
       }
@@ -133,6 +137,7 @@ export default function EmployeeMesa({
               <MesaHistory
                 isMember={isMember}
                 startDate={startDate ?? null}
+                enrolledSince={enrolledSince}
                 onGoToRequest={() => setSubTab('request')}
               />
             ) : (
@@ -1096,10 +1101,14 @@ function RequestStatusBadge({ status }: { status: string }) {
 function MesaHistory({
   isMember,
   startDate,
+  enrolledSince,
   onGoToRequest,
 }: {
   isMember: boolean | null;
   startDate: string | null;
+  /** MESA enrollment date (YYYY-MM-DD). When set, the ledger counts from here —
+   *  NOT the hire date — so a member only sees contributions since they joined. */
+  enrolledSince: string | null;
   onGoToRequest: () => void;
 }) {
   if (isMember === null) {
@@ -1146,18 +1155,26 @@ function MesaHistory({
     );
   }
 
-  // Member — compute the ledger from start_date to today.
-  const start = parseStartDate(startDate);
+  // Member — compute the ledger from the ENROLLMENT date (when they were
+  // approved into MESA), NOT the hire date. Contributions only begin once you
+  // enroll, so counting from hire would over-report every week you weren't a
+  // member yet. Legacy members with no stored enrollment date fall back to the
+  // hire date (old behavior) until HR restamps them.
+  const enrolled = parseStartDate(enrolledSince);
+  const start = enrolled ?? parseStartDate(startDate);
   if (!start) {
     return (
       <div className="rounded-2xl border border-amber-200/80 bg-amber-50/70 p-6 text-sm text-amber-900 shadow-sm dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-100">
-        We couldn't read your hire date, so the contribution history can't be calculated yet.
-        Please ask HR to update your start date.
+        We couldn't read your enrollment date, so the contribution history can't be calculated yet.
+        Please ask HR to confirm your MESA enrollment.
       </div>
     );
   }
 
-  const weeks = buildWeeklyLedger(start, new Date());
+  // When we know the enrollment date, anchor weeks to it (a clean "you've been
+  // enrolled N weeks" model that lines up with the pay cycle you joined on).
+  // Legacy fallback keeps the old Monday-anchored ledger from the hire date.
+  const weeks = enrolled ? buildEnrollmentLedger(enrolled, new Date()) : buildWeeklyLedger(start, new Date());
   const completed = weeks.filter((w) => !w.inProgress);
   const cumulativeEmployee = completed.length * WEEKLY_EMPLOYEE_CONTRIB;
   const cumulativeCompany = completed.length * WEEKLY_COMPANY_MATCH;
@@ -1276,9 +1293,9 @@ function MesaHistory({
           </table>
         </div>
         <p className="mt-3 text-xs italic text-zinc-500 dark:text-zinc-500">
-          This is a projected ledger based on your hire date and current enrollment — the
+          This is a projected ledger based on your MESA enrollment date — the
           program doesn't store individual weekly entries yet, so totals are computed from
-          fully-elapsed weeks only.
+          fully-elapsed weeks only (the current week is still in progress).
         </p>
       </Section>
     </div>
@@ -1327,6 +1344,34 @@ function buildWeeklyLedger(start: Date, today: Date): LedgerWeek[] {
     weeks.push({
       weekStart: new Date(cursor),
       inProgress: cursor.getTime() === todayMonday.getTime(),
+    });
+    cursor.setDate(cursor.getDate() + 7);
+    i += 1;
+  }
+  return weeks;
+}
+
+/**
+ * Builds the weekly ledger anchored to the MESA enrollment date — each week is a
+ * 7-day window starting on the enrollment date. The window containing `today`
+ * (i.e. not yet fully elapsed) is flagged `inProgress` and excluded from
+ * cumulative totals, so a member enrolled part-way through only counts the pay
+ * weeks that have actually closed since they joined.
+ */
+function buildEnrollmentLedger(since: Date, today: Date): LedgerWeek[] {
+  const weeks: LedgerWeek[] = [];
+  const cursor = new Date(since.getFullYear(), since.getMonth(), since.getDate());
+  const t = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  const MAX_WEEKS = 52 * 20;
+  let i = 0;
+  while (cursor.getTime() <= t.getTime() && i < MAX_WEEKS) {
+    const weekEnd = new Date(cursor);
+    weekEnd.setDate(weekEnd.getDate() + 6);
+    weeks.push({
+      weekStart: new Date(cursor),
+      // Still in progress until today passes the last day of the window — the
+      // contribution for the current week hasn't been collected via payroll yet.
+      inProgress: t.getTime() <= weekEnd.getTime(),
     });
     cursor.setDate(cursor.getDate() + 7);
     i += 1;

@@ -29,6 +29,36 @@
   }
 }
 
+/* Every label / badge that vanishes when the rail collapses uses this class, so
+   the whole fade is tuned here alongside the width slide above rather than being
+   re-declared on ~80 spans. It reads the collapse vars, so it stays in lockstep
+   with the rail and honours prefers-reduced-motion for free.
+   Collapse: labels fade AND slide toward the icons, and clear a touch quicker
+   than the rail so they never linger half-cut against the closing edge.
+   Expand: they wait a beat for the rail to open, then ease back in.
+   Desktop only — the mobile drawer has no width change, so labels stay put. */
+.sb-collapse-fade {
+  transition-property: opacity, transform;
+  transition-duration: var(--sb-collapse-ms);
+  transition-timing-function: var(--sb-collapse-ease);
+}
+@media (min-width: 768px) {
+  /* Expand — wait a beat for the rail to start opening, then ease in and settle
+     right as the rail finishes (delay + duration ≈ one collapse span). */
+  .sb-collapse-fade {
+    transition-duration: calc(var(--sb-collapse-ms) * 0.7);
+    transition-delay: calc(var(--sb-collapse-ms) * 0.3);
+  }
+  /* Collapse — fade + slide toward the icons, immediately and a little quicker,
+     so labels are gone well before the closing edge would slice them. */
+  [data-collapsed="true"] .sb-collapse-fade {
+    opacity: 0;
+    transform: translateX(-0.5rem);
+    transition-duration: calc(var(--sb-collapse-ms) * 0.55);
+    transition-delay: 0s;
+  }
+}
+
 @keyframes hero-loading-border {
   0%   { border-color: rgba(239, 68, 68, 0.70);  box-shadow: 0 12px 32px -16px rgba(239, 68, 68, 0.25); }
   30%  { border-color: rgba(249, 115, 22, 0.70); box-shadow: 0 12px 32px -16px rgba(249, 115, 22, 0.25); }

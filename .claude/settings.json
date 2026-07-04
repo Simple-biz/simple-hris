@@ -415,7 +415,12 @@
       "Bash(git --no-pager diff -- src/components/hr/HrNewHireChecklist.tsx)",
       "Bash(git --no-pager diff --no-index /dev/null src/components/hr/NewHireChecklistLockDialog.tsx)",
       "Bash(git --no-pager diff --stat -- src/components/hr/HrNewHireChecklist.tsx)",
-      "Bash(node -e \"const f='src/components/hr/HrOffboarding.tsx';const fs=require\\('fs'\\);let s=fs.readFileSync\\(f,'utf8'\\);const n=\\(s.match\\(/px-4 py-3\\\\.5/g\\)||[]\\).length;s=s.replace\\(/px-4 py-3\\\\.5/g,'px-4 py-4'\\);fs.writeFileSync\\(f,s\\);console.log\\('replaced',n\\);\")"
+      "Bash(node -e \"const f='src/components/hr/HrOffboarding.tsx';const fs=require\\('fs'\\);let s=fs.readFileSync\\(f,'utf8'\\);const n=\\(s.match\\(/px-4 py-3\\\\.5/g\\)||[]\\).length;s=s.replace\\(/px-4 py-3\\\\.5/g,'px-4 py-4'\\);fs.writeFileSync\\(f,s\\);console.log\\('replaced',n\\);\")",
+      "Bash(python digest.py f25a5b12-7618-40ac-b86d-89850043f122.jsonl 43029981-337e-4af4-9513-3ef232ac9cf4.jsonl 771436d0-013f-4bf2-a609-391ee48bfd45.jsonl f7d07af9-095d-4462-89b5-7e1db4190cea.jsonl 663b2de0-8f86-455a-8c63-39a2085c9885.jsonl b2bf4132-4edd-4477-9e1d-dbd9bea541b9.jsonl 505f3dc7-27c9-4d54-9d5e-3436b10c38cb.jsonl fc47e5ef-a0b0-4242-80f5-d52c0f8c072d.jsonl db596721-7fd3-42a3-a4de-caf88ce97d29.jsonl 389dd83d-2875-4a07-aec4-08df0b1ea22c.jsonl)",
+      "Bash(sed 's/\\\\.md$//')",
+      "PowerShell(npx tsc --noEmit)",
+      "Bash(tee /tmp/tsc_out.txt)",
+      "PowerShell(npx tsc --noEmit 2>&1 | Select-Object -Last 5; \"EXIT: $LASTEXITCODE\")"
     ],
     "additionalDirectories": [
       "\\tmp",
