@@ -7,7 +7,6 @@ import AdminOverview from '@/components/admin/AdminOverview';
 import AdminRoles from '@/components/admin/AdminRoles';
 import AdminEmployees from '@/components/admin/AdminEmployees';
 import AdminWebhooks from '@/components/admin/AdminWebhooks';
-import AdminCsvImports from '@/components/admin/AdminCsvImports';
 import AdminWorkspace from '@/components/admin/AdminWorkspace';
 import AdminApiKeys from '@/components/admin/AdminApiKeys';
 import AdminPages from '@/components/admin/AdminPages';
@@ -68,7 +67,7 @@ function AdminPageInner() {
   // "Role Management & Sessions" link in System Settings).
   useEffect(() => {
     const known = new Set([
-      'overview', 'roles', 'employees', 'workspace', 'csv-imports', 'webhooks',
+      'overview', 'roles', 'employees', 'workspace', 'webhooks',
       'pages', 'notifications', 'audit', 'diagnostics', 'api-tokens', 'backups', 'settings',
     ]);
     if (tabFromQuery && known.has(tabFromQuery)) setActiveTab(tabFromQuery);
@@ -166,12 +165,6 @@ function AdminPageInner() {
         return (
           <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
             <AdminPages />
-          </div>
-        );
-      case 'csv-imports':
-        return (
-          <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-            <AdminCsvImports />
           </div>
         );
       case 'workspace':

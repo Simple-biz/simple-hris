@@ -18,19 +18,20 @@ import { useLiveRefresh } from '@/hooks/useLiveRefresh';
 import { getHrTabCache, hasHrTabCache, setHrTabCache, HR_TAB_CACHE_KEYS } from '@/lib/hr/tab-cache';
 import { SCREENING_COLUMNS, type ScreeningRow } from '@/lib/screening/columns';
 
-const PAGE_SIZE = 25;
+const PAGE_SIZE = 100;
 
 const listVariants = {
   hidden: { opacity: 0 },
-  show: { opacity: 1, transition: { staggerChildren: 0.02, delayChildren: 0.02 } },
+  show: { opacity: 1, transition: { staggerChildren: 0.01, delayChildren: 0.01 } },
 };
 
 const rowVariants = {
   hidden: { opacity: 0, y: 6 },
-  show: { opacity: 1, y: 0, transition: { duration: 0.2, ease: [0.22, 1, 0.36, 1] as const } },
+  show: { opacity: 1, y: 0, transition: { duration: 0.18, ease: [0.22, 1, 0.36, 1] as const } },
 };
 
-type Cache = { rows: ScreeningRow[]; total: number };
+// total = null → still counting in the background.
+type Cache = { rows: ScreeningRow[]; total: number | null };
 
 function cellValue(row: ScreeningRow, db: string): string {
   const v = row[db];
@@ -40,7 +41,7 @@ function cellValue(row: ScreeningRow, db: string): string {
 export default function HrScreening() {
   const cached = getHrTabCache<Cache>(HR_TAB_CACHE_KEYS.screening);
   const [rows, setRows] = useState<ScreeningRow[]>(() => cached?.rows ?? []);
-  const [total, setTotal] = useState<number>(() => cached?.total ?? 0);
+  const [total, setTotal] = useState<number | null>(() => cached?.total ?? null);
   const [loading, setLoading] = useState(() => !hasHrTabCache(HR_TAB_CACHE_KEYS.screening));
   const [fetching, setFetching] = useState(false);
   const [syncing, setSyncing] = useState(false);
@@ -49,13 +50,14 @@ export default function HrScreening() {
   const [page, setPage] = useState(0);
   const reduceMotion = useReducedMotion();
 
-  // Latest-wins: only the most recent request applies its result, so fast paging
-  // or typing never lets a slow earlier response clobber a newer one.
-  const reqId = useRef(0);
+  // Independent latest-wins guards for the two request streams.
+  const rowsReq = useRef(0);
+  const countReq = useRef(0);
   const firstLoad = useRef(true);
 
-  const fetchPage = useCallback(async (p: number, q: string, mode: 'initial' | 'quiet') => {
-    const myId = ++reqId.current;
+  // Fast path: fetch just the visible rows (indexed LIMIT scan, no count).
+  const fetchRows = useCallback(async (p: number, q: string, mode: 'initial' | 'quiet') => {
+    const myId = ++rowsReq.current;
     if (mode === 'initial') setLoading(true);
     setFetching(true);
     try {
@@ -63,23 +65,41 @@ export default function HrScreening() {
         `/api/screening?page=${p}&pageSize=${PAGE_SIZE}&q=${encodeURIComponent(q)}`,
         { cache: 'no-store' },
       );
-      const json = (await res.json()) as { rows?: ScreeningRow[]; total?: number; error?: string };
+      const json = (await res.json()) as { rows?: ScreeningRow[]; error?: string };
       if (json.error) throw new Error(json.error);
-      if (myId !== reqId.current) return; // a newer request superseded this one
+      if (myId !== rowsReq.current) return; // superseded
       const next = json.rows ?? [];
-      const tot = json.total ?? 0;
       setRows(next);
-      setTotal(tot);
-      if (p === 0 && !q) setHrTabCache<Cache>(HR_TAB_CACHE_KEYS.screening, { rows: next, total: tot });
+      if (p === 0 && !q) {
+        setHrTabCache<Cache>(HR_TAB_CACHE_KEYS.screening, { rows: next, total: null });
+      }
     } catch (e) {
-      if (myId === reqId.current && mode === 'initial') {
+      if (myId === rowsReq.current && mode === 'initial') {
         toast.error(e instanceof Error ? e.message : 'Failed to load screening');
       }
     } finally {
-      if (myId === reqId.current) {
+      if (myId === rowsReq.current) {
         setFetching(false);
         if (mode === 'initial') setLoading(false);
       }
+    }
+  }, []);
+
+  // Background: total row count for the current query (fills in pagination).
+  const fetchCount = useCallback(async (q: string) => {
+    const myId = ++countReq.current;
+    try {
+      const res = await fetch(`/api/screening?count=1&q=${encodeURIComponent(q)}`, { cache: 'no-store' });
+      const json = (await res.json()) as { total?: number; error?: string };
+      if (json.error) throw new Error(json.error);
+      if (myId !== countReq.current) return;
+      setTotal(json.total ?? 0);
+      if (!q) {
+        const c = getHrTabCache<Cache>(HR_TAB_CACHE_KEYS.screening);
+        if (c) setHrTabCache<Cache>(HR_TAB_CACHE_KEYS.screening, { ...c, total: json.total ?? 0 });
+      }
+    } catch {
+      /* count is best-effort; pagination degrades to "next while a full page" */
     }
   }, []);
 
@@ -92,18 +112,27 @@ export default function HrScreening() {
     return () => clearTimeout(t);
   }, [search]);
 
-  // Fetch whenever the page or the (debounced) query changes.
+  // Rows: refetch on page or query change.
   useEffect(() => {
     const cold = firstLoad.current && !hasHrTabCache(HR_TAB_CACHE_KEYS.screening);
-    void fetchPage(page, debouncedSearch, cold ? 'initial' : 'quiet');
+    void fetchRows(page, debouncedSearch, cold ? 'initial' : 'quiet');
     firstLoad.current = false;
-  }, [page, debouncedSearch, fetchPage]);
+  }, [page, debouncedSearch, fetchRows]);
 
-  // Keep the current page fresh (a Sync elsewhere, or by another HR user).
+  // Count: recompute only when the query changes (not on page turns).
+  useEffect(() => {
+    setTotal(null);
+    void fetchCount(debouncedSearch);
+  }, [debouncedSearch, fetchCount]);
+
+  // Keep current page + count fresh after a Sync (or another HR user's).
   useLiveRefresh({
     tables: ['screening'],
     channel: 'hr-screening',
-    onRefresh: () => void fetchPage(page, debouncedSearch, 'quiet'),
+    onRefresh: () => {
+      void fetchRows(page, debouncedSearch, 'quiet');
+      void fetchCount(debouncedSearch);
+    },
   });
 
   const handleSync = useCallback(async () => {
@@ -117,7 +146,6 @@ export default function HrScreening() {
         updated?: number;
         removed?: number;
         unchanged?: number;
-        activeCount?: number | null;
       };
       if (!res.ok || !json.success) throw new Error(json.error || 'Sync failed');
       const parts: string[] = [];
@@ -126,20 +154,29 @@ export default function HrScreening() {
       if (json.removed) parts.push(`${json.removed} removed`);
       if (typeof json.unchanged === 'number') parts.push(`${json.unchanged} unchanged`);
       toast.success(`Synced from Google Sheet${parts.length ? ` · ${parts.join(' · ')}` : ''}`);
-      await fetchPage(0, debouncedSearch, 'quiet');
       setPage(0);
+      await fetchRows(0, debouncedSearch, 'quiet');
+      void fetchCount(debouncedSearch);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Sync failed');
     } finally {
       setSyncing(false);
     }
-  }, [fetchPage, debouncedSearch]);
+  }, [fetchRows, fetchCount, debouncedSearch]);
 
-  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
-  const safePage = Math.min(page, totalPages - 1);
-  const listKey = `${safePage}::${debouncedSearch}::${rows.map((r) => r.id).join('|')}`;
-  const rangeStart = total === 0 ? 0 : safePage * PAGE_SIZE + 1;
-  const rangeEnd = Math.min((safePage + 1) * PAGE_SIZE, total);
+  const totalPages = total != null ? Math.max(1, Math.ceil(total / PAGE_SIZE)) : null;
+  const hasPrev = page > 0;
+  // If the count isn't in yet, allow "next" whenever we got a full page back.
+  const hasNext = totalPages != null ? page < totalPages - 1 : rows.length === PAGE_SIZE;
+  const listKey = `${page}::${debouncedSearch}::${rows.map((r) => r.id).join('|')}`;
+  const rangeStart = rows.length === 0 ? 0 : page * PAGE_SIZE + 1;
+  const rangeEnd = page * PAGE_SIZE + rows.length;
+
+  const countLabel = loading
+    ? 'Loading…'
+    : total != null
+      ? `${total.toLocaleString()} ${debouncedSearch ? (total === 1 ? 'match' : 'matches') : 'total'}`
+      : 'counting…';
 
   return (
     <div className="flex flex-col gap-6 px-4 pb-10 pt-6 sm:px-6 lg:px-8 lg:pt-8">
@@ -181,7 +218,7 @@ export default function HrScreening() {
             <div>
               <CardTitle className="text-lg font-semibold text-zinc-900 dark:text-white">Screenings</CardTitle>
               <p className="mt-0.5 flex items-center gap-2 text-sm text-zinc-600 dark:text-white">
-                {loading ? 'Loading…' : `${total.toLocaleString()} ${debouncedSearch ? 'match' : 'total'}${total === 1 ? '' : debouncedSearch ? 'es' : ''}`}
+                {countLabel}
                 {fetching && !loading && <Loader2 className="h-3 w-3 animate-spin text-zinc-400" />}
               </p>
             </div>
@@ -201,7 +238,7 @@ export default function HrScreening() {
             <div className="flex items-center justify-center py-12 text-zinc-400">
               <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Loading…
             </div>
-          ) : total === 0 ? (
+          ) : rows.length === 0 ? (
             <p className="py-10 text-center text-xs text-zinc-400">
               {debouncedSearch
                 ? 'No rows match your search.'
@@ -247,36 +284,37 @@ export default function HrScreening() {
               </table>
             </div>
           )}
-          {!loading && total > 0 && (
+          {!loading && rows.length > 0 && (
             <div className="flex items-center justify-between border-t border-zinc-100 px-4 py-2.5 dark:border-zinc-800">
               <p className="text-sm text-zinc-600 dark:text-white">
-                {rangeStart.toLocaleString()}–{rangeEnd.toLocaleString()} of {total.toLocaleString()}
+                {rangeStart.toLocaleString()}–{rangeEnd.toLocaleString()}
+                {total != null ? ` of ${total.toLocaleString()}` : ''}
               </p>
               <div className="flex items-center gap-1">
-                <Button variant="outline" size="icon" className="h-7 w-7" disabled={safePage === 0 || fetching} onClick={() => setPage(0)}>
+                <Button variant="outline" size="icon" className="h-7 w-7" disabled={!hasPrev || fetching} onClick={() => setPage(0)}>
                   <ChevronLeft className="h-3 w-3" /><ChevronLeft className="-ml-2 h-3 w-3" />
                 </Button>
-                <Button variant="outline" size="icon" className="h-7 w-7" disabled={safePage === 0 || fetching} onClick={() => setPage((p) => Math.max(0, p - 1))}>
+                <Button variant="outline" size="icon" className="h-7 w-7" disabled={!hasPrev || fetching} onClick={() => setPage((p) => Math.max(0, p - 1))}>
                   <ChevronLeft className="h-3 w-3" />
                 </Button>
                 <div className="relative min-w-[5rem] overflow-hidden text-center">
                   <AnimatePresence mode="wait" initial={false}>
                     <motion.span
-                      key={safePage}
+                      key={page}
                       initial={reduceMotion ? false : { opacity: 0, y: -6 }}
                       animate={{ opacity: 1, y: 0 }}
                       exit={reduceMotion ? { opacity: 0 } : { opacity: 0, y: 6 }}
                       transition={{ duration: 0.15, ease: 'easeOut' }}
                       className="block text-sm tabular-nums text-zinc-600 dark:text-white"
                     >
-                      {safePage + 1} / {totalPages.toLocaleString()}
+                      {page + 1}{totalPages != null ? ` / ${totalPages.toLocaleString()}` : ''}
                     </motion.span>
                   </AnimatePresence>
                 </div>
-                <Button variant="outline" size="icon" className="h-7 w-7" disabled={safePage >= totalPages - 1 || fetching} onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}>
+                <Button variant="outline" size="icon" className="h-7 w-7" disabled={!hasNext || fetching} onClick={() => setPage((p) => p + 1)}>
                   <ChevronRight className="h-3 w-3" />
                 </Button>
-                <Button variant="outline" size="icon" className="h-7 w-7" disabled={safePage >= totalPages - 1 || fetching} onClick={() => setPage(totalPages - 1)}>
+                <Button variant="outline" size="icon" className="h-7 w-7" disabled={totalPages == null || page >= totalPages - 1 || fetching} onClick={() => totalPages != null && setPage(totalPages - 1)}>
                   <ChevronRight className="h-3 w-3" /><ChevronRight className="-ml-2 h-3 w-3" />
                 </Button>
               </div>

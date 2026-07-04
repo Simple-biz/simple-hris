@@ -7,12 +7,15 @@ import {
   ArrowUp,
   Banknote,
   Building2,
+  Check,
   ChevronLeft,
   ChevronRight,
   ChevronsLeft,
   ChevronsRight,
   ClipboardList,
   Clock,
+  Copy,
+  Eye,
   FileSpreadsheet,
   FolderSync,
   Gift,
@@ -676,13 +679,13 @@ function PageBtn({ children, onClick, disabled }: { children: React.ReactNode; o
   );
 }
 
-function AuditRow({ entry }: { entry: AuditLogEntry }) {
+function AuditRow({ entry, onView }: { entry: AuditLogEntry; onView: (entry: AuditLogEntry) => void }) {
   const details = entry.details as Record<string, unknown> | null;
   const category = categoryFromAction(entry.action);
   const CatIcon = category.Icon;
 
   return (
-    <div className="flex items-start gap-3 rounded-lg border border-zinc-100 bg-white px-3 py-2.5 dark:border-zinc-800 dark:bg-zinc-900/40">
+    <div className="group flex items-start gap-3 rounded-lg border border-zinc-100 bg-white px-3 py-2.5 transition-colors hover:border-indigo-200 hover:bg-indigo-50/30 dark:border-zinc-800 dark:bg-zinc-900/40 dark:hover:border-indigo-800/50 dark:hover:bg-indigo-950/10">
       <span className={cn('mt-1.5 h-2 w-2 flex-shrink-0 rounded-full', actionDot(entry.action))} />
 
       <div className="min-w-0 flex-1">
@@ -718,6 +721,205 @@ function AuditRow({ entry }: { entry: AuditLogEntry }) {
         <p className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400">{formatRelativeTime(entry.created_at)}</p>
         <p className="whitespace-nowrap text-[9px] text-zinc-400 dark:text-zinc-500">{formatAbsoluteTime(entry.created_at)}</p>
       </div>
+
+      <button
+        type="button"
+        onClick={() => onView(entry)}
+        aria-label="View details"
+        title="View full details"
+        className="flex flex-shrink-0 items-center gap-1 self-center rounded-md border border-zinc-200 bg-white px-2 py-1 text-[10px] font-medium text-zinc-500 opacity-0 transition hover:border-indigo-300 hover:bg-indigo-50 hover:text-indigo-600 focus-visible:opacity-100 group-hover:opacity-100 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400 dark:hover:border-indigo-700 dark:hover:bg-indigo-950/40 dark:hover:text-indigo-300"
+      >
+        <Eye className="h-3 w-3" />
+        View
+      </button>
+    </div>
+  );
+}
+
+/** Compact label/value pair for the modal's metadata grid. */
+function MetaField({ label, children, mono }: { label: string; children: React.ReactNode; mono?: boolean }) {
+  return (
+    <div className="min-w-0">
+      <dt className="text-[10px] font-semibold uppercase tracking-wider text-zinc-400 dark:text-zinc-500">{label}</dt>
+      <dd className={cn('mt-0.5 break-words text-[12.5px] text-zinc-700 dark:text-zinc-200', mono && 'font-mono text-[11.5px]')}>
+        {children}
+      </dd>
+    </div>
+  );
+}
+
+/** Renders one `details` value with type-appropriate formatting. */
+function DetailValueView({ value }: { value: unknown }) {
+  if (value === null || value === undefined) {
+    return <span className="text-zinc-400 dark:text-zinc-500">—</span>;
+  }
+  if (typeof value === 'boolean') {
+    return (
+      <span
+        className={cn(
+          'inline-flex items-center rounded px-1.5 py-0.5 text-[11px] font-semibold',
+          value
+            ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300'
+            : 'bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300',
+        )}
+      >
+        {value ? 'true' : 'false'}
+      </span>
+    );
+  }
+  if (typeof value === 'number') {
+    return <span className="font-mono text-[12px] tabular-nums text-zinc-700 dark:text-zinc-200">{value}</span>;
+  }
+  if (typeof value === 'string') {
+    if (value === '') return <span className="text-zinc-400 dark:text-zinc-500">“” (empty)</span>;
+    return <span className="whitespace-pre-wrap break-words text-[12px] text-zinc-700 dark:text-zinc-200">{value}</span>;
+  }
+  // object / array → pretty-printed JSON
+  return (
+    <pre className="mt-0.5 overflow-x-auto rounded-md border border-zinc-200 bg-white p-2 font-mono text-[11px] leading-relaxed text-zinc-700 dark:border-zinc-800 dark:bg-zinc-950/60 dark:text-zinc-300">
+      {JSON.stringify(value, null, 2)}
+    </pre>
+  );
+}
+
+/** Full-detail modal for a single audit-log entry. */
+function AuditDetailModal({ entry, onClose }: { entry: AuditLogEntry; onClose: () => void }) {
+  const [copied, setCopied] = useState(false);
+  const details = entry.details as Record<string, unknown> | null;
+  const category = categoryFromAction(entry.action);
+  const CatIcon = category.Icon;
+  const detailEntries = details ? Object.entries(details) : [];
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  const handleCopy = useCallback(async () => {
+    try {
+      await navigator.clipboard.writeText(JSON.stringify(entry, null, 2));
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      toast.error('Could not copy to clipboard');
+    }
+  }, [entry]);
+
+  return (
+    <div
+      className="fixed inset-0 z-[120] flex items-center justify-center p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="audit-detail-title"
+    >
+      <button
+        type="button"
+        aria-label="Close"
+        onClick={onClose}
+        className="absolute inset-0 cursor-default bg-zinc-950/45 backdrop-blur-sm dark:bg-black/65"
+      />
+      <div className="relative flex max-h-[85vh] w-full max-w-lg flex-col overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-2xl dark:border-zinc-800 dark:bg-[#121214]">
+        {/* Header */}
+        <div className="flex items-start gap-3 border-b border-zinc-100 bg-gradient-to-br from-indigo-50/70 to-white px-5 py-4 dark:border-zinc-800 dark:from-indigo-950/30 dark:to-transparent">
+          <span className={cn('mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full', category.tone.chip)}>
+            <CatIcon className="h-4 w-4" />
+          </span>
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span
+                className={cn(
+                  'inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide',
+                  category.tone.chip,
+                )}
+              >
+                {category.shortLabel}
+              </span>
+              <code className="truncate rounded bg-zinc-100 px-1.5 py-0.5 font-mono text-[10px] text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
+                {entry.action}
+              </code>
+            </div>
+            <h2 id="audit-detail-title" className="mt-1 text-[14px] font-bold leading-snug text-zinc-900 dark:text-white">
+              {formatActionLabel(entry.action, details)}
+            </h2>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close"
+            className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-lg text-zinc-400 transition hover:bg-zinc-100 hover:text-zinc-600 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        {/* Body */}
+        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+          <dl className="grid grid-cols-2 gap-x-4 gap-y-3">
+            <MetaField label="User">{entry.user_name || '—'}</MetaField>
+            <MetaField label="Role">{entry.user_role || '—'}</MetaField>
+            <MetaField label="When">
+              {formatAbsoluteTime(entry.created_at)}
+              <span className="ml-1 text-zinc-400 dark:text-zinc-500">({formatRelativeTime(entry.created_at)})</span>
+            </MetaField>
+            <MetaField label="IP address" mono>{entry.ip_address || '—'}</MetaField>
+            <MetaField label="Resource" mono>{entry.resource || '—'}</MetaField>
+            <MetaField label="Resource ID" mono>{entry.resource_id || '—'}</MetaField>
+          </dl>
+
+          <div className="mt-4">
+            <div className="mb-2 flex items-center justify-between">
+              <p className="text-[10px] font-semibold uppercase tracking-wider text-zinc-400 dark:text-zinc-500">Details</p>
+              <span className="text-[10px] text-zinc-400 dark:text-zinc-500">
+                {detailEntries.length} {detailEntries.length === 1 ? 'field' : 'fields'}
+              </span>
+            </div>
+            {detailEntries.length === 0 ? (
+              <p className="rounded-lg border border-dashed border-zinc-200 px-3 py-4 text-center text-[12px] text-zinc-400 dark:border-zinc-800 dark:text-zinc-500">
+                No additional details recorded.
+              </p>
+            ) : (
+              <dl className="space-y-2">
+                {detailEntries.map(([key, value]) => (
+                  <div
+                    key={key}
+                    className="rounded-lg border border-zinc-100 bg-zinc-50/60 px-3 py-2 dark:border-zinc-800 dark:bg-zinc-900/40"
+                  >
+                    <dt className="mb-0.5 font-mono text-[10px] font-semibold text-zinc-500 dark:text-zinc-400">{key}</dt>
+                    <dd>
+                      <DetailValueView value={value} />
+                    </dd>
+                  </div>
+                ))}
+              </dl>
+            )}
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div className="flex flex-shrink-0 items-center justify-between gap-2 border-t border-zinc-100 bg-zinc-50/60 px-5 py-3 dark:border-zinc-800 dark:bg-zinc-900/40">
+          <span className="truncate font-mono text-[10px] text-zinc-400 dark:text-zinc-500">#{entry.id}</span>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => void handleCopy()}
+              className="flex items-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-2.5 py-1.5 text-[11px] font-medium text-zinc-600 transition hover:bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800"
+            >
+              {copied ? <Check className="h-3 w-3 text-emerald-500" /> : <Copy className="h-3 w-3" />}
+              {copied ? 'Copied' : 'Copy JSON'}
+            </button>
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-lg bg-indigo-500 px-3 py-1.5 text-[11px] font-semibold text-white transition hover:bg-indigo-600"
+            >
+              Close
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
@@ -740,6 +942,7 @@ export default function AuditLogPanel({ onNavigateToOtSettings, className }: Aud
   const [pageSize, setPageSize] = useState<(typeof PAGE_SIZE_OPTIONS)[number]>(25);
   const [categoryId, setCategoryId] = useState<CategoryId>('all');
   const [searchTerm, setSearchTerm] = useState('');
+  const [selectedEntry, setSelectedEntry] = useState<AuditLogEntry | null>(null);
 
   /**
    * Total count per category across the *unfiltered* loaded set, so the
@@ -1076,7 +1279,7 @@ export default function AuditLogPanel({ onNavigateToOtSettings, className }: Aud
 
             <div className="min-h-0 flex-1 space-y-1.5 overflow-y-auto pr-1">
               {pageRows.map((entry) => (
-                <AuditRow key={entry.id} entry={entry} />
+                <AuditRow key={entry.id} entry={entry} onView={setSelectedEntry} />
               ))}
             </div>
 
@@ -1097,6 +1300,8 @@ export default function AuditLogPanel({ onNavigateToOtSettings, className }: Aud
           </div>
         )}
       </div>
+
+      {selectedEntry && <AuditDetailModal entry={selectedEntry} onClose={() => setSelectedEntry(null)} />}
     </div>
   );
 }

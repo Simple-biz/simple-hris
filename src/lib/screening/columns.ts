@@ -81,6 +81,13 @@ export const SCREENING_DB_COLUMNS: readonly string[] = SCREENING_COLUMNS.map((c)
 export const SCREENING_MATCH_COLUMN = 'Email Address';
 
 /**
+ * A sheet row only counts as a real entry when at least one of these has a value.
+ * Used to drop the blank/spacer rows at the bottom of the sheet — a fill-down
+ * formula in some other column can otherwise leave "rows" with no candidate data.
+ */
+export const SCREENING_IDENTITY_COLUMNS = ['Name', 'Email Address'] as const;
+
+/**
  * The sheet's own monotonic sequence column ("Grid ID"). Captured as a numeric
  * `grid_id` purely to order the board "latest scanned first" (highest = newest).
  * It sits OUTSIDE the Name→Referral display range, so it is not in

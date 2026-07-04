@@ -8,7 +8,6 @@ import { withViewTransition } from '@/lib/theme/with-view-transition';
 import {
   Bell,
   Database,
-  FileUp,
   KeyRound,
   LayoutDashboard,
   LayoutTemplate,
@@ -65,7 +64,6 @@ const systemNav: Array<{
   { id: 'roles', label: 'Roles & permissions', icon: UserCog, badge: 'count' },
   { id: 'employees', label: 'Employees', icon: Users, badge: 'count' },
   { id: 'workspace', label: 'Google Workspace', icon: Settings },
-  { id: 'csv-imports', label: 'CSV imports', icon: FileUp },
   { id: 'webhooks', label: 'Webhooks', icon: Webhook, badge: 'alert' },
   { id: 'pages', label: 'Pages', icon: LayoutTemplate },
   { id: 'notifications', label: 'Notifications', icon: Bell },

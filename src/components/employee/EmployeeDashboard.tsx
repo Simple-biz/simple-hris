@@ -12,7 +12,6 @@ import {
   XCircle,
   Info,
   Laptop,
-  FileText,
   RefreshCw,
   CircleHelp,
   Sparkles,
@@ -2097,10 +2096,10 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
         initial={{ opacity: 0, y: 8 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
-        className="relative shrink-0 overflow-hidden rounded-3xl border border-orange-100/80 bg-gradient-to-br from-stone-50 via-orange-50/35 to-blue-50/25 p-5 shadow-[0_12px_32px_-16px_rgba(255,138,76,0.12)] sm:p-6 lg:p-7 dark:border-orange-900/30 dark:from-zinc-950 dark:via-orange-950/15 dark:to-blue-950/15"
+        className={`relative shrink-0 rounded-3xl border border-orange-100/80 bg-gradient-to-br from-stone-50 via-orange-50/35 to-blue-50/25 px-5 pt-5 pb-16 shadow-[0_12px_32px_-16px_rgba(255,138,76,0.12)] sm:px-6 sm:pt-6 lg:px-7 dark:border-orange-900/30 dark:from-zinc-950 dark:via-orange-950/15 dark:to-blue-950/15 ${sourceMenuOpen ? 'z-30' : ''}`}
       >
         {/* Decorative orbs — pure dopamine */}
-        <div aria-hidden className="pointer-events-none absolute inset-0 overflow-hidden">
+        <div aria-hidden className="pointer-events-none absolute inset-0 overflow-hidden rounded-3xl">
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
@@ -2121,246 +2120,20 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
           />
         </div>
 
-        <div className="relative grid grid-cols-1 items-start gap-4 lg:grid-cols-[1fr_auto] lg:gap-8">
-          <div className="flex min-w-0 flex-col gap-1.5">
-            {/* Caption pill */}
-            <div className="mb-2 inline-flex items-center gap-2 self-start rounded-full border border-orange-200/80 bg-stone-50/70 px-4 py-1.5 text-[10.5px] font-semibold uppercase tracking-[0.18em] text-orange-700 backdrop-blur-md dark:border-orange-900/40 dark:bg-orange-950/30 dark:text-orange-300">
+        <div className="relative">
+          {/* Eyebrow + actions row — absorbed from the old Overview header */}
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="inline-flex items-center gap-2 self-start rounded-full border border-orange-200/80 bg-stone-50/70 px-4 py-1.5 text-[10.5px] font-semibold uppercase tracking-[0.18em] text-orange-700 backdrop-blur-md dark:border-orange-900/40 dark:bg-orange-950/30 dark:text-orange-300">
               <Sparkles className="h-3 w-3 shrink-0" />
-              Employee dashboard
-            </div>
-            <h1 className="text-balance text-2xl font-semibold tracking-tight text-zinc-700 sm:text-3xl dark:text-zinc-200">
-              {_greeting ? (
+              Employee
+              {pabMonthRange ? (
                 <>
-                  {_timeGreeting},{' '}
-                  <span className="bg-gradient-to-r from-orange-600 to-rose-500 bg-clip-text font-semibold text-transparent dark:from-orange-400 dark:to-rose-400">
-                    {_greeting}
-                  </span>
-                  .
+                  <span className="mx-0.5 text-orange-400/70 dark:text-orange-500/50">/</span>
+                  {pabMonthRange.monthName} {pabMonthRange.year}
                 </>
-              ) : (
-                <>{_timeGreeting}.</>
-              )}
-            </h1>
-            {/* Accent rule — orange→rose hairline under the greeting */}
-            <div className="mt-2 h-[2px] w-16 rounded-full bg-gradient-to-r from-orange-500 to-rose-500 dark:from-orange-400 dark:to-rose-400" />
-            <p className="mt-2 max-w-2xl text-sm leading-relaxed text-zinc-600 dark:text-zinc-400">
-              {_welcomeMsg.body}
-            </p>
-          </div>
-
-          {/* Live pay-period + stat rail — consolidated into the hero card (moved off the pay panel) */}
-          {row && (
-            <div className="w-full min-w-0 divide-y divide-orange-100/60 overflow-hidden rounded-2xl border border-orange-200/70 bg-stone-50/70 backdrop-blur-md lg:w-auto lg:min-w-[15rem] dark:divide-zinc-800/60 dark:border-orange-900/40 dark:bg-zinc-900/60">
-              {pabMonthRange && (
-                <div className="px-4 py-2.5">
-                  <div className="flex items-center gap-1.5">
-                    <CalendarDays className="h-3.5 w-3.5 shrink-0 text-orange-500 dark:text-orange-400" />
-                    <span className="text-[9px] font-semibold uppercase tracking-[0.16em] text-zinc-400 dark:text-zinc-500">
-                      Pay period
-                    </span>
-                  </div>
-                  <p className="mt-1 text-sm font-semibold tracking-tight text-zinc-800 dark:text-zinc-100">
-                    {pabMonthRange.start.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
-                    <span className="mx-1 text-zinc-300 dark:text-zinc-600">–</span>
-                    {pabMonthRange.end.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
-                  </p>
-                </div>
-              )}
-              <div className="flex items-baseline justify-between gap-3 px-4 py-2.5">
-                <span className="text-[10px] font-medium uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-500">
-                  Hours
-                </span>
-                <span className="text-sm font-medium tabular-nums text-zinc-900 dark:text-white">
-                  {totalHours.toFixed(2)}<span className="text-zinc-400">h</span>
-                </span>
-              </div>
-              <div className="flex items-baseline justify-between gap-3 px-4 py-2.5">
-                <span className="text-[10px] font-medium uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-500">
-                  Reg / OT
-                </span>
-                <span className="text-sm tabular-nums text-zinc-700 dark:text-zinc-300">
-                  {regularHours.toFixed(1)}<span className="text-zinc-400">h</span>
-                  <span className="mx-1 text-zinc-300 dark:text-zinc-700">/</span>
-                  {otHours.toFixed(1)}<span className="text-zinc-400">h</span>
-                </span>
-              </div>
-              <div className="flex items-baseline justify-between gap-3 px-4 py-2.5">
-                <span className="text-[10px] font-medium uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-500">
-                  Hourly
-                </span>
-                <span className="text-sm tabular-nums text-zinc-700 dark:text-zinc-300">
-                  {regularRate != null ? formatPHP(regularRate) : '—'}
-                </span>
-              </div>
-              <div className="flex items-center justify-between gap-3 px-4 py-2.5">
-                <span className="text-[10px] font-medium uppercase tracking-[0.14em] text-indigo-600 dark:text-indigo-400">
-                  PAB
-                </span>
-                {pabMergeLoading ? (
-                  <span className="inline-flex items-center gap-0.5 text-[11px] font-medium text-zinc-400 dark:text-zinc-500">
-                    Loading
-                    <span className="inline-flex items-end gap-px leading-none">
-                      <span className="inline-block h-1 w-1 animate-bounce rounded-full bg-zinc-400 dark:bg-zinc-500" style={{ animationDelay: '0ms' }} />
-                      <span className="inline-block h-1 w-1 animate-bounce rounded-full bg-zinc-400 dark:bg-zinc-500" style={{ animationDelay: '150ms' }} />
-                      <span className="inline-block h-1 w-1 animate-bounce rounded-full bg-zinc-400 dark:bg-zinc-500" style={{ animationDelay: '300ms' }} />
-                    </span>
-                  </span>
-                ) : (
-                  <span
-                    className={`inline-flex items-center gap-1.5 text-[11px] font-medium ${
-                      perfectAttendanceBonusStatus === 'eligible'
-                        ? 'text-emerald-700 dark:text-emerald-400'
-                        : perfectAttendanceBonusStatus === 'pending'
-                          ? 'text-indigo-700 dark:text-indigo-300'
-                          : perfectAttendanceBonusStatus === 'not_eligible'
-                            ? 'text-amber-700 dark:text-amber-400'
-                            : 'text-zinc-500 dark:text-zinc-500'
-                    }`}
-                  >
-                    <span
-                      className={`inline-block h-1.5 w-1.5 rounded-full ${
-                        perfectAttendanceBonusStatus === 'eligible'
-                          ? 'bg-emerald-500'
-                          : perfectAttendanceBonusStatus === 'pending'
-                            ? 'bg-indigo-500 animate-pulse'
-                            : perfectAttendanceBonusStatus === 'not_eligible'
-                              ? 'bg-amber-500'
-                              : 'bg-zinc-400'
-                      }`}
-                    />
-                    {perfectAttendanceBonusStatus === 'eligible'
-                      ? 'Eligible'
-                      : perfectAttendanceBonusStatus === 'pending'
-                        ? 'In progress'
-                        : perfectAttendanceBonusStatus === 'not_eligible'
-                          ? (isPabPeriodInProgressByCalendar ? 'Still in Progress' : 'Not met')
-                          : 'Unknown'}
-                  </span>
-                )}
-              </div>
-              <div className="flex items-center justify-between gap-3 px-4 py-2.5">
-                <span className="text-[10px] font-medium uppercase tracking-[0.14em] text-sky-600 dark:text-sky-400">
-                  Tech
-                </span>
-                {loading || pabMergeLoading ? (
-                  <span className="inline-flex items-center gap-0.5 text-[11px] font-medium text-zinc-400 dark:text-zinc-500">
-                    Loading
-                    <span className="inline-flex items-end gap-px leading-none">
-                      <span className="inline-block h-1 w-1 animate-bounce rounded-full bg-zinc-400 dark:bg-zinc-500" style={{ animationDelay: '0ms' }} />
-                      <span className="inline-block h-1 w-1 animate-bounce rounded-full bg-zinc-400 dark:bg-zinc-500" style={{ animationDelay: '150ms' }} />
-                      <span className="inline-block h-1 w-1 animate-bounce rounded-full bg-zinc-400 dark:bg-zinc-500" style={{ animationDelay: '300ms' }} />
-                    </span>
-                  </span>
-                ) : (
-                  <span
-                    className={`inline-flex items-center gap-1.5 text-[11px] font-medium ${
-                      isTechnologyBonusActive
-                        ? 'text-sky-700 dark:text-sky-300'
-                        : techServiceStatus.state === 'pending'
-                          ? 'text-amber-700 dark:text-amber-400'
-                          : techBonusSalaryThisWeek
-                            ? 'text-sky-700 dark:text-sky-300'
-                            : isTechBonusNextWeek
-                              ? 'text-emerald-700 dark:text-emerald-400'
-                              : isTechBonusWeekPast
-                                ? 'text-emerald-600 dark:text-emerald-400'
-                                : 'text-zinc-500 dark:text-zinc-500'
-                    }`}
-                  >
-                    <span
-                      className={`inline-block h-1.5 w-1.5 rounded-full ${
-                        isTechnologyBonusActive
-                          ? 'bg-sky-500'
-                          : techServiceStatus.state === 'pending'
-                            ? 'bg-amber-500'
-                            : techBonusSalaryThisWeek
-                              ? 'bg-sky-500'
-                              : isTechBonusNextWeek
-                                ? 'bg-emerald-500'
-                                : isTechBonusWeekPast
-                                  ? 'bg-emerald-500'
-                                  : 'bg-zinc-400'
-                      }`}
-                    />
-                    {isTechnologyBonusActive
-                      ? 'Unlocked'
-                      : techServiceStatus.state === 'pending'
-                        ? `${techServiceStatus.daysRemaining}d to go`
-                        : techBonusSalaryThisWeek
-                          ? 'Paid this Week'
-                          : isTechBonusNextWeek
-                            ? 'Unlocked Next Week'
-                            : isTechBonusWeekPast
-                              ? 'Paid'
-                              : 'Locked'}
-                  </span>
-                )}
-              </div>
-              {isMesaParticipant && (
-                <div className="flex items-center justify-between gap-3 bg-teal-50/40 px-4 py-2.5 dark:bg-teal-950/20">
-                  <span className="text-[10px] font-medium uppercase tracking-[0.14em] text-teal-700/80 dark:text-teal-500/80">
-                    MESA
-                  </span>
-                  <span className="text-[11px] font-medium tabular-nums text-teal-800 dark:text-teal-300">
-                    −{formatPHP(mesaContributionPhp)}
-                  </span>
-                </div>
-              )}
+              ) : null}
             </div>
-          )}
-        </div>
-      </motion.header>
-
-      {/* Profile setup nudge — photo, payout, and Skill Sets. Hidden when complete. */}
-      {onNavigateToProfile && (
-        <ProfileCompletionCard
-          needsPhoto={needsPhoto}
-          needsBank={needsBank}
-          needsSkillSet={needsSkillSet}
-          onGoToProfile={onNavigateToProfile}
-        />
-      )}
-
-      {/* One-off special transfers sent from the People tab (hidden when none). */}
-      <EmployeeSpecialTransfers employeeEmail={employeeEmail} />
-
-      {/* Gift Tracker — 6-month milestone shipping form notification.
-          Externally controlled so the header bell icon can also open the modal. */}
-      <GiftShippingCard
-        personalEmail={profileForShipping.personalEmail ?? email}
-        startDate={employeeStartDate}
-        prefill={{
-          name: profileForShipping.name,
-          workEmail: profileForShipping.workEmail,
-          department: profileForShipping.department,
-        }}
-        dialogOpen={giftDialogOpen}
-        onDialogOpenChange={setGiftDialogOpen}
-        onStateChange={setGiftState}
-      />
-
-      {/* Header — editorial: eyebrow + display title + source picker; lg actions on the right */}
-      <header className="flex shrink-0 flex-col gap-3 border-b border-zinc-200/70 pb-2.5 dark:border-zinc-800/70 lg:flex-row lg:items-end lg:justify-between lg:gap-6 lg:pb-3">
-        <div className="min-w-0 flex-1">
-          <div className="flex items-start justify-between gap-2">
-            <div className="min-w-0">
-              <p className="text-[10px] font-medium uppercase tracking-[0.18em] text-amber-700/80 dark:text-amber-500/70">
-                Employee
-                {pabMonthRange ? (
-                  <>
-                    <span className="mx-1.5 text-zinc-300 dark:text-zinc-700">/</span>
-                    {pabMonthRange.monthName} {pabMonthRange.year}
-                  </>
-                ) : null}
-              </p>
-              <h1 className="mt-1 text-2xl font-bold tracking-tight text-zinc-900 sm:text-3xl lg:text-[2.25rem] lg:leading-none dark:text-white">
-                Overview
-              </h1>
-              <p className="mt-1.5 hidden text-xs leading-snug text-zinc-500 lg:block dark:text-zinc-500">
-                Hours, pay, and Perfect Attendance — figures are estimates until payroll confirms them.
-              </p>
-            </div>
-            {/* Mobile-only action buttons */}
+            {/* Mobile action buttons */}
             <div className="flex shrink-0 items-center gap-1.5 lg:hidden">
               {giftState.status !== 'none' && (
                 <GiftBellButton
@@ -2401,109 +2174,304 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
                 )}
               </Button>
             </div>
-          </div>
-          {/* Source file selector — minimal, inline */}
-          {sourceFiles.length > 0 && (
-            <div className="mt-3 flex items-center gap-2">
-              <FileText className="h-3.5 w-3.5 shrink-0 text-zinc-400" />
-              <span className="shrink-0 text-[10px] font-medium uppercase tracking-wider text-zinc-400 dark:text-zinc-500">
-                Source
-              </span>
-              <div ref={sourceMenuRef} className="relative min-w-0 max-w-[18rem] flex-1">
-                <button
-                  type="button"
-                  aria-haspopup="listbox"
-                  aria-expanded={sourceMenuOpen}
-                  onClick={() => setSourceMenuOpen((o) => !o)}
-                  className="flex h-7 w-full items-center justify-between rounded-md border border-zinc-200/90 bg-white pl-2.5 pr-2 text-left text-[11px] text-zinc-700 shadow-sm transition-colors hover:border-zinc-300 focus:border-orange-400 focus:outline-none focus:ring-2 focus:ring-orange-400/20 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:border-zinc-600 dark:focus:border-orange-500/60"
-                >
-                  <span className="truncate">
-                    {selectedFile === null || selectedFile === '__all__'
-                      ? 'All Time · combined'
-                      : `${formatSourceFileLabel(selectedFile)}${sourceFiles[0] === selectedFile ? ' (latest)' : ''}`}
-                  </span>
-                  <ChevronDown className="ml-1 h-3.5 w-3.5 shrink-0 text-zinc-400 dark:text-zinc-500" />
-                </button>
-                {sourceMenuOpen && (
-                  <div
-                    role="listbox"
-                    className="absolute left-0 right-0 top-full z-20 mt-1 max-h-[8.75rem] overflow-y-auto rounded-md border border-zinc-200 bg-white py-1 shadow-lg dark:border-zinc-700 dark:bg-zinc-900"
-                  >
-                    {[{ value: '__all__', label: 'All Time · combined' }, ...[...sourceFiles].sort((a, b) => {
-                      const da = parseDateRangeFromFilename(a)?.start ?? new Date(0);
-                      const db = parseDateRangeFromFilename(b)?.start ?? new Date(0);
-                      return db.getTime() - da.getTime();
-                    }).map((file, i) => ({
-                      value: file,
-                      label: `${formatSourceFileLabel(file)}${i === 0 ? ' (latest)' : ''}`,
-                    }))].map((opt) => {
-                      const isSel = (opt.value === '__all__' && (selectedFile === null || selectedFile === '__all__'))
-                        || opt.value === selectedFile;
-                      return (
-                        <button
-                          key={opt.value}
-                          type="button"
-                          role="option"
-                          aria-selected={isSel}
-                          onClick={() => {
-                            setSelectedFile(opt.value);
-                            setManualFileSelect(true);
-                            setSourceMenuOpen(false);
-                          }}
-                          className={`block w-full truncate px-2.5 py-1.5 text-left text-[11px] transition-colors hover:bg-orange-50 dark:hover:bg-orange-950/30 ${isSel ? 'bg-orange-50/70 font-medium text-orange-700 dark:bg-orange-950/40 dark:text-orange-300' : 'text-zinc-700 dark:text-zinc-300'}`}
-                        >
-                          {opt.label}
-                        </button>
-                      );
-                    })}
-                  </div>
+            {/* Desktop action buttons */}
+            <div className="hidden shrink-0 items-center gap-2 lg:flex">
+              {giftState.status !== 'none' && (
+                <GiftBellButton state={giftState} onClick={() => setGiftDialogOpen(true)} />
+              )}
+              {onNavigateToNotifications && (
+                <NotificationBellButton
+                  unreadCount={unreadNotifications}
+                  onClick={onNavigateToNotifications}
+                />
+              )}
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-8 gap-1.5 border-zinc-200 bg-white/70 text-xs font-medium text-zinc-700 hover:border-zinc-300 dark:border-zinc-800 dark:bg-zinc-900/60 dark:text-zinc-300 dark:hover:border-zinc-700"
+                disabled={refreshing}
+                onClick={() => void refreshDashboard()}
+                aria-label="Refresh dashboard data"
+              >
+                {refreshing ? (
+                  <Loader2 className="size-3.5 animate-spin" aria-hidden />
+                ) : (
+                  <RefreshCw className="size-3.5" aria-hidden />
                 )}
-              </div>
-              {fileLoading && <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-orange-500" />}
+                Refresh
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-8 gap-1.5 border-zinc-200 bg-white/70 text-xs font-medium text-zinc-700 hover:border-zinc-300 dark:border-zinc-800 dark:bg-zinc-900/60 dark:text-zinc-300 dark:hover:border-zinc-700"
+                title="PAB rules, bonuses & pay snapshot — click to read"
+                aria-label="Open PAB and bonus help"
+                onClick={() => setMobileHelpOpen(true)}
+              >
+                <CircleHelp className="size-3.5" aria-hidden />
+                Details
+              </Button>
+            </div>
+          </div>
+
+          <h1 className="mt-4 text-balance text-2xl font-semibold tracking-tight text-zinc-700 sm:text-3xl dark:text-zinc-200">
+            {_greeting ? (
+              <>
+                {_timeGreeting},{' '}
+                <span className="bg-gradient-to-r from-orange-600 to-rose-500 bg-clip-text font-semibold text-transparent dark:from-orange-400 dark:to-rose-400">
+                  {_greeting}
+                </span>
+                .
+              </>
+            ) : (
+              <>{_timeGreeting}.</>
+            )}
+          </h1>
+          {/* Accent rule — orange→rose hairline under the greeting */}
+          <div className="mt-2 h-[2px] w-16 rounded-full bg-gradient-to-r from-orange-500 to-rose-500 dark:from-orange-400 dark:to-rose-400" />
+          <p className="mt-2 max-w-2xl text-sm leading-relaxed text-zinc-600 dark:text-zinc-400">
+            {_welcomeMsg.body}
+          </p>
+
+          {/* Pay-week selector — which weekly Hubstaff upload drives the numbers above */}
+          {sourceFiles.length > 0 && (
+            <div ref={sourceMenuRef} className="relative mt-4 inline-block max-w-full">
+              <button
+                type="button"
+                aria-haspopup="listbox"
+                aria-expanded={sourceMenuOpen}
+                onClick={() => setSourceMenuOpen((o) => !o)}
+                className="group flex max-w-full items-center gap-2.5 rounded-xl border border-orange-200/80 bg-white/80 py-1.5 pl-2 pr-3 text-left shadow-sm backdrop-blur-md transition-colors hover:border-orange-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-400/40 dark:border-orange-900/40 dark:bg-zinc-900/70 dark:hover:border-orange-800/70"
+              >
+                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-orange-100 to-amber-100 text-orange-600 dark:from-orange-950/60 dark:to-amber-950/40 dark:text-orange-300">
+                  <CalendarDays className="h-4 w-4" aria-hidden />
+                </span>
+                <span className="flex min-w-0 flex-col leading-tight">
+                  <span className="text-[9px] font-semibold uppercase tracking-[0.16em] text-orange-600/80 dark:text-orange-400/80">
+                    Pay Week
+                  </span>
+                  <span className="truncate text-[13px] font-medium text-zinc-800 dark:text-zinc-100">
+                    {selectedFile === null || selectedFile === '__all__'
+                      ? 'All time · combined'
+                      : formatSourceFileLabel(selectedFile)}
+                  </span>
+                </span>
+                {fileLoading ? (
+                  <Loader2 className="ml-0.5 h-4 w-4 shrink-0 animate-spin text-orange-500" aria-hidden />
+                ) : (
+                  <ChevronDown
+                    className={`ml-0.5 h-4 w-4 shrink-0 text-zinc-400 transition-transform duration-200 dark:text-zinc-500 ${sourceMenuOpen ? 'rotate-180' : ''}`}
+                    aria-hidden
+                  />
+                )}
+              </button>
+              {sourceMenuOpen && (
+                <motion.div
+                  role="listbox"
+                  initial={{ opacity: 0, y: -4, scale: 0.98 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  transition={{ duration: 0.16, ease: [0.16, 1, 0.3, 1] }}
+                  style={{ transformOrigin: 'top' }}
+                  className="absolute left-0 top-full z-30 mt-2 max-h-[15rem] w-[17rem] max-w-[calc(100vw-2rem)] overflow-y-auto rounded-xl border border-zinc-200 bg-white p-1 shadow-xl ring-1 ring-black/5 dark:border-zinc-700 dark:bg-zinc-900 dark:ring-black/40"
+                >
+                  <div className="px-2.5 pb-1 pt-1.5 text-[9px] font-semibold uppercase tracking-[0.16em] text-zinc-400 dark:text-zinc-500">
+                    Select a pay week
+                  </div>
+                  {[{ value: '__all__', label: 'All time · combined', latest: false }, ...[...sourceFiles].sort((a, b) => {
+                    const da = parseDateRangeFromFilename(a)?.start ?? new Date(0);
+                    const db = parseDateRangeFromFilename(b)?.start ?? new Date(0);
+                    return db.getTime() - da.getTime();
+                  }).map((file, i) => ({
+                    value: file,
+                    label: formatSourceFileLabel(file),
+                    latest: i === 0,
+                  }))].map((opt) => {
+                    const isSel = (opt.value === '__all__' && (selectedFile === null || selectedFile === '__all__'))
+                      || opt.value === selectedFile;
+                    return (
+                      <button
+                        key={opt.value}
+                        type="button"
+                        role="option"
+                        aria-selected={isSel}
+                        onClick={() => {
+                          setSelectedFile(opt.value);
+                          setManualFileSelect(true);
+                          setSourceMenuOpen(false);
+                        }}
+                        className={`flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-2 text-left text-[12.5px] transition-colors ${isSel ? 'bg-orange-50 font-medium text-orange-700 dark:bg-orange-950/40 dark:text-orange-300' : 'text-zinc-700 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800/70'}`}
+                      >
+                        <span className="flex min-w-0 items-center gap-2">
+                          <span className="truncate">{opt.label}</span>
+                          {opt.latest && (
+                            <span className="shrink-0 rounded-full bg-orange-100 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-orange-600 dark:bg-orange-950/50 dark:text-orange-300">
+                              Latest
+                            </span>
+                          )}
+                        </span>
+                        {isSel && <CheckCircle2 className="h-4 w-4 shrink-0 text-orange-500 dark:text-orange-400" aria-hidden />}
+                      </button>
+                    );
+                  })}
+                </motion.div>
+              )}
             </div>
           )}
         </div>
-        {/* Right column — actions only (status badges now live in the data ribbon) */}
-        <div className="hidden shrink-0 items-center gap-2 lg:flex">
-          {giftState.status !== 'none' && (
-            <GiftBellButton state={giftState} onClick={() => setGiftDialogOpen(true)} />
+      </motion.header>
+
+      {/* Live stat strip — overlaps the hero's bottom edge: pay period, hours, rates, bonus status */}
+      {row && (
+        <motion.div
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.4, delay: 0.08, ease: [0.16, 1, 0.3, 1] }}
+          className="relative z-10 -mt-11 mx-3 grid shrink-0 grid-cols-2 gap-px overflow-hidden rounded-2xl border border-orange-200/70 bg-orange-200/50 shadow-xl ring-1 ring-black/5 sm:mx-6 sm:grid-cols-4 lg:grid-cols-7 dark:border-orange-900/40 dark:bg-zinc-800/70 dark:shadow-2xl dark:ring-black/40"
+        >
+          {pabMonthRange && (
+            <div className="bg-stone-50 px-4 py-3 dark:bg-zinc-900">
+              <div className="text-[9px] font-semibold uppercase tracking-[0.14em] text-orange-600/90 dark:text-orange-400/90">PAB Period</div>
+              <div className="mt-0.5 text-sm font-semibold tabular-nums text-zinc-800 dark:text-zinc-100">
+                {pabMonthRange.start.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                <span className="mx-1 text-zinc-300 dark:text-zinc-600">–</span>
+                {pabMonthRange.end.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+              </div>
+            </div>
           )}
-          {onNavigateToNotifications && (
-            <NotificationBellButton
-              unreadCount={unreadNotifications}
-              onClick={onNavigateToNotifications}
-            />
+          <div className="bg-stone-50 px-4 py-3 dark:bg-zinc-900">
+            <div className="text-[9px] font-semibold uppercase tracking-[0.14em] text-zinc-400 dark:text-zinc-500">Hours</div>
+            <div className="mt-0.5 text-sm font-semibold tabular-nums text-zinc-900 dark:text-white">{totalHours.toFixed(2)}<span className="text-zinc-400">h</span></div>
+          </div>
+          <div className="bg-stone-50 px-4 py-3 dark:bg-zinc-900">
+            <div className="text-[9px] font-semibold uppercase tracking-[0.14em] text-zinc-400 dark:text-zinc-500">Reg / OT</div>
+            <div className="mt-0.5 text-sm tabular-nums text-zinc-700 dark:text-zinc-300">{regularHours.toFixed(1)}<span className="text-zinc-400">h</span> <span className="text-zinc-300 dark:text-zinc-700">/</span> {otHours.toFixed(1)}<span className="text-zinc-400">h</span></div>
+          </div>
+          <div className="bg-stone-50 px-4 py-3 dark:bg-zinc-900">
+            <div className="text-[9px] font-semibold uppercase tracking-[0.14em] text-zinc-400 dark:text-zinc-500">Hourly</div>
+            <div className="mt-0.5 text-sm tabular-nums text-zinc-700 dark:text-zinc-300">{regularRate != null ? formatPHP(regularRate) : '—'}</div>
+          </div>
+          <div className="bg-stone-50 px-4 py-3 dark:bg-zinc-900">
+            <div className="text-[9px] font-semibold uppercase tracking-[0.14em] text-indigo-600 dark:text-indigo-400">PAB</div>
+            <div className="mt-0.5">
+              {pabMergeLoading ? (
+                <span className="text-[12px] font-medium text-zinc-400 dark:text-zinc-500">Loading…</span>
+              ) : (
+                <span className={`inline-flex items-center gap-1.5 text-[12px] font-medium ${
+                  perfectAttendanceBonusStatus === 'eligible'
+                    ? 'text-emerald-700 dark:text-emerald-400'
+                    : perfectAttendanceBonusStatus === 'pending'
+                      ? 'text-indigo-700 dark:text-indigo-300'
+                      : perfectAttendanceBonusStatus === 'not_eligible'
+                        ? 'text-amber-700 dark:text-amber-400'
+                        : 'text-zinc-500 dark:text-zinc-500'
+                }`}>
+                  <span className={`inline-block h-1.5 w-1.5 rounded-full ${
+                    perfectAttendanceBonusStatus === 'eligible'
+                      ? 'bg-emerald-500'
+                      : perfectAttendanceBonusStatus === 'pending'
+                        ? 'bg-indigo-500 animate-pulse'
+                        : perfectAttendanceBonusStatus === 'not_eligible'
+                          ? 'bg-amber-500'
+                          : 'bg-zinc-400'
+                  }`} />
+                  {perfectAttendanceBonusStatus === 'eligible'
+                    ? 'Eligible'
+                    : perfectAttendanceBonusStatus === 'pending'
+                      ? 'In progress'
+                      : perfectAttendanceBonusStatus === 'not_eligible'
+                        ? (isPabPeriodInProgressByCalendar ? 'In Progress' : 'Not met')
+                        : 'Unknown'}
+                </span>
+              )}
+            </div>
+          </div>
+          <div className="bg-stone-50 px-4 py-3 dark:bg-zinc-900">
+            <div className="text-[9px] font-semibold uppercase tracking-[0.14em] text-sky-600 dark:text-sky-400">Tech</div>
+            <div className="mt-0.5">
+              {loading || pabMergeLoading ? (
+                <span className="text-[12px] font-medium text-zinc-400 dark:text-zinc-500">Loading…</span>
+              ) : (
+                <span className={`inline-flex items-center gap-1.5 text-[12px] font-medium ${
+                  isTechnologyBonusActive
+                    ? 'text-sky-700 dark:text-sky-300'
+                    : techServiceStatus.state === 'pending'
+                      ? 'text-amber-700 dark:text-amber-400'
+                      : techBonusSalaryThisWeek
+                        ? 'text-sky-700 dark:text-sky-300'
+                        : isTechBonusNextWeek
+                          ? 'text-emerald-700 dark:text-emerald-400'
+                          : isTechBonusWeekPast
+                            ? 'text-emerald-600 dark:text-emerald-400'
+                            : 'text-zinc-500 dark:text-zinc-500'
+                }`}>
+                  <span className={`inline-block h-1.5 w-1.5 rounded-full ${
+                    isTechnologyBonusActive
+                      ? 'bg-sky-500'
+                      : techServiceStatus.state === 'pending'
+                        ? 'bg-amber-500'
+                        : techBonusSalaryThisWeek
+                          ? 'bg-sky-500'
+                          : isTechBonusNextWeek
+                            ? 'bg-emerald-500'
+                            : isTechBonusWeekPast
+                              ? 'bg-emerald-500'
+                              : 'bg-zinc-400'
+                  }`} />
+                  {isTechnologyBonusActive
+                    ? 'Unlocked'
+                    : techServiceStatus.state === 'pending'
+                      ? `${techServiceStatus.daysRemaining}d to go`
+                      : techBonusSalaryThisWeek
+                        ? 'Paid this Week'
+                        : isTechBonusNextWeek
+                          ? 'Next Week'
+                          : isTechBonusWeekPast
+                            ? 'Paid'
+                            : 'Locked'}
+                </span>
+              )}
+            </div>
+          </div>
+          {isMesaParticipant ? (
+            <div className="bg-teal-50/70 px-4 py-3 dark:bg-teal-950/30">
+              <div className="text-[9px] font-semibold uppercase tracking-[0.14em] text-teal-700/80 dark:text-teal-500/80">MESA</div>
+              <div className="mt-0.5 text-sm font-medium tabular-nums text-teal-800 dark:text-teal-300">−{formatPHP(mesaContributionPhp)}</div>
+            </div>
+          ) : (
+            <div className="hidden bg-stone-50 lg:block dark:bg-zinc-900" aria-hidden />
           )}
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            className="h-8 gap-1.5 border-zinc-200 bg-white/70 text-xs font-medium text-zinc-700 hover:border-zinc-300 dark:border-zinc-800 dark:bg-zinc-900/60 dark:text-zinc-300 dark:hover:border-zinc-700"
-            disabled={refreshing}
-            onClick={() => void refreshDashboard()}
-            aria-label="Refresh dashboard data"
-          >
-            {refreshing ? (
-              <Loader2 className="size-3.5 animate-spin" aria-hidden />
-            ) : (
-              <RefreshCw className="size-3.5" aria-hidden />
-            )}
-            Refresh
-          </Button>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            className="h-8 gap-1.5 border-zinc-200 bg-white/70 text-xs font-medium text-zinc-700 hover:border-zinc-300 dark:border-zinc-800 dark:bg-zinc-900/60 dark:text-zinc-300 dark:hover:border-zinc-700"
-            title="PAB rules, bonuses & pay snapshot — click to read"
-            aria-label="Open PAB and bonus help"
-            onClick={() => setMobileHelpOpen(true)}
-          >
-            <CircleHelp className="size-3.5" aria-hidden />
-            Details
-          </Button>
-        </div>
-      </header>
+        </motion.div>
+      )}
+
+      {/* Profile setup nudge — photo, payout, and Skill Sets. Hidden when complete. */}
+      {onNavigateToProfile && (
+        <ProfileCompletionCard
+          needsPhoto={needsPhoto}
+          needsBank={needsBank}
+          needsSkillSet={needsSkillSet}
+          onGoToProfile={onNavigateToProfile}
+        />
+      )}
+
+      {/* One-off special transfers sent from the People tab (hidden when none). */}
+      <EmployeeSpecialTransfers employeeEmail={employeeEmail} />
+
+      {/* Gift Tracker — 6-month milestone shipping form notification.
+          Externally controlled so the header bell icon can also open the modal. */}
+      <GiftShippingCard
+        personalEmail={profileForShipping.personalEmail ?? email}
+        startDate={employeeStartDate}
+        prefill={{
+          name: profileForShipping.name,
+          workEmail: profileForShipping.workEmail,
+          department: profileForShipping.department,
+        }}
+        dialogOpen={giftDialogOpen}
+        onDialogOpenChange={setGiftDialogOpen}
+        onStateChange={setGiftState}
+      />
 
       <div className="flex min-w-0 flex-col gap-2 overflow-x-hidden pb-4 lg:gap-3">
       {dataError && (

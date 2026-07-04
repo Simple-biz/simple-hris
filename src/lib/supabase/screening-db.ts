@@ -49,7 +49,6 @@ export interface ScreeningSyncResult {
 
 export interface ScreeningPage {
   rows: Record<string, unknown>[];
-  total: number;
   page: number;
   pageSize: number;
 }
@@ -291,43 +290,64 @@ export async function replaceScreeningFromRows(
   };
 }
 
+/** Apply the board's optional case-insensitive search to a query builder. */
+function applySearch<Q extends { or: (f: string) => Q }>(query: Q, q: string): Q {
+  const term = q.trim();
+  if (!term) return query;
+  // Escape LIKE wildcards, then strip PostgREST or()-grammar chars so the term is
+  // matched literally and can't break the filter.
+  const esc = escapeLikePattern(term).replace(/[(),]/g, ' ').trim();
+  if (!esc) return query;
+  return query.or(SEARCH_COLUMNS.map((c) => `"${c}".ilike.*${esc}*`).join(','));
+}
+
 /**
  * A page of the active screening board, ordered LATEST-FIRST (highest grid_id),
- * with an optional case-insensitive search across key columns. Returns [] (not an
- * error) when the tables don't exist yet, so the tab shows a clean empty state
- * before migration #102 is run.
+ * with an optional search. NO row count is computed here — that's the slow part
+ * on a 50k-row board, so the count is fetched separately by {@link getScreeningCount}
+ * in the background. This keeps the table paint fast (an indexed LIMIT scan).
+ * Returns [] (not an error) when the tables don't exist yet.
  */
 export async function getScreeningPage(
-  { page = 0, pageSize = 25, q = '' }: { page?: number; pageSize?: number; q?: string },
+  { page = 0, pageSize = 100, q = '' }: { page?: number; pageSize?: number; q?: string },
 ): Promise<ScreeningPage> {
   const sb = adminClient();
-  const size = Math.min(Math.max(1, Math.floor(pageSize) || 25), 100);
+  const size = Math.min(Math.max(1, Math.floor(pageSize) || 100), 200);
   const p = Math.max(0, Math.floor(page) || 0);
   const from = p * size;
   const to = from + size - 1;
 
-  let query = sb.from('active_screening').select('*', { count: 'exact' });
-
-  const term = q.trim();
-  if (term) {
-    // Escape LIKE wildcards, then strip PostgREST or()-grammar chars so the term
-    // is matched literally and can't break the filter.
-    const esc = escapeLikePattern(term).replace(/[(),]/g, ' ').trim();
-    if (esc) query = query.or(SEARCH_COLUMNS.map((c) => `"${c}".ilike.*${esc}*`).join(','));
-  }
-
+  let query = sb.from('active_screening').select('*');
+  query = applySearch(query, q);
   query = query
     .order('grid_id', { ascending: false, nullsFirst: false })
     .order('id', { ascending: false })
     .range(from, to);
 
-  const { data, error, count } = await query;
+  const { data, error } = await query;
   if (error) {
     if (isMissingRelation(error)) {
       console.warn('[screening] active_screening not found yet — run create_screening.sql (migration #102).');
-      return { rows: [], total: 0, page: p, pageSize: size };
+      return { rows: [], page: p, pageSize: size };
     }
     throw new Error(error.message);
   }
-  return { rows: (data ?? []) as Record<string, unknown>[], total: count ?? 0, page: p, pageSize: size };
+  return { rows: (data ?? []) as Record<string, unknown>[], page: p, pageSize: size };
+}
+
+/**
+ * Total active-board rows (optionally filtered by the same search). Runs as a
+ * separate, background request so it never blocks the first paint. Head-only
+ * (no rows) exact count. Returns 0 if the tables don't exist yet.
+ */
+export async function getScreeningCount(q = ''): Promise<number> {
+  const sb = adminClient();
+  let query = sb.from('active_screening').select('*', { count: 'exact', head: true });
+  query = applySearch(query, q);
+  const { count, error } = await query;
+  if (error) {
+    if (isMissingRelation(error)) return 0;
+    throw new Error(error.message);
+  }
+  return count ?? 0;
 }

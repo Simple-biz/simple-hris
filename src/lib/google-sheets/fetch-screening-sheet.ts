@@ -1,6 +1,7 @@
 import { getServiceAccountAccessToken } from './auth';
 import {
   SCREENING_COLUMNS,
+  SCREENING_IDENTITY_COLUMNS,
   SCREENING_ORDER_HEADER,
   SCREENING_ORDER_FIELD,
   acceptedHeaders,
@@ -174,14 +175,15 @@ export async function fetchScreeningSheetAsRows(): Promise<ScreeningSheetFetchRe
   const rows: Record<string, string>[] = [];
   for (const raw of dataGrid) {
     const row: Record<string, string> = {};
-    let anyValue = false;
     SCREENING_COLUMNS.forEach((col, k) => {
       const idx = indices[k]!;
-      const cell = idx >= 0 ? String(raw[idx] ?? '').trim() : '';
-      row[col.db] = cell;
-      if (cell) anyValue = true;
+      row[col.db] = idx >= 0 ? String(raw[idx] ?? '').trim() : '';
     });
-    if (!anyValue) continue; // drop fully-empty rows (Grid ID alone doesn't count)
+    // Keep only rows that actually represent a candidate (have a Name or Email).
+    // Drops the blank/spacer rows at the bottom of the sheet — even when a
+    // fill-down formula in some other column leaves a stray value behind.
+    const hasEntry = SCREENING_IDENTITY_COLUMNS.some((c) => (row[c] ?? '').trim() !== '');
+    if (!hasEntry) continue;
     row[SCREENING_ORDER_FIELD] = gridIdx >= 0 ? String(raw[gridIdx] ?? '').trim() : '';
     rows.push(row);
   }
