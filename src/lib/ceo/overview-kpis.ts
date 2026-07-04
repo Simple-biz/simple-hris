@@ -1,7 +1,17 @@
 import 'server-only';
 
-import { buildPeopleRoster } from '@/lib/people/people-roster';
+import { buildPeopleRoster, type PeopleRosterRow } from '@/lib/people/people-roster';
 import { computeCurrentPay, type CurrentPayResult } from '@/lib/payroll/current-pay';
+import { normEmail } from '@/lib/email/norm-email';
+import {
+  type HubstaffMasterRow,
+  sortHubstaffReconRows,
+} from '@/lib/payroll/hubstaff-reconciliation';
+import {
+  getAppSetting,
+  accountingOverviewSnapshotKey,
+  type AccountingOverviewSnapshot,
+} from '@/lib/supabase/app-settings';
 import {
   listDisbursementReports,
   loadDisbursementRecordsForCycle,
@@ -32,20 +42,35 @@ export interface CeoUnpaidWorker {
  * numbers accounting works from. Null when the current cycle can't be computed.
  */
 export interface CeoSystemOverview {
-  /** Total INITIAL pay (regular + OT, no bonuses) for the current cycle, PHP. */
+  /** Total payout for the current cycle, PHP — Accounting's published figure
+   *  (Σ initial pay + PAB) when available, else base Σ initial pay. */
   totalPayoutPhp: number | null;
-  /** ≈ USD equivalent of the total payout at the cycle's FX rate. */
+  /** ≈ USD equivalent of the total payout. */
   totalPayoutUsd: number | null;
   /** People on the Global Master List (active employees). */
   masterList: number;
   /** Distinct people with Hubstaff hours in the current payroll cycle. */
   inThisPayroll: number;
-  /** Master↔payroll email mismatches (in-payroll-not-master + in-master-not-payroll). */
+  /** Bonuses keyed in for the cycle (Payment Catalog + HSL). Null if unknown. */
+  bonusesKeyedIn: number | null;
+  /** Hubstaff ↔ Master matches (on master AND worked this cycle). */
+  emailsMatched: number | null;
+  /** On master, no hours this cycle. */
+  masterOnlyCount: number | null;
+  /** Worked this cycle but not on the master list. */
+  hubstaffOnlyCount: number | null;
+  /** Master↔payroll email mismatches (kept for back-compat). */
   reconcileGaps: number;
+  /** True once today is past the period end → subtitle reads "Initial pay + PAB". */
+  pabFinalized: boolean;
   /** Pay-period label, e.g. "Jun 14 – 21, 2026". */
   periodLabel: string;
   /** ISO-week number of the period start (matches the Accounting period pill). */
   periodWeek: number | null;
+  /** Full Hubstaff ↔ Master reconciliation breakdown powering the drill-down
+   *  modal. Prefers Accounting's published rows (exact mirror); falls back to a
+   *  roster+payroll build when no snapshot has been published this cycle. */
+  reconRows: HubstaffMasterRow[];
 }
 
 export interface CeoOverviewKpis {
@@ -136,6 +161,73 @@ function periodLabelAndWeek(
   return { label, week };
 }
 
+/** Reconstruct the Hubstaff ↔ Master reconciliation rows from the roster +
+ *  live pay engine — the CEO fallback for when Accounting hasn't published its
+ *  richer breakdown this cycle. Same three status buckets as Accounting; no-hours
+ *  reasons are limited to onboarding timing (leave data isn't loaded here), so
+ *  the published snapshot rows are preferred whenever available. */
+function buildFallbackReconRows(pay: CurrentPayResult, roster: PeopleRosterRow[]): HubstaffMasterRow[] {
+  // pay.byEmail is keyed by normalized work email; those are the people who
+  // logged hours this cycle. masterEmails covers work + personal + alternates.
+  const worked = new Set(Object.keys(pay.byEmail));
+  const hoursByEmail = new Map<string, number>();
+  for (const [em, e] of Object.entries(pay.byEmail)) hoursByEmail.set(em, e.totalHours);
+
+  const out: HubstaffMasterRow[] = [];
+  const masterKeys = new Set<string>();
+
+  for (const r of roster) {
+    const w = normEmail(r.work_email) ?? '';
+    const p = normEmail(r.personal_email) ?? '';
+    const alts = r.alternate_work_emails.map((a) => normEmail(a) ?? '').filter(Boolean);
+    for (const k of [w, p, ...alts]) if (k) masterKeys.add(k);
+    const didWork = [w, p, ...alts].some((k) => k !== '' && worked.has(k));
+    const hrs = [w, p, ...alts].map((k) => (k ? hoursByEmail.get(k) : undefined)).find((h) => h != null);
+    out.push({
+      status: didWork ? 'On Master & worked' : 'On Master, no hours',
+      reason: didWork ? '' : reasonForNoHoursCeo(r, pay.period.start, pay.period.end),
+      name: r.name ?? '',
+      workEmail: r.work_email ?? '',
+      personalEmail: r.personal_email ?? '',
+      department: r.department ?? '',
+      hours: hrs != null ? hrs.toFixed(2) : '',
+    });
+  }
+
+  for (const em of worked) {
+    if (masterKeys.has(em)) continue;
+    out.push({
+      status: 'In Hubstaff, not on Master',
+      reason: 'Worked but missing from the Master List — add to the directory',
+      name: '',
+      workEmail: em,
+      personalEmail: '',
+      department: '',
+      hours: (hoursByEmail.get(em) ?? 0).toFixed(2),
+    });
+  }
+
+  return sortHubstaffReconRows(out);
+}
+
+/** Onboarding-timing explanation for a roster employee who logged no hours. A
+ *  lighter version of the Accounting reason (no leave-overlap check here). */
+function reasonForNoHoursCeo(
+  r: PeopleRosterRow,
+  periodStartIso: string | null,
+  periodEndIso: string | null,
+): string {
+  const startMs = r.start_date ? new Date(r.start_date.trim()).getTime() : NaN;
+  if (Number.isFinite(startMs)) {
+    const startShown = new Date(startMs).toISOString().slice(0, 10);
+    const pStart = periodStartIso ? new Date(periodStartIso).getTime() : NaN;
+    const pEnd = periodEndIso ? new Date(periodEndIso).getTime() : NaN;
+    if (Number.isFinite(pEnd) && startMs > pEnd) return `Not started yet — hired ${startShown}, after this period`;
+    if (Number.isFinite(pStart) && startMs >= pStart) return `Newly onboarded — started ${startShown}, mid-period`;
+  }
+  return 'No hours logged — reason unknown (check Hubstaff upload / time off)';
+}
+
 /** Derive the CEO System Overview block from a computed pay cycle. Email-based
  *  reconcile gaps mirror the Accounting hero: payroll emails ∉ master + master
  *  emails ∉ payroll. `masterListCount` is the deduped roster headcount (the same
@@ -143,31 +235,82 @@ function periodLabelAndWeek(
 function buildSystemOverview(
   pay: CurrentPayResult,
   masterListCount: number,
+  /** Reconciliation rows for the drill-down modal (snapshot rows or fallback). */
+  reconRows: HubstaffMasterRow[],
+  /** Accounting's published hero snapshot. When present its fields are
+   *  authoritative so this board mirrors the Accounting Overview EXACTLY; absent
+   *  fields fall back to the values computed here. */
+  snapshot?: AccountingOverviewSnapshot | null,
 ): CeoSystemOverview {
   const payrollEmails = new Set(Object.keys(pay.byEmail));
-  const masterEmailSet = new Set(pay.masterEmails);
 
-  let totalPayoutPhp: number | null = null;
+  let baseTotalPayoutPhp: number | null = null;
   for (const e of Object.values(pay.byEmail)) {
-    if (e.initialPayPHP != null) totalPayoutPhp = (totalPayoutPhp ?? 0) + e.initialPayPHP;
+    if (e.initialPayPHP != null) baseTotalPayoutPhp = (baseTotalPayoutPhp ?? 0) + e.initialPayPHP;
+  }
+  // Prefer Accounting's published figure (it includes PAB once the period ends,
+  // which the base sum above deliberately omits — that was the 10M vs 8M gap).
+  const totalPayoutPhp =
+    typeof snapshot?.totalPayoutPhp === 'number' ? snapshot.totalPayoutPhp : baseTotalPayoutPhp;
+
+  // Reconciliation (Hubstaff ↔ Master), computed as a fallback for when the
+  // snapshot is absent; the snapshot's own counts win when present. Derived from
+  // the per-PERSON reconRows (not the email set) so "no hours" isn't doubled —
+  // each master person owns a work AND a personal email, and counting the email
+  // set would tally both, inflating the figure toward ~2× the real headcount.
+  let matched = 0;
+  let masterOnly = 0;
+  let hubstaffOnly = 0;
+  for (const r of reconRows) {
+    if (r.status === 'On Master & worked') matched++;
+    else if (r.status === 'On Master, no hours') masterOnly++;
+    else if (r.status === 'In Hubstaff, not on Master') hubstaffOnly++;
   }
 
-  let inPayrollNotMaster = 0;
-  for (const em of payrollEmails) if (!masterEmailSet.has(em)) inPayrollNotMaster++;
-  let inMasterNotPayroll = 0;
-  for (const em of masterEmailSet) if (!payrollEmails.has(em)) inMasterNotPayroll++;
+  // PAB is finalized once today is strictly past the period end (same rule as
+  // the Accounting hero). Snapshot wins if it carried the flag.
+  const pabFinalized =
+    typeof snapshot?.pabFinalized === 'boolean'
+      ? snapshot.pabFinalized
+      : isPastDateIso(pay.period.end);
+
+  const pick = (snap: number | null | undefined, fallback: number | null): number | null =>
+    typeof snap === 'number' ? snap : fallback;
 
   const period = periodLabelAndWeek(pay.period.start, pay.period.end);
+  const totalPayoutUsd =
+    typeof snapshot?.totalPayoutUsd === 'number'
+      ? snapshot.totalPayoutUsd
+      : totalPayoutPhp != null && pay.fxRate > 0
+        ? totalPayoutPhp / pay.fxRate
+        : null;
+
   return {
     totalPayoutPhp: totalPayoutPhp != null ? Math.round(totalPayoutPhp * 100) / 100 : null,
-    totalPayoutUsd:
-      totalPayoutPhp != null && pay.fxRate > 0 ? totalPayoutPhp / pay.fxRate : null,
-    masterList: masterListCount,
-    inThisPayroll: payrollEmails.size,
-    reconcileGaps: inPayrollNotMaster + inMasterNotPayroll,
-    periodLabel: period.label,
-    periodWeek: period.week,
+    totalPayoutUsd,
+    masterList: pick(snapshot?.masterTotal, masterListCount) ?? masterListCount,
+    inThisPayroll: pick(snapshot?.activeWorkers, payrollEmails.size) ?? payrollEmails.size,
+    bonusesKeyedIn: pick(snapshot?.bonusesKeyedIn, null),
+    emailsMatched: pick(snapshot?.emailsMatched, matched),
+    masterOnlyCount: pick(snapshot?.masterOnlyCount, masterOnly),
+    hubstaffOnlyCount: pick(snapshot?.hubstaffOnlyCount, hubstaffOnly),
+    reconcileGaps: hubstaffOnly + masterOnly,
+    pabFinalized,
+    periodLabel: snapshot?.periodLabel ?? period.label,
+    periodWeek: pick(snapshot?.periodWeek, period.week),
+    reconRows,
   };
+}
+
+/** True when `iso` (a YYYY-MM-DD... date) is strictly before today (UTC-safe). */
+function isPastDateIso(iso: string | null): boolean {
+  if (!iso) return false;
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return false;
+  const end = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
+  const now = new Date();
+  const today = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  return today > end;
 }
 
 /**
@@ -287,10 +430,36 @@ export async function buildCeoOverviewKpis(): Promise<CeoOverviewKpis> {
     };
   }
 
+  // Mirror the Accounting Overview hero EXACTLY: read the full snapshot Accounting
+  // published for this cycle and prefer its numbers/tiles over our own recompute.
+  // Best-effort — an absent/unreadable snapshot → base compute.
+  let heroSnapshot: AccountingOverviewSnapshot | null = null;
+  if (payResult?.period.sourceFile) {
+    try {
+      const raw = await getAppSetting(accountingOverviewSnapshotKey(payResult.period.sourceFile));
+      if (raw) heroSnapshot = JSON.parse(raw) as AccountingOverviewSnapshot;
+    } catch {
+      /* fall back to the base computation */
+    }
+  }
+
+  // Reconciliation rows for the drill-down modal: prefer Accounting's published
+  // breakdown (exact mirror, includes leave reasons); otherwise reconstruct from
+  // the roster + live pay engine so the CEO modal is populated even before any
+  // accounting user has visited their overview this cycle.
+  const reconRows: HubstaffMasterRow[] =
+    heroSnapshot?.reconRows && heroSnapshot.reconRows.length > 0
+      ? heroSnapshot.reconRows
+      : payResult
+        ? buildFallbackReconRows(payResult, rows)
+        : [];
+
   return {
     departments,
     totalHeadcount: rows.length,
-    systemOverview: payResult ? buildSystemOverview(payResult, rows.length) : null,
+    systemOverview: payResult
+      ? buildSystemOverview(payResult, rows.length, reconRows, heroSnapshot)
+      : null,
     payWeek,
     lastCycle,
     error: rosterError ?? reportsRes.error ?? null,

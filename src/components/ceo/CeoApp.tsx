@@ -1,11 +1,10 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { resolveFirstName } from '@/lib/name/first-name';
 import { useRouter, useSearchParams } from 'next/navigation';
 import AppFooter from '@/components/AppFooter';
 import { AnimatePresence, motion } from 'motion/react';
-import { Crown, Menu, Sparkles } from 'lucide-react';
+import { Menu } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Toaster } from '@/components/ui/sonner';
 import { normEmail } from '@/lib/email/norm-email';
@@ -13,6 +12,7 @@ import { SESSION_EMAIL_KEY, type Role } from '@/lib/rbac/views';
 import CeoSidebar, { type CeoTab } from './CeoSidebar';
 import CeoChatBubble from './CeoChatBubble';
 import CeoOverviewKpis from './CeoOverviewKpis';
+import CeoFinancialReports from './CeoFinancialReports';
 import BizAiTab from './BizAiTab';
 import PeopleTab from '@/components/people/PeopleTab';
 import AnnouncementWall from '@/components/announcements/AnnouncementWall';
@@ -172,6 +172,7 @@ export default function CeoApp() {
               ) : (
               <ReadOnlyTab readOnly={permsReady && !canEditTab('ceo', activeTab)}>
               {activeTab === 'overview' && <CeoOverview viewerEmail={viewerEmail} />}
+              {activeTab === 'financial-reports' && <CeoFinancialReports viewerEmail={viewerEmail} />}
               {activeTab === 'people' && (
                 <PeopleTab view="ceo" viewerEmail={viewerEmail} canEdit={canEditTab('ceo', 'people')} />
               )}
@@ -207,129 +208,9 @@ export default function CeoApp() {
   );
 }
 
-const CEO_MESSAGES: { heading: (name: string) => string; body: string }[] = [
-  {
-    heading: (name) => `Welcome, ${name} — the company moves in the direction you set. ◆`,
-    body: "Your decisions shape every team, every workflow, and every outcome here. This dashboard is your command center — built to give you clarity at a glance.",
-  },
-  {
-    heading: (name) => `Good to see you, ${name} — great companies are built one decision at a time. ◆`,
-    body: "Everything running through this system — payroll, issues, attendance — traces back to the standards you set. Keep leading with intention.",
-  },
-  {
-    heading: (name) => `Hi ${name} — the best leaders stay informed. ◆`,
-    body: "From pay cycles to team health, you have full visibility here. Use the Announcements board to keep everyone aligned.",
-  },
-  {
-    heading: (name) => `Welcome back, ${name} — steady hands steer great ships. ◆`,
-    body: "Your people are working. Your systems are running. Use this space to stay on top of what matters most.",
-  },
-  {
-    heading: (name) => `Hey ${name} — vision without execution is just a dream. ◆`,
-    body: "This dashboard bridges the two. Real-time data, live updates, and direct communication channels — all in one place for you.",
-  },
-];
-
-const DIAMONDS = [
-  { left: '5%',  delay: '0s',    dur: '4.4s', size: '20px' },
-  { left: '13%', delay: '1.2s',  dur: '3.8s', size: '16px' },
-  { left: '23%', delay: '2.5s',  dur: '4.8s', size: '24px' },
-  { left: '36%', delay: '0.6s',  dur: '3.6s', size: '18px' },
-  { left: '50%', delay: '1.9s',  dur: '4.2s', size: '14px' },
-  { left: '62%', delay: '0.8s',  dur: '4.6s', size: '22px' },
-  { left: '74%', delay: '2.8s',  dur: '3.9s', size: '17px' },
-  { left: '84%', delay: '1.5s',  dur: '4.3s', size: '20px' },
-  { left: '93%', delay: '3.2s',  dur: '4.0s', size: '15px' },
-] as const;
-
 function CeoOverview({ viewerEmail }: { viewerEmail: string | null }) {
-  // Pin the welcome message for this mount so it doesn't reshuffle when the
-  // real-name fetch below triggers a re-render.
-  const [msgIdx] = useState(() => Math.floor(Math.random() * CEO_MESSAGES.length));
-  const welcomeMsg = CEO_MESSAGES[msgIdx]!;
-
-  // Look up the viewer's real name so the greeting shows their actual first
-  // name; the email local part alone is unreliable (e.g. "j.delacruz@…" → "J").
-  const [realName, setRealName] = useState<string | null>(null);
-  useEffect(() => {
-    if (!viewerEmail) return;
-    let alive = true;
-    fetch(`/api/employees?email=${encodeURIComponent(viewerEmail)}`, { cache: 'no-store' })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((j) => {
-        if (!alive) return;
-        const n = j?.employees?.[0]?.name;
-        if (typeof n === 'string' && n.trim()) setRealName(n.trim());
-      })
-      .catch(() => {});
-    return () => { alive = false; };
-  }, [viewerEmail]);
-  const greeting = resolveFirstName({ name: realName, email: viewerEmail });
-
   return (
     <div className="flex flex-col gap-6 px-4 pb-10 pt-6 sm:px-6 lg:gap-8 lg:px-8 lg:pt-8">
-      {/* Hero card */}
-      <header className="relative overflow-hidden rounded-2xl border border-yellow-200/80 bg-gradient-to-br from-yellow-500 via-amber-600 to-zinc-900 px-5 py-7 text-white shadow-lg shadow-yellow-600/20 dark:border-yellow-900/50 dark:from-yellow-600 dark:via-amber-900 dark:to-black sm:px-7">
-        <style>{`
-          @keyframes floatDiamond {
-            0%   { transform: translateY(0)      scale(1);    opacity: 0; }
-            12%  {                                             opacity: 0.5; }
-            80%  { transform: translateY(-115px) scale(0.65); opacity: 0.22; }
-            100% { transform: translateY(-135px) scale(0.45); opacity: 0; }
-          }
-        `}</style>
-
-        {/* Floating diamonds */}
-        {DIAMONDS.map((d, i) => (
-          <span
-            key={i}
-            aria-hidden
-            style={{
-              position: 'absolute',
-              bottom: '6px',
-              left: d.left,
-              fontSize: d.size,
-              color: 'rgba(255,255,255,0.72)',
-              animation: `floatDiamond ${d.dur} ${d.delay} infinite ease-in`,
-              pointerEvents: 'none',
-              userSelect: 'none',
-              lineHeight: 1,
-            }}
-          >
-            ◆
-          </span>
-        ))}
-
-        {/* Glow blobs */}
-        <div className="absolute -right-10 -top-10 h-36 w-36 rounded-full bg-white/10 blur-3xl" aria-hidden />
-        <div className="absolute -bottom-12 left-8 h-32 w-32 rounded-full bg-amber-300/20 blur-2xl" aria-hidden />
-
-        <div className="relative flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between lg:gap-6">
-          <div className="flex min-w-0 flex-col gap-2">
-            <div className="flex flex-wrap items-center gap-2 text-[10.5px] font-semibold uppercase tracking-[0.18em] text-yellow-100/90">
-              <Sparkles className="h-3 w-3 shrink-0" />
-              CEO dashboard
-            </div>
-            <h1 className="text-balance text-2xl font-bold tracking-tight sm:text-3xl">
-              {welcomeMsg.heading(greeting)}
-            </h1>
-            <p className="max-w-2xl text-sm leading-relaxed text-yellow-100/80">
-              {welcomeMsg.body}
-            </p>
-          </div>
-
-          {/* Crown badge */}
-          <div className="flex shrink-0 items-center justify-center">
-            <div className="flex h-16 w-16 items-center justify-center rounded-2xl border border-white/20 bg-white/10 backdrop-blur-sm shadow-lg shadow-black/20">
-              <Crown className="h-8 w-8 text-yellow-100" />
-            </div>
-          </div>
-        </div>
-      </header>
-
-      {/* Executive KPIs — headcount, the LIVE "payments to send" count (click it
-          to watch the live Payroll Wizard / Payment Dispatch driver), and
-          unpaid workers from the last pay cycle. */}
       <CeoOverviewKpis viewerEmail={viewerEmail} />
     </div>
   );

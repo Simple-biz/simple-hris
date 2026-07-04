@@ -3,12 +3,24 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { getSupabaseBrowserClient } from '@/lib/supabase/browser';
 
+/** One recently-dispatched payment for the live "being paid now" feed. */
+export interface PaidFeedEntry {
+  email: string;
+  name: string | null;
+  amountUsd: number | null;
+  amountPhp: number | null;
+  amountCop: number | null;
+  paidAt: string;
+}
+
 export interface PaymentsLiveState {
   sourceFile: string | null;
   label: string;
   total: number;
   paid: number;
   remaining: number;
+  /** Most-recently-paid recipients this cycle, newest first. */
+  recent: PaidFeedEntry[];
   loading: boolean;
   error: string | null;
 }
@@ -19,6 +31,7 @@ const EMPTY: PaymentsLiveState = {
   total: 0,
   paid: 0,
   remaining: 0,
+  recent: [],
   loading: true,
   error: null,
 };
@@ -27,31 +40,87 @@ const POLL_INTERVAL_MS = 20_000;
 const DEBOUNCE_MS = 400;
 
 /**
+ * Supabase Realtime *Broadcast* channel over which the Accounting dispatch
+ * screen publishes its EXACT live counts and the CEO card consumes them.
+ *
+ * Why Broadcast (not postgres_changes): the browser Supabase client connects as
+ * the `anon` role, and `app_settings` / `payment_dispatches` are RLS-protected
+ * ("Admins only"), so postgres_changes events never reach the browser — the old
+ * `app_settings` "pulse" silently never fired and the card only moved on the
+ * 20s poll (i.e. "not live"). Broadcast is a pub/sub message bus that doesn't
+ * touch the DB or RLS, so it reaches every subscriber; and because Accounting
+ * sends the very numbers IT computed, the CEO card mirrors it by construction.
+ *
+ * Kept as literals in this existing client module (rather than a brand-new
+ * shared file) so PayrollDispatch can import them without risking Turbopack
+ * dev's "module factory is not available" on a fresh file.
+ */
+export const PAYMENTS_LIVE_CHANNEL = 'payments-live';
+export const PAYMENTS_LIVE_EVENT_SNAPSHOT = 'snapshot';
+export const PAYMENTS_LIVE_EVENT_REQUEST = 'request';
+
+/** Exact live payment counts, broadcast by Accounting → shown by the CEO card. */
+export interface PaymentsLiveSnapshot {
+  sourceFile: string | null;
+  label: string;
+  total: number;
+  paid: number;
+  remaining: number;
+  /** Client ms timestamp; lets a consumer ignore an out-of-order replay. */
+  ts: number;
+}
+
+/** How long a received broadcast "wins" over the server poll baseline. While an
+ *  accountant is actively on the dispatch screen (broadcasting), the CEO shows
+ *  their exact numbers; if broadcasts stop for this long the poll resumes. */
+const BROADCAST_FRESH_MS = 45_000;
+
+/**
  * Live "payments to send" progress for the current cycle. Hydrates from
- * `/api/ceo/payments-live`, then stays fresh three ways (the project's standard
- * Realtime + poll + focus trio):
- *   1. Supabase Realtime on `payment_dispatches` — fires the instant anyone
- *      marks a worker paid (INSERT) or undoes it (DELETE), so the count ticks
- *      down / back up live. Requires payment_dispatches in the realtime
- *      publication (references/sql/alter/add_payment_dispatches_to_realtime.sql).
- *   2. A 20s poll as a fallback if Realtime is down (missing publication / RLS).
+ * `/api/ceo/payments-live`, then stays fresh:
+ *   1. PRIMARY — the Accounting Broadcast (see PAYMENTS_LIVE_CHANNEL). When an
+ *      accountant is on the Payment Dispatch screen it broadcasts its EXACT
+ *      counts, which the card shows verbatim (and which a fresh broadcast keeps
+ *      authoritative over the poll for BROADCAST_FRESH_MS). This is the path that
+ *      actually reaches the browser — RLS blocks the postgres_changes ones below.
+ *   2. A 20s poll of the server baseline — used when no accountant is publishing
+ *      (nobody on the dispatch tab); its `total` is an approximation of the
+ *      dispatch queue, so the card can read slightly high while idle.
  *   3. A refetch on tab focus.
+ *   4. Legacy postgres_changes channels (app_settings pulse + payment_dispatches)
+ *      — kept as a no-cost bonus for any admin whose JWT can read those tables;
+ *      they never fire for the anon browser, hence the Broadcast path above.
  */
 export function usePaymentsLive(): PaymentsLiveState {
   const [state, setState] = useState<PaymentsLiveState>(EMPTY);
   const instanceId = useId();
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Timestamp of the last Accounting broadcast we applied. A fresh one makes the
+  // server poll defer (below) so it can't stomp Accounting's exact numbers.
+  const lastBroadcastAtRef = useRef(0);
 
   const refetch = useCallback(async () => {
     try {
       const res = await fetch('/api/ceo/payments-live', { cache: 'no-store' });
       const json = (await res.json()) as Omit<PaymentsLiveState, 'loading'> & { error?: string };
+      // While a recent Accounting broadcast is authoritative, keep its exact
+      // counts and only let the poll refresh the "recently paid" feed — don't
+      // overwrite total/paid/remaining with the (possibly divergent) baseline.
+      if (Date.now() - lastBroadcastAtRef.current < BROADCAST_FRESH_MS) {
+        setState((prev) => ({
+          ...prev,
+          recent: Array.isArray(json.recent) ? json.recent : prev.recent,
+          loading: false,
+        }));
+        return;
+      }
       setState({
         sourceFile: json.sourceFile ?? null,
         label: json.label ?? 'Current pay week',
         total: json.total ?? 0,
         paid: json.paid ?? 0,
         remaining: json.remaining ?? 0,
+        recent: Array.isArray(json.recent) ? json.recent : [],
         loading: false,
         error: json.error ?? null,
       });
@@ -119,6 +188,51 @@ export function usePaymentsLive(): PaymentsLiveState {
     };
   }, [debouncedRefetch, instanceId]);
 
+  // PRIMARY live path: the Accounting dispatch screen broadcasts its exact
+  // counts on PAYMENTS_LIVE_CHANNEL. Broadcast is RLS-independent, so — unlike
+  // the postgres_changes channels above — it actually reaches this anon browser.
+  // On connect we ask any present publisher to replay its current snapshot, so a
+  // CEO who opens the dashboard mid-cycle gets Accounting's numbers immediately.
+  useEffect(() => {
+    const supabase = getSupabaseBrowserClient();
+    if (!supabase) return;
+
+    const channel = supabase.channel(PAYMENTS_LIVE_CHANNEL, {
+      config: { broadcast: { self: false } },
+    });
+    channel.on('broadcast', { event: PAYMENTS_LIVE_EVENT_SNAPSHOT }, ({ payload }) => {
+      const p = (payload ?? {}) as Partial<PaymentsLiveSnapshot>;
+      if (typeof p.total !== 'number') return;
+      lastBroadcastAtRef.current = Date.now();
+      const total = p.total ?? 0;
+      const paid = p.paid ?? 0;
+      setState((prev) => ({
+        ...prev,
+        sourceFile: p.sourceFile ?? null,
+        label: p.label ?? 'Current pay week',
+        total,
+        paid,
+        remaining: typeof p.remaining === 'number' ? p.remaining : Math.max(0, total - paid),
+        // `recent` stays poll-driven — Accounting doesn't publish the feed.
+        loading: false,
+        error: null,
+      }));
+    });
+    channel.subscribe((status) => {
+      if (status === 'SUBSCRIBED') {
+        void channel.send({
+          type: 'broadcast',
+          event: PAYMENTS_LIVE_EVENT_REQUEST,
+          payload: {},
+        });
+      }
+    });
+
+    return () => {
+      void supabase.removeChannel(channel);
+    };
+  }, []);
+
   // Poll fallback.
   useEffect(() => {
     const id = window.setInterval(() => void refetch(), POLL_INTERVAL_MS);
@@ -137,4 +251,68 @@ export function usePaymentsLive(): PaymentsLiveState {
   }, [refetch]);
 
   return state;
+}
+
+/**
+ * Accounting-side publisher: broadcasts the dispatch screen's EXACT live counts
+ * on {@link PAYMENTS_LIVE_CHANNEL} so the CEO "Payments to send" card mirrors
+ * them in real time. Fires on every change (mount, mark-paid → refresh, undo,
+ * wizard lock flip) and replays on demand when a CEO joins and asks. No-op while
+ * `enabled` is false (e.g. viewing a past week, queue not ready) so only the
+ * live cycle is ever published.
+ */
+export function usePaymentsLivePublisher(snapshot: {
+  enabled: boolean;
+  sourceFile: string | null;
+  label: string;
+  total: number;
+  paid: number;
+  remaining: number;
+}): void {
+  const { enabled, sourceFile, label, total, paid, remaining } = snapshot;
+
+  // Latest snapshot in a ref so the on-request responder always has current
+  // data without re-subscribing. `null` = nothing to publish right now.
+  const latestRef = useRef<Omit<PaymentsLiveSnapshot, 'ts'> | null>(null);
+  latestRef.current =
+    enabled && sourceFile ? { sourceFile, label, total, paid, remaining } : null;
+
+  // Stable flush() reference the change-effect can call after each render.
+  const flushRef = useRef<(() => void) | null>(null);
+
+  // Subscribe once; wire the request-responder and expose flush().
+  useEffect(() => {
+    const supabase = getSupabaseBrowserClient();
+    if (!supabase) return;
+    let ready = false;
+    const channel = supabase.channel(PAYMENTS_LIVE_CHANNEL, {
+      config: { broadcast: { self: false } },
+    });
+    const flush = () => {
+      const snap = latestRef.current;
+      if (!ready || !snap) return;
+      void channel.send({
+        type: 'broadcast',
+        event: PAYMENTS_LIVE_EVENT_SNAPSHOT,
+        payload: { ...snap, ts: Date.now() },
+      });
+    };
+    flushRef.current = flush;
+    channel.on('broadcast', { event: PAYMENTS_LIVE_EVENT_REQUEST }, () => flush());
+    channel.subscribe((status) => {
+      if (status === 'SUBSCRIBED') {
+        ready = true;
+        flush();
+      }
+    });
+    return () => {
+      flushRef.current = null;
+      void supabase.removeChannel(channel);
+    };
+  }, []);
+
+  // Re-broadcast whenever the numbers (or enabled) change.
+  useEffect(() => {
+    flushRef.current?.();
+  }, [enabled, sourceFile, label, total, paid, remaining]);
 }

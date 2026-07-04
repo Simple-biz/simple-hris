@@ -21,6 +21,7 @@ import {
   Sheet,
   Sun,
   UserMinus,
+  UserSearch,
 } from 'lucide-react';
 import { SWallNavLabel } from '@/components/swall/SWall';
 import ConstructionMark from '@/components/common/ConstructionMark';
@@ -36,7 +37,7 @@ import { useViewerProfilePhoto } from '@/hooks/useViewerProfilePhoto';
 import { useDispatchLock } from '@/hooks/useDispatchLock';
 import { useSidebarCollapsed } from '@/hooks/useSidebarCollapsed';
 
-export type HrTab = 'overview' | 'global-master-list' | 'onboarding' | 'new-hire-checklist' | 'offboarding' | 'leaves' | 'transfers' | 'gift-tracker' | 'mesa' | 'announcements' | 's-wall' | 'notifications';
+export type HrTab = 'overview' | 'global-master-list' | 'screening' | 'onboarding' | 'new-hire-checklist' | 'offboarding' | 'leaves' | 'transfers' | 'gift-tracker' | 'mesa' | 'announcements' | 's-wall' | 'notifications';
 
 interface HrSidebarProps {
   activeTab: HrTab;
@@ -143,6 +144,7 @@ export default function HrSidebar({
           <nav className="flex flex-col gap-px">
             {can('overview') && navBtn('overview', 'Overview', LayoutDashboard)}
             {can('global-master-list') && navBtn('global-master-list', 'Global Master List', Sheet)}
+            {can('screening') && navBtn('screening', 'Screening', UserSearch)}
             {can('new-hire-checklist') && navBtn('new-hire-checklist', 'New Hire Checklist', ClipboardList)}
             {can('onboarding') && navBtn('onboarding', 'Onboarding', LogIn)}
             {can('offboarding') && navBtn('offboarding', 'Offboarding', UserMinus)}

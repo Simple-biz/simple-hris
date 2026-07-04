@@ -41,6 +41,7 @@ import { cn } from '@/lib/utils';
 import HrSidebar, { type HrTab } from './HrSidebar';
 import HrOnboarding from './HrOnboarding';
 import HrGlobalMasterList from './HrGlobalMasterList';
+import HrScreening from './HrScreening';
 import HrNewHireChecklist from './HrNewHireChecklist';
 import HiringWeekOverviewSection from './HiringWeekOverviewSection';
 import HrOffboarding from './HrOffboarding';
@@ -231,6 +232,7 @@ export default function HrApp() {
               <ReadOnlyTab readOnly={permsReady && !canEditTab('hr', activeTab)}>
               {activeTab === 'overview' && <HrOverview viewerEmail={viewerEmail} />}
               {activeTab === 'global-master-list' && <HrGlobalMasterList />}
+              {activeTab === 'screening' && <HrScreening />}
               {activeTab === 'new-hire-checklist' && (
                 <HrNewHireChecklist onScrollSurfaceChange={setNhcScrollSurface} />
               )}

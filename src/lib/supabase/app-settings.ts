@@ -1,4 +1,5 @@
 import { createSupabaseServiceRoleClient } from './server';
+import type { HubstaffMasterRow } from '@/lib/payroll/hubstaff-reconciliation';
 
 /**
  * Bulk lookup — one DB round-trip for many keys. Returns a `key → value` map
@@ -61,6 +62,46 @@ export async function pulsePaymentsLive(): Promise<void> {
   } catch {
     /* non-fatal — the periodic poll still reconciles the count */
   }
+}
+
+/**
+ * Per-cycle key under which the Accounting Overview publishes its EXACT hero
+ * "Total payout" (Σ initial pay + PAB once the period closes). The CEO System
+ * Overview board reads it so its headline mirrors Accounting instead of the base
+ * figure it computes on its own (which drifts low by the PAB total). An absent
+ * key → the CEO falls back to its own computation.
+ */
+export function accountingOverviewSnapshotKey(sourceFile: string): string {
+  return `accounting.overview.snapshot.${sourceFile}`;
+}
+
+/** Shape stored (as a JSON string) at {@link accountingOverviewSnapshotKey}.
+ *  Carries the FULL Accounting hero so the CEO board renders an exact replica
+ *  from Accounting's own numbers. All beyond `totalPayoutPhp` are optional so an
+ *  older snapshot (or a partial publish) degrades gracefully to CEO fallbacks. */
+export interface AccountingOverviewSnapshot {
+  totalPayoutPhp: number | null;
+  totalPayoutUsd: number | null;
+  /** "active workers" pill + "In this payroll" tile (payrollWorkerCount). */
+  activeWorkers?: number | null;
+  /** "Master list" tile (global master headcount). */
+  masterTotal?: number | null;
+  /** "Bonuses keyed in" tile. */
+  bonusesKeyedIn?: number | null;
+  /** "Hubstaff ↔ Master matches" tile + its reconciliation tooltip counts. */
+  emailsMatched?: number | null;
+  masterOnlyCount?: number | null;
+  hubstaffOnlyCount?: number | null;
+  /** Drives the "Initial pay + PAB" vs "Initial pay" subtitle. */
+  pabFinalized?: boolean;
+  periodLabel?: string | null;
+  periodWeek?: number | null;
+  /** Full Hubstaff ↔ Master reconciliation breakdown (one row per person) so the
+   *  CEO drill-down modal renders an exact replica of Accounting's list — same
+   *  rows + no-hours reasons — rather than a server recompute. Optional so an
+   *  older snapshot degrades to the CEO's own fallback build. */
+  reconRows?: HubstaffMasterRow[];
+  ts: string;
 }
 
 /**

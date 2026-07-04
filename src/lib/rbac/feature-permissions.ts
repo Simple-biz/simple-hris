@@ -25,6 +25,7 @@ export const FEATURE_CATALOG: Record<FeatureViewKey, readonly { key: string; lab
   hr: [
     { key: "overview",            label: "Overview" },
     { key: "global_master_list",  label: "Global Master List" },
+    { key: "screening",           label: "Screening" },
     { key: "new_hire_checklist",  label: "New Hire Checklist" },
     { key: "onboarding",          label: "Onboarding" },
     { key: "offboarding",         label: "Offboarding" },
@@ -56,7 +57,8 @@ export const FEATURE_CATALOG: Record<FeatureViewKey, readonly { key: string; lab
     { key: "notifications",  label: "Notifications" },
   ],
   ceo: [
-    { key: "overview",      label: "Overview" },
+    { key: "overview",          label: "Overview" },
+    { key: "financial_reports", label: "Financial Reports" },
     { key: "biz_ai",        label: "Penny AI" },
     { key: "people",        label: "People" },
     { key: "announcements", label: "Announcements" },

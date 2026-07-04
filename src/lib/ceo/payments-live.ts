@@ -23,6 +23,17 @@ import { formatDisbursementReportName } from '@/lib/payroll/disbursement-reports
  * change, so the card ticks down the instant anyone marks someone paid (and
  * back up on Undo).
  */
+/** One recently-dispatched payment, for the CEO's live "being paid now" feed. */
+export interface PaidFeedEntry {
+  email: string;
+  name: string | null;
+  amountUsd: number | null;
+  amountPhp: number | null;
+  amountCop: number | null;
+  /** ISO timestamp the dispatch was logged (created_at). */
+  paidAt: string;
+}
+
 export interface PaymentsLive {
   /** Current cycle's Hubstaff source CSV (the cycle being paid). */
   sourceFile: string | null;
@@ -34,6 +45,9 @@ export interface PaymentsLive {
   paid: number;
   /** total − paid, never negative — what's left to pay. */
   remaining: number;
+  /** Most-recently-paid recipients this cycle (newest first) — powers the live
+   *  "who's getting paid at the moment" feed in the CEO watch modal. */
+  recent: PaidFeedEntry[];
   /** Diagnostics — how each number was derived. Safe to expose (rate-gated). */
   debug?: {
     uploadsCount: number;
@@ -74,6 +88,50 @@ async function exactCount(
  *  (deduped — a recipient may have more than one dispatch row across retries).
  *  Called once per identifier (source file, then upload id) so a payment is
  *  counted no matter which the dispatch flow stamped on the row. */
+/** Collect the most-recent paid dispatch rows for one identifier into `into`,
+ *  keyed by recipient email so a person appears once (their latest dispatch).
+ *  Called once per identifier (source file, then upload id) — belt-and-braces
+ *  against a cycle-key mismatch, exactly like {@link collectPaidEmails}. */
+async function collectRecentPaid(
+  supabase: Supabase,
+  column: 'cycle_source_file' | 'cycle_id',
+  value: string,
+  into: Map<string, PaidFeedEntry>,
+): Promise<void> {
+  const { data, error } = await supabase
+    .from('payment_dispatches')
+    .select('recipient_email, recipient_name, amount_usd, amount_php, amount_cop, created_at')
+    .eq(column, value)
+    .eq('status', 'paid')
+    .order('created_at', { ascending: false })
+    .limit(200);
+  if (error) return;
+  const rows = (data ?? []) as {
+    recipient_email: string | null;
+    recipient_name: string | null;
+    amount_usd: number | null;
+    amount_php: number | null;
+    amount_cop: number | null;
+    created_at: string | null;
+  }[];
+  for (const r of rows) {
+    const email = (r.recipient_email ?? '').trim().toLowerCase();
+    if (!email) continue;
+    const paidAt = r.created_at ?? '';
+    const existing = into.get(email);
+    // Keep the most recent dispatch event per recipient (retries insert extra rows).
+    if (existing && existing.paidAt >= paidAt) continue;
+    into.set(email, {
+      email,
+      name: r.recipient_name,
+      amountUsd: r.amount_usd,
+      amountPhp: r.amount_php,
+      amountCop: r.amount_cop,
+      paidAt,
+    });
+  }
+}
+
 async function collectPaidEmails(
   supabase: Supabase,
   column: 'cycle_source_file' | 'cycle_id',
@@ -107,6 +165,7 @@ export async function buildPaymentsLive(): Promise<PaymentsLive> {
     total: 0,
     paid: 0,
     remaining: 0,
+    recent: [],
     error: null,
   };
 
@@ -173,13 +232,23 @@ export async function buildPaymentsLive(): Promise<PaymentsLive> {
   // flow stamped (they should agree; this is belt-and-braces against a cycle
   // key mismatch that would silently freeze the counter).
   const paidEmails = new Set<string>();
+  // Same two-key union, but keeping the full row per recipient for the live feed.
+  const recentMap = new Map<string, PaidFeedEntry>();
   await Promise.all([
     collectPaidEmails(supabase, 'cycle_source_file', sourceFile, paidEmails),
+    collectRecentPaid(supabase, 'cycle_source_file', sourceFile, recentMap),
     ...(currentUploadId
-      ? [collectPaidEmails(supabase, 'cycle_id', currentUploadId, paidEmails)]
+      ? [
+          collectPaidEmails(supabase, 'cycle_id', currentUploadId, paidEmails),
+          collectRecentPaid(supabase, 'cycle_id', currentUploadId, recentMap),
+        ]
       : []),
   ]);
   const paidFromDispatches = paidEmails.size;
+  // Newest first; cap so the feed payload stays small.
+  const recent = Array.from(recentMap.values())
+    .sort((a, b) => (a.paidAt < b.paidAt ? 1 : a.paidAt > b.paidAt ? -1 : 0))
+    .slice(0, 60);
 
   // "paid" is the count of ACTUAL dispatch actions in `payment_dispatches`.
   // We deliberately do NOT trust `disbursement_records.status='paid'` here: that
@@ -210,6 +279,7 @@ export async function buildPaymentsLive(): Promise<PaymentsLive> {
     total,
     paid,
     remaining: Math.max(0, total - paid),
+    recent,
     debug: {
       uploadsCount: uploads.length,
       isCurrentFound: !!isCurrentUpload,

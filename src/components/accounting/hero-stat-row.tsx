@@ -78,6 +78,7 @@ export function HeroStatRow({
   value,
   tooltip,
   action,
+  onClick,
 }: {
   Icon: React.ComponentType<{ className?: string }>;
   tone: AttentionTone;
@@ -88,17 +89,35 @@ export function HeroStatRow({
   tooltip?: React.ReactNode;
   /** Optional trailing control (e.g. an export button) rendered after the value. */
   action?: React.ReactNode;
+  /** When set, the whole row becomes a button that opens a drill-down (e.g. the
+   *  Hubstaff ↔ Master reconciliation modal). Keyboard-activatable; the hover
+   *  tooltip (if any) still works. */
+  onClick?: () => void;
 }) {
   const palette = ATTENTION_PALETTE[tone];
+  const interactive = tooltip != null || onClick != null;
   return (
     <div
       className={cn(
         'flex items-center gap-2.5 rounded-xl border bg-stone-50/70 px-3 py-2 backdrop-blur-md transition-colors',
         palette.ring,
         'dark:bg-zinc-900/60',
-        tooltip && 'group relative cursor-help focus:outline-none',
+        interactive && 'group relative focus:outline-none',
+        onClick ? 'cursor-pointer' : tooltip ? 'cursor-help' : undefined,
       )}
-      tabIndex={tooltip ? 0 : undefined}
+      tabIndex={interactive ? 0 : undefined}
+      role={onClick ? 'button' : undefined}
+      onClick={onClick}
+      onKeyDown={
+        onClick
+          ? (e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                onClick();
+              }
+            }
+          : undefined
+      }
     >
       <span
         className={cn(

@@ -72,6 +72,7 @@ export const DASHBOARD_PAGES: DashboardPages[] = [
     accent: 'amber',
     pages: [
       { key: 'overview', label: 'Overview', home: true },
+      { key: 'financial-reports', label: 'Financial Reports' },
       { key: 'biz-ai', label: 'Penny AI' },
       { key: 'people', label: 'People' },
       { key: 'announcements', label: 'Announcements' },
@@ -86,6 +87,7 @@ export const DASHBOARD_PAGES: DashboardPages[] = [
     pages: [
       { key: 'overview', label: 'Overview', home: true },
       { key: 'global-master-list', label: 'Global Master List' },
+      { key: 'screening', label: 'Screening' },
       { key: 'new-hire-checklist', label: 'New Hire Checklist' },
       { key: 'onboarding', label: 'Onboarding' },
       { key: 'offboarding', label: 'Offboarding' },

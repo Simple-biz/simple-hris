@@ -350,18 +350,6 @@ const EMPLOYEE_MESSAGES: { heading: (name: string) => string; body: string }[] =
   },
 ];
 
-const SPARKLES_FLOAT = [
-  { left: '4%',  delay: '0s',    dur: '4.1s', size: '18px' },
-  { left: '12%', delay: '1.3s',  dur: '3.7s', size: '14px' },
-  { left: '22%', delay: '2.6s',  dur: '4.5s', size: '22px' },
-  { left: '35%', delay: '0.7s',  dur: '3.4s', size: '16px' },
-  { left: '48%', delay: '2.0s',  dur: '4.0s', size: '12px' },
-  { left: '60%', delay: '0.4s',  dur: '4.7s', size: '20px' },
-  { left: '72%', delay: '2.9s',  dur: '3.8s', size: '15px' },
-  { left: '83%', delay: '1.6s',  dur: '4.2s', size: '19px' },
-  { left: '93%', delay: '3.3s',  dur: '3.6s', size: '13px' },
-] as const;
-
 /** One-off "special transfers" sent to this employee from the People tab. Self-
  *  scoped — the endpoint resolves identity from the session, the `email` is just
  *  a hint. Renders nothing until there's at least one transfer. */
@@ -419,6 +407,13 @@ function EmployeeSpecialTransfers({ employeeEmail }: { employeeEmail: string | n
 export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, needsBank = false, needsSkillSet = false, onNavigateToProfile, onNavigateToNotifications, unreadNotifications = 0 }: EmployeeDashboardProps) {
   const [loading, setLoading] = useState(true);
   const [employeeStartDate, setEmployeeStartDate] = useState<Date | null>(null);
+  // The time-of-day greeting depends on the viewer's LOCAL hour, which only
+  // exists on the client. Computing it during SSR uses the server's timezone
+  // (UTC on Vercel) and mismatches the browser (Manila, UTC+8) → React #418
+  // hydration error. Render a stable greeting on the server + first client
+  // paint, then switch to the time-based one after mount.
+  const [greetingReady, setGreetingReady] = useState(false);
+  useEffect(() => { setGreetingReady(true); }, []);
   // Shared mask state for the hero pay values (Take-Home, Regular, Overtime).
   // Default hidden on every mount so passers-by see masked amounts; one click
   // on the eye next to Take-Home reveals all three together.
@@ -2089,55 +2084,232 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
   // Prefer the employee's real name (already fetched into profileForShipping)
   // so the greeting shows their actual first name, not the email local part.
   const _greeting = resolveFirstName({ name: profileForShipping.name, email });
+  // Time-of-day greeting — stable "Welcome" until mounted (see greetingReady).
+  const _nowHour = new Date().getHours();
+  const _timeGreeting = !greetingReady
+    ? 'Welcome'
+    : _nowHour < 12 ? 'Good morning' : _nowHour < 18 ? 'Good afternoon' : 'Good evening';
 
   return (
     <div className="box-border flex h-full min-h-0 flex-col gap-2 overflow-y-auto overscroll-y-contain bg-gradient-to-br from-white via-orange-50/30 to-blue-50/20 px-3 py-2 [scrollbar-gutter:stable] [@media(max-height:900px)]:gap-1.5 sm:px-4 sm:py-3 md:px-5 lg:gap-3 lg:py-3 dark:bg-none dark:bg-[#0d1117]">
-      {/* ── Hero intro card ── */}
-      <header className="relative shrink-0 overflow-hidden rounded-2xl border border-orange-200/80 bg-gradient-to-br from-orange-500 via-amber-500 to-zinc-900 px-5 py-6 text-white shadow-lg shadow-orange-500/20 dark:border-orange-900/50 dark:from-orange-600 dark:via-amber-800 dark:to-black sm:px-7">
-        <style>{`
-          @keyframes floatSparkle {
-            0%   { transform: translateY(0)      scale(1);    opacity: 0; }
-            12%  {                                             opacity: 0.5; }
-            80%  { transform: translateY(-110px) scale(0.65); opacity: 0.2; }
-            100% { transform: translateY(-130px) scale(0.45); opacity: 0; }
-          }
-        `}</style>
-        {SPARKLES_FLOAT.map((s, i) => (
-          <span
-            key={i}
-            aria-hidden
-            style={{
-              position: 'absolute',
-              bottom: '6px',
-              left: s.left,
-              fontSize: s.size,
-              color: 'rgba(255,255,255,0.70)',
-              animation: `floatSparkle ${s.dur} ${s.delay} infinite ease-in`,
-              pointerEvents: 'none',
-              userSelect: 'none',
-              lineHeight: 1,
-            }}
-          >
-            ✦
-          </span>
-        ))}
-        {/* glow blobs */}
-        <div className="absolute -right-10 -top-10 h-36 w-36 rounded-full bg-white/10 blur-3xl" aria-hidden />
-        <div className="absolute -bottom-10 left-6 h-28 w-28 rounded-full bg-amber-300/20 blur-2xl" aria-hidden />
-
-        <div className="relative flex flex-col gap-1.5">
-          <div className="flex items-center gap-2 text-[10.5px] font-semibold uppercase tracking-[0.18em] text-orange-100/90">
-            <Sparkles className="h-3 w-3 shrink-0" />
-            Employee dashboard
-          </div>
-          <h1 className="text-balance text-xl font-bold tracking-tight sm:text-2xl">
-            {_welcomeMsg.heading(_greeting)}
-          </h1>
-          <p className="max-w-2xl text-sm leading-relaxed text-orange-100/80">
-            {_welcomeMsg.body}
-          </p>
+      {/* ── Hero intro card — soft gradient hero, matching the Accounting view ── */}
+      <motion.header
+        initial={{ opacity: 0, y: 8 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
+        className="relative shrink-0 overflow-hidden rounded-3xl border border-orange-100/80 bg-gradient-to-br from-stone-50 via-orange-50/35 to-blue-50/25 p-5 shadow-[0_12px_32px_-16px_rgba(255,138,76,0.12)] sm:p-6 lg:p-7 dark:border-orange-900/30 dark:from-zinc-950 dark:via-orange-950/15 dark:to-blue-950/15"
+      >
+        {/* Decorative orbs — pure dopamine */}
+        <div aria-hidden className="pointer-events-none absolute inset-0 overflow-hidden">
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ duration: 0.9 }}
+            className="absolute -left-24 -top-24 h-72 w-72 rounded-full bg-orange-300/30 blur-3xl dark:bg-orange-500/15"
+          />
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ duration: 1.1, delay: 0.1 }}
+            className="absolute -right-20 top-12 h-64 w-64 rounded-full bg-rose-300/25 blur-3xl dark:bg-rose-500/15"
+          />
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ duration: 1.3, delay: 0.2 }}
+            className="absolute bottom-0 left-1/3 h-56 w-56 rounded-full bg-blue-300/20 blur-3xl dark:bg-blue-500/15"
+          />
         </div>
-      </header>
+
+        <div className="relative grid grid-cols-1 items-start gap-4 lg:grid-cols-[1fr_auto] lg:gap-8">
+          <div className="flex min-w-0 flex-col gap-1.5">
+            {/* Caption pill */}
+            <div className="mb-2 inline-flex items-center gap-2 self-start rounded-full border border-orange-200/80 bg-stone-50/70 px-4 py-1.5 text-[10.5px] font-semibold uppercase tracking-[0.18em] text-orange-700 backdrop-blur-md dark:border-orange-900/40 dark:bg-orange-950/30 dark:text-orange-300">
+              <Sparkles className="h-3 w-3 shrink-0" />
+              Employee dashboard
+            </div>
+            <h1 className="text-balance text-2xl font-semibold tracking-tight text-zinc-700 sm:text-3xl dark:text-zinc-200">
+              {_greeting ? (
+                <>
+                  {_timeGreeting},{' '}
+                  <span className="bg-gradient-to-r from-orange-600 to-rose-500 bg-clip-text font-semibold text-transparent dark:from-orange-400 dark:to-rose-400">
+                    {_greeting}
+                  </span>
+                  .
+                </>
+              ) : (
+                <>{_timeGreeting}.</>
+              )}
+            </h1>
+            {/* Accent rule — orange→rose hairline under the greeting */}
+            <div className="mt-2 h-[2px] w-16 rounded-full bg-gradient-to-r from-orange-500 to-rose-500 dark:from-orange-400 dark:to-rose-400" />
+            <p className="mt-2 max-w-2xl text-sm leading-relaxed text-zinc-600 dark:text-zinc-400">
+              {_welcomeMsg.body}
+            </p>
+          </div>
+
+          {/* Live pay-period + stat rail — consolidated into the hero card (moved off the pay panel) */}
+          {row && (
+            <div className="w-full min-w-0 divide-y divide-orange-100/60 overflow-hidden rounded-2xl border border-orange-200/70 bg-stone-50/70 backdrop-blur-md lg:w-auto lg:min-w-[15rem] dark:divide-zinc-800/60 dark:border-orange-900/40 dark:bg-zinc-900/60">
+              {pabMonthRange && (
+                <div className="px-4 py-2.5">
+                  <div className="flex items-center gap-1.5">
+                    <CalendarDays className="h-3.5 w-3.5 shrink-0 text-orange-500 dark:text-orange-400" />
+                    <span className="text-[9px] font-semibold uppercase tracking-[0.16em] text-zinc-400 dark:text-zinc-500">
+                      Pay period
+                    </span>
+                  </div>
+                  <p className="mt-1 text-sm font-semibold tracking-tight text-zinc-800 dark:text-zinc-100">
+                    {pabMonthRange.start.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                    <span className="mx-1 text-zinc-300 dark:text-zinc-600">–</span>
+                    {pabMonthRange.end.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                  </p>
+                </div>
+              )}
+              <div className="flex items-baseline justify-between gap-3 px-4 py-2.5">
+                <span className="text-[10px] font-medium uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-500">
+                  Hours
+                </span>
+                <span className="text-sm font-medium tabular-nums text-zinc-900 dark:text-white">
+                  {totalHours.toFixed(2)}<span className="text-zinc-400">h</span>
+                </span>
+              </div>
+              <div className="flex items-baseline justify-between gap-3 px-4 py-2.5">
+                <span className="text-[10px] font-medium uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-500">
+                  Reg / OT
+                </span>
+                <span className="text-sm tabular-nums text-zinc-700 dark:text-zinc-300">
+                  {regularHours.toFixed(1)}<span className="text-zinc-400">h</span>
+                  <span className="mx-1 text-zinc-300 dark:text-zinc-700">/</span>
+                  {otHours.toFixed(1)}<span className="text-zinc-400">h</span>
+                </span>
+              </div>
+              <div className="flex items-baseline justify-between gap-3 px-4 py-2.5">
+                <span className="text-[10px] font-medium uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-500">
+                  Hourly
+                </span>
+                <span className="text-sm tabular-nums text-zinc-700 dark:text-zinc-300">
+                  {regularRate != null ? formatPHP(regularRate) : '—'}
+                </span>
+              </div>
+              <div className="flex items-center justify-between gap-3 px-4 py-2.5">
+                <span className="text-[10px] font-medium uppercase tracking-[0.14em] text-indigo-600 dark:text-indigo-400">
+                  PAB
+                </span>
+                {pabMergeLoading ? (
+                  <span className="inline-flex items-center gap-0.5 text-[11px] font-medium text-zinc-400 dark:text-zinc-500">
+                    Loading
+                    <span className="inline-flex items-end gap-px leading-none">
+                      <span className="inline-block h-1 w-1 animate-bounce rounded-full bg-zinc-400 dark:bg-zinc-500" style={{ animationDelay: '0ms' }} />
+                      <span className="inline-block h-1 w-1 animate-bounce rounded-full bg-zinc-400 dark:bg-zinc-500" style={{ animationDelay: '150ms' }} />
+                      <span className="inline-block h-1 w-1 animate-bounce rounded-full bg-zinc-400 dark:bg-zinc-500" style={{ animationDelay: '300ms' }} />
+                    </span>
+                  </span>
+                ) : (
+                  <span
+                    className={`inline-flex items-center gap-1.5 text-[11px] font-medium ${
+                      perfectAttendanceBonusStatus === 'eligible'
+                        ? 'text-emerald-700 dark:text-emerald-400'
+                        : perfectAttendanceBonusStatus === 'pending'
+                          ? 'text-indigo-700 dark:text-indigo-300'
+                          : perfectAttendanceBonusStatus === 'not_eligible'
+                            ? 'text-amber-700 dark:text-amber-400'
+                            : 'text-zinc-500 dark:text-zinc-500'
+                    }`}
+                  >
+                    <span
+                      className={`inline-block h-1.5 w-1.5 rounded-full ${
+                        perfectAttendanceBonusStatus === 'eligible'
+                          ? 'bg-emerald-500'
+                          : perfectAttendanceBonusStatus === 'pending'
+                            ? 'bg-indigo-500 animate-pulse'
+                            : perfectAttendanceBonusStatus === 'not_eligible'
+                              ? 'bg-amber-500'
+                              : 'bg-zinc-400'
+                      }`}
+                    />
+                    {perfectAttendanceBonusStatus === 'eligible'
+                      ? 'Eligible'
+                      : perfectAttendanceBonusStatus === 'pending'
+                        ? 'In progress'
+                        : perfectAttendanceBonusStatus === 'not_eligible'
+                          ? (isPabPeriodInProgressByCalendar ? 'Still in Progress' : 'Not met')
+                          : 'Unknown'}
+                  </span>
+                )}
+              </div>
+              <div className="flex items-center justify-between gap-3 px-4 py-2.5">
+                <span className="text-[10px] font-medium uppercase tracking-[0.14em] text-sky-600 dark:text-sky-400">
+                  Tech
+                </span>
+                {loading || pabMergeLoading ? (
+                  <span className="inline-flex items-center gap-0.5 text-[11px] font-medium text-zinc-400 dark:text-zinc-500">
+                    Loading
+                    <span className="inline-flex items-end gap-px leading-none">
+                      <span className="inline-block h-1 w-1 animate-bounce rounded-full bg-zinc-400 dark:bg-zinc-500" style={{ animationDelay: '0ms' }} />
+                      <span className="inline-block h-1 w-1 animate-bounce rounded-full bg-zinc-400 dark:bg-zinc-500" style={{ animationDelay: '150ms' }} />
+                      <span className="inline-block h-1 w-1 animate-bounce rounded-full bg-zinc-400 dark:bg-zinc-500" style={{ animationDelay: '300ms' }} />
+                    </span>
+                  </span>
+                ) : (
+                  <span
+                    className={`inline-flex items-center gap-1.5 text-[11px] font-medium ${
+                      isTechnologyBonusActive
+                        ? 'text-sky-700 dark:text-sky-300'
+                        : techServiceStatus.state === 'pending'
+                          ? 'text-amber-700 dark:text-amber-400'
+                          : techBonusSalaryThisWeek
+                            ? 'text-sky-700 dark:text-sky-300'
+                            : isTechBonusNextWeek
+                              ? 'text-emerald-700 dark:text-emerald-400'
+                              : isTechBonusWeekPast
+                                ? 'text-emerald-600 dark:text-emerald-400'
+                                : 'text-zinc-500 dark:text-zinc-500'
+                    }`}
+                  >
+                    <span
+                      className={`inline-block h-1.5 w-1.5 rounded-full ${
+                        isTechnologyBonusActive
+                          ? 'bg-sky-500'
+                          : techServiceStatus.state === 'pending'
+                            ? 'bg-amber-500'
+                            : techBonusSalaryThisWeek
+                              ? 'bg-sky-500'
+                              : isTechBonusNextWeek
+                                ? 'bg-emerald-500'
+                                : isTechBonusWeekPast
+                                  ? 'bg-emerald-500'
+                                  : 'bg-zinc-400'
+                      }`}
+                    />
+                    {isTechnologyBonusActive
+                      ? 'Unlocked'
+                      : techServiceStatus.state === 'pending'
+                        ? `${techServiceStatus.daysRemaining}d to go`
+                        : techBonusSalaryThisWeek
+                          ? 'Paid this Week'
+                          : isTechBonusNextWeek
+                            ? 'Unlocked Next Week'
+                            : isTechBonusWeekPast
+                              ? 'Paid'
+                              : 'Locked'}
+                  </span>
+                )}
+              </div>
+              {isMesaParticipant && (
+                <div className="flex items-center justify-between gap-3 bg-teal-50/40 px-4 py-2.5 dark:bg-teal-950/20">
+                  <span className="text-[10px] font-medium uppercase tracking-[0.14em] text-teal-700/80 dark:text-teal-500/80">
+                    MESA
+                  </span>
+                  <span className="text-[11px] font-medium tabular-nums text-teal-800 dark:text-teal-300">
+                    −{formatPHP(mesaContributionPhp)}
+                  </span>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </motion.header>
 
       {/* Profile setup nudge — photo, payout, and Skill Sets. Hidden when complete. */}
       {onNavigateToProfile && (
@@ -2356,12 +2528,12 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
         </Card>
       ) : !row ? null : (
         <div className="flex shrink-0 flex-col gap-3 lg:gap-4">
-          {/* Hero — editorial pay statement: typographic on the left, divided list on the right */}
+          {/* Pay statement — the estimated take-home figure with its per-line breakdown ribbon (stat rail moved to the hero card) */}
           <motion.section
             initial={{ opacity: 0, y: 8 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
-            className="grid shrink-0 gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,17rem)] lg:gap-8"
+            className="shrink-0"
           >
             {/* Hero pay block */}
             <div className="relative min-w-0 border-l-2 border-emerald-500/80 pl-4 lg:pl-5 dark:border-emerald-400/70">
@@ -2537,167 +2709,6 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
                 </div>
               </dl>
             </div>
-
-            {/* Status panel — divide-y list, no card chrome */}
-            <motion.aside
-              initial={{ opacity: 0, x: 8 }}
-              animate={{ opacity: 1, x: 0 }}
-              transition={{ duration: 0.4, delay: 0.08, ease: [0.16, 1, 0.3, 1] }}
-              className="flex min-w-0 flex-col divide-y divide-zinc-200/80 rounded-md border border-zinc-200/70 bg-white/50 backdrop-blur-sm dark:divide-zinc-800/80 dark:border-zinc-800/70 dark:bg-zinc-900/30"
-            >
-              <div className="flex items-baseline justify-between gap-3 px-3.5 py-2.5">
-                <span className="text-[10px] font-medium uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-500">
-                  Hours
-                </span>
-                <span className="text-sm font-medium tabular-nums text-zinc-900 dark:text-white">
-                  {totalHours.toFixed(2)}<span className="text-zinc-400">h</span>
-                </span>
-              </div>
-              <div className="flex items-baseline justify-between gap-3 px-3.5 py-2.5">
-                <span className="text-[10px] font-medium uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-500">
-                  Reg / OT
-                </span>
-                <span className="text-sm tabular-nums text-zinc-700 dark:text-zinc-300">
-                  {regularHours.toFixed(1)}<span className="text-zinc-400">h</span>
-                  <span className="mx-1 text-zinc-300 dark:text-zinc-700">/</span>
-                  {otHours.toFixed(1)}<span className="text-zinc-400">h</span>
-                </span>
-              </div>
-              <div className="flex items-baseline justify-between gap-3 px-3.5 py-2.5">
-                <span className="text-[10px] font-medium uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-500">
-                  Hourly
-                </span>
-                <span className="text-sm tabular-nums text-zinc-700 dark:text-zinc-300">
-                  {regularRate != null ? formatPHP(regularRate) : '—'}
-                </span>
-              </div>
-              <div className="flex items-center justify-between gap-3 px-3.5 py-2.5">
-                <span className="text-[10px] font-medium uppercase tracking-[0.14em] text-indigo-600 dark:text-indigo-400">
-                  PAB
-                </span>
-                {pabMergeLoading ? (
-                  <span className="inline-flex items-center gap-0.5 text-[11px] font-medium text-zinc-400 dark:text-zinc-500">
-                    Loading
-                    <span className="inline-flex items-end gap-px leading-none">
-                      <span className="inline-block h-1 w-1 animate-bounce rounded-full bg-zinc-400 dark:bg-zinc-500" style={{ animationDelay: '0ms' }} />
-                      <span className="inline-block h-1 w-1 animate-bounce rounded-full bg-zinc-400 dark:bg-zinc-500" style={{ animationDelay: '150ms' }} />
-                      <span className="inline-block h-1 w-1 animate-bounce rounded-full bg-zinc-400 dark:bg-zinc-500" style={{ animationDelay: '300ms' }} />
-                    </span>
-                  </span>
-                ) : (
-                  <span
-                    className={`inline-flex items-center gap-1.5 text-[11px] font-medium ${
-                      perfectAttendanceBonusStatus === 'eligible'
-                        ? 'text-emerald-700 dark:text-emerald-400'
-                        : perfectAttendanceBonusStatus === 'pending'
-                          ? 'text-indigo-700 dark:text-indigo-300'
-                          : perfectAttendanceBonusStatus === 'not_eligible'
-                            ? 'text-amber-700 dark:text-amber-400'
-                            : 'text-zinc-500 dark:text-zinc-500'
-                    }`}
-                  >
-                    <span
-                      className={`inline-block h-1.5 w-1.5 rounded-full ${
-                        perfectAttendanceBonusStatus === 'eligible'
-                          ? 'bg-emerald-500'
-                          : perfectAttendanceBonusStatus === 'pending'
-                            ? 'bg-indigo-500 animate-pulse'
-                            : perfectAttendanceBonusStatus === 'not_eligible'
-                              ? 'bg-amber-500'
-                              : 'bg-zinc-400'
-                      }`}
-                    />
-                    {perfectAttendanceBonusStatus === 'eligible'
-                      ? 'Eligible'
-                      : perfectAttendanceBonusStatus === 'pending'
-                        ? 'In progress'
-                        : perfectAttendanceBonusStatus === 'not_eligible'
-                          ? (isPabPeriodInProgressByCalendar ? 'Still in Progress' : 'Not met')
-                          : 'Unknown'}
-                  </span>
-                )}
-              </div>
-              <div className="flex items-center justify-between gap-3 px-3.5 py-2.5">
-                <span className="text-[10px] font-medium uppercase tracking-[0.14em] text-sky-600 dark:text-sky-400">
-                  Tech
-                </span>
-                {loading || pabMergeLoading ? (
-                  <span className="inline-flex items-center gap-0.5 text-[11px] font-medium text-zinc-400 dark:text-zinc-500">
-                    Loading
-                    <span className="inline-flex items-end gap-px leading-none">
-                      <span className="inline-block h-1 w-1 animate-bounce rounded-full bg-zinc-400 dark:bg-zinc-500" style={{ animationDelay: '0ms' }} />
-                      <span className="inline-block h-1 w-1 animate-bounce rounded-full bg-zinc-400 dark:bg-zinc-500" style={{ animationDelay: '150ms' }} />
-                      <span className="inline-block h-1 w-1 animate-bounce rounded-full bg-zinc-400 dark:bg-zinc-500" style={{ animationDelay: '300ms' }} />
-                    </span>
-                  </span>
-                ) : (
-                  <span
-                    className={`inline-flex items-center gap-1.5 text-[11px] font-medium ${
-                      isTechnologyBonusActive
-                        ? 'text-sky-700 dark:text-sky-300'
-                        : techServiceStatus.state === 'pending'
-                          ? 'text-amber-700 dark:text-amber-400'
-                          : techBonusSalaryThisWeek
-                            ? 'text-sky-700 dark:text-sky-300'
-                            : isTechBonusNextWeek
-                              ? 'text-emerald-700 dark:text-emerald-400'
-                              : isTechBonusWeekPast
-                                ? 'text-emerald-600 dark:text-emerald-400'
-                                : 'text-zinc-500 dark:text-zinc-500'
-                    }`}
-                  >
-                    <span
-                      className={`inline-block h-1.5 w-1.5 rounded-full ${
-                        isTechnologyBonusActive
-                          ? 'bg-sky-500'
-                          : techServiceStatus.state === 'pending'
-                            ? 'bg-amber-500'
-                            : techBonusSalaryThisWeek
-                              ? 'bg-sky-500'
-                              : isTechBonusNextWeek
-                                ? 'bg-emerald-500'
-                                : isTechBonusWeekPast
-                                  ? 'bg-emerald-500'
-                                  : 'bg-zinc-400'
-                      }`}
-                    />
-                    {isTechnologyBonusActive
-                      ? 'Unlocked'
-                      : techServiceStatus.state === 'pending'
-                        ? `${techServiceStatus.daysRemaining}d to go`
-                        : techBonusSalaryThisWeek
-                          ? 'Paid this Week'
-                          : isTechBonusNextWeek
-                            ? 'Unlocked Next Week'
-                            : isTechBonusWeekPast
-                              ? 'Paid'
-                              : 'Locked'}
-                  </span>
-                )}
-              </div>
-              {isMesaParticipant && (
-                <div className="flex items-center justify-between gap-3 bg-teal-50/40 px-3.5 py-2 dark:bg-teal-950/20">
-                  <span className="text-[10px] font-medium uppercase tracking-[0.14em] text-teal-700/80 dark:text-teal-500/80">
-                    MESA
-                  </span>
-                  <span className="text-[11px] font-medium tabular-nums text-teal-800 dark:text-teal-300">
-                    −{formatPHP(mesaContributionPhp)}
-                  </span>
-                </div>
-              )}
-              {pabMonthRange && (
-                <div className="flex items-center justify-between gap-3 bg-amber-50/40 px-3.5 py-2 dark:bg-amber-950/20">
-                  <span className="text-[10px] font-medium uppercase tracking-[0.14em] text-amber-700/80 dark:text-amber-500/80">
-                    Period
-                  </span>
-                  <span className="text-[10px] tabular-nums text-amber-800/90 dark:text-amber-300/90">
-                    {pabMonthRange.start.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
-                    <span className="mx-1 text-amber-400">–</span>
-                    {pabMonthRange.end.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
-                  </span>
-                </div>
-              )}
-            </motion.aside>
           </motion.section>
 
           {/* MESA emergency disbursement — surfaced as its own payout so it never silently

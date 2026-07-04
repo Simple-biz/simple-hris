@@ -65,6 +65,25 @@ export function clearTabCache(key: string): void {
   }
 }
 
+// Tracks which datasets have actually been PULLED FROM THE SERVER during this
+// page-load session. Deliberately NOT persisted: a full reload starts empty, so
+// data is re-pulled fresh. A tab switch, by contrast, only remounts the tab —
+// the flag survives, so the (potentially heavy) refetch can be skipped and the
+// tab repaints instantly from the cache above. Freshness within a session is
+// then maintained by Realtime, post-mutation refetches, and manual Refresh
+// buttons, which all fetch unconditionally.
+const fetchedThisSession = new Set<string>();
+
+/** True once {@link markFetchedThisSession} has run for `key` this page session. */
+export function hasFetchedThisSession(key: string): boolean {
+  return fetchedThisSession.has(key);
+}
+
+/** Record that `key` was successfully pulled from the server this page session. */
+export function markFetchedThisSession(key: string): void {
+  fetchedThisSession.add(key);
+}
+
 // Stable cache keys, one per cached dataset. Centralized so callers can't
 // drift apart on spelling.
 export const TAB_CACHE_KEYS = {

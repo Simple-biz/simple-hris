@@ -57,6 +57,7 @@ import { useDispatchQueue } from './useDispatchQueue';
 import NotificationsPanel from '@/components/notifications/NotificationsPanel';
 import { useDispatchLock } from '@/hooks/useDispatchLock';
 import { useWizardDispatchLock } from '@/hooks/useWizardDispatchLock';
+import { usePaymentsLivePublisher } from '@/hooks/usePaymentsLive';
 
 type TabId = 'all' | 'usd' | 'cop' | 'urgent' | 'done' | 'reports' | 'excluded' | 'orphanage' | 'notifications' | ProcessorId;
 
@@ -261,6 +262,27 @@ export default function PayrollDispatch() {
   // logged with Threshold / Problem are excluded so the headline doesn't lie.
   const paidRows = useMemo(() => paid.filter((p) => p.status === 'paid'), [paid]);
   const totalSent = paidRows.length;
+
+  // ── Mirror the CEO "Payments to send" card in real time ─────────────────────
+  // Broadcast the SAME numbers this screen shows so the CEO dashboard stays in
+  // lockstep (see usePaymentsLive). Distinct recipients (a person can have more
+  // than one dispatch row) so "paid" counts people, matching the CEO framing.
+  // Universe = still-pending payable (all currencies) + already-paid; excluded
+  // (no-bank / no-pay / do-not-pay) people are intentionally left out, exactly
+  // as this screen sets them aside — that's what removes the old over-count.
+  const distinctPaidCount = useMemo(
+    () => new Set(paidRows.map((p) => p.recipient_email.trim().toLowerCase())).size,
+    [paidRows],
+  );
+  usePaymentsLivePublisher({
+    enabled:
+      !viewingPastWeek && wizardReady && hydrated && !loading && Boolean(period.sourceFile),
+    sourceFile: period.sourceFile,
+    label: period.sourceFile ? formatCycleLabelFromFile(period.sourceFile) : 'Current pay week',
+    total: pending.length + distinctPaidCount,
+    paid: distinctPaidCount,
+    remaining: pending.length,
+  });
   // Paid dispatches grouped by the processor they actually went through, so each
   // processor tab can show its own "Paid" sub-view alongside the global Done tab.
   const paidByProcessor = useMemo(() => {

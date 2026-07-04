@@ -40,6 +40,12 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import EmployeePabCalendar from './employee/EmployeePabCalendar';
 import { type AttentionTone, ATTENTION_PALETTE, HeroStatRow } from '@/components/accounting/hero-stat-row';
+import HubstaffMasterMatchesModal from '@/components/accounting/HubstaffMasterMatchesModal';
+import {
+  type HubstaffMasterRow,
+  sortHubstaffReconRows,
+  downloadHubstaffReconCsv,
+} from '@/lib/payroll/hubstaff-reconciliation';
 import { X } from 'lucide-react';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
@@ -406,6 +412,8 @@ interface SimpleViewProps {
   /** Export the Master ↔ Hubstaff reconciliation (who worked, who's on the
    *  master list with no hours, who's in Hubstaff but off the directory). */
   onExportHubstaffCsv: () => void;
+  /** Open the Hubstaff ↔ Master reconciliation drill-down modal (clicking the tile). */
+  onOpenHubstaffModal: () => void;
   /** Live status of the dashboard data feeds — drives the hero pill animation. */
   apiStatus: 'loading' | 'error' | 'live';
   /** Round-trip ms of the most recent API probe — revealed on pill hover. */
@@ -487,6 +495,7 @@ function SimpleView({
   setTechFilter,
   onExportCsv,
   onExportHubstaffCsv,
+  onOpenHubstaffModal,
   apiStatus,
   apiLatencyMs,
   onPingApi,
@@ -640,7 +649,7 @@ function SimpleView({
                 }}
                 onBlur={() => setPillHovered(false)}
                 className={cn(
-                  'group relative mb-3 inline-flex cursor-pointer items-center gap-1.5 overflow-visible rounded-full border px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.18em] backdrop-blur-md transition-[colors,box-shadow] duration-300',
+                  'group relative mb-4 inline-flex cursor-pointer items-center gap-2 overflow-visible rounded-full border px-4 py-1.5 text-[13px] font-semibold uppercase tracking-[0.18em] backdrop-blur-md transition-[colors,box-shadow] duration-300',
                   apiStatus === 'error'
                     ? 'border-rose-200/80 bg-stone-50/70 text-rose-700 hover:shadow-[0_0_0_3px_rgba(244,63,94,0.12)] dark:border-rose-900/40 dark:bg-rose-950/30 dark:text-rose-300'
                     : apiStatus === 'loading'
@@ -679,57 +688,11 @@ function SimpleView({
                   transition={{ duration: 0.9, ease: [0.22, 1, 0.36, 1] }}
                 />
 
-                <span className="relative inline-flex h-3 w-3 items-center justify-center">
-                  {/* Halo ring 1 — primary continuous ripple */}
-                  <motion.span
-                    aria-hidden
-                    className={cn(
-                      'absolute inset-[-4px] rounded-full',
-                      apiStatus === 'error'
-                        ? 'bg-rose-400/50 dark:bg-rose-500/45'
-                        : apiStatus === 'loading'
-                          ? 'bg-amber-400/55 dark:bg-amber-500/50'
-                          : 'bg-orange-400/55 dark:bg-orange-500/45',
-                    )}
-                    animate={
-                      apiStatus === 'loading'
-                        ? { opacity: [0, 0.75, 0], scale: [0.6, 1.7, 2.0] }
-                        : apiStatus === 'error'
-                          ? { opacity: [0, 0.4, 0], scale: [0.6, 1.4, 1.6] }
-                          : { opacity: [0, 0.65, 0], scale: [0.55, 1.7, 2.0] }
-                    }
-                    transition={{
-                      duration: apiStatus === 'loading' ? 1.1 : apiStatus === 'error' ? 1.6 : 2.2,
-                      repeat: Infinity,
-                      ease: 'easeOut',
-                    }}
-                  />
-                  {/* Halo ring 2 — offset second ripple for an ECG-radar feel (live + loading only) */}
-                  {apiStatus !== 'error' && (
-                    <motion.span
-                      aria-hidden
-                      className={cn(
-                        'absolute inset-[-4px] rounded-full',
-                        apiStatus === 'loading'
-                          ? 'bg-amber-300/40 dark:bg-amber-400/35'
-                          : 'bg-orange-300/40 dark:bg-orange-400/35',
-                      )}
-                      animate={{ opacity: [0, 0.45, 0], scale: [0.5, 1.9, 2.3] }}
-                      transition={{
-                        duration: apiStatus === 'loading' ? 1.1 : 2.2,
-                        repeat: Infinity,
-                        ease: 'easeOut',
-                        delay: apiStatus === 'loading' ? 0.55 : 1.1,
-                      }}
-                    />
-                  )}
-                  {/*
-                    ECG-style pulse trace — runs left → right along a reversed Activity path.
-                    A faint base trail shows the full waveform; a bright moving dash sweeps
-                    along it via animated strokeDashoffset, like a hospital heart monitor.
-                  */}
+                <span className="relative inline-flex h-4 w-4 items-center justify-center">
+                  {/* ECG heartbeat trace — a faint full waveform with a bright dash
+                      that sweeps LEFT → RIGHT (CSS `animate-ecg-sweep`, always runs). */}
                   <svg
-                    className="relative h-3 w-3"
+                    className="relative h-4 w-4"
                     viewBox="0 0 24 24"
                     fill="none"
                     aria-hidden
@@ -742,7 +705,12 @@ function SimpleView({
                       strokeLinecap="round"
                       strokeLinejoin="round"
                     />
-                    <motion.path
+                    <path
+                      className="animate-ecg-sweep"
+                      style={{
+                        animationDuration:
+                          apiStatus === 'loading' ? '0.85s' : apiStatus === 'error' ? '2.2s' : '1.5s',
+                      }}
                       d="M2 12h4l3 -9l6 18l3 -9h4"
                       stroke="currentColor"
                       strokeWidth={2.85}
@@ -750,13 +718,6 @@ function SimpleView({
                       strokeLinejoin="round"
                       pathLength={1}
                       strokeDasharray="0.26 0.74"
-                      initial={{ strokeDashoffset: 0 }}
-                      animate={{ strokeDashoffset: [0, -1] }}
-                      transition={{
-                        duration: apiStatus === 'loading' ? 0.85 : apiStatus === 'error' ? 2.2 : 1.5,
-                        repeat: Infinity,
-                        ease: 'linear',
-                      }}
                     />
                   </svg>
                 </span>
@@ -792,7 +753,7 @@ function SimpleView({
                   )}
                 </AnimatePresence>
               </motion.button>
-              <p className="mb-2 text-[13px] text-zinc-600 [@media(max-height:900px)]:mb-1 lg:mb-3 dark:text-zinc-400">
+              <p className="mb-4 text-2xl font-semibold tracking-tight text-zinc-700 [@media(max-height:900px)]:mb-2 sm:text-3xl lg:mb-5 dark:text-zinc-200">
                 {viewerFirstName ? (
                   <>
                     {greeting},{' '}
@@ -913,6 +874,7 @@ function SimpleView({
                 tone="ok"
                 label="Hubstaff ↔ Master matches"
                 value={emailsMatched}
+                onClick={onOpenHubstaffModal}
                 action={
                   <button
                     type="button"
@@ -972,8 +934,9 @@ function SimpleView({
                       </p>
                     )}
                     <p className="border-t border-zinc-100 pt-2 text-[11px] leading-snug text-zinc-500 dark:border-zinc-800 dark:text-zinc-400">
-                      Export the full list (↓ icon) — each no-hours person gets a
-                      likely reason (on leave, newly onboarded, etc.).
+                      Click to open the searchable breakdown — each no-hours person
+                      gets a likely reason (on leave, newly onboarded, etc.). Export
+                      the full list from there or the ↓ icon.
                     </p>
                   </div>
                 }
@@ -2419,6 +2382,28 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
   const [pabFilter, setPabFilter] = useState<'all' | 'eligible' | 'not-eligible'>('all');
   const [techFilter, setTechFilter] = useState<'all' | 'eligible' | 'not-eligible'>('all');
 
+  // ── Publish the hero "Total payout" so the CEO board mirrors it EXACTLY ───────
+  // The CEO System Overview would otherwise recompute a BASE figure (Σ initial
+  // pay) that drifts below this hero once PAB is added at period close (the
+  // 10M vs 8M gap). We publish the exact number shown here, per cycle, so the CEO
+  // reads Accounting's own total. Mirrors the displayTotalPayout math in
+  // AccountingHero: initial pay + (PAB once today is past the period end).
+  const heroTotalPhpForPublish = useMemo(() => {
+    if (totalPayout == null) return null;
+    let pabFinalized = false;
+    if (!pabMetrics.loading && pabMetrics.periodEnd) {
+      const t = new Date();
+      t.setHours(0, 0, 0, 0);
+      const e = new Date(pabMetrics.periodEnd);
+      e.setHours(0, 0, 0, 0);
+      pabFinalized = t.getTime() > e.getTime();
+    }
+    const pab = pabFinalized ? pabMetrics.eligible * sysBonusCfg.pab.amountPHP : 0;
+    return totalPayout + pab;
+  }, [totalPayout, pabMetrics.loading, pabMetrics.periodEnd, pabMetrics.eligible, sysBonusCfg.pab.amountPHP]);
+  // NOTE: the publish effect lives lower down (after emailsMatched / activePeriod
+  // are defined) so it can send the FULL hero snapshot the CEO board replicates.
+
   /**
    * Tech Bonus eligibility: employees who have completed 30 days of service
    * by the **selected period's end date** (or today, if no period is loaded).
@@ -3131,7 +3116,6 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
   }, [filteredEmployees, safePage]);
 
   const { inPayrollNotMaster, inMasterNotPayroll, emailsMatched } = useMemo(() => {
-    const masterSet = buildMasterEmailSet(employees);
     if (payrollEmailsNorm === null) {
       return {
         inPayrollNotMaster: null as number | null,
@@ -3139,15 +3123,24 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
         emailsMatched: null as number | null,
       };
     }
-    let inPayrollNotMasterCount = 0;
+    // Count PEOPLE, not emails — a master-list person owns both a work AND a
+    // personal email, so tallying the email set (buildMasterEmailSet) double-
+    // counts everyone and inflates "no hours" toward ~2× the real headcount.
+    // Iterate one row per person so these reconcile exactly with the modal rows.
+    const masterSet = buildMasterEmailSet(employees); // for the Hubstaff-side residual
     let matchedCount = 0;
-    for (const em of payrollEmailsNorm) {
-      if (masterSet.has(em)) matchedCount++;
-      else inPayrollNotMasterCount++;
-    }
     let inMasterNotPayrollCount = 0;
-    for (const em of masterSet) {
-      if (!payrollEmailsNorm.has(em)) inMasterNotPayrollCount++;
+    for (const e of employees) {
+      const p = normEmail(e.personal_email);
+      const w = normEmail(e.work_email ?? null);
+      const worked = (p != null && payrollEmailsNorm.has(p)) || (w != null && payrollEmailsNorm.has(w));
+      if (worked) matchedCount++;
+      else inMasterNotPayrollCount++;
+    }
+    // Hubstaff workers whose email matches no master row — a directory gap.
+    let inPayrollNotMasterCount = 0;
+    for (const em of payrollEmailsNorm) {
+      if (!masterSet.has(em)) inPayrollNotMasterCount++;
     }
     return {
       inPayrollNotMaster: inPayrollNotMasterCount,
@@ -3208,6 +3201,191 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
   ];
 
   const activePeriod = useMemo(() => parsePeriodFromFilename(activeSourceFile), [activeSourceFile]);
+
+  /** Master ↔ Hubstaff reconciliation rows behind the "Hubstaff ↔ Master matches"
+   *  tile. One row per person, tagged with a Status so the three groups the tile
+   *  counts are all covered:
+   *    - "On Master & worked"        → directory employee who logged hours
+   *    - "On Master, no hours"       → directory employee with NO Hubstaff hours
+   *    - "In Hubstaff, not on Master"→ logged hours but missing from the directory
+   *  Keys off the SAME email sets that feed the tile counts so totals reconcile.
+   *  Feeds the drill-down modal, the CSV export, AND the CEO-mirror snapshot. */
+  const hubstaffReconRows = useMemo<HubstaffMasterRow[]>(() => {
+    const worked = payrollEmailsNorm; // Set of normalized emails with hours this scope
+    const payFor = (w: string, p: string): { hours: number; pay: number | null } | undefined => {
+      if (w && employeePayByEmail[w]) return employeePayByEmail[w];
+      if (p && employeePayByEmail[p]) return employeePayByEmail[p];
+      return undefined;
+    };
+
+    // Index leaves by normalized email so we can explain a no-hours person as
+    // "on leave the whole period" rather than an unexplained gap.
+    type Leave = { email: string; start: string; end: string; type: string; status: string };
+    const leavesByEmail = new Map<string, Leave[]>();
+    for (const lv of leaveRows) {
+      const k = normEmail(lv.email) ?? lv.email;
+      const arr = leavesByEmail.get(k);
+      if (arr) arr.push(lv);
+      else leavesByEmail.set(k, [lv]);
+    }
+
+    const period = parsePeriodRange(activeSourceFile); // null for "All Time"
+    const todayISO = new Date().toISOString().slice(0, 10);
+    const prettyType = (t: string) => (t.trim() ? t.trim() : 'Leave');
+
+    /** Best-guess explanation for a master-list employee who logged no hours.
+     *  Priority: time off overlapping the period → onboarding timing → unknown. */
+    const reasonForNoHours = (e: EmployeeRow, w: string, p: string): string => {
+      // 1) Approved/pending leave overlapping the pay period (or active today
+      //    when viewing All Time). Approved wins over pending.
+      const mine: Leave[] = [];
+      for (const k of new Set([w, p].filter(Boolean))) {
+        const arr = leavesByEmail.get(k);
+        if (arr) mine.push(...arr);
+      }
+      if (mine.length) {
+        const inWindow = period
+          ? mine.filter((lv) => lv.start <= period.endISO && lv.end >= period.startISO)
+          : mine.filter((lv) => lv.start <= todayISO && lv.end >= todayISO);
+        const pick = inWindow.find((lv) => lv.status === 'approved') ?? inWindow[0];
+        if (pick) {
+          const note = pick.status === 'approved' ? '' : ` [${pick.status}]`;
+          if (period) {
+            const whole = pick.start <= period.startISO && pick.end >= period.endISO;
+            return `${whole ? 'On leave the entire period' : 'On leave part of the period'} — ${prettyType(pick.type)} ${pick.start}→${pick.end}${note}`;
+          }
+          return `Currently on leave — ${prettyType(pick.type)} ${pick.start}→${pick.end}${note}`;
+        }
+      }
+
+      // 2) Onboarding timing — a start date landing in/after the period means
+      //    they hadn't started (or only just started) logging hours. Parse via
+      //    Date since the "Start Date" column isn't guaranteed ISO.
+      const startMs = e.start_date ? new Date(e.start_date.trim()).getTime() : NaN;
+      if (Number.isFinite(startMs)) {
+        const startShown = new Date(startMs).toISOString().slice(0, 10);
+        if (period) {
+          const pStart = new Date(period.startISO).getTime();
+          const pEnd = new Date(period.endISO).getTime();
+          if (startMs > pEnd) return `Not started yet — hired ${startShown}, after this period`;
+          if (startMs >= pStart) return `Newly onboarded — started ${startShown}, mid-period`;
+        } else {
+          const now = Date.now();
+          if (startMs > now) return `Not started yet — hired ${startShown}`;
+          if (now - startMs <= 30 * 24 * 3600 * 1000) return `Recently onboarded — started ${startShown}`;
+        }
+      }
+
+      // 3) Nothing in the HRIS explains it — flag for manual review.
+      return period
+        ? 'No hours logged — reason unknown (check Hubstaff upload / time off)'
+        : 'No hours on record — reason unknown';
+    };
+
+    const out: HubstaffMasterRow[] = [];
+    const masterKeys = new Set<string>();
+
+    // Every master-list employee → worked vs. no-hours.
+    for (const e of employees) {
+      const w = normEmail(e.work_email ?? null) ?? '';
+      const p = normEmail(e.personal_email) ?? '';
+      if (w) masterKeys.add(w);
+      if (p) masterKeys.add(p);
+      const didWork = worked != null && ((w !== '' && worked.has(w)) || (p !== '' && worked.has(p)));
+      const pay = payFor(w, p);
+      out.push({
+        status: didWork ? 'On Master & worked' : 'On Master, no hours',
+        reason: didWork ? '' : reasonForNoHours(e, w, p),
+        name: e.name ?? '',
+        workEmail: e.work_email ?? '',
+        personalEmail: e.personal_email ?? '',
+        department: e.department ?? '',
+        hours: pay ? pay.hours.toFixed(2) : '',
+      });
+    }
+
+    // Hubstaff workers with no master-list match — a directory gap to reconcile.
+    if (worked != null) {
+      for (const em of worked) {
+        if (masterKeys.has(em)) continue;
+        const ident = payrollIdentityByEmail?.[em];
+        const pay = employeePayByEmail[em];
+        out.push({
+          status: 'In Hubstaff, not on Master',
+          reason: 'Worked but missing from the Master List — add to the directory',
+          name: ident?.name ?? '',
+          workEmail: em,
+          personalEmail: '',
+          department: ident?.department ?? '',
+          hours: pay ? pay.hours.toFixed(2) : '',
+        });
+      }
+    }
+
+    return sortHubstaffReconRows(out);
+  }, [payrollEmailsNorm, employeePayByEmail, leaveRows, activeSourceFile, employees, payrollIdentityByEmail]);
+
+  // ── Publish the FULL hero snapshot so the CEO board is an EXACT replica ───────
+  // The CEO System Overview reads this and renders Accounting's own numbers/tiles.
+  // Only for the LIVE cycle (selectedSourceFile === activeSourceFile) so the CEO,
+  // which reads the current cycle's snapshot, always gets matching values; a
+  // past-week view publishes nothing (CEO keeps the last live snapshot / falls back).
+  useEffect(() => {
+    const file = selectedSourceFile;
+    if (!file || file === '__all__' || file !== activeSourceFile) return;
+    if (payoutLoading || pabMetrics.loading || heroTotalPhpForPublish == null) return;
+    let pabFinalized = false;
+    if (pabMetrics.periodEnd) {
+      const t = new Date();
+      t.setHours(0, 0, 0, 0);
+      const e = new Date(pabMetrics.periodEnd);
+      e.setHours(0, 0, 0, 0);
+      pabFinalized = t.getTime() > e.getTime();
+    }
+    const totalPayoutPhp = heroTotalPhpForPublish;
+    const payload = {
+      sourceFile: file,
+      totalPayoutPhp,
+      totalPayoutUsd: totalPayoutPhp / PHP_USD_FX,
+      activeWorkers: payrollWorkerCount ?? null,
+      masterTotal: employees.length,
+      bonusesKeyedIn,
+      emailsMatched,
+      masterOnlyCount: inMasterNotPayroll,
+      hubstaffOnlyCount: inPayrollNotMaster,
+      pabFinalized,
+      periodLabel: activePeriod?.label ?? null,
+      periodWeek: activePeriod?.week ?? null,
+      // The full reconciliation breakdown so the CEO drill-down modal is an
+      // exact replica (same rows + reasons) instead of a server recompute.
+      reconRows: hubstaffReconRows,
+    };
+    const id = setTimeout(() => {
+      void fetch('/api/accounting/overview-snapshot', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      }).catch(() => {
+        /* best-effort — the CEO board falls back to its own computation */
+      });
+    }, 600);
+    return () => clearTimeout(id);
+  }, [
+    selectedSourceFile,
+    activeSourceFile,
+    heroTotalPhpForPublish,
+    payoutLoading,
+    pabMetrics.loading,
+    pabMetrics.periodEnd,
+    payrollWorkerCount,
+    employees.length,
+    bonusesKeyedIn,
+    emailsMatched,
+    inMasterNotPayroll,
+    inPayrollNotMaster,
+    activePeriod,
+    hubstaffReconRows,
+  ]);
 
   /** Expanded view: average pay and hours per active worker. */
   const { avgPay, avgHours } = useMemo(() => {
@@ -3307,163 +3485,20 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
     URL.revokeObjectURL(url);
   };
 
-  /** Export the Master ↔ Hubstaff reconciliation behind the "Hubstaff ↔ Master
-   *  matches" card. One row per person, tagged with a Status so the three groups
-   *  the card counts are all covered:
-   *    - "On Master & worked"        → directory employee who logged hours
-   *    - "On Master, no hours"       → directory employee with NO Hubstaff hours
-   *    - "In Hubstaff, not on Master"→ logged hours but missing from the directory
-   *  Keys off the SAME email sets that feed the card counts so totals reconcile. */
+  /** Download the reconciliation as CSV — the ↓ shortcut on the tile and the
+   *  Export button inside the drill-down modal both route here. */
   const exportHubstaffReconciliationCsv = () => {
-    const worked = payrollEmailsNorm; // Set of normalized emails with hours this scope
-    const payFor = (w: string, p: string): { hours: number; pay: number | null } | undefined => {
-      if (w && employeePayByEmail[w]) return employeePayByEmail[w];
-      if (p && employeePayByEmail[p]) return employeePayByEmail[p];
-      return undefined;
-    };
-
-    // Index leaves by normalized email so we can explain a no-hours person as
-    // "on leave the whole period" rather than an unexplained gap.
-    type Leave = { email: string; start: string; end: string; type: string; status: string };
-    const leavesByEmail = new Map<string, Leave[]>();
-    for (const lv of leaveRows) {
-      const k = normEmail(lv.email) ?? lv.email;
-      const arr = leavesByEmail.get(k);
-      if (arr) arr.push(lv);
-      else leavesByEmail.set(k, [lv]);
-    }
-
-    const period = parsePeriodRange(activeSourceFile); // null for "All Time"
-    const todayISO = new Date().toISOString().slice(0, 10);
-    const prettyType = (t: string) => (t.trim() ? t.trim() : 'Leave');
-
-    /** Best-guess explanation for a master-list employee who logged no hours.
-     *  Priority: time off overlapping the period → onboarding timing → unknown. */
-    const reasonForNoHours = (e: EmployeeRow, w: string, p: string): string => {
-      // 1) Approved/pending leave overlapping the pay period (or active today
-      //    when viewing All Time). Approved wins over pending.
-      const mine: Leave[] = [];
-      for (const k of new Set([w, p].filter(Boolean))) {
-        const arr = leavesByEmail.get(k);
-        if (arr) mine.push(...arr);
-      }
-      if (mine.length) {
-        const inWindow = period
-          ? mine.filter((lv) => lv.start <= period.endISO && lv.end >= period.startISO)
-          : mine.filter((lv) => lv.start <= todayISO && lv.end >= todayISO);
-        const pick = inWindow.find((lv) => lv.status === 'approved') ?? inWindow[0];
-        if (pick) {
-          const note = pick.status === 'approved' ? '' : ` [${pick.status}]`;
-          if (period) {
-            const whole = pick.start <= period.startISO && pick.end >= period.endISO;
-            return `${whole ? 'On leave the entire period' : 'On leave part of the period'} — ${prettyType(pick.type)} ${pick.start}→${pick.end}${note}`;
-          }
-          return `Currently on leave — ${prettyType(pick.type)} ${pick.start}→${pick.end}${note}`;
-        }
-      }
-
-      // 2) Onboarding timing — a start date landing in/after the period means
-      //    they hadn't started (or only just started) logging hours. Parse via
-      //    Date since the "Start Date" column isn't guaranteed ISO.
-      const startMs = e.start_date ? new Date(e.start_date.trim()).getTime() : NaN;
-      if (Number.isFinite(startMs)) {
-        const startShown = new Date(startMs).toISOString().slice(0, 10);
-        if (period) {
-          const pStart = new Date(period.startISO).getTime();
-          const pEnd = new Date(period.endISO).getTime();
-          if (startMs > pEnd) return `Not started yet — hired ${startShown}, after this period`;
-          if (startMs >= pStart) return `Newly onboarded — started ${startShown}, mid-period`;
-        } else {
-          const now = Date.now();
-          if (startMs > now) return `Not started yet — hired ${startShown}`;
-          if (now - startMs <= 30 * 24 * 3600 * 1000) return `Recently onboarded — started ${startShown}`;
-        }
-      }
-
-      // 3) Nothing in the HRIS explains it — flag for manual review.
-      return period
-        ? 'No hours logged — reason unknown (check Hubstaff upload / time off)'
-        : 'No hours on record — reason unknown';
-    };
-
-    type OutRow = {
-      status: string;
-      reason: string;
-      name: string;
-      workEmail: string;
-      personalEmail: string;
-      department: string;
-      hours: string;
-    };
-    const out: OutRow[] = [];
-    const masterKeys = new Set<string>();
-
-    // Every master-list employee → worked vs. no-hours.
-    for (const e of employees) {
-      const w = normEmail(e.work_email ?? null) ?? '';
-      const p = normEmail(e.personal_email) ?? '';
-      if (w) masterKeys.add(w);
-      if (p) masterKeys.add(p);
-      const didWork = worked != null && ((w !== '' && worked.has(w)) || (p !== '' && worked.has(p)));
-      const pay = payFor(w, p);
-      out.push({
-        status: didWork ? 'On Master & worked' : 'On Master, no hours',
-        reason: didWork ? '' : reasonForNoHours(e, w, p),
-        name: e.name ?? '',
-        workEmail: e.work_email ?? '',
-        personalEmail: e.personal_email ?? '',
-        department: e.department ?? '',
-        hours: pay ? pay.hours.toFixed(2) : '',
-      });
-    }
-
-    // Hubstaff workers with no master-list match — a directory gap to reconcile.
-    if (worked != null) {
-      for (const em of worked) {
-        if (masterKeys.has(em)) continue;
-        const ident = payrollIdentityByEmail?.[em];
-        const pay = employeePayByEmail[em];
-        out.push({
-          status: 'In Hubstaff, not on Master',
-          reason: 'Worked but missing from the Master List — add to the directory',
-          name: ident?.name ?? '',
-          workEmail: em,
-          personalEmail: '',
-          department: ident?.department ?? '',
-          hours: pay ? pay.hours.toFixed(2) : '',
-        });
-      }
-    }
-
-    // Group by status, then alphabetically, so the actionable rows cluster.
-    const order: Record<string, number> = {
-      'On Master & worked': 0,
-      'On Master, no hours': 1,
-      'In Hubstaff, not on Master': 2,
-    };
-    out.sort((a, b) => {
-      const so = (order[a.status] ?? 9) - (order[b.status] ?? 9);
-      if (so !== 0) return so;
-      return (a.name || a.workEmail).localeCompare(b.name || b.workEmail, undefined, { sensitivity: 'base' });
-    });
-
-    const headers = ['Status', 'Reason', 'Name', 'Work Email', 'Personal Email', 'Department', 'Hours'];
-    const rows = out.map((r) =>
-      [r.status, r.reason, r.name, r.workEmail, r.personalEmail, r.department, r.hours]
-        .map((v) => `"${String(v).replace(/"/g, '""')}"`)
-        .join(','),
-    );
-    const csv = [headers.map((h) => `"${h}"`).join(','), ...rows].join('\n');
-    const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
     const dateStr = new Date().toISOString().slice(0, 10);
     const scope = activeSourceFile ? '_this-cycle' : '_all-time';
-    a.download = `hubstaff-master-reconciliation${scope}_${dateStr}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
+    downloadHubstaffReconCsv(
+      hubstaffReconRows,
+      `hubstaff-master-reconciliation${scope}_${dateStr}.csv`,
+    );
   };
+
+  /** Whether the Hubstaff ↔ Master reconciliation drill-down modal is open
+   *  (opened by clicking the tile in the System Overview rail). */
+  const [reconcileOpen, setReconcileOpen] = useState(false);
 
   return (
     <div className={cn(
@@ -3594,6 +3629,7 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
               setTechFilter={setTechFilter}
               onExportCsv={exportToCsv}
               onExportHubstaffCsv={exportHubstaffReconciliationCsv}
+              onOpenHubstaffModal={() => setReconcileOpen(true)}
               apiStatus={
                 employeesError
                   ? 'error'
@@ -4344,6 +4380,21 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* Hubstaff ↔ Master reconciliation — searchable drill-down opened by the
+          System Overview tile (mirrors the CSV export, plus live search). */}
+      <HubstaffMasterMatchesModal
+        open={reconcileOpen}
+        onOpenChange={setReconcileOpen}
+        rows={hubstaffReconRows}
+        counts={{
+          matched: emailsMatched,
+          masterOnly: inMasterNotPayroll,
+          hubstaffOnly: inPayrollNotMaster,
+        }}
+        periodLabel={activePeriod?.label ?? null}
+        csvFilename={`hubstaff-master-reconciliation${activeSourceFile ? '_this-cycle' : '_all-time'}_${new Date().toISOString().slice(0, 10)}.csv`}
+      />
 
       {/* PAB calendar modal — opens when an Eligible/Not-eligible pill is clicked in the worker table */}
       <AnimatePresence>

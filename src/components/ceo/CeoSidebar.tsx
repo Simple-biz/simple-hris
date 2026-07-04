@@ -4,7 +4,7 @@ import React from 'react';
 import { useTheme } from 'next-themes';
 import { signOut } from 'next-auth/react';
 import { withViewTransition } from '@/lib/theme/with-view-transition';
-import { Bell, Crown, LayoutDashboard, LogOut, Megaphone, Moon, MoreHorizontal, Newspaper, Sun, Users } from 'lucide-react';
+import { Bell, Crown, LayoutDashboard, LineChart, LogOut, Megaphone, Moon, MoreHorizontal, Newspaper, Sun, Users } from 'lucide-react';
 import ConstructionMark from '@/components/common/ConstructionMark';
 import CollapsibleSidebarShell from '@/components/common/CollapsibleSidebarShell';
 import SidebarLogoHeader from '@/components/common/SidebarLogoHeader';
@@ -20,7 +20,7 @@ import { useViewerProfilePhoto } from '@/hooks/useViewerProfilePhoto';
 import { useDispatchLock } from '@/hooks/useDispatchLock';
 import { useSidebarCollapsed } from '@/hooks/useSidebarCollapsed';
 
-export type CeoTab = 'overview' | 'biz-ai' | 'people' | 'announcements' | 's-wall' | 'notifications';
+export type CeoTab = 'overview' | 'financial-reports' | 'biz-ai' | 'people' | 'announcements' | 's-wall' | 'notifications';
 
 interface CeoSidebarProps {
   activeTab: CeoTab;
@@ -120,6 +120,7 @@ export default function CeoSidebar({
           </p>
           <nav className="flex flex-col gap-px">
             {can('overview') && navBtn('overview', 'Overview', LayoutDashboard)}
+            {can('financial-reports') && navBtn('financial-reports', 'Financial Reports', LineChart)}
             {can('biz-ai') && <button
               key="biz-ai"
               type="button"

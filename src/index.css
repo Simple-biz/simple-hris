@@ -709,3 +709,19 @@
   }
 }
 
+/* ECG heartbeat sweep for the "Dashboard · live" pill — the bright dash runs
+   left → right along the waveform, like a hospital heart monitor. Pure CSS (not
+   motion/react) so it always animates regardless of animation context. Pairs
+   with pathLength={1} + strokeDasharray="0.26 0.74" on the <path>. */
+@keyframes ecg-sweep {
+  from {
+    stroke-dashoffset: 0;
+  }
+  to {
+    stroke-dashoffset: -1;
+  }
+}
+.animate-ecg-sweep {
+  animation: ecg-sweep 1.5s linear infinite;
+}
+
