@@ -9,6 +9,7 @@ import { departmentMatchesManagedAssignments } from '@/lib/managed-department-sc
 import { requireFeatureEdit } from '@/lib/auth/authorize-feature';
 import { deniedResponse } from '@/lib/auth/authorize-email';
 import { isValidOffboardReason } from '@/lib/hr/offboard-reasons';
+import { fireOffboardWebhook, MANAGER_OFFBOARD_NOTIFY_SLUG } from '@/lib/hr/offboard-webhooks';
 import {
   insertOffboardingQueueEntries,
   listAllOffboardingQueue,
@@ -212,6 +213,17 @@ export async function POST(request: Request) {
         );
       }
     }
+
+    // Best-effort n8n notification: email alissar@simple.biz the COUNT only (no
+    // names) that a manager wants to offboard someone. Fires on the actual insert
+    // count for this submission. Never blocks the response.
+    void fireOffboardWebhook(MANAGER_OFFBOARD_NOTIFY_SLUG, {
+      event: 'manager.offboarding.requested',
+      count: rows.length,
+      manager: session?.user?.name?.trim() || sessionEmail,
+      manager_email: sessionEmail,
+      requested_at: new Date().toISOString(),
+    });
 
     void insertAuditLog({
       user_name: sessionEmail,
