@@ -466,7 +466,15 @@
       "PowerShell(npx tsc --noEmit 2>&1)",
       "Bash(find src *)",
       "Bash(node \"C:/Users/Itachi/AppData/Local/Temp/claude/c--Users-Itachi-Desktop-simple-hris/c73a86d5-558e-4caf-b144-4b7158dd5565/scratchpad/check-onboarding.mjs\")",
-      "Bash(node \"c:/Users/Itachi/Desktop/simple-hris/_tmp_check_onboarding.mjs\")"
+      "Bash(node \"c:/Users/Itachi/Desktop/simple-hris/_tmp_check_onboarding.mjs\")",
+      "Bash(node \"c:/Users/Itachi/Desktop/simple-hris/_tmp_check_lock.mjs\")",
+      "Bash(node \"c:/Users/Itachi/Desktop/simple-hris/_tmp_coverage.mjs\")",
+      "Bash(node \"c:/Users/Itachi/Desktop/simple-hris/_tmp_apply_enrich.mjs\")",
+      "Bash(curl -sS -m 20 -o /dev/null -w 'HTTP %{http_code}  connect=%{time_connect}s  total=%{time_total}s\\\\n' https://ookpxwxxujdtppqizlrp.supabase.co/rest/v1/)",
+      "Bash(curl -sS -m 20 -o /dev/null -w 'HTTP %{http_code}  total=%{time_total}s\\\\n' __TRACKED_VAR__/auth/v1/health)",
+      "Bash(curl -sS -m 20 __TRACKED_VAR__/auth/v1/health)",
+      "WebFetch(domain:status.supabase.com)",
+      "Bash(node --import tsx --test src/lib/supabase/server.test.ts)"
     ],
     "additionalDirectories": [
       "\\tmp",
