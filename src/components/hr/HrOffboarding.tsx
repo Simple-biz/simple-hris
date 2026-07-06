@@ -17,6 +17,7 @@ import {
   Trash2,
   Undo2,
   UserMinus,
+  UserX,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -100,7 +101,7 @@ function PaginationBar({
   );
 }
 
-type OffboardTab = 'queue' | 'offboarded';
+type OffboardTab = 'queue' | 'hris' | 'offboarded';
 
 export default function HrOffboarding() {
   const [activeTab, setActiveTab] = useState<OffboardTab>('queue');
@@ -124,6 +125,9 @@ export default function HrOffboarding() {
   const [queueLoading, setQueueLoading] = useState(() => !hasHrTabCache(HR_TAB_CACHE_KEYS.offboardQueue));
   const [queueSearch, setQueueSearch] = useState('');
   const [queuePage, setQueuePage] = useState(0);
+  // ── "Offboarded by HRIS": completed queue rows, split out of the Queue tab ──
+  const [hrisSearch, setHrisSearch] = useState('');
+  const [hrisPage, setHrisPage] = useState(0);
   // Rows fed to the 1-by-1 processor (bulk = all pending, or a single row).
   const [processTargets, setProcessTargets] = useState<OffboardingQueueRow[] | null>(null);
   // The queue row being returned to its manager (quick per-row action).
@@ -265,10 +269,13 @@ export default function HrOffboarding() {
     () => queue.filter((r) => r.status === 'pending' || r.status === 'processing'),
     [queue],
   );
+  // Completed rows are offboarded people — they live in the "Offboarded by HRIS"
+  // tab, not the Queue, so the Queue stays cleared to open work + recent decisions.
   const filteredQueue = useMemo(() => {
     setQueuePage(0);
     const q = queueSearch.trim().toLowerCase();
     return queue.filter((r) => {
+      if (r.status === 'completed') return false;
       if (!q) return true;
       return [r.employee_name, r.employee_work_email, r.employee_email, r.department, r.requested_by, r.reason]
         .filter(Boolean)
@@ -279,6 +286,27 @@ export default function HrOffboarding() {
   const safeQueuePage = Math.min(queuePage, queueTotalPages - 1);
   const queuePageRows = filteredQueue.slice(safeQueuePage * QUEUE_PAGE_SIZE, (safeQueuePage + 1) * QUEUE_PAGE_SIZE);
   const pendingCount = pendingQueue.length;
+  // Non-completed rows still shown in the Queue (drives the sub-label + empty copy).
+  const queueOpenTotal = useMemo(() => queue.filter((r) => r.status !== 'completed').length, [queue]);
+
+  // People offboarded through the HRIS queue processor (status === 'completed').
+  const hrisOffboarded = useMemo(
+    () => queue.filter((r) => r.status === 'completed'),
+    [queue],
+  );
+  const filteredHris = useMemo(() => {
+    setHrisPage(0);
+    const q = hrisSearch.trim().toLowerCase();
+    return hrisOffboarded.filter((r) => {
+      if (!q) return true;
+      return [r.employee_name, r.employee_work_email, r.employee_personal_email, r.employee_email, r.department, r.processed_by, r.offboard_reason ?? r.reason]
+        .filter(Boolean)
+        .some((s) => s!.toLowerCase().includes(q));
+    });
+  }, [hrisOffboarded, hrisSearch]);
+  const hrisTotalPages = Math.max(1, Math.ceil(filteredHris.length / PAGE_SIZE));
+  const safeHrisPage = Math.min(hrisPage, hrisTotalPages - 1);
+  const hrisPageRows = filteredHris.slice(safeHrisPage * PAGE_SIZE, (safeHrisPage + 1) * PAGE_SIZE);
 
   // Dedupe by Personal Email so the tab badge / subline reflect unique people,
   // not raw rows. global_master_list keys on (personal_email, department), so
@@ -357,6 +385,29 @@ export default function HrOffboarding() {
               </button>
               <button
                 type="button"
+                onClick={() => setActiveTab('hris')}
+                className={cn(
+                  'relative flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors',
+                  activeTab === 'hris' ? 'text-white' : 'text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100',
+                )}
+              >
+                {activeTab === 'hris' && (
+                  <motion.span
+                    layoutId="offboardTabPill"
+                    className="absolute inset-0 rounded-md bg-gradient-to-r from-rose-500 to-rose-700 shadow-sm"
+                    transition={{ type: 'spring', stiffness: 400, damping: 32 }}
+                  />
+                )}
+                <span className="relative flex items-center gap-1.5">
+                  <UserX className="h-3.5 w-3.5" />
+                  Offboarded by HRIS
+                  <span className={cn('rounded-full px-1.5 py-0.5 text-[10px] tabular-nums', activeTab === 'hris' ? 'bg-white/20' : 'bg-zinc-200/80 text-zinc-600 dark:bg-zinc-700 dark:text-zinc-300')}>
+                    {hrisOffboarded.length}
+                  </span>
+                </span>
+              </button>
+              <button
+                type="button"
                 onClick={() => setActiveTab('offboarded')}
                 className={cn(
                   'relative flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors',
@@ -411,6 +462,16 @@ export default function HrOffboarding() {
                       <RefreshCw className={cn('h-3.5 w-3.5', queueLoading && 'animate-spin')} />
                     </Button>
                   </>
+                ) : activeTab === 'hris' ? (
+                  <>
+                    <div className="relative w-full sm:w-64">
+                      <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" />
+                      <Input value={hrisSearch} onChange={(e) => setHrisSearch(e.target.value)} placeholder="Search name, email…" className="border-emerald-100/70 bg-white pl-9 dark:border-emerald-900/50 dark:bg-zinc-900" />
+                    </div>
+                    <Button variant="outline" size="sm" onClick={() => void fetchQueue()} disabled={queueLoading} className="shrink-0">
+                      <RefreshCw className={cn('h-3.5 w-3.5', queueLoading && 'animate-spin')} />
+                    </Button>
+                  </>
                 ) : (
                   <>
                     <div className="relative w-full sm:w-56">
@@ -430,7 +491,9 @@ export default function HrOffboarding() {
           {/* Sub-label */}
           <p className="text-xs text-muted-foreground">
             {activeTab === 'queue'
-              ? queueLoading ? 'Loading queue…' : `${pendingCount} pending · ${queue.length} total request${queue.length === 1 ? '' : 's'} from managers`
+              ? queueLoading ? 'Loading queue…' : `${pendingCount} pending · ${queueOpenTotal} open request${queueOpenTotal === 1 ? '' : 's'} from managers`
+              : activeTab === 'hris'
+              ? queueLoading ? 'Loading…' : `${filteredHris.length} of ${hrisOffboarded.length} offboarded through HRIS`
               : historyLoading ? 'Loading…' : `${historyUniqueFiltered} of ${historyUniqueTotal} off-boarded`}
           </p>
         </CardHeader>
@@ -454,7 +517,7 @@ export default function HrOffboarding() {
               <div className="flex flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-rose-200/80 bg-white/70 py-10 text-center dark:border-rose-900/50 dark:bg-zinc-950/40">
                 <Inbox className="h-8 w-8 text-rose-300 dark:text-rose-700" />
                 <p className="text-sm text-zinc-600 dark:text-zinc-400">
-                  {queue.length === 0 ? 'No offboarding requests from managers yet.' : 'No rows match your search.'}
+                  {queueOpenTotal === 0 ? 'The queue is clear — no open requests.' : 'No rows match your search.'}
                 </p>
                 <p className="max-w-md text-xs text-zinc-400">
                   Managers send people here from <span className="font-medium">My Team → List view</span>. You process them one at a time.
@@ -462,10 +525,11 @@ export default function HrOffboarding() {
               </div>
             ) : (
               <div className="overflow-x-auto rounded-xl border border-rose-100/90 ring-1 ring-rose-500/10 dark:border-rose-900/60 dark:ring-rose-400/10">
-                <table className="w-full text-left text-sm sm:min-w-[820px]">
+                <table className="w-full text-left text-sm sm:min-w-[940px]">
                   <thead className="sticky top-0 z-[1] bg-gradient-to-r from-rose-50 via-white to-rose-50/80 text-xs text-zinc-600 dark:from-rose-950/40 dark:via-zinc-950 dark:to-rose-950/30 dark:text-zinc-400">
                     <tr>
                       <th className="px-4 py-3 font-semibold">Employee</th>
+                      <th className="px-4 py-3 font-semibold">Personal email</th>
                       <th className="px-4 py-3 font-semibold">Department</th>
                       <th className="px-4 py-3 font-semibold">Reason</th>
                       <th className="px-4 py-3 font-semibold">Requested by</th>
@@ -493,6 +557,7 @@ export default function HrOffboarding() {
                             <div className="font-medium text-zinc-900 dark:text-zinc-100">{r.employee_name ?? '—'}</div>
                             <div className="break-all font-mono text-[11px] text-zinc-500">{r.employee_work_email ?? r.employee_email}</div>
                           </td>
+                          <td data-label="Personal email" className="break-all px-4 py-4 font-mono text-[11px] text-zinc-500">{r.employee_personal_email ?? '—'}</td>
                           <td data-label="Department" className="px-4 py-4 text-xs text-zinc-700 dark:text-zinc-300">{r.department ?? '—'}</td>
                           <td data-label="Reason" className="px-4 py-4">
                             <span className="inline-flex items-center rounded-full bg-rose-100 px-2 py-0.5 text-[11px] font-medium text-rose-700 dark:bg-rose-900/30 dark:text-rose-300">
@@ -546,7 +611,79 @@ export default function HrOffboarding() {
                     })}
                   </tbody>
                 </table>
-                <PaginationBar page={safeQueuePage} totalPages={queueTotalPages} setPage={setQueuePage} total={queue.length} filtered={filteredQueue.length} pageSize={QUEUE_PAGE_SIZE} />
+                <PaginationBar page={safeQueuePage} totalPages={queueTotalPages} setPage={setQueuePage} total={queueOpenTotal} filtered={filteredQueue.length} pageSize={QUEUE_PAGE_SIZE} />
+              </div>
+            )
+          ) : activeTab === 'hris' ? (
+            /* ── Offboarded by HRIS (completed queue rows) ── */
+            queueLoading ? (
+              <div className="flex items-center justify-center py-10 text-zinc-500">
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Loading…
+              </div>
+            ) : filteredHris.length === 0 ? (
+              <div className="flex flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-rose-200/80 bg-white/70 py-10 text-center dark:border-rose-900/50 dark:bg-zinc-950/40">
+                <UserX className="h-8 w-8 text-rose-300 dark:text-rose-700" />
+                <p className="text-sm text-zinc-600 dark:text-zinc-400">
+                  {hrisOffboarded.length === 0 ? 'No one has been offboarded through the queue yet.' : 'No rows match your search.'}
+                </p>
+                <p className="max-w-md text-xs text-zinc-400">
+                  People you <span className="font-medium">Process</span> from the Queue land here once offboarded.
+                </p>
+              </div>
+            ) : (
+              <div className="overflow-x-auto rounded-xl border border-rose-100/90 ring-1 ring-rose-500/10 dark:border-rose-900/60 dark:ring-rose-400/10">
+                <table className="w-full text-left text-sm sm:min-w-[900px]">
+                  <thead className="sticky top-0 z-[1] bg-gradient-to-r from-rose-50 via-white to-rose-50/80 text-xs text-zinc-600 dark:from-rose-950/40 dark:via-zinc-950 dark:to-rose-950/30 dark:text-zinc-400">
+                    <tr>
+                      <th className="px-4 py-3 font-semibold">Employee</th>
+                      <th className="px-4 py-3 font-semibold">Personal email</th>
+                      <th className="px-4 py-3 font-semibold">Department</th>
+                      <th className="px-4 py-3 font-semibold">Reason</th>
+                      <th className="px-4 py-3 font-semibold">Offboarded</th>
+                      <th className="px-4 py-3 font-semibold">By</th>
+                      <th className="px-4 py-3 font-semibold text-right">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-rose-100/70 bg-white/85 dark:divide-rose-900/35 dark:bg-zinc-950/40">
+                    {hrisPageRows.map((r) => {
+                      const reasonKey = r.offboard_reason ?? r.reason;
+                      return (
+                        <tr key={r.id} className="align-middle hover:bg-rose-50/30 dark:hover:bg-rose-950/20">
+                          <td data-label="Employee" className="px-4 py-4">
+                            <div className="font-medium text-zinc-900 dark:text-zinc-100">{r.employee_name ?? '—'}</div>
+                            <div className="break-all font-mono text-[11px] text-zinc-500">{r.employee_work_email ?? r.employee_email}</div>
+                          </td>
+                          <td data-label="Personal email" className="break-all px-4 py-4 font-mono text-[11px] text-zinc-500">{r.employee_personal_email ?? '—'}</td>
+                          <td data-label="Department" className="px-4 py-4 text-xs text-zinc-700 dark:text-zinc-300">{r.department ?? '—'}</td>
+                          <td data-label="Reason" className="px-4 py-4">
+                            {reasonKey ? (
+                              <span className="inline-flex items-center rounded-full bg-rose-100 px-2 py-0.5 text-[11px] font-medium text-rose-700 dark:bg-rose-900/30 dark:text-rose-300">
+                                {REASON_LABELS[reasonKey] ?? reasonKey}
+                              </span>
+                            ) : '—'}
+                            {r.processed_note && (
+                              <p className="mt-0.5 max-w-[200px] truncate text-[11px] text-zinc-500" title={r.processed_note}>{r.processed_note}</p>
+                            )}
+                          </td>
+                          <td data-label="Offboarded" className="px-4 py-4 text-xs text-zinc-600 dark:text-zinc-400">
+                            {r.decided_at ? new Date(r.decided_at).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }) : '—'}
+                          </td>
+                          <td data-label="By" className="px-4 py-4 font-mono text-xs text-zinc-500 dark:text-zinc-500">{r.processed_by ?? '—'}</td>
+                          <td data-label="Action" className="px-4 py-4">
+                            <div className="flex items-center justify-end gap-1.5">
+                              <Button size="sm" variant="outline" onClick={() => setDeleteTarget(r)}
+                                title="Permanently remove this record from the queue"
+                                className="h-7 gap-1 border-rose-300 text-rose-700 hover:bg-rose-50 hover:text-rose-800 dark:border-rose-700/50 dark:text-rose-300 dark:hover:bg-rose-950/30">
+                                <Trash2 className="h-3 w-3" /> Delete
+                              </Button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+                <PaginationBar page={safeHrisPage} totalPages={hrisTotalPages} setPage={setHrisPage} total={hrisOffboarded.length} filtered={filteredHris.length} />
               </div>
             )
           ) : (

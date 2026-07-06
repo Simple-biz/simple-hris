@@ -2473,7 +2473,7 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
         onStateChange={setGiftState}
       />
 
-      <div className="flex min-w-0 flex-col gap-2 overflow-x-hidden pb-4 lg:gap-3">
+      <div className="flex min-w-0 flex-col gap-2 overflow-x-clip pb-4 lg:gap-3">
       {dataError && (
         <Card className="shrink-0 border-red-200 bg-red-50/50 dark:border-red-500/20 dark:bg-red-950/20">
           <CardContent className="flex items-center gap-3 py-3">
