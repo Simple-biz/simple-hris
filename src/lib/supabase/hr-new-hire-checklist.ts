@@ -120,6 +120,28 @@ export async function listHrNewHireChecklist(periodStart: string): Promise<{
 }
 
 /**
+ * Every checklist row across ALL weeks, newest week first then grid order.
+ * Powers the multi-sheet workbook export (one sheet per week). Ordering matches
+ * `listHrNewHireChecklist` within a week so a sheet reads identically to the tab.
+ */
+export async function listAllHrNewHireChecklist(): Promise<{
+  rows: HrNewHireChecklistRow[];
+  error: string | null;
+}> {
+  const sb = client();
+  const { data, error } = await sb
+    .from(TABLE)
+    .select("*")
+    .not("period_start", "is", null)
+    .order("period_start", { ascending: false })
+    .order("position", { ascending: true })
+    .order("created_at", { ascending: true })
+    .range(0, 9999);
+  if (error) return { rows: [], error: error.message };
+  return { rows: (data ?? []) as HrNewHireChecklistRow[], error: null };
+}
+
+/**
  * Full grid sync for ONE week ("Save" / "Lock in" saves straight to Supabase):
  * the payload is the complete desired grid for `periodStart` in row order.
  * Existing rows of that week (with a known `id`) are updated in place —

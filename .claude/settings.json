@@ -481,7 +481,15 @@
       "Bash(node -e \"const p=require\\('./package.json'\\); console.log\\(Object.keys\\(p.scripts||{}\\).join\\('\\\\n'\\)\\)\")",
       "Bash(node -e \"const fs=require\\('fs'\\);const b=fs.readFileSync\\('public/simple-logo.png'\\);if\\(b.toString\\('ascii',12,16\\)==='IHDR'\\){const w=b.readUInt32BE\\(16\\),h=b.readUInt32BE\\(20\\);console.log\\('simple-logo.png intrinsic:',w+'x'+h,'ratio',\\(w/h\\).toFixed\\(2\\)+':1'\\);}else{console.log\\('not PNG or no IHDR'\\);}\")",
       "Bash(node -e \"const t=require\\('./tsconfig.json'\\);const c=t.compilerOptions||{};console.log\\('noUnusedLocals',c.noUnusedLocals,'noUnusedParameters',c.noUnusedParameters,'strict',c.strict\\)\")",
-      "Bash(node --import tsx --test src/hooks/useResilientResource.test.ts)"
+      "Bash(node --import tsx --test src/hooks/useResilientResource.test.ts)",
+      "Bash(PYTHONIOENCODING=utf-8 PYTHONUTF8=1 python -c ' *)",
+      "Bash(node --import tsx --test src/lib/clean-error-message.test.ts)",
+      "Bash(ls app/api)",
+      "Bash(find pages/api -type f)",
+      "Bash(ls src/lib)",
+      "Bash(ls src/lib/auth)",
+      "Bash(sort -t: -k2 -rn)",
+      "Bash(node -e \"const p=require\\('./package.json'\\); console.log\\(Object.keys\\({...p.dependencies,...p.devDependencies}\\).filter\\(d=>/xlsx|excel|sheet|csv|papa/i.test\\(d\\)\\).join\\('\\\\n'\\)||'none'\\)\")"
     ],
     "additionalDirectories": [
       "\\tmp",

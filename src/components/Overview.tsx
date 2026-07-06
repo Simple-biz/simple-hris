@@ -2597,21 +2597,26 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
         }
         const ratesByEmail = indexHourlyRatesByEmail(ratesRows);
 
-        // Accumulate payroll rows across all fetched files
+        // Accumulate payroll rows across all fetched files. Fetch concurrently
+        // (was sequential) so the "All Time" scope doesn't stack one round-trip
+        // per weekly upload; the single-file default only fetches one URL.
         const allPayrollRows: PayrollHubstaffRow[] = [];
-        for (const url of hoursUrls) {
-          const res = await fetch(url, { cache: 'no-store' });
-          const json = (await res.json()) as {
-            payrollRows?: PayrollHubstaffRow[] | null;
-            error?: string | null;
-          };
-          if (cancelled) return;
-          if (res.ok && !json.error && json.payrollRows) {
-            allPayrollRows.push(...json.payrollRows);
-          }
-        }
-
+        const hoursResults = await Promise.all(
+          hoursUrls.map(async (url) => {
+            try {
+              const res = await fetch(url, { cache: 'no-store' });
+              const json = (await res.json()) as {
+                payrollRows?: PayrollHubstaffRow[] | null;
+                error?: string | null;
+              };
+              return res.ok && !json.error && json.payrollRows ? json.payrollRows : [];
+            } catch {
+              return [] as PayrollHubstaffRow[];
+            }
+          }),
+        );
         if (cancelled) return;
+        for (const rows of hoursResults) allPayrollRows.push(...rows);
 
         // For All Time, aggregate hours per employee then compute pay
         const paySet = new Set<string>();
@@ -2736,26 +2741,41 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
         // Always merge every source file so we have a complete picture of every
         // employee's hours. The currently-selected file only affects WHICH PAB
         // month we anchor the eligibility window to (computed below).
-        for (const file of sourceFiles) {
-          const res = await fetch(
-            `/api/hubstaff-hours?source_file=${encodeURIComponent(file)}&_=${Date.now()}`,
-            { cache: 'no-store' },
-          );
-          const json = (await res.json()) as {
-            columns?: string[] | null;
-            rows?: Record<string, unknown>[] | null;
-          };
-          if (cancelled) return;
-          if (!json.columns || !json.rows) continue;
+        //
+        // Fetch every file concurrently (was a sequential `for...of await` that
+        // stacked N weekly-upload round-trips back-to-back — the dominant cause
+        // of the ~1min Overview load). `Promise.all` preserves array order, so
+        // merging over `fileResults` keeps the original "later upload wins for
+        // shared columns" semantics.
+        const fileResults = await Promise.all(
+          sourceFiles.map(async (file) => {
+            try {
+              const res = await fetch(
+                `/api/hubstaff-hours?source_file=${encodeURIComponent(file)}`,
+                { cache: 'no-store' },
+              );
+              const json = (await res.json()) as {
+                columns?: string[] | null;
+                rows?: Record<string, unknown>[] | null;
+              };
+              return { file, columns: json.columns ?? null, rows: json.rows ?? null };
+            } catch {
+              return { file, columns: null as string[] | null, rows: null as Record<string, unknown>[] | null };
+            }
+          }),
+        );
+        if (cancelled) return;
 
-          for (const row of json.rows) {
+        for (const { file, columns, rows } of fileResults) {
+          if (!columns || !rows) continue;
+          for (const row of rows) {
             const rawEmail = String(row['Email'] ?? row['email'] ?? '').trim();
             const email = normEmail(rawEmail) ?? rawEmail.toLowerCase();
             if (!email) continue;
 
-            const needsResolve = columnsAreAllCanonical(json.columns);
+            const needsResolve = columnsAreAllCanonical(columns);
             const resolved = needsResolve ? resolveCanonicalColumnsToIso(row, file) : row;
-            for (const col of (needsResolve ? Object.keys(resolved) : json.columns)) allCols.add(col);
+            for (const col of (needsResolve ? Object.keys(resolved) : columns)) allCols.add(col);
 
             const existing = rowsByEmail.get(email) ?? {};
             rowsByEmail.set(email, { ...existing, ...resolved });

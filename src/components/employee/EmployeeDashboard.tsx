@@ -19,6 +19,7 @@ import {
 import { motion } from 'motion/react';
 import ProfileCompletionCard from './ProfileCompletionCard';
 import { ConnectionStatusBanner } from '@/components/ConnectionStatusBanner';
+import { cleanErrorMessage, looksLikeHtmlError } from '@/lib/clean-error-message';
 import type { ResourceStatus } from '@/hooks/useResilientResource';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -728,7 +729,11 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
         setUsdToPhpRate(effectiveUsdToPhpRateFromStored(fxJson.value));
 
         if (ratesJson.error) {
-          setDataError(ratesJson.error);
+          if (looksLikeHtmlError(String(ratesJson.error))) {
+            setEssentialsError(cleanErrorMessage(ratesJson.error));
+          } else {
+            setDataError(cleanErrorMessage(ratesJson.error));
+          }
         }
         // Server already filtered to this employee.
         const myRate = (ratesJson.rows ?? [])[0];
@@ -748,7 +753,7 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
           // Connection/essentials failure → surface via the ConnectionStatusBanner and
           // KEEP last-known data (don't wipe `row`, don't dump the raw error into the
           // red box) so the dashboard stays usable during a Supabase outage.
-          setEssentialsError(e instanceof Error ? e.message : 'Failed to load dashboard data');
+          setEssentialsError(cleanErrorMessage(e, 'Failed to load dashboard data'));
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -778,7 +783,14 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
       if (cancelled) return;
 
       if (!res.ok || json.error) {
-        setDataError(json.error ?? `Hours request failed (${res.status})`);
+        // A Supabase/Cloudflare outage can arrive as a raw HTML error page in
+        // json.error — route those to the ConnectionStatusBanner (with Retry)
+        // rather than dumping the whole page into the red card.
+        if (!res.ok || looksLikeHtmlError(String(json.error ?? ''))) {
+          setEssentialsError(cleanErrorMessage(json.error, `Hours request failed (${res.status})`));
+        } else {
+          setDataError(cleanErrorMessage(json.error, `Hours request failed (${res.status})`));
+        }
         setRow(null);
       } else if (json.columns && json.rows) {
         setColumns(json.columns);
@@ -830,7 +842,7 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
       }
     } catch (e) {
       if (!cancelled) {
-        setDataError(e instanceof Error ? e.message : 'Failed to load hours');
+        setDataError(cleanErrorMessage(e, 'Failed to load hours'));
         setRow(null);
       }
     }
@@ -1247,7 +1259,11 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
       setUsdToPhpRate(effectiveUsdToPhpRateFromStored(fxJson.value));
 
       if (ratesJson.error) {
-        setDataError(ratesJson.error);
+        if (looksLikeHtmlError(String(ratesJson.error))) {
+          setEssentialsError(cleanErrorMessage(ratesJson.error));
+        } else {
+          setDataError(cleanErrorMessage(ratesJson.error));
+        }
       }
       const myRate = (ratesJson.rows ?? [])[0];
       if (myRate) setRate(myRate);
@@ -1272,7 +1288,7 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
 
       fetchMyDisputes();
     } catch (e) {
-      setDataError(e instanceof Error ? e.message : 'Failed to refresh dashboard');
+      setDataError(cleanErrorMessage(e, 'Failed to refresh dashboard'));
     } finally {
       setRefreshing(false);
     }
@@ -2508,7 +2524,7 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
         <Card className="shrink-0 border-red-200 bg-red-50/50 dark:border-red-500/20 dark:bg-red-950/20">
           <CardContent className="flex items-center gap-3 py-3">
             <AlertCircle className="h-5 w-5 shrink-0 text-red-500" />
-            <p className="text-sm text-red-800 dark:text-red-300">{dataError}</p>
+            <p className="text-sm text-red-800 dark:text-red-300">{cleanErrorMessage(dataError)}</p>
           </CardContent>
         </Card>
       )}

@@ -130,6 +130,10 @@ export default function HrOffboarding() {
   const [hrisPage, setHrisPage] = useState(0);
   // Rows fed to the 1-by-1 processor (bulk = all pending, or a single row).
   const [processTargets, setProcessTargets] = useState<OffboardingQueueRow[] | null>(null);
+  // Multi-select for batch off-boarding a chosen subset of the pending queue.
+  // Kept as a plain id set so selections survive search/pagination (never pruned
+  // when a row scrolls out of the filter).
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   // The queue row being returned to its manager (quick per-row action).
   const [returnTarget, setReturnTarget] = useState<OffboardingQueueRow | null>(null);
   // The queue row being permanently deleted (HR cleanup, any status).
@@ -289,6 +293,41 @@ export default function HrOffboarding() {
   // Non-completed rows still shown in the Queue (drives the sub-label + empty copy).
   const queueOpenTotal = useMemo(() => queue.filter((r) => r.status !== 'completed').length, [queue]);
 
+  // ── Multi-select for batch off-boarding ──
+  const isActionable = (r: OffboardingQueueRow) => r.status === 'pending' || r.status === 'processing';
+  // The selected rows that can still be off-boarded (a selection may include a row
+  // that has since been processed elsewhere — ignore those).
+  const selectedActionable = useMemo(
+    () => pendingQueue.filter((r) => selectedIds.has(r.id)),
+    [pendingQueue, selectedIds],
+  );
+  // Actionable rows on the current page, for the header "select all" checkbox.
+  const pageActionable = useMemo(() => queuePageRows.filter(isActionable), [queuePageRows]);
+  const allPageSelected =
+    pageActionable.length > 0 && pageActionable.every((r) => selectedIds.has(r.id));
+  const toggleRow = (id: string) =>
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  const togglePage = () =>
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (allPageSelected) pageActionable.forEach((r) => next.delete(r.id));
+      else pageActionable.forEach((r) => next.add(r.id));
+      return next;
+    });
+  const clearSelection = () => setSelectedIds(new Set());
+  // Open the processor seeded with just the selected rows → HR clicks "Offboard
+  // all" there to fire the single batched teardown.
+  const offboardSelected = () => {
+    if (selectedActionable.length === 0) return;
+    setProcessTargets(selectedActionable);
+    clearSelection();
+  };
+
   // People offboarded through the HRIS queue processor (status === 'completed').
   const hrisOffboarded = useMemo(
     () => queue.filter((r) => r.status === 'completed'),
@@ -447,11 +486,28 @@ export default function HrOffboarding() {
                       <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" />
                       <Input value={queueSearch} onChange={(e) => setQueueSearch(e.target.value)} placeholder="Search name, manager…" className="border-emerald-100/70 bg-white pl-9 dark:border-emerald-900/50 dark:bg-zinc-900" />
                     </div>
+                    {selectedActionable.length > 0 && (
+                      <Button
+                        size="sm"
+                        onClick={offboardSelected}
+                        className="shrink-0 gap-1.5 bg-rose-700 text-white hover:bg-rose-800"
+                        title="Off-board just the selected people as one batch"
+                      >
+                        <UserMinus className="h-3.5 w-3.5" />
+                        Offboard selected ({selectedActionable.length})
+                      </Button>
+                    )}
                     {pendingCount > 0 && (
                       <Button
                         size="sm"
+                        variant={selectedActionable.length > 0 ? 'outline' : 'default'}
                         onClick={() => setProcessTargets(pendingQueue)}
-                        className="shrink-0 gap-1.5 bg-rose-600 text-white hover:bg-rose-700"
+                        className={cn(
+                          'shrink-0 gap-1.5',
+                          selectedActionable.length > 0
+                            ? ''
+                            : 'bg-rose-600 text-white hover:bg-rose-700',
+                        )}
                         title="Step through all pending requests one by one"
                       >
                         <Play className="h-3.5 w-3.5" />
@@ -528,6 +584,16 @@ export default function HrOffboarding() {
                 <table className="w-full text-left text-sm sm:min-w-[940px]">
                   <thead className="sticky top-0 z-[1] bg-gradient-to-r from-rose-50 via-white to-rose-50/80 text-xs text-zinc-600 dark:from-rose-950/40 dark:via-zinc-950 dark:to-rose-950/30 dark:text-zinc-400">
                     <tr>
+                      <th className="w-10 px-3 py-3">
+                        <input
+                          type="checkbox"
+                          checked={allPageSelected}
+                          onChange={togglePage}
+                          disabled={pageActionable.length === 0}
+                          aria-label="Select all pending on this page"
+                          className="h-4 w-4 cursor-pointer accent-rose-600 disabled:cursor-not-allowed disabled:opacity-40"
+                        />
+                      </th>
                       <th className="px-4 py-3 font-semibold">Employee</th>
                       <th className="px-4 py-3 font-semibold">Personal email</th>
                       <th className="px-4 py-3 font-semibold">Department</th>
@@ -540,7 +606,7 @@ export default function HrOffboarding() {
                   </thead>
                   <tbody className="divide-y divide-rose-100/70 bg-white/85 dark:divide-rose-900/35 dark:bg-zinc-950/40">
                     {queuePageRows.map((r) => {
-                      const actionable = r.status === 'pending' || r.status === 'processing';
+                      const actionable = isActionable(r);
                       const statusPill = (() => {
                         switch (r.status) {
                           case 'pending': return { label: 'Pending', cls: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300' };
@@ -552,7 +618,21 @@ export default function HrOffboarding() {
                         }
                       })();
                       return (
-                        <tr key={r.id} className="align-middle hover:bg-rose-50/30 dark:hover:bg-rose-950/20">
+                        <tr key={r.id} className={cn(
+                          'align-middle hover:bg-rose-50/30 dark:hover:bg-rose-950/20',
+                          selectedIds.has(r.id) && 'bg-rose-50/70 dark:bg-rose-950/30',
+                        )}>
+                          <td data-label="Select" className="w-10 px-3 py-4">
+                            {actionable ? (
+                              <input
+                                type="checkbox"
+                                checked={selectedIds.has(r.id)}
+                                onChange={() => toggleRow(r.id)}
+                                aria-label={`Select ${r.employee_name ?? r.employee_email}`}
+                                className="h-4 w-4 cursor-pointer accent-rose-600"
+                              />
+                            ) : null}
+                          </td>
                           <td data-label="Employee" className="px-4 py-4">
                             <div className="font-medium text-zinc-900 dark:text-zinc-100">{r.employee_name ?? '—'}</div>
                             <div className="break-all font-mono text-[11px] text-zinc-500">{r.employee_work_email ?? r.employee_email}</div>

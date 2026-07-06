@@ -24,8 +24,10 @@ export const runtime = "nodejs";
 // The offboarding webhooks respond "when the last node finishes" (deactivate
 // suspends the Workspace account AND sends the termination email synchronously),
 // which can take well over the old 8s budget. Give the function headroom so
-// Vercel doesn't kill it before n8n replies.
-export const maxDuration = 30;
+// Vercel doesn't kill it before n8n replies. A batch fires at most two webhooks
+// (one per phase) regardless of how many people are in it, so this ceiling still
+// holds — the per-person account teardown is fanned out inside each n8n flow.
+export const maxDuration = 60;
 
 const MASTER_TABLE =
   process.env.NEXT_PUBLIC_SUPABASE_EMPLOYEES_TABLE?.trim() || "global_master_list";
@@ -46,80 +48,119 @@ function getClient() {
   return createSupabaseServiceRoleClient() ?? createSupabaseServerClient();
 }
 
+type SupabaseClient = NonNullable<ReturnType<typeof getClient>>;
+
+/** One normalized offboard request after validation. */
+interface OffboardRequest {
+  work_email: string;
+  reason: Reason;
+  note: string | null;
+}
+
+/** The per-person payload that rides inside a phase-grouped webhook envelope. */
+interface OffboardEmployeePayload {
+  work_email: string;
+  personal_email: string | null;
+  name: string | null;
+  departments: string[];
+  start_date: string | null;
+  reason: Reason;
+  note: string | null;
+  scheduled_deletion_at: string | null;
+}
+
+type Phase = "deactivate" | "delete";
+
+interface OffboardOutcome {
+  work_email: string;
+  ok: boolean;
+  status: number;
+  error: string | null;
+  phase: Phase;
+  deletion_mode: "immediate" | "delayed_14d";
+  rows_updated: number;
+  rbac_revoked: { roles: number; departments: number; features: number } | null;
+  payload: OffboardEmployeePayload | null;
+}
+
 /**
- * POST /api/hr/offboard
- *
- * Body: { work_email: string; reason: Reason; note?: string }
- *
- * Marks every `global_master_list` row matching `work_email` as off-boarded
- * (off_boarded_at = now()), so `active_employees` drops them from every
- * downstream dashboard immediately. History is retained -- rows are NOT deleted.
- *
- * Then fires the department-aware account teardown:
- *   Lead Gen (all of the person's departments are Lead Gen) -> fire
- *     offboarding_delete now; no deletion timer.
- *   Other departments -> fire offboarding_deactivate now AND stamp
- *     scheduled_deletion_at = off_boarded_at + 14d; the daily cron fires
- *     offboarding_delete once the timer elapses.
- *
- * Response keeps a single `webhook` object (the one that fired) so the HR
- * Offboarding dialog's success/warning toast keeps working unchanged.
+ * Validates a single {work_email, reason, note} triple. Returns the normalized
+ * request or an error string (never throws). Shared by the single- and
+ * batch-shaped bodies so both paths reject identically.
  */
-export async function POST(req: Request) {
-  const authz = await requireFeatureEdit('hr', 'offboarding');
-  if (!authz.ok) return deniedResponse(authz);
+function validateOne(raw: {
+  work_email?: unknown;
+  reason?: unknown;
+  note?: unknown;
+}): { ok: true; value: OffboardRequest } | { ok: false; error: string } {
+  const work_email =
+    typeof raw.work_email === "string" ? raw.work_email.trim().toLowerCase() : "";
+  const reason = (typeof raw.reason === "string" ? raw.reason.trim() : "") as
+    | Reason
+    | "";
+  const note = typeof raw.note === "string" && raw.note.trim() ? raw.note.trim() : null;
 
-  let body: { work_email?: string; reason?: string; note?: string };
-  try {
-    body = (await req.json()) as typeof body;
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
-  }
-
-  const work_email = body.work_email?.trim().toLowerCase();
-  const reason = body.reason?.trim() as Reason | undefined;
-  const note = body.note?.trim() || null;
-
-  if (!work_email) {
-    return NextResponse.json({ error: "work_email is required" }, { status: 400 });
-  }
+  if (!work_email) return { ok: false, error: "work_email is required" };
   if (!reason || !VALID_REASONS.includes(reason)) {
-    return NextResponse.json(
-      { error: `reason is required and must be one of: ${VALID_REASONS.join(", ")}` },
-      { status: 400 },
-    );
+    return {
+      ok: false,
+      error: `reason is required and must be one of: ${VALID_REASONS.join(", ")}`,
+    };
   }
   if (reason === "other" && !note) {
-    return NextResponse.json(
-      { error: 'When reason is "other", a free-text note is required.' },
-      { status: 400 },
-    );
+    return { ok: false, error: 'When reason is "other", a free-text note is required.' };
   }
+  return { ok: true, value: { work_email, reason, note } };
+}
 
-  const supabase = getClient();
-  if (!supabase) {
-    return NextResponse.json({ error: "Supabase not configured" }, { status: 500 });
-  }
+/**
+ * Off-boards ONE person: stamps every active master-list row, kicks off the
+ * best-effort side-effects (offboarded_sheet insert + Google Sheet append,
+ * cancel pending hires), revokes RBAC + force-logs-out, and writes the audit
+ * row. Returns everything the caller needs to build the phase-grouped webhook
+ * envelope — but does NOT fire the webhook itself, so a whole batch can be
+ * coalesced into at most two POSTs. Never throws.
+ *
+ * `offBoardedAt` is passed in so every person in a batch shares one timestamp
+ * (and therefore one deletion window), keeping the envelope's `off_boarded_at`
+ * meaningful.
+ */
+async function offboardOnePerson(
+  supabase: SupabaseClient,
+  req: OffboardRequest,
+  actorEmail: string,
+  offBoardedAt: string,
+): Promise<OffboardOutcome> {
+  const { work_email, reason, note } = req;
+  const base: Omit<OffboardOutcome, "phase" | "deletion_mode"> = {
+    work_email,
+    ok: false,
+    status: 500,
+    error: null,
+    rows_updated: 0,
+    rbac_revoked: null,
+    payload: null,
+  };
 
   // Look at the still-active rows first so we know which departments this person
-  // belongs to before deciding the teardown mode. Matches the update below
-  // (work_email, off_boarded_at IS NULL).
+  // belongs to before deciding the teardown mode.
   const { data: activeRows, error: lookupErr } = await supabase
     .from(MASTER_TABLE)
     .select('"Department"')
     .ilike('"Work Email"', work_email)
     .is("off_boarded_at", null);
   if (lookupErr) {
-    return NextResponse.json({ error: lookupErr.message }, { status: 500 });
+    return { ...base, phase: "deactivate", deletion_mode: "delayed_14d", error: lookupErr.message };
   }
   if (!activeRows || activeRows.length === 0) {
-    return NextResponse.json(
-      {
-        error:
-          "No active master-list row found for that email. They may already be off-boarded, or the email doesn't exist on the roster.",
-      },
-      { status: 404 },
-    );
+    return {
+      ...base,
+      status: 404,
+      phase: "deactivate",
+      deletion_mode: "delayed_14d",
+      error:
+        "No active master-list row found for that email. They may already be off-boarded, or the email doesn't exist on the roster.",
+    };
   }
 
   const lookupDepartments = (activeRows as Array<{ Department: string | null }>)
@@ -127,15 +168,13 @@ export async function POST(req: Request) {
     .filter((d): d is string => !!d);
 
   // Lead Gen (immediate delete) only when EVERY department this person holds is
-  // Lead Gen. If any role is non-Lead-Gen, defer deletion 14 days (the safer
-  // path -- the Workspace account is still tied to a non-Lead-Gen role).
+  // Lead Gen. If any role is non-Lead-Gen, defer deletion 14 days.
   const allLeadGen =
     lookupDepartments.length > 0 && lookupDepartments.every(isLeadGenDepartment);
+  const phase: Phase = allLeadGen ? "delete" : "deactivate";
   const deletionMode: "immediate" | "delayed_14d" = allLeadGen
     ? "immediate"
     : "delayed_14d";
-
-  const offBoardedAt = new Date().toISOString();
   const scheduledDeletionAt = allLeadGen ? null : scheduledDeletionFrom(offBoardedAt);
 
   // Stamp off_boarded_* (and the deletion timer for non-Lead-Gen) on every active
@@ -145,7 +184,7 @@ export async function POST(req: Request) {
     .update({
       off_boarded_at: offBoardedAt,
       off_boarded_reason: reason,
-      off_boarded_by: authz.sessionEmail,
+      off_boarded_by: actorEmail,
       off_boarded_note: note,
       scheduled_deletion_at: scheduledDeletionAt,
       deletion_processed_at: null,
@@ -155,7 +194,7 @@ export async function POST(req: Request) {
     .select('id, "Name", "Personal Email", "Work Email", "Department", "Start Date"');
 
   if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return { ...base, phase, deletion_mode: deletionMode, error: error.message };
   }
 
   const rows = (data ?? []) as Array<{
@@ -168,13 +207,14 @@ export async function POST(req: Request) {
   }>;
 
   if (rows.length === 0) {
-    return NextResponse.json(
-      {
-        error:
-          "No active master-list row found for that email. They may already be off-boarded, or the email doesn't exist on the roster.",
-      },
-      { status: 404 },
-    );
+    return {
+      ...base,
+      status: 404,
+      phase,
+      deletion_mode: deletionMode,
+      error:
+        "No active master-list row found for that email. They may already be off-boarded, or the email doesn't exist on the roster.",
+    };
   }
 
   const first = rows[0]!;
@@ -182,9 +222,8 @@ export async function POST(req: Request) {
     new Set(rows.map((r) => r.Department).filter((d): d is string => !!d)),
   );
 
-  // Insert into offboarded_sheet immediately so the HR Offboarded tab shows
-  // the person without waiting for the nightly cron. Best-effort — don't block
-  // the offboard response if Supabase or the Sheet write fails.
+  // Insert into offboarded_sheet immediately so the HR Offboarded tab shows the
+  // person without waiting for the nightly cron. Best-effort — don't block.
   const sheetInput = {
     personalEmail: first["Personal Email"] ?? "",
     workEmail: work_email,
@@ -194,7 +233,7 @@ export async function POST(req: Request) {
     offBoardedAt: offBoardedAt,
     offBoardedReason: reason,
     offBoardedNote: note,
-    offBoardedBy: authz.sessionEmail,
+    offBoardedBy: actorEmail,
   };
 
   void (async () => {
@@ -229,39 +268,13 @@ export async function POST(req: Request) {
     }
   })();
 
-  // Fire the immediate teardown webhook. Lead Gen -> delete now; others ->
-  // deactivate now (n8n suspends the account, sends the email, and removes the
-  // Hubstaff member at pay_rate 0). Best-effort: the DB write above is the source
-  // of truth, so a webhook failure never blocks the off-board.
-  const slug = allLeadGen ? OFFBOARD_DELETE_SLUG : OFFBOARD_DEACTIVATE_SLUG;
-  const webhook = await fireOffboardWebhook(slug, {
-    event: "employee.offboarded",
-    phase: allLeadGen ? "delete" : "deactivate",
-    deletion_mode: deletionMode,
-    hubstaff_pay_rate: 0,
-    work_email,
-    personal_email: first["Personal Email"],
-    name: first.Name,
-    departments,
-    start_date: first["Start Date"],
-    reason,
-    note,
-    off_boarded_at: offBoardedAt,
-    scheduled_deletion_at: scheduledDeletionAt,
-    off_boarded_by: authz.sessionEmail,
-    rows_updated: rows.length,
-  });
-
-  // Strip every RBAC grant this person holds -- role assignments, managed
-  // departments, and per-feature permissions -- so neither a stale JWT nor a
-  // leftover row in Admin -> Roles can keep them privileged. The grants are
-  // snapshotted into app_settings first so re-onboarding restores exactly what
-  // they had. Then force-logout to invalidate any live session immediately.
+  // Strip every RBAC grant this person holds and force-logout to kill live
+  // sessions. The grants are snapshotted first so re-onboarding restores them.
   const rbacRevoked = await snapshotAndRevokeRbacGrants(work_email);
   void bumpForceLogoutFor(work_email);
 
   void insertAuditLog({
-    user_name: authz.sessionEmail,
+    user_name: actorEmail,
     user_role: "hr",
     action: "hr.employee.offboarded",
     resource: MASTER_TABLE,
@@ -274,19 +287,185 @@ export async function POST(req: Request) {
       deletion_mode: deletionMode,
       scheduled_deletion_at: scheduledDeletionAt,
       rbac_revoked: rbacRevoked,
-      webhook_slug: slug,
-      webhook_fired: webhook.fired && webhook.error == null,
-      webhook_status: webhook.status,
-      webhook_error: webhook.error,
+      webhook_slug: allLeadGen ? OFFBOARD_DELETE_SLUG : OFFBOARD_DEACTIVATE_SLUG,
+      batched: true,
     },
   });
 
+  return {
+    work_email,
+    ok: true,
+    status: 200,
+    error: null,
+    phase,
+    deletion_mode: deletionMode,
+    rows_updated: rows.length,
+    rbac_revoked: rbacRevoked,
+    payload: {
+      work_email,
+      personal_email: first["Personal Email"],
+      name: first.Name,
+      departments,
+      start_date: first["Start Date"],
+      reason,
+      note,
+      scheduled_deletion_at: scheduledDeletionAt,
+    },
+  };
+}
+
+/**
+ * POST /api/hr/offboard
+ *
+ * Accepts either shape:
+ *   Single (back-compat): { work_email, reason, note? }
+ *   Batch:                { employees: [{ work_email, reason, note? }, ...] }
+ *
+ * Marks every matching `global_master_list` row as off-boarded, tears down RBAC,
+ * and fires the department-aware account teardown. Firing is COALESCED by phase:
+ * all Lead-Gen people go out in one `offboarding_delete` envelope, everyone else
+ * in one `offboarding_deactivate` envelope — so a batch of any size is at most
+ * two webhook POSTs, each carrying an `employees[]` array for n8n's Split Out.
+ *
+ * Response: `{ success, count, results[], webhooks[], webhook }`. `webhook` is
+ * the first fired webhook (kept so the single-person dialog toast still works).
+ */
+export async function POST(req: Request) {
+  const authz = await requireFeatureEdit("hr", "offboarding");
+  if (!authz.ok) return deniedResponse(authz);
+  const actorEmail = authz.sessionEmail;
+
+  let body: {
+    work_email?: unknown;
+    reason?: unknown;
+    note?: unknown;
+    employees?: unknown;
+  };
+  try {
+    body = (await req.json()) as typeof body;
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+  }
+
+  // Normalize both shapes into a validated list. A batch body wins if present.
+  const rawList: Array<{ work_email?: unknown; reason?: unknown; note?: unknown }> =
+    Array.isArray(body.employees)
+      ? (body.employees as Array<{ work_email?: unknown; reason?: unknown; note?: unknown }>)
+      : [{ work_email: body.work_email, reason: body.reason, note: body.note }];
+
+  if (rawList.length === 0) {
+    return NextResponse.json({ error: "No employees to off-board" }, { status: 400 });
+  }
+
+  // Validate everything up front — reject the whole batch before any writes if a
+  // single entry is malformed, and de-dupe repeated work emails.
+  const seen = new Set<string>();
+  const requests: OffboardRequest[] = [];
+  const validationErrors: Array<{ index: number; work_email: string | null; error: string }> = [];
+  rawList.forEach((raw, index) => {
+    const res = validateOne(raw);
+    if (!res.ok) {
+      validationErrors.push({
+        index,
+        work_email: typeof raw.work_email === "string" ? raw.work_email : null,
+        error: res.error,
+      });
+      return;
+    }
+    if (seen.has(res.value.work_email)) return; // ignore duplicate rows silently
+    seen.add(res.value.work_email);
+    requests.push(res.value);
+  });
+
+  if (validationErrors.length > 0) {
+    return NextResponse.json(
+      { error: "One or more entries are invalid", validation_errors: validationErrors },
+      { status: 400 },
+    );
+  }
+
+  const supabase = getClient();
+  if (!supabase) {
+    return NextResponse.json({ error: "Supabase not configured" }, { status: 500 });
+  }
+
+  // One timestamp for the whole batch → one shared 14-day deletion window.
+  const offBoardedAt = new Date().toISOString();
+
+  // Tear each person down (DB stamp + RBAC + side-effects), in parallel. Each
+  // returns its phase + webhook payload; no webhook has fired yet.
+  const outcomes = await Promise.all(
+    requests.map((r) => offboardOnePerson(supabase, r, actorEmail, offBoardedAt)),
+  );
+
+  const succeeded = outcomes.filter((o) => o.ok && o.payload);
+  const failed = outcomes.filter((o) => !o.ok);
+
+  // Coalesce successes by phase and fire at most one webhook per phase.
+  const groups: Record<Phase, OffboardOutcome[]> = { delete: [], deactivate: [] };
+  for (const o of succeeded) groups[o.phase].push(o);
+
+  const webhooks: Array<{
+    phase: Phase;
+    slug: string;
+    count: number;
+    fired: boolean;
+    status: number | null;
+    error: string | null;
+  }> = [];
+
+  for (const phase of ["deactivate", "delete"] as const) {
+    const group = groups[phase];
+    if (group.length === 0) continue;
+    const slug = phase === "delete" ? OFFBOARD_DELETE_SLUG : OFFBOARD_DEACTIVATE_SLUG;
+    const result = await fireOffboardWebhook(slug, {
+      event: "employee.offboarded",
+      phase,
+      deletion_mode: phase === "delete" ? "immediate" : "delayed_14d",
+      hubstaff_pay_rate: 0,
+      off_boarded_by: actorEmail,
+      off_boarded_at: offBoardedAt,
+      count: group.length,
+      employees: group.map((o) => o.payload as OffboardEmployeePayload),
+    });
+    webhooks.push({
+      phase,
+      slug,
+      count: group.length,
+      fired: result.fired,
+      status: result.status,
+      error: result.error,
+    });
+  }
+
+  // Nothing off-boarded at all → surface the first failure with its status so the
+  // single-person path still returns 404/500 as before.
+  if (succeeded.length === 0) {
+    const firstFail = failed[0];
+    return NextResponse.json(
+      { error: firstFail?.error ?? "Off-board failed", results: outcomes },
+      { status: firstFail?.status ?? 500 },
+    );
+  }
+
+  const results = outcomes.map((o) => ({
+    work_email: o.work_email,
+    ok: o.ok,
+    error: o.error,
+    deletion_mode: o.deletion_mode,
+    rows_updated: o.rows_updated,
+    rbac_revoked: o.rbac_revoked,
+  }));
+
   return NextResponse.json({
     success: true,
-    rows_updated: rows.length,
-    deletion_mode: deletionMode,
-    scheduled_deletion_at: scheduledDeletionAt,
-    rbac_revoked: rbacRevoked,
-    webhook,
+    count: succeeded.length,
+    failed_count: failed.length,
+    results,
+    webhooks,
+    // Back-compat single-webhook field the offboarding dialog/toast reads.
+    webhook: webhooks[0]
+      ? { fired: webhooks[0].fired, status: webhooks[0].status, error: webhooks[0].error }
+      : { fired: false, status: null, error: null },
   });
 }

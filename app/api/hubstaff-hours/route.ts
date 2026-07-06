@@ -19,6 +19,7 @@ import { getSessionActor } from "@/lib/auth/session-actor";
 import { requireFeatureEdit } from "@/lib/auth/authorize-feature";
 import { deniedResponse } from "@/lib/auth/authorize-email";
 import { NextRequest, NextResponse } from "next/server";
+import { cleanErrorMessage } from "@/lib/clean-error-message";
 
 // Columns on the hubstaff_hours row that may carry an employee's email.
 // Mirrors `HUBSTAFF_EMAIL_KEYS` + the case-insensitive aliases used client-side
@@ -123,7 +124,7 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ files, uploads, error: null });
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      return NextResponse.json({ files: [], uploads: [], error: msg });
+      return NextResponse.json({ files: [], uploads: [], error: cleanErrorMessage(msg) });
     }
   }
 
@@ -162,7 +163,7 @@ export async function GET(req: NextRequest) {
       });
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      return NextResponse.json({ columns: [], perFile: [], error: msg });
+      return NextResponse.json({ columns: [], perFile: [], error: cleanErrorMessage(msg) });
     }
   }
 
@@ -185,7 +186,7 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ columns, rows: outRows, payrollRows, error: null });
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      return NextResponse.json({ columns: null, rows: null, payrollRows: [], error: msg });
+      return NextResponse.json({ columns: null, rows: null, payrollRows: [], error: cleanErrorMessage(msg) });
     }
   }
 
@@ -197,7 +198,7 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ columns, rows, payrollRows, error: null });
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      return NextResponse.json({ columns: null, rows: null, payrollRows: [], error: msg });
+      return NextResponse.json({ columns: null, rows: null, payrollRows: [], error: cleanErrorMessage(msg) });
     }
   }
 

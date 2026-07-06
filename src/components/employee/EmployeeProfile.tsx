@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { cleanErrorMessage } from '@/lib/clean-error-message';
 import {
   Loader2,
   AlertCircle,
@@ -1225,7 +1226,7 @@ export default function EmployeeProfile({
         {error && (
           <div className="mt-6 flex items-start gap-2.5 rounded-xl border border-amber-200/80 bg-amber-50/80 px-4 py-3 text-[13px] dark:border-amber-900/40 dark:bg-amber-950/30">
             <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
-            <p className="leading-relaxed text-amber-900 dark:text-amber-200">{error}</p>
+            <p className="leading-relaxed text-amber-900 dark:text-amber-200">{cleanErrorMessage(error)}</p>
           </div>
         )}
         {!master && !error && (

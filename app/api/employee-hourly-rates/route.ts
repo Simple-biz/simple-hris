@@ -10,6 +10,7 @@ import {
 } from "@/lib/auth/authorize-email";
 import { hasRateVisibility } from "@/lib/auth/elevated-roles";
 import { NextRequest, NextResponse } from "next/server";
+import { cleanErrorMessage } from "@/lib/clean-error-message";
 import { listPayStructures } from "@/lib/supabase/pay-structures-db";
 import {
   buildCatalogRateIndex,
@@ -90,7 +91,7 @@ export async function GET(req: NextRequest) {
           ot_rate: String(applied.otPhp),
         };
       }
-      return NextResponse.json({ rows: outRow ? [outRow] : [], error });
+      return NextResponse.json({ rows: outRow ? [outRow] : [], error: error ? cleanErrorMessage(error) : null });
     }
     // Bulk (no ?email=): the whole rates table. Accounting (Payroll Wizard,
     // Overview) needs every numeric rate; the payroll-clerk dispatch queue and
@@ -128,9 +129,9 @@ export async function GET(req: NextRequest) {
         isOwnRow(r) ? r : { ...r, regular_rate: null, ot_rate: null },
       );
     }
-    return NextResponse.json({ rows: safeRows, error });
+    return NextResponse.json({ rows: safeRows, error: error ? cleanErrorMessage(error) : null });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
-    return NextResponse.json({ rows: [], error: msg });
+    return NextResponse.json({ rows: [], error: cleanErrorMessage(msg) });
   }
 }

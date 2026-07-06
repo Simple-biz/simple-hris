@@ -20,11 +20,16 @@ import { normalizeDeptToKey } from "@/lib/payroll/normalize-dept-key";
 
 export const OFFBOARD_DEACTIVATE_SLUG = "offboarding_deactivate";
 export const OFFBOARD_DELETE_SLUG = "offboarding_delete";
+/** Fired when a manager submits team members to the HR offboarding queue;
+ *  the n8n flow emails alissar@simple.biz the count only (no names). */
+export const MANAGER_OFFBOARD_NOTIFY_SLUG = "manager_offboard_notify";
 
 const DEACTIVATE_DEFAULT_URL =
   "https://simpledotbiz.app.n8n.cloud/webhook/offboarding-deactivate";
 const DELETE_DEFAULT_URL =
   "https://simpledotbiz.app.n8n.cloud/webhook/offboarding-delete";
+const MANAGER_OFFBOARD_NOTIFY_DEFAULT_URL =
+  "https://simpledotbiz.app.n8n.cloud/webhook/manager-offboard-notify";
 
 /** Days a non-Lead-Gen account stays deactivated before the cron deletes it. */
 export const DELETION_DELAY_DAYS = 14;
@@ -44,12 +49,18 @@ export function scheduledDeletionFrom(fromIso: string, days = DELETION_DELAY_DAY
 }
 
 function resolveUrl(slug: string): Promise<string> {
-  const defaultUrl =
-    slug === OFFBOARD_DELETE_SLUG ? DELETE_DEFAULT_URL : DEACTIVATE_DEFAULT_URL;
-  const envVars =
-    slug === OFFBOARD_DELETE_SLUG
-      ? ["N8N_OFFBOARDING_DELETE_WEBHOOK_URL"]
-      : ["N8N_OFFBOARDING_DEACTIVATE_WEBHOOK_URL"];
+  let defaultUrl: string;
+  let envVars: string[];
+  if (slug === OFFBOARD_DELETE_SLUG) {
+    defaultUrl = DELETE_DEFAULT_URL;
+    envVars = ["N8N_OFFBOARDING_DELETE_WEBHOOK_URL"];
+  } else if (slug === MANAGER_OFFBOARD_NOTIFY_SLUG) {
+    defaultUrl = MANAGER_OFFBOARD_NOTIFY_DEFAULT_URL;
+    envVars = ["N8N_MANAGER_OFFBOARD_NOTIFY_WEBHOOK_URL"];
+  } else {
+    defaultUrl = DEACTIVATE_DEFAULT_URL;
+    envVars = ["N8N_OFFBOARDING_DEACTIVATE_WEBHOOK_URL"];
+  }
   return resolveWebhookUrl(slug, { envVars, defaultUrl }).then((u) => u ?? defaultUrl);
 }
 

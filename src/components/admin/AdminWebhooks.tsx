@@ -81,6 +81,12 @@ const KNOWN_SLUGS: Array<{ slug: string; label: string; description: string }> =
     description:
       'Fired by the HR New Hire Checklist "Lock in" button. POSTs the locked week\'s full payload (every row + all fields + lock metadata) to n8n.',
   },
+  {
+    slug: 'manager_offboard_notify',
+    label: 'Manager Offboard Request → Notify (n8n)',
+    description:
+      'Fired when a manager submits team members to the HR offboarding queue. POSTs { count, manager } and emails alissar@simple.biz the count only (no names) so HR knows a manager wants to offboard someone.',
+  },
 ];
 
 function uid() {

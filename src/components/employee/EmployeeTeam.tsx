@@ -15,6 +15,7 @@ import { normEmail } from '@/lib/email/norm-email';
 import { useOnlineEmails } from '@/components/presence/PresenceProvider';
 import { SkillBlock, TeamAvatar, formatLastSeen } from '@/components/team/team-ui';
 import { formatCurrentProjects } from '@/lib/skill-set-titles';
+import { cleanErrorMessage } from '@/lib/clean-error-message';
 
 interface SkillSetEntry {
   role_title: string;
@@ -374,7 +375,7 @@ export default function EmployeeTeam({ employeeEmail, department }: Props) {
         ) : error ? (
           <div className="flex flex-col items-center gap-2 rounded-2xl border border-dashed border-orange-200 bg-white py-14 text-center dark:border-blue-950/60 dark:bg-[#0d1117]">
             <WifiOff className="h-7 w-7 text-zinc-300 dark:text-zinc-700" />
-            <p className="text-sm text-zinc-500">{error}</p>
+            <p className="text-sm text-zinc-500">{cleanErrorMessage(error)}</p>
           </div>
         ) : filtered.length === 0 ? (
           <div className="flex flex-col items-center gap-2 rounded-2xl border border-dashed border-orange-200 bg-white py-16 text-center dark:border-blue-950/60 dark:bg-[#0d1117]">

@@ -1,6 +1,7 @@
 'use client';
 
 import type { ResourceStatus } from '@/hooks/useResilientResource';
+import { cleanErrorMessage } from '@/lib/clean-error-message';
 
 interface ConnectionStatusBannerProps {
   status: ResourceStatus;
@@ -48,7 +49,7 @@ export function ConnectionStatusBanner({
 
   const message = stale
     ? `Can't reach the server — showing data${when ? ` from ${when}` : ''}. Reconnecting…`
-    : `Can't reach the server${error ? ` (${error})` : ''}.`;
+    : `Can't reach the server${error ? ` (${cleanErrorMessage(error)})` : ''}.`;
 
   return (
     <div

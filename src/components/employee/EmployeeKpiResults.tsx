@@ -10,6 +10,7 @@
 // focus + Realtime refetch keep it current.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { cleanErrorMessage } from '@/lib/clean-error-message';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   Trophy,
@@ -288,7 +289,7 @@ export default function EmployeeKpiResults({ employeeEmail }: { employeeEmail: s
           </div>
         ) : error ? (
           <div className="mx-auto max-w-md rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700 dark:border-rose-900/50 dark:bg-rose-950/30 dark:text-rose-300">
-            Could not load your KPI results: {error}
+            Could not load your KPI results: {cleanErrorMessage(error)}
           </div>
         ) : periods.length === 0 ? (
           <motion.div

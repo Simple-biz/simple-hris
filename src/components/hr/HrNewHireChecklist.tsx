@@ -11,6 +11,7 @@ import {
   ChevronLeft,
   ChevronRight,
   ClipboardList,
+  Download,
   Eraser,
   Info,
   Loader2,
@@ -305,6 +306,10 @@ export default function HrNewHireChecklist({
   const [periodMetas, setPeriodMetas] = useState<PeriodMeta[]>([]);
   const [periodMenuOpen, setPeriodMenuOpen] = useState(false);
   const periodMenuRef = useRef<HTMLDivElement>(null);
+  // Export-to-Excel menu (this week / all weeks → one .xlsx sheet per week).
+  const [exportMenuOpen, setExportMenuOpen] = useState(false);
+  const [exporting, setExporting] = useState<'week' | 'all' | null>(null);
+  const exportMenuRef = useRef<HTMLDivElement>(null);
   // Per-cell edit-history popover, anchored to the clicked dot via a fixed
   // portal so the grid's scroll overflow never clips it.
   const [historyPopover, setHistoryPopover] = useState<
@@ -569,6 +574,21 @@ export default function HrNewHireChecklist({
       document.removeEventListener('keydown', onEsc);
     };
   }, [periodMenuOpen]);
+
+  // Close the export menu on outside click / Escape.
+  useEffect(() => {
+    if (!exportMenuOpen) return;
+    const onDown = (e: MouseEvent) => {
+      if (exportMenuRef.current && !exportMenuRef.current.contains(e.target as Node)) setExportMenuOpen(false);
+    };
+    const onEsc = (e: KeyboardEvent) => { if (e.key === 'Escape') setExportMenuOpen(false); };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onEsc);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onEsc);
+    };
+  }, [exportMenuOpen]);
 
   // When a cell enters edit mode, focus its freshly-mounted <input> and either
   // select all (double-click / Enter) or drop the caret at the end (F2 / typing).
@@ -896,6 +916,47 @@ export default function HrNewHireChecklist({
     void fetchPeriod(period);
     void loadPeriods();
   }, [dirty, period, fetchPeriod, loadPeriods]);
+
+  // Download a multi-sheet .xlsx workbook (one sheet per week) — either just the
+  // current week or every week with saved rows. Reflects SAVED data; a warning
+  // fires first if the current week has unsaved edits.
+  const exportWorkbook = useCallback(async (scope: 'week' | 'all') => {
+    setExportMenuOpen(false);
+    if (scope === 'week' && dirty && !window.confirm('This week has unsaved changes — export the last SAVED data anyway?')) return;
+    setExporting(scope);
+    try {
+      const url =
+        scope === 'week'
+          ? `/api/hr/new-hire-checklist/export?scope=week&period=${encodeURIComponent(period)}`
+          : '/api/hr/new-hire-checklist/export?scope=all';
+      const res = await fetch(url, { cache: 'no-store' });
+      if (!res.ok) {
+        let msg = `Export failed (${res.status})`;
+        try {
+          const j = (await res.json()) as { error?: string };
+          if (j.error) msg = j.error;
+        } catch { /* non-JSON body — keep the status message */ }
+        throw new Error(msg);
+      }
+      const blob = await res.blob();
+      const cd = res.headers.get('Content-Disposition') ?? '';
+      const named = /filename="?([^"]+)"?/.exec(cd)?.[1];
+      const filename = named ?? (scope === 'week' ? `new-hire-checklist-${period}.xlsx` : 'new-hire-checklist-all-weeks.xlsx');
+      const objectUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = objectUrl;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(objectUrl), 200);
+      toast.success(scope === 'week' ? `Exported ${formatWeekLabel(period)}` : 'Exported all weeks');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Export failed');
+    } finally {
+      setExporting(null);
+    }
+  }, [dirty, period]);
 
   const persist = useCallback(async (action: 'save' | 'lock'): Promise<boolean> => {
     if (!period) return false;
@@ -1238,6 +1299,53 @@ export default function HrNewHireChecklist({
               <RefreshCw className={cn('h-3.5 w-3.5', loading && 'animate-spin')} />
               <span className="hidden sm:inline">Refresh</span>
             </Button>
+
+            {/* Export to Excel — one .xlsx sheet per week (this week / all weeks) */}
+            <div className="relative" ref={exportMenuRef}>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setExportMenuOpen((o) => !o)}
+                disabled={!!exporting}
+                aria-haspopup="menu"
+                aria-expanded={exportMenuOpen}
+                className="h-8 gap-1.5 border-emerald-200 text-emerald-700 hover:bg-emerald-50 dark:border-emerald-800 dark:text-emerald-300"
+              >
+                {exporting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
+                <span className="hidden sm:inline">Export</span>
+                <ChevronDown className="h-3.5 w-3.5 text-zinc-400" />
+              </Button>
+              {exportMenuOpen && (
+                <div
+                  role="menu"
+                  className="absolute right-0 z-30 mt-1 w-56 overflow-hidden rounded-xl border border-zinc-200 bg-white py-1 shadow-lg shadow-black/10 dark:border-zinc-700 dark:bg-zinc-900"
+                >
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => void exportWorkbook('week')}
+                    className="flex w-full flex-col items-start gap-0.5 px-3 py-2 text-left hover:bg-emerald-50 dark:hover:bg-emerald-950/40"
+                  >
+                    <span className="text-[13px] font-medium text-zinc-800 dark:text-zinc-100">This week</span>
+                    <span className="text-[11px] text-zinc-500 dark:text-zinc-400">
+                      {formatWeekLabel(period)} — one sheet
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => void exportWorkbook('all')}
+                    className="flex w-full flex-col items-start gap-0.5 px-3 py-2 text-left hover:bg-emerald-50 dark:hover:bg-emerald-950/40"
+                  >
+                    <span className="text-[13px] font-medium text-zinc-800 dark:text-zinc-100">All weeks</span>
+                    <span className="text-[11px] text-zinc-500 dark:text-zinc-400">
+                      Workbook with one sheet per week
+                    </span>
+                  </button>
+                </div>
+              )}
+            </div>
 
             {locked ? (
               <Button

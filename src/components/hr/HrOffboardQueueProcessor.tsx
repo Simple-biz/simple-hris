@@ -11,6 +11,7 @@ import {
   SkipForward,
   Undo2,
   UserMinus,
+  Users,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Dialog, DialogContent } from '@/components/ui/dialog';
@@ -44,7 +45,7 @@ export default function HrOffboardQueueProcessor({ open, items, onOpenChange, on
   const [outcomes, setOutcomes] = useState<Record<string, Outcome>>({});
   const [reasonById, setReasonById] = useState<Record<string, OffboardReason | ''>>({});
   const [noteById, setNoteById] = useState<Record<string, string>>({});
-  const [busy, setBusy] = useState<null | 'offboard' | 'dismiss' | 'return'>(null);
+  const [busy, setBusy] = useState<null | 'offboard' | 'dismiss' | 'return' | 'offboard-all'>(null);
   // When set, the reason box is shown for a dismiss (reject) or return (send back).
   const [actionMode, setActionMode] = useState<null | 'dismiss' | 'return'>(null);
   const [actionReason, setActionReason] = useState('');
@@ -91,6 +92,115 @@ export default function HrOffboardQueueProcessor({ open, items, onOpenChange, on
   }, [total]);
 
   const markOutcome = (id: string, o: Outcome) => setOutcomes((prev) => ({ ...prev, [id]: o }));
+
+  // A row is "handled" once it carries a terminal outcome. Skipped / never-reached
+  // rows are still fair game for the batch action.
+  const isHandled = useCallback(
+    (id: string) => {
+      const o = outcomes[id];
+      return o === 'completed' || o === 'dismissed' || o === 'returned';
+    },
+    [outcomes],
+  );
+
+  // Rows the batch action can off-board in one shot: still open, have a work
+  // email, a chosen reason, and a note when the reason is "other".
+  const batchEligible = useMemo(
+    () =>
+      items.filter((it) => {
+        if (isHandled(it.id)) return false;
+        if (!it.employee_work_email) return false;
+        const reason = reasonById[it.id];
+        if (!reason) return false;
+        if (reason === 'other' && !(noteById[it.id] ?? '').trim()) return false;
+        return true;
+      }),
+    [items, isHandled, reasonById, noteById],
+  );
+
+  // Off-board every eligible remaining person in a SINGLE request. The API
+  // coalesces them into at most two phase-grouped webhooks (delete vs deactivate),
+  // so this is one round-trip regardless of headcount. Ineligible rows (no work
+  // email, or an unpicked/incomplete reason) are left for the one-by-one flow.
+  const handleOffboardAll = async () => {
+    const eligible = batchEligible;
+    if (eligible.length === 0) {
+      toast.error('No one is ready to batch off-board — pick a reason (and note) first');
+      return;
+    }
+    setBusy('offboard-all');
+    try {
+      const employees = eligible.map((it) => ({
+        work_email: it.employee_work_email as string,
+        reason: reasonById[it.id],
+        note: (noteById[it.id] ?? '').trim() || null,
+      }));
+      const res = await fetch('/api/hr/offboard', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ employees }),
+      });
+      const json = (await res.json()) as {
+        success?: boolean;
+        error?: string;
+        count?: number;
+        webhooks?: Array<{ phase: string; fired: boolean; error: string | null }>;
+      };
+      if (!res.ok || !json.success) throw new Error(json.error ?? 'Batch off-board failed');
+
+      // Mark each queue row completed (notifies its manager). The teardown above
+      // already ran and is the source of truth, so failures here only affect the
+      // "Processing" badge — we still record the local outcome as completed.
+      await Promise.all(
+        eligible.map((it) =>
+          fetch(`/api/offboarding-queue/${it.id}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              decision: 'completed',
+              offboard_reason: reasonById[it.id],
+              note: (noteById[it.id] ?? '').trim() || null,
+            }),
+          }).catch(() => null),
+        ),
+      );
+
+      const doneIds = new Set(eligible.map((e) => e.id));
+      eligible.forEach((it) => markOutcome(it.id, 'completed'));
+
+      const webhookWarn =
+        Array.isArray(json.webhooks) && json.webhooks.some((w) => w.error != null || !w.fired);
+      if (webhookWarn) {
+        toast.warning(`${eligible.length} off-boarded — some workflows didn't fire`, {
+          description: 'Roster + access updated for everyone. Check the offboarding webhooks in Admin.',
+          duration: 7000,
+        });
+      } else {
+        toast.success(`${eligible.length} off-boarded in one batch`);
+      }
+
+      // Jump to the first row this batch didn't cover (missing email / no reason),
+      // so HR handles those individually; otherwise land on the done screen.
+      const nextIdx = items.findIndex((it) => !doneIds.has(it.id) && !isHandled(it.id));
+      const leftover = items.filter((it) => !doneIds.has(it.id) && !isHandled(it.id)).length;
+      if (nextIdx === -1) {
+        setIdx(total);
+      } else {
+        setActionMode(null);
+        setActionReason('');
+        setIdx(nextIdx);
+        if (leftover > 0) {
+          toast.info(`${leftover} left — no work email or reason; handle these individually`, {
+            duration: 6000,
+          });
+        }
+      }
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Batch off-board failed');
+    } finally {
+      setBusy(null);
+    }
+  };
 
   // Close: release any still-'processing' (unhandled) rows back to pending, then refresh.
   const handleClose = useCallback(() => {
@@ -278,6 +388,34 @@ export default function HrOffboardQueueProcessor({ open, items, onOpenChange, on
 
         {/* Body */}
         <div className="bg-zinc-950/60 p-5">
+          {/* Batch action — off-board everyone who's ready in one webhook round-trip. */}
+          {!showDone && !actionMode && batchEligible.length >= 2 && (
+            <div className="mb-4 flex items-center justify-between gap-3 rounded-lg border border-rose-900/50 bg-rose-950/25 px-3 py-2.5">
+              <div className="min-w-0">
+                <p className="text-[11px] font-semibold text-rose-200">
+                  {batchEligible.length} ready to off-board together
+                </p>
+                <p className="truncate text-[10px] text-rose-300/70">
+                  Uses each person&apos;s reason above · fires one batched teardown
+                </p>
+              </div>
+              <Button
+                type="button"
+                size="sm"
+                onClick={handleOffboardAll}
+                disabled={!!busy}
+                title="Off-board every ready person in a single batched request"
+                className="shrink-0 gap-1.5 border-0 bg-rose-700 text-white hover:bg-rose-600 disabled:bg-zinc-800 disabled:text-zinc-600"
+              >
+                {busy === 'offboard-all' ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Users className="h-3.5 w-3.5" />
+                )}
+                Offboard all ({batchEligible.length})
+              </Button>
+            </div>
+          )}
           <AnimatePresence mode="wait" initial={false}>
             {showDone ? (
               <motion.div
