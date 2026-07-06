@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
+import { useSession } from 'next-auth/react';
 import AppFooter from '@/components/AppFooter';
 import { useTheme } from 'next-themes';
 import { AnimatePresence, motion } from 'motion/react';
@@ -21,6 +22,7 @@ import AnnouncementComposer from './components/announcements/AnnouncementCompose
 import SWall from './components/swall/SWall';
 import { ACCOUNTING_TAB_IDS, allowedAccountingTabsForUser, canAccessAccountingTabForUser, canEditAccountingTab } from '@/lib/rbac/accounting-tabs';
 import { canEditFeature, type FeaturePermissionsMap } from '@/lib/rbac/feature-permissions';
+import { readRbacCache, writeRbacCache } from '@/lib/rbac/rbac-cache';
 import ReadOnlyTab from '@/components/rbac/ReadOnlyTab';
 import { usePagesVisibility } from '@/hooks/usePagesVisibility';
 import { pageLabel } from '@/lib/pages/visibility';
@@ -49,6 +51,14 @@ export default function App({ initialData }: { initialData?: InitialAccountingDa
   const searchParams = useSearchParams();
   const emailFromQuery = searchParams?.get('email') ?? null;
 
+  // JWT session roles — an offline fallback so tab gating survives a Supabase
+  // outage (roles are in the cookie without a DB hit). Only trusted for the
+  // session owner's own view; see the fetch effect below.
+  const { data: authSession } = useSession();
+  const authEmail = (authSession?.user?.email ?? '').trim().toLowerCase();
+  const authRoles = (authSession?.user as { roles?: string[] } | undefined)?.roles ?? null;
+  const authRolesKey = (authRoles ?? []).join(',');
+
   useEffect(() => {
     setMounted(true);
     try {
@@ -74,35 +84,55 @@ export default function App({ initialData }: { initialData?: InitialAccountingDa
       return;
     }
     let cancelled = false;
+    // Offline fallbacks (used only if a fetch fails, e.g. Supabase down): the JWT
+    // session roles (when this is the session owner's own view) and last-known-good
+    // cache. Without these, an outage collapses roles+perms to empty and every tab
+    // but the read-only Overview vanishes from the rail.
+    const selfRoles = authRoles && authEmail && authEmail === e.toLowerCase() ? authRoles : null;
+    const cached = readRbacCache(e);
     // Roles + per-feature permissions are fetched in parallel; the tab-gating
     // logic needs both to decide what to show.
     Promise.all([
       fetch(`/api/employee-roles?email=${encodeURIComponent(e)}`, { cache: 'no-store' })
-        .then((r) => r.json())
-        .then((j: { rows?: { role: string }[] }) => (j.rows ?? []).map((row) => row.role))
-        .catch(() => [] as string[]),
+        .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`roles ${r.status}`))))
+        .then((j: { rows?: { role: string }[] }) =>
+          Array.isArray(j.rows)
+            ? j.rows.map((row) => row.role)
+            : Promise.reject(new Error('roles shape')),
+        )
+        .catch(() => selfRoles ?? cached?.roles ?? null),
       fetch(`/api/employee-feature-permissions?email=${encodeURIComponent(e)}`, { cache: 'no-store' })
-        .then((r) => r.json())
+        .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`perms ${r.status}`))))
         .then((j: { rows?: Array<{ view_key: string; feature: string; access: 'view' | 'edit' }> }) => {
+          if (!Array.isArray(j.rows)) return Promise.reject(new Error('perms shape'));
           const out: FeaturePermissionsMap = {};
-          for (const row of j.rows ?? []) {
+          for (const row of j.rows) {
             const view = row.view_key as keyof FeaturePermissionsMap;
             if (!out[view]) out[view] = {};
             (out[view] as Record<string, 'view' | 'edit'>)[row.feature] = row.access;
           }
           return out;
         })
-        .catch(() => ({} as FeaturePermissionsMap)),
+        .catch(() => cached?.perms ?? null),
     ]).then(([r, p]) => {
       if (cancelled) return;
-      setRoles(r);
-      setFeaturePerms(p);
+      setRoles(r ?? []);
+      setFeaturePerms(p ?? {});
       setPermsLoaded(true);
+      // Only refresh the cache from a live (non-null) fetch — never overwrite good
+      // cache with the outage fallback.
+      if (r !== null || p !== null) {
+        writeRbacCache(e, {
+          ...(r !== null ? { roles: r } : {}),
+          ...(p !== null ? { perms: p } : {}),
+        });
+      }
     });
     return () => {
       cancelled = true;
     };
-  }, [sessionEmail]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionEmail, authRolesKey, authEmail]);
 
   const isDark = mounted ? resolvedTheme === 'dark' : false;
   // Global Pages overlay (admin-controlled visible / construction / hidden).

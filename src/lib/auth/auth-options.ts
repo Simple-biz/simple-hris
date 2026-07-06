@@ -63,23 +63,35 @@ const ROLE_REFRESH_THROTTLE_SECONDS = 60;
 
 /**
  * Look up active role assignments for `email`. Uses service-role when available so RLS
- * can stay strict on the `employee_roles` table. Returns [] on any error — callers should
- * treat that as "no elevated access."
+ * can stay strict on the `employee_roles` table.
+ *
+ * Returns `null` when the roles table could NOT be read (no client, query error, or a
+ * thrown/timed-out request — i.e. Supabase is unreachable), which is deliberately
+ * distinct from `[]` ("read succeeded; this user genuinely has no roles"). The throttled
+ * refresh below relies on that distinction to KEEP the roles already baked into the JWT
+ * during a Supabase outage instead of blanking them — see the call site for why that
+ * matters. Use {@link fetchRolesForEmail} when you just want "roles or none."
  */
-async function fetchRolesForEmail(email: string): Promise<string[]> {
+async function fetchRolesForEmailOrNull(email: string): Promise<string[] | null> {
   const supabase = createSupabaseServiceRoleClient() ?? createSupabaseServerClient();
-  if (!supabase) return [];
+  if (!supabase) return null;
   try {
     const { data, error } = await supabase
       .from('employee_roles')
       .select('role')
       .is('revoked_at', null)
       .ilike('work_email', email);
-    if (error || !data) return [];
+    if (error || !data) return null;
     return (data as { role: string }[]).map((r) => r.role);
   } catch {
-    return [];
+    return null;
   }
+}
+
+/** As {@link fetchRolesForEmailOrNull} but collapses "unreachable" to `[]` — for the
+ *  first-sign-in path, where there are no prior roles to preserve anyway. */
+async function fetchRolesForEmail(email: string): Promise<string[]> {
+  return (await fetchRolesForEmailOrNull(email)) ?? [];
 }
 
 /**
@@ -256,14 +268,22 @@ export const authOptions: NextAuthOptions = {
         const nowSec = Math.floor(Date.now() / 1000);
         const lastRefresh = (token as { rolesRefreshedAt?: number }).rolesRefreshedAt ?? 0;
         if (nowSec - lastRefresh >= ROLE_REFRESH_THROTTLE_SECONDS) {
-          try {
-            const roles = await fetchRolesForEmail(emailLower);
-            (token as { roles?: string[] }).roles = roles;
-            (token as { elevated?: boolean }).elevated = hasElevatedRole(roles);
-            (token as { rolesRefreshedAt?: number }).rolesRefreshedAt = nowSec;
-          } catch {
-            /* keep the prior roles on a refresh hiccup -- never fail auth */
+          // Distinguish "read succeeded, no roles" ([]) from "Supabase unreachable"
+          // (null). On an outage we KEEP the roles already in the JWT rather than
+          // wiping them to []. This is load-bearing: the edge proxy (proxy.ts) and
+          // every page layout (requirePageRoles) authorize straight off token.roles,
+          // so a blanked list would bounce a signed-in admin/manager off their
+          // dashboard to /employee — and make the ViewSwitcher vanish — for the whole
+          // outage, even though nothing about their access actually changed. A live
+          // session must ride out a blip; only a definitive DB answer moves the roles.
+          const refreshed = await fetchRolesForEmailOrNull(emailLower);
+          if (refreshed !== null) {
+            (token as { roles?: string[] }).roles = refreshed;
+            (token as { elevated?: boolean }).elevated = hasElevatedRole(refreshed);
           }
+          // Advance the throttle even on failure so an outage doesn't turn every
+          // request into a fresh (slow, failing) DB probe — we simply retry next window.
+          (token as { rolesRefreshedAt?: number }).rolesRefreshedAt = nowSec;
         }
       }
 

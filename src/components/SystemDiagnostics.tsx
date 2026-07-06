@@ -23,7 +23,7 @@
  * and a Reset Layout button restores the template.
  */
 
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ReactFlow,
   BaseEdge,
@@ -689,24 +689,34 @@ function buildMockDiagnostics(now = new Date()): DiagnosticsHealthResponse {
  * Spaced so 280-wide cards don't overlap.
  */
 
+// Collision-free template layout: a strict column grid so the 284px-wide cards
+// never overlap. Columns are 360px apart (76px horizontal gap); rows 280px apart
+// (clears the tallest card even when its summary wraps to several lines).
+// Left→right mirrors the dependency flow: UI/HR → features → data tables → DB.
+const COL = { ui: 0, feature: 360, data: 720, client: 1080, db: 1440 } as const;
 const NODE_POSITIONS: Record<string, { x: number; y: number }> = {
-  'hr-onboarding':         { x: 380,  y: -240 },
-  'hr-offboarding':        { x: 40,   y: -240 },
-  'google-sheet-sync':     { x: 40,   y: 60   },
-  'payroll-wizard':        { x: 380,  y: 60   },
-  'admin-shell':           { x: 40,   y: 320  },
-  rates:                   { x: 380,  y: 600  },
-  'hubstaff-csv':          { x: 740,  y: -40  },
-  'master-list':           { x: 740,  y: 200  },
-  'disbursement-records':  { x: 740,  y: 440  },
-  'supabase-client':       { x: 1100, y: 380  },
-  'supabase-postgres':     { x: 1460, y: 380  },
-  'pg-pool':               { x: 1100, y: 660  },
-  'daily-report':          { x: 740,  y: 660  },
-  'auth-login':            { x: 380,  y: 880  },
-  'audit-log':             { x: 1100, y: 880  },
-  'app-settings':          { x: 1460, y: 60   },
-  'rate-history':          { x: 1100, y: 600  },
+  // Col 0 — shell / HR / auth entry points
+  'admin-shell':           { x: COL.ui,      y: 0    },
+  'hr-onboarding':         { x: COL.ui,      y: 280  },
+  'hr-offboarding':        { x: COL.ui,      y: 560  },
+  'google-sheet-sync':     { x: COL.ui,      y: 840  },
+  'auth-login':            { x: COL.ui,      y: 1120 },
+  // Col 1 — feature workflows
+  'payroll-wizard':        { x: COL.feature, y: 0    },
+  rates:                   { x: COL.feature, y: 280  },
+  'app-settings':          { x: COL.feature, y: 560  },
+  // Col 2 — data tables / imports
+  'hubstaff-csv':          { x: COL.data,    y: 0    },
+  'master-list':           { x: COL.data,    y: 280  },
+  'disbursement-records':  { x: COL.data,    y: 560  },
+  'daily-report':          { x: COL.data,    y: 840  },
+  'rate-history':          { x: COL.data,    y: 1120 },
+  // Col 3 — client / pooler / audit
+  'supabase-client':       { x: COL.client,  y: 0    },
+  'pg-pool':               { x: COL.client,  y: 280  },
+  'audit-log':             { x: COL.client,  y: 560  },
+  // Col 4 — database
+  'supabase-postgres':     { x: COL.db,      y: 0    },
 };
 
 const EDGES: { source: string; target: string }[] = [
@@ -736,7 +746,10 @@ const EDGES: { source: string; target: string }[] = [
   { source: 'rate-history', target: 'supabase-client' },
 ];
 
-const POSITIONS_STORAGE_KEY = 'system-diagnostics-positions-v1';
+// v2: bumped when the template moved to the collision-free grid so any stale
+// v1 drag positions (which could overlap) are dropped and everyone gets the
+// clean layout. New drags persist under this key.
+const POSITIONS_STORAGE_KEY = 'system-diagnostics-positions-v2';
 
 function loadStoredPositions(): Record<string, { x: number; y: number }> {
   if (typeof window === 'undefined') return {};
@@ -1398,8 +1411,26 @@ function formatTimestamp(iso: string): string {
 
 /* ────────────────── Main component ────────────────── */
 
+/** A grey "we don't actually know yet" baseline — used for first paint and
+ *  whenever the live probe fails, so the map NEVER shows fake green/red. Only a
+ *  successful /api/admin/diagnostics probe produces real healthy/warning/critical
+ *  statuses. This is the trust contract: any color = a real live measurement;
+ *  grey Unknown = not live. */
+function buildUnknownBaseline(now = new Date()): DiagnosticsHealthResponse {
+  const base = buildMockDiagnostics(now);
+  return {
+    overallStatus: 'unknown',
+    nodes: base.nodes.map((n) => ({
+      ...n,
+      status: 'unknown' as DiagnosticStatus,
+      summary: 'Awaiting live probe — status unknown.',
+    })),
+    alerts: [],
+  };
+}
+
 export default function SystemDiagnostics() {
-  const [data, setData] = useState<DiagnosticsHealthResponse>(() => buildMockDiagnostics());
+  const [data, setData] = useState<DiagnosticsHealthResponse>(() => buildUnknownBaseline());
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   // Initial positions snapshot — used at first paint and as the "template" we can
@@ -1437,7 +1468,7 @@ export default function SystemDiagnostics() {
         const body = (await res.json().catch(() => ({}))) as { error?: string };
         setDataSource('mock');
         setProbeError(body.error ?? `Probe failed (HTTP ${res.status})`);
-        setData(buildMockDiagnostics());
+        setData(buildUnknownBaseline());
         return;
       }
       const json = (await res.json()) as DiagnosticsHealthResponse & { source?: 'live' | 'mock' };
@@ -1446,11 +1477,17 @@ export default function SystemDiagnostics() {
     } catch (e) {
       setDataSource('mock');
       setProbeError(e instanceof Error ? e.message : 'Probe failed');
-      setData(buildMockDiagnostics());
+      setData(buildUnknownBaseline());
     } finally {
       setRefreshing(false);
     }
   }, []);
+
+  // Keep the latest loadDiagnostics in a ref so the auto-refresh interval can run
+  // on stable [] deps — it never tears down / re-creates the timer, and the deps
+  // array size never changes across renders (avoids React's "deps changed size").
+  const loadDiagnosticsRef = useRef(loadDiagnostics);
+  loadDiagnosticsRef.current = loadDiagnostics;
 
   // Fetch live data on mount.
   useEffect(() => {
@@ -1604,8 +1641,13 @@ export default function SystemDiagnostics() {
     return c;
   }, [data.nodes]);
 
+  // Auto re-probe on an interval so the map is a genuine live feed: it flips to
+  // red on its own the moment Supabase starts failing, no manual Refresh needed.
+  // (Previously this was a no-op timestamp bump — it never re-hit the probe, so a
+  // mid-session outage wouldn't surface until you clicked Refresh.) The tab
+  // unmounts when you navigate away, so this only polls while it's on screen.
   useEffect(() => {
-    const t = setInterval(() => setData((prev) => ({ ...prev })), 60_000);
+    const t = setInterval(() => void loadDiagnosticsRef.current(), 30_000);
     return () => clearInterval(t);
   }, []);
 
@@ -1649,7 +1691,7 @@ export default function SystemDiagnostics() {
                 dataSource === 'live' ? 'bg-emerald-500' : 'bg-zinc-400',
               )}
             />
-            {dataSource === 'live' ? 'Live probes' : 'Mock data'}
+            {dataSource === 'live' ? 'Live probes' : 'Not live'}
           </span>
           <span
             className="font-mono text-[10px] uppercase tracking-wider text-zinc-400 dark:text-zinc-500"
@@ -1674,7 +1716,7 @@ export default function SystemDiagnostics() {
         <div className="flex shrink-0 items-start gap-2 rounded-lg border border-amber-200/80 bg-amber-50/70 px-3 py-2 text-[12px] dark:border-amber-900/50 dark:bg-amber-950/30">
           <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-600 dark:text-amber-400" />
           <p className="leading-relaxed text-amber-900 dark:text-amber-200">
-            Live probe failed — showing mock baseline. <span className="font-mono text-[11px]">{probeError}</span>
+            Live probe failed — every node below is <strong>Unknown</strong> (grey), not live health. <span className="font-mono text-[11px]">{probeError}</span>
           </p>
         </div>
       )}

@@ -27,6 +27,7 @@ import { SWallNavLabel } from '@/components/swall/SWall';
 import ConstructionMark from '@/components/common/ConstructionMark';
 import CollapsibleSidebarShell from '@/components/common/CollapsibleSidebarShell';
 import SidebarLogoHeader from '@/components/common/SidebarLogoHeader';
+import SidebarCollapsedDot from '@/components/common/SidebarCollapsedDot';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -151,19 +152,30 @@ export default function Sidebar({ activeTab, setActiveTab, mobileOpen, allowedTa
                     : 'hover:bg-orange-50 hover:text-zinc-900 dark:hover:bg-blue-950/30 dark:hover:text-zinc-200',
                 )}
               >
-                <item.icon
-                  className={cn(
-                    'h-4 w-4 shrink-0',
-                    activeTab === item.id
-                      ? 'text-orange-500 dark:text-orange-400'
-                      : 'text-zinc-500 group-hover:text-orange-500 dark:text-zinc-500 dark:group-hover:text-orange-400',
+                <span className="relative shrink-0">
+                  <item.icon
+                    className={cn(
+                      'h-4 w-4 shrink-0',
+                      activeTab === item.id
+                        ? 'text-orange-500 dark:text-orange-400'
+                        : 'text-zinc-500 group-hover:text-orange-500 dark:text-zinc-500 dark:group-hover:text-orange-400',
+                    )}
+                  />
+                  {/* Collapsed rail clips the full badge off-screen — stand in with
+                      a corner dot on the bell so unread/lock stays visible. */}
+                  {item.id === 'notifications' && (
+                    <SidebarCollapsedDot
+                      collapsed={collapsed}
+                      show={(unreadNotifications > 0 && activeTab !== 'notifications') || lockState.locked}
+                      tone={unreadNotifications > 0 ? 'bg-rose-500' : 'bg-red-500'}
+                    />
                   )}
-                />
+                </span>
                 <span className={cn('truncate sb-collapse-fade')}>{item.label}</span>
                 {isConstr(item.id) && <span className={cn('sb-collapse-fade')}><ConstructionMark active={activeTab === item.id} /></span>}
                 {item.id === 'notifications' && unreadNotifications > 0 && activeTab !== 'notifications'
                   ? (
-                    <span className="relative ml-auto inline-flex">
+                    <span className="relative ml-auto inline-flex sb-collapse-fade">
                       <span className="absolute inset-0 -m-0.5 animate-ping rounded-full bg-rose-500/60" />
                       <span className="absolute inset-0 animate-pulse rounded-full bg-rose-500/30 blur-[2px]" />
                       <motion.span
@@ -185,9 +197,9 @@ export default function Sidebar({ activeTab, setActiveTab, mobileOpen, allowedTa
                     </span>
                   )
                   : item.id === 'notifications' && unreadNotifications === 0 && lockState.locked
-                    ? <span className="ml-auto h-2 w-2 animate-pulse rounded-full bg-red-500" />
+                    ? <span className="ml-auto h-2 w-2 animate-pulse rounded-full bg-red-500 sb-collapse-fade" />
                     : activeTab === item.id && (
-                      <ChevronRight className="ml-auto h-3 w-3 text-orange-400 dark:text-orange-500/70" />
+                      <ChevronRight className="ml-auto h-3 w-3 text-orange-400 dark:text-orange-500/70 sb-collapse-fade" />
                     )
                 }
               </button>

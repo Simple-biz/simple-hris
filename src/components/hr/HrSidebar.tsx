@@ -27,6 +27,7 @@ import { SWallNavLabel } from '@/components/swall/SWall';
 import ConstructionMark from '@/components/common/ConstructionMark';
 import CollapsibleSidebarShell from '@/components/common/CollapsibleSidebarShell';
 import SidebarLogoHeader from '@/components/common/SidebarLogoHeader';
+import SidebarCollapsedDot from '@/components/common/SidebarCollapsedDot';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -90,6 +91,8 @@ export default function HrSidebar({
     label: string,
     Icon: React.ComponentType<{ className?: string }>,
     badge?: React.ReactNode,
+    /** When true, a corner dot stands in for the (clipped) badge while collapsed. */
+    attention?: boolean,
   ) => (
     <button
       key={id}
@@ -103,15 +106,18 @@ export default function HrSidebar({
           : 'text-[#3f3f46] hover:bg-emerald-50 hover:text-emerald-900 dark:text-zinc-300 dark:hover:bg-emerald-950/40 dark:hover:text-emerald-100',
       )}
     >
-      <Icon
-        className={cn(
-          'h-[15px] w-[15px] shrink-0',
-          activeTab === id ? 'text-white/85' : 'text-[#a1a1aa] dark:text-zinc-500',
-        )}
-      />
+      <span className="relative shrink-0">
+        <Icon
+          className={cn(
+            'h-[15px] w-[15px] shrink-0',
+            activeTab === id ? 'text-white/85' : 'text-[#a1a1aa] dark:text-zinc-500',
+          )}
+        />
+        <SidebarCollapsedDot collapsed={collapsed} show={!!attention} tone="bg-red-500" />
+      </span>
       <span className={cn('truncate text-left sb-collapse-fade')}>{label}</span>
       {isConstr(id) && <span className={cn('sb-collapse-fade')}><ConstructionMark active={activeTab === id} /></span>}
-      {badge}
+      {badge && <span className={cn('ml-auto flex items-center sb-collapse-fade')}>{badge}</span>}
     </button>
   );
 
@@ -158,7 +164,7 @@ export default function HrSidebar({
               'Notifications',
               Bell,
               (unreadNotifications > 0 || lockState.locked) ? (
-                <span className="ml-auto flex items-center gap-1.5">
+                <span className="flex items-center gap-1.5">
                   {unreadNotifications > 0 && (
                     <span
                       className={cn(
@@ -176,6 +182,7 @@ export default function HrSidebar({
                   )}
                 </span>
               ) : null,
+              (unreadNotifications > 0 || lockState.locked),
             )}
             {can('s-wall') && <button
               key="s-wall"

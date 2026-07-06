@@ -28,6 +28,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import ConstructionMark from '@/components/common/ConstructionMark';
 import CollapsibleSidebarShell from '@/components/common/CollapsibleSidebarShell';
 import SidebarLogoHeader from '@/components/common/SidebarLogoHeader';
+import SidebarCollapsedDot from '@/components/common/SidebarCollapsedDot';
 import EmployeeAvatar from './EmployeeAvatar';
 import ViewSwitcher from '@/components/rbac/ViewSwitcher';
 import { useSidebarCollapsed } from '@/hooks/useSidebarCollapsed';
@@ -151,20 +152,30 @@ export default function EmployeeSidebar({
                     : 'hover:bg-orange-50 hover:text-zinc-900 dark:hover:bg-blue-950/30 dark:hover:text-zinc-200',
                 )}
               >
-                <item.icon
-                  className={cn(
-                    'h-4 w-4 transition-colors duration-200',
-                    activeTab === item.id
-                      ? 'text-orange-500 dark:text-orange-400'
-                      : 'text-zinc-500 group-hover:text-orange-500 dark:text-zinc-500 dark:group-hover:text-orange-400',
+                <span className="relative shrink-0">
+                  <item.icon
+                    className={cn(
+                      'h-4 w-4 transition-colors duration-200',
+                      activeTab === item.id
+                        ? 'text-orange-500 dark:text-orange-400'
+                        : 'text-zinc-500 group-hover:text-orange-500 dark:text-zinc-500 dark:group-hover:text-orange-400',
+                    )}
+                  />
+                  {/* Collapsed rail clips the full profile badge — keep the nudge
+                      visible with a corner dot on the icon. */}
+                  {item.id === 'profile' && profileIncomplete && activeTab !== 'profile' && (
+                    <SidebarCollapsedDot
+                      collapsed={collapsed}
+                      tone={bankInfoNudge ? 'bg-rose-500' : 'bg-amber-500'}
+                    />
                   )}
-                />
+                </span>
                 <span className={cn('truncate text-left sb-collapse-fade')}>{item.label}</span>
                 {isConstr(item.id) && <span className={cn('sb-collapse-fade')}><ConstructionMark active={activeTab === item.id} /></span>}
                 {item.id === 'profile' && profileIncomplete && activeTab !== 'profile' && (
                   <span
                     className={cn(
-                      'relative ml-auto flex h-5 min-w-5 items-center justify-center rounded-full px-1.5 text-[10px] font-semibold leading-none text-white ring-2 ring-white dark:ring-[#0d1117]',
+                      'relative ml-auto flex h-5 min-w-5 items-center justify-center rounded-full px-1.5 text-[10px] font-semibold leading-none text-white ring-2 ring-white dark:ring-[#0d1117] sb-collapse-fade',
                       bankInfoNudge ? 'bg-rose-500' : 'bg-amber-500',
                     )}
                     aria-label={bankInfoNudge ? 'Payroll requested your bank details' : 'Profile setup incomplete'}
@@ -193,7 +204,7 @@ export default function EmployeeSidebar({
                 )}
                 {activeTab === item.id
                   && !(item.id === 'disputes' && payrollLocked) && (
-                  <ChevronRight className="ml-auto h-3 w-3 text-orange-400 dark:text-orange-500/70" />
+                  <ChevronRight className="ml-auto h-3 w-3 text-orange-400 dark:text-orange-500/70 sb-collapse-fade" />
                 )}
               </button>
             ))}
@@ -222,7 +233,7 @@ export default function EmployeeSidebar({
               <span className={cn('truncate text-left sb-collapse-fade')}>S-Wall</span>
               {isConstr('s-wall') && <span className={cn('sb-collapse-fade')}><ConstructionMark active={activeTab === 's-wall'} /></span>}
               {activeTab === 's-wall' && (
-                <ChevronRight className="ml-auto h-3 w-3 text-violet-400 dark:text-violet-500/70" />
+                <ChevronRight className="ml-auto h-3 w-3 text-violet-400 dark:text-violet-500/70 sb-collapse-fade" />
               )}
             </button>
             )}

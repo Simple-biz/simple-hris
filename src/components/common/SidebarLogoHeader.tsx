@@ -78,10 +78,12 @@ export default function SidebarLogoHeader({
         aria-hidden
         className={cn(
           'pointer-events-none absolute inset-y-0 left-1 flex origin-left items-center opacity-0 scale-90 transform-gpu will-change-[opacity,transform] transition-[opacity,transform] duration-[var(--sb-collapse-ms)] ease-[var(--sb-collapse-ease)]',
-          collapsed && 'md:opacity-100 md:scale-100 md:delay-[calc(var(--sb-collapse-ms)/4)] md:duration-[calc(var(--sb-collapse-ms)*3/4)]',
+          // Entrance: a touch of delay so the wordmark clears first, then an
+          // ease-out glide in — no bounce, no beat fighting it.
+          collapsed && 'md:opacity-100 md:scale-100 md:delay-[calc(var(--sb-collapse-ms)/4)] md:duration-[calc(var(--sb-collapse-ms)*3/4)] md:ease-[cubic-bezier(0.22,1,0.36,1)]',
         )}
       >
-        <SidebarBrandMark className={accentClassName} />
+        <SidebarBrandMark className={accentClassName} beat={collapsed} />
       </div>
     </div>
   );

@@ -69,6 +69,13 @@ export default function CollapsibleSidebarShell({
         // Positioning context (so the absolute pull-tab + clip layer anchor here)
         // and let the pull-tab overhang the right border without being clipped.
         'overflow-visible md:relative',
+        // Lift the whole rail above the adjacent <main> on desktop. The rail is
+        // its own stacking context (transform-gpu), so the pull-tab's own z-index
+        // is trapped inside it and can't beat <main>'s content (its animated tab
+        // panels each form a stacking context that would otherwise paint over the
+        // 12px overhang). Raising the rail itself is what keeps the handle visible.
+        // Mobile keeps its higher drawer z-index (the rail's own base `z-50`).
+        'md:z-30',
         // Desktop rail slide timing — overrides the per-rail base duration/easing
         // (kept for the mobile drawer) with the shared, gently-eased collapse feel.
         'md:duration-[var(--sb-collapse-ms)] md:ease-[var(--sb-collapse-ease)]',

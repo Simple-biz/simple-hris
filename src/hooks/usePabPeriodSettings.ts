@@ -25,6 +25,11 @@ export function usePabPeriodSettings() {
     setLoading(true);
     try {
       setData(await fetchPabPeriodSettings());
+    } catch {
+      // Network/Supabase down. fetchPabPeriodSettings is now resilient (never
+      // rejects), but keep this catch as a backstop so a failure can never
+      // escape as an unhandled rejection (Next dev error overlay). Keep the
+      // last-known settings rather than resetting to defaults.
     } finally {
       setLoading(false);
     }

@@ -222,11 +222,17 @@ export async function fetchPabPeriodSettings(): Promise<PabPeriodFetchResult> {
     PAB_PERIOD_EXCLUSIONS_KEY,
   ] as const;
 
+  // Each key is fetched independently and degrades to `{ value: null }` on a
+  // non-OK response OR a network error (Supabase down → "Failed to fetch"). This
+  // keeps the function from ever rejecting: a whole-app outage yields default
+  // settings instead of an unhandled rejection that pops the Next dev overlay and
+  // blocks navigation. Callers get sensible defaults; real values return once the
+  // API is reachable again.
   const [mj, sj, ej, ov, am, ex] = await Promise.all(
     keys.map((key) =>
-      fetch(`/api/app-settings?key=${encodeURIComponent(key)}`, { cache: 'no-store' }).then(
-        (res) => res.json() as Promise<{ value: string | null }>,
-      ),
+      fetch(`/api/app-settings?key=${encodeURIComponent(key)}`, { cache: 'no-store' })
+        .then((res) => (res.ok ? (res.json() as Promise<{ value: string | null }>) : { value: null }))
+        .catch(() => ({ value: null as string | null })),
     ),
   );
 

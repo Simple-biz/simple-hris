@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { useSession } from 'next-auth/react';
 import { LayoutDashboard, ShieldCheck, Briefcase, ArrowLeftRight, Sparkles, UserCog, HeartHandshake, Crown, Users, HardHat, ClipboardCheck } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { withViewTransition } from '@/lib/theme/with-view-transition';
@@ -12,6 +13,7 @@ import {
   VIEW_ROUTES,
   useAvailableViews,
   type AppView,
+  type Role,
 } from '@/lib/rbac/views';
 
 interface ViewSwitcherProps {
@@ -33,7 +35,18 @@ const VIEW_ICONS: Record<AppView, React.ComponentType<{ className?: string }>> =
 
 export default function ViewSwitcher({ email, currentView }: ViewSwitcherProps) {
   const router = useRouter();
-  const { views } = useAvailableViews(email);
+  const { data: session } = useSession();
+  // Roles from the JWT session, used as an offline fallback so the switcher
+  // survives a Supabase outage. Only trust them when THIS switcher is showing the
+  // session owner's own views — not when an elevated user is browsing another
+  // person's dashboard via `?email=` (their roles ≠ that person's).
+  const sessionEmail = (session?.user?.email ?? '').trim().toLowerCase();
+  const sessionRoles = (session?.user as { roles?: Role[] } | undefined)?.roles ?? null;
+  const selfRoles =
+    sessionRoles && sessionEmail && sessionEmail === (email ?? '').trim().toLowerCase()
+      ? sessionRoles
+      : null;
+  const { views } = useAvailableViews(email, selfRoles);
   const notifCounts = useNotificationCountsByView(email);
   const [transitioning, setTransitioning] = useState<AppView | null>(null);
 

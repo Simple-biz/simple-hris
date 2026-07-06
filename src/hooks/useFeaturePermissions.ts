@@ -1,12 +1,14 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { useSession } from 'next-auth/react';
 import type { FeaturePermissionsMap, FeatureViewKey } from '@/lib/rbac/feature-permissions';
 import {
   allowedTabsForUser,
   canAccessTabForUser,
   canEditTab as canEditTabFn,
 } from '@/lib/rbac/view-tabs';
+import { readRbacCache, writeRbacCache } from '@/lib/rbac/rbac-cache';
 
 interface FeaturePermissionsState {
   roles: string[];
@@ -25,6 +27,12 @@ interface FeaturePermissionsState {
  * each surface fetching `/api/employee-roles` independently.
  */
 export function useFeaturePermissions(email: string | null | undefined) {
+  const { data: session } = useSession();
+  const sessionEmail = (session?.user?.email ?? '').trim().toLowerCase();
+  const sessionRoles = (session?.user as { roles?: string[] } | undefined)?.roles ?? null;
+  // Stable dependency: a fresh session-array identity each render must not re-run.
+  const sessionRolesKey = (sessionRoles ?? []).join(',');
+
   const [state, setState] = useState<FeaturePermissionsState>({
     roles: [],
     perms: {},
@@ -39,32 +47,55 @@ export function useFeaturePermissions(email: string | null | undefined) {
       return;
     }
     let cancelled = false;
+
+    // Offline fallbacks used ONLY when a fetch fails (Supabase down): the JWT
+    // session roles (when this hook resolves the session owner) and the
+    // last-known-good cache. Feature perms aren't in the JWT (kept out to stay
+    // under the cookie size limit), so the cache is their only offline source.
+    const selfRoles =
+      sessionRoles && sessionEmail && sessionEmail === e.toLowerCase() ? sessionRoles : null;
+    const cached = readRbacCache(e);
+
     setState((s) => ({ ...s, loading: true }));
     Promise.all([
       fetch(`/api/employee-roles?email=${encodeURIComponent(e)}`, { cache: 'no-store' })
-        .then((r) => r.json())
-        .then((j: { rows?: { role: string }[] }) => (j.rows ?? []).map((row) => row.role))
-        .catch(() => [] as string[]),
+        .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`roles ${r.status}`))))
+        .then((j: { rows?: { role: string }[] }) =>
+          Array.isArray(j.rows)
+            ? j.rows.map((row) => row.role)
+            : Promise.reject(new Error('roles shape')),
+        )
+        .catch(() => selfRoles ?? cached?.roles ?? null),
       fetch(`/api/employee-feature-permissions?email=${encodeURIComponent(e)}`, { cache: 'no-store' })
-        .then((r) => r.json())
+        .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`perms ${r.status}`))))
         .then((j: { rows?: Array<{ view_key: string; feature: string; access: 'view' | 'edit' }> }) => {
+          if (!Array.isArray(j.rows)) return Promise.reject(new Error('perms shape'));
           const out: FeaturePermissionsMap = {};
-          for (const row of j.rows ?? []) {
+          for (const row of j.rows) {
             const view = row.view_key as FeatureViewKey;
             if (!out[view]) out[view] = {};
             (out[view] as Record<string, 'view' | 'edit'>)[row.feature] = row.access;
           }
           return out;
         })
-        .catch(() => ({} as FeaturePermissionsMap)),
-    ]).then(([roles, perms]) => {
+        .catch(() => cached?.perms ?? null),
+    ]).then(([rolesRes, permsRes]) => {
       if (cancelled) return;
-      setState({ roles, perms, ready: true, loading: false });
+      setState({ roles: rolesRes ?? [], perms: permsRes ?? {}, ready: true, loading: false });
+      // Refresh the cache only from a live (non-null) fetch, so a failed request
+      // never overwrites good cache with the outage fallback.
+      if (rolesRes !== null || permsRes !== null) {
+        writeRbacCache(e, {
+          ...(rolesRes !== null ? { roles: rolesRes } : {}),
+          ...(permsRes !== null ? { perms: permsRes } : {}),
+        });
+      }
     });
     return () => {
       cancelled = true;
     };
-  }, [email]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [email, sessionRolesKey, sessionEmail]);
 
   const { roles, perms, ready, loading } = state;
   return {

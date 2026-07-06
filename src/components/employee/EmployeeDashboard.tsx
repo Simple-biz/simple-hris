@@ -18,6 +18,8 @@ import {
 } from 'lucide-react';
 import { motion } from 'motion/react';
 import ProfileCompletionCard from './ProfileCompletionCard';
+import { ConnectionStatusBanner } from '@/components/ConnectionStatusBanner';
+import type { ResourceStatus } from '@/hooks/useResilientResource';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -454,6 +456,12 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
   }, [sourceMenuOpen]);
   const [fileLoading, setFileLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  // Connection health for the essentials load — drives the ConnectionStatusBanner so
+  // a dead/unreachable Supabase shows the UI (with last-known data) + a Retry, instead
+  // of a wiped shell or a raw error dump. `lastLoadedAt` gates stale-vs-hard-error.
+  const [lastLoadedAt, setLastLoadedAt] = useState<number | null>(null);
+  const [essentialsError, setEssentialsError] = useState<string | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
   /** Merged row for this employee across ALL uploaded CSVs — used for full-month PAB. */
   const [pabMergedRow, setPabMergedRow] = useState<Record<string, unknown> | null>(null);
   const [pabMergedColumns, setPabMergedColumns] = useState<string[]>([]);
@@ -690,6 +698,7 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
     let cancelled = false;
     (async () => {
       setDataError(null);
+      setEssentialsError(null);
       try {
         const [ratesRes, fxRes, filesRes, holidaysRes, sysBonusRes] = await Promise.all([
           fetch(`/api/employee-hourly-rates?email=${encodeURIComponent(email)}`, { cache: 'no-store' }),
@@ -727,6 +736,7 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
 
         const files = filesJson.files ?? [];
         setSourceFiles(files);
+        setLastLoadedAt(Date.now());
         if (files.length > 0) {
           setSelectedFile(files[0]); // latest (API returns newest-first)
         } else {
@@ -735,8 +745,10 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
         }
       } catch (e) {
         if (!cancelled) {
-          setDataError(e instanceof Error ? e.message : 'Failed to load dashboard data');
-          setRow(null);
+          // Connection/essentials failure → surface via the ConnectionStatusBanner and
+          // KEEP last-known data (don't wipe `row`, don't dump the raw error into the
+          // red box) so the dashboard stays usable during a Supabase outage.
+          setEssentialsError(e instanceof Error ? e.message : 'Failed to load dashboard data');
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -744,7 +756,7 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
     })();
     return () => { cancelled = true; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [email, aliasEmails]);
+  }, [email, aliasEmails, reloadKey]);
 
   // Load hours data for the selected source file
   const loadHoursData = React.useCallback(
@@ -2089,8 +2101,26 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
     ? 'Welcome'
     : _nowHour < 12 ? 'Good morning' : _nowHour < 18 ? 'Good afternoon' : 'Good evening';
 
+  // Connection health for the ConnectionStatusBanner: 'stale' = we have loaded before
+  // but the essentials refresh failed (show last-known + reconnecting); 'error' = the
+  // very first load failed (nothing to show yet). 'ready' hides the banner.
+  const connectionStatus: ResourceStatus = essentialsError
+    ? lastLoadedAt != null
+      ? 'stale'
+      : 'error'
+    : 'ready';
+
   return (
     <div className="box-border flex h-full min-h-0 flex-col gap-2 overflow-y-auto overscroll-y-contain bg-gradient-to-br from-white via-orange-50/30 to-blue-50/20 px-3 py-2 [scrollbar-gutter:stable] [@media(max-height:900px)]:gap-1.5 sm:px-4 sm:py-3 md:px-5 lg:gap-3 lg:py-3 dark:bg-none dark:bg-[#0d1117]">
+      {(connectionStatus === 'stale' || connectionStatus === 'error') && (
+        <ConnectionStatusBanner
+          status={connectionStatus}
+          lastUpdatedAt={lastLoadedAt}
+          error={essentialsError}
+          onRetry={() => setReloadKey((k) => k + 1)}
+          className="mb-1 shrink-0"
+        />
+      )}
       {/* ── Hero intro card — soft gradient hero, matching the Accounting view ── */}
       <motion.header
         initial={{ opacity: 0, y: 8 }}

@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import { ChevronLeft, ChevronRight } from 'lucide-react';
+import { ChevronLeft } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 interface SidebarCollapseToggleProps {
@@ -34,19 +34,32 @@ export default function SidebarCollapseToggle({
       aria-pressed={collapsed}
       title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
       className={cn(
-        'group/collapse absolute -right-3 top-[70px] z-50 hidden h-6 w-6 items-center justify-center',
-        'rounded-full border bg-white text-zinc-500 shadow-md ring-1 ring-black/5',
-        'transition-all duration-200 ease-out hover:scale-110 hover:text-zinc-900 hover:shadow-lg',
+        // Overhangs the rail's right border so it reads as a physical handle on
+        // the seam, half over the rail and half over the content. The rail is
+        // lifted above <main> (see CollapsibleSidebarShell), so this z-50 keeps
+        // the handle above the rail's own contents and it never hides behind
+        // adjacent content.
+        'group/collapse absolute -right-3.5 top-[68px] z-50 hidden h-7 w-7 items-center justify-center',
+        'rounded-full border bg-white text-zinc-500 shadow-lg ring-1 ring-black/5',
+        // Scoped (not `transition-all`) so only the handle's own affordances ease
+        // — nothing fights the rail's width slide.
+        'transition-[transform,color,box-shadow] duration-200 ease-out motion-reduce:transition-none',
+        'hover:scale-110 hover:text-zinc-900 hover:shadow-xl',
         'focus-visible:outline-none focus-visible:ring-2 md:flex',
         'dark:bg-zinc-900 dark:text-zinc-400 dark:ring-white/10 dark:hover:text-zinc-100',
         className,
       )}
     >
-      {collapsed ? (
-        <ChevronRight className="h-3.5 w-3.5 transition-transform duration-200 group-hover/collapse:translate-x-px" />
-      ) : (
-        <ChevronLeft className="h-3.5 w-3.5 transition-transform duration-200 group-hover/collapse:-translate-x-px" />
-      )}
+      {/* One chevron that rotates for direction, so the state flip eases in
+          instead of the two-icon swap popping. Points left to collapse, right
+          (rotated) to expand. */}
+      <ChevronLeft
+        aria-hidden
+        className={cn(
+          'h-4 w-4 transition-transform duration-200 ease-out motion-reduce:transition-none',
+          collapsed && 'rotate-180',
+        )}
+      />
     </button>
   );
 }

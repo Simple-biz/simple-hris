@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { readCachedRoles, writeRbacCache } from '@/lib/rbac/rbac-cache';
 
 export type AppView = 'employee' | 'admin' | 'accounting' | 'manager' | 'orphanage' | 'ceo' | 'hr' | 'contractor' | 'qc';
 export type Role =
@@ -81,9 +82,23 @@ export function defaultViewFor(views: AppView[]): AppView {
   return views[0] ?? 'employee';
 }
 
-export function useAvailableViews(email: string | null | undefined) {
+export function useAvailableViews(
+  email: string | null | undefined,
+  /**
+   * The signed-in user's own roles, read from the NextAuth session (JWT) by the
+   * ViewSwitcher. Passed ONLY when the switcher is showing the session owner's
+   * own views — not when an admin is browsing `?email=someone-else`. Because the
+   * JWT already carries roles without a Supabase hit, this keeps the switcher
+   * alive through a Supabase outage (the roles fetch below fails, but we still
+   * know what this user can access).
+   */
+  fallbackRoles?: readonly Role[] | null,
+) {
   const [views, setViews] = useState<AppView[]>(['employee']);
   const [loading, setLoading] = useState(false);
+
+  // Stable dependency so a new session-array identity each render doesn't loop.
+  const fallbackKey = (fallbackRoles ?? []).join(',');
 
   useEffect(() => {
     let cancelled = false;
@@ -92,22 +107,46 @@ export function useAvailableViews(email: string | null | undefined) {
       setViews(['employee']);
       return;
     }
+
+    // Offline-first: session JWT roles (authoritative, no DB) then last-known-good
+    // cache. Seed immediately so a multi-view user sees the switcher even before —
+    // or entirely without — a successful roles fetch.
+    const offlineRoles =
+      fallbackRoles && fallbackRoles.length > 0
+        ? [...fallbackRoles]
+        : readCachedRoles(e);
+    if (offlineRoles && offlineRoles.length > 0) {
+      const seeded = viewsForRoles(offlineRoles as Role[]);
+      if (seeded.length > 0) setViews(seeded);
+    }
+
     setLoading(true);
     fetch(`/api/employee-roles?email=${encodeURIComponent(e)}`)
-      .then((r) => r.json())
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`roles ${r.status}`))))
       .then((j: { rows?: { role: Role }[] }) => {
         if (cancelled) return;
-        const roles = (j.rows ?? []).map((r) => r.role);
+        // Guard an error-shaped 200 body — don't clobber good state with nothing.
+        if (!Array.isArray(j.rows)) return;
+        const roles = j.rows.map((r) => r.role);
         setViews(viewsForRoles(roles));
+        writeRbacCache(e, { roles });
       })
       .catch(() => {
-        if (!cancelled) setViews(['employee']);
+        if (cancelled) return;
+        // Supabase unreachable: keep whatever we seeded. Fall all the way back to
+        // employee-only only when we truly know nothing about this user.
+        const fb =
+          fallbackRoles && fallbackRoles.length > 0
+            ? [...fallbackRoles]
+            : readCachedRoles(e);
+        setViews(fb && fb.length > 0 ? viewsForRoles(fb as Role[]) : ['employee']);
       })
       .finally(() => !cancelled && setLoading(false));
     return () => {
       cancelled = true;
     };
-  }, [email]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [email, fallbackKey]);
 
   return { views, loading };
 }
