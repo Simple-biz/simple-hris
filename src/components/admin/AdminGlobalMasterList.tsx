@@ -8,12 +8,14 @@ import {
   ChevronLeft,
   ChevronRight,
   Clock,
+  Eye,
   IdCard,
   Loader2,
   LogOut,
   Mail,
   MapPin,
   MessageCircle,
+  MonitorPlay,
   Radio,
   RefreshCw,
   Search,
@@ -35,6 +37,7 @@ import { formatLastSeen } from '@/components/team/team-ui';
 import { dashboardLabelForPathname } from '@/lib/presence/page-label';
 import { usePresenceDetails, useSelfEmail, type PresenceDetail } from '@/components/presence/PresenceProvider';
 import { useAdminPingSender } from '@/components/presence/GlobalPingListener';
+import { useWatchScreen } from '@/components/presence/CobrowseProvider';
 
 const PAGE_SIZE = 10;
 
@@ -137,6 +140,7 @@ export default function AdminGlobalMasterList() {
   const viewerNorm = viewerEmail ? normEmail(viewerEmail) ?? viewerEmail.trim().toLowerCase() : null;
   const presenceDetails = usePresenceDetails();
   const sendPing = useAdminPingSender();
+  const { observe, observedEmail: watchingEmail } = useWatchScreen();
 
   const fetchRoster = useCallback(async () => {
     try {
@@ -735,6 +739,40 @@ export default function AdminGlobalMasterList() {
                       </form>
                       <p className="px-1 text-[10.5px] text-zinc-400 dark:text-zinc-600">
                         A ping pops up on their screen wherever they are — but only if they&apos;re online right now (nothing is saved).
+                      </p>
+
+                      {/* Watch screen (live co-browse) */}
+                      {watchingEmail && watchingEmail === emailKeyFor(selected) ? (
+                        <Button
+                          type="button"
+                          onClick={() => observe(null)}
+                          className="w-full justify-center gap-2 bg-orange-600 text-white hover:bg-orange-500"
+                          title="Stop mirroring their screen"
+                        >
+                          <Eye className="h-4 w-4" aria-hidden />
+                          Stop watching screen
+                        </Button>
+                      ) : (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          onClick={() =>
+                            selectedEmail && observe({ email: selectedEmail, name: selected.name || selectedEmail })
+                          }
+                          disabled={!selectedOnline || !selectedEmail}
+                          className="w-full justify-center gap-2 border-orange-200 text-orange-700 hover:bg-orange-50 disabled:opacity-50 dark:border-orange-800/50 dark:text-orange-300 dark:hover:bg-orange-950/30"
+                          title={
+                            selectedOnline
+                              ? "Live-mirror this person's screen (view-only)"
+                              : 'They must be online to mirror their screen'
+                          }
+                        >
+                          <MonitorPlay className="h-4 w-4" aria-hidden />
+                          {selectedOnline ? 'Watch screen' : 'Watch screen (offline)'}
+                        </Button>
+                      )}
+                      <p className="px-1 text-[10.5px] text-zinc-400 dark:text-zinc-600">
+                        Opens a live, view-only mirror of their screen. They aren&apos;t notified; recording only runs while you watch.
                       </p>
 
                       {/* Force logout */}

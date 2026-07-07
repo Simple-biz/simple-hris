@@ -29,6 +29,7 @@ import { cn } from '@/lib/utils';
 import { SmoothSelect } from '@/components/ui/smooth-select';
 import { toast } from 'sonner';
 import type { EmployeeHourlyRateRow } from '@/lib/supabase/employee-hourly-rates';
+import type { MesaLedgerEvent, MesaMemberSummary } from '@/lib/mesa/ledger';
 
 interface Props {
   employeeEmail: string;
@@ -135,6 +136,7 @@ export default function EmployeeMesa({
               />
             ) : subTab === 'history' ? (
               <MesaHistory
+                employeeEmail={employeeEmail}
                 isMember={isMember}
                 startDate={startDate ?? null}
                 enrolledSince={enrolledSince}
@@ -1099,11 +1101,13 @@ function RequestStatusBadge({ status }: { status: string }) {
 // weeks count toward the ledger so we don't promise contributions that
 // haven't been deducted yet.
 function MesaHistory({
+  employeeEmail,
   isMember,
   startDate,
   enrolledSince,
   onGoToRequest,
 }: {
+  employeeEmail: string;
   isMember: boolean | null;
   startDate: string | null;
   /** MESA enrollment date (YYYY-MM-DD). When set, the ledger counts from here —
@@ -1111,12 +1115,39 @@ function MesaHistory({
   enrolledSince: string | null;
   onGoToRequest: () => void;
 }) {
-  if (isMember === null) {
+  // Real contribution history from the mesa_ledger backfill. When present, this
+  // is authoritative and replaces the projected ledger below.
+  const [ledger, setLedger] = React.useState<{
+    summary: MesaMemberSummary | null;
+    events: MesaLedgerEvent[];
+  } | null>(null);
+  const [ledgerLoading, setLedgerLoading] = React.useState(true);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    setLedgerLoading(true);
+    fetch(`/api/mesa-ledger?email=${encodeURIComponent(employeeEmail)}`, { cache: 'no-store' })
+      .then((r) => (r.ok ? r.json() : { summary: null, events: [] }))
+      .then((j: { summary?: MesaMemberSummary | null; events?: MesaLedgerEvent[] }) => {
+        if (!cancelled) setLedger({ summary: j.summary ?? null, events: j.events ?? [] });
+      })
+      .catch(() => { if (!cancelled) setLedger({ summary: null, events: [] }); })
+      .finally(() => { if (!cancelled) setLedgerLoading(false); });
+    return () => { cancelled = true; };
+  }, [employeeEmail]);
+
+  if (isMember === null || ledgerLoading) {
     return (
       <div className="rounded-2xl border border-teal-100/80 bg-white/80 p-8 text-center text-sm text-zinc-500 shadow-sm dark:border-teal-900/40 dark:bg-zinc-900/40 dark:text-zinc-400">
         Loading your MESA history…
       </div>
     );
+  }
+
+  // Real ledger data wins — a member with actual recorded deposits sees their
+  // true contributed/matched/balance and a week-by-week event log.
+  if (ledger?.summary && (ledger.summary.depositCount > 0 || ledger.events.length > 0)) {
+    return <RealMesaHistory summary={ledger.summary} events={ledger.events} />;
   }
 
   if (!isMember) {
@@ -1296,6 +1327,179 @@ function MesaHistory({
           This is a projected ledger based on your MESA enrollment date — the
           program doesn't store individual weekly entries yet, so totals are computed from
           fully-elapsed weeks only (the current week is still in progress).
+        </p>
+      </Section>
+    </div>
+  );
+}
+
+// ── Real ledger (from mesa_ledger backfill) ─────────────────────────────────
+//
+// Authoritative contribution history: actual recorded weekly deposits (₱100
+// worker + ₱300 Simple.biz match) and any disbursements paid out. Unlike the
+// projected ledger below, these are real events — the numbers match what
+// Accounting sees in the Member Balances view.
+
+type LedgerLine = {
+  key: string;
+  date: string | null;
+  kind: 'deposit' | 'disbursement';
+  you: number;
+  company: number;
+  total: number;
+  label: string | null;
+};
+
+function RealMesaHistory({
+  summary,
+  events,
+}: {
+  summary: MesaMemberSummary;
+  events: MesaLedgerEvent[];
+}) {
+  const lines: LedgerLine[] = [];
+  for (const e of events) {
+    if ((e.total_daily_deposit_php ?? 0) > 0 && e.deposit_date) {
+      lines.push({
+        key: `d-${e.id}`,
+        date: e.deposit_date,
+        kind: 'deposit',
+        you: e.worker_contribution_php ?? 0,
+        company: e.simple_match_php ?? 0,
+        total: e.total_daily_deposit_php ?? 0,
+        label: null,
+      });
+    }
+    if ((e.disbursement_amount_php ?? 0) > 0 && e.disbursement_date) {
+      lines.push({
+        key: `x-${e.id}`,
+        date: e.disbursement_date,
+        kind: 'disbursement',
+        you: 0,
+        company: 0,
+        total: -(e.disbursement_amount_php ?? 0),
+        label: e.disbursement_type || 'Disbursement',
+      });
+    }
+  }
+  // Newest first.
+  lines.sort((a, b) => (b.date ?? '').localeCompare(a.date ?? ''));
+
+  return (
+    <div className="space-y-6">
+      {/* Hero — real cumulative totals */}
+      <div className="overflow-hidden rounded-2xl border border-teal-100/80 bg-gradient-to-br from-teal-50/80 via-white to-emerald-50/60 p-6 shadow-sm dark:border-teal-900/40 dark:from-teal-950/40 dark:via-[#0d1117] dark:to-emerald-950/30 sm:p-8">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div className="min-w-0">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-teal-700 dark:text-teal-300">
+              Contribution history
+            </p>
+            <h2 className="mt-1 text-2xl font-bold tracking-tight text-zinc-900 sm:text-3xl dark:text-white">
+              Your MESA balance
+            </h2>
+            <p className="mt-2 max-w-xl text-sm leading-relaxed text-zinc-600 dark:text-zinc-400">
+              {summary.depositCount} recorded weekly deposit{summary.depositCount === 1 ? '' : 's'}
+              {summary.firstDeposit ? (
+                <> since{' '}
+                  <span className="font-semibold text-zinc-900 dark:text-white">
+                    {formatDateLong(new Date(summary.firstDeposit))}
+                  </span>
+                </>
+              ) : null}
+              .
+            </p>
+          </div>
+          <Badge
+            variant="outline"
+            className={cn(
+              'px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide',
+              summary.isActive
+                ? 'border-teal-200 bg-teal-50 text-teal-700 dark:border-teal-500/40 dark:bg-teal-500/15 dark:text-teal-200'
+                : 'border-zinc-300 bg-white text-zinc-600 dark:border-zinc-700 dark:bg-zinc-900/50 dark:text-zinc-400',
+            )}
+          >
+            {summary.isActive ? <CheckCircle2 className="mr-1 h-3 w-3" /> : null}
+            {summary.isActive ? 'Active' : summary.status ?? 'Enrolled'}
+          </Badge>
+        </div>
+
+        <div className="mt-6 grid gap-3 sm:grid-cols-3">
+          <ContribCard
+            label="You've contributed"
+            amount={formatPHP(summary.contributed)}
+            sub={`${summary.depositCount} weekly deposit${summary.depositCount === 1 ? '' : 's'}`}
+            tone="muted"
+          />
+          <ContribCard
+            label="Simple.biz has matched"
+            amount={formatPHP(summary.matched)}
+            sub="3× your contribution"
+            tone="accent"
+          />
+          <ContribCard
+            label="Current balance"
+            amount={formatPHP(summary.balance)}
+            sub={summary.disbursed > 0 ? `after ${formatPHP(summary.disbursed)} disbursed` : 'Cumulative'}
+            tone="hero"
+          />
+        </div>
+      </div>
+
+      {/* Event ledger */}
+      <Section icon={CalendarClock} eyebrow="Weekly ledger" title="Deposits & disbursements">
+        <div className="overflow-hidden rounded-lg border border-zinc-100 dark:border-zinc-800/80">
+          <table className="w-full text-sm">
+            <thead className="bg-zinc-50/80 text-[11px] uppercase tracking-wide text-zinc-500 dark:bg-zinc-900/60 dark:text-zinc-400">
+              <tr>
+                <th className="px-3 py-2 text-left font-semibold">Date</th>
+                <th className="px-3 py-2 text-right font-semibold">You</th>
+                <th className="px-3 py-2 text-right font-semibold">Simple.biz</th>
+                <th className="px-3 py-2 text-right font-semibold">Total</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-zinc-100 bg-white dark:divide-zinc-800/80 dark:bg-zinc-900/30">
+              {lines.map((l) => (
+                <tr
+                  key={l.key}
+                  className={cn(
+                    'transition-colors',
+                    l.kind === 'disbursement'
+                      ? 'bg-amber-50/30 dark:bg-amber-500/5'
+                      : 'hover:bg-teal-50/40 dark:hover:bg-teal-950/20',
+                  )}
+                >
+                  <td className="px-3 py-2 text-zinc-700 dark:text-zinc-300" data-label="Date">
+                    <span className="font-medium">{l.date ? formatDateShort(new Date(l.date)) : '—'}</span>
+                    {l.kind === 'disbursement' && (
+                      <span className="ml-2 inline-flex items-center rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-800 dark:bg-amber-500/20 dark:text-amber-200">
+                        {l.label}
+                      </span>
+                    )}
+                  </td>
+                  <td className="px-3 py-2 text-right tabular-nums text-zinc-700 dark:text-zinc-300" data-label="You">
+                    {l.kind === 'deposit' ? formatPHP(l.you) : '—'}
+                  </td>
+                  <td className="px-3 py-2 text-right tabular-nums text-zinc-700 dark:text-zinc-300" data-label="Simple.biz">
+                    {l.kind === 'deposit' ? formatPHP(l.company) : '—'}
+                  </td>
+                  <td
+                    className={cn(
+                      'px-3 py-2 text-right font-semibold tabular-nums',
+                      l.total < 0 ? 'text-amber-700 dark:text-amber-300' : 'text-zinc-900 dark:text-white',
+                    )}
+                    data-label="Total"
+                  >
+                    {l.total < 0 ? `−${formatPHP(Math.abs(l.total))}` : formatPHP(l.total)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <p className="mt-3 text-xs italic text-zinc-500 dark:text-zinc-500">
+          These are your actual recorded MESA deposits and disbursements. Contributions of{' '}
+          {formatPHP(WEEKLY_EMPLOYEE_CONTRIB)}/week are matched by Simple.biz at{' '}
+          {formatPHP(WEEKLY_COMPANY_MATCH)}/week.
         </p>
       </Section>
     </div>

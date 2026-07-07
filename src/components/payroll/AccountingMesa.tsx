@@ -15,7 +15,16 @@ import {
   X,
   Undo2,
   Trash2,
+  ClipboardList,
+  Wallet,
+  PiggyBank,
+  Building2,
+  Eye,
+  CalendarClock,
+  ArrowDownCircle,
+  ArrowUpCircle,
 } from 'lucide-react';
+import { motion } from 'motion/react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -24,6 +33,13 @@ import { SmoothSelect } from '@/components/ui/smooth-select';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import { clearTabCache, getTabCache, hasTabCache, setTabCache, TAB_CACHE_KEYS } from '@/lib/accounting/tab-cache';
+import type { MesaLedgerEvent, MesaMemberSummary } from '@/lib/mesa/ledger';
+
+type MesaView = 'requests' | 'balances';
+
+/** Peso, two decimals — follows the app-wide money convention. */
+const formatPHP = (n: number) =>
+  `₱${n.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 export type MesaRequestType = 'opt_in' | 'opt_out' | 'disbursement' | 'return';
 export type MesaRequestStatus = 'pending' | 'approved' | 'denied';
@@ -63,6 +79,7 @@ const TYPE_COLORS: Record<MesaRequestType, string> = {
 };
 
 export default function AccountingMesa() {
+  const [view, setView] = useState<MesaView>('requests');
   const [rows, setRows] = useState<MesaRequest[]>(
     () => getTabCache<MesaRequest[]>(TAB_CACHE_KEYS.mesaRequests) ?? [],
   );
@@ -268,6 +285,20 @@ export default function AccountingMesa() {
           </div>
         </div>
 
+        {/* View switcher */}
+        <div
+          role="tablist"
+          aria-label="MESA sections"
+          className="relative inline-flex items-center gap-1 self-start rounded-lg border border-teal-100/80 bg-white/70 p-1 shadow-sm backdrop-blur dark:border-teal-900/40 dark:bg-zinc-900/60"
+        >
+          <ViewTabButton active={view === 'requests'} onClick={() => setView('requests')} icon={ClipboardList} label="Requests" />
+          <ViewTabButton active={view === 'balances'} onClick={() => setView('balances')} icon={Wallet} label="Member Balances" />
+        </div>
+
+        {view === 'balances' ? (
+          <MesaBalances />
+        ) : (
+        <>
         {/* Stats */}
         <div className="grid gap-3 sm:grid-cols-4">
           <StatCard label="Total" value={stats.total} tone="zinc" />
@@ -491,6 +522,8 @@ export default function AccountingMesa() {
             )}
           </CardContent>
         </Card>
+        </>
+        )}
       </div>
 
       {/* Review modal */}
@@ -683,6 +716,502 @@ function SkeletonRows({ count }: { count: number }) {
           <div className="ml-auto h-4 w-20 animate-pulse rounded bg-zinc-100 dark:bg-zinc-800" />
         </div>
       ))}
+    </div>
+  );
+}
+
+// ── View switcher pill ───────────────────────────────────────────────────────
+
+function ViewTabButton({
+  active,
+  onClick,
+  icon: Icon,
+  label,
+}: {
+  active: boolean;
+  onClick: () => void;
+  icon: React.ComponentType<{ className?: string }>;
+  label: string;
+}) {
+  return (
+    <button
+      type="button"
+      role="tab"
+      aria-selected={active}
+      onClick={onClick}
+      className={cn(
+        'relative inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold transition-colors duration-200',
+        active
+          ? 'text-white'
+          : 'text-zinc-600 hover:bg-teal-50/70 hover:text-teal-700 dark:text-zinc-400 dark:hover:bg-teal-950/40 dark:hover:text-teal-200',
+      )}
+    >
+      {active && (
+        <motion.span
+          layoutId="accounting-mesa-view-pill"
+          aria-hidden
+          className="absolute inset-0 rounded-md bg-gradient-to-r from-teal-500 to-emerald-500 shadow-sm"
+          transition={{ type: 'spring', stiffness: 380, damping: 32 }}
+        />
+      )}
+      <span className="relative z-10 inline-flex items-center gap-1.5">
+        <Icon className="h-3.5 w-3.5" />
+        {label}
+      </span>
+    </button>
+  );
+}
+
+// ── Member Balances ──────────────────────────────────────────────────────────
+//
+// Per-member contribution rollup from the mesa_ledger backfill: how much each
+// person has put in, how much Simple.biz matched, what's been disbursed, and
+// what's left. Read-only — the ledger is the historical record; membership
+// changes flow through the request queue.
+
+const BALANCES_PAGE_SIZE = 20;
+
+function MesaBalances() {
+  const [members, setMembers] = useState<MesaMemberSummary[]>(
+    () => getTabCache<MesaMemberSummary[]>(TAB_CACHE_KEYS.mesaBalances) ?? [],
+  );
+  const [loading, setLoading] = useState(!hasTabCache(TAB_CACHE_KEYS.mesaBalances));
+  const [refreshing, setRefreshing] = useState(false);
+  const [query, setQuery] = useState('');
+  const [page, setPage] = useState(0);
+  const [viewTarget, setViewTarget] = useState<MesaMemberSummary | null>(null);
+
+  const load = async (showSpinner = true) => {
+    if (showSpinner) setLoading(true); else setRefreshing(true);
+    try {
+      const res = await fetch('/api/mesa-ledger', { cache: 'no-store' });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const json = (await res.json()) as { members?: MesaMemberSummary[] };
+      const data = json.members ?? [];
+      setTabCache(TAB_CACHE_KEYS.mesaBalances, data);
+      setMembers(data);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to load MESA balances');
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  };
+
+  useEffect(() => {
+    void load(!hasTabCache(TAB_CACHE_KEYS.mesaBalances));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return members;
+    return members.filter(
+      (m) =>
+        (m.name ?? '').toLowerCase().includes(q) ||
+        m.email.toLowerCase().includes(q) ||
+        (m.department ?? '').toLowerCase().includes(q),
+    );
+  }, [members, query]);
+
+  useEffect(() => { setPage(0); }, [query]);
+
+  const totals = useMemo(() => {
+    let contributed = 0, matched = 0, disbursed = 0, balance = 0, active = 0;
+    for (const m of members) {
+      contributed += m.contributed;
+      matched += m.matched;
+      disbursed += m.disbursed;
+      balance += m.balance;
+      if (m.isActive) active += 1;
+    }
+    return { contributed, matched, disbursed, balance, active };
+  }, [members]);
+
+  const totalPages = Math.max(1, Math.ceil(filtered.length / BALANCES_PAGE_SIZE));
+  const safePage = Math.min(page, totalPages - 1);
+  const pageRows = filtered.slice(safePage * BALANCES_PAGE_SIZE, (safePage + 1) * BALANCES_PAGE_SIZE);
+
+  const handleRefresh = async () => {
+    clearTabCache(TAB_CACHE_KEYS.mesaBalances);
+    await load(false);
+    toast.success('Refreshed MESA balances');
+  };
+
+  return (
+    <div className="space-y-5">
+      {/* Summary cards */}
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <BalanceStat icon={PiggyBank} label="Members contributed" value={formatPHP(totals.contributed)} tone="zinc" />
+        <BalanceStat icon={HeartHandshake} label="Simple.biz matched" value={formatPHP(totals.matched)} tone="teal" />
+        <BalanceStat icon={Wallet} label="Total balance" value={formatPHP(totals.balance)} tone="teal" />
+        <BalanceStat icon={CheckCircle2} label="Active members" value={`${totals.active} / ${members.length}`} tone="amber" />
+      </div>
+
+      {/* Toolbar */}
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="relative min-w-[200px] flex-1">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400" />
+          <Input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search name, email, department..."
+            className="h-9 border-zinc-200 bg-white pl-9 text-sm focus:border-teal-500 focus:ring-2 focus:ring-teal-500/20 dark:border-zinc-800 dark:bg-zinc-900/60"
+          />
+        </div>
+        <Button type="button" variant="outline" size="sm" onClick={handleRefresh} disabled={refreshing || loading} className="gap-1.5">
+          <RefreshCw className={cn('h-3.5 w-3.5', refreshing && 'animate-spin')} />
+          Refresh
+        </Button>
+      </div>
+
+      {/* Table */}
+      <Card className="overflow-hidden border-teal-100/80 shadow-sm dark:border-teal-900/40">
+        <CardHeader className="border-b border-teal-100/80 bg-teal-50/30 px-5 py-3 dark:border-teal-900/40 dark:bg-teal-950/20">
+          <CardTitle className="text-sm font-semibold text-zinc-900 dark:text-white">
+            {loading ? 'Loading balances...' : `${filtered.length} member${filtered.length === 1 ? '' : 's'}`}
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="p-0">
+          {loading ? (
+            <SkeletonRows count={8} />
+          ) : filtered.length === 0 ? (
+            <div className="flex flex-col items-center justify-center gap-2 px-5 py-12 text-center text-sm text-zinc-500 dark:text-zinc-400">
+              <Inbox className="h-6 w-6 text-zinc-400" />
+              {members.length === 0 ? 'No MESA ledger data found.' : 'No results match your search.'}
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs">
+                <thead className="border-b border-teal-100/80 bg-teal-50/40 text-[11px] font-semibold uppercase tracking-wide text-teal-700 dark:border-teal-900/40 dark:bg-teal-950/30 dark:text-teal-300">
+                  <tr>
+                    <th className="px-4 py-2.5">Member</th>
+                    <th className="px-4 py-2.5">Department</th>
+                    <th className="px-4 py-2.5 text-right">Contributed</th>
+                    <th className="px-4 py-2.5 text-right">Matched</th>
+                    <th className="px-4 py-2.5 text-right">Disbursed</th>
+                    <th className="px-4 py-2.5 text-right">Balance</th>
+                    <th className="px-4 py-2.5 text-right">Status</th>
+                    <th className="px-4 py-2.5 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-teal-100/60 dark:divide-teal-900/40">
+                  {pageRows.map((m) => (
+                    <tr key={m.email} className="transition-colors hover:bg-teal-50/40 dark:hover:bg-teal-950/20">
+                      <td className="px-4 py-3" data-label="Member">
+                        <div className="font-medium text-zinc-900 dark:text-zinc-100">{m.name ?? m.email}</div>
+                        <div className="mt-0.5 font-mono text-[11px] text-zinc-500 dark:text-zinc-500">{m.email}</div>
+                      </td>
+                      <td className="px-4 py-3 text-zinc-600 dark:text-zinc-400" data-label="Department">
+                        {m.department ? (
+                          <span className="inline-flex items-center gap-1"><Building2 className="h-3 w-3 text-zinc-400" />{m.department}</span>
+                        ) : <span className="text-zinc-400">—</span>}
+                      </td>
+                      <td className="px-4 py-3 text-right font-mono tabular-nums text-zinc-700 dark:text-zinc-300" data-label="Contributed">
+                        {formatPHP(m.contributed)}
+                        <div className="text-[10px] font-normal text-zinc-400">{m.depositCount} wk{m.depositCount === 1 ? '' : 's'}</div>
+                      </td>
+                      <td className="px-4 py-3 text-right font-mono tabular-nums text-teal-700 dark:text-teal-300" data-label="Matched">
+                        {formatPHP(m.matched)}
+                      </td>
+                      <td className="px-4 py-3 text-right font-mono tabular-nums text-amber-700 dark:text-amber-300" data-label="Disbursed">
+                        {m.disbursed > 0 ? formatPHP(m.disbursed) : <span className="text-zinc-400">—</span>}
+                      </td>
+                      <td className="px-4 py-3 text-right font-mono font-semibold tabular-nums text-zinc-900 dark:text-white" data-label="Balance">
+                        {formatPHP(m.balance)}
+                      </td>
+                      <td className="px-4 py-3 text-right" data-label="Status">
+                        {m.isActive ? (
+                          <Badge variant="outline" className="border-teal-200 bg-teal-50 text-[10.5px] font-semibold uppercase tracking-wide text-teal-700 dark:border-teal-500/40 dark:bg-teal-500/15 dark:text-teal-200">
+                            <CheckCircle2 className="mr-1 h-3 w-3" />Active
+                          </Badge>
+                        ) : (
+                          <Badge variant="outline" className="border-zinc-300 bg-zinc-50 text-[10.5px] font-semibold uppercase tracking-wide text-zinc-600 dark:border-zinc-600 dark:bg-zinc-800/50 dark:text-zinc-300">
+                            {m.status ?? 'Inactive'}
+                          </Badge>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-right" data-label="Actions">
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          onClick={() => setViewTarget(m)}
+                          className="h-7 gap-1 border-teal-200 bg-teal-50/60 text-[11px] font-semibold text-teal-700 hover:bg-teal-100 dark:border-teal-700/50 dark:bg-teal-950/30 dark:text-teal-300 dark:hover:bg-teal-950/60"
+                        >
+                          <Eye className="h-3 w-3" />
+                          View
+                        </Button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          {!loading && filtered.length > BALANCES_PAGE_SIZE && (
+            <div className="flex items-center justify-between border-t border-teal-100/80 px-5 py-2.5 dark:border-teal-900/40">
+              <p className="text-[11px] text-zinc-400">
+                {safePage * BALANCES_PAGE_SIZE + 1}–{Math.min((safePage + 1) * BALANCES_PAGE_SIZE, filtered.length)} of {filtered.length}
+              </p>
+              <div className="flex items-center gap-1">
+                <Button variant="outline" size="icon" className="h-7 w-7" disabled={safePage === 0} onClick={() => setPage(0)} aria-label="First page">
+                  <ChevronLeft className="h-3 w-3" /><ChevronLeft className="-ml-2 h-3 w-3" />
+                </Button>
+                <Button variant="outline" size="icon" className="h-7 w-7" disabled={safePage === 0} onClick={() => setPage((p) => Math.max(0, p - 1))} aria-label="Previous page">
+                  <ChevronLeft className="h-3 w-3" />
+                </Button>
+                <span className="min-w-[4rem] text-center text-[11px] text-zinc-500">{safePage + 1} / {totalPages}</span>
+                <Button variant="outline" size="icon" className="h-7 w-7" disabled={safePage >= totalPages - 1} onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))} aria-label="Next page">
+                  <ChevronRight className="h-3 w-3" />
+                </Button>
+                <Button variant="outline" size="icon" className="h-7 w-7" disabled={safePage >= totalPages - 1} onClick={() => setPage(totalPages - 1)} aria-label="Last page">
+                  <ChevronRight className="h-3 w-3" /><ChevronRight className="-ml-2 h-3 w-3" />
+                </Button>
+              </div>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {viewTarget && (
+        <MesaMemberDetail member={viewTarget} onClose={() => setViewTarget(null)} />
+      )}
+    </div>
+  );
+}
+
+// Drill-down modal: a member's full contribution timeline (deposits + disbursements
+// with dates) plus their totals. Fetches /api/mesa-ledger?email= on open.
+function MesaMemberDetail({
+  member,
+  onClose,
+}: {
+  member: MesaMemberSummary;
+  onClose: () => void;
+}) {
+  const [events, setEvents] = useState<MesaLedgerEvent[]>([]);
+  const [summary, setSummary] = useState<MesaMemberSummary>(member);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    fetch(`/api/mesa-ledger?email=${encodeURIComponent(member.email)}`, { cache: 'no-store' })
+      .then((r) => (r.ok ? r.json() : { summary: member, events: [] }))
+      .then((j: { summary?: MesaMemberSummary | null; events?: MesaLedgerEvent[] }) => {
+        if (cancelled) return;
+        if (j.summary) setSummary(j.summary);
+        setEvents(j.events ?? []);
+      })
+      .catch(() => {})
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [member.email, member]);
+
+  // Build a unified, newest-first timeline of deposits and disbursements.
+  const lines = useMemo(() => {
+    const out: {
+      key: string;
+      date: string | null;
+      kind: 'deposit' | 'disbursement';
+      you: number;
+      company: number;
+      total: number;
+      label: string | null;
+    }[] = [];
+    for (const e of events) {
+      if ((e.total_daily_deposit_php ?? 0) > 0 && e.deposit_date) {
+        out.push({
+          key: `d-${e.id}`,
+          date: e.deposit_date,
+          kind: 'deposit',
+          you: e.worker_contribution_php ?? 0,
+          company: e.simple_match_php ?? 0,
+          total: e.total_daily_deposit_php ?? 0,
+          label: null,
+        });
+      }
+      if ((e.disbursement_amount_php ?? 0) > 0 && e.disbursement_date) {
+        out.push({
+          key: `x-${e.id}`,
+          date: e.disbursement_date,
+          kind: 'disbursement',
+          you: 0,
+          company: 0,
+          total: -(e.disbursement_amount_php ?? 0),
+          label: e.disbursement_type || 'Disbursement',
+        });
+      }
+    }
+    out.sort((a, b) => (b.date ?? '').localeCompare(a.date ?? ''));
+    return out;
+  }, [events]);
+
+  const fmtDate = (d: string | null) =>
+    d ? new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—';
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-[2px] animate-in fade-in duration-200 ease-out motion-reduce:animate-none">
+      <div className="flex max-h-[85vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-2xl dark:border-zinc-800 dark:bg-zinc-950 animate-in fade-in zoom-in-95 slide-in-from-bottom-2 duration-200 ease-out motion-reduce:animate-none">
+        {/* Header */}
+        <div className="flex items-start justify-between border-b border-zinc-200 px-5 py-4 dark:border-zinc-800">
+          <div className="min-w-0">
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-teal-600 dark:text-teal-400">
+              MESA contribution history
+            </p>
+            <h3 className="mt-0.5 truncate text-base font-bold text-zinc-900 dark:text-white">
+              {summary.name ?? summary.email}
+            </h3>
+            <p className="mt-0.5 truncate font-mono text-[11px] text-zinc-500 dark:text-zinc-500">
+              {summary.email}
+              {summary.department ? ` · ${summary.department}` : ''}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-md p-1.5 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-600 dark:hover:bg-zinc-800 dark:hover:text-zinc-300"
+            aria-label="Close"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        {/* Summary cards */}
+        <div className="grid grid-cols-2 gap-3 border-b border-zinc-100 px-5 py-4 sm:grid-cols-4 dark:border-zinc-800/80">
+          <DetailStat label="Contributed" value={formatPHP(summary.contributed)} sub={`${summary.depositCount} wk${summary.depositCount === 1 ? '' : 's'}`} />
+          <DetailStat label="Simple.biz matched" value={formatPHP(summary.matched)} sub="3× match" accent />
+          <DetailStat label="Disbursed" value={summary.disbursed > 0 ? formatPHP(summary.disbursed) : '—'} sub={summary.disbursementCount > 0 ? `${summary.disbursementCount}×` : 'none'} />
+          <DetailStat label="Balance" value={formatPHP(summary.balance)} sub="current" strong />
+        </div>
+
+        {/* Date range */}
+        <div className="flex flex-wrap items-center gap-x-5 gap-y-1 border-b border-zinc-100 px-5 py-2.5 text-[11px] text-zinc-500 dark:border-zinc-800/80 dark:text-zinc-400">
+          <span className="inline-flex items-center gap-1"><CalendarClock className="h-3 w-3" /> First deposit: <span className="font-medium text-zinc-700 dark:text-zinc-300">{fmtDate(summary.firstDeposit)}</span></span>
+          <span className="inline-flex items-center gap-1">Last deposit: <span className="font-medium text-zinc-700 dark:text-zinc-300">{fmtDate(summary.lastDeposit)}</span></span>
+          {summary.lastDisbursement && (
+            <span className="inline-flex items-center gap-1">Last disbursement: <span className="font-medium text-zinc-700 dark:text-zinc-300">{fmtDate(summary.lastDisbursement)}</span></span>
+          )}
+        </div>
+
+        {/* Timeline */}
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          {loading ? (
+            <div className="space-y-2 p-5">
+              {[1, 2, 3, 4].map((i) => (
+                <div key={i} className="h-9 w-full animate-pulse rounded-lg bg-zinc-100 dark:bg-zinc-800" />
+              ))}
+            </div>
+          ) : lines.length === 0 ? (
+            <div className="flex flex-col items-center justify-center gap-2 px-5 py-12 text-center text-sm text-zinc-500 dark:text-zinc-400">
+              <Inbox className="h-6 w-6 text-zinc-400" />
+              No recorded deposits or disbursements.
+            </div>
+          ) : (
+            <table className="w-full text-left text-xs">
+              <thead className="sticky top-0 border-b border-zinc-100 bg-zinc-50/95 text-[11px] font-semibold uppercase tracking-wide text-zinc-500 backdrop-blur dark:border-zinc-800/80 dark:bg-zinc-900/95 dark:text-zinc-400">
+                <tr>
+                  <th className="px-5 py-2">Date</th>
+                  <th className="px-4 py-2">Type</th>
+                  <th className="px-4 py-2 text-right">You</th>
+                  <th className="px-4 py-2 text-right">Simple.biz</th>
+                  <th className="px-5 py-2 text-right">Amount</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800/80">
+                {lines.map((l) => (
+                  <tr key={l.key} className={cn(l.kind === 'disbursement' && 'bg-amber-50/40 dark:bg-amber-500/5')}>
+                    <td className="px-5 py-2 font-medium text-zinc-700 dark:text-zinc-300" data-label="Date">{fmtDate(l.date)}</td>
+                    <td className="px-4 py-2" data-label="Type">
+                      {l.kind === 'deposit' ? (
+                        <span className="inline-flex items-center gap-1 text-teal-700 dark:text-teal-300">
+                          <ArrowDownCircle className="h-3 w-3" /> Deposit
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 text-amber-700 dark:text-amber-300">
+                          <ArrowUpCircle className="h-3 w-3" /> {l.label}
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-4 py-2 text-right tabular-nums text-zinc-600 dark:text-zinc-400" data-label="You">
+                      {l.kind === 'deposit' ? formatPHP(l.you) : '—'}
+                    </td>
+                    <td className="px-4 py-2 text-right tabular-nums text-zinc-600 dark:text-zinc-400" data-label="Simple.biz">
+                      {l.kind === 'deposit' ? formatPHP(l.company) : '—'}
+                    </td>
+                    <td className={cn('px-5 py-2 text-right font-semibold tabular-nums', l.total < 0 ? 'text-amber-700 dark:text-amber-300' : 'text-zinc-900 dark:text-white')} data-label="Amount">
+                      {l.total < 0 ? `−${formatPHP(Math.abs(l.total))}` : formatPHP(l.total)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="flex items-center justify-between border-t border-zinc-200 px-5 py-3 dark:border-zinc-800">
+          <span className="text-[11px] text-zinc-400">
+            {loading ? 'Loading…' : `${lines.length} event${lines.length === 1 ? '' : 's'}`}
+          </span>
+          <Button type="button" variant="outline" size="sm" onClick={onClose}>Close</Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function DetailStat({
+  label,
+  value,
+  sub,
+  accent,
+  strong,
+}: {
+  label: string;
+  value: string;
+  sub?: string;
+  accent?: boolean;
+  strong?: boolean;
+}) {
+  return (
+    <div className="min-w-0">
+      <p className="truncate text-[10.5px] font-medium uppercase tracking-wide text-zinc-400 dark:text-zinc-500">{label}</p>
+      <p className={cn(
+        'mt-0.5 truncate font-mono text-base font-bold tabular-nums',
+        accent ? 'text-teal-700 dark:text-teal-300' : strong ? 'text-zinc-900 dark:text-white' : 'text-zinc-800 dark:text-zinc-200',
+      )}>
+        {value}
+      </p>
+      {sub && <p className="truncate text-[10px] text-zinc-400">{sub}</p>}
+    </div>
+  );
+}
+
+function BalanceStat({
+  icon: Icon,
+  label,
+  value,
+  tone,
+}: {
+  icon: React.ComponentType<{ className?: string }>;
+  label: string;
+  value: string;
+  tone: 'teal' | 'zinc' | 'amber';
+}) {
+  const styles = {
+    teal: 'border-teal-200 bg-gradient-to-br from-teal-50 to-white text-teal-900 dark:border-teal-700/40 dark:from-teal-950/40 dark:to-zinc-950 dark:text-teal-100',
+    zinc: 'border-zinc-200 bg-white text-zinc-900 dark:border-zinc-800 dark:bg-zinc-900/40 dark:text-zinc-100',
+    amber: 'border-amber-200 bg-gradient-to-br from-amber-50 to-white text-amber-900 dark:border-amber-700/40 dark:from-amber-950/40 dark:to-zinc-950 dark:text-amber-100',
+  }[tone];
+  return (
+    <div className={`rounded-xl border p-4 shadow-sm ${styles}`}>
+      <div className="flex items-center gap-1.5 opacity-70">
+        <Icon className="h-3.5 w-3.5" />
+        <p className="text-[11px] font-medium uppercase tracking-wide">{label}</p>
+      </div>
+      <p className="mt-1 font-mono text-xl font-bold tabular-nums">{value}</p>
     </div>
   );
 }

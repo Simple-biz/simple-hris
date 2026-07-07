@@ -27,6 +27,7 @@ import { toast } from 'sonner';
 import HrFpuEnrollments from './HrFpuEnrollments';
 import type { EmployeeHourlyRateRow } from '@/lib/supabase/employee-hourly-rates';
 import type { EmployeeRow } from '@/lib/supabase/employees';
+import type { MesaMemberSummary } from '@/lib/mesa/ledger';
 import { SmoothSelect } from '@/components/ui/smooth-select';
 
 type MesaTab = 'eligible' | 'requests' | 'fpu';
@@ -37,9 +38,15 @@ type EligibleRow = {
   work_email: string | null;
   personal_email: string | null;
   department: string | null;
+  /** Contribution rollup from the MESA ledger, matched by email (null if no ledger history). */
+  ledger: MesaMemberSummary | null;
 };
 
 const PAGE_SIZE = 15;
+
+/** Peso, two decimals — follows the app-wide money convention. */
+const formatPHP = (n: number) =>
+  `₱${n.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 // Module-level cache so flipping between MESA sub-tabs (or away and back to
 // the HR sidebar tab) doesn't re-fetch the rates + employees lists. Cleared
@@ -47,7 +54,7 @@ const PAGE_SIZE = 15;
 // Bump the suffix whenever the row-derivation logic changes — that way a
 // previously-cached snapshot of "—" names doesn't survive into a session that
 // would otherwise compute the email-derived fallback.
-let cachedEligible_v3: EligibleRow[] | null = null;
+let cachedEligible_v4: EligibleRow[] | null = null;
 
 export default function HrMesa() {
   const [tab, setTab] = useState<MesaTab>('eligible');
@@ -180,8 +187,8 @@ function FpuEmbed() {
 }
 
 function MesaEligibleList() {
-  const [rows, setRows] = useState<EligibleRow[]>(() => cachedEligible_v3 ?? []);
-  const [loading, setLoading] = useState(() => cachedEligible_v3 === null);
+  const [rows, setRows] = useState<EligibleRow[]>(() => cachedEligible_v4 ?? []);
+  const [loading, setLoading] = useState(() => cachedEligible_v4 === null);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState('');
@@ -192,14 +199,25 @@ function MesaEligibleList() {
     else setRefreshing(true);
     setError(null);
     try {
-      const [ratesRes, employeesRes] = await Promise.all([
+      const [ratesRes, employeesRes, ledgerRes] = await Promise.all([
         fetch('/api/employee-hourly-rates', { cache: 'no-store' }),
         fetch('/api/employees', { cache: 'no-store' }),
+        fetch('/api/mesa-ledger', { cache: 'no-store' }),
       ]);
       if (!ratesRes.ok) throw new Error(`rates HTTP ${ratesRes.status}`);
       if (!employeesRes.ok) throw new Error(`employees HTTP ${employeesRes.status}`);
       const ratesJson = (await ratesRes.json()) as { rows?: EmployeeHourlyRateRow[] };
       const employeesJson = (await employeesRes.json()) as { employees?: EmployeeRow[] };
+      // Ledger is best-effort — a failure here shouldn't blank out the eligible list.
+      const ledgerJson = ledgerRes.ok
+        ? ((await ledgerRes.json()) as { members?: MesaMemberSummary[] })
+        : { members: [] };
+
+      // Contribution rollups keyed by lowercased email (member's email in the ledger).
+      const ledgerByEmail = new Map<string, MesaMemberSummary>();
+      for (const m of ledgerJson.members ?? []) {
+        if (m.email) ledgerByEmail.set(m.email.toLowerCase(), m);
+      }
 
       // Build a lookup of MESA-eligible rates rows, keyed by both work_email
       // and personal_email. Only rows with mesa_member=true are indexed —
@@ -221,18 +239,20 @@ function MesaEligibleList() {
           const pe = e.personal_email?.toLowerCase().trim();
           const rate = (we && mesaByEmail.get(we)) || (pe && mesaByEmail.get(pe)) || null;
           if (!rate) return null;
+          const ledger = (we && ledgerByEmail.get(we)) || (pe && ledgerByEmail.get(pe)) || null;
           return {
             key: we || pe || (e.employee_id ?? e.name ?? Math.random().toString(36)),
             name: e.name ?? '—',
             work_email: e.work_email ?? null,
             personal_email: e.personal_email ?? null,
             department: e.department ?? rate.department ?? null,
+            ledger,
           } as EligibleRow;
         })
         .filter((r): r is EligibleRow => r !== null)
         .sort((a, b) => a.name.localeCompare(b.name));
 
-      cachedEligible_v3 = eligible;
+      cachedEligible_v4 = eligible;
       setRows(eligible);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load MESA-eligible employees');
@@ -245,7 +265,7 @@ function MesaEligibleList() {
   useEffect(() => {
     // Skip the network round trip if we already have a warm cache —
     // the module-level cache survives sub-tab switches in the current session.
-    if (cachedEligible_v3 !== null) return;
+    if (cachedEligible_v4 !== null) return;
     void load(true);
   }, []);
 
@@ -271,7 +291,7 @@ function MesaEligibleList() {
   const pageRows = filtered.slice(safePage * PAGE_SIZE, (safePage + 1) * PAGE_SIZE);
 
   const handleRefresh = async () => {
-    cachedEligible_v3 = null;
+    cachedEligible_v4 = null;
     await load(false);
     toast.success('Refreshed MESA-eligible list');
   };
@@ -281,12 +301,28 @@ function MesaEligibleList() {
     [rows],
   );
 
+  // Program-wide contribution totals across everyone shown.
+  const totals = useMemo(() => {
+    let contributed = 0;
+    let matched = 0;
+    let balance = 0;
+    for (const r of rows) {
+      if (!r.ledger) continue;
+      contributed += r.ledger.contributed;
+      matched += r.ledger.matched;
+      balance += r.ledger.balance;
+    }
+    return { contributed, matched, balance };
+  }, [rows]);
+
   return (
     <div className="space-y-5">
       {/* Stat strip */}
-      <div className="grid gap-3 sm:grid-cols-2">
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard label="MESA-eligible employees" value={rows.length} tone="teal" />
-        <StatCard label="Distinct departments" value={deptCount} tone="zinc" />
+        <MoneyStatCard label="Total contributed" value={formatPHP(totals.contributed)} tone="zinc" />
+        <MoneyStatCard label="Simple.biz matched" value={formatPHP(totals.matched)} tone="teal" />
+        <MoneyStatCard label="Total balance" value={formatPHP(totals.balance)} tone="teal" />
       </div>
 
       {error && (
@@ -345,8 +381,10 @@ function MesaEligibleList() {
                   <tr>
                     <th className="px-4 py-2.5">Name</th>
                     <th className="px-4 py-2.5">Work email</th>
-                    <th className="px-4 py-2.5">Personal email</th>
                     <th className="px-4 py-2.5">Department</th>
+                    <th className="px-4 py-2.5 text-right">Contributed</th>
+                    <th className="px-4 py-2.5 text-right">Simple.biz match</th>
+                    <th className="px-4 py-2.5 text-right">Balance</th>
                     <th className="px-4 py-2.5 text-right">Status</th>
                   </tr>
                 </thead>
@@ -384,21 +422,6 @@ function MesaEligibleList() {
                         )}
                       </td>
                       <td
-                        data-label="Personal email"
-                        className="px-4 py-2.5 font-mono text-zinc-600 dark:text-zinc-400"
-                      >
-                        {r.personal_email ? (
-                          <a
-                            href={`mailto:${r.personal_email}`}
-                            className="hover:text-teal-700 dark:hover:text-teal-300"
-                          >
-                            {r.personal_email}
-                          </a>
-                        ) : (
-                          <span className="text-zinc-400">—</span>
-                        )}
-                      </td>
-                      <td
                         data-label="Department"
                         className="px-4 py-2.5 text-zinc-600 dark:text-zinc-400"
                       >
@@ -411,14 +434,41 @@ function MesaEligibleList() {
                           <span className="text-zinc-400">—</span>
                         )}
                       </td>
+                      <td
+                        data-label="Contributed"
+                        className="px-4 py-2.5 text-right font-mono tabular-nums text-zinc-700 dark:text-zinc-300"
+                      >
+                        {r.ledger ? formatPHP(r.ledger.contributed) : <span className="text-zinc-400">—</span>}
+                      </td>
+                      <td
+                        data-label="Simple.biz match"
+                        className="px-4 py-2.5 text-right font-mono tabular-nums text-teal-700 dark:text-teal-300"
+                      >
+                        {r.ledger ? formatPHP(r.ledger.matched) : <span className="text-zinc-400">—</span>}
+                      </td>
+                      <td
+                        data-label="Balance"
+                        className="px-4 py-2.5 text-right font-mono font-semibold tabular-nums text-zinc-900 dark:text-white"
+                      >
+                        {r.ledger ? formatPHP(r.ledger.balance) : <span className="text-zinc-400">—</span>}
+                      </td>
                       <td data-label="Status" className="px-4 py-2.5 text-right">
-                        <Badge
-                          variant="outline"
-                          className="border-teal-200 bg-teal-50 text-[10.5px] font-semibold uppercase tracking-wide text-teal-700 dark:border-teal-500/40 dark:bg-teal-500/15 dark:text-teal-200"
-                        >
-                          <CheckCircle2 className="mr-1 h-3 w-3" />
-                          Enrolled
-                        </Badge>
+                        {r.ledger && !r.ledger.isActive && r.ledger.status ? (
+                          <Badge
+                            variant="outline"
+                            className="border-zinc-300 bg-zinc-50 text-[10.5px] font-semibold uppercase tracking-wide text-zinc-600 dark:border-zinc-600 dark:bg-zinc-800/50 dark:text-zinc-300"
+                          >
+                            {r.ledger.status}
+                          </Badge>
+                        ) : (
+                          <Badge
+                            variant="outline"
+                            className="border-teal-200 bg-teal-50 text-[10.5px] font-semibold uppercase tracking-wide text-teal-700 dark:border-teal-500/40 dark:bg-teal-500/15 dark:text-teal-200"
+                          >
+                            <CheckCircle2 className="mr-1 h-3 w-3" />
+                            {r.ledger?.depositCount ? `${r.ledger.depositCount} wks` : 'Enrolled'}
+                          </Badge>
+                        )}
                       </td>
                     </tr>
                   ))}
@@ -497,8 +547,10 @@ function SkeletonRows({ count }: { count: number }) {
           <tr>
             <th className="px-4 py-2.5">Name</th>
             <th className="px-4 py-2.5">Work email</th>
-            <th className="px-4 py-2.5">Personal email</th>
             <th className="px-4 py-2.5">Department</th>
+            <th className="px-4 py-2.5 text-right">Contributed</th>
+            <th className="px-4 py-2.5 text-right">Simple.biz match</th>
+            <th className="px-4 py-2.5 text-right">Balance</th>
             <th className="px-4 py-2.5 text-right">Status</th>
           </tr>
         </thead>
@@ -512,10 +564,16 @@ function SkeletonRows({ count }: { count: number }) {
                 <div className="h-3 w-44 animate-pulse rounded bg-zinc-100 dark:bg-zinc-800" />
               </td>
               <td className="px-4 py-3">
-                <div className="h-3 w-44 animate-pulse rounded bg-zinc-100 dark:bg-zinc-800" />
-              </td>
-              <td className="px-4 py-3">
                 <div className="h-3 w-24 animate-pulse rounded bg-zinc-100 dark:bg-zinc-800" />
+              </td>
+              <td className="px-4 py-3 text-right">
+                <div className="ml-auto h-3 w-16 animate-pulse rounded bg-zinc-100 dark:bg-zinc-800" />
+              </td>
+              <td className="px-4 py-3 text-right">
+                <div className="ml-auto h-3 w-16 animate-pulse rounded bg-zinc-100 dark:bg-zinc-800" />
+              </td>
+              <td className="px-4 py-3 text-right">
+                <div className="ml-auto h-3 w-16 animate-pulse rounded bg-zinc-100 dark:bg-zinc-800" />
               </td>
               <td className="px-4 py-3 text-right">
                 <div className="ml-auto h-5 w-20 animate-pulse rounded-full bg-teal-100/60 dark:bg-teal-900/30" />
@@ -911,6 +969,30 @@ function StatCard({
     <div className={`rounded-xl border p-4 shadow-sm ${styles}`}>
       <p className="text-[11px] font-medium uppercase tracking-wide opacity-70">{label}</p>
       <p className="mt-1 font-mono text-2xl font-bold tabular-nums">{value}</p>
+    </div>
+  );
+}
+
+// Same visual language as StatCard but for a pre-formatted money string.
+function MoneyStatCard({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: string;
+  tone: 'teal' | 'zinc';
+}) {
+  const styles = {
+    teal:
+      'border-teal-200 bg-gradient-to-br from-teal-50 to-white text-teal-900 dark:border-teal-700/40 dark:from-teal-950/40 dark:to-zinc-950 dark:text-teal-100',
+    zinc:
+      'border-zinc-200 bg-white text-zinc-900 dark:border-zinc-800 dark:bg-zinc-900/40 dark:text-zinc-100',
+  }[tone];
+  return (
+    <div className={`rounded-xl border p-4 shadow-sm ${styles}`}>
+      <p className="text-[11px] font-medium uppercase tracking-wide opacity-70">{label}</p>
+      <p className="mt-1 font-mono text-xl font-bold tabular-nums">{value}</p>
     </div>
   );
 }

@@ -4,6 +4,7 @@ import { SessionProvider } from 'next-auth/react';
 import type { Session } from 'next-auth';
 import type { ReactNode } from 'react';
 import PresenceProvider from '@/components/presence/PresenceProvider';
+import CobrowseProvider from '@/components/presence/CobrowseProvider';
 import SessionInvalidationWatcher from '@/components/auth/SessionInvalidationWatcher';
 import GlobalPingListener from '@/components/presence/GlobalPingListener';
 import ImpersonationBanner from '@/components/auth/ImpersonationBanner';
@@ -16,10 +17,11 @@ import ImpersonationBanner from '@/components/auth/ImpersonationBanner';
  * Accepts `session` pre-fetched from the server layout so `useSession()` has
  * data during SSR instead of throwing "must be wrapped in SessionProvider".
  *
- * Also hosts {@link PresenceProvider} so every authenticated client broadcasts
- * online presence app-wide (powers the live status badges on the My Team tab
- * and the Admin Global Master List), and {@link GlobalPingListener} so an
- * Admin "Ping" lands as a toast no matter which dashboard the recipient is on.
+ * Also hosts {@link PresenceProvider} (app-wide online presence + current
+ * dashboard/tab, powering the My Team badges and the Admin Global Master List),
+ * {@link GlobalPingListener} (an Admin "Ping" lands as a toast wherever the
+ * recipient is), and {@link CobrowseProvider} (an app-wide rrweb "watch screen"
+ * driver so an Admin can live-mirror anyone's screen from the Global Master List).
  */
 export default function NextAuthProvider({
   children,
@@ -33,7 +35,9 @@ export default function NextAuthProvider({
       <SessionInvalidationWatcher />
       <GlobalPingListener />
       <ImpersonationBanner />
-      <PresenceProvider>{children}</PresenceProvider>
+      <PresenceProvider>
+        <CobrowseProvider>{children}</CobrowseProvider>
+      </PresenceProvider>
     </SessionProvider>
   );
 }

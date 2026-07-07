@@ -148,10 +148,15 @@ export default function PresenceProvider({ children }: { children: ReactNode }) 
   const retrack = useCallback(() => {
     const channel = channelRef.current;
     if (!channel || !selfEmail || !subscribedRef.current) return;
+    // `usePathname()` can transiently return null on the very first render; fall
+    // back to the live location so we never broadcast a null path (which would
+    // read as "Simple HRIS" on the Global Master List instead of the real page).
+    const path =
+      pathnameRef.current ?? (typeof window !== 'undefined' ? window.location.pathname : null);
     void channel.track({
       email: selfEmail,
       name: nameRef.current,
-      path: pathnameRef.current ?? null,
+      path,
       tab: tabLabelRef.current,
       online_at: new Date().toISOString(),
     } satisfies PresenceMeta);
@@ -222,6 +227,11 @@ export default function PresenceProvider({ children }: { children: ReactNode }) 
   // "Last seen Xm ago" — the realtime channel alone forgets immediately on
   // disconnect. Beat on mount, every minute while visible, on visibility
   // changes, and once more on tab close (keepalive: true).
+  //
+  // We also `retrack()` alongside each beat / on focus: presence is broadcast-
+  // only, so if the initial track ever raced (path not yet resolved), this
+  // re-announces the correct path/tab within a minute instead of leaving the
+  // person stuck showing "Simple HRIS".
   useEffect(() => {
     if (!selfEmail) return;
 
@@ -230,12 +240,14 @@ export default function PresenceProvider({ children }: { children: ReactNode }) 
     const interval = window.setInterval(() => {
       if (document.visibilityState === 'visible') {
         sendHeartbeat(selfEmail, nameRef.current);
+        retrack();
       }
     }, HEARTBEAT_INTERVAL_MS);
 
     const onVisibility = () => {
       if (document.visibilityState === 'visible') {
         sendHeartbeat(selfEmail, nameRef.current);
+        retrack();
       }
     };
     const onUnload = () => {
@@ -250,7 +262,7 @@ export default function PresenceProvider({ children }: { children: ReactNode }) 
       document.removeEventListener('visibilitychange', onVisibility);
       window.removeEventListener('pagehide', onUnload);
     };
-  }, [selfEmail]);
+  }, [selfEmail, retrack]);
 
   const onlineValue = useMemo(() => online, [online]);
   const detailsValue = useMemo(() => details, [details]);

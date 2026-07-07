@@ -17,6 +17,11 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import type { EmployeeRow } from '@/lib/supabase/employees';
 import { useLiveRefresh } from '@/hooks/useLiveRefresh';
 import { getHrTabCache, hasHrTabCache, setHrTabCache, HR_TAB_CACHE_KEYS } from '@/lib/hr/tab-cache';
+import { normEmail } from '@/lib/email/norm-email';
+import { cn } from '@/lib/utils';
+import { usePresenceDetails, type PresenceDetail } from '@/components/presence/PresenceProvider';
+import { dashboardLabelForPathname } from '@/lib/presence/page-label';
+import { formatLastSeen } from '@/components/team/team-ui';
 import DeptFilter from './DeptFilter';
 
 const PAGE_SIZE = 10;
@@ -66,6 +71,11 @@ export default function HrGlobalMasterList() {
   const [dept, setDept] = useState('');
   const [page, setPage] = useState(0);
   const reduceMotion = useReducedMotion();
+
+  // Live presence — who's online and which dashboard/tab they're on. Read-only
+  // here (HR sees status; the Ping / force-logout controls are Admin-only).
+  const presenceDetails = usePresenceDetails();
+  const [lastSeen, setLastSeen] = useState<Record<string, string>>({});
 
   // `/api/employees` returns the full ~1000-row active roster and is expensive
   // (paginated view reads + an employee_ids query + a global_master_list scan +
@@ -159,6 +169,50 @@ export default function HrGlobalMasterList() {
     .map((r) => r.work_email ?? r.personal_email ?? r.employee_id ?? '')
     .join('|')}`;
 
+  const detailFor = useCallback(
+    (r: EmployeeRow): PresenceDetail | null => {
+      const w = normEmail(r.work_email ?? '');
+      const p = normEmail(r.personal_email ?? '');
+      return (w && presenceDetails.get(w)) || (p && presenceDetails.get(p)) || null;
+    },
+    [presenceDetails],
+  );
+
+  const lastSeenFor = useCallback(
+    (r: EmployeeRow): string | null => {
+      const w = r.work_email ? normEmail(r.work_email) : null;
+      const p = r.personal_email ? normEmail(r.personal_email) : null;
+      return (w && lastSeen[w]) || (p && lastSeen[p]) || null;
+    },
+    [lastSeen],
+  );
+
+  // Offline "last seen" only needs to cover the rows currently on screen —
+  // fetching it for the whole ~1000-row roster would blow past the endpoint's
+  // 500-email cap for no benefit.
+  const visibleEmailKey = pageRows
+    .map((r) => r.work_email ?? r.personal_email ?? '')
+    .join('|');
+  useEffect(() => {
+    const emails = pageRows
+      .flatMap((r) => [r.work_email, r.personal_email])
+      .filter((e): e is string => !!e);
+    if (emails.length === 0) return;
+    let cancelled = false;
+    fetch(`/api/presence/last-seen?emails=${encodeURIComponent(emails.join(','))}`, { cache: 'no-store' })
+      .then((res) => res.json())
+      .then((json: { lastSeen?: Record<string, string> }) => {
+        if (!cancelled) setLastSeen(json.lastSeen ?? {});
+      })
+      .catch(() => {
+        /* non-fatal — status falls back to "Offline" */
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visibleEmailKey]);
+
   return (
     <div className="flex flex-col gap-6 px-4 pb-10 pt-6 sm:px-6 lg:px-8 lg:pt-8">
       {/* Hero */}
@@ -240,6 +294,7 @@ export default function HrGlobalMasterList() {
                     <th className="px-4 py-2">Personal email</th>
                     <th className="px-4 py-2">Start date</th>
                     <th className="px-4 py-2">Tenure</th>
+                    <th className="px-4 py-2">Status</th>
                   </tr>
                 </thead>
                 <motion.tbody
@@ -249,7 +304,15 @@ export default function HrGlobalMasterList() {
                   initial={reduceMotion ? false : 'hidden'}
                   animate="show"
                 >
-                  {pageRows.map((r, i) => (
+                  {pageRows.map((r, i) => {
+                    const detail = detailFor(r);
+                    const online = !!detail;
+                    const statusText = online
+                      ? dashboardLabelForPathname(detail!.path) + (detail!.tab ? ` · ${detail!.tab}` : '')
+                      : lastSeenFor(r)
+                        ? `Last seen ${formatLastSeen(lastSeenFor(r)) ?? '—'}`
+                        : 'Offline';
+                    return (
                     <motion.tr
                       key={`${r.work_email ?? r.personal_email ?? r.employee_id ?? i}`}
                       variants={rowVariants}
@@ -262,8 +325,30 @@ export default function HrGlobalMasterList() {
                       <td data-label="Personal email" className="px-4 py-2.5 font-mono text-sm text-zinc-700 dark:text-white">{r.personal_email ?? '—'}</td>
                       <td data-label="Start date" className="px-4 py-2.5 text-base text-zinc-700 dark:text-white">{fmtDate(r.start_date)}</td>
                       <td data-label="Tenure" className="px-4 py-2.5 text-base tabular-nums text-zinc-700 dark:text-white">{tenure(r.start_date)}</td>
+                      <td data-label="Status" className="px-4 py-2.5">
+                        <span className="inline-flex min-w-0 items-center gap-1.5" title={statusText}>
+                          <span
+                            className={cn(
+                              'h-2 w-2 shrink-0 rounded-full',
+                              online ? 'bg-emerald-500' : 'bg-zinc-300 dark:bg-zinc-600',
+                            )}
+                            aria-hidden
+                          />
+                          <span
+                            className={cn(
+                              'truncate text-sm',
+                              online
+                                ? 'font-medium text-emerald-700 dark:text-emerald-400'
+                                : 'text-zinc-500 dark:text-zinc-400',
+                            )}
+                          >
+                            {statusText}
+                          </span>
+                        </span>
+                      </td>
                     </motion.tr>
-                  ))}
+                    );
+                  })}
                 </motion.tbody>
               </table>
               <div className="flex items-center justify-between border-t border-zinc-100 px-4 py-2.5 dark:border-zinc-800">
