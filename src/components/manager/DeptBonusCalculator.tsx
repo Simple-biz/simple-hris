@@ -165,7 +165,6 @@ const DEPT_COLOR: Record<string, string> = {
   edit: '#3b82f6',
   devs: '#8b5cf6',
   lead_gen: '#f59e0b',
-  us_manager_bonus: '#f43f5e',
   callback: '#06b6d4',
   qc: '#f97316',
   discovery: '#14b8a6',
@@ -236,11 +235,10 @@ function addMoney(a: Money, b: Money): Money {
 }
 
 /** Departments whose KPI bonuses ALWAYS resolve in a forced currency, regardless
- *  of each bonus's catalog currency — e.g. US-based teams (US Manager Bonus) are
- *  paid in dollars, so their amounts are dollar figures and both the calculator
- *  display AND the saved/converted payout treat them as USD. Add a Colombian
- *  team here with 'COP' to force COP the same way. */
-const FORCED_DEPT_CURRENCY: Record<string, PayCurrency> = { us_manager_bonus: 'USD' };
+ *  of each bonus's catalog currency. Empty since the US Team / US Manager Bonus
+ *  department (the only USD-forced dept) was retired (2026-07-07). Add a team
+ *  here with 'USD'/'COP' to force that currency across the board again. */
+const FORCED_DEPT_CURRENCY: Record<string, PayCurrency> = {};
 
 /** The native currency a bonus is denominated in (legacy bonuses default PHP). */
 function bonusCurrency(bonus: BonusDef): PayCurrency {

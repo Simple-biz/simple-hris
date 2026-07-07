@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useId, useMemo, useState } from 'react';
+import { useSession } from 'next-auth/react';
 import { getSupabaseBrowserClient } from '@/lib/supabase/browser';
 import {
   PAGES_VISIBILITY_KEY,
@@ -20,8 +21,13 @@ interface UsePagesVisibilityResult {
   /** False until the first fetch settles — gate any nav redirect on this so the
    *  initial (empty) state doesn't briefly flash hidden tabs as visible/etc. */
   ready: boolean;
-  /** Resolve one dashboard tab's state. Default (no override) = 'visible'. */
+  /** EFFECTIVE state used for gating: admins see `construction` as `visible`. */
   visibilityOf: (dash: DashboardKey, key: string) => PageVisibility;
+  /** TRUE stored state (no admin bypass) — use to still SHOW an
+   *  "under construction" indicator to the admin who is bypassing the gate. */
+  rawVisibilityOf: (dash: DashboardKey, key: string) => PageVisibility;
+  /** Whether the viewer holds the `admin` role (drives the bypass). */
+  isAdmin: boolean;
 }
 
 /**
@@ -31,6 +37,12 @@ interface UsePagesVisibilityResult {
  * into the sidebar + content gate. Mirrors {@link useDispatchLock}.
  */
 export function usePagesVisibility(): UsePagesVisibilityResult {
+  const { data: session } = useSession();
+  // Admins bypass the "under construction" gate — they always see the real page
+  // (so they can preview/verify what's being built). "Hidden" still hides for
+  // everyone, admins included. Derived from the JWT session roles, so the bypass
+  // rides along even when an admin is viewing another dashboard via the switcher.
+  const isAdmin = ((session?.user as { roles?: string[] } | undefined)?.roles ?? []).includes('admin');
   const [config, setConfig] = useState<PagesVisibilityConfig>({});
   const [ready, setReady] = useState(false);
   const instanceId = useId();
@@ -110,9 +122,22 @@ export function usePagesVisibility(): UsePagesVisibilityResult {
   }, [refetch]);
 
   const visibilityOf = useCallback(
-    (dash: DashboardKey, key: string) => pageVisibility(config, dash, key),
+    (dash: DashboardKey, key: string): PageVisibility => {
+      const v = pageVisibility(config, dash, key);
+      // Admin override: an under-construction page renders as normal for admins.
+      if (isAdmin && v === 'construction') return 'visible';
+      return v;
+    },
+    [config, isAdmin],
+  );
+
+  const rawVisibilityOf = useCallback(
+    (dash: DashboardKey, key: string): PageVisibility => pageVisibility(config, dash, key),
     [config],
   );
 
-  return useMemo(() => ({ config, ready, visibilityOf }), [config, ready, visibilityOf]);
+  return useMemo(
+    () => ({ config, ready, visibilityOf, rawVisibilityOf, isAdmin }),
+    [config, ready, visibilityOf, rawVisibilityOf, isAdmin],
+  );
 }

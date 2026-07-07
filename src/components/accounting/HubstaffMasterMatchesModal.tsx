@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import {
-  Search, Download, CheckCircle2, MinusCircle, AlertTriangle, ChevronLeft, ChevronRight,
+  Search, Download, CheckCircle2, MinusCircle, AlertTriangle, ChevronLeft, ChevronRight, BadgeCheck,
 } from 'lucide-react';
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
@@ -44,6 +44,15 @@ const STATUS_META: Array<{
     chip: 'border-zinc-200 text-zinc-600 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-900',
     chipActive: 'border-zinc-400 bg-zinc-100 text-zinc-800 dark:border-zinc-500 dark:bg-zinc-800 dark:text-zinc-100',
     badge: 'bg-zinc-100 text-zinc-600 ring-1 ring-zinc-200 dark:bg-zinc-800 dark:text-zinc-300 dark:ring-zinc-700',
+  },
+  {
+    // Freelance / project-based depts that have no Hubstaff by nature — not a gap.
+    key: 'Exempt — no Hubstaff',
+    short: 'Exempt',
+    Icon: BadgeCheck,
+    chip: 'border-indigo-200 text-indigo-700 hover:bg-indigo-50 dark:border-indigo-900/50 dark:text-indigo-300 dark:hover:bg-indigo-950/40',
+    chipActive: 'border-indigo-400 bg-indigo-50 text-indigo-800 dark:border-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-200',
+    badge: 'bg-indigo-50 text-indigo-700 ring-1 ring-indigo-200/70 dark:bg-indigo-950/40 dark:text-indigo-300 dark:ring-indigo-900/50',
   },
   {
     key: 'In Hubstaff, not on Master',
@@ -98,7 +107,14 @@ export default function HubstaffMasterMatchesModal({
   open: boolean;
   onOpenChange: (o: boolean) => void;
   rows: HubstaffMasterRow[];
-  counts: { matched: number | null; masterOnly: number | null; hubstaffOnly: number | null };
+  counts: {
+    matched: number | null;
+    masterOnly: number | null;
+    hubstaffOnly: number | null;
+    /** No-Hubstaff-by-nature depts (SMM Freelancer, Site Building). Optional —
+     *  derived from the rows when a caller doesn't supply it. */
+    exempt?: number | null;
+  };
   /** Pay-period label for the header subtitle, e.g. "Jun 14 – 21, 2026". */
   periodLabel?: string | null;
   /** Filename used by the in-modal Export CSV button. */
@@ -126,10 +142,18 @@ export default function HubstaffMasterMatchesModal({
     [list, safePage],
   );
 
+  // The Exempt bucket is new and not always threaded through as an explicit
+  // count (e.g. the CEO mirror), so derive it from the rows as a fallback.
+  const exemptFromRows = useMemo(
+    () => rows.filter((r) => r.status === 'Exempt — no Hubstaff').length,
+    [rows],
+  );
+
   const countFor = (key: string): number | null => {
     if (key === 'On Master & worked') return counts.matched;
     if (key === 'On Master, no hours') return counts.masterOnly;
     if (key === 'In Hubstaff, not on Master') return counts.hubstaffOnly;
+    if (key === 'Exempt — no Hubstaff') return counts.exempt ?? exemptFromRows;
     return null;
   };
 

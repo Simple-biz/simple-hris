@@ -517,7 +517,10 @@
       "Bash(node scripts/load-mesa-ledger.mjs --dry)",
       "Bash(node scripts/load-mesa-ledger.mjs)",
       "Bash(node scripts/preload-mesa-membership.mjs)",
-      "Bash(node scripts/preload-mesa-membership.mjs --apply)"
+      "Bash(node scripts/preload-mesa-membership.mjs --apply)",
+      "Bash(curl -s -o /dev/null -w \"/hr=%{http_code}\\\\n\" --max-time 8 http://localhost:3000/hr)",
+      "Bash(cd \"C:/Users/Itachi/.claude/projects/c--Users-Itachi-Desktop-simple-hris/\" && ls -t *.jsonl | head -20)",
+      "Bash(python -c 'import sys,json *)"
     ],
     "additionalDirectories": [
       "\\tmp",

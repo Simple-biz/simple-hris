@@ -67,6 +67,7 @@ import { useFeaturePermissions } from '@/hooks/useFeaturePermissions';
 import { usePagesVisibility } from '@/hooks/usePagesVisibility';
 import { pageLabel } from '@/lib/pages/visibility';
 import UnderConstruction from '@/components/common/UnderConstruction';
+import ConstructionBanner from '@/components/common/ConstructionBanner';
 import ReadOnlyTab from '@/components/rbac/ReadOnlyTab';
 import { useOnlineEmails, usePublishPresenceTab } from '@/components/presence/PresenceProvider';
 import { humanizeTabId } from '@/lib/presence/page-label';
@@ -272,11 +273,12 @@ export default function ManagerApp() {
   // Per-tab feature-permission overlay (hidden until granted; admin bypasses).
   const { ready: permsReady, allowedTabs, canEditTab } = useFeaturePermissions(viewerEmail);
   // Global Pages overlay (admin-controlled visible / construction / hidden).
-  const { ready: pagesReady, visibilityOf } = usePagesVisibility();
+  const { ready: pagesReady, visibilityOf, rawVisibilityOf, isAdmin } = usePagesVisibility();
   const allowedManagerTabs = allowedTabs('manager');
   // Drop pages an admin hid; keep "construction" ones (shown with a placeholder).
   const visibleManagerTabs = allowedManagerTabs.filter((t) => visibilityOf('manager', t) !== 'hidden');
-  const constructionManagerTabs = allowedManagerTabs.filter((t) => visibilityOf('manager', t) === 'construction');
+  // Badge uses the RAW state so it still shows for admins (who bypass the gate).
+  const constructionManagerTabs = allowedManagerTabs.filter((t) => rawVisibilityOf('manager', t) === 'construction');
   const visibleManagerKey = visibleManagerTabs.join(',');
   useEffect(() => {
     if (!permsReady || !pagesReady) return;
@@ -366,6 +368,9 @@ export default function ManagerApp() {
               }}
               className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto"
             >
+              {isAdmin && rawVisibilityOf('manager', activeTab) === 'construction' && (
+                <ConstructionBanner title={pageLabel('manager', activeTab)} />
+              )}
               {visibilityOf('manager', activeTab) !== 'visible' ? (
                 <UnderConstruction title={pageLabel('manager', activeTab)} />
               ) : (

@@ -103,14 +103,27 @@ expects flat backgrounds with hairline borders.
 
 ## 2. Sidebars
 
-Two distinct widths and two visual families. Pick by surface (see § 1.2). All
-sidebars share these mechanics:
+Two visual families (branded vs editorial — see § 1.2) but **one shared
+mechanical shell**. Every dashboard rail — HR, Employee, Admin, and the rest —
+composes the same three primitives:
+
+- `src/components/common/CollapsibleSidebarShell.tsx` — the outer rail wrapper.
+- `src/components/common/SidebarLogoHeader.tsx` — the brand logo header (§ 2.6).
+- `src/components/common/SidebarCollapsedDot.tsx` — the corner dot that stands
+  in for a clipped badge while the rail is collapsed (§ 2.5).
+
+Collapse state comes from the shared `useSidebarCollapsed()` hook. Do not
+hand-roll a rail — reach for `CollapsibleSidebarShell`.
+
+All sidebars share these mechanics:
 
 - `flex h-dvh shrink-0 flex-col`
 - `fixed inset-y-0 left-0 z-50` below `md`, `md:static md:z-auto md:translate-x-0` from `md:` up
-- Translate animation: `transition-transform duration-300 ease-out` driven by
-  `mobileOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'`
-- `id="<surface>-sidebar-nav"` + `role="navigation"` + `aria-label`
+- Mobile drawer slide is per-rail (`transition-[transform,opacity,box-shadow,width]`)
+  driven by `mobileOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'`;
+  the desktop collapse width-slide is owned by `CollapsibleSidebarShell` (§ 2.5).
+- `id="<surface>-sidebar-nav"` + `role="navigation"` + `aria-label` — passed to
+  `CollapsibleSidebarShell` (`id` / `ariaLabel`), which renders them on the rail.
 - The mobile hamburger button uses `aria-controls="<surface>-sidebar-nav"` and
   `aria-expanded={mobileOpen}`
 
@@ -178,6 +191,66 @@ for the full diagnosis.)
 
 Editorial family uses `h-[15px] w-[15px]` icons and `text-[13.5px]`; branded
 family uses `h-4 w-4` icons and `text-sm`.
+
+### 2.5 Unified collapsible rail (the shared shell)
+
+Every rail collapses to a **64px icon-only strip on desktop** via
+`CollapsibleSidebarShell` + `useSidebarCollapsed()`. HR, Employee, and Admin all
+run through the exact same shell, so their collapse behaviour, brand header,
+and badge treatment are identical — only the accent colours and expanded width
+differ. How it works and the rules to follow:
+
+- **Collapse is desktop-only.** Below `md` the rail is still the full-width
+  mobile drawer (`w-[85vw] max-w-[20rem]` on HR/Employee, `w-[220px]` on Admin);
+  every `md:`-scoped collapse class is a no-op there.
+- **Only `width` animates.** The rail slides its width down to `md:w-16`; all
+  content lives in a **fixed-width inner panel** (`innerWidthClassName`, e.g.
+  `md:w-64` or `md:w-[220px]`) that the rail clips. Because the panel width
+  never changes, nothing inside re-flows during the animation.
+- **Icons are always visible.** Nav / view / footer icons sit at the panel's
+  left edge and stay put, so they read the same collapsed or expanded. Labels
+  and right-aligned badges fade out via the shared `.sb-collapse-fade` class
+  (opacity + a short slide, `md:`-scoped).
+- **Timing is centralised.** `src/index.css` owns `--sb-collapse-ms` (560ms) and
+  `--sb-collapse-ease` (`cubic-bezier(0.65,0,0.35,1)`), collapsed to ~0 under
+  `prefers-reduced-motion`. Don't re-declare per-rail durations for the collapse.
+- **Counts / badges are preserved but relocated when collapsed.** The full
+  count pill (e.g. HR's unread-notifications bell, Employee's profile-nudge and
+  bell, Admin's Roles / Global Master List counts and webhook-alert pill, and
+  the per-view unread counts in `ViewSwitcher`) all render as before while
+  expanded. When collapsed, the pill is clipped, so a `SidebarCollapsedDot`
+  corner dot on the icon stands in (its `tone` encodes urgency — red for
+  unread, amber for caution).
+- **ViewSwitcher stays reachable by scrolling.** The `<ViewSwitcher>` + theme
+  toggle live **inside** the rail's `<ScrollArea>` (§ 4.1), so on a short
+  viewport they scroll into view on the same scrollbar as the nav rather than
+  being pinned off-screen. When collapsed, the switcher sheds its card chrome
+  (`.vs-collapse-box`) so only the view icons remain, aligned with the nav
+  icons above.
+
+Expanded widths still track the family: HR and Employee share the branded
+`md:w-64` (256px); Admin keeps the editorial `md:w-[220px]`. The collapsed
+width (`md:w-16`) is uniform across all rails.
+
+### 2.6 Brand logo header (`SidebarLogoHeader`)
+
+The Simple wordmark at the top of every rail is the shared `SidebarLogoHeader`.
+Constraints:
+
+- **Keep the aspect ratio.** The logo image is
+  `<img src="/simple-logo.png" className="h-10 w-full object-contain">`. The
+  `object-contain` is load-bearing — it fixed a stretched-logo bug. Never swap
+  it for `object-cover`/`object-fill` or drop it; the wordmark must never be
+  distorted to fill its box.
+- **Retain the existing animation.** The header keeps the neon hover border
+  (`.logo-neon` conic-gradient ring) and the periodic "heartbeat" slide-in
+  (`.logo-heartbeat` → `logo-word-slide`, first beat ~1s after mount, then every
+  12s). The heartbeat runs **only while expanded** — a `forwards`-filled beat
+  would otherwise pin the image back to full opacity and leak the cut-off logo
+  into the collapsed 64px rail.
+- **Collapsed swap.** When collapsed, the whole logo box fades out and a single
+  compact `SidebarBrandMark` icon (tinted by each rail's `accentClassName`)
+  fades in, aligned with the nav icon column below.
 
 ---
 

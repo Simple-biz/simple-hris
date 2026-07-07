@@ -20,6 +20,7 @@ import {
   Loader2,
   Clock,
   XCircle,
+  Search,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -1385,6 +1386,19 @@ function RealMesaHistory({
   // Newest first.
   lines.sort((a, b) => (b.date ?? '').localeCompare(a.date ?? ''));
 
+  const [query, setQuery] = React.useState('');
+  const q = query.trim().toLowerCase();
+  const visibleLines = q
+    ? lines.filter((l) => {
+        const dateLabel = l.date ? formatDateShort(new Date(l.date)).toLowerCase() : '';
+        return (
+          dateLabel.includes(q) ||
+          (l.label ?? '').toLowerCase().includes(q) ||
+          l.kind.includes(q)
+        );
+      })
+    : lines;
+
   return (
     <div className="space-y-6">
       {/* Hero — real cumulative totals */}
@@ -1447,9 +1461,19 @@ function RealMesaHistory({
 
       {/* Event ledger */}
       <Section icon={CalendarClock} eyebrow="Weekly ledger" title="Deposits & disbursements">
-        <div className="overflow-hidden rounded-lg border border-zinc-100 dark:border-zinc-800/80">
+        <div className="mb-3 relative">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400 dark:text-zinc-500" />
+          <input
+            type="text"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search deposits & disbursements…"
+            className="w-full rounded-lg border border-zinc-200 bg-white py-2 pl-9 pr-3 text-sm text-zinc-900 placeholder:text-zinc-400 focus:border-teal-400 focus:outline-none focus:ring-2 focus:ring-teal-100 dark:border-zinc-700 dark:bg-zinc-900/50 dark:text-white dark:placeholder:text-zinc-500 dark:focus:border-teal-500/60 dark:focus:ring-teal-500/20"
+          />
+        </div>
+        <div className="max-h-[740px] overflow-y-auto overflow-x-hidden rounded-lg border border-zinc-100 dark:border-zinc-800/80">
           <table className="w-full text-sm">
-            <thead className="bg-zinc-50/80 text-[11px] uppercase tracking-wide text-zinc-500 dark:bg-zinc-900/60 dark:text-zinc-400">
+            <thead className="sticky top-0 z-10 bg-zinc-50/95 text-[11px] uppercase tracking-wide text-zinc-500 backdrop-blur dark:bg-zinc-900/95 dark:text-zinc-400">
               <tr>
                 <th className="px-3 py-2 text-left font-semibold">Date</th>
                 <th className="px-3 py-2 text-right font-semibold">You</th>
@@ -1458,7 +1482,14 @@ function RealMesaHistory({
               </tr>
             </thead>
             <tbody className="divide-y divide-zinc-100 bg-white dark:divide-zinc-800/80 dark:bg-zinc-900/30">
-              {lines.map((l) => (
+              {visibleLines.length === 0 ? (
+                <tr>
+                  <td colSpan={4} className="px-3 py-8 text-center text-sm text-zinc-500 dark:text-zinc-400">
+                    No matching entries.
+                  </td>
+                </tr>
+              ) : null}
+              {visibleLines.map((l) => (
                 <tr
                   key={l.key}
                   className={cn(

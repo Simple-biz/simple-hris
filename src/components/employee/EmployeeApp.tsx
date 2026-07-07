@@ -28,6 +28,7 @@ import { useBankInfoRequest } from '@/hooks/useBankInfoRequest';
 import { usePagesVisibility } from '@/hooks/usePagesVisibility';
 import { dashboardPages, pageLabel } from '@/lib/pages/visibility';
 import UnderConstruction from '@/components/common/UnderConstruction';
+import ConstructionBanner from '@/components/common/ConstructionBanner';
 
 import { normEmail } from '@/lib/email/norm-email';
 import { usePublishPresenceTab } from '@/components/presence/PresenceProvider';
@@ -108,10 +109,11 @@ export default function EmployeeApp() {
   const bankInfoRequested = useBankInfoRequest(employeeEmail);
 
   // Global Pages overlay (admin-controlled visible / construction / hidden).
-  const { ready: pagesReady, visibilityOf } = usePagesVisibility();
+  const { ready: pagesReady, visibilityOf, rawVisibilityOf, isAdmin } = usePagesVisibility();
   const employeeTabKeys = useMemo(() => dashboardPages('employee').map((p) => p.key), []);
   const hiddenEmployeeTabs = employeeTabKeys.filter((t) => visibilityOf('employee', t) === 'hidden');
-  const constructionEmployeeTabs = employeeTabKeys.filter((t) => visibilityOf('employee', t) === 'construction');
+  // Badge uses the RAW state so it still shows for admins (who bypass the gate).
+  const constructionEmployeeTabs = employeeTabKeys.filter((t) => rawVisibilityOf('employee', t) === 'construction');
 
   const previousLocked = useRef<boolean | null>(null);
 
@@ -512,6 +514,9 @@ export default function EmployeeApp() {
                   isActive ? 'flex' : 'pointer-events-none hidden'
                 }`}
               >
+                {isAdmin && rawVisibilityOf('employee', tab) === 'construction' && (
+                  <ConstructionBanner title={pageLabel('employee', tab)} />
+                )}
                 {renderContent(tab)}
               </motion.div>
             );

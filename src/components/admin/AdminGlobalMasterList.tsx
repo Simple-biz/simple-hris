@@ -222,11 +222,50 @@ export default function AdminGlobalMasterList() {
     return [...set].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
   }, [roster]);
 
-  const onlineCount = useMemo(() => roster.filter((r) => !!detailFor(r)).length, [roster, detailFor]);
+  // Admin/workspace accounts that are ONLINE but not on the payroll roster
+  // (e.g. kaner@simple.biz) have no `/api/employees` row, so they'd never show
+  // up here. Surface them as synthetic rows — this is an admin oversight tool,
+  // so "who's online" must include people the master list doesn't track.
+  const rosterEmailSet = useMemo(() => {
+    const s = new Set<string>();
+    for (const r of roster) {
+      const w = normEmail(r.work_email ?? '');
+      const p = normEmail(r.personal_email ?? '');
+      if (w) s.add(w);
+      if (p) s.add(p);
+    }
+    return s;
+  }, [roster]);
+
+  const extraOnlineRows = useMemo(() => {
+    const rows: EmployeeRow[] = [];
+    for (const [email, detail] of presenceDetails) {
+      if (!email || rosterEmailSet.has(email)) continue;
+      rows.push({
+        employee_id: null,
+        department: null,
+        name: detail.name || email,
+        personal_email: null,
+        work_email: email,
+        start_date: null,
+      } as EmployeeRow);
+    }
+    return rows.sort((a, b) => (a.name ?? '').localeCompare(b.name ?? ''));
+  }, [presenceDetails, rosterEmailSet]);
+
+  const extraOnlineKeySet = useMemo(
+    () => new Set(extraOnlineRows.map((r) => emailKeyFor(r))),
+    [extraOnlineRows, emailKeyFor],
+  );
+
+  // The list the UI works over: online-but-unlisted accounts first, then roster.
+  const fullRoster = useMemo(() => [...extraOnlineRows, ...roster], [extraOnlineRows, roster]);
+
+  const onlineCount = useMemo(() => fullRoster.filter((r) => !!detailFor(r)).length, [fullRoster, detailFor]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return roster.filter((r) => {
+    return fullRoster.filter((r) => {
       if (viewFilter === 'online' && !detailFor(r)) return false;
       if (departmentFilter !== '__all__') {
         const dep = (r.department ?? '').trim();
@@ -237,7 +276,7 @@ export default function AdminGlobalMasterList() {
         .filter(Boolean)
         .some((s) => s!.toLowerCase().includes(q));
     });
-  }, [roster, search, departmentFilter, viewFilter, detailFor]);
+  }, [fullRoster, search, departmentFilter, viewFilter, detailFor]);
 
   useEffect(() => {
     setPage(1);
@@ -249,8 +288,8 @@ export default function AdminGlobalMasterList() {
   const pageRows = filtered.slice(pageStart, pageStart + PAGE_SIZE);
 
   const selected = useMemo(
-    () => roster.find((r) => emailKeyFor(r) === selectedKey) ?? null,
-    [roster, selectedKey, emailKeyFor],
+    () => fullRoster.find((r) => emailKeyFor(r) === selectedKey) ?? null,
+    [fullRoster, selectedKey, emailKeyFor],
   );
 
   // Auto-select the first visible person on first load so the detail pane isn't
@@ -290,6 +329,7 @@ export default function AdminGlobalMasterList() {
   const selectedOnline = !!selectedDetail;
   const selectedIsSelf = !!selected && !!viewerNorm && emailKeyFor(selected) === viewerNorm;
   const selectedEmail = selected ? employeeIdentityEmail(selected) || null : null;
+  const selectedIsExtra = !!selected && extraOnlineKeySet.has(emailKeyFor(selected));
 
   const forceLogoutSelected = useCallback(async () => {
     if (!selectedEmail) return;
@@ -523,6 +563,7 @@ export default function AdminGlobalMasterList() {
                   const detail = detailFor(row);
                   const online = !!detail;
                   const email = employeeIdentityEmail(row) || null;
+                  const isExtra = extraOnlineKeySet.has(key);
                   return (
                     <li key={`${key || row.employee_id || row.name}-${pageStart + i}`}>
                       <button
@@ -561,8 +602,16 @@ export default function AdminGlobalMasterList() {
                           />
                         </div>
                         <div className="min-w-0 flex-1">
-                          <p className="truncate text-sm font-semibold text-zinc-900 dark:text-white">
-                            {row.name || email || '—'}
+                          <p className="flex items-center gap-1.5 truncate text-sm font-semibold text-zinc-900 dark:text-white">
+                            <span className="truncate">{row.name || email || '—'}</span>
+                            {isExtra && (
+                              <span
+                                className="shrink-0 rounded-md border border-sky-300/80 bg-sky-50 px-1.5 py-px text-[9px] font-bold uppercase tracking-wider text-sky-700 dark:border-sky-700/60 dark:bg-sky-950/40 dark:text-sky-300"
+                                title="Online, but not on the master list (e.g. an admin / workspace account)"
+                              >
+                                Off-roster
+                              </span>
+                            )}
                           </p>
                           <p className="truncate font-mono text-[11px] text-zinc-500 dark:text-zinc-400">
                             {email ?? 'No email'}
@@ -629,6 +678,15 @@ export default function AdminGlobalMasterList() {
                     <p className="truncate font-mono text-[11px] text-zinc-500">{selectedEmail || 'No email on file'}</p>
                   </div>
                 </div>
+                {selectedIsExtra && (
+                  <Badge
+                    variant="outline"
+                    className="shrink-0 border-sky-300/80 bg-sky-50 text-[10px] text-sky-700 dark:border-sky-700/60 dark:bg-sky-950/40 dark:text-sky-300"
+                    title="Online, but not on the master list (e.g. an admin / workspace account)"
+                  >
+                    Off-roster
+                  </Badge>
+                )}
                 {selectedIsSelf && (
                   <Badge variant="outline" className="shrink-0 text-[10px] text-zinc-500">
                     You

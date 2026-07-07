@@ -29,6 +29,7 @@ import ReadOnlyTab from '@/components/rbac/ReadOnlyTab';
 import { usePagesVisibility } from '@/hooks/usePagesVisibility';
 import { pageLabel } from '@/lib/pages/visibility';
 import UnderConstruction from '@/components/common/UnderConstruction';
+import ConstructionBanner from '@/components/common/ConstructionBanner';
 import type { InitialAccountingData } from '@/lib/accounting/prefetch';
 import NotificationsPanel from '@/components/notifications/NotificationsPanel';
 import AccountingMesa from '@/components/payroll/AccountingMesa';
@@ -139,11 +140,12 @@ export default function App({ initialData }: { initialData?: InitialAccountingDa
 
   const isDark = mounted ? resolvedTheme === 'dark' : false;
   // Global Pages overlay (admin-controlled visible / construction / hidden).
-  const { ready: pagesReady, visibilityOf } = usePagesVisibility();
+  const { ready: pagesReady, visibilityOf, rawVisibilityOf, isAdmin } = usePagesVisibility();
   const baseAllowedTabs = allowedAccountingTabsForUser(roles, featurePerms);
   // Drop pages an admin hid; keep "construction" ones (shown with a placeholder).
   const allowedTabs = baseAllowedTabs.filter((t) => visibilityOf('accounting', t) !== 'hidden');
-  const constructionTabs = baseAllowedTabs.filter((t) => visibilityOf('accounting', t) === 'construction');
+  // Badge uses the RAW state so it still shows for admins (who bypass the gate).
+  const constructionTabs = baseAllowedTabs.filter((t) => rawVisibilityOf('accounting', t) === 'construction');
   // Deleting a notification is an "edit" action. Admins bypass tab gating;
   // everyone else needs explicit `edit` access to the notifications feature.
   const canDeleteNotifications =
@@ -308,6 +310,9 @@ export default function App({ initialData }: { initialData?: InitialAccountingDa
               transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
               className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
             >
+              {isAdmin && rawVisibilityOf('accounting', activeTab) === 'construction' && (
+                <ConstructionBanner title={pageLabel('accounting', activeTab)} />
+              )}
               {renderContent()}
             </motion.div>
           </AnimatePresence>

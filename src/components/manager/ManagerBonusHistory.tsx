@@ -80,7 +80,6 @@ const CATALOG_DEPT_COLOR: Record<string, string> = {
   edit: '#3b82f6',
   devs: '#8b5cf6',
   lead_gen: '#f59e0b',
-  us_manager_bonus: '#f43f5e',
   callback: '#06b6d4',
   qc: '#f97316',
   discovery: '#14b8a6',

@@ -52,6 +52,7 @@ Two tables (see `references/create_bonus_catalog.sql`):
 | `amount` | numeric(14,2)? | amount (in `currency`) when `kind='flat'` |
 | `formula` | text? | Excel-style expression when `kind='formula'` |
 | `currency` | text | `'PHP'` (default) \| `'USD'` \| `'COP'`; USD/COP is converted to PHP at the live FX rate when the bonus is **applied** (see §3). Added by `add_bonus_catalog_currency.sql`; COP allowed by `add_cop_currency.sql`. |
+| `cadence` | text | `'weekly'` (default) \| `'monthly'`. Weekly pays every payroll week it is applied; monthly pays **once**, on the month's final payroll week (see §7). Legacy rows ⇒ `'weekly'`. Added by `add_bonus_catalog_cadence.sql` (migration #103); `bonus_catalog_applied` snapshots the same column at apply time. |
 | `created_by` / `created_at` | | immutable (preserved by `bonus_catalog_touch` trigger) |
 | `updated_by` / `updated_at` | | |
 
@@ -103,9 +104,12 @@ Example: `IF(tickets >= 10, 500, 250) * tickets` -> variables `[tickets]`; with
 
 - **Create / edit a bonus:** toggle between **Flat amount** and **Formula**
   (animated transition), plus a **PHP / USD / COP** currency toggle (same control
-  as Pay Structures, driven by `PAY_CURRENCIES`). The amount input + all amount
+  as Pay Structures, driven by `PAY_CURRENCIES`) and a **Weekly / Monthly**
+  cadence toggle (monthly shows the hint "Paid once a month, on the last payroll
+  week of the month" — see §7). The amount input + all amount
   displays render in the chosen currency; a sky badge flags non-PHP (USD/COP)
-  bonuses in the cards, detail modal, and assignment rows. Flat shows an amount input; Formula shows a monospace editor
+  bonuses and an amber `CadenceBadge` flags **monthly** bonuses
+  in the cards, detail modal, and assignment rows. Flat shows an amount input; Formula shows a monospace editor
   with live validation and a generated-TypeScript preview.
 - **Inline tester:** for formula bonuses with variables, an `InlineTester` lets
   you type sample variable values and see the computed result (in the bonus's
@@ -312,3 +316,44 @@ Each Bonus Library card has a **star** on the right (`BonusDef.starred`, column
 added by `references/add_bonus_catalog_starred.sql`). Starred bonuses float to
 the top of the list and render with an amber star + ring. Display-only -- it
 does not affect payout.
+
+---
+
+## 7. Payout cadence — Weekly / Monthly *(added 2026-07-07, migration #103)*
+
+Every catalog bonus carries a **cadence** (`BonusDef.cadence`,
+`src/lib/bonus-catalog/types.ts`). Payroll runs **weekly** (one Hubstaff CSV per
+week), so the cadence decides how often a bonus can be applied and paid:
+
+| Cadence | Behaviour |
+|---|---|
+| `weekly` (default, legacy) | Pays every payroll week it is applied. |
+| `monthly` | Pays **once** per month, on the **last payroll week of the month** — mirroring how PAB attaches only to the final weekly paystub of its period. |
+
+**Which week is "the last payroll week"** is decided by one shared, override-free
+calendar helper so the KPI Calculator and the Payroll Wizard always agree from
+the pay-period Monday alone: `isFinalPayrollWeekOfMonth(mondayIso)` in
+`src/lib/payroll/bonus-cadence.ts` — true when the *next* Monday-anchored week
+(`Monday + 7d`) falls in a different calendar month.
+
+**Enforcement is app-side, in three layers** (only the two `cadence` columns are
+needed in the DB):
+
+1. **Manager KPI Calculator** (`DeptBonusCalculator.tsx`) — a monthly bonus is
+   filtered out of `commonByDept` / `individualByDept` in every week except the
+   month's final payroll week (`isMonthlyPayWeek`). So a monthly bonus can only
+   be *applied* (and thus written to `bonus_catalog_applied`) once a month. On
+   non-final weeks a hint banner lists the monthly bonuses that are hidden
+   (`hiddenMonthlyBonusNames`), and applied rows snapshot `cadence`.
+2. **Applied-row snapshot** — `bonus_catalog_applied.cadence` records the
+   definition's cadence at apply time (alongside `bonus_name` / `kind`), so the
+   payout path never has to join back to the definition.
+3. **Payroll Wizard** (`PayrollWizard.tsx`, KPI-Sub aggregation) — a backstop:
+   an applied row with `cadence === 'monthly'` is only summed into a week's
+   "KPI Sub." total when `isFinalPayrollWeekOfMonth(info.period_start)` is true.
+
+Reads coalesce a missing `cadence` to `'weekly'` (`bonus-catalog-db.ts`,
+`bonus-catalog-applied-db.ts`), so legacy rows and a pre-migration DB behave
+exactly as weekly. The `/api/bonus-catalog` route passes `cadence` through
+unchanged. Migration: `references/sql/alter/add_bonus_catalog_cadence.sql`
+(adds `cadence` to both `bonus_catalog_bonuses` and `bonus_catalog_applied`).

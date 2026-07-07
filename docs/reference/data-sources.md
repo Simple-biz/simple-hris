@@ -328,14 +328,14 @@ Single `app_settings` key (`auth.force_logout_map`) holding a JSON map of `{ "em
 
 ### 10. `mesa_requests` *(added 2026-06-01)*
 
-Employee-submitted MESA program requests. Run `references/add_mesa_requests.sql` to create this table.
+Employee-submitted MESA program requests. Run `references/sql/create/add_mesa_requests.sql` to create this table; `references/sql/alter/add_mesa_dispatched_at.sql` adds the `dispatched_at` column + the urgent-queue index. See the paired ledger table §15 and the feature doc [mesa.md](../features/mesa.md).
 
 **Columns:**
 
 | Column | Type | Notes |
 |---|---|---|
 | `id` | uuid PK | `gen_random_uuid()` |
-| `work_email` | text NOT NULL | Submitter's Simple.biz email |
+| `work_email` | text NOT NULL | Submitter's Simple.biz email (lower-cased) |
 | `full_name` | text NOT NULL | Employee's full name at time of submission |
 | `department` | text NOT NULL | Department at time of submission |
 | `request_type` | text NOT NULL | `opt_in` \| `opt_out` \| `disbursement` \| `return` |
@@ -344,23 +344,30 @@ Employee-submitted MESA program requests. Run `references/add_mesa_requests.sql`
 | `explanation` | text | Disbursement explanation or return notes (max 250 chars enforced by UI) |
 | `amount_needed` | numeric(12,2) | Disbursement only — PHP amount requested |
 | `status` | text NOT NULL | `pending` (default) \| `approved` \| `denied` |
-| `review_notes` | text | Accounting reviewer's note to the employee |
+| `review_notes` | text | Reviewer's note to the employee |
 | `reviewed_by` | text | Session email of the reviewer |
 | `reviewed_at` | timestamptz | When the review was completed |
+| `dispatched_at` *(2026-06-04)* | timestamptz | Stamped when an approved disbursement is paid out via the Urgent Payments queue. Non-null = money sent; the request can no longer be revoked or deleted |
 | `created_at` | timestamptz | Submission time |
 
-**Indexes**: `work_email`, `status`, `created_at DESC`.
+**Indexes**: `work_email`, `status`, `created_at DESC`, plus a partial index `idx_mesa_requests_urgent_queue` on `(status, request_type, dispatched_at) WHERE status='approved' AND request_type='disbursement'` for the Urgent Payments queue.
+
+**Request-type routing:** `opt_in` requests are handled by **HR** (`HrMesa.tsx` → Requests sub-tab, `?request_type=opt_in`); `opt_out` / `disbursement` / `return` are handled by **Accounting** (`AccountingMesa.tsx` → Requests view).
 
 **Who reads it:**
-- `GET /api/mesa-requests` — employee (own rows) or Accounting (all)
+- `GET /api/mesa-requests` — employee (own rows, `authorizeEmailAccess`) or elevated session (all; accepts `?status=`, repeatable `?request_type=`, `?limit=`)
 - `src/components/employee/EmployeeMesa.tsx` — Request sub-tab history list
-- `src/components/payroll/AccountingMesa.tsx` — review queue
+- `src/components/payroll/AccountingMesa.tsx` — Accounting review queue (opt-out / disbursement / return)
+- `src/components/hr/HrMesa.tsx` — HR opt-in review queue
+- `src/components/PayrollWizard.tsx` — pulls approved, not-yet-dispatched `disbursement` rows into the Additions "MESA" column + Final pay
 
 **Who writes it:**
-- `POST /api/mesa-requests` — employee submission
-- `PATCH /api/mesa-requests/[id]` — Accounting approve/deny (stamps `reviewed_by`, `reviewed_at`, `review_notes`)
+- `POST /api/mesa-requests` — employee submission (writes an `mesa.request.<type>` audit log)
+- `PATCH /api/mesa-requests/[id]` — approve / deny / revoke-to-pending (`requireFeatureEditAnyView('mesa')`; stamps `reviewed_by`, `reviewed_at`, `review_notes`; blocks reverting a dispatched disbursement with 409)
+- `DELETE /api/mesa-requests/[id]` — permanent delete (blocked once `dispatched_at` is set)
+- `POST /api/mesa-requests/[id]/dispatch` — pays out an approved disbursement and stamps `dispatched_at` (see [urgent-payments.md](../features/urgent-payments.md))
 
-**Note:** Approving an `opt_in` request does **not** automatically flip `employee_hourly_rates.mesa_member`. Accounting must separately call `POST /api/toggle-mesa-member` after approving. This is intentional — the request is a signal, not an automated toggle.
+**Note:** Approving a request does **not** flip `employee_hourly_rates.mesa_member` at the DB level. The client wires it: approving an `opt_in` (HR) calls `POST /api/toggle-mesa-member` with `mesaMember: true`; approving an `opt_out` (Accounting) calls it with `mesaMember: false`. Revoking those decisions reverses the toggle. `mesa_member` is the flag the Payroll Wizard reads to apply the ₱100/week deduction.
 
 ---
 
@@ -466,6 +473,49 @@ On submit, the server renders a filled PDF via `pdf-lib` (name + drawn signature
 
 ---
 
+### 15. `mesa_ledger` *(added 2026-06-26)*
+
+A faithful 1:1 backfill of the external MESA program tracker (medical-emergency savings). **Each row is one ledger EVENT** — a weekly deposit (₱100 worker + ₱300 Simple.biz match = ₱400), a disbursement, or a membership/status snapshot — keyed by lowercased `email`. Source integer `id` is preserved as the primary key. Paired with `mesa_requests` (§10); see [mesa.md](../features/mesa.md).
+
+**Migration / backfill:**
+- `references/sql/create/mesa_ledger_ddl.sql` — the `CREATE TABLE` + indexes. Small; pastes fine into the Supabase SQL Editor.
+- `references/sql/create/backfill_mesa_ledger.sql` — the ~7,235-row data backfill (295 members). **Too large for the SQL Editor** (rejected as "query too large"). It is loaded another way: `scripts/load-mesa-ledger.mjs` parses the file's `INSERT … VALUES` tuples and upserts them over the Supabase REST API (service-role key) in batches of 500, bypassing the request-size limit. Idempotent (`upsert onConflict: id`); `--dry` parses only. Run the DDL once first.
+
+**Columns (subset — full DDL in `mesa_ledger_ddl.sql`):**
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | integer PK | Source export id |
+| `email` | text | Member email (lower-cased for lookups). ~11 external aggregate/summary rows carry NULL email and are dropped from member views |
+| `name` / `department` | text | Snapshotted member identity |
+| `status` | text | `'Active'` \| `'Inactive'` \| NULL — latest non-null wins |
+| `worker_contribution_php` | numeric(12,2) | The employee's own money that event (₱100 on a deposit) |
+| `simple_match_php` | numeric(12,2) | Simple.biz's 3× match (₱300 on a deposit) |
+| `total_daily_deposit_php` | numeric(12,2) | contributed + matched (₱400 on a deposit) |
+| `deposit_date` | date | Deposit event date |
+| `disbursement_amount_php` | numeric(12,2) | Money paid out to the member |
+| `disbursement_date` / `disbursement_type` | date / text | Disbursement event date + label |
+| `fpu_completion_date`, `opt_in_number`, `receipts_deadline`, `funds_returned_*`, `notes`, `synced_at`, … | mixed | Additional tracker fields carried verbatim |
+
+**Indexes:** `lower(email)`, `deposit_date`, `disbursement_date`, `status`.
+
+**Aggregation (`src/lib/mesa/ledger.ts` — shared client + server, no server-only imports):**
+- `MESA_LEDGER_SELECT` — the column list the API selects.
+- `summarizeMember(events)` → `MesaMemberSummary` (contributed / matched / deposited / disbursed / balance = deposited − disbursed, deposit & disbursement counts, first/last dates, latest status → `isActive`).
+- `summarizeMembers(events)` groups by lowercased email and drops email-less aggregate rows.
+
+**Who reads it:**
+- `GET /api/mesa-ledger` — `?email=` returns one member's `{ summary, events }` (self via `authorizeEmailAccess`, or elevated); no `email` returns per-member `{ members }` for the whole program (`requireElevatedSession`). Pages past the 1000-row PostgREST ceiling.
+- `src/components/employee/EmployeeMesa.tsx` — History sub-tab (real ledger wins over the projected weekly ledger).
+- `src/components/payroll/AccountingMesa.tsx` — Member Balances view + per-member "View" drill-down modal.
+- `src/components/hr/HrMesa.tsx` — Eligible sub-tab (per-employee contribution rollup matched by email).
+
+**Who writes it:** `scripts/load-mesa-ledger.mjs` only (backfill import). The app never mutates this table — it is the historical record; membership changes flow through `mesa_requests`.
+
+**Related flag — `employee_hourly_rates.mesa_member` / `mesa_member_since`:** `scripts/preload-mesa-membership.mjs` seeds these from the ledger (everyone Active → `mesa_member=true`, `mesa_member_since` = first recorded deposit) so the Payroll Wizard charges the correct weeks. Dry-run by default; `--apply` writes.
+
+---
+
 ## `app_settings` keys (payroll)
 
 Beyond `auth.force_logout_map` (§9), the wizard/dispatch flow stores two per-pay-period JSON keys in `app_settings`:
@@ -518,6 +568,10 @@ All routes are `export const dynamic = "force-dynamic"` (no caching).
 | `/api/payment-dispatches/reports/[cycleId]` *(2026-04-28)* | GET | Service role preferred | `src/lib/payroll/disbursement-reports.ts: getDisbursementReportDetail()` |
 | `/api/payroll-current-pay` | GET | Service role preferred | `src/lib/payroll/current-pay.ts` |
 | `/api/payroll-dispatch-lock` | GET/POST | Service role preferred | `src/lib/supabase/payroll-dispatch-lock.ts` |
+| `/api/mesa-requests` | GET/POST | Self (`?email=`) or elevated | `app/api/mesa-requests/route.ts` |
+| `/api/mesa-requests/[id]` | PATCH/DELETE | `requireFeatureEditAnyView('mesa')` | `app/api/mesa-requests/[id]/route.ts` |
+| `/api/mesa-requests/[id]/dispatch` | POST | Elevated session | `app/api/mesa-requests/[id]/dispatch/route.ts` |
+| `/api/mesa-ledger` | GET | Self (`?email=`) or elevated | `app/api/mesa-ledger/route.ts` + `src/lib/mesa/ledger.ts` |
 
 ---
 

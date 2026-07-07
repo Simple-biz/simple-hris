@@ -17,7 +17,27 @@
 export type HubstaffReconStatus =
   | 'On Master & worked'
   | 'On Master, no hours'
+  | 'Exempt — no Hubstaff'
   | 'In Hubstaff, not on Master';
+
+/** Status literal for a directory employee whose department has no Hubstaff by
+ *  nature — exported so callers tag rows without repeating the magic string. */
+export const HUBSTAFF_EXEMPT_STATUS = 'Exempt — no Hubstaff';
+
+/**
+ * Departments that legitimately have NO Hubstaff time tracking — freelance /
+ * project-based teams billed by deliverable, not by tracked hours. A person in
+ * one of these depts with no Hubstaff hours is NOT a reconciliation gap; it's
+ * expected. The "Reconcile gaps" count and the "On Master, no hours" bucket
+ * exclude them, and the drill-down surfaces them under their own "Exempt"
+ * status instead. Matched case-insensitively against the raw Department label.
+ */
+const HUBSTAFF_EXEMPT_DEPTS = new Set(['smm freelancer', 'site building']);
+
+export function isHubstaffExemptDept(department: string | null | undefined): boolean {
+  if (!department) return false;
+  return HUBSTAFF_EXEMPT_DEPTS.has(department.trim().toLowerCase());
+}
 
 export interface HubstaffMasterRow {
   /** One of the three HubstaffReconStatus values (typed loosely for JSON round-trips). */
@@ -36,13 +56,15 @@ export interface HubstaffMasterRow {
 export const HUBSTAFF_RECON_ORDER: Record<string, number> = {
   'On Master & worked': 0,
   'On Master, no hours': 1,
-  'In Hubstaff, not on Master': 2,
+  'Exempt — no Hubstaff': 2,
+  'In Hubstaff, not on Master': 3,
 };
 
 /** Visual tone for each status badge, shared by the modal chips + row badges. */
 export const HUBSTAFF_RECON_TONE: Record<string, 'ok' | 'neutral' | 'warn'> = {
   'On Master & worked': 'ok',
   'On Master, no hours': 'neutral',
+  'Exempt — no Hubstaff': 'neutral',
   'In Hubstaff, not on Master': 'warn',
 };
 

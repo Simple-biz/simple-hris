@@ -25,6 +25,7 @@ import { useFeaturePermissions } from '@/hooks/useFeaturePermissions';
 import { usePagesVisibility } from '@/hooks/usePagesVisibility';
 import { pageLabel } from '@/lib/pages/visibility';
 import UnderConstruction from '@/components/common/UnderConstruction';
+import ConstructionBanner from '@/components/common/ConstructionBanner';
 import ReadOnlyTab from '@/components/rbac/ReadOnlyTab';
 
 function isPlausibleEmail(s: string): boolean {
@@ -96,11 +97,12 @@ export default function CeoApp() {
   // Per-tab feature-permission overlay (hidden until granted; admin bypasses).
   const { ready: permsReady, allowedTabs, canEditTab } = useFeaturePermissions(viewerEmail);
   // Global Pages overlay (admin-controlled visible / construction / hidden).
-  const { ready: pagesReady, visibilityOf } = usePagesVisibility();
+  const { ready: pagesReady, visibilityOf, rawVisibilityOf, isAdmin } = usePagesVisibility();
   const allowedCeoTabs = allowedTabs('ceo');
   // Drop pages an admin hid; keep "construction" ones (shown with a placeholder).
   const visibleCeoTabs = allowedCeoTabs.filter((t) => visibilityOf('ceo', t) !== 'hidden');
-  const constructionCeoTabs = allowedCeoTabs.filter((t) => visibilityOf('ceo', t) === 'construction');
+  // Badge uses the RAW state so it still shows for admins (who bypass the gate).
+  const constructionCeoTabs = allowedCeoTabs.filter((t) => rawVisibilityOf('ceo', t) === 'construction');
   const visibleCeoKey = visibleCeoTabs.join(',');
   useEffect(() => {
     if (!permsReady || !pagesReady) return;
@@ -165,6 +167,9 @@ export default function CeoApp() {
               transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
               className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto"
             >
+              {isAdmin && rawVisibilityOf('ceo', activeTab) === 'construction' && (
+                <ConstructionBanner title={pageLabel('ceo', activeTab)} />
+              )}
               {visibilityOf('ceo', activeTab) !== 'visible' ? (
                 <UnderConstruction title={pageLabel('ceo', activeTab)} />
               ) : activeTab === 'biz-ai' ? (

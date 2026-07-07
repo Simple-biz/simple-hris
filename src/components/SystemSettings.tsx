@@ -92,7 +92,6 @@ const DEPARTMENTS = [
   { key: 'hr',               name: 'HR' },
   { key: 'sales_assistant',  name: 'Sales Assistant' },
   { key: 'smart_staff',      name: 'Smart Staff' },
-  { key: 'us_manager_bonus', name: 'US Team' },
   { key: 'hogan_smith_law',  name: 'Hogan Smith Law' },
 ] as const;
 

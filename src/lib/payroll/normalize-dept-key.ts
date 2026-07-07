@@ -17,13 +17,10 @@ export function normalizeDeptToKey(raw: string | null | undefined): string | nul
     'ai & api team': 'devs',
     'lead gen': 'lead_gen',
     'lead generation': 'lead_gen',
-    'us team': 'us_manager_bonus',
-    'us - team': 'us_manager_bonus',
-    // Legacy labels — the department is now surfaced as "US Team", but keep
-    // these so older master/rates rows still resolve to the same key.
-    'us - manager bonus': 'us_manager_bonus',
-    'us manager bonus': 'us_manager_bonus',
-    'manager bonus': 'us_manager_bonus',
+    // NOTE: The former "US Team" / "US Manager Bonus" department was retired
+    // (2026-07-07). Its people are record-only on the Global Master List (now
+    // labelled "US Employees") and are not run through HRIS PHP payroll, so the
+    // label deliberately maps to no payroll key.
     callback: 'callback',
     'callback team': 'callback',
     // The master list (synced from the Google Sheet) carries BOTH "Callback Team"

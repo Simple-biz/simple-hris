@@ -29,10 +29,11 @@ import {
 
 const DEPT_NAME = new Map(DEPARTMENTS.map((d) => [d.key, d.name]));
 
-/** Departments deliberately omitted from the Overview board. US managers are
- *  paid in USD on a separate track and are excluded from the standings by
- *  request -- their rates, people, assignments, and dept coverage never appear. */
-export const EXCLUDED_DEPT_KEYS = new Set<string>(['us_manager_bonus']);
+/** Departments deliberately omitted from the Overview board. Empty since the
+ *  US Team / US Manager Bonus department was retired (2026-07-07) -- it was the
+ *  only excluded dept. Kept as a hook so a future USD/COP-track dept can be
+ *  omitted from the standings again without re-plumbing the filters below. */
+export const EXCLUDED_DEPT_KEYS = new Set<string>([]);
 
 /** The departments the Overview actually counts/displays (DEPARTMENTS minus the
  *  excluded ones). Use this for coverage totals and the dept dot-grid. */

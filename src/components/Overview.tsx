@@ -45,6 +45,8 @@ import {
   type HubstaffMasterRow,
   sortHubstaffReconRows,
   downloadHubstaffReconCsv,
+  isHubstaffExemptDept,
+  HUBSTAFF_EXEMPT_STATUS,
 } from '@/lib/payroll/hubstaff-reconciliation';
 import { X } from 'lucide-react';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -3155,7 +3157,10 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
       const w = normEmail(e.work_email ?? null);
       const worked = (p != null && payrollEmailsNorm.has(p)) || (w != null && payrollEmailsNorm.has(w));
       if (worked) matchedCount++;
-      else inMasterNotPayrollCount++;
+      // Freelance / project-based depts (SMM Freelancer, Site Building) have no
+      // Hubstaff by nature — a no-hours row there isn't a gap, so leave it out of
+      // the "Reconcile gaps" count entirely (it's surfaced as "Exempt" instead).
+      else if (!isHubstaffExemptDept(e.department)) inMasterNotPayrollCount++;
     }
     // Hubstaff workers whose email matches no master row — a directory gap.
     let inPayrollNotMasterCount = 0;
@@ -3312,10 +3317,19 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
       if (w) masterKeys.add(w);
       if (p) masterKeys.add(p);
       const didWork = worked != null && ((w !== '' && worked.has(w)) || (p !== '' && worked.has(p)));
+      const exempt = !didWork && isHubstaffExemptDept(e.department);
       const pay = payFor(w, p);
       out.push({
-        status: didWork ? 'On Master & worked' : 'On Master, no hours',
-        reason: didWork ? '' : reasonForNoHours(e, w, p),
+        status: didWork
+          ? 'On Master & worked'
+          : exempt
+            ? HUBSTAFF_EXEMPT_STATUS
+            : 'On Master, no hours',
+        reason: didWork
+          ? ''
+          : exempt
+            ? `${e.department ?? 'This team'} — no Hubstaff tracking by nature`
+            : reasonForNoHours(e, w, p),
         name: e.name ?? '',
         workEmail: e.work_email ?? '',
         personalEmail: e.personal_email ?? '',

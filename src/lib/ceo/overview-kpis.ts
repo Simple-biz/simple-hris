@@ -6,6 +6,8 @@ import { normEmail } from '@/lib/email/norm-email';
 import {
   type HubstaffMasterRow,
   sortHubstaffReconRows,
+  isHubstaffExemptDept,
+  HUBSTAFF_EXEMPT_STATUS,
 } from '@/lib/payroll/hubstaff-reconciliation';
 import {
   getAppSetting,
@@ -182,10 +184,19 @@ function buildFallbackReconRows(pay: CurrentPayResult, roster: PeopleRosterRow[]
     const alts = r.alternate_work_emails.map((a) => normEmail(a) ?? '').filter(Boolean);
     for (const k of [w, p, ...alts]) if (k) masterKeys.add(k);
     const didWork = [w, p, ...alts].some((k) => k !== '' && worked.has(k));
+    const exempt = !didWork && isHubstaffExemptDept(r.department);
     const hrs = [w, p, ...alts].map((k) => (k ? hoursByEmail.get(k) : undefined)).find((h) => h != null);
     out.push({
-      status: didWork ? 'On Master & worked' : 'On Master, no hours',
-      reason: didWork ? '' : reasonForNoHoursCeo(r, pay.period.start, pay.period.end),
+      status: didWork
+        ? 'On Master & worked'
+        : exempt
+          ? HUBSTAFF_EXEMPT_STATUS
+          : 'On Master, no hours',
+      reason: didWork
+        ? ''
+        : exempt
+          ? `${r.department ?? 'This team'} — no Hubstaff tracking by nature`
+          : reasonForNoHoursCeo(r, pay.period.start, pay.period.end),
       name: r.name ?? '',
       workEmail: r.work_email ?? '',
       personalEmail: r.personal_email ?? '',

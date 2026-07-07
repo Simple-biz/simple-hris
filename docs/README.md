@@ -41,7 +41,9 @@ docs/
 | [accounting-cobrowse.md](./features/accounting-cobrowse.md) | Live "Observe" screen mirroring in Accounting (rrweb over Realtime), built on the collab layer |
 | [orphanage-dispute-flow.md](./features/orphanage-dispute-flow.md) | Orphanage-visit / PAB dispute flow |
 | [delete-authorization.md](./features/delete-authorization.md) | Who can delete what, and the audit trail |
-| [system-diagnostics.md](./features/system-diagnostics.md) | Admin diagnostics service map + probes |
+| [system-diagnostics.md](./features/system-diagnostics.md) | Admin diagnostics service map + probes; live auto re-probe feed for watching the DB during an outage |
+| [mesa.md](./features/mesa.md) | MESA savings program: `mesa_requests` (opt-in/out/disbursement/return) + backfilled `mesa_ledger`; contribution displays across HR/Accounting/Employee dashboards; Wizard ₱100 deduction flag |
+| [offboarding-automation.md](./features/offboarding-automation.md) | Manager multi-select → HR one-by-one offboard queue; RBAC snapshot/restore; n8n `manager-offboard-notify` (count-only email to alissar@) + multi-employee `employee.offboarded` teardown payload |
 | [time-adjustment-requests.md](./features/time-adjustment-requests.md) | Employee time adjustment requests: wizard, evidence upload, Accounting review, pay wiring |
 | [identity-resolution.md](./features/identity-resolution.md) | Master-authoritative identity + Department; alternate-work-email bridging for hours/rate matching across Rates & Profiles, Payroll Wizard, manager + employee dashboards |
 | [manager-my-team.md](./features/manager-my-team.md) | Manager portal → My Team: roster, rates/pay hidden on every surface, Recognition-medal card, attendance-only Hours tab (HSL rule via `department` prop) |
@@ -87,6 +89,7 @@ docs/
 
 | Doc |
 |---|
+| [audit-2026-07-07-session-log.md](./audits/audit-2026-07-07-session-log.md) — log of the 20 most recent Claude sessions (Jul 6–7) |
 | [audit-2026-06-16.md](./audits/audit-2026-06-16.md) |
 | [audit-2026-05-07.md](./audits/audit-2026-05-07.md) |
 | [audit-2026-04-25.md](./audits/audit-2026-04-25.md) |

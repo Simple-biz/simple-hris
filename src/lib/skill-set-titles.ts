@@ -184,14 +184,6 @@ export const TITLES_BY_DEPT_KEY: Record<string, readonly string[]> = {
     'Legal Secretary',
     'Records Clerk',
   ],
-  us_manager_bonus: [
-    'Manager',
-    'Team Lead',
-    'Supervisor',
-    'Operations Manager',
-    'Department Head',
-    'Director',
-  ],
 };
 
 /**

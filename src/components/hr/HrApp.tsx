@@ -38,6 +38,7 @@ import { useFeaturePermissions } from '@/hooks/useFeaturePermissions';
 import { usePagesVisibility } from '@/hooks/usePagesVisibility';
 import { pageLabel } from '@/lib/pages/visibility';
 import UnderConstruction from '@/components/common/UnderConstruction';
+import ConstructionBanner from '@/components/common/ConstructionBanner';
 import ReadOnlyTab from '@/components/rbac/ReadOnlyTab';
 import { cn } from '@/lib/utils';
 import HrSidebar, { type HrTab } from './HrSidebar';
@@ -94,11 +95,12 @@ export default function HrApp() {
   useNotificationChime(viewerEmail);
   const unreadNotifications = useEmployeeNotificationsUnread(viewerEmail);
   // Global Pages overlay (admin-controlled visible / construction / hidden).
-  const { ready: pagesReady, visibilityOf } = usePagesVisibility();
+  const { ready: pagesReady, visibilityOf, rawVisibilityOf, isAdmin } = usePagesVisibility();
   const allowedHrTabs = allowedTabs('hr');
   // Drop pages an admin hid; keep "construction" ones (shown with a placeholder).
   const visibleHrTabs = allowedHrTabs.filter((t) => visibilityOf('hr', t) !== 'hidden');
-  const constructionHrTabs = allowedHrTabs.filter((t) => visibilityOf('hr', t) === 'construction');
+  // Badge uses the RAW state so it still shows for admins (who bypass the gate).
+  const constructionHrTabs = allowedHrTabs.filter((t) => rawVisibilityOf('hr', t) === 'construction');
   const visibleHrKey = visibleHrTabs.join(',');
   useEffect(() => {
     if (!permsReady || !pagesReady) return;
@@ -229,6 +231,9 @@ export default function HrApp() {
               transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
               className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto"
             >
+              {isAdmin && rawVisibilityOf('hr', activeTab) === 'construction' && (
+                <ConstructionBanner title={pageLabel('hr', activeTab)} />
+              )}
               {visibilityOf('hr', activeTab) !== 'visible' ? (
                 <UnderConstruction title={pageLabel('hr', activeTab)} />
               ) : (

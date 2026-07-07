@@ -11,7 +11,7 @@ The app is no longer a single-operator tool. It is **eight role dashboards** tha
 | Dashboard | Route | Top component | Primary roles | What it does |
 |---|---|---|---|---|
 | Accounting | `/` -> `/accounting` | `src/App.tsx` | `payroll_coordinator`, `payroll_manager`, `finance`, `hr_coordinator`, `viewer` | The "Friday Path": Rates, Payroll Wizard, Payment Dispatch, Disputes, **MESA**, Settings |
-| Admin | `/admin` | `app/admin/page.tsx` | `admin` | RBAC + feature permissions, employee directory, webhooks, CSV imports, diagnostics, audit |
+| Admin | `/admin` | `app/admin/page.tsx` | `admin` | RBAC + feature permissions, Global Master List (live presence / ping / watch-screen / force-logout), Google Workspace, webhooks, Pages (per-tab visibility), diagnostics, audit |
 | Employee | `/employee` | `EmployeeApp` | everyone except pure contractors | Self-service: hours, pay, PAB, disputes, leaves, profile, MESA/FPU, gifts, team |
 | Manager | `/manager` | `ManagerApp` | `manager` | Department roster, leave approvals, KPI/HSL bonus calculators, medals, transfers |
 | HR | `/hr` | `HrApp` | `admin`, `hr_coordinator` | Onboarding, offboarding, transfers, gift tracker, MESA/FPU, leaves |
@@ -152,9 +152,12 @@ See [BUSINESS_LOGIC.md](./business-logic.md#pab-day-dispute-system) and [API_REF
 
 ## `src/components/payroll/AccountingMesa.tsx` *(added 2026-06-01)*
 
-**Accounting -> MESA.** Review queue for employee-submitted MESA requests (opt-in, opt-out, disbursement, return). Replaces the meeting ask for "a MESA tab in Accounting sidebar for mid-week disbursements."
+**Accounting -> MESA.** Two views toggled by a pill (`view: 'requests' | 'balances'`):
 
-**Layout**: header with stats strip (Total / Pending / Approved / Denied counters), toolbar (free-text search + status filter dropdown + type filter dropdown + Refresh), and a paginated table.
+1. **Requests** — the review queue for employee-submitted MESA requests (opt-in, opt-out, disbursement, return). Replaces the meeting ask for "a MESA tab in Accounting sidebar for mid-week disbursements."
+2. **Member Balances** — a searchable roster of MESA members' contribution rollups (Contributed / Matched / Balance) sourced from the `mesa_ledger` (`GET /api/mesa-ledger`). Each row has a **View** button opening a `MesaMemberDetail` **drill-down modal** — a member's full contribution timeline (`GET /api/mesa-ledger?email=`), listing each weekly deposit and each disbursement **with its date** (`deposit_date` / `disbursement_date`). This is how Accounting sees "how much each person contributed and when."
+
+**Requests layout**: header with stats strip (Total / Pending / Approved / Denied counters), toolbar (free-text search + status filter dropdown + type filter dropdown + Refresh), and a paginated table.
 
 **Table columns**: Employee (name + email), Department, Type (badge), Details (FPU date, disbursement reason + explanation excerpt, return notes), Amount (PHP), Status badge, Submitted date, Action.
 
@@ -166,6 +169,8 @@ See [BUSINESS_LOGIC.md](./business-logic.md#pab-day-dispute-system) and [API_REF
 |---|---|
 | `GET /api/mesa-requests` | list all requests (elevated) |
 | `PATCH /api/mesa-requests/[id]` | approve or deny a pending request |
+| `GET /api/mesa-ledger` | member contribution rollups (Member Balances view) |
+| `GET /api/mesa-ledger?email=` | one member's deposit/disbursement timeline (drill-down modal) |
 
 ---
 
@@ -243,7 +248,9 @@ Shared leave-request queue mounted by both **Accounting** (`/`) and **Manager** 
 
 ## `src/components/Sidebar.tsx`
 
-**Layout**: Fixed-width (`w-64`), full height (`h-dvh`), flex column. Below `md`, the sidebar is `fixed` with a slide-in transform; `mobileOpen` (from `App`) controls visibility. From `md` up it is `static` in the flex row. Background uses the orange-to-white gradient (light) or navy gradient (dark) from CSS variables.
+**Layout**: Built on the shared **`src/components/common/CollapsibleSidebarShell.tsx`** (padded `md:w-64` rail, `md:w-16` when collapsed via `useSidebarCollapsed`), full height (`h-dvh`), flex column. Below `md`, the sidebar is `fixed` with a slide-in transform; `mobileOpen` (from `App`) controls visibility. From `md` up it is `static` in the flex row. Background uses the orange-to-white gradient (light) or navy gradient (dark) from CSS variables.
+
+> **Unified sidebar system.** Every dashboard sidebar (this Accounting `Sidebar`, plus `AdminSidebar`, `HrSidebar`, `EmployeeSidebar`, `ManagerSidebar`, `CeoSidebar`, `ContractorSidebar`, `PayrollClerkSidebar`, `QCSidebar`) now shares the same building blocks: `CollapsibleSidebarShell` + `useSidebarCollapsed` (collapse toggle via `SidebarCollapseToggle`), a single `ScrollArea` middle column that holds the nav **and** the `ViewSwitcher` + theme toggle (so switch-view is always reachable by scrolling), always-visible `lucide` icons, and count/alert **notification badges** that degrade to a `SidebarCollapsedDot` in the 64px collapsed rail. Rails come in two matched widths — compact `md:w-[220px]` (Admin/Manager/CEO/PayrollClerk/QC) or padded `md:w-64` (Accounting/HR/Employee/Contractor).
 
 **Nav items** (top section, RBAC-filtered): the full set is Overview, Rates, Payroll Wizard, Payment Dispatch, Disputes, **MESA**, Announcements, Notifications, System Settings, and a separately-styled (violet) S-Wall button. The list is filtered to `allowedAccountingTabsForRoles(roles)` so each user sees only their permitted tabs. The **Notifications** item shows an animated unread-count badge (`useEmployeeNotificationsUnread`) or, when unread is 0 but payroll processing is active, a pulsing red dot (`useDispatchLock`).
 - Active item: orange gradient background, right-aligned chevron icon, bold text
@@ -281,6 +288,8 @@ A loading spinner appears beside the dropdown while stats are recomputing.
 | Active Workers | Distinct work emails in selected payroll data | Count of unique employees in the selected file(s) |
 | In Payroll not in Master | Cross-reference payroll emails vs master list | Potential unregistered contractors |
 | In Master not in Payroll | Cross-reference master list vs payroll emails | Employees missing from Hubstaff this period |
+
+**Reconciliation drill-down.** The Hubstaff ↔ Master cross-reference tile is **clickable**: it opens the searchable **`src/components/accounting/HubstaffMasterMatchesModal.tsx`** drill-down (`onOpenHubstaffModal`) — a paginated, searchable, status-filterable list of the exact people behind the gap (on both directions: worked-but-not-on-directory, on-directory-but-no-hours), computed via `src/lib/payroll/hubstaff-reconciliation.ts` so the modal rows reconcile 1:1 with the tile counts. A CSV export (`downloadHubstaffReconCsv`) sits on the tile. The same modal is reused on the CEO Overview (`CeoOverviewKpis` / `hero-stat-row`).
 
 **Total Payout computation** runs in-browser after both Hubstaff data and rates resolve. For "All Time", hours are accumulated per employee across files with per-file regular/OT split, then pay is computed from the summed seconds. Stat card subtexts adapt to show the source (filename or "all uploads combined").
 
@@ -835,10 +844,15 @@ Server-side probe helpers consumed by `app/api/admin/diagnostics/route.ts`. Each
 
 ## `src/components/admin/AdminSidebar.tsx`
 
-**AdminSidebar nav** — left rail for the Admin shell at `app/admin/page.tsx`. Two grouped nav arrays:
+**AdminSidebar nav** — left rail for the Admin shell at `app/admin/page.tsx`. Built on the shared `CollapsibleSidebarShell` (compact `md:w-[220px]` rail, `md:w-16` when collapsed via `useSidebarCollapsed`) with a single `ScrollArea` middle column and anchored brand/sign-out. Three grouped nav sections:
 
-- **systemNav**: Overview, Roles & permissions, Employees, Webhooks, CSV imports
+- **systemNav**: Overview, Roles & permissions, **Global Master List** *(replaced "Employees")*, Google Workspace, Webhooks, **Pages**, Notifications
 - **securityNav**: Audit log, **Diagnostics** *(2026-05-02)*, API tokens, Backups
+- **System settings** (standalone item below the two groups)
+
+**Badges:** Roles and Global Master List show live count badges (`counts.roles` / `counts.employees`); Webhooks shows an amber alert badge + dot when a webhook is active-but-URL-less; Notifications shows a pulsing red dot when `useDispatchLock().state.locked`. Collapsed-rail badges degrade to a `SidebarCollapsedDot`.
+
+**Unification:** like every other dashboard sidebar, the `ViewSwitcher` + dark-mode toggle live **inside** the `ScrollArea` (so they stay reachable via the same scrollbar on short viewports), and the footer identity card + Sign Out are pinned below it.
 
 Diagnostics uses the `Radar` icon and is **only present in this sidebar** — not in the Accounting/Manager/Employee/Orphanage sidebars. Combined with the server-side `roles.includes('admin')` gate on `/api/admin/diagnostics`, this means the entire feature is admin-only at every layer.
 
@@ -860,23 +874,27 @@ An earlier attempt at a global `transition-property: background-color, …` on e
 
 ## Admin Dashboard (`src/components/admin/`)
 
-The Admin shell (`app/admin/page.tsx`) hosts five primary tab components plus the shared `AuditLogPanel` (audit tab) and `NotificationsPanel` (notifications tab). `AdminSidebar.tsx` and `SystemDiagnostics.tsx` are documented in their own sections above; the shell mounts both.
+The Admin shell (`app/admin/page.tsx`) hosts the primary tab components plus the shared `AuditLogPanel` (audit tab) and `NotificationsPanel` (notifications tab). `AdminSidebar.tsx`, `SystemDiagnostics.tsx`, and `AdminPages.tsx` are documented in their own sections; the shell mounts all three.
 
 ### `app/admin/page.tsx`
 
-Client shell that gates the admin experience, resolves the viewer email (`?email=` -> normalized -> `sessionStorage[SESSION_EMAIL_KEY]`, else stored value), and switches tabs. There is no role gate in this file -- it surfaces whatever email it can and passes it down; RBAC gating lives upstream (middleware) and in the role-aware data APIs. A mount effect fetches employees, roles, and webhook config in parallel to compute nav **badge counts** (`{ employees, roles, webhookAlert }`; `roles` counts unique emails with >=1 grant; `webhookAlert` counts active webhooks with a blank URL). Wrapped in `<Suspense>` because it reads `useSearchParams`.
+Client shell that gates the admin experience, resolves the viewer email (`?email=` -> normalized -> `sessionStorage[SESSION_EMAIL_KEY]`, else stored value), and switches tabs. There is no role gate in this file -- it surfaces whatever email it can and passes it down; RBAC gating lives upstream (middleware) and in the role-aware data APIs. It also publishes the active tab into presence via `usePublishPresenceTab(humanizeTabId(activeTab))` (this is what powers the "which tab is this admin on" readout elsewhere). Supports deep-linking via `?tab=<id>`. A mount effect fetches employees, roles, and webhook config in parallel to compute nav **badge counts** (`{ employees, roles, webhookAlert }`; `roles` counts unique emails with >=1 grant; `webhookAlert` counts active webhooks with a blank URL). Wrapped in `<Suspense>` because it reads `useSearchParams`.
 
 | `activeTab` | Component |
 |---|---|
 | `overview` | `AdminOverview` |
 | `roles` | `AdminRoles` |
 | `global-master-list` | `AdminGlobalMasterList` |
+| `workspace` | `AdminWorkspace` (Google Workspace) |
 | `webhooks` | `AdminWebhooks` |
-| `csv-imports` | `AdminCsvImports` |
+| `pages` | `AdminPages` (with `onBack` -> overview) |
 | `audit` | `AuditLogPanel` |
 | `diagnostics` | `SystemDiagnostics` |
+| `api-tokens` | `AdminApiKeys` |
 | `notifications` | `NotificationsPanel` |
-| `api-tokens`, `backups`, `settings` | `Placeholder` (not-wired stubs) |
+| `backups`, `settings` | `Placeholder` (not-wired stubs) |
+
+(The former `csv-imports` tab / `AdminCsvImports` is no longer mounted in the admin shell.)
 
 Data: `GET /api/employees`, `GET /api/employee-roles`, `GET /api/app-settings?key=webhooks.config` (all `cache: 'no-store'`).
 
@@ -898,30 +916,39 @@ Imports `formatActionLabel`/`formatRelativeTime` from `AuditLogPanel`. Audit sea
 
 ### `src/components/admin/AdminGlobalMasterList.tsx`
 
-Editorial-style roster list -- the Admin equivalent of `HrGlobalMasterList.tsx` (same `GET
-/api/employees` roster + `POST /api/cron/sync-master-from-sheet` "Sync from Google Sheet"
-button, same search/department-filter/pagination), plus three Admin-only, live capabilities
-per row, none of which exist on HR's version:
+Replaced the old Admin "Employees" tab. A **split view** (echoing Roles & Permissions): a
+**left roster list** (`GET /api/employees` + `POST /api/cron/sync-master-from-sheet` "Sync"
+button, search / department-filter / pagination, an **All / Online** view toggle, live-refresh
+via `useLiveRefresh` on `global_master_list`) beside a **right detail pane** for the selected
+person, which stacks (1) a **Live status** card, (2) an **Admin functions** section, and (3) a
+read-only **Master list information** grid (employee ID, department, work/personal/alternate
+emails, start date, tenure, location). It is the Admin equivalent of `HrGlobalMasterList.tsx`
+but adds four Admin-only, live capabilities that HR's plain viewer does not have:
 
-- **Status** -- online/offline dot from `usePresenceDetails()`
-  (`src/components/presence/PresenceProvider.tsx`); when online, shows
-  `"{dashboard} · {tab}"` (`dashboardLabelForPathname` from `src/lib/presence/page-label.ts`
-  + the live tab label every dashboard shell publishes via `usePublishPresenceTab`); when
-  offline, `GET /api/presence/last-seen?emails=...` (scoped to the current page's rows only)
-  backs a "Last seen" fallback.
+- **Live status** -- online/offline via `usePresenceDetails()`
+  (`src/components/presence/PresenceProvider.tsx`); the roster row shows a green dot, and the
+  detail pane shows **both which dashboard AND which tab** the person is on right now
+  (`dashboardLabelForPathname` from `src/lib/presence/page-label.ts` + the live tab label every
+  dashboard shell publishes via `usePublishPresenceTab`). Offline rows fall back to
+  `GET /api/presence/last-seen?emails=...` (scoped to the visible page + the selected row only,
+  to stay under the endpoint's email cap). Accounts that are online but not on the roster (e.g.
+  an admin/workspace login) surface as synthetic "Off-roster" rows so "who's online" is complete.
 - **Ping** -- an inline composer broadcasts a directed, ephemeral message on the global
   `hris-ping` Realtime channel (`useAdminPingSender` in
   `src/components/presence/GlobalPingListener.tsx`); the recipient sees a toast + chime via
   the root-mounted `GlobalPingListener`, wherever they currently are. Nothing is persisted --
   lost if they're not connected at that moment.
-- **Force logout** -- calls the existing `POST /api/auth/force-logout` (same endpoint
-  `AdminRoles.forceLogoutSelected` uses), which already propagates live via
-  `SessionInvalidationWatcher`.
+- **Watch screen** *(live co-browse)* -- `useWatchScreen()` from
+  `src/components/presence/CobrowseProvider.tsx`; `observe({ email, name })` opens a live,
+  view-only mirror of that person's screen (button is disabled unless they're online, and turns
+  into "Stop watching screen" while active). The subject is not notified; recording only runs
+  while an admin watches.
+- **Force logout** -- calls `POST /api/auth/force-logout` (same endpoint
+  `AdminRoles.forceLogoutSelected` uses), which propagates live via `SessionInvalidationWatcher`.
 
-Avatar resolution (photo -> Gravatar `/api/avatar?email=&s=&d=404` -> initials) is a
-self-contained `RosterAvatar`, not `EmployeeAvatar` (that component is only valid for the
-signed-in viewer's own photo). No writes beyond the sync button and the two live actions
-above.
+Ping / Watch screen / Force logout are all disabled for the admin's **own** account (a "You"
+badge marks it). Avatars use `EmployeeAvatar` (photo -> Google photo -> Gravatar -> initials).
+No writes beyond the sync button and the three live actions above.
 
 ### `src/components/admin/AdminRoles.tsx`
 
@@ -948,6 +975,22 @@ The RBAC + per-feature-permission control surface. Grants/revokes roles, sets pe
 ### `src/components/admin/AdminWebhooks.tsx`
 
 Editor for the n8n/automation webhook registry -- a single JSON blob in `app_settings` (`webhooks.config`) of slug->URL->active entries. Merges in any missing `KNOWN_SLUGS` as inactive defaults so the five first-party automations always appear: `paystub_dispatch`, `create_workspace_account`, `hubstaff_invite_user`, `onboarding_send`, `offboarding`. `entryStatus` is `active` (toggled on + valid http(s) URL) / `inactive` / `missing`. **`toggleActive` persists immediately** (optimistic + rollback); URL/label/slug edits only set `dirty` and need an explicit Save. **Test** POSTs a sample `{test:true,...}` to the endpoint from the browser. Data: `GET /api/app-settings?key=webhooks.config`, `POST /api/app-settings`. The registry is a runtime override -- when a slug is active, server routes use its URL; otherwise they fall back to a hardcoded default in the API route.
+
+### `src/components/admin/AdminPages.tsx`
+
+**Admin -> Pages.** Per-tab visibility control for **every** dashboard (`DASHBOARD_PAGES` from `src/lib/pages/visibility.ts`: ceo / hr / accounting / manager / employee). A **Back** button sits at the top (calls the `onBack` prop the admin shell passes -> returns to Overview). Below it: a dashboard-tab strip (with a `motion` sliding underline and a per-dashboard override-count badge), an in-tab search box, and a `DashboardCard` listing each page with a 3-way `SegmentedControl`:
+
+| State | Effect |
+|---|---|
+| **Visible** | normal — page appears in that dashboard's sidebar |
+| **Under construction** | page is replaced with a placeholder for everyone (admins bypass — see below) |
+| **Hidden** | page is removed from the menu entirely |
+
+Changes auto-save (optimistic, with rollback + a `SaveBadge`) to `app_settings` under `PAGES_VISIBILITY_KEY` via `POST /api/app-settings` (`serializePagesVisibility`); loaded on mount via `GET /api/app-settings?key=`. "Reset all" per dashboard deletes that dashboard's overrides. The **Landing** page gets a warning when hidden (users are bounced to the next visible page).
+
+**Runtime consumption** (the enforcement side, `src/hooks/usePagesVisibility.ts`):
+- Non-admins hitting a `construction` tab get the full-bleed **`src/components/common/UnderConstruction.tsx`** placeholder (animated hazard-stripe "being built" card); `hidden` tabs disappear from their sidebar.
+- **Admins bypass** the construction gate and see the **real** page, topped by the slim **`src/components/common/ConstructionBanner.tsx`** indicator ("Under construction — not live for others yet. You can see it because you're an admin.").
 
 ### `src/components/admin/AdminCsvImports.tsx`
 
@@ -1073,7 +1116,7 @@ The **Transfers** tab -- approve/reject manager-submitted department-transfer re
 
 ### `src/components/hr/HrMesa.tsx`
 
-The **MESA** tab (Medical Emergency Savings Account). Two sub-tabs: **MESA Eligible** and **FPU Enrollments** (embeds `HrFpuEnrollments`). MESA membership is flagged per-employee via `mesa_member=true` on the rates table; **FPU completion is the only path into MESA**, which is why the two tabs live together. `MesaEligibleList` fetches `GET /api/employee-hourly-rates` + `GET /api/employees`, builds a `mesa_member` lookup keyed by work+personal email, and uses a module-level cache (`cachedEligible_v3`) so sub-tab switches skip refetch (Refresh clears it).
+The **MESA** tab (Medical Emergency Savings Account). Two sub-tabs: **MESA Eligible** and **FPU Enrollments** (embeds `HrFpuEnrollments`). MESA membership is flagged per-employee via `mesa_member=true` on the rates table; **FPU completion is the only path into MESA**, which is why the two tabs live together. `MesaEligibleList` fetches `GET /api/employee-hourly-rates` + `GET /api/employees` + `GET /api/mesa-ledger` (best-effort) in parallel, builds a `mesa_member` lookup keyed by work+personal email, and joins each member to their `mesa_ledger` rollup so the table shows per-person **Contributed / Matched / Balance** columns (plus program-wide totals in a stat strip) alongside status; module-level cache (`cachedEligible_v3`) so sub-tab switches skip refetch (Refresh clears it).
 
 ### `src/components/hr/HrFpuEnrollments.tsx`
 
@@ -1376,7 +1419,7 @@ FPU (Financial Peace University) enrollment sign-up form. Standalone tab OR embe
 | About MESA | Program overview: why it exists, what it covers, contribution breakdown (PHP 100 employee + PHP 400 company = PHP 500/week), program rules, FPU-only enrollment path |
 | FPU Enrollment | Embeds `EmployeeFpu embedded` — FPU sign-up |
 | **Request** *(new)* | Self-service form to submit a MESA request; past submissions shown below the form |
-| History | Projected weekly contribution ledger (`buildWeeklyLedger`) |
+| History | Contribution ledger — real `mesa_ledger` data when present, else a projected ledger (see below) |
 
 **Request sub-tab — `MesaRequestForm`:** A single dropdown selects the request type (Opt-in, Opt-out, Disbursement Request, Return). The relevant panel animates in via a `motion.div` with `key={requestType}` (no exit animation — old panel unmounts instantly, new one fades in once from slightly above, no cycling). Changing the option resets all sub-form state.
 
@@ -1387,7 +1430,9 @@ FPU (Financial Peace University) enrollment sign-up form. Standalone tab OR embe
 
 All types share pre-filled Simple.biz email (read-only), Full Name, and Department (seeded from session props). Submit -> `POST /api/mesa-requests`. Past submissions fetched on tab enter via `GET /api/mesa-requests?email=` and shown in a history table with type / reason / amount / status badge / date.
 
-**Enrollment check:** reads `mesa_member` flag from `GET /api/employee-hourly-rates?email=` (self-lookup). **History ledger** (`buildWeeklyLedger`): Monday-anchored weeks from `start_date` → today; the in-progress week is excluded from totals. Display-only projection — no per-week rows persisted yet.
+**Enrollment check:** reads `mesa_member` flag from `GET /api/employee-hourly-rates?email=` (self-lookup).
+
+**History sub-tab** (`MesaHistory`): fetches `GET /api/mesa-ledger?email=`. When the member has real recorded activity (`depositCount > 0` or any events), it renders **`RealMesaHistory`** — a cumulative totals hero (You've contributed / Simple.biz matched / Current balance) plus a **"Deposits & disbursements"** event ledger: each deposit and disbursement listed newest-first **with its date**, a **search bar** filtering by date/label/kind, and a **fixed-height scroll container** (`max-h-[740px] overflow-y-auto`, sticky header — roughly 20 rows before it scrolls) with **no pagination**. When there's no real ledger, it falls back to a **projected** Monday-anchored ledger (`buildEnrollmentLedger` from the enrollment date, else legacy `buildWeeklyLedger` from `start_date`); the in-progress week is excluded from totals and the projection is clearly labelled.
 
 ### `src/components/employee/EmployeeLeaves.tsx`
 

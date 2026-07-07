@@ -363,6 +363,25 @@ The PAB month used for the PAB check is derived from **the dispatch week's own M
 
 ---
 
+## Catalog bonus cadence — Weekly / Monthly *(added 2026-07-07)*
+
+Custom bonuses authored in the **Payment Catalog → Bonus Library** (see [`features/bonus-catalog.md`](../features/bonus-catalog.md)) now carry a **Weekly / Monthly** cadence toggle, applying the same weekly-gating idea to catalog bonuses that PAB/Tech already use:
+
+- **Weekly** (default, and every legacy bonus): the bonus can be applied — and paid — every payroll week.
+- **Monthly**: the bonus pays **once**, on the **last payroll week of the month** (the PAB week).
+
+The "final payroll week of the month" is decided by one override-free helper, `isFinalPayrollWeekOfMonth(mondayIso)` in `src/lib/payroll/bonus-cadence.ts` — true when the next Monday-anchored week (`Monday + 7d`) starts in a different month — so the manager KPI Calculator and the Payroll Wizard agree from the pay-period Monday alone.
+
+Enforcement is app-side (the migration only adds a `cadence` column to `bonus_catalog_bonuses` and `bonus_catalog_applied`):
+
+1. The **manager KPI Calculator** (`DeptBonusCalculator.tsx`) hides a monthly bonus from a department's bonus columns in every week except that month's final payroll week, so it can only be *applied* (written to `bonus_catalog_applied`) once a month.
+2. Each applied row **snapshots** its `cadence` at apply time.
+3. The **Payroll Wizard** KPI-Sub aggregation only sums a `cadence === 'monthly'` applied row into a week's total when that week is the month's final payroll week (a backstop).
+
+Migration: `references/sql/alter/add_bonus_catalog_cadence.sql` (tracked as pending item #103). Reads coalesce a missing `cadence` to `'weekly'`, so a pre-migration DB behaves exactly as it did before.
+
+---
+
 ## Department Auto-Assignment
 
 Runs automatically in Step 3 after calc rows load. For each Hubstaff employee, the system tries four resolution tiers:
@@ -1019,6 +1038,48 @@ To support the Lead Gen department's typical weekly batch of ~50 new hires, the 
 
 ---
 
+## Department Transfers *(added 2026-07-07)*
+
+A **manager** can move a team member to another department. The transfer is a
+request → approval flow, and it can be raised at any point in a payroll cycle
+(mid-week included).
+
+1. **Manager raises the request** — `POST /api/department-transfers` (gated by
+   `requireFeatureEdit('manager', 'team')`). A department-scoped manager may only
+   move people *out of* departments they manage (`departmentMatchesManagedAssignments`);
+   admins are unrestricted. One pending request per employee (`hasPendingTransferForEmployee`).
+   HR + admins are notified (`transfer.requested`).
+2. **HR (or admin) decides** — `PATCH /api/department-transfers/[id]`
+   (`requireFeatureEdit('hr', 'transfers')`) with `decision: 'approved' | 'rejected'`.
+   The requesting manager may `cancelled` their own request while it is still pending.
+3. **On approval**, `applyDepartmentTransfer()` updates **only** the `Department`
+   column on the matching `global_master_list` row(s) (matched by personal/work
+   email within the source department). The requesting manager is notified
+   (`transfer.approved` / `transfer.rejected`).
+
+**What a transfer does *not* touch.** The approval writes nothing to
+`employee_hourly_rates` or `employee_rate_history` — it is a department relabel
+only. So a mid-cycle transfer does **not** by itself reprice the employee or
+change their pay for that week:
+
+- **Rate entitlement** stays governed by the separate mid-cycle rate-prorating
+  mechanism (see "Mid-cycle rate prorating" below): `employee_rate_history` is
+  authoritative, each rate row carries an `effective_from`, and pay is prorated
+  per day (`current-pay.ts → computeProratedRowPay`). Because an existing
+  employee keeps their history/sheet rate, the destination department's
+  **department-scoped** Payment-Catalog base rate does **not** override it — a
+  department base only applies to someone with no individual rate *and* no sheet
+  rate (priority INDIVIDUAL → SHEET → DEPARTMENT; see the rate-resolution
+  section).
+- **PAB** applies to everyone regardless of department, so it is unaffected by
+  the department label.
+- **Department bonus formulas** *do* follow the new label: the Payroll Wizard's
+  Department Auto-Assignment reads `global_master_list."Department"`, so after an
+  approved transfer the person auto-assigns to the destination department's bonus
+  tab on the next calc.
+
+---
+
 ## Offboarding Process *(updated 2026-06-01)*
 
 ### Department-based account deletion timeline
@@ -1050,3 +1111,50 @@ The pay rate payload sent to Hubstaff on offboard is explicitly set to **zero** 
 ### Known bug — offboarding UI duplicate entries
 
 The offboarding UI can show duplicate entries for a single person (e.g., two "Carla T" rows). Offboarding either entry currently deletes both. Root cause: `global_master_list` keys on `(personal_email, department)`, so employees with a dual-department record can appear twice. This must be corrected so each offboard action targets only the intended row.
+
+### Employee-initiated resignation *(added 2026-07-07, migration #99)*
+
+An employee can start their own offboarding from **Profile → Resign**: a
+last-working-day (`effective_date`) picker plus an optional message →
+`POST /api/resignation-requests`. Identity is session-derived
+(`authorizeEmailAccess`), department managers are resolved via the leave flow's
+`listManagersForDepartment`, and there is a one-pending-per-person guard.
+
+1. **Submit** → row in `resignation_requests` at `status = 'pending'`; the
+   department's managers are notified (`resignation.submitted`) and the resigning
+   person floats to the top of the manager's **My Team** roster with their
+   message and inline Approve / Decline.
+2. **Manager decision** — `PATCH /api/resignation-requests/[id]`
+   (`requireFeatureEdit('manager', 'team')`, plus a per-row check that the actor
+   manages that department). **Reject** requires a note (→ `resignation.rejected`).
+   **Approve** atomically claims the row, then calls the shared
+   `insertOffboardingQueueEntries` with `reason: 'resigned'` — so the person lands
+   in **HR's offboarding queue** exactly as a manager-queued offboard would. HR is
+   notified (`offboarding.requested`), the employee is notified
+   (`resignation.approved`), and the queue id is linked back onto the resignation.
+3. The employee can **cancel** (self-withdraw) their own request while it is still
+   pending.
+
+HR then processes the queued entry through the normal single `POST /api/hr/offboard`
+path (see the Manager→HR offboarding queue).
+
+### Offboard RBAC snapshot + restore
+
+Offboarding strips **every** RBAC grant the person holds so a stale JWT (or a
+leftover Admin → Roles row) can never keep them privileged. On offboard,
+`app/api/hr/offboard` calls `snapshotAndRevokeRbacGrants(work_email)`
+(`src/lib/hr/offboard-rbac.ts`), which:
+
+- Snapshots the person's active grants across three tables — `employee_roles`,
+  `department_managers`, and `employee_feature_permissions` — into
+  `app_settings` under the key **`offboard.rbac.<email>`** (only written when
+  there is something to remember, so a double-offboard can't clobber a good
+  snapshot with an empty one).
+- Soft-revokes all of them (`revoked_at = now()`), then a force-logout
+  (`bumpForceLogoutFor`) kills any live session.
+
+**Re-onboarding restores it.** `app/api/hr/reonboard` calls
+`restoreRbacGrants(work_email, actor)`, which reads the snapshot, un-revokes /
+re-inserts each grant idempotently (already-active grants are left alone), and
+then deletes the `offboard.rbac.<email>` key. An all-zero no-op when there was no
+snapshot to restore.

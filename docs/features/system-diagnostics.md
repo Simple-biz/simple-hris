@@ -52,7 +52,46 @@ Live probe failed — showing mock baseline.  <Probe failed (HTTP 403)>
 
 The chip in the header is the source-of-truth for "is this real":
 - 🟢 **Live probes** — last successful fetch from `/api/admin/diagnostics`
-- ⚪ **Mock data** — first paint OR last fetch failed
+- ⚪ **Not live** — first paint OR last fetch failed (nodes fall back to grey `Unknown`, never fake green/red)
+
+---
+
+## Live feed (auto re-probe)
+
+The map is a **genuine live feed of the database**, added specifically so an admin can leave
+Diagnostics open and *watch* the stack during a Supabase incident and see it flip to red on its
+own — no manual clicking. It is implemented as **polling, not Supabase Realtime**.
+
+```ts
+// SystemDiagnostics.tsx (~line 1649)
+useEffect(() => {
+  const t = setInterval(() => void loadDiagnosticsRef.current(), 30_000);
+  return () => clearInterval(t);
+}, []);
+```
+
+- **30-second auto re-probe.** Every 30s the component re-hits `/api/admin/diagnostics`
+  (`{ cache: 'no-store' }`) and re-renders node/edge statuses. When Supabase starts failing,
+  the nodes go `critical`/`Unknown` on their own — the reason this exists is that a mid-session
+  outage previously wouldn't surface until you clicked **Refresh**.
+- **Runs only while on screen.** The Diagnostics tab unmounts when you navigate away, so the
+  timer stops — no background polling.
+- The latest fetcher is held in a `useRef` (`loadDiagnosticsRef`) so the interval runs on stable
+  `[]` deps and never tears down / re-creates the timer.
+- A separate `useEffect` syncs each fetch's node data into the React Flow node state **without
+  disturbing dragged positions** (roughly the "every 60s" timestamp-roll comment).
+- Manual **Refresh** button and the initial on-mount fetch share the same `loadDiagnostics`
+  path, so all three (mount / interval / button) behave identically.
+
+### Why polling and not `postgres_changes`
+
+The `supabase-client` / `supabase-postgres` probes read through the **Supabase anon client**.
+Anonymous clients **cannot** receive `postgres_changes` events — Row-Level Security blocks the
+Realtime replication stream for the anon role (see the `env_realtime_rls_anon_blocked` note:
+anon must use **Broadcast** or polling). Rather than stand up a Broadcast channel purely for a
+health map, Diagnostics uses a plain 30s poll. It's a *reliable* refresh precisely because it
+doesn't depend on the same Realtime subscription path that an outage would take down — the poll
+either returns fresh probe data or fails loudly and drops the map to `Unknown`.
 
 ---
 
@@ -193,5 +232,5 @@ Probes are pure functions — change the if/else thresholds in the relevant `pro
 ## Out of scope (parked)
 
 - **Workspace Admin Directory sync** for filling Google photos before users log in. Documented in the conversation memory under "Path C" — service account + domain-wide delegation. Not built. Photo population happens organically via the JWT callback when each user signs in (see `src/lib/auth/auth-options.ts → persistGooglePhoto`).
-- **Real-time updates**. The map polls on Refresh + auto-rolls timestamps every 60s, but doesn't subscribe to Supabase Realtime for status changes. If we add a `health_events` channel later, edges could animate in response to live alerts.
+- **Supabase Realtime push**. The map is now a live feed via a **30s poll** (see [Live feed](#live-feed-auto-re-probe)), not a `postgres_changes` subscription — the anon client can't receive those under RLS. A future `health_events` **Broadcast** channel could push status changes instantly (and animate edges on live alerts) instead of polling, but isn't built.
 - **Historical health graphs**. Today's response is a snapshot; there's no time-series store for trends. Would require a `diagnostic_snapshots` table + a worker.
