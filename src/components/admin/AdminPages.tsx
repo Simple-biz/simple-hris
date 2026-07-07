@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
+  ArrowLeft,
   Check,
   Construction,
   Crown,
@@ -18,6 +19,7 @@ import {
   Briefcase,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { Button } from '@/components/ui/button';
 import {
   DASHBOARD_PAGES,
   PAGES_VISIBILITY_KEY,
@@ -97,7 +99,7 @@ const STATES: { value: PageVisibility; label: string; icon: typeof Eye; active: 
   },
 ];
 
-export default function AdminPages() {
+export default function AdminPages({ onBack }: { onBack?: () => void }) {
   const [config, setConfig] = useState<PagesVisibilityConfig>({});
   const [loaded, setLoaded] = useState(false);
   const [saveState, setSaveState] = useState<SaveState>('idle');
@@ -197,6 +199,19 @@ export default function AdminPages() {
 
   return (
     <div className="mx-auto flex min-h-0 w-full max-w-5xl flex-1 flex-col overflow-y-auto px-4 py-6 sm:px-6 lg:px-8">
+      {/* Back */}
+      {onBack && (
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={onBack}
+          className="mb-4 self-start text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100"
+        >
+          <ArrowLeft className="mr-1.5 h-3.5 w-3.5" />
+          Back
+        </Button>
+      )}
+
       {/* Header */}
       <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0">

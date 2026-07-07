@@ -57,7 +57,10 @@ interface OffboardRequest {
   note: string | null;
 }
 
-/** The per-person payload that rides inside a phase-grouped webhook envelope. */
+/** The per-person payload that rides inside a phase-grouped webhook envelope.
+ *  `off_boarded_by` / `off_boarded_at` are duplicated here (they also live on the
+ *  envelope) so each item is self-contained after n8n's Split Out — the per-person
+ *  email node needs them without reaching back to the parent. */
 interface OffboardEmployeePayload {
   work_email: string;
   personal_email: string | null;
@@ -66,6 +69,8 @@ interface OffboardEmployeePayload {
   start_date: string | null;
   reason: Reason;
   note: string | null;
+  off_boarded_by: string;
+  off_boarded_at: string;
   scheduled_deletion_at: string | null;
 }
 
@@ -309,6 +314,8 @@ async function offboardOnePerson(
       start_date: first["Start Date"],
       reason,
       note,
+      off_boarded_by: actorEmail,
+      off_boarded_at: offBoardedAt,
       scheduled_deletion_at: scheduledDeletionAt,
     },
   };

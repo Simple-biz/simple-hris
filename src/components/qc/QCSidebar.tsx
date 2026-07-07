@@ -114,9 +114,7 @@ export default function QCSidebar({
           </nav>
 
           <div className="mt-6 border-t border-orange-100/60 pt-4 dark:border-orange-950/40">
-            <div className={cn('sb-collapse-fade')}>
-              <ViewSwitcher email={viewerEmail} currentView="qc" />
-            </div>
+            <ViewSwitcher email={viewerEmail} currentView="qc" collapsed={collapsed} />
             <button
               type="button"
               onClick={() => withViewTransition(() => setTheme(isDark ? 'light' : 'dark'))}

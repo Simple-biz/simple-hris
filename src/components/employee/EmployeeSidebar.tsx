@@ -55,6 +55,8 @@ interface EmployeeSidebarProps {
   /** Accounting/CEO asked this person to add missing payout details — escalates
    *  the Profile nav flag to a rose "!" blink. */
   bankInfoNudge?: boolean;
+  /** Unread notification count — drives the bell badge in the sidebar. */
+  unreadNotifications?: number;
   /** Tab ids an admin hid in Pages settings — removed from the menu. */
   hiddenTabs?: readonly string[];
   /** Tab ids an admin marked "under construction" — shown with a badge. */
@@ -88,6 +90,7 @@ export default function EmployeeSidebar({
   profileIncomplete = false,
   profileSetupCount = 0,
   bankInfoNudge = false,
+  unreadNotifications = 0,
   hiddenTabs = [],
   constructionTabs = [],
 }: EmployeeSidebarProps) {
@@ -169,6 +172,10 @@ export default function EmployeeSidebar({
                       tone={bankInfoNudge ? 'bg-rose-500' : 'bg-amber-500'}
                     />
                   )}
+                  {/* Collapsed rail clips the count pill — keep a dot on the bell. */}
+                  {item.id === 'notifications' && unreadNotifications > 0 && activeTab !== 'notifications' && (
+                    <SidebarCollapsedDot collapsed={collapsed} tone="bg-red-500" />
+                  )}
                 </span>
                 <span className={cn('truncate text-left sb-collapse-fade')}>{item.label}</span>
                 {isConstr(item.id) && <span className={cn('sb-collapse-fade')}><ConstructionMark active={activeTab === item.id} /></span>}
@@ -202,8 +209,20 @@ export default function EmployeeSidebar({
                     Paused
                   </motion.span>
                 )}
+                {item.id === 'notifications' && unreadNotifications > 0 && (
+                  <span
+                    className={cn(
+                      'ml-auto flex h-5 min-w-5 items-center justify-center rounded-full px-1.5 text-[10px] font-semibold leading-none text-white sb-collapse-fade',
+                      activeTab === item.id ? 'bg-white/25 dark:bg-white/20' : 'bg-red-500',
+                    )}
+                    aria-label={`${unreadNotifications} unread notifications`}
+                  >
+                    {unreadNotifications > 99 ? '99+' : unreadNotifications}
+                  </span>
+                )}
                 {activeTab === item.id
-                  && !(item.id === 'disputes' && payrollLocked) && (
+                  && !(item.id === 'disputes' && payrollLocked)
+                  && !(item.id === 'notifications' && unreadNotifications > 0) && (
                   <ChevronRight className="ml-auto h-3 w-3 text-orange-400 dark:text-orange-500/70 sb-collapse-fade" />
                 )}
               </button>
@@ -238,6 +257,38 @@ export default function EmployeeSidebar({
             </button>
             )}
           </nav>
+
+          {/* ViewSwitcher + theme toggle live INSIDE the scroll surface so they
+              stay reachable via the same scrollbar on short viewports (matches HR). */}
+          <div className="mt-5 px-2">
+            <div className="border-t border-orange-100 pt-4 dark:border-blue-950/60">
+              {payrollLocked && (
+                <p className={cn('mb-2 flex items-center gap-1.5 rounded-md border border-amber-200/80 bg-amber-50/90 px-2.5 py-1.5 text-[10px] leading-tight text-amber-900 transition-opacity duration-[var(--sb-collapse-ms)] ease-[var(--sb-collapse-ease)] dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-100/90', collapsed && 'md:opacity-0')}>
+                  <Lock className="h-3 w-3 shrink-0" aria-hidden />
+                  Payroll is being processed. Some changes may be unavailable.
+                </p>
+              )}
+              <ViewSwitcher email={employeeEmail} currentView="employee" collapsed={collapsed} />
+              <button
+                onClick={() => withViewTransition(() => setTheme(isDark ? 'light' : 'dark'))}
+                title={collapsed ? (isDark ? 'Dark mode' : 'Light mode') : undefined}
+                className="mt-3 flex w-full items-center justify-between rounded-md border border-orange-100 bg-orange-50/60 px-3 py-2 transition-colors hover:bg-orange-100/80 dark:border-blue-950/60 dark:bg-blue-950/20 dark:hover:bg-blue-950/40"
+                aria-label="Toggle dark mode"
+              >
+                <div className="flex items-center gap-2 text-zinc-700 dark:text-zinc-300">
+                  {isDark ? <Moon className="h-4 w-4 shrink-0" /> : <Sun className="h-4 w-4 shrink-0" />}
+                  <span className={cn('text-xs font-medium sb-collapse-fade')}>{isDark ? 'Dark mode' : 'Light mode'}</span>
+                </div>
+                <div className={cn('flex h-6 w-6 items-center justify-center rounded-md bg-white shadow-sm transition-opacity duration-[var(--sb-collapse-ms)] ease-[var(--sb-collapse-ease)] dark:bg-blue-950/60', collapsed && 'md:opacity-0')}>
+                  {isDark ? (
+                    <Sun className="h-3.5 w-3.5 text-orange-400" />
+                  ) : (
+                    <Moon className="h-3.5 w-3.5 text-blue-500" />
+                  )}
+                </div>
+              </button>
+            </div>
+          </div>
         </ScrollArea>
       </div>
 
@@ -250,33 +301,6 @@ export default function EmployeeSidebar({
           mobileOpen ? 'translate-x-0 opacity-100' : '-translate-x-6 opacity-0 md:translate-x-0 md:opacity-100',
         )}
       >
-        {payrollLocked && (
-          <p className={cn('mb-2 flex items-center gap-1.5 rounded-md border border-amber-200/80 bg-amber-50/90 px-2.5 py-1.5 text-[10px] leading-tight text-amber-900 transition-opacity duration-[var(--sb-collapse-ms)] ease-[var(--sb-collapse-ease)] dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-100/90', collapsed && 'md:opacity-0')}>
-            <Lock className="h-3 w-3 shrink-0" aria-hidden />
-            Payroll is being processed. Some changes may be unavailable.
-          </p>
-        )}
-        <div className={cn('sb-collapse-fade')}>
-          <ViewSwitcher email={employeeEmail} currentView="employee" />
-        </div>
-        <button
-          onClick={() => withViewTransition(() => setTheme(isDark ? 'light' : 'dark'))}
-          title={collapsed ? (isDark ? 'Dark mode' : 'Light mode') : undefined}
-          className="mb-2 flex w-full items-center justify-between rounded-md border border-orange-100 bg-orange-50/60 px-3 py-2 transition-colors hover:bg-orange-100/80 dark:border-blue-950/60 dark:bg-blue-950/20 dark:hover:bg-blue-950/40"
-          aria-label="Toggle dark mode"
-        >
-          <div className="flex items-center gap-2 text-zinc-700 dark:text-zinc-300">
-            {isDark ? <Moon className="h-4 w-4 shrink-0" /> : <Sun className="h-4 w-4 shrink-0" />}
-            <span className={cn('text-xs font-medium sb-collapse-fade')}>{isDark ? 'Dark mode' : 'Light mode'}</span>
-          </div>
-          <div className={cn('flex h-6 w-6 items-center justify-center rounded-md bg-white shadow-sm transition-opacity duration-[var(--sb-collapse-ms)] ease-[var(--sb-collapse-ease)] dark:bg-blue-950/60', collapsed && 'md:opacity-0')}>
-            {isDark ? (
-              <Sun className="h-3.5 w-3.5 text-orange-400" />
-            ) : (
-              <Moon className="h-3.5 w-3.5 text-blue-500" />
-            )}
-          </div>
-        </button>
         <div className="mb-4 flex items-center gap-3 px-3 py-2">
           <EmployeeAvatar
             photoUrl={profilePhotoUrl}

@@ -235,9 +235,7 @@ export default function Sidebar({ activeTab, setActiveTab, mobileOpen, allowedTa
       </div>
 
       <div className="mt-auto border-t border-orange-100 p-4 dark:border-blue-950/60">
-        <div className={cn('sb-collapse-fade')}>
-          <ViewSwitcher email={email} currentView="accounting" />
-        </div>
+        <ViewSwitcher email={email} currentView="accounting" collapsed={collapsed} />
         <button
           onClick={() => withViewTransition(() => setTheme(isDark ? 'light' : 'dark'))}
           title={collapsed ? (isDark ? 'Dark mode' : 'Light mode') : undefined}

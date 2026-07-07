@@ -164,7 +164,7 @@ function AdminPageInner() {
       case 'pages':
         return (
           <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-            <AdminPages />
+            <AdminPages onBack={() => navigate('overview')} />
           </div>
         );
       case 'workspace':

@@ -245,9 +245,7 @@ export default function AdminSidebar({
           {/* ViewSwitcher + theme toggle — moved INSIDE the scroll area so they're
               reachable via the same scrollbar when the viewport is short. */}
           <div className="mt-5 border-t border-[#ececec] pt-4 dark:border-zinc-800">
-            <div className={cn('sb-collapse-fade')}>
-              <ViewSwitcher email={email} currentView="admin" />
-            </div>
+            <ViewSwitcher email={email} currentView="admin" collapsed={collapsed} />
             <button
               type="button"
               onClick={() => withViewTransition(() => setTheme(isDark ? 'light' : 'dark'))}

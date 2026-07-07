@@ -171,9 +171,7 @@ export default function CeoSidebar({
           </nav>
 
           <div className="mt-6 border-t border-yellow-100/60 pt-4 dark:border-yellow-950/40">
-            <div className={cn('sb-collapse-fade')}>
-              <ViewSwitcher email={viewerEmail} currentView="ceo" />
-            </div>
+            <ViewSwitcher email={viewerEmail} currentView="ceo" collapsed={collapsed} />
             <button
               type="button"
               onClick={() => withViewTransition(() => setTheme(isDark ? 'light' : 'dark'))}

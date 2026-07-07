@@ -471,6 +471,7 @@ export default function EmployeeApp() {
         profileIncomplete={profileIncomplete}
         profileSetupCount={profileSetupCount}
         bankInfoNudge={bankInfoNudge}
+        unreadNotifications={unreadNotifications}
         hiddenTabs={hiddenEmployeeTabs}
         constructionTabs={constructionEmployeeTabs}
       />

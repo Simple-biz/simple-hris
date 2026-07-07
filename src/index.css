@@ -57,6 +57,21 @@
     transition-duration: calc(var(--sb-collapse-ms) * 0.55);
     transition-delay: 0s;
   }
+  /* ViewSwitcher card: when the rail collapses, shed the border/background/padding
+     so only the view icons remain — aligned with the nav icons above rather than
+     boxed inside a card the 64px rail would slice in half. Animates in lockstep
+     with the label fade above. */
+  .vs-collapse-box {
+    transition-property: border-color, background-color, padding, margin;
+    transition-duration: var(--sb-collapse-ms);
+    transition-timing-function: var(--sb-collapse-ease);
+  }
+  [data-collapsed="true"] .vs-collapse-box {
+    border-color: transparent;
+    background-color: transparent;
+    padding: 0;
+    margin-bottom: 0;
+  }
 }
 
 @keyframes hero-loading-border {

@@ -7,6 +7,7 @@ import { LayoutDashboard, ShieldCheck, Briefcase, ArrowLeftRight, Sparkles, User
 import { cn } from '@/lib/utils';
 import { withViewTransition } from '@/lib/theme/with-view-transition';
 import { useNotificationCountsByView } from '@/hooks/useNotificationCountsByView';
+import SidebarCollapsedDot from '@/components/common/SidebarCollapsedDot';
 import {
   ACTIVE_VIEW_KEY,
   VIEW_LABELS,
@@ -19,6 +20,12 @@ import {
 interface ViewSwitcherProps {
   email: string | null | undefined;
   currentView: AppView;
+  /**
+   * True while the host rail is collapsed (desktop only). Drives the collapsed-rail
+   * treatment — the card chrome + labels fade (CSS, `md:`-scoped) while the view
+   * icons stay visible, with unread counts standing in as a corner dot.
+   */
+  collapsed?: boolean;
 }
 
 const VIEW_ICONS: Record<AppView, React.ComponentType<{ className?: string }>> = {
@@ -33,7 +40,7 @@ const VIEW_ICONS: Record<AppView, React.ComponentType<{ className?: string }>> =
   qc: ClipboardCheck,
 };
 
-export default function ViewSwitcher({ email, currentView }: ViewSwitcherProps) {
+export default function ViewSwitcher({ email, currentView, collapsed = false }: ViewSwitcherProps) {
   const router = useRouter();
   const { data: session } = useSession();
   // Roles from the JWT session, used as an offline fallback so the switcher
@@ -69,8 +76,8 @@ export default function ViewSwitcher({ email, currentView }: ViewSwitcherProps) 
 
   return (
     <>
-      <div className="mb-3 rounded-md border border-orange-100 bg-white/60 p-2 dark:border-blue-950/60 dark:bg-blue-950/20">
-        <div className="mb-1.5 flex items-center gap-1.5 px-1 text-[10px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
+      <div className="vs-collapse-box mb-3 rounded-md border border-orange-100 bg-white/60 p-2 dark:border-blue-950/60 dark:bg-blue-950/20">
+        <div className="mb-1.5 flex items-center gap-1.5 px-1 text-[10px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400 sb-collapse-fade">
           <ArrowLeftRight className="h-3 w-3" />
           Switch view
         </div>
@@ -86,6 +93,7 @@ export default function ViewSwitcher({ email, currentView }: ViewSwitcherProps) 
                 type="button"
                 onClick={() => switchTo(v)}
                 disabled={!!transitioning}
+                title={collapsed ? VIEW_LABELS[v] : undefined}
                 className={cn(
                   'group relative flex items-center gap-2 overflow-hidden rounded px-2 py-1.5 text-xs font-medium transition-all duration-200',
                   active
@@ -95,19 +103,23 @@ export default function ViewSwitcher({ email, currentView }: ViewSwitcherProps) 
                   transitioning && !isPending && 'opacity-40',
                 )}
               >
-                <Icon
-                  className={cn(
-                    'h-3.5 w-3.5 transition-transform',
-                    active ? 'text-orange-500 dark:text-orange-400' : 'text-zinc-400',
-                    isPending && 'animate-pulse',
-                  )}
-                />
-                <span className="relative z-10">{VIEW_LABELS[v]}</span>
+                <span className="relative z-10 flex shrink-0">
+                  <Icon
+                    className={cn(
+                      'h-3.5 w-3.5 transition-transform',
+                      active ? 'text-orange-500 dark:text-orange-400' : 'text-zinc-400',
+                      isPending && 'animate-pulse',
+                    )}
+                  />
+                  {/* Collapsed rail clips the count pill — stand in with a corner dot. */}
+                  <SidebarCollapsedDot collapsed={collapsed} show={notifCount > 0} tone="bg-red-500" />
+                </span>
+                <span className="relative z-10 sb-collapse-fade">{VIEW_LABELS[v]}</span>
                 {notifCount > 0 && (
                   <span
                     title={`${notifCount} unread notification${notifCount === 1 ? '' : 's'} on the ${VIEW_LABELS[v]} dashboard`}
                     className={cn(
-                      'relative z-10 ml-auto inline-flex min-w-[18px] items-center justify-center rounded-full px-1.5 text-[10px] font-bold leading-[18px] tabular-nums text-white shadow-sm',
+                      'relative z-10 ml-auto inline-flex min-w-[18px] items-center justify-center rounded-full px-1.5 text-[10px] font-bold leading-[18px] tabular-nums text-white shadow-sm sb-collapse-fade',
                       isPending ? 'bg-red-400' : 'bg-red-500',
                     )}
                   >

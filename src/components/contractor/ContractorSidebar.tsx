@@ -136,9 +136,7 @@ export default function ContractorSidebar({
           mobileOpen ? 'translate-x-0' : '-translate-x-8 md:translate-x-0',
         )}
       >
-        <div className={cn('sb-collapse-fade')}>
-          <ViewSwitcher email={contractorEmail} currentView="contractor" />
-        </div>
+        <ViewSwitcher email={contractorEmail} currentView="contractor" collapsed={collapsed} />
         <button
           onClick={() => withViewTransition(() => setTheme(isDark ? 'light' : 'dark'))}
           title={collapsed ? (isDark ? 'Dark mode' : 'Light mode') : undefined}

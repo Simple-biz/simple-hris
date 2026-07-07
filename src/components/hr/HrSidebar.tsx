@@ -86,10 +86,15 @@ export default function HrSidebar({
     .toUpperCase()
     .slice(0, 2) || (viewerEmail || '?').slice(0, 2).toUpperCase();
 
+  // Running render position for the staggered mobile drawer slide-in.
+  let i = 0;
+
   const navBtn = (
     id: HrTab,
     label: string,
     Icon: React.ComponentType<{ className?: string }>,
+    /** Render position — drives the staggered mobile drawer slide-in. */
+    index: number,
     badge?: React.ReactNode,
     /** When true, a corner dot stands in for the (clipped) badge while collapsed. */
     attention?: boolean,
@@ -99,8 +104,16 @@ export default function HrSidebar({
       type="button"
       onClick={() => setActiveTab(id)}
       title={collapsed ? label : undefined}
+      style={{
+        // Stagger each nav item on mobile drawer open — no-op on desktop because
+        // md: utilities pin opacity/translate to the visible state.
+        transitionDelay: mobileOpen ? `${60 + index * 35}ms` : '0ms',
+      }}
       className={cn(
-        'flex w-full items-center gap-2.5 rounded-md px-2.5 py-[7px] text-[13.5px] font-[450] transition-[color,background-color,box-shadow] duration-200 ease-out',
+        'flex w-full items-center gap-2.5 rounded-md px-2.5 py-[7px] text-[13.5px] font-[450] transition-[color,background-color,box-shadow,transform,opacity] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none',
+        mobileOpen
+          ? 'translate-x-0 opacity-100'
+          : '-translate-x-6 opacity-0 md:translate-x-0 md:opacity-100',
         activeTab === id
           ? 'bg-gradient-to-r from-emerald-500 to-teal-700 font-medium text-white shadow-sm shadow-emerald-600/25'
           : 'text-[#3f3f46] hover:bg-emerald-50 hover:text-emerald-900 dark:text-zinc-300 dark:hover:bg-emerald-950/40 dark:hover:text-emerald-100',
@@ -125,14 +138,19 @@ export default function HrSidebar({
     <CollapsibleSidebarShell
       collapsed={collapsed}
       onToggle={toggle}
-      innerWidthClassName="md:w-[220px]"
+      innerWidthClassName="md:w-64"
       accentClassName="border-emerald-200/80 hover:text-emerald-700 focus-visible:ring-emerald-400 dark:border-emerald-900/60 dark:hover:text-emerald-300"
       id="hr-sidebar-nav"
       ariaLabel="HR navigation"
       className={cn(
-        'flex h-dvh w-[220px] max-w-[min(100vw,220px)] shrink-0 flex-col border-r border-emerald-100/70 bg-gradient-to-b from-white via-emerald-50/30 to-white shadow-xl dark:border-emerald-950/40 dark:from-black dark:via-emerald-950/15 dark:to-black md:max-w-none md:shadow-none',
-        'fixed inset-y-0 left-0 z-50 transition-[transform,width] duration-300 ease-out md:static md:z-auto md:translate-x-0',
-        mobileOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0',
+        // Base shell — drawer on mobile, static column on md+.
+        'flex h-dvh w-[85vw] max-w-[20rem] shrink-0 flex-col border-r border-emerald-100/70 bg-gradient-to-b from-white via-emerald-50/30 to-white dark:border-emerald-950/40 dark:from-black dark:via-emerald-950/15 dark:to-black md:w-64 md:max-w-none md:shadow-none',
+        // Off-canvas positioning and slide transition.
+        'fixed inset-y-0 left-0 z-50 transform-gpu will-change-transform md:static md:z-auto md:translate-x-0 md:opacity-100',
+        'transition-[transform,opacity,box-shadow,width] duration-[360ms] ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none',
+        mobileOpen
+          ? 'translate-x-0 opacity-100 shadow-2xl shadow-black/25'
+          : '-translate-x-full opacity-0 shadow-none md:translate-x-0 md:opacity-100',
       )}
     >
       {/* Brand — anchored at the top */}
@@ -148,21 +166,24 @@ export default function HrSidebar({
             Workspace
           </p>
           <nav className="flex flex-col gap-px">
-            {can('overview') && navBtn('overview', 'Overview', LayoutDashboard)}
-            {can('global-master-list') && navBtn('global-master-list', 'Global Master List', Sheet)}
-            {can('screening') && navBtn('screening', 'Screening', UserSearch)}
-            {can('new-hire-checklist') && navBtn('new-hire-checklist', 'New Hire Checklist', ClipboardList)}
-            {can('onboarding') && navBtn('onboarding', 'Onboarding', LogIn)}
-            {can('offboarding') && navBtn('offboarding', 'Offboarding', UserMinus)}
-            {can('leaves') && navBtn('leaves', 'Leave Requests', CalendarDays)}
-            {can('transfers') && navBtn('transfers', 'Transfers', ArrowRightLeft)}
-            {can('gift-tracker') && navBtn('gift-tracker', 'Gift Tracker', Gift)}
-            {can('mesa') && navBtn('mesa', 'MESA', HeartHandshake)}
-            {can('announcements') && navBtn('announcements', 'Announcements', Megaphone)}
+            {/* Running index drives the staggered mobile slide-in; `i++` only
+                advances for items that actually render (short-circuit on can()). */}
+            {can('overview') && navBtn('overview', 'Overview', LayoutDashboard, i++)}
+            {can('global-master-list') && navBtn('global-master-list', 'Global Master List', Sheet, i++)}
+            {can('screening') && navBtn('screening', 'Screening', UserSearch, i++)}
+            {can('new-hire-checklist') && navBtn('new-hire-checklist', 'New Hire Checklist', ClipboardList, i++)}
+            {can('onboarding') && navBtn('onboarding', 'Onboarding', LogIn, i++)}
+            {can('offboarding') && navBtn('offboarding', 'Offboarding', UserMinus, i++)}
+            {can('leaves') && navBtn('leaves', 'Leave Requests', CalendarDays, i++)}
+            {can('transfers') && navBtn('transfers', 'Transfers', ArrowRightLeft, i++)}
+            {can('gift-tracker') && navBtn('gift-tracker', 'Gift Tracker', Gift, i++)}
+            {can('mesa') && navBtn('mesa', 'MESA', HeartHandshake, i++)}
+            {can('announcements') && navBtn('announcements', 'Announcements', Megaphone, i++)}
             {can('notifications') && navBtn(
               'notifications',
               'Notifications',
               Bell,
+              i++,
               (unreadNotifications > 0 || lockState.locked) ? (
                 <span className="flex items-center gap-1.5">
                   {unreadNotifications > 0 && (
@@ -189,8 +210,12 @@ export default function HrSidebar({
               type="button"
               onClick={() => setActiveTab('s-wall')}
               title={collapsed ? 'S-Wall' : undefined}
+              style={{ transitionDelay: mobileOpen ? `${60 + i++ * 35}ms` : '0ms' }}
               className={cn(
-                'group/sw flex w-full items-center gap-2.5 rounded-md px-2.5 py-[7px] text-[13.5px] font-[450] transition-[color,background-color,box-shadow] duration-200 ease-out',
+                'group/sw flex w-full items-center gap-2.5 rounded-md px-2.5 py-[7px] text-[13.5px] font-[450] transition-[color,background-color,box-shadow,transform,opacity] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none',
+                mobileOpen
+                  ? 'translate-x-0 opacity-100'
+                  : '-translate-x-6 opacity-0 md:translate-x-0 md:opacity-100',
                 activeTab === 's-wall'
                   ? 'bg-gradient-to-r from-violet-600 to-indigo-700 font-medium text-white shadow-sm shadow-violet-600/25'
                   : 'text-[#3f3f46] hover:bg-violet-50 hover:text-violet-900 dark:text-zinc-300 dark:hover:bg-violet-950/40 dark:hover:text-violet-100',
@@ -210,9 +235,7 @@ export default function HrSidebar({
           {/* ViewSwitcher + theme toggle — kept INSIDE the scroll area so they're
               reachable via the same scrollbar when the viewport is short. */}
           <div className="mt-5 border-t border-emerald-100/60 pt-4 dark:border-emerald-950/40">
-            <div className={cn('sb-collapse-fade')}>
-              <ViewSwitcher email={viewerEmail} currentView="hr" />
-            </div>
+            <ViewSwitcher email={viewerEmail} currentView="hr" collapsed={collapsed} />
             <button
               type="button"
               onClick={() => withViewTransition(() => setTheme(isDark ? 'light' : 'dark'))}

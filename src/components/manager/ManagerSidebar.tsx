@@ -215,9 +215,7 @@ export default function ManagerSidebar({
           </nav>
 
           <div className="mt-6 border-t border-blue-100/60 pt-4 dark:border-blue-950/40">
-            <div className={cn('sb-collapse-fade')}>
-              <ViewSwitcher email={viewerEmail} currentView="manager" />
-            </div>
+            <ViewSwitcher email={viewerEmail} currentView="manager" collapsed={collapsed} />
             <button
               type="button"
               onClick={() => withViewTransition(() => setTheme(isDark ? 'light' : 'dark'))}
