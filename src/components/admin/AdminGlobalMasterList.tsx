@@ -1,21 +1,25 @@
 'use client';
 
-import { memo, useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
-import { motion, AnimatePresence } from 'motion/react';
 import {
   Building2,
+  Calendar,
   ChevronLeft,
   ChevronRight,
+  Clock,
+  IdCard,
   Loader2,
   LogOut,
+  Mail,
+  MapPin,
   MessageCircle,
   Radio,
   RefreshCw,
   Search,
   Send,
   Sheet,
-  X,
+  Users,
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -55,179 +59,65 @@ function fmtDate(iso: string | null | undefined): string {
   return d.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
 }
 
-interface RowProps {
-  row: EmployeeRow;
-  detail: PresenceDetail | null;
-  lastSeenIso: string | null;
-  isSelf: boolean;
-  isPinging: boolean;
-  pingText: string;
-  pingSending: boolean;
-  forcingLogout: boolean;
-  onPingTextChange: (v: string) => void;
-  onStartPing: () => void;
-  onCancelPing: () => void;
-  onSendPing: () => void;
-  onForceLogout: () => void;
+function tenure(iso: string | null | undefined): string {
+  if (!iso) return '—';
+  const start = new Date(iso);
+  if (Number.isNaN(start.getTime())) return '—';
+  const now = new Date();
+  let years = now.getFullYear() - start.getFullYear();
+  let months = now.getMonth() - start.getMonth();
+  if (months < 0) {
+    years -= 1;
+    months += 12;
+  }
+  if (years > 0 && months > 0) return `${years}y ${months}m`;
+  if (years > 0) return `${years}y`;
+  if (months > 0) return `${months}mo`;
+  const days = Math.floor((now.getTime() - start.getTime()) / 86_400_000);
+  return days <= 0 ? 'New' : `${days}d`;
 }
 
-const GmlRow = memo(function GmlRow({
-  row,
-  detail,
-  lastSeenIso,
-  isSelf,
-  isPinging,
-  pingText,
-  pingSending,
-  forcingLogout,
-  onPingTextChange,
-  onStartPing,
-  onCancelPing,
-  onSendPing,
-  onForceLogout,
-}: RowProps) {
-  const email = employeeIdentityEmail(row) || null;
-  const online = !!detail;
-  const statusText = online
-    ? dashboardLabelForPathname(detail!.path) + (detail!.tab ? ` · ${detail!.tab}` : '')
-    : lastSeenIso
-      ? `Last seen ${formatLastSeen(lastSeenIso) ?? '—'}`
-      : 'Offline';
+/** Presence status label. Online → "HR Dashboard · Onboarding"; otherwise last-seen. */
+function statusLabel(detail: PresenceDetail | null, lastSeenIso: string | null): string {
+  if (detail) {
+    return dashboardLabelForPathname(detail.path) + (detail.tab ? ` · ${detail.tab}` : '');
+  }
+  if (lastSeenIso) return `Last seen ${formatLastSeen(lastSeenIso) ?? '—'}`;
+  return 'Offline';
+}
 
+/** One labelled read-only field in the detail record grid. */
+function Field({
+  icon: Icon,
+  label,
+  value,
+  mono,
+}: {
+  icon: typeof Mail;
+  label: string;
+  value: string | null | undefined;
+  mono?: boolean;
+}) {
+  const shown = value && value.trim() ? value : '—';
   return (
-    <li>
-      <div
+    <div className="min-w-0 rounded-xl border border-zinc-200/90 bg-white/70 px-3 py-2 dark:border-zinc-800 dark:bg-zinc-900/40">
+      <p className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-500">
+        <Icon className="h-3 w-3" aria-hidden />
+        {label}
+      </p>
+      <p
         className={cn(
-          'flex flex-col gap-2.5 rounded-xl border px-3 py-2.5 transition-all sm:flex-row sm:items-center sm:gap-3',
-          online
-            ? 'border-emerald-300/60 bg-emerald-50/40 dark:border-emerald-800/40 dark:bg-emerald-950/10'
-            : 'border-zinc-200/90 bg-white/60 dark:border-zinc-800 dark:bg-zinc-900/40',
+          'mt-0.5 truncate text-[13px] text-zinc-900 dark:text-zinc-100',
+          mono && 'font-mono text-[12px]',
+          shown === '—' && 'text-zinc-400 dark:text-zinc-600',
         )}
+        title={shown === '—' ? undefined : shown}
       >
-        <div className="flex min-w-0 flex-1 items-center gap-3">
-          <div
-            className={cn(
-              'relative shrink-0 rounded-xl ring-2',
-              online ? 'ring-emerald-400/70 dark:ring-emerald-500/50' : 'ring-zinc-200/70 dark:ring-zinc-800',
-            )}
-          >
-            <EmployeeAvatar
-              photoUrl={row.profile_photo_url ?? null}
-              googlePhotoUrl={row.google_photo_url ?? null}
-              email={email}
-              initials={initialsFromEmployee(row)}
-              className="!rounded-xl h-10 w-10 text-xs"
-            />
-            <span
-              className={cn(
-                'absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full ring-2 ring-white dark:ring-zinc-950',
-                online ? 'bg-emerald-500' : 'bg-zinc-300 dark:bg-zinc-600',
-              )}
-              aria-hidden
-            />
-          </div>
-          <div className="min-w-0 flex-1">
-            <p className="truncate text-sm font-semibold text-zinc-900 dark:text-white">
-              {row.name || email || '—'}
-            </p>
-            <p className="truncate font-mono text-[11px] text-zinc-500 dark:text-zinc-400">{email ?? 'No email'}</p>
-            <p className="mt-0.5 truncate text-[10px] text-zinc-400 dark:text-zinc-500">
-              {row.department || '—'} · Since {fmtDate(row.start_date)}
-            </p>
-          </div>
-        </div>
-
-        <div className="flex items-center justify-between gap-2 sm:min-w-0 sm:flex-1 sm:justify-end sm:gap-4">
-          <span className="flex min-w-0 items-center gap-1.5 text-[11.5px]" title={statusText}>
-            <span
-              className={cn('h-1.5 w-1.5 shrink-0 rounded-full', online ? 'bg-emerald-500' : 'bg-zinc-300 dark:bg-zinc-600')}
-              aria-hidden
-            />
-            <span className={cn('truncate', online ? 'font-medium text-emerald-700 dark:text-emerald-400' : 'text-zinc-500 dark:text-zinc-400')}>
-              {statusText}
-            </span>
-          </span>
-
-          {isSelf ? (
-            <span className="shrink-0 text-[10.5px] text-zinc-400">You</span>
-          ) : (
-            <div className="flex shrink-0 items-center gap-1">
-              <button
-                type="button"
-                onClick={onStartPing}
-                title="Ping"
-                aria-label={`Ping ${row.name ?? email ?? 'this person'}`}
-                className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-zinc-200 bg-white text-zinc-500 transition-colors hover:border-orange-300 hover:bg-orange-50 hover:text-orange-700 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-orange-300"
-              >
-                <MessageCircle className="h-3.5 w-3.5" />
-              </button>
-              <button
-                type="button"
-                onClick={onForceLogout}
-                disabled={forcingLogout}
-                title="Force logout — invalidate this person's active session"
-                aria-label={`Force logout ${row.name ?? email ?? 'this person'}`}
-                className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-zinc-200 bg-white text-zinc-500 transition-colors hover:border-zinc-300 hover:bg-zinc-50 hover:text-zinc-900 disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800"
-              >
-                {forcingLogout ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <LogOut className="h-3.5 w-3.5" />}
-              </button>
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* Ping composer */}
-      <AnimatePresence initial={false}>
-        {isPinging && (
-          <motion.div
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: 'auto', opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.18 }}
-            className="overflow-hidden"
-          >
-            <form
-              onSubmit={(e) => {
-                e.preventDefault();
-                onSendPing();
-              }}
-              className="mt-1.5 flex items-center gap-2 rounded-xl border border-orange-200/80 bg-orange-50/60 p-2 dark:border-orange-700/40 dark:bg-orange-950/20"
-            >
-              <MessageCircle className="h-3.5 w-3.5 shrink-0 text-orange-500 dark:text-orange-400" aria-hidden />
-              <Input
-                autoFocus
-                value={pingText}
-                onChange={(e) => onPingTextChange(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Escape') onCancelPing();
-                }}
-                placeholder={`Message ${row.name?.split(' ')[0] || 'them'}…`}
-                className="h-8 flex-1 border-orange-200 bg-white text-xs dark:border-orange-800/50 dark:bg-zinc-950"
-              />
-              <Button
-                type="submit"
-                size="sm"
-                disabled={pingSending}
-                className="h-8 gap-1.5 bg-orange-600 px-3 text-xs text-white hover:bg-orange-500 disabled:opacity-50 dark:bg-orange-600 dark:hover:bg-orange-500"
-              >
-                {pingSending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Send className="h-3 w-3" />}
-                Send
-              </Button>
-              <button
-                type="button"
-                onClick={onCancelPing}
-                aria-label="Cancel"
-                className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-zinc-400 hover:bg-white/60 hover:text-zinc-700 dark:hover:bg-zinc-900/60"
-              >
-                <X className="h-3.5 w-3.5" />
-              </button>
-            </form>
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </li>
+        {shown}
+      </p>
+    </div>
   );
-});
+}
 
 export default function AdminGlobalMasterList() {
   const [roster, setRoster] = useState<EmployeeRow[]>([]);
@@ -237,11 +127,11 @@ export default function AdminGlobalMasterList() {
   const [departmentFilter, setDepartmentFilter] = useState<DepartmentFilter>('__all__');
   const [viewFilter, setViewFilter] = useState<ViewFilter>('all');
   const [page, setPage] = useState(1);
+  const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [lastSeen, setLastSeen] = useState<Record<string, string>>({});
-  const [pingTarget, setPingTarget] = useState<string | null>(null);
   const [pingText, setPingText] = useState('');
   const [pingSending, setPingSending] = useState(false);
-  const [forcingLogoutEmail, setForcingLogoutEmail] = useState<string | null>(null);
+  const [forcingLogout, setForcingLogout] = useState(false);
 
   const viewerEmail = useSelfEmail();
   const viewerNorm = viewerEmail ? normEmail(viewerEmail) ?? viewerEmail.trim().toLowerCase() : null;
@@ -296,6 +186,11 @@ export default function AdminGlobalMasterList() {
     }
   }, [fetchRoster]);
 
+  const emailKeyFor = useCallback(
+    (row: EmployeeRow): string => normEmail(employeeIdentityEmail(row)) ?? '',
+    [],
+  );
+
   const detailFor = useCallback(
     (row: EmployeeRow): PresenceDetail | null => {
       const w = normEmail(row.work_email ?? '');
@@ -303,6 +198,15 @@ export default function AdminGlobalMasterList() {
       return (w && presenceDetails.get(w)) || (p && presenceDetails.get(p)) || null;
     },
     [presenceDetails],
+  );
+
+  const lastSeenFor = useCallback(
+    (row: EmployeeRow): string | null => {
+      const w = row.work_email ? normEmail(row.work_email) : null;
+      const p = row.personal_email ? normEmail(row.personal_email) : null;
+      return (w && lastSeen[w]) || (p && lastSeen[p]) || null;
+    },
+    [lastSeen],
   );
 
   const departmentOptions = useMemo(() => {
@@ -340,16 +244,32 @@ export default function AdminGlobalMasterList() {
   const pageStart = (currentPage - 1) * PAGE_SIZE;
   const pageRows = filtered.slice(pageStart, pageStart + PAGE_SIZE);
 
-  // Last-seen is only meaningful for offline rows and only needs to cover the
-  // rows currently on screen — fetching it for the whole ~1000-row roster would
-  // blow past the endpoint's 500-email cap for no benefit.
+  const selected = useMemo(
+    () => roster.find((r) => emailKeyFor(r) === selectedKey) ?? null,
+    [roster, selectedKey, emailKeyFor],
+  );
+
+  // Auto-select the first visible person on first load so the detail pane isn't
+  // empty (matches how a directory naturally opens on something).
   useEffect(() => {
-    const emails = pageRows
-      .flatMap((r) => [r.work_email, r.personal_email])
-      .filter((e): e is string => !!e);
-    if (emails.length === 0) return;
+    if (selectedKey || filtered.length === 0) return;
+    setSelectedKey(emailKeyFor(filtered[0]!));
+  }, [selectedKey, filtered, emailKeyFor]);
+
+  // Last-seen is only meaningful for offline rows, and only for what's on screen
+  // (the visible page + whoever is selected) — fetching the whole ~1000-row
+  // roster would blow past the endpoint's 500-email cap for no benefit.
+  const lastSeenEmailKey = useMemo(() => {
+    const rows = selected ? [...pageRows, selected] : pageRows;
+    return Array.from(
+      new Set(rows.flatMap((r) => [r.work_email, r.personal_email]).filter((e): e is string => !!e)),
+    ).join(',');
+  }, [pageRows, selected]);
+
+  useEffect(() => {
+    if (!lastSeenEmailKey) return;
     let cancelled = false;
-    fetch(`/api/presence/last-seen?emails=${encodeURIComponent(emails.join(','))}`, { cache: 'no-store' })
+    fetch(`/api/presence/last-seen?emails=${encodeURIComponent(lastSeenEmailKey)}`, { cache: 'no-store' })
       .then((res) => res.json())
       .then((json: { lastSeen?: Record<string, string> }) => {
         if (!cancelled) setLastSeen(json.lastSeen ?? {});
@@ -360,28 +280,21 @@ export default function AdminGlobalMasterList() {
     return () => {
       cancelled = true;
     };
-    // Re-key on the visible identities, not the whole `pageRows` array/object identity.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pageRows.map((r) => r.work_email ?? r.personal_email ?? '').join('|')]);
+  }, [lastSeenEmailKey]);
 
-  const lastSeenFor = useCallback(
-    (row: EmployeeRow): string | null => {
-      const w = row.work_email ? normEmail(row.work_email) : null;
-      const p = row.personal_email ? normEmail(row.personal_email) : null;
-      return (w && lastSeen[w]) || (p && lastSeen[p]) || null;
-    },
-    [lastSeen],
-  );
+  const selectedDetail = selected ? detailFor(selected) : null;
+  const selectedOnline = !!selectedDetail;
+  const selectedIsSelf = !!selected && !!viewerNorm && emailKeyFor(selected) === viewerNorm;
+  const selectedEmail = selected ? employeeIdentityEmail(selected) || null : null;
 
-  const emailKeyFor = (row: EmployeeRow): string => normEmail(employeeIdentityEmail(row)) ?? '';
-
-  const forceLogout = useCallback(async (email: string) => {
-    setForcingLogoutEmail(email);
+  const forceLogoutSelected = useCallback(async () => {
+    if (!selectedEmail) return;
+    setForcingLogout(true);
     try {
       const res = await fetch('/api/auth/force-logout', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ email, reason: 'manual session reset — Global Master List' }),
+        body: JSON.stringify({ email: selectedEmail, reason: 'manual session reset — Global Master List' }),
       });
       const json = (await res.json()) as { success?: boolean; error?: string; skipped?: string };
       if (!res.ok || !json.success) {
@@ -396,20 +309,28 @@ export default function AdminGlobalMasterList() {
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Failed to reset session');
     } finally {
-      setForcingLogoutEmail(null);
+      setForcingLogout(false);
     }
-  }, []);
+  }, [selectedEmail]);
 
   const handleSendPing = useCallback(() => {
-    if (!pingTarget) return;
+    if (!selectedEmail) return;
     const text = pingText.trim() || '👋 Hi';
     setPingSending(true);
-    sendPing(pingTarget, text);
+    sendPing(selectedEmail, text);
     setTimeout(() => setPingSending(false), 300);
-    setPingTarget(null);
     setPingText('');
-    toast.success("Pinged — it will land instantly if they're online.");
-  }, [pingTarget, pingText, sendPing]);
+    toast.success(
+      selectedOnline
+        ? 'Pinged — it just landed on their screen.'
+        : "Pinged — but they're offline, so it may not have been received.",
+    );
+  }, [selectedEmail, pingText, sendPing, selectedOnline]);
+
+  // Clear the composer when switching people.
+  useEffect(() => {
+    setPingText('');
+  }, [selectedKey]);
 
   if (loading) {
     return (
@@ -418,6 +339,14 @@ export default function AdminGlobalMasterList() {
       </div>
     );
   }
+
+  const alternateEmails = [selected?.alternate_work_email, selected?.alternate_work_email_2]
+    .map((e) => e?.trim())
+    .filter(Boolean)
+    .join(', ');
+  const location = [selected?.city, selected?.province].map((s) => s?.trim()).filter(Boolean).join(', ') ||
+    selected?.full_address?.trim() ||
+    '';
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-4 overflow-hidden bg-gradient-to-b from-zinc-50/80 to-transparent p-4 sm:p-6 dark:from-zinc-950/50">
@@ -431,12 +360,12 @@ export default function AdminGlobalMasterList() {
               Global Master List
             </h1>
             <p className="max-w-xl text-sm leading-relaxed text-zinc-600 dark:text-zinc-400">
-              The synced roster, with who&apos;s online, where they are, and the tools to reach or reset them.
+              The synced roster, with who&apos;s online, which page they&apos;re on, and the tools to reach or reset them.
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
             <div className="flex items-center gap-2 rounded-xl border border-zinc-200/90 bg-white/90 px-3 py-2 shadow-sm dark:border-zinc-800 dark:bg-zinc-900/60">
-              <Sheet className="h-4 w-4 text-zinc-400" aria-hidden />
+              <Users className="h-4 w-4 text-zinc-400" aria-hidden />
               <div>
                 <p className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500">Roster</p>
                 <p className="font-mono text-sm font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">
@@ -466,156 +395,391 @@ export default function AdminGlobalMasterList() {
         </div>
       </header>
 
-      <Card className="flex h-full min-h-0 flex-1 flex-col overflow-hidden border-zinc-200/90 shadow-sm dark:border-zinc-800/80">
-        <CardHeader className="shrink-0 space-y-3 border-b border-zinc-100 pb-4 dark:border-zinc-800/80">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div className="flex items-center gap-2">
-              <CardTitle className="text-base font-semibold text-zinc-900 dark:text-white">Roster</CardTitle>
-              <Badge variant="outline" className="font-mono text-[10px] text-zinc-600 dark:text-zinc-400">
-                {filtered.length} shown
-              </Badge>
-              <div
-                role="tablist"
-                aria-label="Roster view"
-                className="ml-1 inline-flex items-center rounded-md border border-zinc-200 bg-white p-0.5 dark:border-zinc-800 dark:bg-zinc-900"
-              >
-                {(['all', 'online'] as const).map((mode) => {
-                  const active = viewFilter === mode;
-                  const label = mode === 'all' ? 'All' : 'Online';
-                  const count = mode === 'all' ? roster.length : onlineCount;
-                  return (
-                    <button
-                      key={mode}
-                      type="button"
-                      role="tab"
-                      aria-selected={active}
-                      onClick={() => setViewFilter(mode)}
-                      className={cn(
-                        'inline-flex items-center gap-1.5 rounded px-2 py-1 text-[11px] font-medium transition-colors',
-                        active
-                          ? 'bg-zinc-900 text-white shadow-sm dark:bg-zinc-100 dark:text-zinc-900'
-                          : 'text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100',
-                      )}
-                    >
-                      {label}
-                      <span
+      <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)]">
+        {/* LEFT — roster list */}
+        <Card className="flex h-full min-h-0 flex-col overflow-hidden border-zinc-200/90 shadow-sm dark:border-zinc-800/80">
+          <CardHeader className="shrink-0 space-y-3 border-b border-zinc-100 pb-4 dark:border-zinc-800/80">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <CardTitle className="text-base font-semibold text-zinc-900 dark:text-white">Roster</CardTitle>
+                <Badge variant="outline" className="font-mono text-[10px] text-zinc-600 dark:text-zinc-400">
+                  {filtered.length} shown
+                </Badge>
+                <div
+                  role="tablist"
+                  aria-label="Roster view"
+                  className="ml-1 inline-flex items-center rounded-md border border-zinc-200 bg-white p-0.5 dark:border-zinc-800 dark:bg-zinc-900"
+                >
+                  {(['all', 'online'] as const).map((mode) => {
+                    const active = viewFilter === mode;
+                    const label = mode === 'all' ? 'All' : 'Online';
+                    const count = mode === 'all' ? roster.length : onlineCount;
+                    return (
+                      <button
+                        key={mode}
+                        type="button"
+                        role="tab"
+                        aria-selected={active}
+                        onClick={() => setViewFilter(mode)}
                         className={cn(
-                          'inline-flex min-w-[1.25rem] items-center justify-center rounded-full px-1 py-px font-mono text-[9.5px] font-semibold tabular-nums',
+                          'inline-flex items-center gap-1.5 rounded px-2 py-1 text-[11px] font-medium transition-colors',
                           active
-                            ? 'bg-white/20 text-white dark:bg-zinc-900/20 dark:text-zinc-900'
-                            : 'bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300',
+                            ? 'bg-zinc-900 text-white shadow-sm dark:bg-zinc-100 dark:text-zinc-900'
+                            : 'text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100',
                         )}
                       >
-                        {count}
-                      </span>
-                    </button>
-                  );
-                })}
+                        {label}
+                        <span
+                          className={cn(
+                            'inline-flex min-w-[1.25rem] items-center justify-center rounded-full px-1 py-px font-mono text-[9.5px] font-semibold tabular-nums',
+                            active
+                              ? 'bg-white/20 text-white dark:bg-zinc-900/20 dark:text-zinc-900'
+                              : 'bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300',
+                          )}
+                        >
+                          {count}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => void handleSync()}
+                disabled={syncing}
+                className="h-8 gap-1.5 border-zinc-200 text-xs text-zinc-700 dark:border-zinc-700 dark:text-zinc-200"
+              >
+                {syncing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+                Sync
+              </Button>
             </div>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => void handleSync()}
-              disabled={syncing}
-              className="h-8 gap-1.5 border-zinc-200 text-xs text-zinc-700 dark:border-zinc-700 dark:text-zinc-200"
-            >
-              {syncing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
-              Sync from Google Sheet
-            </Button>
-          </div>
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-            <div className="relative min-w-0 flex-1">
-              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" />
-              <Input
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder="Search name, email, ID…"
-                className="h-9 rounded-lg border-zinc-200 bg-white pl-9 dark:border-zinc-800 dark:bg-zinc-950/50"
-              />
-            </div>
-            <label className="flex shrink-0 items-center gap-2">
-              <span className="flex items-center gap-1 whitespace-nowrap text-[11px] font-medium text-zinc-500 dark:text-zinc-400">
-                <Building2 className="h-3.5 w-3.5" aria-hidden />
-                Department
-              </span>
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+              <div className="relative min-w-0 flex-1">
+                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" />
+                <Input
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  placeholder="Search name, email, ID…"
+                  className="h-9 rounded-lg border-zinc-200 bg-white pl-9 dark:border-zinc-800 dark:bg-zinc-950/50"
+                />
+              </div>
               <SmoothSelect
                 aria-label="Filter by department"
                 value={departmentFilter}
                 onChange={(v) => setDepartmentFilter(v)}
-                triggerClassName="min-w-[10.5rem]"
+                triggerClassName="h-9 min-w-[9.5rem] shrink-0"
                 options={[
                   { value: '__all__', label: 'All departments' },
                   { value: '__unassigned__', label: 'Unassigned' },
                   ...departmentOptions.map((dep) => ({ value: dep, label: dep })),
                 ]}
               />
-            </label>
-            <div className="flex shrink-0 items-center justify-center gap-1 rounded-lg border border-zinc-200 bg-zinc-50/80 p-0.5 dark:border-zinc-800 dark:bg-zinc-900/40">
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="h-8 px-2"
-                disabled={currentPage <= 1}
-                onClick={() => setPage((p) => Math.max(1, p - 1))}
-                aria-label="Previous page"
-              >
-                <ChevronLeft className="size-4" />
-              </Button>
-              <span className="min-w-[4.5rem] text-center font-mono text-xs text-zinc-600 dark:text-zinc-400">
-                {currentPage} / {totalPages}
-              </span>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="h-8 px-2"
-                disabled={currentPage >= totalPages}
-                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-                aria-label="Next page"
-              >
-                <ChevronRight className="size-4" />
-              </Button>
+              <div className="flex shrink-0 items-center justify-center gap-1 rounded-lg border border-zinc-200 bg-zinc-50/80 p-0.5 dark:border-zinc-800 dark:bg-zinc-900/40">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-8 px-2"
+                  disabled={currentPage <= 1}
+                  onClick={() => setPage((p) => Math.max(1, p - 1))}
+                  aria-label="Previous page"
+                >
+                  <ChevronLeft className="size-4" />
+                </Button>
+                <span className="min-w-[3.5rem] text-center font-mono text-xs text-zinc-600 dark:text-zinc-400">
+                  {currentPage}/{totalPages}
+                </span>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-8 px-2"
+                  disabled={currentPage >= totalPages}
+                  onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                  aria-label="Next page"
+                >
+                  <ChevronRight className="size-4" />
+                </Button>
+              </div>
             </div>
-          </div>
-        </CardHeader>
-        <CardContent className="min-h-0 flex-1 overflow-y-auto px-3 pb-4 pt-2 sm:px-4">
-          {pageRows.length === 0 ? (
-            <p className="py-10 text-center text-xs text-zinc-400">
-              {roster.length === 0 ? 'No active employees on record.' : 'No rows match your search.'}
-            </p>
-          ) : (
-            <ul className="space-y-1.5" role="list">
-              {pageRows.map((row) => {
-                const key = emailKeyFor(row);
-                return (
-                  <GmlRow
-                    key={key || row.employee_id || row.name}
-                    row={row}
-                    detail={detailFor(row)}
-                    lastSeenIso={lastSeenFor(row)}
-                    isSelf={!!viewerNorm && key === viewerNorm}
-                    isPinging={pingTarget === key}
-                    pingText={pingTarget === key ? pingText : ''}
-                    pingSending={pingSending}
-                    forcingLogout={forcingLogoutEmail === key}
-                    onPingTextChange={setPingText}
-                    onStartPing={() => {
-                      setPingTarget(key);
-                      setPingText('');
-                    }}
-                    onCancelPing={() => setPingTarget(null)}
-                    onSendPing={handleSendPing}
-                    onForceLogout={() => void forceLogout(key)}
-                  />
-                );
-              })}
-            </ul>
-          )}
-        </CardContent>
-      </Card>
+          </CardHeader>
+          <CardContent className="min-h-0 flex-1 overflow-y-auto px-3 pb-4 pt-2 sm:px-4">
+            {pageRows.length === 0 ? (
+              <p className="py-10 text-center text-xs text-zinc-400">
+                {roster.length === 0 ? 'No active employees on record.' : 'No rows match your search.'}
+              </p>
+            ) : (
+              <ul className="space-y-1.5" role="list">
+                {pageRows.map((row, i) => {
+                  const key = emailKeyFor(row);
+                  const isSel = key === selectedKey;
+                  const detail = detailFor(row);
+                  const online = !!detail;
+                  const email = employeeIdentityEmail(row) || null;
+                  return (
+                    <li key={`${key || row.employee_id || row.name}-${pageStart + i}`}>
+                      <button
+                        type="button"
+                        onClick={() => setSelectedKey(key)}
+                        className={cn(
+                          'flex w-full items-center gap-3 rounded-xl border px-3 py-2.5 text-left transition-all',
+                          isSel
+                            ? 'border-orange-500/55 bg-orange-50/90 shadow-md shadow-orange-500/10 ring-1 ring-orange-500/20 dark:border-orange-500/45 dark:bg-orange-950/35 dark:shadow-none'
+                            : 'border-zinc-200/90 bg-white/60 hover:border-zinc-300 hover:bg-white dark:border-zinc-800 dark:bg-zinc-900/40 dark:hover:border-zinc-700 dark:hover:bg-zinc-900/70',
+                        )}
+                      >
+                        <div
+                          className={cn(
+                            'relative shrink-0 rounded-xl ring-2',
+                            isSel
+                              ? 'ring-orange-400/70 dark:ring-orange-500/55'
+                              : online
+                                ? 'ring-emerald-400/70 dark:ring-emerald-500/45'
+                                : 'ring-zinc-200/70 dark:ring-zinc-800',
+                          )}
+                        >
+                          <EmployeeAvatar
+                            photoUrl={row.profile_photo_url ?? null}
+                            googlePhotoUrl={row.google_photo_url ?? null}
+                            email={email}
+                            initials={initialsFromEmployee(row)}
+                            className="!rounded-xl h-10 w-10 text-xs"
+                          />
+                          <span
+                            className={cn(
+                              'absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full ring-2 ring-white dark:ring-zinc-950',
+                              online ? 'bg-emerald-500' : 'bg-zinc-300 dark:bg-zinc-600',
+                            )}
+                            aria-hidden
+                          />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-sm font-semibold text-zinc-900 dark:text-white">
+                            {row.name || email || '—'}
+                          </p>
+                          <p className="truncate font-mono text-[11px] text-zinc-500 dark:text-zinc-400">
+                            {email ?? 'No email'}
+                          </p>
+                          {online ? (
+                            <p className="mt-0.5 flex items-center gap-1 truncate text-[10.5px] font-medium text-emerald-600 dark:text-emerald-400">
+                              <span className="inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500" aria-hidden />
+                              {statusLabel(detail, null)}
+                            </p>
+                          ) : (
+                            row.department && (
+                              <p className="mt-0.5 truncate text-[10px] text-zinc-400 dark:text-zinc-500">
+                                {row.department}
+                              </p>
+                            )
+                          )}
+                        </div>
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* RIGHT — selected person's record + admin functions */}
+        <Card className="flex h-full min-h-0 flex-col overflow-hidden border-zinc-200/90 shadow-sm dark:border-zinc-800/80">
+          <CardHeader className="shrink-0 border-b border-zinc-100 pb-4 dark:border-zinc-800/80">
+            <CardTitle className="flex items-center gap-2 text-base font-semibold text-zinc-900 dark:text-white">
+              <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-zinc-100 dark:bg-zinc-800">
+                <IdCard className="h-4 w-4 text-orange-600 dark:text-orange-400" aria-hidden />
+              </span>
+              {selected ? 'Master list record' : 'Choose someone'}
+            </CardTitle>
+            {selected && (
+              <div className="flex flex-wrap items-center gap-2 pt-2">
+                <div className="flex min-w-0 flex-1 items-center gap-2 rounded-xl border border-zinc-200/90 bg-zinc-50/80 px-3 py-2 dark:border-zinc-800 dark:bg-zinc-900/50">
+                  <div
+                    className={cn(
+                      'relative shrink-0 rounded-lg ring-1',
+                      selectedOnline ? 'ring-emerald-400/70 dark:ring-emerald-500/45' : 'ring-zinc-200/70 dark:ring-zinc-800',
+                    )}
+                  >
+                    <EmployeeAvatar
+                      photoUrl={selected.profile_photo_url ?? null}
+                      googlePhotoUrl={selected.google_photo_url ?? null}
+                      email={selectedEmail}
+                      initials={initialsFromEmployee(selected)}
+                      className="rounded-lg h-9 w-9 text-xs"
+                    />
+                    <span
+                      className={cn(
+                        'absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full ring-2 ring-white dark:ring-zinc-950',
+                        selectedOnline ? 'bg-emerald-500' : 'bg-zinc-300 dark:bg-zinc-600',
+                      )}
+                      aria-hidden
+                    />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-semibold text-zinc-900 dark:text-white">
+                      {selected.name || selectedEmail || '—'}
+                    </p>
+                    <p className="truncate font-mono text-[11px] text-zinc-500">{selectedEmail || 'No email on file'}</p>
+                  </div>
+                </div>
+                {selectedIsSelf && (
+                  <Badge variant="outline" className="shrink-0 text-[10px] text-zinc-500">
+                    You
+                  </Badge>
+                )}
+              </div>
+            )}
+          </CardHeader>
+          <CardContent className="min-h-0 flex-1 overflow-y-auto px-3 pb-4 pt-3 sm:px-4">
+            {!selected ? (
+              <div className="flex h-full min-h-[240px] flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-zinc-200 bg-zinc-50/50 px-6 py-10 text-center dark:border-zinc-800 dark:bg-zinc-900/30">
+                <Users className="h-10 w-10 text-zinc-300 dark:text-zinc-600" aria-hidden />
+                <div className="space-y-1">
+                  <p className="text-sm font-medium text-zinc-700 dark:text-zinc-300">Select a person</p>
+                  <p className="max-w-xs text-xs text-zinc-500 dark:text-zinc-500">
+                    Pick someone from the roster to see their master-list record, whether they&apos;re
+                    online and which page they&apos;re on, and to ping or reset their session.
+                  </p>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-5">
+                {/* Live status */}
+                <section
+                  className={cn(
+                    'rounded-xl border px-3.5 py-3',
+                    selectedOnline
+                      ? 'border-emerald-300/70 bg-emerald-50/70 dark:border-emerald-800/50 dark:bg-emerald-950/20'
+                      : 'border-zinc-200/90 bg-zinc-50/70 dark:border-zinc-800 dark:bg-zinc-900/40',
+                  )}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-500">
+                      <Radio className="h-3 w-3" aria-hidden />
+                      Live status
+                    </p>
+                    <span
+                      className={cn(
+                        'inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[10px] font-semibold',
+                        selectedOnline
+                          ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300'
+                          : 'bg-zinc-200/70 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400',
+                      )}
+                    >
+                      <span
+                        className={cn(
+                          'h-1.5 w-1.5 rounded-full',
+                          selectedOnline ? 'animate-pulse bg-emerald-500' : 'bg-zinc-400 dark:bg-zinc-500',
+                        )}
+                        aria-hidden
+                      />
+                      {selectedOnline ? 'Online' : 'Offline'}
+                    </span>
+                  </div>
+                  {selectedOnline ? (
+                    <div className="mt-1.5 flex items-baseline gap-2">
+                      <p className="min-w-0 truncate text-[15px] font-semibold text-zinc-900 dark:text-white">
+                        {dashboardLabelForPathname(selectedDetail!.path)}
+                      </p>
+                      {selectedDetail!.tab && (
+                        <span className="inline-flex shrink-0 items-center gap-1 rounded-md bg-white/70 px-1.5 py-0.5 font-mono text-[11px] font-medium text-emerald-700 ring-1 ring-emerald-300/60 dark:bg-zinc-900/60 dark:text-emerald-300 dark:ring-emerald-800/50">
+                          {selectedDetail!.tab}
+                        </span>
+                      )}
+                    </div>
+                  ) : (
+                    <p className="mt-1.5 text-[13px] text-zinc-600 dark:text-zinc-400">
+                      {statusLabel(null, lastSeenFor(selected))}
+                    </p>
+                  )}
+                </section>
+
+                {/* Admin functions */}
+                <section className="space-y-2">
+                  <h3 className="border-b border-zinc-100 pb-1 text-xs font-bold uppercase tracking-wide text-zinc-800 dark:border-zinc-800/80 dark:text-zinc-200">
+                    Admin functions
+                  </h3>
+                  {selectedIsSelf ? (
+                    <p className="rounded-lg border border-zinc-200/90 bg-zinc-50/70 px-3 py-2.5 text-[12px] text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900/40">
+                      This is your own account — ping and session-reset are disabled for yourself.
+                    </p>
+                  ) : (
+                    <>
+                      {/* Ping */}
+                      <form
+                        onSubmit={(e) => {
+                          e.preventDefault();
+                          handleSendPing();
+                        }}
+                        className="flex items-center gap-2 rounded-xl border border-orange-200/80 bg-orange-50/50 p-2 dark:border-orange-700/40 dark:bg-orange-950/20"
+                      >
+                        <MessageCircle className="ml-1 h-4 w-4 shrink-0 text-orange-500 dark:text-orange-400" aria-hidden />
+                        <Input
+                          value={pingText}
+                          onChange={(e) => setPingText(e.target.value)}
+                          placeholder={`Message ${selected.name?.split(' ')[0] || 'them'}…`}
+                          className="h-8 flex-1 border-orange-200 bg-white text-xs dark:border-orange-800/50 dark:bg-zinc-950"
+                        />
+                        <Button
+                          type="submit"
+                          size="sm"
+                          disabled={pingSending}
+                          className="h-8 gap-1.5 bg-orange-600 px-3 text-xs text-white hover:bg-orange-500 disabled:opacity-50 dark:bg-orange-600 dark:hover:bg-orange-500"
+                        >
+                          {pingSending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Send className="h-3 w-3" />}
+                          Ping
+                        </Button>
+                      </form>
+                      <p className="px-1 text-[10.5px] text-zinc-400 dark:text-zinc-600">
+                        A ping pops up on their screen wherever they are — but only if they&apos;re online right now (nothing is saved).
+                      </p>
+
+                      {/* Force logout */}
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={() => void forceLogoutSelected()}
+                        disabled={forcingLogout || !selectedEmail}
+                        className="w-full justify-center gap-2 border-zinc-200 text-zinc-700 hover:bg-red-500/10 hover:text-red-600 dark:border-zinc-700 dark:text-zinc-200 dark:hover:text-red-400"
+                        title="Invalidate this person's active session — they'll be signed out and bounced to /login, live."
+                      >
+                        {forcingLogout ? (
+                          <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+                        ) : (
+                          <LogOut className="h-4 w-4" aria-hidden />
+                        )}
+                        Force logout / reset session
+                      </Button>
+                    </>
+                  )}
+                </section>
+
+                {/* Master list information */}
+                <section className="space-y-2">
+                  <h3 className="border-b border-zinc-100 pb-1 text-xs font-bold uppercase tracking-wide text-zinc-800 dark:border-zinc-800/80 dark:text-zinc-200">
+                    Master list information
+                  </h3>
+                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                    <Field icon={IdCard} label="Employee ID" value={selected.employee_id} mono />
+                    <Field icon={Building2} label="Department" value={selected.department} />
+                    <Field icon={Mail} label="Work email" value={selected.work_email} mono />
+                    <Field icon={Mail} label="Personal email" value={selected.personal_email} mono />
+                    {alternateEmails && (
+                      <Field icon={Mail} label="Alternate emails" value={alternateEmails} mono />
+                    )}
+                    <Field icon={Calendar} label="Start date" value={fmtDate(selected.start_date)} />
+                    <Field icon={Clock} label="Tenure" value={tenure(selected.start_date)} />
+                    {location && <Field icon={MapPin} label="Location" value={location} />}
+                  </div>
+                </section>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </div>
     </div>
   );
 }

@@ -498,7 +498,8 @@
       "Bash(curl -s --max-time 5 \"http://localhost:3000/api/presence/last-seen?emails=test@example.com\" -w \"\\\\nHTTP_STATUS=%{http_code}\\\\n\")",
       "Bash(curl -s --max-time 5 -X POST \"http://localhost:3000/api/auth/force-logout\" -H \"content-type: application/json\" -d '{\"email\":\"nobody@example.com\"}' -w \"\\\\nHTTP_STATUS=%{http_code}\\\\n\")",
       "Bash(curl -s -o /dev/null -w \"/login=%{http_code}\\\\n\" --max-time 5 http://localhost:3000/login)",
-      "Bash(curl -s -o /dev/null -w \"/admin=%{http_code}\\\\n\" --max-time 5 http://localhost:3000/admin)"
+      "Bash(curl -s -o /dev/null -w \"/admin=%{http_code}\\\\n\" --max-time 5 http://localhost:3000/admin)",
+      "Bash(curl -s -o /dev/null -w \"/admin=%{http_code}  /login=%{http_code}\\\\n\" --max-time 5 http://localhost:3000/admin -o /dev/null)"
     ],
     "additionalDirectories": [
       "\\tmp",
