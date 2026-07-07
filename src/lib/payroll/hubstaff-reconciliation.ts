@@ -17,20 +17,21 @@
 export type HubstaffReconStatus =
   | 'On Master & worked'
   | 'On Master, no hours'
-  | 'Exempt — no Hubstaff'
+  | 'Exception'
   | 'In Hubstaff, not on Master';
 
-/** Status literal for a directory employee whose department has no Hubstaff by
- *  nature — exported so callers tag rows without repeating the magic string. */
-export const HUBSTAFF_EXEMPT_STATUS = 'Exempt — no Hubstaff';
+/** Status literal for a no-hours directory employee whose absence is EXPECTED —
+ *  a no-Hubstaff-by-nature department, a just-hired start date, or approved
+ *  leave. Exported so callers tag rows without repeating the magic string.
+ *  These are counted as "exceptions", NOT as reconciliation gaps. */
+export const HUBSTAFF_EXCEPTION_STATUS = 'Exception';
 
 /**
  * Departments that legitimately have NO Hubstaff time tracking — freelance /
  * project-based teams billed by deliverable, not by tracked hours. A person in
  * one of these depts with no Hubstaff hours is NOT a reconciliation gap; it's
- * expected. The "Reconcile gaps" count and the "On Master, no hours" bucket
- * exclude them, and the drill-down surfaces them under their own "Exempt"
- * status instead. Matched case-insensitively against the raw Department label.
+ * expected, so they're tallied as an exception. Matched case-insensitively
+ * against the raw Department label.
  */
 const HUBSTAFF_EXEMPT_DEPTS = new Set(['smm freelancer', 'site building']);
 
@@ -56,7 +57,7 @@ export interface HubstaffMasterRow {
 export const HUBSTAFF_RECON_ORDER: Record<string, number> = {
   'On Master & worked': 0,
   'On Master, no hours': 1,
-  'Exempt — no Hubstaff': 2,
+  'Exception': 2,
   'In Hubstaff, not on Master': 3,
 };
 
@@ -64,7 +65,7 @@ export const HUBSTAFF_RECON_ORDER: Record<string, number> = {
 export const HUBSTAFF_RECON_TONE: Record<string, 'ok' | 'neutral' | 'warn'> = {
   'On Master & worked': 'ok',
   'On Master, no hours': 'neutral',
-  'Exempt — no Hubstaff': 'neutral',
+  'Exception': 'neutral',
   'In Hubstaff, not on Master': 'warn',
 };
 

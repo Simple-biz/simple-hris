@@ -30,6 +30,7 @@ export async function POST(req: NextRequest) {
     emailsMatched?: number | null;
     masterOnlyCount?: number | null;
     hubstaffOnlyCount?: number | null;
+    exceptionsCount?: number | null;
     pabFinalized?: boolean;
     periodLabel?: string | null;
     periodWeek?: number | null;
@@ -86,6 +87,7 @@ export async function POST(req: NextRequest) {
     emailsMatched: num(body.emailsMatched),
     masterOnlyCount: num(body.masterOnlyCount),
     hubstaffOnlyCount: num(body.hubstaffOnlyCount),
+    exceptionsCount: num(body.exceptionsCount),
     pabFinalized: body.pabFinalized === true,
     periodLabel: typeof body.periodLabel === 'string' ? body.periodLabel : null,
     periodWeek: num(body.periodWeek),

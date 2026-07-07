@@ -59,6 +59,7 @@ interface SystemOverview {
   bonusesKeyedIn: number | null;
   emailsMatched: number | null;
   masterOnlyCount: number | null;
+  exceptionsCount: number | null;
   hubstaffOnlyCount: number | null;
   reconcileGaps: number;
   pabFinalized: boolean;
@@ -592,6 +593,15 @@ export default function CeoOverviewKpis({ viewerEmail }: { viewerEmail: string |
                         </span>
                       </li>
                       <li className="flex items-center justify-between gap-3">
+                        <span className="flex items-center gap-1.5 text-indigo-700 dark:text-indigo-300">
+                          <span className="h-1.5 w-1.5 rounded-full bg-indigo-500" />
+                          Exceptions (no Hubstaff / just hired / leave)
+                        </span>
+                        <span className="font-mono font-semibold tabular-nums">
+                          {sys.exceptionsCount == null ? '—' : sys.exceptionsCount.toLocaleString('en-US')}
+                        </span>
+                      </li>
+                      <li className="flex items-center justify-between gap-3">
                         <span className="flex items-center gap-1.5 text-rose-700 dark:text-rose-300">
                           <span className="h-1.5 w-1.5 rounded-full bg-rose-500" />
                           In Hubstaff, not on Master
@@ -834,6 +844,7 @@ export default function CeoOverviewKpis({ viewerEmail }: { viewerEmail: string |
           matched: sys?.emailsMatched ?? null,
           masterOnly: sys?.masterOnlyCount ?? null,
           hubstaffOnly: sys?.hubstaffOnlyCount ?? null,
+          exceptions: sys?.exceptionsCount ?? null,
         }}
         periodLabel={sys?.periodLabel ?? null}
         csvFilename={`hubstaff-master-reconciliation_${new Date().toISOString().slice(0, 10)}.csv`}

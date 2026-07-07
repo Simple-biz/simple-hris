@@ -192,10 +192,10 @@ export default function NewlyHiredPanel({ viewerEmail, teamGate }: NewlyHiredPan
       });
       const json = (await res.json()) as { error?: string };
       if (!res.ok) throw new Error(json.error ?? `HTTP ${res.status}`);
-      toast.warning(`${r.name} marked as no-show`, {
+      toast.warning(`${r.name} marked as did not attend — offboarding triggered`, {
         description: r.work_email
-          ? 'Account teardown triggered. They will not appear in promoted hires.'
-          : 'No account to tear down — marked as no-show.',
+          ? 'Same offboarding webhook HR uses: Workspace account removed and access revoked.'
+          : 'No work account exists yet — recorded as a no-show only.',
       });
       setNoShowNote('');
       void refresh();
@@ -485,7 +485,7 @@ export default function NewlyHiredPanel({ viewerEmail, teamGate }: NewlyHiredPan
               className="h-7 gap-1.5 border-rose-200 text-rose-700 hover:bg-rose-50 dark:border-rose-900/50 dark:text-rose-300 dark:hover:bg-rose-950/30"
               onClick={() => { setConfirmNoShow(r); setNoShowNote(''); }}
               disabled={isBusy}
-              title="Mark as did not attend orientation — triggers account teardown"
+              title="Did not attend = offboard: same offboarding webhook HR uses — Workspace account removed, access revoked. Cannot be undone."
             >
               <XCircle className="h-3 w-3" />
               Did not attend
@@ -501,7 +501,9 @@ export default function NewlyHiredPanel({ viewerEmail, teamGate }: NewlyHiredPan
       <p className="text-xs text-zinc-500 dark:text-zinc-400">
         Pending hires routed to your departments. Tap <strong>Mark orientation attended</strong> once
         the employee has shown up for orientation. HR cannot promote them to the master list until
-        you do.
+        you do. Marking a hire <strong>Did not attend</strong> <strong className="text-rose-600 dark:text-rose-400">offboards
+        them</strong> — it runs the same offboarding webhook HR uses (Google Workspace account removed and
+        access revoked), so use it only when a hire truly never showed up.
       </p>
 
       {activeRows.length === 0 && noShowRows.length === 0 && (
@@ -597,12 +599,24 @@ export default function NewlyHiredPanel({ viewerEmail, teamGate }: NewlyHiredPan
                 <XCircle className="h-5 w-5" />
               </div>
               <div>
-                <p className="text-sm font-semibold text-zinc-900 dark:text-white">Did not attend orientation?</p>
+                <p className="text-sm font-semibold text-zinc-900 dark:text-white">Did not attend = offboard {confirmNoShow.name}?</p>
                 <p className="text-xs text-zinc-500 dark:text-zinc-400">
-                  This will mark <span className="font-medium">{confirmNoShow.name}</span> as a no-show and trigger account teardown. This cannot be undone.
+                  Marking <span className="font-medium">{confirmNoShow.name}</span> as a no-show <strong>offboards them</strong> — the same account teardown HR runs for a departing employee. This cannot be undone.
                 </p>
               </div>
             </div>
+            {confirmNoShow.work_email ? (
+              <ul className="mt-3 space-y-1 rounded-lg border border-rose-200 bg-rose-50/70 p-2.5 text-[11px] leading-relaxed text-rose-700 dark:border-rose-900/50 dark:bg-rose-950/20 dark:text-rose-300">
+                <li>• Google Workspace account (<span className="font-mono">{confirmNoShow.work_email}</span>) disabled &amp; deleted</li>
+                <li>• HRIS &amp; app access revoked immediately</li>
+                <li>• Fires the same offboarding webhook HR uses (Workspace + Hubstaff teardown)</li>
+                <li>• Removed from the promote queue — HR can&apos;t promote them</li>
+              </ul>
+            ) : (
+              <p className="mt-3 rounded-lg border border-zinc-200 bg-zinc-50 p-2.5 text-[11px] text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900/40 dark:text-zinc-400">
+                No work account exists yet — this just records the no-show; nothing to tear down.
+              </p>
+            )}
             <input
               type="text"
               value={noShowNote}

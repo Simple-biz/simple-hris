@@ -7,7 +7,7 @@ import {
   type HubstaffMasterRow,
   sortHubstaffReconRows,
   isHubstaffExemptDept,
-  HUBSTAFF_EXEMPT_STATUS,
+  HUBSTAFF_EXCEPTION_STATUS,
 } from '@/lib/payroll/hubstaff-reconciliation';
 import {
   getAppSetting,
@@ -57,8 +57,10 @@ export interface CeoSystemOverview {
   bonusesKeyedIn: number | null;
   /** Hubstaff ↔ Master matches (on master AND worked this cycle). */
   emailsMatched: number | null;
-  /** On master, no hours this cycle. */
+  /** On master, no hours this cycle — an UNEXPLAINED gap. */
   masterOnlyCount: number | null;
+  /** No hours this cycle but EXPECTED (no-Hubstaff dept / just hired / on leave). */
+  exceptionsCount: number | null;
   /** Worked this cycle but not on the master list. */
   hubstaffOnlyCount: number | null;
   /** Master↔payroll email mismatches (kept for back-compat). */
@@ -184,19 +186,21 @@ function buildFallbackReconRows(pay: CurrentPayResult, roster: PeopleRosterRow[]
     const alts = r.alternate_work_emails.map((a) => normEmail(a) ?? '').filter(Boolean);
     for (const k of [w, p, ...alts]) if (k) masterKeys.add(k);
     const didWork = [w, p, ...alts].some((k) => k !== '' && worked.has(k));
-    const exempt = !didWork && isHubstaffExemptDept(r.department);
     const hrs = [w, p, ...alts].map((k) => (k ? hoursByEmail.get(k) : undefined)).find((h) => h != null);
+    // Classify a no-hours person: a no-Hubstaff-by-nature dept OR a just-hired
+    // start date is an EXPECTED "Exception", not a reconciliation gap.
+    const noHours = didWork
+      ? null
+      : isHubstaffExemptDept(r.department)
+        ? { reason: `${r.department ?? 'This team'} — no Hubstaff tracking by nature`, exception: true }
+        : reasonForNoHoursCeo(r, pay.period.start, pay.period.end);
     out.push({
       status: didWork
         ? 'On Master & worked'
-        : exempt
-          ? HUBSTAFF_EXEMPT_STATUS
+        : noHours!.exception
+          ? HUBSTAFF_EXCEPTION_STATUS
           : 'On Master, no hours',
-      reason: didWork
-        ? ''
-        : exempt
-          ? `${r.department ?? 'This team'} — no Hubstaff tracking by nature`
-          : reasonForNoHoursCeo(r, pay.period.start, pay.period.end),
+      reason: didWork ? '' : noHours!.reason,
       name: r.name ?? '',
       workEmail: r.work_email ?? '',
       personalEmail: r.personal_email ?? '',
@@ -222,21 +226,22 @@ function buildFallbackReconRows(pay: CurrentPayResult, roster: PeopleRosterRow[]
 }
 
 /** Onboarding-timing explanation for a roster employee who logged no hours. A
- *  lighter version of the Accounting reason (no leave-overlap check here). */
+ *  lighter version of the Accounting reason (no leave-overlap check here).
+ *  `exception: true` marks a just-hired start date as EXPECTED, not a gap. */
 function reasonForNoHoursCeo(
   r: PeopleRosterRow,
   periodStartIso: string | null,
   periodEndIso: string | null,
-): string {
+): { reason: string; exception: boolean } {
   const startMs = r.start_date ? new Date(r.start_date.trim()).getTime() : NaN;
   if (Number.isFinite(startMs)) {
     const startShown = new Date(startMs).toISOString().slice(0, 10);
     const pStart = periodStartIso ? new Date(periodStartIso).getTime() : NaN;
     const pEnd = periodEndIso ? new Date(periodEndIso).getTime() : NaN;
-    if (Number.isFinite(pEnd) && startMs > pEnd) return `Not started yet — hired ${startShown}, after this period`;
-    if (Number.isFinite(pStart) && startMs >= pStart) return `Newly onboarded — started ${startShown}, mid-period`;
+    if (Number.isFinite(pEnd) && startMs > pEnd) return { reason: `Not started yet — hired ${startShown}, after this period`, exception: true };
+    if (Number.isFinite(pStart) && startMs >= pStart) return { reason: `Newly onboarded — started ${startShown}, mid-period`, exception: true };
   }
-  return 'No hours logged — reason unknown (check Hubstaff upload / time off)';
+  return { reason: 'No hours logged — reason unknown (check Hubstaff upload / time off)', exception: false };
 }
 
 /** Derive the CEO System Overview block from a computed pay cycle. Email-based
@@ -271,10 +276,12 @@ function buildSystemOverview(
   // set would tally both, inflating the figure toward ~2× the real headcount.
   let matched = 0;
   let masterOnly = 0;
+  let exceptions = 0;
   let hubstaffOnly = 0;
   for (const r of reconRows) {
     if (r.status === 'On Master & worked') matched++;
     else if (r.status === 'On Master, no hours') masterOnly++;
+    else if (r.status === HUBSTAFF_EXCEPTION_STATUS) exceptions++;
     else if (r.status === 'In Hubstaff, not on Master') hubstaffOnly++;
   }
 
@@ -304,6 +311,7 @@ function buildSystemOverview(
     bonusesKeyedIn: pick(snapshot?.bonusesKeyedIn, null),
     emailsMatched: pick(snapshot?.emailsMatched, matched),
     masterOnlyCount: pick(snapshot?.masterOnlyCount, masterOnly),
+    exceptionsCount: pick(snapshot?.exceptionsCount, exceptions),
     hubstaffOnlyCount: pick(snapshot?.hubstaffOnlyCount, hubstaffOnly),
     reconcileGaps: hubstaffOnly + masterOnly,
     pabFinalized,

@@ -1,3 +1,12 @@
+-- ############################################################################
+-- ⚠️ SUPERSEDED — DO NOT RUN. Kept for history only.
+-- This script RE-LABELED the manual-seed US rows to 'US Employees', which was
+-- wrong: it created a competing label next to the Google Sheet's own "USEE" and
+-- made the duplicate rows visible on the roster. The correct fix is to DELETE
+-- the duplicate manual-seed rows — see `dedupe_us_manual_seed_gml_rows.sql`,
+-- which also reverts the 'US Employees' labels this script wrote.
+-- ############################################################################
+
 -- ============================================================================
 -- RETIRE the "US Manager Bonus" / "US Team" department (2026-07-07).
 --

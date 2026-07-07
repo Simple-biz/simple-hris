@@ -520,7 +520,12 @@
       "Bash(node scripts/preload-mesa-membership.mjs --apply)",
       "Bash(curl -s -o /dev/null -w \"/hr=%{http_code}\\\\n\" --max-time 8 http://localhost:3000/hr)",
       "Bash(cd \"C:/Users/Itachi/.claude/projects/c--Users-Itachi-Desktop-simple-hris/\" && ls -t *.jsonl | head -20)",
-      "Bash(python -c 'import sys,json *)"
+      "Bash(python -c 'import sys,json *)",
+      "Bash(node \"C:/Users/Itachi/AppData/Local/Temp/claude/c--Users-Itachi-Desktop-simple-hris/2f5a4141-fe58-4f69-abaa-61c29bc986cd/scratchpad/inspect-jackie.mjs\")",
+      "Bash(node _inspect-jackie.mjs)",
+      "Bash(rm -f _inspect-jackie.mjs)",
+      "Bash(node _inspect-us.mjs)",
+      "Bash(rm -f _inspect-us.mjs)"
     ],
     "additionalDirectories": [
       "\\tmp",

@@ -92,6 +92,9 @@ export interface AccountingOverviewSnapshot {
   emailsMatched?: number | null;
   masterOnlyCount?: number | null;
   hubstaffOnlyCount?: number | null;
+  /** Expected no-hours rows (no-Hubstaff dept / just hired / on leave) — counted
+   *  as exceptions, NOT reconcile gaps. */
+  exceptionsCount?: number | null;
   /** Drives the "Initial pay + PAB" vs "Initial pay" subtitle. */
   pabFinalized?: boolean;
   periodLabel?: string | null;

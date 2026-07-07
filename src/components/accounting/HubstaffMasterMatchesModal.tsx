@@ -46,9 +46,9 @@ const STATUS_META: Array<{
     badge: 'bg-zinc-100 text-zinc-600 ring-1 ring-zinc-200 dark:bg-zinc-800 dark:text-zinc-300 dark:ring-zinc-700',
   },
   {
-    // Freelance / project-based depts that have no Hubstaff by nature — not a gap.
-    key: 'Exempt — no Hubstaff',
-    short: 'Exempt',
+    // No-hours but EXPECTED (no-Hubstaff dept, just hired, or on leave) — not a gap.
+    key: 'Exception',
+    short: 'Exceptions',
     Icon: BadgeCheck,
     chip: 'border-indigo-200 text-indigo-700 hover:bg-indigo-50 dark:border-indigo-900/50 dark:text-indigo-300 dark:hover:bg-indigo-950/40',
     chipActive: 'border-indigo-400 bg-indigo-50 text-indigo-800 dark:border-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-200',
@@ -111,9 +111,9 @@ export default function HubstaffMasterMatchesModal({
     matched: number | null;
     masterOnly: number | null;
     hubstaffOnly: number | null;
-    /** No-Hubstaff-by-nature depts (SMM Freelancer, Site Building). Optional —
-     *  derived from the rows when a caller doesn't supply it. */
-    exempt?: number | null;
+    /** Expected no-hours rows (no-Hubstaff dept / just hired / on leave). Optional
+     *  — derived from the rows when a caller doesn't supply it. */
+    exceptions?: number | null;
   };
   /** Pay-period label for the header subtitle, e.g. "Jun 14 – 21, 2026". */
   periodLabel?: string | null;
@@ -142,10 +142,10 @@ export default function HubstaffMasterMatchesModal({
     [list, safePage],
   );
 
-  // The Exempt bucket is new and not always threaded through as an explicit
-  // count (e.g. the CEO mirror), so derive it from the rows as a fallback.
-  const exemptFromRows = useMemo(
-    () => rows.filter((r) => r.status === 'Exempt — no Hubstaff').length,
+  // The Exceptions bucket isn't always threaded through as an explicit count
+  // (e.g. the CEO mirror), so derive it from the rows as a fallback.
+  const exceptionsFromRows = useMemo(
+    () => rows.filter((r) => r.status === 'Exception').length,
     [rows],
   );
 
@@ -153,7 +153,7 @@ export default function HubstaffMasterMatchesModal({
     if (key === 'On Master & worked') return counts.matched;
     if (key === 'On Master, no hours') return counts.masterOnly;
     if (key === 'In Hubstaff, not on Master') return counts.hubstaffOnly;
-    if (key === 'Exempt — no Hubstaff') return counts.exempt ?? exemptFromRows;
+    if (key === 'Exception') return counts.exceptions ?? exceptionsFromRows;
     return null;
   };
 

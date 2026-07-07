@@ -46,7 +46,7 @@ import {
   sortHubstaffReconRows,
   downloadHubstaffReconCsv,
   isHubstaffExemptDept,
-  HUBSTAFF_EXEMPT_STATUS,
+  HUBSTAFF_EXCEPTION_STATUS,
 } from '@/lib/payroll/hubstaff-reconciliation';
 import { X } from 'lucide-react';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -304,18 +304,6 @@ function DeptMixPieChart({ rows, total }: { rows: MixRow[]; total: number }) {
       </div>
     </div>
   );
-}
-
-/** Match payroll emails to master rows (personal or work email). */
-function buildMasterEmailSet(list: EmployeeRow[]): Set<string> {
-  const s = new Set<string>();
-  for (const e of list) {
-    const p = normEmail(e.personal_email);
-    const w = normEmail(e.work_email ?? null);
-    if (p) s.add(p);
-    if (w) s.add(w);
-  }
-  return s;
 }
 
 /** Merge Member / Job type from Hubstaff rows per normalized email (current payroll scope). */
@@ -3137,42 +3125,184 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
     return filteredEmployees.slice(start, start + PAGE_SIZE);
   }, [filteredEmployees, safePage]);
 
-  const { inPayrollNotMaster, inMasterNotPayroll, emailsMatched } = useMemo(() => {
-    if (payrollEmailsNorm === null) {
-      return {
-        inPayrollNotMaster: null as number | null,
-        inMasterNotPayroll: null as number | null,
-        emailsMatched: null as number | null,
-      };
-    }
-    // Count PEOPLE, not emails — a master-list person owns both a work AND a
-    // personal email, so tallying the email set (buildMasterEmailSet) double-
-    // counts everyone and inflates "no hours" toward ~2× the real headcount.
-    // Iterate one row per person so these reconcile exactly with the modal rows.
-    const masterSet = buildMasterEmailSet(employees); // for the Hubstaff-side residual
-    let matchedCount = 0;
-    let inMasterNotPayrollCount = 0;
-    for (const e of employees) {
-      const p = normEmail(e.personal_email);
-      const w = normEmail(e.work_email ?? null);
-      const worked = (p != null && payrollEmailsNorm.has(p)) || (w != null && payrollEmailsNorm.has(w));
-      if (worked) matchedCount++;
-      // Freelance / project-based depts (SMM Freelancer, Site Building) have no
-      // Hubstaff by nature — a no-hours row there isn't a gap, so leave it out of
-      // the "Reconcile gaps" count entirely (it's surfaced as "Exempt" instead).
-      else if (!isHubstaffExemptDept(e.department)) inMasterNotPayrollCount++;
-    }
-    // Hubstaff workers whose email matches no master row — a directory gap.
-    let inPayrollNotMasterCount = 0;
-    for (const em of payrollEmailsNorm) {
-      if (!masterSet.has(em)) inPayrollNotMasterCount++;
-    }
-    return {
-      inPayrollNotMaster: inPayrollNotMasterCount,
-      inMasterNotPayroll: inMasterNotPayrollCount,
-      emailsMatched: matchedCount,
+  /** Single source of truth for the Master ↔ Hubstaff reconciliation: the
+   *  drill-down rows AND every tile count are computed together here so they can
+   *  never disagree. Statuses:
+   *    - "On Master & worked"        → directory employee who logged hours
+   *    - "On Master, no hours"       → an UNEXPLAINED no-hours row → a real gap
+   *    - "Exception"                 → no-hours but EXPECTED, so NOT a gap:
+   *        a no-Hubstaff-by-nature dept (SMM Freelancer / Site Building), a
+   *        just-hired start date, or approved leave covering the period
+   *    - "In Hubstaff, not on Master"→ logged hours but missing from the directory
+   *  Counts are null until the payroll scope loads (tiles show "—"); the rows are
+   *  always built. Feeds the modal, the CSV export, AND the CEO-mirror snapshot. */
+  const masterRecon = useMemo(() => {
+    const worked = payrollEmailsNorm; // Set of normalized emails with hours this scope, or null
+    const payFor = (w: string, p: string): { hours: number; pay: number | null } | undefined => {
+      if (w && employeePayByEmail[w]) return employeePayByEmail[w];
+      if (p && employeePayByEmail[p]) return employeePayByEmail[p];
+      return undefined;
     };
-  }, [employees, payrollEmailsNorm]);
+
+    // Index leaves by normalized email so we can explain a no-hours person as
+    // "on leave the whole period" rather than an unexplained gap.
+    type Leave = { email: string; start: string; end: string; type: string; status: string };
+    const leavesByEmail = new Map<string, Leave[]>();
+    for (const lv of leaveRows) {
+      const k = normEmail(lv.email) ?? lv.email;
+      const arr = leavesByEmail.get(k);
+      if (arr) arr.push(lv);
+      else leavesByEmail.set(k, [lv]);
+    }
+
+    const period = parsePeriodRange(activeSourceFile); // null for "All Time"
+    const todayISO = new Date().toISOString().slice(0, 10);
+    const prettyType = (t: string) => (t.trim() ? t.trim() : 'Leave');
+
+    /** Classify a no-hours master employee. `exception: true` means the absence
+     *  is EXPECTED (dept exempt / just hired / on leave) and is NOT a gap.
+     *  Priority: no-Hubstaff dept → leave → onboarding timing → unknown gap. */
+    const classifyNoHours = (
+      e: EmployeeRow,
+      w: string,
+      p: string,
+    ): { reason: string; exception: boolean } => {
+      // 0) Department has no Hubstaff by nature (freelance / project-based).
+      if (isHubstaffExemptDept(e.department)) {
+        return {
+          reason: `${e.department ?? 'This team'} — no Hubstaff tracking by nature`,
+          exception: true,
+        };
+      }
+
+      // 1) Approved/pending leave overlapping the pay period (or active today
+      //    when viewing All Time). Approved wins over pending.
+      const mine: Leave[] = [];
+      for (const k of new Set([w, p].filter(Boolean))) {
+        const arr = leavesByEmail.get(k);
+        if (arr) mine.push(...arr);
+      }
+      if (mine.length) {
+        const inWindow = period
+          ? mine.filter((lv) => lv.start <= period.endISO && lv.end >= period.startISO)
+          : mine.filter((lv) => lv.start <= todayISO && lv.end >= todayISO);
+        const pick = inWindow.find((lv) => lv.status === 'approved') ?? inWindow[0];
+        if (pick) {
+          const note = pick.status === 'approved' ? '' : ` [${pick.status}]`;
+          if (period) {
+            const whole = pick.start <= period.startISO && pick.end >= period.endISO;
+            return {
+              reason: `${whole ? 'On leave the entire period' : 'On leave part of the period'} — ${prettyType(pick.type)} ${pick.start}→${pick.end}${note}`,
+              exception: true,
+            };
+          }
+          return {
+            reason: `Currently on leave — ${prettyType(pick.type)} ${pick.start}→${pick.end}${note}`,
+            exception: true,
+          };
+        }
+      }
+
+      // 2) Onboarding timing — a start date landing in/after the period means
+      //    they were just hired and hadn't started (or only just started)
+      //    logging hours. Parse via Date since "Start Date" isn't guaranteed ISO.
+      const startMs = e.start_date ? new Date(e.start_date.trim()).getTime() : NaN;
+      if (Number.isFinite(startMs)) {
+        const startShown = new Date(startMs).toISOString().slice(0, 10);
+        if (period) {
+          const pStart = new Date(period.startISO).getTime();
+          const pEnd = new Date(period.endISO).getTime();
+          if (startMs > pEnd) return { reason: `Not started yet — hired ${startShown}, after this period`, exception: true };
+          if (startMs >= pStart) return { reason: `Newly onboarded — started ${startShown}, mid-period`, exception: true };
+        } else {
+          const now = Date.now();
+          if (startMs > now) return { reason: `Not started yet — hired ${startShown}`, exception: true };
+          if (now - startMs <= 30 * 24 * 3600 * 1000) return { reason: `Recently onboarded — started ${startShown}`, exception: true };
+        }
+      }
+
+      // 3) Nothing in the HRIS explains it — a real gap to reconcile.
+      return {
+        reason: period
+          ? 'No hours logged — reason unknown (check Hubstaff upload / time off)'
+          : 'No hours on record — reason unknown',
+        exception: false,
+      };
+    };
+
+    const out: HubstaffMasterRow[] = [];
+    const masterKeys = new Set<string>();
+    let matched = 0;
+    let gap = 0; // unexplained no-hours — the reconcile gaps
+    let exceptions = 0; // expected no-hours — NOT gaps
+
+    // Every master-list employee → worked / exception / gap.
+    for (const e of employees) {
+      const w = normEmail(e.work_email ?? null) ?? '';
+      const p = normEmail(e.personal_email) ?? '';
+      if (w) masterKeys.add(w);
+      if (p) masterKeys.add(p);
+      const didWork = worked != null && ((w !== '' && worked.has(w)) || (p !== '' && worked.has(p)));
+      const pay = payFor(w, p);
+      if (didWork) {
+        matched++;
+        out.push({
+          status: 'On Master & worked',
+          reason: '',
+          name: e.name ?? '',
+          workEmail: e.work_email ?? '',
+          personalEmail: e.personal_email ?? '',
+          department: e.department ?? '',
+          hours: pay ? pay.hours.toFixed(2) : '',
+        });
+      } else {
+        const { reason, exception } = classifyNoHours(e, w, p);
+        if (exception) exceptions++;
+        else gap++;
+        out.push({
+          status: exception ? HUBSTAFF_EXCEPTION_STATUS : 'On Master, no hours',
+          reason,
+          name: e.name ?? '',
+          workEmail: e.work_email ?? '',
+          personalEmail: e.personal_email ?? '',
+          department: e.department ?? '',
+          hours: pay ? pay.hours.toFixed(2) : '',
+        });
+      }
+    }
+
+    // Hubstaff workers with no master-list match — a directory gap to reconcile.
+    let hubstaffOnly = 0;
+    if (worked != null) {
+      for (const em of worked) {
+        if (masterKeys.has(em)) continue;
+        hubstaffOnly++;
+        const ident = payrollIdentityByEmail?.[em];
+        const pay = employeePayByEmail[em];
+        out.push({
+          status: 'In Hubstaff, not on Master',
+          reason: 'Worked but missing from the Master List — add to the directory',
+          name: ident?.name ?? '',
+          workEmail: em,
+          personalEmail: '',
+          department: ident?.department ?? '',
+          hours: pay ? pay.hours.toFixed(2) : '',
+        });
+      }
+    }
+
+    const isNull = payrollEmailsNorm === null;
+    return {
+      rows: sortHubstaffReconRows(out),
+      emailsMatched: isNull ? null : matched,
+      inMasterNotPayroll: isNull ? null : gap,
+      reconExceptions: isNull ? null : exceptions,
+      inPayrollNotMaster: isNull ? null : hubstaffOnly,
+    };
+  }, [employees, payrollEmailsNorm, employeePayByEmail, leaveRows, activeSourceFile, payrollIdentityByEmail]);
+
+  const { inPayrollNotMaster, inMasterNotPayroll, emailsMatched, reconExceptions } = masterRecon;
+  const hubstaffReconRows = masterRecon.rows;
 
   const pabFinalizedForPayoutExpanded = (() => {
     if (pabMetrics.loading || !pabMetrics.periodEnd) return false;
@@ -3227,138 +3357,6 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
 
   const activePeriod = useMemo(() => parsePeriodFromFilename(activeSourceFile), [activeSourceFile]);
 
-  /** Master ↔ Hubstaff reconciliation rows behind the "Hubstaff ↔ Master matches"
-   *  tile. One row per person, tagged with a Status so the three groups the tile
-   *  counts are all covered:
-   *    - "On Master & worked"        → directory employee who logged hours
-   *    - "On Master, no hours"       → directory employee with NO Hubstaff hours
-   *    - "In Hubstaff, not on Master"→ logged hours but missing from the directory
-   *  Keys off the SAME email sets that feed the tile counts so totals reconcile.
-   *  Feeds the drill-down modal, the CSV export, AND the CEO-mirror snapshot. */
-  const hubstaffReconRows = useMemo<HubstaffMasterRow[]>(() => {
-    const worked = payrollEmailsNorm; // Set of normalized emails with hours this scope
-    const payFor = (w: string, p: string): { hours: number; pay: number | null } | undefined => {
-      if (w && employeePayByEmail[w]) return employeePayByEmail[w];
-      if (p && employeePayByEmail[p]) return employeePayByEmail[p];
-      return undefined;
-    };
-
-    // Index leaves by normalized email so we can explain a no-hours person as
-    // "on leave the whole period" rather than an unexplained gap.
-    type Leave = { email: string; start: string; end: string; type: string; status: string };
-    const leavesByEmail = new Map<string, Leave[]>();
-    for (const lv of leaveRows) {
-      const k = normEmail(lv.email) ?? lv.email;
-      const arr = leavesByEmail.get(k);
-      if (arr) arr.push(lv);
-      else leavesByEmail.set(k, [lv]);
-    }
-
-    const period = parsePeriodRange(activeSourceFile); // null for "All Time"
-    const todayISO = new Date().toISOString().slice(0, 10);
-    const prettyType = (t: string) => (t.trim() ? t.trim() : 'Leave');
-
-    /** Best-guess explanation for a master-list employee who logged no hours.
-     *  Priority: time off overlapping the period → onboarding timing → unknown. */
-    const reasonForNoHours = (e: EmployeeRow, w: string, p: string): string => {
-      // 1) Approved/pending leave overlapping the pay period (or active today
-      //    when viewing All Time). Approved wins over pending.
-      const mine: Leave[] = [];
-      for (const k of new Set([w, p].filter(Boolean))) {
-        const arr = leavesByEmail.get(k);
-        if (arr) mine.push(...arr);
-      }
-      if (mine.length) {
-        const inWindow = period
-          ? mine.filter((lv) => lv.start <= period.endISO && lv.end >= period.startISO)
-          : mine.filter((lv) => lv.start <= todayISO && lv.end >= todayISO);
-        const pick = inWindow.find((lv) => lv.status === 'approved') ?? inWindow[0];
-        if (pick) {
-          const note = pick.status === 'approved' ? '' : ` [${pick.status}]`;
-          if (period) {
-            const whole = pick.start <= period.startISO && pick.end >= period.endISO;
-            return `${whole ? 'On leave the entire period' : 'On leave part of the period'} — ${prettyType(pick.type)} ${pick.start}→${pick.end}${note}`;
-          }
-          return `Currently on leave — ${prettyType(pick.type)} ${pick.start}→${pick.end}${note}`;
-        }
-      }
-
-      // 2) Onboarding timing — a start date landing in/after the period means
-      //    they hadn't started (or only just started) logging hours. Parse via
-      //    Date since the "Start Date" column isn't guaranteed ISO.
-      const startMs = e.start_date ? new Date(e.start_date.trim()).getTime() : NaN;
-      if (Number.isFinite(startMs)) {
-        const startShown = new Date(startMs).toISOString().slice(0, 10);
-        if (period) {
-          const pStart = new Date(period.startISO).getTime();
-          const pEnd = new Date(period.endISO).getTime();
-          if (startMs > pEnd) return `Not started yet — hired ${startShown}, after this period`;
-          if (startMs >= pStart) return `Newly onboarded — started ${startShown}, mid-period`;
-        } else {
-          const now = Date.now();
-          if (startMs > now) return `Not started yet — hired ${startShown}`;
-          if (now - startMs <= 30 * 24 * 3600 * 1000) return `Recently onboarded — started ${startShown}`;
-        }
-      }
-
-      // 3) Nothing in the HRIS explains it — flag for manual review.
-      return period
-        ? 'No hours logged — reason unknown (check Hubstaff upload / time off)'
-        : 'No hours on record — reason unknown';
-    };
-
-    const out: HubstaffMasterRow[] = [];
-    const masterKeys = new Set<string>();
-
-    // Every master-list employee → worked vs. no-hours.
-    for (const e of employees) {
-      const w = normEmail(e.work_email ?? null) ?? '';
-      const p = normEmail(e.personal_email) ?? '';
-      if (w) masterKeys.add(w);
-      if (p) masterKeys.add(p);
-      const didWork = worked != null && ((w !== '' && worked.has(w)) || (p !== '' && worked.has(p)));
-      const exempt = !didWork && isHubstaffExemptDept(e.department);
-      const pay = payFor(w, p);
-      out.push({
-        status: didWork
-          ? 'On Master & worked'
-          : exempt
-            ? HUBSTAFF_EXEMPT_STATUS
-            : 'On Master, no hours',
-        reason: didWork
-          ? ''
-          : exempt
-            ? `${e.department ?? 'This team'} — no Hubstaff tracking by nature`
-            : reasonForNoHours(e, w, p),
-        name: e.name ?? '',
-        workEmail: e.work_email ?? '',
-        personalEmail: e.personal_email ?? '',
-        department: e.department ?? '',
-        hours: pay ? pay.hours.toFixed(2) : '',
-      });
-    }
-
-    // Hubstaff workers with no master-list match — a directory gap to reconcile.
-    if (worked != null) {
-      for (const em of worked) {
-        if (masterKeys.has(em)) continue;
-        const ident = payrollIdentityByEmail?.[em];
-        const pay = employeePayByEmail[em];
-        out.push({
-          status: 'In Hubstaff, not on Master',
-          reason: 'Worked but missing from the Master List — add to the directory',
-          name: ident?.name ?? '',
-          workEmail: em,
-          personalEmail: '',
-          department: ident?.department ?? '',
-          hours: pay ? pay.hours.toFixed(2) : '',
-        });
-      }
-    }
-
-    return sortHubstaffReconRows(out);
-  }, [payrollEmailsNorm, employeePayByEmail, leaveRows, activeSourceFile, employees, payrollIdentityByEmail]);
-
   // ── Publish the FULL hero snapshot so the CEO board is an EXACT replica ───────
   // The CEO System Overview reads this and renders Accounting's own numbers/tiles.
   // Only for the LIVE cycle (selectedSourceFile === activeSourceFile) so the CEO,
@@ -3387,6 +3385,7 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
       emailsMatched,
       masterOnlyCount: inMasterNotPayroll,
       hubstaffOnlyCount: inPayrollNotMaster,
+      exceptionsCount: reconExceptions,
       pabFinalized,
       periodLabel: activePeriod?.label ?? null,
       periodWeek: activePeriod?.week ?? null,
@@ -3417,6 +3416,7 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
     emailsMatched,
     inMasterNotPayroll,
     inPayrollNotMaster,
+    reconExceptions,
     activePeriod,
     hubstaffReconRows,
   ]);
@@ -3727,7 +3727,7 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
           }
           sub={
             inPayrollNotMaster != null && inMasterNotPayroll != null
-              ? `${inPayrollNotMaster}↑ · ${inMasterNotPayroll}↓`
+              ? `${inPayrollNotMaster}↑ · ${inMasterNotPayroll}↓${reconExceptions ? ` · ${reconExceptions} exc` : ''}`
               : ''
           }
           tone={
@@ -4425,6 +4425,7 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
           matched: emailsMatched,
           masterOnly: inMasterNotPayroll,
           hubstaffOnly: inPayrollNotMaster,
+          exceptions: reconExceptions,
         }}
         periodLabel={activePeriod?.label ?? null}
         csvFilename={`hubstaff-master-reconciliation${activeSourceFile ? '_this-cycle' : '_all-time'}_${new Date().toISOString().slice(0, 10)}.csv`}
