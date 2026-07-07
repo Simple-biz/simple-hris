@@ -63,6 +63,7 @@ import { normEmail } from '@/lib/email/norm-email';
 import type { EmployeeRow } from '@/lib/supabase/employees';
 import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
 import { DEPARTMENTS, DEPT_DESCRIPTION, MANAGER_BONUS_DEPT_KEYS } from '@/lib/payroll/department-bonus';
+import { isFinalPayrollWeekOfMonth } from '@/lib/payroll/bonus-cadence';
 import { QC_DEPT_KEYS, isQcDeptKey } from '@/lib/qc/constants';
 import { parseDateRangeFromFilename } from '@/lib/hubstaff/calendar-column-dedupe';
 import {
@@ -260,7 +261,7 @@ function moneyPositive(m: Money): boolean {
 }
 
 /** Render a possibly-mixed total: only the non-zero currencies, joined by " · "
- *  (e.g. "₱1,200.00 · $50.00 · COP$8,000"). An empty total reads "₱0.00", so a
+ *  (e.g. "₱1,200.00 · $50.00 · $COP8,000"). An empty total reads "₱0.00", so a
  *  single-currency department shows pure native and a PHP department is unchanged. */
 function fmtTotals(m: Money): string {
   const parts: string[] = [];
@@ -697,6 +698,11 @@ export default function DeptBonusCalculator({
   const [internalWeek, setInternalWeek] = useState(() => isoWeekStart(new Date()));
   const weekStart = weekIsControlled ? (controlledWeek as string) : internalWeek;
   const weekEnd = useMemo(() => weekEndFromStart(weekStart), [weekStart]);
+  // Monthly catalog bonuses pay once per month, on the LAST payroll week of the
+  // month (mirrors PAB). They are only appliable in that week: in every other
+  // week they're filtered out of the dept's bonus columns below, so a monthly
+  // bonus can never be applied — and thus paid — more than once a month.
+  const isMonthlyPayWeek = useMemo(() => isFinalPayrollWeekOfMonth(weekStart), [weekStart]);
 
   // Report the calculator's OWN week changes up to the shell. Skipped when the
   // shell controls the week — it already knows (user picks route through
@@ -861,12 +867,14 @@ export default function DeptBonusCalculator({
       const key = normalizeDeptToKey(a.departmentKey) ?? a.departmentKey;
       const bonus = bonusById.get(a.bonusId);
       if (!bonus) continue;
+      // Monthly bonuses are only appliable in the month's final payroll week.
+      if (bonus.cadence === 'monthly' && !isMonthlyPayWeek) continue;
       const list = map.get(key) ?? [];
       if (!list.some((b) => b.id === bonus.id)) list.push(bonus);
       map.set(key, list);
     }
     return map;
-  }, [assignments, bonusById]);
+  }, [assignments, bonusById, isMonthlyPayWeek]);
 
   // dept key -> set of bonusIds that are "team effort" (shared) common bonuses:
   // entered once for the whole dept, everyone non-excluded receives the result.
@@ -908,6 +916,8 @@ export default function DeptBonusCalculator({
       const key = normalizeDeptToKey(a.departmentKey) ?? a.departmentKey;
       const bonus = bonusById.get(a.bonusId);
       if (!bonus) continue;
+      // Monthly bonuses are only appliable in the month's final payroll week.
+      if (bonus.cadence === 'monthly' && !isMonthlyPayWeek) continue;
       // Key individual assignments by the same canonical identity the roster uses,
       // so an assignment made under the work email attaches to the one member card.
       const email = canonEmail(a.employeeEmail);
@@ -918,7 +928,7 @@ export default function DeptBonusCalculator({
       map.set(key, byEmail);
     }
     return map;
-  }, [assignments, bonusById, canonEmail]);
+  }, [assignments, bonusById, canonEmail, isMonthlyPayWeek]);
 
   const deptLabelByKey = useMemo<Record<string, string>>(() => {
     const out: Record<string, string> = {};
@@ -931,6 +941,23 @@ export default function DeptBonusCalculator({
     for (const d of managedDepts) add(d);
     return out;
   }, [teamMembers, managedDepts]);
+
+  // Monthly bonuses assigned to this manager's departments that are hidden this
+  // week because it isn't the month's final payroll week. Drives the hint banner
+  // so a manager understands why a monthly bonus isn't showing yet.
+  const hiddenMonthlyBonusNames = useMemo<string[]>(() => {
+    if (isQc || isMonthlyPayWeek) return [];
+    const universe = new Set(Object.keys(deptLabelByKey));
+    const names = new Set<string>();
+    for (const a of assignments) {
+      const bonus = bonusById.get(a.bonusId);
+      if (bonus?.cadence !== 'monthly') continue;
+      const key = normalizeDeptToKey(a.departmentKey) ?? a.departmentKey;
+      if (!universe.has(key)) continue;
+      names.add(bonus.name);
+    }
+    return Array.from(names);
+  }, [isQc, isMonthlyPayWeek, deptLabelByKey, assignments, bonusById]);
 
   const visibleDeptKeys = useMemo<string[]>(() => {
     // QC officers only score the QC depts, and only the slots assigned to them
@@ -1562,6 +1589,7 @@ export default function DeptBonusCalculator({
             bonusId: bonus.id,
             bonusName: bonus.name,
             kind: bonus.kind,
+            cadence: bonus.cadence ?? 'weekly',
             vars: bonus.kind === 'formula' ? numVars : null,
             // USD bonuses are converted to PHP here so the saved amount (and the
             // Payroll Wizard "KPI Sub." sum) stays PHP. The rate is snapshotted
@@ -2002,6 +2030,14 @@ export default function DeptBonusCalculator({
                           <KindDot kind={b.kind} />
                         </div>
                         <BonusCurrencyTag bonus={b} fx={fx} />
+                        {b.cadence === 'monthly' && (
+                          <span
+                            className="w-fit rounded bg-amber-100 px-1 py-0.5 text-[8.5px] font-bold uppercase tracking-wide text-amber-700 dark:bg-amber-950/60 dark:text-amber-300"
+                            title="Paid once a month, on the last payroll week of the month"
+                          >
+                            Monthly
+                          </span>
+                        )}
                         <button
                           type="button"
                           disabled={readOnly || !d?.loaded || appCount === 0}
@@ -2747,6 +2783,18 @@ export default function DeptBonusCalculator({
           />
         )}
 
+        {hiddenMonthlyBonusNames.length > 0 && (
+          <div className="mt-3 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] leading-snug text-amber-800 dark:border-amber-500/30 dark:bg-amber-950/20 dark:text-amber-300">
+            <CalendarDays className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
+            <span>
+              <strong>Monthly {hiddenMonthlyBonusNames.length === 1 ? 'bonus' : 'bonuses'}</strong>{' '}
+              ({hiddenMonthlyBonusNames.join(', ')}) {hiddenMonthlyBonusNames.length === 1 ? 'is' : 'are'} paid
+              once a month and only appear on the <strong>last payroll week of the month</strong> — switch to
+              that week to apply {hiddenMonthlyBonusNames.length === 1 ? 'it' : 'them'}.
+            </span>
+          </div>
+        )}
+
         {/* Calculators toolbar: search + open-as toggle */}
         <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
           <div className="flex min-w-0 flex-1 items-center gap-3">
@@ -3347,7 +3395,7 @@ function PanelIconButton({ label, onClick, children, disabled }: { label: string
 }
 
 /** Sky chip flagging a non-PHP (USD/COP) bonus. For a flat bonus it shows the
- *  native amount (e.g. "$X" / "COP$X"); for a formula it shows the currency code
+ *  native amount (e.g. "$X" / "$COPX"); for a formula it shows the currency code
  *  (the result varies with inputs). The peso figures in the grid are the
  *  FX-converted amounts that get paid; this chip explains why a "$50" bonus
  *  appears as a peso total. Renders nothing for PHP bonuses so the common case

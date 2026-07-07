@@ -11,6 +11,8 @@ import { toast } from 'sonner';
 import { normEmail } from '@/lib/email/norm-email';
 import { SESSION_EMAIL_KEY } from '@/lib/rbac/views';
 import { cn } from '@/lib/utils';
+import { usePublishPresenceTab } from '@/components/presence/PresenceProvider';
+import { humanizeTabId } from '@/lib/presence/page-label';
 import PayrollClerkSidebar from './PayrollClerkSidebar';
 import ProcessorQueue from './ProcessorQueue';
 import DispatchLoader from './DispatchLoader';
@@ -35,6 +37,7 @@ export default function PayrollClerkApp() {
   const [mounted, setMounted] = useState(false);
 
   const [activeTab, setActiveTab] = useState<string>('all');
+  usePublishPresenceTab(humanizeTabId(activeTab));
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [viewerEmail, setViewerEmail] = useState<string | null>(null);
 

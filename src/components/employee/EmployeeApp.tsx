@@ -30,6 +30,8 @@ import { dashboardPages, pageLabel } from '@/lib/pages/visibility';
 import UnderConstruction from '@/components/common/UnderConstruction';
 
 import { normEmail } from '@/lib/email/norm-email';
+import { usePublishPresenceTab } from '@/components/presence/PresenceProvider';
+import { humanizeTabId } from '@/lib/presence/page-label';
 import { isPayoutComplete } from '@/components/employee/employee-payout-fields';
 import { hasAnySkillSetContent, type SkillSetCompletionFields } from '@/lib/skill-set-titles';
 import type { EmployeeRow } from '@/lib/supabase/employees';
@@ -52,6 +54,7 @@ export default function EmployeeApp() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [activeTab, setActiveTab] = useState('dashboard');
+  usePublishPresenceTab(humanizeTabId(activeTab));
   const [profileFocusTab, setProfileFocusTab] = useState<EmployeeProfileFocusTab>('overview');
   // Disputes prefill — kept for future use if the flow is re-enabled
   // const [disputesPrefill, setDisputesPrefill] = useState<{ date: string; seconds?: number } | null>(null);

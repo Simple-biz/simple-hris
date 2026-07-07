@@ -18,11 +18,21 @@ export const BONUS_CATALOG_VERSION = 1 as const;
 /** How a bonus produces its amount. */
 export type BonusKind = 'flat' | 'formula';
 
+/** How often a bonus pays out.
+ *  - `weekly` (default): pays every payroll week it is applied.
+ *  - `monthly`: pays once per month, on the **final payroll week of the month**
+ *    (mirrors PAB). The manager KPI Calculator only lets it be applied in that
+ *    final week, and the Payroll Wizard only sums it into the final week's
+ *    paycheck — so it can never be paid multiple times in one month. */
+export type BonusCadence = 'weekly' | 'monthly';
+
 export interface BonusDef {
   id: string;
   name: string;
   description?: string;
   kind: BonusKind;
+  /** How often the bonus pays. Absent on legacy bonuses ⇒ 'weekly'. */
+  cadence?: BonusCadence;
   /** For kind === 'flat'. */
   amount?: number;
   /** For kind === 'formula' (Excel-style syntax). */

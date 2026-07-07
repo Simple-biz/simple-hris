@@ -16,14 +16,15 @@ import {
   MoreHorizontal,
   Radar,
   Settings,
+  Sheet,
   ShieldCheck,
   Sun,
   UserCog,
-  Users,
   Webhook,
 } from 'lucide-react';
 import CollapsibleSidebarShell from '@/components/common/CollapsibleSidebarShell';
 import SidebarLogoHeader from '@/components/common/SidebarLogoHeader';
+import SidebarCollapsedDot from '@/components/common/SidebarCollapsedDot';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -62,7 +63,7 @@ const systemNav: Array<{
 }> = [
   { id: 'overview', label: 'Overview', icon: LayoutDashboard },
   { id: 'roles', label: 'Roles & permissions', icon: UserCog, badge: 'count' },
-  { id: 'employees', label: 'Employees', icon: Users, badge: 'count' },
+  { id: 'global-master-list', label: 'Global Master List', icon: Sheet, badge: 'count' },
   { id: 'workspace', label: 'Google Workspace', icon: Settings },
   { id: 'webhooks', label: 'Webhooks', icon: Webhook, badge: 'alert' },
   { id: 'pages', label: 'Pages', icon: LayoutTemplate },
@@ -129,7 +130,14 @@ export default function AdminSidebar({
     .toUpperCase()
     .slice(0, 2) || (email || '?').slice(0, 2).toUpperCase();
 
-  const navBtn = (id: string, label: string, Icon: typeof LayoutDashboard, extra?: React.ReactNode) => (
+  const navBtn = (
+    id: string,
+    label: string,
+    Icon: typeof LayoutDashboard,
+    extra?: React.ReactNode,
+    /** Stands in for a right-aligned badge that the collapsed 64px rail clips. */
+    dot?: { show: boolean; tone?: string },
+  ) => (
     <button
       key={id}
       type="button"
@@ -140,12 +148,17 @@ export default function AdminSidebar({
         activeTab === id ? 'bg-[#18181b] font-medium text-white' : 'hover:bg-[#f3f3f3] hover:text-[#18181b]',
       )}
     >
-      <Icon
-        className={cn(
-          'h-[15px] w-[15px] shrink-0',
-          activeTab === id ? 'text-white/75' : 'text-[#a1a1aa]',
+      <span className="relative shrink-0">
+        <Icon
+          className={cn(
+            'h-[15px] w-[15px] shrink-0',
+            activeTab === id ? 'text-white/75' : 'text-[#a1a1aa]',
+          )}
+        />
+        {dot?.show && (
+          <SidebarCollapsedDot collapsed={collapsed} tone={dot.tone ?? 'bg-red-500'} />
         )}
-      />
+      </span>
       <span className={cn('truncate text-left sb-collapse-fade')}>{label}</span>
       {extra}
     </button>
@@ -194,7 +207,7 @@ export default function AdminSidebar({
                   </span>
                 );
               }
-              if (item.badge === 'count' && item.id === 'employees' && counts?.employees != null) {
+              if (item.badge === 'count' && item.id === 'global-master-list' && counts?.employees != null) {
                 badge = (
                   <span
                     className={cn(
@@ -208,6 +221,7 @@ export default function AdminSidebar({
                   </span>
                 );
               }
+              let dot: { show: boolean; tone?: string } | undefined;
               if (item.badge === 'alert' && counts?.webhookAlert != null && counts.webhookAlert > 0) {
                 badge = (
                   <span
@@ -221,11 +235,13 @@ export default function AdminSidebar({
                     {counts.webhookAlert}
                   </span>
                 );
+                dot = { show: true, tone: 'bg-amber-500' };
               }
               if (item.id === 'notifications' && lockState.locked) {
                 badge = <span className="ml-auto h-2 w-2 animate-pulse rounded-full bg-red-500" />;
+                dot = { show: true, tone: 'bg-red-500' };
               }
-              return navBtn(item.id, item.label, item.icon, badge);
+              return navBtn(item.id, item.label, item.icon, badge, dot);
             })}
           </nav>
 

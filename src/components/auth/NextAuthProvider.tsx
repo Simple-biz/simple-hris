@@ -5,6 +5,7 @@ import type { Session } from 'next-auth';
 import type { ReactNode } from 'react';
 import PresenceProvider from '@/components/presence/PresenceProvider';
 import SessionInvalidationWatcher from '@/components/auth/SessionInvalidationWatcher';
+import GlobalPingListener from '@/components/presence/GlobalPingListener';
 import ImpersonationBanner from '@/components/auth/ImpersonationBanner';
 
 /**
@@ -16,7 +17,9 @@ import ImpersonationBanner from '@/components/auth/ImpersonationBanner';
  * data during SSR instead of throwing "must be wrapped in SessionProvider".
  *
  * Also hosts {@link PresenceProvider} so every authenticated client broadcasts
- * online presence app-wide (powers the live status badges on the My Team tab).
+ * online presence app-wide (powers the live status badges on the My Team tab
+ * and the Admin Global Master List), and {@link GlobalPingListener} so an
+ * Admin "Ping" lands as a toast no matter which dashboard the recipient is on.
  */
 export default function NextAuthProvider({
   children,
@@ -28,6 +31,7 @@ export default function NextAuthProvider({
   return (
     <SessionProvider session={session} refetchOnWindowFocus={false}>
       <SessionInvalidationWatcher />
+      <GlobalPingListener />
       <ImpersonationBanner />
       <PresenceProvider>{children}</PresenceProvider>
     </SessionProvider>

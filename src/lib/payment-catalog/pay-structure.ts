@@ -41,9 +41,18 @@ export const CURRENCY_SYMBOL: Record<PayCurrency, string> = {
   // Peso sign is non-ASCII; build it from a char code so this source stays ASCII.
   PHP: String.fromCharCode(0x20b1),
   USD: '$',
-  // Colombian peso also uses "$"; prefix to disambiguate from USD/PHP.
-  COP: 'COP$',
+  // Colombian peso also uses "$"; suffix the code ("$COP") to disambiguate an
+  // amount from USD/PHP without reading as the redundant "COP$ COP" in chips.
+  COP: '$COP',
 };
+
+/** Compact label for currency chips / toggles / badges (symbol + code).
+ *  COP's symbol is already "$COP" (it carries the code), so appending the code
+ *  again would read "$COP COP" — show it alone. PHP/USD show "symbol code"
+ *  (e.g. "₱ PHP", "$ USD"). */
+export function currencyChipLabel(c: PayCurrency): string {
+  return c === 'COP' ? CURRENCY_SYMBOL[c] : `${CURRENCY_SYMBOL[c]} ${c}`;
+}
 
 /** Locale per currency for `toLocaleString` grouping/decimals. */
 export const CURRENCY_LOCALE: Record<PayCurrency, string> = {

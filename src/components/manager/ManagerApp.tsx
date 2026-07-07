@@ -68,7 +68,8 @@ import { usePagesVisibility } from '@/hooks/usePagesVisibility';
 import { pageLabel } from '@/lib/pages/visibility';
 import UnderConstruction from '@/components/common/UnderConstruction';
 import ReadOnlyTab from '@/components/rbac/ReadOnlyTab';
-import { useOnlineEmails } from '@/components/presence/PresenceProvider';
+import { useOnlineEmails, usePublishPresenceTab } from '@/components/presence/PresenceProvider';
+import { humanizeTabId } from '@/lib/presence/page-label';
 import { TeamAvatar, initialsOf, gradientFor } from '@/components/team/team-ui';
 import { formatCurrentProjects } from '@/lib/skill-set-titles';
 import {
@@ -96,6 +97,7 @@ export default function ManagerApp() {
   const emailFromQuery = searchParams?.get('email') ?? null;
 
   const [activeTab, setActiveTab] = useState<ManagerTab>('overview');
+  usePublishPresenceTab(humanizeTabId(activeTab));
   // When a manager owns both HSL branches and regular departments, the KPI tab
   // shows one calculator at a time (null = default to first-assigned).
   const [kpiCalc, setKpiCalc] = useState<'hsl' | 'dept' | null>(null);

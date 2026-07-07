@@ -14,6 +14,8 @@ import ContractorOverview from './ContractorOverview';
 import ContractorInvoices from './ContractorInvoices';
 import ContractorProfile from './ContractorProfile';
 import { normEmail } from '@/lib/email/norm-email';
+import { usePublishPresenceTab } from '@/components/presence/PresenceProvider';
+import { humanizeTabId } from '@/lib/presence/page-label';
 import { useFeaturePermissions } from '@/hooks/useFeaturePermissions';
 import ReadOnlyTab from '@/components/rbac/ReadOnlyTab';
 import type { EmployeeRow } from '@/lib/supabase/employees';
@@ -33,6 +35,7 @@ export default function ContractorApp() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [activeTab, setActiveTab] = useState('overview');
+  usePublishPresenceTab(humanizeTabId(activeTab));
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const { resolvedTheme } = useTheme();
   const [mounted, setMounted] = useState(false);

@@ -17,6 +17,8 @@ import PabDisputeQueue from './components/payroll/PabDisputeQueue';
 import PayrollDispatch from './components/payroll-clerk/PayrollDispatch';
 import { normEmail } from '@/lib/email/norm-email';
 import { SESSION_EMAIL_KEY } from '@/lib/rbac/views';
+import { usePublishPresenceTab } from '@/components/presence/PresenceProvider';
+import { humanizeTabId } from '@/lib/presence/page-label';
 import AnnouncementWall from './components/announcements/AnnouncementWall';
 import AnnouncementComposer from './components/announcements/AnnouncementComposer';
 import SWall from './components/swall/SWall';
@@ -41,6 +43,7 @@ function isPlausibleEmail(s: string): boolean {
 
 export default function App({ initialData }: { initialData?: InitialAccountingData | null }) {
   const [activeTab, setActiveTab] = useState('overview');
+  usePublishPresenceTab(humanizeTabId(activeTab));
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [roles, setRoles] = useState<string[]>([]);
   const [featurePerms, setFeaturePerms] = useState<FeaturePermissionsMap>({});

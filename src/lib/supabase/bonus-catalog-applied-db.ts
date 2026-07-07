@@ -18,6 +18,10 @@ export interface AppliedBonusRow {
   bonusId: string;
   bonusName: string;
   kind: 'flat' | 'formula';
+  /** Snapshot of the bonus's cadence at apply time. 'monthly' rows are only ever
+   *  saved for the final payroll week of a month (the KPI Calculator enforces it)
+   *  and the Payroll Wizard only pays them there. Absent ⇒ 'weekly'. */
+  cadence?: 'weekly' | 'monthly';
   vars?: Record<string, number> | null;
   amount: number;
   appliedBy?: string | null;
@@ -37,6 +41,7 @@ export type AppliedDbRow = {
   bonus_id: string;
   bonus_name: string;
   kind: 'flat' | 'formula';
+  cadence: 'weekly' | 'monthly' | null;
   vars: Record<string, number> | null;
   amount: number | string | null;
   applied_by: string | null;
@@ -88,6 +93,7 @@ export async function saveDeptPeriodApplied(params: {
     bonus_id: r.bonusId,
     bonus_name: r.bonusName,
     kind: r.kind,
+    cadence: r.cadence === 'monthly' ? 'monthly' : 'weekly',
     vars: r.vars ?? null,
     amount: Number.isFinite(r.amount) ? r.amount : 0,
     applied_by: params.actor,

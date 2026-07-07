@@ -870,7 +870,7 @@ Client shell that gates the admin experience, resolves the viewer email (`?email
 |---|---|
 | `overview` | `AdminOverview` |
 | `roles` | `AdminRoles` |
-| `employees` | `AdminEmployees` |
+| `global-master-list` | `AdminGlobalMasterList` |
 | `webhooks` | `AdminWebhooks` |
 | `csv-imports` | `AdminCsvImports` |
 | `audit` | `AuditLogPanel` |
@@ -896,9 +896,32 @@ Read-only "control plane" landing dashboard -- metrics, RBAC mix, webhook health
 
 Imports `formatActionLabel`/`formatRelativeTime` from `AuditLogPanel`. Audit search operates on the in-memory 24-row sample (full search lives in the Audit tab).
 
-### `src/components/admin/AdminEmployees.tsx`
+### `src/components/admin/AdminGlobalMasterList.tsx`
 
-Read-only merged-profile directory -- master-list + rates + Hubstaff + any profile source unioned per person, with a master/detail browser. Left **Directory**: searchable, department-filtered, paginated (`PAGE_SIZE=10`) avatar rows. Right **Profile**: selected person's avatar, emails, org/department badges, **Roles**, and "Data from database" fields grouped into categories (Compensation, Banking, Location, Dates, Other). A `searchIndex` memo precomputes a lowercased blob per profile (perf fix to avoid re-walking fields per keystroke). `ProfileAvatar` cascades photo URL -> Gravatar (`/api/avatar?email=&s=&d=404`) -> initials. Loads `GET /api/employee-rate-profiles` (returns `profiles` + `mergeNotes`), `GET /api/employee-roles`, `GET /api/employees`. No writes.
+Editorial-style roster list -- the Admin equivalent of `HrGlobalMasterList.tsx` (same `GET
+/api/employees` roster + `POST /api/cron/sync-master-from-sheet` "Sync from Google Sheet"
+button, same search/department-filter/pagination), plus three Admin-only, live capabilities
+per row, none of which exist on HR's version:
+
+- **Status** -- online/offline dot from `usePresenceDetails()`
+  (`src/components/presence/PresenceProvider.tsx`); when online, shows
+  `"{dashboard} · {tab}"` (`dashboardLabelForPathname` from `src/lib/presence/page-label.ts`
+  + the live tab label every dashboard shell publishes via `usePublishPresenceTab`); when
+  offline, `GET /api/presence/last-seen?emails=...` (scoped to the current page's rows only)
+  backs a "Last seen" fallback.
+- **Ping** -- an inline composer broadcasts a directed, ephemeral message on the global
+  `hris-ping` Realtime channel (`useAdminPingSender` in
+  `src/components/presence/GlobalPingListener.tsx`); the recipient sees a toast + chime via
+  the root-mounted `GlobalPingListener`, wherever they currently are. Nothing is persisted --
+  lost if they're not connected at that moment.
+- **Force logout** -- calls the existing `POST /api/auth/force-logout` (same endpoint
+  `AdminRoles.forceLogoutSelected` uses), which already propagates live via
+  `SessionInvalidationWatcher`.
+
+Avatar resolution (photo -> Gravatar `/api/avatar?email=&s=&d=404` -> initials) is a
+self-contained `RosterAvatar`, not `EmployeeAvatar` (that component is only valid for the
+signed-in viewer's own photo). No writes beyond the sync button and the two live actions
+above.
 
 ### `src/components/admin/AdminRoles.tsx`
 

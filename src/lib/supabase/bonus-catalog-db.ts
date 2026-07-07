@@ -16,6 +16,7 @@ type BonusRow = {
   amount: number | string | null;
   formula: string | null;
   currency: 'PHP' | 'USD' | null;
+  cadence: 'weekly' | 'monthly' | null;
   starred: boolean | null;
   created_by: string | null;
   created_at: string | null;
@@ -46,6 +47,8 @@ function mapBonus(r: BonusRow): BonusDef {
     formula: r.formula ?? undefined,
     // Legacy rows (pre-currency) are PHP.
     currency: r.currency === 'USD' ? 'USD' : 'PHP',
+    // Legacy rows (pre-cadence) pay weekly.
+    cadence: r.cadence === 'monthly' ? 'monthly' : 'weekly',
     starred: r.starred ?? false,
     createdBy: r.created_by,
     createdAt: r.created_at,
@@ -101,6 +104,7 @@ export async function upsertBonus(
     amount: bonus.kind === 'flat' ? (Number.isFinite(bonus.amount) ? bonus.amount : 0) : null,
     formula: bonus.kind === 'formula' ? (bonus.formula ?? '') : null,
     currency: bonus.currency === 'USD' ? 'USD' : 'PHP',
+    cadence: bonus.cadence === 'monthly' ? 'monthly' : 'weekly',
     starred: !!bonus.starred,
     created_by: actor,
     updated_by: actor,

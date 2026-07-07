@@ -127,6 +127,7 @@ import {
 } from '@/lib/audit/client-format';
 import { usePabPeriodSettings } from '@/hooks/usePabPeriodSettings';
 import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
+import { isFinalPayrollWeekOfMonth } from '@/lib/payroll/bonus-cadence';
 import { parseLocalDateFromIso, resolvePabRangeForMonth, yearMonthKey, PAB_PERIOD_EXCLUSIONS_KEY } from '@/lib/pab-period-settings';
 import {
   US_HOLIDAYS_ENABLED_KEY,
@@ -1221,11 +1222,17 @@ export default function PayrollWizard({
               { cache: 'no-store' },
             );
             const json = (await res.json()) as {
-              rows?: { employee_email: string; amount: number | string | null }[];
+              rows?: { employee_email: string; amount: number | string | null; cadence?: 'weekly' | 'monthly' | null }[];
             };
+            // Monthly bonuses pay once per month, on the LAST payroll week of the
+            // month (mirrors PAB). Only sum them into that final week's paycheck —
+            // a backstop even though the KPI Calculator already prevents a monthly
+            // bonus from being applied outside the final week.
+            const isFinalWeekOfMonth = isFinalPayrollWeekOfMonth(info.period_start);
             for (const r of json.rows ?? []) {
               const em = (r.employee_email ?? '').toLowerCase();
               if (!em) continue;
+              if (r.cadence === 'monthly' && !isFinalWeekOfMonth) continue;
               const amt = r.amount == null ? 0 : Number(r.amount);
               raw[em] = Math.round((raw[em] ?? 0) + amt);
               const bucket = (byDept[em] ??= {});
@@ -6701,7 +6708,7 @@ export default function PayrollWizard({
               <div className="flex items-center gap-2">
                 <div className="relative">
                   <span className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-[11px] font-semibold text-amber-600 dark:text-amber-400">
-                    COP$
+                    $COP
                   </span>
                   <Input
                     type="number"
@@ -6733,7 +6740,7 @@ export default function PayrollWizard({
                             .then(async (res) => {
                               const json = (await res.json()) as { error: string | null };
                               if (!res.ok || json.error) throw new Error(json.error ?? 'Save failed');
-                              toast.success(`Rate saved: COP$${parsed.toLocaleString('es-CO')} / USD`);
+                              toast.success(`Rate saved: $COP${parsed.toLocaleString('es-CO')} / USD`);
                               cursorOverlayRef.current?.broadcastSave();
                               setUsdToCopEditing(false);
                             })
@@ -6787,7 +6794,7 @@ export default function PayrollWizard({
                         .then(async (res) => {
                           const json = (await res.json()) as { error: string | null };
                           if (!res.ok || json.error) throw new Error(json.error ?? 'Save failed');
-                          toast.success(`Rate saved: COP$${parsed.toLocaleString('es-CO')} / USD`);
+                          toast.success(`Rate saved: $COP${parsed.toLocaleString('es-CO')} / USD`);
                           setUsdToCopEditing(false);
                         })
                         .catch((err: unknown) =>
@@ -6802,14 +6809,14 @@ export default function PayrollWizard({
               </div>
               <p className="w-full text-xs text-amber-700/60 dark:text-amber-400/60">
                 Colombian-paid people are converted from USD at this rate for the COP dispatch tab.
-                Current: <span className="font-mono font-semibold">COP${usdToCopRate.toLocaleString('es-CO')}</span> = $1 USD.{' '}
+                Current: <span className="font-mono font-semibold">$COP{usdToCopRate.toLocaleString('es-CO')}</span> = $1 USD.{' '}
                 Derived PHP ↔ COP:{' '}
                 <span className="font-mono font-semibold">
-                  ₱1 = COP${copPerPhp(fxRates).toLocaleString('es-CO', { maximumFractionDigits: 2 })}
+                  ₱1 = $COP{copPerPhp(fxRates).toLocaleString('es-CO', { maximumFractionDigits: 2 })}
                 </span>{' '}
                 ·{' '}
                 <span className="font-mono font-semibold">
-                  COP$1 = ₱{phpPerCop(fxRates).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 5 })}
+                  $COP1 = ₱{phpPerCop(fxRates).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 5 })}
                 </span>
                 {' '}(USD is the anchor — PHP↔COP is computed, not set directly).
               </p>

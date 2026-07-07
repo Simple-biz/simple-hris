@@ -83,7 +83,7 @@ Two distinct visual families:
    `Overview`).
 2. **Editorial** — Admin, Payroll Clerk, Manager, CEO use a near-monochrome
    zinc palette, hairline borders, monospace numerals, and dense per-row UI
-   (`AdminEmployees`, `Rates`, `AdminOverview`). When in doubt for a new admin
+   (`AdminGlobalMasterList`, `Rates`, `AdminOverview`). When in doubt for a new admin
    surface, follow the editorial family.
 
 ### 1.3 Page background tokens
@@ -223,7 +223,7 @@ two common shapes.
 
 #### 3.2.1 Editorial header (zinc, hairline)
 
-Used by `AdminOverview`, `Rates`, `AdminEmployees`, `PayrollDispatch`'s
+Used by `AdminOverview`, `Rates`, `AdminGlobalMasterList`, `PayrollDispatch`'s
 secondary panels.
 
 ```
@@ -375,7 +375,7 @@ Used in: `AuditLogPanel.tsx`, `AdminRoles.tsx` table view.
 
 ### 5.2 Editorial card-list (the main pattern)
 
-Used in `Rates`, `AdminEmployees`, `ProcessorQueue` (Payroll Clerk),
+Used in `Rates`, `AdminGlobalMasterList`, `ProcessorQueue` (Payroll Clerk),
 `SentPaymentsHistory`, `DispatchReports.dispatches`. Each row is a flex card,
 not a `<tr>`. Reasons:
 
@@ -483,7 +483,7 @@ Default size:
 
 Use the shadcn `<Card>` for **bordered, content-section panels** with a clear
 title and structured body. Examples: `AdminRoles` role list cards, audit log
-filters card, `AdminEmployees` directory + selected detail.
+filters card, `AdminGlobalMasterList`'s roster card.
 
 ### 6.2 Hairline panel (editorial alternative)
 

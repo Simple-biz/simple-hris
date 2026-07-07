@@ -2,10 +2,12 @@
 
 import { Suspense, useEffect, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
+import { usePublishPresenceTab } from '@/components/presence/PresenceProvider';
+import { humanizeTabId } from '@/lib/presence/page-label';
 import AdminSidebar from '@/components/admin/AdminSidebar';
 import AdminOverview from '@/components/admin/AdminOverview';
 import AdminRoles from '@/components/admin/AdminRoles';
-import AdminEmployees from '@/components/admin/AdminEmployees';
+import AdminGlobalMasterList from '@/components/admin/AdminGlobalMasterList';
 import AdminWebhooks from '@/components/admin/AdminWebhooks';
 import AdminWorkspace from '@/components/admin/AdminWorkspace';
 import AdminApiKeys from '@/components/admin/AdminApiKeys';
@@ -48,6 +50,7 @@ function AdminPageInner() {
   // gating their sidebar behind a client-only flag, so we match that here.
   const [mounted, setMounted] = useState(false);
   const [activeTab, setActiveTab] = useState('overview');
+  usePublishPresenceTab(humanizeTabId(activeTab));
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [adminEmail, setAdminEmail] = useState<string | null>(null);
   const [navCounts, setNavCounts] = useState({
@@ -67,7 +70,7 @@ function AdminPageInner() {
   // "Role Management & Sessions" link in System Settings).
   useEffect(() => {
     const known = new Set([
-      'overview', 'roles', 'employees', 'workspace', 'webhooks',
+      'overview', 'roles', 'global-master-list', 'workspace', 'webhooks',
       'pages', 'notifications', 'audit', 'diagnostics', 'api-tokens', 'backups', 'settings',
     ]);
     if (tabFromQuery && known.has(tabFromQuery)) setActiveTab(tabFromQuery);
@@ -153,10 +156,10 @@ function AdminPageInner() {
         return <AdminOverview userEmail={adminEmail} onNavigate={navigate} />;
       case 'roles':
         return <AdminRoles />;
-      case 'employees':
+      case 'global-master-list':
         return (
           <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-            <AdminEmployees />
+            <AdminGlobalMasterList />
           </div>
         );
       case 'webhooks':

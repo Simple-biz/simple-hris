@@ -62,6 +62,7 @@ import {
   validateBonus,
   type BonusDef,
   type BonusAssignment,
+  type BonusCadence,
 } from '@/lib/bonus-catalog/types';
 import {
   validateFormula,
@@ -72,6 +73,7 @@ import {
   newPayId,
   formatRate,
   CURRENCY_SYMBOL,
+  currencyChipLabel,
   CURRENCY_LOCALE,
   PAY_CURRENCIES,
   OT_MULTIPLIER,
@@ -1165,7 +1167,7 @@ function CurrencyToggle({
             />
           )}
           <span className="relative z-10">
-            {CURRENCY_SYMBOL[c]} {c}
+            {currencyChipLabel(c)}
           </span>
         </button>
       ))}
@@ -2135,6 +2137,7 @@ function BonusCard({
             <span className="truncate text-sm font-semibold text-zinc-900 dark:text-zinc-100">{bonus.name || 'Untitled'}</span>
             <KindBadge kind={bonus.kind} />
             <CurrencyBadge currency={bonus.currency} />
+            <CadenceBadge cadence={bonus.cadence} />
           </div>
           {bonus.description && (
             <p className="mt-0.5 truncate text-xs text-zinc-500 dark:text-zinc-500">{bonus.description}</p>
@@ -2321,6 +2324,7 @@ function BonusDetailModal({
                   </h2>
                   <KindBadge kind={b.kind} />
                   <CurrencyBadge currency={b.currency} />
+                  <CadenceBadge cadence={b.cadence} />
                 </div>
                 {b.description && (
                   <p className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">{b.description}</p>
@@ -2448,6 +2452,7 @@ function BonusEditor({
   const [amount, setAmount] = useState<string>(initial.amount != null ? String(initial.amount) : '');
   const [formula, setFormula] = useState(initial.formula ?? '');
   const [currency, setCurrency] = useState<PayCurrency>(initial.currency ?? 'PHP');
+  const [cadence, setCadence] = useState<BonusCadence>(initial.cadence ?? 'weekly');
   const [showCode, setShowCode] = useState(false);
 
   const formulaCheck = useMemo(() => (kind === 'formula' ? validateFormula(formula) : null), [kind, formula]);
@@ -2457,6 +2462,7 @@ function BonusEditor({
     name: name.trim(),
     description: description.trim() || undefined,
     kind,
+    cadence,
     amount: kind === 'flat' ? Number(amount) : undefined,
     formula: kind === 'formula' ? formula.trim() : undefined,
     currency,
@@ -2531,6 +2537,35 @@ function BonusEditor({
             </p>
           )}
         </div>
+        <div>
+          <span className="mb-1.5 block text-xs font-medium text-zinc-600 dark:text-zinc-400">Frequency</span>
+          <div className="inline-flex rounded-md border border-zinc-200 p-0.5 dark:border-zinc-800">
+            {(['weekly', 'monthly'] as const).map((c) => (
+              <button
+                key={c}
+                type="button"
+                onClick={() => setCadence(c)}
+                className={`relative rounded px-3 py-1 text-xs font-medium capitalize transition-colors ${
+                  cadence === c ? 'text-white' : 'text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200'
+                }`}
+              >
+                {cadence === c && (
+                  <motion.span
+                    layoutId={`bonusCadencePill-${initial.id}`}
+                    className="absolute inset-0 rounded bg-orange-500"
+                    transition={{ type: 'spring', stiffness: 500, damping: 34 }}
+                  />
+                )}
+                <span className="relative z-10">{c}</span>
+              </button>
+            ))}
+          </div>
+          {cadence === 'monthly' && (
+            <p className="mt-1 max-w-[15rem] text-[10.5px] leading-snug text-zinc-400">
+              Paid once a month, on the last payroll week of the month.
+            </p>
+          )}
+        </div>
       </div>
 
       <motion.div layout className="relative">
@@ -2544,7 +2579,7 @@ function BonusEditor({
           transition={{ duration: 0.2, ease: EASE }}
           className="mt-3 max-w-xs"
         >
-          <Field label={`Amount (${CURRENCY_SYMBOL[currency]} ${currency})`}>
+          <Field label={`Amount (${currencyChipLabel(currency)})`}>
             <Input
               type="number"
               inputMode="decimal"
@@ -3088,6 +3123,7 @@ function AssignmentRow({
           </span>
           {bonus && <KindBadge kind={bonus.kind} />}
           {bonus && <CurrencyBadge currency={bonus.currency} />}
+          {bonus && <CadenceBadge cadence={bonus.cadence} />}
         </div>
         <div className="mt-0.5 flex items-center gap-2 text-xs text-zinc-500">
           {who && <span className="truncate">{who}</span>}
@@ -3176,6 +3212,7 @@ function CommonAssignmentRow({
             </span>
             {bonus && <KindBadge kind={bonus.kind} />}
             {bonus && <CurrencyBadge currency={bonus.currency} />}
+            {bonus && <CadenceBadge cadence={bonus.cadence} />}
           </div>
           <div className="mt-0.5 flex items-center gap-2 text-xs text-zinc-500">
             {bonus?.kind === 'flat' && (
@@ -3363,6 +3400,17 @@ function KindBadge({ kind }: { kind: BonusDef['kind'] }) {
   );
 }
 
+/** Flags a monthly bonus (paid once, on the last payroll week of the month).
+ *  Weekly is the default, so it renders nothing to keep the common case clean. */
+function CadenceBadge({ cadence }: { cadence: BonusDef['cadence'] }) {
+  if (cadence !== 'monthly') return null;
+  return (
+    <span className="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide bg-amber-100 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300">
+      monthly
+    </span>
+  );
+}
+
 /** Flags a non-PHP (USD/COP) bonus. PHP is the silent default, so this renders
  *  nothing for PHP to keep the common case uncluttered. */
 function CurrencyBadge({ currency }: { currency?: PayCurrency }) {
@@ -3373,7 +3421,7 @@ function CurrencyBadge({ currency }: { currency?: PayCurrency }) {
       className="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide bg-sky-100 text-sky-700 dark:bg-sky-950/60 dark:text-sky-300"
       title={`${cur}-denominated — converted to PHP at the live rate when applied`}
     >
-      {CURRENCY_SYMBOL[cur]} {cur}
+      {currencyChipLabel(cur)}
     </span>
   );
 }

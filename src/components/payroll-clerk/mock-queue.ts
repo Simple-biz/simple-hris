@@ -405,8 +405,8 @@ export function formatPHP(n: number | null): string {
   return '₱' + n.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
-/** Native COP — no minor unit, so whole pesos with grouping (e.g. "COP$8,000"). */
+/** Native COP — no minor unit, so whole pesos with grouping (e.g. "$COP8,000"). */
 export function formatCOP(n: number | null): string {
   if (n == null) return '—';
-  return 'COP$' + n.toLocaleString('es-CO', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+  return '$COP' + n.toLocaleString('es-CO', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
 }

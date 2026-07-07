@@ -30,6 +30,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Toaster } from '@/components/ui/sonner';
 import { normEmail } from '@/lib/email/norm-email';
 import { SESSION_EMAIL_KEY, type Role } from '@/lib/rbac/views';
+import { usePublishPresenceTab } from '@/components/presence/PresenceProvider';
+import { humanizeTabId } from '@/lib/presence/page-label';
 import { useEmployeeNotificationsUnread } from '@/hooks/useEmployeeNotificationsUnread';
 import { useNotificationChime } from '@/hooks/useNotificationChime';
 import { useFeaturePermissions } from '@/hooks/useFeaturePermissions';
@@ -70,6 +72,7 @@ export default function HrApp() {
   const emailFromQuery = searchParams?.get('email') ?? null;
 
   const [activeTab, setActiveTab] = useState<HrTab>('overview');
+  usePublishPresenceTab(humanizeTabId(activeTab));
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   // The New Hire Checklist grid registers its scroll box here so the collab
   // layer can anchor peer cursors to the rows (and clip them when scrolled away).
