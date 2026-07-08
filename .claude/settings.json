@@ -543,7 +543,13 @@
       "Bash(rm -f diag-verify.mjs)",
       "Bash(ls proxy.ts middleware.ts src/proxy.ts src/middleware.ts)",
       "Bash(ls src/lib/auth/route-access.ts)",
-      "Bash(ls app/accounting/layout.tsx app/accounting/page.tsx)"
+      "Bash(ls app/accounting/layout.tsx app/accounting/page.tsx)",
+      "Bash(node diag-perms.mjs)",
+      "Bash(rm -f diag-perms.mjs)",
+      "Bash(node diag-roles2.mjs)",
+      "Bash(rm -f diag-roles2.mjs)",
+      "Bash(node diag-permbridge.mjs)",
+      "Bash(rm -f diag-permbridge.mjs)"
     ],
     "additionalDirectories": [
       "\\tmp",

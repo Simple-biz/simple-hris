@@ -1,4 +1,5 @@
 import { createSupabaseServiceRoleClient, createSupabaseServerClient } from "@/lib/supabase/server";
+import { expandWorkEmailAliases } from "@/lib/email/work-email-aliases";
 
 export const FEATURE_ACCESS_LEVELS = ["hidden", "view", "edit"] as const;
 export type FeatureAccess = (typeof FEATURE_ACCESS_LEVELS)[number];
@@ -113,18 +114,28 @@ export async function fetchFeaturePermissionsForEmail(
   const supabase = createSupabaseServiceRoleClient() ?? createSupabaseServerClient();
   if (!supabase) return {};
 
+  // Bridge alternate work emails: this returns a person's EFFECTIVE tab access,
+  // and an alternate (second-inbox) address is the same human — so a grant on
+  // their primary work email must apply when they're keyed on an alternate
+  // (mutation authz, notification gating). Mirrors the role + self-read overlay
+  // bridges. On a same (view, feature) collision across addresses, the most
+  // permissive access wins (edit > view > hidden).
+  const emails = await expandWorkEmailAliases(norm);
   const { data, error } = await supabase
     .from("employee_feature_permissions")
     .select("work_email, view_key, feature, access")
-    .eq("work_email", norm)
+    .in("work_email", emails)
     .is("revoked_at", null);
   if (error || !data) return {};
 
+  const rank: Record<FeatureAccess, number> = { hidden: 0, view: 1, edit: 2 };
   const out: FeaturePermissionsMap = {};
   for (const r of data as PermRow[]) {
     const view = r.view_key as FeatureViewKey;
     if (!out[view]) out[view] = {};
-    (out[view] as Record<string, FeatureAccess>)[r.feature] = r.access;
+    const bucket = out[view] as Record<string, FeatureAccess>;
+    const cur = bucket[r.feature];
+    if (!cur || rank[r.access] > rank[cur]) bucket[r.feature] = r.access;
   }
   return out;
 }

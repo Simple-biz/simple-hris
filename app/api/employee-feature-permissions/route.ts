@@ -4,6 +4,7 @@ import { authorizeEmailAccess, requireElevatedSession, deniedResponse } from "@/
 import { insertAuditLog } from "@/lib/supabase/audit-log";
 import { bumpForceLogoutFor } from "@/lib/auth/force-logout";
 import { FEATURE_ACCESS_LEVELS, type FeatureAccess } from "@/lib/rbac/feature-permissions";
+import { expandWorkEmailAliases } from "@/lib/email/work-email-aliases";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -36,16 +37,40 @@ export async function GET(req: NextRequest) {
   const supabase = getSb();
   if (!supabase) return NextResponse.json({ rows: [], error: "supabase unavailable" });
 
+  // Bridge alternate work emails on a SELF read: a person who signs in via an
+  // alternate (second-inbox) address must inherit the tab overlay granted to
+  // their primary work email, so the dashboard the role bridge already unlocked
+  // isn't stuck showing only the Overview fallback. Cross-reads by an elevated
+  // admin (effectiveEmail != their own) stay EXACT — the AdminRoles grid edits a
+  // specific email's rows, so it must see that email's rows only.
+  const isSelfRead = authz.effectiveEmail === authz.sessionEmail;
+  const emails = isSelfRead ? await expandWorkEmailAliases(email) : [email];
+
   const { data, error } = await supabase
     .from("employee_feature_permissions")
     .select("id, work_email, view_key, feature, access, granted_by, granted_at")
-    .eq("work_email", email)
+    .in("work_email", emails)
     .is("revoked_at", null)
     .order("view_key")
     .order("feature");
 
   if (error) return NextResponse.json({ rows: [], error: error.message }, { status: 500 });
-  return NextResponse.json({ rows: data ?? [] });
+
+  // When bridging unions two addresses, the same (view_key, feature) can appear
+  // twice. Collapse to the MOST-PERMISSIVE grant so the client's feature map is
+  // deterministic (edit > view) rather than taking whichever row sorted last.
+  let rows = data ?? [];
+  if (isSelfRead && emails.length > 1) {
+    const rank: Record<string, number> = { hidden: 0, view: 1, edit: 2 };
+    const best = new Map<string, (typeof rows)[number]>();
+    for (const r of rows) {
+      const k = `${r.view_key}:${r.feature}`;
+      const cur = best.get(k);
+      if (!cur || (rank[r.access] ?? 0) > (rank[cur.access] ?? 0)) best.set(k, r);
+    }
+    rows = [...best.values()];
+  }
+  return NextResponse.json({ rows });
 }
 
 /**
