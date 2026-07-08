@@ -16,6 +16,7 @@ import {
   scheduledDeletionFrom,
 } from "@/lib/hr/offboard-webhooks";
 import { appendOffboardedSheetRow } from "@/lib/google-sheets/append-offboarded-sheet";
+import { offboardReasonLabel } from "@/lib/hr/offboard-reasons";
 import { snapshotAndRevokeRbacGrants } from "@/lib/hr/offboard-rbac";
 import { bumpForceLogoutFor } from "@/lib/auth/force-logout";
 
@@ -280,7 +281,14 @@ async function offboardOnePerson(
       console.error("[offboard] offboarded_sheet insert failed:", e);
     }
     try {
-      await appendOffboardedSheetRow(sheetInput);
+      // The sheet's "Offboard Reason" column is a dropdown of human labels
+      // ("Resigned", "Performance", …) — write the label, not the raw slug, so
+      // the value satisfies the cell's data validation. The DB row above keeps
+      // the slug (consistent with off_boarded_reason on the master).
+      await appendOffboardedSheetRow({
+        ...sheetInput,
+        offBoardedReason: offboardReasonLabel(reason),
+      });
     } catch (e) {
       console.error("[offboard] Google Sheet Offboarded append failed:", e);
     }

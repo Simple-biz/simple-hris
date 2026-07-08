@@ -59,7 +59,7 @@ function findHeaderRowIndex(values: unknown[][]): number {
  * Matching is exact after norm() (trim + lowercase); keep it exact so a broad
  * alias like "email" can't swallow a column it wasn't meant to.
  */
-type FieldKey =
+export type FieldKey =
   | 'personal_email'
   | 'work_email'
   | 'name'
@@ -72,7 +72,7 @@ type FieldKey =
   | 'note'
   | 'by';
 
-const HEADER_ALIASES: Record<FieldKey, string[]> = {
+export const HEADER_ALIASES: Record<FieldKey, string[]> = {
   personal_email: ['personal email', 'personalemail', 'personal_email'],
   work_email: ['work email', 'workemail', 'work_email', 'email'],
   name: ['name', 'full name'],
@@ -111,7 +111,16 @@ for (const [field, aliases] of Object.entries(HEADER_ALIASES) as Array<[FieldKey
   for (const alias of aliases) HEADER_TO_FIELD.set(alias, field);
 }
 
-function formatOffboardDate(iso: string | null | undefined): string {
+/** Which offboarded-sheet field a header cell feeds, or undefined if unrecognised.
+ *  Shared with the backfill so the two agree on column detection. */
+export function fieldForHeader(header: string): FieldKey | undefined {
+  return HEADER_TO_FIELD.get(norm(header));
+}
+
+/** Format an ISO timestamp the way the Offboarded "Date" column expects. Written
+ *  with valueInputOption=USER_ENTERED so Sheets re-parses it into the cell's own
+ *  date format. Exported for reuse by the backfill. */
+export function formatOffboardDate(iso: string | null | undefined): string {
   if (!iso) return '';
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return '';
@@ -119,7 +128,7 @@ function formatOffboardDate(iso: string | null | undefined): string {
 }
 
 function valueForHeader(header: string, input: AppendOffboardedRowInput): string {
-  const field = HEADER_TO_FIELD.get(norm(header));
+  const field = fieldForHeader(header);
   switch (field) {
     case 'personal_email':
       return input.personalEmail ?? '';
