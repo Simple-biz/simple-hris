@@ -385,7 +385,7 @@ export default function NewHireQuickAddDialog({
                 <p className="mt-3.5 text-[11.5px] leading-snug text-zinc-500 dark:text-zinc-500">
                   Only the <strong className="font-semibold text-zinc-700 dark:text-zinc-300">name</strong> is required
                   {' '}(plus <strong className="font-semibold text-zinc-700 dark:text-zinc-300">who referred them</strong> for
-                  referral hires). The hire appears at the bottom of the grid; nothing is sent until you{' '}
+                  referral hires). Nothing is sent until you{' '}
                   <strong className="font-semibold text-zinc-700 dark:text-zinc-300">Lock in</strong> the week.
                 </p>
               </div>
@@ -399,22 +399,24 @@ export default function NewHireQuickAddDialog({
                 >
                   Cancel
                 </button>
-                <button
-                  type="button"
-                  onClick={() => commit(true)}
-                  disabled={!canSave}
-                  className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-emerald-300 bg-white px-4 text-[13px] font-semibold text-emerald-700 transition hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-emerald-500/40 dark:bg-transparent dark:text-emerald-300 dark:hover:bg-emerald-950/40"
-                >
-                  <Plus className="h-4 w-4" />
-                  Save &amp; add another
-                </button>
+                {mode === 'add' && (
+                  <button
+                    type="button"
+                    onClick={() => commit(true)}
+                    disabled={!canSave}
+                    className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-emerald-300 bg-white px-4 text-[13px] font-semibold text-emerald-700 transition hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-emerald-500/40 dark:bg-transparent dark:text-emerald-300 dark:hover:bg-emerald-950/40"
+                  >
+                    <Plus className="h-4 w-4" />
+                    Save &amp; add another
+                  </button>
+                )}
                 <button
                   type="submit"
                   disabled={!canSave}
                   className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg bg-emerald-600 px-4 text-[13px] font-semibold text-white shadow-sm transition hover:bg-emerald-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/50 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-emerald-600 dark:hover:bg-emerald-500"
                 >
                   <Check className="h-4 w-4" />
-                  Add to checklist
+                  {mode === 'edit' ? 'Save changes' : 'Add to checklist'}
                 </button>
               </div>
             </form>
