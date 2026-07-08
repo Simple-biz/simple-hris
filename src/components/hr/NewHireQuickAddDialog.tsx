@@ -11,6 +11,7 @@ import {
   Globe2,
   Mail,
   MapPin,
+  Pencil,
   Phone,
   Plus,
   User,
@@ -88,7 +89,9 @@ const TEXT_FIELDS = [
 
 interface Props {
   open: boolean;
-  /** e.g. "Jun 28 – Jul 4, 2026" — shown so HR sees which week they're adding to. */
+  /** 'add' appends a new hire; 'edit' updates an existing row (pre-filled). */
+  mode: 'add' | 'edit';
+  /** e.g. "Jun 28 – Jul 4, 2026" — shown so HR sees which week they're on. */
   weekLabel: string;
   /** Department dropdown suggestions (same source the grid uses). */
   departments: string[];
@@ -96,17 +99,21 @@ interface Props {
   sources: string[];
   /** Referrer suggestions — names from the Global Master List. */
   referrers: string[];
+  /** Pre-fill values for edit mode; ignored (blank form) in add mode. */
+  initialValues?: QuickAddValues | null;
   onCancel: () => void;
-  /** Append one hire to the bottom of the grid. Fire-and-forget (local state). */
+  /** Add: append to the grid. Edit: apply to the row. Fire-and-forget (local). */
   onSave: (values: QuickAddValues) => void;
 }
 
 export default function NewHireQuickAddDialog({
   open,
+  mode,
   weekLabel,
   departments,
   sources,
   referrers,
+  initialValues,
   onCancel,
   onSave,
 }: Props) {
@@ -130,10 +137,12 @@ export default function NewHireQuickAddDialog({
     [],
   );
 
-  // Fresh form each time the dialog opens.
+  // Seed the form when the dialog OPENS: blank for add, the row's values for
+  // edit. Keyed on `open` only on purpose — re-reading initialValues on every
+  // render would wipe edits in progress.
   useEffect(() => {
-    if (open) setValues(EMPTY);
-  }, [open]);
+    if (open) setValues(initialValues ?? EMPTY);
+  }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Remember the trigger on open; hand focus back to it on close.
   useEffect(() => {
@@ -240,14 +249,14 @@ export default function NewHireQuickAddDialog({
               <div aria-hidden className="pointer-events-none absolute -right-6 -top-8 h-32 w-32 rounded-full bg-white/10 blur-2xl" />
               <div className="relative flex items-start gap-3">
                 <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-white/20 backdrop-blur-sm">
-                  <UserPlus className="h-5 w-5" />
+                  {mode === 'edit' ? <Pencil className="h-5 w-5" /> : <UserPlus className="h-5 w-5" />}
                 </span>
                 <div className="min-w-0">
                   <h2 id="nhc-quickadd-title" className="text-[15px] font-semibold leading-tight drop-shadow-sm sm:text-base">
-                    Add a new hire
+                    {mode === 'edit' ? 'Edit hire' : 'Add a new hire'}
                   </h2>
                   <p className="mt-0.5 text-[12.5px] font-medium text-white/90 drop-shadow-sm">
-                    Lands at the bottom of {weekLabel}
+                    {mode === 'edit' ? `On ${weekLabel}` : `Lands at the bottom of ${weekLabel}`}
                   </p>
                 </div>
                 <button
