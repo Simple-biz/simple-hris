@@ -525,7 +525,8 @@
       "Bash(node _inspect-jackie.mjs)",
       "Bash(rm -f _inspect-jackie.mjs)",
       "Bash(node _inspect-us.mjs)",
-      "Bash(rm -f _inspect-us.mjs)"
+      "Bash(rm -f _inspect-us.mjs)",
+      "PowerShell($c = Test-NetConnection -ComputerName localhost -Port 3000 -WarningAction SilentlyContinue -InformationLevel Quiet; \"port3000_listening=$c\")"
     ],
     "additionalDirectories": [
       "\\tmp",

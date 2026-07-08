@@ -938,6 +938,38 @@ export async function countMasterAndRatesRows(): Promise<{
   };
 }
 
+/**
+ * Distinct active-employee names from the Global Master List (`active_employees`
+ * = the current master upload), sorted A→Z. Powers the New Hire Checklist
+ * "Referred By" picker so a referrer is always checked against a real person on
+ * the master list. Names only (no rates / PII beyond the name).
+ */
+export async function listActiveMasterListNames(): Promise<{ names: string[]; error: string | null }> {
+  let supabase: SupabaseClient;
+  try {
+    supabase = requireServiceRole();
+  } catch (e) {
+    return { names: [], error: e instanceof Error ? e.message : "Supabase not configured" };
+  }
+  // `Name` is selected unquoted to match the roster reader in employees.ts
+  // (PostgREST returns it under the "Name" key).
+  const { data, error } = await supabase.from("active_employees").select("Name").range(0, 9999);
+  if (error) return { names: [], error: error.message };
+  const seen = new Set<string>();
+  const names: string[] = [];
+  for (const row of (data ?? []) as Record<string, unknown>[]) {
+    const raw = row["Name"] ?? row["name"];
+    const n = typeof raw === "string" ? raw.trim() : "";
+    if (!n) continue;
+    const key = n.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    names.push(n);
+  }
+  names.sort((a, b) => a.localeCompare(b));
+  return { names, error: null };
+}
+
 /** Shape consumed by `applyOffboardedFromSheetRows`. Mirror of `OffboardedSheetRow`
  *  in `src/lib/google-sheets/fetch-offboarded-sheet.ts` — kept structurally
  *  identical so the route can pass through the parsed sheet rows directly. */

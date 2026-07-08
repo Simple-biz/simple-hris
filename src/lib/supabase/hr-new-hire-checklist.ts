@@ -2,6 +2,7 @@ import {
   createSupabaseServerClient,
   createSupabaseServiceRoleClient,
 } from "./server";
+import { isReferralSource } from "@/lib/hr/referral-source";
 
 /**
  * Data access for the HR "New Hire Checklist" tab — a free-form, spreadsheet
@@ -25,6 +26,7 @@ export const HR_NEW_HIRE_CHECKLIST_FIELDS = [
   "phone_number",
   "date_of_interview",
   "source",
+  "referred_by",
   "hired_by",
   "department",
   "country",
@@ -64,6 +66,7 @@ export type HrNewHireChecklistRow = {
   phone_number: string | null;
   date_of_interview: string | null;
   source: string | null;
+  referred_by: string | null;
   hired_by: string | null;
   department: string | null;
   country: string | null;
@@ -397,6 +400,49 @@ export async function listHrNewHireChecklistRecruiterCounts(periodStart?: string
     (a, b) => b.hires - a.hires || b.interviewed - a.interviewed || a.recruiter.localeCompare(b.recruiter),
   );
   return { recruiters, totalHires, totalInterviewed, error: null };
+}
+
+/**
+ * Employee referrals, derived from the `source` column: the checklist marks a
+ * referral hire with a `source` of "Referral" (see `isReferralSource`), so this
+ * keeps ONLY those rows and drops every other channel (Facebook, OnlineJobs,
+ * LinkedIn, …) and blanks. Kept rows are grouped by their `source` string
+ * (case-insensitive de-dupe, first-seen casing) into `referrers`, each carrying
+ * the count of referral hires + their NAMES. Every row still counts toward
+ * `total`, so the caller can show a "not referred" remainder (non-referral +
+ * blank hires). Scoped to ALL weeks by default, or one Sun-anchored week when
+ * `periodStart` (YYYY-MM-DD) is given. Powers the HR Overview "Referrals" table.
+ */
+export async function listHrNewHireChecklistReferralCounts(periodStart?: string): Promise<{
+  referrers: { referrer: string; count: number; hires: string[] }[];
+  total: number;
+  error: string | null;
+}> {
+  const sb = client();
+  const period = clean(periodStart ?? null);
+  let query = sb.from(TABLE).select("source, name").range(0, 9999);
+  if (period) query = query.eq("period_start", period);
+  const { data, error } = await query;
+  if (error) return { referrers: [], total: 0, error: error.message };
+  const rows = (data ?? []) as { source: string | null; name: string | null }[];
+  const byKey = new Map<string, { referrer: string; count: number; hires: string[] }>();
+  for (const r of rows) {
+    const s = clean(r.source);
+    if (!s || !isReferralSource(s)) continue; // keep ONLY referral sources
+    const key = s.toLowerCase();
+    const name = clean(r.name);
+    const hit = byKey.get(key);
+    if (hit) {
+      hit.count += 1;
+      if (name) hit.hires.push(name);
+    } else {
+      byKey.set(key, { referrer: s, count: 1, hires: name ? [name] : [] });
+    }
+  }
+  const referrers = [...byKey.values()].sort(
+    (a, b) => b.count - a.count || a.referrer.localeCompare(b.referrer),
+  );
+  return { referrers, total: rows.length, error: null };
 }
 
 // ── Per-week lock ("Lock in" / "Reopen") — its own table, no bonus/payroll tie ─

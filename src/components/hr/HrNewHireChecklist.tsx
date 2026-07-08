@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { motion } from 'motion/react';
+import { motion, useReducedMotion } from 'motion/react';
 import {
   Building2,
   CalendarDays,
@@ -21,6 +21,7 @@ import {
   RefreshCw,
   Save,
   Trash2,
+  UserPlus,
   X,
 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -34,8 +35,10 @@ import {
 import { useSession } from 'next-auth/react';
 import type { CellEditEntry, HrNewHireChecklistRow } from '@/lib/supabase/hr-new-hire-checklist';
 import { ONBOARDING_COUNTRIES, resolveOnboardingCountry } from '@/lib/onboarding/countries';
+import { BASE_SOURCE_OPTIONS, isReferralSource } from '@/lib/hr/referral-source';
 import { useLiveCells, type LiveCellPeer, type LiveCellValue } from '@/hooks/useLiveCells';
 import NewHireChecklistLockDialog, { type LockDialogMode } from './NewHireChecklistLockDialog';
+import NewHireQuickAddDialog, { type QuickAddValues } from './NewHireQuickAddDialog';
 
 /** Grid columns, in display order. Keys match the DB / API field names 1:1. */
 const COLUMNS = [
@@ -45,6 +48,7 @@ const COLUMNS = [
   { key: 'phone_number', label: 'Phone Number' },
   { key: 'date_of_interview', label: 'Date of Interview' },
   { key: 'source', label: 'Source' },
+  { key: 'referred_by', label: 'Referred By' },
   { key: 'hired_by', label: 'Hired By' },
   { key: 'department', label: 'Department' },
   { key: 'country', label: 'Country' },
@@ -298,6 +302,12 @@ export default function HrNewHireChecklist({
   const [pendingAction, setPendingAction] = useState<{ period: string; mode: LockDialogMode } | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const [departments, setDepartments] = useState<string[]>([]);
+  // Source dropdown suggestions = the base list ∪ sources already used (so a
+  // custom source, once typed + saved, reappears as a suggestion). Referrers =
+  // active-employee names from the Global Master List (the "Referred By" picker
+  // always checks the master list).
+  const [sourceOptions, setSourceOptions] = useState<string[]>(() => [...BASE_SOURCE_OPTIONS]);
+  const [referrers, setReferrers] = useState<string[]>([]);
   const [selectedKeys, setSelectedKeys] = useState<Set<string>>(() => new Set());
   const [bulkDept, setBulkDept] = useState('');
   const [bulkCountry, setBulkCountry] = useState('');
@@ -315,6 +325,10 @@ export default function HrNewHireChecklist({
   const [historyPopover, setHistoryPopover] = useState<
     { label: string; entries: CellEditEntry[]; top: number; left: number } | null
   >(null);
+  // Floating "New Hire" quick-add modal (the glowing CTA opens it; disabled when
+  // the week is locked).
+  const [quickAddOpen, setQuickAddOpen] = useState(false);
+  const reduceMotion = useReducedMotion();
 
   // Mutators read the lock through a ref so a locked week can never be edited
   // (even a paste on a readOnly input still fires our onPaste handler).
@@ -531,6 +545,40 @@ export default function HrNewHireChecklist({
       .then((r) => r.json())
       .then((j: { departments?: string[] }) => { if (!cancelled) setDepartments(j.departments ?? []); })
       .catch(() => { /* text-input fallback */ });
+    return () => { cancelled = true; };
+  }, []);
+
+  // Source suggestions: merge the base list with sources already used across all
+  // weeks (case-insensitive de-dupe), so custom sources persist in the dropdown.
+  useEffect(() => {
+    let cancelled = false;
+    fetch('/api/hr/new-hire-checklist/sources', { cache: 'no-store' })
+      .then((r) => r.json())
+      .then((j: { sources?: { source: string }[] }) => {
+        if (cancelled) return;
+        const seen = new Set<string>();
+        const merged: string[] = [];
+        for (const s of [...BASE_SOURCE_OPTIONS, ...((j.sources ?? []).map((x) => x.source))]) {
+          const t = (s ?? '').trim();
+          if (!t) continue;
+          const key = t.toLowerCase();
+          if (seen.has(key)) continue;
+          seen.add(key);
+          merged.push(t);
+        }
+        setSourceOptions(merged);
+      })
+      .catch(() => { /* keep the base fallback */ });
+    return () => { cancelled = true; };
+  }, []);
+
+  // Referrer suggestions: active-employee names from the Global Master List.
+  useEffect(() => {
+    let cancelled = false;
+    fetch('/api/global-master-list/names', { cache: 'no-store' })
+      .then((r) => r.json())
+      .then((j: { names?: string[] }) => { if (!cancelled) setReferrers(j.names ?? []); })
+      .catch(() => { /* free-text fallback */ });
     return () => { cancelled = true; };
   }, []);
 
@@ -877,6 +925,56 @@ export default function HrNewHireChecklist({
     setRows((prev) => [...prev, ...seedBlank(n)]);
     setDirty(true);
   }, []);
+
+  // "New Hire" modal → append one hire at the very bottom of the grid. Mirrors
+  // the grid's own canonicalisation (department / country) and broadcasts the
+  // new row to co-editors so it lands with a shared identity on every client.
+  // The row is local + dirty until the week is Saved / Locked in (same as any
+  // other grid edit).
+  const handleQuickAdd = useCallback(
+    (values: QuickAddValues) => {
+      if (lockedRef.current) return;
+      const cid = newCid();
+      const row = blankRow(cid);
+      for (const c of COLUMNS) {
+        const raw = (values[c.key] ?? '').trim();
+        row[c.key] =
+          c.key === 'department'
+            ? canonicalizeDept(raw, departments)
+            : c.key === 'country'
+              ? canonicalizeCountry(raw)
+              : raw;
+      }
+      const insertIndex = rowsRef.current.length;
+      setRows((prev) => [...prev, row]);
+      setDirty(true);
+
+      // Stream the new row to co-editors (one batch, same shared cid).
+      const batch: LiveCellValue[] = [];
+      for (const c of COLUMNS) {
+        const v = row[c.key];
+        if (v) batch.push({ r: insertIndex, cid, c: c.key, v });
+      }
+      if (batch.length) liveEdits(batch);
+
+      // Select the new row + scroll it into view so it's clearly "there".
+      setSel({ ar: insertIndex, ac: 0, hr: insertIndex, hc: 0 });
+      setEditing(null);
+      setTimeout(() => {
+        const el = scrollRef.current;
+        if (el) el.scrollTo({ top: el.scrollHeight, behavior: reduceMotion ? 'auto' : 'smooth' });
+      }, 60);
+
+      toast.success(`Added ${row.name.trim() || 'new hire'} to ${formatWeekLabel(period)}`);
+    },
+    [departments, liveEdits, period, reduceMotion],
+  );
+
+  // A locked week is read-only — never leave the quick-add modal open over it
+  // (e.g. if a co-editor locks the week while the dialog is up).
+  useEffect(() => {
+    if (locked) setQuickAddOpen(false);
+  }, [locked]);
 
   const clearColumn = useCallback((key: FieldKey, label: string) => {
     if (lockedRef.current) return;
@@ -1420,7 +1518,7 @@ export default function HrNewHireChecklist({
                 <strong>Shift-click</strong> to highlight a range, then <strong>double-click</strong> (or just start
                 typing / press Enter) to edit. <strong>Ctrl/Cmd+C</strong> copies the highlighted range and{' '}
                 <strong>Delete</strong> clears it. Paste a column from Excel / Google Sheets into any cell and it fills
-                straight down. <strong>Department</strong> and <strong>Country</strong> offer a dropdown while editing.
+                straight down. <strong>Source</strong>, <strong>Department</strong> and <strong>Country</strong> offer a dropdown while editing — pick <strong>Referral</strong> as the source and <strong>Referred By</strong> (checked against the Global Master List) is required.
                 Tick rows to bulk-apply a department / country. A green dot in a cell&apos;s corner means it&apos;s been
                 edited — click it for the full history. <strong>Lock in</strong> saves this week&apos;s hires and feeds
                 the per-country <strong>Bulk Invite</strong> in Onboarding. Reopen any week to edit.
@@ -1537,6 +1635,12 @@ export default function HrNewHireChecklist({
               <datalist id="nhc-countries">
                 {COUNTRY_OPTIONS.map((c) => (<option key={c} value={c} />))}
               </datalist>
+              <datalist id="nhc-sources">
+                {sourceOptions.map((s) => (<option key={s} value={s} />))}
+              </datalist>
+              <datalist id="nhc-referrers">
+                {referrers.map((n) => (<option key={n} value={n} />))}
+              </datalist>
 
               {rows.length === 0 ? (
                 <div className="flex flex-1 flex-col items-center justify-center gap-2 rounded-2xl border border-dashed border-emerald-200 bg-white py-12 text-center dark:border-emerald-950/40 dark:bg-[#0d1117]">
@@ -1549,6 +1653,7 @@ export default function HrNewHireChecklist({
                   )}
                 </div>
               ) : (
+                <div className="relative min-h-0 flex-1">
                 <div
                   ref={registerScrollSurface}
                   tabIndex={0}
@@ -1556,7 +1661,7 @@ export default function HrNewHireChecklist({
                   onKeyDown={gridKeyDown}
                   onCopy={gridCopy}
                   onPaste={gridPaste}
-                  className="relative min-h-0 flex-1 overflow-auto rounded-2xl border border-emerald-100/80 bg-white shadow-sm outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/40 dark:border-emerald-950/40 dark:bg-zinc-950"
+                  className="relative h-full w-full overflow-auto rounded-2xl border border-emerald-100/80 bg-white shadow-sm outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/40 dark:border-emerald-950/40 dark:bg-zinc-950"
                 >
                   <table className="table-keep w-full border-collapse text-[13px]">
                     <thead className="sticky top-0 z-10">
@@ -1602,6 +1707,9 @@ export default function HrNewHireChecklist({
                     <tbody>
                       {rows.map((row, r) => {
                         const isSelected = selectedKeys.has(row._key);
+                        // A referral hire must name who referred them — flag the
+                        // Referred By cell amber until it's filled.
+                        const needsReferrer = isReferralSource(row.source || '') && !(row.referred_by || '').trim();
                         const rowPeers = peersByRow.get(r) ?? [];
                         const rowPeerColor = rowPeers[0]?.color;
                         const rowPeerNames = rowPeers
@@ -1664,7 +1772,11 @@ export default function HrNewHireChecklist({
                                   ? departments.length > 0 ? 'nhc-departments' : undefined
                                   : c.key === 'country'
                                     ? 'nhc-countries'
-                                    : undefined;
+                                    : c.key === 'source'
+                                      ? 'nhc-sources'
+                                      : c.key === 'referred_by'
+                                        ? referrers.length > 0 ? 'nhc-referrers' : undefined
+                                        : undefined;
                               const peerHere = peerByCell.get(`${r}:${c.key}`) ?? null;
                               const isEditing = editing?.r === r && editing?.c === ci;
                               const inSel =
@@ -1681,6 +1793,8 @@ export default function HrNewHireChecklist({
                                     'relative border-b border-emerald-50/80 p-0 dark:border-zinc-800/80',
                                     !isEditing && 'cursor-cell',
                                     inSel && !isEditing && 'bg-emerald-200/70 dark:bg-emerald-700/40',
+                                    c.key === 'referred_by' && needsReferrer && !inSel && !isEditing &&
+                                      'bg-amber-50 ring-1 ring-inset ring-amber-300 dark:bg-amber-950/30 dark:ring-amber-700/60',
                                   )}
                                 >
                                   {hasEdits && (
@@ -1732,7 +1846,7 @@ export default function HrNewHireChecklist({
                                             setCell(r, c.key, pre.value);
                                             liveEdit(r, row._cid, c.key, pre.value);
                                           }
-                                        } else if (listId) {
+                                        } else if (listId && (c.key === 'department' || c.key === 'country')) {
                                           const canon =
                                             c.key === 'department'
                                               ? canonicalizeDept(e.target.value, departments)
@@ -1757,11 +1871,15 @@ export default function HrNewHireChecklist({
                                     <div
                                       className={cn(
                                         'flex h-9 select-none items-center whitespace-nowrap px-2.5 text-[13px]',
-                                        value ? 'text-zinc-800 dark:text-zinc-100' : 'text-zinc-400',
+                                        value
+                                          ? 'text-zinc-800 dark:text-zinc-100'
+                                          : c.key === 'referred_by' && needsReferrer
+                                            ? 'text-amber-600 dark:text-amber-400'
+                                            : 'text-zinc-400',
                                         widthClass,
                                       )}
                                     >
-                                      {value}
+                                      {value || (c.key === 'referred_by' && needsReferrer ? 'Who referred?' : '')}
                                     </div>
                                   )}
                                   {/* Active-cell outline for the current selection head. */}
@@ -1816,6 +1934,55 @@ export default function HrNewHireChecklist({
                       })}
                     </tbody>
                   </table>
+                </div>
+
+                {/* "New Hire" CTA — a neon-green glowing button pinned to the
+                    lower-right corner of the table (stays put while the grid
+                    scrolls). Greyed out + inert once the week is locked in;
+                    reopen the week to re-enable it. */}
+                <div className="pointer-events-none absolute bottom-4 right-4 z-30">
+                  {locked ? (
+                    <button
+                      type="button"
+                      disabled
+                      title="This week is locked — reopen it to add a hire"
+                      aria-label="Add a new hire (disabled — this week is locked)"
+                      className="pointer-events-auto flex h-11 cursor-not-allowed items-center gap-2 rounded-full border border-zinc-300 bg-zinc-200/90 px-5 text-sm font-semibold text-zinc-400 shadow-md backdrop-blur-sm dark:border-zinc-700 dark:bg-zinc-800/90 dark:text-zinc-500"
+                    >
+                      <Lock className="h-4 w-4" />
+                      New Hire
+                    </button>
+                  ) : (
+                    <motion.button
+                      type="button"
+                      onClick={() => setQuickAddOpen(true)}
+                      disabled={saving}
+                      aria-label="Add a new hire"
+                      initial={false}
+                      animate={
+                        reduceMotion || saving
+                          ? undefined
+                          : {
+                              boxShadow: [
+                                '0 0 0 1px rgba(16,185,129,0.55), 0 0 12px 2px rgba(16,185,129,0.5), 0 0 26px 6px rgba(16,185,129,0.28)',
+                                '0 0 0 1px rgba(16,185,129,0.9), 0 0 22px 5px rgba(16,185,129,0.85), 0 0 46px 13px rgba(16,185,129,0.5)',
+                              ],
+                            }
+                      }
+                      transition={{ duration: 1.8, repeat: Infinity, repeatType: 'reverse', ease: 'easeInOut' }}
+                      whileHover={reduceMotion ? undefined : { scale: 1.05 }}
+                      whileTap={reduceMotion ? undefined : { scale: 0.96 }}
+                      className={cn(
+                        'pointer-events-auto flex h-11 items-center gap-2 rounded-full bg-gradient-to-br from-emerald-400 via-emerald-500 to-teal-600 px-5 text-sm font-bold tracking-wide text-white ring-1 ring-emerald-300/70 shadow-[0_0_18px_4px_rgba(16,185,129,0.55)] focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-200 disabled:cursor-not-allowed disabled:opacity-50 dark:ring-emerald-400/40',
+                      )}
+                    >
+                      <span className="flex h-6 w-6 items-center justify-center rounded-full bg-white/25 backdrop-blur-sm">
+                        <UserPlus className="h-4 w-4" />
+                      </span>
+                      New Hire
+                    </motion.button>
+                  )}
+                </div>
                 </div>
               )}
 
@@ -1905,6 +2072,18 @@ export default function HrNewHireChecklist({
         lockedStamp={formatLockStamp(lockedAt) || null}
         onCancel={() => setActionDialog(null)}
         onConfirm={runGatedAction}
+      />
+
+      {/* "New Hire" quick-add modal — collects one hire's fields and drops the
+          row at the bottom of the grid. */}
+      <NewHireQuickAddDialog
+        open={quickAddOpen}
+        weekLabel={formatWeekLabel(period)}
+        departments={departments}
+        sources={sourceOptions}
+        referrers={referrers}
+        onCancel={() => setQuickAddOpen(false)}
+        onSave={handleQuickAdd}
       />
     </div>
   );

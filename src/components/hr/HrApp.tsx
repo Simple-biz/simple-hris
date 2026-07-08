@@ -47,6 +47,7 @@ import HrGlobalMasterList from './HrGlobalMasterList';
 import HrScreening from './HrScreening';
 import HrNewHireChecklist from './HrNewHireChecklist';
 import HiringWeekOverviewSection from './HiringWeekOverviewSection';
+import ReferralsWeekSection from './ReferralsWeekSection';
 import HrOffboarding from './HrOffboarding';
 import HrMesa from './HrMesa';
 import GiftTracker from '@/components/orphanage/GiftTracker';
@@ -2967,13 +2968,10 @@ function OverviewBody() {
       {/* Hiring sources + recruiter leaderboard, toggle between all-time and a single week */}
       <HiringWeekOverviewSection />
 
-      {/* Tenure cohorts — distribution visualization + breakdown table */}
-      <TenureCohortsSection
-        loading={loading}
-        roster={roster}
-        tenureCohorts={tenureCohorts}
-        tenureMonthBins={tenureMonthBins}
-      />
+      {/* Referrals — who referred friends to Simple (from the checklist Source
+          column), scoped by its own week selector. Replaced the Tenure Cohorts
+          section (2026-07-08). */}
+      <ReferralsWeekSection />
     </>
   );
 }
