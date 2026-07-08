@@ -35,6 +35,7 @@ const MASTER_TABLE =
 /** Reasons HR can pick when off-boarding. Free-text notes are stored separately
  *  in `off_boarded_note`. "other" requires a non-empty note. */
 const VALID_REASONS = [
+  "ncns",
   "resigned",
   "performance",
   "time_manipulation",
@@ -196,7 +197,9 @@ async function offboardOnePerson(
     })
     .ilike('"Work Email"', work_email)
     .is("off_boarded_at", null) // don't re-stamp already-offboarded rows
-    .select('id, "Name", "Personal Email", "Work Email", "Department", "Start Date"');
+    .select(
+      'id, "Name", "Personal Email", "Work Email", "Department", "Start Date", city, province, full_address, "Location", "Phone Number"',
+    );
 
   if (error) {
     return { ...base, phase, deletion_mode: deletionMode, error: error.message };
@@ -209,6 +212,11 @@ async function offboardOnePerson(
     "Work Email": string | null;
     Department: string | null;
     "Start Date": string | null;
+    city: string | null;
+    province: string | null;
+    full_address: string | null;
+    Location: string | null;
+    "Phone Number": string | null;
   }>;
 
   if (rows.length === 0) {
@@ -227,6 +235,18 @@ async function offboardOnePerson(
     new Set(rows.map((r) => r.Department).filter((d): d is string => !!d)),
   );
 
+  // Location mirrors AdminGlobalMasterList: "City, Province", falling back to the
+  // seeded free-text full address, then the onboarding-form "Location" string
+  // (which is all a freshly-promoted hire has — city/province were only backfilled
+  // for the older seeded rows). Phone comes straight off the master row. Both feed
+  // the Google "Offboarded" sheet columns HR expects filled (the offboarded_sheet
+  // DB table ignores them — they're sheet-only enrichment).
+  const location =
+    [first.city, first.province].map((s) => s?.trim()).filter(Boolean).join(", ") ||
+    first.full_address?.trim() ||
+    first.Location?.trim() ||
+    null;
+
   // Insert into offboarded_sheet immediately so the HR Offboarded tab shows the
   // person without waiting for the nightly cron. Best-effort — don't block.
   const sheetInput = {
@@ -234,6 +254,8 @@ async function offboardOnePerson(
     workEmail: work_email,
     name: first.Name,
     department: departments.join(", ") || null,
+    location,
+    phoneNumber: first["Phone Number"],
     startDate: first["Start Date"],
     offBoardedAt: offBoardedAt,
     offBoardedReason: reason,

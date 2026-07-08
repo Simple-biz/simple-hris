@@ -24,7 +24,7 @@ CREATE INDEX IF NOT EXISTS global_master_list_off_boarded_at_idx
 
 -- Reason taxonomy is enforced by the API (POST /api/hr/offboard) rather than
 -- a CHECK constraint so HR can extend it without a migration. Today's set:
---   resigned · performance · time_manipulation · attendance ·
+--   ncns · resigned · performance · time_manipulation · attendance ·
 --   end_of_contract · other
 -- "other" requires a free-text note on the API side.
 

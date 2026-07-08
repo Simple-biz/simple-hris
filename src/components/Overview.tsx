@@ -2127,6 +2127,15 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
     avgHeadcount: number;
     ratePct: number;
   } | null>(null);
+  /** Offboarded-sheet identities keyed by normalized email (both work AND personal
+   *  email point at the same record). Sourced from the Offboarded tab of the master
+   *  Google Sheet (via /api/hr/offboard-history). A Hubstaff worker who is missing
+   *  from the ACTIVE master list but present here is NOT a directory gap — they've
+   *  already been offboarded, so the recon treats them as an expected exception. */
+  const [offboardedByEmail, setOffboardedByEmail] = useState<Record<
+    string,
+    { name: string; personalEmail: string; department: string; offBoardedAt: string | null }
+  > | null>(null);
   /** New hires in the trailing 30 days, derived from `start_date` on the master list. */
   const newHires = useMemo(() => {
     const now = Date.now();
@@ -2279,13 +2288,41 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
           fetch('/api/hr/offboard-history', { cache: 'no-store' }),
           fetch('/api/employees', { cache: 'no-store' }),
         ]);
-        const offJson = (await offRes.json()) as { rows?: { off_boarded_at: string | null }[] };
+        const offJson = (await offRes.json()) as {
+          rows?: {
+            Name?: string | null;
+            'Work Email'?: string | null;
+            'Personal Email'?: string | null;
+            Department?: string | null;
+            off_boarded_at: string | null;
+          }[];
+        };
         const empJson = (await empRes.json()) as { employees?: unknown[] };
         const cutoff = Date.now() - 365 * 24 * 3600 * 1000;
         const separations = (offJson.rows ?? []).reduce((n, r) => {
           const t = r.off_boarded_at ? new Date(r.off_boarded_at).getTime() : NaN;
           return Number.isFinite(t) && t >= cutoff ? n + 1 : n;
         }, 0);
+        // Index offboarded identities by BOTH normalized emails so the recon can
+        // resolve a Hubstaff worker (matched on work email) to an already-offboarded
+        // person even when only the personal email is on file.
+        const offIndex: Record<
+          string,
+          { name: string; personalEmail: string; department: string; offBoardedAt: string | null }
+        > = {};
+        for (const r of offJson.rows ?? []) {
+          const rec = {
+            name: r.Name ?? '',
+            personalEmail: r['Personal Email'] ?? '',
+            department: r.Department ?? '',
+            offBoardedAt: r.off_boarded_at ?? null,
+          };
+          const w = normEmail(r['Work Email'] ?? null);
+          const p = normEmail(r['Personal Email'] ?? null);
+          if (w) offIndex[w] = rec;
+          if (p) offIndex[p] = rec;
+        }
+        if (!cancelled) setOffboardedByEmail(offIndex);
         const activeHeadcount = Array.isArray(empJson.employees) ? empJson.employees.length : 0;
         // Average headcount over the period ≈ start + end / 2.
         // start ≈ activeNow + everyone who left during the period.
@@ -2293,7 +2330,10 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
         const ratePct = avgHeadcount > 0 ? (separations / avgHeadcount) * 100 : 0;
         if (!cancelled) setAttrition({ separations, activeHeadcount, avgHeadcount, ratePct });
       } catch {
-        if (!cancelled) setAttrition(null);
+        if (!cancelled) {
+          setAttrition(null);
+          setOffboardedByEmail({});
+        }
       }
     })();
     return () => {
@@ -3271,14 +3311,33 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
       }
     }
 
-    // Hubstaff workers with no master-list match — a directory gap to reconcile.
+    // Hubstaff workers with no ACTIVE master-list match. Before flagging one as a
+    // directory gap, check the Offboarded sheet (indexed by work AND personal
+    // email): a match there means the person has already been offboarded — the
+    // active master drops them, so their leftover Hubstaff hours are EXPECTED, not
+    // a gap. Reclassify those as exceptions with the offboarded identity attached.
     let hubstaffOnly = 0;
     if (worked != null) {
       for (const em of worked) {
         if (masterKeys.has(em)) continue;
+        const pay = employeePayByEmail[em];
+        const off = offboardedByEmail?.[em];
+        if (off) {
+          exceptions++;
+          const when = off.offBoardedAt ? ` ${String(off.offBoardedAt).slice(0, 10)}` : '';
+          out.push({
+            status: HUBSTAFF_EXCEPTION_STATUS,
+            reason: `Already offboarded${when} — on the Offboarded sheet, not a directory gap`,
+            name: off.name || payrollIdentityByEmail?.[em]?.name || '',
+            workEmail: em,
+            personalEmail: off.personalEmail || '',
+            department: off.department || payrollIdentityByEmail?.[em]?.department || '',
+            hours: pay ? pay.hours.toFixed(2) : '',
+          });
+          continue;
+        }
         hubstaffOnly++;
         const ident = payrollIdentityByEmail?.[em];
-        const pay = employeePayByEmail[em];
         out.push({
           status: 'In Hubstaff, not on Master',
           reason: 'Worked but missing from the Master List — add to the directory',
@@ -3299,7 +3358,7 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
       reconExceptions: isNull ? null : exceptions,
       inPayrollNotMaster: isNull ? null : hubstaffOnly,
     };
-  }, [employees, payrollEmailsNorm, employeePayByEmail, leaveRows, activeSourceFile, payrollIdentityByEmail]);
+  }, [employees, payrollEmailsNorm, employeePayByEmail, leaveRows, activeSourceFile, payrollIdentityByEmail, offboardedByEmail]);
 
   const { inPayrollNotMaster, inMasterNotPayroll, emailsMatched, reconExceptions } = masterRecon;
   const hubstaffReconRows = masterRecon.rows;

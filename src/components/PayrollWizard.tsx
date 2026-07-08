@@ -3098,9 +3098,26 @@ export default function PayrollWizard({
 
   // When a locked snapshot exists, use it so values don't change on refresh.
   const effectivePabStatus = useMemo<Map<string, 'eligible' | 'ineligible' | 'in_progress'>>(() => {
-    if (lockedPabSnapshot) return new Map(Object.entries(lockedPabSnapshot)) as Map<string, 'eligible' | 'ineligible' | 'in_progress'>;
-    return pabStatusByEmail;
-  }, [lockedPabSnapshot, pabStatusByEmail]);
+    if (!lockedPabSnapshot) return pabStatusByEmail;
+    const snap = new Map(Object.entries(lockedPabSnapshot)) as Map<string, 'eligible' | 'ineligible' | 'in_progress'>;
+    // A snapshot frozen mid-period carries 'in_progress' verdicts. Once the PAB
+    // period has ended, those employees are locked-in eligible for the rest of the
+    // interim (until the next PAB is initiated) — "In Progress" is now stale. Resolve
+    // them from the live computation so the pill, its +₱ amount, and the PAB total all
+    // read "Eligible" instead. Live eligible/ineligible verdicts stay frozen.
+    if (pabMonthRange) {
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const endDay = new Date(pabMonthRange.end);
+      endDay.setHours(0, 0, 0, 0);
+      if (today.getTime() > endDay.getTime()) {
+        for (const [email, status] of snap.entries()) {
+          if (status === 'in_progress') snap.set(email, pabStatusByEmail.get(email) ?? 'eligible');
+        }
+      }
+    }
+    return snap;
+  }, [lockedPabSnapshot, pabStatusByEmail, pabMonthRange]);
 
   const saveAdditionsProgress = React.useCallback(async (opts?: { orphanageAmounts?: Record<string, number> }) => {
     if (!calcSourceFile) {
@@ -9024,15 +9041,20 @@ export default function PayrollWizard({
                                       </TableCell>
                                     );
                                   }
-                                  const status = effectivePabStatus.get(normEmpEmail) ?? 'in_progress';
+                                  const rawStatus = effectivePabStatus.get(normEmpEmail) ?? 'in_progress';
+                                  // "In progress" means no weekday has been failed yet — the employee is
+                                  // effectively eligible for this period and stays eligible until the next PAB
+                                  // is initiated. Show it green with the Payment-Catalog PAB amount rather than
+                                  // a neutral "In Progress"; only an actual failed day locks it to Ineligible.
+                                  const status = rawStatus === 'in_progress' ? 'eligible' : rawStatus;
                                   const label =
                                     status === 'eligible' ? '✓ Eligible'
                                     : status === 'ineligible' ? '✗ Ineligible'
                                     : '⏳ In Progress';
                                   const titleText =
-                                    status === 'eligible' ? 'Passed every Mon–Fri in the PAB period — click to see the calendar.'
-                                    : status === 'ineligible' ? 'Already failed at least one past weekday — locked for this period. Click to see which day.'
-                                    : 'PAB period is still running and no past failures yet. Click to see the calendar.';
+                                    rawStatus === 'ineligible' ? 'Already failed at least one past weekday — locked for this period. Click to see which day.'
+                                    : rawStatus === 'in_progress' ? 'No failed weekday so far — eligible for this period until the next PAB is initiated. Click to see the calendar.'
+                                    : 'Passed every Mon–Fri in the PAB period — click to see the calendar.';
                                   return (
                                     <TableCell className="px-1 py-1.5 text-center">
                                       <button

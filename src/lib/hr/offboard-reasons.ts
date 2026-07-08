@@ -9,6 +9,7 @@
  * `other` requires a free-text note.
  */
 export const VALID_OFFBOARD_REASONS = [
+  'ncns',
   'resigned',
   'end_of_contract',
   'performance',
@@ -20,6 +21,7 @@ export const VALID_OFFBOARD_REASONS = [
 export type OffboardReason = (typeof VALID_OFFBOARD_REASONS)[number];
 
 export const OFFBOARD_REASON_OPTIONS: { value: OffboardReason; label: string }[] = [
+  { value: 'ncns', label: 'NCNS (No Call, No Show)' },
   { value: 'resigned', label: 'Resigned' },
   { value: 'end_of_contract', label: 'End of contract' },
   { value: 'performance', label: 'Performance' },
@@ -30,6 +32,7 @@ export const OFFBOARD_REASON_OPTIONS: { value: OffboardReason; label: string }[]
 
 /** Short display label for a stored reason key (falls back to the raw value). */
 export const OFFBOARD_REASON_LABELS: Record<string, string> = {
+  ncns: 'NCNS',
   resigned: 'Resigned',
   end_of_contract: 'End of contract',
   performance: 'Performance',

@@ -549,7 +549,8 @@
       "Bash(node diag-roles2.mjs)",
       "Bash(rm -f diag-roles2.mjs)",
       "Bash(node diag-permbridge.mjs)",
-      "Bash(rm -f diag-permbridge.mjs)"
+      "Bash(rm -f diag-permbridge.mjs)",
+      "PowerShell(npm run lint)"
     ],
     "additionalDirectories": [
       "\\tmp",

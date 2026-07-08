@@ -28,12 +28,13 @@ export const HUBSTAFF_EXCEPTION_STATUS = 'Exception';
 
 /**
  * Departments that legitimately have NO Hubstaff time tracking — freelance /
- * project-based teams billed by deliverable, not by tracked hours. A person in
- * one of these depts with no Hubstaff hours is NOT a reconciliation gap; it's
- * expected, so they're tallied as an exception. Matched case-insensitively
- * against the raw Department label.
+ * project-based teams billed by deliverable, salaried US staff, and the sales
+ * team (commission-based, not tracked by the hour). A person in one of these
+ * depts with no Hubstaff hours is NOT a reconciliation gap; it's expected, so
+ * they're tallied as an exception. Matched case-insensitively against the raw
+ * Department label.
  */
-const HUBSTAFF_EXEMPT_DEPTS = new Set(['smm freelancer', 'site building']);
+const HUBSTAFF_EXEMPT_DEPTS = new Set(['smm freelancer', 'site building', 'sales', 'usee']);
 
 export function isHubstaffExemptDept(department: string | null | undefined): boolean {
   if (!department) return false;
