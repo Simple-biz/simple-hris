@@ -3215,29 +3215,31 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
         };
       }
 
-      // 1) Approved/pending leave overlapping the pay period (or active today
-      //    when viewing All Time). Approved wins over pending.
+      // 1) APPROVED leave (filed through the Employee portal) overlapping the pay
+      //    period — or active today when viewing All Time. Only an approved leave
+      //    excuses missing hours; a still-pending request does NOT clear the gap,
+      //    so those fall through and stay flagged until HR approves them.
       const mine: Leave[] = [];
       for (const k of new Set([w, p].filter(Boolean))) {
         const arr = leavesByEmail.get(k);
         if (arr) mine.push(...arr);
       }
       if (mine.length) {
-        const inWindow = period
+        const inWindow = (period
           ? mine.filter((lv) => lv.start <= period.endISO && lv.end >= period.startISO)
-          : mine.filter((lv) => lv.start <= todayISO && lv.end >= todayISO);
-        const pick = inWindow.find((lv) => lv.status === 'approved') ?? inWindow[0];
+          : mine.filter((lv) => lv.start <= todayISO && lv.end >= todayISO)
+        ).filter((lv) => lv.status === 'approved');
+        const pick = inWindow[0];
         if (pick) {
-          const note = pick.status === 'approved' ? '' : ` [${pick.status}]`;
           if (period) {
             const whole = pick.start <= period.startISO && pick.end >= period.endISO;
             return {
-              reason: `${whole ? 'On leave the entire period' : 'On leave part of the period'} — ${prettyType(pick.type)} ${pick.start}→${pick.end}${note}`,
+              reason: `${whole ? 'On approved leave the entire period' : 'On approved leave part of the period'} — ${prettyType(pick.type)} ${pick.start}→${pick.end}`,
               exception: true,
             };
           }
           return {
-            reason: `Currently on leave — ${prettyType(pick.type)} ${pick.start}→${pick.end}${note}`,
+            reason: `Currently on approved leave — ${prettyType(pick.type)} ${pick.start}→${pick.end}`,
             exception: true,
           };
         }
