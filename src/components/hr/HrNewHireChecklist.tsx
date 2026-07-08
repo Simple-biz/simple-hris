@@ -17,6 +17,7 @@ import {
   Loader2,
   Lock,
   LockOpen,
+  Pencil,
   Plus,
   RefreshCw,
   Save,
@@ -158,6 +159,14 @@ function toPayload(rows: GridRow[]) {
     for (const c of COLUMNS) o[c.key] = r[c.key];
     return o;
   });
+}
+
+/** A grid row → the modal's field values (for editing an existing row in the
+ *  form). Keys line up 1:1 with COLUMNS / QuickAddValues. */
+function rowToValues(row: GridRow): QuickAddValues {
+  const v = {} as QuickAddValues;
+  for (const c of COLUMNS) v[c.key] = row[c.key] ?? '';
+  return v;
 }
 
 function rowIsBlank(r: GridRow): boolean {
@@ -325,9 +334,10 @@ export default function HrNewHireChecklist({
   const [historyPopover, setHistoryPopover] = useState<
     { label: string; entries: CellEditEntry[]; top: number; left: number } | null
   >(null);
-  // Floating "New Hire" quick-add modal (the glowing CTA opens it; disabled when
-  // the week is locked).
-  const [quickAddOpen, setQuickAddOpen] = useState(false);
+  // "New Hire" modal — the glowing CTA opens it in 'add' mode; a row's Edit
+  // button opens it in 'edit' mode pre-filled with that row (keyed by _key).
+  // null = closed. Disabled while the week is locked.
+  const [editor, setEditor] = useState<{ mode: 'add' } | { mode: 'edit'; key: string } | null>(null);
   const reduceMotion = useReducedMotion();
 
   // Mutators read the lock through a ref so a locked week can never be edited
@@ -970,10 +980,46 @@ export default function HrNewHireChecklist({
     [departments, liveEdits, period, reduceMotion],
   );
 
-  // A locked week is read-only — never leave the quick-add modal open over it
-  // (e.g. if a co-editor locks the week while the dialog is up).
+  // "Edit" a row from the modal → apply the form values to that row in place
+  // (matched by stable _key), canonicalising dept/country and streaming only the
+  // changed cells to co-editors. Local + dirty until Save / Lock in.
+  const handleEditHire = useCallback(
+    (key: string, values: QuickAddValues) => {
+      if (lockedRef.current) return;
+      const cur = rowsRef.current;
+      const idx = cur.findIndex((row) => row._key === key);
+      if (idx < 0) return;
+      const row = cur[idx]!;
+      const updates: Partial<Record<FieldKey, string>> = {};
+      const batch: LiveCellValue[] = [];
+      for (const c of COLUMNS) {
+        const raw = (values[c.key] ?? '').trim();
+        const val =
+          c.key === 'department'
+            ? canonicalizeDept(raw, departments)
+            : c.key === 'country'
+              ? canonicalizeCountry(raw)
+              : raw;
+        if ((row[c.key] ?? '') !== val) {
+          updates[c.key] = val;
+          batch.push({ r: idx, cid: row._cid, c: c.key, v: val });
+        }
+      }
+      if (batch.length === 0) return; // nothing changed
+      setRows((prev) => prev.map((rw) => (rw._key === key ? { ...rw, ...updates } : rw)));
+      setDirty(true);
+      liveEdits(batch);
+      setSel({ ar: idx, ac: 0, hr: idx, hc: 0 });
+      setEditing(null);
+      toast.success(`Updated ${(values.name || '').trim() || 'hire'}`);
+    },
+    [departments, liveEdits],
+  );
+
+  // A locked week is read-only — never leave the modal open over it (e.g. if a
+  // co-editor locks the week while the dialog is up).
   useEffect(() => {
-    if (locked) setQuickAddOpen(false);
+    if (locked) setEditor(null);
   }, [locked]);
 
   const clearColumn = useCallback((key: FieldKey, label: string) => {
@@ -1701,7 +1747,7 @@ export default function HrNewHireChecklist({
                             </div>
                           </th>
                         ))}
-                        {!locked && <th className="w-10 border-b border-emerald-100/80 px-1 py-2 dark:border-emerald-950/40" />}
+                        {!locked && <th className="w-16 border-b border-emerald-100/80 px-1 py-2 dark:border-emerald-950/40" />}
                       </tr>
                     </thead>
                     <tbody>
@@ -1918,15 +1964,26 @@ export default function HrNewHireChecklist({
                               );
                             })}
                             {!locked && (
-                              <td className="border-b border-emerald-50/80 px-1 text-center dark:border-zinc-800/80">
-                                <button
-                                  type="button"
-                                  onClick={() => deleteRow(r, row._key)}
-                                  aria-label={`Delete row ${r + 1}`}
-                                  className="rounded p-1 text-zinc-300 opacity-0 transition hover:bg-rose-50 hover:text-rose-500 focus:opacity-100 group-hover/row:opacity-100 dark:hover:bg-rose-950/30"
-                                >
-                                  <Trash2 className="h-3.5 w-3.5" />
-                                </button>
+                              <td className="border-b border-emerald-50/80 px-1 dark:border-zinc-800/80">
+                                <div className="flex items-center justify-center gap-0.5">
+                                  <button
+                                    type="button"
+                                    onClick={() => setEditor({ mode: 'edit', key: row._key })}
+                                    aria-label={`Edit row ${r + 1} in a form`}
+                                    title="Edit this hire in a form"
+                                    className="rounded p-1 text-zinc-300 opacity-0 transition hover:bg-emerald-50 hover:text-emerald-600 focus:opacity-100 group-hover/row:opacity-100 dark:hover:bg-emerald-950/30 dark:hover:text-emerald-300"
+                                  >
+                                    <Pencil className="h-3.5 w-3.5" />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => deleteRow(r, row._key)}
+                                    aria-label={`Delete row ${r + 1}`}
+                                    className="rounded p-1 text-zinc-300 opacity-0 transition hover:bg-rose-50 hover:text-rose-500 focus:opacity-100 group-hover/row:opacity-100 dark:hover:bg-rose-950/30"
+                                  >
+                                    <Trash2 className="h-3.5 w-3.5" />
+                                  </button>
+                                </div>
                               </td>
                             )}
                           </tr>
@@ -1955,7 +2012,7 @@ export default function HrNewHireChecklist({
                   ) : (
                     <motion.button
                       type="button"
-                      onClick={() => setQuickAddOpen(true)}
+                      onClick={() => setEditor({ mode: 'add' })}
                       disabled={saving}
                       aria-label="Add a new hire"
                       initial={false}
@@ -2074,16 +2131,28 @@ export default function HrNewHireChecklist({
         onConfirm={runGatedAction}
       />
 
-      {/* "New Hire" quick-add modal — collects one hire's fields and drops the
-          row at the bottom of the grid. */}
+      {/* "New Hire" modal — 'add' appends a hire; 'edit' (a row's Edit button)
+          pre-fills the form and updates that row in place. */}
       <NewHireQuickAddDialog
-        open={quickAddOpen}
+        open={editor !== null}
+        mode={editor?.mode ?? 'add'}
         weekLabel={formatWeekLabel(period)}
         departments={departments}
         sources={sourceOptions}
         referrers={referrers}
-        onCancel={() => setQuickAddOpen(false)}
-        onSave={handleQuickAdd}
+        initialValues={
+          editor?.mode === 'edit'
+            ? (() => {
+                const rw = rows.find((r) => r._key === editor.key);
+                return rw ? rowToValues(rw) : null;
+              })()
+            : null
+        }
+        onCancel={() => setEditor(null)}
+        onSave={(values) => {
+          if (editor?.mode === 'edit') handleEditHire(editor.key, values);
+          else handleQuickAdd(values);
+        }}
       />
     </div>
   );
