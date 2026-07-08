@@ -416,17 +416,29 @@ export async function getEmployeeMasterRecord(
       .limit(1)
       .maybeSingle();
 
-  const tryWith = async (sel: string) => {
+  // `includeAlternates` is only safe on the full select — the base select
+  // predates the alternate-email columns, so querying them there would 400 with
+  // "column does not exist" (the very error that triggers the base fallback).
+  const tryWith = async (sel: string, includeAlternates: boolean) => {
     let r = await queryFor('"Work Email"', sel);
     if (!r.data && !r.error) {
       r = await queryFor('"Personal Email"', sel);
     }
+    // Alternate work emails are a second inbox for the same human — resolve
+    // someone who signs in via an alternate to their canonical master row so
+    // their department/identity fills in (My Team, profile) instead of going
+    // blank. Bridged everywhere else already (hours/rates/wizard); this closes
+    // the self-identity gap documented in docs/features/identity-resolution.md.
+    if (includeAlternates) {
+      if (!r.data && !r.error) r = await queryFor('"Alternate Work Email"', sel);
+      if (!r.data && !r.error) r = await queryFor('"Alternate Work Email 2"', sel);
+    }
     return r;
   };
 
-  let res = await tryWith(fullSelect);
+  let res = await tryWith(fullSelect, true);
   if (res.error && /does not exist/i.test(res.error.message ?? "")) {
-    res = await tryWith(baseSelect);
+    res = await tryWith(baseSelect, false);
   }
   if (res.error) return { employee: null, error: res.error.message };
   if (!res.data) return { employee: null, error: null };

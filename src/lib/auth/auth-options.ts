@@ -24,6 +24,7 @@ import {
 import { insertAuditLog } from '@/lib/supabase/audit-log';
 import { hasElevatedRole } from './elevated-roles';
 import { getForceLogoutEpochFor } from './force-logout';
+import { expandWorkEmailAliases } from '@/lib/email/work-email-aliases';
 
 const ALLOWED_HD = 'simple.biz';
 
@@ -76,13 +77,21 @@ async function fetchRolesForEmailOrNull(email: string): Promise<string[] | null>
   const supabase = createSupabaseServiceRoleClient() ?? createSupabaseServerClient();
   if (!supabase) return null;
   try {
+    // Bridge alternate work emails: a role granted to a person's PRIMARY work
+    // email must apply when they sign in via an alternate (second-inbox) address,
+    // and vice versa. `expandWorkEmailAliases` resolves the login email to the
+    // full set of that person's linked work addresses; a role on any of them
+    // counts. Falls back to [email] on failure, matching the old single-email
+    // behavior. Stored work_emails are lowercased (see POST /api/employee-roles),
+    // so `.in` on the lowercased alias set matches without needing ilike.
+    const aliases = await expandWorkEmailAliases(email);
     const { data, error } = await supabase
       .from('employee_roles')
       .select('role')
       .is('revoked_at', null)
-      .ilike('work_email', email);
+      .in('work_email', aliases);
     if (error || !data) return null;
-    return (data as { role: string }[]).map((r) => r.role);
+    return [...new Set((data as { role: string }[]).map((r) => r.role))];
   } catch {
     return null;
   }

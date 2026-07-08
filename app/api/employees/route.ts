@@ -29,7 +29,11 @@ export async function GET(req: NextRequest) {
     const me = (all.employees ?? []).find((e: EmployeeRow) => {
       const we = normEmail(e.work_email ?? "");
       const pe = normEmail(e.personal_email ?? "");
-      return we === norm || pe === norm;
+      // Alternate work emails are a second inbox for the same person — match them
+      // too so a login via an alternate resolves to the right roster row.
+      const a1 = normEmail(e.alternate_work_email ?? "");
+      const a2 = normEmail(e.alternate_work_email_2 ?? "");
+      return we === norm || pe === norm || a1 === norm || a2 === norm;
     });
     if (me) return NextResponse.json({ employees: [me], error: all.error });
 

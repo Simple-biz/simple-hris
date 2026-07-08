@@ -7,6 +7,7 @@ import {
   requireElevatedSession,
 } from '@/lib/auth/authorize-email';
 import { bumpForceLogoutFor } from '@/lib/auth/force-logout';
+import { expandWorkEmailAliases } from '@/lib/email/work-email-aliases';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -116,7 +117,11 @@ export async function GET(request: Request) {
     .is('revoked_at', null)
     .order('assigned_at', { ascending: false });
 
-  if (email) q = q.ilike('work_email', authz.effectiveEmail);
+  // Bridge alternate work emails so the ViewSwitcher (which fetches the caller's
+  // own roles here) shows the same dashboards whether the person signed in via
+  // their primary work email or a linked alternate — roles granted to either
+  // resolve to the same person. See expandWorkEmailAliases.
+  if (email) q = q.in('work_email', await expandWorkEmailAliases(authz.effectiveEmail));
 
   const { data, error } = await q;
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });

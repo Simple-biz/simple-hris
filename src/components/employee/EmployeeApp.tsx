@@ -236,7 +236,12 @@ export default function EmployeeApp() {
         let master = (empJson.employees ?? []).find((e) => {
           const we = normEmail(e.work_email ?? '');
           const pe = normEmail(e.personal_email ?? '');
-          return we === norm || pe === norm;
+          // Alternate work emails are a second inbox for the same person, so a
+          // login via an alternate must still resolve to their own master row
+          // (otherwise department stays null and My Team renders empty).
+          const a1 = normEmail(e.alternate_work_email ?? '');
+          const a2 = normEmail(e.alternate_work_email_2 ?? '');
+          return we === norm || pe === norm || a1 === norm || a2 === norm;
         }) ?? null;
         // Fallback to the underlying `global_master_list` for people who aren't on the
         // latest upload (e.g. internal devs). Keeps identity rendering instead of
