@@ -8,9 +8,11 @@ import {
   ChevronRight,
   Copy,
   RefreshCw,
+  Search,
   Share2,
   UserPlus,
   Users,
+  X,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
@@ -38,6 +40,7 @@ export default function ReferralsWeekSection() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [query, setQuery] = useState('');
 
   const badge = useMemo(() => {
     if (week === null) return null;
@@ -64,17 +67,27 @@ export default function ReferralsWeekSection() {
 
   useEffect(load, [week]);
 
+  // Filter by new-hire OR referrer name (case-insensitive substring).
+  const q = query.trim().toLowerCase();
+  const filtered = useMemo(
+    () =>
+      q
+        ? referrals.filter((r) => r.hire.toLowerCase().includes(q) || r.referredBy.toLowerCase().includes(q))
+        : referrals,
+    [referrals, q],
+  );
+
   const copyCsv = async () => {
     const header = ['New Hire that was Referred', 'Referred By'];
     const lines = [
       header.join(','),
-      ...referrals.map((r) => [r.hire, r.referredBy].map(csvCell).join(',')),
+      ...filtered.map((r) => [r.hire, r.referredBy].map(csvCell).join(',')),
     ];
     try {
       await navigator.clipboard.writeText(lines.join('\r\n'));
       setCopied(true);
       setTimeout(() => setCopied(false), 1800);
-      toast.success(`Copied ${referrals.length} ${referrals.length === 1 ? 'referral' : 'referrals'} to clipboard`);
+      toast.success(`Copied ${filtered.length} ${filtered.length === 1 ? 'referral' : 'referrals'} to clipboard`);
     } catch {
       toast.error('Could not copy to clipboard');
     }
@@ -101,7 +114,7 @@ export default function ReferralsWeekSection() {
           <button
             type="button"
             onClick={copyCsv}
-            disabled={loading || referrals.length === 0}
+            disabled={loading || filtered.length === 0}
             title="Copy the referrals table as CSV"
             className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-emerald-200 px-2.5 text-[11px] font-semibold text-emerald-700 transition-colors hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-emerald-800 dark:text-emerald-300 dark:hover:bg-emerald-950/40"
           >
@@ -213,48 +226,78 @@ export default function ReferralsWeekSection() {
           </div>
         ) : (
           <div className="px-5 py-4 sm:px-6">
-            <div className="overflow-x-auto rounded-xl border border-zinc-100 dark:border-zinc-800">
-              <table className="table-keep w-full text-[13px]">
-                <thead>
-                  <tr className="bg-zinc-50 text-left text-[11px] font-semibold uppercase tracking-wide text-zinc-500 dark:bg-zinc-900 dark:text-zinc-400">
-                    <th className="px-3 py-2">
-                      <span className="flex items-center gap-1.5">
-                        <UserPlus className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
-                        New Hire that was Referred
-                      </span>
-                    </th>
-                    <th className="px-3 py-2">
-                      <span className="flex items-center gap-1.5">
-                        <Users className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
-                        Referred By
-                      </span>
-                    </th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800">
-                  {referrals.map((r, i) => (
-                    <tr
-                      key={`${r.hire}-${r.referredBy}-${i}`}
-                      className="transition-colors hover:bg-emerald-50/50 dark:hover:bg-emerald-950/20"
-                    >
-                      <td className="px-3 py-2 font-medium text-zinc-800 dark:text-zinc-100">
-                        {r.hire || <span className="text-zinc-400 dark:text-zinc-500">—</span>}
-                      </td>
-                      <td className="px-3 py-2 text-zinc-700 dark:text-zinc-300">
-                        {r.referredBy || <span className="text-zinc-400 dark:text-zinc-500">—</span>}
+            {/* Search — filter by new hire OR referrer name */}
+            <div className="relative mb-3">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" />
+              <input
+                type="text"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Search new hire or referrer…"
+                aria-label="Search referrals"
+                className="h-9 w-full rounded-xl border border-zinc-300 bg-white pl-9 pr-9 text-[13px] text-zinc-900 outline-none transition placeholder:text-zinc-400 focus:border-emerald-400 focus:ring-2 focus:ring-emerald-300/50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:focus:border-emerald-500"
+              />
+              {query && (
+                <button
+                  type="button"
+                  onClick={() => setQuery('')}
+                  aria-label="Clear search"
+                  className="absolute right-2 top-1/2 -translate-y-1/2 rounded-md p-1 text-zinc-400 transition hover:bg-zinc-100 hover:text-zinc-600 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </div>
+
+            {filtered.length === 0 ? (
+              <div className="rounded-xl border border-dashed border-zinc-200 py-10 text-center text-sm text-zinc-500 dark:border-zinc-800 dark:text-zinc-400">
+                No referrals match &ldquo;{query.trim()}&rdquo;.
+              </div>
+            ) : (
+              <div className="overflow-x-auto rounded-xl border border-zinc-100 dark:border-zinc-800">
+                <table className="table-keep w-full text-[13px]">
+                  <thead>
+                    <tr className="bg-zinc-50 text-left text-[11px] font-semibold uppercase tracking-wide text-zinc-500 dark:bg-zinc-900 dark:text-zinc-400">
+                      <th className="px-3 py-2">
+                        <span className="flex items-center gap-1.5">
+                          <UserPlus className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
+                          New Hire that was Referred
+                        </span>
+                      </th>
+                      <th className="px-3 py-2">
+                        <span className="flex items-center gap-1.5">
+                          <Users className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
+                          Referred By
+                        </span>
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800">
+                    {filtered.map((r, i) => (
+                      <tr
+                        key={`${r.hire}-${r.referredBy}-${i}`}
+                        className="transition-colors hover:bg-emerald-50/50 dark:hover:bg-emerald-950/20"
+                      >
+                        <td className="px-3 py-2 font-medium text-zinc-800 dark:text-zinc-100">
+                          {r.hire || <span className="text-zinc-400 dark:text-zinc-500">—</span>}
+                        </td>
+                        <td className="px-3 py-2 text-zinc-700 dark:text-zinc-300">
+                          {r.referredBy || <span className="text-zinc-400 dark:text-zinc-500">—</span>}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot>
+                    <tr className="border-t border-zinc-200 bg-zinc-50/60 font-semibold dark:border-zinc-700 dark:bg-zinc-900/60">
+                      <td className="px-3 py-2 text-zinc-700 dark:text-zinc-300" colSpan={2}>
+                        {filtered.length} {filtered.length === 1 ? 'referral' : 'referrals'}
+                        {q && filtered.length !== referrals.length ? ` of ${referrals.length}` : ''}
                       </td>
                     </tr>
-                  ))}
-                </tbody>
-                <tfoot>
-                  <tr className="border-t border-zinc-200 bg-zinc-50/60 font-semibold dark:border-zinc-700 dark:bg-zinc-900/60">
-                    <td className="px-3 py-2 text-zinc-700 dark:text-zinc-300" colSpan={2}>
-                      {referrals.length} {referrals.length === 1 ? 'referral' : 'referrals'}
-                    </td>
-                  </tr>
-                </tfoot>
-              </table>
-            </div>
+                  </tfoot>
+                </table>
+              </div>
+            )}
           </div>
         )}
       </div>
