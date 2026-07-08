@@ -3313,40 +3313,29 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
       }
     }
 
-    // Hubstaff workers with no ACTIVE master-list match. Before flagging one as a
-    // directory gap, check the Offboarded sheet (indexed by work AND personal
-    // email): a match there means the person has already been offboarded — the
-    // active master drops them, so their leftover Hubstaff hours are EXPECTED, not
-    // a gap. Reclassify those as exceptions with the offboarded identity attached.
-    let hubstaffOnly = 0;
+    // Hubstaff workers with no ACTIVE master-list match. The active master list
+    // only holds CURRENT employees, so anyone who logged hours yet isn't on it has
+    // already been offboarded (they were dropped from the directory). That's not a
+    // reconciliation gap — treat every one of them as an offboarded exception,
+    // enriched with the Offboarded-sheet identity/date when we have a match.
+    let hubstaffOnly = 0; // kept at 0 — off-directory workers are no longer counted as gaps
     if (worked != null) {
       for (const em of worked) {
         if (masterKeys.has(em)) continue;
+        exceptions++;
         const pay = employeePayByEmail[em];
         const off = offboardedByEmail?.[em];
-        if (off) {
-          exceptions++;
-          const when = off.offBoardedAt ? ` ${String(off.offBoardedAt).slice(0, 10)}` : '';
-          out.push({
-            status: HUBSTAFF_EXCEPTION_STATUS,
-            reason: `Already offboarded${when} — on the Offboarded sheet, not a directory gap`,
-            name: off.name || payrollIdentityByEmail?.[em]?.name || '',
-            workEmail: em,
-            personalEmail: off.personalEmail || '',
-            department: off.department || payrollIdentityByEmail?.[em]?.department || '',
-            hours: pay ? pay.hours.toFixed(2) : '',
-          });
-          continue;
-        }
-        hubstaffOnly++;
         const ident = payrollIdentityByEmail?.[em];
+        const when = off?.offBoardedAt ? ` ${String(off.offBoardedAt).slice(0, 10)}` : '';
         out.push({
-          status: 'In Hubstaff, not on Master',
-          reason: 'Worked but missing from the Master List — add to the directory',
-          name: ident?.name ?? '',
+          status: HUBSTAFF_EXCEPTION_STATUS,
+          reason: off
+            ? `Already offboarded${when} — on the Offboarded sheet, not a directory gap`
+            : 'Not on the active Master List — treated as offboarded, not a directory gap',
+          name: off?.name || ident?.name || '',
           workEmail: em,
-          personalEmail: '',
-          department: ident?.department ?? '',
+          personalEmail: off?.personalEmail || '',
+          department: off?.department || ident?.department || '',
           hours: pay ? pay.hours.toFixed(2) : '',
         });
       }
