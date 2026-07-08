@@ -2968,10 +2968,13 @@ function OverviewBody() {
       {/* Hiring sources + recruiter leaderboard, toggle between all-time and a single week */}
       <HiringWeekOverviewSection />
 
-      {/* Referrals — who referred friends to Simple (from the checklist Source
-          column), scoped by its own week selector. Replaced the Tenure Cohorts
-          section (2026-07-08). */}
-      <ReferralsWeekSection />
+      {/* Referrals — new hires who came in through a referral + who referred
+          them, scoped by its own week selector. Replaced the Tenure Cohorts
+          section (2026-07-08). Constrained to half width on large screens — the
+          two narrow columns don't need the full row. */}
+      <div className="w-full lg:w-1/2">
+        <ReferralsWeekSection />
+      </div>
     </>
   );
 }
