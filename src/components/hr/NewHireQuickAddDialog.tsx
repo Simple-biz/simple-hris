@@ -325,6 +325,7 @@ export default function NewHireQuickAddDialog({
                         icon={Users}
                         ariaLabel="Referred by"
                         invalid={referrerMissing}
+                        customFirst
                       />
                     </div>
                     {sourceIsReferral && (

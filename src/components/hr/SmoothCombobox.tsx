@@ -39,6 +39,10 @@ interface Props {
   ariaLabel?: string;
   invalid?: boolean;
   disabled?: boolean;
+  /** Show the "Use <typed> (custom)" row ABOVE the matches instead of below —
+   *  handy for long lists (e.g. Referred By) where a custom value would
+   *  otherwise be buried under many suggestions. */
+  customFirst?: boolean;
 }
 
 export default function SmoothCombobox({
@@ -52,6 +56,7 @@ export default function SmoothCombobox({
   ariaLabel,
   invalid,
   disabled,
+  customFirst,
 }: Props) {
   const reduceMotion = useReducedMotion();
   const autoId = useId();
@@ -60,6 +65,7 @@ export default function SmoothCombobox({
   const wrapRef = useRef<HTMLDivElement>(null);
   const popRef = useRef<HTMLDivElement>(null);
   const typedRef = useRef(false); // did the user type since opening? (drives filtering)
+  const navByKeyRef = useRef(false); // last active-option change came from the keyboard (drives scroll-into-view)
   const [open, setOpen] = useState(false);
   const [activeIndex, setActiveIndex] = useState(-1);
   const [pos, setPos] = useState<{ topPx: number; bottomPx: number; left: number; width: number; flip: boolean } | null>(
@@ -127,7 +133,11 @@ export default function SmoothCombobox({
     [onChange, open, place],
   );
 
-  // Close on outside click / scroll / resize (the popover is fixed-positioned).
+  // Close on outside click / resize, and when the PAGE/modal BEHIND the popover
+  // scrolls (the fixed popover would otherwise detach). Crucially, IGNORE the
+  // popover's OWN scroll — wheel-scrolling a long list, or scrollIntoView on
+  // keyboard nav, must NOT slam it shut (that was the "disappears when I move
+  // the mouse" bug on long lists like Department).
   useEffect(() => {
     if (!open) return;
     const onDown = (e: MouseEvent) => {
@@ -135,20 +145,27 @@ export default function SmoothCombobox({
       if (wrapRef.current?.contains(t) || popRef.current?.contains(t)) return;
       close();
     };
-    const onScrollOrResize = () => close();
+    const onScroll = (e: Event) => {
+      const t = e.target as Node | null;
+      if (t && popRef.current?.contains(t)) return; // the popover scrolled itself — keep it open
+      close();
+    };
+    const onResize = () => close();
     document.addEventListener('mousedown', onDown);
-    window.addEventListener('scroll', onScrollOrResize, true);
-    window.addEventListener('resize', onScrollOrResize);
+    window.addEventListener('scroll', onScroll, true);
+    window.addEventListener('resize', onResize);
     return () => {
       document.removeEventListener('mousedown', onDown);
-      window.removeEventListener('scroll', onScrollOrResize, true);
-      window.removeEventListener('resize', onScrollOrResize);
+      window.removeEventListener('scroll', onScroll, true);
+      window.removeEventListener('resize', onResize);
     };
   }, [open, close]);
 
-  // Keep the highlighted option in view.
+  // Keep the highlighted option in view — but ONLY for keyboard nav. Doing this
+  // on mouse hover would scroll the list under the cursor (jitter) and, on a
+  // long list, trip the scroll-close above.
   useEffect(() => {
-    if (!open || activeIndex < 0) return;
+    if (!open || activeIndex < 0 || !navByKeyRef.current) return;
     popRef.current?.querySelector(`[data-idx="${activeIndex}"]`)?.scrollIntoView({ block: 'nearest' });
   }, [activeIndex, open]);
 
@@ -156,10 +173,12 @@ export default function SmoothCombobox({
     if (e.key === 'ArrowDown') {
       e.preventDefault();
       if (!open) { openMenu(); return; }
+      navByKeyRef.current = true;
       setActiveIndex((i) => Math.min(i + 1, filtered.length - 1));
     } else if (e.key === 'ArrowUp') {
       e.preventDefault();
       if (!open) { openMenu(); return; }
+      navByKeyRef.current = true;
       setActiveIndex((i) => Math.max(i - 1, 0));
     } else if (e.key === 'Enter') {
       if (open) {
@@ -183,6 +202,27 @@ export default function SmoothCombobox({
       openMenu();
     }
   };
+
+  // The "Use <typed> (custom)" affordance — placed ABOVE the matches when
+  // `customFirst` (Referred By, long GML list), else below them.
+  const customRow = isCustom ? (
+    <button
+      type="button"
+      onMouseDown={(e) => e.preventDefault()}
+      onClick={() => { close(); requestAnimationFrame(() => inputRef.current?.focus()); }}
+      className={cn(
+        'flex w-full shrink-0 items-center gap-2 px-3 py-2 text-left text-[13.5px] text-emerald-700 transition-colors hover:bg-emerald-50 dark:text-emerald-300 dark:hover:bg-emerald-950/50',
+        customFirst ? 'border-b border-zinc-100 dark:border-zinc-800' : 'border-t border-zinc-100 dark:border-zinc-800',
+      )}
+    >
+      <span className="flex h-4 w-4 shrink-0 items-center justify-center">
+        <Plus className="h-4 w-4" />
+      </span>
+      <span className="truncate">
+        Use &ldquo;{value.trim()}&rdquo; <span className="text-zinc-400">(custom)</span>
+      </span>
+    </button>
+  ) : null;
 
   return (
     <div ref={wrapRef} className="relative">
@@ -243,6 +283,7 @@ export default function SmoothCombobox({
                 }}
                 className="z-[140] overflow-auto overscroll-contain rounded-xl border border-zinc-200 bg-white py-1 shadow-xl shadow-black/15 dark:border-zinc-700 dark:bg-zinc-900"
               >
+                {customFirst && customRow}
                 {filtered.map((opt, i) => {
                   const selected = opt.toLowerCase() === q;
                   const active = i === activeIndex;
@@ -254,7 +295,7 @@ export default function SmoothCombobox({
                       role="option"
                       aria-selected={selected}
                       onMouseDown={(e) => e.preventDefault()} // keep input focused
-                      onMouseEnter={() => setActiveIndex(i)}
+                      onMouseEnter={() => { navByKeyRef.current = false; setActiveIndex(i); }}
                       onClick={() => commit(opt)}
                       className={cn(
                         'flex w-full items-center gap-2 px-3 py-2 text-left text-[13.5px] transition-colors',
@@ -270,21 +311,7 @@ export default function SmoothCombobox({
                   );
                 })}
 
-                {isCustom && (
-                  <button
-                    type="button"
-                    onMouseDown={(e) => e.preventDefault()}
-                    onClick={() => { close(); requestAnimationFrame(() => inputRef.current?.focus()); }}
-                    className="flex w-full items-center gap-2 border-t border-zinc-100 px-3 py-2 text-left text-[13.5px] text-emerald-700 transition-colors hover:bg-emerald-50 dark:border-zinc-800 dark:text-emerald-300 dark:hover:bg-emerald-950/50"
-                  >
-                    <span className="flex h-4 w-4 shrink-0 items-center justify-center">
-                      <Plus className="h-4 w-4" />
-                    </span>
-                    <span className="truncate">
-                      Use &ldquo;{value.trim()}&rdquo; <span className="text-zinc-400">(custom)</span>
-                    </span>
-                  </button>
-                )}
+                {!customFirst && customRow}
 
                 {filtered.length === 0 && !isCustom && (
                   <div className="px-3 py-2 text-[13px] text-zinc-400">No matches</div>
