@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import {
-  Search, Download, CheckCircle2, MinusCircle, AlertTriangle, ChevronLeft, ChevronRight, BadgeCheck,
+  Search, Download, CheckCircle2, MinusCircle, AlertTriangle, ChevronLeft, ChevronRight, BadgeCheck, Plane,
 } from 'lucide-react';
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
@@ -20,7 +20,7 @@ import {
 /** Rows shown per page in the drill-down list. */
 const PAGE_SIZE = 10;
 
-/** The three status buckets, in display order, with their tile styling. */
+/** The status buckets, in display order, with their tile styling. */
 const STATUS_META: Array<{
   key: string;
   short: string;
@@ -46,13 +46,22 @@ const STATUS_META: Array<{
     badge: 'bg-zinc-100 text-zinc-600 ring-1 ring-zinc-200 dark:bg-zinc-800 dark:text-zinc-300 dark:ring-zinc-700',
   },
   {
-    // No-hours but EXPECTED (no-Hubstaff dept, just hired, or on leave) — not a gap.
+    // No-hours but EXPECTED (no-Hubstaff dept or just hired) — not a gap.
     key: 'Exception',
     short: 'Exceptions',
     Icon: BadgeCheck,
     chip: 'border-indigo-200 text-indigo-700 hover:bg-indigo-50 dark:border-indigo-900/50 dark:text-indigo-300 dark:hover:bg-indigo-950/40',
     chipActive: 'border-indigo-400 bg-indigo-50 text-indigo-800 dark:border-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-200',
     badge: 'bg-indigo-50 text-indigo-700 ring-1 ring-indigo-200/70 dark:bg-indigo-950/40 dark:text-indigo-300 dark:ring-indigo-900/50',
+  },
+  {
+    // No hours but excused by an APPROVED leave (current or upcoming).
+    key: 'On Leave',
+    short: 'On Leave',
+    Icon: Plane,
+    chip: 'border-sky-200 text-sky-700 hover:bg-sky-50 dark:border-sky-900/50 dark:text-sky-300 dark:hover:bg-sky-950/40',
+    chipActive: 'border-sky-400 bg-sky-50 text-sky-800 dark:border-sky-700 dark:bg-sky-950/60 dark:text-sky-200',
+    badge: 'bg-sky-50 text-sky-700 ring-1 ring-sky-200/70 dark:bg-sky-950/40 dark:text-sky-300 dark:ring-sky-900/50',
   },
   {
     key: 'In Hubstaff, not on Master',
@@ -142,10 +151,17 @@ export default function HubstaffMasterMatchesModal({
     [list, safePage],
   );
 
-  // The Exceptions bucket isn't always threaded through as an explicit count
-  // (e.g. the CEO mirror), so derive it from the rows as a fallback.
+  // `counts.exceptions` is the TOTAL expected-no-hours tally (dept-exempt + just
+  // hired + on leave). The modal splits that into two chips — "Exceptions" and
+  // "On Leave" — so each chip's number must equal the rows it actually filters to.
+  // Derive both from the rows by exact status, gated on the loaded state (null
+  // exceptions count ⇒ payroll scope not loaded yet ⇒ show "—").
   const exceptionsFromRows = useMemo(
     () => rows.filter((r) => r.status === 'Exception').length,
+    [rows],
+  );
+  const onLeaveFromRows = useMemo(
+    () => rows.filter((r) => r.status === 'On Leave').length,
     [rows],
   );
 
@@ -153,7 +169,8 @@ export default function HubstaffMasterMatchesModal({
     if (key === 'On Master & worked') return counts.matched;
     if (key === 'On Master, no hours') return counts.masterOnly;
     if (key === 'In Hubstaff, not on Master') return counts.hubstaffOnly;
-    if (key === 'Exception') return counts.exceptions ?? exceptionsFromRows;
+    if (key === 'Exception') return counts.exceptions == null ? null : exceptionsFromRows;
+    if (key === 'On Leave') return counts.exceptions == null ? null : onLeaveFromRows;
     return null;
   };
 

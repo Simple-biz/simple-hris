@@ -46,7 +46,9 @@ import {
   sortHubstaffReconRows,
   downloadHubstaffReconCsv,
   isHubstaffExemptDept,
+  isHubstaffReconExcluded,
   HUBSTAFF_EXCEPTION_STATUS,
+  HUBSTAFF_LEAVE_STATUS,
 } from '@/lib/payroll/hubstaff-reconciliation';
 import { X } from 'lucide-react';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -3206,7 +3208,7 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
       e: EmployeeRow,
       w: string,
       p: string,
-    ): { reason: string; exception: boolean } => {
+    ): { reason: string; exception: boolean; status?: string } => {
       // 0) Department has no Hubstaff by nature (freelance / project-based).
       if (isHubstaffExemptDept(e.department)) {
         return {
@@ -3215,32 +3217,46 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
         };
       }
 
-      // 1) APPROVED leave (filed through the Employee portal) overlapping the pay
-      //    period — or active today when viewing All Time. Only an approved leave
-      //    excuses missing hours; a still-pending request does NOT clear the gap,
-      //    so those fall through and stay flagged until HR approves them.
+      // 1) APPROVED leave (filed through the Employee portal) that OVERLAPS the pay
+      //    period OR is UPCOMING relative to it — i.e. any approved leave that
+      //    hasn't already ended before this period started (`lv.end >= startISO`).
+      //    This lets a leave filed for the following week still excuse the latest
+      //    reconciled week. Old leaves that ended before the period do NOT count.
+      //    In All-Time view we treat "on leave today or upcoming" the same way.
+      //    A no-hours person here is shown as an EXCEPTION with their time-off
+      //    excuse as the reason (not a gap). A still-pending request does NOT clear
+      //    anything, so those fall through and stay flagged until HR approves them.
       const mine: Leave[] = [];
       for (const k of new Set([w, p].filter(Boolean))) {
         const arr = leavesByEmail.get(k);
         if (arr) mine.push(...arr);
       }
       if (mine.length) {
-        const inWindow = (period
-          ? mine.filter((lv) => lv.start <= period.endISO && lv.end >= period.startISO)
-          : mine.filter((lv) => lv.start <= todayISO && lv.end >= todayISO)
-        ).filter((lv) => lv.status === 'approved');
+        const inWindow = mine
+          .filter((lv) => lv.status === 'approved')
+          .filter((lv) => (period ? lv.end >= period.startISO : lv.end >= todayISO))
+          .sort((a, b) => a.start.localeCompare(b.start)); // prefer the earliest relevant leave
         const pick = inWindow[0];
         if (pick) {
           if (period) {
-            const whole = pick.start <= period.startISO && pick.end >= period.endISO;
+            let phrase: string;
+            if (pick.start > period.endISO) {
+              phrase = 'Upcoming approved leave';
+            } else {
+              const whole = pick.start <= period.startISO && pick.end >= period.endISO;
+              phrase = whole ? 'On approved leave the entire period' : 'On approved leave part of the period';
+            }
             return {
-              reason: `${whole ? 'On approved leave the entire period' : 'On approved leave part of the period'} — ${prettyType(pick.type)} ${pick.start}→${pick.end}`,
+              reason: `${phrase} — ${prettyType(pick.type)} ${pick.start}→${pick.end}`,
               exception: true,
+              status: HUBSTAFF_LEAVE_STATUS,
             };
           }
+          const phrase = pick.start > todayISO ? 'Upcoming approved leave' : 'Currently on approved leave';
           return {
-            reason: `Currently on approved leave — ${prettyType(pick.type)} ${pick.start}→${pick.end}`,
+            reason: `${phrase} — ${prettyType(pick.type)} ${pick.start}→${pick.end}`,
             exception: true,
+            status: HUBSTAFF_LEAVE_STATUS,
           };
         }
       }
@@ -3284,6 +3300,9 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
       const p = normEmail(e.personal_email) ?? '';
       if (w) masterKeys.add(w);
       if (p) masterKeys.add(p);
+      // Retired seats we drop from the recon entirely (adding their emails to
+      // masterKeys above also keeps the Hubstaff-only loop from re-surfacing them).
+      if (isHubstaffReconExcluded(w) || isHubstaffReconExcluded(p)) continue;
       const didWork = worked != null && ((w !== '' && worked.has(w)) || (p !== '' && worked.has(p)));
       const pay = payFor(w, p);
       if (didWork) {
@@ -3298,11 +3317,11 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
           hours: pay ? pay.hours.toFixed(2) : '',
         });
       } else {
-        const { reason, exception } = classifyNoHours(e, w, p);
+        const { reason, exception, status } = classifyNoHours(e, w, p);
         if (exception) exceptions++;
         else gap++;
         out.push({
-          status: exception ? HUBSTAFF_EXCEPTION_STATUS : 'On Master, no hours',
+          status: status ?? (exception ? HUBSTAFF_EXCEPTION_STATUS : 'On Master, no hours'),
           reason,
           name: e.name ?? '',
           workEmail: e.work_email ?? '',
@@ -3322,6 +3341,7 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
     if (worked != null) {
       for (const em of worked) {
         if (masterKeys.has(em)) continue;
+        if (isHubstaffReconExcluded(em)) continue; // retired seat — drop entirely
         exceptions++;
         const pay = employeePayByEmail[em];
         const off = offboardedByEmail?.[em];

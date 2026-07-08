@@ -18,13 +18,20 @@ export type HubstaffReconStatus =
   | 'On Master & worked'
   | 'On Master, no hours'
   | 'Exception'
+  | 'On Leave'
   | 'In Hubstaff, not on Master';
 
 /** Status literal for a no-hours directory employee whose absence is EXPECTED —
- *  a no-Hubstaff-by-nature department, a just-hired start date, or approved
- *  leave. Exported so callers tag rows without repeating the magic string.
- *  These are counted as "exceptions", NOT as reconciliation gaps. */
+ *  a no-Hubstaff-by-nature department or a just-hired start date. Exported so
+ *  callers tag rows without repeating the magic string. Counted as "exceptions",
+ *  NOT as reconciliation gaps. */
 export const HUBSTAFF_EXCEPTION_STATUS = 'Exception';
+
+/** Status literal for a no-hours employee excused by an APPROVED leave (current
+ *  or upcoming) filed through the Employee portal. A specialization of the
+ *  exception bucket, broken out so the reconciliation modal can offer a dedicated
+ *  "On Leave" filter. Still counts toward the expected-no-hours (exception) tally. */
+export const HUBSTAFF_LEAVE_STATUS = 'On Leave';
 
 /**
  * Departments that legitimately have NO Hubstaff time tracking — freelance /
@@ -39,6 +46,19 @@ const HUBSTAFF_EXEMPT_DEPTS = new Set(['smm freelancer', 'site building', 'sales
 export function isHubstaffExemptDept(department: string | null | undefined): boolean {
   if (!department) return false;
   return HUBSTAFF_EXEMPT_DEPTS.has(department.trim().toLowerCase());
+}
+
+/**
+ * Individual emails to drop from the reconciliation entirely — not a gap AND not
+ * an exception, just absent. Reserved for retired seats that would otherwise
+ * linger as noise (e.g. the retired US Manager, now parked in the USEE dept).
+ * Matched case-insensitively against normalized work/personal emails.
+ */
+const HUBSTAFF_RECON_EXCLUDED_EMAILS = new Set(['seungyong@simple.biz']);
+
+export function isHubstaffReconExcluded(email: string | null | undefined): boolean {
+  if (!email) return false;
+  return HUBSTAFF_RECON_EXCLUDED_EMAILS.has(email.trim().toLowerCase());
 }
 
 export interface HubstaffMasterRow {
@@ -59,7 +79,8 @@ export const HUBSTAFF_RECON_ORDER: Record<string, number> = {
   'On Master & worked': 0,
   'On Master, no hours': 1,
   'Exception': 2,
-  'In Hubstaff, not on Master': 3,
+  'On Leave': 3,
+  'In Hubstaff, not on Master': 4,
 };
 
 /** Visual tone for each status badge, shared by the modal chips + row badges. */
@@ -67,6 +88,7 @@ export const HUBSTAFF_RECON_TONE: Record<string, 'ok' | 'neutral' | 'warn'> = {
   'On Master & worked': 'ok',
   'On Master, no hours': 'neutral',
   'Exception': 'neutral',
+  'On Leave': 'ok',
   'In Hubstaff, not on Master': 'warn',
 };
 
