@@ -287,12 +287,12 @@ export default function ManagerTransferDialog({ open, onOpenChange, myDepartment
             <input
               type="date"
               value={effectiveDate}
-              min={todayLocal()}
               onChange={(e) => setEffectiveDate(e.target.value)}
               className="h-9 w-full rounded-lg border border-zinc-200 bg-white px-2.5 text-sm text-zinc-900 focus:border-blue-300 focus:outline-none focus:ring-1 focus:ring-blue-200 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
             />
             <p className="mt-1 text-[11px] text-zinc-400">
-              The move (and any rate change Accounting sets) takes effect on this date once released.
+              Defaults to today. A <strong>past</strong> date is allowed for a backdated transfer — the
+              rate change Accounting sets will prorate retroactively from it.
             </p>
           </div>
 
