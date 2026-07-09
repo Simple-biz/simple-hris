@@ -10,6 +10,7 @@ import {
   listAllTransferRequests,
   listTransferRequestsByRequester,
   listIncomingTransfersForDepartments,
+  listResolvedTransfersForDepartments,
   hasPendingTransferForEmployee,
 } from '@/lib/supabase/department-transfer-requests';
 
@@ -55,6 +56,16 @@ export async function GET(request: Request) {
       const { rows: depts } = await listDepartmentsForManager(sessionEmail);
       const departments = depts.map((d) => d.department).filter(Boolean);
       const { rows, error } = await listIncomingTransfersForDepartments(departments);
+      if (error) return NextResponse.json({ rows: [], error }, { status: 500 });
+      return NextResponse.json({ rows, error: null });
+    }
+    if (scope === 'done') {
+      // Resolved release requests on the manager's team — released/declined/
+      // applied/cancelled. Once a manager acts, the row leaves the pending
+      // `incoming` queue and lands here so there's still a record of it.
+      const { rows: depts } = await listDepartmentsForManager(sessionEmail);
+      const departments = depts.map((d) => d.department).filter(Boolean);
+      const { rows, error } = await listResolvedTransfersForDepartments(departments);
       if (error) return NextResponse.json({ rows: [], error }, { status: 500 });
       return NextResponse.json({ rows, error: null });
     }

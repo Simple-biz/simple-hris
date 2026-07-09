@@ -81,10 +81,47 @@ export async function PATCH(
       return NextResponse.json({ success: true, error: null });
     }
 
+    // ── Apply now (push through an already-released transfer) ──
+    // A transfer only sits in 'approved' if its release-time apply failed (or it
+    // predates apply-on-release). This lets an admin / source-dept manager apply
+    // it immediately instead of waiting on the daily cron.
+    if (action === 'apply') {
+      if (row.status !== 'approved') {
+        return NextResponse.json(
+          { error: `Only a released (approved) transfer can be applied — this one is ${row.status}.` },
+          { status: 409 },
+        );
+      }
+      const authz = await requireFeatureEdit('manager', 'team');
+      if (!authz.ok) return deniedResponse(authz);
+      if (!isAdmin) {
+        const { rows: assigns } = await listDepartmentsForManager(sessionEmail);
+        const departments = assigns.map((a) => a.department.trim()).filter(Boolean);
+        if (!departmentMatchesManagedAssignments(row.from_department, departments)) {
+          return NextResponse.json(
+            { error: 'Only a manager of the current department (or an admin) can apply this transfer' },
+            { status: 403 },
+          );
+        }
+      }
+      const res = await applyApprovedTransfer(row);
+      if (res.error) return NextResponse.json({ error: `Could not apply: ${res.error}` }, { status: 500 });
+      void insertAuditLog({
+        user_name: sessionEmail,
+        user_role: isAdmin ? 'Admin' : 'Manager',
+        action: 'department_transfer.applied_manual',
+        resource: 'department_transfer_requests',
+        resource_id: id,
+        details: { employee_email: row.employee_email, from_department: row.from_department, to_department: row.to_department, sheet_synced: res.sheetSynced },
+        ip_address: clientIp(request),
+      });
+      return NextResponse.json({ success: true, applied: res.applied, sheet_synced: res.sheetSynced, error: null });
+    }
+
     // ── Source-manager decision (release / decline) ──
     if (action !== 'release' && action !== 'decline') {
       return NextResponse.json(
-        { error: "action must be 'release', 'decline', or 'cancel'" },
+        { error: "action must be 'release', 'decline', 'apply', or 'cancel'" },
         { status: 400 },
       );
     }
@@ -181,25 +218,35 @@ export async function PATCH(
       ip_address: clientIp(request),
     });
 
-    // Apply immediately if the effective date is already due; otherwise the
-    // apply-scheduled-transfers cron picks it up on the day.
-    let applied = false;
-    let sheetSynced = false;
-    if (effectiveDate <= today) {
-      const res = await applyApprovedTransfer({ ...row, status: 'approved', effective_date: effectiveDate });
-      if (res.error) {
-        // Released but the master-list write failed — leave it scheduled so the
-        // cron (or a retry) can complete it. Surface the error.
-        return NextResponse.json(
-          { success: true, released: true, applied: false, error: `Released but could not apply yet: ${res.error}` },
-          { status: 200 },
-        );
-      }
-      applied = res.applied;
-      sheetSynced = res.sheetSynced;
+    // Apply the department move IMMEDIATELY on release, so the change is visible
+    // right away (previously a future effective date left the transfer in a
+    // "released but nothing changed" limbo waiting on the daily cron). The
+    // effective date is retained purely as the RATE-change anchor — payroll
+    // prorates PAY by it (see the wizard/dispatch per-day proration) — it does
+    // NOT defer the department label move.
+    const res = await applyApprovedTransfer({ ...row, status: 'approved', effective_date: effectiveDate });
+    if (res.error) {
+      // Master-list write failed — the row stays 'approved' so it can be retried
+      // via "Apply now" (or the cron). Surface the error.
+      return NextResponse.json(
+        {
+          success: true,
+          released: true,
+          applied: false,
+          error: `Released but could not apply the department change: ${res.error}. Retry with "Apply now" in the Transfers tab.`,
+        },
+        { status: 200 },
+      );
     }
 
-    return NextResponse.json({ success: true, released: true, applied, sheet_synced: sheetSynced, effective_date: effectiveDate, error: null });
+    return NextResponse.json({
+      success: true,
+      released: true,
+      applied: res.applied,
+      sheet_synced: res.sheetSynced,
+      effective_date: effectiveDate,
+      error: null,
+    });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     return NextResponse.json({ error: msg }, { status: 500 });

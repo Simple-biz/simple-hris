@@ -18,6 +18,14 @@ export type AuditAction =
   // Orphanage / tenure / gift decisions
   | 'orphanage.budget_decided'
   | 'orphanage.dispatched'
+  // Orphanage 3rd-party vendors + SIMPLE-branded invoices (self-contained;
+  // NOT part of Payment Dispatch)
+  | 'orphanage.vendor.saved'
+  | 'orphanage.vendor.deleted'
+  | 'orphanage.vendor_invoice.created'
+  | 'orphanage.vendor_invoice.updated'
+  | 'orphanage.vendor_invoice.paid'
+  | 'orphanage.vendor_invoice.deleted'
   | 'tenure.gift_decided'
   | 'gift.payment_edited'
   // Dispatch lifecycle

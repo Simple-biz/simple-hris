@@ -163,6 +163,36 @@ export async function listIncomingTransfersForDepartments(
   return { rows, error: null };
 }
 
+/**
+ * Resolved release requests (anything NOT pending) whose SOURCE department is
+ * one the given manager owns — their decision history for the "Done" tab.
+ * Complements listIncomingTransfersForDepartments (the pending action queue):
+ * once a manager releases/declines, the row leaves that queue and lands here so
+ * there's still a record of what happened.
+ */
+export async function listResolvedTransfersForDepartments(
+  departments: string[],
+  limit = 300,
+): Promise<{ rows: DepartmentTransferRequestRow[]; error: string | null }> {
+  const wanted = new Set(departments.map((d) => d.trim().toLowerCase()).filter(Boolean));
+  if (wanted.size === 0) return { rows: [], error: null };
+  const supabase = createSupabaseServiceRoleClient();
+  if (!supabase) return { rows: [], error: 'Supabase not configured' };
+  const { data, error } = await supabase
+    .from(TABLE)
+    .select('*')
+    .neq('status', 'pending')
+    // updated_at is stamped on every release/decline/cancel/apply, so it's the
+    // most recent-activity ordering across all resolved statuses.
+    .order('updated_at', { ascending: false })
+    .limit(limit);
+  if (error) return { rows: [], error: error.message };
+  const rows = ((data ?? []) as DepartmentTransferRequestRow[]).filter((r) =>
+    wanted.has(r.from_department.trim().toLowerCase()),
+  );
+  return { rows, error: null };
+}
+
 /** Source manager releases a pending request: locks the effective date and moves
  *  it to `approved`. The caller applies immediately if the date is already due. */
 export async function releaseTransfer(params: {

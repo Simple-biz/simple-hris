@@ -6,6 +6,7 @@ import {
   ArrowRight,
   ArrowRightLeft,
   Check,
+  ClipboardCheck,
   Inbox,
   Loader2,
   Plus,
@@ -30,7 +31,7 @@ interface Props {
   canInitiate: boolean;
 }
 
-type SubTab = 'release' | 'mine';
+type SubTab = 'release' | 'mine' | 'done';
 
 const STATUS_STYLE: Record<TransferRequestStatus, string> = {
   pending: 'bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300',
@@ -74,15 +75,18 @@ function fullStamp(iso: string | null): string | undefined {
 }
 
 /**
- * Manager → Transfers tab. Two sub-tabs behind an animated segmented control:
+ * Manager → Transfers tab. Three sub-tabs behind an animated segmented control:
  *   • Release requests — incoming; where THIS manager owns the SOURCE department.
  *     Release locks the requester's proposed effective date and applies the move.
  *   • My requests — the manager's own outbox (status + cancel-while-pending).
+ *   • Done — resolved release requests on their team (released/declined/applied/
+ *     cancelled). A read-only record so past decisions aren't lost once acted on.
  * "Request transfer in" (the pull-in picker) lives in the header, always available.
  */
 export default function ManagerTransfers({ myDepartments, canInitiate }: Props) {
   const [incoming, setIncoming] = useState<DepartmentTransferRequestRow[]>([]);
   const [outgoing, setOutgoing] = useState<DepartmentTransferRequestRow[]>([]);
+  const [done, setDone] = useState<DepartmentTransferRequestRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -99,11 +103,21 @@ export default function ManagerTransfers({ myDepartments, canInitiate }: Props) 
       fetch('/api/department-transfers?scope=outgoing', { cache: 'no-store' })
         .then((r) => (r.ok ? r.json() : { rows: [] }))
         .catch(() => ({ rows: [] })),
+      fetch('/api/department-transfers?scope=done', { cache: 'no-store' })
+        .then((r) => (r.ok ? r.json() : { rows: [] }))
+        .catch(() => ({ rows: [] })),
     ])
-      .then(([inc, out]: [{ rows?: DepartmentTransferRequestRow[] }, { rows?: DepartmentTransferRequestRow[] }]) => {
-        setIncoming(inc.rows ?? []);
-        setOutgoing(out.rows ?? []);
-      })
+      .then(
+        ([inc, out, dn]: [
+          { rows?: DepartmentTransferRequestRow[] },
+          { rows?: DepartmentTransferRequestRow[] },
+          { rows?: DepartmentTransferRequestRow[] },
+        ]) => {
+          setIncoming(inc.rows ?? []);
+          setOutgoing(out.rows ?? []);
+          setDone(dn.rows ?? []);
+        },
+      )
       .finally(() => setLoading(false));
   }, []);
 
@@ -124,6 +138,16 @@ export default function ManagerTransfers({ myDepartments, canInitiate }: Props) 
         body: JSON.stringify({ action, note: action === 'decline' ? declineNote.trim() : null }),
       });
       const json = (await res.json()) as { error?: string; applied?: boolean };
+      // 409 = this request was already decided (by the apply cron, a co-manager
+      // of the source department, or another tab). The card on screen is stale —
+      // reconcile the list instead of leaving it clickable and erroring again.
+      if (res.status === 409) {
+        toast.info('This request was already handled — refreshing the list.');
+        setDeclineFor(null);
+        setDeclineNote('');
+        load();
+        return;
+      }
       if (!res.ok || json.error) throw new Error(json.error || `Request failed (${res.status})`);
       toast.success(
         action === 'release'
@@ -151,8 +175,42 @@ export default function ManagerTransfers({ myDepartments, canInitiate }: Props) 
         body: JSON.stringify({ action: 'cancel' }),
       });
       const json = (await res.json()) as { error?: string };
+      // 409 = already decided elsewhere (released/declined/applied). Reconcile.
+      if (res.status === 409) {
+        toast.info('This request was already handled — refreshing the list.');
+        load();
+        return;
+      }
       if (!res.ok || json.error) throw new Error(json.error || `Request failed (${res.status})`);
       toast.success('Request withdrawn');
+      load();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Action failed');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const applyNow = async (row: DepartmentTransferRequestRow) => {
+    setBusyId(row.id);
+    try {
+      const res = await fetch(`/api/department-transfers/${row.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'apply' }),
+      });
+      const json = (await res.json()) as { error?: string; sheet_synced?: boolean };
+      if (res.status === 409) {
+        toast.info('This request was already handled — refreshing the list.');
+        load();
+        return;
+      }
+      if (!res.ok || json.error) throw new Error(json.error || `Request failed (${res.status})`);
+      toast.success(
+        json.sheet_synced === false
+          ? `${row.employee_name ?? row.employee_email} moved to ${row.to_department} (Sheet not synced — retry in Accounting)`
+          : `${row.employee_name ?? row.employee_email} moved to ${row.to_department}`,
+      );
       load();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Action failed');
@@ -170,6 +228,7 @@ export default function ManagerTransfers({ myDepartments, canInitiate }: Props) 
   const TABS: { id: SubTab; label: string; count: number; icon: typeof Inbox }[] = [
     { id: 'release', label: 'Release requests', count: incoming.length, icon: Inbox },
     { id: 'mine', label: 'My requests', count: sortedOutgoing.length, icon: Send },
+    { id: 'done', label: 'Done', count: done.length, icon: ClipboardCheck },
   ];
 
   return (
@@ -371,7 +430,8 @@ export default function ManagerTransfers({ myDepartments, canInitiate }: Props) 
                       </div>
                     ))
                   )
-                ) : sortedOutgoing.length === 0 ? (
+                ) : sub === 'mine' ? (
+                  sortedOutgoing.length === 0 ? (
                   <div className="flex flex-col items-center gap-2 rounded-2xl border border-dashed border-blue-200 bg-white py-14 text-center dark:border-blue-950/40 dark:bg-[#0d1117]">
                     <Send className="h-7 w-7 text-blue-300 dark:text-blue-800" />
                     <p className="text-sm text-zinc-500">You haven&rsquo;t requested any transfers yet.</p>
@@ -446,11 +506,82 @@ export default function ManagerTransfers({ myDepartments, canInitiate }: Props) 
                                 Withdraw
                               </button>
                             )}
+                            {r.status === 'approved' && (
+                              <Button
+                                type="button"
+                                size="sm"
+                                onClick={() => void applyNow(r)}
+                                disabled={busyId === r.id}
+                                className="h-7 gap-1.5 bg-emerald-600 text-[11px] text-white hover:bg-emerald-700"
+                                title="Apply this released transfer now (moves the department + writes the Sheet)"
+                              >
+                                {busyId === r.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
+                                Apply now
+                              </Button>
+                            )}
                           </div>
                         </div>
                       ))}
                     </div>
                   </div>
+                  )
+                ) : (
+                  done.length === 0 ? (
+                    <div className="flex flex-col items-center gap-2 rounded-2xl border border-dashed border-blue-200 bg-white py-14 text-center dark:border-blue-950/40 dark:bg-[#0d1117]">
+                      <ClipboardCheck className="h-7 w-7 text-blue-300 dark:text-blue-800" />
+                      <p className="text-sm text-zinc-500">
+                        Released and declined requests for your team will show up here.
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="overflow-hidden rounded-2xl border border-blue-100/80 bg-white dark:border-blue-950/40 dark:bg-zinc-950">
+                      <div className="divide-y divide-blue-100/70 dark:divide-blue-950/40">
+                        {done.map((r) => (
+                          <div key={r.id} className="flex flex-wrap items-center justify-between gap-2 px-4 py-3">
+                            <div className="min-w-0">
+                              <div className="text-sm font-medium text-zinc-800 dark:text-zinc-200">
+                                {r.employee_name ?? r.employee_email}
+                              </div>
+                              <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[11px] text-zinc-500">
+                                <span>{r.from_department}</span>
+                                <ArrowRight className="h-3 w-3" />
+                                <span>{r.to_department}</span>
+                                {(r.effective_date || r.proposed_effective_date) && (
+                                  <span className="text-zinc-400">
+                                    · eff {r.effective_date ?? r.proposed_effective_date}
+                                  </span>
+                                )}
+                                <span className="text-zinc-400">· requested by {r.requested_by}</span>
+                                {(() => {
+                                  const stamp =
+                                    r.status === 'applied'
+                                      ? r.applied_at ?? r.decided_at ?? r.updated_at
+                                      : r.decided_at ?? r.updated_at;
+                                  const label = r.status === 'applied' ? 'applied' : 'decided';
+                                  return (
+                                    <span className="text-zinc-400" title={fullStamp(stamp)}>
+                                      · {label} {timeAgo(stamp)}
+                                    </span>
+                                  );
+                                })()}
+                                {r.status === 'rejected' && r.approver_note ? (
+                                  <span className="text-rose-500">· &ldquo;{r.approver_note}&rdquo;</span>
+                                ) : null}
+                              </div>
+                            </div>
+                            <span
+                              className={cn(
+                                'shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold',
+                                STATUS_STYLE[r.status],
+                              )}
+                            >
+                              {STATUS_LABEL[r.status]}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )
                 )}
               </motion.div>
             </AnimatePresence>

@@ -198,6 +198,8 @@ export default function ManagerTransferDialog({ open, onOpenChange, myDepartment
                     value={deptFilter}
                     onChange={(v) => setDeptFilter(v)}
                     triggerClassName="w-[42%] shrink-0"
+                    searchable
+                    searchPlaceholder="Search departments…"
                     options={[
                       { value: '', label: `All departments${departments.length ? ` (${departments.length})` : ''}` },
                       ...departments.map((d) => ({ value: d, label: d })),

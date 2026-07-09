@@ -555,7 +555,8 @@
       "Bash(node \"c:/Users/Itachi/Desktop/simple-hris/diag-shaie.mjs\")",
       "Bash(node diag-period.mjs)",
       "Bash(rm -f diag-period.mjs)",
-      "PowerShell(npx tsc --noEmit; \"EXIT=$LASTEXITCODE\")"
+      "PowerShell(npx tsc --noEmit; \"EXIT=$LASTEXITCODE\")",
+      "PowerShell(npx tsc --noEmit 2>&1 | Select-String -Pattern \"src/|app/api/department-transfers|app/api/manager|app/api/payroll|components/ui/smooth|error TS\" | Select-Object -First 40; \"EXIT=$LASTEXITCODE\")"
     ],
     "additionalDirectories": [
       "\\tmp",
