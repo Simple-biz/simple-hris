@@ -26,8 +26,9 @@ import type {
 interface Props {
   /** Departments this manager can pull people INTO (their managed depts). */
   myDepartments: string[];
-  /** Only admins may INITIATE a transfer ("Request transfer in"). Non-admin
-   *  managers can still Release/Decline incoming requests. */
+  /** Whether the viewer may INITIATE a transfer ("Request transfer in"). Managers
+   *  can — but only for people OUTSIDE their own departments (enforced server-side);
+   *  admins are unrestricted. */
   canInitiate: boolean;
 }
 

@@ -406,7 +406,7 @@ export default function ManagerApp() {
               )}
               {activeTab === 'transfers' && (
                 <ManagerTransfers
-                  canInitiate={isAdmin}
+                  canInitiate
                   myDepartments={
                     teamGate.kind === 'department'
                       ? teamGate.departments

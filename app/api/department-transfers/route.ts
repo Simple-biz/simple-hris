@@ -5,6 +5,7 @@ import { createSupabaseServiceRoleClient } from '@/lib/supabase/server';
 import { normEmail } from '@/lib/email/norm-email';
 import { insertAuditLog } from '@/lib/supabase/audit-log';
 import { listDepartmentsForManager, listManagersByDepartment } from '@/lib/supabase/department-managers';
+import { departmentMatchesManagedAssignments } from '@/lib/managed-department-scope';
 import {
   insertTransferRequest,
   listAllTransferRequests,
@@ -95,11 +96,10 @@ export async function POST(request: Request) {
     if (!sessionEmail) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
     const roles = rolesOf(session);
-    if (!roles.includes('admin')) {
-      return NextResponse.json(
-        { error: 'Admin rights are required to initiate a transfer.' },
-        { status: 403 },
-      );
+    const isAdmin = roles.includes('admin');
+    const isManager = roles.includes('manager');
+    if (!isAdmin && !isManager) {
+      return NextResponse.json({ error: 'Manager or admin role required' }, { status: 403 });
     }
 
     const body = (await request.json()) as {
@@ -132,7 +132,28 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'A proposed effective date (YYYY-MM-DD) is required' }, { status: 400 });
     }
 
-    // Admin-only initiation → the requester is unrestricted on the target dept.
+    // A non-admin manager may only pull people INTO a department they manage,
+    // and only FROM a department they DON'T manage (never poach off their own
+    // team — that's the source manager's call). Admins are unrestricted, as are
+    // managers with no explicit department assignments (elevated).
+    if (!isAdmin) {
+      const { rows: assigns } = await listDepartmentsForManager(sessionEmail);
+      const departments = assigns.map((a) => a.department.trim()).filter(Boolean);
+      if (departments.length > 0) {
+        if (!departmentMatchesManagedAssignments(toDept, departments)) {
+          return NextResponse.json(
+            { error: 'You can only transfer people into a department you manage.' },
+            { status: 403 },
+          );
+        }
+        if (departmentMatchesManagedAssignments(fromDept, departments)) {
+          return NextResponse.json(
+            { error: "You can't initiate a transfer out of your own department." },
+            { status: 403 },
+          );
+        }
+      }
+    }
 
     if (await hasPendingTransferForEmployee(identifying)) {
       return NextResponse.json(
@@ -185,7 +206,7 @@ export async function POST(request: Request) {
 
     void insertAuditLog({
       user_name: sessionEmail,
-      user_role: 'Admin',
+      user_role: isAdmin ? 'Admin' : 'Manager',
       action: 'department_transfer.requested',
       resource: 'department_transfer_requests',
       resource_id: id ?? undefined,

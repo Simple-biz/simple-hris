@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth/auth-options';
 import { normEmail } from '@/lib/email/norm-email';
+import { listDepartmentsForManager } from '@/lib/supabase/department-managers';
 import { listActiveMasterListPeople } from '@/lib/supabase/global-master-list-db';
 
 export const dynamic = 'force-dynamic';
@@ -26,20 +27,32 @@ export async function GET(request: Request) {
   if (!sessionEmail) return NextResponse.json({ people: [], error: 'Not signed in' }, { status: 401 });
 
   const roles = rolesOf(session);
-  if (!roles.includes('admin')) {
+  const isAdmin = roles.includes('admin');
+  const isManager = roles.includes('manager');
+  if (!isAdmin && !isManager) {
     return NextResponse.json(
-      { people: [], departments: [], error: 'Admin rights are required to initiate a transfer.' },
+      { people: [], departments: [], error: 'Manager or admin role required' },
       { status: 403 },
     );
   }
 
-  const { people: available, error } = await listActiveMasterListPeople();
+  const { people, error } = await listActiveMasterListPeople();
   if (error) return NextResponse.json({ people: [], departments: [], error }, { status: 500 });
 
-  // Initiation is admin-only, and admins are unrestricted — an admin can pull
-  // ANYONE, including someone in a department they themselves also manage (a
-  // manager-with-admin). So we deliberately do NOT exclude the caller's own
-  // departments here (doing so hid people on teams the admin also manages).
+  // A non-admin manager may only pull people IN FROM other departments — never
+  // from a department they themselves manage (that's their own team). Admins are
+  // unrestricted (can pull anyone, incl. from a dept they also manage).
+  let available = people;
+  if (!isAdmin) {
+    const { rows: assigns } = await listDepartmentsForManager(sessionEmail);
+    const ownDepts = new Set(assigns.map((a) => a.department.trim().toLowerCase()).filter(Boolean));
+    if (ownDepts.size > 0) {
+      available = people.filter((p) => {
+        const d = (p.department ?? '').trim().toLowerCase();
+        return !(d && ownDepts.has(d));
+      });
+    }
+  }
 
   // Full department list for the picker's filter dropdown — computed from the
   // available set so it stays stable regardless of the active filters.
