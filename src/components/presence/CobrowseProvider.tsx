@@ -12,7 +12,9 @@ import { AnimatePresence } from 'motion/react';
 import { normEmail } from '@/lib/email/norm-email';
 import { useCobrowse, type CobrowseStatus } from '@/hooks/useCobrowse';
 import CobrowseSurface from '@/components/collab/CobrowseSurface';
+import CobrowseChatWindow from '@/components/collab/CobrowseChatWindow';
 import { useSelfEmail } from '@/components/presence/PresenceProvider';
+import { useCobrowseChat } from '@/components/presence/CobrowseChatProvider';
 
 /**
  * App-wide live "watch screen" (screen mirroring), so an Admin can observe ANY
@@ -60,6 +62,7 @@ export function useWatchScreen(): WatchScreenApi {
 export default function CobrowseProvider({ children }: { children: ReactNode }) {
   const selfEmail = useSelfEmail();
   const [target, setTarget] = useState<WatchTarget | null>(null);
+  const chat = useCobrowseChat();
 
   const observedEmail = target ? normEmail(target.email) ?? target.email.trim().toLowerCase() : null;
 
@@ -92,6 +95,26 @@ export default function CobrowseProvider({ children }: { children: ReactNode }) 
             setReplayContainer={setReplayContainer}
             onStop={() => setTarget(null)}
             surfaceLabel="their dashboard"
+          />
+        )}
+      </AnimatePresence>
+
+      {/* Observer side: while watching someone, dock a chat so the admin can
+          talk them through it. Their reply pops up on their own screen (driver
+          windows are rendered by CobrowseChatProvider). */}
+      <AnimatePresence>
+        {target && observedEmail && (
+          <CobrowseChatWindow
+            key={`chat-${observedEmail}`}
+            variant="observer"
+            accent="#f97316"
+            title={`Tutoring ${target.name || target.email}`}
+            subtitle="Live chat · they can reply"
+            messages={chat.threadFor(observedEmail)}
+            unread={chat.unreadFor(observedEmail)}
+            onOpen={() => chat.markRead(observedEmail)}
+            onSend={(text) => chat.send({ email: target.email, name: target.name }, text)}
+            placeholder={`Message ${(target.name || target.email).split(' ')[0] || 'them'}…`}
           />
         )}
       </AnimatePresence>

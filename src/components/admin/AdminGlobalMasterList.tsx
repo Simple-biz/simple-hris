@@ -830,7 +830,7 @@ export default function AdminGlobalMasterList() {
                         </Button>
                       )}
                       <p className="px-1 text-[10.5px] text-zinc-400 dark:text-zinc-600">
-                        Opens a live, view-only mirror of their screen. They aren&apos;t notified; recording only runs while you watch.
+                        Opens a live, view-only mirror of their screen with a chat window so you can tutor them. They aren&apos;t notified until you send your first message; recording only runs while you watch.
                       </p>
 
                       {/* Force logout */}

@@ -5,6 +5,7 @@ import type { Session } from 'next-auth';
 import type { ReactNode } from 'react';
 import PresenceProvider from '@/components/presence/PresenceProvider';
 import CobrowseProvider from '@/components/presence/CobrowseProvider';
+import CobrowseChatProvider from '@/components/presence/CobrowseChatProvider';
 import SessionInvalidationWatcher from '@/components/auth/SessionInvalidationWatcher';
 import GlobalPingListener from '@/components/presence/GlobalPingListener';
 import ImpersonationBanner from '@/components/auth/ImpersonationBanner';
@@ -20,8 +21,10 @@ import ImpersonationBanner from '@/components/auth/ImpersonationBanner';
  * Also hosts {@link PresenceProvider} (app-wide online presence + current
  * dashboard/tab, powering the My Team badges and the Admin Global Master List),
  * {@link GlobalPingListener} (an Admin "Ping" lands as a toast wherever the
- * recipient is), and {@link CobrowseProvider} (an app-wide rrweb "watch screen"
- * driver so an Admin can live-mirror anyone's screen from the Global Master List).
+ * recipient is), {@link CobrowseProvider} (an app-wide rrweb "watch screen"
+ * driver so an Admin can live-mirror anyone's screen from the Global Master List),
+ * and {@link CobrowseChatProvider} (a two-way live chat that rides alongside the
+ * watch session so an Admin can tutor the person they're watching).
  */
 export default function NextAuthProvider({
   children,
@@ -36,7 +39,9 @@ export default function NextAuthProvider({
       <GlobalPingListener />
       <ImpersonationBanner />
       <PresenceProvider>
-        <CobrowseProvider>{children}</CobrowseProvider>
+        <CobrowseChatProvider>
+          <CobrowseProvider>{children}</CobrowseProvider>
+        </CobrowseChatProvider>
       </PresenceProvider>
     </SessionProvider>
   );
