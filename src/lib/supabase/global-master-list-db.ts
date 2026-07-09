@@ -939,6 +939,33 @@ export async function countMasterAndRatesRows(): Promise<{
 }
 
 /**
+ * Read EVERY row of the `active_employees` view, paging past PostgREST's default
+ * `db.max-rows` cap (1000). A single `.range(0, 9999)` is silently capped at 1000
+ * server-side, so a roster larger than 1000 dropped everyone past the first page
+ * (e.g. HR's jamesc@simple.biz vanished from the transfer picker). Mirrors the
+ * paginated readers elsewhere in this file (fetchAllMasterRowsForReconcile, etc.).
+ */
+async function fetchAllActiveEmployeeRows(
+  supabase: SupabaseClient,
+  selectCols: string,
+): Promise<Record<string, unknown>[]> {
+  const pageSize = 1000;
+  const out: Record<string, unknown>[] = [];
+  for (let from = 0; ; from += pageSize) {
+    const { data, error } = await supabase
+      .from("active_employees")
+      .select(selectCols)
+      .range(from, from + pageSize - 1);
+    if (error) throw new Error(error.message);
+    const batch = (data ?? []) as unknown as Record<string, unknown>[];
+    out.push(...batch);
+    if (batch.length < pageSize) break;
+    if (from > 200000) break; // safety valve
+  }
+  return out;
+}
+
+/**
  * Distinct active-employee names from the Global Master List (`active_employees`
  * = the current master upload), sorted A→Z. Powers the New Hire Checklist
  * "Referred By" picker so a referrer is always checked against a real person on
@@ -953,8 +980,12 @@ export async function listActiveMasterListNames(): Promise<{ names: string[]; er
   }
   // `Name` is selected unquoted to match the roster reader in employees.ts
   // (PostgREST returns it under the "Name" key).
-  const { data, error } = await supabase.from("active_employees").select("Name").range(0, 9999);
-  if (error) return { names: [], error: error.message };
+  let data: Record<string, unknown>[];
+  try {
+    data = await fetchAllActiveEmployeeRows(supabase, "Name");
+  } catch (e) {
+    return { names: [], error: e instanceof Error ? e.message : "Failed to read active_employees" };
+  }
   const seen = new Set<string>();
   const names: string[] = [];
   for (const row of (data ?? []) as Record<string, unknown>[]) {
@@ -993,11 +1024,12 @@ export async function listActiveMasterListPeople(): Promise<{
   } catch (e) {
     return { people: [], error: e instanceof Error ? e.message : "Supabase not configured" };
   }
-  const { data, error } = await supabase
-    .from("active_employees")
-    .select('"Name", "Department", "Work Email", "Personal Email"')
-    .range(0, 9999);
-  if (error) return { people: [], error: error.message };
+  let data: Record<string, unknown>[];
+  try {
+    data = await fetchAllActiveEmployeeRows(supabase, '"Name", "Department", "Work Email", "Personal Email"');
+  } catch (e) {
+    return { people: [], error: e instanceof Error ? e.message : "Failed to read active_employees" };
+  }
 
   // Dedupe by (name, department) so a person holding rows in the same dept isn't
   // listed twice; distinct departments for the same human stay as separate rows.
