@@ -46,6 +46,12 @@ interface ChatWire {
   ts: number;
 }
 
+/** Signal that one side has ended the chat — the other side closes & clears it. */
+interface ChatEndWire {
+  fromEmail: string;
+  toEmail: string;
+}
+
 interface StoredMessage extends ChatMessageView {
   /** Normalized email of the other party this message belongs to. */
   peer: string;
@@ -62,6 +68,12 @@ interface CobrowseChatApi {
   markRead: (peerEmail: string | null | undefined) => void;
   /** Best-known display name for a peer, from their most recent message. */
   nameFor: (peerEmail: string | null | undefined) => string | null;
+  /**
+   * End the chat with a peer: broadcasts a close signal so their window shuts
+   * on their screen too, and clears the thread on this side. Used by an Admin to
+   * terminate a tutoring chat.
+   */
+  terminate: (peerEmail: string | null | undefined) => void;
 }
 
 const CobrowseChatContext = createContext<CobrowseChatApi>({
@@ -70,6 +82,7 @@ const CobrowseChatContext = createContext<CobrowseChatApi>({
   unreadFor: () => 0,
   markRead: () => {},
   nameFor: () => null,
+  terminate: () => {},
 });
 
 /** Read/drive the cobrowse tutoring chat (observer side lives in CobrowseProvider). */
@@ -148,6 +161,20 @@ export default function CobrowseChatProvider({ children }: { children: ReactNode
         setDriverPeers((prev) => (prev.includes(from) ? prev : [...prev, from]));
         playPingChime();
       })
+      .on('broadcast', { event: 'end' }, ({ payload }: { payload: ChatEndWire }) => {
+        const to = norm(payload?.toEmail);
+        const from = norm(payload?.fromEmail);
+        if (!to || !from || to !== selfRef.current.normSelf) return;
+        // The other party ended the chat — close its window and clear its thread.
+        setDriverPeers((prev) => (prev.includes(from) ? prev.filter((p) => p !== from) : prev));
+        setThreads((prev) => {
+          if (!prev[from]) return prev;
+          const next = { ...prev };
+          delete next[from];
+          return next;
+        });
+        setUnread((prev) => (prev[from] ? { ...prev, [from]: 0 } : prev));
+      })
       .subscribe((status: string) => {
         readyRef.current = status === 'SUBSCRIBED';
       });
@@ -224,9 +251,33 @@ export default function CobrowseChatProvider({ children }: { children: ReactNode
     setDriverPeers((prev) => prev.filter((p) => p !== peer));
   }, []);
 
+  const terminate = useCallback((peerEmail: string | null | undefined) => {
+    const to = norm(peerEmail);
+    if (!to) return;
+    const from = selfRef.current.normSelf;
+    // Tell the other side to close their chat window too (live-only; if they're
+    // offline it simply never arrives, and their window closes when they leave).
+    if (from && channelRef.current && readyRef.current) {
+      void channelRef.current.send({
+        type: 'broadcast',
+        event: 'end',
+        payload: { fromEmail: from, toEmail: to } satisfies ChatEndWire,
+      });
+    }
+    // Clear this side's thread + unread, and drop any driver popup for the peer.
+    setThreads((prev) => {
+      if (!prev[to]) return prev;
+      const next = { ...prev };
+      delete next[to];
+      return next;
+    });
+    setUnread((prev) => (prev[to] ? { ...prev, [to]: 0 } : prev));
+    setDriverPeers((prev) => (prev.includes(to) ? prev.filter((p) => p !== to) : prev));
+  }, []);
+
   const value = useMemo<CobrowseChatApi>(
-    () => ({ send, threadFor, unreadFor, markRead, nameFor }),
-    [send, threadFor, unreadFor, markRead, nameFor],
+    () => ({ send, threadFor, unreadFor, markRead, nameFor, terminate }),
+    [send, threadFor, unreadFor, markRead, nameFor, terminate],
   );
 
   return (

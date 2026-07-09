@@ -49,14 +49,17 @@ export default function CobrowseChatWindow({
   offsetIndex = 0,
   variant = 'observer',
   placeholder = 'Type a message…',
+  closeTitle = 'Dismiss',
 }: {
   title: string;
   subtitle?: string;
   accent?: string;
   messages: ChatMessageView[];
   onSend: (text: string) => void;
-  /** When provided, shows a dismiss (×) button — used on the driver side. */
+  /** When provided, shows a close (×) button. */
   onClose?: () => void;
+  /** Tooltip for the close button (e.g. "End chat" for the admin side). */
+  closeTitle?: string;
   /** Called whenever the window is expanded/focused, so the parent can clear unread. */
   onOpen?: () => void;
   unread?: number;
@@ -155,7 +158,7 @@ export default function CobrowseChatWindow({
               }
             }}
             className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-white/80 transition-colors hover:bg-white/20 hover:text-white"
-            title="Dismiss"
+            title={closeTitle}
           >
             <X className="h-3.5 w-3.5" aria-hidden />
           </span>
