@@ -554,7 +554,8 @@
       "Bash(node \"C:/Users/Itachi/AppData/Local/Temp/claude/c--Users-Itachi-Desktop-simple-hris/6a54c88c-d00a-49e0-85a7-25b984a17b38/scratchpad/diag-shaie.mjs\")",
       "Bash(node \"c:/Users/Itachi/Desktop/simple-hris/diag-shaie.mjs\")",
       "Bash(node diag-period.mjs)",
-      "Bash(rm -f diag-period.mjs)"
+      "Bash(rm -f diag-period.mjs)",
+      "PowerShell(npx tsc --noEmit; \"EXIT=$LASTEXITCODE\")"
     ],
     "additionalDirectories": [
       "\\tmp",

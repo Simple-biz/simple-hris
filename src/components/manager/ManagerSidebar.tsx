@@ -9,6 +9,7 @@ import {
   CalendarDays,
   ClipboardCheck,
   Calculator,
+  ArrowRightLeft,
   History,
   LayoutDashboard,
   LogOut,
@@ -33,7 +34,7 @@ import { useViewerProfilePhoto } from '@/hooks/useViewerProfilePhoto';
 import { useDispatchLock } from '@/hooks/useDispatchLock';
 import { useSidebarCollapsed } from '@/hooks/useSidebarCollapsed';
 
-export type ManagerTab = 'overview' | 'time-adjustments' | 'leaves' | 'team' | 'announcements' | 's-wall' | 'hsl-bonus' | 'bonus-history' | 'notifications';
+export type ManagerTab = 'overview' | 'time-adjustments' | 'leaves' | 'team' | 'transfers' | 'announcements' | 's-wall' | 'hsl-bonus' | 'bonus-history' | 'notifications';
 
 interface ManagerSidebarProps {
   activeTab: ManagerTab;
@@ -168,6 +169,7 @@ export default function ManagerSidebar({
               countBadge(pendingLeaves, activeTab === 'leaves'),
             )}
             {can('team') && navBtn('team', 'My team', Users)}
+            {can('transfers') && navBtn('transfers', 'Transfers', ArrowRightLeft)}
             {can('announcements') && navBtn('announcements', 'Announcements', Megaphone)}
             {can('s-wall') && <button
               key="s-wall"

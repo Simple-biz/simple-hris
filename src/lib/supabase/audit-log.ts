@@ -129,6 +129,51 @@ export async function fetchAuditLog(limit = 100): Promise<{ rows: AuditLogEntry[
   return { rows: (data ?? []) as AuditLogEntry[], error: error?.message ?? null };
 }
 
+/**
+ * Last successful Google-Sheet sync per source, read straight from the audit
+ * trail each sync already writes (`csv.master.sync` / `csv.rates.sync` /
+ * `csv.hsl.sync`). No separate persistence needed, and cron-triggered syncs are
+ * captured the same as manual ones since both go through the same routes.
+ * Powers the "Last synced" line on the Payroll Wizard's Initialize step.
+ */
+export async function fetchLastSyncTimestamps(): Promise<{
+  master: string | null;
+  rates: string | null;
+  hsl: string | null;
+  error: string | null;
+}> {
+  const supabase = createSupabaseServiceRoleClient();
+  if (!supabase) return { master: null, rates: null, hsl: null, error: 'Supabase not configured' };
+
+  const latest = async (action: string): Promise<string | null> => {
+    const { data, error } = await supabase
+      .from('audit_log')
+      .select('created_at')
+      .eq('action', action)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (error) throw new Error(error.message);
+    return (data?.created_at as string | undefined) ?? null;
+  };
+
+  try {
+    const [master, rates, hsl] = await Promise.all([
+      latest('csv.master.sync'),
+      latest('csv.rates.sync'),
+      latest('csv.hsl.sync'),
+    ]);
+    return { master, rates, hsl, error: null };
+  } catch (e) {
+    return {
+      master: null,
+      rates: null,
+      hsl: null,
+      error: e instanceof Error ? e.message : String(e),
+    };
+  }
+}
+
 // ─── Bank changes ────────────────────────────────────────────────────────────
 // The People-tab bank-change feed/history now reads from the dedicated
 // `bank_update_history` table (src/lib/supabase/bank-update-history.ts) instead

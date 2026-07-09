@@ -970,6 +970,54 @@ export async function listActiveMasterListNames(): Promise<{ names: string[]; er
   return { names, error: null };
 }
 
+export interface ActiveMasterListPerson {
+  name: string;
+  department: string | null;
+  work_email: string | null;
+  personal_email: string | null;
+}
+
+/**
+ * Active employees from the Global Master List with just the fields a manager
+ * needs to pick a transfer target — Name, Department, Work/Personal Email.
+ * Deliberately carries NO rate / pay / banking data: managers never see pay, and
+ * this feeds the "Request transfer in" person picker across every department.
+ */
+export async function listActiveMasterListPeople(): Promise<{
+  people: ActiveMasterListPerson[];
+  error: string | null;
+}> {
+  let supabase: SupabaseClient;
+  try {
+    supabase = requireServiceRole();
+  } catch (e) {
+    return { people: [], error: e instanceof Error ? e.message : "Supabase not configured" };
+  }
+  const { data, error } = await supabase
+    .from("active_employees")
+    .select('"Name", "Department", "Work Email", "Personal Email"')
+    .range(0, 9999);
+  if (error) return { people: [], error: error.message };
+
+  // Dedupe by (name, department) so a person holding rows in the same dept isn't
+  // listed twice; distinct departments for the same human stay as separate rows.
+  const seen = new Set<string>();
+  const people: ActiveMasterListPerson[] = [];
+  for (const row of (data ?? []) as Record<string, unknown>[]) {
+    const name = typeof row["Name"] === "string" ? (row["Name"] as string).trim() : "";
+    if (!name) continue;
+    const department = normalizeDepartment(row["Department"] as string | null);
+    const work_email = normalizeEmail(row["Work Email"] as string | null);
+    const personal_email = normalizeEmail(row["Personal Email"] as string | null);
+    const key = `${name.toLowerCase()}|${(department ?? "").toLowerCase()}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    people.push({ name, department, work_email, personal_email });
+  }
+  people.sort((a, b) => a.name.localeCompare(b.name));
+  return { people, error: null };
+}
+
 /** Shape consumed by `applyOffboardedFromSheetRows`. Mirror of `OffboardedSheetRow`
  *  in `src/lib/google-sheets/fetch-offboarded-sheet.ts` — kept structurally
  *  identical so the route can pass through the parsed sheet rows directly. */

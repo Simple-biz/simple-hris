@@ -1,6 +1,6 @@
 import { createSupabaseServiceRoleClient } from './server';
 
-export type TransferRequestStatus = 'pending' | 'approved' | 'rejected' | 'cancelled';
+export type TransferRequestStatus = 'pending' | 'approved' | 'applied' | 'rejected' | 'cancelled';
 
 export type DepartmentTransferRequestRow = {
   id: string;
@@ -13,12 +13,29 @@ export type DepartmentTransferRequestRow = {
   reason: string | null;
   status: TransferRequestStatus;
   requested_by: string;
+  /** v2: source-department manager who released/declined (reuses approver_*). */
   approver_email: string | null;
   approver_note: string | null;
   decided_at: string | null;
+  /** v2: receiving manager's proposed effective date (YYYY-MM-DD). */
+  proposed_effective_date: string | null;
+  /** v2: effective date, LOCKED when the source manager releases. */
+  effective_date: string | null;
+  /** v2: when the dept change was written to master + Sheet. */
+  applied_at: string | null;
+  /** v2: did the Google Sheet write-back succeed? Drives the "Retry" badge. */
+  sheet_synced: boolean;
+  sheet_sync_error: string | null;
   created_at: string;
   updated_at: string;
 };
+
+/** v2 status semantics:
+ *   pending   → awaiting the source manager's release decision
+ *   approved  → released; effective_date locked; scheduled for that date
+ *   applied   → department written to master + Sheet
+ *   rejected  → source manager declined
+ *   cancelled → receiving manager withdrew */
 
 const TABLE = 'department_transfer_requests';
 const MASTER_TABLE = 'global_master_list';
@@ -32,6 +49,8 @@ export async function insertTransferRequest(row: {
   to_department: string;
   reason: string | null;
   requested_by: string;
+  /** v2: receiving manager's proposed effective date (YYYY-MM-DD), locked on release. */
+  proposed_effective_date?: string | null;
 }): Promise<{ id: string | null; error: string | null }> {
   const supabase = createSupabaseServiceRoleClient();
   if (!supabase) return { id: null, error: 'Supabase not configured' };
@@ -47,6 +66,7 @@ export async function insertTransferRequest(row: {
       to_department: row.to_department.trim(),
       reason: row.reason?.trim() || null,
       requested_by: row.requested_by.trim().toLowerCase(),
+      proposed_effective_date: row.proposed_effective_date?.trim() || null,
       status: 'pending',
     })
     .select('id')
@@ -98,7 +118,9 @@ export async function getTransferRequestById(id: string): Promise<{
   return { row: (data as DepartmentTransferRequestRow) ?? null, error: error?.message ?? null };
 }
 
-/** True when this employee already has a pending transfer request (prevents dupes). */
+/** True when this employee already has an in-flight transfer — either awaiting a
+ *  source-manager decision (`pending`) or released and scheduled but not yet
+ *  applied (`approved`). Prevents raising a second request over an open one. */
 export async function hasPendingTransferForEmployee(
   employeeEmail: string,
 ): Promise<boolean> {
@@ -109,10 +131,141 @@ export async function hasPendingTransferForEmployee(
   const { data } = await supabase
     .from(TABLE)
     .select('id')
-    .eq('status', 'pending')
+    .in('status', ['pending', 'approved'])
     .or(`employee_email.ilike.${e},employee_work_email.ilike.${e},employee_personal_email.ilike.${e}`)
     .limit(1);
   return (data?.length ?? 0) > 0;
+}
+
+/**
+ * Pending release requests whose SOURCE department is one the given manager
+ * owns — i.e. their consent queue. `departments` is the manager's active
+ * department list (case-insensitive match on from_department).
+ */
+export async function listIncomingTransfersForDepartments(
+  departments: string[],
+  limit = 300,
+): Promise<{ rows: DepartmentTransferRequestRow[]; error: string | null }> {
+  const wanted = new Set(departments.map((d) => d.trim().toLowerCase()).filter(Boolean));
+  if (wanted.size === 0) return { rows: [], error: null };
+  const supabase = createSupabaseServiceRoleClient();
+  if (!supabase) return { rows: [], error: 'Supabase not configured' };
+  const { data, error } = await supabase
+    .from(TABLE)
+    .select('*')
+    .eq('status', 'pending')
+    .order('created_at', { ascending: false })
+    .limit(limit);
+  if (error) return { rows: [], error: error.message };
+  const rows = ((data ?? []) as DepartmentTransferRequestRow[]).filter((r) =>
+    wanted.has(r.from_department.trim().toLowerCase()),
+  );
+  return { rows, error: null };
+}
+
+/** Source manager releases a pending request: locks the effective date and moves
+ *  it to `approved`. The caller applies immediately if the date is already due. */
+export async function releaseTransfer(params: {
+  id: string;
+  source_manager_email: string;
+  effective_date: string; // YYYY-MM-DD
+}): Promise<{ error: string | null }> {
+  const supabase = createSupabaseServiceRoleClient();
+  if (!supabase) return { error: 'Supabase not configured' };
+  const now = new Date().toISOString();
+  const { error } = await supabase
+    .from(TABLE)
+    .update({
+      status: 'approved',
+      approver_email: params.source_manager_email.trim().toLowerCase(),
+      effective_date: params.effective_date,
+      decided_at: now,
+      updated_at: now,
+    })
+    .eq('id', params.id)
+    .eq('status', 'pending');
+  return { error: error?.message ?? null };
+}
+
+/** Source manager declines a pending request. */
+export async function declineTransfer(params: {
+  id: string;
+  source_manager_email: string;
+  note: string | null;
+}): Promise<{ error: string | null }> {
+  const supabase = createSupabaseServiceRoleClient();
+  if (!supabase) return { error: 'Supabase not configured' };
+  const now = new Date().toISOString();
+  const { error } = await supabase
+    .from(TABLE)
+    .update({
+      status: 'rejected',
+      approver_email: params.source_manager_email.trim().toLowerCase(),
+      approver_note: params.note,
+      decided_at: now,
+      updated_at: now,
+    })
+    .eq('id', params.id)
+    .eq('status', 'pending');
+  return { error: error?.message ?? null };
+}
+
+/** Marks a released transfer as applied, recording the Sheet write-back outcome. */
+export async function markTransferApplied(params: {
+  id: string;
+  sheet_synced: boolean;
+  sheet_sync_error: string | null;
+}): Promise<{ error: string | null }> {
+  const supabase = createSupabaseServiceRoleClient();
+  if (!supabase) return { error: 'Supabase not configured' };
+  const now = new Date().toISOString();
+  const { error } = await supabase
+    .from(TABLE)
+    .update({
+      status: 'applied',
+      applied_at: now,
+      sheet_synced: params.sheet_synced,
+      sheet_sync_error: params.sheet_sync_error,
+      updated_at: now,
+    })
+    .eq('id', params.id);
+  return { error: error?.message ?? null };
+}
+
+/** Updates only the Sheet write-back outcome (used by the Retry action). */
+export async function setTransferSheetSync(params: {
+  id: string;
+  sheet_synced: boolean;
+  sheet_sync_error: string | null;
+}): Promise<{ error: string | null }> {
+  const supabase = createSupabaseServiceRoleClient();
+  if (!supabase) return { error: 'Supabase not configured' };
+  const { error } = await supabase
+    .from(TABLE)
+    .update({
+      sheet_synced: params.sheet_synced,
+      sheet_sync_error: params.sheet_sync_error,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', params.id);
+  return { error: error?.message ?? null };
+}
+
+/** Released transfers whose effective date is on/before `todayIso` and not yet
+ *  applied — the daily apply-scheduled-transfers cron's work list. */
+export async function listScheduledDueTransfers(
+  todayIso: string,
+): Promise<{ rows: DepartmentTransferRequestRow[]; error: string | null }> {
+  const supabase = createSupabaseServiceRoleClient();
+  if (!supabase) return { rows: [], error: 'Supabase not configured' };
+  const { data, error } = await supabase
+    .from(TABLE)
+    .select('*')
+    .eq('status', 'approved')
+    .not('effective_date', 'is', null)
+    .lte('effective_date', todayIso)
+    .order('effective_date', { ascending: true });
+  return { rows: (data ?? []) as DepartmentTransferRequestRow[], error: error?.message ?? null };
 }
 
 export async function updateTransferRequestStatus(params: {

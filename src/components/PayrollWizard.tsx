@@ -843,6 +843,16 @@ export default function PayrollWizard({
   const [ratesSyncPct, setRatesSyncPct] = useState<{ pct: number } | null>(null);
   const [hslSyncPct, setHslSyncPct] = useState<{ pct: number } | null>(null);
   const syncTimers = useRef<{ master?: ReturnType<typeof setInterval>; rates?: ReturnType<typeof setInterval>; hsl?: ReturnType<typeof setInterval> }>({});
+  /**
+   * Last successful Google-Sheet sync per source (ISO strings, or null when the
+   * audit trail has no sync yet). Loaded on mount from /api/accounting/sync-status
+   * (reads audit_log) and bumped optimistically the moment a manual sync succeeds.
+   */
+  const [lastSyncAt, setLastSyncAt] = useState<{ master: string | null; rates: string | null; hsl: string | null }>({
+    master: null,
+    rates: null,
+    hsl: null,
+  });
   const [hubstaffPage, setHubstaffPage] = useState(1);
   const HUBSTAFF_PAGE_SIZE = 15;
   const SOURCE_FILE_PAGE_SIZE = 25;
@@ -931,6 +941,27 @@ export default function PayrollWizard({
       minute: '2-digit',
     });
   }, []);
+
+  /** "Last synced …" footer line for a Google-Sheet sync card (Initialize step). */
+  const renderLastSynced = React.useCallback(
+    (iso: string | null) => {
+      const stamp = formatUploadStamp(iso);
+      return (
+        <p className="flex items-center gap-1.5 text-[11px] leading-none text-zinc-500 dark:text-zinc-500">
+          <Clock className="h-3 w-3 shrink-0" aria-hidden />
+          {stamp ? (
+            <span>
+              Last synced{' '}
+              <span className="font-medium text-zinc-700 dark:text-zinc-300">{stamp}</span>
+            </span>
+          ) : (
+            <span className="text-zinc-400 dark:text-zinc-600">Never synced from Google Sheet</span>
+          )}
+        </p>
+      );
+    },
+    [formatUploadStamp],
+  );
   const [sourceFilesLoading, setSourceFilesLoading] = useState(true);
   const [selectedSourceFile, setSelectedSourceFile] = useState<string | null>(null);
   const [sourceFileRows, setSourceFileRows] = useState<Record<string, unknown>[] | null>(null);
@@ -5449,6 +5480,25 @@ export default function PayrollWizard({
     }
   };
 
+  const loadLastSyncAt = React.useCallback(async () => {
+    try {
+      const res = await fetch('/api/accounting/sync-status');
+      if (!res.ok) return;
+      const json = (await res.json()) as { master?: string | null; rates?: string | null; hsl?: string | null };
+      setLastSyncAt({
+        master: json.master ?? null,
+        rates: json.rates ?? null,
+        hsl: json.hsl ?? null,
+      });
+    } catch {
+      /* non-fatal — the "Last synced" line just stays hidden */
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadLastSyncAt();
+  }, [loadLastSyncAt]);
+
   const startSyncProgress = (key: 'master' | 'rates' | 'hsl', setter: (v: { pct: number } | null) => void) => {
     const existing = syncTimers.current[key];
     if (existing !== undefined) clearInterval(existing);
@@ -5475,6 +5525,7 @@ export default function PayrollWizard({
       if (!res.ok || !json.success) throw new Error(json.error ?? 'Master list sync failed');
       succeeded = true;
       setMasterSyncPct({ pct: 100 });
+      setLastSyncAt((prev) => ({ ...prev, master: new Date().toISOString() }));
       const activeCount = json.activeCount ?? json.rowCount ?? 0;
       toast.success('Master list synced from Google Sheet', { description: `${activeCount} active employees (${json.inserted ?? 0} new · ${json.updated ?? 0} updated)` });
       await reloadMasterEmployees();
@@ -5499,6 +5550,7 @@ export default function PayrollWizard({
       if (!res.ok || !json.success) throw new Error(json.error ?? 'Rates sync failed');
       succeeded = true;
       setRatesSyncPct({ pct: 100 });
+      setLastSyncAt((prev) => ({ ...prev, rates: new Date().toISOString() }));
       toast.success('Payroll rates synced from Google Sheet', {
         description: [
           `${(json.uniqueEmployees ?? 0).toLocaleString()} employees`,
@@ -5534,6 +5586,7 @@ export default function PayrollWizard({
       if (!res.ok || !json.success) throw new Error(json.error ?? 'HSL sync failed');
       succeeded = true;
       setHslSyncPct({ pct: 100 });
+      setLastSyncAt((prev) => ({ ...prev, hsl: new Date().toISOString() }));
       setHslSyncResult({ kind: 'success', message: `${json.rowCount ?? 0} agents synced (${json.inserted ?? 0} new · ${json.updated ?? 0} updated)` });
       toast.success('Hogan Smith Pay Plan synced');
       if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('rates-profiles-stale'));
@@ -5899,6 +5952,7 @@ export default function PayrollWizard({
                       </div>
                     )}
                     <div className="mt-auto flex flex-col gap-2 pt-1">
+                      {renderLastSynced(lastSyncAt.master)}
                       <Button
                         type="button"
                         variant="outline"
@@ -5948,6 +6002,7 @@ export default function PayrollWizard({
                       </div>
                     )}
                     <div className="mt-auto flex flex-col gap-2 pt-1">
+                      {renderLastSynced(lastSyncAt.rates)}
                       <Button
                         type="button"
                         variant="outline"
@@ -6002,6 +6057,7 @@ export default function PayrollWizard({
                       </p>
                     )}
                     <div className="mt-auto flex flex-col gap-2 pt-1">
+                      {renderLastSynced(lastSyncAt.hsl)}
                       <Button
                         type="button"
                         variant="outline"

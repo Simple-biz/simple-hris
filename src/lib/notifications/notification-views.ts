@@ -15,6 +15,13 @@ import type { FeatureViewKey, FeaturePermissionsMap } from '@/lib/rbac/feature-p
 export const NOTIFICATION_TYPE_TO_VIEWS: Record<string, AppView[]> = {
   'onboarding.submitted': ['hr', 'admin'],
   'transfer.requested': ['hr', 'admin'],
+  // Department Transfers v2 (managers-only): the source dept manager is asked to
+  // release; the receiving manager is told the outcome; the employee learns when
+  // the move actually takes effect. All ungated so managers always see them.
+  'transfer.release_requested': ['manager'],
+  'transfer.released': ['manager'],
+  'transfer.declined': ['manager'],
+  'transfer.applied': ['manager', 'employee'],
   'offboarding.requested': ['hr', 'admin'],
   'offboarding.request_completed': ['manager'],
   'offboarding.request_dismissed': ['manager'],

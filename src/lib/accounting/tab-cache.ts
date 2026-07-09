@@ -97,4 +97,5 @@ export const TAB_CACHE_KEYS = {
   overviewPayouts: 'overview:payouts',
   overviewPabMetrics: 'overview:pab-metrics',
   peopleRoster: 'people:list',
+  transfers: 'transfers:list',
 } as const;

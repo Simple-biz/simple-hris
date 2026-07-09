@@ -4,12 +4,15 @@ import { authOptions } from '@/lib/auth/auth-options';
 import { createSupabaseServiceRoleClient } from '@/lib/supabase/server';
 import { normEmail } from '@/lib/email/norm-email';
 import { insertAuditLog } from '@/lib/supabase/audit-log';
+import { listDepartmentsForManager } from '@/lib/supabase/department-managers';
+import { departmentMatchesManagedAssignments } from '@/lib/managed-department-scope';
 import {
   getTransferRequestById,
-  updateTransferRequestStatus,
+  releaseTransfer,
+  declineTransfer,
   cancelTransferRequestIfOwned,
-  applyDepartmentTransfer,
 } from '@/lib/supabase/department-transfer-requests';
+import { applyApprovedTransfer, manilaTodayIso } from '@/lib/transfers/apply-transfer';
 import { requireFeatureEdit } from '@/lib/auth/authorize-feature';
 import { deniedResponse } from '@/lib/auth/authorize-email';
 
@@ -27,13 +30,12 @@ function rolesOf(session: SessionLike): string[] {
 }
 
 /**
- * PATCH — HR (or admin) approves/rejects a transfer; the original manager may cancel
- * their own pending request.
- *
- * Body: { decision: 'approved' | 'rejected' | 'cancelled', note?: string }
- *  - approved: applies the department change to global_master_list, then marks approved.
- *  - rejected: marks rejected, no master-list change.
- *  - cancelled: only the requesting manager, only while pending.
+ * PATCH — decide a transfer request. Body: { action, note? }
+ *   release  — source-dept manager consents; locks the effective date and either
+ *              applies immediately (date already due) or schedules it for the cron.
+ *   decline  — source-dept manager refuses (note = reason).
+ *   cancel   — the receiving manager withdraws their own pending request.
+ * HR no longer approves transfers (v2) — managers own the decision end to end.
  */
 export async function PATCH(
   request: Request,
@@ -47,20 +49,21 @@ export async function PATCH(
     const sessionEmail = normEmail(session?.user?.email ?? '') ?? '';
     if (!sessionEmail) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
     const roles = rolesOf(session);
+    const isAdmin = roles.includes('admin');
 
-    const body = (await request.json()) as { decision?: string; note?: string | null };
-    const decision = body.decision?.trim();
+    const body = (await request.json()) as { action?: string; note?: string | null };
+    const action = body.action?.trim();
     const note = body.note?.trim() || null;
 
     const { row, error: fetchErr } = await getTransferRequestById(id);
     if (fetchErr) return NextResponse.json({ error: fetchErr }, { status: 500 });
     if (!row) return NextResponse.json({ error: 'Transfer request not found' }, { status: 404 });
-    if (row.status !== 'pending') {
-      return NextResponse.json({ error: `Request already ${row.status}` }, { status: 409 });
-    }
 
-    // ── Manager self-cancel ──
-    if (decision === 'cancelled') {
+    // ── Receiving manager self-cancel (only while pending) ──
+    if (action === 'cancel') {
+      if (row.status !== 'pending') {
+        return NextResponse.json({ error: `Request already ${row.status}` }, { status: 409 });
+      }
       if (row.requested_by.toLowerCase() !== sessionEmail) {
         return NextResponse.json({ error: 'Only the requester can cancel this request' }, { status: 403 });
       }
@@ -68,7 +71,7 @@ export async function PATCH(
       if (error) return NextResponse.json({ error }, { status: 500 });
       void insertAuditLog({
         user_name: sessionEmail,
-        user_role: 'Manager',
+        user_role: isAdmin ? 'Admin' : 'Manager',
         action: 'department_transfer.cancelled',
         resource: 'department_transfer_requests',
         resource_id: id,
@@ -78,77 +81,125 @@ export async function PATCH(
       return NextResponse.json({ success: true, error: null });
     }
 
-    // ── HR / admin decision ──
-    const authz = await requireFeatureEdit('hr', 'transfers');
-    if (!authz.ok) return deniedResponse(authz);
-    if (decision !== 'approved' && decision !== 'rejected') {
-      return NextResponse.json({ error: "decision must be 'approved', 'rejected', or 'cancelled'" }, { status: 400 });
+    // ── Source-manager decision (release / decline) ──
+    if (action !== 'release' && action !== 'decline') {
+      return NextResponse.json(
+        { error: "action must be 'release', 'decline', or 'cancel'" },
+        { status: 400 },
+      );
+    }
+    if (row.status !== 'pending') {
+      return NextResponse.json({ error: `Request already ${row.status}` }, { status: 409 });
     }
 
-    let appliedCount = 0;
-    if (decision === 'approved') {
-      const applied = await applyDepartmentTransfer({
-        personalEmail: row.employee_personal_email,
-        workEmail: row.employee_work_email,
-        fromDepartment: row.from_department,
-        toDepartment: row.to_department,
-      });
-      if (applied.error) {
+    const authz = await requireFeatureEdit('manager', 'team');
+    if (!authz.ok) return deniedResponse(authz);
+
+    // Only a manager of the SOURCE department (or an admin) may decide.
+    if (!isAdmin) {
+      const { rows: assigns } = await listDepartmentsForManager(sessionEmail);
+      const departments = assigns.map((a) => a.department.trim()).filter(Boolean);
+      if (!departmentMatchesManagedAssignments(row.from_department, departments)) {
         return NextResponse.json(
-          { error: `Could not apply transfer: ${applied.error}` },
-          { status: 500 },
+          { error: 'Only a manager of the current department can decide this transfer' },
+          { status: 403 },
         );
       }
-      appliedCount = applied.updated;
     }
 
-    const { error: statusErr } = await updateTransferRequestStatus({
-      id,
-      status: decision,
-      approver_email: sessionEmail,
-      approver_note: note,
-    });
-    if (statusErr) return NextResponse.json({ error: statusErr }, { status: 500 });
-
-    // Notify the requesting manager of the decision.
     const supabase = createSupabaseServiceRoleClient();
+
+    if (action === 'decline') {
+      const { error } = await declineTransfer({ id, source_manager_email: sessionEmail, note });
+      if (error) return NextResponse.json({ error }, { status: 500 });
+      if (supabase && row.requested_by) {
+        await supabase.from('employee_notifications').insert({
+          recipient_email: row.requested_by,
+          type: 'transfer.declined',
+          tone: 'neutral',
+          title: 'Transfer Declined',
+          message: `${sessionEmail} declined releasing ${row.employee_name ?? row.employee_email} to ${row.to_department}${note ? `: "${note}"` : '.'}`,
+          details: {
+            request_id: id,
+            employee_email: row.employee_email,
+            from_department: row.from_department,
+            to_department: row.to_department,
+            note,
+          },
+        });
+      }
+      void insertAuditLog({
+        user_name: sessionEmail,
+        user_role: isAdmin ? 'Admin' : 'Manager',
+        action: 'department_transfer.declined',
+        resource: 'department_transfer_requests',
+        resource_id: id,
+        details: { employee_email: row.employee_email, from_department: row.from_department, to_department: row.to_department, note },
+        ip_address: clientIp(request),
+      });
+      return NextResponse.json({ success: true, error: null });
+    }
+
+    // ── release ──
+    // Lock the effective date to the receiving manager's proposal (fall back to
+    // today for any legacy row that predates the proposed-date field).
+    const today = manilaTodayIso();
+    const effectiveDate = row.proposed_effective_date || today;
+
+    const { error: relErr } = await releaseTransfer({
+      id,
+      source_manager_email: sessionEmail,
+      effective_date: effectiveDate,
+    });
+    if (relErr) return NextResponse.json({ error: relErr }, { status: 500 });
+
+    // Notify the receiving manager it was released.
     if (supabase && row.requested_by) {
-      const approved = decision === 'approved';
       await supabase.from('employee_notifications').insert({
         recipient_email: row.requested_by,
-        type: approved ? 'transfer.approved' : 'transfer.rejected',
-        tone: approved ? 'positive' : 'neutral',
-        title: approved ? 'Transfer Approved' : 'Transfer Rejected',
-        message: approved
-          ? `${row.employee_name ?? row.employee_email} has been moved from ${row.from_department} to ${row.to_department}.`
-          : `Your request to move ${row.employee_name ?? row.employee_email} to ${row.to_department} was not approved${note ? `: "${note}"` : '.'}`,
+        type: 'transfer.released',
+        tone: 'positive',
+        title: 'Transfer Released',
+        message: `${sessionEmail} released ${row.employee_name ?? row.employee_email} to ${row.to_department}, effective ${effectiveDate}.`,
         details: {
           request_id: id,
           employee_email: row.employee_email,
           from_department: row.from_department,
           to_department: row.to_department,
-          approver_note: note,
+          effective_date: effectiveDate,
         },
       });
     }
 
     void insertAuditLog({
       user_name: sessionEmail,
-      user_role: roles.includes('admin') ? 'Admin' : 'HR',
-      action: decision === 'approved' ? 'department_transfer.approved' : 'department_transfer.rejected',
+      user_role: isAdmin ? 'Admin' : 'Manager',
+      action: 'department_transfer.released',
       resource: 'department_transfer_requests',
       resource_id: id,
-      details: {
-        employee_email: row.employee_email,
-        from_department: row.from_department,
-        to_department: row.to_department,
-        rows_updated: appliedCount,
-        note,
-      },
+      details: { employee_email: row.employee_email, from_department: row.from_department, to_department: row.to_department, effective_date: effectiveDate },
       ip_address: clientIp(request),
     });
 
-    return NextResponse.json({ success: true, rows_updated: appliedCount, error: null });
+    // Apply immediately if the effective date is already due; otherwise the
+    // apply-scheduled-transfers cron picks it up on the day.
+    let applied = false;
+    let sheetSynced = false;
+    if (effectiveDate <= today) {
+      const res = await applyApprovedTransfer({ ...row, status: 'approved', effective_date: effectiveDate });
+      if (res.error) {
+        // Released but the master-list write failed — leave it scheduled so the
+        // cron (or a retry) can complete it. Surface the error.
+        return NextResponse.json(
+          { success: true, released: true, applied: false, error: `Released but could not apply yet: ${res.error}` },
+          { status: 200 },
+        );
+      }
+      applied = res.applied;
+      sheetSynced = res.sheetSynced;
+    }
+
+    return NextResponse.json({ success: true, released: true, applied, sheet_synced: sheetSynced, effective_date: effectiveDate, error: null });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     return NextResponse.json({ error: msg }, { status: 500 });

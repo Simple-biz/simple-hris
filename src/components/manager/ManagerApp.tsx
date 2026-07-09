@@ -8,7 +8,6 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { AnimatePresence, motion } from 'motion/react';
 import {
   AlertTriangle,
-  ArrowRightLeft,
   Briefcase,
   Camera,
   CheckCircle2,
@@ -53,7 +52,7 @@ import { HSL_DEPT_KEYS, canAccessHslDept } from '@/lib/hsl-bonus/schema';
 import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
 import { DEPT_INPUT_CONFIG } from '@/lib/payroll/department-bonus';
 import ManagerMemberDialog from '@/components/manager/ManagerMemberDialog';
-import ManagerTransferDialog from '@/components/manager/ManagerTransferDialog';
+import ManagerTransfers from '@/components/manager/ManagerTransfers';
 import ManagerOffboardQueueDialog, {
   type OffboardCandidate,
 } from '@/components/manager/ManagerOffboardQueueDialog';
@@ -403,6 +402,19 @@ export default function ManagerApp() {
                   viewerEmail={viewerEmail}
                   focusEmail={teamFocusEmail}
                   onFocusConsumed={clearTeamFocus}
+                />
+              )}
+              {activeTab === 'transfers' && (
+                <ManagerTransfers
+                  myDepartments={
+                    teamGate.kind === 'department'
+                      ? teamGate.departments
+                      : Array.from(
+                          new Set(
+                            teamMembers.map((m) => (m.department ?? '').trim()).filter(Boolean),
+                          ),
+                        )
+                  }
                 />
               )}
               {activeTab === 'announcements' && (
@@ -2107,7 +2119,6 @@ function TeamPanelInner({ members, teamGate, viewerEmail, focusEmail, onFocusCon
     return (!!w && onlineEmails.has(w)) || (!!p && onlineEmails.has(p));
   };
   const [selectedMember, setSelectedMember] = useState<EmployeeRow | null>(null);
-  const [transferMember, setTransferMember] = useState<EmployeeRow | null>(null);
 
   // Deep-link: open a specific employee's profile when the Overview spotlight
   // requested it, then clear the request so normal navigation doesn't reopen it.
@@ -3250,7 +3261,7 @@ function TeamPanelInner({ members, teamGate, viewerEmail, focusEmail, onFocusCon
                               <UserRound className="h-3.5 w-3.5" />
                               View
                             </Button>
-                            {resig ? (
+                            {resig && (
                               <>
                                 <Button
                                   type="button"
@@ -3274,18 +3285,6 @@ function TeamPanelInner({ members, teamGate, viewerEmail, focusEmail, onFocusCon
                                   Approve
                                 </Button>
                               </>
-                            ) : (
-                              <Button
-                                type="button"
-                                size="sm"
-                                variant="outline"
-                                onClick={() => setTransferMember(m)}
-                                className="h-7 gap-1.5 border-amber-200 text-xs text-amber-700 hover:bg-amber-50 dark:border-amber-800 dark:text-amber-300 dark:hover:bg-amber-950/40"
-                                title="Request a department transfer (HR approval required)"
-                              >
-                                <ArrowRightLeft className="h-3.5 w-3.5" />
-                                Transfer
-                              </Button>
                             )}
                           </div>
                         </motion.div>
@@ -3371,12 +3370,6 @@ function TeamPanelInner({ members, teamGate, viewerEmail, focusEmail, onFocusCon
             },
           }));
         }}
-      />
-
-      <ManagerTransferDialog
-        member={transferMember}
-        open={!!transferMember}
-        onOpenChange={(open) => { if (!open) setTransferMember(null); }}
       />
 
       <ManagerOffboardQueueDialog

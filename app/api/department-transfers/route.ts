@@ -4,7 +4,7 @@ import { authOptions } from '@/lib/auth/auth-options';
 import { createSupabaseServiceRoleClient } from '@/lib/supabase/server';
 import { normEmail } from '@/lib/email/norm-email';
 import { insertAuditLog } from '@/lib/supabase/audit-log';
-import { listDepartmentsForManager } from '@/lib/supabase/department-managers';
+import { listDepartmentsForManager, listManagersByDepartment } from '@/lib/supabase/department-managers';
 import { departmentMatchesManagedAssignments } from '@/lib/managed-department-scope';
 import { requireFeatureEdit } from '@/lib/auth/authorize-feature';
 import { deniedResponse } from '@/lib/auth/authorize-email';
@@ -12,11 +12,14 @@ import {
   insertTransferRequest,
   listAllTransferRequests,
   listTransferRequestsByRequester,
+  listIncomingTransfersForDepartments,
   hasPendingTransferForEmployee,
 } from '@/lib/supabase/department-transfer-requests';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
+
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 function clientIp(request: Request): string | null {
   const fwd = request.headers.get('x-forwarded-for');
@@ -28,29 +31,14 @@ function rolesOf(session: SessionLike): string[] {
   return (session?.user?.roles ?? []) as string[];
 }
 
-/** Active work emails for everyone holding one of `roles`. Used to notify HR. */
-async function recipientsForRoles(roles: string[]): Promise<string[]> {
-  const supabase = createSupabaseServiceRoleClient();
-  if (!supabase) return [];
-  const { data } = await supabase
-    .from('employee_roles')
-    .select('work_email, role')
-    .in('role', roles)
-    .is('revoked_at', null);
-  const out = new Set<string>();
-  for (const r of (data ?? []) as Array<{ work_email?: string | null }>) {
-    const e = (r.work_email ?? '').trim().toLowerCase();
-    if (e) out.add(e);
-  }
-  return Array.from(out);
-}
-
 /**
  * GET — list transfer requests.
- *   HR (hr_coordinator) / admin  -> every request (approval queue).
- *   manager                       -> their own raised requests (outbox).
+ *   HR (hr_coordinator) / admin        -> every request (read-only history).
+ *   manager, scope=incoming            -> release requests for depts they manage
+ *                                          (their consent queue).
+ *   manager, default (scope=outgoing)  -> requests they raised (their outbox).
  */
-export async function GET() {
+export async function GET(request: Request) {
   const session = await getServerSession(authOptions);
   const sessionEmail = normEmail(session?.user?.email ?? '') ?? '';
   if (!sessionEmail) return NextResponse.json({ rows: [], error: 'Not signed in' }, { status: 401 });
@@ -65,6 +53,14 @@ export async function GET() {
     return NextResponse.json({ rows, error: null });
   }
   if (isManager) {
+    const scope = new URL(request.url).searchParams.get('scope');
+    if (scope === 'incoming') {
+      const { rows: depts } = await listDepartmentsForManager(sessionEmail);
+      const departments = depts.map((d) => d.department).filter(Boolean);
+      const { rows, error } = await listIncomingTransfersForDepartments(departments);
+      if (error) return NextResponse.json({ rows: [], error }, { status: 500 });
+      return NextResponse.json({ rows, error: null });
+    }
     const { rows, error } = await listTransferRequestsByRequester(sessionEmail);
     if (error) return NextResponse.json({ rows: [], error }, { status: 500 });
     return NextResponse.json({ rows, error: null });
@@ -72,7 +68,14 @@ export async function GET() {
   return NextResponse.json({ rows: [], error: 'Manager, HR, or admin role required' }, { status: 403 });
 }
 
-/** POST — a manager raises a transfer request for an employee. */
+/**
+ * POST — a RECEIVING manager requests to pull an employee INTO a department they
+ * manage. The person's current (source) department manager(s) are notified to
+ * release or decline. Body:
+ *   { employee_name, employee_work_email, employee_personal_email,
+ *     from_department (person's current dept), to_department (requester's dept),
+ *     reason?, proposed_effective_date (YYYY-MM-DD) }
+ */
 export async function POST(request: Request) {
   try {
     const authz = await requireFeatureEdit('manager', 'team');
@@ -96,6 +99,7 @@ export async function POST(request: Request) {
       from_department?: string | null;
       to_department?: string | null;
       reason?: string | null;
+      proposed_effective_date?: string | null;
     };
 
     const fromDept = body.from_department?.trim() ?? '';
@@ -103,6 +107,7 @@ export async function POST(request: Request) {
     const workEmail = body.employee_work_email?.trim().toLowerCase() || null;
     const personalEmail = body.employee_personal_email?.trim().toLowerCase() || null;
     const identifying = personalEmail ?? workEmail;
+    const proposed = body.proposed_effective_date?.trim() || '';
 
     if (!identifying) {
       return NextResponse.json({ error: 'Employee email is required' }, { status: 400 });
@@ -113,15 +118,18 @@ export async function POST(request: Request) {
     if (fromDept.toLowerCase() === toDept.toLowerCase()) {
       return NextResponse.json({ error: 'Target department must differ from the current one' }, { status: 400 });
     }
+    if (!ISO_DATE.test(proposed)) {
+      return NextResponse.json({ error: 'A proposed effective date (YYYY-MM-DD) is required' }, { status: 400 });
+    }
 
-    // A department-scoped manager may only move employees out of departments they
+    // A department-scoped manager may only pull people INTO a department they
     // manage. Admins (and managers with no explicit assignments) are unrestricted.
     if (!isAdmin) {
       const { rows: assigns } = await listDepartmentsForManager(sessionEmail);
       const departments = assigns.map((a) => a.department.trim()).filter(Boolean);
-      if (departments.length > 0 && !departmentMatchesManagedAssignments(fromDept, departments)) {
+      if (departments.length > 0 && !departmentMatchesManagedAssignments(toDept, departments)) {
         return NextResponse.json(
-          { error: 'You can only transfer employees out of departments you manage' },
+          { error: 'You can only request transfers into departments you manage' },
           { status: 403 },
         );
       }
@@ -129,7 +137,7 @@ export async function POST(request: Request) {
 
     if (await hasPendingTransferForEmployee(identifying)) {
       return NextResponse.json(
-        { error: 'This employee already has a pending transfer request.' },
+        { error: 'This employee already has an in-flight transfer request.' },
         { status: 409 },
       );
     }
@@ -143,27 +151,32 @@ export async function POST(request: Request) {
       to_department: toDept,
       reason: body.reason ?? null,
       requested_by: sessionEmail,
+      proposed_effective_date: proposed,
     });
     if (error) return NextResponse.json({ error }, { status: 500 });
 
-    // Notify HR (+ admins) that a request is waiting.
+    // Notify the SOURCE department's manager(s) — they release or decline.
     const supabase = createSupabaseServiceRoleClient();
     if (supabase) {
-      const recipients = await recipientsForRoles(['hr_coordinator', 'admin']);
-      if (recipients.length > 0) {
+      const sourceManagers = (await listManagersByDepartment(fromDept)).filter(
+        (m) => m !== sessionEmail,
+      );
+      if (sourceManagers.length > 0) {
+        const who = body.employee_name?.trim() || identifying;
         await supabase.from('employee_notifications').insert(
-          recipients.map((to) => ({
+          sourceManagers.map((to) => ({
             recipient_email: to,
-            type: 'transfer.requested',
+            type: 'transfer.release_requested',
             tone: 'neutral',
-            title: 'Department Transfer Request',
-            message: `${body.employee_name?.trim() || identifying} - requested move from ${fromDept} to ${toDept} by ${sessionEmail}.`,
+            title: 'Transfer Release Request',
+            message: `${sessionEmail} would like to move ${who} from ${fromDept} to ${toDept} (proposed ${proposed}). Release or decline in My Team.`,
             details: {
               request_id: id,
               employee_email: identifying,
               from_department: fromDept,
               to_department: toDept,
               requested_by: sessionEmail,
+              proposed_effective_date: proposed,
               reason: body.reason?.trim() || null,
             },
           })),
@@ -181,6 +194,7 @@ export async function POST(request: Request) {
         employee_email: identifying,
         from_department: fromDept,
         to_department: toDept,
+        proposed_effective_date: proposed,
       },
       ip_address: clientIp(request),
     });

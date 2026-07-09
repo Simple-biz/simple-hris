@@ -37,6 +37,7 @@ import AccountingCollabLayer from '@/components/accounting/AccountingCollabLayer
 import PayrollLivePublisher from '@/components/payroll-live/PayrollLivePublisher';
 import BonusCatalog from '@/components/accounting/BonusCatalog';
 import PeopleTab from '@/components/people/PeopleTab';
+import AccountingTransfers from '@/components/accounting/AccountingTransfers';
 
 function isPlausibleEmail(s: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s.trim());
@@ -233,6 +234,8 @@ export default function App({ initialData }: { initialData?: InitialAccountingDa
         return <PayrollDispatch />;
       case 'disputes':
         return <PabDisputeQueue />;
+      case 'transfers':
+        return <AccountingTransfers />;
       case 'mesa':
         return <AccountingMesa />;
       case 'notifications':
