@@ -18,7 +18,7 @@ import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import MarkPaidDialog, { type MarkPaidPayload } from './MarkPaidDialog';
 import OrphanageMarkPaidDialog, { type OrphanageMarkPaidPayload } from './OrphanageMarkPaidDialog';
-import { PROCESSORS, type ProcessorId, type QueueRow } from './mock-queue';
+import { PROCESSORS, DISPATCH_PROCESSORS, type ProcessorId, type QueueRow } from './mock-queue';
 import type { OrphanagePendingItem } from '@/lib/supabase/orphanage-dispatches';
 
 export interface UrgentPaymentRow {
@@ -150,7 +150,7 @@ export default function UrgentPaymentsQueue({ onCountChange }: Props) {
   }, [rows, processorFor]);
 
   const presentProcessors = useMemo(
-    () => PROCESSORS.filter((p) => (counts[p.id] ?? 0) > 0),
+    () => DISPATCH_PROCESSORS.filter((p) => (counts[p.id] ?? 0) > 0),
     [counts],
   );
 
@@ -506,7 +506,7 @@ function UrgentCard({
             className="h-8 rounded-md border border-amber-200 bg-amber-50/60 px-2 text-[12px] font-medium text-amber-800 outline-none focus:border-amber-400 focus:ring-2 focus:ring-amber-200 dark:border-amber-800/40 dark:bg-amber-950/20 dark:text-amber-200"
             title="Choose which processor to pay through"
           >
-            {PROCESSORS.map((p) => (
+            {DISPATCH_PROCESSORS.map((p) => (
               <option key={p.id} value={p.id}>{p.label}</option>
             ))}
           </select>

@@ -32,7 +32,7 @@ import EmployeeAvatar from '@/components/employee/EmployeeAvatar';
 import { useViewerProfilePhoto } from '@/hooks/useViewerProfilePhoto';
 import { useDispatchLock } from '@/hooks/useDispatchLock';
 import { useSidebarCollapsed } from '@/hooks/useSidebarCollapsed';
-import { PROCESSORS, type ProcessorId } from './mock-queue';
+import { DISPATCH_PROCESSORS, type ProcessorId } from './mock-queue';
 
 const PROCESSOR_ICONS: Record<ProcessorId, React.ComponentType<{ className?: string }>> = {
   hurupay: Coins,
@@ -180,7 +180,7 @@ export default function PayrollClerkSidebar({
                 activeTab === 'all',
               ),
             )}
-            {PROCESSORS.map((p) => {
+            {DISPATCH_PROCESSORS.map((p) => {
               const Icon = PROCESSOR_ICONS[p.id];
               return navBtn(p.id, p.label, Icon, countBadge(counts[p.id] ?? 0, activeTab === p.id));
             })}

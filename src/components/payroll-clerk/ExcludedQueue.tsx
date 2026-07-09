@@ -10,6 +10,7 @@ import {
   formatPHP,
   formatUSD,
   PROCESSORS,
+  DISPATCH_PROCESSORS,
   processorIdFromBankPreferred,
   type ArrearsInfo,
   type ExcludedRow,
@@ -159,7 +160,7 @@ export default function ExcludedQueue({ rows, onMarkPaid }: ExcludedQueueProps) 
     return c;
   }, [rows]);
   const presentBanks = useMemo(
-    () => PROCESSORS.filter((p) => (bankCounts.get(p.id) ?? 0) > 0),
+    () => DISPATCH_PROCESSORS.filter((p) => (bankCounts.get(p.id) ?? 0) > 0),
     [bankCounts],
   );
   const otherBankCount = bankCounts.get('other') ?? 0;

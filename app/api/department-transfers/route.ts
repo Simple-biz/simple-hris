@@ -5,9 +5,6 @@ import { createSupabaseServiceRoleClient } from '@/lib/supabase/server';
 import { normEmail } from '@/lib/email/norm-email';
 import { insertAuditLog } from '@/lib/supabase/audit-log';
 import { listDepartmentsForManager, listManagersByDepartment } from '@/lib/supabase/department-managers';
-import { departmentMatchesManagedAssignments } from '@/lib/managed-department-scope';
-import { requireFeatureEdit } from '@/lib/auth/authorize-feature';
-import { deniedResponse } from '@/lib/auth/authorize-email';
 import {
   insertTransferRequest,
   listAllTransferRequests,
@@ -69,27 +66,29 @@ export async function GET(request: Request) {
 }
 
 /**
- * POST — a RECEIVING manager requests to pull an employee INTO a department they
- * manage. The person's current (source) department manager(s) are notified to
- * release or decline. Body:
+ * POST — initiate a transfer: pull an employee INTO a target department. The
+ * person's current (source) department manager(s) are notified to release or
+ * decline. Body:
  *   { employee_name, employee_work_email, employee_personal_email,
- *     from_department (person's current dept), to_department (requester's dept),
+ *     from_department (person's current dept), to_department (target dept),
  *     reason?, proposed_effective_date (YYYY-MM-DD) }
+ *
+ * Initiating a transfer requires ADMIN rights — a plain manager can only release
+ * or decline requests raised for their own team, not start one. A manager who
+ * also holds admin can initiate (admin bypasses the gate).
  */
 export async function POST(request: Request) {
   try {
-    const authz = await requireFeatureEdit('manager', 'team');
-    if (!authz.ok) return deniedResponse(authz);
-
     const session = await getServerSession(authOptions);
     const sessionEmail = normEmail(session?.user?.email ?? '') ?? '';
     if (!sessionEmail) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
     const roles = rolesOf(session);
-    const isManager = roles.includes('manager');
-    const isAdmin = roles.includes('admin');
-    if (!isManager && !isAdmin) {
-      return NextResponse.json({ error: 'Manager or admin role required' }, { status: 403 });
+    if (!roles.includes('admin')) {
+      return NextResponse.json(
+        { error: 'Admin rights are required to initiate a transfer.' },
+        { status: 403 },
+      );
     }
 
     const body = (await request.json()) as {
@@ -122,18 +121,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'A proposed effective date (YYYY-MM-DD) is required' }, { status: 400 });
     }
 
-    // A department-scoped manager may only pull people INTO a department they
-    // manage. Admins (and managers with no explicit assignments) are unrestricted.
-    if (!isAdmin) {
-      const { rows: assigns } = await listDepartmentsForManager(sessionEmail);
-      const departments = assigns.map((a) => a.department.trim()).filter(Boolean);
-      if (departments.length > 0 && !departmentMatchesManagedAssignments(toDept, departments)) {
-        return NextResponse.json(
-          { error: 'You can only request transfers into departments you manage' },
-          { status: 403 },
-        );
-      }
-    }
+    // Admin-only initiation → the requester is unrestricted on the target dept.
 
     if (await hasPendingTransferForEmployee(identifying)) {
       return NextResponse.json(
@@ -186,7 +174,7 @@ export async function POST(request: Request) {
 
     void insertAuditLog({
       user_name: sessionEmail,
-      user_role: isAdmin ? 'Admin' : 'Manager',
+      user_role: 'Admin',
       action: 'department_transfer.requested',
       resource: 'department_transfer_requests',
       resource_id: id ?? undefined,

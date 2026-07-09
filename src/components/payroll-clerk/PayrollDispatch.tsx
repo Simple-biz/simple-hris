@@ -51,7 +51,7 @@ import {
 import ProcessorCard from './ProcessorCard';
 import AnimatedNumber from './AnimatedNumber';
 import DispatchLoader from './DispatchLoader';
-import { PROCESSORS, parseCyclePeriodFromFile, formatCycleLabelFromFile, type ArrearsInfo, type ProcessorId, type QueueRow } from './mock-queue';
+import { PROCESSORS, DISPATCH_PROCESSORS, parseCyclePeriodFromFile, formatCycleLabelFromFile, type ArrearsInfo, type ProcessorId, type QueueRow } from './mock-queue';
 import type { PaymentDispatchRow } from '@/lib/supabase/payment-dispatches';
 import { useDispatchQueue } from './useDispatchQueue';
 import NotificationsPanel from '@/components/notifications/NotificationsPanel';
@@ -784,7 +784,7 @@ export default function PayrollDispatch() {
                 glowBorder
               />
             </motion.div>
-            {PROCESSORS.map((p) => {
+            {DISPATCH_PROCESSORS.map((p) => {
               const v = PROCESSOR_VISUALS[p.id];
               return (
                 <motion.div key={p.id} variants={itemPop} className="w-[136px] shrink-0 lg:w-auto">

@@ -25,6 +25,9 @@ import type {
 interface Props {
   /** Departments this manager can pull people INTO (their managed depts). */
   myDepartments: string[];
+  /** Only admins may INITIATE a transfer ("Request transfer in"). Non-admin
+   *  managers can still Release/Decline incoming requests. */
+  canInitiate: boolean;
 }
 
 type SubTab = 'release' | 'mine';
@@ -77,7 +80,7 @@ function fullStamp(iso: string | null): string | undefined {
  *   • My requests — the manager's own outbox (status + cancel-while-pending).
  * "Request transfer in" (the pull-in picker) lives in the header, always available.
  */
-export default function ManagerTransfers({ myDepartments }: Props) {
+export default function ManagerTransfers({ myDepartments, canInitiate }: Props) {
   const [incoming, setIncoming] = useState<DepartmentTransferRequestRow[]>([]);
   const [outgoing, setOutgoing] = useState<DepartmentTransferRequestRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -158,7 +161,7 @@ export default function ManagerTransfers({ myDepartments }: Props) {
     }
   };
 
-  const canRequest = myDepartments.length > 0;
+  const canRequest = canInitiate && myDepartments.length > 0;
   const sortedOutgoing = useMemo(
     () => [...outgoing].sort((a, b) => b.created_at.localeCompare(a.created_at)),
     [outgoing],
@@ -455,12 +458,14 @@ export default function ManagerTransfers({ myDepartments }: Props) {
         </div>
       </div>
 
-      <ManagerTransferDialog
-        open={dialogOpen}
-        onOpenChange={setDialogOpen}
-        myDepartments={myDepartments}
-        onSubmitted={load}
-      />
+      {canRequest && (
+        <ManagerTransferDialog
+          open={dialogOpen}
+          onOpenChange={setDialogOpen}
+          myDepartments={myDepartments}
+          onSubmitted={load}
+        />
+      )}
     </div>
   );
 }

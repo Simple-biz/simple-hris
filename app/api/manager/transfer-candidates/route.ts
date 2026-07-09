@@ -2,7 +2,6 @@ import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth/auth-options';
 import { normEmail } from '@/lib/email/norm-email';
-import { listDepartmentsForManager } from '@/lib/supabase/department-managers';
 import { listActiveMasterListPeople } from '@/lib/supabase/global-master-list-db';
 
 export const dynamic = 'force-dynamic';
@@ -27,25 +26,20 @@ export async function GET(request: Request) {
   if (!sessionEmail) return NextResponse.json({ people: [], error: 'Not signed in' }, { status: 401 });
 
   const roles = rolesOf(session);
-  const isManager = roles.includes('manager');
-  const isAdmin = roles.includes('admin');
-  if (!isManager && !isAdmin) {
-    return NextResponse.json({ people: [], error: 'Manager or admin role required' }, { status: 403 });
+  if (!roles.includes('admin')) {
+    return NextResponse.json(
+      { people: [], departments: [], error: 'Admin rights are required to initiate a transfer.' },
+      { status: 403 },
+    );
   }
 
-  const { people, error } = await listActiveMasterListPeople();
+  const { people: available, error } = await listActiveMasterListPeople();
   if (error) return NextResponse.json({ people: [], departments: [], error }, { status: 500 });
 
-  // Exclude the manager's own departments — you can't "pull in" someone already
-  // on your team. Admins have no assignments, so they see everyone.
-  const { rows: assigns } = await listDepartmentsForManager(sessionEmail);
-  const ownDepts = new Set(assigns.map((a) => a.department.trim().toLowerCase()).filter(Boolean));
-
-  // Everyone the manager could pull in, before search/department narrowing.
-  const available = people.filter((p) => {
-    const dept = (p.department ?? '').trim().toLowerCase();
-    return !(ownDepts.size > 0 && dept && ownDepts.has(dept));
-  });
+  // Initiation is admin-only, and admins are unrestricted — an admin can pull
+  // ANYONE, including someone in a department they themselves also manage (a
+  // manager-with-admin). So we deliberately do NOT exclude the caller's own
+  // departments here (doing so hid people on teams the admin also manages).
 
   // Full department list for the picker's filter dropdown — computed from the
   // available set so it stays stable regardless of the active filters.
@@ -61,7 +55,14 @@ export async function GET(request: Request) {
     const pDept = (p.department ?? '').trim().toLowerCase();
     if (dept && pDept !== dept) return false;
     if (!q) return true;
-    return p.name.toLowerCase().includes(q) || pDept.includes(q);
+    const work = (p.work_email ?? '').toLowerCase();
+    const personal = (p.personal_email ?? '').toLowerCase();
+    return (
+      p.name.toLowerCase().includes(q) ||
+      pDept.includes(q) ||
+      work.includes(q) ||
+      personal.includes(q)
+    );
   });
 
   return NextResponse.json({ people: filtered.slice(0, 200), departments, error: null });

@@ -30,7 +30,7 @@ import {
 import type { OrphanageDispatchRow } from '@/lib/supabase/orphanage-dispatches';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
-import { formatPHP, formatUSD, PROCESSORS, type ProcessorId } from './mock-queue';
+import { formatPHP, formatUSD, PROCESSORS, DISPATCH_PROCESSORS, type ProcessorId } from './mock-queue';
 import type {
   PaymentDispatchRow,
   PaymentDispatchStatus,
@@ -943,7 +943,7 @@ function ReportDetail({
             </span>
           </div>
           <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
-            {PROCESSORS.map((p) => {
+            {DISPATCH_PROCESSORS.map((p) => {
               const stats = report.byProcessor[p.id] ?? { count: 0, usd: 0, php: 0 };
               return (
                 <div

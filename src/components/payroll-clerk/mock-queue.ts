@@ -62,6 +62,25 @@ export const PROCESSORS: ProcessorMeta[] = [
 ];
 
 /**
+ * Processors retired from the dispatch tabs / pickers. They intentionally stay
+ * in PROCESSORS and the ProcessorId type so historical dispatch records still
+ * resolve their label + visuals in Reports / Done / Sent-payments history —
+ * they're simply no longer shown as a pending-queue tab or offered as a new
+ * dispatch destination. Mirrors RETIRED_PROCESSOR_IDS in
+ * src/lib/employee-payment-processors.ts (where 'wepay' is likewise retired).
+ */
+export const RETIRED_DISPATCH_PROCESSOR_IDS: readonly ProcessorId[] = ['wepay'];
+
+/**
+ * PROCESSORS minus retired ones. Render dispatch tabs, filter rails, and
+ * processor pickers from this; keep using PROCESSORS for `.find()` label/visual
+ * lookups so old records still resolve.
+ */
+export const DISPATCH_PROCESSORS: ProcessorMeta[] = PROCESSORS.filter(
+  (p) => !RETIRED_DISPATCH_PROCESSOR_IDS.includes(p.id),
+);
+
+/**
  * A row that can't be dispatched this cycle. Surfaced in the "No Bank Preferred /
  * No Current Pay / No Hours" tab so Lenny can see why someone is missing from
  * the active queue rather than them silently disappearing.

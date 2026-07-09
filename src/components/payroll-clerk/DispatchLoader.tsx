@@ -18,7 +18,6 @@ const STATUS_MESSAGES = [
 
 const PROCESSOR_CHIPS: Array<{ label: string; monogram: string; gradient: string }> = [
   { label: 'Hurupay', monogram: 'Hu', gradient: 'from-orange-500 to-amber-500' },
-  { label: 'Wepay', monogram: 'We', gradient: 'from-sky-500 to-blue-600' },
   { label: 'Higlobe', monogram: 'Hi', gradient: 'from-violet-500 to-fuchsia-500' },
   { label: 'Wise', monogram: 'Wi', gradient: 'from-emerald-500 to-teal-600' },
   { label: 'Jeeves', monogram: 'Je', gradient: 'from-rose-500 to-pink-600' },

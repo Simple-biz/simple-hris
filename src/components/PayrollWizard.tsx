@@ -93,6 +93,11 @@ import {
   resolveEmployeeCatalogRate,
   resolveDeptCatalogRate,
 } from '@/lib/payroll/resolve-rate';
+import {
+  resolveRateAsOfDate,
+  buildRateHistoryByEmail,
+  type RateHistoryByEmail,
+} from '@/lib/payroll/rate-history-resolve';
 import type { PayStructure } from '@/lib/payment-catalog/pay-structure';
 import { resolveSystemBonuses, isDeptEligible } from '@/lib/payment-catalog/system-bonus';
 import { normEmail } from '@/lib/email/norm-email';
@@ -422,7 +427,120 @@ type CalcRow = {
   regularPay: number | null;
   otPay: number | null;
   initialPay: number | null;
+  /** Set when a pay-rate change took effect MID-PERIOD (e.g. a transfer): the
+   *  reg/OT pay above is prorated per day (old rate before the effective date,
+   *  new rate after), matching Payment Dispatch. Drives the Step-2 badge. */
+  rateChange?: {
+    oldRegular: number | null;
+    newRegular: number | null;
+    oldOt: number | null;
+    newOt: number | null;
+    effectiveDate: string; // YYYY-MM-DD
+  } | null;
 };
+
+const REG_WEEK_CAP_SEC = 40 * 3600;
+
+function fmtLocalIsoDate(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+/**
+ * Per-day prorated pay across a MID-PERIOD rate change, mirroring the server
+ * dispatch compute (`computeProratedRowPay` in current-pay.ts) EXACTLY: chronological
+ * 40h/week regular cap, HSL weekend +15/h folded per day, raw per-day accumulation
+ * rounded once at the end. Returns null when the resolved per-day (reg,ot) rate is
+ * CONSTANT across the period — so the caller keeps its existing single-rate result
+ * and unchanged employees stay byte-identical to today. Only a genuine mid-period
+ * change (a transfer / dated rate change) produces a prorated override + segments.
+ */
+function proratePayForMidPeriodChange(params: {
+  days: Array<{ date: Date; seconds: number }>;
+  isHsl: boolean;
+  history: RateHistoryByEmail | undefined;
+  histEmail: string | null;
+  fallbackReg: number | null;
+  fallbackOt: number | null;
+}): {
+  regularPay: number | null;
+  otPay: number | null;
+  change: {
+    oldRegular: number | null;
+    newRegular: number | null;
+    oldOt: number | null;
+    newOt: number | null;
+    effectiveDate: string;
+  } | null;
+} | null {
+  const { days, isHsl, history, histEmail, fallbackReg, fallbackOt } = params;
+  const empHist = history && histEmail ? history.get(histEmail) : undefined;
+  if (!empHist || empHist.length === 0 || days.length === 0) return null;
+
+  let usedRegSec = 0;
+  let regularPayPHP = 0;
+  let otPayPHP = 0;
+  let anyReg = false;
+  let anyOt = false;
+  let firstReg: number | null | undefined;
+  let firstOt: number | null | undefined;
+  let change: {
+    oldRegular: number | null;
+    newRegular: number | null;
+    oldOt: number | null;
+    newOt: number | null;
+    effectiveDate: string;
+  } | null = null;
+
+  for (const d of days) {
+    const resolved = resolveRateAsOfDate(empHist, d.date);
+    const reg = resolved?.regularRate ?? fallbackReg;
+    const ot = resolved?.otRate ?? fallbackOt;
+
+    if (firstReg === undefined) {
+      firstReg = reg;
+      firstOt = ot;
+    } else if (change === null && (reg !== firstReg || ot !== firstOt)) {
+      change = {
+        oldRegular: firstReg ?? null,
+        newRegular: reg,
+        oldOt: firstOt ?? null,
+        newOt: ot,
+        effectiveDate: fmtLocalIsoDate(d.date),
+      };
+    }
+
+    const remaining = Math.max(0, REG_WEEK_CAP_SEC - usedRegSec);
+    const dayRegSec = Math.min(d.seconds, remaining);
+    const dayOtSec = d.seconds - dayRegSec;
+    usedRegSec += dayRegSec;
+
+    const dow = d.date.getDay();
+    const weekendBonus = isHsl && (dow === 0 || dow === 6) ? 15 : 0;
+    if (reg != null) {
+      regularPayPHP += (dayRegSec / 3600) * (reg + weekendBonus);
+      anyReg = true;
+    }
+    if (ot != null) {
+      otPayPHP += (dayOtSec / 3600) * (ot + weekendBonus);
+      anyOt = true;
+    }
+  }
+
+  // Constant rate across the week: keep the caller's single-rate result ONLY when
+  // that constant rate equals the fallback (the cache/catalog rate the caller
+  // already used) — that path is byte-identical (incl. HSL premium rounding). If
+  // the constant history rate DIFFERS from the cache (e.g. the cache lags a
+  // future-dated change that only landed in employee_rate_history), override with
+  // the history-resolved pay so the wizard matches Payment Dispatch, which always
+  // reads history. No mid-week badge then (the rate didn't change WITHIN the week).
+  if (!change && firstReg === fallbackReg && firstOt === fallbackOt) return null;
+
+  return {
+    regularPay: anyReg ? Math.round(regularPayPHP * 100) / 100 : null,
+    otPay: anyOt ? Math.round(otPayPHP * 100) / 100 : null,
+    change,
+  };
+}
 
 /** A pasted Orphanage row resolved to an Additions-table employee + PHP amount. */
 type OrphanagePasteOk = {
@@ -1986,6 +2104,23 @@ export default function PayrollWizard({
   useEffect(() => {
     void loadPayStructures();
   }, [loadPayStructures]);
+
+  // Rate history powers per-day proration of MID-PERIOD rate changes (e.g. a
+  // mid-week transfer) so the wizard's pay matches Payment Dispatch. Loaded once
+  // on mount; the bulk endpoint is rate-visible gated (the wizard is Accounting).
+  const [rateHistoryByEmail, setRateHistoryByEmail] = useState<RateHistoryByEmail>(() => new Map());
+  const loadRateHistory = React.useCallback(async () => {
+    try {
+      const res = await fetch('/api/payroll/rate-history-bulk', { cache: 'no-store' });
+      const json = (await res.json()) as { rows?: Array<Record<string, unknown>> };
+      setRateHistoryByEmail(buildRateHistoryByEmail(json.rows ?? []));
+    } catch {
+      setRateHistoryByEmail(new Map());
+    }
+  }, []);
+  useEffect(() => {
+    void loadRateHistory();
+  }, [loadRateHistory]);
 
   // Step 2 needs the rates table. Skip the first call when initialData
   // already shipped it — manual re-load buttons inside step 2 still re-fetch.
@@ -3693,6 +3828,16 @@ export default function PayrollWizard({
    * Total hours rounded to 2dp (Hubstaff-style) before split; pay uses whole seconds + centavo rounding.
    * HSL employees receive an additional +15 PHP/h for Saturday and Sunday hours.
    */
+  // Catalog index used ONLY to detect individual (employee-scoped) rates during
+  // proration: an individual catalog rate is flat for the whole period (it bypasses
+  // per-day history in dispatch), so such employees never get a mid-week split.
+  // Null during replay (catalog overlay is skipped then) so historical periods
+  // prorate purely from the dated rate history.
+  const catalogIndexForProration = useMemo(
+    () => (isReplay || payStructures.length === 0 ? null : buildCatalogRateIndex(payStructures)),
+    [isReplay, payStructures],
+  );
+
   const calcResults = useMemo<CalcRow[]>(() => {
     return hubstaffData.map((row) => {
       const em = normEmail(row.email);
@@ -3753,6 +3898,45 @@ export default function PayrollWizard({
         if (otPay != null) otPay = Math.round((otPay + wknd.otPremiumPHP) * 100) / 100;
       }
 
+      // ── Mid-period rate change (e.g. a mid-week transfer) ──
+      // When a dated rate change falls INSIDE this pay week, prorate per day (old
+      // rate before the effective date, new after) exactly as Payment Dispatch does,
+      // and expose the change for the Step-2 badge. Employees with a flat INDIVIDUAL
+      // catalog rate are skipped (their rate is flat all period). Untouched employees
+      // (no change) keep the single-rate result above, byte-identical to before.
+      let rateChange: CalcRow['rateChange'] = null;
+      const payDay = em ? payDaysByEmail.get(em) : undefined;
+      if (payDay && payDay.days.length > 0) {
+        // candidate emails for history lookup + individual detection
+        const candidates = [em, normEmail(rateRow?.work_email ?? ''), normEmail(rateRow?.personal_email ?? '')]
+          .filter((x): x is string => !!x);
+        const isIndividual =
+          catalogIndexForProration != null &&
+          !!resolveEmployeeCatalogRate(catalogIndexForProration, candidates, fxRates);
+        if (!isIndividual) {
+          // Key history on the Hubstaff email ONLY — the exact key Payment
+          // Dispatch (computeProratedRowPay) uses — so the two engines can never
+          // resolve a different history row (the broadened candidate set is used
+          // only for the individual-catalog skip above, mirroring Dispatch's
+          // alias-bridged catalog lookup).
+          const histEmail = em && rateHistoryByEmail.has(em) ? em : null;
+          const prorated = proratePayForMidPeriodChange({
+            days: payDay!.days,
+            isHsl: payDay!.isHsl,
+            history: rateHistoryByEmail,
+            histEmail,
+            fallbackReg: regularRate,
+            fallbackOt: otRate,
+          });
+          if (prorated) {
+            regularPay = prorated.regularPay;
+            // Respect the existing "no OT hours → 0, not null" convention.
+            otPay = otSec > 0 ? prorated.otPay : 0;
+            rateChange = prorated.change;
+          }
+        }
+      }
+
       const initialPay =
         regularPay != null && otPay != null
           ? Math.round((regularPay + otPay) * 100) / 100
@@ -3769,9 +3953,21 @@ export default function PayrollWizard({
         regularPay,
         otPay,
         initialPay,
+        rateChange,
       };
     });
-  }, [hubstaffData, ratesByEmail, masterIndex, weekendPremiumByEmail, payHoursByEmail]);
+  }, [
+    hubstaffData,
+    ratesByEmail,
+    masterIndex,
+    weekendPremiumByEmail,
+    payHoursByEmail,
+    payDaysByEmail,
+    rateHistoryByEmail,
+    catalogIndexForProration,
+    isReplay,
+    fxRates,
+  ]);
 
   /**
    * Applies per-department and global OT suspension from System Settings.
@@ -7207,9 +7403,24 @@ export default function PayrollWizard({
                             )}
                           </TableCell>
                           <TableCell className="px-2 text-right align-middle font-mono text-xs tabular-nums text-zinc-700 dark:text-zinc-300">
-                            {row.regularRate != null ? formatPHP(row.regularRate) : (
-                              <span className="text-[10px] font-medium text-amber-600 dark:text-amber-400">No rate</span>
-                            )}
+                            <div className="flex flex-col items-end gap-0.5">
+                              <span>
+                                {row.regularRate != null ? formatPHP(row.regularRate) : (
+                                  <span className="text-[10px] font-medium text-amber-600 dark:text-amber-400">No rate</span>
+                                )}
+                              </span>
+                              {row.rateChange && (
+                                <span
+                                  title={`Rate changed mid-week — effective ${row.rateChange.effectiveDate}. Pay is prorated per day (matches Payment Dispatch).`}
+                                  className="inline-block whitespace-nowrap rounded bg-amber-100 px-1 py-px text-[9px] font-semibold leading-tight text-amber-700 dark:bg-amber-500/15 dark:text-amber-300"
+                                >
+                                  {row.rateChange.oldRegular != null ? formatPHP(row.rateChange.oldRegular) : '—'}
+                                  {'→'}
+                                  {row.rateChange.newRegular != null ? formatPHP(row.rateChange.newRegular) : '—'}
+                                  <span className="ml-1 font-normal opacity-80">eff {row.rateChange.effectiveDate}</span>
+                                </span>
+                              )}
+                            </div>
                           </TableCell>
                           <TableCell className="px-2 text-right align-middle font-mono text-xs tabular-nums text-zinc-700 dark:text-zinc-300">
                             {row.otRate != null ? formatPHP(row.otRate) : (

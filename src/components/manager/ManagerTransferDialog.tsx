@@ -189,7 +189,7 @@ export default function ManagerTransferDialog({ open, onOpenChange, myDepartment
                       type="search"
                       value={query}
                       onChange={(e) => setQuery(e.target.value)}
-                      placeholder="Search by name"
+                      placeholder="Search by name or work email"
                       className="h-9 w-full rounded-lg border border-zinc-200 bg-white pl-8 pr-2 text-sm text-zinc-900 placeholder:text-zinc-400 focus:border-blue-300 focus:outline-none focus:ring-1 focus:ring-blue-200 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
                     />
                   </div>
@@ -227,6 +227,7 @@ export default function ManagerTransferDialog({ open, onOpenChange, myDepartment
                           </span>
                           <span className="block truncate text-[11px] text-zinc-400">
                             {c.department || 'No department'}
+                            {c.work_email ? ` · ${c.work_email}` : ''}
                           </span>
                         </span>
                       </button>

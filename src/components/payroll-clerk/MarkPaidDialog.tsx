@@ -8,11 +8,31 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
-import { AlertTriangle, CheckCircle2, ChevronLeft, ChevronRight, CircleDashed, Gauge, Loader2 } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, CircleDashed, Gauge, Loader2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { formatPHP, formatUSD, formatCOP, type ProcessorId, type QueueRow } from './mock-queue';
 
 export type DispatchStatus = 'paid' | 'not_paid' | 'threshold' | 'problem';
+
+/**
+ * Source banks / accounts the company sends payroll FROM. Shown as a dropdown
+ * in the "Bank used" field so the clerk picks a consistent value instead of
+ * free text (which produced inconsistent spellings that were hard to report
+ * on). Order mirrors the accounting team's canonical list.
+ */
+const BANK_USED_OPTIONS = [
+  'Chase',
+  'Jeeves',
+  'Parallax',
+  'PayPal',
+  'Wise',
+  'x1161',
+  'x1153',
+  'x0048',
+  'Remitly',
+  'HiGlobe',
+  'Hurupay',
+] as const;
 
 /* ---- status configuration -------------------------------------------- */
 
@@ -175,6 +195,44 @@ function FieldInput({ cfg, className, onFocus, onBlur, ...props }: FieldInputPro
         style={{ borderColor: focused ? cfg.accent : cfg.accentDim }}
         onFocus={(e) => { setFocused(true);  onFocus?.(e); }}
         onBlur={(e)  => { setFocused(false); onBlur?.(e);  }}
+      />
+    </div>
+  );
+}
+
+interface FieldSelectProps extends Omit<React.ComponentPropsWithoutRef<'select'>, 'style'> {
+  cfg: StatusCfg;
+  /** Renders the value in muted placeholder color while nothing is chosen. */
+  placeholderActive?: boolean;
+}
+
+function FieldSelect({ cfg, className, placeholderActive, onFocus, onBlur, children, ...props }: FieldSelectProps) {
+  const [focused, setFocused] = useState(false);
+  return (
+    <div
+      className="relative rounded-md transition-[box-shadow] duration-200"
+      style={{ boxShadow: focused ? `0 0 0 3px ${cfg.accentGlow}` : '0 0 0 3px transparent' }}
+    >
+      <select
+        {...props}
+        className={cn(
+          'flex h-9 w-full cursor-pointer appearance-none rounded-md border bg-white px-3 py-1 pr-9 text-sm text-zinc-900 outline-none',
+          'transition-[border-color] duration-200',
+          'disabled:cursor-not-allowed disabled:opacity-50',
+          'dark:bg-zinc-950 dark:text-zinc-100',
+          placeholderActive && 'text-zinc-400 dark:text-zinc-500',
+          className,
+        )}
+        style={{ borderColor: focused ? cfg.accent : cfg.accentDim }}
+        onFocus={(e) => { setFocused(true);  onFocus?.(e); }}
+        onBlur={(e)  => { setFocused(false); onBlur?.(e);  }}
+      >
+        {children}
+      </select>
+      <ChevronDown
+        aria-hidden
+        className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400 transition-colors duration-200"
+        style={{ color: focused ? cfg.accent : undefined }}
       />
     </div>
   );
@@ -502,13 +560,18 @@ export default function MarkPaidDialog({
           </Field>
 
           <Field id="bank" label="Bank used (sent from)" cfg={cfg}>
-            <FieldInput
+            <FieldSelect
               id="bank"
               cfg={cfg}
-              placeholder="e.g. BPI corporate, Wise USD"
               value={bankUsed}
+              placeholderActive={bankUsed === ''}
               onChange={(e) => setBankUsed(e.target.value)}
-            />
+            >
+              <option value="" disabled>Select a bank…</option>
+              {BANK_USED_OPTIONS.map((bank) => (
+                <option key={bank} value={bank}>{bank}</option>
+              ))}
+            </FieldSelect>
           </Field>
 
           <div className="grid grid-cols-2 gap-3">
