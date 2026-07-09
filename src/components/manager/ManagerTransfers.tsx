@@ -12,6 +12,7 @@ import {
   Plus,
   RefreshCw,
   Send,
+  Trash2,
   X,
 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -94,6 +95,7 @@ export default function ManagerTransfers({ myDepartments, canInitiate }: Props) 
   const [declineFor, setDeclineFor] = useState<string | null>(null);
   const [declineNote, setDeclineNote] = useState('');
   const [sub, setSub] = useState<SubTab>('release');
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
   const load = useCallback(() => {
     setLoading(true);
@@ -220,11 +222,62 @@ export default function ManagerTransfers({ myDepartments, canInitiate }: Props) 
     }
   };
 
+  const deleteRequest = async (row: DepartmentTransferRequestRow) => {
+    setBusyId(row.id);
+    try {
+      const res = await fetch(`/api/department-transfers/${row.id}`, { method: 'DELETE' });
+      const json = (await res.json()) as { error?: string };
+      if (!res.ok || json.error) throw new Error(json.error || `Request failed (${res.status})`);
+      toast.success('Request deleted');
+      setConfirmDeleteId(null);
+      load();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Delete failed');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
   const canRequest = canInitiate && myDepartments.length > 0;
   const sortedOutgoing = useMemo(
     () => [...outgoing].sort((a, b) => b.created_at.localeCompare(a.created_at)),
     [outgoing],
   );
+
+  // Two-click delete control (avoids accidental record deletion). Reused across
+  // the release / my-requests / done lists.
+  const renderDeleteControl = (row: DepartmentTransferRequestRow) =>
+    confirmDeleteId === row.id ? (
+      <span className="inline-flex items-center gap-1.5">
+        <button
+          type="button"
+          onClick={() => void deleteRequest(row)}
+          disabled={busyId === row.id}
+          className="inline-flex items-center gap-1 text-[11px] font-semibold text-rose-600 hover:underline disabled:opacity-50 dark:text-rose-400"
+        >
+          {busyId === row.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 className="h-3 w-3" />}
+          Delete?
+        </button>
+        <button
+          type="button"
+          onClick={() => setConfirmDeleteId(null)}
+          className="text-[11px] text-zinc-400 hover:underline"
+        >
+          Cancel
+        </button>
+      </span>
+    ) : (
+      <button
+        type="button"
+        onClick={() => setConfirmDeleteId(row.id)}
+        disabled={busyId === row.id}
+        title="Delete this transfer request record"
+        aria-label="Delete request"
+        className="text-zinc-400 transition-colors hover:text-rose-600 disabled:opacity-50 dark:text-zinc-500 dark:hover:text-rose-400"
+      >
+        <Trash2 className="h-3.5 w-3.5" />
+      </button>
+    );
 
   const TABS: { id: SubTab; label: string; count: number; icon: typeof Inbox }[] = [
     { id: 'release', label: 'Release requests', count: incoming.length, icon: Inbox },
@@ -404,6 +457,7 @@ export default function ManagerTransfers({ myDepartments, canInitiate }: Props) 
                               Decline
                             </Button>
                             </div>
+                            <div className="mt-0.5">{renderDeleteControl(r)}</div>
                           </div>
                         </div>
 
@@ -520,6 +574,7 @@ export default function ManagerTransfers({ myDepartments, canInitiate }: Props) 
                                 Apply now
                               </Button>
                             )}
+                            {renderDeleteControl(r)}
                           </div>
                         </div>
                       ))}
@@ -570,14 +625,17 @@ export default function ManagerTransfers({ myDepartments, canInitiate }: Props) 
                                 ) : null}
                               </div>
                             </div>
-                            <span
-                              className={cn(
-                                'shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold',
-                                STATUS_STYLE[r.status],
-                              )}
-                            >
-                              {STATUS_LABEL[r.status]}
-                            </span>
+                            <div className="flex shrink-0 items-center gap-2">
+                              <span
+                                className={cn(
+                                  'rounded-full px-2 py-0.5 text-[11px] font-semibold',
+                                  STATUS_STYLE[r.status],
+                                )}
+                              >
+                                {STATUS_LABEL[r.status]}
+                              </span>
+                              {renderDeleteControl(r)}
+                            </div>
                           </div>
                         ))}
                       </div>

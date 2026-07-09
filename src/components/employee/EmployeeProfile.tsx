@@ -23,6 +23,9 @@ import {
   AlertTriangle,
   Clock,
   XCircle,
+  FileText,
+  FileCheck2,
+  Download,
 } from 'lucide-react';
 import { motion, AnimatePresence, LayoutGroup } from 'motion/react';
 import { toast } from 'sonner';
@@ -101,7 +104,7 @@ function matchesEmployeeEmail(emp: EmployeeRow, n: string): boolean {
 
 /* ───────── Visual primitives ───────── */
 
-type TabId = 'overview' | 'compensation' | 'payment' | 'skillsets' | 'reports' | 'resign';
+type TabId = 'overview' | 'compensation' | 'payment' | 'skillsets' | 'reports' | 'requestDocuments' | 'resign';
 
 interface SkillSetFields {
   role_title: string;
@@ -462,7 +465,8 @@ function TabBar({
     { id: 'compensation', label: 'Compensation', sub: 'Rates & currency' },
     { id: 'payment', label: 'Payment', sub: 'Disbursement details' },
     { id: 'skillsets', label: 'Skill Sets', sub: 'Visible to teammates' },
-    { id: 'reports', label: 'Reports', sub: 'Commendations & recognition' },
+    { id: 'reports', label: 'Reports', sub: 'Commendations' },
+    { id: 'requestDocuments', label: 'Request Documents', sub: 'COE, pay stubs & certificates' },
     { id: 'resign', label: 'Resign', sub: 'End your employment' },
   ];
 
@@ -490,7 +494,7 @@ function TabBar({
               aria-selected={isActive}
               onClick={() => onChange(t.id)}
               className={[
-                'relative shrink-0 px-3 py-3 text-left transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-500/40 focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-[#0a0a0a] sm:px-4',
+                'relative shrink-0 px-2.5 py-3 text-left transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-500/40 focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-[#0a0a0a] sm:px-3',
                 isActive
                   ? 'text-zinc-900 dark:text-zinc-50'
                   : 'text-zinc-500 hover:text-zinc-800 dark:text-zinc-500 dark:hover:text-zinc-200',
@@ -527,7 +531,7 @@ function TabBar({
 function ProfileSkeleton() {
   return (
     <div className="flex h-full min-h-0 flex-col overflow-y-auto bg-white dark:bg-[#0a0a0a]">
-      <div className="mx-auto w-full max-w-[1024px] px-5 pb-16 pt-8 sm:px-8 sm:pt-12 lg:px-10">
+      <div className="mx-auto w-full max-w-[1200px] px-5 pb-16 pt-8 sm:px-8 sm:pt-12 lg:px-10">
         <div className="flex items-center gap-5">
           <div className="h-16 w-16 animate-pulse rounded-full bg-zinc-100 dark:bg-zinc-900 sm:h-20 sm:w-20" />
           <div className="flex-1 space-y-2.5">
@@ -603,6 +607,10 @@ export default function EmployeeProfile({
   const [payoutEditing, setPayoutEditing] = useState(false);
 
   const [activeTab, setActiveTab] = useState<TabId>('overview');
+
+  /** Static-only for now — the selected document type in the Request Documents tab. */
+  const [requestDocType, setRequestDocType] = useState('');
+  const [requestDocNote, setRequestDocNote] = useState('');
 
   useEffect(() => {
     setActiveTab(focusTab);
@@ -1068,7 +1076,7 @@ export default function EmployeeProfile({
 
   return (
     <div className="flex h-full min-h-0 flex-1 flex-col overflow-y-auto bg-white dark:bg-[#0a0a0a]">
-      <div className="mx-auto w-full max-w-[1024px] px-5 pb-16 pt-8 sm:px-8 sm:pt-12 sm:pb-20 lg:px-10 lg:pt-14">
+      <div className="mx-auto w-full max-w-[1200px] px-5 pb-16 pt-8 sm:px-8 sm:pt-12 sm:pb-20 lg:px-10 lg:pt-14">
         {/* ─────────── Hero ─────────── */}
         <motion.section
           initial={{ opacity: 0, y: 8 }}
@@ -1696,6 +1704,99 @@ export default function EmployeeProfile({
                       ))}
                     </div>
                   )}
+                </>
+              )}
+
+              {activeTab === 'requestDocuments' && (
+                <>
+                  <Section
+                    title="Request a document"
+                    description="Ask HR for official employment paperwork. Requests are reviewed and issued by the HR team."
+                  >
+                    <div className="space-y-5 py-4">
+                      <div className="flex items-start gap-2.5 rounded-xl border border-zinc-200/80 bg-zinc-50/70 px-4 py-3 text-[12.5px] dark:border-zinc-800/60 dark:bg-zinc-900/40">
+                        <FileText className="mt-0.5 h-4 w-4 shrink-0 text-zinc-500 dark:text-zinc-400" />
+                        <p className="leading-relaxed text-zinc-600 dark:text-zinc-300">
+                          Choose the document you need below. Most requests are processed within a
+                          few business days and delivered to your work email.
+                        </p>
+                      </div>
+
+                      <label className="block">
+                        <div className="mb-1.5 flex items-center gap-1.5 text-[12px] font-medium text-zinc-700 dark:text-zinc-200">
+                          <FileCheck2 className="h-3.5 w-3.5 text-zinc-400" />
+                          Document type
+                        </div>
+                        <SmoothSelect
+                          aria-label="Document type"
+                          value={requestDocType}
+                          onChange={(v) => setRequestDocType(v)}
+                          triggerClassName="w-full"
+                          options={[
+                            { value: '', label: 'Select a document…' },
+                            { value: 'coe', label: 'Certificate of Employment (COE)' },
+                            { value: 'paystubs_6mo', label: '6 Months of Pay Stubs' },
+                            { value: 'certificate', label: 'Certificate' },
+                          ]}
+                        />
+                      </label>
+
+                      <label className="block">
+                        <div className="mb-1.5 text-[12px] font-medium text-zinc-700 dark:text-zinc-200">
+                          Additional details{' '}
+                          <span className="font-normal text-zinc-400 dark:text-zinc-500">(optional)</span>
+                        </div>
+                        <textarea
+                          value={requestDocNote}
+                          onChange={(e) => setRequestDocNote(e.target.value)}
+                          rows={4}
+                          maxLength={2000}
+                          placeholder="e.g. the purpose of the document, where it should be addressed, or any specific dates to cover."
+                          className="w-full resize-y rounded-lg border border-zinc-200 bg-white px-3 py-2 text-[13.5px] leading-relaxed text-zinc-900 placeholder:text-zinc-400 transition-colors focus:border-orange-300 focus:outline-none focus:ring-1 focus:ring-orange-200 dark:border-zinc-800 dark:bg-zinc-950/60 dark:text-zinc-100 dark:focus:border-orange-500/40 dark:focus:ring-orange-500/20"
+                        />
+                      </label>
+
+                      <div className="flex flex-col items-start gap-2 sm:flex-row sm:items-center sm:justify-between">
+                        <p className="text-[11.5px] text-zinc-400 dark:text-zinc-600">
+                          This is a preview — submitting isn&rsquo;t wired up yet.
+                        </p>
+                        <Button
+                          type="button"
+                          disabled
+                          className="h-11 w-full gap-2 rounded-xl bg-orange-500 text-sm font-semibold text-white shadow-sm shadow-orange-500/20 transition-colors hover:bg-orange-600 disabled:opacity-50 dark:bg-orange-500 dark:hover:bg-orange-400 sm:w-auto"
+                        >
+                          <Send className="h-4 w-4" />
+                          Submit request
+                        </Button>
+                      </div>
+                    </div>
+                  </Section>
+
+                  <div className="mt-4">
+                    <Section
+                      title="What you can request"
+                      description="A quick reference for the documents available."
+                    >
+                      <div className="grid gap-3 py-4 sm:grid-cols-3">
+                        {[
+                          { icon: FileCheck2, title: 'Certificate of Employment', body: 'Confirms your role, tenure and employment status.' },
+                          { icon: Download, title: '6 Months of Pay Stubs', body: 'Your last six months of disbursement records.' },
+                          { icon: FileText, title: 'Certificate', body: 'Other official certificates issued by HR.' },
+                        ].map((d) => (
+                          <div
+                            key={d.title}
+                            className="flex flex-col gap-2 rounded-xl border border-zinc-200/80 bg-white px-4 py-3.5 dark:border-zinc-800/80 dark:bg-zinc-950/40"
+                          >
+                            <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-orange-50 ring-1 ring-orange-200/60 dark:bg-orange-900/20 dark:ring-orange-700/30">
+                              <d.icon className="h-4 w-4 text-orange-600 dark:text-orange-400" />
+                            </span>
+                            <p className="text-[13px] font-semibold tracking-[-0.01em] text-zinc-900 dark:text-zinc-100">{d.title}</p>
+                            <p className="text-[12px] leading-relaxed text-zinc-500 dark:text-zinc-400">{d.body}</p>
+                          </div>
+                        ))}
+                      </div>
+                    </Section>
+                  </div>
                 </>
               )}
 

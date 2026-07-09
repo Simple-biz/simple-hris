@@ -118,6 +118,15 @@ export async function getTransferRequestById(id: string): Promise<{
   return { row: (data as DepartmentTransferRequestRow) ?? null, error: error?.message ?? null };
 }
 
+/** Hard-delete a transfer request row (record cleanup). Does NOT reverse an
+ *  already-applied department move — it only removes the request record. */
+export async function deleteTransferRequestById(id: string): Promise<{ error: string | null }> {
+  const supabase = createSupabaseServiceRoleClient();
+  if (!supabase) return { error: 'Supabase not configured' };
+  const { error } = await supabase.from(TABLE).delete().eq('id', id);
+  return { error: error?.message ?? null };
+}
+
 /** True when this employee already has an in-flight transfer — either awaiting a
  *  source-manager decision (`pending`) or released and scheduled but not yet
  *  applied (`approved`). Prevents raising a second request over an open one. */
