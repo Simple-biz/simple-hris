@@ -142,7 +142,9 @@ export default function CobrowseProvider({ children }: { children: ReactNode }) 
               setChatOpen(false);
             }}
             closeTitle="End chat"
-            onSend={(text) => chat.send({ email: target.email, name: target.name }, text)}
+            onSend={(text) =>
+              chat.send({ email: target.email, name: target.name }, text, { asName: 'Admin' })
+            }
             placeholder={`Message ${(target.name || target.email).split(' ')[0] || 'them'}…`}
           />
         )}

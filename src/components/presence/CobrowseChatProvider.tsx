@@ -58,8 +58,17 @@ interface StoredMessage extends ChatMessageView {
 }
 
 interface CobrowseChatApi {
-  /** Send a chat message to a peer. Local-echoes into the peer's thread. */
-  send: (peer: { email: string; name?: string | null }, text: string) => void;
+  /**
+   * Send a chat message to a peer. Local-echoes into the peer's thread.
+   * Pass `opts.asName` to broadcast under a fixed label (e.g. "Admin") instead
+   * of the sender's real name — used so the person being watched sees "Admin"
+   * rather than the staff member's actual name.
+   */
+  send: (
+    peer: { email: string; name?: string | null },
+    text: string,
+    opts?: { asName?: string | null },
+  ) => void;
   /** Ordered messages for a peer's thread (empty if none / null). */
   threadFor: (peerEmail: string | null | undefined) => ChatMessageView[];
   /** Unread count for a peer (cleared via {@link markRead}). */
@@ -188,10 +197,17 @@ export default function CobrowseChatProvider({ children }: { children: ReactNode
 
   // ---- Send half ----
   const send = useCallback(
-    (peer: { email: string; name?: string | null }, text: string) => {
+    (
+      peer: { email: string; name?: string | null },
+      text: string,
+      opts?: { asName?: string | null },
+    ) => {
       const trimmed = text.trim();
       const to = norm(peer.email);
-      const { normSelf: from, selfName: fromName } = selfRef.current;
+      const { normSelf: from, selfName } = selfRef.current;
+      // Label the outgoing message: an explicit override (e.g. "Admin") wins over
+      // the sender's real name, so watched users never see staff names.
+      const fromName = opts?.asName?.trim() || selfName;
       if (!trimmed || !to || !from || !channelRef.current || !readyRef.current) return;
 
       const id = newId();
