@@ -264,6 +264,199 @@ export async function syncHrNewHireChecklist(
   return listHrNewHireChecklist(period);
 }
 
+// ── Atomic per-row ops (the modal-only intake model) ──────────────────────────
+// Every add/edit/delete is its own scoped write, so two people working the same
+// week can never clobber each other the way a whole-grid "make the DB match my
+// copy" save does. Nothing here ever deletes a row the caller didn't name.
+
+/** Append a `{by,at,from,to}` entry to a column's history log (capped), and
+ *  return the new log. Pure — the caller decides whether the field changed. */
+function pushCellEdit(
+  prior: CellEditEntry[] | undefined,
+  entry: CellEditEntry,
+): CellEditEntry[] {
+  return (Array.isArray(prior) ? prior : []).concat(entry).slice(-MAX_CELL_HISTORY);
+}
+
+/**
+ * Insert ONE hire at the end of a week (position after the current max). Blank
+ * adds are refused. Seeds each non-blank field's edit history with a `from:null`
+ * entry. Returns the freshly-inserted row (with its DB id) so the client can
+ * drop it straight into the grid.
+ */
+export async function insertHrNewHireChecklistRow(
+  periodStart: string,
+  values: Partial<Record<HrNewHireChecklistField, string | null>>,
+  opts: { createdBy?: string | null; editedBy?: string | null } = {},
+): Promise<{ row: HrNewHireChecklistRow | null; error: string | null }> {
+  const period = clean(periodStart);
+  if (!period) return { row: null, error: "A period (week) is required." };
+  const sb = client();
+  const createdBy = clean(opts.createdBy)?.toLowerCase() ?? null;
+  const editedBy = clean(opts.editedBy ?? opts.createdBy)?.toLowerCase() ?? null;
+  const nowIso = new Date().toISOString();
+
+  const fields: Record<string, string | null> = {};
+  for (const f of HR_NEW_HIRE_CHECKLIST_FIELDS) fields[f] = clean(values[f]);
+  if (HR_NEW_HIRE_CHECKLIST_FIELDS.every((f) => fields[f] === null)) {
+    return { row: null, error: "Nothing to add — the hire has no details." };
+  }
+
+  // Append after the current last row of this week.
+  const { data: maxRow, error: maxErr } = await sb
+    .from(TABLE)
+    .select("position")
+    .eq("period_start", period)
+    .order("position", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (maxErr) return { row: null, error: maxErr.message };
+  const position = ((maxRow?.position as number | undefined) ?? -1) + 1;
+
+  const insertPayload: Record<string, unknown> = {
+    position,
+    period_start: period,
+    created_by: createdBy,
+    ...fields,
+  };
+  if (editedBy) {
+    const cellEdits: CellEdits = {};
+    for (const f of HR_NEW_HIRE_CHECKLIST_FIELDS) {
+      if (fields[f] != null) cellEdits[f] = [{ by: editedBy, at: nowIso, from: null, to: fields[f] }];
+    }
+    if (Object.keys(cellEdits).length > 0) insertPayload.cell_edits = cellEdits;
+  }
+
+  const { data, error } = await sb.from(TABLE).insert(insertPayload).select("*").single();
+  if (error) return { row: null, error: error.message };
+  return { row: data as HrNewHireChecklistRow, error: null };
+}
+
+/**
+ * Update ONE row by id, touching ONLY the fields the caller passes (so a
+ * bulk-apply of one column can't wipe another). Optimistic concurrency: if
+ * `expectedUpdatedAt` is given and the row has moved since the client loaded it,
+ * this returns `{ conflict: true }` with the current row instead of overwriting
+ * a co-editor's change. Each changed field appends a `cell_edits` entry, diffed
+ * against the value CURRENTLY IN THE DB. `updated_at` is advanced explicitly so
+ * concurrency detection never depends on a DB trigger.
+ */
+export async function updateHrNewHireChecklistRow(
+  id: string,
+  values: Partial<Record<HrNewHireChecklistField, string | null>>,
+  opts: { editedBy?: string | null; expectedUpdatedAt?: string | null } = {},
+): Promise<{ row: HrNewHireChecklistRow | null; conflict?: boolean; error: string | null }> {
+  const rowId = clean(id);
+  if (!rowId) return { row: null, error: "A row id is required." };
+  const sb = client();
+  const editedBy = clean(opts.editedBy)?.toLowerCase() ?? null;
+  const nowIso = new Date().toISOString();
+
+  const { data: current, error: curErr } = await sb
+    .from(TABLE)
+    .select(["id", "updated_at", "cell_edits", ...HR_NEW_HIRE_CHECKLIST_FIELDS].join(", "))
+    .eq("id", rowId)
+    .maybeSingle();
+  if (curErr) return { row: null, error: curErr.message };
+  if (!current) {
+    return { row: null, error: "That hire no longer exists — it may have just been deleted." };
+  }
+  const cur = current as unknown as {
+    id: string;
+    updated_at: string | null;
+    cell_edits: CellEdits | null;
+  } & Record<HrNewHireChecklistField, string | null>;
+
+  const expected = clean(opts.expectedUpdatedAt ?? null);
+  if (expected && cur.updated_at && cur.updated_at !== expected) {
+    const { data: full } = await sb.from(TABLE).select("*").eq("id", rowId).maybeSingle();
+    return { row: (full ?? null) as HrNewHireChecklistRow | null, conflict: true, error: null };
+  }
+
+  const updatePayload: Record<string, unknown> = {};
+  const nextCellEdits: CellEdits = { ...(cur.cell_edits ?? {}) };
+  let changed = false;
+  for (const f of HR_NEW_HIRE_CHECKLIST_FIELDS) {
+    if (!(f in values)) continue; // only the fields the caller sent
+    const after = clean(values[f]);
+    const before = cur[f] ?? null;
+    if (after === before) continue;
+    updatePayload[f] = after;
+    if (editedBy) nextCellEdits[f] = pushCellEdit(nextCellEdits[f], { by: editedBy, at: nowIso, from: before, to: after });
+    changed = true;
+  }
+  if (!changed) {
+    const { data: full } = await sb.from(TABLE).select("*").eq("id", rowId).maybeSingle();
+    return { row: (full ?? null) as HrNewHireChecklistRow | null, error: null };
+  }
+  updatePayload.updated_at = nowIso;
+  if (editedBy) updatePayload.cell_edits = nextCellEdits;
+
+  const { data, error } = await sb.from(TABLE).update(updatePayload).eq("id", rowId).select("*").single();
+  if (error) return { row: null, error: error.message };
+  return { row: data as HrNewHireChecklistRow, error: null };
+}
+
+/**
+ * Delete rows by id (one or many). Scoped by primary key, so it removes exactly
+ * the rows named and nothing else. Returns how many were deleted.
+ */
+export async function deleteHrNewHireChecklistRows(
+  ids: string[],
+): Promise<{ deleted: number; error: string | null }> {
+  const cleanIds = [...new Set(ids.map((i) => (i ?? "").trim()).filter(Boolean))];
+  if (cleanIds.length === 0) return { deleted: 0, error: null };
+  const sb = client();
+  const { data, error } = await sb.from(TABLE).delete().in("id", cleanIds).select("id");
+  if (error) return { deleted: 0, error: error.message };
+  return { deleted: (data ?? []).length, error: null };
+}
+
+/**
+ * Set ONE field on many rows (the bulk-apply department / country action). Only
+ * that column is written per row, so it can't clobber a co-editor's other cells;
+ * each row that actually changes appends a `cell_edits` entry. Returns the fresh
+ * rows so the client reconciles exactly. Volume is a manual multi-select, so a
+ * per-row update loop keeps the history correct without a bulk-diff dance.
+ */
+export async function bulkSetHrNewHireChecklistField(
+  ids: string[],
+  field: HrNewHireChecklistField,
+  value: string | null,
+  opts: { editedBy?: string | null } = {},
+): Promise<{ rows: HrNewHireChecklistRow[]; error: string | null }> {
+  if (!HR_NEW_HIRE_CHECKLIST_FIELDS.includes(field)) return { rows: [], error: "Unknown field." };
+  const cleanIds = [...new Set(ids.map((i) => (i ?? "").trim()).filter(Boolean))];
+  if (cleanIds.length === 0) return { rows: [], error: null };
+  const sb = client();
+  const editedBy = clean(opts.editedBy)?.toLowerCase() ?? null;
+  const nowIso = new Date().toISOString();
+  const v = clean(value);
+
+  const { data: existing, error: exErr } = await sb
+    .from(TABLE)
+    .select(`id, cell_edits, ${field}`)
+    .in("id", cleanIds);
+  if (exErr) return { rows: [], error: exErr.message };
+
+  for (const raw of (existing ?? []) as Array<{ id: string; cell_edits: CellEdits | null } & Record<string, unknown>>) {
+    const before = (raw[field] as string | null) ?? null;
+    if (before === v) continue; // already at the target value
+    const payload: Record<string, unknown> = { [field]: v, updated_at: nowIso };
+    if (editedBy) {
+      const ce: CellEdits = { ...(raw.cell_edits ?? {}) };
+      ce[field] = pushCellEdit(ce[field], { by: editedBy, at: nowIso, from: before, to: v });
+      payload.cell_edits = ce;
+    }
+    const { error: upErr } = await sb.from(TABLE).update(payload).eq("id", raw.id);
+    if (upErr) return { rows: [], error: upErr.message };
+  }
+
+  const { data, error } = await sb.from(TABLE).select("*").in("id", cleanIds).order("position", { ascending: true });
+  if (error) return { rows: [], error: error.message };
+  return { rows: (data ?? []) as HrNewHireChecklistRow[], error: null };
+}
+
 /**
  * Distinct, non-blank departments present in the checklist (case-insensitive
  * de-dupe, keeping the first-seen casing), each with its row count. Powers the

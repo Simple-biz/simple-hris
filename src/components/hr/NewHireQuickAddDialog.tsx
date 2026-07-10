@@ -9,6 +9,7 @@ import {
   Check,
   Compass,
   Globe2,
+  Loader2,
   Mail,
   MapPin,
   Pencil,
@@ -102,8 +103,9 @@ interface Props {
   /** Pre-fill values for edit mode; ignored (blank form) in add mode. */
   initialValues?: QuickAddValues | null;
   onCancel: () => void;
-  /** Add: append to the grid. Edit: apply to the row. Fire-and-forget (local). */
-  onSave: (values: QuickAddValues) => void;
+  /** Add: insert the hire. Edit: update the row. Awaited — resolve `false` to
+   *  keep the dialog open (e.g. the server write failed / hit a conflict). */
+  onSave: (values: QuickAddValues) => boolean | void | Promise<boolean | void>;
 }
 
 export default function NewHireQuickAddDialog({
@@ -123,6 +125,7 @@ export default function NewHireQuickAddDialog({
   // The control focused before we opened, so focus returns there on close.
   const returnFocusRef = useRef<HTMLElement | null>(null);
   const [values, setValues] = useState<QuickAddValues>(EMPTY);
+  const [submitting, setSubmitting] = useState(false);
 
   const sourceOptions = useMemo(
     () => (sources.length > 0 ? sources : [...BASE_SOURCE_OPTIONS]),
@@ -170,17 +173,25 @@ export default function NewHireQuickAddDialog({
   }, [open]);
 
   const commit = useCallback(
-    (again: boolean) => {
-      if (!canSave) return;
-      onSave(values);
-      if (again) {
-        setValues(EMPTY);
-        requestAnimationFrame(() => firstFieldRef.current?.focus());
-      } else {
-        onCancel();
+    async (again: boolean) => {
+      if (!canSave || submitting) return;
+      setSubmitting(true);
+      try {
+        // A `false` result means the server write failed / conflicted — keep the
+        // dialog open so the entry isn't lost and can be retried.
+        const ok = await Promise.resolve(onSave(values));
+        if (ok === false) return;
+        if (again) {
+          setValues(EMPTY);
+          requestAnimationFrame(() => firstFieldRef.current?.focus());
+        } else {
+          onCancel();
+        }
+      } finally {
+        setSubmitting(false);
       }
     },
-    [canSave, values, onSave, onCancel],
+    [canSave, submitting, values, onSave, onCancel],
   );
 
   // Escape closes; Tab is trapped inside the card so focus can't reach the
@@ -228,7 +239,7 @@ export default function NewHireQuickAddDialog({
           transition={{ duration: reduceMotion ? 0 : 0.18 }}
         >
           {/* Backdrop */}
-          <div className="absolute inset-0 bg-zinc-950/50 backdrop-blur-sm" onClick={onCancel} aria-hidden />
+          <div className="absolute inset-0 bg-zinc-950/50 backdrop-blur-sm" onClick={submitting ? undefined : onCancel} aria-hidden />
 
           {/* Card */}
           <motion.div
@@ -262,8 +273,9 @@ export default function NewHireQuickAddDialog({
                 <button
                   type="button"
                   onClick={onCancel}
+                  disabled={submitting}
                   aria-label="Cancel"
-                  className="ml-auto -mr-1 -mt-1 rounded-lg p-1.5 text-white/70 transition hover:bg-white/15 hover:text-white"
+                  className="ml-auto -mr-1 -mt-1 rounded-lg p-1.5 text-white/70 transition hover:bg-white/15 hover:text-white disabled:opacity-40"
                 >
                   <X className="h-4 w-4" />
                 </button>
@@ -271,7 +283,7 @@ export default function NewHireQuickAddDialog({
             </div>
 
             {/* ── Body (form) ────────────────────────────────────────── */}
-            <form noValidate onSubmit={(e) => { e.preventDefault(); commit(false); }}>
+            <form noValidate onSubmit={(e) => { e.preventDefault(); void commit(false); }}>
               <div className="max-h-[62vh] overflow-y-auto px-5 py-4">
                 <div className="grid grid-cols-1 gap-x-4 gap-y-3.5 sm:grid-cols-2">
                   {TEXT_FIELDS.map((f, i) => {
@@ -385,8 +397,9 @@ export default function NewHireQuickAddDialog({
                 <p className="mt-3.5 text-[11.5px] leading-snug text-zinc-500 dark:text-zinc-500">
                   Only the <strong className="font-semibold text-zinc-700 dark:text-zinc-300">name</strong> is required
                   {' '}(plus <strong className="font-semibold text-zinc-700 dark:text-zinc-300">who referred them</strong> for
-                  referral hires). Nothing is sent until you{' '}
-                  <strong className="font-semibold text-zinc-700 dark:text-zinc-300">Lock in</strong> the week.
+                  referral hires). This hire is saved to the checklist right away — the{' '}
+                  <strong className="font-semibold text-zinc-700 dark:text-zinc-300">orientation invite</strong> only sends when
+                  you <strong className="font-semibold text-zinc-700 dark:text-zinc-300">Lock in</strong> the week.
                 </p>
               </div>
 
@@ -395,15 +408,16 @@ export default function NewHireQuickAddDialog({
                 <button
                   type="button"
                   onClick={onCancel}
-                  className="h-9 rounded-lg border border-zinc-200 px-4 text-[13px] font-medium text-zinc-600 transition hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
+                  disabled={submitting}
+                  className="h-9 rounded-lg border border-zinc-200 px-4 text-[13px] font-medium text-zinc-600 transition hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
                 >
                   Cancel
                 </button>
                 {mode === 'add' && (
                   <button
                     type="button"
-                    onClick={() => commit(true)}
-                    disabled={!canSave}
+                    onClick={() => void commit(true)}
+                    disabled={!canSave || submitting}
                     className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-emerald-300 bg-white px-4 text-[13px] font-semibold text-emerald-700 transition hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-emerald-500/40 dark:bg-transparent dark:text-emerald-300 dark:hover:bg-emerald-950/40"
                   >
                     <Plus className="h-4 w-4" />
@@ -412,10 +426,10 @@ export default function NewHireQuickAddDialog({
                 )}
                 <button
                   type="submit"
-                  disabled={!canSave}
+                  disabled={!canSave || submitting}
                   className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg bg-emerald-600 px-4 text-[13px] font-semibold text-white shadow-sm transition hover:bg-emerald-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/50 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-emerald-600 dark:hover:bg-emerald-500"
                 >
-                  <Check className="h-4 w-4" />
+                  {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
                   {mode === 'edit' ? 'Save changes' : 'Add to checklist'}
                 </button>
               </div>

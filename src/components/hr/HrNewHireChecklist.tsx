@@ -12,15 +12,12 @@ import {
   ChevronRight,
   ClipboardList,
   Download,
-  Eraser,
   Info,
   Loader2,
   Lock,
   LockOpen,
   Pencil,
-  Plus,
   RefreshCw,
-  Save,
   Trash2,
   UserPlus,
   X,
@@ -37,7 +34,7 @@ import { useSession } from 'next-auth/react';
 import type { CellEditEntry, HrNewHireChecklistRow } from '@/lib/supabase/hr-new-hire-checklist';
 import { ONBOARDING_COUNTRIES, resolveOnboardingCountry } from '@/lib/onboarding/countries';
 import { BASE_SOURCE_OPTIONS, isReferralSource } from '@/lib/hr/referral-source';
-import { useLiveCells, type LiveCellPeer, type LiveCellValue } from '@/hooks/useLiveCells';
+import { useChecklistRoom } from '@/hooks/useChecklistRoom';
 import NewHireChecklistLockDialog, { type LockDialogMode } from './NewHireChecklistLockDialog';
 import NewHireQuickAddDialog, { type QuickAddValues } from './NewHireQuickAddDialog';
 
@@ -55,8 +52,8 @@ const COLUMNS = [
   { key: 'country', label: 'Country' },
 ] as const;
 
-/** The onboarding-supported countries — the Country cell is a dropdown of these
- *  so Bulk Invite can segregate hires into the matching per-country box. */
+/** The onboarding-supported countries — the bulk-apply Country control offers
+ *  these so Bulk Invite can segregate hires into the matching per-country box. */
 const COUNTRY_OPTIONS = ONBOARDING_COUNTRIES.map((c) => c.name);
 
 // Native <option> popups don't inherit the app's dark theme — without an
@@ -68,24 +65,25 @@ const SELECT_SCHEME_CLASS = '[color-scheme:light] dark:[color-scheme:dark]';
 
 type FieldKey = (typeof COLUMNS)[number]['key'];
 
-/** Valid column keys, for validating a live-edit message from a peer. */
-const COLUMN_KEY_SET = new Set<string>(COLUMNS.map((c) => c.key));
-
-/** A grid row: a stable client `_key`, the DB `id` (null until saved), a shared
- *  cross-client identity `_cid` (used by live co-editing to line rows up between
- *  clients regardless of position), one string per column (empty string = blank
- *  cell), and `_editedBy` — the edit history log per column, as loaded from the
- *  server (never sent back on save; the server recomputes it by diffing against
- *  its own current values). */
+/**
+ * A grid row. Every row is server-persisted, so it always has a DB `id` (used as
+ * the React key, the selection key, and the co-editing identity). `_updatedAt`
+ * is the row's version for optimistic-concurrency edits, and `_editedBy` is the
+ * per-column edit-history log loaded from the server (never sent back).
+ */
 type GridRow = {
-  _key: string;
-  /** Shared co-editing identity: the DB id once saved, a deterministic seed key
-   *  for a fresh week's blank rows (so two clients align), or a random client id
-   *  for rows added after that. Never sent to the server. */
-  _cid: string;
-  id: string | null;
+  id: string;
+  _updatedAt: string | null;
   _editedBy?: Partial<Record<FieldKey, CellEditEntry[]>>;
 } & Record<FieldKey, string>;
+
+/** The edit modal's open state: adding a hire, or editing a specific row with a
+ *  snapshot of its values + version captured AT OPEN TIME (so the save diffs
+ *  against what the editor actually saw and can detect a co-editor's change). */
+type EditorState =
+  | { mode: 'add' }
+  | { mode: 'edit'; id: string; baseUpdatedAt: string | null; base: QuickAddValues }
+  | null;
 
 type PeriodMeta = {
   period_start: string;
@@ -99,7 +97,6 @@ type PeriodMeta = {
 type CacheVal = {
   period: string;
   rows: GridRow[];
-  dirty: boolean;
   locked: boolean;
   lockedAt: string | null;
   lockedBy: string | null;
@@ -108,82 +105,29 @@ type CacheVal = {
 
 const CACHE_KEY = HR_TAB_CACHE_KEYS.newHireChecklist;
 
-// Cap how many pasted cells are mirrored live to co-editors in one batch. A
-// paste bigger than this still saves normally — it just doesn't stream live
-// (keeps the single broadcast payload well under Realtime's message-size limit).
-const MAX_PASTE_BROADCAST_CELLS = 2000;
-
-// Stable, render-safe row keys (no Math.random/Date during render — avoids SSR
-// hydration drift). Module-level so keys stay unique across tab remounts.
-let keySeq = 0;
-const nextKey = () => `nhc-${++keySeq}`;
-
-/** A fresh shared co-editing id for a client-created row. Only ever called from
- *  event handlers / effects (never during render), so `crypto` is safe here. */
-function newCid(): string {
-  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
-    return crypto.randomUUID();
-  }
-  return `cid-${nextKey()}`;
-}
-
-function blankRow(cid?: string): GridRow {
-  const r = { _key: nextKey(), _cid: cid ?? newCid(), id: null } as GridRow;
-  for (const c of COLUMNS) r[c.key] = '';
-  return r;
-}
-
-function seedBlank(n: number): GridRow[] {
-  return Array.from({ length: n }, () => blankRow());
-}
-
-/** Deterministic blank seed for an EMPTY week, so two clients opening the same
- *  fresh week share row identities (`seed:<week>:<i>`) and their live edits line
- *  up cell-for-cell — even if one of them later deletes a blank row. */
-function emptyWeekSeed(period: string, n = 6): GridRow[] {
-  return Array.from({ length: n }, (_, i) => blankRow(`seed:${period}:${i}`));
-}
+// Coalesce a burst of peer "changed" broadcasts into a single refetch.
+const REMOTE_REFETCH_DEBOUNCE_MS = 400;
 
 function fromServer(row: HrNewHireChecklistRow): GridRow {
-  // A saved row's shared identity IS its DB id, so a peer editing it resolves to
-  // the same row on every client.
-  const r = { _key: nextKey(), _cid: row.id, id: row.id, _editedBy: row.cell_edits ?? undefined } as GridRow;
+  const r = {
+    id: row.id,
+    _updatedAt: row.updated_at ?? null,
+    _editedBy: row.cell_edits ?? undefined,
+  } as GridRow;
   for (const c of COLUMNS) r[c.key] = (row[c.key] ?? '') as string;
   return r;
 }
 
-function toPayload(rows: GridRow[]) {
-  return rows.map((r) => {
-    const o: Record<string, string | null> = {};
-    if (r.id) o.id = r.id;
-    for (const c of COLUMNS) o[c.key] = r[c.key];
-    return o;
-  });
-}
-
 /** A grid row → the modal's field values (for editing an existing row in the
- *  form). Keys line up 1:1 with COLUMNS / QuickAddValues. */
+ *  form, and as the diff baseline). Keys line up 1:1 with COLUMNS / QuickAddValues. */
 function rowToValues(row: GridRow): QuickAddValues {
   const v = {} as QuickAddValues;
   for (const c of COLUMNS) v[c.key] = row[c.key] ?? '';
   return v;
 }
 
-function rowIsBlank(r: GridRow): boolean {
-  return COLUMNS.every((c) => (r[c.key] ?? '').trim() === '');
-}
-
-/** Parse clipboard text into a 2D matrix: rows split on newlines, cells on tabs
- *  (the format Excel / Google Sheets put on the clipboard). A trailing newline
- *  is dropped so a copied column doesn't yield a stray empty final row. */
-function parseClipboard(text: string): string[][] {
-  const normalized = text.replace(/\r\n?/g, '\n');
-  const trimmed = normalized.endsWith('\n') ? normalized.slice(0, -1) : normalized;
-  return trimmed.split('\n').map((line) => line.split('\t'));
-}
-
-/** Snap a pasted department to the canonical casing from the dropdown list when
- *  it matches case-insensitively (so Bulk Invite detects it exactly); otherwise
+/** Snap a department to the canonical casing from the dropdown list when it
+ *  matches case-insensitively (so Bulk Invite detects it exactly); otherwise
  *  keep the raw value so nothing is silently dropped. */
 function canonicalizeDept(value: string, departments: string[]): string {
   const t = value.trim();
@@ -191,9 +135,9 @@ function canonicalizeDept(value: string, departments: string[]): string {
   return departments.find((d) => d.toLowerCase() === t.toLowerCase()) ?? t;
 }
 
-/** Snap a pasted country to its canonical onboarding name (handles aliases like
- *  "USA" → "United States") so Bulk Invite routes it to the right box; keep raw
- *  if unrecognized. */
+/** Snap a country to its canonical onboarding name (handles aliases like "USA"
+ *  → "United States") so Bulk Invite routes it to the right box; keep raw if
+ *  unrecognized. */
 function canonicalizeCountry(value: string): string {
   const t = value.trim();
   if (!t) return '';
@@ -236,9 +180,7 @@ function formatWeekLabel(startIso: string): string {
 }
 
 /** The orientation day for a Sun-anchored week: the MONDAY (start + 1 day),
- *  formatted "Monday, Jul 6, 2026". Mirrors the webhook's ORIENT_OFFSET_DAYS=1
- *  (src/lib/hr/new-hire-checklist-webhook.ts) so the dialog shows the exact date
- *  each hire is emailed. */
+ *  formatted "Monday, Jul 6, 2026". Mirrors the webhook's ORIENT_OFFSET_DAYS=1. */
 function formatOrientationLabel(startIso: string): string {
   if (!startIso) return '—';
   const [y, m, d] = startIso.split('-').map(Number);
@@ -267,6 +209,8 @@ function rollingWeeks(currentSunday: string, back: number, fwd: number): string[
   return out;
 }
 
+const JSON_HEADERS = { 'Content-Type': 'application/json' };
+
 export default function HrNewHireChecklist({
   onScrollSurfaceChange,
 }: {
@@ -281,46 +225,33 @@ export default function HrNewHireChecklist({
   const [currentSunday] = useState(() => sundayIso(new Date()));
   const [period, setPeriod] = useState<string>(() => cached?.period ?? sundayIso(new Date()));
   const [rows, setRows] = useState<GridRow[]>(() => cached?.rows ?? []);
-  const [dirty, setDirty] = useState<boolean>(() => cached?.dirty ?? false);
   const [locked, setLocked] = useState<boolean>(() => cached?.locked ?? false);
   const [lockedAt, setLockedAt] = useState<string | null>(() => cached?.lockedAt ?? null);
   const [lockedBy, setLockedBy] = useState<string | null>(() => cached?.lockedBy ?? null);
   const [loaded, setLoaded] = useState<boolean>(() => cached?.loaded ?? false);
   const [loading, setLoading] = useState<boolean>(() => !cached?.loaded);
-  const [saving, setSaving] = useState(false);
+  const [busy, setBusy] = useState(false); // any in-flight mutation (add/edit/delete/bulk/lock)
   const [error, setError] = useState<string | null>(null);
-  // ── Spreadsheet-style cell selection ──────────────────────────────────────
-  // Google-Sheets feel: a single click selects a cell (drag or Shift-click
-  // extends a rectangular range); editing only begins on double-click, Enter, or
-  // by typing. `sel` is the anchor→head range; `editing` is the single cell in
-  // edit mode (its <input> is live), null while the grid is in select mode.
-  const [sel, setSel] = useState<{ ar: number; ac: number; hr: number; hc: number } | null>(null);
-  const [editing, setEditing] = useState<{ r: number; c: number } | null>(null);
-  const draggingRef = useRef(false);
-  const selRef = useRef(sel);
-  const editingRef = useRef(editing);
-  const escapingRef = useRef(false); // Escape reverts the in-flight edit on blur
-  const preEditRef = useRef<{ r: number; c: number; value: string } | null>(null);
-  const editSelectAllRef = useRef(false); // select-all vs caret-at-end on edit start
-  // Which password-gated action is being confirmed (null = no dialog). Locking
-  // fires the orientation automation and reopening lets a locked week be edited
-  // (and re-locked), so both go through the HR-Manager passphrase dialog.
+
+  // Which password-gated action is being confirmed (null = no dialog).
   const [actionDialog, setActionDialog] = useState<LockDialogMode | null>(null);
   // A lock/reopen requested from the week dropdown for a week that first has to
   // load: we switch to it, then this effect fires the dialog once it's in view.
   const [pendingAction, setPendingAction] = useState<{ period: string; mode: LockDialogMode } | null>(null);
+
   const scrollRef = useRef<HTMLDivElement>(null);
   const [departments, setDepartments] = useState<string[]>([]);
-  // Source dropdown suggestions = the base list ∪ sources already used (so a
-  // custom source, once typed + saved, reappears as a suggestion). Referrers =
-  // active-employee names from the Global Master List (the "Referred By" picker
-  // always checks the master list).
+  // Source dropdown suggestions = the base list ∪ sources already used; Referrers
+  // = active-employee names from the Global Master List (fed to the modal).
   const [sourceOptions, setSourceOptions] = useState<string[]>(() => [...BASE_SOURCE_OPTIONS]);
   const [referrers, setReferrers] = useState<string[]>([]);
-  const [selectedKeys, setSelectedKeys] = useState<Set<string>>(() => new Set());
+
+  // Row multiselect (keyed by DB id, so it survives a live refetch).
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
   const [bulkDept, setBulkDept] = useState('');
   const [bulkCountry, setBulkCountry] = useState('');
   const selectAllRef = useRef<HTMLInputElement>(null);
+
   // Period selector
   const [periodMetas, setPeriodMetas] = useState<PeriodMeta[]>([]);
   const [periodMenuOpen, setPeriodMenuOpen] = useState(false);
@@ -335,156 +266,23 @@ export default function HrNewHireChecklist({
     { label: string; entries: CellEditEntry[]; top: number; left: number } | null
   >(null);
   // "New Hire" modal — the glowing CTA opens it in 'add' mode; a row's Edit
-  // button opens it in 'edit' mode pre-filled with that row (keyed by _key).
-  // null = closed. Disabled while the week is locked.
-  const [editor, setEditor] = useState<{ mode: 'add' } | { mode: 'edit'; key: string } | null>(null);
+  // button opens it in 'edit' mode pre-filled with that row. null = closed.
+  const [editor, setEditor] = useState<EditorState>(null);
   const reduceMotion = useReducedMotion();
 
-  // Mutators read the lock through a ref so a locked week can never be edited
-  // (even a paste on a readOnly input still fires our onPaste handler).
+  // Mutators read the lock through a ref so a locked week can never be edited.
   const lockedRef = useRef(locked);
   useEffect(() => { lockedRef.current = locked; }, [locked]);
-  // Latest selection / editing cell in refs so global (window / grid) handlers
-  // read them without being recreated every keystroke.
-  useEffect(() => { selRef.current = sel; }, [sel]);
-  useEffect(() => { editingRef.current = editing; }, [editing]);
+  // Latest period in a ref so the (stable) remote-refetch callback reads it.
+  const periodRef = useRef(period);
+  useEffect(() => { periodRef.current = period; }, [period]);
 
-  // ── Live cell co-editing ────────────────────────────────────────────────
-  // Broadcast this viewer's cell focus/typing to everyone else on the same week,
-  // and merge peers' keystrokes into our grid in real time (Google-Sheets style).
   const { data: session } = useSession();
   const selfEmail = session?.user?.email ?? null;
   const selfName = session?.user?.name ?? null;
 
-  // The cell the local user is actively editing, so an incoming peer edit can
-  // never overwrite it mid-keystroke (which would jump their caret).
-  const activeCellRef = useRef<{ r: number; col: FieldKey } | null>(null);
-  // Latest rows in a ref, so the paste handler can resolve target-row DB ids
-  // when broadcasting pasted cells without re-creating its callback each render.
-  const rowsRef = useRef(rows);
-  useEffect(() => { rowsRef.current = rows; }, [rows]);
-
-  // Set when a co-editor announces they saved the week; drives the resync/nudge
-  // effect (declared after fetchPeriod so it can reload).
-  const [savedSignal, setSavedSignal] = useState<{ by: string } | null>(null);
-
-  // Merge a peer's edits (one cell for a keystroke, many for a paste) into our
-  // own grid in ONE state update. Each cell matches its row by the shared `_cid`
-  // (DB id once saved, else a deterministic seed / client id) so it lines up
-  // regardless of position, falling back to the broadcast index only when no cid
-  // matches. Grows the grid so a peer's freshly-added row still lands (adopting
-  // the sender's cid so later edits keep matching), skips the cell the local
-  // user is focused in so their typing is never clobbered, and on the index-only
-  // fallback will ONLY fill a blank cell — so a structural drift can never
-  // destroy data the local user typed elsewhere. `dirty` flips only if a cell
-  // actually changed (read after the single setRows, whose updater React runs
-  // eagerly for this empty-queue async dispatch).
-  const applyRemoteEdits = useCallback((cells: LiveCellValue[]) => {
-    if (lockedRef.current) return; // a locked week is read-only for everyone
-    let changed = false;
-    setRows((prev) => {
-      const active = activeCellRef.current;
-      const origLen = prev.length;
-      let next = prev;
-      for (const cell of cells) {
-        if (!COLUMN_KEY_SET.has(cell.c)) continue;
-        const key = cell.c as FieldKey;
-        let idx = cell.cid ? next.findIndex((row) => row._cid === cell.cid) : -1;
-        const matchedByCid = idx >= 0;
-        if (idx < 0) idx = cell.r;
-        if (idx < 0) continue;
-        if (active && active.r === idx && active.col === key) continue;
-        // Don't grow the grid just to write a blank into a row we don't have yet
-        // (a paste batch can carry empty trailing cells); clearing an existing
-        // cell still works because that row is already present.
-        if (idx >= next.length && cell.v.trim() === '') continue;
-        if (next === prev) next = prev.slice();
-        while (next.length <= idx) next.push(blankRow());
-        // A brand-new row we just grew to reach the peer's row adopts their cid,
-        // so their subsequent edits to it keep cid-matching instead of drifting.
-        if (cell.cid && idx >= origLen) next[idx] = { ...next[idx]!, _cid: cell.cid };
-        const cur = next[idx]![key] ?? '';
-        if (cur === cell.v) continue; // already in sync
-        if (!matchedByCid && cur.trim() !== '') continue; // don't clobber on index guess
-        next[idx] = { ...next[idx]!, [key]: cell.v };
-        changed = true;
-      }
-      return changed ? next : prev;
-    });
-    if (changed) setDirty(true);
-  }, []);
-
-  const handlePeerSaved = useCallback((byEmail: string, byName: string | null) => {
-    setSavedSignal({ by: (byName && byName.trim()) || byEmail.split('@')[0] || byEmail });
-  }, []);
-
-  const {
-    peers: livePeers,
-    sendFocus: liveFocus,
-    sendBlur: liveBlur,
-    sendEdit: liveEdit,
-    sendEdits: liveEdits,
-    sendSaved: liveSaved,
-  } = useLiveCells({
-    selfEmail,
-    selfName,
-    channel: `hr-nhc-cells:${period}`,
-    enabled: !!selfEmail && !!period,
-    onRemoteEdits: applyRemoteEdits,
-    onSaved: handlePeerSaved,
-  });
-
-  // Resolve each peer's row index once (shared cid, then broadcast index) so
-  // `peerByCell` (exact cell) and `peersByRow` (anywhere in the row) can't
-  // disagree on which row a peer is in.
-  const resolvedPeers = useMemo(() => {
-    const out: Array<{ peer: LiveCellPeer; idx: number }> = [];
-    for (const p of livePeers) {
-      let idx = p.cid ? rows.findIndex((row) => row._cid === p.cid) : -1;
-      if (idx < 0) idx = p.row;
-      if (idx < 0 || idx >= rows.length) continue;
-      out.push({ peer: p, idx });
-    }
-    return out;
-  }, [livePeers, rows]);
-
-  // Which peer (if any) occupies each rendered cell, keyed `${rowIndex}:${col}`.
-  const peerByCell = useMemo(() => {
-    const m = new Map<string, LiveCellPeer>();
-    for (const { peer, idx } of resolvedPeers) m.set(`${idx}:${peer.col}`, peer);
-    return m;
-  }, [resolvedPeers]);
-
-  // Which peer(s) are anywhere in a row, regardless of column — drives a
-  // row-level "someone's already in here" indicator so a second person can
-  // see a row is occupied before they've focused any specific cell in it.
-  const peersByRow = useMemo(() => {
-    const m = new Map<number, LiveCellPeer[]>();
-    for (const { peer, idx } of resolvedPeers) {
-      const arr = m.get(idx);
-      if (arr) arr.push(peer);
-      else m.set(idx, [peer]);
-    }
-    return m;
-  }, [resolvedPeers]);
-
-  // Callback ref for the scrollable grid box: keeps `scrollRef` (used for cell
-  // focus) in sync AND registers the element with the HR collab layer so peer
-  // cursors anchor to the rows. Fires with `null` when the box unmounts (empty
-  // state / tab switch), clearing the anchor.
-  const registerScrollSurface = useCallback(
-    (el: HTMLDivElement | null) => {
-      scrollRef.current = el;
-      onScrollSurfaceChange?.(el);
-    },
-    [onScrollSurfaceChange],
-  );
-
-  // Clear the anchor if this tab unmounts entirely.
-  useEffect(() => () => onScrollSurfaceChange?.(null), [onScrollSurfaceChange]);
-
-  const fetchPeriod = useCallback(async (p: string) => {
-    setLoading(true);
+  const fetchPeriod = useCallback(async (p: string, opts?: { silent?: boolean }) => {
+    if (!opts?.silent) setLoading(true);
     setError(null);
     try {
       const res = await fetch(`/api/hr/new-hire-checklist?period=${encodeURIComponent(p)}`, { cache: 'no-store' });
@@ -496,23 +294,22 @@ export default function HrNewHireChecklist({
       if (!res.ok || json.error) throw new Error(json.error || `Request failed (${res.status})`);
       const isLocked = json.period?.status === 'locked';
       const fresh = (json.rows ?? []).map(fromServer);
-      setRows(fresh.length ? fresh : isLocked ? [] : emptyWeekSeed(p));
+      setRows(fresh);
       setLocked(isLocked);
       setLockedAt(json.period?.locked_at ?? null);
       setLockedBy(json.period?.locked_by ?? null);
-      setDirty(false);
-      setSelectedKeys(new Set());
-      setSel(null);
-      setEditing(null);
-      // A resync (e.g. a peer's save) can drop the editing cell without a blur,
-      // so clear the live-edit cursor here too — otherwise a stale activeCellRef
-      // would make one cell ignore incoming peer edits until the next focus.
-      activeCellRef.current = null;
+      // Keep any selection that still points at rows that survived the refetch.
+      setSelectedIds((prev) => {
+        if (prev.size === 0) return prev;
+        const live = new Set(fresh.map((r) => r.id));
+        const next = new Set([...prev].filter((id) => live.has(id)));
+        return next.size === prev.size ? prev : next;
+      });
       setLoaded(true);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load the checklist');
     } finally {
-      setLoading(false);
+      if (!opts?.silent) setLoading(false);
     }
   }, []);
 
@@ -524,8 +321,48 @@ export default function HrNewHireChecklist({
     } catch { /* selector still works off the generated rolling weeks */ }
   }, []);
 
+  // A peer changed the week's data — coalesce a burst into one silent refetch so
+  // an added / edited / deleted hire shows up live without a loading flash.
+  const refetchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const scheduleRefetch = useCallback(() => {
+    if (refetchTimer.current) clearTimeout(refetchTimer.current);
+    refetchTimer.current = setTimeout(() => {
+      refetchTimer.current = null;
+      void fetchPeriod(periodRef.current, { silent: true });
+      void loadPeriods();
+    }, REMOTE_REFETCH_DEBOUNCE_MS);
+  }, [fetchPeriod, loadPeriods]);
+  useEffect(() => () => { if (refetchTimer.current) clearTimeout(refetchTimer.current); }, []);
+
+  // ── Realtime room: soft row-lock (who's editing which row) + change fan-out ──
+  const { editingByRowId, broadcastChanged, setEditing } = useChecklistRoom({
+    selfEmail,
+    selfName,
+    channel: `hr-nhc-room:${period}`,
+    enabled: !!selfEmail && !!period,
+    onChanged: scheduleRefetch,
+  });
+
+  // Announce which row (if any) this client is editing, so peers see the soft
+  // lock. Cleared when the modal closes or drops to 'add'.
+  useEffect(() => {
+    setEditing(editor?.mode === 'edit' ? editor.id : null);
+  }, [editor, setEditing]);
+
+  // Callback ref for the scrollable grid box: keeps `scrollRef` in sync AND
+  // registers the element with the HR collab layer so peer cursors anchor to the
+  // rows. Fires with `null` when the box unmounts (empty state / tab switch).
+  const registerScrollSurface = useCallback(
+    (el: HTMLDivElement | null) => {
+      scrollRef.current = el;
+      onScrollSurfaceChange?.(el);
+    },
+    [onScrollSurfaceChange],
+  );
+  useEffect(() => () => onScrollSurfaceChange?.(null), [onScrollSurfaceChange]);
+
   // Load the selected week's rows + lock state when it isn't already loaded
-  // (skipped on a warm cache so tab-switches keep in-progress edits).
+  // (skipped on a warm cache so tab-switches stay instant).
   useEffect(() => {
     if (!period || loaded) return;
     void fetchPeriod(period);
@@ -533,33 +370,17 @@ export default function HrNewHireChecklist({
 
   useEffect(() => { void loadPeriods(); }, [loadPeriods]);
 
-  // A co-editor saved this week. With no local edits in flight, silently resync
-  // so we adopt the server row ids (a blind second save would otherwise insert a
-  // co-edited new row twice); mid-edit, just nudge to Refresh.
-  useEffect(() => {
-    if (!savedSignal) return;
-    setSavedSignal(null);
-    if (dirty || saving) {
-      toast.info(`${savedSignal.by} saved this week — Refresh to sync (avoids duplicate rows).`);
-    } else {
-      void fetchPeriod(period);
-      void loadPeriods();
-    }
-  }, [savedSignal, dirty, saving, period, fetchPeriod, loadPeriods]);
-
-  // Department dropdown options (best-effort; failure leaves Department as a
-  // plain text input so entry is never blocked).
+  // Department dropdown options (best-effort; used by the modal + bulk bar).
   useEffect(() => {
     let cancelled = false;
     fetch('/api/departments', { cache: 'no-store' })
       .then((r) => r.json())
       .then((j: { departments?: string[] }) => { if (!cancelled) setDepartments(j.departments ?? []); })
-      .catch(() => { /* text-input fallback */ });
+      .catch(() => { /* free-text fallback */ });
     return () => { cancelled = true; };
   }, []);
 
-  // Source suggestions: merge the base list with sources already used across all
-  // weeks (case-insensitive de-dupe), so custom sources persist in the dropdown.
+  // Source suggestions: base list ∪ sources already used (case-insensitive).
   useEffect(() => {
     let cancelled = false;
     fetch('/api/hr/new-hire-checklist/sources', { cache: 'no-store' })
@@ -594,11 +415,18 @@ export default function HrNewHireChecklist({
 
   // Mirror state into the per-session tab cache on every change.
   useEffect(() => {
-    setHrTabCache<CacheVal>(CACHE_KEY, { period, rows, dirty, locked, lockedAt, lockedBy, loaded });
-  }, [period, rows, dirty, locked, lockedAt, lockedBy, loaded]);
+    setHrTabCache<CacheVal>(CACHE_KEY, { period, rows, locked, lockedAt, lockedBy, loaded });
+  }, [period, rows, locked, lockedAt, lockedBy, loaded]);
 
-  // Close the edit-history popover on outside click, Escape, or any scroll
-  // (its fixed position would otherwise drift away from the anchor cell).
+  // A locked week is read-only — never leave the modal or a selection over it.
+  useEffect(() => {
+    if (locked) { setEditor(null); setSelectedIds(new Set()); }
+  }, [locked]);
+
+  // Switching weeks invalidates ids — drop any editor / selection.
+  useEffect(() => { setEditor(null); setSelectedIds(new Set()); }, [period]);
+
+  // Close the edit-history popover on outside click, Escape, or any scroll.
   useEffect(() => {
     if (!historyPopover) return;
     const onDown = (e: MouseEvent) => {
@@ -648,350 +476,60 @@ export default function HrNewHireChecklist({
     };
   }, [exportMenuOpen]);
 
-  // When a cell enters edit mode, focus its freshly-mounted <input> and either
-  // select all (double-click / Enter) or drop the caret at the end (F2 / typing).
-  useEffect(() => {
-    if (!editing) return;
-    const el = scrollRef.current?.querySelector<HTMLInputElement>(`[data-cell="${editing.r}-${editing.c}"]`);
-    if (!el) return;
-    el.focus();
-    if (editSelectAllRef.current) {
-      el.select();
-    } else {
-      const n = el.value.length;
-      el.setSelectionRange(n, n);
-    }
-  }, [editing]);
+  // ── Mutations — each an atomic server write, reconciled from the response ────
 
-  // Drag-select ends whenever the mouse is released anywhere.
-  useEffect(() => {
-    const up = () => { draggingRef.current = false; };
-    window.addEventListener('mouseup', up);
-    return () => window.removeEventListener('mouseup', up);
-  }, []);
-
-  // Switching weeks invalidates row indices — drop any selection / edit.
-  useEffect(() => { setSel(null); setEditing(null); }, [period]);
-
-  const setCell = useCallback((r: number, key: FieldKey, value: string) => {
-    if (lockedRef.current) return;
-    setRows((prev) => prev.map((row, i) => (i === r ? { ...row, [key]: value } : row)));
-    setDirty(true);
-  }, []);
-
-  // Core fill logic shared by the editing cell's onPaste (fill-down) and a
-  // range paste from select mode: writes `matrix` into the grid starting at
-  // (r, c), growing rows as needed, and mirrors it live to co-editors.
-  const pasteMatrixAt = useCallback(
-    (matrix: string[][], r: number, c: number) => {
-      if (lockedRef.current) return;
-      const preRows = rowsRef.current;
-      // Resolve a stable shared cid per target row up front, so the row we grow
-      // locally and the value we broadcast to peers share identity (an appended
-      // paste row gets a fresh cid that BOTH sides use).
-      const targetCids: string[] = [];
-      for (let i = 0; i < matrix.length; i++) targetCids[i] = preRows[r + i]?._cid ?? newCid();
-
-      setRows((prev) => {
-        const next = prev.map((row) => ({ ...row }));
-        for (let i = 0; i < matrix.length; i++) {
-          const targetRow = r + i;
-          while (next.length <= targetRow) next.push(blankRow());
-          next[targetRow]!._cid = targetCids[i]!; // share identity with the broadcast
-          const cells = matrix[i]!;
-          for (let j = 0; j < cells.length; j++) {
-            const targetCol = c + j;
-            if (targetCol >= COLUMNS.length) break;
-            const key = COLUMNS[targetCol]!.key;
-            const raw = cells[j]!.trim();
-            next[targetRow]![key] =
-              key === 'department'
-                ? canonicalizeDept(raw, departments)
-                : key === 'country'
-                  ? canonicalizeCountry(raw)
-                  : raw;
-          }
-        }
-        return next;
-      });
-      setDirty(true);
-
-      // Mirror the paste to co-editors as one batch (same grow-on-demand path as
-      // typing), so a fill-down shows up live on their screens too. Skipped when
-      // over the cap — such a paste still syncs on Save.
-      const batch: LiveCellValue[] = [];
-      let overflow = false;
-      for (let i = 0; i < matrix.length && !overflow; i++) {
-        const targetRow = r + i;
-        const cells = matrix[i]!;
-        for (let j = 0; j < cells.length; j++) {
-          const targetCol = c + j;
-          if (targetCol >= COLUMNS.length) break;
-          if (batch.length >= MAX_PASTE_BROADCAST_CELLS) { overflow = true; break; }
-          const key = COLUMNS[targetCol]!.key;
-          const raw = cells[j]!.trim();
-          const val =
-            key === 'department'
-              ? canonicalizeDept(raw, departments)
-              : key === 'country'
-                ? canonicalizeCountry(raw)
-                : raw;
-          batch.push({ r: targetRow, cid: targetCids[i]!, c: key, v: val });
-        }
-      }
-      if (!overflow) liveEdits(batch);
-    },
-    [departments, liveEdits],
-  );
-
-  // The editing cell's paste = fill-down from that cell (a single value falls
-  // through to the browser's native paste into the input).
-  const handlePaste = useCallback(
-    (e: React.ClipboardEvent<HTMLInputElement>, r: number, c: number) => {
-      if (lockedRef.current) return;
-      const text = e.clipboardData?.getData('text/plain') ?? '';
-      if (!text) return;
-      const matrix = parseClipboard(text);
-      if (matrix.length === 1 && matrix[0]!.length === 1) return; // single value → native paste
-      e.preventDefault();
-      pasteMatrixAt(matrix, r, c);
-    },
-    [pasteMatrixAt],
-  );
-
-  // ── Cell selection + edit-mode handlers ───────────────────────────────────
-  const beginEdit = useCallback(
-    (r: number, c: number, opts?: { selectAll?: boolean; initial?: string }) => {
-      if (lockedRef.current) return;
-      const key = COLUMNS[c]!.key;
-      const cid = rowsRef.current[r]?._cid ?? '';
-      preEditRef.current = { r, c, value: rowsRef.current[r]?.[key] ?? '' };
-      editSelectAllRef.current = !!opts?.selectAll;
-      if (opts?.initial !== undefined) {
-        setCell(r, key, opts.initial);
-        if (cid) liveEdit(r, cid, key, opts.initial);
-      }
-      setSel({ ar: r, ac: c, hr: r, hc: c });
-      setEditing({ r, c });
-    },
-    [setCell, liveEdit],
-  );
-
-  const cellMouseDown = useCallback((e: React.MouseEvent, r: number, c: number) => {
-    if (e.button !== 0) return;
-    // Clicking inside the cell already being edited: let the input place its own
-    // caret / drag a text selection.
-    if (editingRef.current?.r === r && editingRef.current?.c === c) return;
-    e.preventDefault(); // suppress native text-selection while range-selecting
-    setSel((prev) => (e.shiftKey && prev ? { ...prev, hr: r, hc: c } : { ar: r, ac: c, hr: r, hc: c }));
-    draggingRef.current = true;
-    // Move focus off any open editor (commits it via onBlur) onto the grid so
-    // keyboard nav / copy / type-to-edit work.
-    scrollRef.current?.focus();
-  }, []);
-
-  const cellMouseEnter = useCallback((r: number, c: number) => {
-    if (!draggingRef.current) return;
-    setSel((prev) => (prev ? { ...prev, hr: r, hc: c } : prev));
-  }, []);
-
-  const clearRange = useCallback(() => {
-    if (lockedRef.current) return;
-    const s = selRef.current;
-    if (!s) return;
-    const r0 = Math.min(s.ar, s.hr), r1 = Math.max(s.ar, s.hr);
-    const c0 = Math.min(s.ac, s.hc), c1 = Math.max(s.ac, s.hc);
-    const batch: LiveCellValue[] = [];
-    setRows((prev) =>
-      prev.map((row, ri) => {
-        if (ri < r0 || ri > r1) return row;
-        let changed = false;
-        const next = { ...row };
-        for (let ci = c0; ci <= c1; ci++) {
-          const key = COLUMNS[ci]!.key;
-          if ((next[key] ?? '') !== '') {
-            next[key] = '';
-            changed = true;
-            batch.push({ r: ri, cid: row._cid, c: key, v: '' });
-          }
-        }
-        return changed ? next : row;
-      }),
-    );
-    if (batch.length) { liveEdits(batch); setDirty(true); }
-  }, [liveEdits]);
-
-  // Keyboard while a cell/range is selected (not editing). Attached to the grid
-  // container; bails while editing so the <input> keeps its own keys.
-  const gridKeyDown = useCallback(
-    (e: React.KeyboardEvent<HTMLDivElement>) => {
-      // Only handle keys aimed at the container itself — never hijack Space /
-      // Enter etc. bubbling up from a focused checkbox / delete / history button.
-      if (e.target !== e.currentTarget) return;
-      if (editingRef.current) return;
-      const k = e.key;
-      const isNav =
-        k === 'ArrowUp' || k === 'ArrowDown' || k === 'ArrowLeft' || k === 'ArrowRight' || k === 'Enter' || k === 'F2';
-      const isPrintable = !e.ctrlKey && !e.metaKey && !e.altKey && k.length === 1;
-      const s = selRef.current;
-      // Keyboard bootstrap: a user who Tabs into the grid (no prior click) has no
-      // selection yet — the first navigation / edit / type key seeds cell A1, and
-      // subsequent keys operate normally.
-      if (!s) {
-        if ((isNav || isPrintable) && rowsRef.current.length > 0) {
-          e.preventDefault();
-          setSel({ ar: 0, ac: 0, hr: 0, hc: 0 });
-        }
-        return;
-      }
-      const maxR = rowsRef.current.length - 1;
-      const maxC = COLUMNS.length - 1;
-      if (k === 'ArrowUp' || k === 'ArrowDown' || k === 'ArrowLeft' || k === 'ArrowRight') {
-        e.preventDefault();
-        const dr = k === 'ArrowDown' ? 1 : k === 'ArrowUp' ? -1 : 0;
-        const dc = k === 'ArrowRight' ? 1 : k === 'ArrowLeft' ? -1 : 0;
-        const nr = Math.min(Math.max(s.hr + dr, 0), maxR);
-        const nc = Math.min(Math.max(s.hc + dc, 0), maxC);
-        setSel((prev) => (prev && e.shiftKey ? { ...prev, hr: nr, hc: nc } : { ar: nr, ac: nc, hr: nr, hc: nc }));
-        return;
-      }
-      if (k === 'Enter' || k === 'F2') {
-        e.preventDefault();
-        beginEdit(s.hr, s.hc, { selectAll: k === 'Enter' });
-        return;
-      }
-      if (k === 'Escape') { e.preventDefault(); setSel(null); return; }
-      if (k === 'Delete' || k === 'Backspace') {
-        if (lockedRef.current) return;
-        e.preventDefault();
-        clearRange();
-        return;
-      }
-      // Type-to-edit: a lone printable character replaces the cell and edits it.
-      if (!e.ctrlKey && !e.metaKey && !e.altKey && k.length === 1) {
-        if (lockedRef.current) return;
-        e.preventDefault();
-        beginEdit(s.hr, s.hc, { initial: k });
-      }
-    },
-    [beginEdit, clearRange],
-  );
-
-  // Keys inside the editing <input>: commit + move (Enter/Tab) or revert (Esc).
-  const editingKeyDown = useCallback((e: React.KeyboardEvent<HTMLInputElement>, r: number, c: number) => {
-    const k = e.key;
-    if (k === 'Enter') {
-      e.preventDefault();
-      if (r + 1 >= rowsRef.current.length) setRows((prev) => [...prev, blankRow()]);
-      setSel({ ar: r + 1, ac: c, hr: r + 1, hc: c });
-      scrollRef.current?.focus(); // blurs the input → commit via onBlur
-    } else if (k === 'Tab') {
-      e.preventDefault();
-      const nc = Math.min(Math.max(c + (e.shiftKey ? -1 : 1), 0), COLUMNS.length - 1);
-      setSel({ ar: r, ac: nc, hr: r, hc: nc });
-      scrollRef.current?.focus();
-    } else if (k === 'Escape') {
-      e.preventDefault();
-      escapingRef.current = true; // onBlur restores the pre-edit value
-      setSel({ ar: r, ac: c, hr: r, hc: c });
-      scrollRef.current?.focus();
-    }
-  }, []);
-
-  // Copy the selected range as TSV (so it pastes cleanly into Sheets / Excel).
-  const gridCopy = useCallback((e: React.ClipboardEvent<HTMLDivElement>) => {
-    if (e.target !== e.currentTarget) return; // only when the grid itself is focused
-    if (editingRef.current) return; // let the input copy its own text selection
-    const s = selRef.current;
-    if (!s) return;
-    const r0 = Math.min(s.ar, s.hr), r1 = Math.max(s.ar, s.hr);
-    const c0 = Math.min(s.ac, s.hc), c1 = Math.max(s.ac, s.hc);
-    const rowsNow = rowsRef.current;
-    const lines: string[] = [];
-    for (let ri = r0; ri <= r1; ri++) {
-      const cells: string[] = [];
-      for (let ci = c0; ci <= c1; ci++) cells.push(rowsNow[ri]?.[COLUMNS[ci]!.key] ?? '');
-      lines.push(cells.join('\t'));
-    }
-    e.preventDefault();
-    e.clipboardData.setData('text/plain', lines.join('\n'));
-  }, []);
-
-  // Paste into the grid from select mode (starts at the range's top-left).
-  const gridPaste = useCallback((e: React.ClipboardEvent<HTMLDivElement>) => {
-    if (e.target !== e.currentTarget) return; // only when the grid itself is focused
-    if (editingRef.current) return; // the input's own onPaste handles fill-down
-    if (lockedRef.current) return;
-    const s = selRef.current;
-    if (!s) return;
-    const text = e.clipboardData?.getData('text/plain') ?? '';
-    if (!text) return;
-    e.preventDefault();
-    pasteMatrixAt(parseClipboard(text), Math.min(s.ar, s.hr), Math.min(s.ac, s.hc));
-  }, [pasteMatrixAt]);
-
-  const addRows = useCallback((n: number) => {
-    if (lockedRef.current) return;
-    setRows((prev) => [...prev, ...seedBlank(n)]);
-    setDirty(true);
-  }, []);
-
-  // "New Hire" modal → append one hire at the very bottom of the grid. Mirrors
-  // the grid's own canonicalisation (department / country) and broadcasts the
-  // new row to co-editors so it lands with a shared identity on every client.
-  // The row is local + dirty until the week is Saved / Locked in (same as any
-  // other grid edit).
+  // "New Hire" modal (add) → POST one row. Returns false to keep the modal open
+  // on failure (the entry isn't lost).
   const handleQuickAdd = useCallback(
-    (values: QuickAddValues) => {
-      if (lockedRef.current) return;
-      const cid = newCid();
-      const row = blankRow(cid);
+    async (values: QuickAddValues): Promise<boolean> => {
+      if (lockedRef.current) return false;
+      const payloadValues: Record<string, string> = {};
       for (const c of COLUMNS) {
         const raw = (values[c.key] ?? '').trim();
-        row[c.key] =
+        payloadValues[c.key] =
           c.key === 'department'
             ? canonicalizeDept(raw, departments)
             : c.key === 'country'
               ? canonicalizeCountry(raw)
               : raw;
       }
-      const insertIndex = rowsRef.current.length;
-      setRows((prev) => [...prev, row]);
-      setDirty(true);
-
-      // Stream the new row to co-editors (one batch, same shared cid).
-      const batch: LiveCellValue[] = [];
-      for (const c of COLUMNS) {
-        const v = row[c.key];
-        if (v) batch.push({ r: insertIndex, cid, c: c.key, v });
+      setBusy(true);
+      try {
+        const res = await fetch('/api/hr/new-hire-checklist', {
+          method: 'POST',
+          headers: JSON_HEADERS,
+          body: JSON.stringify({ period_start: period, period_end: weekEndIso(period), values: payloadValues }),
+        });
+        const json = (await res.json()) as { row?: HrNewHireChecklistRow; error?: string };
+        if (!res.ok || json.error || !json.row) throw new Error(json.error || `Add failed (${res.status})`);
+        const row = fromServer(json.row);
+        setRows((prev) => [...prev, row]);
+        broadcastChanged();
+        void loadPeriods();
+        setTimeout(() => {
+          const el = scrollRef.current;
+          if (el) el.scrollTo({ top: el.scrollHeight, behavior: reduceMotion ? 'auto' : 'smooth' });
+        }, 60);
+        toast.success(`Added ${row.name.trim() || 'new hire'} to ${formatWeekLabel(period)}`);
+        return true;
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : 'Failed to add the hire');
+        return false;
+      } finally {
+        setBusy(false);
       }
-      if (batch.length) liveEdits(batch);
-
-      // Select the new row + scroll it into view so it's clearly "there".
-      setSel({ ar: insertIndex, ac: 0, hr: insertIndex, hc: 0 });
-      setEditing(null);
-      setTimeout(() => {
-        const el = scrollRef.current;
-        if (el) el.scrollTo({ top: el.scrollHeight, behavior: reduceMotion ? 'auto' : 'smooth' });
-      }, 60);
-
-      toast.success(`Added ${row.name.trim() || 'new hire'} to ${formatWeekLabel(period)}`);
     },
-    [departments, liveEdits, period, reduceMotion],
+    [departments, period, reduceMotion, broadcastChanged, loadPeriods],
   );
 
-  // "Edit" a row from the modal → apply the form values to that row in place
-  // (matched by stable _key), canonicalising dept/country and streaming only the
-  // changed cells to co-editors. Local + dirty until Save / Lock in.
+  // "Edit" modal → PATCH only the fields that changed vs the snapshot taken when
+  // the modal opened, with optimistic concurrency. On a 409 the server hands
+  // back the current row: we refresh the grid + the modal's baseline and keep it
+  // open so the editor can re-apply their change on top of the co-editor's.
   const handleEditHire = useCallback(
-    (key: string, values: QuickAddValues) => {
-      if (lockedRef.current) return;
-      const cur = rowsRef.current;
-      const idx = cur.findIndex((row) => row._key === key);
-      if (idx < 0) return;
-      const row = cur[idx]!;
-      const updates: Partial<Record<FieldKey, string>> = {};
-      const batch: LiveCellValue[] = [];
+    async (ed: { id: string; baseUpdatedAt: string | null; base: QuickAddValues }, values: QuickAddValues): Promise<boolean> => {
+      if (lockedRef.current) return false;
+      const changed: Record<string, string> = {};
       for (const c of COLUMNS) {
         const raw = (values[c.key] ?? '').trim();
         const val =
@@ -1000,73 +538,230 @@ export default function HrNewHireChecklist({
             : c.key === 'country'
               ? canonicalizeCountry(raw)
               : raw;
-        if ((row[c.key] ?? '') !== val) {
-          updates[c.key] = val;
-          batch.push({ r: idx, cid: row._cid, c: c.key, v: val });
-        }
+        if (val !== (ed.base[c.key] ?? '').trim()) changed[c.key] = val;
       }
-      if (batch.length === 0) return; // nothing changed
-      setRows((prev) => prev.map((rw) => (rw._key === key ? { ...rw, ...updates } : rw)));
-      setDirty(true);
-      liveEdits(batch);
-      setSel({ ar: idx, ac: 0, hr: idx, hc: 0 });
-      setEditing(null);
-      toast.success(`Updated ${(values.name || '').trim() || 'hire'}`);
+      if (Object.keys(changed).length === 0) return true; // nothing to do → close
+
+      setBusy(true);
+      try {
+        const res = await fetch('/api/hr/new-hire-checklist', {
+          method: 'PATCH',
+          headers: JSON_HEADERS,
+          body: JSON.stringify({ period_start: period, id: ed.id, values: changed, expectedUpdatedAt: ed.baseUpdatedAt }),
+        });
+        const json = (await res.json()) as { row?: HrNewHireChecklistRow; conflict?: boolean; error?: string };
+        if (res.status === 409 && json.row) {
+          const fresh = fromServer(json.row);
+          setRows((prev) => prev.map((r) => (r.id === fresh.id ? fresh : r)));
+          setEditor((prev) =>
+            prev?.mode === 'edit' && prev.id === fresh.id
+              ? { ...prev, baseUpdatedAt: fresh._updatedAt, base: rowToValues(fresh) }
+              : prev,
+          );
+          toast.error('Someone else just changed this hire — the latest values are loaded. Review and save again.');
+          return false; // keep the modal open with the refreshed baseline
+        }
+        if (!res.ok || json.error || !json.row) throw new Error(json.error || `Save failed (${res.status})`);
+        const fresh = fromServer(json.row);
+        setRows((prev) => prev.map((r) => (r.id === fresh.id ? fresh : r)));
+        broadcastChanged();
+        toast.success(`Updated ${(values.name || '').trim() || 'hire'}`);
+        return true;
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : 'Failed to save the hire');
+        return false;
+      } finally {
+        setBusy(false);
+      }
     },
-    [departments, liveEdits],
+    [departments, period, broadcastChanged],
   );
 
-  // A locked week is read-only — never leave the modal open over it (e.g. if a
-  // co-editor locks the week while the dialog is up).
+  const deleteIds = useCallback(
+    async (ids: string[]) => {
+      if (lockedRef.current || ids.length === 0) return;
+      setBusy(true);
+      try {
+        const res = await fetch('/api/hr/new-hire-checklist', {
+          method: 'DELETE',
+          headers: JSON_HEADERS,
+          body: JSON.stringify({ period_start: period, ids }),
+        });
+        const json = (await res.json()) as { deleted?: number; error?: string };
+        if (!res.ok || json.error) throw new Error(json.error || `Delete failed (${res.status})`);
+        const gone = new Set(ids);
+        setRows((prev) => prev.filter((r) => !gone.has(r.id)));
+        setSelectedIds((prev) => {
+          const next = new Set([...prev].filter((id) => !gone.has(id)));
+          return next.size === prev.size ? prev : next;
+        });
+        broadcastChanged();
+        void loadPeriods();
+        const n = json.deleted ?? ids.length;
+        toast.success(`Deleted ${n} ${n === 1 ? 'hire' : 'hires'}`);
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : 'Failed to delete');
+      } finally {
+        setBusy(false);
+      }
+    },
+    [period, broadcastChanged, loadPeriods],
+  );
+
+  const deleteRow = useCallback(
+    (id: string, name: string) => {
+      if (lockedRef.current) return;
+      if (!window.confirm(`Delete ${name.trim() || 'this hire'} from ${formatWeekLabel(period)}? This can't be undone.`)) return;
+      void deleteIds([id]);
+    },
+    [period, deleteIds],
+  );
+
+  const deleteSelected = useCallback(() => {
+    if (lockedRef.current) return;
+    const ids = [...selectedIds];
+    if (ids.length === 0) return;
+    if (!window.confirm(`Delete ${ids.length} ${ids.length === 1 ? 'hire' : 'hires'}? This can't be undone.`)) return;
+    void deleteIds(ids);
+  }, [selectedIds, deleteIds]);
+
+  const applyToSelected = useCallback(
+    async (field: 'department' | 'country', value: string) => {
+      if (lockedRef.current) return;
+      const v = value.trim();
+      const ids = [...selectedIds];
+      if (!v || ids.length === 0) return;
+      setBusy(true);
+      try {
+        const res = await fetch('/api/hr/new-hire-checklist', {
+          method: 'PATCH',
+          headers: JSON_HEADERS,
+          body: JSON.stringify({ period_start: period, ids, field, value: v }),
+        });
+        const json = (await res.json()) as { rows?: HrNewHireChecklistRow[]; error?: string };
+        if (!res.ok || json.error) throw new Error(json.error || `Update failed (${res.status})`);
+        const byId = new Map((json.rows ?? []).map((r) => [r.id, fromServer(r)]));
+        setRows((prev) => prev.map((r) => byId.get(r.id) ?? r));
+        broadcastChanged();
+        toast.success(`Set ${field} on ${ids.length} ${ids.length === 1 ? 'hire' : 'hires'} to ${v}`);
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : 'Failed to apply');
+      } finally {
+        setBusy(false);
+      }
+    },
+    [selectedIds, period, broadcastChanged],
+  );
+
+  // ── Lock / reopen (rows are already persisted; lock only freezes + emails) ───
+  const lockWeek = useCallback(async (): Promise<boolean> => {
+    if (!period) return false;
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await fetch('/api/hr/new-hire-checklist', {
+        method: 'PUT',
+        headers: JSON_HEADERS,
+        body: JSON.stringify({ period_start: period, period_end: weekEndIso(period), action: 'lock' }),
+      });
+      const json = (await res.json()) as {
+        rows?: HrNewHireChecklistRow[];
+        period?: { status?: string; locked_at?: string | null; locked_by?: string | null };
+        error?: string;
+      };
+      if (!res.ok || json.error) throw new Error(json.error || `Lock failed (${res.status})`);
+      const fresh = (json.rows ?? []).map(fromServer);
+      setRows(fresh);
+      setLocked(true);
+      setLockedAt(json.period?.locked_at ?? null);
+      setLockedBy(json.period?.locked_by ?? null);
+      setSelectedIds(new Set());
+      broadcastChanged();
+      void loadPeriods();
+      toast.success(`Locked in ${fresh.length} ${fresh.length === 1 ? 'hire' : 'hires'} for ${formatWeekLabel(period)}`);
+      return true;
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Lock failed');
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  }, [period, broadcastChanged, loadPeriods]);
+
+  const reopen = useCallback(async (): Promise<boolean> => {
+    if (!period) return false;
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await fetch('/api/hr/new-hire-checklist', {
+        method: 'PUT',
+        headers: JSON_HEADERS,
+        body: JSON.stringify({ period_start: period, action: 'reopen' }),
+      });
+      const json = (await res.json()) as { rows?: HrNewHireChecklistRow[]; error?: string };
+      if (!res.ok || json.error) throw new Error(json.error || `Reopen failed (${res.status})`);
+      setRows((json.rows ?? []).map(fromServer));
+      setLocked(false);
+      setLockedAt(null);
+      setLockedBy(null);
+      broadcastChanged();
+      void loadPeriods();
+      toast.success(`Reopened ${formatWeekLabel(period)} for editing`);
+      return true;
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Reopen failed');
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  }, [period, broadcastChanged, loadPeriods]);
+
+  // Run the password-gated action the dialog just confirmed; close only on
+  // success (a failure keeps it open so the passphrase can be retried).
+  const runGatedAction = useCallback(async (): Promise<boolean> => {
+    const ok = actionDialog === 'lock' ? await lockWeek() : await reopen();
+    if (ok) setActionDialog(null);
+    return ok;
+  }, [actionDialog, lockWeek, reopen]);
+
+  // Lock / reopen a specific week from the dropdown. If it isn't the active week
+  // we switch to it first (so the HR Manager sees what they're acting on), then
+  // the effect below opens the dialog once it's loaded.
+  const startPeriodAction = useCallback((targetPeriod: string, mode: LockDialogMode) => {
+    setPeriodMenuOpen(false);
+    if (targetPeriod === period && loaded && !loading) {
+      setActionDialog(mode);
+      return;
+    }
+    if (targetPeriod !== period) {
+      setPeriod(targetPeriod);
+      setLoaded(false);
+    }
+    setPendingAction({ period: targetPeriod, mode });
+  }, [period, loaded, loading]);
+
   useEffect(() => {
-    if (locked) setEditor(null);
-  }, [locked]);
-
-  const clearColumn = useCallback((key: FieldKey, label: string) => {
-    if (lockedRef.current) return;
-    setRows((prev) => prev.map((row) => ({ ...row, [key]: '' })));
-    setDirty(true);
-    toast.success(`Cleared the ${label} column`);
-  }, []);
-
-  const deleteRow = useCallback((r: number, key: string) => {
-    if (lockedRef.current) return;
-    setRows((prev) => {
-      const next = prev.filter((_, i) => i !== r);
-      return next.length ? next : seedBlank(1);
-    });
-    setSelectedKeys((prev) => {
-      if (!prev.has(key)) return prev;
-      const next = new Set(prev);
-      next.delete(key);
-      return next;
-    });
-    setSel(null); // row indices shifted — drop the cell selection
-    setEditing(null);
-    setDirty(true);
-  }, []);
+    if (!pendingAction) return;
+    if (pendingAction.period !== period || loading || !loaded) return;
+    setActionDialog(pendingAction.mode);
+    setPendingAction(null);
+  }, [pendingAction, period, loading, loaded]);
 
   const changePeriod = useCallback((p: string) => {
     setPeriodMenuOpen(false);
     if (p === period) return;
-    if (dirty && !window.confirm('Discard unsaved changes and switch weeks?')) return;
     setPeriod(p);
     setLoaded(false);
-    setSavedSignal(null); // drop any pending peer-save nudge from the week we're leaving
-  }, [period, dirty]);
+  }, [period]);
 
   const refresh = useCallback(() => {
-    if (dirty && !window.confirm('Discard unsaved changes and reload from the server?')) return;
     void fetchPeriod(period);
     void loadPeriods();
-  }, [dirty, period, fetchPeriod, loadPeriods]);
+  }, [period, fetchPeriod, loadPeriods]);
 
-  // Download a multi-sheet .xlsx workbook (one sheet per week) — either just the
-  // current week or every week with saved rows. Reflects SAVED data; a warning
-  // fires first if the current week has unsaved edits.
+  // Download a multi-sheet .xlsx workbook (one sheet per week).
   const exportWorkbook = useCallback(async (scope: 'week' | 'all') => {
     setExportMenuOpen(false);
-    if (scope === 'week' && dirty && !window.confirm('This week has unsaved changes — export the last SAVED data anyway?')) return;
     setExporting(scope);
     try {
       const url =
@@ -1100,191 +795,42 @@ export default function HrNewHireChecklist({
     } finally {
       setExporting(null);
     }
-  }, [dirty, period]);
+  }, [period]);
 
-  const persist = useCallback(async (action: 'save' | 'lock'): Promise<boolean> => {
-    if (!period) return false;
-    setSaving(true);
-    setError(null);
-    try {
-      const res = await fetch('/api/hr/new-hire-checklist', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          period_start: period,
-          period_end: weekEndIso(period),
-          rows: toPayload(rows),
-          action,
-        }),
-      });
-      const json = (await res.json()) as {
-        rows?: HrNewHireChecklistRow[];
-        period?: { status?: string; locked_at?: string | null; locked_by?: string | null };
-        error?: string;
-      };
-      if (!res.ok || json.error) throw new Error(json.error || `Save failed (${res.status})`);
-      const isLocked = json.period?.status === 'locked';
-      const fresh = (json.rows ?? []).map(fromServer);
-      setRows(fresh.length ? fresh : isLocked ? [] : emptyWeekSeed(period));
-      setLocked(isLocked);
-      setLockedAt(json.period?.locked_at ?? null);
-      setLockedBy(json.period?.locked_by ?? null);
-      setDirty(false);
-      setSelectedKeys(new Set());
-      setSel(null);
-      setEditing(null);
-      setLoaded(true);
-      liveSaved(); // tell co-editors to resync (avoids a duplicate insert of a shared new row)
-      const filled = fresh.filter((r) => !rowIsBlank(r)).length;
-      toast.success(
-        action === 'lock'
-          ? `Locked in ${filled} ${filled === 1 ? 'hire' : 'hires'} for ${formatWeekLabel(period)}`
-          : `Saved ${filled} ${filled === 1 ? 'hire' : 'hires'} to ${formatWeekLabel(period)}`,
-      );
-      void loadPeriods();
-      return true;
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Save failed');
-      return false;
-    } finally {
-      setSaving(false);
-    }
-  }, [period, rows, loadPeriods, liveSaved]);
-
-  const reopen = useCallback(async (): Promise<boolean> => {
-    if (!period) return false;
-    setSaving(true);
-    setError(null);
-    try {
-      const res = await fetch('/api/hr/new-hire-checklist', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ period_start: period, action: 'reopen' }),
-      });
-      const json = (await res.json()) as { rows?: HrNewHireChecklistRow[]; error?: string };
-      if (!res.ok || json.error) throw new Error(json.error || `Reopen failed (${res.status})`);
-      const fresh = (json.rows ?? []).map(fromServer);
-      setRows(fresh.length ? fresh : emptyWeekSeed(period));
-      setLocked(false);
-      setLockedAt(null);
-      setLockedBy(null);
-      setDirty(false);
-      toast.success(`Reopened ${formatWeekLabel(period)} for editing`);
-      liveSaved(); // reopen changes the shared grid too — nudge co-editors to resync
-      void loadPeriods();
-      return true;
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Reopen failed');
-      return false;
-    } finally {
-      setSaving(false);
-    }
-  }, [period, loadPeriods, liveSaved]);
-
-  // Run the password-gated action the dialog just confirmed; close the dialog
-  // only on success (a failure keeps it open so the passphrase can be retried).
-  const runGatedAction = useCallback(async (): Promise<boolean> => {
-    const ok = actionDialog === 'lock' ? await persist('lock') : await reopen();
-    if (ok) setActionDialog(null);
-    return ok;
-  }, [actionDialog, persist, reopen]);
-
-  // Lock / reopen a specific week straight from the dropdown. Locking requires
-  // that week's rows loaded (the server sends the whole grid + fires the
-  // orientation emails), and it's safest to always show the HR Manager the week
-  // they're about to act on — so if it isn't the active week we switch to it
-  // first and let the effect below open the dialog once it's loaded.
-  const startPeriodAction = useCallback((targetPeriod: string, mode: LockDialogMode) => {
-    setPeriodMenuOpen(false);
-    if (targetPeriod === period && loaded && !loading) {
-      setActionDialog(mode);
-      return;
-    }
-    if (targetPeriod !== period) {
-      if (dirty && !window.confirm('Discard unsaved changes and switch weeks?')) return;
-      setPeriod(targetPeriod);
-      setLoaded(false);
-      setSavedSignal(null);
-    }
-    setPendingAction({ period: targetPeriod, mode });
-  }, [period, loaded, loading, dirty]);
-
-  // Once the week a dropdown action asked for is in view (loaded, not loading),
-  // pop its dialog. A failed load leaves `loaded` false so nothing opens.
-  useEffect(() => {
-    if (!pendingAction) return;
-    if (pendingAction.period !== period || loading || !loaded) return;
-    setActionDialog(pendingAction.mode);
-    setPendingAction(null);
-  }, [pendingAction, period, loading, loaded]);
-
-  const filledCount = useMemo(() => rows.filter((r) => !rowIsBlank(r)).length, [rows]);
-
-  // Normalised (min→max) selection rectangle for highlighting cells.
-  const selBounds = useMemo(() => {
-    if (!sel) return null;
-    return {
-      r0: Math.min(sel.ar, sel.hr),
-      r1: Math.max(sel.ar, sel.hr),
-      c0: Math.min(sel.ac, sel.hc),
-      c1: Math.max(sel.ac, sel.hc),
-    };
-  }, [sel]);
+  const hireCount = rows.length;
 
   // ── Row multiselect → bulk-apply department / country / delete ──
-  const selectedCount = selectedKeys.size;
-  const allSelected = rows.length > 0 && rows.every((r) => selectedKeys.has(r._key));
+  const selectedCount = selectedIds.size;
+  const allSelected = rows.length > 0 && rows.every((r) => selectedIds.has(r.id));
 
   useEffect(() => {
     if (selectAllRef.current) selectAllRef.current.indeterminate = selectedCount > 0 && !allSelected;
   }, [selectedCount, allSelected]);
 
-  const toggleRow = useCallback((key: string) => {
-    setSelectedKeys((prev) => {
+  const toggleRow = useCallback((id: string) => {
+    setSelectedIds((prev) => {
       const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
       return next;
     });
   }, []);
 
   const toggleAll = useCallback(() => {
-    setSelectedKeys((prev) => {
-      const everySelected = rows.length > 0 && rows.every((r) => prev.has(r._key));
-      return everySelected ? new Set() : new Set(rows.map((r) => r._key));
+    setSelectedIds((prev) => {
+      const everySelected = rows.length > 0 && rows.every((r) => prev.has(r.id));
+      return everySelected ? new Set() : new Set(rows.map((r) => r.id));
     });
   }, [rows]);
 
-  const clearSelection = useCallback(() => setSelectedKeys(new Set()), []);
+  const clearSelection = useCallback(() => setSelectedIds(new Set()), []);
 
-  const applyToSelected = useCallback(
-    (field: 'department' | 'country', value: string) => {
-      if (lockedRef.current) return;
-      const v = value.trim();
-      if (!v || selectedKeys.size === 0) return;
-      const n = selectedKeys.size;
-      setRows((prev) => prev.map((row) => (selectedKeys.has(row._key) ? { ...row, [field]: v } : row)));
-      setDirty(true);
-      toast.success(`Set ${field} on ${n} ${n === 1 ? 'hire' : 'hires'} to ${v}`);
-    },
-    [selectedKeys],
-  );
+  const openAdd = useCallback(() => setEditor({ mode: 'add' }), []);
+  const openEdit = useCallback((row: GridRow) => {
+    setEditor({ mode: 'edit', id: row.id, baseUpdatedAt: row._updatedAt, base: rowToValues(row) });
+  }, []);
 
-  const deleteSelected = useCallback(() => {
-    if (lockedRef.current) return;
-    if (selectedKeys.size === 0) return;
-    setRows((prev) => {
-      const next = prev.filter((row) => !selectedKeys.has(row._key));
-      return next.length ? next : seedBlank(1);
-    });
-    setSelectedKeys(new Set());
-    setSel(null); // row indices shifted — drop the cell selection
-    setEditing(null);
-    setDirty(true);
-  }, [selectedKeys]);
-
-  // Period options for the dropdown: generated rolling weeks unioned with weeks
-  // that already have saved rows / a lock (so historical data is always reachable).
+  // Period options: generated rolling weeks ∪ weeks that already have rows / a lock.
   const periodOptions = useMemo(() => {
     const map = new Map<string, { start: string; locked: boolean; rowCount: number }>();
     for (const s of rollingWeeks(currentSunday, 16, 1)) map.set(s, { start: s, locked: false, rowCount: 0 });
@@ -1306,10 +852,10 @@ export default function HrNewHireChecklist({
               New Hire Checklist
             </h1>
             <p className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-500">
-              Paste each column, pick the week, then Lock in to save these hires to that period.
-              {filledCount > 0 && (
+              Add hires with the New Hire button — every change saves instantly. Lock in the week to send orientation invites.
+              {hireCount > 0 && (
                 <span className="ml-1 font-medium text-emerald-700 dark:text-emerald-400">
-                  {filledCount} {filledCount === 1 ? 'hire' : 'hires'} this week.
+                  {hireCount} {hireCount === 1 ? 'hire' : 'hires'} this week.
                 </span>
               )}
             </p>
@@ -1322,7 +868,7 @@ export default function HrNewHireChecklist({
                 <button
                   type="button"
                   onClick={() => changePeriod(addWeeks(period, -1))}
-                  disabled={saving}
+                  disabled={busy}
                   aria-label="Previous week"
                   className="flex h-8 w-7 items-center justify-center rounded-lg border border-emerald-200 text-emerald-700 hover:bg-emerald-50 disabled:opacity-50 dark:border-emerald-800 dark:text-emerald-300 dark:hover:bg-emerald-950/40"
                 >
@@ -1331,7 +877,7 @@ export default function HrNewHireChecklist({
                 <button
                   type="button"
                   onClick={() => setPeriodMenuOpen((o) => !o)}
-                  disabled={saving}
+                  disabled={busy}
                   className={cn(
                     'flex h-8 items-center gap-1.5 rounded-lg border px-2.5 text-[13px] font-medium transition-colors disabled:opacity-50',
                     locked
@@ -1352,7 +898,7 @@ export default function HrNewHireChecklist({
                 <button
                   type="button"
                   onClick={() => changePeriod(addWeeks(period, 1))}
-                  disabled={saving}
+                  disabled={busy}
                   aria-label="Next week"
                   className="flex h-8 w-7 items-center justify-center rounded-lg border border-emerald-200 text-emerald-700 hover:bg-emerald-50 disabled:opacity-50 dark:border-emerald-800 dark:text-emerald-300 dark:hover:bg-emerald-950/40"
                 >
@@ -1397,7 +943,7 @@ export default function HrNewHireChecklist({
                           <button
                             type="button"
                             onClick={() => startPeriodAction(o.start, 'reopen')}
-                            disabled={saving}
+                            disabled={busy}
                             title={`Reopen ${formatWeekLabel(o.start)} for editing`}
                             aria-label={`Reopen ${formatWeekLabel(o.start)} for editing`}
                             className="flex shrink-0 items-center gap-1 rounded-lg border border-amber-300 bg-amber-50 px-2 py-1 text-[11px] font-semibold text-amber-700 transition hover:bg-amber-100 disabled:opacity-50 dark:border-amber-500/40 dark:bg-amber-950/30 dark:text-amber-300 dark:hover:bg-amber-950/50"
@@ -1409,7 +955,7 @@ export default function HrNewHireChecklist({
                           <button
                             type="button"
                             onClick={() => startPeriodAction(o.start, 'lock')}
-                            disabled={saving}
+                            disabled={busy}
                             title={`Lock in ${formatWeekLabel(o.start)} & send orientation invites`}
                             aria-label={`Lock in ${formatWeekLabel(o.start)}`}
                             className="flex shrink-0 items-center gap-1 rounded-lg border border-emerald-300 bg-emerald-50 px-2 py-1 text-[11px] font-semibold text-emerald-700 transition hover:bg-emerald-100 disabled:opacity-50 dark:border-emerald-500/40 dark:bg-emerald-950/30 dark:text-emerald-300 dark:hover:bg-emerald-950/50"
@@ -1425,19 +971,12 @@ export default function HrNewHireChecklist({
               )}
             </div>
 
-            {dirty && !locked && (
-              <span className="flex items-center gap-1.5 text-[11px] font-medium text-amber-600 dark:text-amber-400">
-                <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-amber-500" />
-                Unsaved
-              </span>
-            )}
-
             <Button
               type="button"
               variant="outline"
               size="sm"
               onClick={refresh}
-              disabled={loading || saving}
+              disabled={loading || busy}
               className="h-8 gap-1.5 border-emerald-200 text-emerald-700 hover:bg-emerald-50 dark:border-emerald-800 dark:text-emerald-300"
             >
               <RefreshCw className={cn('h-3.5 w-3.5', loading && 'animate-spin')} />
@@ -1496,36 +1035,23 @@ export default function HrNewHireChecklist({
                 type="button"
                 size="sm"
                 onClick={() => setActionDialog('reopen')}
-                disabled={saving || loading}
+                disabled={busy || loading}
                 className="h-8 gap-1.5 bg-amber-500 text-white hover:bg-amber-600 disabled:opacity-50"
               >
-                {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <LockOpen className="h-3.5 w-3.5" />}
+                {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <LockOpen className="h-3.5 w-3.5" />}
                 Reopen
               </Button>
             ) : (
-              <>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={() => void persist('save')}
-                  disabled={saving || loading || !dirty}
-                  className="h-8 gap-1.5 border-emerald-200 text-emerald-700 hover:bg-emerald-50 disabled:opacity-50 dark:border-emerald-800 dark:text-emerald-300"
-                >
-                  {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
-                  Save
-                </Button>
-                <Button
-                  type="button"
-                  size="sm"
-                  onClick={() => setActionDialog('lock')}
-                  disabled={saving || loading}
-                  className="h-8 gap-1.5 bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50"
-                >
-                  <Lock className="h-3.5 w-3.5" />
-                  Lock in
-                </Button>
-              </>
+              <Button
+                type="button"
+                size="sm"
+                onClick={() => setActionDialog('lock')}
+                disabled={busy || loading}
+                className="h-8 gap-1.5 bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50"
+              >
+                <Lock className="h-3.5 w-3.5" />
+                Lock in
+              </Button>
             )}
           </div>
         </div>
@@ -1546,7 +1072,7 @@ export default function HrNewHireChecklist({
                 type="button"
                 size="sm"
                 onClick={() => setActionDialog('reopen')}
-                disabled={saving}
+                disabled={busy}
                 className="ml-auto h-7 gap-1.5 bg-amber-500 text-white hover:bg-amber-600"
               >
                 <LockOpen className="h-3.5 w-3.5" />
@@ -1555,19 +1081,17 @@ export default function HrNewHireChecklist({
             </div>
           )}
 
-          {/* Paste hint (editing only) */}
+          {/* How-it-works hint (editing only) */}
           {!locked && (
             <div className="flex items-start gap-2 rounded-xl border border-emerald-200 bg-emerald-50/70 px-3.5 py-2.5 text-[12px] leading-snug text-emerald-800 dark:border-emerald-500/30 dark:bg-emerald-950/20 dark:text-emerald-300">
               <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />
               <span>
-                Works like a spreadsheet: <strong>click</strong> a cell to select it, <strong>drag</strong> or{' '}
-                <strong>Shift-click</strong> to highlight a range, then <strong>double-click</strong> (or just start
-                typing / press Enter) to edit. <strong>Ctrl/Cmd+C</strong> copies the highlighted range and{' '}
-                <strong>Delete</strong> clears it. Paste a column from Excel / Google Sheets into any cell and it fills
-                straight down. <strong>Source</strong>, <strong>Department</strong> and <strong>Country</strong> offer a dropdown while editing — pick <strong>Referral</strong> as the source and <strong>Referred By</strong> (checked against the Global Master List) is required.
-                Tick rows to bulk-apply a department / country. A green dot in a cell&apos;s corner means it&apos;s been
-                edited — click it for the full history. <strong>Lock in</strong> saves this week&apos;s hires and feeds
-                the per-country <strong>Bulk Invite</strong> in Onboarding. Reopen any week to edit.
+                This checklist is edit-locked so two people can never overwrite each other. Use the{' '}
+                <strong>New Hire</strong> button to add a hire and the <strong>pencil</strong> to edit one — every change
+                saves instantly and shows up live for everyone. Tick rows to bulk-apply a{' '}
+                <strong>department</strong> / <strong>country</strong> or delete. A green dot in a cell means it&apos;s been
+                edited — click it for the full history. <strong>Lock in</strong> sends this week&apos;s orientation invites
+                and feeds the per-country <strong>Bulk Invite</strong> in Onboarding.
               </span>
             </div>
           )}
@@ -1608,8 +1132,8 @@ export default function HrNewHireChecklist({
               <Button
                 type="button"
                 size="sm"
-                onClick={() => applyToSelected('department', bulkDept)}
-                disabled={!bulkDept.trim()}
+                onClick={() => void applyToSelected('department', bulkDept)}
+                disabled={!bulkDept.trim() || busy}
                 className="h-8 gap-1.5 bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50"
               >
                 <Check className="h-3.5 w-3.5" />
@@ -1634,8 +1158,8 @@ export default function HrNewHireChecklist({
               <Button
                 type="button"
                 size="sm"
-                onClick={() => applyToSelected('country', bulkCountry)}
-                disabled={!bulkCountry.trim()}
+                onClick={() => void applyToSelected('country', bulkCountry)}
+                disabled={!bulkCountry.trim() || busy}
                 className="h-8 gap-1.5 bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50"
               >
                 <Check className="h-3.5 w-3.5" />
@@ -1647,7 +1171,8 @@ export default function HrNewHireChecklist({
                 size="sm"
                 variant="outline"
                 onClick={deleteSelected}
-                className="h-8 gap-1.5 border-rose-200 text-rose-700 hover:bg-rose-50 dark:border-rose-800 dark:text-rose-300"
+                disabled={busy}
+                className="h-8 gap-1.5 border-rose-200 text-rose-700 hover:bg-rose-50 disabled:opacity-50 dark:border-rose-800 dark:text-rose-300"
               >
                 <Trash2 className="h-3.5 w-3.5" />
                 Delete
@@ -1672,402 +1197,239 @@ export default function HrNewHireChecklist({
             <div className="rounded-xl border border-dashed border-rose-200 bg-white py-10 text-center text-sm text-rose-600 dark:border-rose-500/30 dark:bg-[#0d1117]">
               {error}
             </div>
-          ) : (
-            <>
-              {/* Dropdown sources for the Department + Country comboboxes. */}
-              <datalist id="nhc-departments">
-                {departments.map((d) => (<option key={d} value={d} />))}
-              </datalist>
-              <datalist id="nhc-countries">
-                {COUNTRY_OPTIONS.map((c) => (<option key={c} value={c} />))}
-              </datalist>
-              <datalist id="nhc-sources">
-                {sourceOptions.map((s) => (<option key={s} value={s} />))}
-              </datalist>
-              <datalist id="nhc-referrers">
-                {referrers.map((n) => (<option key={n} value={n} />))}
-              </datalist>
-
-              {rows.length === 0 ? (
-                <div className="flex flex-1 flex-col items-center justify-center gap-2 rounded-2xl border border-dashed border-emerald-200 bg-white py-12 text-center dark:border-emerald-950/40 dark:bg-[#0d1117]">
-                  <ClipboardList className="h-7 w-7 text-emerald-300 dark:text-emerald-800" />
-                  <p className="text-sm text-zinc-500">No hires saved for {formatWeekLabel(period)}.</p>
-                  {locked && (
-                    <Button type="button" size="sm" onClick={() => setActionDialog('reopen')} disabled={saving} className="mt-1 gap-1.5 bg-amber-500 text-white hover:bg-amber-600">
-                      <LockOpen className="h-3.5 w-3.5" /> Reopen to add hires
-                    </Button>
-                  )}
-                </div>
+          ) : rows.length === 0 ? (
+            <div className="flex flex-1 flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-emerald-200 bg-white py-12 text-center dark:border-emerald-950/40 dark:bg-[#0d1117]">
+              <ClipboardList className="h-7 w-7 text-emerald-300 dark:text-emerald-800" />
+              <p className="text-sm text-zinc-500">No hires yet for {formatWeekLabel(period)}.</p>
+              {locked ? (
+                <Button type="button" size="sm" onClick={() => setActionDialog('reopen')} disabled={busy} className="gap-1.5 bg-amber-500 text-white hover:bg-amber-600">
+                  <LockOpen className="h-3.5 w-3.5" /> Reopen to add hires
+                </Button>
               ) : (
-                <div className="relative min-h-0 flex-1">
-                <div
-                  ref={registerScrollSurface}
-                  tabIndex={0}
-                  aria-label="New hire checklist grid — click or use arrow keys to select cells; Enter, F2, or double-click to edit; Ctrl+C to copy, Delete to clear"
-                  onKeyDown={gridKeyDown}
-                  onCopy={gridCopy}
-                  onPaste={gridPaste}
-                  className="relative h-full w-full overflow-auto rounded-2xl border border-emerald-100/80 bg-white shadow-sm outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/40 dark:border-emerald-950/40 dark:bg-zinc-950"
-                >
-                  <table className="table-keep w-full border-collapse text-[13px]">
-                    <thead className="sticky top-0 z-10">
-                      <tr className="bg-emerald-50/90 backdrop-blur dark:bg-emerald-950/40">
-                        <th className="sticky left-0 z-20 w-14 border-b border-r border-emerald-100/80 bg-emerald-50/90 px-1 py-2 text-center backdrop-blur dark:border-emerald-950/40 dark:bg-emerald-950/40">
-                          {locked ? (
-                            <span className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-300">#</span>
-                          ) : (
-                            <input
-                              ref={selectAllRef}
-                              type="checkbox"
-                              checked={allSelected}
-                              onChange={toggleAll}
-                              aria-label="Select all rows"
-                              className="h-3.5 w-3.5 cursor-pointer align-middle accent-emerald-600"
-                            />
-                          )}
+                <Button type="button" size="sm" onClick={openAdd} disabled={busy} className="gap-1.5 bg-emerald-600 text-white hover:bg-emerald-700">
+                  <UserPlus className="h-3.5 w-3.5" /> Add a new hire
+                </Button>
+              )}
+            </div>
+          ) : (
+            <div className="relative min-h-0 flex-1">
+              <div
+                ref={registerScrollSurface}
+                className="relative h-full w-full overflow-auto rounded-2xl border border-emerald-100/80 bg-white shadow-sm dark:border-emerald-950/40 dark:bg-zinc-950"
+              >
+                <table className="table-keep w-full border-collapse text-[13px]">
+                  <thead className="sticky top-0 z-10">
+                    <tr className="bg-emerald-50/90 backdrop-blur dark:bg-emerald-950/40">
+                      <th className="sticky left-0 z-20 w-14 border-b border-r border-emerald-100/80 bg-emerald-50/90 px-1 py-2 text-center backdrop-blur dark:border-emerald-950/40 dark:bg-emerald-950/40">
+                        {locked ? (
+                          <span className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-300">#</span>
+                        ) : (
+                          <input
+                            ref={selectAllRef}
+                            type="checkbox"
+                            checked={allSelected}
+                            onChange={toggleAll}
+                            aria-label="Select all rows"
+                            className="h-3.5 w-3.5 cursor-pointer align-middle accent-emerald-600"
+                          />
+                        )}
+                      </th>
+                      {COLUMNS.map((c) => (
+                        <th
+                          key={c.key}
+                          className="whitespace-nowrap border-b border-emerald-100/80 px-2.5 py-2 text-left text-[11.5px] font-semibold uppercase tracking-wide text-emerald-700 dark:border-emerald-950/40 dark:text-emerald-300"
+                        >
+                          {c.label}
                         </th>
-                        {COLUMNS.map((c) => (
-                          <th
-                            key={c.key}
-                            className="group/col whitespace-nowrap border-b border-emerald-100/80 px-2.5 py-2 text-left text-[11.5px] font-semibold uppercase tracking-wide text-emerald-700 dark:border-emerald-950/40 dark:text-emerald-300"
-                          >
-                            <div className="flex items-center justify-between gap-2">
-                              <span>{c.label}</span>
-                              {!locked && (
-                                <button
-                                  type="button"
-                                  onClick={() => clearColumn(c.key, c.label)}
-                                  aria-label={`Clear the ${c.label} column`}
-                                  title={`Clear the ${c.label} column`}
-                                  className="shrink-0 rounded p-0.5 text-emerald-400 opacity-0 transition hover:bg-emerald-100 hover:text-emerald-700 focus:opacity-100 group-hover/col:opacity-100 dark:text-emerald-600 dark:hover:bg-emerald-900/40 dark:hover:text-emerald-200"
-                                >
-                                  <Eraser className="h-3 w-3" />
-                                </button>
-                              )}
-                            </div>
-                          </th>
-                        ))}
-                        {!locked && <th className="w-16 border-b border-emerald-100/80 px-1 py-2 dark:border-emerald-950/40" />}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {rows.map((row, r) => {
-                        const isSelected = selectedKeys.has(row._key);
-                        // A referral hire must name who referred them — flag the
-                        // Referred By cell amber until it's filled.
-                        const needsReferrer = isReferralSource(row.source || '') && !(row.referred_by || '').trim();
-                        const rowPeers = peersByRow.get(r) ?? [];
-                        const rowPeerColor = rowPeers[0]?.color;
-                        const rowPeerNames = rowPeers
-                          .map((p) => p.name?.trim() || p.email.split('@')[0])
-                          .join(', ');
-                        return (
-                          <tr
-                            key={row._key}
+                      ))}
+                      {!locked && <th className="w-16 border-b border-emerald-100/80 px-1 py-2 dark:border-emerald-950/40" />}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rows.map((row, r) => {
+                      const isSelected = selectedIds.has(row.id);
+                      // A referral hire must name who referred them — flag the
+                      // Referred By cell amber until it's filled.
+                      const needsReferrer = isReferralSource(row.source || '') && !(row.referred_by || '').trim();
+                      const peerEditing = editingByRowId.get(row.id) ?? null;
+                      const peerName = peerEditing ? (peerEditing.name?.trim() || peerEditing.email.split('@')[0]) : '';
+                      return (
+                        <tr
+                          key={row.id}
+                          className={cn(
+                            'group/row hover:bg-emerald-50/40 dark:hover:bg-emerald-950/20',
+                            isSelected ? 'bg-emerald-50 dark:bg-emerald-950/30' : 'even:bg-zinc-50/40 dark:even:bg-zinc-900/30',
+                          )}
+                          style={peerEditing ? { boxShadow: `inset 3px 0 0 0 ${peerEditing.color}` } : undefined}
+                        >
+                          <td
                             className={cn(
-                              'group/row hover:bg-emerald-50/40 dark:hover:bg-emerald-950/20',
-                              isSelected ? 'bg-emerald-50 dark:bg-emerald-950/30' : 'even:bg-zinc-50/40 dark:even:bg-zinc-900/30',
+                              'sticky left-0 z-[1] border-b border-r border-emerald-50 px-1.5 py-0 dark:border-zinc-800',
+                              isSelected
+                                ? 'bg-emerald-50 dark:bg-emerald-950/30'
+                                : 'bg-white group-even/row:bg-zinc-50/40 group-hover/row:bg-emerald-50/40 dark:bg-zinc-950 dark:group-even/row:bg-zinc-900/30',
                             )}
-                            style={rowPeerColor ? { boxShadow: `inset 3px 0 0 0 ${rowPeerColor}` } : undefined}
                           >
-                            <td
-                              className={cn(
-                                'sticky left-0 z-[1] border-b border-r border-emerald-50 px-1.5 py-0 dark:border-zinc-800',
-                                isSelected
-                                  ? 'bg-emerald-50 dark:bg-emerald-950/30'
-                                  : 'bg-white group-even/row:bg-zinc-50/40 group-hover/row:bg-emerald-50/40 dark:bg-zinc-950 dark:group-even/row:bg-zinc-900/30',
-                              )}
+                            <div
+                              className="flex items-center justify-center gap-1.5"
+                              title={peerEditing ? `${peerName} is editing this hire` : undefined}
                             >
-                              <div
-                                className="flex items-center justify-center gap-1.5"
-                                title={
-                                  rowPeers.length > 0
-                                    ? `${rowPeerNames} ${rowPeers.length > 1 ? 'are' : 'is'} already in this row`
-                                    : undefined
-                                }
-                              >
-                                {!locked && (
-                                  <input
-                                    type="checkbox"
-                                    checked={isSelected}
-                                    onChange={() => toggleRow(row._key)}
-                                    aria-label={`Select row ${r + 1}`}
-                                    className="h-3.5 w-3.5 cursor-pointer accent-emerald-600"
+                              {!locked && (
+                                <input
+                                  type="checkbox"
+                                  checked={isSelected}
+                                  onChange={() => toggleRow(row.id)}
+                                  aria-label={`Select row ${r + 1}`}
+                                  className="h-3.5 w-3.5 cursor-pointer accent-emerald-600"
+                                />
+                              )}
+                              <span className="relative tabular-nums text-[11px] text-zinc-400">
+                                {r + 1}
+                                {peerEditing && (
+                                  <motion.span
+                                    aria-hidden
+                                    className="absolute -right-1.5 top-0 h-2.5 w-[2px] rounded-full"
+                                    style={{ background: peerEditing.color }}
+                                    animate={{ opacity: [1, 0.15, 1] }}
+                                    transition={{ duration: 0.9, repeat: Infinity, ease: 'linear' }}
                                   />
                                 )}
-                                <span className="relative tabular-nums text-[11px] text-zinc-400">
-                                  {r + 1}
-                                  {rowPeerColor && (
-                                    <motion.span
-                                      aria-hidden
-                                      className="absolute -right-1.5 top-0 h-2.5 w-[2px] rounded-full"
-                                      style={{ background: rowPeerColor }}
-                                      animate={{ opacity: [1, 0.15, 1] }}
-                                      transition={{ duration: 0.9, repeat: Infinity, ease: 'linear' }}
-                                    />
-                                  )}
-                                </span>
-                              </div>
-                            </td>
-                            {COLUMNS.map((c, ci) => {
-                              const value = row[c.key];
-                              const edits = row._editedBy?.[c.key];
-                              const hasEdits = !!edits && edits.length > 0;
-                              const listId =
-                                c.key === 'department'
-                                  ? departments.length > 0 ? 'nhc-departments' : undefined
-                                  : c.key === 'country'
-                                    ? 'nhc-countries'
-                                    : c.key === 'source'
-                                      ? 'nhc-sources'
-                                      : c.key === 'referred_by'
-                                        ? referrers.length > 0 ? 'nhc-referrers' : undefined
-                                        : undefined;
-                              const peerHere = peerByCell.get(`${r}:${c.key}`) ?? null;
-                              const isEditing = editing?.r === r && editing?.c === ci;
-                              const inSel =
-                                !!selBounds && r >= selBounds.r0 && r <= selBounds.r1 && ci >= selBounds.c0 && ci <= selBounds.c1;
-                              const isHead = sel?.hr === r && sel?.hc === ci;
-                              const widthClass = listId ? 'min-w-[10rem]' : 'min-w-[8rem]';
-                              return (
-                                <td
-                                  key={c.key}
-                                  onMouseDown={(e) => cellMouseDown(e, r, ci)}
-                                  onMouseEnter={() => cellMouseEnter(r, ci)}
-                                  onDoubleClick={() => beginEdit(r, ci, { selectAll: true })}
+                              </span>
+                            </div>
+                          </td>
+                          {COLUMNS.map((c) => {
+                            const value = row[c.key];
+                            const edits = row._editedBy?.[c.key];
+                            const hasEdits = !!edits && edits.length > 0;
+                            const listId =
+                              c.key === 'department' || c.key === 'country' || c.key === 'source' || c.key === 'referred_by';
+                            const widthClass = listId ? 'min-w-[10rem]' : 'min-w-[8rem]';
+                            return (
+                              <td
+                                key={c.key}
+                                className={cn(
+                                  'relative border-b border-emerald-50/80 p-0 dark:border-zinc-800/80',
+                                  c.key === 'referred_by' && needsReferrer && 'bg-amber-50 ring-1 ring-inset ring-amber-300 dark:bg-amber-950/30 dark:ring-amber-700/60',
+                                )}
+                              >
+                                {hasEdits && (
+                                  <button
+                                    type="button"
+                                    data-cell-history-dot
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      const rect = e.currentTarget.getBoundingClientRect();
+                                      const width = 300;
+                                      const maxH = 320; // matches max-h-80 below
+                                      setHistoryPopover({
+                                        label: c.label,
+                                        entries: [...(edits ?? [])].reverse(),
+                                        top: Math.max(12, Math.min(rect.bottom + 6, window.innerHeight - maxH - 12)),
+                                        left: Math.max(12, Math.min(rect.left, window.innerWidth - width - 12)),
+                                      });
+                                    }}
+                                    title={`Edited ${edits!.length} ${edits!.length === 1 ? 'time' : 'times'} — view history`}
+                                    aria-label={`View edit history for ${c.label}, row ${r + 1}`}
+                                    className="absolute right-0.5 top-0.5 z-[4] flex h-3 w-3 items-center justify-center"
+                                  >
+                                    <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 ring-2 ring-white dark:bg-emerald-400 dark:ring-zinc-950" />
+                                  </button>
+                                )}
+                                <div
                                   className={cn(
-                                    'relative border-b border-emerald-50/80 p-0 dark:border-zinc-800/80',
-                                    !isEditing && 'cursor-cell',
-                                    inSel && !isEditing && 'bg-emerald-200/70 dark:bg-emerald-700/40',
-                                    c.key === 'referred_by' && needsReferrer && !inSel && !isEditing &&
-                                      'bg-amber-50 ring-1 ring-inset ring-amber-300 dark:bg-amber-950/30 dark:ring-amber-700/60',
+                                    'flex h-9 select-text items-center whitespace-nowrap px-2.5 text-[13px]',
+                                    value
+                                      ? 'text-zinc-800 dark:text-zinc-100'
+                                      : c.key === 'referred_by' && needsReferrer
+                                        ? 'text-amber-600 dark:text-amber-400'
+                                        : 'text-zinc-400',
+                                    widthClass,
                                   )}
                                 >
-                                  {hasEdits && (
-                                    <button
-                                      type="button"
-                                      data-cell-history-dot
-                                      onMouseDown={(e) => e.stopPropagation()}
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        const rect = e.currentTarget.getBoundingClientRect();
-                                        const width = 300;
-                                        const maxH = 320; // matches max-h-80 below
-                                        setHistoryPopover({
-                                          label: c.label,
-                                          entries: [...(edits ?? [])].reverse(),
-                                          // Clamp within the viewport so a dot near the
-                                          // bottom edge can't push the popover off-screen.
-                                          top: Math.max(12, Math.min(rect.bottom + 6, window.innerHeight - maxH - 12)),
-                                          left: Math.max(12, Math.min(rect.left, window.innerWidth - width - 12)),
-                                        });
-                                      }}
-                                      title={`Edited ${edits!.length} ${edits!.length === 1 ? 'time' : 'times'} — view history`}
-                                      aria-label={`View edit history for ${c.label}, row ${r + 1}`}
-                                      className="absolute right-0.5 top-0.5 z-[4] flex h-3 w-3 items-center justify-center"
-                                    >
-                                      <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 ring-2 ring-white dark:bg-emerald-400 dark:ring-zinc-950" />
-                                    </button>
-                                  )}
-                                  {isEditing ? (
-                                    <input
-                                      data-cell={`${r}-${ci}`}
-                                      list={listId}
-                                      value={value}
-                                      onFocus={() => {
-                                        activeCellRef.current = { r, col: c.key };
-                                        liveFocus(r, row._cid, c.key);
-                                      }}
-                                      onChange={(e) => {
-                                        setCell(r, c.key, e.target.value);
-                                        liveEdit(r, row._cid, c.key, e.target.value);
-                                      }}
-                                      onPaste={(e) => handlePaste(e, r, ci)}
-                                      onKeyDown={(e) => editingKeyDown(e, r, ci)}
-                                      onBlur={(e) => {
-                                        if (escapingRef.current) {
-                                          escapingRef.current = false;
-                                          const pre = preEditRef.current;
-                                          if (pre && pre.r === r && pre.c === ci) {
-                                            setCell(r, c.key, pre.value);
-                                            liveEdit(r, row._cid, c.key, pre.value);
-                                          }
-                                        } else if (listId && (c.key === 'department' || c.key === 'country')) {
-                                          const canon =
-                                            c.key === 'department'
-                                              ? canonicalizeDept(e.target.value, departments)
-                                              : canonicalizeCountry(e.target.value);
-                                          if (canon !== e.target.value) {
-                                            setCell(r, c.key, canon);
-                                            liveEdit(r, row._cid, c.key, canon);
-                                          }
-                                        }
-                                        liveBlur(r, row._cid, c.key);
-                                        if (activeCellRef.current?.r === r && activeCellRef.current?.col === c.key) {
-                                          activeCellRef.current = null;
-                                        }
-                                        setEditing((cur) => (cur?.r === r && cur?.c === ci ? null : cur));
-                                      }}
-                                      className={cn(
-                                        'relative z-[3] h-9 w-full bg-emerald-50/90 px-2.5 text-[13px] text-zinc-800 outline-none ring-2 ring-inset ring-emerald-500 placeholder:text-zinc-300 dark:bg-emerald-950/50 dark:text-zinc-100',
-                                        listId ? cn(widthClass, SELECT_SCHEME_CLASS) : widthClass,
-                                      )}
-                                    />
-                                  ) : (
-                                    <div
-                                      className={cn(
-                                        'flex h-9 select-none items-center whitespace-nowrap px-2.5 text-[13px]',
-                                        value
-                                          ? 'text-zinc-800 dark:text-zinc-100'
-                                          : c.key === 'referred_by' && needsReferrer
-                                            ? 'text-amber-600 dark:text-amber-400'
-                                            : 'text-zinc-400',
-                                        widthClass,
-                                      )}
-                                    >
-                                      {value || (c.key === 'referred_by' && needsReferrer ? 'Who referred?' : '')}
-                                    </div>
-                                  )}
-                                  {/* Active-cell outline for the current selection head. */}
-                                  {isHead && !isEditing && (
-                                    <span
-                                      aria-hidden
-                                      className="pointer-events-none absolute inset-0 z-[2] rounded-[1px] ring-2 ring-inset ring-emerald-500"
-                                    />
-                                  )}
-                                  {/* Live co-editing: a peer is in this cell right
-                                      now — ring it in their identity color + tag
-                                      it with their name (their keystrokes stream
-                                      into the value above in real time). */}
-                                  {peerHere && (
-                                    <>
-                                      <span
-                                        aria-hidden
-                                        className="pointer-events-none absolute inset-0 z-[2] rounded-[2px]"
-                                        style={{ boxShadow: `inset 0 0 0 2px ${peerHere.color}` }}
-                                      />
-                                      <span
-                                        className={cn(
-                                          // z above the sticky header (z-10) + sticky row-number cell (z-20)
-                                          // so the name isn't painted over at the header boundary.
-                                          'pointer-events-none absolute left-0 z-[21] flex max-w-full items-center whitespace-nowrap rounded px-1 py-px text-[9px] font-semibold leading-none text-white shadow-sm',
-                                          r === 0 ? 'top-full mt-px' : 'bottom-full mb-px',
-                                        )}
-                                        style={{ background: peerHere.color }}
-                                        title={`${(peerHere.name && peerHere.name.trim()) || peerHere.email} is editing this cell`}
-                                      >
-                                        {(peerHere.name && peerHere.name.trim()) || peerHere.email.split('@')[0]}
-                                      </span>
-                                    </>
-                                  )}
-                                </td>
-                              );
-                            })}
-                            {!locked && (
-                              <td className="border-b border-emerald-50/80 px-1 dark:border-zinc-800/80">
-                                <div className="flex items-center justify-center gap-0.5">
-                                  <button
-                                    type="button"
-                                    onClick={() => setEditor({ mode: 'edit', key: row._key })}
-                                    aria-label={`Edit row ${r + 1} in a form`}
-                                    title="Edit this hire in a form"
-                                    className="rounded p-1 text-zinc-300 opacity-0 transition hover:bg-emerald-50 hover:text-emerald-600 focus:opacity-100 group-hover/row:opacity-100 dark:hover:bg-emerald-950/30 dark:hover:text-emerald-300"
-                                  >
-                                    <Pencil className="h-3.5 w-3.5" />
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => deleteRow(r, row._key)}
-                                    aria-label={`Delete row ${r + 1}`}
-                                    className="rounded p-1 text-zinc-300 opacity-0 transition hover:bg-rose-50 hover:text-rose-500 focus:opacity-100 group-hover/row:opacity-100 dark:hover:bg-rose-950/30"
-                                  >
-                                    <Trash2 className="h-3.5 w-3.5" />
-                                  </button>
+                                  {value || (c.key === 'referred_by' && needsReferrer ? 'Who referred?' : '')}
                                 </div>
                               </td>
-                            )}
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
+                            );
+                          })}
+                          {!locked && (
+                            <td className="border-b border-emerald-50/80 px-1 dark:border-zinc-800/80">
+                              <div className="flex items-center justify-center gap-0.5">
+                                <button
+                                  type="button"
+                                  onClick={() => openEdit(row)}
+                                  disabled={busy || !!peerEditing}
+                                  aria-label={`Edit row ${r + 1} in a form`}
+                                  title={peerEditing ? `${peerName} is editing this hire` : 'Edit this hire in a form'}
+                                  className="rounded p-1 text-zinc-300 opacity-0 transition hover:bg-emerald-50 hover:text-emerald-600 focus:opacity-100 group-hover/row:opacity-100 disabled:cursor-not-allowed disabled:opacity-40 disabled:group-hover/row:opacity-40 dark:hover:bg-emerald-950/30 dark:hover:text-emerald-300"
+                                >
+                                  <Pencil className="h-3.5 w-3.5" />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => deleteRow(row.id, row.name)}
+                                  disabled={busy}
+                                  aria-label={`Delete row ${r + 1}`}
+                                  className="rounded p-1 text-zinc-300 opacity-0 transition hover:bg-rose-50 hover:text-rose-500 focus:opacity-100 group-hover/row:opacity-100 disabled:cursor-not-allowed disabled:opacity-40 dark:hover:bg-rose-950/30"
+                                >
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                </button>
+                              </div>
+                            </td>
+                          )}
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
 
-                {/* "New Hire" CTA — a neon-green glowing button pinned to the
-                    lower-right corner of the table (stays put while the grid
-                    scrolls). Greyed out + inert once the week is locked in;
-                    reopen the week to re-enable it. */}
-                <div className="pointer-events-none absolute bottom-4 right-4 z-30">
-                  {locked ? (
-                    <button
-                      type="button"
-                      disabled
-                      title="This week is locked — reopen it to add a hire"
-                      aria-label="Add a new hire (disabled — this week is locked)"
-                      className="pointer-events-auto flex h-11 cursor-not-allowed items-center gap-2 rounded-full border border-zinc-300 bg-zinc-200/90 px-5 text-sm font-semibold text-zinc-400 shadow-md backdrop-blur-sm dark:border-zinc-700 dark:bg-zinc-800/90 dark:text-zinc-500"
-                    >
-                      <Lock className="h-4 w-4" />
-                      New Hire
-                    </button>
-                  ) : (
-                    <motion.button
-                      type="button"
-                      onClick={() => setEditor({ mode: 'add' })}
-                      disabled={saving}
-                      aria-label="Add a new hire"
-                      initial={false}
-                      animate={
-                        reduceMotion || saving
-                          ? undefined
-                          : {
-                              boxShadow: [
-                                '0 0 0 1px rgba(16,185,129,0.55), 0 0 12px 2px rgba(16,185,129,0.5), 0 0 26px 6px rgba(16,185,129,0.28)',
-                                '0 0 0 1px rgba(16,185,129,0.9), 0 0 22px 5px rgba(16,185,129,0.85), 0 0 46px 13px rgba(16,185,129,0.5)',
-                              ],
-                            }
-                      }
-                      transition={{ duration: 1.8, repeat: Infinity, repeatType: 'reverse', ease: 'easeInOut' }}
-                      whileHover={reduceMotion ? undefined : { scale: 1.05 }}
-                      whileTap={reduceMotion ? undefined : { scale: 0.96 }}
-                      className={cn(
-                        'pointer-events-auto flex h-11 items-center gap-2 rounded-full bg-gradient-to-br from-emerald-400 via-emerald-500 to-teal-600 px-5 text-sm font-bold tracking-wide text-white ring-1 ring-emerald-300/70 shadow-[0_0_18px_4px_rgba(16,185,129,0.55)] focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-200 disabled:cursor-not-allowed disabled:opacity-50 dark:ring-emerald-400/40',
-                      )}
-                    >
-                      <span className="flex h-6 w-6 items-center justify-center rounded-full bg-white/25 backdrop-blur-sm">
-                        <UserPlus className="h-4 w-4" />
-                      </span>
-                      New Hire
-                    </motion.button>
-                  )}
-                </div>
-                </div>
-              )}
-
-              {!locked && (
-                <div className="flex shrink-0 flex-wrap items-center gap-2">
-                  <Button
+              {/* "New Hire" CTA — a neon-green glowing button pinned to the
+                  lower-right corner of the table (stays put while the grid
+                  scrolls). Greyed out + inert once the week is locked. */}
+              <div className="pointer-events-none absolute bottom-4 right-4 z-30">
+                {locked ? (
+                  <button
                     type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={() => addRows(1)}
-                    className="h-8 gap-1.5 border-emerald-200 text-emerald-700 hover:bg-emerald-50 dark:border-emerald-800 dark:text-emerald-300"
+                    disabled
+                    title="This week is locked — reopen it to add a hire"
+                    aria-label="Add a new hire (disabled — this week is locked)"
+                    className="pointer-events-auto flex h-11 cursor-not-allowed items-center gap-2 rounded-full border border-zinc-300 bg-zinc-200/90 px-5 text-sm font-semibold text-zinc-400 shadow-md backdrop-blur-sm dark:border-zinc-700 dark:bg-zinc-800/90 dark:text-zinc-500"
                   >
-                    <Plus className="h-3.5 w-3.5" />
-                    Add row
-                  </Button>
-                  <Button
+                    <Lock className="h-4 w-4" />
+                    New Hire
+                  </button>
+                ) : (
+                  <motion.button
                     type="button"
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => addRows(10)}
-                    className="h-8 gap-1.5 text-emerald-700 hover:bg-emerald-50 dark:text-emerald-300"
+                    onClick={openAdd}
+                    disabled={busy}
+                    aria-label="Add a new hire"
+                    initial={false}
+                    animate={
+                      reduceMotion || busy
+                        ? undefined
+                        : {
+                            boxShadow: [
+                              '0 0 0 1px rgba(16,185,129,0.55), 0 0 12px 2px rgba(16,185,129,0.5), 0 0 26px 6px rgba(16,185,129,0.28)',
+                              '0 0 0 1px rgba(16,185,129,0.9), 0 0 22px 5px rgba(16,185,129,0.85), 0 0 46px 13px rgba(16,185,129,0.5)',
+                            ],
+                          }
+                    }
+                    transition={{ duration: 1.8, repeat: Infinity, repeatType: 'reverse', ease: 'easeInOut' }}
+                    whileHover={reduceMotion ? undefined : { scale: 1.05 }}
+                    whileTap={reduceMotion ? undefined : { scale: 0.96 }}
+                    className={cn(
+                      'pointer-events-auto flex h-11 items-center gap-2 rounded-full bg-gradient-to-br from-emerald-400 via-emerald-500 to-teal-600 px-5 text-sm font-bold tracking-wide text-white ring-1 ring-emerald-300/70 shadow-[0_0_18px_4px_rgba(16,185,129,0.55)] focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-200 disabled:cursor-not-allowed disabled:opacity-50 dark:ring-emerald-400/40',
+                    )}
                   >
-                    <Plus className="h-3.5 w-3.5" />
-                    Add 10 rows
-                  </Button>
-                </div>
-              )}
-            </>
+                    <span className="flex h-6 w-6 items-center justify-center rounded-full bg-white/25 backdrop-blur-sm">
+                      <UserPlus className="h-4 w-4" />
+                    </span>
+                    New Hire
+                  </motion.button>
+                )}
+              </div>
+            </div>
           )}
         </div>
       </div>
@@ -2124,15 +1486,16 @@ export default function HrNewHireChecklist({
         mode={actionDialog}
         weekLabel={formatWeekLabel(period)}
         orientationLabel={formatOrientationLabel(period)}
-        hireCount={filledCount}
+        hireCount={hireCount}
         lockedBy={lockedBy}
         lockedStamp={formatLockStamp(lockedAt) || null}
         onCancel={() => setActionDialog(null)}
         onConfirm={runGatedAction}
       />
 
-      {/* "New Hire" modal — 'add' appends a hire; 'edit' (a row's Edit button)
-          pre-fills the form and updates that row in place. */}
+      {/* "New Hire" modal — 'add' inserts a hire; 'edit' (a row's Edit button)
+          pre-fills the form and updates that row. Both write to the server
+          immediately (see handleQuickAdd / handleEditHire). */}
       <NewHireQuickAddDialog
         open={editor !== null}
         mode={editor?.mode ?? 'add'}
@@ -2140,18 +1503,12 @@ export default function HrNewHireChecklist({
         departments={departments}
         sources={sourceOptions}
         referrers={referrers}
-        initialValues={
-          editor?.mode === 'edit'
-            ? (() => {
-                const rw = rows.find((r) => r._key === editor.key);
-                return rw ? rowToValues(rw) : null;
-              })()
-            : null
-        }
+        initialValues={editor?.mode === 'edit' ? editor.base : null}
         onCancel={() => setEditor(null)}
         onSave={(values) => {
-          if (editor?.mode === 'edit') handleEditHire(editor.key, values);
-          else handleQuickAdd(values);
+          const ed = editor;
+          if (ed?.mode === 'edit') return handleEditHire(ed, values);
+          return handleQuickAdd(values);
         }}
       />
     </div>

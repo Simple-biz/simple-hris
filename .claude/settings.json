@@ -556,7 +556,8 @@
       "Bash(node diag-period.mjs)",
       "Bash(rm -f diag-period.mjs)",
       "PowerShell(npx tsc --noEmit; \"EXIT=$LASTEXITCODE\")",
-      "PowerShell(npx tsc --noEmit 2>&1 | Select-String -Pattern \"src/|app/api/department-transfers|app/api/manager|app/api/payroll|components/ui/smooth|error TS\" | Select-Object -First 40; \"EXIT=$LASTEXITCODE\")"
+      "PowerShell(npx tsc --noEmit 2>&1 | Select-String -Pattern \"src/|app/api/department-transfers|app/api/manager|app/api/payroll|components/ui/smooth|error TS\" | Select-Object -First 40; \"EXIT=$LASTEXITCODE\")",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" --max-time 5 http://localhost:3000/api/hr/new-hire-checklist?period=2026-07-05)"
     ],
     "additionalDirectories": [
       "\\tmp",

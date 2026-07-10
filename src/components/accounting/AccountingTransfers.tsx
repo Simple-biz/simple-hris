@@ -16,16 +16,13 @@ import { cn } from '@/lib/utils';
 import { getTabCache, hasFetchedThisSession, markFetchedThisSession, setTabCache, TAB_CACHE_KEYS } from '@/lib/accounting/tab-cache';
 import type { AccountingTransferRow, TransferRateChange } from '@/lib/transfers/accounting-transfers';
 import type { TransferRequestStatus } from '@/lib/supabase/department-transfer-requests';
+import { CURRENCY_SYMBOL, type PayCurrency } from '@/lib/payment-catalog/pay-structure';
 
-const peso = new Intl.NumberFormat('en-PH', {
-  style: 'currency',
-  currency: 'PHP',
-  minimumFractionDigits: 2,
-  maximumFractionDigits: 2,
-});
-
-function money(n: number | null): string {
-  return n == null ? '—' : peso.format(n);
+/** Format a rate in its own currency (PHP/USD/COP), always with 2 decimals. */
+function money(n: number | null, c: PayCurrency | null): string {
+  if (n == null) return '—';
+  const sym = c ? CURRENCY_SYMBOL[c] : '';
+  return `${sym}${n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
 const STATUS_STYLE: Record<TransferRequestStatus, string> = {
@@ -44,19 +41,31 @@ const STATUS_LABEL: Record<TransferRequestStatus, string> = {
 };
 
 function RateCell({ rc }: { rc: TransferRateChange | null }) {
-  if (!rc) {
-    return <span className="text-[11px] italic text-zinc-400">rate change pending</span>;
+  if (!rc || (rc.old_regular == null && rc.new_regular == null)) {
+    return <span className="text-[11px] italic text-zinc-400">no catalog rate set</span>;
   }
   const otLine =
     rc.old_ot != null || rc.new_ot != null
-      ? `OT ${money(rc.old_ot)} → ${money(rc.new_ot)}`
+      ? `OT ${money(rc.old_ot, rc.old_currency)} → ${money(rc.new_ot, rc.new_currency)}`
       : null;
+  // Compare only when both sides are known and in the same currency — a
+  // cross-currency numeric compare (e.g. $10 vs ₱500) is meaningless.
+  const comparable =
+    rc.old_regular != null && rc.new_regular != null && rc.old_currency === rc.new_currency;
+  const dir = comparable ? Math.sign(rc.new_regular! - rc.old_regular!) : 0;
+  const newClass =
+    dir > 0
+      ? 'text-emerald-700 dark:text-emerald-300' // increase
+      : dir < 0
+        ? 'text-rose-600 dark:text-rose-400' // decrease
+        : 'text-zinc-700 dark:text-zinc-200'; // no change / not comparable
   return (
-    <div className="text-xs" title={otLine ? `${otLine} · effective ${rc.effective_from}` : `effective ${rc.effective_from}`}>
-      <span className="text-zinc-500 line-through dark:text-zinc-500">{money(rc.old_regular)}</span>
+    <div className="text-xs" title={otLine ?? undefined}>
+      <span className="text-zinc-500 line-through dark:text-zinc-500">
+        {money(rc.old_regular, rc.old_currency)}
+      </span>
       <ArrowRight className="mx-1 inline h-3 w-3 text-zinc-400" />
-      <span className="font-semibold text-emerald-700 dark:text-emerald-300">{money(rc.new_regular)}</span>
-      <span className="ml-1 text-[10px] text-zinc-400">eff {rc.effective_from}</span>
+      <span className={cn('font-semibold', newClass)}>{money(rc.new_regular, rc.new_currency)}</span>
     </div>
   );
 }

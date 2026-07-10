@@ -1,18 +1,24 @@
-import { createSupabaseServiceRoleClient, createSupabaseServerClient } from '@/lib/supabase/server';
 import {
   listAllTransferRequests,
-  type DepartmentTransferRequestRow,
   type TransferRequestStatus,
 } from '@/lib/supabase/department-transfer-requests';
+import { listPayStructures } from '@/lib/supabase/pay-structures-db';
+import { buildCatalogRateIndex, type CatalogRateIndex } from '@/lib/payroll/resolve-rate';
+import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
+import type { PayCurrency, PayStructure } from '@/lib/payment-catalog/pay-structure';
 
-/** The rate change linked to a transfer, resolved from employee_rate_history by
- *  the transfer's effective date. Null when Accounting hasn't set one yet. */
+/** The pay-rate change a transfer produces, read from the Payment Catalog: the
+ *  base rate of the department the employee left ("old") vs. the base rate of
+ *  the department they joined ("new"). Each side carries its own currency
+ *  because departments can be paid in PHP or USD. A side is null when that
+ *  department has no catalog rate set yet. */
 export interface TransferRateChange {
-  effective_from: string;
   old_regular: number | null;
   old_ot: number | null;
+  old_currency: PayCurrency | null;
   new_regular: number | null;
   new_ot: number | null;
+  new_currency: PayCurrency | null;
 }
 
 export interface AccountingTransferRow {
@@ -36,46 +42,51 @@ export interface AccountingTransferRow {
   rate_change: TransferRateChange | null;
 }
 
-type RateRow = { regular: number | null; ot: number | null; effective_from: string };
-
-function parseNum(v: unknown): number | null {
-  if (v == null || v === '') return null;
-  const n = parseFloat(String(v).replace(/,/g, ''));
-  return Number.isFinite(n) ? n : null;
-}
-
-/** All emails that could identify one transfer's employee in rate history. */
-function candidateEmails(t: DepartmentTransferRequestRow): string[] {
-  return [t.employee_work_email, t.employee_personal_email, t.employee_email]
-    .map((e) => (e ?? '').trim().toLowerCase())
-    .filter(Boolean);
+/** Look up a department-scoped catalog structure by its (possibly raw) name. */
+function deptStructure(
+  index: CatalogRateIndex,
+  deptRaw: string | null | undefined,
+): PayStructure | null {
+  if (!deptRaw) return null;
+  // Accept either a raw department name or an already-canonical key.
+  const key = normalizeDeptToKey(deptRaw) ?? (index.byDeptKey.has(deptRaw) ? deptRaw : null);
+  if (!key) return null;
+  return index.byDeptKey.get(key) ?? null;
 }
 
 /**
- * Resolve the rate change a transfer produced: the first rate-history entry
- * effective ON/AFTER the transfer's effective date is the "new" rate; the entry
- * in effect just before it is the "old" rate. Rows are ascending by date.
+ * Resolve the department-to-department rate change a transfer represents: the
+ * Payment Catalog base rate of the FROM department vs. the base rate of the TO
+ * department. Null when neither department has a catalog rate set.
+ *
+ * Note: this compares department BASE rates. An employee with a negotiated
+ * individual rate keeps it across a move (individual wins over the department
+ * base at pay time), so this column reflects the departmental rate difference,
+ * not necessarily that one person's take-home change.
  */
-function resolveRateChange(rows: RateRow[] | undefined, effDate: string): TransferRateChange | null {
-  if (!rows || rows.length === 0) return null;
-  const sorted = [...rows].sort((a, b) => a.effective_from.localeCompare(b.effective_from));
-  const newIdx = sorted.findIndex((r) => r.effective_from >= effDate);
-  if (newIdx < 0) return null; // no change on/after the transfer date yet
-  const next = sorted[newIdx];
-  const prev = newIdx > 0 ? sorted[newIdx - 1] : null;
+function resolveDeptRateChange(
+  index: CatalogRateIndex,
+  fromDept: string | null | undefined,
+  toDept: string | null | undefined,
+): TransferRateChange | null {
+  const from = deptStructure(index, fromDept);
+  const to = deptStructure(index, toDept);
+  if (!from && !to) return null;
   return {
-    effective_from: next.effective_from,
-    old_regular: prev?.regular ?? null,
-    old_ot: prev?.ot ?? null,
-    new_regular: next.regular,
-    new_ot: next.ot,
+    old_regular: from?.regularRate ?? null,
+    old_ot: from?.otRate ?? null,
+    old_currency: from?.currency ?? null,
+    new_regular: to?.regularRate ?? null,
+    new_ot: to?.otRate ?? null,
+    new_currency: to?.currency ?? null,
   };
 }
 
 /**
  * Builds the Accounting Transfers view: every transfer request joined to the
- * pay-rate change it triggered (resolved from employee_rate_history by the
- * effective date). Pay-bearing — callers must gate to rate-visible roles.
+ * department-to-department pay-rate change it represents (the Payment Catalog
+ * base rate of the FROM department vs. the TO department). Pay-bearing —
+ * callers must gate to rate-visible roles.
  */
 export async function buildAccountingTransfers(): Promise<{
   rows: AccountingTransferRow[];
@@ -85,46 +96,12 @@ export async function buildAccountingTransfers(): Promise<{
   if (error) return { rows: [], error };
   if (transfers.length === 0) return { rows: [], error: null };
 
-  // Rate history for just the involved employees, indexed by lowercased email.
-  const supabase = createSupabaseServiceRoleClient() ?? createSupabaseServerClient();
-  const byEmail = new Map<string, RateRow[]>();
-  if (supabase) {
-    const emails = Array.from(new Set(transfers.flatMap((t) => candidateEmails(t))));
-    if (emails.length > 0) {
-      const { data } = await supabase
-        .from('employee_rate_history')
-        .select('employee_email, regular_rate, ot_rate, effective_from')
-        .in('employee_email', emails);
-      for (const r of (data ?? []) as Array<Record<string, unknown>>) {
-        const em = String(r['employee_email'] ?? '').trim().toLowerCase();
-        const eff = String(r['effective_from'] ?? '').slice(0, 10);
-        if (!em || !eff) continue;
-        const row: RateRow = {
-          regular: parseNum(r['regular_rate']),
-          ot: parseNum(r['ot_rate']),
-          effective_from: eff,
-        };
-        const list = byEmail.get(em);
-        if (list) list.push(row);
-        else byEmail.set(em, [row]);
-      }
-    }
-  }
+  // Payment Catalog department base rates drive the from/to rate comparison.
+  const { structures } = await listPayStructures();
+  const catalogIndex = buildCatalogRateIndex(structures);
 
   const rows: AccountingTransferRow[] = transfers.map((t) => {
-    // Effective date drives the rate link (fall back to proposed for a request
-    // still awaiting release, so Accounting sees the anticipated change).
-    const effDate = t.effective_date || t.proposed_effective_date;
-    let rateChange: TransferRateChange | null = null;
-    if (effDate) {
-      for (const em of candidateEmails(t)) {
-        const hit = resolveRateChange(byEmail.get(em), effDate);
-        if (hit) {
-          rateChange = hit;
-          break;
-        }
-      }
-    }
+    const rateChange = resolveDeptRateChange(catalogIndex, t.from_department, t.to_department);
     return {
       id: t.id,
       employee_name: t.employee_name,
