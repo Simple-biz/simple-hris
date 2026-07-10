@@ -527,6 +527,31 @@ Beyond `auth.force_logout_map` (§9), the wizard/dispatch flow stores two per-pa
 
 ---
 
+## Data-integrity gotcha: PostgREST 1000-row default cap *(discovered 2026-07-09)*
+
+PostgREST silently enforces a default `db.max-rows` ceiling of **1000** on every read. A single un-paginated query — even `.range(0, 9999)`, which *looks* like it asks for 10,000 rows — returns **at most 1000 rows with NO error**: the response is a clean 200 with a quietly truncated body. Nothing in the client surfaces the truncation.
+
+The active roster is **1075**, so this bit the master-list readers first. `listActiveMasterListPeople` / `listActiveMasterListNames` (in [global-master-list-db.ts](src/lib/supabase/global-master-list-db.ts)) each did one `.range(0, 9999)` read of `active_employees` and silently dropped ~75 people — `jamesc@simple.biz` among them — off the **Department Transfers "Request transfer in" person picker** and the **New Hire Checklist "Referred By" picker**. The person simply wasn't in the list; no error hinted why.
+
+**Fix:** `fetchAllActiveEmployeeRows` (same file) loops `.range(from, from + 1000 - 1)` in 1000-row pages until a short page returns, with a `from > 200000` safety valve. Both pickers now read through it. `fetchActiveEmployees` in [employees.ts](src/lib/supabase/employees.ts) (which feeds `masterEmployees` — the Payroll Wizard's department source-of-truth + rate-match bridge) paginates the same way via its inner `queryView` loop, as do the pre-existing paginated readers in this doc (`fetchAllMasterRowsForReconcile`, `applyOffboardedFromSheetRows`, `listOffboardedSheetRows`, `fetchHubstaffRowsOrdered`, the `mesa_ledger` reader).
+
+**The rule:** any read of a table that can exceed 1000 rows *after filtering* MUST paginate. `.range(0, 9999)` is not pagination — it is a 1000-row cap with a misleading number.
+
+**Audit fallout (2026-07-09):** an audit found ~44 more un-paginated `.range(0, 9999)` reads across the data layer. The ones confirmed to run against tables that already exceed (or can exceed) 1000 rows still need the same pagination fix:
+
+| Call site | File | What it reads |
+|---|---|---|
+| `loadTakenWorkEmails` | [work-email-server.ts](src/lib/hr/work-email-server.ts) | Work-email minting — the set of already-taken work emails; a truncated set can re-mint a colliding address |
+| Rates CSV sync existing-row lookup | [rates-upload-db.ts](src/lib/supabase/rates-upload-db.ts) | The full-table `employee_hourly_rates` read folded case-insensitively in memory (the 2026-05-07 "single full-table SELECT" fix) |
+| `fetchMasterMin` | [current-pay.ts](src/lib/payroll/current-pay.ts) | The current-pay / dispatch-queue master-min read that builds the Tech Bonus `startDateByEmail` map |
+| `getTeamRoster` | [team-roster.ts](src/lib/supabase/team-roster.ts) | Manager team-roster membership |
+
+> These are the *confirmed-live* candidates flagged by the audit; the remaining `.range(0, 9999)` hits are on tables comfortably under 1000 rows today (e.g. HSL agents, departments, leave requests) and are latent — they become bugs the moment their table crosses the ceiling.
+>
+> The profile-merge engine ([employee-rate-profiles.ts](src/lib/supabase/employee-rate-profiles.ts)) was also audited but its full-table anchor reads (rates, master, extra tables) **already paginate** in 1000-row pages; its only un-paginated reads are bounded (US-only `.in()` on ~12 emails, per-email `.ilike(...).limit(50)` lookups), so it needs no fix.
+
+---
+
 ## Where the SQL lives
 
 All migrations/seeds referenced above live under `references/sql/`, organized by intent into subfolders:

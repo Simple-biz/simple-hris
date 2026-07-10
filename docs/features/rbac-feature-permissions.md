@@ -235,5 +235,43 @@ The Manager **HSL Bonus** tab hosts two KPI calculators, gated by
 - A manager with neither sees an empty-state ("No bonus departments assigned to
   you"); a manager with both gets a calculator switcher.
 
+---
+
+## 7. 2026-07 updates
+
+### `FEATURE_CATALOG` is the single source of truth for the admin grid
+
+A tab is only *gateable* if it appears in `FEATURE_CATALOG[view]`
+([feature-permissions.ts](src/lib/rbac/feature-permissions.ts)). The per-role
+tabs files (e.g. [accounting-tabs.ts](src/lib/rbac/accounting-tabs.ts)) drive the
+sidebar and edit checks off `TAB_TO_FEATURE`, but they do **not** feed the
+AdminRoles grid — `FeaturePermissionGrid` renders one row per catalog entry.
+So a tab wired into a tabs file (its `TAB_TO_FEATURE` maps a UI tab id →
+feature key) but **not** also registered in `FEATURE_CATALOG[view]` ships with
+no Hidden/View/Edit toggle row: it runs at runtime with no way for an admin to
+grant or hide it. **MESA hit exactly this bug** — it was live in the accounting
+tabs list before it had a `{ key: "mesa", label: "MESA" }` entry in
+`FEATURE_CATALOG.accounting`. When adding a tab, register it in **both** places
+(and keep `VIEW_TAB_IDS` in sync per the §1 note).
+
+### Feature-permission self-read unions linked work emails
+
+`fetchFeaturePermissionsForEmail` and the `GET /api/employee-feature-permissions`
+**self-read** now expand the caller through `expandWorkEmailAliases` and query
+`employee_feature_permissions` for **all** of a person's linked work emails.
+When the same `(view_key, feature)` grant appears under more than one address,
+the **most-permissive access wins** (`edit` > `view` > `hidden`). This means a
+person who signs in via an alternate (second-inbox) work email inherits the tab
+overlay granted to their primary work email, so the dashboard the role bridge
+already unlocked isn't stuck showing only the read-only Overview fallback.
+
+**Admin cross-reads stay exact.** In the GET route the union only applies when
+`authz.effectiveEmail === authz.sessionEmail` (`isSelfRead`); an elevated admin
+reading someone else's grid (`effectiveEmail != sessionEmail`) sees **only that
+exact email's rows**, because the AdminRoles grid edits one specific email's
+rows and must not be told a union of aliases.
+
+---
+
 See also: `docs/reference/system-architecture.md` decision #8;
 `docs/implementation-plans/implementation-plan-rbac.md` for the original plan.

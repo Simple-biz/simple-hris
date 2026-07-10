@@ -39,6 +39,10 @@ interface PresenceMeta {
   /** Current in-dashboard tab label, e.g. `"Onboarding"`. Null when the route
    *  has no tabbed shell (login, onboarding links, etc.) or hasn't reported one yet. */
   tab: string | null;
+  /** Whether the HRIS tab is currently focused/visible. `false` means the person
+   *  is still connected but has switched tabs / minimized / is on another app —
+   *  i.e. "inactive". Driven by `document.visibilityState`. */
+  active: boolean;
   online_at: string;
 }
 
@@ -47,6 +51,8 @@ export interface PresenceDetail {
   name: string | null;
   path: string | null;
   tab: string | null;
+  /** `false` = connected but not looking at the HRIS tab (inactive/away). */
+  active: boolean;
   online_at: string;
 }
 
@@ -173,6 +179,7 @@ export default function PresenceProvider({ children }: { children: ReactNode }) 
       name: nameRef.current,
       path,
       tab: tabLabelRef.current,
+      active: typeof document !== 'undefined' ? document.visibilityState === 'visible' : true,
       online_at: new Date().toISOString(),
     } satisfies PresenceMeta);
   }, [selfEmail]);
@@ -208,6 +215,9 @@ export default function PresenceProvider({ children }: { children: ReactNode }) 
           name: meta?.name ?? null,
           path: meta?.path ?? null,
           tab: meta?.tab ?? null,
+          // Default to active when the field is absent (older bundles) so a
+          // pre-change session isn't wrongly shown as inactive.
+          active: meta?.active ?? true,
           online_at: meta?.online_at ?? new Date().toISOString(),
         });
       }
@@ -261,10 +271,14 @@ export default function PresenceProvider({ children }: { children: ReactNode }) 
     }, HEARTBEAT_INTERVAL_MS);
 
     const onVisibility = () => {
+      // Re-announce on EITHER transition so the active/inactive flag flips live
+      // for viewers the moment someone switches tabs or comes back. Only beat
+      // the DB "last seen" stamp when visible (hidden tabs are still connected,
+      // so they shouldn't refresh last-seen — that's for truly-gone sessions).
       if (document.visibilityState === 'visible') {
         sendHeartbeat(selfEmail, nameRef.current);
-        retrack();
       }
+      retrack();
     };
     const onUnload = () => {
       sendHeartbeat(selfEmail, nameRef.current);

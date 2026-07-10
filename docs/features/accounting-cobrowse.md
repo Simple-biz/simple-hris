@@ -83,3 +83,84 @@ Both run together: while observing you get the full screen mirror *and* the
 driver's live cursor. See
 [project_accounting_collab_layer](../../) memory and
 `docs/reference/components.md` for the collab layer details.
+
+---
+
+## 5. Two-way tutoring chat + Admin Global Master List (2026-07-09/10)
+
+The app-wide **"watch screen"** cobrowse (a second driver every authenticated
+client runs on the shared `hris-cobrowse` channel, separate from the per-dashboard
+`accounting-cobrowse` / `hr-cobrowse` drivers) is driven **only** from the
+admin-gated **Admin → Global Master List**. While watching a person's real screen
+from there, the admin can hold a **two-way tutoring chat** with them — a live
+back-and-forth layered on top of the silent mirror.
+
+Key files:
+
+- [CobrowseProvider.tsx](src/components/presence/CobrowseProvider.tsx) — app-wide watch-screen driver/observer (`useWatchScreen`), full-screen mirror, and the **observer-side** docked chat window + reopen bubble.
+- [CobrowseChatProvider.tsx](src/components/presence/CobrowseChatProvider.tsx) — the `hris-cobrowse-chat` Broadcast layer (`useCobrowseChat`) and the **driver-side** pop-up windows.
+- [AdminGlobalMasterList.tsx](src/components/admin/AdminGlobalMasterList.tsx) — the GML surface: the Observe/watch button, the **Refresh** button, and the 15s telemetry tick.
+- [PresenceProvider.tsx](src/components/presence/PresenceProvider.tsx) — `usePresenceRefresh` / `PresenceRefreshContext` (force-recompute the live presence roster).
+
+### The chat — live-only, silent-watch-preserving
+
+- **Docked window, admin side.** When the admin observes someone, `CobrowseProvider`
+  docks a `CobrowseChatWindow` (`variant="observer"`, titled `Tutoring <name>`).
+- **Pop-up appears on the watched screen only on the FIRST admin message.**
+  `CobrowseChatProvider` opens a driver-side pop-up (`variant="driver"`, "…is helping
+  you — reply here") for a peer only when a message for that peer actually arrives.
+  A pure silent watch therefore stays silent — nothing surfaces on the watched
+  person's screen until the admin types — matching the mirror's "they aren't
+  notified" contract. Driver replies keep the driver's real name.
+- **Nothing is persisted.** Threads live in memory for the session, keyed by the
+  **other party's normalized email**; if the other side isn't connected when a
+  message is sent, it's simply never received (same trust/delivery model as the
+  Admin **Ping**). Chime feedback via `playPingChime` (receive) / `playPingSent`
+  (send).
+
+### Transport (`hris-cobrowse-chat`)
+
+Its own Realtime Broadcast channel (`CHAT_CHANNEL`), `broadcast: { self: false }`,
+distinct from both the mirror's `hris-cobrowse` and the presence `hris-presence`
+channels. Two events:
+
+| Event | Payload | Meaning |
+|---|---|---|
+| `msg` | `{ id, fromEmail, fromName, toEmail, text, ts }` (`ChatWire`) | a chat message; receiver dedupes to itself (`to === self`, `from !== self`) |
+| `end` | `{ fromEmail, toEmail }` (`ChatEndWire`) | one side ended the chat; the other closes its window and clears the thread |
+
+### Anonymized admin identity
+
+The admin sends with `chat.send({ email, name }, text, { asName: 'Admin' })`, so the
+outgoing `fromName` is the fixed label **"Admin"** — the staff member never sees the
+admin's real name. `send`'s `opts.asName` override wins over the sender's session
+name. Driver-side replies carry no such override, so the admin sees the staff
+member's real name.
+
+### Ending the chat (decoupled from the watch)
+
+The admin can **End** the chat (× on the observer window, `closeTitle="End chat"`):
+this calls `chat.terminate(observedEmail)`, which broadcasts `end` (clearing the
+pop-up + thread on the watched person's side), clears the thread/unread on the admin
+side, and drops any driver popup — then minimizes the admin's chat to a reopen
+**bubble** (`chatOpen=false`; a `MessageCircle` FAB with an unread badge) **without
+stopping the screen mirror**. Auto-cleanup: `observe()` calls `chat.terminate` for
+the previous peer whenever the admin stops (`observe(null)`) or switches to a
+different person, so a stale popup never lingers on someone's screen.
+
+### GML live telemetry — Refresh, 15s tick, "Live" dot
+
+- **Refresh button** (`RotateCw`, beside the Sync button). `handleRefresh` calls
+  `refreshPresence()` (the `usePresenceRefresh` `resync`, which force-recomputes the
+  online roster from the current `hris-presence` channel state) **and** bumps
+  `statusTick` to re-fetch the DB-backed **last-seen** stamps
+  (`/api/presence/last-seen?emails=…`) for the on-screen rows, refreshing relative
+  times.
+- **15s auto-telemetry tick.** A `window.setInterval` (`REFRESH_MS = 15_000`, paused
+  while the tab is hidden, and it re-ticks on `visibilitychange` → visible) bumps
+  `statusTick` so the offline "last seen" times stay fresh **without** pressing
+  Refresh. Presence itself (who's online / which page) already streams live over
+  `hris-presence`, so this tick only refreshes the last-seen layer.
+- **Pulsing "Live" dot.** The **Online now** stat card carries an emerald
+  `animate-ping` dot (title "Live — updating in real time") signaling the roster is
+  updating in real time.

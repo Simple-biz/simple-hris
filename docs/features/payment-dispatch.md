@@ -977,3 +977,29 @@ After running migrations 3 + 4:
    - **Dispatch detail** table lists every `payment_dispatches` row for the cycle, paid first.
 5. From SQL Editor, INSERT or UPDATE a `payment_dispatches` row → re-load Reports → the matching `disbursement_records` row should now show `status='paid'` (the trigger fired).
 6. From SQL Editor, run the mass mark-as-paid UPDATE in §6.5.3 → re-load Reports → every cycle's "Pending" should drop to 0 and "Paid" should match its recipient count.
+
+---
+
+## 12. 2026-07 updates
+
+Two additive changes; §3.3 and §3.5 above describe the pre-change behavior (a free-text "Bank used" field and a Wepay processor tab) and are superseded on these two points.
+
+### 12.1 "Bank used (sent from)" is now a dropdown
+
+In [MarkPaidDialog.tsx](src/components/payroll-clerk/MarkPaidDialog.tsx) the **Bank used (sent from)** field became a `<select>` (the `FieldSelect` component) instead of free text, driven by the `BANK_USED_OPTIONS` constant. This replaces the inconsistent free-text spellings that were hard to report on. Options, in the accounting team's canonical order:
+
+```
+Chase · Jeeves · Parallax · PayPal · Wise · x1161 · x1153 · x0048 · Remitly · HiGlobe · Hurupay
+```
+
+- The select opens on a disabled `Select a bank…` placeholder option (empty `value`), rendered in muted placeholder color via the `placeholderActive` prop while nothing is chosen.
+- The confirm button **stays disabled until a bank is picked**: `valid = transactionId.trim().length > 0 && bankUsed.trim().length > 0 && sentDate.length > 0`, and the button is `disabled={!valid || submitting}`. So transaction ID, a chosen bank, and a sent date are all required before a dispatch can be logged.
+
+### 12.2 Wepay retired from the dispatch tabs
+
+Wepay is no longer offered as a pending-queue tab, filter rail, or new-dispatch destination. In [mock-queue.ts](src/components/payroll-clerk/mock-queue.ts):
+
+- `RETIRED_DISPATCH_PROCESSOR_IDS = ['wepay']` lists the retired processors.
+- `DISPATCH_PROCESSORS` = `PROCESSORS` minus the retired ids. **Tabs, filter rails, and processor pickers render `DISPATCH_PROCESSORS`.**
+- `PROCESSORS` (and the `ProcessorId` type / `'wepay'` member) intentionally stay put, so **label + visual `.find()` lookups still keep using `PROCESSORS`** — historical dispatch records that were sent via Wepay still resolve their label and branding in Reports / Done / Sent-payments history. Wepay is simply hidden as a live destination, not deleted.
+- Mirrors `RETIRED_PROCESSOR_IDS` in [employee-payment-processors.ts](src/lib/employee-payment-processors.ts), where `'wepay'` is likewise retired on the employee-facing side.

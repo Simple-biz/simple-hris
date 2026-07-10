@@ -5,7 +5,66 @@ accounting-editable adjustments layered on top. Covers the **Initial Calculation
 the **Additions** table (step 3), and the **HSL** table (step 5).
 
 Source: [`src/components/PayrollWizard.tsx`](../../src/components/PayrollWizard.tsx).
-Last substantive update: **2026-06-16**.
+Last substantive update: **2026-07-10**.
+
+---
+
+## 2026-07 updates
+
+Three changes landed 2026-07 — a proration-parity fix, a PAB-pill display change, and
+last-synced timestamps on the Initialize step.
+
+Key files:
+
+- [`src/lib/payroll/rate-history-resolve.ts`](../../src/lib/payroll/rate-history-resolve.ts) — client-safe rate-as-of-date + history index.
+- [`app/api/payroll/rate-history-bulk/route.ts`](../../app/api/payroll/rate-history-bulk/route.ts) — rate-visible bulk `employee_rate_history` feed.
+- [`app/api/accounting/sync-status/route.ts`](../../app/api/accounting/sync-status/route.ts) — last Google-sync timestamp per source.
+- [`src/lib/supabase/audit-log.ts`](../../src/lib/supabase/audit-log.ts) — `fetchLastSyncTimestamps` (reads the audit trail).
+
+### Mid-week rate proration (Step 2 ↔ Payment Dispatch parity)
+
+Step 2's Initial-Pay calc now prorates a **mid-week rate change** per day so the wizard
+matches Payment Dispatch byte-for-byte. When a dated rate change falls **inside** the pay week,
+`proratePayForMidPeriodChange` (`PayrollWizard.tsx:457`) walks the pay days chronologically —
+old rate before the effective date, new rate on/after — mirroring the server's
+`computeProratedRowPay` in [`current-pay.ts`](../../src/lib/payroll/current-pay.ts): a **40h
+chronological regular cap** (`REG_WEEK_CAP_SEC`), the **HSL +₱15/day** weekend premium on
+Sat/Sun hours, and **raw accumulate then round once** (per-day PHP summed into a float,
+`Math.round(..*100)/100` applied only at the end).
+
+- **Data feed:** rate history comes from the client-safe
+  [`rate-history-resolve.ts`](../../src/lib/payroll/rate-history-resolve.ts) module
+  (`buildRateHistoryByEmail` / `resolveRateAsOfDate`, the pure half of `rate-history.ts`) hydrated
+  from `GET /api/payroll/rate-history-bulk` — every `employee_rate_history` row (email, reg/ot,
+  `effective_from`), newest-first, gated to **rate-visible roles** (admin / accounting / ceo).
+- **Keyed on the Hubstaff email only.** History is looked up on the same `em` key Payment Dispatch
+  uses, so the two engines can never resolve a different history row (`PayrollWizard.tsx:3922`).
+  A flat **INDIVIDUAL** catalog rate is skipped (that rate is flat all period).
+- **Unchanged employees stay byte-identical.** When the week has no in-window change and the
+  constant history rate equals the fallback cache/catalog rate, the function returns `null` and
+  the caller keeps its existing single-rate result (`PayrollWizard.tsx:536`).
+- **Step-2 badge.** A mid-week change surfaces an amber `old→new eff YYYY-MM-DD` pill under the
+  Rate column (`row.rateChange`, `PayrollWizard.tsx:7412`).
+
+### PAB pill — provisional "Eligible" (display only)
+
+On the **Additions** tab the PAB pill now shows a green **✓ Eligible** with the Payment-Catalog
+PAB amount as soon as **no weekday has failed yet** (previously a neutral ⏳ "In Progress").
+The tri-state pill (`PayrollWizard.tsx:9316`) collapses the raw `in_progress` status to `eligible`
+for display: `status = rawStatus === 'in_progress' ? 'eligible' : rawStatus`. This is
+**display-only** — actual payout is still gated by the `perfect_attendance` toggle plus dept
+eligibility (`isPabDeptEligible`), and only a genuinely failed weekday locks the pill to
+✗ Ineligible. The HSL step (id 4/5) tab is unchanged.
+
+### Last-synced timestamps on Initialize
+
+The **Initialize Payroll Data** step now renders a "Last synced …" line under each Google-sync
+card — **Roster** (`master`), **Rates** (`rates`), and **Hogan** (`hsl`). The wizard fetches
+`GET /api/accounting/sync-status` on mount into `lastSyncAt` (`PayrollWizard.tsx:969`, rendered via
+`renderLastSynced`), which calls `fetchLastSyncTimestamps` — the latest `created_at` of the
+`csv.master.sync` / `csv.rates.sync` / `csv.hsl.sync` audit actions. Because it reads the audit
+trail each sync route already writes, **cron-triggered syncs count the same as manual button
+syncs**; no separate persistence. Missing timestamps are non-fatal (the line just stays hidden).
 
 ---
 

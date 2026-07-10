@@ -200,6 +200,73 @@ back to the parent envelope.
 
 ---
 
+## 2026-07 updates
+
+Three changes landed in July 2026 — a new reason, an explicit no-show teardown, and a fix for the
+Google "Offboarded" sheet writer that had been leaving key columns blank.
+
+### NCNS reason
+
+`ncns` (**"NCNS (No Call, No Show)"** in the dialog, short label **"NCNS"**) was added at the **top**
+of the offboarding reason dropdown. The reason set lives in **two hand-synced places** — there is no
+DB `CHECK` constraint enforcing it:
+
+- [offboard-reasons.ts](src/lib/hr/offboard-reasons.ts) — `VALID_OFFBOARD_REASONS` (shared by the HR
+  Offboard dialog, the manager queue dialog, and the HR queue processor), `OFFBOARD_REASON_OPTIONS`
+  (dropdown value+label), and `OFFBOARD_REASON_LABELS` / `offboardReasonLabel()` (slug → display label).
+- [route.ts](app/api/hr/offboard/route.ts) — the server keeps its **own** `VALID_REASONS` copy
+  authoritative for validation; its doc-comment notes it MUST stay in sync with the shared list. A
+  body whose `reason` isn't in the list is rejected 400 before any write.
+
+### Manager "Did not attend" fires the same teardown
+
+Marking a pending hire **Did not attend** (a no-show) in the manager's Newly Hired panel already runs
+the *same* offboarding webhooks HR uses — [no-show/route.ts](app/api/manager/pending-hires/[id]/no-show/route.ts)
+fires `offboarding_deactivate` (or `offboarding_delete` for Lead Gen) keyed on the pending row's
+`work_email`, with **`never_promoted: true`** and `event: "hire.no_show"`. Because the Hubstaff invite
+only fires at **promote**, `never_promoted:true` tells n8n the Hubstaff removal step is a no-op for a
+hire who never had a seat — Hubstaff is a step *inside* the webhook flow, not a guaranteed per-hire
+effect here. When the pending row has **no** `work_email` yet, nothing is torn down — the row is just
+flipped to `no_show`. Non-Lead-Gen no-shows get the same 14-day `scheduled_deletion_at` timer on the
+pending row (the cron fires the delete later); Lead Gen stamps `deletion_processed_at` immediately.
+
+The warning copy is now explicit that this is a real offboard:
+[NewlyHiredPanel.tsx](src/components/manager/NewlyHiredPanel.tsx) both the button tooltip, the panel
+intro, and the confirm dialog spell out "same offboarding webhook HR uses — Workspace account removed,
+access revoked. Cannot be undone," and the toast/dialog branch on `work_email` so a hire with no
+account reads "recorded as a no-show only."
+
+### Offboarded-tab sheet writer fixed
+
+The Google "Offboarded" tab append had been writing **blank** Location / Start Date / Reason /
+Offboarded Date cells. The fix spans three files:
+
+- **Offboard route enriches the row.** [route.ts](app/api/hr/offboard/route.ts) now `select`s
+  `city, province, full_address, "Location", "Phone Number"` on the stamped rows and builds a
+  `location` string mirroring AdminGlobalMasterList — `"City, Province"`, falling back to the seeded
+  `full_address`, then the onboarding-form `"Location"` string. Phone comes straight off the master
+  row. These are **sheet-only enrichment** — the `offboarded_sheet` DB table ignores them.
+- **Shared alias-map matcher.** [append-offboarded-sheet.ts](src/lib/google-sheets/append-offboarded-sheet.ts)
+  replaced ad-hoc header detection with `HEADER_ALIASES` (a `FieldKey → alias[]` map, mirroring the
+  reader in `fetch-offboarded-sheet.ts`) and an exported `fieldForHeader(header)` that does an exact
+  match after `norm()`. Exporting it means the reader, writer, and backfill can't drift on which
+  column is which.
+- **Reason writes the LABEL, not the slug.** The append path is handed `offboardReasonLabel(reason)`
+  (e.g. `"Resigned"`) because the sheet's "Offboard Reason" column is a data-validation dropdown of
+  human labels — the raw enum slug (`resigned`) failed validation. The `offboarded_sheet` DB row keeps
+  the slug, consistent with `off_boarded_reason` on the master.
+
+**Dormant backfill endpoint.** [offboard-sheet-backfill/route.ts](app/api/hr/offboard-sheet-backfill/route.ts)
+(`POST /api/hr/offboard-sheet-backfill`, gated by `requireFeatureEdit("hr", "offboarding")`) fills the
+blank Location / Contact Number / Start Date / Offboard Reason / Offboarded Date cells from the master
+record, matched on personal-then-work email. It **only** touches blank cells (never clobbers a
+hand-typed value) and is **dry-run by default** — pass `{ "apply": true }` to actually write.
+[backfill-offboarded-sheet.ts](src/lib/google-sheets/backfill-offboarded-sheet.ts) does the walk and
+reuses the same `fieldForHeader` / `formatOffboardDate` helpers. A real run writes an
+`hr.offboarded_sheet.backfilled` audit row.
+
+---
+
 ## Related
 
 - **Resignation flow** — Profile → Resign → manager approval → offboarding queue (same queue this

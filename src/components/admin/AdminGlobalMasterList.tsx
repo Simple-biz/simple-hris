@@ -95,6 +95,14 @@ function statusLabel(detail: PresenceDetail | null, lastSeenIso: string | null):
   return 'Offline';
 }
 
+type LiveState = 'online' | 'inactive' | 'offline';
+
+/** Three-state presence: active (looking) → inactive (tab backgrounded) → offline. */
+function liveStateOf(detail: PresenceDetail | null): LiveState {
+  if (!detail) return 'offline';
+  return detail.active ? 'online' : 'inactive';
+}
+
 /** One labelled read-only field in the detail record grid. */
 function Field({
   icon: Icon,
@@ -367,6 +375,8 @@ export default function AdminGlobalMasterList() {
 
   const selectedDetail = selected ? detailFor(selected) : null;
   const selectedOnline = !!selectedDetail;
+  // Connected but with the HRIS tab backgrounded (switched tabs / minimized).
+  const selectedInactive = selectedOnline && !selectedDetail!.active;
   const selectedIsSelf = !!selected && !!viewerNorm && emailKeyFor(selected) === viewerNorm;
   const selectedEmail = selected ? employeeIdentityEmail(selected) || null : null;
   const selectedIsExtra = !!selected && extraOnlineKeySet.has(emailKeyFor(selected));
@@ -623,6 +633,7 @@ export default function AdminGlobalMasterList() {
                   const isSel = key === selectedKey;
                   const detail = detailFor(row);
                   const online = !!detail;
+                  const liveState = liveStateOf(detail);
                   const email = employeeIdentityEmail(row) || null;
                   const isExtra = extraOnlineKeySet.has(key);
                   return (
@@ -642,9 +653,11 @@ export default function AdminGlobalMasterList() {
                             'relative shrink-0 rounded-xl ring-2',
                             isSel
                               ? 'ring-orange-400/70 dark:ring-orange-500/55'
-                              : online
+                              : liveState === 'online'
                                 ? 'ring-emerald-400/70 dark:ring-emerald-500/45'
-                                : 'ring-zinc-200/70 dark:ring-zinc-800',
+                                : liveState === 'inactive'
+                                  ? 'ring-amber-400/70 dark:ring-amber-500/45'
+                                  : 'ring-zinc-200/70 dark:ring-zinc-800',
                           )}
                         >
                           <EmployeeAvatar
@@ -657,7 +670,11 @@ export default function AdminGlobalMasterList() {
                           <span
                             className={cn(
                               'absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full ring-2 ring-white dark:ring-zinc-950',
-                              online ? 'bg-emerald-500' : 'bg-zinc-300 dark:bg-zinc-600',
+                              liveState === 'online'
+                                ? 'bg-emerald-500'
+                                : liveState === 'inactive'
+                                  ? 'bg-amber-500'
+                                  : 'bg-zinc-300 dark:bg-zinc-600',
                             )}
                             aria-hidden
                           />
@@ -678,9 +695,24 @@ export default function AdminGlobalMasterList() {
                             {email ?? 'No email'}
                           </p>
                           {online ? (
-                            <p className="mt-0.5 flex items-center gap-1 truncate text-[10.5px] font-medium text-emerald-600 dark:text-emerald-400">
-                              <span className="inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500" aria-hidden />
-                              {statusLabel(detail, null)}
+                            <p
+                              className={cn(
+                                'mt-0.5 flex items-center gap-1 truncate text-[10.5px] font-medium',
+                                liveState === 'inactive'
+                                  ? 'text-amber-600 dark:text-amber-400'
+                                  : 'text-emerald-600 dark:text-emerald-400',
+                              )}
+                            >
+                              <span
+                                className={cn(
+                                  'inline-block h-1.5 w-1.5 shrink-0 rounded-full',
+                                  liveState === 'inactive' ? 'bg-amber-500' : 'bg-emerald-500',
+                                )}
+                                aria-hidden
+                              />
+                              {liveState === 'inactive'
+                                ? `Inactive · ${statusLabel(detail, null)}`
+                                : statusLabel(detail, null)}
                             </p>
                           ) : (
                             row.department && (
@@ -714,7 +746,11 @@ export default function AdminGlobalMasterList() {
                   <div
                     className={cn(
                       'relative shrink-0 rounded-lg ring-1',
-                      selectedOnline ? 'ring-emerald-400/70 dark:ring-emerald-500/45' : 'ring-zinc-200/70 dark:ring-zinc-800',
+                      selectedInactive
+                        ? 'ring-amber-400/70 dark:ring-amber-500/45'
+                        : selectedOnline
+                          ? 'ring-emerald-400/70 dark:ring-emerald-500/45'
+                          : 'ring-zinc-200/70 dark:ring-zinc-800',
                     )}
                   >
                     <EmployeeAvatar
@@ -727,7 +763,11 @@ export default function AdminGlobalMasterList() {
                     <span
                       className={cn(
                         'absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full ring-2 ring-white dark:ring-zinc-950',
-                        selectedOnline ? 'bg-emerald-500' : 'bg-zinc-300 dark:bg-zinc-600',
+                        selectedInactive
+                          ? 'bg-amber-500'
+                          : selectedOnline
+                            ? 'bg-emerald-500'
+                            : 'bg-zinc-300 dark:bg-zinc-600',
                       )}
                       aria-hidden
                     />
@@ -774,9 +814,11 @@ export default function AdminGlobalMasterList() {
                 <section
                   className={cn(
                     'rounded-xl border px-3.5 py-3',
-                    selectedOnline
-                      ? 'border-emerald-300/70 bg-emerald-50/70 dark:border-emerald-800/50 dark:bg-emerald-950/20'
-                      : 'border-zinc-200/90 bg-zinc-50/70 dark:border-zinc-800 dark:bg-zinc-900/40',
+                    selectedInactive
+                      ? 'border-amber-300/70 bg-amber-50/70 dark:border-amber-800/50 dark:bg-amber-950/20'
+                      : selectedOnline
+                        ? 'border-emerald-300/70 bg-emerald-50/70 dark:border-emerald-800/50 dark:bg-emerald-950/20'
+                        : 'border-zinc-200/90 bg-zinc-50/70 dark:border-zinc-800 dark:bg-zinc-900/40',
                   )}
                 >
                   <div className="flex items-center justify-between gap-2">
@@ -787,32 +829,52 @@ export default function AdminGlobalMasterList() {
                     <span
                       className={cn(
                         'inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[10px] font-semibold',
-                        selectedOnline
-                          ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300'
-                          : 'bg-zinc-200/70 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400',
+                        selectedInactive
+                          ? 'bg-amber-500/15 text-amber-700 dark:text-amber-300'
+                          : selectedOnline
+                            ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300'
+                            : 'bg-zinc-200/70 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400',
                       )}
                     >
                       <span
                         className={cn(
                           'h-1.5 w-1.5 rounded-full',
-                          selectedOnline ? 'animate-pulse bg-emerald-500' : 'bg-zinc-400 dark:bg-zinc-500',
+                          selectedInactive
+                            ? 'bg-amber-500'
+                            : selectedOnline
+                              ? 'animate-pulse bg-emerald-500'
+                              : 'bg-zinc-400 dark:bg-zinc-500',
                         )}
                         aria-hidden
                       />
-                      {selectedOnline ? 'Online' : 'Offline'}
+                      {selectedInactive ? 'Inactive' : selectedOnline ? 'Online' : 'Offline'}
                     </span>
                   </div>
                   {selectedOnline ? (
-                    <div className="mt-1.5 flex items-baseline gap-2">
-                      <p className="min-w-0 truncate text-[15px] font-semibold text-zinc-900 dark:text-white">
-                        {dashboardLabelForPathname(selectedDetail!.path)}
-                      </p>
-                      {selectedDetail!.tab && (
-                        <span className="inline-flex shrink-0 items-center gap-1 rounded-md bg-white/70 px-1.5 py-0.5 font-mono text-[11px] font-medium text-emerald-700 ring-1 ring-emerald-300/60 dark:bg-zinc-900/60 dark:text-emerald-300 dark:ring-emerald-800/50">
-                          {selectedDetail!.tab}
-                        </span>
+                    <>
+                      <div className="mt-1.5 flex items-baseline gap-2">
+                        <p className="min-w-0 truncate text-[15px] font-semibold text-zinc-900 dark:text-white">
+                          {dashboardLabelForPathname(selectedDetail!.path)}
+                        </p>
+                        {selectedDetail!.tab && (
+                          <span
+                            className={cn(
+                              'inline-flex shrink-0 items-center gap-1 rounded-md bg-white/70 px-1.5 py-0.5 font-mono text-[11px] font-medium ring-1 dark:bg-zinc-900/60',
+                              selectedInactive
+                                ? 'text-amber-700 ring-amber-300/60 dark:text-amber-300 dark:ring-amber-800/50'
+                                : 'text-emerald-700 ring-emerald-300/60 dark:text-emerald-300 dark:ring-emerald-800/50',
+                            )}
+                          >
+                            {selectedDetail!.tab}
+                          </span>
+                        )}
+                      </div>
+                      {selectedInactive && (
+                        <p className="mt-1 text-[11.5px] text-amber-700/90 dark:text-amber-400/90">
+                          Switched away — this tab isn&apos;t focused right now.
+                        </p>
                       )}
-                    </div>
+                    </>
                   ) : (
                     <p className="mt-1.5 text-[13px] text-zinc-600 dark:text-zinc-400">
                       {statusLabel(null, lastSeenFor(selected))}

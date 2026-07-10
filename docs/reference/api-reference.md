@@ -28,6 +28,7 @@ Complete documentation for all REST API endpoints. Base URL: `http://localhost:3
 12.12. [Onboarding (public)](#1212-onboarding-public)
 14. [Paystub Dispatch Queue](#14-paystub-dispatch-queue)
 13. [Planned Endpoints (Payroll Automation)](#13-planned-endpoints-payroll-automation)
+15. [New endpoints (2026-07-08..10)](#15-new-endpoints-2026-07-0810)
 
 ---
 
@@ -2351,6 +2352,87 @@ Hard-deletes a denied time adjustment request. Only callable by Accounting roles
 **Audit log:** `time_adjustment.deleted` with `prior_status`, `employee`, `adjust_date`.
 
 **UI surface:** small trash icon button that appears only on `denied`/`manager_denied` rows in the Decided section of `TimeAdjustmentReviewPanel`. Spinner while in-flight (`deletingId` match). Accounting uses this to clean up the list after reviewing denials.
+
+---
+
+## 15. New endpoints (2026-07-08..10)
+
+Endpoints added the week of 2026-07-08 for **Department Transfers v2**, the **People profile editor**, the **granular New Hire Checklist**, **3rd-Party Vendors**, and the **Offboarded-sheet backfill**. All are NextAuth-session-gated (no client-supplied identity). Three gate helpers recur below:
+
+- `requireRateVisibilitySession()` — **rate-visible only**: `admin`, accounting roles, or `ceo` (`RATE_VISIBLE_ROLES`). Used for any pay-bearing read.
+- `requireFeatureEdit(view, feature)` / `requireFeatureAccess(view, feature, level)` — the [feature-permissions overlay](../features/rbac-feature-permissions.md) (Hidden/View/Edit per tab).
+- `requireElevatedSession()` — any elevated role.
+
+Feature docs: [Department Transfers](../features/department-transfers.md), [3rd Party Vendors](../features/third-party-vendors.md), [New Hire Checklist](../features/new-hire-checklist.md), [Offboarding Automation](../features/offboarding-automation.md).
+
+### Department Transfers
+
+Managers own the pull-in / release handshake end-to-end (HR no longer approves in v2). Backed by [route.ts](app/api/department-transfers/route.ts) + [[id]/route.ts](app/api/department-transfers/[id]/route.ts).
+
+| Method / path | Gate | Purpose |
+|---|---|---|
+| `GET /api/department-transfers` | signed-in; HR/admin, else `manager` | List transfer requests. HR (`hr_coordinator`)/admin → **all** rows (read-only history). Manager: `?scope=incoming` → pending release requests on depts they manage (consent queue); `?scope=done` → resolved rows (released/declined/applied/cancelled) on their team; default (outgoing) → requests they raised. `403` if neither manager, HR, nor admin. |
+| `POST /api/department-transfers` | `manager` or `admin` | Initiate a **pull-in**: move an employee into a target dept. A non-admin manager may only pull *into* a dept they manage and *from* a dept they do **not** manage (admins unrestricted). Notifies the source-dept manager(s) via `employee_notifications` (`transfer.release_requested`). Audit `department_transfer.requested`. |
+| `PATCH /api/department-transfers/[id]` | see below | Decide a request via `{ action, note? }`. |
+| `DELETE /api/department-transfers/[id]` | admin, original requester, or source-dept manager | Hard-delete the request record (cleanup). Does **not** reverse an already-applied dept move. Audit `department_transfer.deleted`. |
+
+`POST` returns `409` when the employee already has an in-flight transfer, `400` on missing email / equal from-to / non-ISO `proposed_effective_date`, `403` on the manager scope violations.
+
+`PATCH` actions (all guard against acting on an already-decided row with **`409` `Request already <status>`**):
+- **`release`** — source-dept manager consents. Locks the effective date to the requester's `proposed_effective_date` (falls back to today), then applies the dept move **immediately** (the effective date is retained only as the rate-proration anchor, not to defer the label change). If the master-list write fails the row stays `approved` (retry via `apply`) and the response carries `applied: false` with an explanatory `error` at `200`. Requires `requireFeatureEdit('manager','team')` + source-dept manager (or admin). Audit `department_transfer.released`.
+- **`decline`** — source-dept manager refuses (`note` = reason); notifies requester. Audit `department_transfer.declined`. Row must be `pending`.
+- **`cancel`** — the receiving/requesting manager withdraws their own **`pending`** request; `403` if the caller isn't the requester. Audit `department_transfer.cancelled`.
+- **`apply`** — push through a released transfer stuck in `approved` (release-time apply failed). `409` if the row isn't `approved`. Requires `requireFeatureEdit('manager','team')` + source-dept manager (or admin). Audit `department_transfer.applied_manual`.
+
+### `GET /api/manager/transfer-candidates`
+
+Gate: `manager` or `admin` (`401`/`403`). Transfer-target picker for "Request transfer in" — active `global_master_list` people the manager could pull in, i.e. everyone **except** those already in a dept the manager manages (admins see everyone). Returns Name + Department + emails only — **no pay/rate data**. Optional `?q=` (name/department/work-email/personal-email substring) and `?department=` filters; also returns the `departments` list for the filter dropdown. Capped at 200 rows. [route.ts](app/api/manager/transfer-candidates/route.ts)
+
+### Accounting: transfers + rate history + sync status
+
+Pay-bearing reads, all gated by `requireRateVisibilitySession()`.
+
+| Method / path | Purpose |
+|---|---|
+| `GET /api/accounting/transfers` | Read-only transfer history joined to the pay-rate change each move triggered. [route.ts](app/api/accounting/transfers/route.ts) |
+| `POST /api/accounting/transfers` | `{ id, action: 'retry_sheet' }` — retry the Google Sheet dept write-back for an `applied` transfer whose sheet sync failed (`409` if not `applied`). Audit `department_transfer.sheet_retry`. |
+| `GET /api/payroll/rate-history-bulk` | Every `employee_rate_history` row (`employee_email`, `regular_rate`, `ot_rate`, `effective_from`), newest-first, unpaginated. Feeds the Payroll Wizard's per-employee mid-cycle rate proration. [route.ts](app/api/payroll/rate-history-bulk/route.ts) |
+| `GET /api/accounting/sync-status` | Last successful Google-Sheet sync timestamps `{ master, rates, hsl, error }` (from the audit trail, so both cron and manual syncs count). Powers the Wizard Initialize step. [route.ts](app/api/accounting/sync-status/route.ts) |
+
+### `PATCH /api/people/[email]/profile`
+
+Gate: `requireFeatureEditAnyView('people')` (`accounting` | `ceo` | `admin`). Edits one person's master-list identity/contact fields from the People → View Modal. Body: `{ id, original_work_email?, original_personal_email?, original_department?, patch }`. Writes `global_master_list` **by row id**, then best-effort flips the matching cells in the master Google Sheet so the next Sheet→DB sync won't revert the edit. The `patch` is allowlisted (`name`, `department`, `work_email`, `personal_email`, `alternate_work_email`(`_2`), `start_date`, `phone_number`, `location`, `street`, `city`, `province`, `postal_code`, `full_address`) — a crafted body can't touch `off_boarded_*`/`employee_id`/upload ids; structured-address fields have no sheet column. `400` (missing id / no editable fields / bad JSON), `409` (identity collision), `404`, `503` (sheet not configured). Audit `people.profile.updated`. [route.ts](app/api/people/[email]/profile/route.ts)
+
+### `/api/hr/new-hire-checklist`
+
+Granular per-row checklist API (rows persist atomically as they're typed — no batch save). GET is `requireElevatedSession()`; every mutation is `requireFeatureEdit('hr','new_hire_checklist')`. Any mutation whose `period_start` names a **locked** week is refused with `409`. [route.ts](app/api/hr/new-hire-checklist/route.ts)
+
+| Method | Body | Purpose |
+|---|---|---|
+| `GET` | `?period=YYYY-MM-DD` (required) | That week's rows + its lock state. `400` without a valid period. |
+| `POST` | `{ period_start, period_end?, values }` | Add ONE hire (atomic insert; concurrent adders never collide). `409` if the week is locked. Audit `hr.new_hire_checklist.row_added`. |
+| `PATCH` | single `{ id, values, expectedUpdatedAt? }` **or** bulk `{ ids[], field, value }` | Single: update named fields; a stale `expectedUpdatedAt` → `409 { conflict: true }` (co-editor won). Bulk: set one column across many ids (bulk-apply department/country). Audit `…row_updated` / `…bulk_set`. |
+| `DELETE` | `{ id? }` or `{ ids[] }` | Delete exactly the named ids (never "everything not in the payload"). Audit `…row_deleted`. |
+| `PUT` | `{ period_start, period_end?, action }` | `action: 'lock'` freezes the week and fires the orientation webhook off the **DB's** current rows (best-effort); `'reopen'` flips it back to `open`. Audit `…locked` / `…reopened`. |
+
+### 3rd-Party Vendors (Orphanage)
+
+Vendor directory + SIMPLE-branded invoices, separate from Payment Dispatch. Reads are `requireFeatureAccess('orphanage','third_party_vendors','view')` (rows carry vendor banking details — not an open read); writes are `requireFeatureEdit('orphanage','third_party_vendors')`.
+
+| Method / path | Purpose |
+|---|---|
+| `GET /api/orphanage-vendors` | List vendors. [route.ts](app/api/orphanage-vendors/route.ts) |
+| `POST /api/orphanage-vendors` | Create a vendor (`business_name` required). Audit `orphanage.vendor.saved`. |
+| `PATCH /api/orphanage-vendors/[id]` | Update a vendor. [[id]/route.ts](app/api/orphanage-vendors/[id]/route.ts) |
+| `DELETE /api/orphanage-vendors/[id]` | Delete a vendor. Audit `orphanage.vendor.deleted`. |
+| `GET /api/orphanage-vendor-invoices` | List invoices; optional `?status=pending|paid`. [route.ts](app/api/orphanage-vendor-invoices/route.ts) |
+| `POST /api/orphanage-vendor-invoices` | Create a pending invoice (`invoice_number` + `vendor_name` + ≥1 meaningful line item required). Returns `201`; duplicate `invoice_number` → `409`. Audit `orphanage.vendor_invoice.created`. |
+| `PATCH /api/orphanage-vendor-invoices/[id]` | `body.action === 'mark_paid'` stamps the payment record + PAID watermark (`409` if not found/already paid); otherwise edits a still-pending invoice. Audit `…paid` / `…updated`. [[id]/route.ts](app/api/orphanage-vendor-invoices/[id]/route.ts) |
+| `DELETE /api/orphanage-vendor-invoices/[id]` | Delete an invoice. Audit `orphanage.vendor_invoice.deleted`. |
+
+### `POST /api/hr/offboard-sheet-backfill`
+
+Gate: `requireFeatureEdit('hr','offboarding')`. Fills the blank Location / Contact Number / Start Date / Offboard Reason / Offboarded Date cells in the Google "Offboarded" tab from the master record, matched on personal- (then work-) email. Only blank cells are touched (hand-typed values are preserved). **Defaults to a dry run** — the body is `{ apply?: boolean }` and you must pass `{ "apply": true }` to actually write; omit it to preview the exact cell changes. Response includes `scannedRows` / `matchedRows` / `filledCells` / `byField` / `unmatched`. Audit `hr.offboarded_sheet.backfilled` (only on `apply`). [route.ts](app/api/hr/offboard-sheet-backfill/route.ts)
 
 ---
 

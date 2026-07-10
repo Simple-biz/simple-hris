@@ -382,6 +382,18 @@ Migration: `references/sql/alter/add_bonus_catalog_cadence.sql` (tracked as pend
 
 ---
 
+## COP currency symbol — `$COP`, no double-print *(added 2026-07-08)*
+
+Payment-Catalog pay structures carry a per-row currency (`PayCurrency = 'PHP' | 'USD' | 'COP'`) because the org pays PHP staff, USD contractors, and now some COP staff. The Colombian peso shares the `$` glyph with USD, so `CURRENCY_SYMBOL.COP` is **`'$COP'`** — the code is now suffixed onto the sign (flipped from the earlier `"COP$"`) so an amount reads `$COP 1,000.00` and can't be mistaken for USD.
+
+Key file:
+
+- [pay-structure.ts](src/lib/payment-catalog/pay-structure.ts) — `CURRENCY_SYMBOL`, `currencyChipLabel`, `formatRate`, `CURRENCY_LOCALE`.
+
+The wrinkle: currency **chips / toggles / badges** render `{symbol} {code}` (e.g. `₱ PHP`, `$ USD`). For COP that template would print `$COP COP` — the code twice. `currencyChipLabel(c)` guards this: it returns the bare symbol for COP (which already carries the code) and `` `${symbol} ${code}` `` for everything else. Chip UIs must call `currencyChipLabel` rather than interpolating `symbol` + `code` themselves. `formatRate` (used for `"$COP1,000.00/hr"` rate strings) uses `CURRENCY_SYMBOL` directly and needs no special-casing.
+
+---
+
 ## Department Auto-Assignment
 
 Runs automatically in Step 3 after calc rows load. For each Hubstaff employee, the system tries four resolution tiers:
@@ -1077,6 +1089,25 @@ change their pay for that week:
   Department Auto-Assignment reads `global_master_list."Department"`, so after an
   approved transfer the person auto-assigns to the destination department's bonus
   tab on the next calc.
+
+### Transfers vs. period-earned bonuses — payout survives a later transfer *(analysis, 2026-07-08)*
+
+A recurring worry is that moving someone between departments mid-period would strip a bonus they had already earned. It does **not** — because both bonus stores stamp the department + week the bonus was *earned in* onto the persisted row, and a later `Department` relabel never rewrites those rows.
+
+Key files:
+
+- [bonus-catalog-applied-db.ts](src/lib/supabase/bonus-catalog-applied-db.ts) — manager (Payment-Catalog) bonuses.
+- [qc-db.ts](src/lib/supabase/qc-db.ts) — QC roster + per-officer bonus split.
+- [apply-transfer.ts](src/lib/transfers/apply-transfer.ts) → `applyDepartmentTransfer()`.
+
+| Store | Row key | Transfer-safety |
+|---|---|---|
+| Manager bonuses (`bonus_catalog_applied`) | `(period_start, department, employee_email, bonus_id)` — upsert `onConflict` on all four | The row is stamped with the dept + week it was applied in. A transfer only changes `global_master_list."Department"`; the already-written applied row keeps its own `department`/`period_start`, so the earned payout is untouched. |
+| QC bonuses (`qc_*` roster) | `(period_start, member_email, department)` plus a `roster_status` flag (`active` / `transferred` / `removed`) and `current_department` | The roster row is deliberate "memory": when a member later leaves that department (transfer) or the master list (offboard), the row is **kept and flagged**, not deleted — so their earned share for that week is preserved and still attributed to the department they earned it in. |
+
+So a payout is pinned to the dept+week it was earned in and **survives** a later transfer. The only real gap a mid-period transfer creates is roster **visibility at scoring time**: `applyDepartmentTransfer()` is a point-in-time overwrite of the `Department` column, so if the move lands *before* the manager/QC roster for that week is built, the person shows up under the destination department (or is missing from the source) when scores are entered. It does not retroactively move or delete an already-recorded bonus row.
+
+(The Weekly / Monthly cadence of catalog bonuses is documented separately in [`features/bonus-catalog.md`](../features/bonus-catalog.md).)
 
 ---
 

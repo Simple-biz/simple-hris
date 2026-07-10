@@ -40,6 +40,7 @@ docs/
 | [rbac-feature-permissions.md](./features/rbac-feature-permissions.md) | Role grants + per-tab Hidden/View/Edit overlay; Admin-provisioned, enforced across all views + API; force-logout/session reset |
 | [accounting-cobrowse.md](./features/accounting-cobrowse.md) | Live "Observe" screen mirroring in Accounting (rrweb over Realtime), built on the collab layer |
 | [orphanage-dispute-flow.md](./features/orphanage-dispute-flow.md) | Orphanage-visit / PAB dispute flow |
+| [third-party-vendors.md](./features/third-party-vendors.md) | Orphanage 3rd Party Vendors tab: vendor directory (dual banking) + SIMPLE-branded invoice builder with PAID watermark; deliberately separate from Payment Dispatch (own tables, no n8n) |
 | [delete-authorization.md](./features/delete-authorization.md) | Who can delete what, and the audit trail |
 | [system-diagnostics.md](./features/system-diagnostics.md) | Admin diagnostics service map + probes; live auto re-probe feed for watching the DB during an outage |
 | [mesa.md](./features/mesa.md) | MESA savings program: `mesa_requests` (opt-in/out/disbursement/return) + backfilled `mesa_ledger`; contribution displays across HR/Accounting/Employee dashboards; Wizard ₱100 deduction flag |
@@ -47,6 +48,8 @@ docs/
 | [time-adjustment-requests.md](./features/time-adjustment-requests.md) | Employee time adjustment requests: wizard, evidence upload, Accounting review, pay wiring |
 | [identity-resolution.md](./features/identity-resolution.md) | Master-authoritative identity + Department; alternate-work-email bridging for hours/rate matching across Rates & Profiles, Payroll Wizard, manager + employee dashboards |
 | [manager-my-team.md](./features/manager-my-team.md) | Manager portal → My Team: roster, rates/pay hidden on every surface, Recognition-medal card, attendance-only Hours tab (HSL rule via `department` prop) |
+| [department-transfers.md](./features/department-transfers.md) | Department Transfers v2: manager-driven pull-in + source-manager consent, Google-Sheet write-back, past-dated transfers, Payroll-Wizard mid-week rate proration, and the Manager / HR (read-only) / Accounting (rate-linked) Transfers tabs |
+| [new-hire-checklist.md](./features/new-hire-checklist.md) | HR New Hire Checklist: modal-only, read-only grid with atomic per-row writes, optimistic-concurrency edits (409 reconcile), and `useChecklistRoom` soft row-locks + change broadcasts |
 | [onboarding-ip-assignment.md](./features/onboarding-ip-assignment.md) | IP Assignment / Talent Release / Copyright Waiver as the first public onboarding step; signed PDF via pdf-lib stored in `hr-onboarding-files`; HR IP Assignment tab; `/onboarding/preview` no-save preview mode (migration #73 PENDING) |
 | [onboarding-pay-plans.md](./features/onboarding-pay-plans.md) | HR uploads one pay-plan PDF per (Department, Country); the matched plan rides the onboarding **invite** email (in-email card + attachment + `pay_plan`) via a Country picker stored as `invite_country`. Migration #80 (two files) PENDING |
 | [onboarding-gmail-surname.md](./features/onboarding-gmail-surname.md) | Read-only auto-derived `@simple.biz` surname slice (collision-aware via `loadTakenWorkEmails`), sent to the workspace-account webhook in place of the legal surname for privacy. Migration #81 PENDING |
@@ -89,6 +92,7 @@ docs/
 
 | Doc |
 |---|
+| [audit-2026-07-10-session-log.md](./audits/audit-2026-07-10-session-log.md) — log of the 20 most recent Claude sessions (Jul 8–10) |
 | [audit-2026-07-07-session-log.md](./audits/audit-2026-07-07-session-log.md) — log of the 20 most recent Claude sessions (Jul 6–7) |
 | [audit-2026-06-16.md](./audits/audit-2026-06-16.md) |
 | [audit-2026-05-07.md](./audits/audit-2026-05-07.md) |
