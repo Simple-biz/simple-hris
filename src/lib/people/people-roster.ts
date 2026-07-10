@@ -40,6 +40,9 @@ export interface PeopleHours {
 }
 
 export interface PeopleRosterRow {
+  /** Primary key of the underlying global_master_list row — targets identity
+   *  edits from the People -> View Modal profile editor. */
+  id: string | null;
   employee_id: string | null;
   name: string | null;
   work_email: string | null;
@@ -51,9 +54,15 @@ export interface PeopleRosterRow {
   /** Hire date (YYYY-MM-DD) — powers the tenure display in the profile. */
   start_date: string | null;
   /** Home location — city/province for the directory, full address in the profile. */
+  street: string | null;
   city: string | null;
   province: string | null;
+  postal_code: string | null;
   full_address: string | null;
+  /** Contact phone from the master list (distinct from the payout phone). */
+  phone_number: string | null;
+  /** Free-text "Location" column — the sheet's single address field. */
+  location: string | null;
   rate: PeopleRate;
   hours: PeopleHours;
   processor: string | null;
@@ -447,6 +456,7 @@ export async function buildPeopleRoster(scope: PeopleRosterScope = {}): Promise<
     );
 
     return {
+      id: e.id ?? null,
       employee_id: e.employee_id ?? null,
       name: e.name ?? null,
       work_email: e.work_email ?? null,
@@ -454,9 +464,13 @@ export async function buildPeopleRoster(scope: PeopleRosterScope = {}): Promise<
       alternate_work_emails: altEmails,
       department: e.department ?? null,
       start_date: e.start_date ?? null,
+      street: e.street ?? null,
       city: e.city ?? null,
       province: e.province ?? null,
+      postal_code: e.postal_code ?? null,
       full_address: e.full_address ?? null,
+      phone_number: e.phone_number ?? null,
+      location: e.location ?? null,
       rate,
       hours,
       processor: idInfo?.processor ?? null,

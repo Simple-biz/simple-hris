@@ -18,6 +18,7 @@ import {
   MonitorPlay,
   Radio,
   RefreshCw,
+  RotateCw,
   Search,
   Send,
   Sheet,
@@ -35,7 +36,12 @@ import EmployeeAvatar from '@/components/employee/EmployeeAvatar';
 import { useLiveRefresh } from '@/hooks/useLiveRefresh';
 import { formatLastSeen } from '@/components/team/team-ui';
 import { dashboardLabelForPathname } from '@/lib/presence/page-label';
-import { usePresenceDetails, useSelfEmail, type PresenceDetail } from '@/components/presence/PresenceProvider';
+import {
+  usePresenceDetails,
+  usePresenceRefresh,
+  useSelfEmail,
+  type PresenceDetail,
+} from '@/components/presence/PresenceProvider';
 import { useAdminPingSender } from '@/components/presence/GlobalPingListener';
 import { useWatchScreen } from '@/components/presence/CobrowseProvider';
 
@@ -126,6 +132,10 @@ export default function AdminGlobalMasterList() {
   const [roster, setRoster] = useState<EmployeeRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  // Bumped on manual Refresh + the auto-telemetry tick. Drives the last-seen
+  // refetch and re-renders so "Last seen Xm ago" relative times stay current.
+  const [statusTick, setStatusTick] = useState(0);
   const [search, setSearch] = useState('');
   const [departmentFilter, setDepartmentFilter] = useState<DepartmentFilter>('__all__');
   const [viewFilter, setViewFilter] = useState<ViewFilter>('all');
@@ -139,6 +149,7 @@ export default function AdminGlobalMasterList() {
   const viewerEmail = useSelfEmail();
   const viewerNorm = viewerEmail ? normEmail(viewerEmail) ?? viewerEmail.trim().toLowerCase() : null;
   const presenceDetails = usePresenceDetails();
+  const refreshPresence = usePresenceRefresh();
   const sendPing = useAdminPingSender();
   const { observe, observedEmail: watchingEmail } = useWatchScreen();
 
@@ -189,6 +200,35 @@ export default function AdminGlobalMasterList() {
       setSyncing(false);
     }
   }, [fetchRoster]);
+
+  // Manual "Refresh": force-pull the live presence roster and re-fetch the
+  // DB-backed "last seen" stamps for what's on screen, updating relative times.
+  const handleRefresh = useCallback(() => {
+    setRefreshing(true);
+    refreshPresence();
+    setStatusTick((t) => t + 1);
+    window.setTimeout(() => setRefreshing(false), 500);
+  }, [refreshPresence]);
+
+  // Realtime telemetry: presence (who's online / which page) already streams in
+  // live over the `hris-presence` channel. This lightweight tick keeps the
+  // offline "last seen" stamps and their relative times fresh too, so the admin
+  // never has to press Refresh. Paused while the tab is hidden.
+  useEffect(() => {
+    const REFRESH_MS = 15_000;
+    const id = window.setInterval(() => {
+      if (document.visibilityState !== 'visible') return;
+      setStatusTick((t) => t + 1);
+    }, REFRESH_MS);
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') setStatusTick((t) => t + 1);
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      window.clearInterval(id);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+  }, []);
 
   const emailKeyFor = useCallback(
     (row: EmployeeRow): string => normEmail(employeeIdentityEmail(row)) ?? '',
@@ -323,7 +363,7 @@ export default function AdminGlobalMasterList() {
     return () => {
       cancelled = true;
     };
-  }, [lastSeenEmailKey]);
+  }, [lastSeenEmailKey, statusTick]);
 
   const selectedDetail = selected ? detailFor(selected) : null;
   const selectedOnline = !!selectedDetail;
@@ -420,7 +460,13 @@ export default function AdminGlobalMasterList() {
             <div className="flex items-center gap-2 rounded-xl border border-zinc-200/90 bg-white/90 px-3 py-2 shadow-sm dark:border-zinc-800 dark:bg-zinc-900/60">
               <Radio className="h-4 w-4 text-emerald-500" aria-hidden />
               <div>
-                <p className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500">Online now</p>
+                <p className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wide text-zinc-500">
+                  Online now
+                  <span className="relative flex h-1.5 w-1.5" title="Live — updating in real time">
+                    <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+                    <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                  </span>
+                </p>
                 <p className="font-mono text-sm font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">
                   {onlineCount}
                 </p>
@@ -488,17 +534,32 @@ export default function AdminGlobalMasterList() {
                   })}
                 </div>
               </div>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => void handleSync()}
-                disabled={syncing}
-                className="h-8 gap-1.5 border-zinc-200 text-xs text-zinc-700 dark:border-zinc-700 dark:text-zinc-200"
-              >
-                {syncing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
-                Sync
-              </Button>
+              <div className="flex items-center gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={handleRefresh}
+                  disabled={refreshing}
+                  title="Refresh live status — who's online and where they are right now"
+                  className="h-8 gap-1.5 border-emerald-200 text-xs text-emerald-700 hover:bg-emerald-50 dark:border-emerald-800/50 dark:text-emerald-300 dark:hover:bg-emerald-950/30"
+                >
+                  <RotateCw className={cn('h-3.5 w-3.5', refreshing && 'animate-spin')} />
+                  Refresh
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => void handleSync()}
+                  disabled={syncing}
+                  title="Re-sync the roster from the Google Sheet"
+                  className="h-8 gap-1.5 border-zinc-200 text-xs text-zinc-700 dark:border-zinc-700 dark:text-zinc-200"
+                >
+                  {syncing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+                  Sync
+                </Button>
+              </div>
             </div>
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
               <div className="relative min-w-0 flex-1">

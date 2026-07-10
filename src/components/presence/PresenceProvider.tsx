@@ -56,6 +56,8 @@ const OnlinePresenceContext = createContext<ReadonlySet<string>>(new Set());
 const PresenceDetailsContext = createContext<ReadonlyMap<string, PresenceDetail>>(new Map());
 /** Lets a dashboard shell publish its current tab label up to the provider. */
 const PresenceTabSetterContext = createContext<(label: string | null) => void>(() => {});
+/** Imperatively force a re-read of the live presence roster (manual "Refresh"). */
+const PresenceRefreshContext = createContext<() => void>(() => {});
 
 /** Returns the live set of normalized emails that are currently online. */
 export function useOnlineEmails(): ReadonlySet<string> {
@@ -66,6 +68,16 @@ export function useOnlineEmails(): ReadonlySet<string> {
  *  for everyone online right now, keyed by normalized email. */
 export function usePresenceDetails(): ReadonlyMap<string, PresenceDetail> {
   return useContext(PresenceDetailsContext);
+}
+
+/**
+ * Returns a function that force-recomputes the presence roster from the live
+ * channel state. Presence already streams in over Realtime (join/leave/sync),
+ * so this is only for a manual "Refresh" affordance / belt-and-suspenders pull —
+ * it's a no-op-shaped recompute, never a network round-trip.
+ */
+export function usePresenceRefresh(): () => void {
+  return useContext(PresenceRefreshContext);
 }
 
 /**
@@ -142,6 +154,9 @@ export default function PresenceProvider({ children }: { children: ReactNode }) 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const channelRef = useRef<any>(null);
   const subscribedRef = useRef(false);
+  // Holds the latest `sync` closure so an external "Refresh" can force a
+  // recompute from the current channel state without tearing anything down.
+  const syncRef = useRef<() => void>(() => {});
 
   // Re-announce our presence payload (path/tab may have changed) without
   // tearing down the channel/subscription. No-ops until SUBSCRIBED fires once.
@@ -199,6 +214,7 @@ export default function PresenceProvider({ children }: { children: ReactNode }) 
       setOnline(set);
       setDetails(map);
     };
+    syncRef.current = sync;
 
     channel
       .on('presence', { event: 'sync' }, sync)
@@ -266,12 +282,16 @@ export default function PresenceProvider({ children }: { children: ReactNode }) 
 
   const onlineValue = useMemo(() => online, [online]);
   const detailsValue = useMemo(() => details, [details]);
+  // Force-recompute from the current channel state. Stable identity.
+  const resync = useCallback(() => syncRef.current(), []);
 
   return (
     <OnlinePresenceContext.Provider value={onlineValue}>
       <PresenceDetailsContext.Provider value={detailsValue}>
         <PresenceTabSetterContext.Provider value={setTabLabel}>
-          {children}
+          <PresenceRefreshContext.Provider value={resync}>
+            {children}
+          </PresenceRefreshContext.Provider>
         </PresenceTabSetterContext.Provider>
       </PresenceDetailsContext.Provider>
     </OnlinePresenceContext.Provider>

@@ -10,6 +10,10 @@ const ACTIVE_EMPLOYEES_VIEW = "active_employees";
 
 /** Normalized row for the UI (snake_case internally). */
 export type EmployeeRow = {
+  /** Primary key of the global_master_list row. Used to target single-row
+   *  identity edits (People -> View Modal profile editor). Only present when the
+   *  select tier that includes `id` resolves. */
+  id?: string | null;
   employee_id: string | null;
   department: string | null;
   name: string | null;
@@ -38,6 +42,13 @@ export type EmployeeRow = {
   province?: string | null;
   postal_code?: string | null;
   full_address?: string | null;
+  /** Contact phone from global_master_list "Phone Number" (distinct from the
+   *  payout phone in employee_ids). Only present when the extended select tier
+   *  resolves (needs the active_employees view recreated). */
+  phone_number?: string | null;
+  /** Free-text "Location" column on global_master_list — the sheet's single
+   *  address field, kept in sync with the combined home address. */
+  location?: string | null;
   /** Public URL from Supabase Storage when set (see references/supabase_employee_profile_photos.sql). */
   profile_photo_url?: string | null;
   /** Google Workspace profile picture URL — populated by NextAuth jwt callback on sign-in
@@ -186,14 +197,18 @@ export function mapEmployeeRow(row: RawRow): EmployeeRow {
     "Profile_Photo_URL",
     "profile photo url",
   ]);
+  const id = pick(row, ["id"]);
   const street = pick(row, ["street", "Street"]);
   const city = pick(row, ["city", "City"]);
   const province = pick(row, ["province", "Province"]);
   const postal_code = pick(row, ["postal_code", "Postal Code", "PostalCode", "postal"]);
   const full_address = pick(row, ["full_address", "Full Address", "FullAddress"]);
+  const phone_number = pick(row, ["Phone Number", "phone_number", "Phone_Number", "phone number", "Contact Number", "contact_number"]);
+  const location = pick(row, ["Location", "location"]);
   const google_photo_url = pick(row, ["google_photo_url", "Google Photo URL", "google_picture"]);
 
   return {
+    id: id != null ? String(id) : null,
     // Persisted YYMM-NNNN from global_master_list.employee_id. When the column
     // is null (legacy rows that pre-date the persistence migration), the value
     // stays null here and generateEmployeeIds() fills it in downstream.
@@ -214,6 +229,8 @@ export function mapEmployeeRow(row: RawRow): EmployeeRow {
     province: province != null ? String(province).trim() || null : null,
     postal_code: postal_code != null ? String(postal_code).trim() || null : null,
     full_address: full_address != null ? String(full_address).trim() || null : null,
+    phone_number: phone_number != null ? String(phone_number).trim() || null : null,
+    location: location != null ? String(location).trim() || null : null,
     profile_photo_url:
       profile_photo_url != null ? String(profile_photo_url).trim() || null : null,
     google_photo_url:
@@ -246,8 +263,17 @@ const GLOBAL_MASTER_SELECT_BASE =
  *  shape resolves successfully against the view. */
 const GLOBAL_MASTER_SELECT =
   GLOBAL_MASTER_SELECT_BASE +
-  ',street,city,province,postal_code,full_address,google_photo_url,employee_id' +
+  ',id,street,city,province,postal_code,full_address,google_photo_url,employee_id' +
   ',"Alternate Work Email","Alternate Work Email 2"';
+
+/** Adds the "Phone Number" + "Location" columns (present on global_master_list
+ *  since add_phone_location_to_onboarding_and_master.sql, but only exposed
+ *  through active_employees once that view is recreated — see
+ *  references/sql/alter/recreate_active_employees_expose_phone_location.sql).
+ *  Tried FIRST; falls back to GLOBAL_MASTER_SELECT if the view is stale so the
+ *  roster never regresses just because this migration hasn't run yet. */
+const GLOBAL_MASTER_SELECT_EXT =
+  GLOBAL_MASTER_SELECT + ',"Phone Number","Location"';
 
 /** True when every field is null, empty, or whitespace-only. */
 function isRowEmptyOrWhitespace(row: EmployeeRow): boolean {
@@ -290,8 +316,17 @@ async function fetchActiveEmployees(
     return { data: out, error: null };
   };
 
-  let res = await queryView(GLOBAL_MASTER_SELECT);
-  let select = GLOBAL_MASTER_SELECT;
+  // Tiered fallback so a not-yet-run migration degrades gracefully instead of
+  // regressing the whole roster: extended (adds Phone Number/Location) -> full
+  // (id/address/alt-emails/employee_id) -> base. Each step only fires if the
+  // previous failed with a "column does not exist" (a stale active_employees
+  // view), never on a real error.
+  let res = await queryView(GLOBAL_MASTER_SELECT_EXT);
+  let select = GLOBAL_MASTER_SELECT_EXT;
+  if (res.error && /does not exist/i.test(res.error.message ?? "")) {
+    res = await queryView(GLOBAL_MASTER_SELECT);
+    select = GLOBAL_MASTER_SELECT;
+  }
   if (res.error && /does not exist/i.test(res.error.message ?? "")) {
     res = await queryView(GLOBAL_MASTER_SELECT_BASE);
     select = GLOBAL_MASTER_SELECT_BASE;

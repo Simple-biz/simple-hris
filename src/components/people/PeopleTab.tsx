@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import {
-  Search, Send, Eye, EyeOff, Clock, AlertTriangle, Users, Banknote, Loader2, Sparkles, RefreshCw, CalendarDays, ChevronRight, Landmark, Bell, Check,
+  Search, Send, Eye, EyeOff, Clock, AlertTriangle, Users, Banknote, Loader2, Sparkles, RefreshCw, CalendarDays, ChevronRight, Landmark, Bell, Check, Pencil, X,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
@@ -39,6 +39,8 @@ interface Hours {
   projectedOt: number | null;
 }
 interface RosterRow {
+  /** global_master_list PK — targets identity edits from the profile editor. */
+  id: string | null;
   employee_id: string | null;
   name: string | null;
   work_email: string | null;
@@ -46,13 +48,37 @@ interface RosterRow {
   alternate_work_emails: string[];
   department: string | null;
   start_date: string | null;
+  street: string | null;
   city: string | null;
   province: string | null;
+  postal_code: string | null;
   full_address: string | null;
+  phone_number: string | null;
+  location: string | null;
   rate: Rate;
   hours: Hours;
   processor: string | null;
   hasBanking: boolean;
+}
+
+/** Fresh master fields returned by PATCH /api/people/[email]/profile — merged
+ *  into the in-memory roster row (rate/hours/banking are left untouched). */
+interface MasterProfileFields {
+  id: string | null;
+  employee_id: string | null;
+  name: string | null;
+  department: string | null;
+  work_email: string | null;
+  personal_email: string | null;
+  alternate_work_emails: string[];
+  start_date: string | null;
+  phone_number: string | null;
+  location: string | null;
+  street: string | null;
+  city: string | null;
+  province: string | null;
+  postal_code: string | null;
+  full_address: string | null;
 }
 interface Banking {
   preferred_processor: string | null;
@@ -146,6 +172,113 @@ const GRANULARITY_ORDER: Granularity[] = ['daily', 'weekly', 'monthly'];
 /** Ambient auto-cycle: begin after this much idle time, then hold each view this long. */
 const AUTOPLAY_IDLE_MS = 30_000;
 const AUTOPLAY_STEP_MS = 5_000;
+
+/** Editable master-list profile fields, all held as strings for form binding. */
+interface ProfileForm {
+  name: string;
+  department: string;
+  work_email: string;
+  personal_email: string;
+  alternate_work_email: string;
+  alternate_work_email_2: string;
+  start_date: string;
+  phone_number: string;
+  street: string;
+  city: string;
+  province: string;
+  postal_code: string;
+  full_address: string;
+}
+
+/** Master "Start Date" is free-text (e.g. "2/26/18"); coerce to YYYY-MM-DD for
+ *  the <input type="date"> when parseable, else '' (the field shows blank and the
+ *  original is preserved unless the user picks a new date). */
+function toDateInput(raw: string | null | undefined): string {
+  if (!raw?.trim()) return '';
+  const s = raw.trim();
+  // Already ISO (date-only or timestamp) — take the date part verbatim so there's
+  // no UTC parse shift (new Date('2018-02-26') is UTC midnight = the prior day in
+  // negative-UTC zones). Free-text like "2/26/18" parses as LOCAL midnight below.
+  const iso = /^(\d{4})-(\d{2})-(\d{2})/.exec(s);
+  if (iso) return `${iso[1]}-${iso[2]}-${iso[3]}`;
+  const d = new Date(s);
+  if (Number.isNaN(d.getTime())) return '';
+  const p = (x: number) => String(x).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+
+function initialForm(row: RosterRow): ProfileForm {
+  return {
+    name: row.name ?? '',
+    department: row.department ?? '',
+    work_email: row.work_email ?? '',
+    personal_email: row.personal_email ?? '',
+    alternate_work_email: row.alternate_work_emails?.[0] ?? '',
+    alternate_work_email_2: row.alternate_work_emails?.[1] ?? '',
+    start_date: toDateInput(row.start_date),
+    phone_number: row.phone_number ?? '',
+    street: row.street ?? '',
+    city: row.city ?? '',
+    province: row.province ?? '',
+    postal_code: row.postal_code ?? '',
+    full_address: row.full_address ?? '',
+  };
+}
+
+/** A labeled text/date input for the profile editor grid. */
+function EditField({
+  label,
+  value,
+  onChange,
+  accent,
+  type = 'text',
+  hint,
+  wide,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  accent: Accent;
+  type?: string;
+  hint?: string;
+  wide?: boolean;
+}) {
+  return (
+    <div className={cn(wide && 'sm:col-span-2')}>
+      <label className="text-[10.5px] uppercase tracking-wide text-zinc-400">{label}</label>
+      <Input
+        value={value}
+        type={type}
+        onChange={(e) => onChange(e.target.value)}
+        className={cn('mt-1 h-8 text-[13px]', accent.ring)}
+      />
+      {hint && <p className="mt-0.5 text-[10.5px] text-zinc-400">{hint}</p>}
+    </div>
+  );
+}
+
+/** Merge freshly-saved master fields into an existing roster row, leaving the
+ *  rate/hours/processor/banking (which a profile edit never touches) intact. */
+function mergeMaster(row: RosterRow, m: MasterProfileFields): RosterRow {
+  return {
+    ...row,
+    id: m.id ?? row.id,
+    employee_id: m.employee_id ?? row.employee_id,
+    name: m.name,
+    work_email: m.work_email,
+    personal_email: m.personal_email,
+    alternate_work_emails: m.alternate_work_emails ?? [],
+    department: m.department,
+    start_date: m.start_date,
+    street: m.street,
+    city: m.city,
+    province: m.province,
+    postal_code: m.postal_code,
+    full_address: m.full_address,
+    phone_number: m.phone_number,
+    location: m.location,
+  };
+}
 
 function fmtMoney(amount: number | null | undefined, currency: Currency = 'PHP'): string {
   if (amount == null) return '—';
@@ -401,6 +534,24 @@ export default function PeopleTab({
     },
     [rows],
   );
+
+  // Reflect a profile edit (from the View Modal) into the in-memory roster + the
+  // open dialog immediately, without a refetch. Admin/HR reflect it separately
+  // via their own live refresh (same global_master_list table). Matches by the
+  // stable master-row id. Warms the tab cache only when on the default scope
+  // (mirrors load()), so a cached paint next mount isn't a stale non-default week.
+  const handleRowUpdated = useCallback((master: MasterProfileFields) => {
+    setRows((prev) => {
+      const next = prev.map((r) => (r.id != null && r.id === master.id ? mergeMaster(r, master) : r));
+      if (!rangeRef.current && (!periodRef.current || periodRef.current === defaultFileRef.current)) {
+        setTabCache(TAB_CACHE_KEYS.peopleRoster, next);
+      }
+      return next;
+    });
+    // onRowUpdated only fires from the currently-open dialog, so the selection is
+    // exactly this person — merge unconditionally.
+    setSelected((sel) => (sel ? mergeMaster(sel, master) : sel));
+  }, []);
 
   // Manual refresh — re-pull the SELECTED week in place (no skeleton flash) so a
   // change made in the Payroll Wizard shows up here without a full reload.
@@ -886,12 +1037,13 @@ export default function PeopleTab({
 
       {selected && (
         <PersonDetailDialog
-          key={selected.work_email ?? selected.employee_id ?? selected.name ?? 'person'}
+          key={selected.id ?? selected.work_email ?? selected.employee_id ?? selected.name ?? 'person'}
           row={selected}
           accent={accent}
           canEdit={canEdit}
           onClose={() => setSelected(null)}
           onSendTransfer={() => setTransferFor(selected)}
+          onRowUpdated={handleRowUpdated}
         />
       )}
 
@@ -2253,12 +2405,14 @@ function PersonDetailDialog({
   canEdit,
   onClose,
   onSendTransfer,
+  onRowUpdated,
 }: {
   row: RosterRow;
   accent: Accent;
   canEdit: boolean;
   onClose: () => void;
   onSendTransfer: () => void;
+  onRowUpdated: (master: MasterProfileFields) => void;
 }) {
   const [tab, setTab] = useState<PersonTab>('profile');
   // The scroll viewport for the tab panels — reset to the top on every switch so
@@ -2285,7 +2439,78 @@ function PersonDetailDialog({
   const [bankHistDetail, setBankHistDetail] = useState<BankChangeEntry | null>(null);
   const reduceMotion = useReducedMotion();
   const HIST_PAGE_SIZE = 5;
-  const email = row.work_email ?? '';
+  // Freeze the person's identity for the dialog's lifetime: the dialog is keyed by
+  // the stable master id, so editing the work email must NOT re-fire the banking/
+  // payroll/PAB fetches (which would flash skeletons and silently re-mask a reveal).
+  const [email] = useState(() => row.work_email ?? '');
+
+  // Profile editor (Identity & contact). Only reachable when canEdit AND the row
+  // carries its master-list id (the update target).
+  const [editing, setEditing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [form, setForm] = useState<ProfileForm>(() => initialForm(row));
+  const upd = (k: keyof ProfileForm, v: string) => setForm((f) => ({ ...f, [k]: v }));
+  const beginEdit = () => { setForm(initialForm(row)); setEditing(true); };
+  const cancelEdit = () => { setForm(initialForm(row)); setEditing(false); };
+
+  const saveProfile = async () => {
+    const initial = initialForm(row);
+    const patch: Record<string, string> = {};
+    (Object.keys(initial) as (keyof ProfileForm)[]).forEach((k) => {
+      const before = k === 'start_date' ? initial[k] : initial[k].trim();
+      const after = k === 'start_date' ? form[k] : form[k].trim();
+      if (before !== after) patch[k] = after;
+    });
+    // Any structured-address change re-derives the combined "Location" line
+    // (the single address field the Google Sheet carries).
+    const ADDR = ['street', 'city', 'province', 'postal_code', 'full_address'];
+    if (ADDR.some((k) => k in patch)) {
+      const full = form.full_address.trim();
+      patch.location =
+        full || [form.street, form.city, form.province, form.postal_code].map((x) => x.trim()).filter(Boolean).join(', ');
+    }
+    // Never blank the identity keys (mirrors the server guard so the user gets an
+    // inline error instead of a 400).
+    const REQUIRED_LABELS: Record<string, string> = { name: 'Name', work_email: 'Work email', department: 'Department' };
+    for (const k of Object.keys(REQUIRED_LABELS)) {
+      if (k in patch && !(patch[k] ?? '').trim()) {
+        toast.error(`${REQUIRED_LABELS[k]} can’t be empty.`);
+        return;
+      }
+    }
+    if (Object.keys(patch).length === 0) { setEditing(false); return; }
+
+    setSaving(true);
+    try {
+      const seg = email || row.personal_email || row.id || 'employee';
+      const res = await fetch(`/api/people/${encodeURIComponent(seg)}/profile`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: row.id,
+          original_work_email: row.work_email,
+          original_personal_email: row.personal_email,
+          original_department: row.department,
+          patch,
+        }),
+      });
+      const j = (await res.json()) as { ok?: boolean; master?: MasterProfileFields; sheet?: { updated: number; reason?: string }; error?: string };
+      if (!res.ok || !j.ok || !j.master) throw new Error(j.error || `Save failed (${res.status})`);
+      onRowUpdated(j.master);
+      setEditing(false);
+      if (j.sheet && j.sheet.updated === 0) {
+        toast.message('Saved in-app — Google Sheet not updated', {
+          description: `${j.sheet.reason ?? 'The master Sheet row was not found.'} This edit may revert on the next Sheet sync.`,
+        });
+      } else {
+        toast.success('Profile updated.');
+      }
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not save the profile.');
+    } finally {
+      setSaving(false);
+    }
+  };
 
   const changeTab = (next: PersonTab) => {
     if (next === tab) return;
@@ -2460,33 +2685,78 @@ function PersonDetailDialog({
             />
           </div>
 
-          {/* Identity & contact — the "cabinet" profile fields. All sourced from
-              the roster row already in memory, so this adds no fetch. Non-sensitive
-              (unlike Banking), so it's always visible. */}
+          {/* Identity & contact — master-list "cabinet" fields, editable in place
+              (canEdit + a resolved master id). Read-only values come from the
+              roster row already in memory; the editor writes global_master_list +
+              the Google Sheet, and Admin/HR reflect it on their next refresh. */}
           <div className="mt-5">
-            <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-500">Identity &amp; contact</h3>
-            <div className="rounded-lg border border-zinc-200 bg-zinc-50/60 p-3 text-[13px] dark:border-zinc-800 dark:bg-zinc-900/40">
-              <dl className="grid grid-cols-1 gap-x-6 gap-y-1.5 sm:grid-cols-2">
-                <Field label="Employee ID" value={row.employee_id} mono />
-                <Field label="Department" value={row.department} />
-                <Field label="Work email" value={row.work_email} />
-                <Field label="Personal email" value={row.personal_email} />
-                {(row.alternate_work_emails ?? []).length > 0 && (
-                  <Field label="Alternate work emails" value={(row.alternate_work_emails ?? []).join(', ')} wide />
-                )}
-                <Field label="Start date" value={formatHireDate(row.start_date)} />
-                <Field label="Tenure" value={tenureFrom(row.start_date)} />
-                <Field
-                  label="Home address"
-                  value={
-                    row.full_address?.trim() ||
-                    [row.city, row.province].map((x) => (x ?? '').trim()).filter(Boolean).join(', ') ||
-                    null
-                  }
-                  wide
-                />
-              </dl>
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <h3 className="text-xs font-semibold uppercase tracking-wide text-zinc-500">Identity &amp; contact</h3>
+              {canEdit && !editing && (
+                row.id ? (
+                  <Button type="button" size="sm" variant="outline" className="h-7 gap-1.5 px-2 text-[12px]" onClick={beginEdit}>
+                    <Pencil className="h-3.5 w-3.5" /> Edit
+                  </Button>
+                ) : (
+                  <span className="text-[10.5px] text-zinc-400">Not editable (no master record)</span>
+                )
+              )}
             </div>
+            {editing ? (
+              <div className="rounded-lg border border-zinc-200 bg-zinc-50/60 p-3 dark:border-zinc-800 dark:bg-zinc-900/40">
+                <div className="grid grid-cols-1 gap-x-6 gap-y-3 sm:grid-cols-2">
+                  <EditField label="Full name" value={form.name} onChange={(v) => upd('name', v)} accent={accent} wide hint="Saved in the master-list format (surname first)." />
+                  <EditField label="Department" value={form.department} onChange={(v) => upd('department', v)} accent={accent} />
+                  <EditField label="Work email" value={form.work_email} onChange={(v) => upd('work_email', v)} accent={accent} type="email" hint="Identity key — must stay unique per department." />
+                  <EditField label="Personal email" value={form.personal_email} onChange={(v) => upd('personal_email', v)} accent={accent} type="email" />
+                  <EditField label="Alternate work email" value={form.alternate_work_email} onChange={(v) => upd('alternate_work_email', v)} accent={accent} type="email" />
+                  <EditField label="Alternate work email 2" value={form.alternate_work_email_2} onChange={(v) => upd('alternate_work_email_2', v)} accent={accent} type="email" />
+                  <EditField label="Start date" value={form.start_date} onChange={(v) => upd('start_date', v)} accent={accent} type="date" hint={row.start_date ? `Currently: ${formatHireDate(row.start_date)}` : undefined} />
+                  <EditField label="Phone number" value={form.phone_number} onChange={(v) => upd('phone_number', v)} accent={accent} />
+                  <EditField label="Full address" value={form.full_address} onChange={(v) => upd('full_address', v)} accent={accent} wide hint="Synced to the Sheet's Location column." />
+                  <EditField label="Street" value={form.street} onChange={(v) => upd('street', v)} accent={accent} />
+                  <EditField label="City" value={form.city} onChange={(v) => upd('city', v)} accent={accent} />
+                  <EditField label="Province" value={form.province} onChange={(v) => upd('province', v)} accent={accent} />
+                  <EditField label="Postal code" value={form.postal_code} onChange={(v) => upd('postal_code', v)} accent={accent} />
+                </div>
+                <p className="mt-3 text-[11px] text-zinc-400">
+                  Employee ID <span className="font-mono">{row.employee_id ?? '—'}</span> is system-managed. Saving writes the Global Master List + Google Sheet.
+                </p>
+                <div className="mt-3 flex items-center justify-end gap-2">
+                  <Button type="button" size="sm" variant="outline" className="h-8 gap-1.5 px-3 text-[12px]" onClick={cancelEdit} disabled={saving}>
+                    <X className="h-3.5 w-3.5" /> Cancel
+                  </Button>
+                  <Button type="button" size="sm" className={cn('h-8 gap-1.5 px-3 text-[12px] font-medium', accent.btn)} onClick={saveProfile} disabled={saving}>
+                    {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />} Save changes
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <div className="rounded-lg border border-zinc-200 bg-zinc-50/60 p-3 text-[13px] dark:border-zinc-800 dark:bg-zinc-900/40">
+                <dl className="grid grid-cols-1 gap-x-6 gap-y-1.5 sm:grid-cols-2">
+                  <Field label="Employee ID" value={row.employee_id} mono />
+                  <Field label="Department" value={row.department} />
+                  <Field label="Work email" value={row.work_email} />
+                  <Field label="Personal email" value={row.personal_email} />
+                  {(row.alternate_work_emails ?? []).length > 0 && (
+                    <Field label="Alternate work emails" value={(row.alternate_work_emails ?? []).join(', ')} wide />
+                  )}
+                  <Field label="Start date" value={formatHireDate(row.start_date)} />
+                  <Field label="Tenure" value={tenureFrom(row.start_date)} />
+                  <Field label="Phone number" value={row.phone_number} />
+                  <Field
+                    label="Home address"
+                    value={
+                      row.full_address?.trim() ||
+                      [row.city, row.province].map((x) => (x ?? '').trim()).filter(Boolean).join(', ') ||
+                      row.location ||
+                      null
+                    }
+                    wide
+                  />
+                </dl>
+              </div>
+            )}
           </div>
           </>
           )}
