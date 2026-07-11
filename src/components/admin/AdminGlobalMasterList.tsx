@@ -150,6 +150,12 @@ export default function AdminGlobalMasterList() {
   const [page, setPage] = useState(1);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [lastSeen, setLastSeen] = useState<Record<string, string>>({});
+  // Reliable "actively using the app" signal from the HTTP heartbeat, keyed by
+  // normalized email — backs the fragile Realtime presence channel so people
+  // whose WebSocket is blocked/dropped still show as online.
+  const [recentActive, setRecentActive] = useState<
+    Record<string, { last_seen_at: string; name: string | null }>
+  >({});
   const [pingText, setPingText] = useState('');
   const [pingSending, setPingSending] = useState(false);
   const [forcingLogout, setForcingLogout] = useState(false);
@@ -238,6 +244,24 @@ export default function AdminGlobalMasterList() {
     };
   }, []);
 
+  // Pull the reliable heartbeat-based "who's active right now" set. Re-runs on
+  // mount and on every telemetry tick / manual Refresh (statusTick). This is
+  // what makes online detection resilient to Realtime WebSocket gaps.
+  useEffect(() => {
+    let cancelled = false;
+    fetch('/api/presence/active?withinSeconds=120', { cache: 'no-store' })
+      .then((res) => res.json())
+      .then((json: { active?: Record<string, { last_seen_at: string; name: string | null }> }) => {
+        if (!cancelled) setRecentActive(json.active ?? {});
+      })
+      .catch(() => {
+        /* non-fatal — falls back to Realtime-only presence */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [statusTick]);
+
   const emailKeyFor = useCallback(
     (row: EmployeeRow): string => normEmail(employeeIdentityEmail(row)) ?? '',
     [],
@@ -250,6 +274,31 @@ export default function AdminGlobalMasterList() {
       return (w && presenceDetails.get(w)) || (p && presenceDetails.get(p)) || null;
     },
     [presenceDetails],
+  );
+
+  // Reliable heartbeat signal: has this person's tab beaten within the window?
+  const recentActiveFor = useCallback(
+    (row: EmployeeRow): boolean => {
+      const w = normEmail(row.work_email ?? '');
+      const p = normEmail(row.personal_email ?? '');
+      return (!!w && !!recentActive[w]) || (!!p && !!recentActive[p]);
+    },
+    [recentActive],
+  );
+
+  // Merge the two signals into one live state. Realtime presence is authoritative
+  // when present (it knows the page + focus). When it's missing someone the
+  // heartbeat still vouches for — treat them as Online (the heartbeat only fires
+  // while the tab is visible, so a recent beat means actively looking). `detail`
+  // is null for heartbeat-only people since Realtime never delivered their page.
+  const liveFor = useCallback(
+    (row: EmployeeRow): { state: LiveState; detail: PresenceDetail | null } => {
+      const detail = detailFor(row);
+      if (detail) return { state: liveStateOf(detail), detail };
+      if (recentActiveFor(row)) return { state: 'online', detail: null };
+      return { state: 'offline', detail: null };
+    },
+    [detailFor, recentActiveFor],
   );
 
   const lastSeenFor = useCallback(
@@ -287,19 +336,24 @@ export default function AdminGlobalMasterList() {
 
   const extraOnlineRows = useMemo(() => {
     const rows: EmployeeRow[] = [];
-    for (const [email, detail] of presenceDetails) {
-      if (!email || rosterEmailSet.has(email)) continue;
+    const seen = new Set<string>();
+    const add = (email: string, name: string | null) => {
+      if (!email || rosterEmailSet.has(email) || seen.has(email)) return;
+      seen.add(email);
       rows.push({
         employee_id: null,
         department: null,
-        name: detail.name || email,
+        name: name || email,
         personal_email: null,
         work_email: email,
         start_date: null,
       } as EmployeeRow);
-    }
+    };
+    // Realtime presence first (richer), then heartbeat-only actives.
+    for (const [email, detail] of presenceDetails) add(email, detail.name);
+    for (const [email, info] of Object.entries(recentActive)) add(email, info.name);
     return rows.sort((a, b) => (a.name ?? '').localeCompare(b.name ?? ''));
-  }, [presenceDetails, rosterEmailSet]);
+  }, [presenceDetails, recentActive, rosterEmailSet]);
 
   const extraOnlineKeySet = useMemo(
     () => new Set(extraOnlineRows.map((r) => emailKeyFor(r))),
@@ -309,12 +363,15 @@ export default function AdminGlobalMasterList() {
   // The list the UI works over: online-but-unlisted accounts first, then roster.
   const fullRoster = useMemo(() => [...extraOnlineRows, ...roster], [extraOnlineRows, roster]);
 
-  const onlineCount = useMemo(() => fullRoster.filter((r) => !!detailFor(r)).length, [fullRoster, detailFor]);
+  const onlineCount = useMemo(
+    () => fullRoster.filter((r) => liveFor(r).state !== 'offline').length,
+    [fullRoster, liveFor],
+  );
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     return fullRoster.filter((r) => {
-      if (viewFilter === 'online' && !detailFor(r)) return false;
+      if (viewFilter === 'online' && liveFor(r).state === 'offline') return false;
       if (departmentFilter !== '__all__') {
         const dep = (r.department ?? '').trim();
         if (departmentFilter === '__unassigned__' ? dep !== '' : dep !== departmentFilter) return false;
@@ -324,7 +381,7 @@ export default function AdminGlobalMasterList() {
         .filter(Boolean)
         .some((s) => s!.toLowerCase().includes(q));
     });
-  }, [fullRoster, search, departmentFilter, viewFilter, detailFor]);
+  }, [fullRoster, search, departmentFilter, viewFilter, liveFor]);
 
   useEffect(() => {
     setPage(1);
@@ -373,10 +430,13 @@ export default function AdminGlobalMasterList() {
     };
   }, [lastSeenEmailKey, statusTick]);
 
-  const selectedDetail = selected ? detailFor(selected) : null;
-  const selectedOnline = !!selectedDetail;
+  const selectedLive = selected ? liveFor(selected) : { state: 'offline' as LiveState, detail: null };
+  const selectedDetail = selectedLive.detail;
+  const selectedOnline = selectedLive.state !== 'offline';
   // Connected but with the HRIS tab backgrounded (switched tabs / minimized).
-  const selectedInactive = selectedOnline && !selectedDetail!.active;
+  const selectedInactive = selectedLive.state === 'inactive';
+  // Online purely by heartbeat — Realtime never delivered their live page.
+  const selectedOnlineNoDetail = selectedOnline && !selectedDetail;
   const selectedIsSelf = !!selected && !!viewerNorm && emailKeyFor(selected) === viewerNorm;
   const selectedEmail = selected ? employeeIdentityEmail(selected) || null : null;
   const selectedIsExtra = !!selected && extraOnlineKeySet.has(emailKeyFor(selected));
@@ -631,9 +691,8 @@ export default function AdminGlobalMasterList() {
                 {pageRows.map((row, i) => {
                   const key = emailKeyFor(row);
                   const isSel = key === selectedKey;
-                  const detail = detailFor(row);
-                  const online = !!detail;
-                  const liveState = liveStateOf(detail);
+                  const { state: liveState, detail } = liveFor(row);
+                  const online = liveState !== 'offline';
                   const email = employeeIdentityEmail(row) || null;
                   const isExtra = extraOnlineKeySet.has(key);
                   return (
@@ -710,9 +769,11 @@ export default function AdminGlobalMasterList() {
                                 )}
                                 aria-hidden
                               />
-                              {liveState === 'inactive'
-                                ? `Inactive · ${statusLabel(detail, null)}`
-                                : statusLabel(detail, null)}
+                              {detail
+                                ? liveState === 'inactive'
+                                  ? `Inactive · ${statusLabel(detail, null)}`
+                                  : statusLabel(detail, null)
+                                : 'Online'}
                             </p>
                           ) : (
                             row.department && (
@@ -850,13 +911,13 @@ export default function AdminGlobalMasterList() {
                       {selectedInactive ? 'Inactive' : selectedOnline ? 'Online' : 'Offline'}
                     </span>
                   </div>
-                  {selectedOnline ? (
+                  {selectedDetail ? (
                     <>
                       <div className="mt-1.5 flex items-baseline gap-2">
                         <p className="min-w-0 truncate text-[15px] font-semibold text-zinc-900 dark:text-white">
-                          {dashboardLabelForPathname(selectedDetail!.path)}
+                          {dashboardLabelForPathname(selectedDetail.path)}
                         </p>
-                        {selectedDetail!.tab && (
+                        {selectedDetail.tab && (
                           <span
                             className={cn(
                               'inline-flex shrink-0 items-center gap-1 rounded-md bg-white/70 px-1.5 py-0.5 font-mono text-[11px] font-medium ring-1 dark:bg-zinc-900/60',
@@ -865,7 +926,7 @@ export default function AdminGlobalMasterList() {
                                 : 'text-emerald-700 ring-emerald-300/60 dark:text-emerald-300 dark:ring-emerald-800/50',
                             )}
                           >
-                            {selectedDetail!.tab}
+                            {selectedDetail.tab}
                           </span>
                         )}
                       </div>
@@ -874,6 +935,16 @@ export default function AdminGlobalMasterList() {
                           Switched away — this tab isn&apos;t focused right now.
                         </p>
                       )}
+                    </>
+                  ) : selectedOnlineNoDetail ? (
+                    <>
+                      <p className="mt-1.5 text-[15px] font-semibold text-emerald-700 dark:text-emerald-300">
+                        Online
+                      </p>
+                      <p className="mt-1 text-[11.5px] text-emerald-700/80 dark:text-emerald-400/80">
+                        Actively using the app — live page unavailable (their realtime link isn&apos;t
+                        connected).
+                      </p>
                     </>
                   ) : (
                     <p className="mt-1.5 text-[13px] text-zinc-600 dark:text-zinc-400">
