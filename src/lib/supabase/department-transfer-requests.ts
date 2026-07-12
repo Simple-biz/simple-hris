@@ -28,6 +28,11 @@ export type DepartmentTransferRequestRow = {
   sheet_sync_error: string | null;
   created_at: string;
   updated_at: string;
+  /** Client-only enrichment (NOT a DB column): for a still-pending OUTGOING
+   *  request, the source-department manager(s) whose Release we're awaiting.
+   *  Populated by GET ?scope=outgoing so the requester sees whom to nudge — an
+   *  empty array means the source department has no manager assigned. */
+  pending_with?: string[];
 };
 
 /** v2 status semantics:

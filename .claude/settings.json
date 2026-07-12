@@ -604,7 +604,13 @@
       "PowerShell(taskkill /F /T /PID 31728 2>&1; Start-Sleep -Milliseconds 800; $alive = Get-Process node -ErrorAction SilentlyContinue | Where-Object { $_.WorkingSet64/1MB -gt 100 }; if \\($alive\\) { \"STILL HEAVY: \" + \\($alive.Id -join ','\\) } else { \"heavy node procs cleared\" })",
       "Bash(curl -s -o /dev/null -w \"HTTP %{http_code}  time %{time_total}s\\\\n\" --max-time 75 http://localhost:3000/login)",
       "Bash(curl -s -o /dev/null -w \"HTTP %{http_code}  time %{time_total}s\\\\n\" --max-time 150 http://localhost:3000/admin)",
-      "PowerShell(Get-Process node -ErrorAction SilentlyContinue | Sort-Object CPU -Descending | Select-Object Id, @{N='CPU\\(s\\)';E={[math]::Round\\($_.CPU,1\\)}}, @{N='RAM\\(MB\\)';E={[math]::Round\\($_.WorkingSet64/1MB\\)}} | Format-Table -AutoSize; \"--- overall CPU load % ---\"; \\(Get-CimInstance Win32_Processor | Measure-Object -Property LoadPercentage -Average\\).Average)"
+      "PowerShell(Get-Process node -ErrorAction SilentlyContinue | Sort-Object CPU -Descending | Select-Object Id, @{N='CPU\\(s\\)';E={[math]::Round\\($_.CPU,1\\)}}, @{N='RAM\\(MB\\)';E={[math]::Round\\($_.WorkingSet64/1MB\\)}} | Format-Table -AutoSize; \"--- overall CPU load % ---\"; \\(Get-CimInstance Win32_Processor | Measure-Object -Property LoadPercentage -Average\\).Average)",
+      "PowerShell($c = Get-NetTCPConnection -LocalPort 3000 -State Listen -ErrorAction SilentlyContinue; if \\($c\\) { $c.OwningProcess | Select-Object -Unique | ForEach-Object { $p = Get-Process -Id $_ -ErrorAction SilentlyContinue; Write-Output \"Killing PID $_ \\($\\($p.ProcessName\\)\\)\"; Stop-Process -Id $_ -Force } } else { Write-Output \"Nothing listening on port 3000\" })",
+      "Bash(node scripts/check-markt.mjs)",
+      "Bash(node scripts/check-markt2.mjs)",
+      "Bash(node scripts/check-markt3.mjs)",
+      "Bash(node scripts/fix-markt-duplicate.mjs)",
+      "Bash(node scripts/fix-markt-duplicate.mjs --live)"
     ],
     "additionalDirectories": [
       "\\tmp",

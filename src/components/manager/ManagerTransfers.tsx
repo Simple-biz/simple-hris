@@ -18,6 +18,7 @@ import {
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
+import { useLiveRefresh } from '@/hooks/useLiveRefresh';
 import ManagerTransferDialog from '@/components/manager/ManagerTransferDialog';
 import type {
   DepartmentTransferRequestRow,
@@ -97,8 +98,11 @@ export default function ManagerTransfers({ myDepartments, canInitiate }: Props) 
   const [sub, setSub] = useState<SubTab>('release');
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
-  const load = useCallback(() => {
-    setLoading(true);
+  // `silent` refreshes (live Realtime events, the poll backstop, tab refocus)
+  // update the three lists in place without flashing the full-page spinner, so
+  // a co-manager's or admin's action shows up live and stale cards can't linger.
+  const load = useCallback((opts?: { silent?: boolean }) => {
+    if (!opts?.silent) setLoading(true);
     Promise.all([
       fetch('/api/department-transfers?scope=incoming', { cache: 'no-store' })
         .then((r) => (r.ok ? r.json() : { rows: [] }))
@@ -121,12 +125,24 @@ export default function ManagerTransfers({ myDepartments, canInitiate }: Props) 
           setDone(dn.rows ?? []);
         },
       )
-      .finally(() => setLoading(false));
+      .finally(() => {
+        if (!opts?.silent) setLoading(false);
+      });
   }, []);
 
   useEffect(() => {
     load();
   }, [load]);
+
+  // Keep all three sub-tabs live: a request being released/declined/applied (by a
+  // co-manager, an admin, or from another tab) fires a Realtime event -> in-place
+  // refresh. The 60s poll + focus refresh are the backstop if Realtime drops.
+  useLiveRefresh({
+    tables: ['department_transfer_requests'],
+    onRefresh: () => load({ silent: true }),
+    channel: 'manager-transfers',
+    pollMs: 60_000,
+  });
 
   const decide = async (row: DepartmentTransferRequestRow, action: 'release' | 'decline') => {
     if (action === 'decline' && !declineNote.trim()) {
@@ -540,6 +556,22 @@ export default function ManagerTransfers({ myDepartments, canInitiate }: Props) 
                               {r.status === 'rejected' && r.approver_note ? (
                                 <span className="text-rose-500">· &ldquo;{r.approver_note}&rdquo;</span>
                               ) : null}
+                              {r.status === 'pending' &&
+                                (r.pending_with && r.pending_with.length > 0 ? (
+                                  <span
+                                    className="text-amber-600 dark:text-amber-400"
+                                    title="Whose release we're waiting on"
+                                  >
+                                    · waiting on {r.pending_with.join(', ')}
+                                  </span>
+                                ) : (
+                                  <span
+                                    className="font-medium text-rose-600 dark:text-rose-400"
+                                    title={`No manager is assigned to ${r.from_department}, so no one can release this. Ask an admin to assign one (or to apply it directly).`}
+                                  >
+                                    · no manager on {r.from_department} — ask an admin
+                                  </span>
+                                ))}
                             </div>
                           </div>
                           <div className="flex items-center gap-2">
@@ -653,7 +685,7 @@ export default function ManagerTransfers({ myDepartments, canInitiate }: Props) 
           open={dialogOpen}
           onOpenChange={setDialogOpen}
           myDepartments={myDepartments}
-          onSubmitted={load}
+          onSubmitted={() => load()}
         />
       )}
     </div>

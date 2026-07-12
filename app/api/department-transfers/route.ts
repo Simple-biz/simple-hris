@@ -4,7 +4,11 @@ import { authOptions } from '@/lib/auth/auth-options';
 import { createSupabaseServiceRoleClient } from '@/lib/supabase/server';
 import { normEmail } from '@/lib/email/norm-email';
 import { insertAuditLog } from '@/lib/supabase/audit-log';
-import { listDepartmentsForManager, listManagersByDepartment } from '@/lib/supabase/department-managers';
+import {
+  listDepartmentsForManager,
+  listManagersByDepartment,
+  listAllDepartmentManagers,
+} from '@/lib/supabase/department-managers';
 import { departmentMatchesManagedAssignments } from '@/lib/managed-department-scope';
 import {
   insertTransferRequest,
@@ -28,6 +32,41 @@ function clientIp(request: Request): string | null {
 type SessionLike = { user?: { email?: string | null; roles?: string[] } | null } | null;
 function rolesOf(session: SessionLike): string[] {
   return (session?.user?.roles ?? []) as string[];
+}
+
+/**
+ * Tag each still-pending request with the source-department manager(s) whose
+ * Release it's waiting on ("whom do I nudge?"), excluding the requester
+ * themselves. An empty `pending_with` means the source department has NO
+ * manager assigned — i.e. the request is orphaned and only an admin can move
+ * it. Resolved decline/apply rows are left untouched. Uses a single
+ * department_managers read (not one per row).
+ */
+async function attachPendingWith(
+  rows: Awaited<ReturnType<typeof listTransferRequestsByRequester>>['rows'],
+  requesterEmail: string,
+) {
+  if (!rows.some((r) => r.status === 'pending')) return rows;
+  const { rows: mgrs } = await listAllDepartmentManagers();
+  const byDept = new Map<string, string[]>();
+  for (const m of mgrs) {
+    const key = m.department.trim().toLowerCase();
+    const list = byDept.get(key) ?? [];
+    const e = m.manager_email.trim().toLowerCase();
+    if (e && !list.includes(e)) list.push(e);
+    byDept.set(key, list);
+  }
+  const me = requesterEmail.toLowerCase();
+  return rows.map((r) =>
+    r.status === 'pending'
+      ? {
+          ...r,
+          pending_with: (byDept.get(r.from_department.trim().toLowerCase()) ?? []).filter(
+            (e) => e !== me,
+          ),
+        }
+      : r,
+  );
 }
 
 /**
@@ -72,7 +111,7 @@ export async function GET(request: Request) {
     }
     const { rows, error } = await listTransferRequestsByRequester(sessionEmail);
     if (error) return NextResponse.json({ rows: [], error }, { status: 500 });
-    return NextResponse.json({ rows, error: null });
+    return NextResponse.json({ rows: await attachPendingWith(rows, sessionEmail), error: null });
   }
   return NextResponse.json({ rows: [], error: 'Manager, HR, or admin role required' }, { status: 403 });
 }

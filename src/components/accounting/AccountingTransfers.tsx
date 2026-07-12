@@ -14,6 +14,7 @@ import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { getTabCache, hasFetchedThisSession, markFetchedThisSession, setTabCache, TAB_CACHE_KEYS } from '@/lib/accounting/tab-cache';
+import { useLiveRefresh } from '@/hooks/useLiveRefresh';
 import type { AccountingTransferRow, TransferRateChange } from '@/lib/transfers/accounting-transfers';
 import type { TransferRequestStatus } from '@/lib/supabase/department-transfer-requests';
 import { CURRENCY_SYMBOL, type PayCurrency } from '@/lib/payment-catalog/pay-structure';
@@ -84,8 +85,12 @@ export default function AccountingTransfers() {
   const [error, setError] = useState<string | null>(null);
   const [retryId, setRetryId] = useState<string | null>(null);
 
-  const fetchAll = useCallback(async () => {
-    setLoading(true);
+  // `silent` refetches (live Realtime events, the poll backstop, tab refocus)
+  // must NOT flash the full-page spinner or wipe the visible table on a blip —
+  // they swap rows in place and keep the last-good view on error, so an
+  // auditing session never goes blank or (worse) silently stale.
+  const fetchAll = useCallback(async (opts?: { silent?: boolean }) => {
+    if (!opts?.silent) setLoading(true);
     setError(null);
     try {
       const res = await fetch('/api/accounting/transfers', { cache: 'no-store' });
@@ -95,9 +100,9 @@ export default function AccountingTransfers() {
       setTabCache(TAB_CACHE_KEYS.transfers, json.rows ?? []);
       markFetchedThisSession(TAB_CACHE_KEYS.transfers);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to load transfers');
+      if (!opts?.silent) setError(e instanceof Error ? e.message : 'Failed to load transfers');
     } finally {
-      setLoading(false);
+      if (!opts?.silent) setLoading(false);
     }
   }, []);
 
@@ -105,6 +110,18 @@ export default function AccountingTransfers() {
     if (hasFetchedThisSession(TAB_CACHE_KEYS.transfers)) return;
     void fetchAll();
   }, [fetchAll]);
+
+  // Keep the view live so an auditor never chases a manager over an already-
+  // handled request. A transfer row flipping pending -> applied/rejected (and
+  // the rate-history entry that fills the rate-change column) fires a Realtime
+  // event -> in-place refetch. The 60s poll + focus refresh are the backstop if
+  // the Realtime socket ever drops silently.
+  useLiveRefresh({
+    tables: ['department_transfer_requests', 'employee_rate_history'],
+    onRefresh: () => void fetchAll({ silent: true }),
+    channel: 'accounting-transfers',
+    pollMs: 60_000,
+  });
 
   const retrySheet = async (id: string) => {
     setRetryId(id);
