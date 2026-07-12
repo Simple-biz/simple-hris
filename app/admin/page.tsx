@@ -12,6 +12,7 @@ import AdminWebhooks from '@/components/admin/AdminWebhooks';
 import AdminWorkspace from '@/components/admin/AdminWorkspace';
 import AdminApiKeys from '@/components/admin/AdminApiKeys';
 import AdminPages from '@/components/admin/AdminPages';
+import AdminDesignSpecs from '@/components/admin/AdminDesignSpecs';
 import AuditLogPanel from '@/components/audit/AuditLogPanel';
 import SystemDiagnostics from '@/components/SystemDiagnostics';
 import { Construction, Menu } from 'lucide-react';
@@ -71,7 +72,7 @@ function AdminPageInner() {
   useEffect(() => {
     const known = new Set([
       'overview', 'roles', 'global-master-list', 'workspace', 'webhooks',
-      'pages', 'notifications', 'audit', 'diagnostics', 'api-tokens', 'backups', 'settings',
+      'pages', 'design-specs', 'notifications', 'audit', 'diagnostics', 'api-tokens', 'backups', 'settings',
     ]);
     if (tabFromQuery && known.has(tabFromQuery)) setActiveTab(tabFromQuery);
   }, [tabFromQuery]);
@@ -158,15 +159,17 @@ function AdminPageInner() {
         return <AdminRoles />;
       case 'global-master-list':
         return (
-          <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+          <div className="flex flex-col lg:min-h-0 lg:flex-1 lg:overflow-hidden">
             <AdminGlobalMasterList />
           </div>
         );
       case 'webhooks':
         return <AdminWebhooks />;
+      case 'design-specs':
+        return <AdminDesignSpecs />;
       case 'pages':
         return (
-          <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+          <div className="flex flex-col lg:min-h-0 lg:flex-1 lg:overflow-hidden">
             <AdminPages onBack={() => navigate('overview')} />
           </div>
         );
@@ -178,13 +181,13 @@ function AdminPageInner() {
         );
       case 'audit':
         return (
-          <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+          <div className="flex flex-col lg:min-h-0 lg:flex-1 lg:overflow-hidden">
             <AuditLogPanel className="min-h-0 flex-1" />
           </div>
         );
       case 'diagnostics':
         return (
-          <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+          <div className="flex flex-col lg:min-h-0 lg:flex-1 lg:overflow-hidden">
             <SystemDiagnostics />
           </div>
         );

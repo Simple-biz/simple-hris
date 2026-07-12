@@ -14,6 +14,7 @@ import {
   LogOut,
   Moon,
   MoreHorizontal,
+  PencilRuler,
   Radar,
   Settings,
   Sheet,
@@ -67,6 +68,7 @@ const systemNav: Array<{
   { id: 'workspace', label: 'Google Workspace', icon: Settings },
   { id: 'webhooks', label: 'Webhooks', icon: Webhook, badge: 'alert' },
   { id: 'pages', label: 'Pages', icon: LayoutTemplate },
+  { id: 'design-specs', label: 'Design & Specifications', icon: PencilRuler },
   { id: 'notifications', label: 'Notifications', icon: Bell },
 ];
 

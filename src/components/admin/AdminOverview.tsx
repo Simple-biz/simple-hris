@@ -949,7 +949,7 @@ export default function AdminOverview({ userEmail, onNavigate }: AdminOverviewPr
               'flex min-h-[280px] w-full min-w-0 shrink-0 flex-col lg:min-h-0 lg:w-0 lg:flex-1',
             )}
           >
-            <div className={cn(panelHead, 'flex-wrap gap-y-2')}>
+            <div className={cn(panelHead, 'h-auto min-h-9 flex-wrap gap-y-2')}>
               <div className="flex items-center gap-2">
                 <span className="text-xs font-semibold text-zinc-700 dark:text-zinc-200">Recent audit</span>
                 <span className="hidden rounded bg-zinc-200/80 px-1.5 py-px font-mono text-[10px] text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400 xl:inline">

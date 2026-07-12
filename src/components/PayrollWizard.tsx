@@ -2513,6 +2513,7 @@ export default function PayrollWizard({
           province_state: null,
           mesa_member: null,
           mesa_member_since: null,
+          mesa_fpu_completed_on: null,
         };
         for (const em of emails) idx.set(em, synthetic);
       }

@@ -503,7 +503,7 @@ export default function AdminGlobalMasterList() {
     '';
 
   return (
-    <div className="flex h-full min-h-0 flex-col gap-4 overflow-hidden bg-gradient-to-b from-zinc-50/80 to-transparent p-4 sm:p-6 dark:from-zinc-950/50">
+    <div className="flex flex-col gap-4 bg-gradient-to-b from-zinc-50/80 to-transparent p-4 sm:p-6 lg:h-full lg:min-h-0 lg:overflow-hidden dark:from-zinc-950/50">
       <header className="shrink-0 space-y-3">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
           <div className="space-y-1">
@@ -555,9 +555,9 @@ export default function AdminGlobalMasterList() {
         </div>
       </header>
 
-      <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)]">
+      <div className="grid grid-cols-1 gap-4 lg:min-h-0 lg:flex-1 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)]">
         {/* LEFT — roster list */}
-        <Card className="flex h-full min-h-0 flex-col overflow-hidden border-zinc-200/90 shadow-sm dark:border-zinc-800/80">
+        <Card className="flex flex-col border-zinc-200/90 shadow-sm lg:h-full lg:min-h-0 lg:overflow-hidden dark:border-zinc-800/80">
           <CardHeader className="shrink-0 space-y-3 border-b border-zinc-100 pb-4 dark:border-zinc-800/80">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="flex items-center gap-2">
@@ -582,7 +582,7 @@ export default function AdminGlobalMasterList() {
                         aria-selected={active}
                         onClick={() => setViewFilter(mode)}
                         className={cn(
-                          'inline-flex items-center gap-1.5 rounded px-2 py-1 text-[11px] font-medium transition-colors',
+                          'inline-flex items-center gap-1.5 rounded px-2.5 py-1.5 text-[11px] font-medium transition-colors',
                           active
                             ? 'bg-zinc-900 text-white shadow-sm dark:bg-zinc-100 dark:text-zinc-900'
                             : 'text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100',
@@ -681,7 +681,7 @@ export default function AdminGlobalMasterList() {
               </div>
             </div>
           </CardHeader>
-          <CardContent className="min-h-0 flex-1 overflow-y-auto px-3 pb-4 pt-2 sm:px-4">
+          <CardContent className="px-3 pb-4 pt-2 sm:px-4 lg:min-h-0 lg:flex-1 lg:overflow-y-auto">
             {pageRows.length === 0 ? (
               <p className="py-10 text-center text-xs text-zinc-400">
                 {roster.length === 0 ? 'No active employees on record.' : 'No rows match your search.'}
@@ -793,7 +793,7 @@ export default function AdminGlobalMasterList() {
         </Card>
 
         {/* RIGHT — selected person's record + admin functions */}
-        <Card className="flex h-full min-h-0 flex-col overflow-hidden border-zinc-200/90 shadow-sm dark:border-zinc-800/80">
+        <Card className="flex flex-col border-zinc-200/90 shadow-sm lg:h-full lg:min-h-0 lg:overflow-hidden dark:border-zinc-800/80">
           <CardHeader className="shrink-0 border-b border-zinc-100 pb-4 dark:border-zinc-800/80">
             <CardTitle className="flex items-center gap-2 text-base font-semibold text-zinc-900 dark:text-white">
               <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-zinc-100 dark:bg-zinc-800">
@@ -857,7 +857,7 @@ export default function AdminGlobalMasterList() {
               </div>
             )}
           </CardHeader>
-          <CardContent className="min-h-0 flex-1 overflow-y-auto px-3 pb-4 pt-3 sm:px-4">
+          <CardContent className="px-3 pb-4 pt-3 sm:px-4 lg:min-h-0 lg:flex-1 lg:overflow-y-auto">
             {!selected ? (
               <div className="flex h-full min-h-[240px] flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-zinc-200 bg-zinc-50/50 px-6 py-10 text-center dark:border-zinc-800 dark:bg-zinc-900/30">
                 <Users className="h-10 w-10 text-zinc-300 dark:text-zinc-600" aria-hidden />

@@ -803,6 +803,7 @@ export default function HrOnboardingForm() {
   const [showFailedOnly, setShowFailedOnly] = useState(false);
 
   const [generateOpen, setGenerateOpen] = useState(false);
+  const [bypassOpen, setBypassOpen] = useState(false);
   const [payPlansOpen, setPayPlansOpen] = useState(false);
   const [linkCreated, setLinkCreated] = useState<SubmissionRow | null>(null);
   const [viewRow, setViewRow] = useState<SubmissionRow | null>(null);
@@ -1243,6 +1244,15 @@ export default function HrOnboardingForm() {
                 Generate link
               </Button>
             </span>
+            <Button
+              variant="outline"
+              className="border-violet-200 text-violet-800 hover:bg-violet-50 dark:border-violet-900/50 dark:text-violet-300 dark:hover:bg-violet-950/30"
+              onClick={() => setBypassOpen(true)}
+              title="Manual setup for a worker who already has a Workspace account — verify it, then promote straight to the master list (no account created)."
+            >
+              <ShieldCheck className="mr-1.5 h-4 w-4" />
+              Bypass
+            </Button>
             <Button
               variant="outline"
               className="border-emerald-200 text-emerald-800"
@@ -1806,6 +1816,16 @@ export default function HrOnboardingForm() {
         }}
       />
 
+      <BypassSetupDialog
+        open={bypassOpen}
+        onClose={() => setBypassOpen(false)}
+        onDone={() => {
+          setBypassOpen(false);
+          void load();
+          refreshLicenseInfo();
+        }}
+      />
+
       <LinkCreatedDialog
         row={linkCreated}
         onClose={() => setLinkCreated(null)}
@@ -1965,6 +1985,402 @@ export default function HrOnboardingForm() {
         </DialogContent>
       </Dialog>
     </div>
+  );
+}
+
+// ─── Bypass / manual setup dialog ─────────────────────────────────────────
+
+/**
+ * "Bypass" — manual setup for a worker whose @simple.biz Google Workspace
+ * account is ALREADY provisioned (set up outside the self-serve onboarding
+ * flow). HR types the worker's identity + their existing work email; a
+ * read-only Verify confirms the account exists in Google Workspace — and the
+ * pipeline is BLOCKED until it does. "Promote to Master List" then stages the
+ * hire and promotes them straight into global_master_list + the master Google
+ * Sheet in one shot (POST /api/hr/onboarding-bypass), reusing the exact same
+ * promote pipeline as every other hire. The create-workspace webhook is NEVER
+ * fired — no duplicate account, no Hubstaff invite, no onboarding emails —
+ * because the account already exists.
+ */
+function BypassSetupDialog({
+  open,
+  onClose,
+  onDone,
+}: {
+  open: boolean;
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const [departments, setDepartments] = useState<string[]>([]);
+  const [deptsLoading, setDeptsLoading] = useState(false);
+
+  const [fullName, setFullName] = useState('');
+  const [personalEmail, setPersonalEmail] = useState('');
+  const [dept, setDept] = useState('');
+  const [workEmail, setWorkEmail] = useState('');
+  const [phone, setPhone] = useState('');
+  const [location, setLocation] = useState('');
+  const [startDate, setStartDate] = useState('');
+
+  // Verify phase — the account must be confirmed to exist before we promote.
+  const [verifying, setVerifying] = useState(false);
+  const [verifyState, setVerifyState] = useState<'exists' | 'missing' | 'error' | null>(null);
+  const [verifyDetail, setVerifyDetail] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  // Identity token for the in-flight verify. A verify only applies its result if
+  // it's still the current request — so editing the work email, closing the
+  // dialog, or firing a newer verify while one is in flight can never land a
+  // stale green check on a DIFFERENT address than the one being checked.
+  const verifyReq = useRef<object | null>(null);
+
+  const emailNorm = workEmail.trim().toLowerCase();
+  const workEmailValid = isPlausibleEmail(emailNorm) && emailNorm.endsWith('@simple.biz');
+  const personalValid = isPlausibleEmail(personalEmail.trim());
+  const fieldsReady =
+    fullName.trim().length > 0 && personalValid && dept.trim().length > 0 && workEmailValid;
+  const verified = verifyState === 'exists';
+
+  // Reset everything when the dialog closes so the next open starts clean.
+  // Dropping verifyReq abandons any verify still in flight so its late result
+  // can't stamp a stale green check onto the next open (which starts blank).
+  useEffect(() => {
+    if (open) return;
+    verifyReq.current = null;
+    setFullName(''); setPersonalEmail(''); setDept(''); setWorkEmail('');
+    setPhone(''); setLocation(''); setStartDate('');
+    setVerifying(false); setVerifyState(null); setVerifyDetail(null); setBusy(false);
+  }, [open]);
+
+  // Editing the work email invalidates any prior verify — HR must re-verify the
+  // new address before the pipeline unlocks (so a green check never lingers on a
+  // different address than the one that will be promoted). Dropping verifyReq +
+  // clearing `verifying` also abandons an in-flight verify for the old address.
+  useEffect(() => {
+    verifyReq.current = null;
+    setVerifyState(null);
+    setVerifyDetail(null);
+    setVerifying(false);
+  }, [emailNorm]);
+
+  // Department list, once, when the dialog opens.
+  useEffect(() => {
+    if (!open || departments.length > 0 || deptsLoading) return;
+    setDeptsLoading(true);
+    fetch('/api/departments', { cache: 'no-store' })
+      .then((r) => r.json())
+      .then((j: { departments?: string[]; error?: string }) => {
+        if (j.error) throw new Error(j.error);
+        setDepartments(j.departments ?? []);
+      })
+      .catch((e) => toast.error(e instanceof Error ? e.message : 'Could not load departments'))
+      .finally(() => setDeptsLoading(false));
+  }, [open, departments.length, deptsLoading]);
+
+  async function runVerify() {
+    if (!workEmailValid) {
+      toast.error('Enter a valid @simple.biz work email first.');
+      return;
+    }
+    const token = {};
+    verifyReq.current = token;
+    setVerifying(true);
+    setVerifyState(null);
+    setVerifyDetail(null);
+    try {
+      const res = await fetch('/api/hr/workspace-account/verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ work_email: emailNorm }),
+      });
+      const j = (await res.json().catch(() => ({}))) as {
+        state?: 'exists' | 'missing' | 'error';
+        detail?: string | null;
+        error?: string;
+      };
+      // Stale — the address changed, the dialog closed, or a newer verify started
+      // while this one was in flight. Drop the result rather than stamping it.
+      if (verifyReq.current !== token) return;
+      if (!res.ok && !j.state) throw new Error(j.error ?? `Verify failed (${res.status})`);
+      setVerifyState(j.state ?? 'error');
+      setVerifyDetail(j.detail ?? j.error ?? null);
+    } catch (e) {
+      if (verifyReq.current !== token) return;
+      setVerifyState('error');
+      setVerifyDetail(e instanceof Error ? e.message : 'Verify failed');
+    } finally {
+      if (verifyReq.current === token) setVerifying(false);
+    }
+  }
+
+  async function runPipeline() {
+    if (!verified) {
+      toast.error('Verify the Workspace account first.');
+      return;
+    }
+    setBusy(true);
+    try {
+      const res = await fetch('/api/hr/onboarding-bypass', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          full_name: fullName.trim(),
+          personal_email: personalEmail.trim(),
+          department: dept.trim(),
+          work_email: emailNorm,
+          phone: phone.trim() || null,
+          location: location.trim() || null,
+          start_date: startDate.trim() || null,
+        }),
+      });
+      const j = (await res.json().catch(() => ({}))) as {
+        ok?: boolean;
+        error?: string;
+        warning?: string | null;
+      };
+      if (!res.ok || j.error) throw new Error(j.error ?? 'Bypass failed');
+      if (j.warning) {
+        // Partial success — the worker IS on the master list, but the Google
+        // Sheet append failed and can be retried from Pending Hires.
+        toast.warning(`${fullName.trim()} added to the master list`, {
+          description: `${j.warning} Retry the Google Sheet sync from Pending Hires.`,
+        });
+      } else {
+        toast.success(`${fullName.trim()} added to the master list`, {
+          description:
+            'Verified and promoted straight into the roster — no account created, no emails sent.',
+        });
+      }
+      onDone();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Bypass failed');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => !o && !busy && onClose()}>
+      <DialogContent className="max-h-[92vh] overflow-y-auto sm:max-w-2xl">
+        {/* Header (violet, to set it apart from the emerald Generate-link flow) */}
+        <div className="-mx-6 -mt-6 mb-4 overflow-hidden rounded-t-lg border-b border-violet-100/80 bg-gradient-to-br from-violet-50 via-white to-fuchsia-50/60 px-6 py-5 dark:border-violet-950/40 dark:from-violet-950/30 dark:via-zinc-950 dark:to-fuchsia-950/20">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2.5 text-base font-semibold">
+              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-violet-500 to-fuchsia-700 text-white shadow-md shadow-violet-600/25">
+                <ShieldCheck className="h-4 w-4" />
+              </span>
+              Bypass — manual setup
+            </DialogTitle>
+            <p className="mt-1 text-[12px] leading-relaxed text-zinc-500 dark:text-zinc-400">
+              For a worker whose @simple.biz account is <strong>already set up</strong>. Verify the
+              account exists, then promote them straight to the master list — no account is created
+              and no onboarding emails are sent.
+            </p>
+          </DialogHeader>
+        </div>
+
+        {/* Identity */}
+        <div className="flex flex-col gap-4">
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="flex flex-col gap-1.5">
+              <Label className="text-[10px] font-semibold uppercase tracking-widest text-zinc-400 dark:text-zinc-500">
+                Full name
+              </Label>
+              <div className="relative">
+                <User className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400" />
+                <Input
+                  value={fullName}
+                  onChange={(e) => setFullName(e.target.value)}
+                  placeholder="Jan Kane Reroma"
+                  className="pl-8"
+                  autoFocus
+                />
+              </div>
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label className="text-[10px] font-semibold uppercase tracking-widest text-zinc-400 dark:text-zinc-500">
+                Personal email
+              </Label>
+              <div className="relative">
+                <Mail className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400" />
+                <Input
+                  value={personalEmail}
+                  onChange={(e) => setPersonalEmail(e.target.value)}
+                  placeholder="jane@gmail.com"
+                  className="pl-8 font-mono"
+                  spellCheck={false}
+                  autoCapitalize="none"
+                />
+              </div>
+              {personalEmail.trim().length > 0 && !personalValid && (
+                <p className="text-[11px] text-rose-600 dark:text-rose-400">
+                  Enter a valid personal email.
+                </p>
+              )}
+            </div>
+          </div>
+
+          {/* Department */}
+          <div className="flex flex-col gap-1.5">
+            <Label className="text-[10px] font-semibold uppercase tracking-widest text-zinc-400 dark:text-zinc-500">
+              Department
+            </Label>
+            <DepartmentSelect
+              value={dept}
+              onChange={setDept}
+              departments={departments}
+              loading={deptsLoading}
+            />
+            <p className="text-[11px] text-zinc-400 dark:text-zinc-500">
+              Required — the worker is added to the master list under this department.
+            </p>
+          </div>
+
+          {/* Existing work email + verify */}
+          <div className="flex flex-col gap-1.5">
+            <Label className="text-[10px] font-semibold uppercase tracking-widest text-zinc-400 dark:text-zinc-500">
+              Existing work email
+            </Label>
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+              <div className="relative flex-1">
+                <Mail className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400" />
+                <Input
+                  value={workEmail}
+                  onChange={(e) => setWorkEmail(e.target.value)}
+                  placeholder="namel@simple.biz"
+                  className="pl-8 pr-9 font-mono"
+                  spellCheck={false}
+                  autoCapitalize="none"
+                />
+                <span className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2">
+                  {verifying ? (
+                    <Loader2 className="h-4 w-4 animate-spin text-zinc-400" />
+                  ) : verifyState === 'exists' ? (
+                    <CheckCircle2 className="h-4 w-4 text-emerald-500" />
+                  ) : verifyState === 'missing' ? (
+                    <XCircle className="h-4 w-4 text-rose-500" />
+                  ) : verifyState === 'error' ? (
+                    <AlertTriangle className="h-4 w-4 text-amber-500" />
+                  ) : null}
+                </span>
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="border-violet-200 text-violet-800 hover:bg-violet-50 disabled:opacity-50 dark:border-violet-900/50 dark:text-violet-300 dark:hover:bg-violet-950/30"
+                onClick={() => void runVerify()}
+                disabled={!workEmailValid || verifying}
+              >
+                {verifying ? (
+                  <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <ShieldCheck className="mr-1 h-3.5 w-3.5" />
+                )}
+                {verifying ? 'Verifying' : verified ? 'Re-verify' : 'Verify'}
+              </Button>
+            </div>
+
+            {/* Verify result banner */}
+            {verifyState === 'exists' && (
+              <div className="flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50/70 px-3 py-2 text-xs font-medium text-emerald-800 dark:border-emerald-900/50 dark:bg-emerald-950/25 dark:text-emerald-200">
+                <CheckCircle2 className="h-4 w-4 shrink-0" />
+                Account verified in Google Workspace — you can promote this worker.
+              </div>
+            )}
+            {verifyState === 'missing' && (
+              <div className="flex items-start gap-2 rounded-lg border border-rose-200 bg-rose-50/70 px-3 py-2 text-xs font-medium text-rose-800 dark:border-rose-900/50 dark:bg-rose-950/25 dark:text-rose-200">
+                <XCircle className="mt-0.5 h-4 w-4 shrink-0" />
+                <span>
+                  No account found for this address. Bypass is only for workers who already have a
+                  Workspace account — use “Generate link” to provision a new one.
+                </span>
+              </div>
+            )}
+            {verifyState === 'error' && (
+              <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50/70 px-3 py-2 text-xs font-medium text-amber-800 dark:border-amber-900/50 dark:bg-amber-950/25 dark:text-amber-200">
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                <span>
+                  Could not verify this account{verifyDetail ? ` (${verifyDetail})` : ''}. It must be
+                  verifiable before it can be bypassed — try again.
+                </span>
+              </div>
+            )}
+            {!verifyState && (
+              <p className="text-[11px] text-zinc-400 dark:text-zinc-500">
+                Must be an @simple.biz address. Click Verify to confirm the account exists before
+                promoting.
+              </p>
+            )}
+          </div>
+
+          {/* Optional details */}
+          <div className="grid gap-4 sm:grid-cols-3">
+            <div className="flex flex-col gap-1.5">
+              <Label className="text-[10px] font-semibold uppercase tracking-widest text-zinc-400 dark:text-zinc-500">
+                Phone <span className="font-normal normal-case text-zinc-400">(optional)</span>
+              </Label>
+              <Input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="+63…" />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label className="text-[10px] font-semibold uppercase tracking-widest text-zinc-400 dark:text-zinc-500">
+                Location <span className="font-normal normal-case text-zinc-400">(optional)</span>
+              </Label>
+              <Input
+                value={location}
+                onChange={(e) => setLocation(e.target.value)}
+                placeholder="City, Country"
+              />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label className="text-[10px] font-semibold uppercase tracking-widest text-zinc-400 dark:text-zinc-500">
+                Start date <span className="font-normal normal-case text-zinc-400">(optional)</span>
+              </Label>
+              <Input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
+            </div>
+          </div>
+        </div>
+
+        <DialogFooter className="mt-5 gap-2 border-t border-zinc-100 pt-4 sm:gap-0 dark:border-zinc-800">
+          <Button variant="outline" size="sm" onClick={onClose} disabled={busy}>
+            Cancel
+          </Button>
+          {!verified ? (
+            <Button
+              size="sm"
+              className="bg-gradient-to-br from-violet-500 to-fuchsia-700 text-white shadow-md shadow-violet-600/25 hover:from-violet-500 hover:to-fuchsia-600"
+              onClick={() => void runVerify()}
+              disabled={!fieldsReady || verifying}
+              title={
+                fieldsReady
+                  ? 'Check that this Workspace account exists'
+                  : 'Fill in name, personal email, department and a valid @simple.biz work email first'
+              }
+            >
+              {verifying ? (
+                <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <ShieldCheck className="mr-1 h-3.5 w-3.5" />
+              )}
+              {verifying ? 'Verifying…' : 'Verify account'}
+            </Button>
+          ) : (
+            <Button
+              size="sm"
+              className="bg-gradient-to-br from-violet-500 to-fuchsia-700 text-white shadow-md shadow-violet-600/25 hover:from-violet-500 hover:to-fuchsia-600"
+              onClick={() => void runPipeline()}
+              disabled={!fieldsReady || busy}
+            >
+              {busy ? (
+                <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <UserCheck className="mr-1 h-3.5 w-3.5" />
+              )}
+              {busy ? 'Promoting…' : 'Promote to Master List'}
+            </Button>
+          )}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

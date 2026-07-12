@@ -167,7 +167,7 @@ export default function AdminWorkspace() {
 
           {!editing ? (
             <div className="space-y-4">
-              <div className="grid grid-cols-3 gap-4 rounded-lg border border-zinc-200 bg-zinc-50/50 p-4 dark:border-zinc-800 dark:bg-zinc-900/30">
+              <div className="grid grid-cols-3 gap-2 rounded-lg border border-zinc-200 bg-zinc-50/50 p-4 sm:gap-4 dark:border-zinc-800 dark:bg-zinc-900/30">
                 <div>
                   <p className="text-xs font-medium text-zinc-500 dark:text-zinc-400">Available</p>
                   <p className="mt-1 text-2xl font-bold text-emerald-700 dark:text-emerald-400">
@@ -217,7 +217,7 @@ export default function AdminWorkspace() {
             </div>
           ) : (
             <div className="space-y-4">
-              <div className={'grid gap-4 ' + (isLive ? 'grid-cols-1' : 'grid-cols-2')}>
+              <div className={'grid gap-4 ' + (isLive ? 'grid-cols-1' : 'grid-cols-1 sm:grid-cols-2')}>
                 <div className="space-y-2">
                   <Label htmlFor="total" className="text-sm font-medium">
                     Total Licenses (purchased)
@@ -294,13 +294,13 @@ export default function AdminWorkspace() {
             <li>
               In <strong>Admin Console &gt; Security &gt; API Controls &gt; Domain-wide Delegation</strong>,
               authorize the service account client ID for scope{' '}
-              <code className="rounded bg-zinc-100 px-1 dark:bg-zinc-800">
+              <code className="break-all rounded bg-zinc-100 px-1 dark:bg-zinc-800">
                 https://www.googleapis.com/auth/apps.licensing
               </code>
               .
             </li>
             <li>
-              Set <code className="rounded bg-zinc-100 px-1 dark:bg-zinc-800">GOOGLE_WORKSPACE_ADMIN_EMAIL</code>{' '}
+              Set <code className="break-all rounded bg-zinc-100 px-1 dark:bg-zinc-800">GOOGLE_WORKSPACE_ADMIN_EMAIL</code>{' '}
               (a super-admin to impersonate) in the server env, then redeploy.
             </li>
             <li>Hit <strong>Refresh</strong> above — Assigned should switch to a live count.</li>

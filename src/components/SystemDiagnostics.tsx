@@ -1652,7 +1652,7 @@ export default function SystemDiagnostics() {
   }, []);
 
   return (
-    <div className="flex h-full min-h-0 flex-col gap-4 overflow-hidden bg-gradient-to-br from-white via-orange-50/20 to-blue-50/20 p-4 sm:p-5 dark:bg-none dark:bg-[#0d1117]">
+    <div className="flex flex-col gap-4 bg-gradient-to-br from-white via-orange-50/20 to-blue-50/20 p-4 sm:p-5 lg:h-full lg:min-h-0 lg:overflow-hidden dark:bg-none dark:bg-[#0d1117]">
       {/* ── Header ── */}
       <header className="flex shrink-0 flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div className="flex min-w-0 items-start gap-3">
@@ -1730,10 +1730,10 @@ export default function SystemDiagnostics() {
       </div>
 
       {/* ── Main: diagram + side panel ── */}
-      <div className="grid min-h-0 flex-1 grid-cols-1 gap-3 overflow-hidden xl:grid-cols-[1fr_22rem]">
+      <div className="grid grid-cols-1 gap-3 lg:min-h-0 lg:flex-1 lg:overflow-hidden xl:grid-cols-[1fr_22rem]">
         {/* Diagram */}
         <Card className="relative flex min-h-[480px] flex-col overflow-hidden border border-zinc-200/80 bg-zinc-50/40 ring-0 backdrop-blur-sm dark:border-zinc-800 dark:bg-zinc-950/60">
-          <div className="flex shrink-0 items-center justify-between gap-3 border-b border-zinc-100 px-4 py-2.5 dark:border-zinc-800/60">
+          <div className="flex shrink-0 flex-wrap items-center justify-between gap-x-3 gap-y-2 border-b border-zinc-100 px-4 py-2.5 dark:border-zinc-800/60">
             <div className="flex min-w-0 items-center gap-2">
               <Activity className="h-3.5 w-3.5 shrink-0 text-orange-500 dark:text-orange-400" />
               <span className="text-[12px] font-semibold tracking-tight text-zinc-900 dark:text-zinc-100">
@@ -1830,11 +1830,11 @@ export default function SystemDiagnostics() {
                 onMouseLeave={(e) => {
                   (e.currentTarget as unknown as HTMLElement).style.opacity = '0.78';
                 }}
-                className="!m-2 !rounded-lg !border !border-zinc-200/80 !bg-white/70 !shadow-sm backdrop-blur-md dark:!border-zinc-800/80 dark:!bg-zinc-950/60"
+                className="hidden !m-2 !rounded-lg !border !border-zinc-200/80 !bg-white/70 !shadow-sm backdrop-blur-md sm:block dark:!border-zinc-800/80 dark:!bg-zinc-950/60"
               />
               <Panel
                 position="bottom-right"
-                className="!m-2 rounded-lg border border-zinc-200 bg-white/95 p-2.5 shadow-sm backdrop-blur-sm dark:border-zinc-800 dark:bg-zinc-950/90"
+                className="hidden !m-2 rounded-lg border border-zinc-200 bg-white/95 p-2.5 shadow-sm backdrop-blur-sm sm:block dark:border-zinc-800 dark:bg-zinc-950/90"
               >
                 <p className="mb-1.5 font-mono text-[9px] uppercase tracking-[0.16em] text-zinc-400 dark:text-zinc-500">
                   Edge legend
@@ -1851,9 +1851,9 @@ export default function SystemDiagnostics() {
         </Card>
 
         {/* Right side stack: node details + alerts */}
-        <div className="flex min-h-0 flex-col gap-3 overflow-hidden">
+        <div className="flex flex-col gap-3 lg:min-h-0 lg:overflow-hidden">
           {/* Node details */}
-          <Card className="flex min-h-[260px] flex-1 flex-col overflow-hidden border border-zinc-200/80 bg-white/80 ring-0 backdrop-blur-sm dark:border-zinc-800 dark:bg-zinc-950/40">
+          <Card className="flex min-h-[260px] flex-col border border-zinc-200/80 bg-white/80 ring-0 backdrop-blur-sm lg:flex-1 lg:overflow-hidden dark:border-zinc-800 dark:bg-zinc-950/40">
             <div className="flex shrink-0 items-center gap-2 border-b border-zinc-100 px-4 py-3 dark:border-zinc-800/60">
               <ShieldAlert className="h-3.5 w-3.5 text-orange-500 dark:text-orange-400" />
               <span className="text-[12px] font-semibold tracking-tight text-zinc-900 dark:text-zinc-100">
@@ -2005,7 +2005,7 @@ export default function SystemDiagnostics() {
                             <p className="mt-0.5 line-clamp-2 text-[11.5px] leading-snug text-zinc-500 dark:text-zinc-400">
                               {alert.description}
                             </p>
-                            <div className="mt-1 flex items-center gap-1.5 text-[10px] text-zinc-400 dark:text-zinc-500">
+                            <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[10px] text-zinc-400 dark:text-zinc-500">
                               <Badge variant="outline" className={cn('h-4 gap-1 font-mono text-[9px] uppercase tracking-wider', palette.badge)}>
                                 {STATUS_LABEL[alert.severity]}
                               </Badge>

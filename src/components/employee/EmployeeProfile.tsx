@@ -532,39 +532,44 @@ function ProfileSkeleton() {
   return (
     <div className="flex h-full min-h-0 flex-col overflow-y-auto bg-white dark:bg-[#0a0a0a]">
       <div className="mx-auto w-full max-w-[1200px] px-5 pb-16 pt-8 sm:px-8 sm:pt-12 lg:px-10">
-        <div className="flex items-center gap-5">
-          <div className="h-16 w-16 animate-pulse rounded-full bg-zinc-100 dark:bg-zinc-900 sm:h-20 sm:w-20" />
-          <div className="flex-1 space-y-2.5">
-            <div className="h-6 w-44 animate-pulse rounded-md bg-zinc-100 dark:bg-zinc-900" />
-            <div className="h-3.5 w-32 animate-pulse rounded bg-zinc-100/70 dark:bg-zinc-900/70" />
-            <div className="flex gap-1.5">
-              <div className="h-5 w-16 animate-pulse rounded-full bg-zinc-100 dark:bg-zinc-900" />
-              <div className="h-5 w-20 animate-pulse rounded-full bg-zinc-100 dark:bg-zinc-900" />
-            </div>
+        {/* Header — avatar + name + dept/ID + Active badge (mirrors the real header row). */}
+        <div className="flex items-center gap-4 sm:gap-6">
+          <div className="h-16 w-16 shrink-0 animate-pulse rounded-full bg-zinc-100 ring-1 ring-zinc-200 dark:bg-zinc-900 dark:ring-zinc-800 sm:h-20 sm:w-20" />
+          <div className="min-w-0 flex-1 space-y-2">
+            <div className="h-7 w-48 animate-pulse rounded-md bg-zinc-100 dark:bg-zinc-900 sm:h-8 sm:w-64" />
+            <div className="h-3.5 w-40 animate-pulse rounded bg-zinc-100/70 dark:bg-zinc-900/70" />
+            <div className="h-5 w-20 animate-pulse rounded-full bg-emerald-100/70 dark:bg-emerald-500/10" />
           </div>
         </div>
-        <div className="mt-8 flex gap-1 border-b border-zinc-200 dark:border-zinc-800">
-          {[1, 2, 3].map((i) => (
+        {/* Tab bar (Overview / Payment / Skill Sets / …). */}
+        <div className="mt-8 flex gap-1 border-b border-zinc-200 dark:border-zinc-800 sm:mt-10">
+          {[0, 1, 2, 3].map((i) => (
             <div key={i} className="px-4 py-3">
-              <div className="h-3.5 w-20 animate-pulse rounded bg-zinc-100 dark:bg-zinc-900" />
-              <div className="mt-1 h-2 w-28 animate-pulse rounded bg-zinc-100/70 dark:bg-zinc-900/70" />
+              <div
+                className="h-3.5 w-20 animate-pulse rounded bg-zinc-100 dark:bg-zinc-900"
+                style={{ animationDelay: `${i * 80}ms` }}
+              />
             </div>
           ))}
         </div>
-        <div className="mt-8 space-y-4">
-          {[1, 2, 3].map((i) => (
+        {/* Tab content — section cards with title + description + label/value rows. */}
+        <div className="mt-6 space-y-4 sm:mt-8">
+          {[0, 1].map((s) => (
             <div
-              key={i}
+              key={s}
               className="rounded-2xl border border-zinc-200/80 bg-white p-5 dark:border-zinc-800/80 dark:bg-zinc-950/40"
             >
               <div className="h-4 w-24 animate-pulse rounded bg-zinc-100 dark:bg-zinc-900" />
-              <div className="mt-4 space-y-3">
-                {[1, 2, 3].map((j) => (
-                  <div
-                    key={j}
-                    className="h-3.5 animate-pulse rounded bg-zinc-100/70 dark:bg-zinc-900/70"
-                    style={{ animationDelay: `${j * 100}ms` }}
-                  />
+              <div className="mt-1 h-2.5 w-40 animate-pulse rounded bg-zinc-100/70 dark:bg-zinc-900/70" />
+              <div className="mt-4 divide-y divide-zinc-100 dark:divide-zinc-800/60">
+                {[0, 1, 2].map((r) => (
+                  <div key={r} className="flex items-center justify-between py-3.5">
+                    <div className="h-3 w-24 animate-pulse rounded bg-zinc-100 dark:bg-zinc-900" />
+                    <div
+                      className="h-3.5 w-36 animate-pulse rounded bg-zinc-100/70 dark:bg-zinc-900/70"
+                      style={{ animationDelay: `${r * 90}ms` }}
+                    />
+                  </div>
                 ))}
               </div>
             </div>

@@ -25,6 +25,11 @@ export type EmployeeHourlyRateRow = {
    * (enrolled before we tracked the date) → treated as always contributing.
    */
   mesa_member_since: string | null;
+  /**
+   * Date the member completed FPU (YYYY-MM-DD), backfilled from the MESA active
+   * export. Pre-fills the employee Opt-in form's "Date you completed FPU" field.
+   */
+  mesa_fpu_completed_on: string | null;
 };
 
 type RawRow = Record<string, unknown>;
@@ -152,6 +157,7 @@ export function mapEmployeeHourlyRateRow(row: RawRow): EmployeeHourlyRateRow {
 
   const mesa_member_raw = getField(idx, ['mesa_member', 'Mesa Member', 'MESA Member', 'mesa member']);
   const mesa_member_since = getField(idx, ['mesa_member_since', 'MESA Member Since', 'mesa member since', 'Mesa Member Since']);
+  const mesa_fpu_completed_on = getField(idx, ['mesa_fpu_completed_on', 'MESA FPU Completed On', 'mesa fpu completed on']);
 
   return {
     work_email: toStr(work_email),
@@ -174,6 +180,10 @@ export function mapEmployeeHourlyRateRow(row: RawRow): EmployeeHourlyRateRow {
     // date comparisons in the Wizard / History are stable.
     mesa_member_since: (() => {
       const s = toStr(mesa_member_since);
+      return s ? s.slice(0, 10) : null;
+    })(),
+    mesa_fpu_completed_on: (() => {
+      const s = toStr(mesa_fpu_completed_on);
       return s ? s.slice(0, 10) : null;
     })(),
   };

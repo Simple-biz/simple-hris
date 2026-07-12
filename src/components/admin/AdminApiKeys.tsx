@@ -162,7 +162,7 @@ export default function AdminApiKeys() {
                       <button
                         type="button"
                         onClick={() => setReveal((v) => !v)}
-                        className="absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300"
+                        className="absolute right-1.5 top-1/2 flex -translate-y-1/2 items-center justify-center rounded p-1.5 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300"
                         aria-label={reveal ? 'Hide key' : 'Show key'}
                       >
                         {reveal ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}

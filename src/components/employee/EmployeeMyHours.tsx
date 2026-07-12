@@ -126,30 +126,6 @@ function secondsToDisplay(s: number): string {
   return `${h}h ${m}m`;
 }
 
-const HUBSTAFF_EMAIL_KEYS = ['Email', 'email', 'Work Email', 'work_email', 'user_email'] as const;
-
-function rowMatchesEmployee(row: Record<string, unknown>, employeeNorms: Set<string>): boolean {
-  const seen = new Set<string>();
-  const add = (s: string | null | undefined) => {
-    const t = s?.trim();
-    if (t) seen.add(t);
-  };
-  for (const k of HUBSTAFF_EMAIL_KEYS) {
-    if (Object.prototype.hasOwnProperty.call(row, k)) add(String(row[k]));
-  }
-  const lower = new Map<string, unknown>();
-  for (const [k, v] of Object.entries(row)) lower.set(k.toLowerCase(), v);
-  for (const alias of ['work email', 'personal email', 'work_email', 'personal_email']) {
-    const v = lower.get(alias);
-    if (v != null) add(String(v));
-  }
-  for (const e of seen) {
-    const n = normEmail(e);
-    if (n && employeeNorms.has(n)) return true;
-  }
-  return false;
-}
-
 function getFieldFromRow(row: Record<string, unknown>, keys: string[]): unknown {
   for (const k of keys) {
     if (Object.prototype.hasOwnProperty.call(row, k)) {
@@ -587,52 +563,45 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
   }, [email, rate]);
 
   const fetchMerged = useCallback(async () => {
-    if (aliasEmails.length === 0) return;
-    const filesRes = await fetch(`/api/hubstaff-hours?source_files=1&_=${Date.now()}`, {
-      cache: 'no-store',
-    });
-    const filesJson = (await filesRes.json()) as { files?: string[] };
-    const files = filesJson.files ?? [];
-    if (files.length === 0) {
+    // One email-filtered server query for this employee's rows across every
+    // upload. The server expands aliases from the master list, so the login
+    // email is enough — this no longer waits on /api/employees to resolve
+    // aliasEmails first (that serial hop gated the whole calendar). Replaces the
+    // old N-parallel `?source_file=...` fan-out. Mirrors EmployeeDashboard's PAB
+    // merge so both surfaces read identical hours. See
+    // app/api/hubstaff-hours/route.ts `merge_all` mode. Canonical weekday columns
+    // are still resolved to ISO dates client-side (resolver needs the filename).
+    const res = await fetch(
+      `/api/hubstaff-hours?merge_all=1&email=${encodeURIComponent(email)}&_=${Date.now()}`,
+      { cache: 'no-store' },
+    );
+    const json = (await res.json()) as {
+      columns?: string[] | null;
+      perFile?: { source_file: string; row: Record<string, unknown> | null }[] | null;
+    };
+    const perFile = json.perFile ?? [];
+    if (perFile.length === 0) {
       setMergedRow(null);
       setMergedColumns([]);
       return;
     }
 
-    const employeeNorms = new Set(aliasEmails);
-    const responses = await Promise.all(
-      files.map((file) =>
-        fetch(`/api/hubstaff-hours?source_file=${encodeURIComponent(file)}&_=${Date.now()}`, {
-          cache: 'no-store',
-        })
-          .then(async (res) => {
-            const json = (await res.json()) as {
-              columns?: string[] | null;
-              rows?: Record<string, unknown>[] | null;
-            };
-            return { file, json };
-          })
-          .catch(() => ({ file, json: { columns: null, rows: null } })),
-      ),
-    );
-
     const allCols = new Set<string>();
     let merged: Record<string, unknown> = {};
     let found = false;
 
-    for (const { file, json } of responses) {
-      if (!json.columns || !json.rows) continue;
-      const myRow = json.rows.find((r) => rowMatchesEmployee(r, employeeNorms));
+    for (const { source_file: file, row: myRow } of perFile) {
       if (!myRow) continue;
       found = true;
-      const needsResolve = columnsAreAllCanonical(json.columns);
+      const rowCols = Object.keys(myRow);
+      const needsResolve = columnsAreAllCanonical(rowCols);
       const resolved = needsResolve ? resolveCanonicalColumnsToIso(myRow, file) : myRow;
-      for (const col of needsResolve ? Object.keys(resolved) : json.columns) allCols.add(col);
+      for (const col of needsResolve ? Object.keys(resolved) : rowCols) allCols.add(col);
       merged = { ...merged, ...resolved };
     }
     setMergedColumns([...allCols]);
     setMergedRow(found ? merged : null);
-  }, [aliasEmails]);
+  }, [email]);
 
   const fetchRatesAndFx = useCallback(async () => {
     setRatesLoading(true);
@@ -757,7 +726,6 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      if (aliasEmails.length === 0) return;
       setLoading(true);
       try {
         await fetchMerged();

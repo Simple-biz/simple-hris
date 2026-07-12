@@ -652,6 +652,44 @@ export async function deleteHrPendingEmployee(
 }
 
 /**
+ * Escapes the SQL-LIKE wildcards `%` and `_` (and the escape char `\`) so a value
+ * passed to `.ilike()` is matched LITERALLY, not as a pattern. Work emails can
+ * legally contain `_` (a valid local-part char), which ILIKE would otherwise
+ * treat as "any single character" — silently matching a DIFFERENT person's row.
+ */
+function escapeLikePattern(value: string): string {
+  return value.replace(/([\\%_])/g, "\\$1");
+}
+
+/**
+ * Looks up the `global_master_list` row for this (Work Email, Department) and
+ * reports whether it exists AND whether it is off-boarded. Used by the onboarding
+ * "Bypass" flow so it can refuse BOTH an already-active employee AND a lingering
+ * off-boarded record (which promote would silently REUSE without clearing
+ * off_boarded_*, leaving the "promoted" worker invisible in active_employees —
+ * off-boarded rehires must go through the re-onboarding flow, not Bypass).
+ * (Work Email, Department) is unique, so at most one row matches. `id` is null
+ * only when no row exists at all.
+ */
+export async function findMasterRowByWorkEmail(
+  workEmail: string,
+  department: string,
+): Promise<{ id: string | null; offBoarded: boolean; error: string | null }> {
+  const sb = client();
+  const { data, error } = await sb
+    .from(MASTER_TABLE)
+    .select("id, off_boarded_at")
+    .ilike("Work Email", escapeLikePattern(workEmail.trim()))
+    .ilike("Department", escapeLikePattern(department.trim()))
+    .limit(1)
+    .maybeSingle();
+  if (error) return { id: null, offBoarded: false, error: error.message };
+  const row = (data ?? null) as { id: string; off_boarded_at: string | null } | null;
+  if (!row) return { id: null, offBoarded: false, error: null };
+  return { id: row.id, offBoarded: !!row.off_boarded_at, error: null };
+}
+
+/**
  * Promotes a pending hire into `global_master_list`. Inserts a fresh master-list
  * row stamped with the current upload id (so it appears in `active_employees`),
  * then flips the staging row to `promoted` and stores the new master-list id.
@@ -758,11 +796,14 @@ export async function promoteHrPendingEmployee(
   // disambiguates. This mirrors the (Work Email, Department) uniqueness the
   // schema now enforces.
   let masterId: string;
+  // Escape LIKE wildcards: a work email can contain `_` (legal local-part char),
+  // which ILIKE would treat as "any char" and match a DIFFERENT person's row —
+  // reassigning this hire onto their master record.
   const { data: existingMaster, error: existingErr } = await sb
     .from(MASTER_TABLE)
     .select("id")
-    .ilike("Work Email", row.work_email)
-    .ilike("Department", row.department)
+    .ilike("Work Email", escapeLikePattern(row.work_email))
+    .ilike("Department", escapeLikePattern(row.department))
     .limit(1)
     .maybeSingle();
   if (existingErr)

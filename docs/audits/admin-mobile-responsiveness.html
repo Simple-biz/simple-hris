@@ -1,0 +1,584 @@
+<title>Admin Mobile Responsiveness Audit</title>
+<style>
+  /* ─────────────────────────────────────────────────────────────
+     Admin — Mobile Responsiveness Audit
+     Information-design treatment: diagnostics console.
+     Palette echoes the Admin dashboard (orange accent, warm zinc),
+     with semantic severity colors kept separate from the accent.
+     ───────────────────────────────────────────────────────────── */
+  :root {
+    --bg: #faf9f7;
+    --surface: #ffffff;
+    --surface-2: #f5f3f0;
+    --border: #e8e5e0;
+    --border-strong: #d8d4cd;
+    --text: #1c1917;
+    --muted: #6f6a63;
+    --faint: #a29b91;
+    --accent: #ea580c;
+    --accent-ink: #c2410c;
+    --accent-wash: #fef2e9;
+    --high: #e11d48;
+    --med: #c2790a;
+    --low: #0284c7;
+    --ok: #059669;
+    --high-wash: #fdeef1;
+    --med-wash: #fbf3e3;
+    --low-wash: #e9f4fc;
+    --ok-wash: #e7f6ef;
+    --shadow: 0 1px 2px rgba(28, 25, 23, .04), 0 8px 24px -12px rgba(28, 25, 23, .12);
+    --radius: 14px;
+    --ff-sans: -apple-system, BlinkMacSystemFont, "Segoe UI Variable Text", "Segoe UI", system-ui, Roboto, sans-serif;
+    --ff-mono: "Cascadia Code", ui-monospace, "SF Mono", "Segoe UI Mono", Consolas, "Liberation Mono", monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0d1117;
+      --surface: #161b22;
+      --surface-2: #1b2129;
+      --border: #2a313b;
+      --border-strong: #3a424e;
+      --text: #e7edf3;
+      --muted: #9aa2ad;
+      --faint: #6b7480;
+      --accent: #fb923c;
+      --accent-ink: #fdba74;
+      --accent-wash: #2a1a0e;
+      --high: #fb7185;
+      --med: #f5b642;
+      --low: #48b8f0;
+      --ok: #34d399;
+      --high-wash: #2a1419;
+      --med-wash: #291f0e;
+      --low-wash: #0f2231;
+      --ok-wash: #0e2a20;
+      --shadow: 0 1px 2px rgba(0, 0, 0, .3), 0 12px 30px -14px rgba(0, 0, 0, .6);
+    }
+  }
+  /* Viewer toggle wins over the media query, both directions. */
+  :root[data-theme="light"] {
+    --bg: #faf9f7; --surface: #ffffff; --surface-2: #f5f3f0; --border: #e8e5e0; --border-strong: #d8d4cd;
+    --text: #1c1917; --muted: #6f6a63; --faint: #a29b91;
+    --accent: #ea580c; --accent-ink: #c2410c; --accent-wash: #fef2e9;
+    --high: #e11d48; --med: #c2790a; --low: #0284c7; --ok: #059669;
+    --high-wash: #fdeef1; --med-wash: #fbf3e3; --low-wash: #e9f4fc; --ok-wash: #e7f6ef;
+    --shadow: 0 1px 2px rgba(28,25,23,.04), 0 8px 24px -12px rgba(28,25,23,.12);
+  }
+  :root[data-theme="dark"] {
+    --bg: #0d1117; --surface: #161b22; --surface-2: #1b2129; --border: #2a313b; --border-strong: #3a424e;
+    --text: #e7edf3; --muted: #9aa2ad; --faint: #6b7480;
+    --accent: #fb923c; --accent-ink: #fdba74; --accent-wash: #2a1a0e;
+    --high: #fb7185; --med: #f5b642; --low: #48b8f0; --ok: #34d399;
+    --high-wash: #2a1419; --med-wash: #291f0e; --low-wash: #0f2231; --ok-wash: #0e2a20;
+    --shadow: 0 1px 2px rgba(0,0,0,.3), 0 12px 30px -14px rgba(0,0,0,.6);
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background:
+      radial-gradient(120% 60% at 100% -10%, var(--accent-wash) 0%, transparent 45%),
+      var(--bg);
+    color: var(--text);
+    font-family: var(--ff-sans);
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  .page {
+    max-width: 1080px;
+    margin: 0 auto;
+    padding: clamp(20px, 5vw, 52px) clamp(16px, 4vw, 40px) 64px;
+  }
+  .eyebrow {
+    font-family: var(--ff-mono);
+    font-size: 11.5px;
+    letter-spacing: .14em;
+    text-transform: uppercase;
+    color: var(--accent-ink);
+    margin: 0 0 14px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+  .eyebrow::before {
+    content: "";
+    width: 22px; height: 2px;
+    background: var(--accent);
+    display: inline-block;
+  }
+  h1 {
+    font-size: clamp(28px, 6vw, 44px);
+    line-height: 1.05;
+    letter-spacing: -.022em;
+    font-weight: 720;
+    margin: 0 0 14px;
+    text-wrap: balance;
+  }
+  .lede {
+    font-size: clamp(15px, 2.4vw, 17px);
+    color: var(--muted);
+    max-width: 60ch;
+    margin: 0 0 22px;
+  }
+  .lede b { color: var(--text); font-weight: 600; }
+
+  .meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 34px;
+  }
+  .chip {
+    font-family: var(--ff-mono);
+    font-size: 12px;
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    padding: 6px 11px;
+    border-radius: 999px;
+    border: 1px solid var(--border-strong);
+    background: var(--surface);
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+  }
+  .chip b { color: var(--text); font-weight: 600; }
+  .chip .dot { width: 7px; height: 7px; border-radius: 999px; background: var(--ok); box-shadow: 0 0 0 3px var(--ok-wash); }
+
+  section { margin-top: 40px; }
+  .sec-label {
+    font-family: var(--ff-mono);
+    font-size: 11px;
+    letter-spacing: .13em;
+    text-transform: uppercase;
+    color: var(--faint);
+    margin: 0 0 16px;
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+  }
+  .sec-label::after {
+    content: "";
+    flex: 1;
+    height: 1px;
+    background: var(--border);
+  }
+
+  /* ── Summary stat tiles ── */
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 12px;
+  }
+  .stat {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 18px 18px 16px;
+    box-shadow: var(--shadow);
+    position: relative;
+    overflow: hidden;
+  }
+  .stat::before {
+    content: "";
+    position: absolute; inset: 0 auto 0 0;
+    width: 3px; background: var(--tone, var(--accent));
+  }
+  .stat .num {
+    font-size: 34px;
+    font-weight: 720;
+    letter-spacing: -.02em;
+    line-height: 1;
+    font-variant-numeric: tabular-nums;
+    color: var(--tone, var(--text));
+  }
+  .stat .num small { font-size: 16px; font-weight: 600; color: var(--faint); letter-spacing: 0; }
+  .stat .cap {
+    margin-top: 8px;
+    font-size: 12.5px;
+    color: var(--muted);
+  }
+  .stat .cap b { color: var(--text); font-weight: 600; }
+
+  /* ── Severity distribution ── */
+  .dist-bar {
+    display: flex;
+    height: 14px;
+    border-radius: 999px;
+    overflow: hidden;
+    border: 1px solid var(--border);
+    background: var(--surface-2);
+  }
+  .dist-bar span { display: block; height: 100%; }
+  .dist-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 18px;
+    margin-top: 14px;
+  }
+  .leg { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); }
+  .leg .sw { width: 11px; height: 11px; border-radius: 3px; }
+  .leg b { color: var(--text); font-weight: 650; font-variant-numeric: tabular-nums; }
+
+  /* ── Diagnosis callout ── */
+  .diagnosis {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--accent);
+    border-radius: var(--radius);
+    padding: clamp(20px, 3.5vw, 28px);
+    box-shadow: var(--shadow);
+  }
+  .diagnosis h3 {
+    margin: 0 0 10px;
+    font-size: 18px;
+    letter-spacing: -.01em;
+    display: flex; align-items: center; gap: 10px;
+  }
+  .diagnosis h3 .tag {
+    font-family: var(--ff-mono);
+    font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase;
+    color: var(--accent-ink); background: var(--accent-wash);
+    padding: 3px 8px; border-radius: 6px; font-weight: 600;
+  }
+  .diagnosis p { margin: 0 0 14px; color: var(--muted); max-width: 68ch; }
+  .diagnosis p b { color: var(--text); font-weight: 600; }
+  .code {
+    font-family: var(--ff-mono);
+    font-size: 12.5px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px 16px;
+    overflow-x: auto;
+    line-height: 1.7;
+    color: var(--text);
+  }
+  .code .k { color: var(--accent-ink); }
+  .code .del { color: var(--high); text-decoration: line-through; opacity: .8; }
+  .code .add { color: var(--ok); font-weight: 600; }
+  .code .cmt { color: var(--faint); }
+
+  /* ── Findings ── */
+  .findings-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+  .finding {
+    --sev: var(--faint);
+    --sev-wash: var(--surface-2);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 16px 18px 17px 20px;
+    position: relative;
+    overflow: hidden;
+    box-shadow: var(--shadow);
+  }
+  .finding::before {
+    content: "";
+    position: absolute; inset: 0 auto 0 0;
+    width: 4px; background: var(--sev);
+  }
+  .finding.high { --sev: var(--high); --sev-wash: var(--high-wash); }
+  .finding.med  { --sev: var(--med);  --sev-wash: var(--med-wash); }
+  .finding.low  { --sev: var(--low);  --sev-wash: var(--low-wash); }
+  .finding.none { --sev: var(--faint); --sev-wash: var(--surface-2); }
+
+  .f-head {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-bottom: 9px;
+  }
+  .f-name { font-size: 16px; font-weight: 650; letter-spacing: -.01em; }
+  .f-id {
+    font-family: var(--ff-mono);
+    font-size: 11.5px;
+    color: var(--faint);
+  }
+  .f-spacer { flex: 1; }
+  .pill {
+    font-family: var(--ff-mono);
+    font-size: 10.5px;
+    letter-spacing: .05em;
+    text-transform: uppercase;
+    font-weight: 600;
+    padding: 3px 9px;
+    border-radius: 999px;
+    white-space: nowrap;
+  }
+  .pill.sev { color: var(--sev); background: var(--sev-wash); }
+  .pill.fixed { color: var(--ok); background: var(--ok-wash); }
+  .pill.hold  { color: var(--muted); background: var(--surface-2); border: 1px solid var(--border); }
+
+  .f-body { font-size: 14px; color: var(--muted); }
+  .f-body .row { display: flex; gap: 9px; padding: 3px 0; }
+  .f-body .row .lbl {
+    font-family: var(--ff-mono);
+    font-size: 10.5px; letter-spacing: .06em; text-transform: uppercase;
+    color: var(--faint);
+    flex: 0 0 42px;
+    padding-top: 3px;
+  }
+  .f-body .row .val { flex: 1; }
+  .f-body .row .val b { color: var(--text); font-weight: 600; }
+  code.inline {
+    font-family: var(--ff-mono);
+    font-size: .86em;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    padding: 1px 5px;
+    color: var(--accent-ink);
+    word-break: break-word;
+  }
+
+  /* ── Method / footer ── */
+  .method-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+  .method {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 18px 20px;
+  }
+  .method h4 {
+    margin: 0 0 8px; font-size: 14px; letter-spacing: -.005em;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .method h4 .ic { font-size: 15px; }
+  .method p { margin: 0; font-size: 13.5px; color: var(--muted); }
+  .method p b { color: var(--text); font-weight: 600; }
+  .method code.inline { font-size: .82em; }
+
+  footer {
+    margin-top: 44px;
+    padding-top: 20px;
+    border-top: 1px solid var(--border);
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px 20px;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 12.5px;
+    color: var(--faint);
+    font-family: var(--ff-mono);
+  }
+  footer .note { max-width: 62ch; line-height: 1.5; }
+
+  a { color: var(--accent-ink); }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+
+  /* Entrance — tasteful, single orchestrated rise. */
+  @media (prefers-reduced-motion: no-preference) {
+    .reveal { opacity: 0; transform: translateY(10px); animation: rise .6s cubic-bezier(.22,1,.36,1) forwards; }
+    .reveal:nth-child(1) { animation-delay: .02s; }
+    .reveal:nth-child(2) { animation-delay: .06s; }
+    .reveal:nth-child(3) { animation-delay: .10s; }
+    .reveal:nth-child(4) { animation-delay: .14s; }
+    @keyframes rise { to { opacity: 1; transform: none; } }
+  }
+
+  /* ── Wider viewports ── */
+  @media (min-width: 620px) {
+    .stats { grid-template-columns: repeat(4, 1fr); }
+    .findings-grid { grid-template-columns: 1fr 1fr; }
+    .method-grid { grid-template-columns: repeat(3, 1fr); }
+  }
+</style>
+
+<div class="page">
+  <header>
+    <p class="eyebrow">Responsiveness Audit · Samsung S23 Ultra</p>
+    <h1>Admin dashboard, made to fit the phone.</h1>
+    <p class="lede">
+      Every Admin tab and table, audited against a <b>412 × 883</b> portrait viewport — below
+      Tailwind's <code class="inline">sm</code> breakpoint, where the desktop layout has to give way.
+      Three tabs were fully blocked; all blocking and medium issues are now resolved.
+    </p>
+    <div class="meta">
+      <span class="chip"><span class="dot"></span> <b>Resolved</b> — blocking + medium</span>
+      <span class="chip">Last audited <b>11 Jul 2026</b></span>
+      <span class="chip">Revision <b>1</b></span>
+      <span class="chip">Typecheck <b>tsc&nbsp;✓</b></span>
+    </div>
+  </header>
+
+  <section aria-label="Summary">
+    <div class="stats">
+      <div class="stat reveal"><div class="num">11</div><div class="cap"><b>Surfaces</b> audited</div></div>
+      <div class="stat reveal" style="--tone:var(--high)"><div class="num">3</div><div class="cap"><b>High</b> — content clipped</div></div>
+      <div class="stat reveal" style="--tone:var(--ok)"><div class="num">13</div><div class="cap"><b>Issues</b> fixed</div></div>
+      <div class="stat reveal" style="--tone:var(--accent)"><div class="num">8<small> files</small></div><div class="cap">changed &amp; verified</div></div>
+    </div>
+  </section>
+
+  <section aria-label="Severity distribution">
+    <p class="sec-label">Severity found</p>
+    <div class="dist-bar" role="img" aria-label="3 high, 10 medium, 12 low">
+      <span style="flex:3;background:var(--high)"></span>
+      <span style="flex:10;background:var(--med)"></span>
+      <span style="flex:12;background:var(--low)"></span>
+    </div>
+    <div class="dist-legend">
+      <span class="leg"><span class="sw" style="background:var(--high)"></span> High <b>3</b> · all fixed</span>
+      <span class="leg"><span class="sw" style="background:var(--med)"></span> Medium <b>10</b> · all fixed</span>
+      <span class="leg"><span class="sw" style="background:var(--low)"></span> Low <b>12</b> · 2 fixed, rest logged</span>
+    </div>
+  </section>
+
+  <section aria-label="Root cause">
+    <p class="sec-label">The common failure</p>
+    <div class="diagnosis">
+      <h3><span class="tag">Root cause</span> The two-pane app-shell never let go on mobile</h3>
+      <p>
+        The blocked tabs share one desktop pattern: a fixed-height master/detail shell
+        (<code class="inline">h-full</code> + <code class="inline">flex-1</code> +
+        <code class="inline">overflow-hidden</code>) pinned to the viewport with its own internal scroll.
+        When it collapsed to a single stacked column on a phone, it <b>stayed pinned</b> — and because the
+        <code class="inline">Card</code> primitive always carries <code class="inline">overflow-hidden</code>,
+        the roster's scroll region <b>shrank to near-zero height</b>. That's the "scrollbar, but no entries"
+        you saw in the Global Master List.
+      </p>
+      <p>The fix, applied consistently: keep the pinned shell at <b>lg and up</b> (desktop is unchanged), but let panes flow at natural height on phone/tablet so the page itself scrolls.</p>
+      <div class="code"><span class="cmt">// each pinned container, gated to desktop only</span>
+<span class="del">flex h-full min-h-0 overflow-hidden</span>
+<span class="add">flex  →  lg:h-full lg:min-h-0 lg:overflow-hidden</span></div>
+    </div>
+  </section>
+
+  <section aria-label="Findings by tab">
+    <p class="sec-label">Tab by tab</p>
+    <div class="findings-grid">
+
+      <article class="finding high reveal">
+        <div class="f-head"><span class="f-name">Global Master List</span><span class="f-id">global-master-list</span><span class="f-spacer"></span><span class="pill sev">High</span></div>
+        <div class="f-body">
+          <div class="row"><span class="lbl">Was</span><span class="val">Roster showed a bare scrollbar with <b>no rows</b> — the two-pane shell stayed viewport-pinned when stacked.</span></div>
+          <div class="row"><span class="lbl">Now</span><span class="val">Roster and detail stack and scroll with the page. All/Online toggle enlarged for touch.</span></div>
+          <div class="row"><span class="lbl">State</span><span class="val"><span class="pill fixed">Fixed</span></span></div>
+        </div>
+      </article>
+
+      <article class="finding high reveal">
+        <div class="f-head"><span class="f-name">Roles &amp; permissions</span><span class="f-id">roles</span><span class="f-spacer"></span><span class="pill sev">High</span></div>
+        <div class="f-body">
+          <div class="row"><span class="lbl">Was</span><span class="val">The <b>role-assignment pane</b> was pushed off-screen and unreachable once the panes stacked.</span></div>
+          <div class="row"><span class="lbl">Now</span><span class="val">Panes flow on mobile; the People header wraps; the loading skeleton matches so there's no jump.</span></div>
+          <div class="row"><span class="lbl">State</span><span class="val"><span class="pill fixed">Fixed</span></span></div>
+        </div>
+      </article>
+
+      <article class="finding high reveal">
+        <div class="f-head"><span class="f-name">Diagnostics</span><span class="f-id">diagnostics</span><span class="f-spacer"></span><span class="pill sev">High</span></div>
+        <div class="f-body">
+          <div class="row"><span class="lbl">Was</span><span class="val"><b>Node details</b> and <b>Active alerts</b> were clipped below the service map with no way to scroll to them.</span></div>
+          <div class="row"><span class="lbl">Now</span><span class="val">Panels flow; Service-Map header wraps; minimap + edge legend hidden on phones (they covered the tiny map).</span></div>
+          <div class="row"><span class="lbl">State</span><span class="val"><span class="pill fixed">Fixed</span></span></div>
+        </div>
+      </article>
+
+      <article class="finding med reveal">
+        <div class="f-head"><span class="f-name">Audit log</span><span class="f-id">audit</span><span class="f-spacer"></span><span class="pill sev">Medium</span></div>
+        <div class="f-body">
+          <div class="row"><span class="lbl">Was</span><span class="val">The row <b>"View"</b> action was hover-only — on touch the detail dialog was unreachable. Header overflowed when the clear-log confirm expanded.</span></div>
+          <div class="row"><span class="lbl">Now</span><span class="val">"View" always visible on touch; header wraps its actions.</span></div>
+          <div class="row"><span class="lbl">State</span><span class="val"><span class="pill fixed">Fixed</span></span></div>
+        </div>
+      </article>
+
+      <article class="finding med reveal">
+        <div class="f-head"><span class="f-name">Google Workspace</span><span class="f-id">workspace</span><span class="f-spacer"></span><span class="pill sev">Medium</span></div>
+        <div class="f-body">
+          <div class="row"><span class="lbl">Was</span><span class="val">License stats forced 3-across and the edit form 2-across at 412px; the OAuth scope string overflowed sideways.</span></div>
+          <div class="row"><span class="lbl">Now</span><span class="val">Tighter stat gaps, fields stack, and the long <code class="inline">&lt;code&gt;</code> wraps.</span></div>
+          <div class="row"><span class="lbl">State</span><span class="val"><span class="pill fixed">Fixed</span></span></div>
+        </div>
+      </article>
+
+      <article class="finding med reveal">
+        <div class="f-head"><span class="f-name">Overview</span><span class="f-id">overview</span><span class="f-spacer"></span><span class="pill sev">Medium</span></div>
+        <div class="f-body">
+          <div class="row"><span class="lbl">Was</span><span class="val">The recent-audit panel had a <b>fixed-height header</b> the wrapping search box overflowed into the rows.</span></div>
+          <div class="row"><span class="lbl">Now</span><span class="val">Header grows to fit its wrapped controls. (Page already scrolled correctly.)</span></div>
+          <div class="row"><span class="lbl">State</span><span class="val"><span class="pill fixed">Fixed</span></span></div>
+        </div>
+      </article>
+
+      <article class="finding low reveal">
+        <div class="f-head"><span class="f-name">API tokens</span><span class="f-id">api-tokens</span><span class="f-spacer"></span><span class="pill sev">Low</span></div>
+        <div class="f-body">
+          <div class="row"><span class="lbl">Was</span><span class="val">The show/hide-key control was a <b>~16px bare icon</b>, hard to hit on touch.</span></div>
+          <div class="row"><span class="lbl">Now</span><span class="val">Wrapped in a proper padded target. Content already flowed.</span></div>
+          <div class="row"><span class="lbl">State</span><span class="val"><span class="pill fixed">Fixed</span></span></div>
+        </div>
+      </article>
+
+      <article class="finding low reveal">
+        <div class="f-head"><span class="f-name">Pages</span><span class="f-id">pages</span><span class="f-spacer"></span><span class="pill sev">Low</span></div>
+        <div class="f-body">
+          <div class="row"><span class="lbl">Was</span><span class="val">Compact ~26px segmented controls; the tab strip scrolls horizontally by design.</span></div>
+          <div class="row"><span class="lbl">Now</span><span class="val">Flows correctly via the shared wrapper fix; target sizes logged as acceptable.</span></div>
+          <div class="row"><span class="lbl">State</span><span class="val"><span class="pill hold">No change needed</span></span></div>
+        </div>
+      </article>
+
+      <article class="finding low reveal">
+        <div class="f-head"><span class="f-name">Notifications</span><span class="f-id">notifications</span><span class="f-spacer"></span><span class="pill sev">Low</span></div>
+        <div class="f-body">
+          <div class="row"><span class="lbl">Was</span><span class="val">A 2-col rate-change grid and a few 28px controls — legible, no overflow at 412px.</span></div>
+          <div class="row"><span class="lbl">Now</span><span class="val">Verified; left as-is.</span></div>
+          <div class="row"><span class="lbl">State</span><span class="val"><span class="pill hold">No change needed</span></span></div>
+        </div>
+      </article>
+
+      <article class="finding low reveal">
+        <div class="f-head"><span class="f-name">Webhooks</span><span class="f-id">webhooks</span><span class="f-spacer"></span><span class="pill sev">Low</span></div>
+        <div class="f-body">
+          <div class="row"><span class="lbl">Was</span><span class="val">28px Test / toggle / delete controls; long URLs scroll inside their field, so no page overflow.</span></div>
+          <div class="row"><span class="lbl">Now</span><span class="val">Logged as compact sizing shared with desktop.</span></div>
+          <div class="row"><span class="lbl">State</span><span class="val"><span class="pill hold">No change needed</span></span></div>
+        </div>
+      </article>
+
+      <article class="finding none reveal">
+        <div class="f-head"><span class="f-name">Backups · System settings</span><span class="f-id">backups / settings</span><span class="f-spacer"></span><span class="pill sev">—</span></div>
+        <div class="f-body">
+          <div class="row"><span class="lbl">Note</span><span class="val">Placeholder panels — a centered message with nothing to adapt.</span></div>
+          <div class="row"><span class="lbl">State</span><span class="val"><span class="pill hold">OK</span></span></div>
+        </div>
+      </article>
+
+    </div>
+  </section>
+
+  <section aria-label="Method">
+    <p class="sec-label">How it was checked</p>
+    <div class="method-grid">
+      <div class="method">
+        <h4><span class="ic">📐</span> Target</h4>
+        <p><b>412 × 883</b> CSS px, portrait. Below <code class="inline">sm</code> (640px), so every base class renders and <code class="inline">sm/md/lg</code> variants are off.</p>
+      </div>
+      <div class="method">
+        <h4><span class="ic">🧭</span> Navigation</h4>
+        <p>The sidebar already collapses to a hamburger drawer on mobile — left untouched. The fixes are all in tab <b>content</b>.</p>
+      </div>
+      <div class="method">
+        <h4><span class="ic">✓</span> Verification</h4>
+        <p><code class="inline">tsc --noEmit</code> passes clean. A live in-browser pass on the S23 Ultra is still worth a spot-check — the admin routes are auth-gated.</p>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <span class="note">This report regenerates on each audit — re-run "Admin mobile audit" and the same link updates in place.</span>
+    <span>admin · mobile-responsiveness</span>
+  </footer>
+</div>

@@ -59,6 +59,7 @@ export default function EmployeeMesa({
 }: Props) {
   const [isMember, setIsMember] = useState<boolean | null>(null);
   const [enrolledSince, setEnrolledSince] = useState<string | null>(null);
+  const [fpuCompletedOn, setFpuCompletedOn] = useState<string | null>(null);
   const [subTab, setSubTab] = useState<SubTab>('about');
 
   // Look up the current user's mesa_member flag — server-side ?email= filter
@@ -80,6 +81,7 @@ export default function EmployeeMesa({
         if (!cancelled) {
           setIsMember(!!mine?.mesa_member);
           setEnrolledSince(mine?.mesa_member_since ?? null);
+          setFpuCompletedOn(mine?.mesa_fpu_completed_on ?? null);
         }
       } catch {
         if (!cancelled) setIsMember(false);
@@ -122,18 +124,22 @@ export default function EmployeeMesa({
 
         <AnimatePresence mode="wait" initial={false}>
           <motion.div
-            key={subTab}
+            key={isMember === null ? 'loading' : subTab}
             initial={{ opacity: 0, y: 8, filter: 'blur(2px)' }}
             animate={{ opacity: 1, y: 0, filter: 'blur(0px)' }}
             exit={{ opacity: 0, y: -6, filter: 'blur(2px)' }}
             transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
           >
-            {subTab === 'request' ? (
+            {isMember === null ? (
+              <MesaAboutSkeleton />
+            ) : subTab === 'request' ? (
               <MesaRequestForm
                 employeeEmail={employeeEmail}
                 employeeName={employeeName ?? null}
                 department={department ?? null}
                 isMember={isMember}
+                enrolledSince={enrolledSince}
+                fpuCompletedOn={fpuCompletedOn}
               />
             ) : subTab === 'history' ? (
               <MesaHistory
@@ -152,6 +158,64 @@ export default function EmployeeMesa({
           </motion.div>
         </AnimatePresence>
       </div>
+    </div>
+  );
+}
+
+/**
+ * Loading skeleton shown while the membership fetch (`isMember === null`) is in
+ * flight. Mirrors the default About tab — teal hero card + two section cards each
+ * with a 3-up grid (UseCards / ContribCards) — so nothing reflows on reveal.
+ */
+function MesaAboutSkeleton() {
+  return (
+    <div className="space-y-6">
+      {/* Hero */}
+      <div className="overflow-hidden rounded-2xl border border-teal-100/80 bg-gradient-to-br from-teal-50/80 via-white to-emerald-50/60 p-6 shadow-sm dark:border-teal-900/40 dark:from-teal-950/40 dark:via-[#0d1117] dark:to-emerald-950/30 sm:p-8">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div className="min-w-0 flex-1 space-y-2">
+            <div className="h-2.5 w-56 animate-pulse rounded bg-teal-200/70 dark:bg-teal-900/50" />
+            <div className="h-7 w-40 animate-pulse rounded-md bg-zinc-200 dark:bg-zinc-800 sm:h-8" />
+            <div className="space-y-1.5 pt-1">
+              <div className="h-3 w-full max-w-md animate-pulse rounded bg-zinc-200/70 dark:bg-zinc-800/70" />
+              <div className="h-3 w-2/3 max-w-sm animate-pulse rounded bg-zinc-200/60 dark:bg-zinc-800/60" />
+            </div>
+          </div>
+          {/* Enrollment badge placeholder */}
+          <div className="h-7 w-24 shrink-0 animate-pulse rounded-full bg-teal-100/80 dark:bg-teal-900/40" />
+        </div>
+      </div>
+
+      {/* Two section cards, each with a 3-up grid */}
+      {[0, 1].map((s) => (
+        <div
+          key={s}
+          className="rounded-2xl border border-zinc-200/70 bg-white/70 p-5 shadow-sm dark:border-zinc-800/70 dark:bg-zinc-900/40 sm:p-6"
+        >
+          <div className="flex items-center gap-2.5">
+            <div className="h-8 w-8 shrink-0 animate-pulse rounded-lg bg-teal-100/80 dark:bg-teal-900/40" />
+            <div className="space-y-1.5">
+              <div className="h-2 w-28 animate-pulse rounded bg-zinc-200/70 dark:bg-zinc-800/70" />
+              <div className="h-3.5 w-44 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
+            </div>
+          </div>
+          <div className="mt-4 grid gap-3 sm:grid-cols-3">
+            {[0, 1, 2].map((i) => (
+              <div
+                key={i}
+                className="rounded-xl border border-zinc-200/60 bg-zinc-50/60 p-4 dark:border-zinc-800/60 dark:bg-zinc-900/40"
+              >
+                <div className="h-6 w-6 animate-pulse rounded-md bg-zinc-200 dark:bg-zinc-800" />
+                <div
+                  className="mt-3 h-3.5 w-24 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800"
+                  style={{ animationDelay: `${(s * 3 + i) * 70}ms` }}
+                />
+                <div className="mt-1.5 h-3 w-full animate-pulse rounded bg-zinc-200/50 dark:bg-zinc-800/50" />
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
     </div>
   );
 }
@@ -601,6 +665,59 @@ const DISBURSEMENT_REASONS = [
   'Other',
 ];
 
+// Request options rendered as tabs (replaces the old dropdown). Each maps to a
+// RequestType and reveals its own option-specific section below.
+const REQUEST_TYPE_TABS: {
+  value: Exclude<RequestType, ''>;
+  label: string;
+  icon: React.ComponentType<{ className?: string }>;
+}[] = [
+  { value: 'opt_in', label: 'Opt-in', icon: HeartHandshake },
+  { value: 'opt_out', label: 'Opt-out', icon: XCircle },
+  { value: 'disbursement', label: 'Disbursement Request', icon: ReceiptText },
+  { value: 'return', label: 'Return', icon: PiggyBank },
+];
+
+function RequestTypeTabButton({
+  active,
+  onClick,
+  icon: Icon,
+  label,
+}: {
+  active: boolean;
+  onClick: () => void;
+  icon: React.ComponentType<{ className?: string }>;
+  label: string;
+}) {
+  return (
+    <button
+      type="button"
+      role="tab"
+      aria-selected={active}
+      onClick={onClick}
+      className={cn(
+        'relative inline-flex flex-1 items-center justify-center gap-1.5 rounded-md px-3 py-2 text-xs font-semibold transition-colors duration-200 sm:flex-none sm:justify-start',
+        active
+          ? 'text-white'
+          : 'text-zinc-600 hover:bg-teal-50/70 hover:text-teal-700 dark:text-zinc-400 dark:hover:bg-teal-950/40 dark:hover:text-teal-200',
+      )}
+    >
+      {active && (
+        <motion.span
+          layoutId="mesa-request-type-pill"
+          aria-hidden
+          className="absolute inset-0 rounded-md bg-gradient-to-r from-teal-500 to-emerald-500 shadow-sm"
+          transition={{ type: 'spring', stiffness: 380, damping: 32 }}
+        />
+      )}
+      <span className="relative z-10 inline-flex items-center gap-1.5">
+        <Icon className="h-3.5 w-3.5" />
+        {label}
+      </span>
+    </button>
+  );
+}
+
 const OPT_IN_AGREEMENTS = [
   'I understand the MESA terms provided above.',
   'I understand that PHP 100 will be deducted from my paycheck each week and put into my MESA account.',
@@ -613,10 +730,19 @@ interface MesaRequestRow {
   id: string;
   request_type: string;
   status: string;
+  fpu_date: string | null;
   disbursement_reason: string | null;
   amount_needed: number | null;
   created_at: string;
   review_notes: string | null;
+}
+
+// The date <input> needs a strict YYYY-MM-DD value. mesa_member_since already
+// arrives in that shape; a prior request's fpu_date is free text, so only reuse
+// it when it happens to be a clean ISO date (otherwise fall back to enrollment).
+function toDateInputValue(raw: string | null | undefined): string {
+  if (!raw) return '';
+  return /^\d{4}-\d{2}-\d{2}$/.test(raw.trim()) ? raw.trim() : '';
 }
 
 function MesaRequestForm({
@@ -624,11 +750,18 @@ function MesaRequestForm({
   employeeName,
   department,
   isMember,
+  enrolledSince,
+  fpuCompletedOn,
 }: {
   employeeEmail: string;
   employeeName: string | null;
   department: string | null;
   isMember: boolean | null;
+  /** MESA enrollment date (YYYY-MM-DD). Shown in the "already enrolled" banner. */
+  enrolledSince: string | null;
+  /** Real FPU completion date (YYYY-MM-DD), backfilled from the MESA export.
+   *  Primary source for pre-filling the Opt-in "Date you completed FPU" field. */
+  fpuCompletedOn: string | null;
 }) {
   const [requestType, setRequestType] = React.useState<RequestType>('');
   const [agreements, setAgreements] = React.useState<boolean[]>(OPT_IN_AGREEMENTS.map(() => false));
@@ -664,6 +797,33 @@ function MesaRequestForm({
       .finally(() => { if (!cancelled) setLoadingHistory(false); });
     return () => { cancelled = true; };
   }, [employeeEmail]);
+
+  // FPU completion date to pre-fill for already-enrolled members. Priority:
+  //   1. Real backfilled FPU date (mesa_fpu_completed_on) — authoritative.
+  //   2. A prior opt-in request that carried a clean ISO fpu_date.
+  //   3. Enrollment date as a last-resort anchor.
+  const prefilledFpuDate = React.useMemo(() => {
+    const priorIso = pastRequests
+      .map((r) => (r.request_type === 'opt_in' ? toDateInputValue(r.fpu_date) : ''))
+      .find(Boolean);
+    return toDateInputValue(fpuCompletedOn) || priorIso || toDateInputValue(enrolledSince);
+  }, [pastRequests, enrolledSince, fpuCompletedOn]);
+
+  // Switching request tabs. For an already-enrolled member landing on Opt-in we
+  // reflect their standing enrollment: agreements checked + FPU date pre-filled.
+  const selectRequestType = (value: RequestType) => {
+    setRequestType(value);
+    setOptOutChecked(false);
+    setDisbursementChecked(false);
+    if (value === 'opt_in' && isMember) {
+      setAgreements(OPT_IN_AGREEMENTS.map(() => true));
+      setOptInChecked(true);
+      setFpuDate((prev) => prev || prefilledFpuDate);
+    } else {
+      setAgreements(OPT_IN_AGREEMENTS.map(() => false));
+      setOptInChecked(false);
+    }
+  };
 
   const resetForm = () => {
     setRequestType('');
@@ -761,30 +921,26 @@ function MesaRequestForm({
       <Card className="border-teal-100/80 shadow-sm dark:border-teal-900/40">
         <CardContent className="p-5 sm:p-6">
           <form onSubmit={handleSubmit} className="space-y-5">
-            {/* Option selector */}
+            {/* Option selector — tabs (one per request type) */}
             <div className="space-y-1.5">
               <label className="text-sm font-semibold text-zinc-900 dark:text-white">
                 Options <span className="text-rose-500">*</span>
               </label>
-              <SmoothSelect
-                aria-label="Options"
-                value={requestType}
-                onChange={(v) => {
-                  setRequestType(v as RequestType);
-                  setAgreements(OPT_IN_AGREEMENTS.map(() => false));
-                  setOptInChecked(false);
-                  setOptOutChecked(false);
-                  setDisbursementChecked(false);
-                }}
-                triggerClassName="w-full"
-                options={[
-                  { value: '', label: '-- Select --' },
-                  { value: 'opt_in', label: 'Opt-in' },
-                  { value: 'opt_out', label: 'Opt-out' },
-                  { value: 'disbursement', label: 'Disbursement Request' },
-                  { value: 'return', label: 'Return' },
-                ]}
-              />
+              <div
+                role="tablist"
+                aria-label="Request options"
+                className="grid grid-cols-2 gap-1.5 rounded-lg border border-teal-100/80 bg-white/70 p-1 shadow-sm backdrop-blur sm:flex sm:flex-wrap sm:items-center dark:border-teal-900/40 dark:bg-zinc-900/60"
+              >
+                {REQUEST_TYPE_TABS.map((t) => (
+                  <RequestTypeTabButton
+                    key={t.value}
+                    active={requestType === t.value}
+                    onClick={() => selectRequestType(t.value)}
+                    icon={t.icon}
+                    label={t.label}
+                  />
+                ))}
+              </div>
             </div>
 
             {/* Option-specific section — keyed so React replaces the node on change,
@@ -798,6 +954,19 @@ function MesaRequestForm({
               >
                 {requestType === 'opt_in' && (
                   <div className="space-y-4 rounded-lg border border-teal-100 bg-teal-50/40 p-4 dark:border-teal-900/40 dark:bg-teal-950/20">
+                    {isMember && (
+                      <div className="flex items-start gap-2 rounded-md border border-teal-200 bg-white/80 p-3 text-xs leading-relaxed text-teal-900 dark:border-teal-500/40 dark:bg-teal-950/40 dark:text-teal-100">
+                        <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-teal-600 dark:text-teal-300" />
+                        <span>
+                          You&rsquo;re already enrolled in MESA
+                          {enrolledSince && parseStartDate(enrolledSince)
+                            ? ` (since ${formatDateLong(parseStartDate(enrolledSince)!)})`
+                            : ''}
+                          . Your agreement is on file and pre-filled below &mdash; there&rsquo;s no
+                          need to opt in again unless you&rsquo;re correcting your details.
+                        </span>
+                      </div>
+                    )}
                     <label className="flex cursor-pointer items-start gap-2 text-sm font-medium text-zinc-900 dark:text-white">
                       <input
                         type="checkbox"

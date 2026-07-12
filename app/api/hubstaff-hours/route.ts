@@ -139,28 +139,50 @@ export async function GET(req: NextRequest) {
     try {
       const norm = normEmail(mergeEmail) ?? mergeEmail.toLowerCase();
       const aliasSet = await expandEmailAliases(norm);
-      const uploads = await listHubstaffUploads().catch(() => []);
-      const files = uploads.length > 0
-        ? [...new Set(uploads.map((u) => (u.source_file ?? "").trim()).filter(Boolean))]
-        : await getUploadedSourceFiles();
+      const aliases = [...aliasSet].filter(Boolean);
 
+      const supabase = createSupabaseServiceRoleClient() ?? createSupabaseServerClient();
+      if (!supabase) throw new Error("Supabase client unavailable");
+      const table =
+        process.env.NEXT_PUBLIC_SUPABASE_HUBSTAFF_HOURS_TABLE?.trim() || "hubstaff_hours";
+
+      // One email-filtered query for this employee's rows across ALL uploads,
+      // instead of reading every weekly file's full roster (~13 sequential full
+      // scans) just to pick out one row. Matches on the Hubstaff "Email" column
+      // (capital E, per CSV mapping) — the same column the authoritative pay
+      // calculator (member-monthly-pay `fetchHubstaffRowsForEmail`) filters on.
+      const orFilter = aliases.map((e) => `"Email".eq.${e}`).join(",");
+      const PAGE = 1000;
+      const rows: Record<string, unknown>[] = [];
+      let from = 0;
+      while (true) {
+        const { data, error } = await supabase
+          .from(table)
+          .select("*")
+          .or(orFilter)
+          .range(from, from + PAGE - 1);
+        if (error) throw new Error(error.message);
+        const page = (data ?? []) as Record<string, unknown>[];
+        rows.push(...page);
+        if (page.length < PAGE) break;
+        from += PAGE;
+        if (from > 10_000) break; // one employee won't have >10k weekly rows
+      }
+
+      // Group into one row per source_file (last wins on the rare duplicate),
+      // preserving the { columns, perFile } shape both clients already consume.
       const allCols = new Set<string>();
-      const perFile: { source_file: string; row: Record<string, unknown> | null }[] = [];
+      const byFile = new Map<string, Record<string, unknown>>();
+      for (const row of rows) {
+        for (const k of Object.keys(row)) allCols.add(k);
+        const sf =
+          typeof row["source_file"] === "string" ? (row["source_file"] as string).trim() : "";
+        if (!sf) continue;
+        byFile.set(sf, row);
+      }
+      const perFile = [...byFile.entries()].map(([source_file, row]) => ({ source_file, row }));
 
-      await Promise.all(
-        files.map(async (file) => {
-          const { columns, rows } = await fetchHubstaffRowsBySourceFile(file);
-          for (const c of columns) allCols.add(c);
-          const myRow = rows.find((r) => rowMatchesAnyEmail(r, aliasSet)) ?? null;
-          perFile.push({ source_file: file, row: myRow });
-        }),
-      );
-
-      return NextResponse.json({
-        columns: [...allCols],
-        perFile,
-        error: null,
-      });
+      return NextResponse.json({ columns: [...allCols], perFile, error: null });
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       return NextResponse.json({ columns: [], perFile: [], error: cleanErrorMessage(msg) });

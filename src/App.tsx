@@ -27,6 +27,7 @@ import { canEditFeature, type FeaturePermissionsMap } from '@/lib/rbac/feature-p
 import { readRbacCache, writeRbacCache } from '@/lib/rbac/rbac-cache';
 import ReadOnlyTab from '@/components/rbac/ReadOnlyTab';
 import { usePagesVisibility } from '@/hooks/usePagesVisibility';
+import { useIdleTabTitle } from '@/hooks/useIdleTabTitle';
 import { pageLabel } from '@/lib/pages/visibility';
 import UnderConstruction from '@/components/common/UnderConstruction';
 import ConstructionBanner from '@/components/common/ConstructionBanner';
@@ -46,6 +47,8 @@ function isPlausibleEmail(s: string): boolean {
 export default function App({ initialData }: { initialData?: InitialAccountingData | null }) {
   const [activeTab, setActiveTab] = useState('overview');
   usePublishPresenceTab(humanizeTabId(activeTab));
+  // Nudge the tab title when the user wanders off to another tab/app.
+  useIdleTabTitle();
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [roles, setRoles] = useState<string[]>([]);
   const [featurePerms, setFeaturePerms] = useState<FeaturePermissionsMap>({});

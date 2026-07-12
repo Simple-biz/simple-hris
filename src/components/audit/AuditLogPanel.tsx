@@ -727,7 +727,7 @@ function AuditRow({ entry, onView }: { entry: AuditLogEntry; onView: (entry: Aud
         onClick={() => onView(entry)}
         aria-label="View details"
         title="View full details"
-        className="flex flex-shrink-0 items-center gap-1 self-center rounded-md border border-zinc-200 bg-white px-2 py-1 text-[10px] font-medium text-zinc-500 opacity-0 transition hover:border-indigo-300 hover:bg-indigo-50 hover:text-indigo-600 focus-visible:opacity-100 group-hover:opacity-100 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400 dark:hover:border-indigo-700 dark:hover:bg-indigo-950/40 dark:hover:text-indigo-300"
+        className="flex flex-shrink-0 items-center gap-1 self-center rounded-md border border-zinc-200 bg-white px-2.5 py-1.5 text-[10px] font-medium text-zinc-500 opacity-100 transition hover:border-indigo-300 hover:bg-indigo-50 hover:text-indigo-600 focus-visible:opacity-100 sm:opacity-0 sm:group-hover:opacity-100 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400 dark:hover:border-indigo-700 dark:hover:bg-indigo-950/40 dark:hover:text-indigo-300"
       >
         <Eye className="h-3 w-3" />
         View
@@ -1061,7 +1061,7 @@ export default function AuditLogPanel({ onNavigateToOtSettings, className }: Aud
 
   return (
     <div className={cn('flex min-h-0 flex-1 flex-col overflow-hidden', className)}>
-      <div className="flex flex-shrink-0 items-center justify-between border-b border-zinc-100 px-5 py-3 dark:border-zinc-800">
+      <div className="flex flex-shrink-0 flex-wrap items-center justify-between gap-y-2 border-b border-zinc-100 px-5 py-3 dark:border-zinc-800">
         <div className="flex items-center gap-2.5">
           <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-indigo-50 dark:bg-indigo-950/30">
             <ClipboardList className="h-3.5 w-3.5 text-indigo-500" />

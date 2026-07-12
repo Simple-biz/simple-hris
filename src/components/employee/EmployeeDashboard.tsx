@@ -1983,79 +1983,99 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         transition={{ duration: 0.3, ease: 'easeOut' }}
-        className="box-border flex h-full min-h-0 flex-col gap-3 overflow-hidden bg-gradient-to-br from-white via-orange-50/30 to-blue-50/20 px-3 py-3 sm:px-4 sm:py-4 md:px-5 dark:bg-none dark:bg-[#0d1117]"
+        className="box-border flex h-full min-h-0 flex-col gap-2 overflow-y-auto overscroll-y-contain bg-gradient-to-br from-white via-orange-50/30 to-blue-50/20 px-3 py-2 [scrollbar-gutter:stable] sm:px-4 sm:py-3 md:px-5 lg:gap-3 lg:py-3 dark:bg-none dark:bg-[#0d1117]"
       >
-        {/* Branded header */}
-        <div className="flex shrink-0 items-center gap-4 border-b border-zinc-200/70 pb-3 dark:border-zinc-800/70">
-          <div className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-[13px] bg-gradient-to-br from-orange-500 via-amber-500 to-orange-600 text-xl font-bold text-white shadow-lg shadow-orange-400/25">
-            s
-            <div className="absolute inset-0 rounded-[13px] ring-[3px] ring-orange-400/20 ring-offset-2 ring-offset-white dark:ring-offset-[#0d1117]" />
+        {/* Hero card — mirrors the real gradient hero (orbs, eyebrow, greeting, pay-week chip). */}
+        <div className="relative shrink-0 overflow-hidden rounded-3xl border border-orange-100/80 bg-gradient-to-br from-stone-50 via-orange-50/35 to-blue-50/25 px-5 pt-5 pb-16 shadow-[0_12px_32px_-16px_rgba(255,138,76,0.12)] sm:px-6 sm:pt-6 lg:px-7 dark:border-orange-900/30 dark:from-zinc-950 dark:via-orange-950/15 dark:to-blue-950/15">
+          <div aria-hidden className="pointer-events-none absolute inset-0 overflow-hidden rounded-3xl">
+            <div className="absolute -left-24 -top-24 h-72 w-72 rounded-full bg-orange-300/30 blur-3xl dark:bg-orange-500/15" />
+            <div className="absolute -right-20 top-12 h-64 w-64 rounded-full bg-rose-300/25 blur-3xl dark:bg-rose-500/15" />
           </div>
-          <div className="flex min-w-0 flex-1 flex-col gap-1.5">
-            <div className="flex items-center gap-2">
-              {[0, 1, 2].map((i) => (
-                <motion.div
-                  key={i}
-                  className="h-1.5 w-1.5 rounded-full bg-orange-400 dark:bg-orange-500"
-                  animate={{ opacity: [0.25, 1, 0.25], scale: [0.75, 1, 0.75] }}
-                  transition={{ duration: 1.2, delay: i * 0.2, repeat: Infinity, ease: 'easeInOut' }}
-                />
-              ))}
-              <span className="text-[11px] text-zinc-400 dark:text-zinc-500">Loading dashboard…</span>
+          <div className="relative">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              {/* Eyebrow pill with live loading dots */}
+              <div className="inline-flex items-center gap-2 self-start rounded-full border border-orange-200/80 bg-stone-50/70 px-4 py-1.5 backdrop-blur-md dark:border-orange-900/40 dark:bg-orange-950/30">
+                {[0, 1, 2].map((i) => (
+                  <motion.div
+                    key={i}
+                    className="h-1.5 w-1.5 rounded-full bg-orange-400 dark:bg-orange-500"
+                    animate={{ opacity: [0.25, 1, 0.25], scale: [0.75, 1, 0.75] }}
+                    transition={{ duration: 1.2, delay: i * 0.2, repeat: Infinity, ease: 'easeInOut' }}
+                  />
+                ))}
+                <span className="text-[10.5px] font-semibold uppercase tracking-[0.18em] text-orange-700/80 dark:text-orange-300/80">
+                  Loading dashboard…
+                </span>
+              </div>
+              {/* Action buttons (desktop) */}
+              <div className="hidden shrink-0 items-center gap-2 lg:flex">
+                <div className="h-8 w-20 animate-pulse rounded-md bg-zinc-200/80 dark:bg-zinc-800/80" />
+                <div className="h-8 w-20 animate-pulse rounded-md bg-zinc-200/80 dark:bg-zinc-800/80" />
+              </div>
             </div>
-            <div className="flex gap-2">
-              <div className="h-3 w-28 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
-              <div className="h-3 w-16 animate-pulse rounded bg-zinc-200/60 dark:bg-zinc-800/60" />
+            {/* Greeting + accent rule + welcome body */}
+            <div className="mt-3 h-7 w-56 animate-pulse rounded-md bg-zinc-200 sm:h-8 sm:w-72 dark:bg-zinc-800" />
+            <div className="mt-1.5 h-[2px] w-16 rounded-full bg-gradient-to-r from-orange-500 to-rose-500 dark:from-orange-400 dark:to-rose-400" />
+            <div className="mt-2 space-y-1.5">
+              <div className="h-3 w-full max-w-2xl animate-pulse rounded bg-zinc-200/70 dark:bg-zinc-800/70" />
+              <div className="h-3 w-2/3 max-w-md animate-pulse rounded bg-zinc-200/60 dark:bg-zinc-800/60" />
+            </div>
+            {/* Pay-week selector chip */}
+            <div className="mt-3 flex w-56 max-w-full items-center gap-2.5 rounded-xl border border-orange-200/80 bg-white/80 py-1.5 pl-2 pr-3 shadow-sm backdrop-blur-md dark:border-orange-900/40 dark:bg-zinc-900/70">
+              <div className="h-8 w-8 shrink-0 animate-pulse rounded-lg bg-orange-100 dark:bg-orange-950/50" />
+              <div className="flex-1 space-y-1">
+                <div className="h-2 w-14 animate-pulse rounded bg-zinc-200/70 dark:bg-zinc-800/70" />
+                <div className="h-3 w-28 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
+              </div>
             </div>
           </div>
         </div>
 
-        {/* Bonus indicators skeleton — desktop only */}
-        <div className="hidden shrink-0 rounded-xl border border-zinc-200/80 bg-white/60 p-4 dark:border-zinc-800 dark:bg-zinc-900/30 lg:block">
-          <div className="mb-3 h-4 w-44 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
-          <div className="space-y-2.5">
-            {[52, 40].map((w, i) => (
-              <div key={i} className="flex items-center gap-3 rounded-lg border border-zinc-200/60 bg-zinc-50/80 p-3 dark:border-zinc-800 dark:bg-zinc-900/40">
-                <div className="h-8 w-8 shrink-0 animate-pulse rounded-full bg-zinc-200 dark:bg-zinc-800" />
-                <div className="flex-1 space-y-1.5">
-                  <div className={`h-3.5 w-${w} animate-pulse rounded bg-zinc-200 dark:bg-zinc-800`} />
-                  <div className="h-3 w-80 animate-pulse rounded bg-zinc-200/60 dark:bg-zinc-800/60" />
-                </div>
-                <div className="h-6 w-16 shrink-0 animate-pulse rounded-full bg-zinc-200 dark:bg-zinc-800" />
+        {/* Stat strip — overlaps the hero's bottom edge (7 cells: PAB period, hours, reg/OT, hourly, PAB, tech, MESA) */}
+        <div className="relative z-10 -mt-11 mx-3 grid shrink-0 grid-cols-2 gap-px overflow-hidden rounded-2xl border border-orange-200/70 bg-orange-200/50 shadow-xl ring-1 ring-black/5 sm:mx-6 sm:grid-cols-4 lg:grid-cols-7 dark:border-orange-900/40 dark:bg-zinc-800/70 dark:shadow-2xl dark:ring-black/40">
+          {Array.from({ length: 7 }, (_, i) => (
+            <div key={i} className="bg-stone-50 px-4 py-2.5 dark:bg-zinc-900">
+              <div className="h-2 w-12 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
+              <div className="mt-1.5 h-3.5 w-16 animate-pulse rounded bg-zinc-200/80 dark:bg-zinc-800/80" style={{ animationDelay: `${i * 70}ms` }} />
+            </div>
+          ))}
+        </div>
+
+        {/* Pay statement — estimated take-home + 4-col data ribbon (Regular / OT / PAB / Tech) */}
+        <div className="mt-1 shrink-0 border-l-2 border-emerald-500/80 pl-4 lg:pl-5 dark:border-emerald-400/70">
+          <div className="h-2.5 w-32 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
+          <div className="mt-2 flex items-baseline gap-3">
+            <div className="h-10 w-52 animate-pulse rounded-md bg-zinc-200 sm:h-12 sm:w-64 lg:h-14 lg:w-72 dark:bg-zinc-800" />
+            <div className="h-4 w-24 animate-pulse rounded bg-zinc-200/70 dark:bg-zinc-800/70" />
+          </div>
+          <div className="mt-2 h-2.5 w-72 max-w-full animate-pulse rounded bg-zinc-200/60 dark:bg-zinc-800/60" />
+          <div className="mt-5 grid grid-cols-2 gap-x-4 gap-y-4 border-t border-zinc-200/80 pt-4 sm:grid-cols-4 sm:gap-x-6 dark:border-zinc-800/80">
+            {Array.from({ length: 4 }, (_, i) => (
+              <div key={i} className="space-y-1.5">
+                <div className="h-2.5 w-16 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
+                <div className="h-5 w-20 animate-pulse rounded bg-zinc-200/80 dark:bg-zinc-800/80" style={{ animationDelay: `${i * 80}ms` }} />
+                <div className="h-2 w-24 animate-pulse rounded bg-zinc-200/50 dark:bg-zinc-800/50" />
               </div>
             ))}
           </div>
         </div>
 
-        {/* Stats cards skeleton */}
-        <div className="grid shrink-0 grid-cols-2 gap-2 md:grid-cols-5 md:gap-3">
-          {Array.from({ length: 5 }, (_, i) => (
-            <div key={i} className="rounded-xl border border-zinc-200/60 bg-white/60 p-3 dark:border-zinc-800 dark:bg-zinc-900/30">
-              <div className="mb-2 flex items-center justify-between">
-                <div className="h-3 w-16 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
-                <div className="h-3.5 w-3.5 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
-              </div>
-              <div className="h-6 w-24 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" style={{ animationDelay: `${i * 100}ms` }} />
-              <div className="mt-1.5 h-2.5 w-32 animate-pulse rounded bg-zinc-200/50 dark:bg-zinc-800/50" />
-            </div>
-          ))}
-        </div>
-
-        {/* Chart + Calendar + Summary skeleton */}
-        <div className="flex min-h-0 flex-1 flex-col gap-3 lg:flex-row lg:gap-4">
-          <div className="flex min-h-[10rem] flex-1 flex-col rounded-xl border border-zinc-200/60 bg-white/60 p-3 dark:border-zinc-800 dark:bg-zinc-900/30 lg:min-h-0">
+        {/* Daily Hours chart + PAB calendar — side-by-side on lg+ */}
+        <div className="flex min-h-0 flex-1 flex-col gap-3 pb-4 lg:flex-row lg:gap-4">
+          {/* Daily Hours chart card */}
+          <div className="flex min-h-[20rem] flex-1 flex-col rounded-2xl border border-orange-100/80 bg-gradient-to-br from-white to-blue-50/20 p-3 shadow-md ring-1 ring-orange-500/5 dark:border-blue-950/60 dark:from-blue-950/20 dark:to-blue-950/5 dark:ring-blue-950/30 lg:min-h-0 lg:rounded-xl lg:shadow-sm lg:ring-0">
             <div className="mb-3 h-3.5 w-36 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
             <div className="flex-1 space-y-2">
-              {Array.from({ length: 5 }, (_, i) => (
+              {Array.from({ length: 7 }, (_, i) => (
                 <div key={i} className="flex items-center gap-2">
-                  <div className="h-3 w-8 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
-                  <div className="h-5 flex-1 animate-pulse rounded-md bg-zinc-200/70 dark:bg-zinc-800/70" style={{ animationDelay: `${i * 80}ms` }} />
+                  <div className="h-3 w-9 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
+                  <div className="h-5 flex-1 animate-pulse rounded-md bg-zinc-200/70 dark:bg-zinc-800/70" style={{ animationDelay: `${i * 70}ms` }} />
                   <div className="h-3 w-10 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
                 </div>
               ))}
             </div>
           </div>
-          {/* PAB Calendar skeleton — mirrors the real card chrome (indigo gradient,
+          {/* PAB Calendar card — mirrors the real card chrome (indigo gradient,
               week-number col + M/T/W/T/F headers + 5 week rows of h-10 cells) so
               it doesn't reflow when the real calendar swaps in. */}
           <div className="flex min-h-[16rem] flex-1 flex-col rounded-2xl border border-indigo-100/80 bg-gradient-to-br from-white to-indigo-50/20 p-3 ring-1 ring-indigo-500/5 dark:border-indigo-950/60 dark:from-indigo-950/20 dark:to-indigo-950/5 dark:ring-indigo-950/30 lg:min-h-0 lg:rounded-xl lg:ring-0">
@@ -2067,14 +2087,12 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
               <div className="h-6 w-6 shrink-0 animate-pulse rounded-md bg-indigo-100/70 dark:bg-indigo-950/40" />
             </div>
             <div className="flex flex-1 flex-col gap-0">
-              {/* Day-of-week headers (M T W T F) */}
               <div className="mb-0.5 grid grid-cols-[1.25rem_repeat(5,1fr)] gap-0.5">
                 <div />
                 {Array.from({ length: 5 }, (_, i) => (
                   <div key={i} className="mx-auto h-2 w-2.5 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
                 ))}
               </div>
-              {/* 5 week rows: week-number + 5 day cells */}
               {Array.from({ length: 5 }, (_, wi) => (
                 <div key={wi} className="mb-0.5 grid grid-cols-[1.25rem_repeat(5,1fr)] items-stretch gap-0.5">
                   <div className="flex items-center justify-end">
@@ -2087,17 +2105,6 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
                       style={{ animationDelay: `${(wi * 5 + di) * 35}ms` }}
                     />
                   ))}
-                </div>
-              ))}
-            </div>
-          </div>
-          <div className="flex w-full flex-col rounded-xl border border-zinc-200/60 bg-white/60 p-3 dark:border-zinc-800 dark:bg-zinc-900/30 lg:w-[20rem]">
-            <div className="mb-3 h-3.5 w-24 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
-            <div className="space-y-3">
-              {Array.from({ length: 5 }, (_, i) => (
-                <div key={i} className="flex items-center justify-between">
-                  <div className="h-3 w-16 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
-                  <div className="h-3.5 w-20 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" style={{ animationDelay: `${i * 60}ms` }} />
                 </div>
               ))}
             </div>
@@ -2262,7 +2269,7 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
             </div>
           </div>
 
-          <h1 className="mt-4 text-balance text-2xl font-semibold tracking-tight text-zinc-700 sm:text-3xl dark:text-zinc-200">
+          <h1 className="mt-3 text-balance text-xl font-semibold tracking-tight text-zinc-700 sm:text-2xl dark:text-zinc-200">
             {_greeting ? (
               <>
                 {_timeGreeting},{' '}
@@ -2276,14 +2283,14 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
             )}
           </h1>
           {/* Accent rule — orange→rose hairline under the greeting */}
-          <div className="mt-2 h-[2px] w-16 rounded-full bg-gradient-to-r from-orange-500 to-rose-500 dark:from-orange-400 dark:to-rose-400" />
-          <p className="mt-2 max-w-2xl text-sm leading-relaxed text-zinc-600 dark:text-zinc-400">
+          <div className="mt-1.5 h-[2px] w-16 rounded-full bg-gradient-to-r from-orange-500 to-rose-500 dark:from-orange-400 dark:to-rose-400" />
+          <p className="mt-1.5 max-w-2xl text-[13px] leading-relaxed text-zinc-600 dark:text-zinc-400">
             {_welcomeMsg.body}
           </p>
 
           {/* Pay-week selector — which weekly Hubstaff upload drives the numbers above */}
           {sourceFiles.length > 0 && (
-            <div ref={sourceMenuRef} className="relative mt-4 inline-block max-w-full">
+            <div ref={sourceMenuRef} className="relative mt-3 inline-block max-w-full">
               <button
                 type="button"
                 aria-haspopup="listbox"
@@ -2377,7 +2384,7 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
           className="relative z-10 -mt-11 mx-3 grid shrink-0 grid-cols-2 gap-px overflow-hidden rounded-2xl border border-orange-200/70 bg-orange-200/50 shadow-xl ring-1 ring-black/5 sm:mx-6 sm:grid-cols-4 lg:grid-cols-7 dark:border-orange-900/40 dark:bg-zinc-800/70 dark:shadow-2xl dark:ring-black/40"
         >
           {pabMonthRange && (
-            <div className="bg-stone-50 px-4 py-3 dark:bg-zinc-900">
+            <div className="bg-stone-50 px-4 py-2.5 dark:bg-zinc-900">
               <div className="text-[9px] font-semibold uppercase tracking-[0.14em] text-orange-600/90 dark:text-orange-400/90">PAB Period</div>
               <div className="mt-0.5 text-sm font-semibold tabular-nums text-zinc-800 dark:text-zinc-100">
                 {pabMonthRange.start.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
@@ -2386,19 +2393,19 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
               </div>
             </div>
           )}
-          <div className="bg-stone-50 px-4 py-3 dark:bg-zinc-900">
+          <div className="bg-stone-50 px-4 py-2.5 dark:bg-zinc-900">
             <div className="text-[9px] font-semibold uppercase tracking-[0.14em] text-zinc-400 dark:text-zinc-500">Hours</div>
             <div className="mt-0.5 text-sm font-semibold tabular-nums text-zinc-900 dark:text-white">{totalHours.toFixed(2)}<span className="text-zinc-400">h</span></div>
           </div>
-          <div className="bg-stone-50 px-4 py-3 dark:bg-zinc-900">
+          <div className="bg-stone-50 px-4 py-2.5 dark:bg-zinc-900">
             <div className="text-[9px] font-semibold uppercase tracking-[0.14em] text-zinc-400 dark:text-zinc-500">Reg / OT</div>
             <div className="mt-0.5 text-sm tabular-nums text-zinc-700 dark:text-zinc-300">{regularHours.toFixed(1)}<span className="text-zinc-400">h</span> <span className="text-zinc-300 dark:text-zinc-700">/</span> {otHours.toFixed(1)}<span className="text-zinc-400">h</span></div>
           </div>
-          <div className="bg-stone-50 px-4 py-3 dark:bg-zinc-900">
+          <div className="bg-stone-50 px-4 py-2.5 dark:bg-zinc-900">
             <div className="text-[9px] font-semibold uppercase tracking-[0.14em] text-zinc-400 dark:text-zinc-500">Hourly</div>
             <div className="mt-0.5 text-sm tabular-nums text-zinc-700 dark:text-zinc-300">{regularRate != null ? formatPHP(regularRate) : '—'}</div>
           </div>
-          <div className="bg-stone-50 px-4 py-3 dark:bg-zinc-900">
+          <div className="bg-stone-50 px-4 py-2.5 dark:bg-zinc-900">
             <div className="text-[9px] font-semibold uppercase tracking-[0.14em] text-indigo-600 dark:text-indigo-400">PAB</div>
             <div className="mt-0.5">
               {pabMergeLoading ? (
@@ -2433,7 +2440,7 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
               )}
             </div>
           </div>
-          <div className="bg-stone-50 px-4 py-3 dark:bg-zinc-900">
+          <div className="bg-stone-50 px-4 py-2.5 dark:bg-zinc-900">
             <div className="text-[9px] font-semibold uppercase tracking-[0.14em] text-sky-600 dark:text-sky-400">Tech</div>
             <div className="mt-0.5">
               {loading || pabMergeLoading ? (
@@ -2481,7 +2488,7 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
             </div>
           </div>
           {isMesaParticipant ? (
-            <div className="bg-teal-50/70 px-4 py-3 dark:bg-teal-950/30">
+            <div className="bg-teal-50/70 px-4 py-2.5 dark:bg-teal-950/30">
               <div className="text-[9px] font-semibold uppercase tracking-[0.14em] text-teal-700/80 dark:text-teal-500/80">MESA</div>
               <div className="mt-0.5 text-sm font-medium tabular-nums text-teal-800 dark:text-teal-300">−{formatPHP(mesaContributionPhp)}</div>
             </div>
@@ -2519,7 +2526,7 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
         onStateChange={setGiftState}
       />
 
-      <div className="flex min-w-0 flex-col gap-2 overflow-x-clip pb-4 lg:gap-3">
+      <div className="flex min-w-0 flex-col gap-2 overflow-x-clip pb-2 lg:min-h-0 lg:grow lg:gap-3">
       {dataError && (
         <Card className="shrink-0 border-red-200 bg-red-50/50 dark:border-red-500/20 dark:bg-red-950/20">
           <CardContent className="flex items-center gap-3 py-3">
@@ -2541,7 +2548,7 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
           </CardContent>
         </Card>
       ) : !row ? null : (
-        <div className="flex shrink-0 flex-col gap-3 lg:gap-4">
+        <div className="flex shrink-0 flex-col gap-3 lg:min-h-0 lg:grow lg:gap-4">
           {/* Pay statement — the estimated take-home figure with its per-line breakdown ribbon (stat rail moved to the hero card) */}
           <motion.section
             initial={{ opacity: 0, y: 8 }}
@@ -2561,7 +2568,7 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
                     className="flex-wrap items-baseline gap-x-3 gap-y-1"
                     mask={
                       <>
-                        <span className="break-words text-[2.25rem] font-bold tabular-nums leading-none tracking-tight text-zinc-400 sm:text-5xl lg:text-[3.5rem] xl:text-6xl dark:text-zinc-600">
+                        <span className="break-words text-[2.25rem] font-bold tabular-nums leading-none tracking-tight text-zinc-400 sm:text-4xl lg:text-5xl dark:text-zinc-600">
                           ₱•••••••••
                         </span>
                         <span className="text-xs tabular-nums text-zinc-400 sm:text-sm dark:text-zinc-600">
@@ -2578,7 +2585,7 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
                     ) : (
                       <>
                         <span
-                          className="break-words text-[2.25rem] font-bold tabular-nums leading-none tracking-tight text-zinc-900 sm:text-5xl lg:text-[3.5rem] xl:text-6xl dark:text-white"
+                          className="break-words text-[2.25rem] font-bold tabular-nums leading-none tracking-tight text-zinc-900 sm:text-4xl lg:text-5xl dark:text-white"
                           title={takeHomeFromPayroll ? 'Final pay confirmed by payroll' : formatPHP(takeHomePhp ?? 0)}
                         >
                           {formatPHP(takeHomePhp ?? 0)}
@@ -2590,7 +2597,7 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
                     )}
                   </HiddenValue>
                 ) : (
-                  <span className="break-words text-[2.25rem] font-bold tabular-nums leading-none tracking-tight text-zinc-900 sm:text-5xl lg:text-[3.5rem] xl:text-6xl dark:text-white">
+                  <span className="break-words text-[2.25rem] font-bold tabular-nums leading-none tracking-tight text-zinc-900 sm:text-4xl lg:text-5xl dark:text-white">
                     —
                   </span>
                 )}
@@ -2616,7 +2623,7 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
               </div>
 
               {/* Data ribbon */}
-              <dl className="mt-5 grid grid-cols-2 gap-x-4 gap-y-4 border-t border-zinc-200/80 pt-4 sm:grid-cols-4 sm:gap-x-6 dark:border-zinc-800/80">
+              <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-3 border-t border-zinc-200/80 pt-3 sm:grid-cols-4 sm:gap-x-6 dark:border-zinc-800/80">
                 <div className="min-w-0">
                   <dt className="text-[10px] font-medium uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-500">
                     Regular
@@ -2689,7 +2696,7 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
                     {perfectAttendanceBonusStatus === 'pending'
                       ? 'Pending'
                       : pabBonusAmount > 0
-                        ? `+${formatPHP(pabBonusAmount)}`
+                        ? <span className="pab-shine-text font-semibold">{`+${formatPHP(pabBonusAmount)}`}</span>
                         : formatPHP(0)}
                   </dd>
                   <p className="mt-0.5 text-[10px] tabular-nums text-zinc-400 dark:text-zinc-500">
@@ -2773,7 +2780,7 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
           )}
 
           {/* Daily Hours + PAB Calendar — fills remaining vertical space; side-by-side on lg+, stacked below */}
-          <div className="flex shrink-0 flex-col gap-3 lg:flex-row lg:items-stretch lg:gap-3 xl:gap-4">
+          <div className="flex shrink-0 flex-col gap-3 lg:min-h-0 lg:grow lg:flex-row lg:items-stretch lg:gap-3 xl:gap-4">
             {/* Daily Hours Bar Chart — always visible. On mobile we grow the
                 card so all 7 weekday rows fit without an inner scroll. */}
             <Card
@@ -2793,7 +2800,7 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
                   </div>
                 ) : (
                   <div className="flex min-h-0 flex-1 flex-col gap-0">
-                    <div className="flex-1 space-y-1.5 overflow-x-clip pr-0.5 sm:space-y-2 lg:space-y-1.5 lg:pr-2">
+                    <div className="flex-1 space-y-1.5 overflow-x-clip pr-0.5 sm:space-y-2 lg:flex lg:flex-col lg:justify-between lg:space-y-1.5 lg:pr-2">
                     {dailyHours.map((day) => {
                       const hours = day.seconds / 3600;
                       const pct = maxBarSeconds > 0 ? (day.seconds / maxBarSeconds) * 100 : 0;
@@ -2806,7 +2813,7 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
                       return (
                         <div
                           key={day.col}
-                          className="flex min-w-0 items-center gap-2 sm:gap-2.5 lg:gap-2"
+                          className="group flex min-w-0 -mx-1 items-center gap-2 rounded-lg px-1 transition-all duration-300 ease-out hover:-translate-y-px hover:bg-orange-50/50 sm:gap-2.5 lg:gap-2 dark:hover:bg-orange-950/20"
                         >
                           <span
                             className={`w-9 shrink-0 text-right text-[11px] font-semibold tabular-nums leading-none sm:w-[2.5rem] sm:text-xs lg:w-10 lg:text-xs lg:font-medium ${
@@ -2819,9 +2826,9 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
                           >
                             {day.label}
                           </span>
-                          <div className="relative h-7 min-w-0 flex-1 overflow-hidden rounded-md bg-zinc-100 dark:bg-zinc-800/60 sm:h-8 sm:rounded-lg lg:h-6 lg:rounded-md">
+                          <div className="relative h-7 min-w-0 flex-1 overflow-hidden rounded-md bg-zinc-100 transition-shadow duration-300 ease-out group-hover:shadow-sm group-hover:ring-1 group-hover:ring-orange-300/40 dark:bg-zinc-800/60 dark:group-hover:ring-orange-500/25 sm:h-8 sm:rounded-lg lg:h-7 lg:rounded-md">
                             <div
-                              className={`absolute inset-y-0 left-0 rounded-lg transition-all duration-500 lg:rounded-md ${
+                              className={`absolute inset-y-0 left-0 rounded-lg transition-all duration-500 ease-out group-hover:brightness-110 lg:rounded-md ${
                                 isHolidayBar
                                   ? 'bg-gradient-to-r from-sky-400 to-sky-500 dark:from-sky-500 dark:to-sky-600'
                                   : meetsPA
@@ -2853,7 +2860,7 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
                               </span>
                             ) : null}
                           </div>
-                          <span className="w-[3.5rem] shrink-0 text-right text-[11px] font-medium tabular-nums text-zinc-600 sm:w-[4.25rem] sm:text-xs lg:w-14 lg:text-[10px] lg:font-normal dark:text-zinc-400">
+                          <span className="w-[3.5rem] shrink-0 text-right text-[11px] font-medium tabular-nums text-zinc-600 transition-colors duration-300 group-hover:text-zinc-900 sm:w-[4.25rem] sm:text-xs lg:w-14 lg:text-[10px] lg:font-normal dark:text-zinc-400 dark:group-hover:text-zinc-100">
                             {secondsToDisplay(day.seconds)}
                           </span>
                         </div>
@@ -2964,7 +2971,7 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
                 ) : pabCalendar && pabCalendar.length > 0 ? (
                   /* -------- PAB Calendar Grid -------- */
                   <div className="flex min-h-0 flex-1 flex-col gap-0">
-                    <div className="flex-1 overflow-x-clip pr-1">
+                    <div className="flex flex-1 flex-col overflow-x-clip pr-1">
                       {/* Column headers */}
                       <div className="sticky top-0 z-10 mb-0.5 grid grid-cols-[1.25rem_repeat(5,1fr)] gap-0.5 bg-white/95 pb-0.5 dark:bg-[#0d1117]/95">
                         <div />
@@ -2978,7 +2985,7 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
                       {pabCalendar.map((week, wi) => (
                         <div
                           key={wi}
-                          className="mb-0.5 grid grid-cols-[1.25rem_repeat(5,1fr)] items-stretch gap-0.5"
+                          className="mb-0.5 grid grid-cols-[1.25rem_repeat(5,1fr)] items-stretch gap-0.5 lg:min-h-0 lg:flex-1 lg:grid-rows-1"
                           style={{ animation: `pab-row-in 0.35s ease-out ${wi * 80}ms both` }}
                         >
                           <div className="flex items-center justify-end text-[8px] font-medium text-zinc-400 dark:text-zinc-500">
@@ -3003,7 +3010,7 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
                               return (
                                 <div
                                   key={di}
-                                  className="flex h-10 items-center justify-center rounded-md border border-dashed border-zinc-200 bg-zinc-50/50 dark:border-zinc-800 dark:bg-zinc-900/20"
+                                  className="flex h-10 items-center justify-center rounded-md border border-dashed border-zinc-200 bg-zinc-50/50 lg:h-full lg:min-h-[2.5rem] dark:border-zinc-800 dark:bg-zinc-900/20"
                                 >
                                   <span className="text-xs text-zinc-300 tabular-nums dark:text-zinc-700">—</span>
                                 </div>
@@ -3107,7 +3114,7 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
                             return (
                               <div
                                 key={di}
-                                className={`relative flex h-10 flex-col overflow-hidden rounded-md border transition-all duration-300 ${cellBorder} ${cellClickable ? `cursor-pointer ${isHoliday ? 'hover:ring-2 hover:ring-sky-400/50' : 'hover:ring-2 hover:ring-orange-300/50'}` : ''}`}
+                                className={`relative flex h-10 flex-col overflow-hidden rounded-md border transition-all duration-300 lg:h-full lg:min-h-[2.5rem] ${cellBorder} ${cellClickable ? `cursor-pointer ${isHoliday ? 'hover:ring-2 hover:ring-sky-400/50' : 'hover:ring-2 hover:ring-orange-300/50'}` : ''}`}
                                 title={`${day.dayLabel} ${day.dateStr}${holidayName ? ` · ${holidayName} (holiday — click for details)` : ''}: ${secondsToDisplay(day.seconds)}${dispute ? ` (${dispute.status})` : day.passes ? ' ✓' : isToday ? ' — in progress' : isFutureOrToday ? ' — not yet' : stillProcessing ? ' — processing' : day.hasData ? ' ✗ needs 7h — click to file an issue' : ' — no data'}${rateTooltipSuffix}`}
                                 style={{ animation: `pab-cell-in 0.3s ease-out ${wi * 80 + di * 40}ms both` }}
                                 onClick={cellClickable ? () => {

@@ -22,7 +22,7 @@ export type ProcessorId = (typeof PROCESSOR_OPTIONS)[number]['id'];
  * their labels and detail fields — they're just no longer offered for new
  * selections in the employee/contractor pickers.
  */
-export const RETIRED_PROCESSOR_IDS: ProcessorId[] = ['wepay', 'wise'];
+export const RETIRED_PROCESSOR_IDS: ProcessorId[] = ['wepay', 'wise', 'jeeves'];
 
 /** PROCESSOR_OPTIONS minus retired ones — use this to render pickers. */
 export const SELECTABLE_PROCESSOR_OPTIONS = PROCESSOR_OPTIONS.filter(

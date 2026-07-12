@@ -547,6 +547,49 @@
   }
 }
 
+/* PAB Bonus "sun glare" — a warm highlight band glides continuously across the
+   earned amount text (clipped to the glyphs only). The text always stays fully
+   visible in its base indigo; only the glare travels. The loop is seamless
+   because the band sits off-screen at both ends of the keyframe. */
+@keyframes pab-shine {
+  0%   { background-position: 180% center; }
+  100% { background-position: -80% center; }
+}
+
+.pab-shine-text {
+  background-image: linear-gradient(
+    105deg,
+    #4338ca 0%, #4338ca 36%,
+    #ff3b3b 40%, #ff9f1c 44%, #ffe600 47%, #2fe56b 50%, #24c2ff 53%, #8a5bff 57%,
+    #4338ca 62%, #4338ca 100%
+  );
+  background-size: 220% auto;
+  background-repeat: repeat;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+  animation: pab-shine 5.6s linear infinite;
+}
+
+.dark .pab-shine-text {
+  background-image: linear-gradient(
+    105deg,
+    #a5b4fc 0%, #a5b4fc 36%,
+    #ff6b6b 40%, #ffb14d 44%, #fff36b 47%, #5cf08a 50%, #5ecbff 53%, #b18bff 57%,
+    #a5b4fc 62%, #a5b4fc 100%
+  );
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pab-shine-text {
+    animation: none;
+    background-image: none;
+    -webkit-text-fill-color: currentColor;
+    color: inherit;
+  }
+}
+
 /* ────────────────────────────────────────────────────────────────────────
    Global responsive tables — below the sm breakpoint (<640px) every
    <table> collapses into a vertical stack of "card" rows. Each <tr>

@@ -742,7 +742,7 @@ export default function AdminRoles() {
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-col gap-4 overflow-hidden bg-gradient-to-b from-zinc-50/80 to-transparent p-4 sm:p-6 dark:from-zinc-950/50">
+    <div className="flex flex-col gap-4 bg-gradient-to-b from-zinc-50/80 to-transparent p-4 sm:p-6 lg:h-full lg:min-h-0 lg:overflow-hidden dark:from-zinc-950/50">
       <header className="shrink-0 space-y-3">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
           <div className="space-y-1">
@@ -788,11 +788,11 @@ export default function AdminRoles() {
         </div>
       </header>
 
-      <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)]">
-        <Card className="flex h-full min-h-0 flex-col overflow-hidden border-zinc-200/90 shadow-sm dark:border-zinc-800/80">
+      <div className="grid grid-cols-1 gap-4 lg:min-h-0 lg:flex-1 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)]">
+        <Card className="flex flex-col border-zinc-200/90 shadow-sm lg:h-full lg:min-h-0 lg:overflow-hidden dark:border-zinc-800/80">
           <CardHeader className="shrink-0 space-y-3 border-b border-zinc-100 pb-4 dark:border-zinc-800/80">
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <CardTitle className="text-base font-semibold text-zinc-900 dark:text-white">People</CardTitle>
                 <Badge variant="outline" className="font-mono text-[10px] text-zinc-600 dark:text-zinc-400">
                   {filtered.length} shown
@@ -970,7 +970,7 @@ export default function AdminRoles() {
                 )}
             </p>
           </CardHeader>
-          <CardContent className="min-h-0 flex-1 overflow-y-auto px-3 pb-4 pt-2 sm:px-4">
+          <CardContent className="px-3 pb-4 pt-2 sm:px-4 lg:min-h-0 lg:flex-1 lg:overflow-y-auto">
             <ul className="space-y-1.5" role="list">
               {pageSlice.map((e, i) => {
                 const assignedRoles = assignmentsForEmployee(e, allAssignments);
@@ -1075,7 +1075,7 @@ export default function AdminRoles() {
           </CardContent>
         </Card>
 
-        <Card className="flex h-full min-h-0 flex-col overflow-hidden border-zinc-200/90 shadow-sm dark:border-zinc-800/80">
+        <Card className="flex flex-col border-zinc-200/90 shadow-sm lg:h-full lg:min-h-0 lg:overflow-hidden dark:border-zinc-800/80">
           <CardHeader className="shrink-0 space-y-1 border-b border-zinc-100 pb-4 dark:border-zinc-800/80">
             <CardTitle className="flex items-center gap-2 text-base font-semibold text-zinc-900 dark:text-white">
               <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-zinc-100 dark:bg-zinc-800">
@@ -1139,7 +1139,7 @@ export default function AdminRoles() {
               </div>
             )}
           </CardHeader>
-          <CardContent className="min-h-0 flex-1 overflow-y-auto px-3 pb-4 pt-1 sm:px-4">
+          <CardContent className="px-3 pb-4 pt-1 sm:px-4 lg:min-h-0 lg:flex-1 lg:overflow-y-auto">
             {!selected ? (
               <div className="flex h-full min-h-[240px] flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-zinc-200 bg-zinc-50/50 px-6 py-10 text-center dark:border-zinc-800 dark:bg-zinc-900/30">
                 <UserCog className="h-10 w-10 text-zinc-300 dark:text-zinc-600" aria-hidden />
@@ -1560,7 +1560,7 @@ function RoleConflictModal({
 function AdminRolesSkeleton() {
   return (
     <div
-      className="flex h-full min-h-0 flex-col gap-4 overflow-hidden bg-gradient-to-b from-zinc-50/80 to-transparent p-4 sm:p-6 dark:from-zinc-950/50"
+      className="flex flex-col gap-4 bg-gradient-to-b from-zinc-50/80 to-transparent p-4 sm:p-6 lg:h-full lg:min-h-0 lg:overflow-hidden dark:from-zinc-950/50"
       role="status"
       aria-busy="true"
       aria-label="Loading people and assignments"
@@ -1584,9 +1584,9 @@ function AdminRolesSkeleton() {
       </header>
 
       {/* Two-pane grid */}
-      <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)]">
+      <div className="grid grid-cols-1 gap-4 lg:min-h-0 lg:flex-1 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)]">
         {/* Left: People list */}
-        <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-xl border border-zinc-200/90 bg-white shadow-sm dark:border-zinc-800/80 dark:bg-zinc-900/40">
+        <div className="flex flex-col rounded-xl border border-zinc-200/90 bg-white shadow-sm lg:h-full lg:min-h-0 lg:overflow-hidden dark:border-zinc-800/80 dark:bg-zinc-900/40">
           <div className="shrink-0 space-y-3 border-b border-zinc-100 p-4 dark:border-zinc-800/80">
             <div className="flex items-center gap-2">
               <Skeleton className="h-5 w-16" />
@@ -1595,7 +1595,7 @@ function AdminRolesSkeleton() {
             </div>
             <Skeleton className="h-10 w-full rounded-lg" />
           </div>
-          <div className="min-h-0 flex-1 space-y-1.5 overflow-hidden px-3 pb-4 pt-2 sm:px-4">
+          <div className="space-y-1.5 px-3 pb-4 pt-2 sm:px-4 lg:min-h-0 lg:flex-1 lg:overflow-hidden">
             {Array.from({ length: 8 }).map((_, i) => (
               <div
                 key={i}
@@ -1613,7 +1613,7 @@ function AdminRolesSkeleton() {
         </div>
 
         {/* Right: Role assignments detail */}
-        <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-xl border border-zinc-200/90 bg-white shadow-sm dark:border-zinc-800/80 dark:bg-zinc-900/40">
+        <div className="flex flex-col rounded-xl border border-zinc-200/90 bg-white shadow-sm lg:h-full lg:min-h-0 lg:overflow-hidden dark:border-zinc-800/80 dark:bg-zinc-900/40">
           <div className="shrink-0 space-y-3 border-b border-zinc-100 p-4 dark:border-zinc-800/80">
             <div className="flex items-center gap-2">
               <Skeleton className="h-8 w-8 rounded-lg" />
@@ -1621,7 +1621,7 @@ function AdminRolesSkeleton() {
             </div>
             <Skeleton className="h-14 w-full rounded-xl" />
           </div>
-          <div className="min-h-0 flex-1 space-y-2 overflow-hidden px-3 pb-4 pt-2 sm:px-4">
+          <div className="space-y-2 px-3 pb-4 pt-2 sm:px-4 lg:min-h-0 lg:flex-1 lg:overflow-hidden">
             {Array.from({ length: 5 }).map((_, i) => (
               <div
                 key={i}

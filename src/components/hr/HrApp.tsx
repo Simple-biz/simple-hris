@@ -36,6 +36,7 @@ import { useEmployeeNotificationsUnread } from '@/hooks/useEmployeeNotifications
 import { useNotificationChime } from '@/hooks/useNotificationChime';
 import { useFeaturePermissions } from '@/hooks/useFeaturePermissions';
 import { usePagesVisibility } from '@/hooks/usePagesVisibility';
+import { useIdleTabTitle } from '@/hooks/useIdleTabTitle';
 import { pageLabel } from '@/lib/pages/visibility';
 import UnderConstruction from '@/components/common/UnderConstruction';
 import ConstructionBanner from '@/components/common/ConstructionBanner';
@@ -75,6 +76,8 @@ export default function HrApp() {
 
   const [activeTab, setActiveTab] = useState<HrTab>('overview');
   usePublishPresenceTab(humanizeTabId(activeTab));
+  // Nudge the tab title when the user wanders off to another tab/app.
+  useIdleTabTitle();
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   // The New Hire Checklist grid registers its scroll box here so the collab
   // layer can anchor peer cursors to the rows (and clip them when scrolled away).
