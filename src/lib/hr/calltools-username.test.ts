@@ -9,6 +9,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   calltoolsUsernameCandidates,
+  fallbackDialerIdentity,
   firstNameInitial,
   formatCallToolsUsername,
   isLeadGenDepartment,
@@ -97,4 +98,33 @@ test('different nickname or initial is its own namespace — no false collisions
 
 test('no surname -> single nickname+initial candidate', () => {
   assert.equal(suggestCallToolsUsername('Mikey', 'James', '', new Set()), 'Mikey J.');
+});
+
+test('fallbackDialerIdentity handles the roster name conventions (real shapes)', () => {
+  const cases: Array<[string, { nickname: string; first: string; last: string }]> = [
+    // Plain given-first name — nickname defaults to the first name.
+    ['Donabelle Manaig', { nickname: 'Donabelle', first: 'Donabelle', last: 'Manaig' }],
+    // Quoted go-by name, straight quotes.
+    ['Joan "Andy" Raguindin', { nickname: 'Andy', first: 'Joan', last: 'Raguindin' }],
+    // Quoted go-by name mid-name, curly quotes.
+    ['Merielyn Grace “Meri” Itis', { nickname: 'Meri', first: 'Merielyn', last: 'Itis' }],
+    // Surname-first with a comma + curly-quoted nickname.
+    ['Caraga, Siegmond Lois “Siegmond”', { nickname: 'Siegmond', first: 'Siegmond', last: 'Caraga' }],
+    // Surname-first with a generational suffix in the given names.
+    ['Santos, Feliciano Andres Jr “Jun”', { nickname: 'Jun', first: 'Feliciano', last: 'Santos' }],
+    // Given-first with a trailing suffix — suffix never becomes the surname.
+    ['Juan Dela Cruz Jr', { nickname: 'Juan', first: 'Juan', last: 'Cruz' }],
+    ['', { nickname: '', first: '', last: '' }],
+  ];
+  for (const [input, expected] of cases) {
+    assert.deepEqual(fallbackDialerIdentity(input), expected, `input: ${JSON.stringify(input)}`);
+  }
+});
+
+test('fallback identity feeds the minting rule end to end', () => {
+  const id = fallbackDialerIdentity('Caraga, Siegmond Lois “Siegmond”');
+  assert.equal(
+    suggestCallToolsUsername(id.nickname, id.first, id.last, new Set()),
+    'Siegmond S. C.',
+  );
 });

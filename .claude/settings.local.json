@@ -304,7 +304,12 @@
       "Bash(rm -f scripts/__tmp_inspect_carla.mjs)",
       "Bash(cp \"C:\\\\Users\\\\Kane\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-Kane-Desktop-simple-hris\\\\2d64539b-4251-430c-82bb-a94b34f2597d\\\\scratchpad\\\\backfill-carla.mjs\" scripts/__tmp_backfill_carla.mjs)",
       "Bash(node scripts/__tmp_backfill_carla.mjs)",
-      "Bash(rm -f scripts/__tmp_backfill_carla.mjs)"
+      "Bash(rm -f scripts/__tmp_backfill_carla.mjs)",
+      "Bash(cp \"C:\\\\Users\\\\Kane\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-Kane-Desktop-simple-hris\\\\2d64539b-4251-430c-82bb-a94b34f2597d\\\\scratchpad\\\\diag-calltools.mjs\" scripts/__tmp_diag.mjs)",
+      "Bash(node scripts/__tmp_diag.mjs)",
+      "Bash(rm -f scripts/__tmp_diag.mjs)",
+      "Bash(npx tsx *)",
+      "Bash(rm -f scripts/__tmp_dryrun_calltools.mts)"
     ],
     "additionalDirectories": [
       "c:\\Users\\Itachi\\.claude\\projects\\c--Users-Itachi-Desktop-simple-hris\\memory",

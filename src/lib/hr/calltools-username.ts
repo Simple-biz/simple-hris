@@ -19,7 +19,7 @@
  * already minted on onboarding submissions).
  */
 
-import { normalizeNamePart } from "./work-email";
+import { normalizeNamePart, splitFullName } from "./work-email";
 
 /** Department labels that identify a Lead Gen hire (matches the bulk-invite
  *  check in HR > Onboarding and normalizeDeptToKey's lead_gen mapping). */
@@ -27,6 +27,48 @@ export function isLeadGenDepartment(dept: string | null | undefined): boolean {
   return ["lead gen", "lead generation"].includes(
     (dept ?? "").trim().toLowerCase(),
   );
+}
+
+/** Straight + curly double quotes — the checklist wraps go-by nicknames in
+ *  either ('Joan "Andy" Raguindin', 'Caraga, Siegmond Lois “Siegmond”'). */
+const QUOTED_NICK = /["“”]\s*([^"“”]+?)\s*["“”]/;
+
+/**
+ * Dialer identity for a hire whose paperwork predates the self-chosen-nickname
+ * feature (nothing stored to mint from): derived from their roster name, which
+ * follows the New Hire Checklist conventions. Preference order for the
+ * nickname: the quoted go-by name, else the first given name. Handles both
+ * given-first ("Joan \"Andy\" Raguindin") and surname-first
+ * ("Caraga, Siegmond Lois “Siegmond”") forms; generational suffixes
+ * are never mistaken for a surname.
+ */
+export function fallbackDialerIdentity(name: string | null | undefined): {
+  nickname: string;
+  first: string;
+  last: string;
+} {
+  const raw = (name ?? "").trim();
+  const nickFromQuotes = raw.match(QUOTED_NICK)?.[1]?.trim() ?? "";
+  // Drop the quoted segment before splitting, so the nickname never pollutes
+  // the first/last derivation.
+  const bare = raw
+    .replace(/["“”][^"“”]*["“”]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  let first = "";
+  let last = "";
+  const comma = bare.indexOf(",");
+  if (comma >= 0) {
+    // Surname-first: everything before the comma is the surname; the first
+    // token after it is the given name.
+    last = bare.slice(0, comma).trim();
+    first = bare.slice(comma + 1).trim().split(/\s+/)[0] ?? "";
+  } else {
+    const split = splitFullName(bare);
+    first = split.first;
+    last = split.last;
+  }
+  return { nickname: nickFromQuotes || first, first, last };
 }
 
 /** Collapse inner whitespace and trim — a nickname is stored/compared as one
