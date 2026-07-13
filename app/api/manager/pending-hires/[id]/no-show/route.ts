@@ -15,10 +15,19 @@ import {
 } from "@/lib/hr/offboard-webhooks";
 import { requireFeatureEdit } from "@/lib/auth/authorize-feature";
 import { deniedResponse } from "@/lib/auth/authorize-email";
+import type { OffboardReason } from "@/lib/hr/offboard-reasons";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 export const maxDuration = 30;
+
+/**
+ * A "did not attend orientation" no-show is, by definition, a No-Call-No-Show,
+ * so we stamp the canonical `ncns` reason into the offboarding payload. This
+ * mirrors the `reason` HR sends from the Offboard dialog and gives the n8n
+ * automation the same key to branch on for a manager-triggered teardown.
+ */
+const NO_SHOW_REASON: OffboardReason = "ncns";
 
 function normEmail(s: string | null | undefined): string {
   return (s ?? "").trim().toLowerCase();
@@ -139,6 +148,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     const slug = leadGen ? OFFBOARD_DELETE_SLUG : OFFBOARD_DEACTIVATE_SLUG;
     webhook = await fireOffboardWebhook(slug, {
       event: "hire.no_show",
+      reason: NO_SHOW_REASON,
       phase: leadGen ? "delete" : "deactivate",
       deletion_mode: leadGen ? "immediate" : "delayed_14d",
       never_promoted: true,
@@ -174,6 +184,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     details: {
       target_email: workEmail || null,
       department: row.department,
+      reason: NO_SHOW_REASON,
       lead_gen: leadGen,
       deletion_mode: workEmail ? (leadGen ? "immediate" : "delayed_14d") : "no_account",
       scheduled_deletion_at: scheduledDeletionAt,

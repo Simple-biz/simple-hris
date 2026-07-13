@@ -223,7 +223,10 @@ DB `CHECK` constraint enforcing it:
 Marking a pending hire **Did not attend** (a no-show) in the manager's Newly Hired panel already runs
 the *same* offboarding webhooks HR uses — [no-show/route.ts](app/api/manager/pending-hires/[id]/no-show/route.ts)
 fires `offboarding_deactivate` (or `offboarding_delete` for Lead Gen) keyed on the pending row's
-`work_email`, with **`never_promoted: true`** and `event: "hire.no_show"`. Because the Hubstaff invite
+`work_email`, with **`never_promoted: true`**, `event: "hire.no_show"`, and a defaulted
+**`reason: "ncns"`** — a "did not attend orientation" no-show is by definition a No-Call-No-Show, so
+the payload carries the same canonical `reason` key HR sends from the Offboard dialog, giving the n8n
+automation something to branch on. Because the Hubstaff invite
 only fires at **promote**, `never_promoted:true` tells n8n the Hubstaff removal step is a no-op for a
 hire who never had a seat — Hubstaff is a step *inside* the webhook flow, not a guaranteed per-hire
 effect here. When the pending row has **no** `work_email` yet, nothing is torn down — the row is just
