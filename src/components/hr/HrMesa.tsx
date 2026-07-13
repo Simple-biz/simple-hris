@@ -477,7 +477,7 @@ function MesaEligibleList() {
             </div>
           )}
           {!loading && filtered.length > 0 && (
-            <div className="flex items-center justify-between border-t border-teal-100/80 px-5 py-2.5 dark:border-teal-900/40">
+            <div data-readonly-allow className="flex items-center justify-between border-t border-teal-100/80 px-5 py-2.5 dark:border-teal-900/40">
               <p className="text-[11px] text-zinc-400">
                 {filtered.length === 0
                   ? '0'
@@ -841,7 +841,7 @@ function MesaOptInQueue() {
             </div>
           )}
           {!loading && filtered.length > PAGE_SIZE && (
-            <div className="flex items-center justify-between border-t border-teal-100/80 px-5 py-2.5 dark:border-teal-900/40">
+            <div data-readonly-allow className="flex items-center justify-between border-t border-teal-100/80 px-5 py-2.5 dark:border-teal-900/40">
               <p className="text-[11px] text-zinc-400">
                 {safePage * PAGE_SIZE + 1}–{Math.min((safePage + 1) * PAGE_SIZE, filtered.length)} of{' '}
                 {filtered.length}

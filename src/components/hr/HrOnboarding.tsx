@@ -658,7 +658,7 @@ export default function HrOnboarding() {
       </header>
 
       {/* Sub-tabs */}
-      <div className="-mb-2 flex flex-wrap items-center gap-1.5 border-b border-emerald-100/60 pb-2 dark:border-emerald-900/40">
+      <div role="tablist" aria-label="Onboarding views" className="-mb-2 flex flex-wrap items-center gap-1.5 border-b border-emerald-100/60 pb-2 dark:border-emerald-900/40">
         <SubTabPill
           label="Onboarding Form"
           active={subTab === 'onboarding-form'}
@@ -761,7 +761,7 @@ export default function HrOnboarding() {
           </div>
 
           {/* Tab pills */}
-          <div className="mt-3 flex flex-wrap items-center gap-1">
+          <div role="tablist" aria-label="Pending hire status" className="mt-3 flex flex-wrap items-center gap-1">
             <TabPill label="Awaiting email" count={counts.pending} active={tab === 'pending'} onClick={() => setTab('pending')} />
             <TabPill label="Ready" count={counts.ready} active={tab === 'ready'} onClick={() => setTab('ready')} />
             {counts.failed > 0 && (
@@ -1159,7 +1159,7 @@ export default function HrOnboarding() {
                 </tbody>
               </table>
               {promotedPaged && promotedTotalPages > 1 && (
-                <div className="flex items-center justify-between border-t border-emerald-100/60 px-4 py-2.5 dark:border-emerald-900/30">
+                <div data-readonly-allow className="flex items-center justify-between border-t border-emerald-100/60 px-4 py-2.5 dark:border-emerald-900/30">
                   <p className="text-[11px] text-zinc-400">
                     {promotedSafePage * PROMOTED_PAGE_SIZE + 1}–
                     {Math.min((promotedSafePage + 1) * PROMOTED_PAGE_SIZE, filteredPending.length)} of{' '}
@@ -1904,7 +1904,8 @@ function SubTabPill({
     <button
       type="button"
       onClick={onClick}
-      aria-pressed={active}
+      role="tab"
+      aria-selected={active}
       className={cn(
         'relative rounded-md px-3 py-1.5 text-[13px] font-medium transition-colors',
         active
@@ -1946,7 +1947,8 @@ function TabPill({
     <button
       type="button"
       onClick={onClick}
-      aria-pressed={active}
+      role="tab"
+      aria-selected={active}
       className={cn(
         'relative flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[12px] font-medium transition-colors',
         active && 'text-white',

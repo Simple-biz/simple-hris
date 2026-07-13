@@ -471,7 +471,7 @@ export default function ManagerApp() {
                 return (
                   <div className="flex min-h-0 flex-col">
                     {both && (
-                      <div className="flex items-center gap-2 border-b border-zinc-200/80 bg-white px-4 py-2.5 dark:border-zinc-800 dark:bg-zinc-950 sm:px-6">
+                      <div role="tablist" aria-label="KPI calculator views" className="flex items-center gap-2 border-b border-zinc-200/80 bg-white px-4 py-2.5 dark:border-zinc-800 dark:bg-zinc-950 sm:px-6">
                         <span className="mr-1 font-mono text-[10px] uppercase tracking-[0.2em] text-zinc-400">
                           Calculator
                         </span>
@@ -482,6 +482,8 @@ export default function ManagerApp() {
                           <button
                             key={t.id}
                             type="button"
+                            role="tab"
+                            aria-selected={active === t.id}
                             onClick={() => setKpiCalc(t.id)}
                             className={cn(
                               'rounded-full border px-3 py-1 text-xs font-medium transition-colors',
@@ -2559,9 +2561,11 @@ function TeamPanelInner({ members, teamGate, viewerEmail, focusEmail, onFocusCon
           )}
         </p>
         <div className="mt-2 flex items-center gap-2">
-          <div className="inline-flex w-fit rounded-md border border-blue-200 bg-blue-50/40 p-0.5 dark:border-blue-900/50 dark:bg-blue-950/20">
+          <div role="tablist" aria-label="Team views" className="inline-flex w-fit rounded-md border border-blue-200 bg-blue-50/40 p-0.5 dark:border-blue-900/50 dark:bg-blue-950/20">
             <button
               type="button"
+              role="tab"
+              aria-selected={innerTab === 'roster'}
               onClick={() => setInnerTab('roster')}
               className={cn(
                 'rounded-[5px] px-3 py-1.5 text-xs font-semibold transition',
@@ -2577,6 +2581,8 @@ function TeamPanelInner({ members, teamGate, viewerEmail, focusEmail, onFocusCon
             </button>
             <button
               type="button"
+              role="tab"
+              aria-selected={innerTab === 'newly-hired'}
               onClick={() => setInnerTab('newly-hired')}
               className={cn(
                 'rounded-[5px] px-3 py-1.5 text-xs font-semibold transition',
@@ -2589,6 +2595,8 @@ function TeamPanelInner({ members, teamGate, viewerEmail, focusEmail, onFocusCon
             </button>
             <button
               type="button"
+              role="tab"
+              aria-selected={innerTab === 'ai-team'}
               onClick={() => setInnerTab('ai-team')}
               className={cn(
                 'rounded-[5px] px-3 py-1.5 text-xs font-semibold transition',
@@ -2601,12 +2609,13 @@ function TeamPanelInner({ members, teamGate, viewerEmail, focusEmail, onFocusCon
             </button>
           </div>
           {innerTab === 'roster' && !unassigned && members.length > 0 && (
-            <div className="flex items-center gap-0.5 rounded-lg border border-blue-100/80 bg-blue-50/50 p-0.5 dark:border-blue-950/50 dark:bg-blue-950/20">
+            <div role="tablist" aria-label="Roster layout" className="flex items-center gap-0.5 rounded-lg border border-blue-100/80 bg-blue-50/50 p-0.5 dark:border-blue-950/50 dark:bg-blue-950/20">
               <button
                 type="button"
+                role="tab"
                 onClick={() => setViewMode('cards')}
                 title="Card view"
-                aria-pressed={viewMode === 'cards'}
+                aria-selected={viewMode === 'cards'}
                 className={cn(
                   'flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium transition-colors',
                   viewMode === 'cards'
@@ -2618,9 +2627,10 @@ function TeamPanelInner({ members, teamGate, viewerEmail, focusEmail, onFocusCon
               </button>
               <button
                 type="button"
+                role="tab"
                 onClick={() => setViewMode('list')}
                 title="List view — multi-select to queue offboarding"
-                aria-pressed={viewMode === 'list'}
+                aria-selected={viewMode === 'list'}
                 className={cn(
                   'flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium transition-colors',
                   viewMode === 'list'
@@ -3040,7 +3050,7 @@ function TeamPanelInner({ members, teamGate, viewerEmail, focusEmail, onFocusCon
                           </tbody>
                         </table>
                       </div>
-                      <div className="flex flex-col items-center justify-between gap-2 border-t border-blue-100/70 bg-white/60 px-4 py-2.5 text-[11px] text-zinc-500 dark:border-blue-950/50 dark:bg-zinc-950/40 dark:text-zinc-400 sm:flex-row">
+                      <div data-readonly-allow className="flex flex-col items-center justify-between gap-2 border-t border-blue-100/70 bg-white/60 px-4 py-2.5 text-[11px] text-zinc-500 dark:border-blue-950/50 dark:bg-zinc-950/40 dark:text-zinc-400 sm:flex-row">
                         <span className="tabular-nums">
                           Showing{' '}
                           <span className="font-medium text-zinc-700 dark:text-zinc-300">{pageStart + 1}–{pageEnd}</span>{' '}
@@ -3296,7 +3306,7 @@ function TeamPanelInner({ members, teamGate, viewerEmail, focusEmail, onFocusCon
 
                   {/* Pagination footer */}
                   {filteredMembers.length > TEAM_PAGE_SIZE && (
-                    <div className="flex flex-col items-center justify-between gap-2 border-t border-blue-100/70 bg-white/60 px-4 py-3 text-xs text-zinc-600 dark:border-blue-950/50 dark:bg-zinc-950/40 dark:text-zinc-400 sm:flex-row">
+                    <div data-readonly-allow className="flex flex-col items-center justify-between gap-2 border-t border-blue-100/70 bg-white/60 px-4 py-3 text-xs text-zinc-600 dark:border-blue-950/50 dark:bg-zinc-950/40 dark:text-zinc-400 sm:flex-row">
                       <span className="tabular-nums">
                         Showing{' '}
                         <span className="font-medium text-zinc-800 dark:text-zinc-200">

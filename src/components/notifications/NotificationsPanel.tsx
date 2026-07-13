@@ -505,7 +505,7 @@ export default function NotificationsPanel({
             })}
 
             {totalPages > 1 && (
-              <div className="flex items-center justify-between border-t border-zinc-100 pt-3 dark:border-zinc-800">
+              <div data-readonly-allow className="flex items-center justify-between border-t border-zinc-100 pt-3 dark:border-zinc-800">
                 <p className="text-[11px] text-zinc-400">
                   {safePage * PAGE_SIZE + 1}–{Math.min((safePage + 1) * PAGE_SIZE, filtered.length)} of {filtered.length}
                 </p>

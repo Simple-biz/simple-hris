@@ -1603,7 +1603,7 @@ function SimpleView({
                 </strong>{' '}
                 of {filteredTotal}
               </div>
-              <div className="flex gap-0.5">
+              <div data-readonly-allow className="flex gap-0.5">
                 <PagerEdgeBtn disabled={safePage <= 1} onClick={() => setPage(1)} aria-label="First page">
                   <ChevronsLeft className="h-3.5 w-3.5" />
                 </PagerEdgeBtn>
@@ -4255,7 +4255,7 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
                     )}
                   </p>
 
-                  <div className="flex items-center gap-1">
+                  <div data-readonly-allow className="flex items-center gap-1">
                     {/* First page */}
                     <Button
                       type="button"

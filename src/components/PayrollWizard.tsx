@@ -5805,9 +5805,11 @@ export default function PayrollWizard({
         return (
           <div className="space-y-6">
             {/* ── Tab switcher: Uploaded Files | Upload CSV ── */}
-            <div className="flex items-center gap-1 rounded-lg border border-zinc-200 bg-zinc-100 p-1 dark:border-zinc-800 dark:bg-zinc-900">
+            <div role="tablist" aria-label="Hubstaff data source" className="flex items-center gap-1 rounded-lg border border-zinc-200 bg-zinc-100 p-1 dark:border-zinc-800 dark:bg-zinc-900">
               <button
                 type="button"
+                role="tab"
+                aria-selected={hubstaffActiveTab === 'files'}
                 className={cn(
                   'flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors',
                   hubstaffActiveTab === 'files'
@@ -5834,6 +5836,8 @@ export default function PayrollWizard({
               </button>
               <button
                 type="button"
+                role="tab"
+                aria-selected={hubstaffActiveTab === 'upload'}
                 className={cn(
                   'flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors',
                   hubstaffActiveTab === 'upload'
@@ -6066,7 +6070,7 @@ export default function PayrollWizard({
                                 </Table>
                               </div>
 
-                              <div className="flex items-center justify-between pt-1">
+                              <div data-readonly-allow className="flex items-center justify-between pt-1">
                                 <span className="text-xs text-zinc-400">
                                   {filtered.length === 0 ? 'No results' : (
                                     <>
@@ -6657,7 +6661,7 @@ export default function PayrollWizard({
                           </TableBody>
                         </Table>
 
-                        <div className="flex items-center justify-between pt-1">
+                        <div data-readonly-allow className="flex items-center justify-between pt-1">
                           <span className="text-xs text-zinc-400">
                             {filtered.length === 0 ? 'No results' : (
                               <>
@@ -7468,7 +7472,7 @@ export default function PayrollWizard({
                   </div>
                 </div>
                 {!initialCalcDataLoading && filteredCalcResults.length > INITIAL_CALC_PAGE_SIZE && (
-                  <div className="flex items-center justify-between pt-2">
+                  <div data-readonly-allow className="flex items-center justify-between pt-2">
                     <span className="text-xs text-zinc-400">
                       Showing {(calcSafePage - 1) * INITIAL_CALC_PAGE_SIZE + 1}-
                       {Math.min(calcSafePage * INITIAL_CALC_PAGE_SIZE, filteredCalcResults.length)} of {filteredCalcResults.length}
@@ -8221,7 +8225,7 @@ export default function PayrollWizard({
 
                           {/* Pager — 5 per page */}
                           {totalPages > 1 && (
-                            <div className="mt-2.5 flex items-center justify-between gap-2">
+                            <div data-readonly-allow className="mt-2.5 flex items-center justify-between gap-2">
                               <button
                                 type="button"
                                 onClick={() => setPabExclusionPage((p) => Math.max(0, p - 1))}
@@ -8450,7 +8454,7 @@ export default function PayrollWizard({
                 rail collapses to a horizontal scroller above the content. */}
             <div className="flex flex-col gap-4 xl:flex-row xl:items-start">
               {/* Department rail */}
-              <div className="flex gap-1.5 overflow-x-auto pb-1 xl:w-48 xl:shrink-0 xl:flex-col xl:gap-1 xl:overflow-visible xl:pb-0 [-ms-overflow-style:none] [&::-webkit-scrollbar]:h-1.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-zinc-300/80 dark:[&::-webkit-scrollbar-thumb]:bg-zinc-600">
+              <div role="tablist" aria-label="Departments" className="flex gap-1.5 overflow-x-auto pb-1 xl:w-48 xl:shrink-0 xl:flex-col xl:gap-1 xl:overflow-visible xl:pb-0 [-ms-overflow-style:none] [&::-webkit-scrollbar]:h-1.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-zinc-300/80 dark:[&::-webkit-scrollbar-thumb]:bg-zinc-600">
                 <p className="hidden px-1 pb-1 text-[10px] font-semibold uppercase tracking-wider text-zinc-400 xl:block dark:text-zinc-500">
                   Departments
                 </p>
@@ -8462,6 +8466,8 @@ export default function PayrollWizard({
                     <motion.button
                       key={dept.key}
                       type="button"
+                      role="tab"
+                      aria-selected={isActive}
                       onClick={() => { setActiveDeptTab(dept.key); setAdditionsSearch(''); }}
                       whileTap={{ scale: 0.97 }}
                       className={cn(
@@ -10140,7 +10146,7 @@ export default function PayrollWizard({
                 Period cards and the employee table to the selected department. */}
             <div className="flex flex-col gap-4 xl:flex-row xl:items-start">
               {/* HSL department rail */}
-              <div className="flex gap-1.5 overflow-x-auto pb-1 xl:w-48 xl:shrink-0 xl:flex-col xl:gap-1 xl:overflow-visible xl:pb-0 [-ms-overflow-style:none] [&::-webkit-scrollbar]:h-1.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-zinc-300/80 dark:[&::-webkit-scrollbar-thumb]:bg-zinc-600">
+              <div role="tablist" aria-label="HSL departments" className="flex gap-1.5 overflow-x-auto pb-1 xl:w-48 xl:shrink-0 xl:flex-col xl:gap-1 xl:overflow-visible xl:pb-0 [-ms-overflow-style:none] [&::-webkit-scrollbar]:h-1.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-zinc-300/80 dark:[&::-webkit-scrollbar-thumb]:bg-zinc-600">
                 <p className="hidden px-1 pb-1 text-[10px] font-semibold uppercase tracking-wider text-zinc-400 xl:block dark:text-zinc-500">
                   HSL Departments
                 </p>
@@ -10163,6 +10169,8 @@ export default function PayrollWizard({
                       <motion.button
                         key={item.key}
                         type="button"
+                        role="tab"
+                        aria-selected={isActive}
                         onClick={() => { setActiveHslDept(item.key); setHslSearch(''); setHslPage(1); }}
                         whileTap={{ scale: 0.97 }}
                         className={cn(
@@ -10613,7 +10621,7 @@ export default function PayrollWizard({
 
                   {/* Pagination */}
                   {totalHslPages > 1 && (
-                    <div className="flex items-center justify-between border border-t-0 border-zinc-200 bg-white px-3 py-2 dark:border-zinc-800 dark:bg-zinc-950/60">
+                    <div data-readonly-allow className="flex items-center justify-between border border-t-0 border-zinc-200 bg-white px-3 py-2 dark:border-zinc-800 dark:bg-zinc-950/60">
                       <span className="text-[11px] text-zinc-500 dark:text-zinc-400">
                         Page {safePage} of {totalHslPages} &middot; {filteredHsl.length} employee{filteredHsl.length !== 1 ? 's' : ''}
                       </span>
@@ -11199,7 +11207,7 @@ export default function PayrollWizard({
               return (
                 <div className="flex flex-col gap-4 xl:flex-row xl:items-start">
                   {/* Department rail */}
-                  <div className="flex gap-1.5 overflow-x-auto pb-1 xl:w-48 xl:shrink-0 xl:flex-col xl:gap-1 xl:overflow-visible xl:pb-0 [-ms-overflow-style:none] [&::-webkit-scrollbar]:h-1.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-zinc-300/80 dark:[&::-webkit-scrollbar-thumb]:bg-zinc-600">
+                  <div role="tablist" aria-label="Departments" className="flex gap-1.5 overflow-x-auto pb-1 xl:w-48 xl:shrink-0 xl:flex-col xl:gap-1 xl:overflow-visible xl:pb-0 [-ms-overflow-style:none] [&::-webkit-scrollbar]:h-1.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-zinc-300/80 dark:[&::-webkit-scrollbar-thumb]:bg-zinc-600">
                     <p className="hidden px-1 pb-1 text-[10px] font-semibold uppercase tracking-wider text-zinc-400 xl:block dark:text-zinc-500">
                       Departments
                     </p>
@@ -11210,6 +11218,8 @@ export default function PayrollWizard({
                         <motion.button
                           key={g.key}
                           type="button"
+                          role="tab"
+                          aria-selected={isActive}
                           onClick={() => { setValidationDeptTab(g.key); setValidationSearch(''); }}
                           whileTap={{ scale: 0.97 }}
                           className={cn(

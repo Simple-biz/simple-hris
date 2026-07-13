@@ -958,7 +958,7 @@ export default function OrphanageApp() {
                   </motion.div>
                   </AnimatePresence>
                   {filteredVerified.length > PAGE_SIZE && (
-                    <div className="flex items-center justify-between border-t border-pink-100/60 px-4 py-3 dark:border-pink-900/40">
+                    <div data-readonly-allow className="flex items-center justify-between border-t border-pink-100/60 px-4 py-3 dark:border-pink-900/40">
                       <span className="text-xs text-zinc-500 dark:text-zinc-400">
                         Page {verifiedPage + 1} of {Math.ceil(filteredVerified.length / PAGE_SIZE)}
                         {' · '}{filteredVerified.length} total

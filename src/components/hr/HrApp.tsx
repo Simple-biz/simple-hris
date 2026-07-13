@@ -876,7 +876,7 @@ function OffboardReasonsCard({
 
             {/* Pagination footer */}
             {totalPages > 1 && (
-              <div className="flex items-center justify-between border-t border-zinc-100 px-5 py-2.5 dark:border-zinc-900">
+              <div data-readonly-allow className="flex items-center justify-between border-t border-zinc-100 px-5 py-2.5 dark:border-zinc-900">
                 <p className="text-[11px] text-zinc-400 dark:text-zinc-500">
                   {safePage * REASONS_PAGE_SIZE + 1}&ndash;
                   {Math.min((safePage + 1) * REASONS_PAGE_SIZE, paths.length)} of {paths.length}
@@ -1065,7 +1065,7 @@ function RosterCard({ loading, roster }: { loading: boolean; roster: EmployeeRow
                 ))}
               </tbody>
             </table>
-            <div className="flex items-center justify-between border-t border-zinc-100 px-4 py-2.5 dark:border-zinc-800">
+            <div data-readonly-allow className="flex items-center justify-between border-t border-zinc-100 px-4 py-2.5 dark:border-zinc-800">
               <p className="text-[11px] text-zinc-400">
                 {filtered.length === 0 ? '0' : `${safePage * PAGE_SIZE + 1}–${Math.min((safePage + 1) * PAGE_SIZE, filtered.length)}`} of {filtered.length}
               </p>
@@ -1480,7 +1480,7 @@ function PhilippinesMapCard({
                         ))}
                       </div>
                       {totalPages > 1 && (
-                        <div className="flex shrink-0 items-center justify-between border-t border-zinc-100 px-2.5 py-1.5 dark:border-zinc-800">
+                        <div data-readonly-allow className="flex shrink-0 items-center justify-between border-t border-zinc-100 px-2.5 py-1.5 dark:border-zinc-800">
                           <button
                             disabled={listPage === 0}
                             onClick={() => setListPage((p) => p - 1)}
@@ -2114,7 +2114,7 @@ function RecentHiresCard({
               ))}
             </div>
             {totalPages > 1 && (
-              <div className="mt-5 flex items-center justify-between gap-2">
+              <div data-readonly-allow className="mt-5 flex items-center justify-between gap-2">
                 <p className="text-[11px] text-zinc-400 dark:text-zinc-500">
                   {(safePage - 1) * PAGE_SIZE + 1}–{Math.min(safePage * PAGE_SIZE, filtered.length)} of {filtered.length}
                 </p>

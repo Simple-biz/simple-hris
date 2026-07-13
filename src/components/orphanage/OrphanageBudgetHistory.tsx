@@ -433,7 +433,7 @@ function SourcePillToggle({
   onChange: (v: 'budgets' | 'gifts') => void;
 }) {
   return (
-    <div className="inline-flex items-center gap-0.5 rounded-md border border-zinc-200 bg-white p-0.5 shadow-sm dark:border-zinc-800 dark:bg-zinc-950">
+    <div role="tablist" aria-label="Budget history source" className="inline-flex items-center gap-0.5 rounded-md border border-zinc-200 bg-white p-0.5 shadow-sm dark:border-zinc-800 dark:bg-zinc-950">
       {(['budgets', 'gifts'] as const).map((opt) => {
         const selected = value === opt;
         const Icon = opt === 'budgets' ? PiggyBank : Gift;
@@ -441,6 +441,7 @@ function SourcePillToggle({
           <button
             key={opt}
             type="button"
+            role="tab"
             onClick={() => onChange(opt)}
             className={cn(
               'inline-flex items-center gap-1 rounded px-2.5 py-1 text-[11.5px] font-medium transition-colors',
@@ -449,6 +450,7 @@ function SourcePillToggle({
                 : 'text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-200',
             )}
             aria-pressed={selected}
+            aria-selected={selected}
           >
             <Icon className="h-3 w-3" />
             {opt === 'budgets' ? 'Budgets' : 'Gifts'}
@@ -692,13 +694,14 @@ function ScopePillToggle({
   onChange: (v: 'mine' | 'all') => void;
 }) {
   return (
-    <div className="inline-flex items-center gap-0.5 rounded-md border border-zinc-200 bg-white p-0.5 shadow-sm dark:border-zinc-800 dark:bg-zinc-950">
+    <div role="tablist" aria-label="Budget history scope" className="inline-flex items-center gap-0.5 rounded-md border border-zinc-200 bg-white p-0.5 shadow-sm dark:border-zinc-800 dark:bg-zinc-950">
       {(['mine', 'all'] as const).map((opt) => {
         const selected = value === opt;
         return (
           <button
             key={opt}
             type="button"
+            role="tab"
             onClick={() => onChange(opt)}
             className={cn(
               'rounded px-2.5 py-1 text-[11.5px] font-medium transition-colors',
@@ -707,6 +710,7 @@ function ScopePillToggle({
                 : 'text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-200',
             )}
             aria-pressed={selected}
+            aria-selected={selected}
           >
             {opt === 'mine' ? 'My requests' : 'All'}
           </button>

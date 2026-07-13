@@ -997,7 +997,7 @@ export default function PeopleTab({
             </table>
           </div>
 
-          <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-[12px] text-zinc-500">
+          <div data-readonly-allow className="mt-3 flex flex-wrap items-center justify-between gap-2 text-[12px] text-zinc-500">
             <span>
               Showing {pageStart + 1}–{Math.min(pageStart + PAGE_SIZE, filtered.length)} of {filtered.length}
             </span>
@@ -1980,7 +1980,7 @@ function PeopleStatsChart({
               options={statsPeriodOptions}
             />
             {/* Sort toggle so the two rankings can be told apart. */}
-            <div className="inline-flex shrink-0 rounded-lg border border-zinc-200 bg-zinc-50 p-0.5 dark:border-zinc-800 dark:bg-zinc-900">
+            <div data-readonly-allow className="inline-flex shrink-0 rounded-lg border border-zinc-200 bg-zinc-50 p-0.5 dark:border-zinc-800 dark:bg-zinc-900">
               {([['hours', 'Top OT hours'], ['pay', 'Top OT pay']] as const).map(([key, label]) => (
                 <button
                   key={key}
@@ -2002,7 +2002,7 @@ function PeopleStatsChart({
         </div>
         {/* People | Department tabs + a search bar scoped to the active tab. */}
         <div className="flex flex-col gap-2 border-b border-zinc-200 px-3 py-2 sm:flex-row sm:items-center dark:border-zinc-800">
-          <div className="inline-flex shrink-0 rounded-lg border border-zinc-200 bg-zinc-50 p-0.5 dark:border-zinc-800 dark:bg-zinc-900">
+          <div data-readonly-allow className="inline-flex shrink-0 rounded-lg border border-zinc-200 bg-zinc-50 p-0.5 dark:border-zinc-800 dark:bg-zinc-900">
             {([['people', 'People'], ['department', 'Department']] as const).map(([key, label]) => (
               <button
                 key={key}
@@ -2130,7 +2130,7 @@ function PeopleStatsChart({
         </motion.div>
         </AnimatePresence>
         {leaderTotalPages > 1 && (
-          <div className="flex items-center justify-between gap-2 border-t border-zinc-200 px-4 py-2.5 text-[12px] text-zinc-500 dark:border-zinc-800">
+          <div data-readonly-allow className="flex items-center justify-between gap-2 border-t border-zinc-200 px-4 py-2.5 text-[12px] text-zinc-500 dark:border-zinc-800">
             <span className="tabular-nums">
               {leaderStart + 1}–{Math.min(leaderStart + LEADERS_PER_PAGE, filteredCount)} of {filteredCount}
             </span>
@@ -2930,7 +2930,7 @@ function PersonDetailDialog({
                 })}
               </ul>
               {bankHistTotalPages > 1 && (
-                <div className="mt-2 flex items-center justify-between text-[11px] text-zinc-500">
+                <div data-readonly-allow className="mt-2 flex items-center justify-between text-[11px] text-zinc-500">
                   <span>
                     Showing {bankHistStart + 1}–{Math.min(bankHistStart + HIST_PAGE_SIZE, bankHistory.length)} of {bankHistory.length}
                   </span>

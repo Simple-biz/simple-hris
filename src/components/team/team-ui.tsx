@@ -171,7 +171,7 @@ export function SkillBlock({
                 <span className="text-[10px] text-zinc-400 dark:text-zinc-500">
                   {chipStart + 1}–{chipEnd} of {items.length}
                 </span>
-                <div className="inline-flex items-center gap-1 rounded-full border border-orange-100/80 bg-white px-1 py-0.5 dark:border-blue-950/60 dark:bg-[#0d1117]">
+                <div data-readonly-allow className="inline-flex items-center gap-1 rounded-full border border-orange-100/80 bg-white px-1 py-0.5 dark:border-blue-950/60 dark:bg-[#0d1117]">
                   <button
                     type="button"
                     onClick={(e) => {

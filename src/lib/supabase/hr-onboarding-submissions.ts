@@ -211,6 +211,38 @@ export function generateOnboardingToken(): string {
   return randomBytes(24).toString("base64url");
 }
 
+/**
+ * Every column the Onboarding "Submitted" list + its detail modal read, EXCEPT
+ * the four captured-signature data-URL columns (`ip_agreement_signature`,
+ * `non_solicitation_signature`, `privacy_signature`, `contract_signature`).
+ *
+ * Those four base64 PNGs are ~80 KB PER ROW combined and account for ~99% of the
+ * table's payload — a `SELECT *` over a few hundred rows pulls tens of MB, which
+ * downloads in ~1-2s from Vercel (same-region backbone) but takes MINUTES over a
+ * local/residential connection, so the HR Onboarding table "loads forever" on
+ * localhost while it's fine on prod. The list/table never renders a signature;
+ * only the per-row detail modal does, and it already fetches the full single row
+ * via GET /api/hr/onboarding-submissions/[id] on open — so it hydrates the
+ * signatures there instead. Keep this list in sync with the columns the UI needs
+ * (all non-signature columns of the row).
+ */
+const LIST_COLUMNS = [
+  "id", "token", "status", "created_at", "created_by", "submitted_at",
+  "invite_name", "invite_personal_email", "invite_department", "invite_country",
+  "invite_note", "full_name", "display_name", "gmail_surname", "phone", "email",
+  "location", "country", "address_street", "address_city", "address_state",
+  "address_province", "address_region", "address_postal_code",
+  "ip_agreement_agreed", "ip_agreement_name", "ip_agreement_date",
+  "ip_assignment_file_path", "ip_assignment_file_name",
+  "w8ben_applicable", "w8ben_file_path", "w8ben_file_name",
+  "payment_method", "hurupay_email", "bank_full_name", "bank_account_name",
+  "bank_account_number", "bank_swift_code", "bank_street", "bank_city",
+  "bank_province", "bank_postal_code", "bank_full_address",
+  "contract_date", "work_email", "pending_employee_id", "workspace_account_ok",
+  "workspace_account_status", "workspace_account_error", "workspace_account_at",
+  "archived_at", "notes",
+].join(",");
+
 export async function listHrOnboardingSubmissions(): Promise<{
   rows: HrOnboardingSubmissionRow[];
   error: string | null;
@@ -218,11 +250,14 @@ export async function listHrOnboardingSubmissions(): Promise<{
   const sb = client();
   const { data, error } = await sb
     .from(TABLE)
-    .select("*")
+    .select(LIST_COLUMNS)
     .order("created_at", { ascending: false })
     .range(0, 999);
   if (error) return { rows: [], error: error.message };
-  const rows = (data ?? []) as HrOnboardingSubmissionRow[];
+  // Cast via `unknown`: a column-list `.select()` (vs `.select("*")`) makes
+  // supabase-js infer `GenericStringError[]`, which doesn't structurally overlap
+  // the row type, so a direct cast is rejected.
+  const rows = (data ?? []) as unknown as HrOnboardingSubmissionRow[];
 
   // Attach the linked pending hire's status so the UI can mark an archived
   // submission whose hire was promoted as "Archived/Complete". Best-effort.

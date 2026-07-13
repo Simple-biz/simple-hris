@@ -266,7 +266,16 @@
       "PowerShell(npm install pdf-lib 2>&1)",
       "PowerShell($dev = Get-Content package.json | ConvertFrom-Json; $dev.scripts.dev)",
       "Bash(mkdir -p /c/tmp/sessions)",
-      "Bash(cp /tmp/sessions/0[2-9]_*.txt /tmp/sessions/1[01]_*.txt /c/tmp/sessions/)"
+      "Bash(cp /tmp/sessions/0[2-9]_*.txt /tmp/sessions/1[01]_*.txt /c/tmp/sessions/)",
+      "PowerShell($env:Path = [Environment]::GetEnvironmentVariable\\(\"Path\",\"Machine\"\\) + \";\" + [Environment]::GetEnvironmentVariable\\(\"Path\",\"User\"\\); npm run dev)",
+      "PowerShell(npm run lint 2>&1)",
+      "PowerShell(npm run lint)",
+      "PowerShell(\\(Get-Command node\\).Source; \\(Get-Command npm -ErrorAction SilentlyContinue\\); Get-ChildItem \"$env:APPDATA\\\\npm\" -ErrorAction SilentlyContinue | Select-Object -First 5)",
+      "PowerShell($p = @\\(\"$env:ProgramFiles\\\\nodejs\\\\node.exe\",\"$env:LOCALAPPDATA\\\\Programs\\\\nodejs\\\\node.exe\",\"$env:APPDATA\\\\nvm\"\\) ; foreach\\($x in $p\\){ if\\(Test-Path $x\\){ $x } } ; where.exe node 2>$null ; Get-ChildItem \"$env:ProgramFiles\\\\nodejs\" -ErrorAction SilentlyContinue | Select-Object -First 3 Name)",
+      "PowerShell($env:Path = \"C:\\\\Program Files\\\\nodejs;\" + $env:Path; & \"C:\\\\Program Files\\\\nodejs\\\\node.exe\" \"C:\\\\Program Files\\\\nodejs\\\\node_modules\\\\npm\\\\bin\\\\npm-cli.js\" run lint)",
+      "PowerShell($env:Path = \"C:\\\\Program Files\\\\nodejs;\" + $env:Path; & \"C:\\\\Program Files\\\\nodejs\\\\node.exe\" --import tsx \"C:\\\\Users\\\\Kane\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-Kane-Desktop-simple-hris\\\\1449d4ac-7c4a-4cc0-9651-ec26b29f7d6c\\\\scratchpad\\\\export-smoke.ts\")",
+      "PowerShell($env:Path = \"C:\\\\Program Files\\\\nodejs;\" + $env:Path; & \"C:\\\\Program Files\\\\nodejs\\\\node.exe\" --import tsx \".\\\\src\\\\lib\\\\hr\\\\__export_smoke.ts\")",
+      "PowerShell(\"cleaned\")"
     ],
     "additionalDirectories": [
       "c:\\Users\\Itachi\\.claude\\projects\\c--Users-Itachi-Desktop-simple-hris\\memory",

@@ -130,9 +130,16 @@ capture-phase listener on the wrapper that swallows every *mutating* event
 (`click`, `keydown`, `input`, `paste`, `submit`, drag/drop, etc.) before it
 reaches a child handler. It deliberately does **not** use the `inert` attribute
 (`inert` is all-or-nothing on a subtree and can't be re-enabled on a descendant).
-A carve-out keeps search/filter fields live (`data-readonly-allow`,
-`input[type="search"]`, `[role="searchbox"]`, plus a placeholder/aria-label
-search heuristic); scrolling and read-only gestures are never blocked.
+A carve-out keeps read-only **navigation** live so a viewer can move around what
+they're allowed to see: ARIA tab controls (`[role="tab"]`, `[role="tablist"]` —
+the in-page sub-tab switchers), anything marked `data-readonly-allow` (used to
+opt in pagination bars and segmented browse toggles), and search/filter fields
+(`input[type="search"]`, `[role="searchbox"]`, plus a placeholder/aria-label
+search heuristic). Scrolling and read-only gestures are never blocked. Note
+`[role="tabpanel"]` is deliberately **not** exempt — that's the tab's content,
+not a switcher. So when adding an in-page sub-tab bar or pager to a gated
+dashboard, give the switcher `role="tablist"`/`role="tab"` (also correct a11y) or
+mark the pager container `data-readonly-allow`, or view-only users can't use it.
 
 > `src/lib/rbac/accounting-tabs.ts` still exports `allowedAccountingTabsForRoles()`
 > but it is **deprecated** -- kept only so older callers don't break. Real gating

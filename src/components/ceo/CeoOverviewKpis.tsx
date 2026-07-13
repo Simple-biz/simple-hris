@@ -795,7 +795,7 @@ export default function CeoOverviewKpis({ viewerEmail }: { viewerEmail: string |
             </ul>
           )}
           {deptTotalPages > 1 && (
-            <div className="mt-3.5 flex items-center justify-between border-t border-zinc-100 pt-3 dark:border-zinc-800">
+            <div data-readonly-allow className="mt-3.5 flex items-center justify-between border-t border-zinc-100 pt-3 dark:border-zinc-800">
               <button
                 type="button"
                 onClick={() => setDeptPage((p) => Math.max(1, p - 1))}

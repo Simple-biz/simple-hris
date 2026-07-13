@@ -17,6 +17,7 @@ import {
   ExternalLink,
   Eye,
   EyeOff,
+  FileSpreadsheet,
   FileText,
   Globe,
   Landmark,
@@ -27,6 +28,7 @@ import {
   RefreshCw,
   Search,
   Send,
+  Sheet,
   ShieldCheck,
   Sparkles,
   Trash2,
@@ -69,6 +71,13 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { cn } from '@/lib/utils';
+import {
+  buildOnboardingExport,
+  downloadOnboardingCsv,
+  downloadOnboardingPdf,
+  downloadOnboardingXlsx,
+  type OnboardingExportInput,
+} from '@/lib/hr/onboarding-export';
 
 function isPlausibleEmail(s: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s.trim());
@@ -783,6 +792,167 @@ const GEN_NEON_CSS = `
 }
 `;
 
+// Export dropdown for the onboarding submissions in view (PDF / CSV / XLSX).
+// Visually mirrors the Payment Catalog / Accounting export menu: an outline
+// trigger with the orange (light) / blue (dark) accent, and an animated panel
+// with one styled row per format. Acts on whatever rows are currently in view
+// (respects the active status filter, search and the "needs setup" toggles).
+const EXPORT_EASE = [0.22, 1, 0.36, 1] as const;
+
+function OnboardingExportMenu({
+  rows,
+  scopeLabel,
+  disabled,
+}: {
+  rows: readonly OnboardingExportInput[];
+  scopeLabel: string;
+  disabled?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState<null | 'csv' | 'xlsx' | 'pdf'>(null);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDocClick = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false);
+    };
+    document.addEventListener('mousedown', onDocClick);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDocClick);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+
+  const buildModel = useCallback(
+    () => buildOnboardingExport({ rows, scopeLabel }),
+    [rows, scopeLabel],
+  );
+
+  const noRows = rows.length === 0;
+
+  const onCsv = () => {
+    try {
+      downloadOnboardingCsv(buildModel());
+      toast.success('New hires exported to CSV');
+    } catch {
+      toast.error('Could not export CSV');
+    } finally {
+      setOpen(false);
+    }
+  };
+
+  const onXlsx = () => {
+    try {
+      downloadOnboardingXlsx(buildModel());
+      toast.success('New hires exported to Excel');
+    } catch {
+      toast.error('Could not export Excel file');
+    } finally {
+      setOpen(false);
+    }
+  };
+
+  const onPdf = async () => {
+    setBusy('pdf');
+    try {
+      await downloadOnboardingPdf(buildModel());
+      toast.success('New hires exported to PDF');
+      setOpen(false);
+    } catch {
+      toast.error('Could not generate PDF');
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <div ref={ref} className="relative shrink-0">
+      <Button
+        type="button"
+        size="sm"
+        variant="outline"
+        disabled={disabled || busy !== null}
+        onClick={() => setOpen((o) => !o)}
+        className="gap-1.5 border-orange-200 text-orange-700 hover:bg-orange-50 dark:border-blue-900/60 dark:text-blue-300 dark:hover:bg-blue-950/40"
+      >
+        {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+        Export
+        <motion.span animate={{ rotate: open ? 180 : 0 }} transition={{ duration: 0.2, ease: EXPORT_EASE }}>
+          <ChevronDownIcon className="h-3.5 w-3.5" />
+        </motion.span>
+      </Button>
+
+      <AnimatePresence>
+        {open && (
+          <motion.div
+            initial={{ opacity: 0, y: -6, scale: 0.98 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -6, scale: 0.98 }}
+            transition={{ duration: 0.16, ease: EXPORT_EASE }}
+            className="absolute right-0 z-40 mt-1 w-64 origin-top-right overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-xl dark:border-zinc-700 dark:bg-zinc-900"
+          >
+            <div className="border-b border-zinc-100 px-3 py-2 dark:border-zinc-800">
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+                Export new hires
+              </p>
+              <p className="mt-0.5 text-[10.5px] text-zinc-400">
+                {noRows
+                  ? 'No hires in this view.'
+                  : `${rows.length} hire${rows.length === 1 ? '' : 's'} in view · ${scopeLabel}`}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={onPdf}
+              disabled={busy !== null || noRows}
+              className="flex w-full items-start gap-2.5 px-3 py-2.5 text-left transition-colors hover:bg-orange-50 disabled:opacity-50 dark:hover:bg-blue-950/30"
+            >
+              {busy === 'pdf' ? (
+                <Loader2 className="mt-0.5 h-4 w-4 shrink-0 animate-spin text-orange-500" />
+              ) : (
+                <FileText className="mt-0.5 h-4 w-4 shrink-0 text-rose-500" />
+              )}
+              <span>
+                <span className="block text-sm font-medium text-zinc-800 dark:text-zinc-100">PDF report</span>
+                <span className="block text-[11px] text-zinc-500 dark:text-zinc-400">Branded, sectioned, print-ready.</span>
+              </span>
+            </button>
+            <button
+              type="button"
+              onClick={onCsv}
+              disabled={busy !== null || noRows}
+              className="flex w-full items-start gap-2.5 px-3 py-2.5 text-left transition-colors hover:bg-orange-50 disabled:opacity-50 dark:hover:bg-blue-950/30"
+            >
+              <FileSpreadsheet className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
+              <span>
+                <span className="block text-sm font-medium text-zinc-800 dark:text-zinc-100">CSV spreadsheet</span>
+                <span className="block text-[11px] text-zinc-500 dark:text-zinc-400">One flat table for Excel / Sheets.</span>
+              </span>
+            </button>
+            <button
+              type="button"
+              onClick={onXlsx}
+              disabled={busy !== null || noRows}
+              className="flex w-full items-start gap-2.5 px-3 py-2.5 text-left transition-colors hover:bg-orange-50 disabled:opacity-50 dark:hover:bg-blue-950/30"
+            >
+              <Sheet className="mt-0.5 h-4 w-4 shrink-0 text-green-600 dark:text-green-400" />
+              <span>
+                <span className="block text-sm font-medium text-zinc-800 dark:text-zinc-100">Excel workbook</span>
+                <span className="block text-[11px] text-zinc-500 dark:text-zinc-400">Native .xlsx with sized columns.</span>
+              </span>
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
 export default function HrOnboardingForm() {
   const reduceMotion = useReducedMotion();
   const [rows, setRows] = useState<SubmissionRow[]>(
@@ -1336,10 +1506,12 @@ export default function HrOnboardingForm() {
       {/* Filter + search */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex flex-wrap items-center gap-1">
-          <FilterPill label="Awaiting submission" count={counts.pending} active={filter === 'pending'} onClick={() => setFilter('pending')} />
-          <FilterPill label="Submitted" count={counts.submitted} active={filter === 'submitted'} onClick={() => setFilter('submitted')} />
-          <FilterPill label="Archived" count={counts.archived} active={filter === 'archived'} onClick={() => setFilter('archived')} />
-          <FilterPill label="All" count={rows.length} active={filter === 'all'} onClick={() => setFilter('all')} />
+          <div role="tablist" aria-label="Onboarding submission status" className="flex flex-wrap items-center gap-1">
+            <FilterPill label="Awaiting submission" count={counts.pending} active={filter === 'pending'} onClick={() => setFilter('pending')} />
+            <FilterPill label="Submitted" count={counts.submitted} active={filter === 'submitted'} onClick={() => setFilter('submitted')} />
+            <FilterPill label="Archived" count={counts.archived} active={filter === 'archived'} onClick={() => setFilter('archived')} />
+            <FilterPill label="All" count={rows.length} active={filter === 'all'} onClick={() => setFilter('all')} />
+          </div>
           {filter === 'submitted' && counts.submitted > 0 && (
             <>
               <span className="mx-1 h-4 w-px bg-emerald-200/70 dark:bg-emerald-900/50" aria-hidden />
@@ -1394,13 +1566,28 @@ export default function HrOnboardingForm() {
             </>
           )}
         </div>
-        <div className="relative w-full sm:w-72">
-          <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400" />
-          <Input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search name, email, dept…"
-            className="border-emerald-100/70 bg-white pl-9 dark:border-emerald-900/50 dark:bg-zinc-900"
+        <div className="flex w-full items-center gap-2 sm:w-auto">
+          <div className="relative w-full sm:w-72">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400" />
+            <Input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search name, email, dept…"
+              className="border-emerald-100/70 bg-white pl-9 dark:border-emerald-900/50 dark:bg-zinc-900"
+            />
+          </div>
+          <OnboardingExportMenu
+            rows={filtered}
+            scopeLabel={
+              filter === 'all'
+                ? 'All'
+                : filter === 'pending'
+                  ? 'Awaiting submission'
+                  : filter === 'submitted'
+                    ? 'Submitted'
+                    : 'Archived'
+            }
+            disabled={loading}
           />
         </div>
       </div>
@@ -1779,7 +1966,7 @@ export default function HrOnboardingForm() {
               </tbody>
             </table>
             {totalPages > 1 && (
-              <div className="flex items-center justify-between border-t border-emerald-100/60 px-4 py-2.5 dark:border-emerald-900/30">
+              <div data-readonly-allow className="flex items-center justify-between border-t border-emerald-100/60 px-4 py-2.5 dark:border-emerald-900/30">
                 <p className="text-[11px] text-zinc-400">
                   {safePage * PAGE_SIZE + 1}–{Math.min((safePage + 1) * PAGE_SIZE, filtered.length)} of {filtered.length}
                 </p>
@@ -5562,8 +5749,18 @@ function SubmissionDetailDialog({
     if (rowProp) setCachedRow(rowProp);
   }, [rowProp]);
 
+  // The list query intentionally omits the four heavy signature data-URLs (see
+  // LIST_COLUMNS in hr-onboarding-submissions.ts — they're ~99% of the payload
+  // and made the table load forever on localhost). We fetch the FULL row on open
+  // and merge it over the slim list row so the signature previews below render.
+  const [fullRow, setFullRow] = useState<SubmissionRow | null>(null);
+
   const open = !!rowProp;
-  const row = rowProp ?? cachedRow;
+  const baseRow = rowProp ?? cachedRow;
+  const row =
+    baseRow && fullRow && fullRow.id === baseRow.id
+      ? { ...baseRow, ...fullRow }
+      : baseRow;
 
   // Reset to the Summary tab each time a submission is opened — guarded so it
   // doesn't snap back to Summary mid-close (rowProp is null while closing).
@@ -5574,30 +5771,38 @@ function SubmissionDetailDialog({
     }
   }, [rowProp?.id]);
 
+  // On open, pull the FULL single row (incl. the signature data-URLs the list
+  // omits) plus short-lived signed URLs for the W-8BEN / IP-assignment PDFs.
+  // Keyed on the opened row's id so it fires once per open, not on every merge.
   useEffect(() => {
-    if (!row?.w8ben_file_path && !row?.ip_assignment_file_path) {
-      setW8benUrl(null);
-      setIpAssignmentUrl(null);
-      return;
-    }
+    if (!rowProp) return;
     let cancelled = false;
+    setFullRow(null);
+    setW8benUrl(null);
+    setIpAssignmentUrl(null);
     (async () => {
       try {
-        const res = await fetch(`/api/hr/onboarding-submissions/${row.id}`, { cache: 'no-store' });
-        const json = (await res.json()) as { w8benUrl?: string; ipAssignmentUrl?: string };
+        const res = await fetch(`/api/hr/onboarding-submissions/${rowProp.id}`, { cache: 'no-store' });
+        const json = (await res.json()) as {
+          row?: SubmissionRow;
+          w8benUrl?: string;
+          ipAssignmentUrl?: string;
+        };
         if (!cancelled) {
+          setFullRow(json.row ?? null);
           setW8benUrl(json.w8benUrl ?? null);
           setIpAssignmentUrl(json.ipAssignmentUrl ?? null);
         }
       } catch {
         if (!cancelled) {
+          setFullRow(null);
           setW8benUrl(null);
           setIpAssignmentUrl(null);
         }
       }
     })();
     return () => { cancelled = true; };
-  }, [row]);
+  }, [rowProp?.id]);
 
   if (!row) return null;
 
@@ -6170,7 +6375,8 @@ function FilterPill({
     <button
       type="button"
       onClick={onClick}
-      aria-pressed={active}
+      role="tab"
+      aria-selected={active}
       className={cn(
         'relative flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[12px] font-medium transition-colors',
         active

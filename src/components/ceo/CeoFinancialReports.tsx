@@ -419,7 +419,7 @@ export default function CeoFinancialReports({ viewerEmail: _viewerEmail }: { vie
             />
 
             {/* Prev / next stepper */}
-            <div className="flex items-center overflow-hidden rounded-lg border border-zinc-200 dark:border-zinc-800">
+            <div data-readonly-allow className="flex items-center overflow-hidden rounded-lg border border-zinc-200 dark:border-zinc-800">
               <button
                 type="button"
                 onClick={() => setSelectedIndex((i) => (i == null ? null : Math.max(0, i - 1)))}
@@ -446,6 +446,7 @@ export default function CeoFinancialReports({ viewerEmail: _viewerEmail }: { vie
               value={granularity}
               onChange={(v) => setGranularity(v as Granularity)}
               options={[{ value: 'weekly', label: 'Weekly' }, { value: 'monthly', label: 'Monthly' }]}
+              ariaLabel="Chart granularity"
             />
 
             <div className="ml-auto flex items-center gap-2">
@@ -490,6 +491,7 @@ export default function CeoFinancialReports({ viewerEmail: _viewerEmail }: { vie
                 value={metric}
                 onChange={(v) => setMetric(v as Metric)}
                 options={METRICS.map((m) => ({ value: m.key, label: m.label }))}
+                ariaLabel="Chart metric"
               />
             </div>
             <PayoutTrendChart
@@ -504,7 +506,7 @@ export default function CeoFinancialReports({ viewerEmail: _viewerEmail }: { vie
 
           {/* Table switcher */}
           <div className="rounded-2xl border border-zinc-200 bg-white shadow-sm dark:border-zinc-800 dark:bg-zinc-950">
-            <div className="flex items-center gap-1 border-b border-zinc-100 p-2 dark:border-zinc-800/80">
+            <div role="tablist" aria-label="Report table views" className="flex items-center gap-1 border-b border-zinc-100 p-2 dark:border-zinc-800/80">
               {([
                 { key: 'timeline', label: 'Timeline', Icon: CalendarDays },
                 { key: 'department', label: 'By department', Icon: Activity },
@@ -513,6 +515,8 @@ export default function CeoFinancialReports({ viewerEmail: _viewerEmail }: { vie
                 <button
                   key={t.key}
                   type="button"
+                  role="tab"
+                  aria-selected={tableView === t.key}
                   onClick={() => setTableView(t.key)}
                   className={cn(
                     'inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[12.5px] font-medium transition-colors',
@@ -579,19 +583,23 @@ function Segmented({
   value,
   onChange,
   options,
+  ariaLabel,
 }: {
   value: string;
   onChange: (v: string) => void;
   options: { value: string; label: string }[];
+  ariaLabel: string;
 }) {
   return (
-    <div className="inline-flex items-center rounded-lg border border-zinc-200 bg-zinc-50 p-0.5 dark:border-zinc-800 dark:bg-zinc-900">
+    <div role="tablist" aria-label={ariaLabel} className="inline-flex items-center rounded-lg border border-zinc-200 bg-zinc-50 p-0.5 dark:border-zinc-800 dark:bg-zinc-900">
       {options.map((o) => {
         const active = o.value === value;
         return (
           <button
             key={o.value}
             type="button"
+            role="tab"
+            aria-selected={active}
             onClick={() => onChange(o.value)}
             className={cn(
               'relative rounded-md px-2.5 py-1 text-[12px] font-medium transition-colors',

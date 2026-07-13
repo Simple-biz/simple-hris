@@ -793,11 +793,13 @@ export default function ContractorInvoices({ contractorEmail }: { contractorEmai
 
       {/* Sub-tabs */}
       <div className="shrink-0 border-b border-zinc-100 bg-white px-4 dark:border-zinc-800 dark:bg-[#0d1117]">
-        <div className="flex gap-0">
+        <div role="tablist" aria-label="Invoice views" className="flex gap-0">
           {(['new', 'history'] as const).map((tab) => (
             <button
               key={tab}
               type="button"
+              role="tab"
+              aria-selected={subTab === tab}
               onClick={() => {
                 setSubTab(tab);
                 if (tab === 'history') setHistoryRefreshKey((k) => k + 1);

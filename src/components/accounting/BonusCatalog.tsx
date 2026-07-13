@@ -784,11 +784,13 @@ export default function BonusCatalog({ initialData }: { initialData?: InitialAcc
         </div>
 
         {/* Inner tabs — navigation stays live even in a view-only tab. */}
-        <div className="mt-4 flex flex-wrap gap-1" data-readonly-allow>
+        <div role="tablist" aria-label="Bonus catalog views" className="mt-4 flex flex-wrap gap-1" data-readonly-allow>
           {tabs.map((t) => (
             <button
               key={t.id}
               type="button"
+              role="tab"
+              aria-selected={tab === t.id}
               onClick={() => setTab(t.id)}
               className={`relative flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
                 tab === t.id
@@ -2068,7 +2070,7 @@ function LibraryTab({
         </motion.div>
 
         {pageCount > 1 && (
-          <div className="flex items-center justify-center gap-3 pt-1">
+          <div data-readonly-allow className="flex items-center justify-center gap-3 pt-1">
             <Button
               type="button"
               variant="outline"

@@ -17,10 +17,18 @@ import { cn } from '@/lib/utils';
  * the capture phase prevents the event from ever reaching the target or bubbling
  * back up to React's delegated root listener.
  *
- * Carve-out: anything inside an element marked `data-readonly-allow`, plus
- * native search inputs (`input[type="search"]`, `[role="searchbox"]`), stays
- * fully interactive so a viewer can still search and filter what they can see.
+ * Carve-out: read-only *navigation* stays fully live so a viewer can still move
+ * around what they're allowed to see — they just can't mutate it. That means:
+ *   - anything inside an element marked `data-readonly-allow` (explicit opt-in,
+ *     e.g. pagination bars);
+ *   - ARIA tab controls (`[role="tab"]`, `[role="tablist"]`) — the in-page
+ *     sub-tab switchers that let a viewer flip between views of the same data;
+ *   - native search inputs (`input[type="search"]`, `[role="searchbox"]`).
  * Scrolling and wheel gestures are never blocked.
+ *
+ * Note we deliberately do NOT exempt `[role="tabpanel"]`: that's the tab's
+ * *content*, and exempting it would unblock the whole subtree. Only the
+ * switcher controls (tab / tablist) are navigation.
  *
  * Dialogs portaled to `document.body` render outside this subtree, so a tab's
  * dialog triggers must stay inside the wrapper (the trigger click is then
@@ -30,9 +38,17 @@ import { cn } from '@/lib/utils';
 
 /**
  * Elements (and their descendants) that stay interactive in read-only mode.
- * Mark any wrapper with `data-readonly-allow` to opt a region in explicitly.
+ * Mark any wrapper with `data-readonly-allow` to opt a region in explicitly;
+ * ARIA tab controls are recognised automatically so in-page sub-tab navigation
+ * keeps working for view-only users.
  */
-const ALLOW_SELECTOR = '[data-readonly-allow], input[type="search"], [role="searchbox"]';
+const ALLOW_SELECTOR = [
+  '[data-readonly-allow]',
+  '[role="tab"]',
+  '[role="tablist"]',
+  'input[type="search"]',
+  '[role="searchbox"]',
+].join(', ');
 
 /**
  * Heuristic carve-out so existing search/filter boxes stay live without a

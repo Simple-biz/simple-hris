@@ -1053,7 +1053,7 @@ function DeptBlock({
                   <span className="text-zinc-400"> · filtered from {state.entries.length}</span>
                 )}
               </span>
-              <div className="flex items-center gap-0.5 rounded-md border border-zinc-200 bg-white p-0.5 dark:border-zinc-800 dark:bg-zinc-900/60">
+              <div data-readonly-allow className="flex items-center gap-0.5 rounded-md border border-zinc-200 bg-white p-0.5 dark:border-zinc-800 dark:bg-zinc-900/60">
                 <button
                   type="button"
                   className="rounded p-1 text-zinc-600 hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-40 dark:text-zinc-300 dark:hover:bg-zinc-800"

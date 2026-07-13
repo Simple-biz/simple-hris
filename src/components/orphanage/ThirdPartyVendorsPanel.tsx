@@ -212,6 +212,7 @@ export default function ThirdPartyVendorsPanel({ viewerEmail }: { viewerEmail: s
 
       {/* Sub-tab nav */}
       <nav
+        role="tablist"
         className="inline-flex w-full flex-wrap items-center gap-1 rounded-lg border border-pink-100/80 bg-white/80 p-1 sm:w-fit dark:border-pink-950/45 dark:bg-zinc-950/60"
         aria-label="3rd party vendor sections"
         data-readonly-allow
@@ -421,6 +422,8 @@ function SubTabButton({
   return (
     <button
       type="button"
+      role="tab"
+      aria-selected={active}
       onClick={onClick}
       className={cn(
         'inline-flex items-center gap-2 rounded-md px-3.5 py-1.5 text-[13px] font-medium transition-colors',

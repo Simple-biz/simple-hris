@@ -627,6 +627,7 @@ export default function GiftTracker({ viewerEmail }: { viewerEmail: string | nul
 
         {/* Sub-tab toggle — Roster vs editable Catalog. */}
         <nav
+          role="tablist"
           className="inline-flex w-full flex-wrap items-center gap-1 rounded-lg border border-emerald-100/80 bg-white/80 p-1 sm:w-fit dark:border-emerald-950/45 dark:bg-zinc-950/60"
           aria-label="Gift Tracker sections"
         >
@@ -843,7 +844,7 @@ export default function GiftTracker({ viewerEmail }: { viewerEmail: string | nul
                 </motion.table>
                 </AnimatePresence>
                 {filteredRows.length > PAGE_SIZE && (
-                  <div className="flex items-center justify-between border-t border-emerald-100/60 bg-white/70 px-4 py-3 dark:border-emerald-900/40 dark:bg-zinc-950/40">
+                  <div data-readonly-allow className="flex items-center justify-between border-t border-emerald-100/60 bg-white/70 px-4 py-3 dark:border-emerald-900/40 dark:bg-zinc-950/40">
                     <span className="text-xs text-zinc-500 dark:text-zinc-400">
                       Page {page + 1} of {Math.ceil(filteredRows.length / PAGE_SIZE)}
                       {' · '}{filteredRows.length} total
@@ -986,8 +987,10 @@ function SubTabButton({
   return (
     <button
       type="button"
+      role="tab"
       onClick={onClick}
       aria-pressed={active}
+      aria-selected={active}
       className={cn(
         'flex items-center gap-1.5 rounded-md px-3 py-1.5 text-[12px] font-medium transition-colors',
         active

@@ -77,7 +77,7 @@ function PaginationBar({
   total: number; filtered: number; pageSize?: number;
 }) {
   return (
-    <div className="flex items-center justify-between border-t border-emerald-100/60 px-4 py-2.5 dark:border-emerald-900/40">
+    <div data-readonly-allow className="flex items-center justify-between border-t border-emerald-100/60 px-4 py-2.5 dark:border-emerald-900/40">
       <p className="text-[11px] text-zinc-400">
         {filtered === 0 ? '0' : `${page * pageSize + 1}–${Math.min((page + 1) * pageSize, filtered)}`} of {filtered}
         {filtered < total && <span className="text-zinc-300 dark:text-zinc-600"> (filtered from {total})</span>}
@@ -396,9 +396,11 @@ export default function HrOffboarding() {
           {/* Tab switcher + search + refresh */}
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             {/* Tabs */}
-            <div className="flex items-center gap-1 rounded-lg border border-emerald-100/80 bg-emerald-50/60 p-1 dark:border-emerald-900/50 dark:bg-emerald-950/30">
+            <div role="tablist" aria-label="Offboarding views" className="flex items-center gap-1 rounded-lg border border-emerald-100/80 bg-emerald-50/60 p-1 dark:border-emerald-900/50 dark:bg-emerald-950/30">
               <button
                 type="button"
+                role="tab"
+                aria-selected={activeTab === 'queue'}
                 onClick={() => setActiveTab('queue')}
                 className={cn(
                   'relative flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors',
@@ -424,6 +426,8 @@ export default function HrOffboarding() {
               </button>
               <button
                 type="button"
+                role="tab"
+                aria-selected={activeTab === 'hris'}
                 onClick={() => setActiveTab('hris')}
                 className={cn(
                   'relative flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors',
@@ -447,6 +451,8 @@ export default function HrOffboarding() {
               </button>
               <button
                 type="button"
+                role="tab"
+                aria-selected={activeTab === 'offboarded'}
                 onClick={() => setActiveTab('offboarded')}
                 className={cn(
                   'relative flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors',

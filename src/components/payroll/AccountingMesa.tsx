@@ -498,7 +498,7 @@ export default function AccountingMesa() {
               </div>
             )}
             {!loading && filtered.length > PAGE_SIZE && (
-              <div className="flex items-center justify-between border-t border-teal-100/80 px-5 py-2.5 dark:border-teal-900/40">
+              <div data-readonly-allow className="flex items-center justify-between border-t border-teal-100/80 px-5 py-2.5 dark:border-teal-900/40">
                 <p className="text-[11px] text-zinc-400">
                   {safePage * PAGE_SIZE + 1}–{Math.min((safePage + 1) * PAGE_SIZE, filtered.length)} of{' '}
                   {filtered.length}
@@ -950,7 +950,7 @@ function MesaBalances() {
             </div>
           )}
           {!loading && filtered.length > BALANCES_PAGE_SIZE && (
-            <div className="flex items-center justify-between border-t border-teal-100/80 px-5 py-2.5 dark:border-teal-900/40">
+            <div data-readonly-allow className="flex items-center justify-between border-t border-teal-100/80 px-5 py-2.5 dark:border-teal-900/40">
               <p className="text-[11px] text-zinc-400">
                 {safePage * BALANCES_PAGE_SIZE + 1}–{Math.min((safePage + 1) * BALANCES_PAGE_SIZE, filtered.length)} of {filtered.length}
               </p>

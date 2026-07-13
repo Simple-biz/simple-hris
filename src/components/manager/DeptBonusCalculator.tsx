@@ -2369,7 +2369,7 @@ export default function DeptBonusCalculator({
 
         {/* Pager: only for paginated depts (Lead Gen) with more than one page */}
         {paginated && (
-          <div className="flex flex-none items-center justify-between gap-3 border-t border-zinc-100 px-4 py-2 dark:border-zinc-800/70 sm:px-5">
+          <div data-readonly-allow className="flex flex-none items-center justify-between gap-3 border-t border-zinc-100 px-4 py-2 dark:border-zinc-800/70 sm:px-5">
             <span className="font-mono text-[11px] tabular-nums text-zinc-500 dark:text-zinc-400">
               {page * pageSize + 1}–{Math.min(members.length, (page + 1) * pageSize)} of {members.length}
             </span>

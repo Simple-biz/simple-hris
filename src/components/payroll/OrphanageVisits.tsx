@@ -456,7 +456,7 @@ export default function OrphanageVisits({ sessionEmail }: { sessionEmail?: strin
         </div>
       ) : (
         <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden">
-          <div className="flex shrink-0 items-center justify-between text-xs text-zinc-600 dark:text-zinc-500">
+          <div data-readonly-allow className="flex shrink-0 items-center justify-between text-xs text-zinc-600 dark:text-zinc-500">
             <span>
               Showing <span className="font-mono">{(safePage - 1) * PAGE_SIZE + 1}–{Math.min(safePage * PAGE_SIZE, filtered.length)}</span> of <span className="font-mono">{filtered.length}</span>
             </span>
