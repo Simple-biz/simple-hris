@@ -281,7 +281,13 @@ function WeeklyEarningsRail({
       const r = rateFor(localDate);
       const state: 'past' | 'today' | 'future' =
         i < todayIdx ? 'past' : i === todayIdx ? 'today' : 'future';
-      const workedHours = state === 'past' ? WORK_HOURS_PER_DAY : state === 'today' ? elapsedToday : 0;
+      // With the live Hubstaff overlay, every day pays on REAL tracked hours
+      // (today included — it grows as the tracker runs). Without it, fall back to
+      // the legacy projection: full 8h for past days, elapsed 9-5 clock for today.
+      const cellIso = cell.toISOString().slice(0, 10);
+      const workedHours = liveDays
+        ? (liveDays[cellIso] ?? 0) / 3600
+        : state === 'past' ? WORK_HOURS_PER_DAY : state === 'today' ? elapsedToday : 0;
 
       const fullDay = r != null ? weeklyCappedPay(cumPot, WORK_HOURS_PER_DAY, r.reg, r.ot) : null;
       const earned = r != null ? weeklyCappedPay(cumWorked, workedHours, r.reg, r.ot) : null;
@@ -295,14 +301,15 @@ function WeeklyEarningsRail({
         rate: r?.reg ?? null,
         fullDay,
         earned,
-        elapsedToday: state === 'today' ? elapsedToday : null,
+        workedHours,
+        elapsedToday: state === 'today' ? (liveDays ? workedHours : elapsedToday) : null,
       };
     });
 
     const earnedSoFar = days.reduce((sum, d) => sum + (d.earned ?? 0), 0);
     const potential = days.reduce((sum, d) => sum + (d.fullDay ?? 0), 0);
     return { days, earnedSoFar, potential, elapsedToday };
-  }, [nowMs, rateFor]);
+  }, [nowMs, rateFor, liveDays]);
 
   // Only for non-HSL people with a known rate.
   if (isHsl) return null;
@@ -326,7 +333,9 @@ function WeeklyEarningsRail({
           </CardTitle>
         </div>
         <p className="pl-10 text-[10px] leading-snug text-zinc-500 dark:text-zinc-500">
-          Projected at a full 8h day (9 AM&ndash;5 PM EDT). Today ticks live. Capped at 40h regular + 5h OT per week.
+          {liveDays
+            ? 'Real Hubstaff tracked time — today updates every few minutes while you track. Capped at 40h regular + 5h OT per week.'
+            : 'Projected at a full 8h day (9 AM–5 PM EDT). Today ticks live. Capped at 40h regular + 5h OT per week.'}
         </p>
       </CardHeader>
       <CardContent className="flex flex-1 flex-col gap-3 px-4 pb-5 pt-0 sm:px-5">
@@ -370,6 +379,11 @@ function WeeklyEarningsRail({
                   <span className="text-[9px] tabular-nums text-zinc-400 dark:text-zinc-600">
                     {d.dateNum}
                   </span>
+                  {liveDays != null && d.workedHours > 0 && (
+                    <span className="text-[9px] tabular-nums text-zinc-500 dark:text-zinc-500">
+                      {secondsToDisplay(Math.round(d.workedHours * 3600))}
+                    </span>
+                  )}
                   {isToday && (
                     <span className="flex items-center gap-1 text-[8.5px] font-medium uppercase tracking-wide text-emerald-600 dark:text-emerald-400">
                       <span className="relative flex h-1.5 w-1.5">
@@ -1273,6 +1287,7 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
           cacheRegularRate={parseRateText(rate?.regular_rate)}
           cacheOtRate={parseRateText(rate?.ot_rate)}
           isHsl={isHsl}
+          liveDays={liveHours?.days ?? null}
         />
         <Card
           size="sm"
@@ -1280,8 +1295,20 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
         >
           <CardHeader className="shrink-0 space-y-2 pb-2 pt-4 sm:pt-5">
             <div className="flex items-start justify-between gap-2">
-              <CardTitle className="text-sm font-semibold text-zinc-700 dark:text-zinc-300">
+              <CardTitle className="flex items-center gap-2 text-sm font-semibold text-zinc-700 dark:text-zinc-300">
                 Hubstaff hours
+                {liveHours != null && (
+                  <span
+                    title={`Today's time comes straight from Hubstaff (updated ${new Date(liveHours.asOf).toLocaleTimeString()}). Past weeks show the payroll batch.`}
+                    className="inline-flex items-center gap-1 rounded-full border border-emerald-300 bg-emerald-50 px-1.5 py-px text-[9px] font-bold uppercase tracking-wide text-emerald-700 dark:border-emerald-800/70 dark:bg-emerald-950/40 dark:text-emerald-400"
+                  >
+                    <span className="relative flex h-1.5 w-1.5">
+                      <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+                      <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                    </span>
+                    Live
+                  </span>
+                )}
               </CardTitle>
               <button
                 type="button"

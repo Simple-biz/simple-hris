@@ -331,7 +331,12 @@
       "PowerShell(node --import tsx --test src/lib/hubstaff/build-weekly-summary.test.ts)",
       "PowerShell(node --import tsx --test src/lib/hubstaff/build-weekly-summary.test.ts 2>$null)",
       "PowerShell(npm run lint; echo \"EXIT=$LASTEXITCODE\")",
-      "PowerShell(npx tsc --noEmit --incremental false)"
+      "PowerShell(npx tsc --noEmit --incremental false)",
+      "PowerShell(node --env-file=.env.local --import tsx scripts/probe-hubstaff-live.ts)",
+      "Bash(awk -F= '/^HUBSTAFF_PAT=/{gsub\\(/\"/,\"\",$2\\); print NR\": HUBSTAFF_PAT length=\"length\\($2\\)}' /c/Users/Kane/Desktop/simple-hris/.env.local)",
+      "Bash(sed -i '/^# PASTE your Personal Access Token/d; /^HUBSTAFF_PAT=\"\"$/d' .env.local)",
+      "Bash(sed -i 's|^# Hubstaff live API sync \\(Payroll Wizard \"Sync from Hubstaff\"\\) - see .env.example$|# Hubstaff live API sync - HUBSTAFF_PAT lives in .env \\(do NOT re-add it here: .env.local overrides .env\\)|' .env.local)",
+      "PowerShell(node --env-file=.env --env-file=.env.local --import tsx scripts/probe-hubstaff-live.ts)"
     ],
     "additionalDirectories": [
       "c:\\Users\\Itachi\\.claude\\projects\\c--Users-Itachi-Desktop-simple-hris\\memory",
