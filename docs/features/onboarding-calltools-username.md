@@ -80,14 +80,14 @@ whenever the row has them.
 
 ---
 
-## Orientation-attended webhook (where the username leaves the system)
+## CallTools-creation webhook (where the username leaves the system)
 
-When a manager marks the hire as **attended** on Manager → Newly Hired
-(single or bulk — bulk fires one event per hire),
-**`POST /api/manager/pending-hires/[id]/orientation`** fires the
-**`orientation_attended`** n8n webhook
-([src/lib/hr/orientation-webhook.ts](../../src/lib/hr/orientation-webhook.ts)) —
-this is the payload that provisions the Lead Gen CallTools agent:
+When a manager marks a **LEAD GEN** hire as **attended** on Manager → Newly
+Hired (single or bulk — bulk fires one event per hire; other departments fire
+nothing), **`POST /api/manager/pending-hires/[id]/orientation`** fires the
+**`call_tools_creation`** n8n webhook
+([src/lib/hr/orientation-webhook.ts](../../src/lib/hr/orientation-webhook.ts))
+— this is the payload that provisions the CallTools agent:
 
 ```jsonc
 {
@@ -97,9 +97,12 @@ this is the payload that provisions the Lead Gen CallTools agent:
   "work_email": "jamest@simple.biz",
   "personal_email": "james@gmail.com",
   "department": "Lead Gen",
-  "lead_gen": true,                    // normalizeDeptToKey-based
-  "calltools_nickname": "Mikey",       // null for non-Lead-Gen
-  "calltools_username": "Mikey J. T.", // null for non-Lead-Gen / pre-feature rows
+  "lead_gen": true,                    // always true — Lead Gen only
+  "calltools_nickname": "Mikey",
+  "calltools_username": "Mikey J. T.",
+  "pay_rate": 175,                     // regular rate, 0 when Accounting hasn't set it
+  "regular_rate": 175,                 // Payment Catalog figures (null when unset)
+  "ot_rate": 262.5,
   "attended_on": "2026-07-14",         // Manila date = Start Date
   "orientation_attended_at": "2026-07-13T16:00:00.000Z",
   "marked_by": "manager@simple.biz",
@@ -128,13 +131,13 @@ present, null for non-Lead-Gen) also ride the **`create_workspace_account`
 webhook payload** — set-work-email, the Add-Person work-email PATCH, and
 retry-workspace all resolve them through the same stored-or-minted helper, so
 whichever webhook fires first mints and the others reuse the persisted value.
-Per HR, the **orientation-attended webhook is the CallTools provisioning
+Per HR, the **mark-attended (CallTools-creation) webhook is the provisioning
 trigger**; the workspace payload carries the fields for reference. Best-effort: a
 webhook failure never blocks the mark, but it is returned to the panel, which
 toasts "attendance saved, but the n8n webhook failed" (and a per-hire tally on
-bulk). URL: Admin → Webhooks slug `orientation_attended`, env
-`N8N_ORIENTATION_ATTENDED_WEBHOOK_URL`, default
-`…n8n.cloud/webhook/orientation-attended`. The HR **Bypass** flow marks
+bulk). URL: Admin → Webhooks slug `call_tools_creation` (registered from the
+Admin dashboard, active), env `N8N_CALLTOOLS_CREATION_WEBHOOK_URL`, default
+`…n8n.cloud/webhook/calltools-creation`. The HR **Bypass** flow marks
 orientation too but deliberately does NOT fire this (a bypassed worker already
 has accounts).
 
@@ -201,8 +204,8 @@ The pure rule lives in
 | [`app/api/onboarding/[token]/route.ts`](../../app/api/onboarding/[token]/route.ts) | Mints `calltools_username` server-side at submit; returns only the nickname in `priorData` |
 | [`src/lib/supabase/hr-onboarding-submissions.ts`](../../src/lib/supabase/hr-onboarding-submissions.ts) | Row/input types, verbatim-sanitized write, pre-migration retry |
 | [`src/components/hr/HrOnboardingForm.tsx`](../../src/components/hr/HrOnboardingForm.tsx) | Detail-modal "CallTools nickname / username" rows |
-| [`src/lib/hr/orientation-webhook.ts`](../../src/lib/hr/orientation-webhook.ts) | `orientation_attended` slug + payload type + best-effort fire |
+| [`src/lib/hr/orientation-webhook.ts`](../../src/lib/hr/orientation-webhook.ts) | `call_tools_creation` slug + payload type (incl. rates) + best-effort fire |
 | [`app/api/manager/pending-hires/[id]/orientation/route.ts`](../../app/api/manager/pending-hires/[id]/orientation/route.ts) | Fires the webhook on mark-attended with the CallTools fields + `already_marked` |
 | [`src/components/manager/NewlyHiredPanel.tsx`](../../src/components/manager/NewlyHiredPanel.tsx) | Toasts when the mark saved but the n8n webhook failed (single + bulk) |
-| [`src/components/admin/AdminWebhooks.tsx`](../../src/components/admin/AdminWebhooks.tsx) | `orientation_attended` slug registry entry |
+| [`src/components/admin/AdminWebhooks.tsx`](../../src/components/admin/AdminWebhooks.tsx) | `call_tools_creation` slug registry entry |
 | [`references/sql/alter/add_calltools_username_to_onboarding.sql`](../../references/sql/alter/add_calltools_username_to_onboarding.sql) | **PENDING** migration |

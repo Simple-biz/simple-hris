@@ -449,7 +449,7 @@ function RosterSkeleton({ view }: { view: ViewMode }) {
   if (view === 'table') {
     return (
       <div className="divide-y divide-zinc-100/80 dark:divide-zinc-800/60" aria-hidden>
-        {Array.from({ length: 8 }, (_, i) => (
+        {Array.from({ length: TABLE_PAGE_SIZE }, (_, i) => (
           <div key={i} className="flex items-center gap-3 px-4 py-3">
             <div className="h-7 w-7 shrink-0 animate-pulse rounded-full bg-zinc-100 dark:bg-zinc-800" />
             <div className="h-3 w-40 animate-pulse rounded bg-zinc-100 dark:bg-zinc-800" />
@@ -463,7 +463,7 @@ function RosterSkeleton({ view }: { view: ViewMode }) {
   return (
     <div className="bg-zinc-50/60 p-3 dark:bg-zinc-950/40 sm:p-4" aria-hidden>
       <div className="grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(280px,1fr))]">
-        {Array.from({ length: 6 }, (_, i) => (
+        {Array.from({ length: CARD_PAGE_SIZE }, (_, i) => (
           <div key={i} className="rounded-xl border border-zinc-200/80 bg-white p-3.5 dark:border-zinc-800 dark:bg-zinc-900/70">
             <div className="flex items-start gap-3">
               <div className="h-11 w-11 shrink-0 animate-pulse rounded-full bg-zinc-100 dark:bg-zinc-800" />

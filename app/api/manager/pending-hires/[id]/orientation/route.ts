@@ -15,7 +15,7 @@ import { deniedResponse } from '@/lib/auth/authorize-email';
 import { isLeadGenDepartment } from '@/lib/hr/offboard-webhooks';
 import { ensureCallToolsFieldsForPendingHire } from '@/lib/hr/calltools-username-server';
 import {
-  fireOrientationAttendedWebhook,
+  fireCallToolsCreationWebhook,
   type OrientationWebhookResult,
 } from '@/lib/hr/orientation-webhook';
 
@@ -132,26 +132,34 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   });
   if (error) return NextResponse.json({ error }, { status: 500 });
 
-  // Notify n8n the hire attended (best-effort — the DB mark above is the source
-  // of truth and already succeeded). The payload carries the CallTools dialer
-  // fields from the hire's onboarding paperwork — stored, or minted+persisted
-  // right now for pre-nickname-feature Lead Gen paperwork (see
-  // ensureCallToolsFieldsForSubmission); null for other departments.
+  // LEAD GEN ONLY: fire the CallTools-creation webhook (best-effort — the DB
+  // mark above is the source of truth and already succeeded). The payload
+  // carries the dialer fields from the hire's onboarding paperwork — stored,
+  // or minted+persisted right now for pre-nickname-feature paperwork (see
+  // ensureCallToolsFieldsForSubmission) — plus the Payment Catalog rates,
+  // mirroring the create-workspace-account payload convention. Other
+  // departments fire nothing on attendance.
   let webhook: OrientationWebhookResult | null = null;
-  if (row) {
+  if (row && isLeadGenDepartment(row.department)) {
     const calltools = await ensureCallToolsFieldsForPendingHire(id, {
       name: row.name ?? null,
       department: row.department ?? null,
     });
-    webhook = await fireOrientationAttendedWebhook({
+    const toNum = (v: string | null | undefined): number | null =>
+      v != null && v !== '' && Number.isFinite(Number(v)) ? Number(v) : null;
+    const regularRate = toNum(row.regular_rate);
+    webhook = await fireCallToolsCreationWebhook({
       event: 'hire.orientation_attended',
       pending_employee_id: id,
       name: row.name ?? null,
       work_email: row.work_email ?? null,
       personal_email: row.personal_email ?? null,
       department: row.department ?? null,
-      lead_gen: isLeadGenDepartment(row.department),
+      lead_gen: true,
       ...calltools,
+      pay_rate: regularRate ?? 0,
+      regular_rate: regularRate,
+      ot_rate: toNum(row.ot_rate),
       attended_on: manilaDateFromIso(row.orientation_attended_at),
       orientation_attended_at: row.orientation_attended_at ?? null,
       marked_by: authz.sessionEmail,
