@@ -279,7 +279,21 @@
       "PowerShell($npm = \\(Get-Command npm.cmd -ErrorAction SilentlyContinue\\).Source; if \\(-not $npm\\) { $npm = \\(Get-Command node -ErrorAction SilentlyContinue\\).Source }; \"npm.cmd: $npm\"; where.exe npm 2>$null; where.exe npx 2>$null)",
       "PowerShell(& \"C:\\\\Program Files\\\\nodejs\\\\node.exe\" \".\\\\node_modules\\\\typescript\\\\bin\\\\tsc\" --noEmit 2>&1)",
       "PowerShell(& \"C:\\\\Program Files\\\\nodejs\\\\node.exe\" \".\\\\node_modules\\\\typescript\\\\bin\\\\tsc\" --noEmit; \"EXIT=$LASTEXITCODE\")",
-      "Bash(npx next *)"
+      "Bash(npx next *)",
+      "Bash(node .claude/skills/impeccable/scripts/context.mjs)",
+      "PowerShell(npx tsx --test src/lib/hr/calltools-username.test.ts)",
+      "Bash(node -e ' *)",
+      "PowerShell(npm test)",
+      "PowerShell(Test-Path \"c:\\\\Users\\\\Kane\\\\Desktop\\\\simple-hris\\\\.env.local\"; \\(Get-NetTCPConnection -LocalPort 3000 -State Listen -ErrorAction SilentlyContinue\\) -ne $null)",
+      "PowerShell($r = Invoke-WebRequest -Uri \"http://localhost:3000/onboarding/preview\" -UseBasicParsing -TimeoutSec 120; \"STATUS: $\\($r.StatusCode\\)\"; $has = $r.Content -match 'Preview mode'; \"HAS BANNER TEXT: $has\")",
+      "PowerShell(try { $r = Invoke-WebRequest -Uri \"http://localhost:3000/api/onboarding/preview/calltools-username\" -Method POST -Body '{\"nickname\":\"Mikey\",\"first\":\"James\",\"last\":\"Thomas\"}' -ContentType 'application/json' -UseBasicParsing -TimeoutSec 120 } catch { $r = $_.Exception.Response }; \"PREVIEW-NO-SESSION STATUS: $\\([int]$r.StatusCode\\)\"; try { $r2 = Invoke-WebRequest -Uri \"http://localhost:3000/api/onboarding/notarealtoken123/calltools-username\" -Method POST -Body '{\"nickname\":\"Mikey\",\"first\":\"James\",\"last\":\"Thomas\"}' -ContentType 'application/json' -UseBasicParsing -TimeoutSec 60 } catch { $r2 = $_.Exception.Response }; \"BOGUS-TOKEN STATUS: $\\([int]$r2.StatusCode\\)\")",
+      "PowerShell(npm run build)",
+      "PowerShell(\\(Get-Content package.json | Select-String 'tailwind'\\).Line)",
+      "PowerShell($r = Invoke-WebRequest -Uri \"http://localhost:3000/onboarding/preview\" -UseBasicParsing -TimeoutSec 120; \"STATUS: $\\($r.StatusCode\\)\")",
+      "PowerShell(npm run lint --if-present 2>$null)",
+      "PowerShell(node -e \"console.log\\(JSON.stringify\\(require\\('./package.json'\\).scripts, null, 2\\)\\)\")",
+      "PowerShell($r = Invoke-WebRequest -Uri \"http://localhost:3000/onboarding/preview\" -UseBasicParsing -TimeoutSec 120; \"PAGE: $\\($r.StatusCode\\)\"; try { $a = Invoke-WebRequest -Uri \"http://localhost:3000/api/onboarding/preview/calltools-username\" -Method POST -Body '{\"nickname\":\"Mikey\",\"first\":\"James\",\"last\":\"Thomas\"}' -ContentType 'application/json' -UseBasicParsing -TimeoutSec 120 } catch { $a = $_.Exception.Response }; \"PREVIEW-NO-SESSION: $\\([int]$a.StatusCode\\)\"; try { $b = Invoke-WebRequest -Uri \"http://localhost:3000/api/onboarding/sometoken123/calltools-username\" -Method POST -Body '{\"nickname\":\"Mikey\",\"first\":\"James\",\"last\":\"Thomas\"}' -ContentType 'application/json' -UseBasicParsing -TimeoutSec 60 } catch { $b = $_.Exception.Response }; \"REAL-TOKEN \\(now locked\\): $\\([int]$b.StatusCode\\)\")",
+      "PowerShell(try { $r = Invoke-WebRequest -Uri \"http://localhost:3000/api/manager/pending-hires/999999/orientation\" -Method POST -Body '{\"attendedOn\":\"2026-07-14\"}' -ContentType 'application/json' -UseBasicParsing -TimeoutSec 120 } catch { $r = $_.Exception.Response }; \"ORIENTATION ROUTE \\(no session\\): $\\([int]$r.StatusCode\\)\")"
     ],
     "additionalDirectories": [
       "c:\\Users\\Itachi\\.claude\\projects\\c--Users-Itachi-Desktop-simple-hris\\memory",

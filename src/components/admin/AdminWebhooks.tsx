@@ -87,6 +87,12 @@ const KNOWN_SLUGS: Array<{ slug: string; label: string; description: string }> =
     description:
       'Fired when a manager submits team members to the HR offboarding queue. POSTs { count, manager } and emails alissar@simple.biz the count only (no names) so HR knows a manager wants to offboard someone.',
   },
+  {
+    slug: 'orientation_attended',
+    label: 'Orientation Attended (n8n)',
+    description:
+      'Fired when a manager marks a newly hired person as having attended orientation (Manager → Newly Hired; bulk fires one event per hire). Payload carries the hire\'s identity, department, lead_gen flag, and the CallTools dialer fields from their paperwork — calltools_username (e.g. "Mikey J. T.") + calltools_nickname — so n8n can provision the Lead Gen agent account (both null for other departments). Re-marks (date edits) re-fire with already_marked: true.',
+  },
 ];
 
 function uid() {

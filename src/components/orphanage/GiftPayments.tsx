@@ -16,6 +16,7 @@ import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
+import { DatePicker } from '@/components/ui/date-picker';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
@@ -814,13 +815,23 @@ function FieldRow({
       <Label className="w-[120px] shrink-0 text-[11px] font-medium text-zinc-600 dark:text-zinc-400">
         {label}
       </Label>
-      <Input
-        value={value}
-        type={type}
-        placeholder={placeholder}
-        onChange={(e) => onChange(e.target.value)}
-        className="h-8 flex-1 border-zinc-200 text-xs dark:border-zinc-700"
-      />
+      {type === 'date' ? (
+        <DatePicker
+          value={String(value ?? '')}
+          onChange={onChange}
+          aria-label={label}
+          className="h-8 text-xs"
+          containerClassName="flex-1"
+        />
+      ) : (
+        <Input
+          value={value}
+          type={type}
+          placeholder={placeholder}
+          onChange={(e) => onChange(e.target.value)}
+          className="h-8 flex-1 border-zinc-200 text-xs dark:border-zinc-700"
+        />
+      )}
     </div>
   );
 }

@@ -12,6 +12,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
+import { DatePicker } from '@/components/ui/date-picker';
 import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
@@ -106,11 +107,10 @@ export default function VendorInvoiceMarkPaidDialog({
             />
           </FieldRow>
           <FieldRow id="p-date" label="Date sent">
-            <Input
+            <DatePicker
               id="p-date"
-              type="date"
               value={sentDate}
-              onChange={(e) => setSentDate(e.target.value)}
+              onChange={setSentDate}
               disabled={saving}
             />
           </FieldRow>

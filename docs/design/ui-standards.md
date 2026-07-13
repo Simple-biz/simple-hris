@@ -766,9 +766,24 @@ count once the debounced query has resolved. See `ProcessorQueue.SearchBar`.
 
 ### 9.3 Date / time inputs
 
-Native `<Input type="date">` is used everywhere. Pair with a calendar icon
-when standalone. Don't introduce a date picker library — the native input is
-acceptable for the precision this app needs (day-level).
+Use the shared pickers in `components/ui/date-picker.tsx` — still no
+third-party date library; both are hand-rolled and dependency-free:
+
+- `<DatePicker />` for single dates. Same value contract as the old native
+  input (`value: "YYYY-MM-DD" | ""`, `onChange(iso)`), plus `min`/`max`,
+  `required` (keeps native form validation via an invisible mirror input and
+  hides the clear ×), `className` (trigger: height/text/focus-ring accent) and
+  `containerClassName` (width/flex — the trigger itself is `w-full`). Calendar
+  popover has month/year drill-down (click the header label), full keyboard
+  nav (arrows, PageUp/Down ± month, Shift+PageUp/Down ± year, Home/End),
+  a Today shortcut, and edge-aware placement.
+- `<DateRangePicker />` for range filters (formerly
+  `PeopleDateRangePicker`, now shared). Two-month calendar on `sm:`+, preset
+  chips, hover span preview, optional `accent` object for per-dashboard
+  theming (defaults to the teal used by `SmoothSelect`).
+
+Don't use native `<input type="date">` in new code — its popup ignores the
+app theme and renders inconsistently across browsers.
 
 ---
 

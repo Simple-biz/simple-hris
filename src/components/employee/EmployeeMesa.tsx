@@ -28,6 +28,7 @@ import { Badge } from '@/components/ui/badge';
 import { AnimatePresence, motion } from 'motion/react';
 import { cn } from '@/lib/utils';
 import { SmoothSelect } from '@/components/ui/smooth-select';
+import { DatePicker } from '@/components/ui/date-picker';
 import { toast } from 'sonner';
 import type { EmployeeHourlyRateRow } from '@/lib/supabase/employee-hourly-rates';
 import type { MesaLedgerEvent, MesaMemberSummary } from '@/lib/mesa/ledger';
@@ -1001,11 +1002,11 @@ function MesaRequestForm({
                       <label className="text-sm font-semibold text-zinc-900 dark:text-white">
                         Date you completed FPU <span className="text-rose-500">*</span>
                       </label>
-                      <input
-                        type="date"
+                      <DatePicker
                         value={fpuDate}
-                        onChange={(e) => setFpuDate(e.target.value)}
-                        className="w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 focus:border-teal-500 focus:outline-none focus:ring-2 focus:ring-teal-500/20 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
+                        onChange={setFpuDate}
+                        required
+                        className="dark:bg-zinc-900 focus-visible:border-teal-500 focus-visible:ring-teal-500/20"
                       />
                     </div>
                   </div>

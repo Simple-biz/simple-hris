@@ -15,6 +15,7 @@ import {
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { DatePicker } from '@/components/ui/date-picker';
 import { Label } from '@/components/ui/label';
 import {
   Table,
@@ -392,12 +393,12 @@ export default function OrphanageVisits({ sessionEmail }: { sessionEmail?: strin
           </div>
           <div className="w-full space-y-1.5 sm:w-44">
             <Label htmlFor="visit-date" className="text-xs text-zinc-600 dark:text-zinc-400">Visit date</Label>
-            <Input
+            <DatePicker
               id="visit-date"
-              type="date"
               value={formDate}
-              onChange={e => setFormDate(e.target.value)}
-              className="h-9 border-zinc-200 bg-white text-zinc-900 dark:border-zinc-800 dark:bg-zinc-900/80 dark:text-zinc-200"
+              onChange={setFormDate}
+              required
+              className="h-9 dark:bg-zinc-900/80"
             />
           </div>
           <div className="min-w-0 flex-1 space-y-1.5">

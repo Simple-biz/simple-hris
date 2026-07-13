@@ -12,6 +12,7 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
+import { DatePicker } from '@/components/ui/date-picker';
 import { SmoothSelect } from '@/components/ui/smooth-select';
 import { cn } from '@/lib/utils';
 
@@ -284,11 +285,11 @@ export default function ManagerTransferDialog({ open, onOpenChange, myDepartment
               <CalendarClock className="h-3.5 w-3.5" />
               Proposed effective date
             </label>
-            <input
-              type="date"
+            <DatePicker
               value={effectiveDate}
-              onChange={(e) => setEffectiveDate(e.target.value)}
-              className="h-9 w-full rounded-lg border border-zinc-200 bg-white px-2.5 text-sm text-zinc-900 focus:border-blue-300 focus:outline-none focus:ring-1 focus:ring-blue-200 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
+              onChange={setEffectiveDate}
+              required
+              className="h-9 text-sm focus-visible:border-blue-300 focus-visible:ring-blue-200 dark:bg-zinc-900"
             />
             <p className="mt-1 text-[11px] text-zinc-400">
               Defaults to today. A <strong>past</strong> date is allowed for a backdated transfer — the

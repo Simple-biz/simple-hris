@@ -43,6 +43,13 @@ export type HrOnboardingSubmissionRow = {
   /** Surname for the @simple.biz Google account — sent to the workspace-account
    *  webhook in place of the legal last name (falls back to it when null). */
   gmail_surname: string | null;
+  /** Lead Gen only: the nickname the hire typed on the paperwork — how they want
+   *  to be called on the CallTools dialer. Null for every other department. */
+  calltools_nickname: string | null;
+  /** Lead Gen only: the auto-minted CallTools dialer username —
+   *  `<Nickname> <first initial>. <surname slice>.` (e.g. "Mikey J. T."), the
+   *  slice lengthened until unique (see src/lib/hr/calltools-username.ts). */
+  calltools_username: string | null;
   phone: string | null;
   email: string | null;
   /**
@@ -141,6 +148,11 @@ export type SubmitOnboardingInput = {
   /** Optional surname for the @simple.biz Google account (falls back to the
    *  legal last name when blank). */
   gmail_surname?: string | null;
+  /** Lead Gen only — the hire's self-chosen dialer nickname. Omit (undefined)
+   *  for other departments so the columns aren't touched. */
+  calltools_nickname?: string | null;
+  /** Lead Gen only — the minted CallTools username ("Mikey J. T."). */
+  calltools_username?: string | null;
   phone: string;
   email: string;
   /** Optional pre-composed location; normally derived from the parts below. */
@@ -226,6 +238,11 @@ export function generateOnboardingToken(): string {
  * signatures there instead. Keep this list in sync with the columns the UI needs
  * (all non-signature columns of the row).
  */
+// NOTE: calltools_nickname / calltools_username are deliberately NOT listed —
+// the list/table never shows them, the detail modal reads them from its
+// full-row (`select("*")`) hydration fetch, and keeping them out means this
+// query keeps working on a database where migration
+// add_calltools_username_to_onboarding.sql hasn't run yet.
 const LIST_COLUMNS = [
   "id", "token", "status", "created_at", "created_by", "submitted_at",
   "invite_name", "invite_personal_email", "invite_department", "invite_country",
@@ -409,6 +426,16 @@ export async function submitHrOnboarding(
     // (only Unicode-folded). It is NOT title-cased: it can legitimately be a
     // short all-caps initial form and feeds account provisioning, not display.
     gmail_surname: sanitizeNameOrNull(input.gmail_surname),
+    // Lead Gen dialer fields — only written when the client sent them (the form
+    // sends them for Lead Gen hires only), so other departments never touch the
+    // columns. Kept verbatim like gmail_surname: the username's casing
+    // ("Mikey J. TH.") is deliberate and must match what the hire was shown.
+    ...(input.calltools_nickname !== undefined && {
+      calltools_nickname: sanitizeNameOrNull(input.calltools_nickname),
+    }),
+    ...(input.calltools_username !== undefined && {
+      calltools_username: sanitizeNameOrNull(input.calltools_username),
+    }),
     phone: input.phone.trim(),
     email: input.email.trim().toLowerCase(),
     location: composedLocation,
@@ -460,6 +487,32 @@ export async function submitHrOnboarding(
     .eq("token", token)
     .select("*")
     .single();
+  // Pre-migration safety net: on a database where the calltools_* columns don't
+  // exist yet (add_calltools_username_to_onboarding.sql not run), a Lead Gen
+  // submit would otherwise hard-fail and block the hire. Retry once without
+  // those fields — the submission lands, only the dialer username is dropped.
+  if (
+    error &&
+    /calltools_/i.test(error.message) &&
+    ("calltools_nickname" in update || "calltools_username" in update)
+  ) {
+    console.error(
+      "hr_onboarding_submissions is missing the calltools_* columns (run " +
+        "references/sql/alter/add_calltools_username_to_onboarding.sql); " +
+        "saving the submission without them:",
+      error.message,
+    );
+    delete update.calltools_nickname;
+    delete update.calltools_username;
+    const retry = await sb
+      .from(TABLE)
+      .update(update)
+      .eq("token", token)
+      .select("*")
+      .single();
+    if (retry.error) return { row: null, error: retry.error.message };
+    return { row: retry.data as HrOnboardingSubmissionRow, error: null };
+  }
   if (error) return { row: null, error: error.message };
   return { row: data as HrOnboardingSubmissionRow, error: null };
 }

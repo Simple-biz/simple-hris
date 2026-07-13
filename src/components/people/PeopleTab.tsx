@@ -15,7 +15,7 @@ import { TeamAvatar } from '@/components/team/team-ui';
 import { SmoothSelect } from '@/components/ui/smooth-select';
 import { Skeleton } from '@/components/ui/skeleton';
 import EmployeePabCalendar from '@/components/employee/EmployeePabCalendar';
-import PeopleDateRangePicker, { type DateRange } from './PeopleDateRangePicker';
+import { DatePicker, DateRangePicker, type DateRange } from '@/components/ui/date-picker';
 import PeopleBankChanges from './PeopleBankChanges';
 import { BankChangeDetailDialog, timeAgo, type BankChangeEntry } from './bank-change-detail';
 import { getTabCache, setTabCache, TAB_CACHE_KEYS } from '@/lib/accounting/tab-cache';
@@ -191,7 +191,7 @@ interface ProfileForm {
 }
 
 /** Master "Start Date" is free-text (e.g. "2/26/18"); coerce to YYYY-MM-DD for
- *  the <input type="date"> when parseable, else '' (the field shows blank and the
+ *  the DatePicker when parseable, else '' (the field shows blank and the
  *  original is preserved unless the user picks a new date). */
 function toDateInput(raw: string | null | undefined): string {
   if (!raw?.trim()) return '';
@@ -246,12 +246,20 @@ function EditField({
   return (
     <div className={cn(wide && 'sm:col-span-2')}>
       <label className="text-[10.5px] uppercase tracking-wide text-zinc-400">{label}</label>
-      <Input
-        value={value}
-        type={type}
-        onChange={(e) => onChange(e.target.value)}
-        className={cn('mt-1 h-8 text-[13px]', accent.ring)}
-      />
+      {type === 'date' ? (
+        <DatePicker
+          value={value}
+          onChange={onChange}
+          className={cn('mt-1 h-8 text-[13px]', accent.ring)}
+        />
+      ) : (
+        <Input
+          value={value}
+          type={type}
+          onChange={(e) => onChange(e.target.value)}
+          className={cn('mt-1 h-8 text-[13px]', accent.ring)}
+        />
+      )}
       {hint && <p className="mt-0.5 text-[10.5px] text-zinc-400">{hint}</p>}
     </div>
   );
@@ -788,7 +796,7 @@ export default function PeopleTab({
             }
           />
           {/* Custom date-range picker — aggregates hours/OT across the range. */}
-          <PeopleDateRangePicker
+          <DateRangePicker
             value={range}
             onChange={onRangeChange}
             accent={accent}
@@ -3379,7 +3387,7 @@ function SpecialTransferDialog({
 
           <div>
             <label htmlFor="st-date" className="mb-1.5 block text-xs font-medium text-zinc-600 dark:text-zinc-300">Date sent</label>
-            <Input id="st-date" type="date" value={date} max={todayIso()} onChange={(e) => setDate(e.target.value)} className={accent.ring} />
+            <DatePicker id="st-date" value={date} max={todayIso()} onChange={setDate} required className={accent.ring} />
           </div>
 
           <div>

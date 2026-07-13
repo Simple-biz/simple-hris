@@ -14,6 +14,7 @@ import {
   CloudUpload,
   Eraser,
   FileText,
+  Headset,
   Loader2,
   PartyPopper,
   Shield,
@@ -21,7 +22,9 @@ import {
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { DatePicker } from '@/components/ui/date-picker';
 import { Label } from '@/components/ui/label';
+import { Switch } from '@/components/ui/switch';
 import { Toaster } from '@/components/ui/sonner';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import { cn } from '@/lib/utils';
@@ -41,10 +44,14 @@ import {
 import { ONBOARDING_COUNTRIES, currencyForCountry } from '@/lib/onboarding/countries';
 import { toTitleCaseName } from '@/lib/text/sanitize-name';
 import { NAME_EXTENSIONS } from '@/lib/hr/work-email';
+import { calltoolsUsernameCandidates, isLeadGenDepartment } from '@/lib/hr/calltools-username';
 
 type PriorData = {
   full_name: string | null;
   gmail_surname: string | null;
+  /** Lead Gen only. The minted calltools_username is deliberately NOT returned
+   *  to the paperwork — it's internal to HR and re-minted on re-submit. */
+  calltools_nickname: string | null;
   phone: string | null;
   email: string | null;
   location: string | null;
@@ -91,11 +98,19 @@ type LinkInfo = {
 
 type FormState = {
   first_name: string;
-  /** Read-only display name mirrored from {@link first_name}. When the hire has
-   *  more than one first name (e.g. "Mary Grace"), this holds whichever one they
-   *  stepped to with the arrow buttons, defaulting to the first. Display-only —
-   *  it is NOT part of the submit payload. */
+  /** For most departments: a read-only display name mirrored from
+   *  {@link first_name}. When the hire has more than one first name (e.g.
+   *  "Mary Grace"), this holds whichever one they stepped to with the arrow
+   *  buttons, defaulting to the first, and it is NOT part of the submit payload.
+   *  For LEAD GEN hires the field is editable instead — the hire types how they
+   *  want to be called on the CallTools dialer, it feeds
+   *  {@link calltools_username}, and it IS submitted (calltools_nickname). */
   nickname: string;
+  /** Lead Gen only: read-only auto-minted CallTools dialer username —
+   *  `<Nickname> <first initial>. <surname slice>.` (e.g. "Mikey J. T."), the
+   *  slice lengthening until unique (mirrors the Gmail Surname rule). Empty for
+   *  every other department. */
+  calltools_username: string;
   last_name: string;
   /** Optional name extension / generational suffix (Jr., Sr., II, III, IV) shown
    *  beside the last name. Folded into the stored full_name for HR + contracts,
@@ -141,6 +156,7 @@ type FormState = {
 const emptyForm: FormState = {
   first_name: '',
   nickname: '',
+  calltools_username: '',
   last_name: '',
   extension: '',
   gmail_surname: '',
@@ -238,6 +254,30 @@ export default function OnboardingFormPage() {
   // True while the Gmail-surname lookup is in flight (debounce + request) — drives
   // the inline "searching Google Workspace" indicator on the read-only field.
   const [surnameLoading, setSurnameLoading] = useState(false);
+  // Same, for the CallTools-username lookup on the Lead Gen Welcome step.
+  const [calltoolsLoading, setCalltoolsLoading] = useState(false);
+  // Preview-only: lets HR flip the sample form into the Lead Gen experience
+  // (editable nickname + auto-minted CallTools username) to test it. Real links
+  // get Lead Gen behaviour from their invite_department instead.
+  const [previewLeadGen, setPreviewLeadGen] = useState(false);
+
+  // Lead Gen hires choose their own dialer nickname and get a CallTools
+  // username minted from it; everyone else keeps the mirrored read-only
+  // Nickname. Driven by the invite's department — or the Lead Gen switch in
+  // preview, where there is no invite.
+  const isLeadGen = isPreview
+    ? previewLeadGen
+    : isLeadGenDepartment(link?.invite_department);
+
+  // Preview-only: flip the sample form between the standard and the Lead Gen
+  // experience. Shared by the banner pill and the Welcome-step switch.
+  // Entering Lead Gen blanks the mirrored nickname so the tester types their
+  // own (the real Lead Gen behaviour); leaving re-mirrors it from the first
+  // name automatically.
+  const setPreviewLeadGenMode = useCallback((next: boolean) => {
+    setPreviewLeadGen(next);
+    if (next) setForm((f) => ({ ...f, nickname: '', calltools_username: '' }));
+  }, []);
 
   // Honour the OS "reduce motion" setting — fall back to a plain cross-fade.
   const reduceMotion = useReducedMotion();
@@ -272,9 +312,13 @@ export default function OnboardingFormPage() {
         if (prior) {
           // Pre-fill from previous submission so the hire doesn't start from scratch.
           const priorName = splitName(prior.full_name);
+          // A Lead Gen hire's nickname is their own typed dialer name — restore
+          // it from the stored value, never from the first name.
+          const leadGen = isLeadGenDepartment(json.row?.invite_department);
           setForm({
             first_name: priorName.first,
-            nickname: priorName.first,
+            nickname: leadGen ? prior.calltools_nickname ?? '' : priorName.first,
+            calltools_username: '', // preview-only display value; never prefilled
             last_name: priorName.last,
             extension: priorName.extension,
             gmail_surname: prior.gmail_surname ?? '',
@@ -316,13 +360,14 @@ export default function OnboardingFormPage() {
             contract_date: prior.contract_date ?? '',
           });
         } else {
-          // New submission — seed invite fields as hints.
+          // New submission — seed invite fields as hints. A Lead Gen hire's
+          // nickname stays blank on purpose: they type their own dialer name.
           if (json.row?.invite_name) {
             const inviteName = splitName(json.row.invite_name);
             setForm((f) => ({
               ...f,
               first_name: inviteName.first,
-              nickname: inviteName.first,
+              nickname: isLeadGenDepartment(json.row?.invite_department) ? '' : inviteName.first,
               last_name: inviteName.last,
               extension: inviteName.extension,
               // Pre-fill the IP document's name from the invite too.
@@ -418,7 +463,11 @@ export default function OnboardingFormPage() {
   // later one with the arrows, that choice is kept as long as it still appears
   // in the (re-typed / re-cased) first name — otherwise it falls back to the
   // first. Case-insensitive match so blur-time title-casing doesn't reset it.
+  // Lead Gen hires type their OWN nickname (it feeds the CallTools username),
+  // so the mirror must never clobber it — but flipping the preview toggle back
+  // off re-mirrors, which is why isLeadGen is a dependency.
   useEffect(() => {
+    if (isLeadGen) return;
     const tokens = form.first_name.trim().split(/\s+/).filter(Boolean);
     setForm((f) => {
       const matchIdx = tokens.findIndex(
@@ -427,7 +476,60 @@ export default function OnboardingFormPage() {
       const desired = matchIdx >= 0 ? tokens[matchIdx] : tokens[0] ?? '';
       return f.nickname === desired ? f : { ...f, nickname: desired };
     });
-  }, [form.first_name]);
+  }, [form.first_name, isLeadGen]);
+
+  // PREVIEW ONLY: derive the "CallTools Username" live so HR can watch it mint —
+  // the self-chosen nickname + first-name initial + a progressive surname slice
+  // ("Mikey J. T.", lengthening to "Mikey J. TH." on a collision), checked
+  // against the usernames this system has already minted (the endpoint is
+  // session-gated for the preview token). Same debounced pattern as the Gmail
+  // Surname above. A REAL hire never sees the username, so their form never
+  // derives it — the submit route mints it server-side instead.
+  useEffect(() => {
+    const nickname = form.nickname.trim();
+    const first = form.first_name.trim();
+    const last = form.last_name.trim();
+    const apply = (val: string) =>
+      setForm((f) => (f.calltools_username === val ? f : { ...f, calltools_username: val }));
+
+    // The shortest candidate ("<Nick> <F>. <S>.") — the guaranteed minimal
+    // username, seeded immediately and kept whenever the lookup can't run.
+    const fallback =
+      isPreview && isLeadGen ? calltoolsUsernameCandidates(nickname, first, last)[0] ?? '' : '';
+    if (!fallback) {
+      setCalltoolsLoading(false);
+      apply(''); // not Lead Gen, or nothing to generate yet
+      return;
+    }
+    apply(fallback);
+    setCalltoolsLoading(true);
+    let cancelled = false;
+    const handle = setTimeout(() => {
+      void (async () => {
+        try {
+          const res = await fetch(`/api/onboarding/${token}/calltools-username`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ nickname, first, last }),
+          });
+          const json = (await res.json().catch(() => ({}))) as { calltools_username?: string };
+          if (cancelled) return;
+          // Use the collision-aware result when present; otherwise keep the
+          // minimal candidate.
+          apply(res.ok && json.calltools_username ? json.calltools_username : fallback);
+        } catch {
+          if (!cancelled) apply(fallback);
+        } finally {
+          // Only the latest (non-superseded) request clears the indicator.
+          if (!cancelled) setCalltoolsLoading(false);
+        }
+      })();
+    }, 300);
+    return () => {
+      cancelled = true;
+      clearTimeout(handle);
+    };
+  }, [form.nickname, form.first_name, form.last_name, isPreview, isLeadGen, token]);
 
   const update = useCallback(<K extends keyof FormState>(k: K, v: FormState[K]) => {
     setForm((f) => ({ ...f, [k]: v }));
@@ -443,6 +545,11 @@ export default function OnboardingFormPage() {
       case 1:
         if (!form.first_name.trim()) return 'Please enter your first name.';
         if (!form.last_name.trim()) return 'Please enter your last name.';
+        // Lead Gen: the nickname is the hire's own dialer name and the CallTools
+        // username is minted from it, so it can't be blank.
+        if (isLeadGen && !form.nickname.trim()) {
+          return 'Please enter the nickname you want to use in CallTools.';
+        }
         if (!form.phone.trim()) return 'Please enter your phone number.';
         if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim())) return 'Please enter a valid email.';
         if (!form.country.trim()) return 'Please select your country.';
@@ -497,7 +604,7 @@ export default function OnboardingFormPage() {
       default:
         return null;
     }
-  }, [form]);
+  }, [form, isLeadGen]);
 
   const goNext = useCallback(() => {
     // In preview, skip validation so HR can page through every step freely.
@@ -594,6 +701,13 @@ export default function OnboardingFormPage() {
             .filter(Boolean)
             .join(' '),
           gmail_surname: form.gmail_surname.trim() || null,
+          // Lead Gen only — just the self-chosen dialer nickname. The CallTools
+          // username is hidden from the hire and minted SERVER-SIDE at submit
+          // (the route ignores any client-sent value). Omitted entirely for
+          // other departments so the server never touches those columns.
+          ...(isLeadGen && {
+            calltools_nickname: form.nickname.trim() || null,
+          }),
           phone: form.phone.trim(),
           email: form.email.trim(),
           country: form.country.trim() || null,
@@ -642,7 +756,7 @@ export default function OnboardingFormPage() {
     } finally {
       setSubmitting(false);
     }
-  }, [form, token, validateStep, isPreview, generateIpPreviewPdf, step]);
+  }, [form, token, validateStep, isPreview, isLeadGen, generateIpPreviewPdf, step]);
 
   if (loading) {
     return (
@@ -684,9 +798,37 @@ export default function OnboardingFormPage() {
     <main className="onboarding-public min-h-dvh bg-gradient-to-br from-sky-50 via-white to-emerald-50 px-3 py-6 sm:px-6 sm:py-10">
       <div className="mx-auto flex w-full max-w-3xl flex-col gap-5">
         {isPreview && (
-          <div className="flex items-center gap-2 rounded-xl border border-amber-300 bg-amber-50 px-4 py-2.5 text-xs font-medium text-amber-900 shadow-sm">
+          <div className="flex flex-wrap items-center gap-2 rounded-xl border border-amber-300 bg-amber-50 px-4 py-2.5 text-xs font-medium text-amber-900 shadow-sm">
             <Sparkles className="h-4 w-4 shrink-0 text-amber-600" />
-            Preview mode — this is what new hires see. Nothing here is saved or submitted.
+            <span className="min-w-0 flex-1">
+              Preview mode — this is what new hires see. Nothing here is saved or submitted.
+            </span>
+            {/* Flip the sample form into the Lead Gen experience: editable
+                nickname + live CallTools username on the Welcome step. */}
+            <button
+              type="button"
+              role="switch"
+              aria-checked={previewLeadGen}
+              onClick={() => setPreviewLeadGenMode(!previewLeadGen)}
+              title="Preview the paperwork as a Lead Gen hire — the Welcome step swaps to a type-your-own nickname and mints the CallTools username live."
+              className={cn(
+                'flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1 text-[11px] font-semibold transition-colors',
+                previewLeadGen
+                  ? 'border-violet-500 bg-violet-600 text-white shadow-sm'
+                  : 'border-amber-300 bg-white text-amber-900 hover:bg-amber-100',
+              )}
+            >
+              <Headset className="h-3.5 w-3.5" />
+              Test as Lead Gen
+              <span
+                className={cn(
+                  'rounded-full px-1.5 py-px text-[9px] font-bold uppercase tracking-wide',
+                  previewLeadGen ? 'bg-white/25 text-white' : 'bg-amber-100 text-amber-700',
+                )}
+              >
+                {previewLeadGen ? 'On' : 'Off'}
+              </span>
+            </button>
           </div>
         )}
         {/* Brand header */}
@@ -744,7 +886,7 @@ export default function OnboardingFormPage() {
               transition={{ duration: reduceMotion ? 0.15 : 0.26, ease: [0.22, 1, 0.36, 1] }}
             >
               {step === 0 && <StepIpAssignment form={form} update={update} preview={isPreview} onPreview={generateIpPreviewPdf} previewBusy={submitting} />}
-              {step === 1 && <Step1Welcome form={form} update={update} link={link} surnameLoading={surnameLoading} />}
+              {step === 1 && <Step1Welcome form={form} update={update} link={link} surnameLoading={surnameLoading} isLeadGen={isLeadGen} calltoolsLoading={calltoolsLoading} preview={isPreview} onPreviewLeadGenChange={setPreviewLeadGenMode} />}
               {step === 2 && <Step2NonSolicitation form={form} update={update} />}
               {step === 3 && <Step3Privacy form={form} update={update} />}
               {step === 4 && <Step4W8Ben token={token!} form={form} update={update} preview={isPreview} />}
@@ -927,11 +1069,24 @@ function Step1Welcome({
   update,
   link,
   surnameLoading,
+  isLeadGen,
+  calltoolsLoading,
+  preview,
+  onPreviewLeadGenChange,
 }: {
   form: FormState;
   update: <K extends keyof FormState>(k: K, v: FormState[K]) => void;
   link: LinkInfo;
   surnameLoading: boolean;
+  /** Lead Gen: the Nickname becomes the hire's own typed dialer name and the
+   *  auto-minted CallTools Username field appears beneath it. */
+  isLeadGen: boolean;
+  calltoolsLoading: boolean;
+  /** Preview mode: shows the inline "Onboard as Lead Gen" switch right above
+   *  the Nickname field so HR can watch it flip between the system-generated
+   *  mirror and the Lead Gen type-your-own version. */
+  preview?: boolean;
+  onPreviewLeadGenChange?: (next: boolean) => void;
 }) {
   // Currency is derived from the selected country (United States → USD,
   // Philippines → PHP, Colombia → COP) — knowing the country is how we know it.
@@ -1005,6 +1160,105 @@ function Step1Welcome({
             />
           </Field>
         </div>
+        {/* Preview-only: the Lead Gen switch sits right on top of the Nickname
+            field so HR can flip it and watch the field change from the
+            system-generated mirror to the type-your-own Lead Gen version. */}
+        {preview && (
+          <div
+            className={cn(
+              'flex flex-wrap items-center justify-between gap-3 rounded-xl border border-dashed px-3.5 py-3 transition-colors sm:col-span-2',
+              isLeadGen ? 'border-violet-400 bg-violet-50/70' : 'border-zinc-300 bg-zinc-50/60',
+            )}
+          >
+            <div className="flex min-w-0 items-center gap-2.5">
+              <span
+                className={cn(
+                  'flex h-9 w-9 shrink-0 items-center justify-center rounded-lg transition-colors',
+                  isLeadGen ? 'bg-violet-600 text-white' : 'bg-zinc-200 text-zinc-500',
+                )}
+              >
+                <Headset className="h-4.5 w-4.5" />
+              </span>
+              <div className="min-w-0">
+                <p className={cn('text-xs font-semibold', isLeadGen ? 'text-violet-900' : 'text-zinc-700')}>
+                  Preview test — onboard this hire as Lead Gen
+                </p>
+                <p className={cn('text-[11px] leading-relaxed', isLeadGen ? 'text-violet-700/90' : 'text-zinc-500')}>
+                  {isLeadGen
+                    ? 'Lead Gen: the hire types their own nickname, and their CallTools username is minted from it below.'
+                    : 'Off: the nickname is auto-generated from the first name, like every other department.'}
+                </p>
+              </div>
+            </div>
+            <label className="flex shrink-0 cursor-pointer items-center gap-2">
+              <span
+                className={cn(
+                  'text-[11px] font-bold uppercase tracking-wide',
+                  isLeadGen ? 'text-violet-700' : 'text-zinc-400',
+                )}
+              >
+                {isLeadGen ? 'Lead Gen' : 'Standard'}
+              </span>
+              <Switch
+                checked={isLeadGen}
+                onCheckedChange={(v) => onPreviewLeadGenChange?.(v)}
+                aria-label="Onboard as Lead Gen"
+                className="data-checked:bg-violet-600"
+              />
+            </label>
+          </div>
+        )}
+        {isLeadGen ? (
+          <>
+            {/* Lead Gen: the hire types their OWN dialer nickname (never derived
+                from their name). The CallTools username minted from it is an
+                internal HR value — the hire never sees it, so the field below
+                renders ONLY in preview; real submissions mint it server-side. */}
+            <Field label="Nickname" required className="sm:col-span-2">
+              <Input
+                value={form.nickname ?? ''}
+                onChange={(e) => update('nickname', e.target.value)}
+                onBlur={(e) => update('nickname', toTitleCaseName(e.target.value))}
+                placeholder="How you want to be called — e.g. Mikey"
+                className="font-medium"
+              />
+              <p className="text-[11px] leading-relaxed text-zinc-500">
+                You&rsquo;re joining as <span className="font-semibold text-zinc-600">Lead Gen</span> — type the
+                nickname you want to go by on the dialer.
+                {preview && ' It builds the CallTools username below.'}
+              </p>
+            </Field>
+            {preview && (
+              <Field label="CallTools Username" className="sm:col-span-2">
+                <div className="relative">
+                  <Input
+                    value={form.calltools_username ?? ''}
+                    readOnly
+                    tabIndex={-1}
+                    aria-readonly
+                    placeholder={
+                      form.nickname.trim() && form.first_name.trim()
+                        ? ''
+                        : 'Enter your nickname and name above'
+                    }
+                    className="pr-52 font-mono tracking-wide"
+                  />
+                  {calltoolsLoading && (
+                    <span className="pointer-events-none absolute right-3 top-1/2 inline-flex -translate-y-1/2 items-center gap-1.5 text-[11px] font-medium text-emerald-600">
+                      <span className="h-3 w-3 animate-spin rounded-full border-2 border-emerald-500 border-t-transparent" />
+                      Checking availability…
+                    </span>
+                  )}
+                </div>
+                <p className="text-[11px] leading-relaxed text-zinc-500">
+                  <span className="font-semibold text-violet-700">Only visible in this preview</span> — the hire
+                  never sees this field. On a real submission the username is generated when they submit: nickname
+                  plus initials, with extra surname letters added automatically if it&rsquo;s already in use.
+                </p>
+              </Field>
+            )}
+          </>
+        ) : (
         <Field label="Nickname" className="sm:col-span-2">
           <div className="flex items-center gap-2">
             {hasMultipleFirstNames && (
@@ -1047,6 +1301,7 @@ function Step1Welcome({
             )}
           </p>
         </Field>
+        )}
         <Field label="Gmail Surname" className="sm:col-span-2">
           <div className="relative">
             <Input
@@ -1624,10 +1879,10 @@ function Step6Contract({
       </Field>
 
       <Field label="Date of Signature" required className="max-w-xs">
-        <Input
-          type="date"
+        <DatePicker
           value={form.contract_date}
-          onChange={(e) => update('contract_date', e.target.value)}
+          onChange={(v) => update('contract_date', v)}
+          required
         />
       </Field>
     </div>

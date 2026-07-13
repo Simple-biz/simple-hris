@@ -22,6 +22,7 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { DatePicker } from '@/components/ui/date-picker';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { toast } from 'sonner';
@@ -362,24 +363,22 @@ export default function EmployeeLeaves({
                 </div>
                 <div className="space-y-1.5">
                   <Label htmlFor="leave-start">Start date</Label>
-                  <Input
+                  <DatePicker
                     id="leave-start"
-                    type="date"
                     min={today}
                     value={startDate}
-                    onChange={(e) => setStartDate(e.target.value)}
+                    onChange={setStartDate}
                     required
                     className="dark:bg-zinc-900"
                   />
                 </div>
                 <div className="space-y-1.5">
                   <Label htmlFor="leave-end">End date</Label>
-                  <Input
+                  <DatePicker
                     id="leave-end"
-                    type="date"
                     min={startDate || today}
                     value={endDate}
-                    onChange={(e) => setEndDate(e.target.value)}
+                    onChange={setEndDate}
                     required
                     className="dark:bg-zinc-900"
                   />

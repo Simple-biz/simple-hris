@@ -18,6 +18,7 @@ import {
 import { cn } from '@/lib/utils';
 import { formatMoney, normalizeCurrency, type ContractorCurrency } from '@/lib/contractor-currency';
 import { Button } from '@/components/ui/button';
+import { DatePicker } from '@/components/ui/date-picker';
 import { Input } from '@/components/ui/input';
 import {
   Table,
@@ -479,11 +480,21 @@ function NewInvoiceForm({
           </div>
           <div>
             <FieldLabel>Invoice Date</FieldLabel>
-            <FormInput type="date" value={form.invoiceDate} onChange={setInvoiceDate} />
+            <DatePicker
+              value={form.invoiceDate ?? ''}
+              onChange={setInvoiceDate}
+              required
+              className="h-8 rounded-md border-zinc-200 bg-zinc-50/50 text-sm focus-visible:border-blue-400 focus-visible:ring-blue-400/30 dark:border-zinc-700 dark:bg-zinc-800/50"
+            />
           </div>
           <div>
             <FieldLabel>Due Date</FieldLabel>
-            <FormInput type="date" value={form.dueDate} onChange={(v) => set('dueDate', v)} />
+            <DatePicker
+              value={form.dueDate ?? ''}
+              onChange={(v) => set('dueDate', v)}
+              required
+              className="h-8 rounded-md border-zinc-200 bg-zinc-50/50 text-sm focus-visible:border-blue-400 focus-visible:ring-blue-400/30 dark:border-zinc-700 dark:bg-zinc-800/50"
+            />
           </div>
         </div>
       </div>

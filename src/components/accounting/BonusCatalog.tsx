@@ -52,6 +52,7 @@ import {
   LayoutDashboard,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { DatePicker } from '@/components/ui/date-picker';
 import { Input } from '@/components/ui/input';
 import { DEPARTMENTS } from '@/lib/payroll/department-bonus';
 import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
@@ -1675,11 +1676,12 @@ function IndividualPayAdder({
                   <p className="text-[10px] font-medium uppercase tracking-wide text-emerald-600 dark:text-emerald-400">
                     Effective from
                   </p>
-                  <Input
-                    type="date"
+                  <DatePicker
                     value={effectiveDate}
-                    onChange={(e) => setEffectiveDate(e.target.value)}
-                    className="h-9 w-40 border-zinc-200 bg-white tabular-nums text-sm font-medium text-zinc-900 transition-colors hover:border-zinc-300 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 dark:border-zinc-800 dark:bg-zinc-900 dark:text-white"
+                    onChange={setEffectiveDate}
+                    required
+                    containerClassName="w-40"
+                    className="h-9 text-sm font-medium tabular-nums focus-visible:border-emerald-500 focus-visible:ring-emerald-500/20 dark:bg-zinc-900"
                   />
                 </div>
                 <PayRateEditor
@@ -1825,11 +1827,12 @@ function IndividualPayRow({
                 <p className="text-[10px] font-medium uppercase tracking-wide text-emerald-600 dark:text-emerald-400">
                   Effective from
                 </p>
-                <Input
-                  type="date"
+                <DatePicker
                   value={effectiveDate}
-                  onChange={(e) => setEffectiveDate(e.target.value)}
-                  className="h-9 w-40 border-zinc-200 bg-white tabular-nums text-sm font-medium text-zinc-900 transition-colors hover:border-zinc-300 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 dark:border-zinc-800 dark:bg-zinc-900 dark:text-white"
+                  onChange={setEffectiveDate}
+                  required
+                  containerClassName="w-40"
+                  className="h-9 text-sm font-medium tabular-nums focus-visible:border-emerald-500 focus-visible:ring-emerald-500/20 dark:bg-zinc-900"
                 />
               </div>
               <PayRateEditor

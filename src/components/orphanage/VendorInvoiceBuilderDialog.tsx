@@ -12,6 +12,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
+import { DatePicker } from '@/components/ui/date-picker';
 import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
@@ -278,11 +279,11 @@ export default function VendorInvoiceBuilderDialog({
                   <Input id="i-num" value={invoiceNumber} onChange={(e) => setInvoiceNumber(e.target.value)} className="font-mono text-xs" />
                 </Field>
                 <Field id="i-date" label="Invoice date">
-                  <Input id="i-date" type="date" value={invoiceDate} onChange={(e) => setInvoiceDate(e.target.value)} />
+                  <DatePicker id="i-date" value={invoiceDate} onChange={setInvoiceDate} required />
                 </Field>
               </div>
               <Field id="i-due" label="Due date (optional)">
-                <Input id="i-due" type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
+                <DatePicker id="i-due" value={dueDate} onChange={setDueDate} />
               </Field>
 
               {/* Banking */}

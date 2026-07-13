@@ -12,6 +12,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
+import { DatePicker } from '@/components/ui/date-picker';
 import type { OrphanagePendingItem } from '@/lib/supabase/orphanage-dispatches';
 import { workerTypeLabel } from '@/lib/orphanage/worker-payment';
 
@@ -339,12 +340,10 @@ export default function OrphanageMarkPaidDialog({ item, onClose, onConfirm }: Ma
           </OField>
 
           <OField id="o-date" label="Date sent" cfg={cfg}>
-            <OInput
+            <DatePicker
               id="o-date"
-              type="date"
-              cfg={cfg}
               value={sentDate}
-              onChange={(e) => setSentDate(e.target.value)}
+              onChange={setSentDate}
               disabled={saving}
             />
           </OField>

@@ -45,6 +45,7 @@ import { toTitleCaseNameOrNull } from '@/lib/text/sanitize-name';
 import { getSupabaseBrowserClient } from '@/lib/supabase/browser';
 import { getHrTabCache, hasHrTabCache, setHrTabCache, HR_TAB_CACHE_KEYS } from '@/lib/hr/tab-cache';
 import { Button } from '@/components/ui/button';
+import { DatePicker } from '@/components/ui/date-picker';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
@@ -160,6 +161,12 @@ type SubmissionRow = {
   // DERIVED surname-first display name (`Surname, Given... "GoBy"`) from the DB
   // trigger; null until a hire submits. Display only — see migration #87.
   display_name: string | null;
+  // Lead Gen only: the hire's self-chosen dialer nickname + the auto-minted
+  // CallTools username ("Mikey J. T."). OPTIONAL because the list query omits
+  // them (pre-migration safety) — only the detail modal's full-row fetch
+  // hydrates them. Null/absent for every other department.
+  calltools_nickname?: string | null;
+  calltools_username?: string | null;
   phone: string | null;
   email: string | null;
   location: string | null;
@@ -2545,7 +2552,7 @@ function BypassSetupDialog({
               <Label className="text-[10px] font-semibold uppercase tracking-widest text-zinc-400 dark:text-zinc-500">
                 Start date <span className="font-normal normal-case text-zinc-400">(optional)</span>
               </Label>
-              <Input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
+              <DatePicker value={startDate} onChange={setStartDate} />
             </div>
           </div>
         </div>
@@ -5957,6 +5964,14 @@ function SubmissionDetailDialog({
                     <div className="space-y-5">
                       <DetailSection title="Personal info">
                         <DetailRow label="Full name" value={row.full_name} />
+                        {/* Lead Gen only — the hire's self-chosen dialer nickname and
+                            the auto-minted CallTools username ("Mikey J. T."). */}
+                        {(row.calltools_nickname || row.calltools_username) && (
+                          <>
+                            <DetailRow label="CallTools nickname" value={row.calltools_nickname} />
+                            <DetailRow label="CallTools username" value={row.calltools_username} mono copyable />
+                          </>
+                        )}
                         <DetailRow label="Phone" value={row.phone} />
                         <DetailRow label="Email" value={row.email} mono />
                         <DetailRow label="Country" value={row.country} />

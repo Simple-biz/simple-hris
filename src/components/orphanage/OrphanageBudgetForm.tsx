@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Input } from '@/components/ui/input';
+import { DatePicker } from '@/components/ui/date-picker';
 import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
@@ -637,10 +638,11 @@ function MonthlySection({
     >
       <div className="grid gap-4 sm:grid-cols-3">
         <FormField label="Date of Visit" required>
-          <Input
-            type="date"
+          <DatePicker
             value={state.dateOfVisit}
-            onChange={(e) => setField('dateOfVisit', e.target.value)}
+            onChange={(v) => setField('dateOfVisit', v)}
+            required
+            aria-label="Date of Visit"
           />
         </FormField>
         <FormField label="No. of Children" required>

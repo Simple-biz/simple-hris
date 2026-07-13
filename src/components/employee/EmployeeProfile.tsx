@@ -19,7 +19,6 @@ import {
   Bell,
   DoorOpen,
   Send,
-  CalendarDays,
   AlertTriangle,
   Clock,
   XCircle,
@@ -31,6 +30,7 @@ import { motion, AnimatePresence, LayoutGroup } from 'motion/react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { SmoothSelect } from '@/components/ui/smooth-select';
+import { DatePicker } from '@/components/ui/date-picker';
 import EmployeeAvatar from './EmployeeAvatar';
 import { cn } from '@/lib/utils';
 import { normEmail } from '@/lib/email/norm-email';
@@ -1934,16 +1934,15 @@ export default function EmployeeProfile({
                           </div>
 
                           <label className="block">
-                            <div className="mb-1.5 flex items-center gap-1.5 text-[12px] font-medium text-zinc-700 dark:text-zinc-200">
-                              <CalendarDays className="h-3.5 w-3.5 text-zinc-400" />
+                            <div className="mb-1.5 text-[12px] font-medium text-zinc-700 dark:text-zinc-200">
                               Effective date
                             </div>
-                            <input
-                              type="date"
+                            <DatePicker
                               value={resignEffectiveDate}
                               min={new Date().toISOString().slice(0, 10)}
-                              onChange={(e) => setResignEffectiveDate(e.target.value)}
-                              className="w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-[14px] text-zinc-900 transition-colors focus:border-rose-300 focus:outline-none focus:ring-1 focus:ring-rose-200 dark:border-zinc-800 dark:bg-zinc-950/60 dark:text-zinc-100 dark:focus:border-rose-500/40 dark:focus:ring-rose-500/20 sm:max-w-[16rem]"
+                              onChange={setResignEffectiveDate}
+                              containerClassName="sm:max-w-[16rem]"
+                              className="dark:bg-zinc-950/60 focus-visible:border-rose-300 focus-visible:ring-rose-200 dark:focus-visible:border-rose-500/40 dark:focus-visible:ring-rose-500/20"
                             />
                           </label>
 

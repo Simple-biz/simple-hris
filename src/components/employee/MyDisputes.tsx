@@ -3,7 +3,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertCircle,
-  CalendarDays,
   CheckCircle2,
   Clock,
   FileText,
@@ -18,6 +17,7 @@ import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { SmoothSelect } from '@/components/ui/smooth-select';
+import { DatePicker } from '@/components/ui/date-picker';
 import {
   DEFAULT_DISPUTE_REASON_CODES,
   isOrphanageStyleReason,
@@ -403,20 +403,16 @@ export default function MyDisputes({
               <label htmlFor="dispute-date" className="text-[10px] font-medium uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
                 Date
               </label>
-              <div className="relative">
-                <CalendarDays className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400" />
-                <input
-                  id="dispute-date"
-                  type="date"
-                  value={disputeDate}
-                  max={todayIso()}
-                  onChange={(e) => {
-                    setDisputeDate(e.target.value);
-                    setPrefilledHours(null);
-                  }}
-                  className="h-9 w-full rounded-md border border-zinc-200 bg-white pl-8 pr-2 font-mono text-xs text-zinc-700 transition-colors focus:border-emerald-500 focus:outline-none dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300 dark:focus:border-emerald-400"
-                />
-              </div>
+              <DatePicker
+                id="dispute-date"
+                value={disputeDate}
+                max={todayIso()}
+                onChange={(v) => {
+                  setDisputeDate(v);
+                  setPrefilledHours(null);
+                }}
+                className="h-9 text-xs dark:bg-zinc-900 focus-visible:border-emerald-500 dark:focus-visible:border-emerald-400"
+              />
               {prefilledHours != null && (
                 <p className="font-mono text-[10px] text-amber-700 dark:text-amber-400">
                   Hubstaff logged {(prefilledHours / 3600).toFixed(2)}h on this day.

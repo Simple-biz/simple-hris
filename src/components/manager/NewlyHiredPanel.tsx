@@ -1,9 +1,10 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { AlertTriangle, CheckCircle2, ClipboardCheck, Layers, Loader2, RotateCcw, Search, UserPlus, X, XCircle } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, ClipboardCheck, Download, FileSpreadsheet, Layers, Loader2, RotateCcw, Search, UserPlus, X, XCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
+import { DatePicker } from '@/components/ui/date-picker';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { formatWeekLabel, sundayIso } from '@/lib/hr/hiring-week';
@@ -122,6 +123,100 @@ function sortBatchKeys(keys: string[]): string[] {
   });
 }
 
+// ── CSV / Excel export ──────────────────────────────────────────────────────
+// Detail columns for a hire, in the order both exports render them. The Batch is
+// a leading column in the CSV and the sheet title in the workbook, so it's kept
+// out of this list.
+const EXPORT_DETAIL_HEADERS = [
+  'Name',
+  'Personal Email',
+  'Work Email',
+  'Department',
+  'Role',
+  'Start Date',
+  'Status',
+  'Orientation / No-show Date',
+  'Marked By',
+  'Note',
+] as const;
+
+/** Human status for the export: mirrors the badge shown on each card. */
+function exportStatusLabel(r: PendingHireRow): string {
+  if (r.status === 'no_show') return 'Did not attend';
+  return r.orientation_attended_at ? 'Orientation attended' : 'Awaiting orientation';
+}
+
+/** A hire's detail cells (no Batch), aligned 1:1 with EXPORT_DETAIL_HEADERS. */
+function exportDetailValues(r: PendingHireRow): string[] {
+  const isNoShow = r.status === 'no_show';
+  const markedBy = isNoShow ? r.no_show_by : r.orientation_attended_by;
+  const note = isNoShow ? r.no_show_note : r.orientation_note;
+  const eventDate = isNoShow ? r.no_show_at : r.orientation_attended_at;
+  return [
+    r.name ?? '',
+    r.personal_email ?? '',
+    r.work_email ?? '',
+    r.department ?? '',
+    r.job_description ?? '',
+    r.start_date ? fmtLongDate(r.start_date) : '',
+    exportStatusLabel(r),
+    eventDate ? fmtManilaDate(eventDate) : '',
+    markedBy ?? '',
+    note ?? '',
+  ];
+}
+
+/** Escape one CSV cell (RFC 4180): quote when it holds a comma, quote or newline. */
+function csvCell(v: string): string {
+  return /[",\n\r]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v;
+}
+
+/** Group hires into batches (newest first) for the per-sheet workbook + display. */
+function groupHiresByBatch(rows: PendingHireRow[]): Array<{ key: string; label: string; rows: PendingHireRow[] }> {
+  const byBatch = new Map<string, PendingHireRow[]>();
+  for (const r of rows) {
+    const k = batchKeyOf(r);
+    const bucket = byBatch.get(k);
+    if (bucket) bucket.push(r);
+    else byBatch.set(k, [r]);
+  }
+  return sortBatchKeys([...byBatch.keys()]).map((key) => ({
+    key,
+    label: batchLabelOf(key),
+    rows: byBatch.get(key) ?? [],
+  }));
+}
+
+/** A valid, unique Excel sheet name: <=31 chars, none of []:*?/\, de-duped. */
+function safeSheetName(desired: string, used: Set<string>): string {
+  const base = (desired.replace(/[[\]:*?/\\]/g, ' ').trim() || 'Batch').slice(0, 31);
+  let name = base;
+  let i = 2;
+  while (used.has(name.toLowerCase())) {
+    const suffix = ` (${i++})`;
+    name = base.slice(0, 31 - suffix.length) + suffix;
+  }
+  used.add(name.toLowerCase());
+  return name;
+}
+
+/** Today's date (YYYY-MM-DD, Manila) for a stable, sortable download filename. */
+function exportStamp(): string {
+  return manilaToday();
+}
+
+/** Trigger a browser download of `blob` as `filename`. */
+function downloadBlob(blob: Blob, filename: string): void {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
 export default function NewlyHiredPanel({ viewerEmail, teamGate }: NewlyHiredPanelProps) {
   const [rows, setRows] = useState<PendingHireRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -143,6 +238,9 @@ export default function NewlyHiredPanel({ viewerEmail, teamGate }: NewlyHiredPan
   // destructive, so we list everyone selected in a modal before firing.
   const [confirmBulkNoShow, setConfirmBulkNoShow] = useState(false);
   const [bulkNoShowNote, setBulkNoShowNote] = useState('');
+  // Building the .xlsx lazy-loads the `xlsx` lib, so keep the button busy while
+  // the dynamic import + write runs.
+  const [xlsxBusy, setXlsxBusy] = useState(false);
   // Live progress for a bulk run (orientation mark OR no-show) — drives a modal
   // that shows, in real time, how many hires have actually been processed so
   // far. null when no bulk run is in flight or awaiting review. `kind` selects
@@ -194,13 +292,25 @@ export default function NewlyHiredPanel({ viewerEmail, teamGate }: NewlyHiredPan
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ note: note || null, attendedOn }),
       });
-      const json = (await res.json()) as { row?: PendingHireRow; error?: string };
+      const json = (await res.json()) as {
+        row?: PendingHireRow;
+        webhook?: { fired: boolean; status: number | null; error: string | null } | null;
+        error?: string;
+      };
       if (!res.ok) throw new Error(json.error ?? `HTTP ${res.status}`);
       toast.success(
         isEdit
           ? 'Orientation date updated (Start Date synced)'
           : 'Orientation marked as attended',
       );
+      // The mark itself succeeded — but if the n8n notification (which carries
+      // the CallTools username for Lead Gen provisioning) failed, say so, or
+      // the dialer account silently never gets created.
+      if (json.webhook?.error) {
+        toast.warning('Attendance saved, but the n8n webhook failed', {
+          description: `${json.webhook.error} — account provisioning (e.g. CallTools) may not have run.`,
+        });
+      }
       void refresh();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Failed to mark orientation');
@@ -359,6 +469,7 @@ export default function NewlyHiredPanel({ viewerEmail, teamGate }: NewlyHiredPan
     setBulkProgress({ kind: 'orientation', total: targets.length, done: 0, ok: 0, fail: 0, current: null, failures: [], finished: false });
     let ok = 0;
     let fail = 0;
+    let webhookFails = 0;
     let firstErr = '';
     const failures: { name: string; error: string }[] = [];
     for (const t of targets) {
@@ -369,9 +480,15 @@ export default function NewlyHiredPanel({ viewerEmail, teamGate }: NewlyHiredPan
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ attendedOn: bulkDate }),
         });
-        const json = (await res.json()) as { error?: string };
+        const json = (await res.json()) as {
+          webhook?: { error: string | null } | null;
+          error?: string;
+        };
         if (!res.ok) throw new Error(json.error ?? `HTTP ${res.status}`);
         ok += 1;
+        // Mark saved but the per-hire n8n notification (CallTools provisioning
+        // for Lead Gen) failed — tally it for the summary toast.
+        if (json.webhook?.error) webhookFails += 1;
       } catch (e) {
         fail += 1;
         const msg = e instanceof Error ? e.message : String(e);
@@ -381,9 +498,13 @@ export default function NewlyHiredPanel({ viewerEmail, teamGate }: NewlyHiredPan
       setBulkProgress((p) => (p ? { ...p, done: ok + fail, ok, fail, failures: [...failures] } : p));
     }
     setBulkProgress((p) => (p ? { ...p, current: null, finished: true } : p));
-    if (fail === 0) {
+    if (fail === 0 && webhookFails === 0) {
       toast.success(`Orientation set for ${ok} hire${ok !== 1 ? 's' : ''}`, {
         description: 'Start Date syncs for any already promoted.',
+      });
+    } else if (fail === 0) {
+      toast.warning(`Orientation set for ${ok}, but ${webhookFails} n8n webhook${webhookFails !== 1 ? 's' : ''} failed`, {
+        description: 'Account provisioning (e.g. CallTools) may not have run for those hires.',
       });
     } else {
       toast.warning(`${ok} updated, ${fail} failed`, { description: firstErr || undefined });
@@ -445,6 +566,69 @@ export default function NewlyHiredPanel({ viewerEmail, teamGate }: NewlyHiredPan
     setBulkProgress(null);
     setSelected(new Set());
     void refresh();
+  }
+
+  // Both exports reflect the CURRENT view (search + batch filter), active and
+  // no-show hires alike, grouped into batches newest-first. Exporting what's on
+  // screen is the least surprising behaviour: clear the filters to export all.
+  function exportGroups() {
+    return groupHiresByBatch([...visibleActive, ...visibleNoShow]);
+  }
+
+  // Flat CSV — one leading Batch column, then the detail columns. A UTF-8 BOM
+  // keeps Excel from mangling non-ASCII names.
+  function exportCsv() {
+    const groups = exportGroups();
+    const lines = [['Batch', ...EXPORT_DETAIL_HEADERS].map(csvCell).join(',')];
+    for (const g of groups) {
+      for (const r of g.rows) {
+        lines.push([g.label, ...exportDetailValues(r)].map(csvCell).join(','));
+      }
+    }
+    const csv = '﻿' + lines.join('\r\n');
+    downloadBlob(
+      new Blob([csv], { type: 'text/csv;charset=utf-8' }),
+      `new-hire-check-list-${exportStamp()}.csv`,
+    );
+  }
+
+  // Excel workbook — ONE SHEET PER BATCH (title row + count + header + hires),
+  // mirroring HR's New Hire Checklist export. `xlsx` is dynamically imported so
+  // it stays out of the panel's initial bundle.
+  async function exportXlsx() {
+    setXlsxBusy(true);
+    try {
+      const XLSX = await import('xlsx');
+      const groups = exportGroups();
+      const wb = XLSX.utils.book_new();
+      const used = new Set<string>();
+      if (groups.length === 0) {
+        const ws = XLSX.utils.aoa_to_sheet([['No hires match the current view.']]);
+        XLSX.utils.book_append_sheet(wb, ws, 'New Hires');
+      } else {
+        for (const g of groups) {
+          const aoa: (string | number)[][] = [
+            [`New Hire Check List — ${g.label}`],
+            [`${g.rows.length} hire${g.rows.length === 1 ? '' : 's'}`],
+            [],
+            ['#', ...EXPORT_DETAIL_HEADERS],
+          ];
+          g.rows.forEach((r, i) => aoa.push([i + 1, ...exportDetailValues(r)]));
+          const ws = XLSX.utils.aoa_to_sheet(aoa);
+          ws['!cols'] = [{ wch: 4 }, ...EXPORT_DETAIL_HEADERS.map((h) => ({ wch: Math.max(14, h.length + 2) }))];
+          XLSX.utils.book_append_sheet(wb, ws, safeSheetName(g.label, used));
+        }
+      }
+      const buf = XLSX.write(wb, { type: 'array', bookType: 'xlsx' }) as ArrayBuffer;
+      downloadBlob(
+        new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }),
+        `new-hire-check-list-${exportStamp()}.xlsx`,
+      );
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to build the Excel file');
+    } finally {
+      setXlsxBusy(false);
+    }
   }
 
   function HireCard({ r }: { r: PendingHireRow }) {
@@ -550,12 +734,12 @@ export default function NewlyHiredPanel({ viewerEmail, teamGate }: NewlyHiredPan
           <div className="flex shrink-0 flex-col items-stretch gap-2 sm:items-end">
             <label className="flex flex-col gap-1 text-[10px] font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400 sm:w-[200px] sm:items-end">
               Orientation date
-              <input
-                type="date"
+              <DatePicker
                 value={draftDate}
                 max={manilaToday()}
-                onChange={(e) => setDateDraft((s) => ({ ...s, [r.id]: e.target.value }))}
-                className="h-7 w-full rounded-md border border-zinc-200 bg-white px-2 text-xs text-zinc-800 focus:border-blue-400 focus:outline-none focus:ring-1 focus:ring-blue-200 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-200"
+                onChange={(v) => setDateDraft((s) => ({ ...s, [r.id]: v }))}
+                required
+                className="h-7 text-xs focus-visible:border-blue-400 focus-visible:ring-blue-200 dark:bg-zinc-950"
                 disabled={isBusy}
               />
             </label>
@@ -674,6 +858,31 @@ export default function NewlyHiredPanel({ viewerEmail, teamGate }: NewlyHiredPan
             ))}
           </select>
         </label>
+        {/* Export the current view (respects search + batch). */}
+        <div className="flex items-center gap-1.5 sm:ml-auto">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-9 gap-1.5 text-xs"
+            onClick={exportCsv}
+            disabled={visibleActive.length + visibleNoShow.length === 0}
+            title="Download the hires currently shown as a CSV"
+          >
+            <Download className="h-3.5 w-3.5" /> CSV
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-9 gap-1.5 text-xs"
+            onClick={() => void exportXlsx()}
+            disabled={xlsxBusy || visibleActive.length + visibleNoShow.length === 0}
+            title="Download the hires currently shown as an Excel workbook (one sheet per batch)"
+          >
+            {xlsxBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FileSpreadsheet className="h-3.5 w-3.5" />} Excel
+          </Button>
+        </div>
       </div>
 
       {visibleActive.length === 0 && visibleNoShow.length === 0 && (
@@ -731,12 +940,13 @@ export default function NewlyHiredPanel({ viewerEmail, teamGate }: NewlyHiredPan
               <div className="flex flex-wrap items-center gap-2">
                 <label className="flex items-center gap-1.5 text-[11px] font-medium text-zinc-600 dark:text-zinc-300">
                   Orientation date
-                  <input
-                    type="date"
+                  <DatePicker
                     value={bulkDate}
                     max={manilaToday()}
-                    onChange={(e) => setBulkDate(e.target.value)}
-                    className="h-7 rounded-md border border-zinc-200 bg-white px-2 text-xs text-zinc-800 focus:border-blue-400 focus:outline-none focus:ring-1 focus:ring-blue-200 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-200"
+                    onChange={setBulkDate}
+                    required
+                    containerClassName="w-40"
+                    className="h-7 text-xs focus-visible:border-blue-400 focus-visible:ring-blue-200 dark:bg-zinc-950"
                     disabled={bulkBusy}
                   />
                 </label>

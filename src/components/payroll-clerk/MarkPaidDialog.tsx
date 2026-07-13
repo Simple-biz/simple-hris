@@ -8,6 +8,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
+import { DatePicker } from '@/components/ui/date-picker';
 import { AlertTriangle, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, CircleDashed, Gauge, Loader2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { formatPHP, formatUSD, formatCOP, type ProcessorId, type QueueRow } from './mock-queue';
@@ -576,12 +577,11 @@ export default function MarkPaidDialog({
 
           <div className="grid grid-cols-2 gap-3">
             <Field id="sent" label="Date sent" cfg={cfg}>
-              <FieldInput
+              <DatePicker
                 id="sent"
-                type="date"
-                cfg={cfg}
                 value={sentDate}
-                onChange={(e) => setSentDate(e.target.value)}
+                onChange={setSentDate}
+                required
               />
             </Field>
             <Field
@@ -594,12 +594,10 @@ export default function MarkPaidDialog({
               }
               cfg={cfg}
             >
-              <FieldInput
+              <DatePicker
                 id="arrival"
-                type="date"
-                cfg={cfg}
                 value={arrivalDate}
-                onChange={(e) => setArrivalDate(e.target.value)}
+                onChange={setArrivalDate}
               />
             </Field>
           </div>

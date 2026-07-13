@@ -53,7 +53,7 @@ function onboardingPayoutPatch(sub: {
  * their manager marked orientation: a UTC timestamp like 23:30 the night before
  * would otherwise roll the date back a day. Returns null for empty/invalid input.
  */
-function manilaDateFromIso(iso: string | null | undefined): string | null {
+export function manilaDateFromIso(iso: string | null | undefined): string | null {
   if (!iso) return null;
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return null;

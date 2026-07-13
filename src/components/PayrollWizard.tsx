@@ -60,6 +60,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Badge } from '@/components/ui/badge';
 import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
+import { DatePicker } from '@/components/ui/date-picker';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
 import { Switch } from '@/components/ui/switch';
@@ -7961,28 +7962,28 @@ export default function PayrollWizard({
                           Editing: {MONTH_NAMES[editMonth.month]} {editMonth.year}
                         </span>
                         <div className="flex min-w-0 items-center gap-2">
-                          <Input
-                            type="date"
+                          <DatePicker
                             value={pabStartLocal}
-                            onChange={(ev) => {
-                              const v = ev.target.value;
+                            onChange={(v) => {
                               setPabStartLocal(v);
                               if (v && pabEndLocal) void saveActiveMonthOverride(v, pabEndLocal);
                             }}
                             disabled={pabSaveState === 'saving'}
-                            className="h-8 w-[150px] shrink-0 text-xs"
+                            required
+                            className="h-8 text-xs"
+                            containerClassName="w-[160px] shrink-0"
                           />
                           <span className="text-zinc-400">→</span>
-                          <Input
-                            type="date"
+                          <DatePicker
                             value={pabEndLocal}
-                            onChange={(ev) => {
-                              const v = ev.target.value;
+                            onChange={(v) => {
                               setPabEndLocal(v);
                               if (pabStartLocal && v) void saveActiveMonthOverride(pabStartLocal, v);
                             }}
                             disabled={pabSaveState === 'saving'}
-                            className="h-8 w-[150px] shrink-0 text-xs"
+                            required
+                            className="h-8 text-xs"
+                            containerClassName="w-[160px] shrink-0"
                           />
                         </div>
                         <button
@@ -8321,11 +8322,11 @@ export default function PayrollWizard({
                       <div className="mb-3 flex flex-wrap items-end gap-2 rounded-lg border border-dashed border-violet-200 bg-violet-50/40 px-3 py-2.5 dark:border-violet-900/40 dark:bg-violet-950/15">
                         <div className="flex flex-col gap-1">
                           <label className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Date</label>
-                          <Input
-                            type="date"
+                          <DatePicker
                             value={pabHolNewDate}
-                            onChange={(e) => setPabHolNewDate(e.target.value)}
-                            className="h-8 w-[150px] shrink-0 text-xs"
+                            onChange={setPabHolNewDate}
+                            className="h-8 text-xs"
+                            containerClassName="w-[160px] shrink-0"
                           />
                         </div>
                         <div className="flex flex-1 flex-col gap-1">

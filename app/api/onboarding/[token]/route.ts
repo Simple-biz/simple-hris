@@ -7,6 +7,12 @@ import {
 } from "@/lib/supabase/hr-onboarding-submissions";
 import { createSupabaseServiceRoleClient } from "@/lib/supabase/server";
 import { generateIpAssignmentPdf } from "@/lib/onboarding/ip-assignment-pdf";
+import {
+  isLeadGenDepartment,
+  suggestCallToolsUsername,
+} from "@/lib/hr/calltools-username";
+import { loadTakenCallToolsUsernames } from "@/lib/hr/calltools-username-server";
+import { splitFullName } from "@/lib/hr/work-email";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -100,6 +106,9 @@ export async function GET(
     ? {
         full_name: row.full_name,
         gmail_surname: row.gmail_surname,
+        // calltools_username is intentionally omitted: it's an internal HR
+        // value the hire never sees (re-minted server-side on re-submit).
+        calltools_nickname: row.calltools_nickname ?? null,
         phone: row.phone,
         email: row.email,
         location: row.location,
@@ -234,6 +243,42 @@ export async function POST(
     } catch (e) {
       console.error("IP assignment PDF generation failed:", e);
     }
+  }
+
+  // CallTools dialer fields are SERVER-controlled. The hire only ever types
+  // their nickname — the minted username is hidden from the paperwork — so the
+  // username is derived HERE, at submit time, against the freshest taken set
+  // (rather than trusting a value from the client, which could be stale or
+  // forged). "Mikey" + "James Thomas" -> "Mikey J. T."; taken -> "Mikey J. TH.".
+  if (isLeadGenDepartment(lookup.row?.invite_department)) {
+    const nickname = (body.calltools_nickname ?? "").trim();
+    if (nickname) {
+      // full_name is validated present above; splitFullName peels a trailing
+      // Jr./Sr./III so the slice keys off the real surname.
+      const { first, last } = splitFullName(body.full_name);
+      let taken: Set<string>;
+      try {
+        taken = await loadTakenCallToolsUsernames();
+      } catch (e) {
+        // Never block a hire on a roster hiccup — mint the shortest form
+        // uncontested; HR sees the nickname either way and can adjust.
+        console.error("CallTools taken-set load failed; minting unchecked:", e);
+        taken = new Set();
+      }
+      // A re-submission already holds its own username — don't collide with
+      // self, or the slice would needlessly lengthen.
+      const self = lookup.row?.calltools_username?.trim().toLowerCase();
+      if (self) taken.delete(self);
+      body.calltools_nickname = nickname;
+      body.calltools_username = suggestCallToolsUsername(nickname, first, last, taken);
+    } else {
+      body.calltools_nickname = null;
+      body.calltools_username = null;
+    }
+  } else {
+    // Not a Lead Gen invite — never touch the columns, whatever the client sent.
+    delete body.calltools_nickname;
+    delete body.calltools_username;
   }
 
   const { row, error } = await submitHrOnboarding(token, body as SubmitOnboardingInput);

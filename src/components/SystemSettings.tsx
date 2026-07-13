@@ -21,6 +21,7 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
+import { DatePicker } from '@/components/ui/date-picker';
 import AuditLogPanel from '@/components/audit/AuditLogPanel';
 import {
   US_HOLIDAYS_ENABLED_KEY,
@@ -672,15 +673,11 @@ export default function SystemSettings({ sessionEmail }: { sessionEmail?: string
                 <div className="flex flex-col gap-2.5 sm:flex-row sm:items-end">
                   <div className="flex flex-col gap-1 sm:w-44">
                     <label className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Date</label>
-                    <div className="relative">
-                      <CalendarDays className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400" />
-                      <input
-                        type="date"
-                        value={newHolidayDate}
-                        onChange={(e) => setNewHolidayDate(e.target.value)}
-                        className="h-9 w-full rounded-lg border border-zinc-300 bg-white pl-8 pr-2 text-xs text-zinc-800 transition-shadow focus:border-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-200 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:focus:ring-sky-900/50"
-                      />
-                    </div>
+                    <DatePicker
+                      value={newHolidayDate}
+                      onChange={setNewHolidayDate}
+                      className="h-9 text-xs focus-visible:border-sky-400 focus-visible:ring-sky-200 dark:bg-zinc-900 dark:focus-visible:ring-sky-900/50"
+                    />
                   </div>
                   <div className="flex flex-col gap-1 sm:flex-1">
                     <label className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Name</label>

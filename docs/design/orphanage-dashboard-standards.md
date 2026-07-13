@@ -174,7 +174,7 @@ Stagger effects on lists use `transition={{ delay: index * 0.04 }}`.
 - Validation is manual (pre-submit guard checks), surfaced via `toast.error()`
 - `<Input>` from shadcn/ui with `className` overrides for sizing
 - Numeric inputs: `type="number"` with `min`, `step` and optional currency prefix icon
-- Date inputs: `type="date"` native HTML element
+- Date inputs: shared `<DatePicker>` from `components/ui/date-picker.tsx` (see ui-standards § 9.3)
 - Text areas: native `<textarea>` with Tailwind styling (no shadcn Textarea in this feature)
 - No form library used
 
