@@ -953,7 +953,13 @@ function OnboardingExportMenu({
   );
 }
 
-export default function HrOnboardingForm() {
+export default function HrOnboardingForm({
+  openSubmission,
+}: {
+  /** When set (from a notification click), open this submission's drawer. The
+   *  `nonce` refires the effect if the same id is requested again. */
+  openSubmission?: { id: string; nonce: number } | null;
+} = {}) {
   const reduceMotion = useReducedMotion();
   const [rows, setRows] = useState<SubmissionRow[]>(
     () =>
@@ -1031,6 +1037,23 @@ export default function HrOnboardingForm() {
     if (hasHrTabCache(HR_TAB_CACHE_KEYS.onboardingSubmissions)) return;
     void load();
   }, [load]);
+
+  // A notification click (via HrOnboarding) asked to open a specific submission.
+  // Prefer the already-loaded list row so the drawer's summary renders instantly;
+  // otherwise open with a minimal row (the detail dialog fetches the full record
+  // on open) and refresh the list so the rest of the table catches up. Keyed on
+  // `nonce` so it fires once per click, not on every rows refresh.
+  useEffect(() => {
+    if (!openSubmission) return;
+    const found = rows.find((r) => r.id === openSubmission.id);
+    if (found) {
+      setViewRow(found);
+    } else {
+      setViewRow({ id: openSubmission.id } as SubmissionRow);
+      void load();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openSubmission?.nonce]);
 
   // Re-pull the license meter — on mount and after a set consumes seats, so the
   // "available" count reflects newly-provisioned accounts.
@@ -5762,6 +5785,12 @@ function SubmissionDetailDialog({
       ? { ...baseRow, ...fullRow }
       : baseRow;
 
+  // Opened from a notification deep-link with only an id (no cached list row):
+  // every summary field is blank until the full record lands, so show a skeleton
+  // instead of a wall of "—". A normal "View" click already carries the list row
+  // (which always has `status`), so no skeleton flashes in that path.
+  const hydrating = !!baseRow && !baseRow.status && (!fullRow || fullRow.id !== baseRow.id);
+
   // Reset to the Summary tab each time a submission is opened — guarded so it
   // doesn't snap back to Summary mid-close (rowProp is null while closing).
   useEffect(() => {
@@ -5870,12 +5899,17 @@ function SubmissionDetailDialog({
             {row.full_name ?? row.invite_name ?? 'Onboarding submission'}
           </DialogTitle>
           <DialogDescription className="text-xs">
-            Submitted {fmtDateTime(row.submitted_at)} · {row.invite_department ?? '—'}
+            {hydrating
+              ? 'Loading submission…'
+              : `Submitted ${fmtDateTime(row.submitted_at)} · ${row.invite_department ?? '—'}`}
           </DialogDescription>
         </DialogHeader>
 
-        {/* Folder-style tabs: the active tab connects seamlessly into the
-            panel below it (shared white edge, broken baseline). */}
+        {hydrating ? (
+          <SubmissionDetailSkeleton />
+        ) : (
+        /* Folder-style tabs: the active tab connects seamlessly into the
+            panel below it (shared white edge, broken baseline). */
         <div className="flex min-h-0 flex-1 flex-col px-6 pb-6 pt-4">
           <TabsPrimitive.Root value={tab} onValueChange={(v) => selectTab(v as string)} className="shrink-0">
             <TabsPrimitive.List className="flex flex-wrap items-end gap-1 border-b border-zinc-200/80 dark:border-zinc-700/70">
@@ -6094,6 +6128,7 @@ function SubmissionDetailDialog({
             </AnimatePresence>
           </div>
         </div>
+        )}
 
         {/* mx-0/mb-0 cancel DialogFooter's default -mx-4/-mb-4 (those assume the
             dialog's default p-4; this modal is p-0, so without resetting them the
@@ -6106,6 +6141,43 @@ function SubmissionDetailDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+// Loading placeholder for the detail dialog when it's opened from a notification
+// deep-link (only the submission id is known) and the full record is still in
+// flight. Mirrors the tab bar + two-column summary layout so the modal doesn't
+// jump when the real content lands.
+function SubmissionDetailSkeleton() {
+  return (
+    <div className="flex min-h-0 flex-1 flex-col px-6 pb-6 pt-4" aria-busy="true">
+      {/* Tab bar */}
+      <div className="flex flex-wrap items-end gap-1 border-b border-zinc-200/80 dark:border-zinc-700/70">
+        {[64, 96, 104, 72, 80].map((w, i) => (
+          <Skeleton key={i} className="mb-1 h-8 rounded-t-lg" style={{ width: w }} />
+        ))}
+      </div>
+      {/* Summary panel */}
+      <div className="min-h-0 flex-1 rounded-b-xl rounded-tr-xl border border-t-0 border-zinc-200/90 bg-white p-5 shadow-sm dark:border-zinc-700/80 dark:bg-zinc-950">
+        <div className="grid gap-x-8 gap-y-6 md:grid-cols-2">
+          {[0, 1].map((col) => (
+            <div key={col} className="space-y-6">
+              {[0, 1].map((sec) => (
+                <div key={sec} className="space-y-3">
+                  <Skeleton className="h-2.5 w-28" />
+                  {[0, 1, 2, 3].map((r) => (
+                    <div key={r} className="flex items-center justify-between gap-4">
+                      <Skeleton className="h-3 w-20" />
+                      <Skeleton className="h-3 w-32" />
+                    </div>
+                  ))}
+                </div>
+              ))}
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
   );
 }
 

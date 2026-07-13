@@ -43,7 +43,8 @@ import ConstructionBanner from '@/components/common/ConstructionBanner';
 import ReadOnlyTab from '@/components/rbac/ReadOnlyTab';
 import { cn } from '@/lib/utils';
 import HrSidebar, { type HrTab } from './HrSidebar';
-import HrOnboarding from './HrOnboarding';
+import HrOnboarding, { type OnboardingDeepLink } from './HrOnboarding';
+import type { NotificationActionTarget } from '@/lib/notifications/notification-actions';
 import HrGlobalMasterList from './HrGlobalMasterList';
 import HrScreening from './HrScreening';
 import HrNewHireChecklist from './HrNewHireChecklist';
@@ -75,6 +76,22 @@ export default function HrApp() {
   const emailFromQuery = searchParams?.get('email') ?? null;
 
   const [activeTab, setActiveTab] = useState<HrTab>('overview');
+  // Pending "open this onboarding submission" request from a notification click.
+  const [onboardingDeepLink, setOnboardingDeepLink] = useState<OnboardingDeepLink | null>(null);
+  const deepLinkNonce = useRef(0);
+  // A notification's action button switches to its tab and (for onboarding)
+  // hands the sub-tab + submission id down so HrOnboarding opens the drawer.
+  const handleNotificationNavigate = useCallback((target: NotificationActionTarget) => {
+    const nonce = ++deepLinkNonce.current;
+    setActiveTab(target.tab as HrTab);
+    if (target.tab === 'onboarding') {
+      setOnboardingDeepLink({
+        subTab: target.subTab as OnboardingDeepLink['subTab'],
+        submissionId: target.entityId ?? null,
+        nonce,
+      });
+    }
+  }, []);
   usePublishPresenceTab(humanizeTabId(activeTab));
   // Nudge the tab title when the user wanders off to another tab/app.
   useIdleTabTitle();
@@ -248,7 +265,7 @@ export default function HrApp() {
               {activeTab === 'new-hire-checklist' && (
                 <HrNewHireChecklist onScrollSurfaceChange={setNhcScrollSurface} />
               )}
-              {activeTab === 'onboarding' && <HrOnboarding />}
+              {activeTab === 'onboarding' && <HrOnboarding deepLink={onboardingDeepLink} />}
               {activeTab === 'offboarding' && <HrOffboarding />}
               {activeTab === 'leaves' && <LeaveRequestsPanel />}
               {activeTab === 'transfers' && <HrTransfers />}
@@ -256,7 +273,13 @@ export default function HrApp() {
               {activeTab === 'mesa' && <HrMesa />}
               {activeTab === 'announcements' && <HrAnnouncements viewerEmail={viewerEmail} />}
               {activeTab === 'notifications' && (
-                <NotificationsPanel viewerEmail={viewerEmail} accent="emerald" backfillOnboarding />
+                <NotificationsPanel
+                  viewerEmail={viewerEmail}
+                  accent="emerald"
+                  backfillOnboarding
+                  view="hr"
+                  onNavigate={handleNotificationNavigate}
+                />
               )}
               {activeTab === 's-wall' && <HrSwallTab viewerEmail={viewerEmail} />}
               </ReadOnlyTab>

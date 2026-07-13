@@ -1,10 +1,15 @@
 'use client';
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Bell, CheckCheck, Lock, Unlock, AlertTriangle, PartyPopper, BadgeDollarSign, X, Search, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Bell, CheckCheck, Lock, Unlock, AlertTriangle, PartyPopper, BadgeDollarSign, X, Search, ChevronLeft, ChevronRight, ArrowRight } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useDispatchLock } from '@/hooks/useDispatchLock';
 import { getSupabaseBrowserClient } from '@/lib/supabase/browser';
+import type { AppView } from '@/lib/rbac/views';
+import {
+  resolveNotificationAction,
+  type NotificationActionTarget,
+} from '@/lib/notifications/notification-actions';
 
 interface EmployeeNotification {
   id: string;
@@ -18,6 +23,8 @@ interface EmployeeNotification {
     before_title?: string | null;
     after_title?: string | null;
     submitted_at?: string | null;
+    /** For onboarding.submitted: the hr_onboarding_submissions.id to open. */
+    submission_id?: string | null;
   } | null;
   read_at: string | null;
   created_at: string;
@@ -59,6 +66,18 @@ interface NotificationsPanelProps {
   /** When true, silently backfills notifications for already-submitted
    *  onboarding forms before the first fetch. Pass on HR/admin panels. */
   backfillOnboarding?: boolean;
+  /**
+   * The dashboard this panel is mounted in. Used with {@link onNavigate} to
+   * decide whether an actionable notification (e.g. a new onboarding
+   * submission) can render a "jump to it" button here.
+   */
+  view?: AppView;
+  /**
+   * Called when the viewer clicks an actionable notification's button. The host
+   * dashboard drives its own tab/sub-tab state to the target and opens the
+   * referenced entity. Omit to render notifications as read-only cards.
+   */
+  onNavigate?: (target: NotificationActionTarget) => void;
 }
 
 function formatLockedAt(iso: string | null): string | null {
@@ -80,6 +99,8 @@ export default function NotificationsPanel({
   accent = 'orange',
   canDelete = true,
   backfillOnboarding = false,
+  view,
+  onNavigate,
 }: NotificationsPanelProps) {
   const { state: lockState, loading } = useDispatchLock();
   const [items, setItems] = useState<EmployeeNotification[]>([]);
@@ -169,6 +190,22 @@ export default function NotificationsPanel({
       void refetch();
     }
   }, [refetch]);
+
+  // Click-through: mark this one read (best-effort — the panel is about to
+  // unmount as the dashboard switches tabs) and hand the target to the host.
+  const handleNavigate = useCallback(
+    (id: string, target: NotificationActionTarget) => {
+      if (normEmail) {
+        void fetch('/api/employee-notifications', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ids: [id] }),
+        }).catch(() => {});
+      }
+      onNavigate?.(target);
+    },
+    [normEmail, onNavigate],
+  );
 
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(0);
@@ -406,6 +443,9 @@ export default function NotificationsPanel({
                     ? 'text-emerald-600 dark:text-emerald-400'
                     : 'text-zinc-500 dark:text-zinc-400';
               const Icon = isPayrollStart ? Lock : isPayrollStop ? Unlock : positive ? PartyPopper : BadgeDollarSign;
+              const action = onNavigate
+                ? resolveNotificationAction(view, n.type, n.details as Record<string, unknown> | null)
+                : null;
               const beforeReg = n.details?.before?.regular_rate;
               const afterReg  = n.details?.after?.regular_rate;
               const beforeOt  = n.details?.before?.ot_rate;
@@ -457,6 +497,17 @@ export default function NotificationsPanel({
                         <p className="mt-1.5 text-[13px] leading-relaxed text-zinc-600 dark:text-zinc-400">
                           {n.message}
                         </p>
+
+                        {action && (
+                          <button
+                            type="button"
+                            onClick={() => handleNavigate(n.id, action)}
+                            className="group mt-3 inline-flex items-center gap-1.5 rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-1.5 text-[12px] font-semibold text-emerald-700 transition-colors hover:border-emerald-400 hover:bg-emerald-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/50 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300 dark:hover:border-emerald-700 dark:hover:bg-emerald-950/70"
+                          >
+                            {action.label}
+                            <ArrowRight className="h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5" />
+                          </button>
+                        )}
 
                         {isRate && (
                           <div className="mt-3 grid grid-cols-2 gap-2 rounded-lg border border-zinc-100 bg-zinc-50/60 p-3 text-[12px] dark:border-zinc-800 dark:bg-zinc-900/40">

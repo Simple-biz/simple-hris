@@ -214,7 +214,14 @@ export default function App({ initialData }: { initialData?: InitialAccountingDa
       return <UnderConstruction title={pageLabel('accounting', activeTab)} />;
     }
     const readOnly = permsLoaded && !canEditAccountingTab(activeTab as typeof ACCOUNTING_TAB_IDS[number], roles, featurePerms);
-    return <ReadOnlyTab readOnly={readOnly}>{renderTabContent()}</ReadOnlyTab>;
+    // The Payroll Wizard is a processing surface, not a browse surface: a
+    // view-only user must not touch its step / department navigation, so lock it
+    // strictly (no tab/pagination carve-out) rather than the usual browseable read-only.
+    return (
+      <ReadOnlyTab readOnly={readOnly} strict={activeTab === 'payroll-wizard'}>
+        {renderTabContent()}
+      </ReadOnlyTab>
+    );
   };
 
   const renderTabContent = () => {

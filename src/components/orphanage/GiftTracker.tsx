@@ -989,7 +989,6 @@ function SubTabButton({
       type="button"
       role="tab"
       onClick={onClick}
-      aria-pressed={active}
       aria-selected={active}
       className={cn(
         'flex items-center gap-1.5 rounded-md px-3 py-1.5 text-[12px] font-medium transition-colors',

@@ -449,7 +449,6 @@ function SourcePillToggle({
                 ? 'bg-gradient-to-r from-pink-600 to-rose-700 text-white shadow-sm shadow-pink-500/25'
                 : 'text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-200',
             )}
-            aria-pressed={selected}
             aria-selected={selected}
           >
             <Icon className="h-3 w-3" />
@@ -709,7 +708,6 @@ function ScopePillToggle({
                 ? 'bg-gradient-to-r from-pink-600 to-rose-700 text-white shadow-sm shadow-pink-500/25'
                 : 'text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-200',
             )}
-            aria-pressed={selected}
             aria-selected={selected}
           >
             {opt === 'mine' ? 'My requests' : 'All'}

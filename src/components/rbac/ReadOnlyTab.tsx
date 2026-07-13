@@ -96,10 +96,19 @@ const BLOCKED_EVENTS = [
 
 export default function ReadOnlyTab({
   readOnly,
+  strict = false,
   children,
   className,
 }: {
   readOnly: boolean;
+  /**
+   * Fully lock the subtree. When true, the navigation carve-outs (tabs,
+   * pagination, search) are ignored and EVERY interaction is swallowed. Use for
+   * processing surfaces — e.g. the Payroll Wizard — where even moving between
+   * steps/departments must be blocked for view-only users. Default `false`
+   * keeps read-only navigation live so viewers can browse.
+   */
+  strict?: boolean;
   children: React.ReactNode;
   className?: string;
 }) {
@@ -111,8 +120,9 @@ export default function ReadOnlyTab({
     if (!node) return;
 
     const swallow = (e: Event) => {
-      // Let read-only-safe controls (search / filter) work as normal.
-      if (isReadOnlyAllowed(e.target)) return;
+      // Strict mode exempts nothing — even sub-tab / pagination / search are
+      // swallowed. Otherwise let read-only-safe navigation + search work.
+      if (!strict && isReadOnlyAllowed(e.target)) return;
       e.stopPropagation();
       if (e.cancelable) e.preventDefault();
     };
@@ -121,14 +131,16 @@ export default function ReadOnlyTab({
     return () => {
       for (const type of BLOCKED_EVENTS) node.removeEventListener(type, swallow, true);
     };
-  }, [readOnly]);
+  }, [readOnly, strict]);
 
   if (!readOnly) return <>{children}</>;
   return (
     <div className={cn('flex min-h-0 flex-1 flex-col', className)}>
       <div className="flex shrink-0 items-center gap-2 border-b border-amber-200/80 bg-amber-50/90 px-4 py-2 text-[12px] font-medium text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-200">
         <Eye className="h-3.5 w-3.5 shrink-0" aria-hidden />
-        View only &mdash; you can browse and search, but you don&apos;t have edit access to this tab.
+        {strict
+          ? 'View only — you don’t have edit access to this tab.'
+          : 'View only — you can browse and search, but you don’t have edit access to this tab.'}
       </div>
       <div ref={ref} aria-disabled className="flex min-h-0 flex-1 flex-col opacity-95">
         {children}

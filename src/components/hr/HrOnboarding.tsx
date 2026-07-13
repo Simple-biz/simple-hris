@@ -50,6 +50,17 @@ import type {
 type TabFilter = 'pending' | 'ready' | 'promoted' | 'failed' | 'cancelled' | 'no_show' | 'all';
 type SubTab = 'pending-hires' | 'onboarding-form';
 
+/**
+ * A "jump to a submission" request handed down from a notification click (see
+ * HrApp). `nonce` changes on every click so the same target re-triggers the
+ * effects even when the tab/submission is unchanged.
+ */
+export type OnboardingDeepLink = {
+  subTab?: SubTab;
+  submissionId?: string | null;
+  nonce: number;
+};
+
 // Left-to-right order of the sub-tabs, so the panel can slide in the direction
 // that matches the pill the user moved toward.
 const SUB_TAB_ORDER: Record<SubTab, number> = { 'onboarding-form': 0, 'pending-hires': 1 };
@@ -98,7 +109,7 @@ function formatDate(iso: string | null): string {
   });
 }
 
-export default function HrOnboarding() {
+export default function HrOnboarding({ deepLink }: { deepLink?: OnboardingDeepLink | null } = {}) {
   const reduceMotion = useReducedMotion();
   const [subTab, setSubTab] = useState<SubTab>('onboarding-form');
   // Direction of the last sub-tab move (+1 forward, -1 back) so the panel
@@ -113,6 +124,19 @@ export default function HrOnboarding() {
     },
     [],
   );
+
+  // A notification click asked us to open a specific submission: switch to the
+  // requested sub-tab and forward the id to the form, which opens its drawer.
+  // Keyed on `nonce` so re-clicking the same notification fires again.
+  const [openSubmission, setOpenSubmission] = useState<{ id: string; nonce: number } | null>(null);
+  useEffect(() => {
+    if (!deepLink) return;
+    if (deepLink.subTab) selectSubTab(deepLink.subTab);
+    if (deepLink.submissionId) {
+      setOpenSubmission({ id: deepLink.submissionId, nonce: deepLink.nonce });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [deepLink?.nonce]);
   const [pending, setPending] = useState<HrPendingEmployeeRow[]>(
     () => getHrTabCache<HrPendingEmployeeRow[]>(HR_TAB_CACHE_KEYS.pendingEmployees) ?? [],
   );
@@ -687,7 +711,7 @@ export default function HrOnboarding() {
             className="flex flex-col gap-6 lg:gap-8"
           >
             {subTab === 'onboarding-form' ? (
-              <HrOnboardingForm />
+              <HrOnboardingForm openSubmission={openSubmission} />
             ) : (
             <>
       {/* Stat tiles */}
