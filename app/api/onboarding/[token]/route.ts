@@ -6,6 +6,7 @@ import {
   type SubmitOnboardingInput,
 } from "@/lib/supabase/hr-onboarding-submissions";
 import { createSupabaseServiceRoleClient } from "@/lib/supabase/server";
+import { createHrPendingEmployee } from "@/lib/supabase/hr-pending-employees";
 import { generateIpAssignmentPdf } from "@/lib/onboarding/ip-assignment-pdf";
 import {
   isLeadGenDepartment,
@@ -285,6 +286,50 @@ export async function POST(
   if (error) {
     const status = /not found|no longer active/i.test(error) ? 409 : 500;
     return NextResponse.json({ error }, { status });
+  }
+
+  // Stage the hire the moment their paperwork lands: create the
+  // hr_pending_employees row WITHOUT a work email (status pending_work_email)
+  // and link it to this submission. This is what puts the hire on the manager's
+  // Newly Hired tab in the week they onboarded — even before HR runs "Set work
+  // email" (which finds the linked row via pending_employee_id and UPDATES it
+  // in place rather than creating a duplicate), so orientation can be marked in
+  // either order. Skipped when already staged (re-submission) or when the
+  // invite carries no department (nothing to scope the manager view by — HR's
+  // set-work-email still stages those later, exactly as before). Best-effort:
+  // a failure here never blocks the hire's submit.
+  if (row && row.pending_employee_id == null) {
+    const department = (row.invite_department ?? "").trim();
+    const stagedName = row.full_name?.trim() || body.full_name!.trim();
+    if (department && stagedName) {
+      try {
+        const { row: staged, error: stageErr } = await createHrPendingEmployee({
+          name: stagedName,
+          personal_email: row.invite_personal_email ?? row.email ?? body.email!,
+          department,
+          phone: row.phone,
+          location: row.location,
+          source: "onboarding_form",
+          onboarding_submission_id: row.id,
+        });
+        if (stageErr || !staged) {
+          console.error("stage-on-submit: creating the pending hire failed:", stageErr);
+        } else {
+          const sb = createSupabaseServiceRoleClient();
+          const { error: linkErr } = sb
+            ? await sb
+                .from("hr_onboarding_submissions")
+                .update({ pending_employee_id: staged.id })
+                .eq("id", row.id)
+            : { error: { message: "Supabase client missing" } };
+          if (linkErr) {
+            console.error("stage-on-submit: linking the submission failed:", linkErr.message);
+          }
+        }
+      } catch (e) {
+        console.error("stage-on-submit threw:", e);
+      }
+    }
   }
 
   // Alert HR — pops into their Notifications bell (and chimes) in real time.

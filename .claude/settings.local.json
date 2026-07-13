@@ -294,7 +294,17 @@
       "PowerShell(node -e \"console.log\\(JSON.stringify\\(require\\('./package.json'\\).scripts, null, 2\\)\\)\")",
       "PowerShell($r = Invoke-WebRequest -Uri \"http://localhost:3000/onboarding/preview\" -UseBasicParsing -TimeoutSec 120; \"PAGE: $\\($r.StatusCode\\)\"; try { $a = Invoke-WebRequest -Uri \"http://localhost:3000/api/onboarding/preview/calltools-username\" -Method POST -Body '{\"nickname\":\"Mikey\",\"first\":\"James\",\"last\":\"Thomas\"}' -ContentType 'application/json' -UseBasicParsing -TimeoutSec 120 } catch { $a = $_.Exception.Response }; \"PREVIEW-NO-SESSION: $\\([int]$a.StatusCode\\)\"; try { $b = Invoke-WebRequest -Uri \"http://localhost:3000/api/onboarding/sometoken123/calltools-username\" -Method POST -Body '{\"nickname\":\"Mikey\",\"first\":\"James\",\"last\":\"Thomas\"}' -ContentType 'application/json' -UseBasicParsing -TimeoutSec 60 } catch { $b = $_.Exception.Response }; \"REAL-TOKEN \\(now locked\\): $\\([int]$b.StatusCode\\)\")",
       "PowerShell(try { $r = Invoke-WebRequest -Uri \"http://localhost:3000/api/manager/pending-hires/999999/orientation\" -Method POST -Body '{\"attendedOn\":\"2026-07-14\"}' -ContentType 'application/json' -UseBasicParsing -TimeoutSec 120 } catch { $r = $_.Exception.Response }; \"ORIENTATION ROUTE \\(no session\\): $\\([int]$r.StatusCode\\)\")",
-      "PowerShell(try { $r = Invoke-WebRequest -Uri \"http://localhost:3000/api/manager/pending-hires\" -UseBasicParsing -TimeoutSec 120 } catch { $r = $_.Exception.Response }; \"PENDING-HIRES ROUTE \\(no session\\): $\\([int]$r.StatusCode\\)\")"
+      "PowerShell(try { $r = Invoke-WebRequest -Uri \"http://localhost:3000/api/manager/pending-hires\" -UseBasicParsing -TimeoutSec 120 } catch { $r = $_.Exception.Response }; \"PENDING-HIRES ROUTE \\(no session\\): $\\([int]$r.StatusCode\\)\")",
+      "Bash(node \"C:\\\\Users\\\\Kane\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-Kane-Desktop-simple-hris\\\\2d64539b-4251-430c-82bb-a94b34f2597d\\\\scratchpad\\\\inspect-pending-hires.mjs\")",
+      "Bash(cp \"C:\\\\Users\\\\Kane\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-Kane-Desktop-simple-hris\\\\2d64539b-4251-430c-82bb-a94b34f2597d\\\\scratchpad\\\\inspect-pending-hires.mjs\" scripts/__tmp_inspect_pending.mjs)",
+      "Bash(node scripts/__tmp_inspect_pending.mjs)",
+      "Bash(rm -f scripts/__tmp_inspect_pending.mjs)",
+      "Bash(cp \"C:\\\\Users\\\\Kane\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-Kane-Desktop-simple-hris\\\\2d64539b-4251-430c-82bb-a94b34f2597d\\\\scratchpad\\\\inspect-carla.mjs\" scripts/__tmp_inspect_carla.mjs)",
+      "Bash(node scripts/__tmp_inspect_carla.mjs)",
+      "Bash(rm -f scripts/__tmp_inspect_carla.mjs)",
+      "Bash(cp \"C:\\\\Users\\\\Kane\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-Kane-Desktop-simple-hris\\\\2d64539b-4251-430c-82bb-a94b34f2597d\\\\scratchpad\\\\backfill-carla.mjs\" scripts/__tmp_backfill_carla.mjs)",
+      "Bash(node scripts/__tmp_backfill_carla.mjs)",
+      "Bash(rm -f scripts/__tmp_backfill_carla.mjs)"
     ],
     "additionalDirectories": [
       "c:\\Users\\Itachi\\.claude\\projects\\c--Users-Itachi-Desktop-simple-hris\\memory",
