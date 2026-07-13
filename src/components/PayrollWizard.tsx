@@ -5484,6 +5484,119 @@ export default function PayrollWizard({
     setApproveUploadDialogOpen(true);
   };
 
+  /**
+   * Shared post-ingest steps for BOTH hours paths (CSV upload + live API sync):
+   * persist the daily breakdown for PA detection, reload the preview, refresh the
+   * source-file list, and point steps 2–4 at the new batch. `csvText` is the CSV
+   * that was ingested — uploaded by the user, or generated server-side by the sync.
+   */
+  const finalizeHubstaffIngest = async (csvText: string, uploadedFileName: string) => {
+    let cleanGrid: string[][] = [];
+    try {
+      const rawGrid = parseCsv(csvText);
+      cleanGrid = [
+        rawGrid[0],
+        ...rawGrid.slice(1).filter((row) => row.some((cell) => cell.trim() !== '')),
+      ];
+    } catch {
+      // Rows are already in Supabase; preview will still refresh below.
+    }
+
+    if (cleanGrid.length >= 2) {
+      const headers = cleanGrid[0].map((h) => h.trim());
+      const csvRows: Record<string, unknown>[] = cleanGrid.slice(1).map((row) => {
+        const obj: Record<string, unknown> = {};
+        headers.forEach((h, i) => {
+          const val = (row[i] ?? '').trim();
+          obj[h] = val || null;
+        });
+        return obj;
+      });
+      const dateCols = headers.filter(colIsWeekday);
+      if (dateCols.length > 0) {
+        const daily: Record<string, Record<string, string | null>> = {};
+        for (const r of csvRows) {
+          const email = normEmail(String(r['Email'] ?? r['email'] ?? '')) ?? '';
+          if (!email) continue;
+          const dayData: Record<string, string | null> = {};
+          for (const col of dateCols) {
+            dayData[col] = r[col] != null ? String(r[col]) : null;
+          }
+          daily[email] = dayData;
+        }
+        await fetch('/api/app-settings', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ key: 'hubstaff_daily_breakdown', value: JSON.stringify({ dateCols, daily }) }),
+        }).catch(() => {});
+      }
+    }
+
+    await loadHubstaffPreview();
+
+    // Refresh source-file list (retry once so PostgREST read sees the new rows), then open that file
+    let files = await loadUploadedSourceFiles();
+    if (uploadedFileName && !files.includes(uploadedFileName)) {
+      await new Promise((r) => setTimeout(r, 400));
+      files = await loadUploadedSourceFiles();
+    }
+    if (uploadedFileName && files.includes(uploadedFileName)) {
+      await loadSourceFileRows(uploadedFileName);
+    }
+
+    // Update calcSourceFile to the latest uploaded file so steps 2–4 use the new data
+    if (files.length > 0) {
+      setCalcSourceFile(files[0]);
+    }
+  };
+
+  /**
+   * Live "Sync from Hubstaff": the server pulls the week straight from the Hubstaff
+   * REST API and ingests it through the same pipeline as a CSV upload. The response
+   * echoes the generated CSV so the client-side post-ingest steps stay identical.
+   */
+  const syncFromHubstaffApi = async () => {
+    if (!hubstaffSyncWeekStart || hubstaffSyncLoading) return;
+    setHubstaffSyncLoading(true);
+    try {
+      // Hogan cycles export Sun→Sun (8 days, trailing Sunday for HSL's Mon→Sun week);
+      // everyone else uses the plain Sun→Sat pay week. Mirrors the CSV export ranges.
+      const weekEnd = addDaysToIso(hubstaffSyncWeekStart, isHoganCycle ? 7 : 6);
+      const res = await fetch('/api/hubstaff-hours', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'api_sync',
+          weekStart: hubstaffSyncWeekStart,
+          weekEnd,
+          uploaded_by: sessionEmail || undefined,
+        }),
+      });
+      const json = (await res.json()) as {
+        success?: boolean;
+        error?: string;
+        rowCount?: number;
+        fileName?: string;
+        csvText?: string;
+      };
+      if (!res.ok || !json.success) {
+        throw new Error(json.error || 'Hubstaff sync failed');
+      }
+
+      await finalizeHubstaffIngest(json.csvText ?? '', json.fileName ?? '');
+
+      toast.success('Synced from Hubstaff', {
+        description: `${json.rowCount ?? 0} rows loaded for ${hubstaffSyncWeekStart} → ${weekEnd} (${json.fileName ?? 'api sync'}).`,
+      });
+      cursorOverlayRef.current?.broadcastSave();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Hubstaff sync failed';
+      toast.error('Hubstaff sync failed', { description: msg });
+    } finally {
+      setHubstaffSyncLoading(false);
+    }
+  };
+
   const confirmWeeklyUploadToDatabase = async () => {
     if (!pendingWeekly) return;
     setWeeklyUploadLoading(true);
@@ -6294,6 +6407,50 @@ export default function PayrollWizard({
                         accept=".csv,.CSV,text/csv,application/csv,text/plain"
                         className="hidden"
                       />
+                      {HUBSTAFF_API_ENABLED && (
+                        <>
+                          <div className="flex items-center gap-2 py-0.5">
+                            <div className="h-px flex-1 bg-indigo-200/70 dark:bg-indigo-900/50" />
+                            <span className="text-[10px] font-semibold uppercase tracking-wider text-indigo-400 dark:text-indigo-500">
+                              or sync live
+                            </span>
+                            <div className="h-px flex-1 bg-indigo-200/70 dark:bg-indigo-900/50" />
+                          </div>
+                          <div className="flex items-center gap-2 rounded-md border border-zinc-200 bg-white/70 px-2 py-1.5 dark:border-zinc-800 dark:bg-zinc-900/60">
+                            <label
+                              htmlFor="hubstaff-sync-week-start"
+                              className="shrink-0 text-[10px] font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400"
+                            >
+                              Week (Sun)
+                            </label>
+                            <input
+                              id="hubstaff-sync-week-start"
+                              type="date"
+                              value={hubstaffSyncWeekStart}
+                              onChange={(e) => setHubstaffSyncWeekStart(e.target.value)}
+                              disabled={hubstaffSyncLoading}
+                              className="min-w-0 flex-1 bg-transparent text-xs text-zinc-700 outline-none dark:text-zinc-300"
+                            />
+                            <span className="shrink-0 whitespace-nowrap font-mono text-[10px] text-zinc-400 dark:text-zinc-500">
+                              → {hubstaffSyncWeekStart ? addDaysToIso(hubstaffSyncWeekStart, isHoganCycle ? 7 : 6) : '—'}
+                            </span>
+                          </div>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            disabled={hubstaffSyncLoading || weeklyUploadLoading || !hubstaffSyncWeekStart}
+                            onClick={() => void syncFromHubstaffApi()}
+                            className="w-full gap-2 border-indigo-300/80 bg-white text-indigo-900 hover:bg-indigo-50 dark:border-indigo-800 dark:bg-indigo-950/40 dark:text-indigo-100 dark:hover:bg-indigo-950/70"
+                          >
+                            {hubstaffSyncLoading ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <RefreshCw className="h-4 w-4" />
+                            )}
+                            {hubstaffSyncLoading ? 'Fetching from Hubstaff…' : 'Sync from Hubstaff'}
+                          </Button>
+                        </>
+                      )}
                     </div>
                   </section>
                 </div>
@@ -6433,6 +6590,14 @@ export default function PayrollWizard({
                                 <span className="truncate font-mono text-xs text-zinc-700 dark:text-zinc-300">
                                   {file}
                                 </span>
+                                {file.includes('_api_sync_') && (
+                                  <span
+                                    title="Pulled live from the Hubstaff API (not a CSV upload)"
+                                    className="shrink-0 rounded border border-indigo-300 bg-indigo-50 px-1 py-0 text-[9px] font-bold uppercase tracking-wide text-indigo-700 dark:border-indigo-700/60 dark:bg-indigo-950/40 dark:text-indigo-400"
+                                  >
+                                    API
+                                  </span>
+                                )}
                                 {isActive && (
                                   <span className="shrink-0 rounded border border-emerald-300 bg-emerald-50 px-1 py-0 text-[9px] font-bold uppercase tracking-wide text-emerald-700 dark:border-emerald-700/60 dark:bg-emerald-950/40 dark:text-emerald-400">
                                     Source of truth
