@@ -13,6 +13,7 @@ import { hasRateVisibility } from "@/lib/auth/elevated-roles";
 import { requireFeatureEdit } from "@/lib/auth/authorize-feature";
 import { splitFullName, gmailSurnameFromWorkEmail } from "@/lib/hr/work-email";
 import { createWorkspaceAccount } from "@/lib/hr/workspace-account";
+import { ensureCallToolsFieldsForPendingHire } from "@/lib/hr/calltools-username-server";
 import {
   OFFBOARD_DELETE_SLUG,
   fireOffboardWebhook,
@@ -78,6 +79,12 @@ export async function PATCH(
         row.regular_rate != null && Number.isFinite(Number(row.regular_rate))
           ? Number(row.regular_rate)
           : 0;
+      // Lead Gen dialer fields from the linked submission (stored, or minted
+      // now for pre-nickname paperwork); nulls for unlinked / other depts.
+      const calltools = await ensureCallToolsFieldsForPendingHire(id, {
+        name: row.name ?? null,
+        department: row.department ?? null,
+      });
       workspace = await createWorkspaceAccount({
         firstName: first,
         // Send the email-derived surname slice, never the full legal surname.
@@ -86,6 +93,8 @@ export async function PATCH(
         personalEmail,
         projectNames,
         payRate,
+        calltoolsNickname: calltools.calltools_nickname,
+        calltoolsUsername: calltools.calltools_username,
       });
       if (!workspace.ok) {
         console.warn(

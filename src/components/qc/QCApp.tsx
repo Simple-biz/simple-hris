@@ -42,6 +42,8 @@ import type { EmployeeRow } from '@/lib/supabase/employees';
 import DeptBonusCalculator from '@/components/manager/DeptBonusCalculator';
 import NotificationsPanel from '@/components/notifications/NotificationsPanel';
 import ReadOnlyTab from '@/components/rbac/ReadOnlyTab';
+import PayrollProcessingLock from '@/components/payroll/PayrollProcessingLock';
+import { useDispatchLock } from '@/hooks/useDispatchLock';
 import { useFeaturePermissions } from '@/hooks/useFeaturePermissions';
 import QCSidebar, { type QcTab } from './QCSidebar';
 
@@ -138,6 +140,10 @@ export default function QCApp() {
   }, [emailFromQuery]);
 
   const { allowedTabs, canEditTab, ready, roles } = useFeaturePermissions(viewerEmail);
+  // "Start processing" lock from the Payroll Wizard — while on, the QC
+  // dashboard's working tabs (Overview + Calculator) are fully taken over so
+  // scores can't move while people are being paid. Notifications stay open.
+  const { state: payrollProcessing } = useDispatchLock();
 
   // Soft client gate: bounce anyone without the qc (or admin) role. /qc + every
   // /api/qc handler enforce this server-side too.
@@ -373,6 +379,13 @@ export default function QCApp() {
               transition={{ duration: 0.32, ease: [0.22, 1, 0.36, 1] }}
               className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto"
             >
+              {payrollProcessing.locked && activeTab !== 'notifications' ? (
+                <PayrollProcessingLock
+                  surface="The QC dashboard"
+                  lockedAt={payrollProcessing.lockedAt}
+                />
+              ) : (
+                <>
               {activeTab === 'overview' && (
                 <QcOverview
                   viewerEmail={viewerEmail}
@@ -424,6 +437,8 @@ export default function QCApp() {
                 <div className="mx-auto w-full max-w-3xl px-4 py-6">
                   <NotificationsPanel viewerEmail={viewerEmail} accent="orange" />
                 </div>
+              )}
+                </>
               )}
             </motion.div>
           </AnimatePresence>

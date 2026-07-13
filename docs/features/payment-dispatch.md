@@ -530,6 +530,28 @@ if (previous != null && previous !== current) {
 
 Uses Sonner with custom rose / emerald icons. 6 s duration on lock, 5 s on unlock.
 
+### 6.3 KPI Calculator & QC lockout
+
+Since 2026-07-14 the same global lock also takes the score-entry dashboards fully offline — once processing starts, the numbers being paid must not move.
+
+**Client (full takeover, not just disabled buttons):**
+
+- **Manager dashboard → KPI Calculator tab** (`ManagerApp.tsx`, tab `hsl-bonus`): when `useDispatchLock().state.locked`, the tab renders `PayrollProcessingLock` (`src/components/payroll/PayrollProcessingLock.tsx`) instead of the HSL / Departments calculators.
+- **QC dashboard** (`QCApp.tsx`): Overview and QC Calculator tabs render the same takeover; only Notifications stays usable.
+- Both react live via the existing `useDispatchLock` Realtime + 30 s poll plumbing, so open dashboards flip the moment Start/Stop processing is clicked.
+- `HslBonusCalculator`'s older inline `payrollLocked` handling (disabled mark-ready buttons) remains as defense in depth beneath the takeover.
+
+**Server (authoritative):** `rejectWhilePayrollProcessing()` (`src/lib/payroll/processing-guard.ts`) returns **423 Locked** from every KPI/QC mutation while `payroll.dispatch_locked` is `'true'` — same pattern as the bank-details guard. Guarded handlers (GETs stay open; the Payroll Wizard reads them):
+
+| Route | Methods |
+|---|---|
+| `/api/qc/submissions` | POST |
+| `/api/qc/lock` | POST |
+| `/api/qc/review` | POST |
+| `/api/hsl-bonus/entries` | POST, DELETE |
+| `/api/hsl-bonus/period-status` | POST |
+| `/api/bonus-catalog-applied` | POST, DELETE |
+
 ---
 
 ## 6.5 Weekly Disbursement Reports

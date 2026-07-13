@@ -10,6 +10,7 @@ import {
   updateHrPendingEmployee,
 } from "@/lib/supabase/hr-pending-employees";
 import { loadTakenWorkEmails } from "@/lib/hr/work-email-server";
+import { ensureCallToolsFieldsForSubmission } from "@/lib/hr/calltools-username-server";
 import { WORK_EMAIL_DOMAIN, splitFullName, gmailSurnameFromWorkEmail } from "@/lib/hr/work-email";
 import { insertAuditLog } from "@/lib/supabase/audit-log";
 import { createWorkspaceAccount, verifyWorkspaceAccount } from "@/lib/hr/workspace-account";
@@ -249,6 +250,14 @@ export async function POST(
       : 0;
   const otPayRate =
     otRateStr != null && Number.isFinite(Number(otRateStr)) ? Number(otRateStr) : null;
+  // Lead Gen dialer fields ride the workspace payload too — stored on the
+  // submission, or minted right now for pre-nickname-feature paperwork (and
+  // persisted, so the orientation-attended webhook later reuses the same value).
+  const calltools = await ensureCallToolsFieldsForSubmission({
+    submissionId: row.id,
+    fallbackName: name,
+    department,
+  });
   const workspace = await createWorkspaceAccount({
     firstName: first,
     lastName: gmailSurname,
@@ -257,6 +266,8 @@ export async function POST(
     projectNames,
     payRate,
     otRate: otPayRate,
+    calltoolsNickname: calltools.calltools_nickname,
+    calltoolsUsername: calltools.calltools_username,
   });
 
   // Resolve the outcome we'll persist. A create that reports failure does NOT

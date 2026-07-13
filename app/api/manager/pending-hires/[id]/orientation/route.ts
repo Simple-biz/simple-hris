@@ -13,11 +13,7 @@ import { createSupabaseServiceRoleClient } from '@/lib/supabase/server';
 import { requireFeatureEdit } from '@/lib/auth/authorize-feature';
 import { deniedResponse } from '@/lib/auth/authorize-email';
 import { isLeadGenDepartment } from '@/lib/hr/offboard-webhooks';
-import {
-  fallbackDialerIdentity,
-  suggestCallToolsUsername,
-} from '@/lib/hr/calltools-username';
-import { loadTakenCallToolsUsernames } from '@/lib/hr/calltools-username-server';
+import { ensureCallToolsFieldsForPendingHire } from '@/lib/hr/calltools-username-server';
 import {
   fireOrientationAttendedWebhook,
   type OrientationWebhookResult,
@@ -90,72 +86,6 @@ async function authorizeForHire(id: number) {
   return { ok: true as const, sessionEmail };
 }
 
-/**
- * The Lead Gen dialer fields for the attended webhook — looked up via the
- * submission linked to this pending hire
- * (hr_onboarding_submissions.pending_employee_id).
- *
- * When the submission has NO stored username (paperwork submitted before the
- * self-chosen-nickname feature), a Lead Gen hire gets one MINTED right here at
- * mark time — from the stored nickname if any, else the roster name's quoted
- * go-by name ('Joan "Andy" Raguindin' -> Andy), else the first name — checked
- * against every already-minted username and PERSISTED back onto the submission
- * so it is reserved, stable across re-marks, and visible to HR in the
- * submission modal. The payload therefore always carries a calltools_username
- * for a Lead Gen hire with a linked submission.
- *
- * Best-effort: nulls when there's no linked submission, the hire isn't Lead
- * Gen, or the calltools migration hasn't run (missing-column error).
- */
-async function loadCallToolsFields(
-  pendingId: number,
-  hire: { name: string | null; department: string | null },
-): Promise<{ calltools_nickname: string | null; calltools_username: string | null }> {
-  const none = { calltools_nickname: null, calltools_username: null };
-  const sb = createSupabaseServiceRoleClient();
-  if (!sb) return none;
-  try {
-    const { data, error } = await sb
-      .from('hr_onboarding_submissions')
-      .select('id, calltools_nickname, calltools_username')
-      .eq('pending_employee_id', pendingId)
-      .order('submitted_at', { ascending: false })
-      .limit(1);
-    if (error || !data?.[0]) return none;
-    const sub = data[0] as {
-      id: string;
-      calltools_nickname?: string | null;
-      calltools_username?: string | null;
-    };
-    if (sub.calltools_username) {
-      return {
-        calltools_nickname: sub.calltools_nickname ?? null,
-        calltools_username: sub.calltools_username,
-      };
-    }
-    if (!isLeadGenDepartment(hire.department)) return none;
-
-    // Pre-feature Lead Gen paperwork — mint the dialer username now.
-    const identity = fallbackDialerIdentity(hire.name);
-    const nickname = (sub.calltools_nickname ?? '').trim() || identity.nickname;
-    if (!nickname || !identity.first) return none;
-    const taken = await loadTakenCallToolsUsernames();
-    const username = suggestCallToolsUsername(nickname, identity.first, identity.last, taken);
-    if (!username) return none;
-    // Reserve it: write back onto the submission. The `.is(null)` guard means a
-    // concurrent mark can't double-assign; whoever wrote first wins and the
-    // value is identical on a same-hire re-mark anyway.
-    await sb
-      .from('hr_onboarding_submissions')
-      .update({ calltools_nickname: nickname, calltools_username: username })
-      .eq('id', sub.id)
-      .is('calltools_username', null);
-    return { calltools_nickname: nickname, calltools_username: username };
-  } catch {
-    return none;
-  }
-}
-
 /** POST — mark orientation as attended (idempotent). Body: { note?: string }. */
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const feat = await requireFeatureEdit('manager', 'team');
@@ -204,11 +134,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
   // Notify n8n the hire attended (best-effort — the DB mark above is the source
   // of truth and already succeeded). The payload carries the CallTools dialer
-  // fields from the hire's onboarding paperwork so the flow can provision the
-  // Lead Gen agent account; they're null for other departments.
+  // fields from the hire's onboarding paperwork — stored, or minted+persisted
+  // right now for pre-nickname-feature Lead Gen paperwork (see
+  // ensureCallToolsFieldsForSubmission); null for other departments.
   let webhook: OrientationWebhookResult | null = null;
   if (row) {
-    const calltools = await loadCallToolsFields(id, {
+    const calltools = await ensureCallToolsFieldsForPendingHire(id, {
       name: row.name ?? null,
       department: row.department ?? null,
     });

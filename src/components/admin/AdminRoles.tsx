@@ -188,6 +188,8 @@ export default function AdminRoles() {
   const [currencyMutating, setCurrencyMutating] = useState(false);
   const [page, setPage] = useState(1);
   const [viewFilter, setViewFilter] = useState<'all' | 'with_roles'>('all');
+  // Role picker for the People list. 'all' = no role filter.
+  const [roleFilter, setRoleFilter] = useState<'all' | RoleKey>('all');
   // Department picker for the People list. 'all' = no department filter.
   const [deptFilter, setDeptFilter] = useState<string>('all');
   const [departments, setDepartments] = useState<string[]>([]);
@@ -420,15 +422,38 @@ export default function AdminRoles() {
     [allAssignments],
   );
 
+  // Lowercased emails holding each role — powers the role filter without
+  // re-scanning allAssignments per employee.
+  const emailsByRole = useMemo(() => {
+    const out = new Map<RoleKey, Set<string>>();
+    for (const a of allAssignments) {
+      const email = a.work_email.trim().toLowerCase();
+      if (!email) continue;
+      let set = out.get(a.role);
+      if (!set) {
+        set = new Set<string>();
+        out.set(a.role, set);
+      }
+      set.add(email);
+    }
+    return out;
+  }, [allAssignments]);
+
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     const withRolesOnly = viewFilter === 'with_roles';
     const dept = deptFilter.trim().toLowerCase();
+    const roleEmails = roleFilter === 'all' ? null : emailsByRole.get(roleFilter) ?? new Set<string>();
     const base = uniqueEmployees.filter((e) => {
       if (withRolesOnly) {
         const we = (e.work_email ?? '').trim().toLowerCase();
         const pe = (e.personal_email ?? '').trim().toLowerCase();
         if (!emailsWithRolesSet.has(we) && !emailsWithRolesSet.has(pe)) return false;
+      }
+      if (roleEmails) {
+        const we = (e.work_email ?? '').trim().toLowerCase();
+        const pe = (e.personal_email ?? '').trim().toLowerCase();
+        if (!roleEmails.has(we) && !(pe !== '' && roleEmails.has(pe))) return false;
       }
       if (dept !== 'all') {
         // Off-roster / custom emails have no department, so they drop out of
@@ -445,11 +470,11 @@ export default function AdminRoles() {
       return true;
     });
     return [...base].sort((a, b) => (a.name ?? '').localeCompare(b.name ?? ''));
-  }, [uniqueEmployees, search, viewFilter, deptFilter, emailsWithRolesSet]);
+  }, [uniqueEmployees, search, viewFilter, roleFilter, deptFilter, emailsWithRolesSet, emailsByRole]);
 
   useEffect(() => {
     setPage(1);
-  }, [search, viewFilter, deptFilter]);
+  }, [search, viewFilter, roleFilter, deptFilter]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const currentPage = Math.min(page, totalPages);
@@ -913,6 +938,23 @@ export default function AdminRoles() {
                   className="h-10 rounded-lg border-zinc-200 bg-white pl-9 dark:border-zinc-800 dark:bg-zinc-950/50"
                 />
               </div>
+              <div className="relative shrink-0 sm:w-40">
+                <ShieldCheck className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400" aria-hidden />
+                <select
+                  value={roleFilter}
+                  onChange={(e) => setRoleFilter(e.target.value as 'all' | RoleKey)}
+                  aria-label="Filter by role"
+                  className="h-10 w-full appearance-none truncate rounded-lg border border-zinc-200 bg-white pl-8 pr-7 text-sm text-zinc-700 focus:outline-none focus:ring-2 focus:ring-orange-500/30 dark:border-zinc-800 dark:bg-zinc-950/50 dark:text-zinc-200"
+                >
+                  <option value="all">All roles</option>
+                  {ROLES.map((r) => (
+                    <option key={r.key} value={r.key}>
+                      {r.label}
+                    </option>
+                  ))}
+                </select>
+                <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" aria-hidden />
+              </div>
               <div className="relative shrink-0 sm:w-48">
                 <Building2 className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400" aria-hidden />
                 <select
@@ -964,7 +1006,7 @@ export default function AdminRoles() {
                 {filtered.length === 0 ? 0 : pageStart + 1}–{Math.min(pageStart + PAGE_SIZE, filtered.length)}
               </span>{' '}
               of <span className="font-mono font-medium text-zinc-700 dark:text-zinc-300">{filtered.length}</span>
-              {(search.trim() || deptFilter !== 'all' || viewFilter !== 'all') &&
+              {(search.trim() || deptFilter !== 'all' || roleFilter !== 'all' || viewFilter !== 'all') &&
                 uniqueEmployees.length !== filtered.length && (
                   <span className="text-zinc-400"> · filtered from {uniqueEmployees.length}</span>
                 )}

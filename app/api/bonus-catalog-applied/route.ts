@@ -8,6 +8,7 @@ import {
 } from '@/lib/supabase/bonus-catalog-applied-db';
 import { requireFeatureEdit } from '@/lib/auth/authorize-feature';
 import { deniedResponse } from '@/lib/auth/authorize-email';
+import { rejectWhilePayrollProcessing } from '@/lib/payroll/processing-guard';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -54,6 +55,8 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   const authz = await requireFeatureEdit('manager', 'hsl_bonus');
   if (!authz.ok) return deniedResponse(authz);
+  const processing = await rejectWhilePayrollProcessing('the KPI Calculator');
+  if (processing) return processing;
 
   let body: {
     department?: string;
@@ -89,6 +92,8 @@ export async function POST(request: Request) {
 export async function DELETE(request: Request) {
   const authz = await requireFeatureEdit('manager', 'hsl_bonus');
   if (!authz.ok) return deniedResponse(authz);
+  const processing = await rejectWhilePayrollProcessing('the KPI Calculator');
+  if (processing) return processing;
 
   const { searchParams } = new URL(request.url);
   const dept = searchParams.get('dept');

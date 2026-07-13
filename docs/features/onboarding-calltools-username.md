@@ -108,19 +108,28 @@ this is the payload that provisions the Lead Gen CallTools agent:
 }
 ```
 
-The CallTools fields are looked up from the submission linked to the pending
-hire (`hr_onboarding_submissions.pending_employee_id`). **Mint-on-mark
-fallback:** when a Lead Gen hire's linked submission has no stored username
-(paperwork submitted before the nickname feature), the route mints one at mark
-time — nickname preference: stored `calltools_nickname` → the roster name's
-quoted go-by name (`Joan "Andy" Raguindin` → Andy; surname-first
+The CallTools fields come from `ensureCallToolsFieldsForSubmission` /
+`...ForPendingHire`
+([calltools-username-server.ts](../../src/lib/hr/calltools-username-server.ts)):
+STORED-OR-MINTED. When a Lead Gen hire's linked submission has no stored
+username (paperwork submitted before the nickname feature), one is minted at
+call time — nickname preference: stored `calltools_nickname` → the roster
+name's quoted go-by name (`Joan "Andy" Raguindin` → Andy; surname-first
 `Caraga, Siegmond Lois “Siegmond”` handled too — `fallbackDialerIdentity`) →
-first name — checks it against every minted username, and **persists it back
-onto the submission** (reserved + stable + visible in the HR modal). So the
-payload always carries a username for a Lead Gen hire with a linked
-submission; nulls only when unlinked, non-Lead-Gen, or pre-migration. Marking
-is idempotent, so **date edits re-fire with `already_marked: true`** — the n8n
-flow must treat those as an update, not a second account. Best-effort: a
+first name — checked against every minted username, and **persisted back onto
+the submission** (reserved + stable + visible in the HR modal). So the payload
+always carries a username for a Lead Gen hire with a linked submission; nulls
+only when unlinked, non-Lead-Gen, or pre-migration. Marking is idempotent, so
+**date edits re-fire with `already_marked: true`** — the n8n flow must treat
+those as an update, not a second account.
+
+The same two fields (`calltools_nickname` / `calltools_username`, always
+present, null for non-Lead-Gen) also ride the **`create_workspace_account`
+webhook payload** — set-work-email, the Add-Person work-email PATCH, and
+retry-workspace all resolve them through the same stored-or-minted helper, so
+whichever webhook fires first mints and the others reuse the persisted value.
+Per HR, the **orientation-attended webhook is the CallTools provisioning
+trigger**; the workspace payload carries the fields for reference. Best-effort: a
 webhook failure never blocks the mark, but it is returned to the panel, which
 toasts "attendance saved, but the n8n webhook failed" (and a per-hire tally on
 bulk). URL: Admin → Webhooks slug `orientation_attended`, env

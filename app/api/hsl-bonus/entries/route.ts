@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createSupabaseServiceRoleClient } from '@/lib/supabase/server';
 import { requireFeatureEdit } from '@/lib/auth/authorize-feature';
 import { deniedResponse } from '@/lib/auth/authorize-email';
+import { rejectWhilePayrollProcessing } from '@/lib/payroll/processing-guard';
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
@@ -23,6 +24,8 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   const authz = await requireFeatureEdit('manager', 'hsl_bonus');
   if (!authz.ok) return deniedResponse(authz);
+  const processing = await rejectWhilePayrollProcessing('the KPI Calculator');
+  if (processing) return processing;
   const body = (await req.json()) as {
     entries: {
       department: string;
@@ -63,6 +66,8 @@ export async function POST(req: NextRequest) {
 export async function DELETE(req: NextRequest) {
   const authz = await requireFeatureEdit('manager', 'hsl_bonus');
   if (!authz.ok) return deniedResponse(authz);
+  const processing = await rejectWhilePayrollProcessing('the KPI Calculator');
+  if (processing) return processing;
   const { searchParams } = new URL(req.url);
   const dept = searchParams.get('dept');
   const period_start = searchParams.get('period_start');

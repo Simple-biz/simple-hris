@@ -63,6 +63,8 @@ import { offboardReasonLabel } from '@/lib/hr/offboard-reasons';
 import NewlyHiredPanel from '@/components/manager/NewlyHiredPanel';
 import NotificationsPanel from '@/components/notifications/NotificationsPanel';
 import { useFeaturePermissions } from '@/hooks/useFeaturePermissions';
+import { useDispatchLock } from '@/hooks/useDispatchLock';
+import PayrollProcessingLock from '@/components/payroll/PayrollProcessingLock';
 import { usePagesVisibility } from '@/hooks/usePagesVisibility';
 import { pageLabel } from '@/lib/pages/visibility';
 import UnderConstruction from '@/components/common/UnderConstruction';
@@ -101,6 +103,9 @@ export default function ManagerApp() {
   // When a manager owns both HSL branches and regular departments, the KPI tab
   // shows one calculator at a time (null = default to first-assigned).
   const [kpiCalc, setKpiCalc] = useState<'hsl' | 'dept' | null>(null);
+  // "Start processing" lock from the Payroll Wizard — while on, the KPI
+  // Calculator tab is fully taken over (values are being paid out).
+  const { state: payrollProcessing } = useDispatchLock();
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [viewerEmail, setViewerEmail] = useState<string | null>(null);
   const [authChecked, setAuthChecked] = useState(false);
@@ -425,6 +430,16 @@ export default function ManagerApp() {
                 <ManagerSwallTab viewerEmail={viewerEmail} />
               )}
               {activeTab === 'hsl-bonus' && (() => {
+                // Hard stop: once Accounting hits "Start processing" in the
+                // Payroll Wizard, KPI Calculators are unusable until it stops.
+                if (payrollProcessing.locked) {
+                  return (
+                    <PayrollProcessingLock
+                      surface="The KPI Calculator"
+                      lockedAt={payrollProcessing.lockedAt}
+                    />
+                  );
+                }
                 const managed = teamGate.kind === 'department' ? teamGate.departments : [];
                 const elevated = teamGate.kind === 'elevated';
                 // HSL KPI Calculator is visible ONLY to managers explicitly assigned

@@ -69,6 +69,12 @@ export type CreateWorkspaceAccountInput = {
   role?: string;
   /** Whether the hire is trackable in Hubstaff. Defaults to true. */
   trackable?: boolean;
+  /** Lead Gen dialer fields (see src/lib/hr/calltools-username.ts) — the
+   *  hire's self-chosen nickname and the collision-safe minted CallTools
+   *  username ("Mikey J. T."). Null/omitted for other departments; always
+   *  emitted in the wire payload so n8n mappings stay stable. */
+  calltoolsNickname?: string | null;
+  calltoolsUsername?: string | null;
 };
 
 export type CreateWorkspaceAccountResult = {
@@ -133,6 +139,10 @@ export async function createWorkspaceAccount(
     regular_rate: rawRate,
     ot_rate: otRate,
     trackable: input.trackable ?? true,
+    // Lead Gen dialer identity — null for other departments. Keys are always
+    // present so the n8n workflow can map them unconditionally.
+    calltools_nickname: input.calltoolsNickname ?? null,
+    calltools_username: input.calltoolsUsername ?? null,
   };
 
   let url: string;

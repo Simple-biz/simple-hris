@@ -3,6 +3,7 @@ import { deniedResponse } from "@/lib/auth/authorize-email";
 import { requireFeatureEdit } from "@/lib/auth/authorize-feature";
 import { getHrPendingEmployeeById } from "@/lib/supabase/hr-pending-employees";
 import { createWorkspaceAccount } from "@/lib/hr/workspace-account";
+import { ensureCallToolsFieldsForPendingHire } from "@/lib/hr/calltools-username-server";
 import { splitFullName, gmailSurnameFromWorkEmail } from "@/lib/hr/work-email";
 import { insertAuditLog } from "@/lib/supabase/audit-log";
 
@@ -59,6 +60,12 @@ export async function POST(
       : 0;
   const projectNames = Array.isArray(row.project_names) ? row.project_names : [];
 
+  // Lead Gen dialer fields from the linked submission (stored, or minted now
+  // for pre-nickname paperwork); nulls for unlinked / other departments.
+  const calltools = await ensureCallToolsFieldsForPendingHire(row.id, {
+    name: row.name ?? null,
+    department: row.department ?? null,
+  });
   const workspace = await createWorkspaceAccount({
     firstName: first,
     // Send the email-derived surname slice, never the full legal surname.
@@ -67,6 +74,8 @@ export async function POST(
     personalEmail: row.personal_email,
     projectNames,
     payRate,
+    calltoolsNickname: calltools.calltools_nickname,
+    calltoolsUsername: calltools.calltools_username,
   });
 
   void insertAuditLog({

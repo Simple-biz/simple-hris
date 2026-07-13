@@ -309,7 +309,9 @@
       "Bash(node scripts/__tmp_diag.mjs)",
       "Bash(rm -f scripts/__tmp_diag.mjs)",
       "Bash(npx tsx *)",
-      "Bash(rm -f scripts/__tmp_dryrun_calltools.mts)"
+      "Bash(rm -f scripts/__tmp_dryrun_calltools.mts)",
+      "PowerShell(try { $r = Invoke-WebRequest -Uri \"http://localhost:3000/api/manager/pending-hires/999999/orientation\" -Method POST -Body '{\"attendedOn\":\"2026-07-14\"}' -ContentType 'application/json' -UseBasicParsing -TimeoutSec 120 } catch { $r = $_.Exception.Response }; \"ORIENTATION ROUTE: $\\([int]$r.StatusCode\\)\")",
+      "PowerShell(npx eslint src/components/payroll/PayrollProcessingLock.tsx src/lib/payroll/processing-guard.ts src/components/qc/QCApp.tsx src/components/manager/ManagerApp.tsx app/api/qc/submissions/route.ts app/api/qc/lock/route.ts app/api/qc/review/route.ts app/api/hsl-bonus/entries/route.ts app/api/hsl-bonus/period-status/route.ts app/api/bonus-catalog-applied/route.ts)"
     ],
     "additionalDirectories": [
       "c:\\Users\\Itachi\\.claude\\projects\\c--Users-Itachi-Desktop-simple-hris\\memory",

@@ -3,6 +3,7 @@ import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth/auth-options';
 import { requireFeatureEdit } from '@/lib/auth/authorize-feature';
 import { deniedResponse } from '@/lib/auth/authorize-email';
+import { rejectWhilePayrollProcessing } from '@/lib/payroll/processing-guard';
 import { createSupabaseServiceRoleClient } from '@/lib/supabase/server';
 import { insertAuditLog } from '@/lib/supabase/audit-log';
 import {
@@ -49,6 +50,8 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   const authz = await requireFeatureEdit('manager', 'hsl_bonus');
   if (!authz.ok) return deniedResponse(authz);
+  const processing = await rejectWhilePayrollProcessing('QC review');
+  if (processing) return processing;
   const reviewer = norm(authz.sessionEmail);
 
   let body: {

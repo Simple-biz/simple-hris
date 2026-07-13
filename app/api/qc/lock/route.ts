@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { requireFeatureEdit } from '@/lib/auth/authorize-feature';
 import { deniedResponse } from '@/lib/auth/authorize-email';
+import { rejectWhilePayrollProcessing } from '@/lib/payroll/processing-guard';
 import { createSupabaseServiceRoleClient } from '@/lib/supabase/server';
 import { insertAuditLog } from '@/lib/supabase/audit-log';
 import { listAllDepartmentManagers } from '@/lib/supabase/department-managers';
@@ -29,6 +30,8 @@ const QC_DEPT_SET = new Set<string>(QC_DEPT_KEYS);
 export async function POST(request: Request) {
   const authz = await requireFeatureEdit('qc', 'qc_calculator');
   if (!authz.ok) return deniedResponse(authz);
+  const processing = await rejectWhilePayrollProcessing('QC scoring');
+  if (processing) return processing;
   const officer = norm(authz.sessionEmail);
 
   let body: { period_start?: string; status?: 'locked' | 'draft' };
