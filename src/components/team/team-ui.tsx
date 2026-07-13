@@ -35,13 +35,13 @@ export function TeamAvatar({
 }: {
   name: string;
   email: string | null;
-  size?: 'md' | 'xl';
+  size?: 'sm' | 'md' | 'xl';
 }) {
   const [failed, setFailed] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const seed = email ?? name;
-  const px = size === 'xl' ? 88 : 44;
-  const dimClass = size === 'xl' ? 'h-22 w-22' : 'h-11 w-11';
+  const px = size === 'xl' ? 88 : size === 'sm' ? 28 : 44;
+  const dimClass = size === 'xl' ? 'h-22 w-22' : size === 'sm' ? 'h-7 w-7' : 'h-11 w-11';
   const dimStyle = size === 'xl' ? { height: 88, width: 88 } : undefined;
 
   // No photo to fetch, or it failed — show the styled-initials fallback.
@@ -52,7 +52,7 @@ export function TeamAvatar({
         className={cn(
           'flex shrink-0 items-center justify-center rounded-full bg-gradient-to-br font-bold text-white shadow-sm',
           dimClass,
-          size === 'xl' ? 'text-2xl' : 'text-sm',
+          size === 'xl' ? 'text-2xl' : size === 'sm' ? 'text-[10px]' : 'text-sm',
           gradientFor(seed),
         )}
         style={dimStyle}

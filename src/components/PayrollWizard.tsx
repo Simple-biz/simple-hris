@@ -759,6 +759,28 @@ function colDayPrefix(col: string): { label: string; order: number; weekday: boo
 }
 
 /**
+ * Live Hubstaff API sync is opt-in per environment: the button only renders when the
+ * deployment has credentials configured (HUBSTAFF_PAT / HUBSTAFF_ORG_ID server-side),
+ * signalled by this build-time flag. CSV upload always remains available as fallback.
+ */
+const HUBSTAFF_API_ENABLED = process.env.NEXT_PUBLIC_HUBSTAFF_API_ENABLED === 'true';
+
+/** Local-calendar ISO date arithmetic for the sync week picker. */
+function addDaysToIso(iso: string, days: number): string {
+  const [y, m, d] = iso.split('-').map(Number);
+  const dt = new Date(y, (m ?? 1) - 1, (d ?? 1) + days);
+  return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
+}
+
+/** Sunday starting the most recent COMPLETED Sun→Sat pay week (uploads are Sun-anchored). */
+function defaultHubstaffSyncWeekStart(): string {
+  const now = new Date();
+  const d = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  d.setDate(d.getDate() - d.getDay() - 7);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+/**
  * Returns true when a Hubstaff column name represents a Monday–Friday workday.
  *
  * Priority:
@@ -898,6 +920,10 @@ export default function PayrollWizard({
   const [hubstaffPreviewLoading, setHubstaffPreviewLoading] = useState(false);
   const [hubstaffPreviewError, setHubstaffPreviewError] = useState<string | null>(null);
   const [weeklyUploadLoading, setWeeklyUploadLoading] = useState(false);
+  const [hubstaffSyncLoading, setHubstaffSyncLoading] = useState(false);
+  const [hubstaffSyncWeekStart, setHubstaffSyncWeekStart] = useState<string>(() =>
+    defaultHubstaffSyncWeekStart(),
+  );
   const [masterListUploadLoading, setMasterListUploadLoading] = useState(false);
   const [ratesUploadLoading, setRatesUploadLoading] = useState(false);
   const { state: lockState, setLocked } = useDispatchLock();
@@ -5480,65 +5506,7 @@ export default function PayrollWizard({
       setPendingWeekly(null);
       setApproveUploadDialogOpen(false);
 
-      // Persist daily breakdown for PA detection, then reload full table from Supabase
-      // so the preview reflects every appended batch (not only the last file).
-      let cleanGrid: string[][] = [];
-      try {
-        const rawGrid = parseCsv(csvText);
-        cleanGrid = [
-          rawGrid[0],
-          ...rawGrid.slice(1).filter((row) => row.some((cell) => cell.trim() !== '')),
-        ];
-      } catch {
-        // Rows are already in Supabase; preview will still refresh below.
-      }
-
-      if (cleanGrid.length >= 2) {
-        const headers = cleanGrid[0].map((h) => h.trim());
-        const csvRows: Record<string, unknown>[] = cleanGrid.slice(1).map((row) => {
-          const obj: Record<string, unknown> = {};
-          headers.forEach((h, i) => {
-            const val = (row[i] ?? '').trim();
-            obj[h] = val || null;
-          });
-          return obj;
-        });
-        const dateCols = headers.filter(colIsWeekday);
-        if (dateCols.length > 0) {
-          const daily: Record<string, Record<string, string | null>> = {};
-          for (const r of csvRows) {
-            const email = normEmail(String(r['Email'] ?? r['email'] ?? '')) ?? '';
-            if (!email) continue;
-            const dayData: Record<string, string | null> = {};
-            for (const col of dateCols) {
-              dayData[col] = r[col] != null ? String(r[col]) : null;
-            }
-            daily[email] = dayData;
-          }
-          await fetch('/api/app-settings', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ key: 'hubstaff_daily_breakdown', value: JSON.stringify({ dateCols, daily }) }),
-          }).catch(() => {});
-        }
-      }
-
-      await loadHubstaffPreview();
-
-      // Refresh source-file list (retry once so PostgREST read sees the new rows), then open that file
-      let files = await loadUploadedSourceFiles();
-      if (uploadedFileName && !files.includes(uploadedFileName)) {
-        await new Promise((r) => setTimeout(r, 400));
-        files = await loadUploadedSourceFiles();
-      }
-      if (uploadedFileName && files.includes(uploadedFileName)) {
-        await loadSourceFileRows(uploadedFileName);
-      }
-
-      // Update calcSourceFile to the latest uploaded file so steps 2–4 use the new data
-      if (files.length > 0) {
-        setCalcSourceFile(files[0]);
-      }
+      await finalizeHubstaffIngest(csvText, uploadedFileName);
 
       toast.success('Saved to hubstaff_hours', {
         description: `${json.rowCount ?? 0} rows appended to public.hubstaff_hours.`,

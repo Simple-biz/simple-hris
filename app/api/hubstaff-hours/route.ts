@@ -14,6 +14,12 @@ import {
   sortHubstaffColumnsForDisplay,
 } from "@/lib/supabase/hubstaff-hours-db";
 import { insertAuditLog } from "@/lib/supabase/audit-log";
+import {
+  fetchDailyActivities,
+  getHubstaffOrgId,
+  hubstaffApiConfigured,
+} from "@/lib/hubstaff/api-client";
+import { apiSyncFileName, buildWeeklySummaryCsv } from "@/lib/hubstaff/build-weekly-summary";
 import { normEmail } from "@/lib/email/norm-email";
 import { getSessionActor } from "@/lib/auth/session-actor";
 import { requireFeatureEdit } from "@/lib/auth/authorize-feature";
@@ -397,6 +403,13 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // JSON body → live API sync ("Sync from Hubstaff" in the Payroll Wizard).
+    // Multipart body → the original CSV upload path, unchanged below.
+    const contentType = req.headers.get("content-type") ?? "";
+    if (contentType.includes("application/json")) {
+      return handleApiSync(req);
+    }
+
     const form = await req.formData();
     const file = form.get("file");
     if (!file || typeof file === "string") {
@@ -427,4 +440,85 @@ export async function POST(req: NextRequest) {
     console.error("[POST /api/hubstaff-hours]", msg);
     return NextResponse.json({ success: false, error: msg }, { status: 500 });
   }
+}
+
+/**
+ * Live Hubstaff API sync: pulls the week's daily activity aggregates from the
+ * Hubstaff REST API, renders them as the SAME weekly-summary CSV a manual export
+ * produces, and feeds that through `replaceHubstaffHoursFromCsvText` — so an API
+ * batch is archived, promoted, and consumed downstream exactly like a CSV upload.
+ * Auth (`requireFeatureEdit`) and the service-role check already ran in POST.
+ */
+async function handleApiSync(req: NextRequest) {
+  const body = (await req.json().catch(() => ({}))) as {
+    action?: unknown;
+    weekStart?: unknown;
+    weekEnd?: unknown;
+    uploaded_by?: unknown;
+  };
+  if (body.action !== "api_sync") {
+    return NextResponse.json(
+      { success: false, error: `Unknown action "${String(body.action)}".` },
+      { status: 400 },
+    );
+  }
+
+  const weekStart = typeof body.weekStart === "string" ? body.weekStart.trim() : "";
+  const weekEnd = typeof body.weekEnd === "string" ? body.weekEnd.trim() : "";
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(weekStart) || !/^\d{4}-\d{2}-\d{2}$/.test(weekEnd)) {
+    return NextResponse.json(
+      { success: false, error: "weekStart and weekEnd must be YYYY-MM-DD dates." },
+      { status: 400 },
+    );
+  }
+
+  if (!hubstaffApiConfigured()) {
+    return NextResponse.json(
+      {
+        success: false,
+        error:
+          "Hubstaff API sync is not configured. Set HUBSTAFF_PAT (Personal Access Token from " +
+          "developer.hubstaff.com) and HUBSTAFF_ORG_ID in the environment, then redeploy.",
+      },
+      { status: 503 },
+    );
+  }
+
+  const startedAt = Date.now();
+  const orgId = getHubstaffOrgId()!;
+  const { activities, users } = await fetchDailyActivities(orgId, weekStart, weekEnd);
+  if (activities.length === 0) {
+    return NextResponse.json(
+      { success: false, error: `No Hubstaff time entries found between ${weekStart} and ${weekEnd}.` },
+      { status: 400 },
+    );
+  }
+
+  const { csvText, rowCount: memberCount } = buildWeeklySummaryCsv(
+    users,
+    activities,
+    weekStart,
+    weekEnd,
+  );
+  const fileName = apiSyncFileName(weekStart, weekEnd);
+  const uploadedBy = typeof body.uploaded_by === "string" ? body.uploaded_by.trim() || null : null;
+
+  const { rowCount, uploadId } = await replaceHubstaffHoursFromCsvText(csvText, fileName, uploadedBy);
+
+  console.log(
+    `[hubstaff api_sync] ${weekStart}→${weekEnd} org=${orgId} members=${memberCount} rows=${rowCount} in ${Date.now() - startedAt}ms`,
+  );
+
+  const actor = await getSessionActor();
+  void insertAuditLog({
+    user_name:   uploadedBy ?? actor.user_name,
+    user_role:   actor.user_role,
+    action:      'hubstaff.api_sync',
+    resource:    'hubstaff_hours',
+    resource_id: fileName,
+    details:     { file: fileName, week_start: weekStart, week_end: weekEnd, members: memberCount, rows: rowCount, upload_id: uploadId },
+    ip_address:  clientIp(req),
+  });
+
+  return NextResponse.json({ success: true, rowCount, uploadId, fileName, csvText });
 }

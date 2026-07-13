@@ -3484,10 +3484,26 @@ function SubmitModal({
   );
 }
 
-/** "Add External Member" modal: a details form (full name + email) followed by
- *  ONE warning step that makes the manager double-check what they typed before
- *  the member is added — the applied rows are keyed and paid exactly as
- *  entered, so a typo here is a payroll typo. */
+/** One person from the Global Master List, as served by
+ *  /api/manager/transfer-candidates (name + emails only — never rates). */
+interface ExternalCandidate {
+  name: string;
+  department: string | null;
+  work_email: string | null;
+  personal_email: string | null;
+}
+
+/** The identity email an external candidate would be keyed under — personal
+ *  first, matching how the roster keys members (rowEmail). */
+function candidateEmail(c: ExternalCandidate): string {
+  return normEmail(c.personal_email ?? null) || normEmail(c.work_email ?? null) || '';
+}
+
+/** "Add External Member" modal: search the Global Master List for someone
+ *  outside the manager's departments (same endpoint the transfer dialog uses,
+ *  so a plain manager needs no extra permissions), pick them, then pass ONE
+ *  warning step that makes the manager double-check the person before they're
+ *  added — the applied rows are keyed and paid exactly as selected. */
 function AddExternalMemberModal({
   deptName,
   color,
@@ -3502,53 +3518,65 @@ function AddExternalMemberModal({
   onClose: () => void;
   reduce: boolean;
 }) {
-  const [name, setName] = useState('');
-  const [email, setEmail] = useState('');
-  const [phase, setPhase] = useState<'form' | 'confirm'>('form');
+  const [query, setQuery] = useState('');
+  const [candidates, setCandidates] = useState<ExternalCandidate[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [selected, setSelected] = useState<ExternalCandidate | null>(null);
+  const [phase, setPhase] = useState<'pick' | 'confirm'>('pick');
   const [error, setError] = useState<string | null>(null);
-  const nameRef = useRef<HTMLInputElement | null>(null);
+  const searchRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose();
     };
     document.addEventListener('keydown', onKey);
-    const t = window.setTimeout(() => nameRef.current?.focus(), 60);
+    const t = window.setTimeout(() => searchRef.current?.focus(), 60);
     return () => {
       document.removeEventListener('keydown', onKey);
       window.clearTimeout(t);
     };
   }, [onClose]);
 
-  const trimmedName = name.trim();
-  const trimmedEmail = email.trim().toLowerCase();
-  const emailOk = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedEmail);
-
-  function handleContinue() {
-    if (trimmedName.length < 2) {
-      setError('Enter the member’s full name.');
-      return;
-    }
-    if (!emailOk) {
-      setError('Enter a valid email address.');
-      return;
-    }
-    setError(null);
-    setPhase('confirm');
-  }
+  // Debounced Global-Master-List search. The endpoint already excludes the
+  // manager's own departments — everyone it returns is external to the team.
+  useEffect(() => {
+    let cancelled = false;
+    const handle = setTimeout(() => {
+      setLoading(true);
+      const params = new URLSearchParams();
+      if (query.trim()) params.set('q', query.trim());
+      fetch(`/api/manager/transfer-candidates?${params.toString()}`, { cache: 'no-store' })
+        .then((r) => r.json())
+        .then((j: { people?: ExternalCandidate[] }) => {
+          if (!cancelled) setCandidates(j.people ?? []);
+        })
+        .catch(() => {
+          if (!cancelled) setCandidates([]);
+        })
+        .finally(() => {
+          if (!cancelled) setLoading(false);
+        });
+    }, 250);
+    return () => {
+      cancelled = true;
+      clearTimeout(handle);
+    };
+  }, [query]);
 
   function handleConfirm() {
-    const err = onAdd(trimmedName, trimmedEmail);
+    if (!selected) return;
+    const email = candidateEmail(selected);
+    const err = onAdd(selected.name, email);
     if (err) {
       setError(err);
-      setPhase('form');
+      setPhase('pick');
       return;
     }
     onClose();
   }
 
-  const inputClass =
-    'h-9 w-full rounded-md border border-zinc-200 bg-white px-2.5 text-[13px] text-zinc-900 outline-none transition-colors focus:border-emerald-400 focus:ring-1 focus:ring-emerald-200 dark:border-zinc-700 dark:bg-zinc-900/60 dark:text-zinc-100';
+  const selectedEmail = selected ? candidateEmail(selected) : '';
 
   return (
     <motion.div
@@ -3568,14 +3596,14 @@ function AddExternalMemberModal({
         className="absolute inset-0 cursor-default bg-zinc-950/45 backdrop-blur-md dark:bg-black/65"
       />
       <motion.div
-        className="relative w-full max-w-sm overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-2xl dark:border-zinc-800 dark:bg-[#0e1117]"
+        className="relative flex max-h-[min(620px,90vh)] w-full max-w-md flex-col overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-2xl dark:border-zinc-800 dark:bg-[#0e1117]"
         initial={reduce ? false : { opacity: 0, scale: 0.94, y: 12 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}
         exit={reduce ? { opacity: 0 } : { opacity: 0, scale: 0.97, y: 4 }}
         transition={{ duration: 0.32, ease: EASE }}
       >
-        {phase === 'form' ? (
-          <div className="flex flex-col gap-3 px-6 py-6">
+        {phase === 'pick' ? (
+          <div className="flex min-h-0 flex-col gap-3 px-6 py-6">
             <div className="flex items-center gap-3">
               <span
                 className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full"
@@ -3589,36 +3617,82 @@ function AddExternalMemberModal({
               </div>
             </div>
             <p className="text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">
-              External members aren’t on the {deptName} roster and need no HRIS permissions. They’ll
-              receive the team’s <span className="font-semibold text-zinc-700 dark:text-zinc-300">common bonus</span> for
-              this week and go to payroll with the rest of the team.
+              Pick someone from the <span className="font-semibold text-zinc-700 dark:text-zinc-300">Global Master List</span> outside
+              the {deptName} team — no extra permissions needed. They’ll receive the team’s{' '}
+              <span className="font-semibold text-zinc-700 dark:text-zinc-300">common bonus</span> for this week and go
+              to payroll with the rest of the team.
             </p>
-            <label className="flex flex-col gap-1">
-              <span className="font-mono text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-500">
-                Full name
-              </span>
+            <div className="relative">
+              <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400" aria-hidden />
               <input
-                ref={nameRef}
-                type="text"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="e.g. Juan Dela Cruz"
-                className={inputClass}
+                ref={searchRef}
+                type="search"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Search by name or email…"
+                className="h-9 w-full rounded-md border border-zinc-200 bg-white pl-8 pr-2.5 text-[13px] text-zinc-900 outline-none transition-colors focus:border-emerald-400 focus:ring-1 focus:ring-emerald-200 dark:border-zinc-700 dark:bg-zinc-900/60 dark:text-zinc-100"
               />
-            </label>
-            <label className="flex flex-col gap-1">
-              <span className="font-mono text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-500">
-                Email
-              </span>
-              <input
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && handleContinue()}
-                placeholder="name@example.com"
-                className={inputClass}
-              />
-            </label>
+            </div>
+            <div className="min-h-0 flex-1 overflow-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
+              {loading ? (
+                <div className="flex items-center justify-center gap-2 px-3 py-10 text-xs text-zinc-400">
+                  <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> Searching the master list…
+                </div>
+              ) : candidates.length === 0 ? (
+                <div className="px-3 py-10 text-center text-xs text-zinc-400">
+                  No one on the master list matches{query.trim() ? ` “${query.trim()}”` : ''}.
+                </div>
+              ) : (
+                candidates.map((c) => {
+                  const email = candidateEmail(c);
+                  const isSelected =
+                    !!selected && candidateEmail(selected) === email && selected.name === c.name;
+                  const noEmail = !email;
+                  return (
+                    <button
+                      key={`${c.name}:${email || c.department || ''}`}
+                      type="button"
+                      disabled={noEmail}
+                      onClick={() => {
+                        setSelected(c);
+                        setError(null);
+                      }}
+                      title={noEmail ? 'No email on file — cannot be added' : undefined}
+                      className={cn(
+                        'flex w-full items-center gap-2.5 border-b border-zinc-100 px-3 py-2 text-left transition-colors last:border-0 dark:border-zinc-800/60',
+                        noEmail
+                          ? 'cursor-not-allowed opacity-45'
+                          : isSelected
+                            ? 'bg-emerald-50 dark:bg-emerald-950/30'
+                            : 'hover:bg-zinc-50 dark:hover:bg-zinc-900/50',
+                      )}
+                    >
+                      <span
+                        className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[9px] font-bold"
+                        style={{ backgroundColor: hexA(color, 0.14), color }}
+                        aria-hidden
+                      >
+                        {initials(c.name)}
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-[12.5px] font-medium text-zinc-800 dark:text-zinc-100">
+                          {c.name}
+                        </span>
+                        <span className="block truncate font-mono text-[10px] text-zinc-400">
+                          {email || 'no email on file'}
+                        </span>
+                      </span>
+                      {c.department && (
+                        <span className="shrink-0 rounded bg-zinc-100 px-1.5 py-0.5 font-mono text-[9px] font-semibold text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
+                          {c.department}
+                        </span>
+                      )}
+                      {isSelected && <Check className="h-3.5 w-3.5 shrink-0 text-emerald-600 dark:text-emerald-400" aria-hidden />}
+                    </button>
+                  );
+                })
+              )}
+            </div>
             {error && (
               <p className="flex items-start gap-1.5 text-xs font-medium text-red-600 dark:text-red-400">
                 <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden /> {error}
@@ -3631,8 +3705,8 @@ function AddExternalMemberModal({
               <Button
                 size="sm"
                 className="h-8 gap-1.5 bg-emerald-600 text-xs text-white hover:bg-emerald-700 disabled:opacity-60"
-                disabled={trimmedName.length < 2 || !emailOk}
-                onClick={handleContinue}
+                disabled={!selected || !selectedEmail}
+                onClick={() => setPhase('confirm')}
               >
                 Continue
               </Button>
@@ -3645,22 +3719,27 @@ function AddExternalMemberModal({
             </span>
             <div className="text-base font-bold text-zinc-900 dark:text-zinc-100">Double-check before adding</div>
             <div className="w-full rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2.5 text-left dark:border-zinc-800 dark:bg-zinc-900/60">
-              <div className="truncate text-[13px] font-semibold text-zinc-900 dark:text-zinc-100" title={trimmedName}>
-                {trimmedName}
+              <div className="truncate text-[13px] font-semibold text-zinc-900 dark:text-zinc-100" title={selected?.name}>
+                {selected?.name}
               </div>
-              <div className="truncate font-mono text-[11px] text-zinc-500 dark:text-zinc-400" title={trimmedEmail}>
-                {trimmedEmail}
+              <div className="truncate font-mono text-[11px] text-zinc-500 dark:text-zinc-400" title={selectedEmail}>
+                {selectedEmail}
               </div>
+              {selected?.department && (
+                <div className="mt-0.5 truncate font-mono text-[10px] text-zinc-400">
+                  Currently in: {selected.department}
+                </div>
+              )}
             </div>
             <p className="text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">
-              This person is not on the {deptName} roster. Once added, they’ll receive the{' '}
+              This person is outside the {deptName} team. Once added, they’ll receive the{' '}
               <span className="font-semibold text-zinc-700 dark:text-zinc-300">{deptName} team’s common bonus</span> in
-              this week’s KPI submission, paid out exactly under the name and email above — please make
-              sure every detail is entered correctly. You can still remove them any time before
-              submitting to payroll.
+              this week’s KPI submission, paid out under the details above — please make sure this is
+              the right person before confirming. You can still remove them any time before submitting
+              to payroll.
             </p>
             <div className="mt-1 flex gap-2">
-              <Button size="sm" variant="outline" className="h-8 text-xs" onClick={() => setPhase('form')}>
+              <Button size="sm" variant="outline" className="h-8 text-xs" onClick={() => setPhase('pick')}>
                 Go back
               </Button>
               <Button size="sm" className="h-8 gap-1.5 bg-emerald-600 text-xs text-white hover:bg-emerald-700" onClick={handleConfirm}>
