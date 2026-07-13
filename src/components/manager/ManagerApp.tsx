@@ -2591,7 +2591,7 @@ function TeamPanelInner({ members, teamGate, viewerEmail, focusEmail, onFocusCon
                   : 'text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200',
               )}
             >
-              Newly Hired
+              New Hire Check List
             </button>
             <button
               type="button"

@@ -1,11 +1,12 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { AlertTriangle, CheckCircle2, ClipboardCheck, Loader2, RotateCcw, UserPlus, XCircle } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, ClipboardCheck, Layers, Loader2, RotateCcw, Search, UserPlus, X, XCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
+import { formatWeekLabel, sundayIso } from '@/lib/hr/hiring-week';
 import type { HrPendingStatus } from '@/lib/supabase/hr-pending-employees';
 
 /**
@@ -88,6 +89,39 @@ function manilaInputDate(iso: string | null): string {
   }).format(d);
 }
 
+/** Sentinel batch key for hires whose date can't be parsed into a week. */
+const UNKNOWN_BATCH = 'unknown';
+
+/**
+ * The hiring "batch" a pending hire belongs to — the Sun-anchored week HR's New
+ * Hire Checklist groups them into. Derived from the hire's tentative Start Date
+ * (the Monday of their orientation week), falling back to when HR staged them.
+ * Returns a `YYYY-MM-DD` Sunday key (sortable) or `UNKNOWN_BATCH`.
+ */
+function batchKeyOf(r: PendingHireRow): string {
+  const raw = r.start_date ?? r.created_at;
+  const isoOnly = raw && raw.length >= 10 ? raw.slice(0, 10) : raw;
+  const [y, m, d] = (isoOnly ?? '').split('-').map(Number);
+  if (!y || !m || !d) return UNKNOWN_BATCH;
+  const anchor = new Date(y, m - 1, d);
+  if (Number.isNaN(anchor.getTime())) return UNKNOWN_BATCH;
+  return sundayIso(anchor);
+}
+
+/** Human label for a batch key ("Jun 28 – Jul 4, 2026" / "No batch date"). */
+function batchLabelOf(key: string): string {
+  return key === UNKNOWN_BATCH ? 'No batch date' : formatWeekLabel(key);
+}
+
+/** Sort batch keys newest-first, with the unknown bucket always last. */
+function sortBatchKeys(keys: string[]): string[] {
+  return [...keys].sort((a, b) => {
+    if (a === UNKNOWN_BATCH) return 1;
+    if (b === UNKNOWN_BATCH) return -1;
+    return a < b ? 1 : a > b ? -1 : 0;
+  });
+}
+
 export default function NewlyHiredPanel({ viewerEmail, teamGate }: NewlyHiredPanelProps) {
   const [rows, setRows] = useState<PendingHireRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -97,14 +131,24 @@ export default function NewlyHiredPanel({ viewerEmail, teamGate }: NewlyHiredPan
   const [dateDraft, setDateDraft] = useState<Record<number, string>>({});
   const [confirmNoShow, setConfirmNoShow] = useState<PendingHireRow | null>(null);
   const [noShowNote, setNoShowNote] = useState('');
+  // Filters: free-text search + a batch (hiring-week) picker so managers can
+  // navigate one batch at a time, matching HR's New Hire Checklist weeks.
+  const [searchQuery, setSearchQuery] = useState('');
+  const [batchFilter, setBatchFilter] = useState<string>('all');
   // Multi-select: tick hires, pick one date, mark/update orientation for all.
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [bulkDate, setBulkDate] = useState<string>(manilaToday());
   const [bulkBusy, setBulkBusy] = useState(false);
-  // Live progress for the bulk "mark attended" run — drives a modal that shows,
-  // in real time, how many hires have actually been marked so far. null when no
-  // bulk run is in flight or awaiting review.
+  // Confirmation gate for the bulk "Did not attend" run — offboarding is
+  // destructive, so we list everyone selected in a modal before firing.
+  const [confirmBulkNoShow, setConfirmBulkNoShow] = useState(false);
+  const [bulkNoShowNote, setBulkNoShowNote] = useState('');
+  // Live progress for a bulk run (orientation mark OR no-show) — drives a modal
+  // that shows, in real time, how many hires have actually been processed so
+  // far. null when no bulk run is in flight or awaiting review. `kind` selects
+  // the copy so the same tally UI serves both actions.
   const [bulkProgress, setBulkProgress] = useState<{
+    kind: 'orientation' | 'no-show';
     total: number;
     done: number;
     ok: number;
@@ -211,7 +255,7 @@ export default function NewlyHiredPanel({ viewerEmail, teamGate }: NewlyHiredPan
       <Card className="border-blue-100/70 bg-gradient-to-br from-white to-blue-50/40 ring-1 ring-blue-500/10 dark:border-blue-950/50 dark:from-zinc-950 dark:to-blue-950/15">
         <CardContent className="flex items-center justify-center gap-2 py-12 text-sm text-zinc-500 dark:text-zinc-400">
           <Loader2 className="h-4 w-4 animate-spin" />
-          Loading newly hired roster…
+          Loading new hire check list…
         </CardContent>
       </Card>
     );
@@ -245,8 +289,44 @@ export default function NewlyHiredPanel({ viewerEmail, teamGate }: NewlyHiredPan
   const activeRows = rows.filter((r) => r.status !== 'no_show');
   const noShowRows = rows.filter((r) => r.status === 'no_show');
 
-  const selectedActiveCount = activeRows.filter((r) => selected.has(r.id)).length;
-  const allActiveSelected = activeRows.length > 0 && selectedActiveCount === activeRows.length;
+  // Batches (hiring weeks) present across every hire — powers the batch picker.
+  // Counted over all rows so the dropdown reflects the full roster, not the
+  // currently-filtered view.
+  const batchCounts = new Map<string, number>();
+  for (const r of rows) {
+    const k = batchKeyOf(r);
+    batchCounts.set(k, (batchCounts.get(k) ?? 0) + 1);
+  }
+  const batchKeys = sortBatchKeys([...batchCounts.keys()]);
+
+  // Search + batch filter. Search spans name, both emails, department and role.
+  const q = searchQuery.trim().toLowerCase();
+  const matches = (r: PendingHireRow): boolean => {
+    if (batchFilter !== 'all' && batchKeyOf(r) !== batchFilter) return false;
+    if (!q) return true;
+    return [r.name, r.personal_email, r.work_email, r.department, r.job_description].some((v) =>
+      (v ?? '').toLowerCase().includes(q),
+    );
+  };
+  const visibleActive = activeRows.filter(matches);
+  const visibleNoShow = noShowRows.filter(matches);
+  const filtering = q !== '' || batchFilter !== 'all';
+
+  // Visible active hires grouped into their batches, newest batch first.
+  const activeByBatch = new Map<string, PendingHireRow[]>();
+  for (const r of visibleActive) {
+    const k = batchKeyOf(r);
+    const bucket = activeByBatch.get(k);
+    if (bucket) bucket.push(r);
+    else activeByBatch.set(k, [r]);
+  }
+  const activeBatchKeys = sortBatchKeys([...activeByBatch.keys()]);
+
+  // Selection + bulk actions operate on the VISIBLE active hires only, so
+  // "Select all" honours the current search/batch filter. Selection is keyed by
+  // id, so it survives a refetch (ticked hires filtered out of view stay ticked).
+  const selectedActiveCount = visibleActive.filter((r) => selected.has(r.id)).length;
+  const allActiveSelected = visibleActive.length > 0 && selectedActiveCount === visibleActive.length;
   const someActiveSelected = selectedActiveCount > 0 && !allActiveSelected;
 
   function toggleOne(id: number) {
@@ -259,8 +339,8 @@ export default function NewlyHiredPanel({ viewerEmail, teamGate }: NewlyHiredPan
   }
   function toggleAllActive() {
     setSelected((prev) => {
-      const everything = activeRows.every((r) => prev.has(r.id));
-      return everything ? new Set() : new Set(activeRows.map((r) => r.id));
+      const everything = visibleActive.every((r) => prev.has(r.id));
+      return everything ? new Set() : new Set(visibleActive.map((r) => r.id));
     });
   }
 
@@ -271,12 +351,12 @@ export default function NewlyHiredPanel({ viewerEmail, teamGate }: NewlyHiredPan
   // manager dismisses the modal (see closeBulkProgress) — refreshing mid-run would
   // flip `loading` true and unmount the modal along with its live counter.
   async function bulkApply() {
-    const targets = activeRows
+    const targets = visibleActive
       .filter((r) => selected.has(r.id))
       .map((r) => ({ id: r.id, name: r.name }));
     if (targets.length === 0) return;
     setBulkBusy(true);
-    setBulkProgress({ total: targets.length, done: 0, ok: 0, fail: 0, current: null, failures: [], finished: false });
+    setBulkProgress({ kind: 'orientation', total: targets.length, done: 0, ok: 0, fail: 0, current: null, failures: [], finished: false });
     let ok = 0;
     let fail = 0;
     let firstErr = '';
@@ -308,6 +388,54 @@ export default function NewlyHiredPanel({ viewerEmail, teamGate }: NewlyHiredPan
     } else {
       toast.warning(`${ok} updated, ${fail} failed`, { description: firstErr || undefined });
     }
+    setBulkBusy(false);
+  }
+
+  // Bulk "Did not attend": offboards every selected hire (same per-hire teardown
+  // as the single no-show), driving the shared live-tally modal. Confirmed first
+  // by the confirmBulkNoShow dialog, which lists everyone affected. Runs
+  // sequentially so the tally is real and each failure is captured per hire.
+  async function bulkNoShow() {
+    const targets = visibleActive
+      .filter((r) => selected.has(r.id))
+      .map((r) => ({ id: r.id, name: r.name }));
+    if (targets.length === 0) return;
+    const note = bulkNoShowNote.trim();
+    setConfirmBulkNoShow(false);
+    setBulkBusy(true);
+    setBulkProgress({ kind: 'no-show', total: targets.length, done: 0, ok: 0, fail: 0, current: null, failures: [], finished: false });
+    let ok = 0;
+    let fail = 0;
+    let firstErr = '';
+    const failures: { name: string; error: string }[] = [];
+    for (const t of targets) {
+      setBulkProgress((p) => (p ? { ...p, current: t.name } : p));
+      try {
+        const res = await fetch(`/api/manager/pending-hires/${t.id}/no-show`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ note: note || null }),
+        });
+        const json = (await res.json()) as { error?: string };
+        if (!res.ok) throw new Error(json.error ?? `HTTP ${res.status}`);
+        ok += 1;
+      } catch (e) {
+        fail += 1;
+        const msg = e instanceof Error ? e.message : String(e);
+        if (!firstErr) firstErr = msg;
+        failures.push({ name: t.name, error: msg });
+      }
+      setBulkProgress((p) => (p ? { ...p, done: ok + fail, ok, fail, failures: [...failures] } : p));
+    }
+    setBulkProgress((p) => (p ? { ...p, current: null, finished: true } : p));
+    if (fail === 0) {
+      toast.warning(`${ok} hire${ok !== 1 ? 's' : ''} marked did not attend — offboarding triggered`, {
+        description: 'Workspace accounts removed and access revoked where one existed.',
+      });
+    } else {
+      toast.warning(`${ok} offboarded, ${fail} failed`, { description: firstErr || undefined });
+    }
+    setBulkNoShowNote('');
     setBulkBusy(false);
   }
 
@@ -499,30 +627,91 @@ export default function NewlyHiredPanel({ viewerEmail, teamGate }: NewlyHiredPan
   return (
     <div className="flex flex-col gap-3">
       <p className="text-xs text-zinc-500 dark:text-zinc-400">
-        Pending hires routed to your departments. Tap <strong>Mark orientation attended</strong> once
-        the employee has shown up for orientation. HR cannot promote them to the master list until
-        you do. Marking a hire <strong>Did not attend</strong> <strong className="text-rose-600 dark:text-rose-400">offboards
+        Hires from HR&apos;s New Hire Checklist, grouped by <strong>batch</strong> (the hiring week
+        they belong to). Tap <strong>Mark orientation attended</strong> once the employee has shown up
+        for orientation. HR cannot promote them to the master list until you do. Marking a hire{' '}
+        <strong>Did not attend</strong> <strong className="text-rose-600 dark:text-rose-400">offboards
         them</strong> — it runs the same offboarding webhook HR uses (Google Workspace account removed and
         access revoked), so use it only when a hire truly never showed up.
       </p>
 
-      {activeRows.length === 0 && noShowRows.length === 0 && (
+      {/* Search + batch filter. Kept above the list so managers can narrow to one
+          batch (matching HR's checklist weeks) or search across all of them. */}
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+        <div className="relative flex-1">
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400" />
+          <input
+            type="search"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Search name, email, department, or role…"
+            className="h-9 w-full rounded-lg border border-zinc-200 bg-white pl-8 pr-8 text-sm text-zinc-800 placeholder:text-zinc-400 focus:border-blue-400 focus:outline-none focus:ring-1 focus:ring-blue-200 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-200"
+          />
+          {searchQuery && (
+            <button
+              type="button"
+              aria-label="Clear search"
+              onClick={() => setSearchQuery('')}
+              className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-0.5 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          )}
+        </div>
+        <label className="flex items-center gap-1.5 text-xs font-medium text-zinc-600 dark:text-zinc-300">
+          <Layers className="h-3.5 w-3.5 text-zinc-400" />
+          <span className="sr-only sm:not-sr-only">Batch</span>
+          <select
+            value={batchFilter}
+            onChange={(e) => setBatchFilter(e.target.value)}
+            className="h-9 rounded-lg border border-zinc-200 bg-white px-2 text-sm text-zinc-800 focus:border-blue-400 focus:outline-none focus:ring-1 focus:ring-blue-200 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-200"
+          >
+            <option value="all">All batches ({rows.length})</option>
+            {batchKeys.map((k) => (
+              <option key={k} value={k}>
+                {batchLabelOf(k)} ({batchCounts.get(k) ?? 0})
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+
+      {visibleActive.length === 0 && visibleNoShow.length === 0 && (
         <Card className="border-blue-100/70 bg-gradient-to-br from-white to-blue-50/40 ring-1 ring-blue-500/10 dark:border-blue-950/50 dark:from-zinc-950 dark:to-blue-950/15">
           <CardContent className="flex flex-col items-center justify-center gap-3 px-4 py-16 text-center">
             <div className="flex h-12 w-12 items-center justify-center rounded-full bg-gradient-to-br from-blue-500 to-blue-700 text-white shadow-md shadow-blue-500/25">
               <UserPlus className="h-6 w-6" />
             </div>
-            <p className="text-sm font-medium text-zinc-700 dark:text-zinc-200">No newly hired employees</p>
-            <p className="max-w-md text-xs text-zinc-500 dark:text-zinc-400">
-              When HR adds a new hire to a department you manage, they&apos;ll show up here.
+            <p className="text-sm font-medium text-zinc-700 dark:text-zinc-200">
+              {filtering ? 'No hires match your filters' : 'No newly hired employees'}
             </p>
+            <p className="max-w-md text-xs text-zinc-500 dark:text-zinc-400">
+              {filtering
+                ? 'Try a different search or batch.'
+                : "When HR adds a new hire to a department you manage, they'll show up here."}
+            </p>
+            {filtering && (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-7 gap-1.5 text-xs"
+                onClick={() => {
+                  setSearchQuery('');
+                  setBatchFilter('all');
+                }}
+              >
+                <X className="h-3 w-3" /> Clear filters
+              </Button>
+            )}
           </CardContent>
         </Card>
       )}
 
-      {activeRows.length > 0 && (
-        <div className="flex flex-col gap-2">
-          {/* Multi-select toolbar: pick one date, mark/update orientation for all ticked hires. */}
+      {visibleActive.length > 0 && (
+        <div className="flex flex-col gap-3">
+          {/* Multi-select toolbar: mark/update orientation OR bulk "Did not attend"
+              for every ticked hire. Operates on the visible (filtered) hires. */}
           <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-blue-200/70 bg-blue-50/60 px-3 py-2 dark:border-blue-900/50 dark:bg-blue-950/20">
             <label className="flex cursor-pointer items-center gap-2 text-xs font-medium text-zinc-700 dark:text-zinc-200">
               <input
@@ -536,9 +725,9 @@ export default function NewlyHiredPanel({ viewerEmail, teamGate }: NewlyHiredPan
                 onChange={toggleAllActive}
                 disabled={bulkBusy}
               />
-              {selected.size > 0 ? `${selectedActiveCount} selected` : `Select all (${activeRows.length})`}
+              {selectedActiveCount > 0 ? `${selectedActiveCount} selected` : `Select all (${visibleActive.length})`}
             </label>
-            {selected.size > 0 && (
+            {selectedActiveCount > 0 && (
               <div className="flex flex-wrap items-center gap-2">
                 <label className="flex items-center gap-1.5 text-[11px] font-medium text-zinc-600 dark:text-zinc-300">
                   Orientation date
@@ -559,10 +748,22 @@ export default function NewlyHiredPanel({ viewerEmail, teamGate }: NewlyHiredPan
                   disabled={bulkBusy}
                   title="Mark/update orientation for all selected hires to this date"
                 >
-                  {bulkBusy ? <Loader2 className="h-3 w-3 animate-spin" /> : <ClipboardCheck className="h-3 w-3" />}
-                  {bulkBusy && bulkProgress
+                  {bulkBusy && bulkProgress?.kind === 'orientation' ? <Loader2 className="h-3 w-3 animate-spin" /> : <ClipboardCheck className="h-3 w-3" />}
+                  {bulkBusy && bulkProgress?.kind === 'orientation'
                     ? `Marking… ${bulkProgress.done}/${bulkProgress.total}`
                     : `Mark / update selected (${selectedActiveCount})`}
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-7 gap-1.5 border-rose-200 px-3 text-xs text-rose-700 hover:bg-rose-50 dark:border-rose-900/50 dark:text-rose-300 dark:hover:bg-rose-950/30"
+                  onClick={() => { setBulkNoShowNote(''); setConfirmBulkNoShow(true); }}
+                  disabled={bulkBusy}
+                  title="Mark all selected hires as did not attend — offboards them (same webhook HR uses). Cannot be undone."
+                >
+                  <XCircle className="h-3 w-3" />
+                  Did not attend ({selectedActiveCount})
                 </Button>
                 <Button
                   type="button"
@@ -577,16 +778,31 @@ export default function NewlyHiredPanel({ viewerEmail, teamGate }: NewlyHiredPan
               </div>
             )}
           </div>
-          {activeRows.map((r) => <HireCard key={r.id} r={r} />)}
+
+          {/* Cards grouped by batch (hiring week), newest batch first. */}
+          {activeBatchKeys.map((k) => {
+            const batchRows = activeByBatch.get(k) ?? [];
+            return (
+              <div key={k} className="flex flex-col gap-2">
+                <p className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-blue-700 dark:text-blue-300">
+                  <Layers className="h-3 w-3" /> {batchLabelOf(k)}
+                  <span className="rounded bg-blue-100 px-1.5 py-0.5 text-[10px] font-medium text-blue-700 dark:bg-blue-950/50 dark:text-blue-300">
+                    {batchRows.length}
+                  </span>
+                </p>
+                {batchRows.map((r) => <HireCard key={r.id} r={r} />)}
+              </div>
+            );
+          })}
         </div>
       )}
 
-      {noShowRows.length > 0 && (
+      {visibleNoShow.length > 0 && (
         <div className="flex flex-col gap-2">
           <p className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-rose-600 dark:text-rose-400">
-            <AlertTriangle className="h-3 w-3" /> No-shows ({noShowRows.length})
+            <AlertTriangle className="h-3 w-3" /> No-shows ({visibleNoShow.length})
           </p>
-          {noShowRows.map((r) => <HireCard key={r.id} r={r} />)}
+          {visibleNoShow.map((r) => <HireCard key={r.id} r={r} />)}
         </div>
       )}
 
@@ -653,8 +869,86 @@ export default function NewlyHiredPanel({ viewerEmail, teamGate }: NewlyHiredPan
         </div>
       )}
 
-      {/* Live bulk "mark attended" progress — real-time tally of how many hires
-          have actually been marked, with a per-hire failure list on completion. */}
+      {/* Bulk "Did not attend" confirm — lists everyone selected before firing
+          the offboarding teardown for each. Destructive + irreversible. */}
+      {confirmBulkNoShow && (() => {
+        const targets = visibleActive.filter((r) => selected.has(r.id));
+        const withAccount = targets.filter((r) => !!r.work_email).length;
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+            <div className="w-full max-w-md rounded-2xl border border-rose-200 bg-white p-6 shadow-xl dark:border-rose-900/50 dark:bg-zinc-950">
+              <div className="flex items-center gap-3">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-rose-500 to-rose-700 text-white">
+                  <XCircle className="h-5 w-5" />
+                </div>
+                <div>
+                  <p className="text-sm font-semibold text-zinc-900 dark:text-white">
+                    Did not attend = offboard {targets.length} hire{targets.length !== 1 ? 's' : ''}?
+                  </p>
+                  <p className="text-xs text-zinc-500 dark:text-zinc-400">
+                    Each of these hires is <strong>offboarded</strong> — the same account teardown HR
+                    runs for a departing employee. This cannot be undone.
+                  </p>
+                </div>
+              </div>
+
+              <div className="mt-3 max-h-48 space-y-1 overflow-y-auto rounded-lg border border-rose-200 bg-rose-50/60 p-2 dark:border-rose-900/50 dark:bg-rose-950/20">
+                {targets.map((r) => (
+                  <div key={r.id} className="flex items-center justify-between gap-2 text-[11px] text-rose-700 dark:text-rose-300">
+                    <span className="min-w-0 truncate">
+                      <span className="font-medium">{r.name}</span>
+                      <span className="ml-1.5 text-rose-500/80 dark:text-rose-400/80">{r.department}</span>
+                    </span>
+                    <span className="shrink-0 font-mono text-[10px] text-rose-500/80 dark:text-rose-400/80">
+                      {r.work_email ? r.work_email : 'no work account'}
+                    </span>
+                  </div>
+                ))}
+              </div>
+
+              <p className="mt-2 text-[11px] text-zinc-500 dark:text-zinc-400">
+                {withAccount > 0
+                  ? `${withAccount} of ${targets.length} have a Google Workspace account that will be disabled & deleted and access revoked. The rest are recorded as no-shows only.`
+                  : 'None have a work account yet — this just records the no-shows; nothing to tear down.'}
+              </p>
+
+              <input
+                type="text"
+                value={bulkNoShowNote}
+                onChange={(e) => setBulkNoShowNote(e.target.value)}
+                placeholder="Optional note applied to all (e.g. batch never onboarded)"
+                className="mt-3 h-8 w-full rounded-md border border-zinc-200 bg-white px-2.5 text-xs text-zinc-800 placeholder:text-zinc-400 focus:border-rose-400 focus:outline-none focus:ring-1 focus:ring-rose-200 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-200"
+              />
+
+              <div className="mt-4 flex justify-end gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setConfirmBulkNoShow(false)}
+                  disabled={bulkBusy}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  className="gap-1.5 bg-gradient-to-br from-rose-500 to-rose-700 text-white hover:opacity-90"
+                  onClick={() => void bulkNoShow()}
+                  disabled={bulkBusy}
+                >
+                  <XCircle className="h-3.5 w-3.5" />
+                  Confirm — offboard {targets.length}
+                </Button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* Live bulk progress — real-time tally of how many hires have actually
+          been processed, with a per-hire failure list on completion. Serves both
+          the orientation-mark and the no-show runs (copy varies by kind). */}
       {bulkProgress && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
           <div className="w-full max-w-sm rounded-2xl border border-blue-200 bg-white p-6 shadow-xl dark:border-blue-900/50 dark:bg-zinc-950">
@@ -679,13 +973,19 @@ export default function NewlyHiredPanel({ viewerEmail, teamGate }: NewlyHiredPan
               </div>
               <div className="min-w-0">
                 <p className="text-sm font-semibold text-zinc-900 dark:text-white">
-                  {bulkProgress.finished ? 'Orientation marking complete' : 'Marking orientation attended…'}
+                  {bulkProgress.kind === 'no-show'
+                    ? bulkProgress.finished
+                      ? 'Offboarding complete'
+                      : 'Marking did not attend…'
+                    : bulkProgress.finished
+                      ? 'Orientation marking complete'
+                      : 'Marking orientation attended…'}
                 </p>
                 <p className="truncate text-xs text-zinc-500 dark:text-zinc-400">
                   {bulkProgress.finished
-                    ? `${bulkProgress.ok} of ${bulkProgress.total} marked as attended`
+                    ? `${bulkProgress.ok} of ${bulkProgress.total} ${bulkProgress.kind === 'no-show' ? 'offboarded' : 'marked as attended'}`
                     : bulkProgress.current
-                      ? `Now marking ${bulkProgress.current}`
+                      ? `Now ${bulkProgress.kind === 'no-show' ? 'offboarding' : 'marking'} ${bulkProgress.current}`
                       : 'Starting…'}
                 </p>
               </div>
@@ -709,7 +1009,7 @@ export default function NewlyHiredPanel({ viewerEmail, teamGate }: NewlyHiredPan
               </div>
               <div className="mt-2 flex flex-wrap items-center gap-3 text-[11px]">
                 <span className="inline-flex items-center gap-1 font-medium text-emerald-700 dark:text-emerald-300">
-                  <CheckCircle2 className="h-3 w-3" /> {bulkProgress.ok} marked
+                  <CheckCircle2 className="h-3 w-3" /> {bulkProgress.ok} {bulkProgress.kind === 'no-show' ? 'offboarded' : 'marked'}
                 </span>
                 {bulkProgress.fail > 0 && (
                   <span className="inline-flex items-center gap-1 font-medium text-rose-700 dark:text-rose-300">

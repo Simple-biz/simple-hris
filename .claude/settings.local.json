@@ -278,7 +278,8 @@
       "PowerShell(\"cleaned\")",
       "PowerShell($npm = \\(Get-Command npm.cmd -ErrorAction SilentlyContinue\\).Source; if \\(-not $npm\\) { $npm = \\(Get-Command node -ErrorAction SilentlyContinue\\).Source }; \"npm.cmd: $npm\"; where.exe npm 2>$null; where.exe npx 2>$null)",
       "PowerShell(& \"C:\\\\Program Files\\\\nodejs\\\\node.exe\" \".\\\\node_modules\\\\typescript\\\\bin\\\\tsc\" --noEmit 2>&1)",
-      "PowerShell(& \"C:\\\\Program Files\\\\nodejs\\\\node.exe\" \".\\\\node_modules\\\\typescript\\\\bin\\\\tsc\" --noEmit; \"EXIT=$LASTEXITCODE\")"
+      "PowerShell(& \"C:\\\\Program Files\\\\nodejs\\\\node.exe\" \".\\\\node_modules\\\\typescript\\\\bin\\\\tsc\" --noEmit; \"EXIT=$LASTEXITCODE\")",
+      "Bash(npx next *)"
     ],
     "additionalDirectories": [
       "c:\\Users\\Itachi\\.claude\\projects\\c--Users-Itachi-Desktop-simple-hris\\memory",
