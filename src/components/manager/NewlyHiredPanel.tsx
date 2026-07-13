@@ -24,6 +24,8 @@ type PendingHireRow = {
   job_description: string | null;
   start_date: string | null;
   status: HrPendingStatus;
+  /** Intake channel — 'onboarding_bypass' marks a manual (Bypass) onboard. */
+  source: string | null;
   orientation_attended_at: string | null;
   orientation_attended_by: string | null;
   orientation_note: string | null;
@@ -31,6 +33,17 @@ type PendingHireRow = {
   no_show_by: string | null;
   no_show_note: string | null;
 };
+
+/**
+ * A hire HR onboarded manually via the Onboarding tab's Bypass flow. They were
+ * promoted instantly (account pre-existing, orientation auto-stamped), so the
+ * manager has nothing to action — the card is informational, they sit under
+ * the week they were ONBOARDED (created_at, not a checklist batch), and they
+ * are excluded from selection / bulk runs.
+ */
+function isManualOnboard(r: PendingHireRow): boolean {
+  return r.source === 'onboarding_bypass';
+}
 
 interface NewlyHiredPanelProps {
   viewerEmail: string | null;
@@ -100,7 +113,10 @@ const UNKNOWN_BATCH = 'unknown';
  * Returns a `YYYY-MM-DD` Sunday key (sortable) or `UNKNOWN_BATCH`.
  */
 function batchKeyOf(r: PendingHireRow): string {
-  const raw = r.start_date ?? r.created_at;
+  // Manually onboarded (Bypass) hires belong to no checklist batch — they
+  // group under the week HR onboarded them (created_at), never their possibly
+  // backdated start_date, so they always surface in a recent, visible week.
+  const raw = isManualOnboard(r) ? r.created_at : r.start_date ?? r.created_at;
   const isoOnly = raw && raw.length >= 10 ? raw.slice(0, 10) : raw;
   const [y, m, d] = (isoOnly ?? '').split('-').map(Number);
   if (!y || !m || !d) return UNKNOWN_BATCH;
@@ -142,6 +158,7 @@ const EXPORT_DETAIL_HEADERS = [
 
 /** Human status for the export: mirrors the badge shown on each card. */
 function exportStatusLabel(r: PendingHireRow): string {
+  if (isManualOnboard(r)) return 'Manually onboarded';
   if (r.status === 'no_show') return 'Did not attend';
   return r.orientation_attended_at ? 'Orientation attended' : 'Awaiting orientation';
 }
@@ -435,8 +452,11 @@ export default function NewlyHiredPanel({ viewerEmail, teamGate }: NewlyHiredPan
   // Selection + bulk actions operate on the VISIBLE active hires only, so
   // "Select all" honours the current search/batch filter. Selection is keyed by
   // id, so it survives a refetch (ticked hires filtered out of view stay ticked).
-  const selectedActiveCount = visibleActive.filter((r) => selected.has(r.id)).length;
-  const allActiveSelected = visibleActive.length > 0 && selectedActiveCount === visibleActive.length;
+  // Manually onboarded (Bypass) cards are informational — no checkbox, never
+  // selectable — so the select-all math runs over the selectable subset.
+  const selectableActive = visibleActive.filter((r) => !isManualOnboard(r));
+  const selectedActiveCount = selectableActive.filter((r) => selected.has(r.id)).length;
+  const allActiveSelected = selectableActive.length > 0 && selectedActiveCount === selectableActive.length;
   const someActiveSelected = selectedActiveCount > 0 && !allActiveSelected;
 
   function toggleOne(id: number) {
@@ -449,8 +469,8 @@ export default function NewlyHiredPanel({ viewerEmail, teamGate }: NewlyHiredPan
   }
   function toggleAllActive() {
     setSelected((prev) => {
-      const everything = visibleActive.every((r) => prev.has(r.id));
-      return everything ? new Set() : new Set(visibleActive.map((r) => r.id));
+      const everything = selectableActive.every((r) => prev.has(r.id));
+      return everything ? new Set() : new Set(selectableActive.map((r) => r.id));
     });
   }
 
@@ -461,7 +481,7 @@ export default function NewlyHiredPanel({ viewerEmail, teamGate }: NewlyHiredPan
   // manager dismisses the modal (see closeBulkProgress) — refreshing mid-run would
   // flip `loading` true and unmount the modal along with its live counter.
   async function bulkApply() {
-    const targets = visibleActive
+    const targets = selectableActive
       .filter((r) => selected.has(r.id))
       .map((r) => ({ id: r.id, name: r.name }));
     if (targets.length === 0) return;
@@ -517,7 +537,7 @@ export default function NewlyHiredPanel({ viewerEmail, teamGate }: NewlyHiredPan
   // by the confirmBulkNoShow dialog, which lists everyone affected. Runs
   // sequentially so the tally is real and each failure is captured per hire.
   async function bulkNoShow() {
-    const targets = visibleActive
+    const targets = selectableActive
       .filter((r) => selected.has(r.id))
       .map((r) => ({ id: r.id, name: r.name }));
     if (targets.length === 0) return;
@@ -635,12 +655,48 @@ export default function NewlyHiredPanel({ viewerEmail, teamGate }: NewlyHiredPan
     const attended = !!r.orientation_attended_at;
     const isBusy = busyId === r.id;
     const isNoShow = r.status === 'no_show';
+    const isManual = isManualOnboard(r);
     // Date input value: the manager's in-progress edit, else the saved
     // orientation date (when attended), else today. `dateChanged` gates the
     // "Update date" button so we only re-POST when the date actually moved.
     const savedDate = attended ? manilaInputDate(r.orientation_attended_at) : manilaToday();
     const draftDate = dateDraft[r.id] ?? savedDate;
     const dateChanged = draftDate !== savedDate;
+
+    // Manually onboarded (Bypass): already promoted with a pre-existing account,
+    // orientation auto-stamped by HR — purely informational, nothing to action.
+    // No checkbox (never part of a bulk run), no orientation buttons.
+    if (isManual) {
+      return (
+        <Card className="overflow-hidden border border-violet-200/80 bg-gradient-to-br from-white to-violet-50/40 ring-1 ring-violet-500/10 dark:border-violet-900/50 dark:from-zinc-950 dark:to-violet-950/15">
+          <CardContent className="flex flex-col gap-2 p-4 sm:flex-row sm:items-start sm:justify-between">
+            <div className="min-w-0 flex-1 space-y-1">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-sm font-semibold text-zinc-900 dark:text-white">{r.name}</span>
+                <span className="rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-blue-700 dark:border-blue-900/50 dark:bg-blue-950/30 dark:text-blue-300">
+                  {r.department}
+                </span>
+                <span className="inline-flex items-center gap-1 rounded-full border border-violet-300 bg-violet-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-violet-700 dark:border-violet-800/70 dark:bg-violet-950/30 dark:text-violet-300">
+                  <UserPlus className="h-3 w-3" /> Manually onboarded
+                </span>
+              </div>
+              <div className="font-mono text-xs text-zinc-500 dark:text-zinc-400">
+                {r.personal_email}
+                {r.work_email ? ` · ${r.work_email}` : ''}
+              </div>
+              <div className="text-[11px] text-zinc-500 dark:text-zinc-400">
+                Onboarded {fmtLongDate(r.created_at)} by HR (Bypass — account pre-existing)
+                {r.start_date ? ` · start ${fmtLongDate(r.start_date)}` : ''}
+                {r.job_description ? ` · ${r.job_description}` : ''}
+              </div>
+              <div className="text-[11px] text-violet-700 dark:text-violet-300">
+                Already active on the roster — no orientation needed from you.
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      );
+    }
 
     if (isNoShow) {
       return (
@@ -816,7 +872,10 @@ export default function NewlyHiredPanel({ viewerEmail, teamGate }: NewlyHiredPan
         for orientation. HR cannot promote them to the master list until you do. Marking a hire{' '}
         <strong>Did not attend</strong> <strong className="text-rose-600 dark:text-rose-400">offboards
         them</strong> — it runs the same offboarding webhook HR uses (Google Workspace account removed and
-        access revoked), so use it only when a hire truly never showed up.
+        access revoked), so use it only when a hire truly never showed up. People HR onboarded{' '}
+        <strong className="text-violet-700 dark:text-violet-300">manually</strong> (Bypass) also show up
+        here — under the week they were onboarded rather than a checklist batch — purely for visibility;
+        they&apos;re already active and need nothing from you.
       </p>
 
       {/* Search + batch filter. Kept above the list so managers can narrow to one

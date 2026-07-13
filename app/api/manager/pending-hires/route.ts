@@ -4,6 +4,7 @@ import { authOptions } from '@/lib/auth/auth-options';
 import { hasElevatedRole, hasRateVisibility } from '@/lib/auth/elevated-roles';
 import { listDepartmentsForManager } from '@/lib/supabase/department-managers';
 import {
+  isRecentManualOnboard,
   listHrPendingEmployees,
   listManagerPendingHires,
   type HrPendingEmployeeRow,
@@ -19,7 +20,9 @@ function normEmail(s: string | null | undefined): string {
 /**
  * GET — feeds the Manager Dashboard → My Team → Newly Hired tab. Returns every
  * actionable pending hire (`pending_work_email` or `ready` status) in any of
- * the viewer's managed departments. Elevated viewers (HR / admin) see all.
+ * the viewer's managed departments, plus recently promoted Bypass rows so
+ * manually onboarded people appear in the week they were onboarded (see
+ * isRecentManualOnboard). Elevated viewers (HR / admin) see all.
  */
 export async function GET() {
   const session = await getServerSession(authOptions);
@@ -48,7 +51,12 @@ export async function GET() {
   // the same list. Keep the response shape identical to the scoped path.
   if (hasElevatedRole(roles)) {
     const { rows, error } = await listHrPendingEmployees();
-    const actionable = rows.filter((r) => r.status === 'pending_work_email' || r.status === 'ready');
+    const actionable = rows.filter(
+      (r) =>
+        r.status === 'pending_work_email' ||
+        r.status === 'ready' ||
+        isRecentManualOnboard(r),
+    );
     return NextResponse.json(
       { rows: stripRates(actionable), scope: 'elevated', departments: [], error },
       { status: error ? 500 : 200 },

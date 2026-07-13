@@ -1119,8 +1119,34 @@ export async function setHrPromotionOutcome(
 }
 
 /**
+ * How long a manually-onboarded (Bypass) hire keeps appearing in the manager
+ * Newly Hired panel after their instant promote. Bypass rows are promoted the
+ * moment HR creates them, so without this window they'd never be seen; with an
+ * unbounded one they'd pile up forever. 8 Sun-anchored weeks matches the
+ * useful depth of the panel's batch picker.
+ */
+export const MANUAL_ONBOARD_PANEL_WINDOW_DAYS = 56;
+
+/**
+ * True for a Bypass ("manual setup") row the Newly Hired panel should show
+ * even though it is already promoted: the manager still needs to see that
+ * someone was onboarded onto their team this week, outside any checklist
+ * batch. Recency-bounded by {@link MANUAL_ONBOARD_PANEL_WINDOW_DAYS}.
+ */
+export function isRecentManualOnboard(r: HrPendingEmployeeRow): boolean {
+  if (r.source !== "onboarding_bypass" || r.status !== "promoted") return false;
+  const t = new Date(r.created_at).getTime();
+  return (
+    Number.isFinite(t) &&
+    Date.now() - t <= MANUAL_ONBOARD_PANEL_WINDOW_DAYS * 24 * 60 * 60 * 1000
+  );
+}
+
+/**
  * Manager dashboard fetch: every pending hire in any of the manager's
- * departments that is still actionable (not promoted, not cancelled). Used by
+ * departments that is still actionable (not promoted, not cancelled), PLUS
+ * recently promoted Bypass rows (see {@link isRecentManualOnboard}) so
+ * manually onboarded people surface in the week they were onboarded. Used by
  * `/api/manager/pending-hires` to feed the My Team → Newly Hired tab.
  *
  * Case-insensitive department match; `departments` is the list returned by
@@ -1131,10 +1157,15 @@ export async function listManagerPendingHires(
 ): Promise<{ rows: HrPendingEmployeeRow[]; error: string | null }> {
   if (departments.length === 0) return { rows: [], error: null };
   const sb = client();
+  const manualCutoff = new Date(
+    Date.now() - MANUAL_ONBOARD_PANEL_WINDOW_DAYS * 24 * 60 * 60 * 1000,
+  ).toISOString();
   const { data, error } = await sb
     .from(TABLE)
     .select("*")
-    .in("status", ["pending_work_email", "ready"])
+    .or(
+      `status.in.(pending_work_email,ready),and(status.eq.promoted,source.eq.onboarding_bypass,created_at.gte.${manualCutoff})`,
+    )
     .order("created_at", { ascending: false })
     .range(0, 499);
   if (error) return { rows: [], error: error.message };
