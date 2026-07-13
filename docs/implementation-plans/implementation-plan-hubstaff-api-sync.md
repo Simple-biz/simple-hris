@@ -2,6 +2,12 @@
 
 > **Goal**: Replace the manual weekly CSV export/upload workflow with a "Sync from Hubstaff" button that calls the Hubstaff REST API v2 directly, pulling the same weekly hours data into the existing `hubstaff_hours` pipeline without changing the downstream payroll flow.
 
+> **Status (2026-07-14): IMPLEMENTED**, with three deviations from this plan discovered during build:
+> 1. **Auth**: the PAT is NOT a bearer token (Section 4 below is outdated). It is a 90-day OAuth *refresh token* that must be exchanged at `POST https://account.hubstaff.com/access_tokens` (`grant_type=refresh_token`, no client_id/secret) for a ~24h access token. Hubstaff **rotates the refresh token on every exchange**, and the token endpoint is limited to ~5 req/hour — so `src/lib/hubstaff/api-client.ts` caches the access token and persists the rotated chain in `app_settings` (key `hubstaff.api.token`), seeded from `HUBSTAFF_PAT`.
+> 2. **Endpoint**: uses `GET /v2/organizations/{org_id}/activities/daily?date[start]&date[stop]&include=users` instead of raw `time_entries` — it is pre-aggregated **by the organization's timezone date** (same bucketing as the CSV export), so no Manila-conversion code was needed.
+> 3. **No DB refactor**: instead of extracting `replaceHubstaffHoursFromRows`, `src/lib/hubstaff/build-weekly-summary.ts` renders the API data as the same weekly-summary **CSV text** a manual export produces, and the sync route feeds it through the untouched `replaceHubstaffHoursFromCsvText` — guaranteed parity with the CSV path.
+> Filenames use `simple-biz_api_sync_<start>_to_<end>.csv`; the wizard's batch list shows an "API" badge for them.
+
 ---
 
 ## 1. Current State

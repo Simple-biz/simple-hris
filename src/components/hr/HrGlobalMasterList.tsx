@@ -38,8 +38,8 @@ import { dashboardLabelForPathname } from '@/lib/presence/page-label';
 import { formatLastSeen, TeamAvatar } from '@/components/team/team-ui';
 import DeptFilter from './DeptFilter';
 
-// Cards page in 12s (fills 2- and 3-column grids evenly); the table keeps 10.
-const CARD_PAGE_SIZE = 12;
+// Cards page in 15s (fills the 3-column grid evenly); the table keeps 10.
+const CARD_PAGE_SIZE = 15;
 const TABLE_PAGE_SIZE = 10;
 
 const EASE = [0.22, 1, 0.36, 1] as const;
@@ -223,9 +223,8 @@ const RosterCard = memo(function RosterCard({
   return (
     <motion.li
       initial={reduce ? false : { opacity: 0, y: 6 }}
-      animate={{ opacity: 1, y: 0, transition: { duration: 0.22, ease: EASE, delay } }}
-      whileHover={reduce ? undefined : { y: -2 }}
-      transition={{ type: 'spring', stiffness: 320, damping: 24 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.22, ease: EASE, delay }}
       className="group flex flex-col rounded-xl border border-zinc-200/90 bg-white p-3.5 shadow-sm transition-[border-color,box-shadow] duration-200 hover:border-emerald-300/70 hover:shadow-md hover:shadow-emerald-600/5 dark:border-zinc-800 dark:bg-zinc-900/70 dark:hover:border-emerald-800/70"
     >
       <div className="flex items-start gap-3">
@@ -310,7 +309,8 @@ const RosterRow = memo(function RosterRow({
   return (
     <motion.tr
       initial={reduce ? false : { opacity: 0, y: 4 }}
-      animate={{ opacity: 1, y: 0, transition: { duration: 0.18, ease: 'easeOut', delay } }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.18, ease: 'easeOut', delay }}
       className="transition-colors hover:bg-emerald-50/40 dark:hover:bg-zinc-800/30"
     >
       <td data-label="Employee" className="px-4 py-2.5">
