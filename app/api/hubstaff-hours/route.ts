@@ -16,6 +16,7 @@ import {
 import { insertAuditLog } from "@/lib/supabase/audit-log";
 import {
   fetchDailyActivities,
+  fetchDailyActivitiesCached,
   getHubstaffOrgId,
   hubstaffApiConfigured,
 } from "@/lib/hubstaff/api-client";
@@ -23,7 +24,7 @@ import { apiSyncFileName, buildWeeklySummaryCsv } from "@/lib/hubstaff/build-wee
 import { normEmail } from "@/lib/email/norm-email";
 import { getSessionActor } from "@/lib/auth/session-actor";
 import { requireFeatureEdit } from "@/lib/auth/authorize-feature";
-import { deniedResponse } from "@/lib/auth/authorize-email";
+import { authorizeEmailAccess, deniedResponse } from "@/lib/auth/authorize-email";
 import { NextRequest, NextResponse } from "next/server";
 import { cleanErrorMessage } from "@/lib/clean-error-message";
 
@@ -97,6 +98,76 @@ export const runtime = "nodejs";
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
+
+  // Live current-hours overlay for the employee "My Hours" surface. Returns this
+  // person's per-day tracked seconds for the trailing two weeks straight from the
+  // Hubstaff API (org-timezone bucketed, same as uploads) — so today's time shows
+  // up in near-real-time instead of waiting for the weekly batch. Self-scoped:
+  // employees can only request their own hours; elevated roles may request anyone.
+  // The org-wide fetch is cached server-side (~3 min) to respect Hubstaff rate limits.
+  if (searchParams.get("live") === "1") {
+    const requested = searchParams.get("email")?.trim() || null;
+    const authz = await authorizeEmailAccess(requested);
+    if (!authz.ok) return deniedResponse(authz);
+
+    if (!hubstaffApiConfigured()) {
+      // Not an error — environments without credentials simply have no overlay.
+      return NextResponse.json({ configured: false, days: {}, totalSeconds: 0, error: null });
+    }
+
+    try {
+      const norm = normEmail(authz.effectiveEmail) ?? authz.effectiveEmail.toLowerCase();
+      const aliasSet = await expandEmailAliases(norm);
+
+      // Trailing window: 13 days back through tomorrow. The +1 day absorbs the
+      // org-timezone date running ahead of the server's UTC date; Hubstaff just
+      // returns nothing for a date with no activity yet.
+      const DAY_MS = 86_400_000;
+      const todayUtc = new Date();
+      const iso = (offsetDays: number) =>
+        new Date(todayUtc.getTime() + offsetDays * DAY_MS).toISOString().slice(0, 10);
+      const rangeStart = iso(-13);
+      const rangeStop = iso(1);
+
+      const { activities, users } = await fetchDailyActivitiesCached(
+        getHubstaffOrgId()!,
+        rangeStart,
+        rangeStop,
+      );
+
+      const myUserIds = new Set<number>();
+      for (const u of users) {
+        const e = u.email ? normEmail(u.email) : null;
+        if (e && aliasSet.has(e)) myUserIds.add(u.id);
+      }
+
+      const days: Record<string, number> = {};
+      let totalSeconds = 0;
+      for (const a of activities) {
+        if (!myUserIds.has(a.user_id)) continue;
+        const tracked = typeof a.tracked === "number" && Number.isFinite(a.tracked) ? a.tracked : 0;
+        days[a.date] = (days[a.date] ?? 0) + tracked;
+        totalSeconds += tracked;
+      }
+
+      return NextResponse.json({
+        configured: true,
+        days,
+        totalSeconds,
+        rangeStart,
+        rangeStop,
+        asOf: new Date().toISOString(),
+        error: null,
+      });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error("[GET /api/hubstaff-hours?live=1]", msg);
+      return NextResponse.json(
+        { configured: true, days: {}, totalSeconds: 0, error: cleanErrorMessage(msg) },
+        { status: 502 },
+      );
+    }
+  }
 
   // Return list of uploaded source files. Shape:
   //   {

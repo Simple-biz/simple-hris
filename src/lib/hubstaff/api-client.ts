@@ -216,3 +216,38 @@ export async function fetchDailyActivities(
 
   return { activities, users: [...usersById.values()] };
 }
+
+/**
+ * Short-TTL cache in front of {@link fetchDailyActivities} for the employee-facing
+ * live "My Hours" overlay. The whole org's range is fetched once and every
+ * employee's request within the TTL is served from the same promise — so N employees
+ * polling costs 1–2 Hubstaff calls per TTL window (limit is 1000 req/hour), and
+ * concurrent first requests dedupe onto one in-flight fetch. Per-instance memory
+ * cache; serverless cold starts just refetch.
+ */
+const dailyActivitiesCache = new Map<
+  string,
+  { at: number; promise: Promise<{ activities: HubstaffDailyActivity[]; users: HubstaffUser[] }> }
+>();
+const LIVE_CACHE_TTL_MS = 180_000;
+
+export async function fetchDailyActivitiesCached(
+  orgId: string,
+  dateStartIso: string,
+  dateStopIso: string,
+): Promise<{ activities: HubstaffDailyActivity[]; users: HubstaffUser[] }> {
+  const now = Date.now();
+  for (const [k, v] of dailyActivitiesCache) {
+    if (now - v.at >= LIVE_CACHE_TTL_MS) dailyActivitiesCache.delete(k);
+  }
+
+  const key = `${orgId}:${dateStartIso}:${dateStopIso}`;
+  const hit = dailyActivitiesCache.get(key);
+  if (hit) return hit.promise;
+
+  const promise = fetchDailyActivities(orgId, dateStartIso, dateStopIso);
+  dailyActivitiesCache.set(key, { at: now, promise });
+  // Never cache failures — the next poll should retry.
+  promise.catch(() => dailyActivitiesCache.delete(key));
+  return promise;
+}

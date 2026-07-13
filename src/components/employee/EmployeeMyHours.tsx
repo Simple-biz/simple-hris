@@ -229,11 +229,16 @@ function WeeklyEarningsRail({
   cacheRegularRate,
   cacheOtRate,
   isHsl,
+  liveDays,
 }: {
   rateHistory: RateHistoryEntry[];
   cacheRegularRate: number | null;
   cacheOtRate: number | null;
   isHsl: boolean;
+  /** Real Hubstaff tracked seconds by ISO date (live API overlay). When present the
+   *  rail shows actual tracked time; when null it falls back to the 9-5 EDT clock
+   *  projection (deployments without Hubstaff API credentials). */
+  liveDays: Record<string, number> | null;
 }) {
   // Per-second clock — drives the live ticker. Starts at a stable seed so the
   // first paint (and any SSR pass) is deterministic, then begins ticking.
@@ -470,6 +475,10 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
   const [orphanageLoading, setOrphanageLoading] = useState(true);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  /** Live per-day tracked seconds (ISO date → sec) from the Hubstaff API for the
+   *  trailing two weeks — fills today/this week before accounting ingests the batch.
+   *  Null when the deployment has no Hubstaff API credentials (overlay disabled). */
+  const [liveHours, setLiveHours] = useState<{ days: Record<string, number>; asOf: string } | null>(null);
   const [usHolidayDates, setUsHolidayDates] = useState<Map<string, string>>(new Map());
   // Per-month PAB window overrides set by accounting in the Payroll Wizard's PAB
   // Calendar period setter (`pab_period_overrides`). Empty map → fall back to the
@@ -602,6 +611,45 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
     setMergedColumns([...allCols]);
     setMergedRow(found ? merged : null);
   }, [email]);
+
+  /**
+   * Live overlay: this person's real tracked time straight from the Hubstaff API
+   * (server-cached ~3 min org-wide). Uploaded batches stay authoritative — the
+   * overlay only fills days the batches don't cover yet (today / this week).
+   */
+  const fetchLiveHours = useCallback(async () => {
+    try {
+      const res = await fetch(
+        `/api/hubstaff-hours?live=1&email=${encodeURIComponent(email)}&_=${Date.now()}`,
+        { cache: 'no-store' },
+      );
+      const json = (await res.json()) as {
+        configured?: boolean;
+        days?: Record<string, number>;
+        asOf?: string;
+        error?: string | null;
+      };
+      if (!res.ok || !json.configured || json.error) {
+        // Unconfigured or transiently failing — keep whatever overlay we had.
+        if (!json.configured) setLiveHours(null);
+        return;
+      }
+      setLiveHours({ days: json.days ?? {}, asOf: json.asOf ?? new Date().toISOString() });
+    } catch {
+      /* transient — the next poll retries */
+    }
+  }, [email]);
+
+  useEffect(() => {
+    void fetchLiveHours();
+    const id = window.setInterval(() => void fetchLiveHours(), 180_000);
+    const onFocus = () => void fetchLiveHours();
+    window.addEventListener('focus', onFocus);
+    return () => {
+      window.clearInterval(id);
+      window.removeEventListener('focus', onFocus);
+    };
+  }, [fetchLiveHours]);
 
   const fetchRatesAndFx = useCallback(async () => {
     setRatesLoading(true);
@@ -812,11 +860,11 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
   const handleRefresh = useCallback(async () => {
     setRefreshing(true);
     try {
-      await Promise.all([fetchMerged(), fetchDisputes(), fetchTimeAdjustments(), fetchRatesAndFx(), fetchOrphanageVisits(), fetchMemberPay()]);
+      await Promise.all([fetchMerged(), fetchDisputes(), fetchTimeAdjustments(), fetchRatesAndFx(), fetchOrphanageVisits(), fetchMemberPay(), fetchLiveHours()]);
     } finally {
       setRefreshing(false);
     }
-  }, [fetchMerged, fetchDisputes, fetchRatesAndFx, fetchOrphanageVisits, fetchMemberPay]);
+  }, [fetchMerged, fetchDisputes, fetchRatesAndFx, fetchOrphanageVisits, fetchMemberPay, fetchLiveHours]);
 
   /**
    * Pay summary view-model, sourced entirely from the manager calculator so the
@@ -882,31 +930,46 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
     return map;
   }, [timeAdjustments]);
 
-  /** Merged Hubstaff + approved dispute overrides, all calendar days (for pay + calendar grid). */
+  /** Merged Hubstaff + live overlay + approved dispute overrides, all calendar days (for pay + calendar grid). */
   const mergedHoursByDateKey = useMemo(() => {
     const hoursByDateKey = new Map<string, number>();
     const cols = mergedColumns;
-    if (!mergedRow || !cols.length) return hoursByDateKey;
 
-    const dateCols = cols.filter(isDateCol);
-    const groups = groupDateColumnsByCalendarDay(dateCols, cols);
-    for (const group of groups) {
-      let d: Date | null = null;
-      for (const c of group) {
-        d = parseColDate(c);
-        if (d) break;
+    if (mergedRow && cols.length) {
+      const dateCols = cols.filter(isDateCol);
+      const groups = groupDateColumnsByCalendarDay(dateCols, cols);
+      for (const group of groups) {
+        let d: Date | null = null;
+        for (const c of group) {
+          d = parseColDate(c);
+          if (d) break;
+        }
+        if (!d) continue;
+        let maxS = 0;
+        for (const c of group) {
+          const raw =
+            getFieldFromRow(mergedRow, [c]) ??
+            (Object.prototype.hasOwnProperty.call(mergedRow, c) ? mergedRow[c] : undefined);
+          maxS = Math.max(maxS, parseHMS(raw));
+        }
+        const key = pabDateKey(d);
+        hoursByDateKey.set(key, Math.max(hoursByDateKey.get(key) ?? 0, maxS));
       }
-      if (!d) continue;
-      let maxS = 0;
-      for (const c of group) {
-        const raw =
-          getFieldFromRow(mergedRow, [c]) ??
-          (Object.prototype.hasOwnProperty.call(mergedRow, c) ? mergedRow[c] : undefined);
-        maxS = Math.max(maxS, parseHMS(raw));
-      }
-      const key = pabDateKey(d);
-      hoursByDateKey.set(key, Math.max(hoursByDateKey.get(key) ?? 0, maxS));
     }
+
+    // Live Hubstaff overlay: real tracked time for the trailing window. `max` keeps
+    // the uploaded batch authoritative once it lands (it may include manual edits),
+    // while filling days no batch covers yet — i.e. today and the current week.
+    if (liveHours) {
+      for (const [isoDate, sec] of Object.entries(liveHours.days)) {
+        if (!sec || sec <= 0) continue;
+        const [y, m, day] = isoDate.split('-').map(Number);
+        if (!y || !m || !day) continue;
+        const key = `${y}-${m}-${day}`;
+        hoursByDateKey.set(key, Math.max(hoursByDateKey.get(key) ?? 0, sec));
+      }
+    }
+
     for (const d of disputes) {
       if (!disputeGrantsPabForgiveness(d)) continue;
       const set = d.override_hours;
@@ -917,7 +980,7 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
       hoursByDateKey.set(key, set * 3600);
     }
     return hoursByDateKey;
-  }, [mergedRow, mergedColumns, disputes]);
+  }, [mergedRow, mergedColumns, disputes, liveHours]);
 
   const isHsl = (memberPay?.department ?? '').trim().toLowerCase() === 'hsl';
 
