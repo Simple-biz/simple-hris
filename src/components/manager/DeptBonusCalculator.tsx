@@ -51,6 +51,7 @@ import {
   Sparkles,
   Unlock,
   User,
+  UserPlus,
   Users,
   X,
   Zap,
@@ -101,6 +102,13 @@ const PESO = '₱';
 /** Departments whose calculator table is paginated, and how many rows per page. */
 const PAGED_DEPTS: Record<string, number> = { lead_gen: 8 };
 
+/** Departments whose manager can add an EXTERNAL member — someone outside the
+ *  roster (no employee record / permissions needed). The external member is
+ *  keyed by the email the manager types, receives the department's common /
+ *  team bonuses like everyone else, and persists purely through their saved
+ *  applied rows (the same rows payroll pays). */
+const EXTERNAL_MEMBER_DEPTS = new Set(['edit']);
+
 /** Per-member, per-bonus applied state. `vars` holds formula inputs as strings. */
 interface AppliedState {
   on: boolean;
@@ -111,6 +119,9 @@ interface MemberState {
   email: string;
   name: string;
   applied: Record<string, AppliedState>; // keyed by bonusId
+  /** Manager-added external member: not on the roster, exists only through
+   *  their applied rows. Removable while the week is still a draft. */
+  external?: boolean;
 }
 
 interface DeptState {
@@ -1010,11 +1021,15 @@ export default function DeptBonusCalculator({
     phase: 'sending' | 'done' | 'error';
     msg?: string;
   } | null>(null);
+  // "Add External Member" modal: the dept key it's adding into (null = closed).
+  const [extAddKey, setExtAddKey] = useState<string | null>(null);
   // Mirror of `submit` for the (stable) Escape handler so it can defer to the
   // modal without re-binding the drawer's keydown listener.
   const submitRef = useRef(submit);
+  const extAddRef = useRef(extAddKey);
   useEffect(() => {
     submitRef.current = submit;
+    extAddRef.current = extAddKey;
   });
 
   function patchDept(key: string, patch: Partial<DeptState>) {
@@ -1135,7 +1150,14 @@ export default function DeptBonusCalculator({
             continue;
           }
           const member =
-            byEmail.get(em) ?? { email: em, name: row.employee_name ?? em, applied: {} };
+            byEmail.get(em) ?? {
+              email: em,
+              name: row.employee_name ?? em,
+              applied: {},
+              // Off-roster with saved rows in an external-member dept: this is a
+              // manager-added external member — recreate them with their tag.
+              external: !isQc && EXTERNAL_MEMBER_DEPTS.has(key),
+            };
           if (!byEmail.has(em)) byEmail.set(em, member);
           member.applied[row.bonus_id] = { on: true, vars };
         }
@@ -1537,6 +1559,61 @@ export default function DeptBonusCalculator({
     });
   }
 
+  /** Add an off-roster (external) member to a department's calculator. No
+   *  employee record or permission is created — the applied rows saved for
+   *  them are the single source of truth, so they flow to payroll through the
+   *  normal Save → Lock → Submit path. Their KPI is the department's common /
+   *  team bonuses, pre-ticked here the same way a fresh week pre-applies them.
+   *  Returns an error message to show in the form, or null on success. */
+  function addExternalMember(deptKey: string, name: string, emailRaw: string): string | null {
+    const d = state[deptKey];
+    if (!d) return 'This department has not finished loading yet.';
+    const email = canonEmail(emailRaw);
+    if (!email) return 'A valid email is required.';
+    if (d.members.some((m) => canonEmail(m.email) === email)) {
+      return 'Someone with this email is already on this calculator.';
+    }
+    const applied: Record<string, AppliedState> = {};
+    const sharedSet = sharedCommonByDept.get(deptKey);
+    const exMap = commonExclusionsByDept.get(deptKey);
+    for (const b of commonByDept.get(deptKey) ?? []) {
+      if (sharedSet?.has(b.id)) continue; // team-effort amount lives on the dept, not the member
+      if (exMap?.get(b.id)?.has(email)) continue;
+      applied[b.id] = { on: true, vars: {} };
+    }
+    const member: MemberState = { email, name: name.trim(), applied, external: true };
+    setState((prev) => {
+      const cur = prev[deptKey];
+      if (!cur) return prev;
+      return {
+        ...prev,
+        [deptKey]: {
+          ...cur,
+          dirty: true,
+          members: [...cur.members, member].sort((a, b) => a.name.localeCompare(b.name)),
+        },
+      };
+    });
+    return null;
+  }
+
+  /** Remove a manager-added external member (draft only). Saving afterwards
+   *  replaces the week's rows, so the removal persists. */
+  function removeExternalMember(deptKey: string, email: string) {
+    setState((prev) => {
+      const d = prev[deptKey];
+      if (!d) return prev;
+      return {
+        ...prev,
+        [deptKey]: {
+          ...d,
+          dirty: true,
+          members: d.members.filter((m) => !(m.external && m.email === email)),
+        },
+      };
+    });
+  }
+
   /** Toggle a common bonus on/off for every member of the department at once. */
   function applyToAll(deptKey: string, bonusId: string, on: boolean) {
     setState((prev) => {
@@ -1777,8 +1854,9 @@ export default function DeptBonusCalculator({
   useEffect(() => {
     if (!openId) return;
     const onKey = (e: KeyboardEvent) => {
-      // While the submit modal is up it owns Escape; don't close the panel under it.
-      if (e.key === 'Escape' && !submitRef.current) close();
+      // While the submit or add-member modal is up it owns Escape; don't close
+      // the panel under it.
+      if (e.key === 'Escape' && !submitRef.current && !extAddRef.current) close();
     };
     document.addEventListener('keydown', onKey);
     const prevOverflow = document.body.style.overflow;
@@ -1855,6 +1933,8 @@ export default function DeptBonusCalculator({
     const statusReadOnly = v.readOnly;
     const editLocked = !!lockedDepts[key];
     const readOnly = statusReadOnly || editLocked;
+    // "Add External Member": manager mode, an allowed dept, week still editable.
+    const canAddExternal = !isQc && EXTERNAL_MEMBER_DEPTS.has(key) && !readOnly && !!d?.loaded;
     const accentSoft = hexA(color, 0.13);
     const accentBorder = hexA(color, 0.4);
     const tableReady = !!d?.loaded && hasAnyBonus && allMembers.length > 0;
@@ -1948,7 +2028,18 @@ export default function DeptBonusCalculator({
                 className="h-8 w-full rounded-md border border-zinc-200 bg-white pl-8 pr-2 text-xs text-zinc-900 outline-none transition-colors focus:border-emerald-400 focus:ring-1 focus:ring-emerald-200 dark:border-zinc-800 dark:bg-zinc-900/60 dark:text-zinc-100"
               />
             </div>
-            <div className="flex shrink-0 items-center">
+            <div className="flex shrink-0 items-center gap-2.5">
+              {canAddExternal && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-8 gap-1.5 text-xs"
+                  onClick={() => setExtAddKey(key)}
+                  title="Add someone outside the roster — they receive this team's common bonus"
+                >
+                  <UserPlus className="h-3.5 w-3.5" /> Add External Member
+                </Button>
+              )}
               <CompletionGauge
                 entered={entered}
                 total={allMembers.length}
@@ -2157,12 +2248,40 @@ export default function DeptBonusCalculator({
                           >
                             {initials(m.name)}
                           </span>
-                          <span
-                            className="min-w-0 truncate text-[12px] font-medium text-zinc-800 dark:text-zinc-100"
-                            title={m.name}
-                          >
-                            {m.name}
+                          <span className="min-w-0 flex-1">
+                            <span className="flex items-center gap-1.5">
+                              <span
+                                className="min-w-0 truncate text-[12px] font-medium text-zinc-800 dark:text-zinc-100"
+                                title={m.name}
+                              >
+                                {m.name}
+                              </span>
+                              {m.external && (
+                                <span
+                                  className="shrink-0 rounded bg-sky-100 px-1 py-0.5 font-mono text-[8px] font-bold uppercase tracking-wide text-sky-700 dark:bg-sky-950/60 dark:text-sky-300"
+                                  title="External member — not on the team roster; receives the team's common bonus"
+                                >
+                                  Ext
+                                </span>
+                              )}
+                            </span>
+                            {m.external && (
+                              <span className="block truncate font-mono text-[9px] text-zinc-400" title={m.email}>
+                                {m.email}
+                              </span>
+                            )}
                           </span>
+                          {m.external && !readOnly && (
+                            <button
+                              type="button"
+                              onClick={() => removeExternalMember(key, m.email)}
+                              title={`Remove ${m.name}`}
+                              aria-label={`Remove external member ${m.name}`}
+                              className="shrink-0 rounded-md p-1 text-zinc-400 transition-colors hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950/40 dark:hover:text-red-400"
+                            >
+                              <X className="h-3 w-3" />
+                            </button>
+                          )}
                         </div>
                       </td>
 
@@ -2694,6 +2813,34 @@ export default function DeptBonusCalculator({
       )
     : null;
 
+  // -- Add External Member (centered modal), portalled above the overlay --------
+
+  const extAddOverlay = mounted
+    ? createPortal(
+        <AnimatePresence>
+          {extAddKey && (
+            <AddExternalMemberModal
+              key="kpi-ext-add-modal"
+              deptName={DEPARTMENTS.find((d) => d.key === extAddKey)?.name ?? extAddKey}
+              color={deptColor(extAddKey)}
+              reduce={!!reduceMotion}
+              onAdd={(name, email) => {
+                const err = addExternalMember(extAddKey, name, email);
+                if (!err) {
+                  toast.success('External member added', {
+                    description: `${name} will receive the team's common bonus — save the draft to keep them.`,
+                  });
+                }
+                return err;
+              }}
+              onClose={() => setExtAddKey(null)}
+            />
+          )}
+        </AnimatePresence>,
+        document.body,
+      )
+    : null;
+
   // -- Landing -------------------------------------------------------------------
 
   if (!ready) {
@@ -2885,6 +3032,7 @@ export default function DeptBonusCalculator({
 
       {overlay}
       {submitOverlay}
+      {extAddOverlay}
     </div>
   );
 }
@@ -3331,6 +3479,196 @@ function SubmitModal({
             </>
           )}
         </div>
+      </motion.div>
+    </motion.div>
+  );
+}
+
+/** "Add External Member" modal: a details form (full name + email) followed by
+ *  ONE warning step that makes the manager double-check what they typed before
+ *  the member is added — the applied rows are keyed and paid exactly as
+ *  entered, so a typo here is a payroll typo. */
+function AddExternalMemberModal({
+  deptName,
+  color,
+  onAdd,
+  onClose,
+  reduce,
+}: {
+  deptName: string;
+  color: string;
+  /** Attempt the add; returns an error message to surface, or null on success. */
+  onAdd: (name: string, email: string) => string | null;
+  onClose: () => void;
+  reduce: boolean;
+}) {
+  const [name, setName] = useState('');
+  const [email, setEmail] = useState('');
+  const [phase, setPhase] = useState<'form' | 'confirm'>('form');
+  const [error, setError] = useState<string | null>(null);
+  const nameRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    document.addEventListener('keydown', onKey);
+    const t = window.setTimeout(() => nameRef.current?.focus(), 60);
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      window.clearTimeout(t);
+    };
+  }, [onClose]);
+
+  const trimmedName = name.trim();
+  const trimmedEmail = email.trim().toLowerCase();
+  const emailOk = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedEmail);
+
+  function handleContinue() {
+    if (trimmedName.length < 2) {
+      setError('Enter the member’s full name.');
+      return;
+    }
+    if (!emailOk) {
+      setError('Enter a valid email address.');
+      return;
+    }
+    setError(null);
+    setPhase('confirm');
+  }
+
+  function handleConfirm() {
+    const err = onAdd(trimmedName, trimmedEmail);
+    if (err) {
+      setError(err);
+      setPhase('form');
+      return;
+    }
+    onClose();
+  }
+
+  const inputClass =
+    'h-9 w-full rounded-md border border-zinc-200 bg-white px-2.5 text-[13px] text-zinc-900 outline-none transition-colors focus:border-emerald-400 focus:ring-1 focus:ring-emerald-200 dark:border-zinc-700 dark:bg-zinc-900/60 dark:text-zinc-100';
+
+  return (
+    <motion.div
+      className="fixed inset-0 z-[80] flex items-center justify-center p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Add external member"
+      initial={reduce ? false : { opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      transition={{ duration: 0.24, ease: EASE }}
+    >
+      <button
+        type="button"
+        aria-label="Close"
+        onClick={onClose}
+        className="absolute inset-0 cursor-default bg-zinc-950/45 backdrop-blur-md dark:bg-black/65"
+      />
+      <motion.div
+        className="relative w-full max-w-sm overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-2xl dark:border-zinc-800 dark:bg-[#0e1117]"
+        initial={reduce ? false : { opacity: 0, scale: 0.94, y: 12 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        exit={reduce ? { opacity: 0 } : { opacity: 0, scale: 0.97, y: 4 }}
+        transition={{ duration: 0.32, ease: EASE }}
+      >
+        {phase === 'form' ? (
+          <div className="flex flex-col gap-3 px-6 py-6">
+            <div className="flex items-center gap-3">
+              <span
+                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full"
+                style={{ backgroundColor: hexA(color, 0.14), color }}
+              >
+                <UserPlus className="h-5 w-5" aria-hidden />
+              </span>
+              <div className="min-w-0">
+                <div className="text-base font-bold text-zinc-900 dark:text-zinc-100">Add External Member</div>
+                <p className="font-mono text-[10.5px] text-zinc-500 dark:text-zinc-400">{deptName} · KPI Calculator</p>
+              </div>
+            </div>
+            <p className="text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">
+              External members aren’t on the {deptName} roster and need no HRIS permissions. They’ll
+              receive the team’s <span className="font-semibold text-zinc-700 dark:text-zinc-300">common bonus</span> for
+              this week and go to payroll with the rest of the team.
+            </p>
+            <label className="flex flex-col gap-1">
+              <span className="font-mono text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-500">
+                Full name
+              </span>
+              <input
+                ref={nameRef}
+                type="text"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="e.g. Juan Dela Cruz"
+                className={inputClass}
+              />
+            </label>
+            <label className="flex flex-col gap-1">
+              <span className="font-mono text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-500">
+                Email
+              </span>
+              <input
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && handleContinue()}
+                placeholder="name@example.com"
+                className={inputClass}
+              />
+            </label>
+            {error && (
+              <p className="flex items-start gap-1.5 text-xs font-medium text-red-600 dark:text-red-400">
+                <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden /> {error}
+              </p>
+            )}
+            <div className="mt-1 flex justify-end gap-2">
+              <Button size="sm" variant="outline" className="h-8 text-xs" onClick={onClose}>
+                Cancel
+              </Button>
+              <Button
+                size="sm"
+                className="h-8 gap-1.5 bg-emerald-600 text-xs text-white hover:bg-emerald-700 disabled:opacity-60"
+                disabled={trimmedName.length < 2 || !emailOk}
+                onClick={handleContinue}
+              >
+                Continue
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <div className="flex flex-col items-center gap-3 px-6 py-7 text-center">
+            <span className="flex h-14 w-14 items-center justify-center rounded-full bg-amber-100 dark:bg-amber-950/50">
+              <AlertTriangle className="h-7 w-7 text-amber-600 dark:text-amber-400" aria-hidden />
+            </span>
+            <div className="text-base font-bold text-zinc-900 dark:text-zinc-100">Double-check before adding</div>
+            <div className="w-full rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2.5 text-left dark:border-zinc-800 dark:bg-zinc-900/60">
+              <div className="truncate text-[13px] font-semibold text-zinc-900 dark:text-zinc-100" title={trimmedName}>
+                {trimmedName}
+              </div>
+              <div className="truncate font-mono text-[11px] text-zinc-500 dark:text-zinc-400" title={trimmedEmail}>
+                {trimmedEmail}
+              </div>
+            </div>
+            <p className="text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">
+              This person is not on the {deptName} roster. Once added, they’ll receive the{' '}
+              <span className="font-semibold text-zinc-700 dark:text-zinc-300">{deptName} team’s common bonus</span> in
+              this week’s KPI submission, paid out exactly under the name and email above — please make
+              sure every detail is entered correctly. You can still remove them any time before
+              submitting to payroll.
+            </p>
+            <div className="mt-1 flex gap-2">
+              <Button size="sm" variant="outline" className="h-8 text-xs" onClick={() => setPhase('form')}>
+                Go back
+              </Button>
+              <Button size="sm" className="h-8 gap-1.5 bg-emerald-600 text-xs text-white hover:bg-emerald-700" onClick={handleConfirm}>
+                <UserPlus className="h-3.5 w-3.5" /> Confirm &amp; Add
+              </Button>
+            </div>
+          </div>
+        )}
       </motion.div>
     </motion.div>
   );
