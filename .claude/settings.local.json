@@ -336,7 +336,11 @@
       "Bash(awk -F= '/^HUBSTAFF_PAT=/{gsub\\(/\"/,\"\",$2\\); print NR\": HUBSTAFF_PAT length=\"length\\($2\\)}' /c/Users/Kane/Desktop/simple-hris/.env.local)",
       "Bash(sed -i '/^# PASTE your Personal Access Token/d; /^HUBSTAFF_PAT=\"\"$/d' .env.local)",
       "Bash(sed -i 's|^# Hubstaff live API sync \\(Payroll Wizard \"Sync from Hubstaff\"\\) - see .env.example$|# Hubstaff live API sync - HUBSTAFF_PAT lives in .env \\(do NOT re-add it here: .env.local overrides .env\\)|' .env.local)",
-      "PowerShell(node --env-file=.env --env-file=.env.local --import tsx scripts/probe-hubstaff-live.ts)"
+      "PowerShell(node --env-file=.env --env-file=.env.local --import tsx scripts/probe-hubstaff-live.ts)",
+      "PowerShell(try { $r = Invoke-WebRequest -Uri 'http://localhost:3000/api/auth/csrf' -UseBasicParsing -TimeoutSec 10; \"STATUS: $\\($r.StatusCode\\)\"; $r.Content.Substring\\(0, [Math]::Min\\(200, $r.Content.Length\\)\\) } catch { \"FAILED: $\\($_.Exception.Message\\)\" })",
+      "Bash(curl -s -b /tmp/hris_jar.txt -w '\\\\nHTTP %{http_code} in %{time_total}s\\\\n' 'http://localhost:3000/api/manager/member-monthly-pay?email=kaner%40simple.biz&year=2026&month=6')",
+      "Bash(curl -s -b /tmp/hris_jar.txt -o /tmp/mmp.html -w 'HTTP %{http_code} in %{time_total}s, %{size_download} bytes\\\\n' 'http://localhost:3000/api/manager/member-monthly-pay?email=kaner%40simple.biz&year=2026&month=6')",
+      "PowerShell(npm run dev:3001)"
     ],
     "additionalDirectories": [
       "c:\\Users\\Itachi\\.claude\\projects\\c--Users-Itachi-Desktop-simple-hris\\memory",
