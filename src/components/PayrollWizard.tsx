@@ -4216,8 +4216,9 @@ export default function PayrollWizard({
     const salaryDate = new Date(weekStartDate.getFullYear(), weekStartDate.getMonth(), weekStartDate.getDate() + 8);
     const first = new Date(salaryDate.getFullYear(), salaryDate.getMonth(), 1);
     const dow = first.getDay();
-    const daysForward = (8 - dow) % 7;
-    const firstMon = new Date(first.getFullYear(), first.getMonth(), first.getDate() + daysForward);
+    // Rule B: week 1 = the week CONTAINING the 1st → Monday on/before the 1st.
+    const daysBackToMon = (dow + 6) % 7;
+    const firstMon = new Date(first.getFullYear(), first.getMonth(), first.getDate() - daysBackToMon);
     const thirdWeekMon = new Date(firstMon.getFullYear(), firstMon.getMonth(), firstMon.getDate() + 14);
     const fourthWeekMon = new Date(firstMon.getFullYear(), firstMon.getMonth(), firstMon.getDate() + 21);
     const t = salaryDate.getTime();
@@ -4585,17 +4586,18 @@ export default function PayrollWizard({
     /**
      * Salary date = the Tuesday after the pay period's Sunday (i.e. weekStart + 8).
      * Tech bonus attaches to the paycheck whose salary date lands in the **3rd
-     * full Mon–Sun week** of its month — "full week" = a week whose Monday is
-     * on or after the 1st. Per Carla (May 2026 meeting), this lands tech bonus
-     * two weeks out from PAB.
+     * Mon–Sun week** of its month, where week 1 = the week CONTAINING the 1st
+     * (a partial leading week counts as week 1; its Monday may be in the prior month).
      *
      * Examples:
-     *   March 2026 (1st = Sun) → first full week Mar 2–8 → 3rd week Mar 16–22
-     *     → salary Tue Mar 17 pays pay-period Mar 9–15 ✅
-     *   May 2026 (1st = Fri)   → first full week May 4–10 → 3rd week May 18–24
-     *     → salary Tue May 19 ("week of the 22nd") pays pay-period May 11–17 ✅
-     *   June 2026 (1st = Mon)  → first full week Jun 1–7 → 3rd week Jun 15–21
-     *     → salary Tue Jun 16 pays pay-period Jun 8–14 ✅
+     *   March 2026 (1st = Sun) → week 1 = Feb 23–Mar 1 → 3rd week Mar 9–15
+     *     → salary Tue Mar 10 pays pay-period Mar 2–8 ✅
+     *   May 2026 (1st = Fri)   → week 1 = Apr 27–May 3 → 3rd week May 11–17
+     *     → salary Tue May 12 pays pay-period May 4–10 ✅
+     *   July 2026 (1st = Wed)  → week 1 = Jun 29–Jul 5 → 3rd week Jul 13–19
+     *     → salary Tue Jul 14 pays pay-period Jul 6–12 ✅
+     *   June 2026 (1st = Mon)  → week 1 = Jun 1–7 → 3rd week Jun 15–21
+     *     → salary Tue Jun 16 pays pay-period Jun 8–14 (unchanged) ✅
      */
     const salaryDate = weekStartDate
       ? new Date(weekStartDate.getFullYear(), weekStartDate.getMonth(), weekStartDate.getDate() + 8)
@@ -4605,9 +4607,10 @@ export default function PayrollWizard({
       const techMonth = { year: salaryDate.getFullYear(), month: salaryDate.getMonth() };
       const first = new Date(techMonth.year, techMonth.month, 1);
       const dow = first.getDay();
-      // Days forward to first Monday ≥ the 1st. Sun=0→1, Mon=1→0, Tue=2→6, …
-      const daysForward = (8 - dow) % 7;
-      const firstMon = new Date(first.getFullYear(), first.getMonth(), first.getDate() + daysForward);
+      // Rule B: week 1 = the week CONTAINING the 1st → Monday on/before the 1st
+      // (may be in the previous month). Days back to that Monday: Mon=1→0, … Sun=0→6.
+      const daysBackToMon = (dow + 6) % 7;
+      const firstMon = new Date(first.getFullYear(), first.getMonth(), first.getDate() - daysBackToMon);
       const thirdWeekMon = new Date(firstMon.getFullYear(), firstMon.getMonth(), firstMon.getDate() + 14);
       const fourthWeekMon = new Date(firstMon.getFullYear(), firstMon.getMonth(), firstMon.getDate() + 21);
       const t = salaryDate.getTime();

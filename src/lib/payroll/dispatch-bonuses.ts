@@ -286,13 +286,15 @@ export function isFinalPabWeek(weekEnd: Date, pabPeriodEnd: Date): boolean {
 }
 
 /**
- * Carla's rule (May 2026 meeting): salary date = period Monday + 8 days.
- * Tech bonus fires when that salary date lands inside the **3rd full Mon–Sun
- * week** of its month — "full week" = a week whose Monday is on or after the
- * 1st. So week 1 starts on the first Monday ≥ the 1st; week 3 = +14 days.
- * This places tech bonus two weeks out from PAB. Strict equality: only the
- * 3rd week, not 4th+.
+ * Salary date = period Monday + 8 days. Tech bonus fires when that salary date
+ * lands inside the **3rd Mon–Sun week** of its month, where week 1 = the week
+ * that CONTAINS the 1st — a partial leading week counts as week 1. So week 1's
+ * Monday is the Monday on/before the 1st (which may fall in the previous month)
+ * and week 3 = +14 days. Strict: only the 3rd week, not 4th+.
  * Used by HSL (Hogan) employees whose weeks run Mon–Sun.
+ *
+ * Note: counting the partial first week as week 1 (business rule confirmed
+ * Jul 2026) lands tech one week earlier than the older "first full week" rule.
  */
 export function isTechBonusWeek(weekMonday: Date): boolean {
   const salary = new Date(
@@ -302,12 +304,14 @@ export function isTechBonusWeek(weekMonday: Date): boolean {
   );
   const first = new Date(salary.getFullYear(), salary.getMonth(), 1);
   const dow = first.getDay();
-  // Days forward to first Monday ≥ the 1st. Sun=0→1, Mon=1→0, Tue=2→6, …
-  const daysForward = (8 - dow) % 7;
+  // Week 1 = the week CONTAINING the 1st, so anchor on the Monday on/before the
+  // 1st (may be in the previous month). Days back to that Monday: Mon=1→0,
+  // Tue=2→1, … Sun=0→6.
+  const daysBackToMon = (dow + 6) % 7;
   const firstMon = new Date(
     first.getFullYear(),
     first.getMonth(),
-    first.getDate() + daysForward,
+    first.getDate() - daysBackToMon,
   );
   const thirdMon = new Date(
     firstMon.getFullYear(),
@@ -326,7 +330,8 @@ export function isTechBonusWeek(weekMonday: Date): boolean {
 /**
  * Sun–Sat variant of isTechBonusWeek for non-HSL employees.
  * Salary date = weekSunday + 8 days; fires when that date lands in the
- * 3rd full Sun–Sat week of its month.
+ * 3rd Sun–Sat week of its month, where week 1 = the week containing the 1st
+ * (a partial leading week counts as week 1; its Sunday may be in the prior month).
  */
 export function isTechBonusWeekSunSat(weekSunday: Date): boolean {
   const salary = new Date(
@@ -336,12 +341,13 @@ export function isTechBonusWeekSunSat(weekSunday: Date): boolean {
   );
   const first = new Date(salary.getFullYear(), salary.getMonth(), 1);
   const dow = first.getDay();
-  // Days forward to first Sunday >= the 1st: Sun(0)→0, Mon(1)→6, …, Sat(6)→1
-  const daysForward = dow === 0 ? 0 : 7 - dow;
+  // Week 1 = the week CONTAINING the 1st → anchor on the Sunday on/before the
+  // 1st (may be in the previous month). Days back to that Sunday = dow.
+  const daysBackToSun = dow;
   const firstSun = new Date(
     first.getFullYear(),
     first.getMonth(),
-    first.getDate() + daysForward,
+    first.getDate() - daysBackToSun,
   );
   const thirdSun = new Date(
     firstSun.getFullYear(),

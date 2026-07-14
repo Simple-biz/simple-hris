@@ -1622,14 +1622,13 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
   }, [hasRates, isPAEligible, pabDeptOk, pabBonusPhpAmt, isAllTime, selectedFileWeek, isFinalPabWeekForSelected, pabEligibleCount]);
 
   /**
-   * Tech Bonus rules (per Carla, May 2026 meeting):
-   *  - Paid in the 3rd full Mon–Sun week of the salary-date's month, where
-   *    "full week" = the first week whose Monday is on or after the 1st of
-   *    the month. So week 1 starts on the first Monday ≥ the 1st; week 3
-   *    starts 14 days later. Salary Tuesday must land inside that week.
-   *    Concretely: this lands the tech bonus two weeks out from the PAB
-   *    (e.g. Mar 2026 → salary Tue Mar 17 paying period Mar 9–15;
-   *    May 2026 → salary Tue May 19, the "week of the 22nd").
+   * Tech Bonus rules:
+   *  - Paid in the 3rd Mon–Sun week of the salary-date's month, where week 1 =
+   *    the week CONTAINING the 1st (a partial leading week counts as week 1, so
+   *    week 1's Monday may fall in the previous month); week 3 starts 14 days
+   *    later. Salary Tuesday must land inside that week.
+   *    (e.g. Mar 2026 → salary Tue Mar 10 paying period Mar 2–8;
+   *    May 2026 → salary Tue May 12; Jul 2026 → salary Tue Jul 14 paying Jul 6–12).
    *  - Employee must have completed 30 days of service from their start_date.
    *
    *  All-time view uses the most recently dispatched pay period's salary date
@@ -1664,14 +1663,15 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
     if (refMonday.getTime() < eligibleFrom.getTime()) return false;
 
     // Salary Date = the Tuesday after the pay-period Sunday (refMonday + 8).
-    // Tech bonus fires when salary date falls in the 3rd full Mon–Sun week of
-    // its month — week 1 starts on the first Monday on or after the 1st.
+    // Tech bonus fires when salary date falls in the 3rd Mon–Sun week of its
+    // month — week 1 = the week containing the 1st (partial leading week counts).
     const salaryDate = new Date(refMonday.getFullYear(), refMonday.getMonth(), refMonday.getDate() + 8);
     const first = new Date(salaryDate.getFullYear(), salaryDate.getMonth(), 1);
     const dow = first.getDay();
-    // Days forward to the first Monday ≥ the 1st (Mon=0, Sun=6).
-    const daysForward = (8 - dow) % 7; // dow=1→0, dow=2→6, … dow=0(Sun)→1
-    const firstMon = new Date(first.getFullYear(), first.getMonth(), first.getDate() + daysForward);
+    // Rule B: week 1 = the week CONTAINING the 1st → Monday on/before the 1st
+    // (may be in the previous month). Days back to that Monday: Mon=1→0, … Sun=0→6.
+    const daysBackToMon = (dow + 6) % 7;
+    const firstMon = new Date(first.getFullYear(), first.getMonth(), first.getDate() - daysBackToMon);
     const thirdWeekMon = new Date(firstMon.getFullYear(), firstMon.getMonth(), firstMon.getDate() + 14);
     const fourthWeekMon = new Date(firstMon.getFullYear(), firstMon.getMonth(), firstMon.getDate() + 21);
     const t = salaryDate.getTime();
@@ -1749,8 +1749,9 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
     const salaryDate = new Date(refMonday.getFullYear(), refMonday.getMonth(), refMonday.getDate() + 8);
     const first = new Date(salaryDate.getFullYear(), salaryDate.getMonth(), 1);
     const dow = first.getDay();
-    const daysForward = (8 - dow) % 7;
-    const firstMon = new Date(first.getFullYear(), first.getMonth(), first.getDate() + daysForward);
+    // Rule B: week 1 = the week CONTAINING the 1st → Monday on/before the 1st.
+    const daysBackToMon = (dow + 6) % 7;
+    const firstMon = new Date(first.getFullYear(), first.getMonth(), first.getDate() - daysBackToMon);
     const thirdWeekMon = new Date(firstMon.getFullYear(), firstMon.getMonth(), firstMon.getDate() + 14);
     const fourthWeekMon = new Date(firstMon.getFullYear(), firstMon.getMonth(), firstMon.getDate() + 21);
     const t = salaryDate.getTime();
@@ -1791,8 +1792,9 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
     const yr = pabMonthRange ? pabMonthRange.start.getFullYear() : refMonday.getFullYear();
     const mo = pabMonthRange ? pabMonthRange.start.getMonth() : refMonday.getMonth();
     const first = new Date(yr, mo, 1);
-    const daysForward = (8 - first.getDay()) % 7;
-    const firstMon = new Date(yr, mo, 1 + daysForward);
+    // Rule B: week 1 = the week CONTAINING the 1st → Monday on/before the 1st.
+    const daysBackToMon = (first.getDay() + 6) % 7;
+    const firstMon = new Date(yr, mo, 1 - daysBackToMon);
     const week3Mon = new Date(firstMon.getFullYear(), firstMon.getMonth(), firstMon.getDate() + 14);
     // "Past" once the current file week starts strictly after the tech bonus week's Monday.
     return refMonday.getTime() > week3Mon.getTime();
@@ -1820,8 +1822,9 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
     const salaryDate = new Date(payPeriodMon.getFullYear(), payPeriodMon.getMonth(), payPeriodMon.getDate() + 8);
     const first = new Date(salaryDate.getFullYear(), salaryDate.getMonth(), 1);
     const fdow = first.getDay();
-    const daysForward = (8 - fdow) % 7;
-    const firstMon = new Date(first.getFullYear(), first.getMonth(), first.getDate() + daysForward);
+    // Rule B: week 1 = the week CONTAINING the 1st → Monday on/before the 1st.
+    const week1Back = (fdow + 6) % 7;
+    const firstMon = new Date(first.getFullYear(), first.getMonth(), first.getDate() - week1Back);
     const thirdMon = new Date(firstMon.getFullYear(), firstMon.getMonth(), firstMon.getDate() + 14);
     const fourthMon = new Date(firstMon.getFullYear(), firstMon.getMonth(), firstMon.getDate() + 21);
     const t = salaryDate.getTime();

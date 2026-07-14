@@ -327,8 +327,9 @@ function isTechBonusWeekMonSun(weekMonday: Date): boolean {
   const salary = new Date(weekMonday.getFullYear(), weekMonday.getMonth(), weekMonday.getDate() + 8);
   const first = new Date(salary.getFullYear(), salary.getMonth(), 1);
   const dow = first.getDay();
-  const daysForward = (8 - dow) % 7;
-  const firstMon = new Date(first.getFullYear(), first.getMonth(), first.getDate() + daysForward);
+  // Rule B: week 1 = the week CONTAINING the 1st → Monday on/before the 1st.
+  const daysBackToMon = (dow + 6) % 7;
+  const firstMon = new Date(first.getFullYear(), first.getMonth(), first.getDate() - daysBackToMon);
   const thirdMon = new Date(firstMon.getFullYear(), firstMon.getMonth(), firstMon.getDate() + 14);
   const fourthMon = new Date(firstMon.getFullYear(), firstMon.getMonth(), firstMon.getDate() + 21);
   const t = salary.getTime();
