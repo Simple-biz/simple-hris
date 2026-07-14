@@ -208,6 +208,94 @@
 }
 
 
+/* ==========================================================================
+   Prism panel — a "new feature" beacon that reads as a diamond catching light.
+   Same GPU-safe recipe as the urgent card (registered <angle> + transform +
+   opacity only): a slow iridescent rim hugging the border band, plus an
+   occasional glint sweeping the surface. Deliberately restrained for a money
+   app — a thin rim and a resting glint, not a rainbow drench. Scoped to a
+   single section via .prism-panel, so it's a moment, not a page treatment.
+   ========================================================================== */
+
+@property --prism-angle {
+  syntax: '<angle>';
+  initial-value: 0deg;
+  inherits: false;
+}
+
+/* Slow-turning iridescent border ring. The mask keeps the conic gradient in the
+   1.5px padding band only, so it reads as a crisp jewel rim over any (even
+   translucent) card background. Diamond-refraction spectrum: sky → indigo →
+   violet → fuchsia → a fleck of gold → cyan → a white sparkle, and back. */
+@keyframes prism-rim-spin {
+  to { --prism-angle: 360deg; }
+}
+.prism-rim {
+  padding: 1.5px;
+  background: conic-gradient(
+    from var(--prism-angle),
+    #38bdf8,
+    #818cf8,
+    #c084fc,
+    #f0abfc,
+    #fde68a,
+    #67e8f9,
+    #ffffff,
+    #38bdf8
+  );
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+          mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+          mask-composite: exclude;
+  opacity: 0.9;
+  animation: prism-rim-spin 7s linear infinite;
+}
+.dark .prism-rim { opacity: 0.8; }
+
+/* Diamond glint: a soft, faintly-spectral highlight that sweeps the surface,
+   then rests — the light catching a facet, not a strobe. */
+@keyframes prism-sheen-sweep {
+  0%        { transform: translateX(-160%) skewX(-16deg); opacity: 0; }
+  6%        { opacity: 1; }
+  30%       { opacity: 1; }
+  46%, 100% { transform: translateX(340%)  skewX(-16deg); opacity: 0; }
+}
+.prism-sheen {
+  position: absolute;
+  top: -20%;
+  bottom: -20%;
+  left: 0;
+  width: 34%;
+  background: linear-gradient(
+    100deg,
+    transparent,
+    rgba(103, 232, 249, 0.28),
+    rgba(255, 255, 255, 0.62),
+    rgba(240, 171, 252, 0.3),
+    transparent
+  );
+  filter: blur(3px);
+  transform: translateX(-160%) skewX(-16deg);
+  animation: prism-sheen-sweep 7s ease-in-out infinite;
+}
+.dark .prism-sheen {
+  background: linear-gradient(
+    100deg,
+    transparent,
+    rgba(103, 232, 249, 0.16),
+    rgba(255, 255, 255, 0.34),
+    rgba(240, 171, 252, 0.18),
+    transparent
+  );
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* Keep the jewel identity (a resting iridescent rim), drop the movement. */
+  .prism-rim   { animation: none; --prism-angle: 125deg; }
+  .prism-sheen { animation: none; opacity: 0; }
+}
+
+
 @theme {
   --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;

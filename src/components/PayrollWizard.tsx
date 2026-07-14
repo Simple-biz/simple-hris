@@ -138,6 +138,7 @@ import {
   auditEventsToAoa,
   type ClientAuditEvent,
 } from '@/lib/audit/client-format';
+import { downloadPayrollReportPdf, type PayrollReportRow } from '@/lib/payroll-wizard/report-pdf';
 import { usePabPeriodSettings } from '@/hooks/usePabPeriodSettings';
 import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
 import { isFinalPayrollWeekOfMonth } from '@/lib/payroll/bonus-cadence';
@@ -6390,21 +6391,32 @@ export default function PayrollWizard({
                     </div>
                   </section>
 
-                  {/* 4. Hubstaff weekly timesheet */}
-                  <section className="flex flex-col gap-3 rounded-xl border border-indigo-200/80 bg-indigo-50/40 p-4 dark:border-indigo-900/40 dark:bg-indigo-950/20">
-                    <div className="flex items-start gap-3">
-                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-indigo-200/90 bg-white dark:border-indigo-800/60 dark:bg-indigo-950/50">
-                        <Clock className="h-5 w-5 text-indigo-700 dark:text-indigo-400" aria-hidden />
+                  {/* 4. Hubstaff weekly timesheet — prism-lit to flag the new live-sync feature */}
+                  <section className="prism-panel relative isolate flex flex-col gap-3 overflow-hidden rounded-xl border border-indigo-200/70 bg-indigo-50/40 p-4 shadow-[0_10px_30px_-16px_rgba(99,102,241,0.5)] dark:border-indigo-900/40 dark:bg-indigo-950/20 dark:shadow-[0_10px_34px_-16px_rgba(99,102,241,0.55)]">
+                    {/* Iridescent jewel rim + occasional facet glint (.prism-* keyframes in index.css). */}
+                    <span aria-hidden className="prism-rim pointer-events-none absolute inset-0 z-0 rounded-[inherit]" />
+                    <span aria-hidden className="prism-sheen pointer-events-none z-0" />
+
+                    <div className="relative z-10 flex flex-1 flex-col gap-3">
+                      <div className="flex items-start gap-3">
+                        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-indigo-200/90 bg-white shadow-sm dark:border-indigo-800/60 dark:bg-indigo-950/50">
+                          <Clock className="h-5 w-5 text-indigo-700 dark:text-indigo-400" aria-hidden />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-1.5">
+                            <p className="text-[10px] font-semibold uppercase tracking-wider text-indigo-800/90 dark:text-indigo-400/90">
+                              Hubstaff timesheets
+                            </p>
+                            <span className="inline-flex items-center gap-1 rounded-full border border-indigo-300/70 bg-white/80 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-indigo-700 shadow-sm dark:border-indigo-500/40 dark:bg-indigo-950/60 dark:text-indigo-300">
+                              <Sparkles className="h-2.5 w-2.5" aria-hidden />
+                              New
+                            </span>
+                          </div>
+                          <h3 className="text-base font-semibold leading-tight text-zinc-900 dark:text-white">
+                            Hubstaff weekly report
+                          </h3>
+                        </div>
                       </div>
-                      <div className="min-w-0">
-                        <p className="text-[10px] font-semibold uppercase tracking-wider text-indigo-800/90 dark:text-indigo-400/90">
-                          Hubstaff timesheets
-                        </p>
-                        <h3 className="text-base font-semibold leading-tight text-zinc-900 dark:text-white">
-                          Hubstaff weekly report
-                        </h3>
-                      </div>
-                    </div>
                     <p className="text-xs leading-relaxed text-zinc-600 dark:text-zinc-400">
                       Choose your Hubstaff export CSV. After you confirm, the rows are appended to{' '}
                       <span className="font-mono text-zinc-500">public.hubstaff_hours</span> in Supabase
@@ -6485,6 +6497,7 @@ export default function PayrollWizard({
                           </p>
                         </>
                       )}
+                      </div>
                     </div>
                   </section>
                 </div>
@@ -12046,6 +12059,7 @@ export default function PayrollWizard({
                     ? `Replay of ${formatPeriodLabel(calcSourceFile)} · salaries from the dispatched snapshot.`
                     : `Dispatched ${fmt(snap.dispatchedAt)}.`}
               </span>
+              <div className="flex flex-wrap items-center gap-2">
               <Button
                 type="button"
                 variant="outline"
@@ -12108,6 +12122,65 @@ export default function PayrollWizard({
                 <Download className="size-3.5" />
                 Export XLSX{isDraft && <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-amber-800 dark:bg-amber-950/60 dark:text-amber-200">Draft</span>}
               </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-8 gap-2 border-rose-300/70 text-rose-700 hover:bg-rose-50 dark:border-rose-700/50 dark:text-rose-300 dark:hover:bg-rose-950/30"
+                onClick={async () => {
+                  const rows: PayrollReportRow[] = snap.employees.map((e) => ({
+                    name: e.name ?? '',
+                    email: e.email,
+                    department: e.department_name ?? '',
+                    hours: e.hours.total,
+                    regular: e.pay_php.regular ?? null,
+                    ot: e.pay_php.ot ?? null,
+                    bonuses: e.pay_php.bonuses_total,
+                    mesa: (e.pay_php.mesa_disbursement ?? 0) - e.pay_php.mesa_deduction,
+                    netPhp: e.pay_php.final ?? 0,
+                    netUsd: snap.usdToPhpRate > 0
+                      ? Math.round(((e.pay_php.final ?? 0) / snap.usdToPhpRate) * 100) / 100
+                      : null,
+                  }));
+
+                  // Timestamp like "2026-05-14 09-32-18" — filesystem-safe (no colons).
+                  const d = snap.startedAt;
+                  const pad = (n: number) => String(n).padStart(2, '0');
+                  const stamp = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}-${pad(d.getMinutes())}-${pad(d.getSeconds())}`;
+                  const filename = `Payroll Wizard - ${isDraft ? 'Draft' : 'Official'} - ${stamp}.pdf`;
+
+                  try {
+                    await downloadPayrollReportPdf(
+                      {
+                        isDraft,
+                        isReplay,
+                        startedAt: snap.startedAt,
+                        dispatchedAt: snap.dispatchedAt,
+                        generatedAt: new Date(),
+                        usdToPhpRate: snap.usdToPhpRate,
+                        periodLabel: calcSourceFile ? formatPeriodLabel(calcSourceFile) : null,
+                        employees: rows,
+                        totalPhp: totalSalaries,
+                        totalUsd: snap.usdToPhpRate > 0
+                          ? Math.round((totalSalaries / snap.usdToPhpRate) * 100) / 100
+                          : null,
+                      },
+                      filename,
+                    );
+                    toast.success(`Downloaded ${filename}`, {
+                      description: `${rows.length} employee${rows.length === 1 ? '' : 's'} · ${isDraft ? 'Draft' : 'Official'} report`,
+                    });
+                  } catch (err) {
+                    toast.error('Could not generate PDF', {
+                      description: err instanceof Error ? err.message : 'Unexpected error',
+                    });
+                  }
+                }}
+              >
+                <FileText className="size-3.5" />
+                Export PDF{isDraft && <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-amber-800 dark:bg-amber-950/60 dark:text-amber-200">Draft</span>}
+              </Button>
+              </div>
             </div>
 
             {/* Salaries / Wages */}

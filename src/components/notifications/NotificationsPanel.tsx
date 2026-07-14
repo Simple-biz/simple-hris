@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Bell, CheckCheck, Lock, Unlock, AlertTriangle, PartyPopper, BadgeDollarSign, X, Search, ChevronLeft, ChevronRight, ArrowRight } from 'lucide-react';
+import { Bell, CheckCheck, CheckCircle2, Lock, Unlock, AlertTriangle, PartyPopper, BadgeDollarSign, X, Search, ChevronLeft, ChevronRight, ArrowRight } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useDispatchLock } from '@/hooks/useDispatchLock';
 import { getSupabaseBrowserClient } from '@/lib/supabase/browser';
@@ -25,10 +25,33 @@ interface EmployeeNotification {
     submitted_at?: string | null;
     /** For onboarding.submitted: the hr_onboarding_submissions.id to open. */
     submission_id?: string | null;
+    /** For offboarding.requested: the offboarding_queue row id(s) this alert covers. */
+    request_ids?: string[] | null;
   } | null;
   read_at: string | null;
   created_at: string;
 }
+
+/** Live status of an offboarding_queue row, keyed by its id (HR panel only). */
+interface QueueStatusInfo {
+  status: 'pending' | 'processing' | 'completed' | 'dismissed' | 'returned' | 'cancelled';
+  processed_by: string | null;
+  decided_at: string | null;
+  employee_name: string | null;
+}
+
+/**
+ * Past-tense outcome phrase for a terminal offboarding-queue status, rendered as
+ * "Already {phrase}" on a request notification whose queue row has since been
+ * actioned. Only terminal statuses appear here — pending/processing keep the
+ * live "Review request" call-to-action instead.
+ */
+const OFFBOARD_ACTIONED_PHRASE: Record<string, string> = {
+  completed: 'offboarded',
+  dismissed: 'dismissed',
+  returned: 'returned to the manager',
+  cancelled: 'withdrawn by the manager',
+};
 
 function formatRelative(iso: string): string {
   try {
@@ -105,6 +128,11 @@ export default function NotificationsPanel({
   const { state: lockState, loading } = useDispatchLock();
   const [items, setItems] = useState<EmployeeNotification[]>([]);
   const [itemsLoading, setItemsLoading] = useState<boolean>(!!viewerEmail);
+  // Live status of the offboarding_queue rows referenced by any
+  // `offboarding.requested` notification, so the card can tell HR when the
+  // request has already been actioned (offboarded / dismissed / returned /
+  // withdrawn) rather than dangling a stale "Review request" button.
+  const [queueStatus, setQueueStatus] = useState<Record<string, QueueStatusInfo>>({});
 
   const normEmail = useMemo(
     () => (viewerEmail ? viewerEmail.trim().toLowerCase() : null),
@@ -175,6 +203,65 @@ export default function NotificationsPanel({
     }, 2000);
     return () => window.clearTimeout(t);
   }, [items, normEmail]);
+
+  // Every offboarding_queue id referenced by an offboarding.requested alert.
+  const offboardIds = useMemo(() => {
+    const set = new Set<string>();
+    for (const n of items) {
+      if (n.type !== 'offboarding.requested') continue;
+      const ids = n.details?.request_ids;
+      if (Array.isArray(ids)) ids.forEach((x) => { if (typeof x === 'string') set.add(x); });
+    }
+    return Array.from(set).sort();
+  }, [items]);
+  const offboardIdsKey = offboardIds.join(',');
+
+  // Resolve the live queue status for those rows. Gated to the HR dashboard —
+  // it's the only panel wired with `view` + `onNavigate` (so the only one that
+  // renders offboarding action buttons), and the offboarding-queue endpoint is
+  // HR/admin/manager-only. Refetches whenever the referenced id set changes.
+  useEffect(() => {
+    if (view !== 'hr' || offboardIdsKey === '') return;
+    let cancelled = false;
+    void fetch('/api/offboarding-queue', { cache: 'no-store' })
+      .then((r) => r.json())
+      .then((json: { rows?: Array<QueueStatusInfo & { id: string }> }) => {
+        if (cancelled) return;
+        const map: Record<string, QueueStatusInfo> = {};
+        for (const row of json.rows ?? []) {
+          map[row.id] = {
+            status: row.status,
+            processed_by: row.processed_by ?? null,
+            decided_at: row.decided_at ?? null,
+            employee_name: row.employee_name ?? null,
+          };
+        }
+        setQueueStatus(map);
+      })
+      .catch(() => { /* leave prior statuses; card falls back to the CTA */ });
+    return () => { cancelled = true; };
+  }, [view, offboardIdsKey]);
+
+  /**
+   * Summarize the queue rows behind one offboarding.requested notification.
+   * Returns `null` when no referenced row is known yet (status not loaded) so
+   * the card keeps its default "Review request" button. When every known row is
+   * terminal, `resolved` is true and the card shows the outcome instead.
+   */
+  const summarizeOffboard = useCallback(
+    (ids: string[]): { resolved: boolean; phrase: string; by: string | null; at: string | null } | null => {
+      const infos = ids.map((id) => queueStatus[id]).filter(Boolean) as QueueStatusInfo[];
+      if (infos.length === 0) return null;
+      const hasActionable = infos.some((i) => i.status === 'pending' || i.status === 'processing');
+      if (hasActionable) return { resolved: false, phrase: '', by: null, at: null };
+      const distinct = new Set(infos.map((i) => i.status));
+      const phrase = distinct.size === 1 ? (OFFBOARD_ACTIONED_PHRASE[[...distinct][0]] ?? 'handled') : 'handled';
+      // Attribute to the most recent decision (who/when).
+      const latest = infos.reduce((a, b) => ((b.decided_at ?? '') > (a.decided_at ?? '') ? b : a));
+      return { resolved: true, phrase, by: latest.processed_by, at: latest.decided_at };
+    },
+    [queueStatus],
+  );
 
   const unreadCount = items.filter(n => !n.read_at).length + (lockState.locked ? 1 : 0);
   const hasAny = items.length > 0 || lockState.locked;
@@ -446,6 +533,14 @@ export default function NotificationsPanel({
               const action = onNavigate
                 ? resolveNotificationAction(view, n.type, n.details as Record<string, unknown> | null)
                 : null;
+              // For an offboarding request, check whether its queue row has since
+              // been actioned so we can detail the outcome instead of the CTA.
+              const offboardResolution =
+                n.type === 'offboarding.requested' && Array.isArray(n.details?.request_ids)
+                  ? summarizeOffboard(
+                      (n.details!.request_ids as unknown[]).filter((x): x is string => typeof x === 'string'),
+                    )
+                  : null;
               const beforeReg = n.details?.before?.regular_rate;
               const afterReg  = n.details?.after?.regular_rate;
               const beforeOt  = n.details?.before?.ot_rate;
@@ -498,7 +593,30 @@ export default function NotificationsPanel({
                           {n.message}
                         </p>
 
-                        {action && (
+                        {action && offboardResolution?.resolved ? (
+                          /* Queue row already actioned — detail the outcome; the
+                             viewer can still jump to the queue to see the record. */
+                          <div className="mt-3 flex flex-wrap items-center gap-x-2 gap-y-1 rounded-lg border border-zinc-200 bg-zinc-50/80 px-3 py-2 text-[12px] dark:border-zinc-800 dark:bg-zinc-900/40">
+                            <span className="inline-flex items-center gap-1.5 font-semibold text-zinc-700 dark:text-zinc-300">
+                              <CheckCircle2 className="h-3.5 w-3.5 text-zinc-400 dark:text-zinc-500" />
+                              Already {offboardResolution.phrase}
+                            </span>
+                            {offboardResolution.by && (
+                              <span className="text-zinc-500 dark:text-zinc-500">by {offboardResolution.by}</span>
+                            )}
+                            {offboardResolution.at && (
+                              <span className="text-zinc-400 dark:text-zinc-600">· {formatRelative(offboardResolution.at)}</span>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => handleNavigate(n.id, action)}
+                              className="group ml-auto inline-flex items-center gap-1 text-[11.5px] font-semibold text-emerald-700 hover:underline dark:text-emerald-400"
+                            >
+                              View request
+                              <ArrowRight className="h-3 w-3 transition-transform group-hover:translate-x-0.5" />
+                            </button>
+                          </div>
+                        ) : action ? (
                           <button
                             type="button"
                             onClick={() => handleNavigate(n.id, action)}
@@ -507,7 +625,7 @@ export default function NotificationsPanel({
                             {action.label}
                             <ArrowRight className="h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5" />
                           </button>
-                        )}
+                        ) : null}
 
                         {isRate && (
                           <div className="mt-3 grid grid-cols-2 gap-2 rounded-lg border border-zinc-100 bg-zinc-50/60 p-3 text-[12px] dark:border-zinc-800 dark:bg-zinc-900/40">

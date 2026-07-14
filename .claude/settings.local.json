@@ -355,7 +355,13 @@
       "Bash(npm test *)",
       "PowerShell(npx tsc --noEmit 2>$null | Select-String \"OrphanageApp\" ; \"exit=$LASTEXITCODE\")",
       "Bash(node --import tsx --test \"src/**/*.test.ts\")",
-      "Bash(rm -f docs/notes/hsl-week-model-cutover-2026-07-05.md)"
+      "Bash(rm -f docs/notes/hsl-week-model-cutover-2026-07-05.md)",
+      "Skill(artifact-design)",
+      "Skill(artifact-design:*)",
+      "Bash(curl -s --max-time 8 \"http://localhost:3000/login\")",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" --max-time 10 \"http://localhost:3000/api/auth/session\")",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" --max-time 12 \"http://localhost:3000/login\")",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" --max-time 12 \"http://localhost:3000/login?callbackUrl=%2Faccounting\")"
     ],
     "additionalDirectories": [
       "c:\\Users\\Itachi\\.claude\\projects\\c--Users-Itachi-Desktop-simple-hris\\memory",

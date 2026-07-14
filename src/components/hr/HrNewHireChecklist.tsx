@@ -12,6 +12,7 @@ import {
   ChevronRight,
   ClipboardList,
   Download,
+  Filter,
   Info,
   Loader2,
   Lock,
@@ -62,6 +63,11 @@ const COUNTRY_OPTIONS = ONBOARDING_COUNTRIES.map((c) => c.name);
 // <select> so both the closed control and the open list read correctly.
 const SELECT_OPTION_CLASS = 'bg-white text-zinc-900 dark:bg-zinc-900 dark:text-zinc-100';
 const SELECT_SCHEME_CLASS = '[color-scheme:light] dark:[color-scheme:dark]';
+
+// Shared styling for the filter-bar dropdowns (neutral border so they read as
+// "view" controls, distinct from the emerald bulk-apply bar).
+const FILTER_SELECT_CLASS =
+  'h-8 min-w-[8.5rem] rounded-lg border border-zinc-200 bg-white px-2 text-[13px] text-zinc-800 outline-none focus:border-emerald-400 focus:ring-1 focus:ring-emerald-300 disabled:cursor-not-allowed disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100';
 
 type FieldKey = (typeof COLUMNS)[number]['key'];
 
@@ -252,6 +258,12 @@ export default function HrNewHireChecklist({
   const [bulkCountry, setBulkCountry] = useState('');
   const selectAllRef = useRef<HTMLInputElement>(null);
 
+  // Table filters (Department / Country / Hired By). Each holds the exact value
+  // to match, or '' for "all". Options are derived from the loaded week's rows.
+  const [filterDept, setFilterDept] = useState('');
+  const [filterCountry, setFilterCountry] = useState('');
+  const [filterHiredBy, setFilterHiredBy] = useState('');
+
   // Period selector
   const [periodMetas, setPeriodMetas] = useState<PeriodMeta[]>([]);
   const [periodMenuOpen, setPeriodMenuOpen] = useState(false);
@@ -423,8 +435,14 @@ export default function HrNewHireChecklist({
     if (locked) { setEditor(null); setSelectedIds(new Set()); }
   }, [locked]);
 
-  // Switching weeks invalidates ids — drop any editor / selection.
-  useEffect(() => { setEditor(null); setSelectedIds(new Set()); }, [period]);
+  // Switching weeks invalidates ids — drop any editor / selection / filters.
+  useEffect(() => {
+    setEditor(null);
+    setSelectedIds(new Set());
+    setFilterDept('');
+    setFilterCountry('');
+    setFilterHiredBy('');
+  }, [period]);
 
   // Close the edit-history popover on outside click, Escape, or any scroll.
   useEffect(() => {
@@ -799,9 +817,59 @@ export default function HrNewHireChecklist({
 
   const hireCount = rows.length;
 
+  // ── Filters: distinct Department / Country / Hired By values present this week
+  // (sorted, blanks dropped), used to populate the filter-bar dropdowns. ──
+  const filterOptions = useMemo(() => {
+    const dept = new Set<string>();
+    const country = new Set<string>();
+    const hiredBy = new Set<string>();
+    for (const row of rows) {
+      const d = (row.department || '').trim();
+      if (d) dept.add(d);
+      const c = (row.country || '').trim();
+      if (c) country.add(c);
+      const h = (row.hired_by || '').trim();
+      if (h) hiredBy.add(h);
+    }
+    const sorted = (s: Set<string>) => [...s].sort((a, b) => a.localeCompare(b));
+    return { departments: sorted(dept), countries: sorted(country), hiredBy: sorted(hiredBy) };
+  }, [rows]);
+
+  const anyFilterActive = !!(filterDept || filterCountry || filterHiredBy);
+
+  // The rows actually shown — `rows` narrowed by the active filters.
+  const filteredRows = useMemo(() => {
+    if (!anyFilterActive) return rows;
+    return rows.filter((row) => {
+      if (filterDept && (row.department || '').trim() !== filterDept) return false;
+      if (filterCountry && (row.country || '').trim() !== filterCountry) return false;
+      if (filterHiredBy && (row.hired_by || '').trim() !== filterHiredBy) return false;
+      return true;
+    });
+  }, [rows, anyFilterActive, filterDept, filterCountry, filterHiredBy]);
+
+  // Drop a filter whose value no longer exists in the loaded rows (e.g. after
+  // deleting the last hire in that department) so the grid can't get stuck empty.
+  useEffect(() => {
+    if (filterDept && !filterOptions.departments.includes(filterDept)) setFilterDept('');
+    if (filterCountry && !filterOptions.countries.includes(filterCountry)) setFilterCountry('');
+    if (filterHiredBy && !filterOptions.hiredBy.includes(filterHiredBy)) setFilterHiredBy('');
+  }, [filterOptions, filterDept, filterCountry, filterHiredBy]);
+
+  const clearFilters = useCallback(() => {
+    setFilterDept('');
+    setFilterCountry('');
+    setFilterHiredBy('');
+  }, []);
+
+  // Changing a filter changes which rows are visible — drop the selection so a
+  // bulk apply / delete can never hit a row that's currently hidden.
+  useEffect(() => { setSelectedIds(new Set()); }, [filterDept, filterCountry, filterHiredBy]);
+
   // ── Row multiselect → bulk-apply department / country / delete ──
+  // Selection acts on the *visible* (filtered) rows so "select all" is intuitive.
   const selectedCount = selectedIds.size;
-  const allSelected = rows.length > 0 && rows.every((r) => selectedIds.has(r.id));
+  const allSelected = filteredRows.length > 0 && filteredRows.every((r) => selectedIds.has(r.id));
 
   useEffect(() => {
     if (selectAllRef.current) selectAllRef.current.indeterminate = selectedCount > 0 && !allSelected;
@@ -818,10 +886,10 @@ export default function HrNewHireChecklist({
 
   const toggleAll = useCallback(() => {
     setSelectedIds((prev) => {
-      const everySelected = rows.length > 0 && rows.every((r) => prev.has(r.id));
-      return everySelected ? new Set() : new Set(rows.map((r) => r.id));
+      const everySelected = filteredRows.length > 0 && filteredRows.every((r) => prev.has(r.id));
+      return everySelected ? new Set() : new Set(filteredRows.map((r) => r.id));
     });
-  }, [rows]);
+  }, [filteredRows]);
 
   const clearSelection = useCallback(() => setSelectedIds(new Set()), []);
 
@@ -1188,6 +1256,76 @@ export default function HrNewHireChecklist({
             </div>
           )}
 
+          {/* Filter bar — narrow the visible rows by Department / Country / Hired
+              By. Options are the distinct values present in the loaded week.
+              Available whether or not the week is locked (filtering is read-only). */}
+          {!loading && !error && rows.length > 0 && (
+            <div className="flex shrink-0 flex-wrap items-center gap-x-2 gap-y-2 rounded-xl border border-zinc-200 bg-white px-3 py-2 dark:border-zinc-800 dark:bg-zinc-900/50">
+              <span className="flex items-center gap-1.5 text-[12px] font-semibold text-zinc-600 dark:text-zinc-300">
+                <Filter className="h-3.5 w-3.5" />
+                Filter
+              </span>
+
+              <span className="ml-1 text-[11px] text-zinc-600 dark:text-zinc-400">Dept</span>
+              <select
+                value={filterDept}
+                onChange={(e) => setFilterDept(e.target.value)}
+                disabled={filterOptions.departments.length === 0}
+                aria-label="Filter by department"
+                className={cn(FILTER_SELECT_CLASS, SELECT_SCHEME_CLASS)}
+              >
+                <option value="" className={SELECT_OPTION_CLASS}>All departments</option>
+                {filterOptions.departments.map((d) => (
+                  <option key={d} value={d} className={SELECT_OPTION_CLASS}>{d}</option>
+                ))}
+              </select>
+
+              <span className="ml-2 text-[11px] text-zinc-600 dark:text-zinc-400">Country</span>
+              <select
+                value={filterCountry}
+                onChange={(e) => setFilterCountry(e.target.value)}
+                disabled={filterOptions.countries.length === 0}
+                aria-label="Filter by country"
+                className={cn(FILTER_SELECT_CLASS, SELECT_SCHEME_CLASS)}
+              >
+                <option value="" className={SELECT_OPTION_CLASS}>All countries</option>
+                {filterOptions.countries.map((c) => (
+                  <option key={c} value={c} className={SELECT_OPTION_CLASS}>{c}</option>
+                ))}
+              </select>
+
+              <span className="ml-2 text-[11px] text-zinc-600 dark:text-zinc-400">Hired By</span>
+              <select
+                value={filterHiredBy}
+                onChange={(e) => setFilterHiredBy(e.target.value)}
+                disabled={filterOptions.hiredBy.length === 0}
+                aria-label="Filter by who hired"
+                className={cn(FILTER_SELECT_CLASS, SELECT_SCHEME_CLASS)}
+              >
+                <option value="" className={SELECT_OPTION_CLASS}>Anyone</option>
+                {filterOptions.hiredBy.map((h) => (
+                  <option key={h} value={h} className={SELECT_OPTION_CLASS}>{h}</option>
+                ))}
+              </select>
+
+              {anyFilterActive && (
+                <>
+                  <span className="ml-1 text-[11px] tabular-nums text-zinc-500 dark:text-zinc-400">
+                    Showing {filteredRows.length} of {hireCount}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={clearFilters}
+                    className="ml-auto flex items-center gap-1 text-[11px] text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                    Clear filters
+                  </button>
+                </>
+              )}
+            </div>
+          )}
+
           {loading ? (
             <div className="flex flex-1 items-center justify-center gap-2 text-sm text-zinc-500">
               <Loader2 className="h-4 w-4 animate-spin" />
@@ -1246,7 +1384,24 @@ export default function HrNewHireChecklist({
                     </tr>
                   </thead>
                   <tbody>
-                    {rows.map((row, r) => {
+                    {filteredRows.length === 0 ? (
+                      <tr>
+                        <td
+                          colSpan={COLUMNS.length + (locked ? 1 : 2)}
+                          className="px-4 py-10 text-center text-[13px] text-zinc-500 dark:text-zinc-400"
+                        >
+                          No hires match these filters.{' '}
+                          <button
+                            type="button"
+                            onClick={clearFilters}
+                            className="font-medium text-emerald-700 underline-offset-2 hover:underline dark:text-emerald-400"
+                          >
+                            Clear filters
+                          </button>
+                        </td>
+                      </tr>
+                    ) : (
+                      filteredRows.map((row, r) => {
                       const isSelected = selectedIds.has(row.id);
                       // A referral hire must name who referred them — flag the
                       // Referred By cell amber until it's filled.
@@ -1378,7 +1533,8 @@ export default function HrNewHireChecklist({
                           )}
                         </tr>
                       );
-                    })}
+                      })
+                    )}
                   </tbody>
                 </table>
               </div>
