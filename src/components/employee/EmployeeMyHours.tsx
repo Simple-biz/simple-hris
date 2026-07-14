@@ -224,12 +224,73 @@ function clamp(n: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, n));
 }
 
+/** Loading shell for the weekly rail — mirrors the final card so the layout doesn't shift. */
+function WeeklyEarningsRailSkeleton() {
+  return (
+    <Card
+      size="sm"
+      className="flex w-full shrink-0 flex-col overflow-hidden rounded-2xl border-amber-100/80 bg-gradient-to-br from-white to-amber-50/30 shadow-md ring-1 ring-amber-500/10 dark:border-amber-950/50 dark:bg-none dark:from-amber-950/15 dark:to-amber-950/5 dark:ring-amber-950/20 lg:w-64 xl:w-72"
+    >
+      <CardHeader className="shrink-0 space-y-1 pb-2 pt-4 sm:pt-5">
+        <div className="flex items-center gap-2">
+          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-amber-500/15 text-amber-700 dark:text-amber-400">
+            <TrendingUp className="h-4 w-4" aria-hidden />
+          </div>
+          <CardTitle className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">
+            This week
+          </CardTitle>
+        </div>
+        <div className="space-y-1 pl-10">
+          <div className="h-2 w-40 max-w-full animate-pulse rounded bg-zinc-200/70 dark:bg-zinc-800/70" />
+          <div className="h-2 w-28 animate-pulse rounded bg-zinc-200/60 dark:bg-zinc-800/60" />
+        </div>
+      </CardHeader>
+      <CardContent className="flex flex-1 flex-col gap-3 px-4 pb-5 pt-0 sm:px-5">
+        <ul className="flex flex-col gap-1.5">
+          {Array.from({ length: 7 }, (_, i) => (
+            <li
+              key={i}
+              className="flex items-center justify-between gap-2 rounded-lg border border-zinc-100 bg-white/60 px-2.5 py-2 dark:border-zinc-800/60 dark:bg-zinc-900/20"
+            >
+              <div className="flex items-center gap-1.5">
+                <div
+                  className="h-2.5 w-8 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800"
+                  style={{ animationDelay: `${i * 60}ms` }}
+                />
+                <div
+                  className="h-2 w-4 animate-pulse rounded bg-zinc-200/60 dark:bg-zinc-800/60"
+                  style={{ animationDelay: `${i * 60}ms` }}
+                />
+              </div>
+              <div
+                className="h-2.5 w-14 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800"
+                style={{ animationDelay: `${i * 60 + 30}ms` }}
+              />
+            </li>
+          ))}
+        </ul>
+        <div className="mt-auto space-y-1.5 border-t border-amber-200/50 pt-3 dark:border-amber-900/30">
+          <div className="flex items-baseline justify-between gap-2">
+            <div className="h-2 w-20 animate-pulse rounded bg-amber-200/60 dark:bg-amber-900/40" />
+            <div className="h-4 w-24 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
+          </div>
+          <div className="h-1.5 w-full overflow-hidden rounded-full bg-amber-100 dark:bg-amber-950/40">
+            <div className="h-full w-1/3 animate-pulse rounded-full bg-amber-200/80 dark:bg-amber-900/50" />
+          </div>
+          <div className="ml-auto h-2 w-28 animate-pulse rounded bg-zinc-200/60 dark:bg-zinc-800/60" />
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 function WeeklyEarningsRail({
   rateHistory,
   cacheRegularRate,
   cacheOtRate,
   isHsl,
   liveDays,
+  loading,
 }: {
   rateHistory: RateHistoryEntry[];
   cacheRegularRate: number | null;
@@ -239,6 +300,9 @@ function WeeklyEarningsRail({
    *  rail shows actual tracked time; when null it falls back to the 9-5 EDT clock
    *  projection (deployments without Hubstaff API credentials). */
   liveDays: Record<string, number> | null;
+  /** True while rates / member-pay are still loading — renders the skeleton shell
+   *  instead of nothing, so the rail doesn't pop in with a layout shift. */
+  loading: boolean;
 }) {
   // Per-second clock — drives the live ticker. Starts at a stable seed so the
   // first paint (and any SSR pass) is deterministic, then begins ticking.
@@ -313,8 +377,11 @@ function WeeklyEarningsRail({
 
   // Only for non-HSL people with a known rate.
   if (isHsl) return null;
+  if (loading) return <WeeklyEarningsRailSkeleton />;
   if (cacheRegularRate == null && rateHistory.length === 0) return null;
-  if (!week) return null;
+  // Data is loaded but the per-second clock hasn't ticked yet (first client
+  // render) — hold the skeleton for that frame instead of flashing empty.
+  if (!week) return <WeeklyEarningsRailSkeleton />;
 
   const pct = week.potential > 0 ? clamp((week.earnedSoFar / week.potential) * 100, 0, 100) : 0;
 
@@ -1288,6 +1355,7 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
           cacheOtRate={parseRateText(rate?.ot_rate)}
           isHsl={isHsl}
           liveDays={liveHours?.days ?? null}
+          loading={ratesLoading || memberPayLoading}
         />
         <Card
           size="sm"
@@ -1559,6 +1627,11 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
                         } else if (!day.hasData) {
                           cellBorder =
                             'border-orange-300 bg-orange-50 dark:border-orange-700/70 dark:bg-orange-950/30';
+                        } else if (isToday) {
+                          // Today is still in progress — live tracked time below 7h
+                          // stays orange (in-progress), never red (failed day).
+                          cellBorder =
+                            'border-orange-300 bg-orange-50 dark:border-orange-700/70 dark:bg-orange-950/30';
                         } else {
                           cellBorder =
                             'border-red-300 bg-red-50 dark:border-red-700/70 dark:bg-red-950/40';
@@ -1584,6 +1657,8 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
                           hourText = 'text-zinc-400 dark:text-zinc-500';
                         } else if (weekend) {
                           hourText = 'text-zinc-400 dark:text-zinc-500';
+                        } else if (isToday) {
+                          hourText = 'text-orange-600 dark:text-orange-400';
                         } else {
                           hourText = 'text-red-600 dark:text-red-400';
                         }
@@ -1594,6 +1669,8 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
                           ? ` (${dispute.status})`
                           : inMonth && day.passes
                             ? ' · OK'
+                            : inMonth && isToday
+                              ? ' — in progress'
                             : inMonth && isFutureOrToday
                               ? ' — not yet'
                               : inMonth && day.hasData
@@ -1684,6 +1761,29 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
                                   style={{ animation: 'hourglass-flip 2s ease-in-out infinite' }}
                                 />
                                 <span className="text-[6.5px] font-semibold uppercase tracking-wider leading-none text-orange-400 dark:text-orange-300 sm:text-[7.5px]">
+                                  In Progress
+                                </span>
+                              </div>
+                            ) : isToday ? (
+                              // Live tracked time landed (timer running or paused) —
+                              // show the contribution so far, still flagged in-progress.
+                              <div className="flex flex-col items-center gap-px">
+                                <span
+                                  className={`font-mono text-[10px] font-bold leading-none tabular-nums sm:text-[11px] ${
+                                    effectivelyPasses
+                                      ? 'text-emerald-700 dark:text-emerald-400'
+                                      : 'text-orange-600 dark:text-orange-400'
+                                  }`}
+                                >
+                                  {secondsToDisplay(day.seconds)}
+                                </span>
+                                <span
+                                  className={`text-[6px] font-semibold uppercase tracking-wider leading-none sm:text-[7px] ${
+                                    effectivelyPasses
+                                      ? 'text-emerald-600 dark:text-emerald-400'
+                                      : 'text-orange-400 dark:text-orange-300'
+                                  }`}
+                                >
                                   In Progress
                                 </span>
                               </div>
@@ -1873,10 +1973,38 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
                 className="flex flex-1 flex-col gap-4"
               >
             {memberPayLoading ? (
-              <div className="space-y-3 py-2">
-                <div className="h-10 animate-pulse rounded-lg bg-zinc-200 dark:bg-zinc-800" />
-                <div className="h-16 animate-pulse rounded-lg bg-zinc-200 dark:bg-zinc-800" />
-                <div className="h-16 animate-pulse rounded-lg bg-zinc-200 dark:bg-zinc-800" />
+              <div className="flex flex-1 flex-col gap-4">
+                {/* Estimated take-home block */}
+                <div className="rounded-xl border border-emerald-200/50 bg-emerald-50/30 px-3 py-3 dark:border-emerald-900/30 dark:bg-emerald-950/15">
+                  <div className="h-2 w-28 animate-pulse rounded bg-emerald-200/70 dark:bg-emerald-900/50" />
+                  <div className="mt-2 h-7 w-36 animate-pulse rounded-md bg-zinc-200 dark:bg-zinc-800" />
+                  <div className="mt-2 h-2 w-44 max-w-full animate-pulse rounded bg-zinc-200/70 dark:bg-zinc-800/70" />
+                </div>
+                {/* Hours + bonus line items */}
+                <div className="space-y-2.5">
+                  <div className="flex items-center justify-between gap-2 border-b border-zinc-200/80 pb-2 dark:border-zinc-800">
+                    <div className="h-2.5 w-28 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
+                    <div className="h-2.5 w-14 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
+                  </div>
+                  {Array.from({ length: 4 }, (_, i) => (
+                    <div key={i} className="flex items-center justify-between gap-2">
+                      <div
+                        className="h-2.5 w-20 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800"
+                        style={{ animationDelay: `${i * 70}ms` }}
+                      />
+                      <div
+                        className="h-2.5 w-24 animate-pulse rounded bg-zinc-200/80 dark:bg-zinc-800/80"
+                        style={{ animationDelay: `${i * 70 + 35}ms` }}
+                      />
+                    </div>
+                  ))}
+                </div>
+                {/* Footnote */}
+                <div className="mt-auto space-y-1.5">
+                  <div className="h-2 w-full animate-pulse rounded bg-zinc-200/60 dark:bg-zinc-800/60" />
+                  <div className="h-2 w-5/6 animate-pulse rounded bg-zinc-200/60 dark:bg-zinc-800/60" />
+                  <div className="h-2 w-2/3 animate-pulse rounded bg-zinc-200/60 dark:bg-zinc-800/60" />
+                </div>
               </div>
             ) : memberPayError ? (
               <p className="py-6 text-center text-xs text-rose-500 dark:text-rose-400">

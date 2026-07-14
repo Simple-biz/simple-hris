@@ -7,6 +7,17 @@
 > 2. **Endpoint**: uses `GET /v2/organizations/{org_id}/activities/daily?date[start]&date[stop]&include=users` instead of raw `time_entries` — it is pre-aggregated **by the organization's timezone date** (same bucketing as the CSV export), so no Manila-conversion code was needed.
 > 3. **No DB refactor**: instead of extracting `replaceHubstaffHoursFromRows`, `src/lib/hubstaff/build-weekly-summary.ts` renders the API data as the same weekly-summary **CSV text** a manual export produces, and the sync route feeds it through the untouched `replaceHubstaffHoursFromCsvText` — guaranteed parity with the CSV path.
 > Filenames use `simple-biz_api_sync_<start>_to_<end>.csv`; the wizard's batch list shows an "API" badge for them.
+>
+> **Update (2026-07-14): week selection reworked.** "Sync from Hubstaff" now opens the app-standard
+> calendar popover (`WeekPicker` in `components/ui/date-picker.tsx`) instead of a native date input:
+> one click selects the whole **Sunday → Saturday** pay week (start + finish snap together), and the
+> confirm CTA inside the panel runs the sync. The window is always exactly 7 days — the route rejects
+> non-Sunday starts / non-7-day spans — so API batches can never reintroduce the legacy 8-day Sun→Sun
+> overlap (`docs/notes/hubstaff-sunday-overlap.md`); the "Hogan cycle" 8-day sync toggle was removed
+> (post `hsl.week_model_cutover`, HSL uses the same Sun→Sat week; CSV upload remains for backfills).
+> Period labels everywhere (wizard batch list + replay selector, Accounting Overview, employee
+> dashboard week selector) come from one shared formatter, `src/lib/hubstaff/period-label.ts`
+> ("Jul 5 - 11, 2026"), parsed from the filename's `YYYY-MM-DD_to_YYYY-MM-DD` block.
 
 ---
 

@@ -34,6 +34,7 @@ export function formatRange(start: string, end: string): string {
   const mShort = (d: Date) => d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
   const withYear = (d: Date) => d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
   if (s.getFullYear() !== e.getFullYear()) return `${withYear(s)} – ${withYear(e)}`;
+  if (s.getMonth() === e.getMonth()) return `${mShort(s)} – ${e.getDate()}, ${e.getFullYear()}`;
   return `${mShort(s)} – ${mShort(e)}, ${e.getFullYear()}`;
 }
 
@@ -894,6 +895,311 @@ export function DateRangePicker({
                 className="rounded-md px-1.5 py-0.5 text-[12px] font-medium text-zinc-500 transition-colors hover:bg-zinc-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500/40 dark:text-zinc-400 dark:hover:bg-zinc-800"
               >
                 Clear
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Week picker (Sun → Sat snap)                                        */
+/* ------------------------------------------------------------------ */
+
+/** The Sun→Sat week containing `iso` (start = Sunday, end = Saturday). */
+export function weekRangeOfIso(iso: string): DateRange | null {
+  const d = fromIso(iso);
+  if (!d) return null;
+  const sun = addDays(d, -d.getDay());
+  return { start: toIso(sun), end: toIso(addDays(sun, 6)) };
+}
+
+export interface WeekPickerProps {
+  /** Committed pay week — `start` is the Sunday, `end` the Saturday. */
+  value: DateRange | null;
+  /** Fired with the full snapped week whenever a day is picked. */
+  onChange: (v: DateRange) => void;
+  /** Days outside [min, max] can't be picked (the snapped week may still extend past them). */
+  min?: string | null;
+  max?: string | null;
+  disabled?: boolean;
+  accent?: PickerAccent;
+  /** Wrapper classes (positioning / flex sizing). */
+  className?: string;
+  /** Full class override for the trigger button; defaults to the standard picker chip. */
+  triggerClassName?: string;
+  /** Trigger content; defaults to a calendar icon + the selected week's label. */
+  children?: React.ReactNode;
+  placeholder?: string;
+  title?: string;
+  /**
+   * Confirm CTA rendered in the footer, labeled `"{actionLabel} {week label}"`
+   * (e.g. "Sync Jul 5 – 11, 2026"). While set, picking a day only moves the
+   * selection — the CTA commits it, so the operator always sees the exact
+   * Sun→Sat cutoff they are about to act on.
+   */
+  actionLabel?: string;
+  actionBusy?: boolean;
+  onAction?: (v: DateRange) => void;
+  'aria-label'?: string;
+}
+
+/**
+ * Calendar popover that selects whole Sunday→Saturday pay weeks: hovering
+ * previews the full week and one click selects both the start and the finish.
+ * Same shell, grid, and keyboard model as {@link DateRangePicker}.
+ */
+export function WeekPicker({
+  value,
+  onChange,
+  min,
+  max,
+  disabled = false,
+  accent = DEFAULT_ACCENT,
+  className,
+  triggerClassName,
+  children,
+  placeholder = 'Pick a pay week',
+  title,
+  actionLabel,
+  actionBusy = false,
+  onAction,
+  'aria-label': ariaLabel,
+}: WeekPickerProps) {
+  const { open, openPanel, closePanel, placement, rootRef, triggerRef } = usePickerPopover(576);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const [viewMonth, setViewMonth] = useState<Date>(() => startOfMonth(new Date()));
+  const [hoverDay, setHoverDay] = useState<string | null>(null);
+  const [focusIso, setFocusIso] = useState<string | null>(null);
+
+  const minIso = (min ?? '').trim() || null;
+  const maxIso = (max ?? '').trim() || null;
+  const isDisabled = (iso: string) => !!((minIso && iso < minIso) || (maxIso && iso > maxIso));
+
+  const gridAccent = {
+    bar: accent.bar,
+    barText: accent.barText ?? 'text-white',
+    chipBg: accent.chipBg,
+    chipText: accent.chipText,
+  };
+
+  const show = () => {
+    const anchorIso = value ? value.start : maxIso ?? toIso(new Date());
+    const anchor = fromIso(anchorIso) ?? new Date();
+    // Left month = the selected week's month, so the selection is visible even
+    // on mobile where only the left grid renders.
+    setViewMonth(startOfMonth(anchor));
+    setHoverDay(null);
+    setFocusIso(anchorIso);
+    openPanel();
+    requestAnimationFrame(() => {
+      panelRef.current?.querySelector<HTMLButtonElement>(`[data-iso="${anchorIso}"]`)?.focus();
+    });
+  };
+  const hide = (refocus = false) => {
+    setHoverDay(null);
+    closePanel(refocus);
+  };
+
+  // Highlighted span: the hovered day's week while the pointer is in the grid,
+  // else the committed value — never a stale focus position, so the highlighted
+  // week and the confirm CTA can't disagree about what will be synced.
+  const previewWeek = hoverDay ? weekRangeOfIso(hoverDay) : null;
+  const shown = previewWeek ?? value;
+  const lo = shown?.start ?? null;
+  const hi = shown?.end ?? null;
+
+  const hoverDayTo = (iso: string | null) => {
+    setHoverDay(iso);
+    if (iso) setFocusIso(iso);
+  };
+
+  const pickDay = (iso: string) => {
+    if (isDisabled(iso)) return;
+    const week = weekRangeOfIso(iso);
+    if (!week) return;
+    onChange(week);
+    // With a confirm CTA the panel stays open so the operator can verify the
+    // exact week before acting; without one, picking commits and closes.
+    if (!onAction) hide(true);
+  };
+
+  /** Snap "today − offsetWeeks" to its week; clamp the anchor into [min, max]. */
+  const pickRelativeWeek = (offsetWeeks: number) => {
+    let anchor = toIso(addDays(new Date(), -7 * offsetWeeks));
+    if (maxIso && anchor > maxIso) anchor = maxIso;
+    if (minIso && anchor < minIso) anchor = minIso;
+    const week = weekRangeOfIso(anchor);
+    if (!week) return;
+    const anchorDate = fromIso(week.start) ?? new Date();
+    if (!sameMonth(anchorDate, viewMonth) && !sameMonth(anchorDate, addMonths(viewMonth, 1))) {
+      setViewMonth(startOfMonth(anchorDate));
+    }
+    setFocusIso(week.start);
+    onChange(week);
+    if (!onAction) hide(true);
+  };
+
+  const rightMonth = addMonths(viewMonth, 1);
+  const onGridKeys = useGridKeyNav({
+    focusIso,
+    setFocusIso,
+    clampToView: (t) => {
+      if (toIso(t) < toIso(viewMonth)) setViewMonth(startOfMonth(t));
+      else if (!sameMonth(t, viewMonth) && !sameMonth(t, rightMonth)) setViewMonth(addMonths(startOfMonth(t), -1));
+    },
+    isDisabled,
+    panelRef,
+    active: open,
+  });
+
+  const todayIso = toIso(new Date());
+
+  return (
+    <div ref={rootRef} className={cn('relative', className)}>
+      <button
+        ref={triggerRef}
+        type="button"
+        disabled={disabled}
+        onClick={() => (open ? hide() : show())}
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        aria-label={ariaLabel}
+        title={title}
+        className={
+          triggerClassName ??
+          cn(
+            'flex h-9 w-full items-center gap-2 rounded-lg border bg-white px-2.5 text-[13px] transition-colors dark:bg-zinc-950',
+            'focus:outline-none focus-visible:ring-2',
+            'disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50',
+            accent.ring,
+            value
+              ? cn('border-transparent font-medium', accent.chipBg, accent.chipText)
+              : 'border-zinc-300 text-zinc-600 hover:border-zinc-400 dark:border-zinc-700 dark:text-zinc-300 dark:hover:border-zinc-600',
+          )
+        }
+      >
+        {children ?? (
+          <>
+            <CalendarRange className="h-4 w-4 shrink-0 opacity-70" aria-hidden />
+            <span className="min-w-0 flex-1 truncate text-left">
+              {value ? formatRange(value.start, value.end) : placeholder}
+            </span>
+          </>
+        )}
+      </button>
+
+      {open && (
+        <div
+          ref={panelRef}
+          role="dialog"
+          aria-label="Choose a pay week"
+          className={cn(panelClass(placement.up, placement.right), 'w-[19rem] sm:w-[36rem]')}
+        >
+          {/* Presets — most syncs target the week that just closed. */}
+          <div className="mb-2 flex flex-wrap gap-1.5">
+            {[
+              { label: 'Last week', offset: 1 },
+              { label: 'This week', offset: 0 },
+            ].map((p) => (
+              <button
+                key={p.label}
+                type="button"
+                onClick={() => pickRelativeWeek(p.offset)}
+                className="rounded-full border border-zinc-200 px-2.5 py-1 text-[11px] font-medium text-zinc-600 transition-colors hover:bg-zinc-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500/40 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-900"
+              >
+                {p.label}
+              </button>
+            ))}
+            <span className="ml-auto hidden items-center text-[10px] font-medium uppercase tracking-wide text-zinc-400 sm:flex dark:text-zinc-500">
+              Sun → Sat
+            </span>
+          </div>
+
+          {/* Month headers + nav */}
+          <div className="mb-1 flex items-center">
+            <button type="button" onClick={() => setViewMonth((m) => addMonths(m, -1))} className={navBtnClass} aria-label="Previous month">
+              <ChevronLeft className="h-4 w-4" />
+            </button>
+            <span className="flex-1 text-center text-[13px] font-semibold text-zinc-800 dark:text-zinc-100">
+              {viewMonth.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
+            </span>
+            <span className="hidden flex-1 text-center text-[13px] font-semibold text-zinc-800 sm:block dark:text-zinc-100">
+              {rightMonth.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
+            </span>
+            <button type="button" onClick={() => setViewMonth((m) => addMonths(m, 1))} className={navBtnClass} aria-label="Next month">
+              <ChevronRight className="h-4 w-4" />
+            </button>
+          </div>
+
+          {/* Day grids — hovering any day previews its whole Sun→Sat week. */}
+          <div className="flex gap-4" onKeyDown={onGridKeys}>
+            <div className="min-w-0 flex-1">
+              <MonthGrid
+                month={viewMonth}
+                todayIso={todayIso}
+                lo={lo}
+                hi={hi}
+                isDisabled={isDisabled}
+                onPick={pickDay}
+                onHover={hoverDayTo}
+                focusIso={focusIso}
+                accent={gridAccent}
+                range
+                hideOutside
+              />
+            </div>
+            <div className="hidden min-w-0 flex-1 sm:block">
+              <MonthGrid
+                month={rightMonth}
+                todayIso={todayIso}
+                lo={lo}
+                hi={hi}
+                isDisabled={isDisabled}
+                onPick={pickDay}
+                onHover={hoverDayTo}
+                focusIso={focusIso}
+                accent={gridAccent}
+                range
+                hideOutside
+              />
+            </div>
+          </div>
+
+          {/* Footer — selected week + optional confirm CTA */}
+          <div className="mt-2 flex items-center justify-between gap-2 border-t border-zinc-100 pt-2 dark:border-zinc-800">
+            <span className="min-w-0 truncate text-[11px] text-zinc-500 dark:text-zinc-400" aria-live="polite">
+              {value
+                ? `${formatRange(value.start, value.end)} · Sun → Sat`
+                : 'Pick any day — its whole Sun → Sat week is selected'}
+            </span>
+            {onAction && (
+              <button
+                type="button"
+                disabled={!value || actionBusy}
+                onClick={() => {
+                  if (!value) return;
+                  hide(true);
+                  onAction(value);
+                }}
+                className={cn(
+                  'inline-flex shrink-0 items-center gap-1.5 rounded-md px-2.5 py-1 text-[12px] font-semibold transition-colors',
+                  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500/40',
+                  'disabled:cursor-not-allowed disabled:opacity-50',
+                  accent.bar,
+                  accent.barText ?? 'text-white',
+                )}
+              >
+                {actionBusy && (
+                  <span
+                    aria-hidden
+                    className="h-3 w-3 animate-spin rounded-full border-2 border-current border-t-transparent"
+                  />
+                )}
+                {actionLabel ?? 'Use'}
+                {value ? ` ${formatRange(value.start, value.end)}` : ''}
               </button>
             )}
           </div>

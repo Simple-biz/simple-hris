@@ -238,11 +238,12 @@ export default function OrphanageApp() {
   const [disputesByEmployee, setDisputesByEmployee] = useState<DisputesByEmployee>(new Map());
   const [disputesByEmployeeLoading, setDisputesByEmployeeLoading] = useState(true);
 
-  // Pre-fetch the roster on mount. Backed by /api/employee-rate-profiles/summary which
-  // does a heavy server-side merge; warming it here means the dialog opens instantly.
+  // Pre-fetch the roster on mount. Backed by /api/global-master-list/people so the
+  // "People involved" picker resolves from the Global Master List; warming it here
+  // means the dialog opens instantly.
   useEffect(() => {
     let cancelled = false;
-    fetch('/api/employee-rate-profiles/summary', { cache: 'no-store' })
+    fetch('/api/global-master-list/people', { cache: 'no-store' })
       .then((r) => r.json())
       .then((json: { profiles?: EmployeeOption[] }) => {
         if (cancelled) return;
@@ -733,28 +734,6 @@ export default function OrphanageApp() {
                     {welcomeMsg.body}
                   </p>
                 </div>
-                <div className="flex shrink-0 flex-wrap items-center gap-2">
-                  <Button
-                    size="lg"
-                    className="h-12 border-0 bg-white/95 px-7 text-base font-semibold text-pink-700 shadow-md shadow-black/10 hover:bg-white dark:bg-zinc-100 dark:text-rose-800 dark:hover:bg-white [&_svg]:size-[1.15rem]"
-                    onClick={() => setCreateDialogOpen(true)}
-                  >
-                    <Plus className="mr-2 shrink-0" />
-                    Create issues
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="border-white/35 bg-white/10 text-white backdrop-blur-sm hover:bg-white/20 hover:text-white"
-                    onClick={() => void fetchRows()}
-                    disabled={loading}
-                  >
-                    <RefreshCw
-                      className={loading ? 'mr-1.5 h-3.5 w-3.5 animate-spin' : 'mr-1.5 h-3.5 w-3.5'}
-                    />
-                    Refresh
-                  </Button>
-                </div>
               </div>
             </header>
 
@@ -815,15 +794,39 @@ export default function OrphanageApp() {
                 </div>
               </CardHeader>
               <CardContent className="flex flex-col gap-4 pt-4">
-                <div className="relative max-w-md">
-                  <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" />
-                  <Input
-                    value={verifiedSearch}
-                    onChange={(e) => { setVerifiedSearch(e.target.value); setVerifiedPage(0); }}
-                    placeholder="Search by email, note, status, or date..."
-                    className="border-pink-100/70 bg-white/90 pl-9 disabled:opacity-60 dark:border-pink-900/50 dark:bg-zinc-900/70"
-                    disabled={loading}
-                  />
+                {/* Search + primary actions — kept right above the table so the
+                    Create/Refresh controls are within reach of the log. */}
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="relative w-full max-w-md">
+                    <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" />
+                    <Input
+                      value={verifiedSearch}
+                      onChange={(e) => { setVerifiedSearch(e.target.value); setVerifiedPage(0); }}
+                      placeholder="Search by email, note, status, or date..."
+                      className="border-pink-100/70 bg-white/90 pl-9 disabled:opacity-60 dark:border-pink-900/50 dark:bg-zinc-900/70"
+                      disabled={loading}
+                    />
+                  </div>
+                  <div className="flex shrink-0 items-center gap-2">
+                    <Button
+                      size="sm"
+                      className="bg-rose-600 text-white hover:bg-rose-700"
+                      onClick={() => setCreateDialogOpen(true)}
+                    >
+                      <Plus className="mr-1.5 h-3.5 w-3.5 shrink-0" />
+                      Create issues
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="border-rose-200 text-rose-700 hover:bg-rose-50 dark:border-rose-900/60 dark:text-rose-400 dark:hover:bg-rose-950/30"
+                      onClick={() => void fetchRows()}
+                      disabled={loading}
+                    >
+                      <RefreshCw className={cn('mr-1.5 h-3.5 w-3.5', loading && 'animate-spin')} />
+                      Refresh
+                    </Button>
+                  </div>
                 </div>
                 {loading ? null : filteredVerified.length === 0 ? (
                   <div className="flex flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-pink-200/80 bg-white/70 py-10 text-center dark:border-pink-900/50 dark:bg-zinc-950/40">

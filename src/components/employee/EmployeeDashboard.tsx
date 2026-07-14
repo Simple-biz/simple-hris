@@ -65,6 +65,7 @@ import {
   columnsAreAllCanonical,
 } from '@/lib/hubstaff/calendar-column-dedupe';
 import type { PabCalendarDay } from '@/lib/hubstaff/calendar-column-dedupe';
+import { periodLabelFromFilename } from '@/lib/hubstaff/period-label';
 import { usePabPeriodSettings } from '@/hooks/usePabPeriodSettings';
 import {
   resolvePabMonthFromColumns,
@@ -115,26 +116,15 @@ function formatPabCalendarDate(d: Date): string {
 
 /**
  * Compact label for a source CSV. Input filenames look like
- * `simple-biz_daily_report_2026-05-03_to_2026-05-09.csv` — we surface that as
- * "May 3 to 9, 2026" (same month) / "May 28 to Jun 3, 2026" (cross-month) /
- * "Dec 30, 2025 to Jan 5, 2026" (cross-year). Falls back to the raw filename
- * for anything that doesn't match the daily-report pattern.
+ * `simple-biz_daily_report_2026-05-03_to_2026-05-09.csv` (manual export) or
+ * `simple-biz_api_sync_2026-07-05_to_2026-07-11.csv` (live Hubstaff sync) —
+ * both surface as "Jul 5 - 11, 2026" via the shared pay-period formatter, so
+ * this selector, the Payroll Wizard, and the Accounting Overview all render
+ * the same label for the same batch. Falls back to the raw filename for
+ * anything without an embedded date range.
  */
-const MONTHS_FULL = [
-  'January', 'February', 'March', 'April', 'May', 'June',
-  'July', 'August', 'September', 'October', 'November', 'December',
-];
 function formatSourceFileLabel(file: string): string {
-  const m = /(\d{4})-(\d{2})-(\d{2})_to_(\d{4})-(\d{2})-(\d{2})/.exec(file);
-  if (!m) return file;
-  const [, y1, mo1, d1, y2, mo2, d2] = m;
-  const y1n = Number(y1), mo1n = Number(mo1), d1n = Number(d1);
-  const y2n = Number(y2), mo2n = Number(mo2), d2n = Number(d2);
-  const M1 = MONTHS_FULL[mo1n - 1] ?? mo1;
-  const M2 = MONTHS_FULL[mo2n - 1] ?? mo2;
-  if (y1n !== y2n) return `${M1} ${d1n}, ${y1n} to ${M2} ${d2n}, ${y2n}`;
-  if (mo1n !== mo2n) return `${M1} ${d1n} to ${M2} ${d2n}, ${y1n}`;
-  return `${M1} ${d1n} to ${d2n}, ${y1n}`;
+  return periodLabelFromFilename(file);
 }
 
 const DAY_NAMES: Record<string, { label: string; order: number; weekday: boolean }> = {
@@ -614,6 +604,11 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
   }, []);
 
   const [myDisputes, setMyDisputes] = useState<import('@/lib/supabase/pab-day-disputes').PabDayDisputeRow[]>([]);
+  /** Live per-day tracked seconds (ISO date → sec) from the Hubstaff API for the
+   *  trailing two weeks — fills today/this week on the PAB calendar before
+   *  accounting ingests the batch. Null when the deployment has no Hubstaff API
+   *  credentials (overlay disabled). Mirrors EmployeeMyHours' overlay. */
+  const [liveHours, setLiveHours] = useState<{ days: Record<string, number>; asOf: string } | null>(null);
   // Holiday map: ISO "YYYY-MM-DD" -> holiday name (only enabled holidays when master toggle is on)
   const [usHolidayDates, setUsHolidayDates] = useState<Map<string, string>>(new Map());
   const [holidayModal, setHolidayModal] = useState<{ name: string; date: string } | null>(null);
@@ -693,6 +688,46 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
       cancelled = true;
     };
   }, [email]);
+
+  /**
+   * Live overlay: this person's real tracked time straight from the Hubstaff API
+   * (server-cached ~3 min org-wide). Uploaded batches stay authoritative — the
+   * overlay only fills days the batches don't cover yet (today / this week).
+   * Mirrors EmployeeMyHours so the Overview PAB calendar and My Hours agree.
+   */
+  const fetchLiveHours = useCallback(async () => {
+    try {
+      const res = await fetch(
+        `/api/hubstaff-hours?live=1&email=${encodeURIComponent(email)}&_=${Date.now()}`,
+        { cache: 'no-store' },
+      );
+      const json = (await res.json()) as {
+        configured?: boolean;
+        days?: Record<string, number>;
+        asOf?: string;
+        error?: string | null;
+      };
+      if (!res.ok || !json.configured || json.error) {
+        // Unconfigured or transiently failing — keep whatever overlay we had.
+        if (!json.configured) setLiveHours(null);
+        return;
+      }
+      setLiveHours({ days: json.days ?? {}, asOf: json.asOf ?? new Date().toISOString() });
+    } catch {
+      /* transient — the next poll retries */
+    }
+  }, [email]);
+
+  useEffect(() => {
+    void fetchLiveHours();
+    const id = window.setInterval(() => void fetchLiveHours(), 180_000);
+    const onFocus = () => void fetchLiveHours();
+    window.addEventListener('focus', onFocus);
+    return () => {
+      window.clearInterval(id);
+      window.removeEventListener('focus', onFocus);
+    };
+  }, [fetchLiveHours]);
 
   // Load rates, exchange rate, and source file list on mount
   useEffect(() => {
@@ -1287,12 +1322,13 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
       }
 
       fetchMyDisputes();
+      void fetchLiveHours();
     } catch (e) {
       setDataError(cleanErrorMessage(e, 'Failed to refresh dashboard'));
     } finally {
       setRefreshing(false);
     }
-  }, [email, selectedFile, loadHoursData, fetchMyDisputes]);
+  }, [email, selectedFile, loadHoursData, fetchMyDisputes, fetchLiveHours]);
 
   const disputesByDate = useMemo(() => {
     const map = new Map<string, import('@/lib/supabase/pab-day-disputes').PabDayDisputeRow>();
@@ -1308,11 +1344,35 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
     // PAB period is populated, regardless of which file drives the period.
     const pabRow = pabMergedRow ?? row;
     const pabCols = pabMergedColumns.length > 0 ? pabMergedColumns : columns;
+
+    // Live Hubstaff overlay map (ISO date → seconds), built up front — also used
+    // when no batch rows exist yet (e.g. a new hire's first week) so today still
+    // shows live tracked time instead of a bare placeholder.
+    const liveMap = new Map<string, number>();
+    if (liveHours) {
+      for (const [isoDate, sec] of Object.entries(liveHours.days)) {
+        if (!sec || sec <= 0) continue;
+        const [y, m, day] = isoDate.split('-').map(Number);
+        if (!y || !m || !day) continue;
+        liveMap.set(`${y}-${m}-${day}`, sec);
+      }
+    }
+
     // When we have a month range but no row/cols yet, still render empty weeks
     // (placeholders with 0h) instead of looping the skeleton forever.
     if (!pabRow || !pabCols.length) {
-      const empty = buildPabCalendarWeeks(pabMonthRange.start, pabMonthRange.end, new Map());
-      return empty.length > 0 ? [empty[0]] : null;
+      const empty = buildPabCalendarWeeks(pabMonthRange.start, pabMonthRange.end, liveMap);
+      if (empty.length === 0) return null;
+      if (liveMap.size === 0) return [empty[0]];
+      // Live data exists — show every week that has started, mirroring the trim below.
+      const n = new Date();
+      const tMid = new Date(n.getFullYear(), n.getMonth(), n.getDate()).getTime();
+      const started = empty.filter((week) => {
+        const firstDay = week[0]?.date;
+        if (!firstDay) return false;
+        return new Date(firstDay.getFullYear(), firstDay.getMonth(), firstDay.getDate()).getTime() <= tMid;
+      });
+      return started.length > 0 ? started : [empty[0]];
     }
 
     // Build date → seconds lookup directly from grouped columns + raw row data.
@@ -1338,6 +1398,13 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
       }
       const key = pabDateKey(d);
       hoursByDateKey.set(key, Math.max(hoursByDateKey.get(key) ?? 0, maxS));
+    }
+
+    // Live Hubstaff overlay: real tracked time for the trailing window. `max` keeps
+    // the uploaded batch authoritative once it lands (it may include manual edits),
+    // while filling days no batch covers yet — i.e. today and the current week.
+    for (const [key, sec] of liveMap) {
+      hoursByDateKey.set(key, Math.max(hoursByDateKey.get(key) ?? 0, sec));
     }
 
     // Apply approved dispute override_hours as a SET (replaces Hubstaff hours for that day).
@@ -1401,7 +1468,7 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
       return weekStart.getTime() <= cutoff.getTime();
     });
     return trimmed.length > 0 ? trimmed : weeks.slice(0, 1);
-  }, [pabMonthRange, pabMergedRow, pabMergedColumns, row, columns, selectedFile, manualFileSelect, myDisputes, usHolidayDates]);
+  }, [pabMonthRange, pabMergedRow, pabMergedColumns, row, columns, selectedFile, manualFileSelect, myDisputes, usHolidayDates, liveHours]);
 
   /** PAB: every expected weekday in the PAB period must be ≥ 7 h. */
   const pabWeekdayHours = pabDailyHours.filter((d) => d.weekday);
@@ -1440,14 +1507,16 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
     return t <= endT;
   }, [pabMonthRange]);
 
-  /** Elapsed weekdays where hours were logged but fell below the 7h threshold — hard disqualifications. */
+  /** Elapsed weekdays where hours were logged but fell below the 7h threshold — hard disqualifications.
+   *  Strictly BEFORE today: with the live Hubstaff overlay, today always carries partial
+   *  hours while it's still in progress — it only counts once the day has ended. */
   const pabViolations = useMemo<PabCalendarDay[]>(() => {
     const days = pabCalendar?.flat() ?? [];
     const today = new Date();
     const todayT = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
     return days.filter((d) => {
       const dT = new Date(d.date.getFullYear(), d.date.getMonth(), d.date.getDate()).getTime();
-      return dT <= todayT && d.hasData && !d.passes;
+      return dT < todayT && d.hasData && !d.passes;
     });
   }, [pabCalendar]);
 
@@ -2903,8 +2972,20 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
             >
               <CardHeader className="shrink-0 pb-2 pt-3">
                 <div className="flex items-start justify-between gap-2">
-                  <CardTitle className="text-xs font-medium text-zinc-600 dark:text-zinc-400">
+                  <CardTitle className="flex items-center gap-2 text-xs font-medium text-zinc-600 dark:text-zinc-400">
                     PAB Calendar
+                    {liveHours != null && (
+                      <span
+                        title={`Today's time comes straight from Hubstaff (updated ${new Date(liveHours.asOf).toLocaleTimeString()}). Past weeks show the payroll batch.`}
+                        className="inline-flex items-center gap-1 rounded-full border border-emerald-300 bg-emerald-50 px-1.5 py-px text-[9px] font-bold uppercase tracking-wide text-emerald-700 dark:border-emerald-800/70 dark:bg-emerald-950/40 dark:text-emerald-400"
+                      >
+                        <span className="relative flex h-1.5 w-1.5">
+                          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+                          <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                        </span>
+                        Live
+                      </span>
+                    )}
                   </CardTitle>
                   <button
                     type="button"
@@ -3074,15 +3155,13 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
                               cellBorder =
                                 'border-amber-400 bg-amber-50 ring-1 ring-amber-400/35 dark:border-amber-600/60 dark:bg-amber-950/35';
                             } else if (effectivelyPasses) {
-                              if (isCurrentWeek) {
-                                cellBorder = forgiven
-                                  ? 'border-orange-400 bg-orange-50 ring-1 ring-orange-400/40 dark:border-orange-600/60 dark:bg-orange-950/30'
-                                  : 'border-orange-300 bg-orange-50 dark:border-orange-700/60 dark:bg-orange-950/30';
-                              } else {
-                                cellBorder = forgiven
-                                  ? 'border-emerald-400 bg-emerald-50 ring-1 ring-emerald-400/40 dark:border-emerald-600/60 dark:bg-emerald-950/30'
-                                  : 'border-emerald-300 bg-emerald-50 dark:border-emerald-800/60 dark:bg-emerald-950/30';
-                              }
+                              // A day that hit ≥7h is locked green the moment it's
+                              // logged — including elapsed days in the current week.
+                              // (Today's live cell keeps its orange "in progress"
+                              // styling below only while it's still UNDER 7h.)
+                              cellBorder = forgiven
+                                ? 'border-emerald-400 bg-emerald-50 ring-1 ring-emerald-400/40 dark:border-emerald-600/60 dark:bg-emerald-950/30'
+                                : 'border-emerald-300 bg-emerald-50 dark:border-emerald-800/60 dark:bg-emerald-950/30';
                             } else if (isToday) {
                               cellBorder =
                                 'border-orange-300 bg-orange-50 dark:border-orange-700/60 dark:bg-orange-950/30';
@@ -3142,7 +3221,31 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
                                   </span>
                                 )}
                                 <div className="flex flex-1 flex-col items-center justify-center px-0.5 pb-0.5 pt-2.5">
-                                  {isToday || stillInProgress ? (
+                                  {isToday && day.seconds > 0 ? (
+                                    // Live tracked time landed (timer running or paused) —
+                                    // show the contribution so far. Emerald once the day
+                                    // has cleared 7h, orange while it's still short.
+                                    <div className="flex flex-col items-center gap-0.5">
+                                      <span
+                                        className={`text-center text-[11px] font-bold tabular-nums leading-none tracking-tight ${
+                                          effectivelyPasses
+                                            ? 'text-emerald-700 dark:text-emerald-400'
+                                            : 'text-orange-700 dark:text-orange-400'
+                                        }`}
+                                      >
+                                        {secondsToDisplay(day.seconds)}
+                                      </span>
+                                      <span
+                                        className={`text-[6px] font-semibold uppercase tracking-wider ${
+                                          effectivelyPasses
+                                            ? 'text-emerald-600 dark:text-emerald-400'
+                                            : 'text-orange-400 dark:text-orange-300'
+                                        }`}
+                                      >
+                                        In Progress
+                                      </span>
+                                    </div>
+                                  ) : isToday || stillInProgress ? (
                                     <div className="flex flex-col items-center gap-0.5">
                                       <Hourglass
                                         className="h-3 w-3 text-orange-400 dark:text-orange-300"
@@ -3173,7 +3276,7 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
                                         dispute != null && disputeIsAwaitingResolution(dispute)
                                           ? 'text-amber-700 dark:text-amber-400'
                                           : effectivelyPasses
-                                            ? (isCurrentWeek ? 'text-orange-700 dark:text-orange-400' : 'text-emerald-700 dark:text-emerald-400')
+                                            ? 'text-emerald-700 dark:text-emerald-400'
                                             : isToday || isFutureOrToday || stillInProgress || !day.hasData
                                               ? 'text-zinc-400 dark:text-zinc-500'
                                               : 'text-red-600 dark:text-red-400'
@@ -3189,7 +3292,7 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
                                   ) : dispute != null && disputeIsAwaitingResolution(dispute) ? (
                                     <Clock className="h-2.5 w-2.5 text-amber-500" />
                                   ) : effectivelyPasses ? (
-                                    <CheckCircle2 className={`h-2.5 w-2.5 ${isCurrentWeek ? 'text-orange-500' : 'text-emerald-500'}`} />
+                                    <CheckCircle2 className="h-2.5 w-2.5 text-emerald-500" />
                                   ) : isToday || isFutureOrToday || stillInProgress || !day.hasData ? null : day.hasData ? (
                                     <XCircle className="h-2.5 w-2.5 text-red-400" />
                                   ) : null}

@@ -427,6 +427,55 @@ export function buildPabCalendarWeeks(
 }
 
 /**
+ * Like {@link buildPabCalendarWeeks} but each week runs the full Mon→Sun (7 days,
+ * closing on Sunday) instead of Mon→Fri. Saturday and Sunday are included as
+ * ordinary cells carrying real {@link hoursByDateKey} totals and the same ≥ 7 h
+ * `passes` rule — used by the orphanage "Forgiven days" picker so weekend days
+ * can be forgiven too.
+ *
+ * `pabEnd` is typically the Friday returned by {@link getPabMonthRange}; the walk
+ * continues to the following Sunday so the final week's weekend cells appear. Pass
+ * an end that already lands on/after that Sunday to include it.
+ *
+ * @param pabStart  First Monday of the PAB period
+ * @param pabEnd    Sunday closing the last week (Friday is auto-extended by callers)
+ * @param hoursByDateKey  Map of `"YYYY-M-D"` → seconds worked (use {@link pabDateKey})
+ */
+export function buildPabCalendarWeeksMonSun(
+  pabStart: Date,
+  pabEnd: Date,
+  hoursByDateKey: Map<string, number>,
+): PabCalendarDay[][] {
+  const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const weeks: PabCalendarDay[][] = [];
+  let currentWeek: PabCalendarDay[] = [];
+  const cur = new Date(pabStart.getFullYear(), pabStart.getMonth(), pabStart.getDate());
+  const endTime = pabEnd.getTime();
+
+  while (cur.getTime() <= endTime) {
+    const dow = cur.getDay();
+    const key = pabDateKey(cur);
+    const seconds = hoursByDateKey.get(key) ?? 0;
+    currentWeek.push({
+      date: new Date(cur),
+      dateStr: `${cur.getMonth() + 1}/${cur.getDate()}`,
+      dayLabel: dayNames[dow],
+      seconds,
+      passes: seconds >= 7 * 3600,
+      hasData: hoursByDateKey.has(key),
+    });
+    if (dow === 0) {
+      // Sunday closes the Mon→Sun week
+      weeks.push(currentWeek);
+      currentWeek = [];
+    }
+    cur.setDate(cur.getDate() + 1);
+  }
+  if (currentWeek.length > 0) weeks.push(currentWeek);
+  return weeks;
+}
+
+/**
  * Calendar month grid Mon–Sun (7 columns), one row per week. Includes leading/trailing
  * days from adjacent months; those cells still show {@link hoursByDateKey} when present
  * so split weeks display real Hubstaff totals on every day (My Hours only).

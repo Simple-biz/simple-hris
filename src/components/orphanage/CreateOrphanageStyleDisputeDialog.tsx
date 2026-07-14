@@ -38,7 +38,7 @@ import {
 } from '@/components/ui/dialog';
 import { normEmail } from '@/lib/email/norm-email';
 import {
-  buildPabCalendarWeeks,
+  buildPabCalendarWeeksMonSun,
   getCurrentPabMonth,
   getPabMonthRange,
   type PabCalendarDay,
@@ -88,9 +88,9 @@ export type CreateOrphanageStyleDisputeDialogProps = {
   defaultReason?: ReasonChoice;
   /**
    * Optional pre-fetched employee list. When provided, the dialog skips its own
-   * `/api/employee-rate-profiles/summary` call and renders instantly. Pass this
-   * from a parent that already loads the roster (Rates-style summary endpoint
-   * is slow — keeping the data warm in the parent eliminates open-time lag).
+   * `/api/global-master-list/people` call and renders instantly. Pass this from a
+   * parent that already loads the Global Master List roster — keeping the data
+   * warm in the parent eliminates open-time lag.
    */
   employees?: EmployeeOption[];
   employeesLoading?: boolean;
@@ -176,7 +176,7 @@ export default function CreateOrphanageStyleDisputeDialog({
     if (internalEmployees.length > 0 || internalLoading) return;
     let cancelled = false;
     setInternalLoading(true);
-    fetch('/api/employee-rate-profiles/summary', { cache: 'no-store' })
+    fetch('/api/global-master-list/people', { cache: 'no-store' })
       .then((r) => r.json())
       .then((json: { profiles?: EmployeeOption[] }) => {
         if (cancelled) return;
@@ -352,7 +352,14 @@ export default function CreateOrphanageStyleDisputeDialog({
   const pabRange = useMemo(() => getPabMonthRange(viewYear, viewMonth), [viewYear, viewMonth]);
 
   const calendar = useMemo<PabCalendarDay[][] | null>(() => {
-    const weeks = buildPabCalendarWeeks(pabRange.start, pabRange.end, activePersonHoursByDateKey);
+    // Extend the PAB end (a Friday) to the following Sunday so each week shows its
+    // full Mon→Sun span — weekend days are forgivable in the orphanage flow.
+    const monSunEnd = new Date(
+      pabRange.end.getFullYear(),
+      pabRange.end.getMonth(),
+      pabRange.end.getDate() + 2,
+    );
+    const weeks = buildPabCalendarWeeksMonSun(pabRange.start, monSunEnd, activePersonHoursByDateKey);
     return weeks.length > 0 ? weeks : null;
   }, [pabRange, activePersonHoursByDateKey]);
 
@@ -687,28 +694,28 @@ export default function CreateOrphanageStyleDisputeDialog({
                 </button>
               </div>
 
-              {/* Day headers — Mon–Fri, matches EmployeePabCalendar */}
-              <div className="mb-1 grid grid-cols-[1.5rem_repeat(5,1fr)] gap-1">
+              {/* Day headers — Mon–Sun (weekend days are forgivable here) */}
+              <div className="mb-1 grid grid-cols-[1.5rem_repeat(7,1fr)] gap-1">
                 <div />
-                {['M', 'T', 'W', 'T', 'F'].map((d, i) => (
+                {['M', 'T', 'W', 'T', 'F', 'S', 'S'].map((d, i) => (
                   <div key={i} className="text-center text-[8px] font-semibold text-zinc-400 dark:text-zinc-500">
                     {d}
                   </div>
                 ))}
               </div>
 
-              {/* Week rows — week-number column + 5 Mon–Fri cells */}
+              {/* Week rows — week-number column + 7 Mon–Sun cells */}
               {calendar?.map((week, wi) => (
                 <div
                   key={wi}
-                  className="mb-1 grid grid-cols-[1.5rem_repeat(5,1fr)] items-stretch gap-1"
+                  className="mb-1 grid grid-cols-[1.5rem_repeat(7,1fr)] items-stretch gap-1"
                 >
                   <div className="flex items-center justify-end text-[8px] font-medium text-zinc-400 dark:text-zinc-500">
                     {wi + 1}
                   </div>
-                  {Array.from({ length: 5 }, (_, di) => {
+                  {[1, 2, 3, 4, 5, 6, 0].map((dow, di) => {
                     const day: PabCalendarDay | undefined = week.find(
-                      (d) => d.date.getDay() === di + 1,
+                      (d) => d.date.getDay() === dow,
                     );
                     if (!day) {
                       return (
@@ -731,7 +738,7 @@ export default function CreateOrphanageStyleDisputeDialog({
                     const existingForgiven = !!existing && disputeGrantsPabForgiveness(existing);
                     const existingPending = !!existing && disputeIsAwaitingResolution(existing);
                     const existingDenied = !!existing && disputeIsFinallyDenied(existing);
-                    // Below 7h on a Mon–Fri = forgiveness candidate. 0h (no data) counts —
+                    // Below 7h on any Mon–Sun day = forgiveness candidate. 0h (no data) counts —
                     // employee was probably out, which is exactly what the dispute exists for.
                     const isBelow7h = day.seconds < 7 * 3600;
                     // Clickable only if no existing dispute (any status) blocks re-picking.

@@ -54,13 +54,14 @@ import { cn } from '@/lib/utils';
 import { formatMoney, normalizeCurrency, sumByCurrency, CONTRACTOR_CURRENCIES } from '@/lib/contractor-currency';
 import { InvoiceViewDialog, type SavedInvoice } from '@/components/contractor/InvoiceReceiptDialog';
 import { KPI_BONUS_ID, DEPARTMENTS, FORMULA_DEPT_KEYS, MANAGER_BONUS_DEPT_KEYS, ACCOUNTING_WEEKDAY_METRICS, calcLeadGenBonus, isDevsDelivery, isDevsChecking, isJeromeRosero, isTeal } from '@/lib/payroll/department-bonus';
-import { Button } from '@/components/ui/button';
+import { Button, buttonVariants } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
-import { DatePicker } from '@/components/ui/date-picker';
+import { DatePicker, WeekPicker, type DateRange } from '@/components/ui/date-picker';
+import { formatPeriodRange, periodLabelFromFilename } from '@/lib/hubstaff/period-label';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
 import { Switch } from '@/components/ui/switch';
@@ -772,12 +773,19 @@ function addDaysToIso(iso: string, days: number): string {
   return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
 }
 
-/** Sunday starting the most recent COMPLETED Sun→Sat pay week (uploads are Sun-anchored). */
-function defaultHubstaffSyncWeekStart(): string {
+/** Today's date in the browser's local calendar (bounds the sync week picker). */
+function localTodayIso(): string {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+}
+
+/** The most recent COMPLETED Sun→Sat pay week (uploads are Sun-anchored). */
+function defaultHubstaffSyncWeek(): DateRange {
   const now = new Date();
   const d = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   d.setDate(d.getDate() - d.getDay() - 7);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  const start = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  return { start, end: addDaysToIso(start, 6) };
 }
 
 /**
@@ -906,7 +914,6 @@ export default function PayrollWizard({
   const [payments, setPayments] = useState<PaymentLineItem[]>(MOCK_PAYMENTS);
   const [hubstaffData, setHubstaffData] = useState<HubstaffRow[]>([]);
   const [issues, setIssues] = useState<ReconciliationIssue[]>([]);
-  const [isHoganCycle, setIsHoganCycle] = useState(false);
   const [masterEmployees, setMasterEmployees] = useState<EmployeeRow[]>(
     initialData?.employees ?? [],
   );
@@ -921,8 +928,8 @@ export default function PayrollWizard({
   const [hubstaffPreviewError, setHubstaffPreviewError] = useState<string | null>(null);
   const [weeklyUploadLoading, setWeeklyUploadLoading] = useState(false);
   const [hubstaffSyncLoading, setHubstaffSyncLoading] = useState(false);
-  const [hubstaffSyncWeekStart, setHubstaffSyncWeekStart] = useState<string>(() =>
-    defaultHubstaffSyncWeekStart(),
+  const [hubstaffSyncWeek, setHubstaffSyncWeek] = useState<DateRange>(() =>
+    defaultHubstaffSyncWeek(),
   );
   const [masterListUploadLoading, setMasterListUploadLoading] = useState(false);
   const [ratesUploadLoading, setRatesUploadLoading] = useState(false);
@@ -1063,15 +1070,14 @@ export default function PayrollWizard({
     return map;
   }, [hubstaffUploads]);
 
-  /** Human-readable pay-period label parsed from a Hubstaff filename's date range.
-   *  Falls back to the raw filename when the range can't be parsed. */
-  const formatPeriodLabel = React.useCallback((file: string | null | undefined): string => {
-    if (!file) return '—';
-    const r = parseDateRangeFromFilename(file);
-    if (!r) return file;
-    const fmt = (d: Date) => d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-    return `${fmt(r.start)} – ${fmt(r.end)}, ${r.end.getFullYear()}`;
-  }, []);
+  /** Human-readable pay-period label parsed from a Hubstaff filename's date range
+   *  ("Jul 5 - 11, 2026"). Shared with the employee dashboard / Overview selectors
+   *  so every surface renders the same label for the same batch. Falls back to the
+   *  raw filename when the range can't be parsed. */
+  const formatPeriodLabel = React.useCallback(
+    (file: string | null | undefined): string => periodLabelFromFilename(file),
+    [],
+  );
 
   /** Short human-readable timestamp. Returns null on invalid input. */
   const formatUploadStamp = React.useCallback((iso: string | null | undefined): string | null => {
@@ -5551,23 +5557,24 @@ export default function PayrollWizard({
   };
 
   /**
-   * Live "Sync from Hubstaff": the server pulls the week straight from the Hubstaff
-   * REST API and ingests it through the same pipeline as a CSV upload. The response
-   * echoes the generated CSV so the client-side post-ingest steps stay identical.
+   * Live "Sync from Hubstaff": the server pulls the selected Sun→Sat pay week
+   * straight from the Hubstaff REST API and ingests it through the same pipeline
+   * as a CSV upload. The response echoes the generated CSV so the client-side
+   * post-ingest steps stay identical. The window is exactly the 7 days the
+   * WeekPicker snapped to — no 8-day Sun→Sun overlap like the legacy exports,
+   * so the cutoff is precise on both ends.
    */
-  const syncFromHubstaffApi = async () => {
-    if (!hubstaffSyncWeekStart || hubstaffSyncLoading) return;
+  const syncFromHubstaffApi = async (week: DateRange) => {
+    if (!week.start || hubstaffSyncLoading) return;
     setHubstaffSyncLoading(true);
     try {
-      // Hogan cycles export Sun→Sun (8 days, trailing Sunday for HSL's Mon→Sun week);
-      // everyone else uses the plain Sun→Sat pay week. Mirrors the CSV export ranges.
-      const weekEnd = addDaysToIso(hubstaffSyncWeekStart, isHoganCycle ? 7 : 6);
+      const weekEnd = addDaysToIso(week.start, 6); // Saturday — always a 7-day week
       const res = await fetch('/api/hubstaff-hours', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           action: 'api_sync',
-          weekStart: hubstaffSyncWeekStart,
+          weekStart: week.start,
           weekEnd,
           uploaded_by: sessionEmail || undefined,
         }),
@@ -5586,7 +5593,7 @@ export default function PayrollWizard({
       await finalizeHubstaffIngest(json.csvText ?? '', json.fileName ?? '');
 
       toast.success('Synced from Hubstaff', {
-        description: `${json.rowCount ?? 0} rows loaded for ${hubstaffSyncWeekStart} → ${weekEnd} (${json.fileName ?? 'api sync'}).`,
+        description: `${json.rowCount ?? 0} rows loaded for ${periodLabelFromFilename(json.fileName, `${week.start} → ${weekEnd}`)}.`,
       });
       cursorOverlayRef.current?.broadcastSave();
     } catch (err) {
@@ -6380,12 +6387,6 @@ export default function PayrollWizard({
                       <span className="font-mono">SUPABASE_SERVICE_ROLE_KEY</span> in{' '}
                       <span className="font-mono">.env</span>.
                     </p>
-                    <div className="flex items-center justify-between gap-2 rounded-full border border-zinc-200 bg-white/70 px-3 py-1.5 dark:border-zinc-800 dark:bg-zinc-900/60">
-                      <Label htmlFor="hogan-switch" className="text-xs text-zinc-600 dark:text-zinc-400">
-                        Hogan cycle
-                      </Label>
-                      <Switch id="hogan-switch" checked={isHoganCycle} onCheckedChange={setIsHoganCycle} />
-                    </div>
                     <div className="mt-auto flex flex-col gap-2 pt-1">
                       <Button
                         type="button"
@@ -6416,31 +6417,32 @@ export default function PayrollWizard({
                             </span>
                             <div className="h-px flex-1 bg-indigo-200/70 dark:bg-indigo-900/50" />
                           </div>
-                          <div className="flex items-center gap-2 rounded-md border border-zinc-200 bg-white/70 px-2 py-1.5 dark:border-zinc-800 dark:bg-zinc-900/60">
-                            <label
-                              htmlFor="hubstaff-sync-week-start"
-                              className="shrink-0 text-[10px] font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400"
-                            >
-                              Week (Sun)
-                            </label>
-                            <input
-                              id="hubstaff-sync-week-start"
-                              type="date"
-                              value={hubstaffSyncWeekStart}
-                              onChange={(e) => setHubstaffSyncWeekStart(e.target.value)}
-                              disabled={hubstaffSyncLoading}
-                              className="min-w-0 flex-1 bg-transparent text-xs text-zinc-700 outline-none dark:text-zinc-300"
-                            />
-                            <span className="shrink-0 whitespace-nowrap font-mono text-[10px] text-zinc-400 dark:text-zinc-500">
-                              → {hubstaffSyncWeekStart ? addDaysToIso(hubstaffSyncWeekStart, isHoganCycle ? 7 : 6) : '—'}
-                            </span>
-                          </div>
-                          <Button
-                            type="button"
-                            variant="outline"
-                            disabled={hubstaffSyncLoading || weeklyUploadLoading || !hubstaffSyncWeekStart}
-                            onClick={() => void syncFromHubstaffApi()}
-                            className="w-full gap-2 border-indigo-300/80 bg-white text-indigo-900 hover:bg-indigo-50 dark:border-indigo-800 dark:bg-indigo-950/40 dark:text-indigo-100 dark:hover:bg-indigo-950/70"
+                          {/* Opens the app-standard week calendar: one click selects the whole
+                              Sun→Sat pay week (start + finish), and the confirm CTA inside the
+                              panel pulls exactly those 7 days from the Hubstaff API. */}
+                          <WeekPicker
+                            value={hubstaffSyncWeek}
+                            onChange={setHubstaffSyncWeek}
+                            max={localTodayIso()}
+                            disabled={hubstaffSyncLoading || weeklyUploadLoading}
+                            accent={{
+                              ring: 'focus-visible:ring-indigo-500/30 focus-visible:border-indigo-500',
+                              chipBg: 'bg-indigo-50 dark:bg-indigo-950/40',
+                              chipText: 'text-indigo-800 dark:text-indigo-200',
+                              btn: '',
+                              bar: 'bg-indigo-600 dark:bg-indigo-400',
+                              barText: 'text-white dark:text-indigo-950',
+                            }}
+                            actionLabel="Sync"
+                            actionBusy={hubstaffSyncLoading}
+                            onAction={(week) => void syncFromHubstaffApi(week)}
+                            className="w-full"
+                            triggerClassName={cn(
+                              buttonVariants({ variant: 'outline' }),
+                              'w-full gap-2 border-indigo-300/80 bg-white text-indigo-900 hover:bg-indigo-50 dark:border-indigo-800 dark:bg-indigo-950/40 dark:text-indigo-100 dark:hover:bg-indigo-950/70',
+                            )}
+                            title="Pick the Sun → Sat pay week, then pull it straight from the Hubstaff API"
+                            aria-label="Sync from Hubstaff — choose the pay week"
                           >
                             {hubstaffSyncLoading ? (
                               <Loader2 className="h-4 w-4 animate-spin" />
@@ -6448,7 +6450,14 @@ export default function PayrollWizard({
                               <RefreshCw className="h-4 w-4" />
                             )}
                             {hubstaffSyncLoading ? 'Fetching from Hubstaff…' : 'Sync from Hubstaff'}
-                          </Button>
+                          </WeekPicker>
+                          <p className="text-center text-[10px] leading-snug text-zinc-500 dark:text-zinc-500">
+                            Week <span className="font-semibold text-zinc-600 dark:text-zinc-400">{formatPeriodRange(
+                              new Date(hubstaffSyncWeek.start + 'T00:00:00'),
+                              new Date(hubstaffSyncWeek.end + 'T00:00:00'),
+                            )}</span>{' '}
+                            · exact Sun → Sat cutoff
+                          </p>
                         </>
                       )}
                     </div>
@@ -6574,6 +6583,9 @@ export default function PayrollWizard({
                         const isActive = !!meta?.is_current;
                         const busy = initializingSourceFile !== null;
                         const thisBusy = initializingSourceFile === file;
+                        // "Jul 5 - 11, 2026" — parsed from the filename's date block,
+                        // the same label every CSV selector shows for this batch.
+                        const periodLabel = periodLabelFromFilename(file, '');
                         return (
                           <li
                             key={file}
@@ -6604,8 +6616,14 @@ export default function PayrollWizard({
                                   </span>
                                 )}
                               </span>
-                              {(stamp || meta?.row_count != null) && (
+                              {(periodLabel || stamp || meta?.row_count != null) && (
                                 <span className="mt-0.5 block text-[10px] text-zinc-500 dark:text-zinc-500">
+                                  {periodLabel && (
+                                    <span className="font-semibold text-zinc-600 dark:text-zinc-400">
+                                      {periodLabel}
+                                    </span>
+                                  )}
+                                  {periodLabel && (stamp || meta?.row_count != null) ? ' · ' : ''}
                                   {stamp ?? ''}
                                   {stamp && meta?.row_count != null ? ' · ' : ''}
                                   {meta?.row_count != null ? `${meta.row_count.toLocaleString()} rows` : ''}

@@ -87,9 +87,9 @@ export default function OrphanageVisits({ sessionEmail }: { sessionEmail?: strin
   const [deleteDialog, setDeleteDialog] = useState<PabDayDisputeRow | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [bulkCreateOpen, setBulkCreateOpen] = useState(false);
-  /** Roster used by the bulk-create dialog. Pre-fetched on mount via the same
-   *  `/api/employee-rate-profiles/summary` endpoint the Rates tab uses, so opening
-   *  the dialog is instant rather than waiting on the merge query. */
+  /** Roster used by the bulk-create dialog. Pre-fetched on mount from the Global
+   *  Master List (`/api/global-master-list/people`) so the "People involved" picker
+   *  resolves from the master list, and opening the dialog is instant. */
   const [rosterEmployees, setRosterEmployees] = useState<RosterEmployeeOption[]>([]);
   const [rosterLoading, setRosterLoading] = useState(true);
   /** Hubstaff hours per employee for the dialog's PAB-style red-day calendar. Pre-fetched + parsed
@@ -103,7 +103,7 @@ export default function OrphanageVisits({ sessionEmail }: { sessionEmail?: strin
 
   useEffect(() => {
     let cancelled = false;
-    fetch('/api/employee-rate-profiles/summary', { cache: 'no-store' })
+    fetch('/api/global-master-list/people', { cache: 'no-store' })
       .then((r) => r.json())
       .then((json: { profiles?: RosterEmployeeOption[] }) => {
         if (cancelled) return;

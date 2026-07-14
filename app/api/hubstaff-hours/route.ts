@@ -543,6 +543,18 @@ async function handleApiSync(req: NextRequest) {
     );
   }
 
+  // The pay week is strictly Sunday → Saturday: a precise 7-day cutoff keyed to
+  // the Sun→Sat pay model. Rejecting anything else here guarantees API batches
+  // can never reintroduce the legacy 8-day Sun→Sun overlap (dropped-Sunday bug).
+  const startMs = Date.parse(`${weekStart}T00:00:00Z`);
+  const spanDays = Math.round((Date.parse(`${weekEnd}T00:00:00Z`) - startMs) / 86_400_000) + 1;
+  if (new Date(startMs).getUTCDay() !== 0 || spanDays !== 7) {
+    return NextResponse.json(
+      { success: false, error: "Pick a Sunday-to-Saturday pay week — weekStart must be a Sunday and weekEnd the following Saturday." },
+      { status: 400 },
+    );
+  }
+
   if (!hubstaffApiConfigured()) {
     return NextResponse.json(
       {

@@ -57,7 +57,7 @@ function DialogContent({
           "duration-[320ms] ease-[cubic-bezier(0.22,1,0.36,1)]",
           "data-open:animate-in data-open:fade-in-0 data-open:zoom-in-[0.94] data-open:slide-in-from-bottom-6",
           "data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-[0.97] data-closed:duration-[180ms] data-closed:ease-in",
-          "bg-gradient-to-br from-white via-orange-50/30 to-blue-50/40 dark:from-[#0d1117] dark:via-[#0f1729] dark:to-[#0a1628]",
+          "bg-gradient-to-br from-white via-orange-50 to-blue-50 dark:from-[#0d1117] dark:via-[#0f1729] dark:to-[#0a1628]",
           className
         )}
         {...props}
@@ -106,7 +106,7 @@ function DialogFooter({
     <div
       data-slot="dialog-footer"
       className={cn(
-        "-mx-4 -mb-4 flex flex-col-reverse gap-2 rounded-b-xl border-t border-orange-100/60 bg-gradient-to-r from-orange-50/60 to-blue-50/40 p-4 sm:flex-row sm:justify-end dark:border-blue-950/50 dark:from-blue-950/30 dark:to-[#0d1117]",
+        "-mx-4 -mb-4 flex flex-col-reverse gap-2 rounded-b-xl border-t border-orange-100 bg-gradient-to-r from-orange-50 to-blue-50 p-4 sm:flex-row sm:justify-end dark:border-blue-950/50 dark:from-blue-950/30 dark:to-[#0d1117]",
         className
       )}
       {...props}

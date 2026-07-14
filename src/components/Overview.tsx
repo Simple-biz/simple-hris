@@ -78,6 +78,7 @@ import {
   groupDateColumnsByCalendarDay,
   parseDateRangeFromFilename,
 } from '@/lib/hubstaff/calendar-column-dedupe';
+import { formatPeriodRange } from '@/lib/hubstaff/period-label';
 import { HSL_DEPT_KEYS } from '@/lib/hsl-bonus/schema';
 import {
   fetchPabPeriodSettings,
@@ -124,21 +125,19 @@ function formatStartDate(value: string | null): string {
   });
 }
 
-/** Extract a "Mar 24 – 30, 2026 · week N" style label from a Hubstaff filename. */
+/** Extract a "Jul 5 - 11, 2026 · week N" style label from a Hubstaff filename.
+ *  The label comes from the shared pay-period formatter so this selector stays
+ *  in lock-step with the Payroll Wizard and the employee dashboard. */
 function parsePeriodFromFilename(file: string | null): { label: string; week: number | null } | null {
   if (!file) return null;
   const m = /(\d{4})-(\d{2})-(\d{2})_to_(\d{4})-(\d{2})-(\d{2})/.exec(file);
   if (!m) return null;
-  const start = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3]));
-  const end = new Date(Date.UTC(+m[4], +m[5] - 1, +m[6]));
+  const start = new Date(+m[1], +m[2] - 1, +m[3]);
+  const end = new Date(+m[4], +m[5] - 1, +m[6]);
   if (isNaN(start.getTime()) || isNaN(end.getTime())) return null;
-  const sameMonth = start.getUTCMonth() === end.getUTCMonth() && start.getUTCFullYear() === end.getUTCFullYear();
-  const monthShort = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-  const label = sameMonth
-    ? `${monthShort[start.getUTCMonth()]} ${start.getUTCDate()} – ${end.getUTCDate()}, ${end.getUTCFullYear()}`
-    : `${monthShort[start.getUTCMonth()]} ${start.getUTCDate()} – ${monthShort[end.getUTCMonth()]} ${end.getUTCDate()}, ${end.getUTCFullYear()}`;
-  const firstOfYear = Date.UTC(start.getUTCFullYear(), 0, 1);
-  const week = Math.floor((start.getTime() - firstOfYear) / (7 * 24 * 3600 * 1000)) + 1;
+  const label = formatPeriodRange(start, end);
+  const firstOfYear = Date.UTC(+m[1], 0, 1);
+  const week = Math.floor((Date.UTC(+m[1], +m[2] - 1, +m[3]) - firstOfYear) / (7 * 24 * 3600 * 1000)) + 1;
   return { label, week };
 }
 
