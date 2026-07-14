@@ -340,7 +340,8 @@
       "PowerShell(try { $r = Invoke-WebRequest -Uri 'http://localhost:3000/api/auth/csrf' -UseBasicParsing -TimeoutSec 10; \"STATUS: $\\($r.StatusCode\\)\"; $r.Content.Substring\\(0, [Math]::Min\\(200, $r.Content.Length\\)\\) } catch { \"FAILED: $\\($_.Exception.Message\\)\" })",
       "Bash(curl -s -b /tmp/hris_jar.txt -w '\\\\nHTTP %{http_code} in %{time_total}s\\\\n' 'http://localhost:3000/api/manager/member-monthly-pay?email=kaner%40simple.biz&year=2026&month=6')",
       "Bash(curl -s -b /tmp/hris_jar.txt -o /tmp/mmp.html -w 'HTTP %{http_code} in %{time_total}s, %{size_download} bytes\\\\n' 'http://localhost:3000/api/manager/member-monthly-pay?email=kaner%40simple.biz&year=2026&month=6')",
-      "PowerShell(npm run dev:3001)"
+      "PowerShell(npm run dev:3001)",
+      "PowerShell(taskkill /PID 22204 /F; Start-Sleep -Seconds 2; Remove-Item -Recurse -Force .next -ErrorAction SilentlyContinue; \"cleaned: $\\(-not \\(Test-Path .next\\)\\)\")"
     ],
     "additionalDirectories": [
       "c:\\Users\\Itachi\\.claude\\projects\\c--Users-Itachi-Desktop-simple-hris\\memory",
