@@ -54,6 +54,11 @@ import {
   isTechBonusWeek as gateIsTechBonusWeek,
   pabMonthFromWeekStart,
 } from "@/lib/payroll/dispatch-bonuses";
+import {
+  HSL_WEEK_MODEL_CUTOVER_KEY,
+  resolveHslWeekModelWithDefault,
+  type HslWeekModel,
+} from "@/lib/payroll/hsl-week-model";
 import { fetchAllRateHistory, resolveRateAsOfDate, type RateHistoryByEmail } from "@/lib/payroll/rate-history";
 import { listPayStructures } from "@/lib/supabase/pay-structures-db";
 import { listSystemBonuses } from "@/lib/supabase/system-bonuses-db";
@@ -469,6 +474,7 @@ export async function computeCurrentPay(
       PAB_PERIOD_EXCLUSIONS_KEY,
       US_HOLIDAYS_ENABLED_KEY,
       US_HOLIDAYS_LIST_KEY,
+      HSL_WEEK_MODEL_CUTOVER_KEY,
     ]),
     cycleIdPromise,
     supabase ? fetchMasterMin(supabase) : Promise.resolve<MasterEmployeeMin[]>([]),
@@ -498,6 +504,7 @@ export async function computeCurrentPay(
   const pabExclusionsValue = appSettings[PAB_PERIOD_EXCLUSIONS_KEY];
   const usHolidaysEnabledValue = appSettings[US_HOLIDAYS_ENABLED_KEY];
   const usHolidaysListValue = appSettings[US_HOLIDAYS_LIST_KEY];
+  const hslWeekModelCutoverValue = appSettings[HSL_WEEK_MODEL_CUTOVER_KEY];
 
   // USD-anchored FX. The internal pay engine accumulates in PHP-equivalent
   // (fxRate = usdToPhp keeps that math unchanged); `fx` also carries the COP
@@ -573,18 +580,29 @@ export async function computeCurrentPay(
   // Wizard → PAB settings). Excluded emails get ₱0 PAB regardless of attendance.
   let pabExcludedEmails = new Set<string>();
 
+  // HSL week model for THIS upload — resolved from the STABLE file start date
+  // (never from a week-shape-dependent value). Pre-cutover uploads stay Mon→Sun;
+  // uploads on/after the effective cutover (app_settings hsl.week_model_cutover,
+  // default 2026-05-31) compute Sun→Sat. Only HSL employees are affected.
+  const hslWeekModel: HslWeekModel = resolveHslWeekModelWithDefault(
+    periodStart,
+    hslWeekModelCutoverValue,
+  );
+
   // Per-department pay-week windows derived from the upload's start date.
-  // An 8-day Sun→Sun upload yields two different 7-day weeks: HSL keeps Mon→Sun
-  // (drops the leading Sunday), everyone else keeps Sun→Sat (drops the trailing
-  // Sunday). Per-employee hours/pay are clamped to the matching window below.
-  const payWeekHsl = periodStart ? payWeekFromUploadStart(periodStart, true) : null;
+  // An 8-day Sun→Sun upload yields two different 7-day weeks. Pre-cutover HSL
+  // keeps Mon→Sun (drops the leading Sunday); post-cutover HSL and everyone else
+  // keep Sun→Sat (drops the trailing Sunday). Per-employee hours/pay are clamped
+  // to the matching window below.
+  const payWeekHsl = periodStart ? payWeekFromUploadStart(periodStart, true, hslWeekModel) : null;
   const payWeekNonHsl = periodStart ? payWeekFromUploadStart(periodStart, false) : null;
 
   if (periodStart) {
-    // Both pay weeks share the same Monday (HSL's Mon→Sun start = the Monday
-    // inside the non-HSL Sun→Sat week), so it anchors PAB month + bonus timing
-    // for the whole dispatch regardless of whether the upload starts on Sunday.
-    weekMonday = payWeekHsl!.start;
+    // PAB-month ownership + bonus timing stay MONDAY-based for ALL week models: a
+    // Sun→Sat HSL week is owned by the month of the Monday inside it. Derive the
+    // owning Monday from the mon_sun HSL variant (always a Monday) so switching
+    // the pay window to Sun→Sat never moves a week into a different payroll cycle.
+    weekMonday = payWeekFromUploadStart(periodStart, true, 'mon_sun').start;
     const pabMonth = pabMonthFromWeekStart(weekMonday);
     const monthKey = yearMonthKey(pabMonth.year, pabMonth.month);
     const overrides = parsePabPeriodOverrides(pabOverridesValue);
@@ -592,7 +610,7 @@ export async function computeCurrentPay(
     pabRange = overrideEntry
       ? { start: overrideEntry.start, end: overrideEntry.end }
       : getPabMonthRange(pabMonth.year, pabMonth.month);
-    hslAdjustedEnd = getHslAdjustedEnd(pabRange.end);
+    hslAdjustedEnd = getHslAdjustedEnd(pabRange.end, hslWeekModel);
     pabExcludedEmails = parsePabPeriodExclusions(pabExclusionsValue).get(monthKey) ?? new Set<string>();
 
     if (periodEnd) {
@@ -714,6 +732,7 @@ export async function computeCurrentPay(
       hslEmails,
       approvedDisputeDates,
       usHolidayDates,
+      weekModel: hslWeekModel,
     });
     for (const e of passes) pabEligible.add(e);
   }

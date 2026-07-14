@@ -2,7 +2,7 @@
 -- =====================================================
 -- Freezes the CURRENT Mon→Sun computed payroll/PAB output for every HSL
 -- employee, for every historical Hubstaff upload, BEFORE the HSL week boundary
--- is switched to Sun→Sat (week of 2026-06-30 cutover).
+-- is switched to Sun→Sat (effective 2026-05-31 cutover).
 --
 -- Why this exists: almost every HSL surface (calendars, PAB verdicts, dispatch
 -- estimates, the wizard when a past period is re-opened LIVE) recomputes from
@@ -78,4 +78,4 @@ CREATE INDEX IF NOT EXISTS hsl_week_model_snapshot_source_idx
   ON public.hsl_week_model_snapshot (source_file);
 
 COMMENT ON TABLE public.hsl_week_model_snapshot IS
-  'Pre-change Mon→Sun (Sunday-to-Sunday) baseline of HSL payroll/PAB output, frozen before the 2026-06-30 Sun→Sat cutover. Regression oracle for the week-boundary change.';
+  'Pre-change Mon→Sun (Sunday-to-Sunday) baseline of HSL payroll/PAB output, frozen before the 2026-05-31 Sun→Sat cutover. Regression oracle for the week-boundary change.';

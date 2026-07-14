@@ -2,8 +2,9 @@
  * HSL week-model cutover resolver.
  *
  * Management is moving HSL's work/PAB week from Mon→Sun ("Sunday-to-Sunday") to
- * Sun→Sat ("Sunday-to-Saturday"), effective a specific cutover date (the start
- * of the new pay period — week of 2026-07-05). This is an EFFECTIVE-DATE cutover,
+ * Sun→Sat ("Sunday-to-Saturday"), effective a specific cutover date (the Sunday
+ * that opens June 2026's first Sun→Sat week — 2026-05-31; see
+ * {@link HSL_WEEK_MODEL_DEFAULT_CUTOVER}). This is an EFFECTIVE-DATE cutover,
  * NOT a global flip: periods before the cutover keep computing Mon→Sun so all
  * historical pay/PAB/calendars stay byte-identical to what was already produced
  * (and consistent with frozen disbursement_records + final_pay snapshots); periods
@@ -25,6 +26,20 @@
  */
 
 export const HSL_WEEK_MODEL_CUTOVER_KEY = 'hsl.week_model_cutover';
+
+/**
+ * Effective date the HSL week flips Mon→Sun → Sun→Sat. Used when
+ * app_settings `hsl.week_model_cutover` is unset, so the cutover is live
+ * without requiring a manual DB write. A stored setting value always wins,
+ * so the date can be corrected/moved from data without a code change.
+ *
+ * 2026-05-31 is the Sunday that opens June 2026's first Sun→Sat week
+ * (May 31 – Jun 6, owned by Monday Jun 1). June onward computes Sun→Sat; May
+ * and earlier stay Mon→Sun (May's last week uploads on 2026-05-24, before the
+ * cutover). Anchoring on this Sunday keeps the per-upload server resolution and
+ * the wizard's per-PAB-month resolution consistent at the June boundary.
+ */
+export const HSL_WEEK_MODEL_DEFAULT_CUTOVER = '2026-05-31';
 
 /** Mon→Sun (legacy / pre-cutover) vs Sun→Sat (post-cutover). */
 export type HslWeekModel = 'mon_sun' | 'sun_sat';
@@ -68,4 +83,19 @@ export function resolveHslWeekModel(
         : null;
   if (!a) return 'mon_sun';
   return a.getTime() >= cut.getTime() ? 'sun_sat' : 'mon_sun';
+}
+
+/**
+ * Convenience wrapper for the two production call sites (server pay engine +
+ * Payroll Wizard): resolve the week model for `anchor`, falling back to
+ * {@link HSL_WEEK_MODEL_DEFAULT_CUTOVER} when the app-settings value is unset.
+ * Pass the raw `app_settings['hsl.week_model_cutover']` value straight through.
+ */
+export function resolveHslWeekModelWithDefault(
+  anchor: Date | string | null | undefined,
+  settingValue: string | null | undefined,
+): HslWeekModel {
+  const cutover =
+    settingValue && settingValue.trim() ? settingValue : HSL_WEEK_MODEL_DEFAULT_CUTOVER;
+  return resolveHslWeekModel(anchor, cutover);
 }

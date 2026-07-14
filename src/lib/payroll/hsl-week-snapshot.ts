@@ -4,7 +4,7 @@
  * Freezes the CURRENT Mon→Sun computed payroll/PAB output for every HSL
  * employee across ALL historical Hubstaff uploads into
  * `hsl_week_model_snapshot`, BEFORE the HSL week boundary is switched to
- * Sun→Sat (week of 2026-06-30).
+ * Sun→Sat (effective 2026-05-31).
  *
  * It deliberately reuses {@link computeCurrentPay} — the same engine Payment
  * Dispatch and the Payroll Wizard's mirror use — so the captured numbers are

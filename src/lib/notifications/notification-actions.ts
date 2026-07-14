@@ -55,6 +55,15 @@ const ACTIONS: Partial<Record<AppView, Record<string, ActionResolver>>> = {
         label: 'Review submission',
       };
     },
+    // A manager sent someone to offboarding (or an approved resignation queued
+    // them) → open the Offboarding → Queue tab, mirroring the onboarding
+    // "Review submission" jump. The queue is HrOffboarding's default sub-tab, so
+    // switching to the tab lands on the pending requests; no entity id needed.
+    'offboarding.requested': () => ({
+      tab: 'offboarding',
+      subTab: 'queue',
+      label: 'Review request',
+    }),
   },
 };
 

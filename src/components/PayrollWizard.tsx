@@ -84,6 +84,12 @@ import {
   checkHslPabEligibility,
   pabDateKey,
 } from '@/lib/hubstaff/calendar-column-dedupe';
+import { getHslAdjustedEnd } from '@/lib/payroll/dispatch-bonuses';
+import {
+  HSL_WEEK_MODEL_CUTOVER_KEY,
+  resolveHslWeekModelWithDefault,
+  type HslWeekModel,
+} from '@/lib/payroll/hsl-week-model';
 import type { EmployeeRow } from '@/lib/supabase/employees';
 import { parseCsv } from '@/lib/csv/parse-csv';
 import {
@@ -1517,6 +1523,10 @@ export default function PayrollWizard({
   const [otDeptEnabled, setOtDeptEnabled] = useState<Record<string, boolean>>(
     Object.fromEntries(DEPARTMENTS.map(d => [`ot_dept_${d.key}`, true])),
   );
+  // Raw app_settings 'hsl.week_model_cutover' value (YYYY-MM-DD or null). Drives the
+  // HSL week-shape cutover: PAB months anchored on/after it render & pay Sun→Sat;
+  // before it stays Mon→Sun. `null` falls back to HSL_WEEK_MODEL_DEFAULT_CUTOVER.
+  const [hslWeekModelCutover, setHslWeekModelCutover] = useState<string | null>(null);
 
   const pabPeriodSettings = usePabPeriodSettings();
 
@@ -2085,7 +2095,7 @@ export default function PayrollWizard({
     let cancelled = false;
     (async () => {
       try {
-        const allKeys = ['ot_global_suspended', ...DEPARTMENTS.map(d => `ot_dept_${d.key}`)];
+        const allKeys = ['ot_global_suspended', HSL_WEEK_MODEL_CUTOVER_KEY, ...DEPARTMENTS.map(d => `ot_dept_${d.key}`)];
         const res = await fetch(
           `/api/app-settings?keys=${encodeURIComponent(allKeys.join(','))}`,
           { cache: 'no-store' },
@@ -2094,6 +2104,7 @@ export default function PayrollWizard({
         if (cancelled) return;
         const values = json.values ?? {};
         setOtGlobalSuspended(values['ot_global_suspended'] === 'true');
+        setHslWeekModelCutover(values[HSL_WEEK_MODEL_CUTOVER_KEY] ?? null);
         const deptMap: Record<string, boolean> = {};
         DEPARTMENTS.forEach((d) => {
           const val = values[`ot_dept_${d.key}`];
@@ -2617,6 +2628,18 @@ export default function PayrollWizard({
     };
   }, [effectiveMonth.year, effectiveMonth.month, effectiveMonthRange.start, effectiveMonthRange.end]);
 
+  /**
+   * HSL week model for the viewed PAB month. Resolved from the STABLE PAB-month
+   * start (never a week-shape-dependent value) against the effective cutover
+   * (app_settings `hsl.week_model_cutover`, default 2026-07-05). Months on/after
+   * the cutover (default 2026-05-31) render & score HSL as Sun→Sat; earlier
+   * months stay Mon→Sun. Mirrors current-pay.ts.
+   */
+  const hslWeekModel: HslWeekModel = useMemo(
+    () => resolveHslWeekModelWithDefault(pabMonthRange.start, hslWeekModelCutover),
+    [pabMonthRange.start, hslWeekModelCutover],
+  );
+
   // Real-time: when a manager marks a dept ready/unready, update accounting's view live.
   useEffect(() => {
     if (currentStep !== 4) return;
@@ -2720,17 +2743,15 @@ export default function PayrollWizard({
   }, [currentStep]);
 
   /**
-   * HSL payroll weeks run Mon–Sun, so the effective PAB end is extended to the
-   * Sunday that closes the last week. E.g. if pabMonthRange.end is Saturday May 2,
-   * hslAdjustedPabEnd becomes Sunday May 3 so the full week is evaluated.
+   * The effective PAB end, extended so the last HSL week is fully evaluated.
+   * Pre-cutover (Mon→Sun) snaps forward to the closing SUNDAY; post-cutover
+   * (Sun→Sat) snaps to the closing SATURDAY. Delegates to getHslAdjustedEnd so
+   * the wizard and the authoritative engine (current-pay.ts) stay identical.
    */
   const hslAdjustedPabEnd = useMemo(() => {
     if (!pabMonthRange) return null;
-    const d = new Date(pabMonthRange.end);
-    const dow = d.getDay(); // Sun=0 … Sat=6
-    if (dow !== 0) d.setDate(d.getDate() + (7 - dow));
-    return d;
-  }, [pabMonthRange]);
+    return getHslAdjustedEnd(pabMonthRange.end, hslWeekModel);
+  }, [pabMonthRange, hslWeekModel]);
 
   /**
    * Per-month Hubstaff data availability for the month picker. For each YYYY-MM key,
@@ -3092,7 +3113,7 @@ export default function PayrollWizard({
           const [y, m, d] = groupDate.split('-').map(Number);
           hoursByDateKey.set(pabDateKey(new Date(y, m - 1, d)), recordedSeconds);
         }
-        if (checkHslPabEligibility(pabMonthRange.start, hslAdjustedPabEnd ?? pabMonthRange.end, hoursByDateKey)) {
+        if (checkHslPabEligibility(pabMonthRange.start, hslAdjustedPabEnd ?? pabMonthRange.end, hoursByDateKey, hslWeekModel)) {
           eligible.add(email);
         }
       } else {
@@ -3132,6 +3153,7 @@ export default function PayrollWizard({
     dailyDataMissing,
     pabMonthRange,
     hslAdjustedPabEnd,
+    hslWeekModel,
     pabMonthColumnCoverageComplete,
     weekdayColumnGroups,
     allDaysColumnGroups,
@@ -3786,9 +3808,12 @@ export default function PayrollWizard({
       }
       if (allDays.length === 0) continue;
 
-      // The employee's pay week, anchored on the upload's start date.
+      // The employee's pay week, anchored on the upload's start date. HSL flips
+      // Mon→Sun → Sun→Sat on/after the cutover; resolve the model from the stable
+      // upload start (mirrors current-pay.ts). No-op for non-HSL.
       const start = anchor ?? allDays.reduce((min, d) => (d.date < min ? d.date : min), allDays[0].date);
-      const week = payWeekFromUploadStart(start, isHsl);
+      const rowWeekModel = resolveHslWeekModelWithDefault(start, hslWeekModelCutover);
+      const week = payWeekFromUploadStart(start, isHsl, rowWeekModel);
       const lo = week.start.getTime();
       const hi = week.end.getTime();
       const days = allDays
@@ -3800,7 +3825,7 @@ export default function PayrollWizard({
       if (days.length > 0) map.set(em, { isHsl, days });
     }
     return map;
-  }, [hubstaffRowsForPab, hubstaffDisplayRows, calcSourceFile, employeeDepts]);
+  }, [hubstaffRowsForPab, hubstaffDisplayRows, calcSourceFile, employeeDepts, hslWeekModelCutover]);
 
   /**
    * Paid hours per employee = sum of their pay-week days, with the 40 h/week
@@ -14157,6 +14182,10 @@ export default function PayrollWizard({
           const isHsl =
             employeeDepts[pabCalendarModalEmail] === 'hogan_smith_law' ||
             employeeDepts[pabCalendarModalEmail.toLowerCase()] === 'hogan_smith_law';
+          // Post-cutover HSL weeks run Sun→Sat instead of Mon→Sun. Drives the grid
+          // anchor, day labels and week grouping below so the calendar matches
+          // the eligibility engine (checkHslPabEligibility) and what is paid.
+          const hslSunSat = isHsl && hslWeekModel === 'sun_sat';
 
           // Weekend premium for this pay week (current source file only)
           const wkndPremiumData = isHsl ? weekendPremiumByEmail.get(normEmpEmail) : undefined;
@@ -14181,11 +14210,14 @@ export default function PayrollWizard({
             });
           }
 
-          // Helper: return ISO string of the Monday that starts the Mon–Sun week containing `date`.
-          const getWeekMondayIso = (date: Date): string => {
+          // Helper: ISO string of the day that STARTS the HSL week containing `date` —
+          // the Monday for Mon→Sun weeks, or the Sunday for post-cutover Sun→Sat weeks.
+          // Must match the hslWeekInfo anchor + checkHslPabEligibility so a cell's
+          // pass/fail lookup lands on the right week.
+          const getWeekStartIso = (date: Date): string => {
             const d = new Date(date);
             const dow = d.getDay(); // Sun=0 … Sat=6
-            const daysBack = dow === 0 ? 6 : dow - 1;
+            const daysBack = hslSunSat ? dow : (dow === 0 ? 6 : dow - 1);
             d.setDate(d.getDate() - daysBack);
             return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
           };
@@ -14204,8 +14236,15 @@ export default function PayrollWizard({
             const endT = effectivePabEnd.getTime();
             const wCur = new Date(pabMonthRange.start);
             const wDow = wCur.getDay();
-            const wToMon = wDow === 0 ? 1 : wDow === 1 ? 0 : 8 - wDow;
-            wCur.setDate(wCur.getDate() + wToMon);
+            // Anchor the first week the same way checkHslPabEligibility does:
+            // sun_sat → back to the Sunday on/before pabStart; mon_sun → forward
+            // to the first Monday on/after pabStart.
+            if (hslSunSat) {
+              wCur.setDate(wCur.getDate() - wDow);
+            } else {
+              const wToMon = wDow === 0 ? 1 : wDow === 1 ? 0 : 8 - wDow;
+              wCur.setDate(wCur.getDate() + wToMon);
+            }
             while (wCur.getTime() <= endT) {
               const weekIso = `${wCur.getFullYear()}-${String(wCur.getMonth() + 1).padStart(2, '0')}-${String(wCur.getDate()).padStart(2, '0')}`;
               let qualifyingDays = 0;
@@ -14260,16 +14299,17 @@ export default function PayrollWizard({
           type Cell = { date: Date; iso: string; inRange: boolean; isWeekday: boolean; data: { seconds: number; passes: boolean; forgivenByDispute: boolean; forgivenByHoliday: boolean; holidayName: string | null } | null; holidayName: string | null };
           const cells: Cell[] = [];
           if (pabMonthRange) {
-            // HSL weeks run Mon–Sun; standard weeks run Sun–Sat.
+            // Legacy HSL weeks run Mon–Sun; standard + post-cutover HSL weeks run Sun–Sat.
+            const monStart = isHsl && !hslSunSat;
             const gridStart = new Date(pabMonthRange.start);
-            if (isHsl) {
+            if (monStart) {
               const dow = gridStart.getDay();
               gridStart.setDate(gridStart.getDate() - (dow === 0 ? 6 : dow - 1));
             } else {
               gridStart.setDate(gridStart.getDate() - gridStart.getDay());
             }
             const gridEnd = new Date(pabMonthRange.end);
-            if (isHsl) {
+            if (monStart) {
               const dow = gridEnd.getDay();
               gridEnd.setDate(gridEnd.getDate() + (dow === 0 ? 0 : 7 - dow));
             } else {
@@ -14317,13 +14357,13 @@ export default function PayrollWizard({
               if (dow === 0 || dow === 6) return false; // Sat/Sun never count as failed in the tally
               const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
               if (hslOvernightIsoSet.has(iso)) return false; // overnight-qualifying
-              const weekData = hslWeekInfo.get(getWeekMondayIso(d));
+              const weekData = hslWeekInfo.get(getWeekStartIso(d));
               if (weekData?.weekPasses) return false; // reconciled
             }
             return true;
           }).length;
-          // HSL weeks run Mon–Sun; standard weeks run Sun–Sat
-          const WEEKDAY_LABELS = isHsl
+          // Legacy HSL weeks run Mon–Sun; standard + post-cutover HSL weeks run Sun–Sat
+          const WEEKDAY_LABELS = (isHsl && !hslSunSat)
             ? ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
             : ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
@@ -14338,7 +14378,7 @@ export default function PayrollWizard({
                 if (dow === 0 || dow === 6) return false;
                 const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
                 if (hslOvernightIsoSet.has(iso)) return false; // overnight-qualifying
-                const weekData = hslWeekInfo.get(getWeekMondayIso(d));
+                const weekData = hslWeekInfo.get(getWeekStartIso(d));
                 if (weekData?.weekPasses) return false;
               }
               return true;
@@ -14606,7 +14646,7 @@ export default function PayrollWizard({
                             key={lbl}
                             className={cn(
                               'pb-1 text-[10px] font-semibold uppercase tracking-wide',
-                              (isHsl ? i === 5 || i === 6 : i === 0 || i === 6)
+                              ((isHsl && !hslSunSat) ? i === 5 || i === 6 : i === 0 || i === 6)
                                 ? 'text-zinc-400 dark:text-zinc-600'
                                 : 'text-zinc-500 dark:text-zinc-400',
                             )}
@@ -14642,7 +14682,7 @@ export default function PayrollWizard({
                             } else if (hslOvernightIsoSet.has(cell.iso)) {
                               state = 'overnight';
                             } else {
-                              const weekData = hslWeekInfo.get(getWeekMondayIso(cell.date));
+                              const weekData = hslWeekInfo.get(getWeekStartIso(cell.date));
                               state = weekData?.weekPasses ? 'reconciled' : 'idle';
                             }
                           } else if (data?.passes) {
@@ -14653,7 +14693,7 @@ export default function PayrollWizard({
                               if (hslOvernightIsoSet.has(cell.iso)) {
                                 state = 'overnight';
                               } else {
-                                const weekData = hslWeekInfo.get(getWeekMondayIso(cell.date));
+                                const weekData = hslWeekInfo.get(getWeekStartIso(cell.date));
                                 state = weekData?.weekPasses ? 'reconciled' : 'failed';
                               }
                             } else {

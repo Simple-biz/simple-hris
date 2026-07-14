@@ -1,12 +1,18 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { resolveHslWeekModel } from './hsl-week-model';
+import {
+  resolveHslWeekModel,
+  resolveHslWeekModelWithDefault,
+  HSL_WEEK_MODEL_DEFAULT_CUTOVER,
+} from './hsl-week-model';
 import {
   payWeekFromUploadStart,
   checkHslPabEligibility,
   pabDateKey,
+  getPabMonthRange,
 } from '../hubstaff/calendar-column-dedupe';
+import { getHslAdjustedEnd } from './dispatch-bonuses';
 
 const fmt = (d: Date) =>
   `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -25,6 +31,18 @@ test('resolveHslWeekModel: before cutover → mon_sun, on/after → sun_sat', ()
   assert.equal(resolveHslWeekModel('2026-07-05', cut), 'sun_sat'); // exactly the cutover
   assert.equal(resolveHslWeekModel('2026-07-12', cut), 'sun_sat'); // after
   assert.equal(resolveHslWeekModel(new Date(2026, 6, 5), cut), 'sun_sat'); // Date form
+});
+
+// ── resolveHslWeekModelWithDefault ───────────────────────────────────────────
+test('resolveHslWeekModelWithDefault: unset value falls back to the default cutover', () => {
+  assert.equal(HSL_WEEK_MODEL_DEFAULT_CUTOVER, '2026-05-31');
+  // Unset (null/''/undefined) → uses the default cutover, NOT mon_sun-everywhere.
+  assert.equal(resolveHslWeekModelWithDefault('2026-05-24', null), 'mon_sun'); // before default (May's last week)
+  assert.equal(resolveHslWeekModelWithDefault('2026-05-31', ''), 'sun_sat'); // on default (June's first week)
+  assert.equal(resolveHslWeekModelWithDefault('2026-07-12', undefined), 'sun_sat'); // after default
+  // A stored setting value overrides the default.
+  assert.equal(resolveHslWeekModelWithDefault('2026-06-28', '2026-08-01'), 'mon_sun');
+  assert.equal(resolveHslWeekModelWithDefault('2026-08-02', '2026-08-01'), 'sun_sat');
 });
 
 // ── payWeekFromUploadStart: HSL Mon→Sun (legacy) vs Sun→Sat (post-cutover) ───
@@ -81,4 +99,41 @@ test('checkHslPabEligibility: anchor determines the 7-day grouping', () => {
   );
   // Default arg = legacy mon_sun.
   assert.equal(checkHslPabEligibility(start, new Date(2026, 5, 7), hours), false);
+});
+
+// ── Integration: the exact current-pay.ts / wizard resolution at the cutover ──
+// Reproduces the server wiring for two consecutive HSL uploads around the
+// default 2026-05-31 cutover and asserts (a) the pay window flips and (b) the
+// owning Monday — which drives PAB-month + tech-bonus timing — stays Monday.
+function resolveForUpload(periodStart: Date, cutover: string | null) {
+  const model = resolveHslWeekModelWithDefault(periodStart, cutover);
+  const payWeekHsl = payWeekFromUploadStart(periodStart, true, model);
+  // Guardrail: owning Monday is ALWAYS the mon_sun start, never the sun_sat Sunday.
+  const weekMonday = payWeekFromUploadStart(periodStart, true, 'mon_sun').start;
+  return { model, payWeekHsl, weekMonday };
+}
+
+test('cutover integration: May 24 upload stays Mon→Sun (May), owning Monday = May 25', () => {
+  const r = resolveForUpload(new Date(2026, 4, 24), null); // Sun May 24, default cutover
+  assert.equal(r.model, 'mon_sun');
+  assert.equal(fmt(r.payWeekHsl.start), '2026-05-25'); // Monday
+  assert.equal(fmt(r.payWeekHsl.end), '2026-05-31'); // Sunday
+  assert.equal(fmt(r.weekMonday), '2026-05-25');
+  assert.equal(r.weekMonday.getMonth(), 4, 'owned by May'); // 0-based: 4 = May
+  // May PAB end (Mon→Sun) snaps forward to the closing Sunday.
+  const mayEnd = getPabMonthRange(2026, 4).end;
+  assert.equal(getHslAdjustedEnd(mayEnd, 'mon_sun').getDay(), 0, 'snaps to Sunday');
+});
+
+test('cutover integration: May 31 upload flips to Sun→Sat (June), owning Monday = Jun 1', () => {
+  const r = resolveForUpload(new Date(2026, 4, 31), null); // Sun May 31, default cutover
+  assert.equal(r.model, 'sun_sat');
+  assert.equal(fmt(r.payWeekHsl.start), '2026-05-31'); // Sunday
+  assert.equal(fmt(r.payWeekHsl.end), '2026-06-06'); // Saturday
+  // Guardrail: pay window opens Sunday, but ownership Monday is the NEXT day → June.
+  assert.equal(fmt(r.weekMonday), '2026-06-01');
+  assert.equal(r.weekMonday.getMonth(), 5, 'owned by June'); // 5 = June
+  // June PAB end (Sun→Sat) snaps forward to the closing Saturday.
+  const juneEnd = getPabMonthRange(2026, 5).end;
+  assert.equal(getHslAdjustedEnd(juneEnd, 'sun_sat').getDay(), 6, 'snaps to Saturday');
 });
