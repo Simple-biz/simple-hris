@@ -569,7 +569,27 @@ async function handleApiSync(req: NextRequest) {
 
   const startedAt = Date.now();
   const orgId = getHubstaffOrgId()!;
-  const { activities, users } = await fetchDailyActivities(orgId, weekStart, weekEnd);
+
+  // Pull the week from Hubstaff. Upstream failures carry an HTTP `status`
+  // (see api-client): a 429 rate limit is transient and retryable, so answer
+  // 429; other Hubstaff errors (401/403/404/5xx) are gateway problems, so 502.
+  // Only genuine bugs in this route fall through to POST's 500 handler.
+  let synced: Awaited<ReturnType<typeof fetchDailyActivities>>;
+  try {
+    synced = await fetchDailyActivities(orgId, weekStart, weekEnd);
+  } catch (e) {
+    const status = (e as { status?: number })?.status;
+    const msg = e instanceof Error ? e.message : String(e);
+    if (typeof status === "number") {
+      return NextResponse.json(
+        { success: false, error: msg, retryable: status === 429 },
+        { status: status === 429 ? 429 : 502 },
+      );
+    }
+    throw e;
+  }
+
+  const { activities, users } = synced;
   if (activities.length === 0) {
     return NextResponse.json(
       { success: false, error: `No Hubstaff time entries found between ${weekStart} and ${weekEnd}.` },

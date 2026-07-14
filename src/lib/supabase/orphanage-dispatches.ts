@@ -85,9 +85,6 @@ export async function listPendingOrphanageItems(): Promise<{
   const dispatchedBudgetIds = (dispatched ?? [])
     .map((d: { budget_request_id: string | null }) => d.budget_request_id)
     .filter(Boolean) as string[];
-  const dispatchedGiftIds = (dispatched ?? [])
-    .map((d: { gift_shipping_id: string | null }) => d.gift_shipping_id)
-    .filter(Boolean) as string[];
   // Worker-payment ids that already have a dispatch. Best-effort: if the
   // worker_payment_id column doesn't exist yet (pre-migration), skip dedup
   // rather than failing the whole (budget + gift) queue.
@@ -111,17 +108,9 @@ export async function listPendingOrphanageItems(): Promise<{
   const { data: brData, error: brErr } = await brQuery;
   if (brErr) return { items: [], defaultBank: null, error: brErr.message };
 
-  // Approved gift shippings not yet dispatched
-  let gsQuery = supabase
-    .from('employee_gift_shipping_details')
-    .select('*')
-    .eq('status', 'approved')
-    .order('decided_at', { ascending: false });
-  if (dispatchedGiftIds.length > 0) {
-    gsQuery = gsQuery.not('id', 'in', `(${dispatchedGiftIds.join(',')})`);
-  }
-  const { data: gsData, error: gsErr } = await gsQuery;
-  if (gsErr) return { items: [], defaultBank: null, error: gsErr.message };
+  // Tenure gifts are informational only (no payment / no price) so they never
+  // enter the dispatch queue — the queue carries budget requests and worker
+  // payments. (Historical gift dispatches, if any, still show in Reports.)
 
   // Worker payments not yet dispatched (handymen / musicians / other staff the
   // clerk added by hand in the Orphanage tab). These are pending the moment
@@ -141,7 +130,6 @@ export async function listPendingOrphanageItems(): Promise<{
   }
 
   const budgetRows = (brData ?? []) as OrphanageBudgetRequestRow[];
-  const giftRows = (gsData ?? []) as EmployeeGiftShippingRow[];
   const workerRows = (wpData ?? []) as OrphanageWorkerPaymentRow[];
 
   // The most recent approved budget request provides the default orphanage bank
@@ -167,18 +155,6 @@ export async function listPendingOrphanageItems(): Promise<{
       swiftCode: r.swift_code,
       amountPhp: r.final_amount,
       budgetRequest: r,
-    })),
-    ...giftRows.map((r) => ({
-      sourceType: 'gift_shipping' as const,
-      sourceId: r.id,
-      label: `Gift · ${r.milestone_index * 6}-month milestone${r.gift_name ? ` · ${r.gift_name}` : ''}`,
-      submitterEmail: r.personal_email,
-      bankName: defaultBank?.bank_name ?? '',
-      bankAccountName: defaultBank?.bank_account_name ?? '',
-      bankAccountNumber: defaultBank?.bank_account_number ?? '',
-      swiftCode: defaultBank?.swift_code ?? '',
-      amountPhp: r.gift_price_php ?? 0,
-      giftShipping: r,
     })),
     ...workerRows.map((r) => ({
       sourceType: 'worker_payment' as const,

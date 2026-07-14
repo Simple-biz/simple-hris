@@ -8,7 +8,6 @@ import {
   Gift,
   Loader2,
   Package,
-  Receipt,
   RefreshCw,
   Save,
   Search,
@@ -16,7 +15,6 @@ import {
   Users,
 } from 'lucide-react';
 import GiftCatalog from '@/components/orphanage/GiftCatalog';
-import GiftPayments from '@/components/orphanage/GiftPayments';
 import { toast } from 'sonner';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -26,8 +24,7 @@ import { cn } from '@/lib/utils';
 import type { EmployeeRow } from '@/lib/supabase/employees';
 import type { GiftTrackerNote } from '@/lib/supabase/gift-tracker-notes';
 import type { EmployeeGiftShippingRow } from '@/lib/supabase/employee-gift-shipping';
-import type { GiftCatalogItem, GiftAnniversaryTier, GiftCatalogPayload } from '@/lib/supabase/gift-catalog';
-import { CheckCircle2, XCircle, Truck, Lock, Tag, Pencil, Trash2, Undo2 } from 'lucide-react';
+import { CheckCircle2, Truck, Lock, Pencil, Trash2, Undo2, Shirt } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -36,6 +33,9 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
+
+/** Apparel sizes the employee can pick for wearable milestone gifts. */
+const APPAREL_SIZES = ['XS', 'S', 'M', 'L', 'XL', '2XL', '3XL'] as const;
 
 type GiftStatus = 'overdue' | 'red' | 'orange' | 'green' | 'far';
 
@@ -161,16 +161,13 @@ export default function GiftTracker({ viewerEmail }: { viewerEmail: string | nul
   );
   /** Row id currently being approved/rejected (for spinner state). */
   const [decidingId, setDecidingId] = useState<string | null>(null);
-  /** Gift catalog items (PHP) — provide the actual price when auto-deriving the gift. */
-  const [giftCatalogItems, setGiftCatalogItems] = useState<GiftCatalogItem[]>([]);
-  /** Anniversary tiers — the per-milestone mapping (6mo→Tshirt, 12mo→Tumbler, …). */
-  const [giftCatalogAnnivs, setGiftCatalogAnnivs] = useState<GiftAnniversaryTier[]>([]);
   /** Row being edited by the orphanage manager (shipping fields). Null = closed. */
   const [editDraft, setEditDraft] = useState<{
     row: EmployeeGiftShippingRow;
     emailKey: string;
     location: string;
     contact: string;
+    size: string;
     notes: string;
     saving: boolean;
   } | null>(null);
@@ -179,7 +176,7 @@ export default function GiftTracker({ viewerEmail }: { viewerEmail: string | nul
   const [page, setPage] = useState(0);
   const [pageDir, setPageDir] = useState<1 | -1>(1);
   const PAGE_SIZE = 10;
-  const [subTab, setSubTab] = useState<'roster' | 'submissions' | 'catalog' | 'payments'>('roster');
+  const [subTab, setSubTab] = useState<'roster' | 'submissions' | 'catalog'>('roster');
   /** Submissions sub-tab filter: which statuses to show. */
   const [submissionsFilter, setSubmissionsFilter] = useState<'pending' | 'approved' | 'rejected' | 'all'>('pending');
   const [submissionsSearch, setSubmissionsSearch] = useState('');
@@ -189,15 +186,11 @@ export default function GiftTracker({ viewerEmail }: { viewerEmail: string | nul
   const load = useCallback(async () => {
     setRefreshing(true);
     try {
-      const [empRes, notesRes, shipRes, catRes] = await Promise.all([
+      const [empRes, notesRes, shipRes] = await Promise.all([
         fetch('/api/employees', { cache: 'no-store' }),
         fetch('/api/gift-tracker-notes', { cache: 'no-store' }),
         fetch('/api/employee-gift-shipping', { cache: 'no-store' }),
-        fetch('/api/gift-catalog', { cache: 'no-store' }),
       ]);
-      const catJson = (await catRes.json()) as { catalog?: GiftCatalogPayload; error?: string };
-      setGiftCatalogItems(catJson.catalog?.items ?? []);
-      setGiftCatalogAnnivs(catJson.catalog?.anniversaries ?? []);
       const empJson = (await empRes.json()) as { employees?: EmployeeRow[]; error?: string };
       const notesJson = (await notesRes.json()) as { notes?: GiftTrackerNote[]; error?: string };
       const shipJson = (await shipRes.json()) as { rows?: EmployeeGiftShippingRow[]; error?: string };
@@ -398,48 +391,10 @@ export default function GiftTracker({ viewerEmail }: { viewerEmail: string | nul
     [viewerEmail],
   );
 
-  /**
-   * Auto-derive the gift for a given milestone:
-   *  milestone_index 1 → 0.5 years, 2 → 1, 3 → 1.5, etc.
-   *  Look up the anniversary tier for that year, then find the matching item
-   *  in the catalog by name. Returns the catalog item id + name + PHP price.
-   *  Falls back to the anniversary's `gift` string with price 0 when no
-   *  matching catalog item exists.
-   */
-  const deriveGiftForMilestone = useCallback(
-    (milestoneIndex: number): { itemId: string | null; name: string; pricePhp: number } | null => {
-      const year = milestoneIndex * 0.5;
-      const tier = giftCatalogAnnivs.find((a) => Math.abs(a.year - year) < 0.01);
-      const giftName = tier?.gift?.trim() ?? '';
-      if (!giftName) return null;
-
-      const target = giftName.toLowerCase();
-      let match = giftCatalogItems.find((i) => i.item.trim().toLowerCase() === target);
-      if (!match) {
-        const firstWord = target.split(/[\s&]+/)[0];
-        if (firstWord) {
-          match = giftCatalogItems.find((i) => i.item.trim().toLowerCase() === firstWord);
-        }
-      }
-      return {
-        itemId: match?.id ?? null,
-        name: match?.item ?? giftName,
-        pricePhp: match?.price_php ?? 0,
-      };
-    },
-    [giftCatalogAnnivs, giftCatalogItems],
-  );
-
-  /** Approve with the auto-derived gift. No dialog, no manual picking. */
+  /** Approve = lock the submitted details. Gifts are informational — no price,
+   *  no gift assignment, nothing sent to Accounting. */
   const approveShipping = useCallback(
-    async (rowId: string, milestoneIndex: number, emailKey: string) => {
-      const gift = deriveGiftForMilestone(milestoneIndex);
-      if (!gift) {
-        toast.error(
-          'No catalog mapping for this milestone yet. Add it in Gift Tracker → Catalog first.',
-        );
-        return;
-      }
+    async (rowId: string, emailKey: string) => {
       setDecidingId(rowId);
       try {
         const res = await fetch(`/api/employee-gift-shipping/${rowId}/decide`, {
@@ -449,9 +404,6 @@ export default function GiftTracker({ viewerEmail }: { viewerEmail: string | nul
             status: 'approved',
             decided_by: viewerEmail,
             decision_note: null,
-            gift_catalog_item_id: gift.itemId,
-            gift_name: gift.name,
-            gift_price_php: gift.pricePhp,
           }),
         });
         const json = (await res.json()) as { row?: EmployeeGiftShippingRow; error?: string };
@@ -465,16 +417,14 @@ export default function GiftTracker({ viewerEmail }: { viewerEmail: string | nul
           next.set(emailKey, arr);
           return next;
         });
-        toast.success(
-          `Approved — ${gift.name} (₱${gift.pricePhp.toLocaleString()}) sent to Accounting.`,
-        );
+        toast.success('Submission approved & locked.');
       } catch (e) {
         toast.error(e instanceof Error ? e.message : 'Could not approve submission');
       } finally {
         setDecidingId(null);
       }
     },
-    [deriveGiftForMilestone, viewerEmail],
+    [viewerEmail],
   );
 
   /** Open the edit-shipping dialog for an orphanage-side correction. */
@@ -485,6 +435,7 @@ export default function GiftTracker({ viewerEmail }: { viewerEmail: string | nul
         emailKey,
         location: row.preferred_delivery_location,
         contact: row.active_contact_number,
+        size: row.apparel_size ?? '',
         notes: row.notes,
         saving: false,
       });
@@ -503,6 +454,7 @@ export default function GiftTracker({ viewerEmail }: { viewerEmail: string | nul
           edited_by: viewerEmail,
           preferred_delivery_location: editDraft.location.trim(),
           active_contact_number: editDraft.contact.trim(),
+          apparel_size: editDraft.size,
           notes: editDraft.notes.trim(),
         }),
       });
@@ -567,14 +519,9 @@ export default function GiftTracker({ viewerEmail }: { viewerEmail: string | nul
         void rejectShipping(rowId, emailKey);
         return;
       }
-      const candidate = shippingByEmail.get(emailKey)?.find((r) => r.id === rowId);
-      if (!candidate) {
-        toast.error('Could not locate submission. Refresh and retry.');
-        return;
-      }
-      void approveShipping(rowId, candidate.milestone_index, emailKey);
+      void approveShipping(rowId, emailKey);
     },
-    [approveShipping, rejectShipping, shippingByEmail],
+    [approveShipping, rejectShipping],
   );
 
   return (
@@ -656,12 +603,6 @@ export default function GiftTracker({ viewerEmail }: { viewerEmail: string | nul
             Icon={Package}
             label="Catalog"
           />
-          <SubTabButton
-            active={subTab === 'payments'}
-            onClick={() => setSubTab('payments')}
-            Icon={Receipt}
-            label="Payments"
-          />
         </nav>
 
         <AnimatePresence mode="wait" initial={false}>
@@ -674,16 +615,6 @@ export default function GiftTracker({ viewerEmail }: { viewerEmail: string | nul
             transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
           >
             <GiftCatalog viewerEmail={viewerEmail} />
-          </motion.div>
-        ) : subTab === 'payments' ? (
-          <motion.div
-            key="payments"
-            initial={{ opacity: 0, y: 8 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -6 }}
-            transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
-          >
-            <GiftPayments viewerEmail={viewerEmail} />
           </motion.div>
         ) : subTab === 'submissions' ? (
           <motion.div
@@ -929,6 +860,33 @@ export default function GiftTracker({ viewerEmail }: { viewerEmail: string | nul
                   }
                   disabled={editDraft.saving}
                 />
+              </div>
+              <div className="grid gap-1.5">
+                <Label className="text-xs font-medium">Shirt / apparel size</Label>
+                <div className="flex flex-wrap gap-1.5">
+                  {APPAREL_SIZES.map((s) => {
+                    const active = editDraft.size === s;
+                    return (
+                      <button
+                        key={s}
+                        type="button"
+                        disabled={editDraft.saving}
+                        aria-pressed={active}
+                        onClick={() =>
+                          setEditDraft((d) => (d ? { ...d, size: active ? '' : s } : d))
+                        }
+                        className={cn(
+                          'min-w-[44px] rounded-full border px-3 py-1 text-xs font-semibold transition-colors disabled:opacity-60',
+                          active
+                            ? 'border-emerald-500 bg-emerald-600 text-white'
+                            : 'border-zinc-200 bg-white text-zinc-600 hover:bg-emerald-50 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-300 dark:hover:bg-emerald-950/30',
+                        )}
+                      >
+                        {s}
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
               <div className="grid gap-1.5">
                 <Label htmlFor="edit-notes" className="text-xs font-medium">
@@ -1243,6 +1201,17 @@ function RowItem({
                                   <span className="font-semibold text-zinc-700 dark:text-zinc-300">Phone:</span>{' '}
                                   {s.active_contact_number || <span className="italic text-zinc-400">—</span>}
                                 </div>
+                                <div>
+                                  <span className="font-semibold text-zinc-700 dark:text-zinc-300">Shirt size:</span>{' '}
+                                  {s.apparel_size ? (
+                                    <span className="inline-flex items-center gap-1 font-semibold text-emerald-700 dark:text-emerald-300">
+                                      <Shirt className="h-2.5 w-2.5" />
+                                      {s.apparel_size}
+                                    </span>
+                                  ) : (
+                                    <span className="italic text-zinc-400">—</span>
+                                  )}
+                                </div>
                                 {s.notes && (
                                   <div>
                                     <span className="font-semibold text-zinc-700 dark:text-zinc-300">Notes:</span>{' '}
@@ -1252,17 +1221,6 @@ function RowItem({
                                 {s.decision_note && (
                                   <div className="mt-1 italic text-zinc-500 dark:text-zinc-500">
                                     Reviewer note: {s.decision_note}
-                                  </div>
-                                )}
-                                {s.status === 'approved' && s.gift_name && (
-                                  <div className="mt-1.5 inline-flex items-center gap-1 rounded-md border border-emerald-300/60 bg-emerald-50/80 px-1.5 py-0.5 text-[10.5px] font-semibold text-emerald-800 dark:border-emerald-800/50 dark:bg-emerald-950/30 dark:text-emerald-200">
-                                    <Tag className="h-2.5 w-2.5" />
-                                    {s.gift_name}
-                                    {s.gift_price_php != null && (
-                                      <span className="font-mono tabular-nums">
-                                        · ₱{s.gift_price_php.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                                      </span>
-                                    )}
                                   </div>
                                 )}
                               </div>
@@ -1297,22 +1255,6 @@ function RowItem({
                                       Approve & lock
                                     </Button>
                                   </>
-                                )}
-                                {isLocked && !s.gift_name && (
-                                  <Button
-                                    size="sm"
-                                    variant="outline"
-                                    className="h-7 border-emerald-300 text-emerald-700 hover:bg-emerald-50 dark:border-emerald-900/50 dark:text-emerald-300 dark:hover:bg-emerald-950/30"
-                                    disabled={isDeciding || isDeleting}
-                                    onClick={() => onDecideShipping(s.id, 'approved')}
-                                  >
-                                    {isDeciding ? (
-                                      <Loader2 className="mr-1 h-3 w-3 animate-spin" />
-                                    ) : (
-                                      <Tag className="mr-1 h-3 w-3" />
-                                    )}
-                                    Apply gift
-                                  </Button>
                                 )}
                                 <Button
                                   size="sm"
@@ -1607,6 +1549,17 @@ function SubmissionsPanel({
                             {sub.active_contact_number || <span className="italic text-zinc-400">—</span>}
                           </span>
                         </div>
+                        <div>
+                          <span className="font-semibold text-zinc-700 dark:text-zinc-300">Shirt size:</span>{' '}
+                          {sub.apparel_size ? (
+                            <span className="inline-flex items-center gap-1 font-semibold text-emerald-700 dark:text-emerald-300">
+                              <Shirt className="h-3 w-3" />
+                              {sub.apparel_size}
+                            </span>
+                          ) : (
+                            <span className="italic text-zinc-400">—</span>
+                          )}
+                        </div>
                         {sub.notes && (
                           <div>
                             <span className="font-semibold text-zinc-700 dark:text-zinc-300">Notes:</span>{' '}
@@ -1616,17 +1569,6 @@ function SubmissionsPanel({
                         {sub.decision_note && (
                           <div className="mt-0.5 italic text-zinc-500 dark:text-zinc-500">
                             Reviewer note: {sub.decision_note}
-                          </div>
-                        )}
-                        {sub.status === 'approved' && sub.gift_name && (
-                          <div className="mt-1 inline-flex items-center gap-1.5 rounded-md border border-emerald-300/60 bg-emerald-50/80 px-2 py-1 text-[11px] font-semibold text-emerald-800 dark:border-emerald-800/50 dark:bg-emerald-950/30 dark:text-emerald-200">
-                            <Tag className="h-3 w-3" />
-                            {sub.gift_name}
-                            {sub.gift_price_php != null && (
-                              <span className="font-mono tabular-nums">
-                                · ₱{sub.gift_price_php.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                              </span>
-                            )}
                           </div>
                         )}
                         {sub.status === 'approved' && sub.decided_at && (
@@ -1677,24 +1619,8 @@ function SubmissionsPanel({
                           <Lock className="h-3 w-3" /> Locked
                         </span>
                       )}
-                      {/* Edit / Delete / Apply-gift — available regardless of status. */}
+                      {/* Edit / Delete — available regardless of status. */}
                       <div className="flex flex-wrap justify-end gap-1.5">
-                        {isLocked && !sub.gift_name && (
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            className="h-7 border-emerald-300 text-emerald-700 hover:bg-emerald-50 dark:border-emerald-900/50 dark:text-emerald-300 dark:hover:bg-emerald-950/30"
-                            disabled={isDeciding || isDeleting}
-                            onClick={() => onDecide(sub.id, 'approved', emailKey)}
-                          >
-                            {isDeciding ? (
-                              <Loader2 className="mr-1 h-3 w-3 animate-spin" />
-                            ) : (
-                              <Tag className="mr-1 h-3 w-3" />
-                            )}
-                            Apply gift
-                          </Button>
-                        )}
                         <Button
                           size="sm"
                           variant="outline"

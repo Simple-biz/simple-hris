@@ -9,6 +9,8 @@ export interface EmployeeGiftShippingRow {
   milestone_date: string;
   preferred_delivery_location: string;
   active_contact_number: string;
+  /** Employee's apparel size (XS–3XL) for wearable milestone gifts. '' when N/A. */
+  apparel_size: string;
   notes: string;
   status: EmployeeGiftShippingStatus;
   decided_by: string | null;
@@ -30,11 +32,12 @@ export interface UpsertShippingInput {
   milestone_date: string; // YYYY-MM-DD
   preferred_delivery_location: string;
   active_contact_number: string;
+  apparel_size: string;
   notes: string;
 }
 
 const SELECT_COLS =
-  'id, personal_email, milestone_index, milestone_date, preferred_delivery_location, active_contact_number, notes, status, decided_by, decided_at, decision_note, gift_catalog_item_id, gift_name, gift_price_php, created_at, updated_at';
+  'id, personal_email, milestone_index, milestone_date, preferred_delivery_location, active_contact_number, apparel_size, notes, status, decided_by, decided_at, decision_note, gift_catalog_item_id, gift_name, gift_price_php, created_at, updated_at';
 
 /**
  * List shipping submissions. Pass `personalEmail` to scope to one employee
@@ -91,6 +94,7 @@ export async function upsertShippingDetail(
         milestone_date: input.milestone_date,
         preferred_delivery_location: input.preferred_delivery_location,
         active_contact_number: input.active_contact_number,
+        apparel_size: input.apparel_size ?? '',
         notes: input.notes,
         // Resubmitting after a rejection moves the row back to pending so the
         // Orphanage team sees the updated answers.
@@ -114,6 +118,7 @@ export async function editShippingDetailFields(args: {
   id: string;
   preferred_delivery_location?: string;
   active_contact_number?: string;
+  apparel_size?: string;
   notes?: string;
 }): Promise<{ row: EmployeeGiftShippingRow | null; error: string | null }> {
   const supabase = createSupabaseServiceRoleClient();
@@ -125,6 +130,7 @@ export async function editShippingDetailFields(args: {
   if (args.active_contact_number !== undefined) {
     patch.active_contact_number = args.active_contact_number;
   }
+  if (args.apparel_size !== undefined) patch.apparel_size = args.apparel_size;
   if (args.notes !== undefined) patch.notes = args.notes;
   if (Object.keys(patch).length === 0) {
     return { row: null, error: 'No fields to update' };
@@ -157,46 +163,19 @@ export async function decideShippingDetail(args: {
   status: 'approved' | 'rejected';
   decided_by: string | null;
   decision_note: string | null;
-  /** Required when status='approved'. Snapshot the catalog item picked. */
-  gift_catalog_item_id?: string | null;
-  gift_name?: string | null;
-  gift_price_php?: number | null;
 }): Promise<{ row: EmployeeGiftShippingRow | null; error: string | null }> {
   const supabase = createSupabaseServiceRoleClient();
   if (!supabase) return { row: null, error: 'Supabase client unavailable' };
 
-  // On approval, the gift name + price must be present. We snapshot them onto
-  // the row so the Accounting view (which queries this table directly) doesn't
-  // need to re-resolve them from gift_catalog at read time.
-  if (args.status === 'approved') {
-    if (!args.gift_name || !args.gift_name.trim()) {
-      return { row: null, error: 'Gift name is required when approving' };
-    }
-    if (
-      args.gift_price_php == null ||
-      !Number.isFinite(args.gift_price_php) ||
-      args.gift_price_php < 0
-    ) {
-      return { row: null, error: 'A valid PHP gift price is required when approving' };
-    }
-  }
-
+  // Tenure gifts are informational only now — approval just locks the submitted
+  // details. No gift/price is assigned (the milestone→gift mapping lives in the
+  // catalog, and gifts carry no payment or price).
   const patch: Record<string, unknown> = {
     status: args.status,
     decided_by: args.decided_by,
     decided_at: new Date().toISOString(),
     decision_note: args.decision_note,
   };
-  if (args.status === 'approved') {
-    patch.gift_catalog_item_id = args.gift_catalog_item_id ?? null;
-    patch.gift_name = args.gift_name ?? null;
-    patch.gift_price_php = args.gift_price_php ?? null;
-  } else {
-    // Rejection clears any previously-assigned gift so a re-approval picks fresh.
-    patch.gift_catalog_item_id = null;
-    patch.gift_name = null;
-    patch.gift_price_php = null;
-  }
 
   const { data, error } = await supabase
     .from('employee_gift_shipping_details')

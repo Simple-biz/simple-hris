@@ -11,10 +11,6 @@ interface DecideBody {
   status: 'approved' | 'rejected';
   decided_by: string | null;
   decision_note?: string | null;
-  /** Required when status='approved'. */
-  gift_catalog_item_id?: string | null;
-  gift_name?: string | null;
-  gift_price_php?: number | null;
 }
 
 export async function PATCH(
@@ -47,9 +43,6 @@ export async function PATCH(
     status: body.status,
     decided_by: body.decided_by,
     decision_note: body.decision_note ?? null,
-    gift_catalog_item_id: body.gift_catalog_item_id ?? null,
-    gift_name: body.gift_name ?? null,
-    gift_price_php: body.gift_price_php ?? null,
   });
   if (error || !row) {
     const status = error?.toLowerCase().includes('required') ? 400 : 500;
@@ -66,8 +59,6 @@ export async function PATCH(
       personal_email: row.personal_email,
       milestone_index: row.milestone_index,
       decision_note: body.decision_note ?? null,
-      gift_name: row.gift_name,
-      gift_price_php: row.gift_price_php,
     },
   });
 

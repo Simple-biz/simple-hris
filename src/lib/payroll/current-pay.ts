@@ -29,7 +29,6 @@ import {
   createSupabaseServiceRoleClient,
 } from "@/lib/supabase/server";
 import { listOrphanageBudgetRequests } from "@/lib/supabase/orphanage-budget-requests";
-import { listGiftPayments } from "@/lib/supabase/gift-payments";
 import { buildFxRates, USD_TO_COP_SETTINGS_KEY, type FxRates } from "@/lib/fx/currency-fx";
 import { normEmail } from "@/lib/email/norm-email";
 import {
@@ -139,8 +138,6 @@ export interface CurrentPayResult {
   stashedMesaTotalPHP: number;
   /** Sum of final_amount across all approved orphanage budget requests. */
   approvedBudgetRequestsTotalPHP: number;
-  /** Sum of pending/sent gift payments converted to PHP. */
-  giftPaymentsTotalPHP: number;
   /**
    * Every email (work + personal + alternates, lowercased) present in the
    * Global Master List (`active_employees`). The dispatch queue filters to these
@@ -460,7 +457,6 @@ export async function computeCurrentPay(
     masterRows,
     rateHistory,
     budgetRequestsResult,
-    giftPaymentsResult,
     approvedDisputeDates,
     payStructuresResult,
     systemBonusesResult,
@@ -480,7 +476,6 @@ export async function computeCurrentPay(
     supabase ? fetchMasterMin(supabase) : Promise.resolve<MasterEmployeeMin[]>([]),
     fetchAllRateHistory(),
     listOrphanageBudgetRequests({ status: "approved" }),
-    listGiftPayments({}),
     supabase
       ? fetchAllApprovedDisputes(supabase).then((m) => mergeApprovedTimeAdjustments(supabase, m))
       : Promise.resolve(new Map<string, Map<string, number | null>>()),
@@ -911,15 +906,6 @@ export async function computeCurrentPay(
     0,
   );
 
-  // Gift payments that haven't been cancelled are still obligations.
-  const activeGiftPayments = (giftPaymentsResult.rows ?? []).filter(
-    (r) => r.status !== "cancelled",
-  );
-  const giftPaymentsTotalPHP = activeGiftPayments.reduce(
-    (sum, r) => sum + (r.total_usd ?? 0) * fxRate,
-    0,
-  );
-
   return {
     period: { cycleId, start: periodStartIso, end: periodEndIso, sourceFile },
     fxRate,
@@ -927,7 +913,6 @@ export async function computeCurrentPay(
     byEmail,
     stashedMesaTotalPHP,
     approvedBudgetRequestsTotalPHP: Math.round(approvedBudgetRequestsTotalPHP * 100) / 100,
-    giftPaymentsTotalPHP: Math.round(giftPaymentsTotalPHP * 100) / 100,
     masterEmails: Array.from(masterEmailSet),
   };
 }

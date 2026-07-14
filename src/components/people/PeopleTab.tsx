@@ -386,6 +386,10 @@ export interface Accent {
   check: string;
   /** solid color for the active tab underline */
   bar: string;
+  /** interior focus ring for popover date-picker controls */
+  focusRing?: string;
+  /** text color for the "today" marker in date pickers */
+  today?: string;
 }
 
 export default function PeopleTab({
@@ -407,6 +411,8 @@ export default function PeopleTab({
           btn: 'bg-gradient-to-r from-yellow-500 to-amber-600 hover:from-yellow-500 hover:to-amber-700 text-white',
           check: 'accent-amber-600',
           bar: 'bg-amber-500',
+          focusRing: 'focus-visible:ring-amber-500/40',
+          today: 'text-amber-700 dark:text-amber-300',
         }
       : {
           ring: 'focus-visible:ring-orange-500/40',
@@ -415,6 +421,8 @@ export default function PeopleTab({
           btn: 'bg-gradient-to-r from-orange-500 to-amber-600 hover:from-orange-600 hover:to-amber-700 text-white',
           check: 'accent-orange-600',
           bar: 'bg-orange-500',
+          focusRing: 'focus-visible:ring-orange-500/40',
+          today: 'text-orange-700 dark:text-orange-300',
         };
 
   const [rows, setRows] = useState<RosterRow[]>(() => getTabCache<RosterRow[]>(TAB_CACHE_KEYS.peopleRoster) ?? []);
@@ -423,7 +431,6 @@ export default function PeopleTab({
   const [refreshing, setRefreshing] = useState(false);
   const [query, setQuery] = useState('');
   const [selected, setSelected] = useState<RosterRow | null>(null);
-  const [transferFor, setTransferFor] = useState<RosterRow | null>(null);
   const [showExcluded, setShowExcluded] = useState(false);
   const [showNoBanking, setShowNoBanking] = useState(false);
   const [deptFilter, setDeptFilter] = useState<string>('all');
@@ -682,8 +689,7 @@ export default function PeopleTab({
 
   return (
     // data-readonly-allow: People is a read surface (browse, search, reveal-banking
-    // is itself audited); the only mutation — special transfers — is gated on
-    // `canEdit` + the server, so we don't want ReadOnlyTab swallowing row clicks.
+    // is itself audited), so we don't want ReadOnlyTab swallowing row clicks.
     <div data-readonly-allow className="flex h-full min-h-0 flex-col">
       <div className="shrink-0 border-b border-[#ececec] bg-white px-4 py-3 sm:px-6 sm:py-5 dark:border-zinc-800 dark:bg-zinc-950">
         <div className="flex flex-wrap items-center justify-between gap-3">
@@ -692,7 +698,7 @@ export default function PeopleTab({
               <Users className="h-5 w-5 shrink-0 text-zinc-400" /> People
             </h1>
             <p className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-500">
-              Everyone, searchable — hours this week, pay rate, banking, and one-off transfers.
+              Everyone, searchable — hours this week, pay rate, and banking.
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -1050,20 +1056,7 @@ export default function PeopleTab({
           accent={accent}
           canEdit={canEdit}
           onClose={() => setSelected(null)}
-          onSendTransfer={() => setTransferFor(selected)}
           onRowUpdated={handleRowUpdated}
-        />
-      )}
-
-      {transferFor && (
-        <SpecialTransferDialog
-          row={transferFor}
-          accent={accent}
-          onClose={() => setTransferFor(null)}
-          onDone={() => {
-            setTransferFor(null);
-            void load(true);
-          }}
         />
       )}
 
@@ -2412,14 +2405,12 @@ function PersonDetailDialog({
   accent,
   canEdit,
   onClose,
-  onSendTransfer,
   onRowUpdated,
 }: {
   row: RosterRow;
   accent: Accent;
   canEdit: boolean;
   onClose: () => void;
-  onSendTransfer: () => void;
   onRowUpdated: (master: MasterProfileFields) => void;
 }) {
   const [tab, setTab] = useState<PersonTab>('profile');
@@ -3115,30 +3106,6 @@ function PersonDetailDialog({
           )}
         </div>
 
-        {/* Footer — a plain section (NOT DialogFooter, whose -mx-4/-mb-4 breakout
-            margins fight this p-0 + overflow-hidden dialog and clip the button
-            against the edge). Mirrors the header: full-bleed border-t, tinted bar,
-            helper text left + action right, stacking on mobile. */}
-        <div className="flex shrink-0 flex-col gap-3 border-t border-zinc-200 bg-zinc-50/70 px-5 py-3.5 sm:flex-row sm:items-center sm:justify-between sm:px-6 dark:border-zinc-800 dark:bg-zinc-900/40">
-          <p className="text-[11px] leading-snug text-zinc-500 dark:text-zinc-400">
-            {canEdit
-              ? 'One-off payment, recorded straight into payroll history.'
-              : 'View only — special transfers require edit access.'}
-          </p>
-          {canEdit && (
-            <Button
-              type="button"
-              onClick={onSendTransfer}
-              className={cn(
-                'h-10 shrink-0 gap-2 px-4 font-medium shadow-sm transition-transform active:scale-[0.98]',
-                accent.btn,
-              )}
-            >
-              <Send className="h-4 w-4" />
-              Send special transfer
-            </Button>
-          )}
-        </div>
         </div>
       </DialogContent>
     </Dialog>
@@ -3274,176 +3241,4 @@ function Field({ label, value, mono, cap, wide }: { label: string; value: string
   );
 }
 
-/* ── Special transfer modal ─────────────────────────────────────────────── */
-
-function SpecialTransferDialog({
-  row,
-  accent,
-  onClose,
-  onDone,
-}: {
-  row: RosterRow;
-  accent: Accent;
-  onClose: () => void;
-  onDone: () => void;
-}) {
-  const [amount, setAmount] = useState('');
-  const [date, setDate] = useState(todayIso());
-  const [reason, setReason] = useState('');
-  const [notify, setNotify] = useState(true);
-  const [submitting, setSubmitting] = useState(false);
-  const [fx, setFx] = useState<number | null>(null);
-  const submittedRef = useRef(false);
-
-  useEffect(() => {
-    let alive = true;
-    fetch('/api/app-settings?keys=usd_to_php_rate', { cache: 'no-store' })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((j: { values?: Record<string, string | null> } | null) => {
-        if (!alive || !j?.values) return;
-        const n = parseFloat(String(j.values.usd_to_php_rate ?? ''));
-        if (Number.isFinite(n) && n > 0) setFx(n);
-      })
-      .catch(() => {});
-    return () => { alive = false; };
-  }, []);
-
-  const amountNum = parseFloat(amount.replace(/[^\d.]/g, ''));
-  const usdPreview = fx && Number.isFinite(amountNum) && amountNum > 0 ? amountNum / fx : null;
-  const valid = Number.isFinite(amountNum) && amountNum > 0 && !!date && reason.trim().length > 0;
-
-  const submit = async () => {
-    if (!valid || submittedRef.current) return;
-    submittedRef.current = true;
-    setSubmitting(true);
-    try {
-      const res = await fetch('/api/people/special-transfer', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          recipient_email: row.work_email,
-          amount_php: amountNum,
-          sent_date: date,
-          reason: reason.trim(),
-          notify,
-        }),
-      });
-      const j = (await res.json()) as { ok?: boolean; error?: string; notified?: boolean };
-      if (!res.ok || !j.ok) throw new Error(j.error || 'Transfer failed');
-      toast.success(`Special transfer of ${fmtMoney(amountNum)} recorded for ${row.name ?? row.work_email}.`);
-      onDone();
-    } catch (e) {
-      submittedRef.current = false;
-      toast.error(e instanceof Error ? e.message : 'Could not record transfer');
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  return (
-    <Dialog open onOpenChange={(o) => { if (!o && !submitting) onClose(); }}>
-      <DialogContent className="gap-0 p-0 sm:max-w-md">
-        <DialogHeader className="space-y-3 border-b border-zinc-200 px-5 py-4 dark:border-zinc-800">
-          <DialogTitle className="flex items-center gap-2 text-base">
-            <span className={cn('flex h-7 w-7 items-center justify-center rounded-full', accent.btn)}>
-              <Send className="h-3.5 w-3.5" />
-            </span>
-            Special transfer
-          </DialogTitle>
-          <DialogDescription className="sr-only">
-            Record a one-off payment to {row.name ?? row.work_email}.
-          </DialogDescription>
-          {/* Recipient context — confirm who's being paid before any numbers. */}
-          <div className="flex items-center gap-2.5 rounded-lg bg-zinc-50 px-3 py-2 dark:bg-zinc-900/50">
-            <TeamAvatar name={row.name ?? ''} email={row.work_email} />
-            <div className="min-w-0">
-              <div className="truncate text-sm font-medium text-zinc-900 dark:text-zinc-100">{row.name ?? row.work_email}</div>
-              <div className="truncate text-[11px] text-zinc-500">{row.department ?? row.work_email ?? ''}</div>
-            </div>
-          </div>
-        </DialogHeader>
-
-        <div className="space-y-4 px-5 py-4">
-          {/* Amount — the primary value, given the most visual weight. */}
-          <div>
-            <label htmlFor="st-amount" className="mb-1.5 block text-xs font-medium text-zinc-600 dark:text-zinc-300">Amount</label>
-            <div className="relative">
-              <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-base font-medium text-zinc-400">₱</span>
-              <Input
-                id="st-amount"
-                inputMode="decimal"
-                placeholder="0.00"
-                value={amount}
-                onChange={(e) => setAmount(e.target.value)}
-                className={cn('h-11 pl-8 text-lg font-semibold tabular-nums', accent.ring)}
-                autoFocus
-              />
-            </div>
-            {/* Fixed height so the preview appearing doesn't shift the form. */}
-            <p className="mt-1 h-4 text-[11px] text-zinc-400">
-              {usdPreview != null ? `≈ ${fmtMoney(usdPreview, 'USD')} at the current FX rate` : 'Philippine pesos'}
-            </p>
-          </div>
-
-          <div>
-            <label htmlFor="st-date" className="mb-1.5 block text-xs font-medium text-zinc-600 dark:text-zinc-300">Date sent</label>
-            <DatePicker id="st-date" value={date} max={todayIso()} onChange={setDate} required className={accent.ring} />
-          </div>
-
-          <div>
-            <label htmlFor="st-reason" className="mb-1.5 block text-xs font-medium text-zinc-600 dark:text-zinc-300">Reason</label>
-            <textarea
-              id="st-reason"
-              rows={2}
-              placeholder="e.g. Reimbursement for client travel"
-              value={reason}
-              onChange={(e) => setReason(e.target.value)}
-              className={cn(
-                'w-full resize-none rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none ring-offset-2 placeholder:text-zinc-400 focus-visible:ring-2 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100',
-                accent.ring,
-              )}
-            />
-            <p className="mt-1 text-[11px] text-zinc-400">Shown on the employee&apos;s pay history and the audit log.</p>
-          </div>
-
-          <label htmlFor="st-notify" className="flex cursor-pointer items-center justify-between gap-3 rounded-lg border border-zinc-200 px-3 py-2.5 transition-colors hover:bg-zinc-50 dark:border-zinc-800 dark:hover:bg-zinc-900/50">
-            <span className="min-w-0">
-              <span className="block text-[13px] font-medium text-zinc-800 dark:text-zinc-100">
-                Notify {row.name?.split(' ')[0] ?? 'the employee'}
-              </span>
-              <span className="block text-[11px] text-zinc-500">Sends a notification to their portal.</span>
-            </span>
-            <input
-              id="st-notify"
-              type="checkbox"
-              checked={notify}
-              onChange={(e) => setNotify(e.target.checked)}
-              className={cn('h-4 w-4 shrink-0 rounded border-zinc-300', accent.check)}
-            />
-          </label>
-
-          {/* Plain-language confirmation, shown once the form is valid. */}
-          {valid && (
-            <div className={cn('rounded-lg px-3 py-2 text-[13px]', accent.chipBg, accent.chipText)}>
-              Recording <span className="font-semibold tabular-nums">{fmtMoney(amountNum)}</span> to{' '}
-              <span className="font-medium">{row.name?.split(' ')[0] ?? row.work_email}</span> on {formatDay(date)}.
-            </div>
-          )}
-        </div>
-
-        <div className="flex shrink-0 flex-col-reverse gap-2 border-t border-zinc-200 bg-zinc-50/70 px-5 py-3.5 sm:flex-row sm:justify-end sm:px-6 dark:border-zinc-800 dark:bg-zinc-900/40">
-          <Button type="button" variant="outline" onClick={onClose} disabled={submitting}>Cancel</Button>
-          <Button
-            type="button"
-            onClick={submit}
-            disabled={!valid || submitting}
-            className={cn('gap-2 font-medium shadow-sm transition-transform active:scale-[0.98]', accent.btn)}
-          >
-            {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-            Record transfer
-          </Button>
-        </div>
-      </DialogContent>
-    </Dialog>
-  );
-}
+/* Special transfer / one-off payment removed — People is now a read-only surface. */

@@ -2,7 +2,7 @@
 
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { motion } from 'motion/react';
-import { ChevronDown, GraduationCap, MessageCircle, Send, X } from 'lucide-react';
+import { ChevronDown, GraduationCap, MessageCircle, Send, Smile, X } from 'lucide-react';
 
 /**
  * Floating live-chat window used by the "watch screen" tutoring flow.
@@ -37,6 +37,30 @@ function formatTime(ts: number): string {
   }
 }
 
+/**
+ * Curated emoji set for the composer picker. Native characters — they're
+ * inserted verbatim into the draft and stored/rendered as plain text (message
+ * bubbles use whitespace-pre-wrap), exactly like the emoji reactions elsewhere.
+ */
+const EMOJI_GROUPS: { label: string; emojis: string[] }[] = [
+  {
+    label: 'Smileys',
+    emojis: ['😀', '😄', '😁', '😊', '🙂', '😉', '😍', '😘', '😎', '🤩', '🥳', '😇', '🤔', '🤗', '😅', '😂', '🤣', '🙃', '😌', '😴'],
+  },
+  {
+    label: 'Gestures',
+    emojis: ['👍', '👎', '👏', '🙌', '🙏', '👌', '🤝', '💪', '🤙', '✌️', '🤞', '👋', '🫡', '🫶'],
+  },
+  {
+    label: 'Love & hype',
+    emojis: ['❤️', '🧡', '💛', '💚', '💙', '💜', '🖤', '💯', '🔥', '✨', '⭐', '🎉', '🎊', '💫'],
+  },
+  {
+    label: 'Work',
+    emojis: ['✅', '❌', '⚠️', '❓', '❗', '📌', '📎', '📝', '💡', '⏰', '🚀', '👀', '🆗', '🔒'],
+  },
+];
+
 export default function CobrowseChatWindow({
   title,
   subtitle,
@@ -70,6 +94,7 @@ export default function CobrowseChatWindow({
 }) {
   const [collapsed, setCollapsed] = useState(false);
   const [draft, setDraft] = useState('');
+  const [emojiOpen, setEmojiOpen] = useState(false);
   const listRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
@@ -90,6 +115,23 @@ export default function CobrowseChatWindow({
     onSend(text);
     setDraft('');
     inputRef.current?.focus();
+  };
+
+  // Insert an emoji at the caret (or append), keeping the input focused so the
+  // user can keep typing / adding more.
+  const insertEmoji = (emoji: string) => {
+    const el = inputRef.current;
+    const start = el?.selectionStart ?? draft.length;
+    const end = el?.selectionEnd ?? draft.length;
+    const next = draft.slice(0, start) + emoji + draft.slice(end);
+    setDraft(next);
+    requestAnimationFrame(() => {
+      const input = inputRef.current;
+      if (!input) return;
+      input.focus();
+      const pos = start + emoji.length;
+      input.setSelectionRange(pos, pos);
+    });
   };
 
   const right = 16 + offsetIndex * 356;
@@ -207,8 +249,51 @@ export default function CobrowseChatWindow({
             )}
           </div>
 
+          {/* Emoji picker — sits in-flow above the composer so it stays inside
+              the window (the root is overflow-hidden, so a floating popover
+              would be clipped). */}
+          {emojiOpen && (
+            <div className="max-h-[172px] shrink-0 overflow-y-auto border-t border-zinc-200 bg-white px-2 py-2 dark:border-zinc-800 dark:bg-zinc-900">
+              {EMOJI_GROUPS.map((group) => (
+                <div key={group.label} className="mb-1.5 last:mb-0">
+                  <div className="px-1 pb-0.5 text-[10px] font-semibold uppercase tracking-wider text-zinc-400 dark:text-zinc-500">
+                    {group.label}
+                  </div>
+                  <div className="grid grid-cols-8 gap-0.5">
+                    {group.emojis.map((emoji) => (
+                      <button
+                        key={emoji}
+                        type="button"
+                        onClick={() => insertEmoji(emoji)}
+                        className="flex h-8 w-8 items-center justify-center rounded-lg text-[18px] leading-none transition-transform hover:scale-125 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                        title={`Add ${emoji}`}
+                      >
+                        {emoji}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
           {/* Composer */}
-          <div className="flex shrink-0 items-center gap-2 border-t border-zinc-200 bg-white px-2.5 py-2 dark:border-zinc-800 dark:bg-zinc-900">
+          <div className="flex shrink-0 items-center gap-1.5 border-t border-zinc-200 bg-white px-2.5 py-2 dark:border-zinc-800 dark:bg-zinc-900">
+            <button
+              type="button"
+              onClick={() => setEmojiOpen((o) => !o)}
+              className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full transition-colors ${
+                emojiOpen
+                  ? 'text-white'
+                  : 'text-zinc-400 hover:bg-zinc-100 hover:text-zinc-600 dark:hover:bg-zinc-800 dark:hover:text-zinc-300'
+              }`}
+              style={emojiOpen ? { background: accent } : undefined}
+              title="Emoji"
+              aria-label="Insert emoji"
+              aria-expanded={emojiOpen}
+            >
+              <Smile className="h-4 w-4" aria-hidden />
+            </button>
             <input
               ref={inputRef}
               value={draft}
@@ -217,6 +302,9 @@ export default function CobrowseChatWindow({
                 if (e.key === 'Enter' && !e.shiftKey) {
                   e.preventDefault();
                   send();
+                } else if (e.key === 'Escape' && emojiOpen) {
+                  e.preventDefault();
+                  setEmojiOpen(false);
                 }
               }}
               placeholder={placeholder}

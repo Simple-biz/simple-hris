@@ -64,6 +64,10 @@ interface Props {
   hideInlineCard?: boolean;
 }
 
+/** Apparel sizes offered on the form — covers shirts, hoodies, jackets, polos.
+ *  Non-apparel milestone gifts (tumbler, mug, speaker, …) just leave it blank. */
+const APPAREL_SIZES = ['XS', 'S', 'M', 'L', 'XL', '2XL', '3XL'] as const;
+
 /** Positions for the floating hearts behind the card content. */
 const HEARTS_FLOAT = [
   { left: '6%',  delay: '0s',    dur: '5.2s', size: 14, rotate: -8 },
@@ -150,6 +154,7 @@ export default function GiftShippingCard({
   // Form fields
   const [location, setLocation] = useState('');
   const [contact, setContact] = useState('');
+  const [size, setSize] = useState('');
   const [notes, setNotes] = useState('');
   const [saving, setSaving] = useState(false);
   /** Switches the dialog to the celebration screen for ~2.4s after a successful save. */
@@ -174,10 +179,12 @@ export default function GiftShippingCard({
       if (match) {
         setLocation(match.preferred_delivery_location);
         setContact(match.active_contact_number);
+        setSize(match.apparel_size ?? '');
         setNotes(match.notes);
       } else {
         setLocation('');
         setContact('');
+        setSize('');
         setNotes('');
       }
     } catch (e) {
@@ -276,6 +283,7 @@ export default function GiftShippingCard({
           milestone_date: fmtDateIso(milestone.date),
           preferred_delivery_location: location.trim(),
           active_contact_number: contact.trim(),
+          apparel_size: size,
           notes: notes.trim(),
         }),
       });
@@ -824,6 +832,38 @@ export default function GiftShippingCard({
                   />
                 </div>
                 <div className="grid gap-1.5">
+                  <Label className="text-xs font-medium">
+                    Shirt / apparel size{' '}
+                    <span className="font-normal text-zinc-400">· for wearable gifts</span>
+                  </Label>
+                  <div className="flex flex-wrap gap-1.5">
+                    {APPAREL_SIZES.map((s) => {
+                      const active = size === s;
+                      return (
+                        <button
+                          key={s}
+                          type="button"
+                          disabled={isLocked || saving}
+                          onClick={() => setSize(active ? '' : s)}
+                          aria-pressed={active}
+                          className={cn(
+                            'min-w-[46px] rounded-full border px-3 py-1.5 text-xs font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-60',
+                            active
+                              ? 'border-pink-500 bg-pink-600 text-white shadow-sm shadow-pink-600/25'
+                              : 'border-pink-200/80 bg-white text-zinc-600 hover:border-pink-300 hover:bg-pink-50 dark:border-pink-900/50 dark:bg-zinc-950 dark:text-zinc-300 dark:hover:bg-pink-950/30',
+                          )}
+                        >
+                          {s}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <p className="text-[11px] text-zinc-400">
+                    Tap your size for shirts, hoodies, jackets or polos. Leave blank for
+                    non-apparel gifts (mug, tumbler, speaker…).
+                  </p>
+                </div>
+                <div className="grid gap-1.5">
                   <Label htmlFor="ship-notes" className="text-xs font-medium">
                     Notes <span className="font-normal text-zinc-400">· optional</span>
                   </Label>
@@ -999,11 +1039,6 @@ export default function GiftShippingCard({
                         <div className="mt-1.5 flex items-center gap-1.5 rounded-md border border-emerald-100 bg-emerald-50/80 px-2.5 py-1.5 text-[11px] font-medium text-emerald-800 dark:border-emerald-900/40 dark:bg-emerald-950/30 dark:text-emerald-300">
                           <Gift className="h-3 w-3 shrink-0" />
                           <span>{msRow.gift_name}</span>
-                          {msRow.gift_price_php != null && (
-                            <span className="ml-auto font-normal text-emerald-600 dark:text-emerald-500">
-                              ₱{msRow.gift_price_php.toLocaleString()}
-                            </span>
-                          )}
                         </div>
                       )}
                       {msStatus === 'rejected' && msRow?.decision_note && (

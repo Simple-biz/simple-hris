@@ -1,6 +1,8 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
+import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import { CalendarDays, CalendarRange, ChevronLeft, ChevronRight, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -54,16 +56,39 @@ export interface PickerAccent {
   bar: string;
   /** Text on top of `bar` (defaults to white). */
   barText?: string;
+  /** Focus ring for controls *inside* the panel (nav, presets, day cells).
+   *  Falls back to the brand default so a themed picker stays cohesive. */
+  focusRing?: string;
+  /** Text color for the "today" marker (number + dot). Falls back to brand. */
+  today?: string;
 }
 
+/** Brand-orange default (see `--primary` in index.css). Every emphasis color
+ *  is AA-legible in both themes; picking a hue keeps the whole popover on one
+ *  color story instead of leaking a stray accent into focus/today/month cells. */
 const DEFAULT_ACCENT: PickerAccent = {
-  ring: 'focus-visible:ring-teal-500/30 focus-visible:border-teal-500',
-  chipBg: 'bg-teal-50 dark:bg-teal-950/40',
-  chipText: 'text-teal-800 dark:text-teal-200',
+  ring: 'focus-visible:ring-orange-500/30 focus-visible:border-orange-500',
+  chipBg: 'bg-orange-50 dark:bg-orange-950/40',
+  chipText: 'text-orange-800 dark:text-orange-200',
   btn: '',
-  bar: 'bg-teal-700 dark:bg-teal-400',
-  barText: 'text-white dark:text-teal-950',
+  bar: 'bg-orange-700 dark:bg-orange-500',
+  barText: 'text-white dark:text-orange-950',
+  focusRing: 'focus-visible:ring-orange-500/50',
+  today: 'text-orange-700 dark:text-orange-300',
 };
+
+/** Every emphasis color MonthGrid needs, with the optional interior fields
+ *  (focus ring + today marker) resolved from the brand default. */
+type GridAccent = { bar: string; barText: string; chipBg: string; chipText: string; focusRing: string; today: string };
+const resolveGridAccent = (a: PickerAccent): GridAccent => ({
+  bar: a.bar,
+  barText: a.barText ?? 'text-white',
+  chipBg: a.chipBg,
+  chipText: a.chipText,
+  focusRing: a.focusRing ?? DEFAULT_ACCENT.focusRing!,
+  today: a.today ?? DEFAULT_ACCENT.today!,
+});
+const DEFAULT_GRID = resolveGridAccent(DEFAULT_ACCENT);
 
 /* ------------------------------------------------------------------ */
 /* Popover shell: outside-click / Escape close + edge-aware placement  */
@@ -121,8 +146,11 @@ const panelClass = (up: boolean, right: boolean) =>
     'max-w-[calc(100vw-2rem)]',
   );
 
-const navBtnClass =
-  'flex h-7 w-7 items-center justify-center rounded-md text-zinc-500 transition-colors hover:bg-zinc-100 hover:text-zinc-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500/40 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-200';
+const navBtnClass = (focusRing: string) =>
+  cn(
+    'flex h-7 w-7 items-center justify-center rounded-md text-zinc-500 transition-colors hover:bg-zinc-100 hover:text-zinc-700 focus-visible:outline-none focus-visible:ring-2 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-200',
+    focusRing,
+  );
 
 /* ------------------------------------------------------------------ */
 /* Month grid (shared by single + range pickers)                       */
@@ -138,7 +166,7 @@ interface MonthGridProps {
   onPick: (iso: string) => void;
   onHover?: (iso: string | null) => void;
   focusIso: string | null;
-  accent: Required<Pick<PickerAccent, 'bar' | 'chipBg' | 'chipText'>> & { barText: string };
+  accent: GridAccent;
   range: boolean;
   /** Render out-of-month cells as empty space (two-month layouts). */
   hideOutside?: boolean;
@@ -190,7 +218,7 @@ function MonthGrid({ month, todayIso, lo, hi, isDisabled, onPick, onHover, focus
                 !disabled && inMonth && !inRange && 'text-zinc-700 dark:text-zinc-200',
                 !disabled && !isEdge && 'rounded-lg hover:bg-zinc-100 dark:hover:bg-zinc-800',
                 inRange && !isEdge && cn('rounded-none', accent.chipBg, accent.chipText, 'font-medium'),
-                !disabled && 'focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-teal-500/60',
+                !disabled && cn('focus-visible:ring-2 focus-visible:ring-inset', accent.focusRing),
               )}
             >
               {/* Continuous tint behind the edge days of a multi-day range. */}
@@ -200,17 +228,14 @@ function MonthGrid({ month, todayIso, lo, hi, isDisabled, onPick, onHover, focus
                 className={cn(
                   'relative z-10 mx-auto flex h-9 w-9 items-center justify-center rounded-lg',
                   isEdge && cn('font-semibold', accent.bar, accent.barText),
-                  !isEdge && isToday && !disabled && 'font-semibold text-teal-700 dark:text-teal-300',
+                  !isEdge && isToday && !disabled && cn('font-semibold', accent.today),
                 )}
               >
                 {d.getDate()}
                 {isToday && (
                   <span
                     aria-hidden
-                    className={cn(
-                      'absolute bottom-1 h-1 w-1 rounded-full',
-                      isEdge ? 'bg-current opacity-80' : 'bg-teal-600 dark:bg-teal-400',
-                    )}
+                    className={cn('absolute bottom-1 h-1 w-1 rounded-full bg-current', isEdge && 'opacity-80')}
                   />
                 )}
               </span>
@@ -464,7 +489,7 @@ export function DatePicker({
                 else if (view === 'months') setViewMonth((m) => new Date(m.getFullYear() - 1, m.getMonth(), 1));
                 else setYearBase((b) => b - 12);
               }}
-              className={navBtnClass}
+              className={navBtnClass(DEFAULT_GRID.focusRing)}
             >
               <ChevronLeft className="h-4 w-4" />
             </button>
@@ -472,7 +497,10 @@ export function DatePicker({
               type="button"
               onClick={() => setView((v) => (v === 'days' ? 'months' : v === 'months' ? 'years' : 'days'))}
               aria-label="Choose month and year"
-              className="rounded-md px-2 py-1 text-[13px] font-semibold text-zinc-800 transition-colors hover:bg-zinc-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500/40 dark:text-zinc-100 dark:hover:bg-zinc-800"
+              className={cn(
+                'rounded-md px-2 py-1 text-[13px] font-semibold text-zinc-800 transition-colors hover:bg-zinc-100 focus-visible:outline-none focus-visible:ring-2 dark:text-zinc-100 dark:hover:bg-zinc-800',
+                DEFAULT_GRID.focusRing,
+              )}
             >
               {view === 'years'
                 ? `${yearBase}–${yearBase + 11}`
@@ -488,7 +516,7 @@ export function DatePicker({
                 else if (view === 'months') setViewMonth((m) => new Date(m.getFullYear() + 1, m.getMonth(), 1));
                 else setYearBase((b) => b + 12);
               }}
-              className={navBtnClass}
+              className={navBtnClass(DEFAULT_GRID.focusRing)}
             >
               <ChevronRight className="h-4 w-4" />
             </button>
@@ -504,12 +532,7 @@ export function DatePicker({
                 isDisabled={isDisabled}
                 onPick={pick}
                 focusIso={focusIso}
-                accent={{
-                  bar: DEFAULT_ACCENT.bar,
-                  barText: DEFAULT_ACCENT.barText!,
-                  chipBg: DEFAULT_ACCENT.chipBg,
-                  chipText: DEFAULT_ACCENT.chipText,
-                }}
+                accent={DEFAULT_GRID}
                 range={false}
               />
             </div>
@@ -530,9 +553,10 @@ export function DatePicker({
                       setView('days');
                     }}
                     className={cn(
-                      'h-9 rounded-lg text-[13px] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500/40',
+                      'h-9 rounded-lg text-[13px] transition-colors focus-visible:outline-none focus-visible:ring-2',
+                      DEFAULT_GRID.focusRing,
                       off && 'cursor-not-allowed text-zinc-300 dark:text-zinc-700',
-                      !off && isCurrent && 'bg-teal-700 font-semibold text-white dark:bg-teal-400 dark:text-teal-950',
+                      !off && isCurrent && cn('font-semibold', DEFAULT_GRID.bar, DEFAULT_GRID.barText),
                       !off && !isCurrent && 'text-zinc-700 hover:bg-zinc-100 dark:text-zinc-200 dark:hover:bg-zinc-800',
                     )}
                   >
@@ -558,9 +582,10 @@ export function DatePicker({
                       setView('months');
                     }}
                     className={cn(
-                      'h-9 rounded-lg text-[13px] tabular-nums transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500/40',
+                      'h-9 rounded-lg text-[13px] tabular-nums transition-colors focus-visible:outline-none focus-visible:ring-2',
+                      DEFAULT_GRID.focusRing,
                       off && 'cursor-not-allowed text-zinc-300 dark:text-zinc-700',
-                      !off && isCurrent && 'bg-teal-700 font-semibold text-white dark:bg-teal-400 dark:text-teal-950',
+                      !off && isCurrent && cn('font-semibold', DEFAULT_GRID.bar, DEFAULT_GRID.barText),
                       !off && !isCurrent && 'text-zinc-700 hover:bg-zinc-100 dark:text-zinc-200 dark:hover:bg-zinc-800',
                     )}
                   >
@@ -577,7 +602,11 @@ export function DatePicker({
               type="button"
               disabled={isDisabled(todayIso)}
               onClick={() => pick(todayIso)}
-              className="rounded-md px-1.5 py-0.5 text-[12px] font-medium text-teal-700 transition-colors hover:bg-teal-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500/40 disabled:cursor-not-allowed disabled:text-zinc-300 dark:text-teal-300 dark:hover:bg-teal-950/40 dark:disabled:text-zinc-700"
+              className={cn(
+                'rounded-md px-1.5 py-0.5 text-[12px] font-medium transition-colors hover:bg-zinc-100 focus-visible:outline-none focus-visible:ring-2 disabled:cursor-not-allowed disabled:text-zinc-300 dark:hover:bg-zinc-800 dark:disabled:text-zinc-700',
+                DEFAULT_GRID.today,
+                DEFAULT_GRID.focusRing,
+              )}
             >
               Today
             </button>
@@ -588,7 +617,10 @@ export function DatePicker({
                   onChange('');
                   closePanel(true);
                 }}
-                className="rounded-md px-1.5 py-0.5 text-[12px] font-medium text-zinc-500 transition-colors hover:bg-zinc-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500/40 dark:text-zinc-400 dark:hover:bg-zinc-800"
+                className={cn(
+                  'rounded-md px-1.5 py-0.5 text-[12px] font-medium text-zinc-500 transition-colors hover:bg-zinc-100 focus-visible:outline-none focus-visible:ring-2 dark:text-zinc-400 dark:hover:bg-zinc-800',
+                  DEFAULT_GRID.focusRing,
+                )}
               >
                 Clear
               </button>
@@ -676,12 +708,7 @@ export function DateRangePicker({
   const minIso = (min ?? '').trim() || null;
   const isDisabled = (iso: string) => !!((minIso && iso < minIso) || (maxIso && iso > maxIso));
 
-  const gridAccent = {
-    bar: accent.bar,
-    barText: accent.barText ?? 'text-white',
-    chipBg: accent.chipBg,
-    chipText: accent.chipText,
-  };
+  const gridAccent = resolveGridAccent(accent);
 
   const show = () => {
     const anchorIso = value ? value.end : maxIso ?? toIso(new Date());
@@ -816,7 +843,10 @@ export function DateRangePicker({
                   key={p.label}
                   type="button"
                   onClick={() => applyPreset(p.make())}
-                  className="rounded-full border border-zinc-200 px-2.5 py-1 text-[11px] font-medium text-zinc-600 transition-colors hover:bg-zinc-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500/40 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-900"
+                  className={cn(
+                    'rounded-full border border-zinc-200 px-2.5 py-1 text-[11px] font-medium text-zinc-600 transition-colors hover:bg-zinc-50 focus-visible:outline-none focus-visible:ring-2 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-900',
+                    gridAccent.focusRing,
+                  )}
                 >
                   {p.label}
                 </button>
@@ -826,7 +856,7 @@ export function DateRangePicker({
 
           {/* Month headers + nav */}
           <div className="mb-1 flex items-center">
-            <button type="button" onClick={() => setViewMonth((m) => addMonths(m, -1))} className={navBtnClass} aria-label="Previous month">
+            <button type="button" onClick={() => setViewMonth((m) => addMonths(m, -1))} className={navBtnClass(gridAccent.focusRing)} aria-label="Previous month">
               <ChevronLeft className="h-4 w-4" />
             </button>
             <span className="flex-1 text-center text-[13px] font-semibold text-zinc-800 dark:text-zinc-100">
@@ -835,7 +865,7 @@ export function DateRangePicker({
             <span className="hidden flex-1 text-center text-[13px] font-semibold text-zinc-800 sm:block dark:text-zinc-100">
               {rightMonth.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
             </span>
-            <button type="button" onClick={() => setViewMonth((m) => addMonths(m, 1))} className={navBtnClass} aria-label="Next month">
+            <button type="button" onClick={() => setViewMonth((m) => addMonths(m, 1))} className={navBtnClass(gridAccent.focusRing)} aria-label="Next month">
               <ChevronRight className="h-4 w-4" />
             </button>
           </div>
@@ -892,7 +922,10 @@ export function DateRangePicker({
                   onChange(null);
                   hide(true);
                 }}
-                className="rounded-md px-1.5 py-0.5 text-[12px] font-medium text-zinc-500 transition-colors hover:bg-zinc-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500/40 dark:text-zinc-400 dark:hover:bg-zinc-800"
+                className={cn(
+                  'rounded-md px-1.5 py-0.5 text-[12px] font-medium text-zinc-500 transition-colors hover:bg-zinc-100 focus-visible:outline-none focus-visible:ring-2 dark:text-zinc-400 dark:hover:bg-zinc-800',
+                  gridAccent.focusRing,
+                )}
               >
                 Clear
               </button>
@@ -968,8 +1001,12 @@ export function WeekPicker({
   onAction,
   'aria-label': ariaLabel,
 }: WeekPickerProps) {
-  const { open, openPanel, closePanel, placement, rootRef, triggerRef } = usePickerPopover(576);
+  // Renders as a centered modal (not an anchored popover): a focused surface
+  // for picking the exact Sun→Sat pay week before syncing.
+  const [open, setOpen] = useState(false);
   const panelRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const reduceMotion = useReducedMotion();
   const [viewMonth, setViewMonth] = useState<Date>(() => startOfMonth(new Date()));
   const [hoverDay, setHoverDay] = useState<string | null>(null);
   const [focusIso, setFocusIso] = useState<string | null>(null);
@@ -978,12 +1015,7 @@ export function WeekPicker({
   const maxIso = (max ?? '').trim() || null;
   const isDisabled = (iso: string) => !!((minIso && iso < minIso) || (maxIso && iso > maxIso));
 
-  const gridAccent = {
-    bar: accent.bar,
-    barText: accent.barText ?? 'text-white',
-    chipBg: accent.chipBg,
-    chipText: accent.chipText,
-  };
+  const gridAccent = resolveGridAccent(accent);
 
   const show = () => {
     const anchorIso = value ? value.start : maxIso ?? toIso(new Date());
@@ -993,15 +1025,59 @@ export function WeekPicker({
     setViewMonth(startOfMonth(anchor));
     setHoverDay(null);
     setFocusIso(anchorIso);
-    openPanel();
+    setOpen(true);
     requestAnimationFrame(() => {
       panelRef.current?.querySelector<HTMLButtonElement>(`[data-iso="${anchorIso}"]`)?.focus();
     });
   };
   const hide = (refocus = false) => {
     setHoverDay(null);
-    closePanel(refocus);
+    setOpen(false);
+    if (refocus) triggerRef.current?.focus();
   };
+
+  // Modal chrome: Escape closes, and the body scroll locks while it's open so
+  // the calendar is the only thing the operator interacts with.
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.stopPropagation();
+        hide(true);
+        return;
+      }
+      // Keep Tab focus inside the dialog.
+      if (e.key === 'Tab' && panelRef.current) {
+        const focusables = Array.from(
+          panelRef.current.querySelectorAll<HTMLElement>(
+            'button:not([disabled]):not([tabindex="-1"]), [href], input:not([disabled]), [tabindex]:not([tabindex="-1"])',
+          ),
+        ).filter((el) => el.offsetParent !== null);
+        if (focusables.length === 0) return;
+        const first = focusables[0]!;
+        const last = focusables[focusables.length - 1]!;
+        const active = document.activeElement as HTMLElement | null;
+        if (active && !panelRef.current.contains(active)) {
+          e.preventDefault();
+          first.focus();
+        } else if (e.shiftKey && active === first) {
+          e.preventDefault();
+          last.focus();
+        } else if (!e.shiftKey && active === last) {
+          e.preventDefault();
+          first.focus();
+        }
+      }
+    };
+    document.addEventListener('keydown', onKey);
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      document.body.style.overflow = prevOverflow;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
 
   // Highlighted span: the hovered day's week while the pointer is in the grid,
   // else the committed value — never a stale focus position, so the highlighted
@@ -1057,13 +1133,15 @@ export function WeekPicker({
 
   const todayIso = toIso(new Date());
 
+  const weekLabel = value ? formatRange(value.start, value.end) : null;
+
   return (
-    <div ref={rootRef} className={cn('relative', className)}>
+    <div className={className}>
       <button
         ref={triggerRef}
         type="button"
         disabled={disabled}
-        onClick={() => (open ? hide() : show())}
+        onClick={() => (open ? hide(true) : show())}
         aria-haspopup="dialog"
         aria-expanded={open}
         aria-label={ariaLabel}
@@ -1091,120 +1169,193 @@ export function WeekPicker({
         )}
       </button>
 
-      {open && (
-        <div
-          ref={panelRef}
-          role="dialog"
-          aria-label="Choose a pay week"
-          className={cn(panelClass(placement.up, placement.right), 'w-[19rem] sm:w-[36rem]')}
-        >
-          {/* Presets — most syncs target the week that just closed. */}
-          <div className="mb-2 flex flex-wrap gap-1.5">
-            {[
-              { label: 'Last week', offset: 1 },
-              { label: 'This week', offset: 0 },
-            ].map((p) => (
-              <button
-                key={p.label}
-                type="button"
-                onClick={() => pickRelativeWeek(p.offset)}
-                className="rounded-full border border-zinc-200 px-2.5 py-1 text-[11px] font-medium text-zinc-600 transition-colors hover:bg-zinc-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500/40 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-900"
+      {typeof document !== 'undefined' &&
+        createPortal(
+          <AnimatePresence>
+            {open && (
+              <motion.div
+                className="fixed inset-0 z-[120] flex items-center justify-center p-4 sm:p-6"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: reduceMotion ? 0 : 0.18 }}
               >
-                {p.label}
-              </button>
-            ))}
-            <span className="ml-auto hidden items-center text-[10px] font-medium uppercase tracking-wide text-zinc-400 sm:flex dark:text-zinc-500">
-              Sun → Sat
-            </span>
-          </div>
+                {/* Backdrop */}
+                <div
+                  className="absolute inset-0 bg-zinc-950/50 backdrop-blur-sm"
+                  onClick={() => hide(true)}
+                  aria-hidden
+                />
 
-          {/* Month headers + nav */}
-          <div className="mb-1 flex items-center">
-            <button type="button" onClick={() => setViewMonth((m) => addMonths(m, -1))} className={navBtnClass} aria-label="Previous month">
-              <ChevronLeft className="h-4 w-4" />
-            </button>
-            <span className="flex-1 text-center text-[13px] font-semibold text-zinc-800 dark:text-zinc-100">
-              {viewMonth.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
-            </span>
-            <span className="hidden flex-1 text-center text-[13px] font-semibold text-zinc-800 sm:block dark:text-zinc-100">
-              {rightMonth.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
-            </span>
-            <button type="button" onClick={() => setViewMonth((m) => addMonths(m, 1))} className={navBtnClass} aria-label="Next month">
-              <ChevronRight className="h-4 w-4" />
-            </button>
-          </div>
+                {/* Card */}
+                <motion.div
+                  ref={panelRef}
+                  role="dialog"
+                  aria-modal="true"
+                  aria-label="Choose a pay week"
+                  tabIndex={-1}
+                  onClick={(e) => e.stopPropagation()}
+                  initial={reduceMotion ? { opacity: 0 } : { opacity: 0, scale: 0.96, y: 12 }}
+                  animate={reduceMotion ? { opacity: 1 } : { opacity: 1, scale: 1, y: 0 }}
+                  exit={reduceMotion ? { opacity: 0 } : { opacity: 0, scale: 0.97, y: 8 }}
+                  transition={{ duration: reduceMotion ? 0 : 0.24, ease: [0.22, 1, 0.36, 1] }}
+                  className="relative z-[1] flex max-h-[calc(100vh-2rem)] w-full max-w-[22rem] flex-col overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-2xl shadow-black/30 sm:max-w-2xl dark:border-zinc-800 dark:bg-[#0d1117]"
+                >
+                  {/* Header */}
+                  <div className="flex items-start gap-3 border-b border-zinc-100 px-5 py-4 dark:border-zinc-800">
+                    <span className={cn('flex h-9 w-9 shrink-0 items-center justify-center rounded-xl', gridAccent.chipBg, gridAccent.chipText)}>
+                      <CalendarRange className="h-[18px] w-[18px]" aria-hidden />
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <h2 className="text-[15px] font-semibold leading-tight text-zinc-900 dark:text-white">Select pay week</h2>
+                      <p className="mt-0.5 text-[12.5px] leading-snug text-zinc-500 dark:text-zinc-400">
+                        Pick any day and its whole Sunday → Saturday week is selected.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => hide(true)}
+                      aria-label="Close"
+                      className={cn(
+                        '-mr-1 -mt-1 shrink-0 rounded-lg p-1.5 text-zinc-400 transition-colors hover:bg-zinc-100 hover:text-zinc-600 focus-visible:outline-none focus-visible:ring-2 dark:hover:bg-zinc-800 dark:hover:text-zinc-300',
+                        gridAccent.focusRing,
+                      )}
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  </div>
 
-          {/* Day grids — hovering any day previews its whole Sun→Sat week. */}
-          <div className="flex gap-4" onKeyDown={onGridKeys}>
-            <div className="min-w-0 flex-1">
-              <MonthGrid
-                month={viewMonth}
-                todayIso={todayIso}
-                lo={lo}
-                hi={hi}
-                isDisabled={isDisabled}
-                onPick={pickDay}
-                onHover={hoverDayTo}
-                focusIso={focusIso}
-                accent={gridAccent}
-                range
-                hideOutside
-              />
-            </div>
-            <div className="hidden min-w-0 flex-1 sm:block">
-              <MonthGrid
-                month={rightMonth}
-                todayIso={todayIso}
-                lo={lo}
-                hi={hi}
-                isDisabled={isDisabled}
-                onPick={pickDay}
-                onHover={hoverDayTo}
-                focusIso={focusIso}
-                accent={gridAccent}
-                range
-                hideOutside
-              />
-            </div>
-          </div>
+                  {/* Body */}
+                  <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+                    {/* Presets — most syncs target the week that just closed. */}
+                    <div className="mb-3 flex flex-wrap items-center gap-1.5">
+                      {[
+                        { label: 'Last week', offset: 1 },
+                        { label: 'This week', offset: 0 },
+                      ].map((p) => (
+                        <button
+                          key={p.label}
+                          type="button"
+                          onClick={() => pickRelativeWeek(p.offset)}
+                          className={cn(
+                            'rounded-full border border-zinc-200 px-3 py-1 text-[11px] font-medium text-zinc-600 transition-colors hover:bg-zinc-50 focus-visible:outline-none focus-visible:ring-2 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-900',
+                            gridAccent.focusRing,
+                          )}
+                        >
+                          {p.label}
+                        </button>
+                      ))}
+                      <span className="ml-auto flex items-center text-[10px] font-medium uppercase tracking-wide text-zinc-400 dark:text-zinc-500">
+                        Sun → Sat
+                      </span>
+                    </div>
 
-          {/* Footer — selected week + optional confirm CTA */}
-          <div className="mt-2 flex items-center justify-between gap-2 border-t border-zinc-100 pt-2 dark:border-zinc-800">
-            <span className="min-w-0 truncate text-[11px] text-zinc-500 dark:text-zinc-400" aria-live="polite">
-              {value
-                ? `${formatRange(value.start, value.end)} · Sun → Sat`
-                : 'Pick any day — its whole Sun → Sat week is selected'}
-            </span>
-            {onAction && (
-              <button
-                type="button"
-                disabled={!value || actionBusy}
-                onClick={() => {
-                  if (!value) return;
-                  hide(true);
-                  onAction(value);
-                }}
-                className={cn(
-                  'inline-flex shrink-0 items-center gap-1.5 rounded-md px-2.5 py-1 text-[12px] font-semibold transition-colors',
-                  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500/40',
-                  'disabled:cursor-not-allowed disabled:opacity-50',
-                  accent.bar,
-                  accent.barText ?? 'text-white',
-                )}
-              >
-                {actionBusy && (
-                  <span
-                    aria-hidden
-                    className="h-3 w-3 animate-spin rounded-full border-2 border-current border-t-transparent"
-                  />
-                )}
-                {actionLabel ?? 'Use'}
-                {value ? ` ${formatRange(value.start, value.end)}` : ''}
-              </button>
+                    {/* Month headers + nav */}
+                    <div className="mb-1 flex items-center">
+                      <button type="button" onClick={() => setViewMonth((m) => addMonths(m, -1))} className={navBtnClass(gridAccent.focusRing)} aria-label="Previous month">
+                        <ChevronLeft className="h-4 w-4" />
+                      </button>
+                      <span className="flex-1 text-center text-[13px] font-semibold text-zinc-800 dark:text-zinc-100">
+                        {viewMonth.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
+                      </span>
+                      <span className="hidden flex-1 text-center text-[13px] font-semibold text-zinc-800 sm:block dark:text-zinc-100">
+                        {rightMonth.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
+                      </span>
+                      <button type="button" onClick={() => setViewMonth((m) => addMonths(m, 1))} className={navBtnClass(gridAccent.focusRing)} aria-label="Next month">
+                        <ChevronRight className="h-4 w-4" />
+                      </button>
+                    </div>
+
+                    {/* Day grids — hovering any day previews its whole Sun→Sat week. */}
+                    <div className="flex gap-5" onKeyDown={onGridKeys}>
+                      <div className="min-w-0 flex-1">
+                        <MonthGrid
+                          month={viewMonth}
+                          todayIso={todayIso}
+                          lo={lo}
+                          hi={hi}
+                          isDisabled={isDisabled}
+                          onPick={pickDay}
+                          onHover={hoverDayTo}
+                          focusIso={focusIso}
+                          accent={gridAccent}
+                          range
+                          hideOutside
+                        />
+                      </div>
+                      <div className="hidden min-w-0 flex-1 sm:block">
+                        <MonthGrid
+                          month={rightMonth}
+                          todayIso={todayIso}
+                          lo={lo}
+                          hi={hi}
+                          isDisabled={isDisabled}
+                          onPick={pickDay}
+                          onHover={hoverDayTo}
+                          focusIso={focusIso}
+                          accent={gridAccent}
+                          range
+                          hideOutside
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Footer — selected week + confirm CTA */}
+                  <div className="flex items-center justify-between gap-3 border-t border-zinc-100 bg-zinc-50/70 px-5 py-3.5 dark:border-zinc-800 dark:bg-zinc-900/40">
+                    <span className="min-w-0 flex-1 truncate text-[12px] text-zinc-500 dark:text-zinc-400" aria-live="polite">
+                      {weekLabel ? (
+                        <>
+                          Selected: <span className="font-semibold text-zinc-700 dark:text-zinc-200">{weekLabel}</span>
+                        </>
+                      ) : (
+                        'No week selected yet'
+                      )}
+                    </span>
+                    <div className="flex shrink-0 items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => hide(true)}
+                        className={cn(
+                          'rounded-lg px-3 py-1.5 text-[12px] font-medium text-zinc-600 transition-colors hover:bg-zinc-100 focus-visible:outline-none focus-visible:ring-2 dark:text-zinc-300 dark:hover:bg-zinc-800',
+                          gridAccent.focusRing,
+                        )}
+                      >
+                        Cancel
+                      </button>
+                      {onAction && (
+                        <button
+                          type="button"
+                          disabled={!value || actionBusy}
+                          onClick={() => {
+                            if (!value) return;
+                            hide(true);
+                            onAction(value);
+                          }}
+                          className={cn(
+                            'inline-flex shrink-0 items-center gap-1.5 rounded-lg px-3.5 py-1.5 text-[12px] font-semibold shadow-sm transition-colors',
+                            'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-[#0d1117]',
+                            gridAccent.focusRing,
+                            'disabled:cursor-not-allowed disabled:opacity-50',
+                            accent.bar,
+                            accent.barText ?? 'text-white',
+                          )}
+                        >
+                          {actionBusy && (
+                            <span aria-hidden className="h-3 w-3 animate-spin rounded-full border-2 border-current border-t-transparent" />
+                          )}
+                          {actionLabel ?? 'Use'}
+                          {weekLabel ? ` ${weekLabel}` : ''}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </motion.div>
+              </motion.div>
             )}
-          </div>
-        </div>
-      )}
+          </AnimatePresence>,
+          document.body,
+        )}
     </div>
   );
 }

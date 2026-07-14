@@ -12,7 +12,6 @@ const STATUS_MESSAGES = [
   'Applying PAB & Tech bonuses',
   'Reconciling Time Adjustments',
   'Checking Orphanage budgets',
-  'Fetching Gift payments',
   'Computing current pay & FX rate',
 ];
 

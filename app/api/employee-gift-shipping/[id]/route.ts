@@ -15,6 +15,7 @@ interface EditBody {
   edited_by?: string | null;
   preferred_delivery_location?: string;
   active_contact_number?: string;
+  apparel_size?: string;
   notes?: string;
 }
 
@@ -40,6 +41,7 @@ export async function PATCH(
     id,
     preferred_delivery_location: body.preferred_delivery_location,
     active_contact_number: body.active_contact_number,
+    apparel_size: body.apparel_size,
     notes: body.notes,
   });
   if (error || !row) {

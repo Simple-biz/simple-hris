@@ -284,7 +284,7 @@ export default function GiftCatalog({ viewerEmail }: { viewerEmail?: string | nu
               </Button>
             </div>
             <p className="mt-1 text-xs text-muted-foreground">
-              Catalog of items that can be sent as a gift. Prices in PHP.
+              Catalog of items that can be sent as a gift.
             </p>
           </CardHeader>
           <CardContent className="pt-4">
@@ -294,7 +294,6 @@ export default function GiftCatalog({ viewerEmail }: { viewerEmail?: string | nu
                   <tr>
                     <th className="px-3 py-2 font-semibold">Item</th>
                     <th className="px-3 py-2 font-semibold">Description</th>
-                    <th className="px-3 py-2 font-semibold w-[120px]">Price (PHP)</th>
                     <th className="px-2 py-2 w-[1%]" />
                   </tr>
                 </thead>
@@ -324,17 +323,6 @@ export default function GiftCatalog({ viewerEmail }: { viewerEmail?: string | nu
                         />
                       </td>
                       <td className="px-2 py-1.5">
-                        <Input
-                          type="number"
-                          step="0.01"
-                          value={row.price_php}
-                          onChange={(e) =>
-                            updateItem(row.id, { price_php: Number(e.target.value) || 0 })
-                          }
-                          className="h-8 border-zinc-200 text-xs tabular-nums dark:border-zinc-700"
-                        />
-                      </td>
-                      <td className="px-2 py-1.5">
                         <Button
                           variant="ghost"
                           size="icon"
@@ -349,7 +337,7 @@ export default function GiftCatalog({ viewerEmail }: { viewerEmail?: string | nu
                   ))}
                   {payload.items.length === 0 && (
                     <tr>
-                      <td colSpan={4} className="px-3 py-6 text-center text-xs text-zinc-400">
+                      <td colSpan={3} className="px-3 py-6 text-center text-xs text-zinc-400">
                         No items yet — click "Add item".
                       </td>
                     </tr>
@@ -392,7 +380,6 @@ export default function GiftCatalog({ viewerEmail }: { viewerEmail?: string | nu
                     <th className="px-3 py-2 font-semibold w-[64px]">Year</th>
                     <th className="px-3 py-2 font-semibold">Month</th>
                     <th className="px-3 py-2 font-semibold">Gift</th>
-                    <th className="px-3 py-2 font-semibold w-[96px]">USD est.</th>
                     <th className="px-2 py-2 w-[1%]" />
                   </tr>
                 </thead>
@@ -431,17 +418,6 @@ export default function GiftCatalog({ viewerEmail }: { viewerEmail?: string | nu
                         />
                       </td>
                       <td className="px-2 py-1.5">
-                        <Input
-                          type="number"
-                          step="0.01"
-                          value={row.usd_est}
-                          onChange={(e) =>
-                            updateAnniv(row.id, { usd_est: Number(e.target.value) || 0 })
-                          }
-                          className="h-8 border-zinc-200 text-xs tabular-nums dark:border-zinc-700"
-                        />
-                      </td>
-                      <td className="px-2 py-1.5">
                         <Button
                           variant="ghost"
                           size="icon"
@@ -456,7 +432,7 @@ export default function GiftCatalog({ viewerEmail }: { viewerEmail?: string | nu
                   ))}
                   {payload.anniversaries.length === 0 && (
                     <tr>
-                      <td colSpan={5} className="px-3 py-6 text-center text-xs text-zinc-400">
+                      <td colSpan={4} className="px-3 py-6 text-center text-xs text-zinc-400">
                         No tiers yet — click "Add tier".
                       </td>
                     </tr>

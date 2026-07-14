@@ -361,7 +361,11 @@
       "Bash(curl -s --max-time 8 \"http://localhost:3000/login\")",
       "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" --max-time 10 \"http://localhost:3000/api/auth/session\")",
       "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" --max-time 12 \"http://localhost:3000/login\")",
-      "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" --max-time 12 \"http://localhost:3000/login?callbackUrl=%2Faccounting\")"
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" --max-time 12 \"http://localhost:3000/login?callbackUrl=%2Faccounting\")",
+      "Bash(sed -n 's/.*\"scripts\".*/&/p' package.json)",
+      "Bash(node -e \"const s=require\\('./package.json'\\).scripts||{}; console.log\\(JSON.stringify\\(s,null,2\\)\\)\")",
+      "Bash(node -e \"const m=require\\('motion/react'\\); console.log\\('useReducedMotion:', typeof m.useReducedMotion, '| AnimatePresence:', typeof m.AnimatePresence, '| motion:', typeof m.motion\\)\")",
+      "Bash(curl -s -o /dev/null -w \"GET / -> %{http_code}\\\\n\" http://localhost:3000/)"
     ],
     "additionalDirectories": [
       "c:\\Users\\Itachi\\.claude\\projects\\c--Users-Itachi-Desktop-simple-hris\\memory",

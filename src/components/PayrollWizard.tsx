@@ -5611,11 +5611,20 @@ export default function PayrollWizard({
       const json = (await res.json()) as {
         success?: boolean;
         error?: string;
+        retryable?: boolean;
         rowCount?: number;
         fileName?: string;
         csvText?: string;
       };
       if (!res.ok || !json.success) {
+        // A 429 is Hubstaff throttling us, not a failure to act on — surface it
+        // as a calm "try again shortly" rather than an alarming error toast.
+        if (res.status === 429 || json.retryable) {
+          toast.warning('Hubstaff is busy — try again shortly', {
+            description: json.error || 'Hubstaff rate limit hit. Wait about a minute, then sync again.',
+          });
+          return;
+        }
         throw new Error(json.error || 'Hubstaff sync failed');
       }
 
@@ -6472,6 +6481,8 @@ export default function PayrollWizard({
                               btn: '',
                               bar: 'bg-indigo-600 dark:bg-indigo-400',
                               barText: 'text-white dark:text-indigo-950',
+                              focusRing: 'focus-visible:ring-indigo-500/40',
+                              today: 'text-indigo-700 dark:text-indigo-300',
                             }}
                             actionLabel="Sync"
                             actionBusy={hubstaffSyncLoading}

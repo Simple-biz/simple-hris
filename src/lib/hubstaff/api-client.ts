@@ -21,6 +21,40 @@ const TOKEN_SETTING_KEY = "hubstaff.api.token";
 /** Refresh the access token this many seconds before its reported expiry. */
 const EXPIRY_SAFETY_SECONDS = 300;
 
+/** Retry budget for transient Hubstaff responses (429 rate limit / 5xx). */
+const MAX_RETRIES = 4;
+/** Never hold a single request open longer than this waiting out a throttle;
+ *  a longer `Retry-After` is surfaced as a 429 so the operator can retry later. */
+const MAX_RETRY_WAIT_MS = 10_000;
+/** Small gap between paginated activity calls so a wide range doesn't burst. */
+const PAGE_GAP_MS = 150;
+
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+/**
+ * `fetch()` that transparently rides out transient Hubstaff throttling: on a 429
+ * (or 5xx) it waits — honoring the server's `Retry-After` header (seconds) when
+ * present, else exponential backoff — and retries, up to {@link MAX_RETRIES}.
+ * Bounded on both attempts and per-wait duration: if the throttle window is longer
+ * than {@link MAX_RETRY_WAIT_MS} it returns the 429 unmodified so the caller can map
+ * it to a retryable response instead of holding the request open indefinitely.
+ */
+async function fetchHubstaff(url: string, init: RequestInit): Promise<Response> {
+  for (let attempt = 0; ; attempt++) {
+    const res = await fetch(url, init);
+    if (res.status !== 429 && res.status < 500) return res;
+    if (attempt >= MAX_RETRIES) return res;
+    const retryAfter = Number(res.headers.get("retry-after"));
+    const waitMs =
+      Number.isFinite(retryAfter) && retryAfter > 0
+        ? retryAfter * 1000
+        : Math.min(MAX_RETRY_WAIT_MS, 500 * 2 ** attempt);
+    if (waitMs > MAX_RETRY_WAIT_MS) return res;
+    await res.text().catch(() => {}); // release the socket before waiting
+    await sleep(waitMs);
+  }
+}
+
 export type HubstaffUser = {
   id: number;
   name: string | null;
@@ -61,7 +95,7 @@ async function exchangeRefreshToken(refreshToken: string): Promise<{
   refresh_token: string | null;
   expires_in: number | null;
 }> {
-  const res = await fetch(TOKEN_ENDPOINT, {
+  const res = await fetchHubstaff(TOKEN_ENDPOINT, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({ grant_type: "refresh_token", refresh_token: refreshToken }),
@@ -69,7 +103,12 @@ async function exchangeRefreshToken(refreshToken: string): Promise<{
   });
   if (!res.ok) {
     const body = await res.text().catch(() => "");
-    throw new Error(`Hubstaff token endpoint returned ${res.status}: ${body.slice(0, 300)}`);
+    // `status`/`upstream` let callers map Hubstaff's HTTP status to a meaningful
+    // response (e.g. 429 rate limit) instead of a blanket 500.
+    throw Object.assign(new Error(`Hubstaff token endpoint returned ${res.status}: ${body.slice(0, 300)}`), {
+      status: res.status,
+      upstream: true,
+    });
   }
   const json = (await res.json()) as {
     access_token?: string;
@@ -144,11 +183,15 @@ export async function getHubstaffAccessToken(): Promise<string> {
   }
 
   const detail = lastErr instanceof Error ? lastErr.message : String(lastErr);
-  throw new Error(
+  const status = (lastErr as { status?: number } | null)?.status;
+  const err = new Error(
     `Could not obtain a Hubstaff access token (${detail}). If the Personal Access Token expired ` +
       `(90 days) or was revoked, create a new one at https://developer.hubstaff.com/personal_access_tokens ` +
       `and update HUBSTAFF_PAT.`,
   );
+  // Preserve an upstream status (e.g. a 429 on the ~5/hour token endpoint) so the
+  // route answers retryable/502 rather than a blanket 500.
+  throw status ? Object.assign(err, { status, upstream: true }) : err;
 }
 
 function describeApiError(status: number): string {
@@ -191,13 +234,17 @@ export async function fetchDailyActivities(
     });
     if (pageStartId) params.set("page_start_id", String(pageStartId));
 
-    const res = await fetch(
+    const res = await fetchHubstaff(
       `${API_BASE}/v2/organizations/${encodeURIComponent(orgId)}/activities/daily?${params}`,
       { headers: { Authorization: `Bearer ${accessToken}` }, cache: "no-store" },
     );
     if (!res.ok) {
       const body = await res.text().catch(() => "");
-      throw new Error(`${describeApiError(res.status)} ${body.slice(0, 300)}`.trim());
+      // Carry the upstream status so the API route can answer 429/502 (not 500).
+      throw Object.assign(new Error(`${describeApiError(res.status)} ${body.slice(0, 300)}`.trim()), {
+        status: res.status,
+        upstream: true,
+      });
     }
 
     const json = (await res.json()) as {
@@ -212,6 +259,7 @@ export async function fetchDailyActivities(
     const next = json.pagination?.next_page_start_id;
     if (!next) break;
     pageStartId = next;
+    await sleep(PAGE_GAP_MS);
   }
 
   return { activities, users: [...usersById.values()] };
