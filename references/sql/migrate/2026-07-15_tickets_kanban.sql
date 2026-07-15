@@ -8,7 +8,9 @@
 -- "Tickets" entry in every eligible dashboard's ViewSwitcher.
 --
 -- Access model: the standard two layers —
---   * roles (accounting / hr_coordinator / manager / ceo / admin) open /tickets
+--   * roles open /tickets: accounting / hr_coordinator / manager / ceo /
+--     admin, plus the dedicated `tickets` role an admin can assign to anyone
+--     else (Admin → Roles & permissions → "Tickets").
 --   * the `tickets` feature key in employee_feature_permissions decides per
 --     user whether they can create/move tickets (`edit`) or just watch
 --     (`view`). Admin toggles this in Admin → Roles & permissions.
@@ -17,6 +19,21 @@
 -- ============================================================================
 
 BEGIN;
+
+-- 0. Widen the role CHECK constraint to allow the dedicated `tickets` role.
+--    Keep the full current set plus the legacy values so soft-deleted history
+--    rows stay valid (the app's VALID_ROLES blocks assigning legacy roles).
+ALTER TABLE public.employee_roles
+  DROP CONSTRAINT IF EXISTS employee_roles_role_check;
+
+ALTER TABLE public.employee_roles
+  ADD CONSTRAINT employee_roles_role_check
+  CHECK (role IN (
+    'admin', 'ceo', 'hr_coordinator', 'accounting',
+    'manager', 'orphanage_manager', 'contractor', 'qc', 'tickets',
+    -- legacy (history only; not assignable in the app anymore):
+    'finance', 'payroll_coordinator', 'payroll_manager', 'viewer'
+  ));
 
 -- 1. tickets — the board items. `ticket_no` is the human-facing #id (like an
 --    Azure DevOps work item id). `position` orders cards inside a column

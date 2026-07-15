@@ -12,7 +12,8 @@ export type Role =
   | 'orphanage_manager'
   | 'ceo'
   | 'contractor'
-  | 'qc';
+  | 'qc'
+  | 'tickets';
 
 // Roles that unlock the Accounting dashboard. `accounting` is the dedicated
 // dashboard role (renamed from the old `finance`). `hr_coordinator` was
@@ -82,7 +83,9 @@ export function viewsForRoles(roles: Role[]): AppView[] {
   if (roles.includes('contractor')) set.add('contractor');
   // The shared HRIS-updates ticket board — every role that may open /tickets
   // gets it in the switcher (mirrors ROUTE_REQUIRED_ROLES in route-access.ts).
-  if (roles.some((r) => (['accounting', 'hr_coordinator', 'manager', 'ceo'] as Role[]).includes(r))) {
+  // `tickets` is also a standalone assignable role, so an admin can hand the
+  // board to someone who holds no dashboard role at all.
+  if (roles.some((r) => (['accounting', 'hr_coordinator', 'manager', 'ceo', 'tickets'] as Role[]).includes(r))) {
     set.add('tickets');
   }
   return VIEW_PRIORITY.filter((v) => set.has(v));

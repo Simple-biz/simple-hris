@@ -97,6 +97,9 @@ export const VIEW_TAB_IDS: Record<FeatureViewKey, readonly string[]> = {
     'qc-calculator',
     'notifications',
   ],
+  // /tickets is a single-surface board, not a tabbed dashboard — no tab ids.
+  // Its access is checked via the `tickets` feature key directly (API layer).
+  tickets: [],
 };
 
 /** Roles that bypass the per-tab overlay and always see/edit every tab. */

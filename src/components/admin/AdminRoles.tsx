@@ -48,6 +48,7 @@ const ROLES = [
   { key: 'orphanage_manager', label: 'Orphanage', blurb: 'Unlocks the Orphanage dashboard.' },
   { key: 'contractor', label: 'Contractor', blurb: 'Unlocks the Contractor dashboard (invoice management).' },
   { key: 'ceo', label: 'CEO', blurb: 'Unlocks the CEO dashboard, post company-wide announcements.' },
+  { key: 'tickets', label: 'Tickets', blurb: 'Unlocks the HRIS Updates ticket board (Kanban) in the view switcher — create, drag and reply to update requests.' },
   { key: 'admin', label: 'Admin', blurb: 'Full system access — unlocks every dashboard.' },
 ] as const;
 
@@ -64,6 +65,7 @@ const ASSIGNABLE_ROLE_KEYS = [
   'accounting',
   'orphanage_manager',
   'contractor',
+  'tickets',
   'manager',
   'qc',
 ] as const satisfies readonly RoleKey[];
@@ -101,6 +103,8 @@ function rolePillClasses(role: RoleKey): string {
       'border-blue-500/35 bg-blue-500/10 text-blue-800 dark:text-blue-300/95 dark:border-blue-600/40',
     ceo:
       'border-yellow-500/40 bg-yellow-500/10 text-yellow-900 dark:text-yellow-200/95 dark:border-yellow-600/45',
+    tickets:
+      'border-violet-500/35 bg-violet-500/10 text-violet-800 dark:text-violet-300/95 dark:border-violet-600/40',
     admin:
       'border-rose-500/40 bg-rose-500/10 text-rose-900 dark:text-rose-200/95 dark:border-rose-600/45',
   };
@@ -119,6 +123,7 @@ function roleRowAccent(role: RoleKey): string {
     orphanage_manager: 'border-l-pink-500',
     contractor: 'border-l-blue-500',
     ceo: 'border-l-yellow-500',
+    tickets: 'border-l-violet-500',
     admin: 'border-l-rose-500',
   };
   return (map as Record<string, string>)[role] ?? 'border-l-zinc-400 dark:border-l-zinc-500';
