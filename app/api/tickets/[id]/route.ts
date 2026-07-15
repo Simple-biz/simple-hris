@@ -4,11 +4,12 @@ import { requireFeatureEditAnyView } from '@/lib/auth/authorize-feature';
 import { deniedResponse } from '@/lib/auth/authorize-email';
 import { getSessionActor } from '@/lib/auth/session-actor';
 import { insertAuditLog } from '@/lib/supabase/audit-log';
-import { notifyTicketDone } from '@/lib/tickets/notify';
+import { notifyTicketAssigned, notifyTicketDone } from '@/lib/tickets/notify';
 import {
   TICKET_BOARD_MOVERS,
   TICKET_STATUSES,
   TICKET_PRIORITIES,
+  TICKET_PRIORITY_LABELS,
   type TicketRow,
   type TicketStatus,
   type TicketPriority,
@@ -137,6 +138,44 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   // Fires only on the transition (not on later edits to an already-done card).
   if (moved && ticket.status === 'done') {
     void notifyTicketDone(ticket, authz.sessionEmail);
+  }
+
+  // Newly assigned → in-app HRIS notification for the assignee. The message
+  // carries the full ask (title, priority, details excerpt), so it stands on
+  // its own even for someone with no access to the /tickets board. Fires only
+  // when the assignee actually changes, and never for self-assignment.
+  const newAssignee = (ticket.assigned_to ?? '').trim().toLowerCase();
+  const prevAssignee = (beforeRow.assigned_to ?? '').trim().toLowerCase();
+  if (
+    patch.assigned_to !== undefined &&
+    newAssignee &&
+    newAssignee !== prevAssignee &&
+    newAssignee !== authz.sessionEmail
+  ) {
+    // Email leg (n8n `ticket_assigned` hook) + in-app notification below.
+    void notifyTicketAssigned(ticket, authz.sessionEmail);
+    const details = (ticket.description ?? '').trim();
+    void supabase
+      .from('employee_notifications')
+      .insert({
+        recipient_email: newAssignee,
+        type: 'ticket.assigned',
+        tone: 'neutral',
+        title: `You've been assigned ticket #${ticket.ticket_no}`,
+        message:
+          `${authz.sessionEmail} assigned you "${ticket.title}" ` +
+          `(${TICKET_PRIORITY_LABELS[ticket.priority] ?? ticket.priority} priority).` +
+          (details ? ` Details: ${details.slice(0, 200)}${details.length > 200 ? '…' : ''}` : ''),
+        details: {
+          ticket_id: ticket.id,
+          ticket_no: ticket.ticket_no,
+          assigned_by: authz.sessionEmail,
+          priority: ticket.priority,
+        },
+      })
+      .then(({ error: notifErr }) => {
+        if (notifErr) console.warn('[tickets] assignment notification failed:', notifErr.message);
+      });
   }
 
   return NextResponse.json({ ticket });

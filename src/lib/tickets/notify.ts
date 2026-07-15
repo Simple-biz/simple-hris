@@ -1,4 +1,5 @@
 import { resolveWebhookUrl } from '@/lib/webhooks/resolve-webhook';
+import { lookupFullNameForEmail } from '@/lib/supabase/announcements';
 import {
   TICKET_PRIORITY_LABELS,
   TICKET_STATUS_LABELS,
@@ -100,5 +101,50 @@ export async function notifyTicketDone(ticket: TicketRow, movedBy: string): Prom
     });
   } catch {
     // Best-effort only — the move is already saved.
+  }
+}
+
+/**
+ * Fire the `ticket_assigned` webhook (n8n) when a ticket gets a (new)
+ * assignee — the n8n side emails THEM the full ask, pairing with the in-app
+ * notification the PATCH route writes. Resolution mirrors the other two
+ * hooks (Admin → Webhooks slug `ticket_assigned`, then
+ * N8N_TICKETS_ASSIGNED_WEBHOOK_URL). No-op when unconfigured; never throws.
+ */
+export async function notifyTicketAssigned(ticket: TicketRow, assignedBy: string): Promise<void> {
+  try {
+    const assignee = (ticket.assigned_to ?? '').trim().toLowerCase();
+    if (!assignee) return;
+    const url = await resolveWebhookUrl('ticket_assigned', {
+      envVars: ['N8N_TICKETS_ASSIGNED_WEBHOOK_URL'],
+    });
+    if (!url) return;
+
+    const origin = publicOrigin();
+    const assigneeName = await lookupFullNameForEmail(assignee);
+    await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        event: 'ticket.assigned',
+        // The assignee — the n8n Gmail node uses this as its "To".
+        send_to: assignee,
+        assignee_name: assigneeName ?? assignee.split('@')[0],
+        assigned_by: assignedBy,
+        ticket_no: ticket.ticket_no,
+        title: ticket.title,
+        description: ticket.description ?? '',
+        priority: ticket.priority,
+        priority_label: TICKET_PRIORITY_LABELS[ticket.priority] ?? ticket.priority,
+        status_label: TICKET_STATUS_LABELS[ticket.status] ?? ticket.status,
+        created_by: ticket.created_by,
+        created_by_name: ticket.created_by_name ?? ticket.created_by.split('@')[0],
+        board_url: `${origin}/tickets`,
+        ticket_url: `${origin}/tickets?ticket=${encodeURIComponent(ticket.id)}`,
+      }),
+      signal: AbortSignal.timeout(10_000),
+    });
+  } catch {
+    // Best-effort only — the assignment is already saved.
   }
 }

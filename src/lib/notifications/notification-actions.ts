@@ -81,6 +81,16 @@ const ACTIONS: Partial<Record<AppView, Record<string, ActionResolver>>> = {
         label: 'View & reply',
       };
     },
+    // Assigned a ticket to fix. The button helps assignees who hold a board
+    // role; roleless assignees get bounced home by the proxy, so the
+    // notification MESSAGE itself carries the full ask (see the tickets PATCH).
+    'ticket.assigned': (details) => {
+      const id = readString(details, 'ticket_id');
+      return {
+        href: id ? `/tickets?ticket=${encodeURIComponent(id)}` : '/tickets',
+        label: 'Open ticket',
+      };
+    },
   },
 };
 

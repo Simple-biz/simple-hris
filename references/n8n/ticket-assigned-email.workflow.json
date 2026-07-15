@@ -1,0 +1,48 @@
+{
+  "name": "HRIS Ticket Assigned → Email Assignee",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "hris-ticket-assigned",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 0],
+      "id": "9f1c2a3b-3333-4aaa-8bbb-000000000001",
+      "name": "Ticket Assigned (from HRIS)",
+      "webhookId": "hris-ticket-assigned"
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $json.body.send_to }}",
+        "subject": "=🔧 [{{ $json.body.priority_label }}] You've been assigned Ticket #{{ $json.body.ticket_no }} — {{ $json.body.title }}",
+        "message": "=<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:#f4f4f5;padding:24px 12px\">\n  <tr><td align=\"center\">\n    <table role=\"presentation\" width=\"560\" cellpadding=\"0\" cellspacing=\"0\" style=\"width:100%;max-width:560px;background:#ffffff;border:1px solid #e4e4e7;border-radius:12px;font-family:Arial,Helvetica,sans-serif\">\n      <tr>\n        <td style=\"padding:16px 24px 14px\"><img src=\"https://simple-hris.vercel.app/simple-logo.png\" alt=\"Simple\" width=\"82\" height=\"28\" style=\"display:block;border:0\"></td>\n      </tr>\n      <tr>\n        <td bgcolor=\"#0a0a0b\" style=\"background:#0a0a0b;padding:20px 24px;border-bottom:3px solid #dc2626\">\n          <table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\">\n            <tr>\n              <td style=\"font-size:11px;letter-spacing:2px;color:#a1a1aa;text-transform:uppercase;font-weight:bold\">Simple HRIS &middot; Updates board</td>\n              <td align=\"right\"><span style=\"display:inline-block;background:{{ $json.body.priority === 'urgent' ? '#dc2626' : $json.body.priority === 'high' ? '#ea580c' : $json.body.priority === 'medium' ? '#2563eb' : '#52525b' }};color:#ffffff;font-size:11px;font-weight:bold;letter-spacing:1px;padding:4px 10px;border-radius:20px\">{{ $json.body.priority_label.toUpperCase() }}</span></td>\n            </tr>\n          </table>\n          <div style=\"margin-top:14px;font-size:20px;line-height:1.35;color:#ffffff;font-weight:bold\"><span style=\"color:#ef4444\">#{{ $json.body.ticket_no }}</span>&nbsp;&nbsp;{{ $json.body.title }}</div>\n        </td>\n      </tr>\n      <tr>\n        <td style=\"padding:20px 24px 0;font-size:14px;line-height:1.6;color:#27272a\">\n          Hi {{ $json.body.assignee_name }},<br><br>\n          <b>{{ $json.body.assigned_by }}</b> assigned this ticket to you on the HRIS Updates board.\n        </td>\n      </tr>\n      <tr>\n        <td style=\"padding:16px 24px 0\">\n          <table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"font-size:13px;color:#18181b\">\n            <tr>\n              <td width=\"110\" style=\"padding:7px 0;color:#71717a\">Requested by</td>\n              <td style=\"padding:7px 0;font-weight:bold\">{{ $json.body.created_by_name }} <span style=\"color:#71717a;font-weight:normal\">&lt;{{ $json.body.created_by }}&gt;</span></td>\n            </tr>\n            <tr>\n              <td width=\"110\" style=\"padding:7px 0;color:#71717a;border-top:1px solid #f4f4f5\">Column</td>\n              <td style=\"padding:7px 0;border-top:1px solid #f4f4f5\">{{ $json.body.status_label }}</td>\n            </tr>\n          </table>\n        </td>\n      </tr>\n      <tr>\n        <td style=\"padding:18px 24px 0\">\n          <div style=\"font-size:11px;letter-spacing:1.5px;text-transform:uppercase;color:#71717a;font-weight:bold;margin-bottom:8px\">What needs doing</div>\n          <div style=\"white-space:pre-wrap;border:1px solid #e4e4e7;border-radius:8px;padding:14px 16px;font-size:14px;line-height:1.6;color:#27272a;background:#fafafa\">{{ $json.body.description || 'No details provided — check the ticket thread or ask ' + $json.body.assigned_by + '.' }}</div>\n        </td>\n      </tr>\n      <tr>\n        <td style=\"padding:20px 24px 8px\">\n          <table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\">\n            <tr>\n              <td bgcolor=\"#dc2626\" style=\"background:#dc2626;border-radius:8px\">\n                <a href=\"{{ $json.body.ticket_url || $json.body.board_url }}\" style=\"display:inline-block;padding:12px 22px;color:#ffffff;font-size:14px;font-weight:bold;text-decoration:none\">Open ticket #{{ $json.body.ticket_no }} &rarr;</a>\n              </td>\n            </tr>\n          </table>\n          <div style=\"margin-top:10px;font-size:12px;color:#a1a1aa;word-break:break-all\">Button not working? {{ $json.body.ticket_url || $json.body.board_url }}</div>\n        </td>\n      </tr>\n      <tr>\n        <td style=\"padding:14px 24px 16px;border-top:1px solid #f4f4f5;font-size:12px;color:#a1a1aa\">You're getting this because you were assigned this ticket. Progress notes go on its Updates thread; questions go to {{ $json.body.assigned_by }}.</td>\n      </tr>\n    </table>\n  </td></tr>\n</table>",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [220, 0],
+      "id": "9f1c2a3b-3333-4aaa-8bbb-000000000002",
+      "name": "Email Assignee"
+    }
+  ],
+  "connections": {
+    "Ticket Assigned (from HRIS)": {
+      "main": [
+        [
+          {
+            "node": "Email Assignee",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

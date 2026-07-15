@@ -105,6 +105,12 @@ const KNOWN_SLUGS: Array<{ slug: string; label: string; description: string }> =
     description:
       'Fired when a ticket is moved into the Done column. POSTs the ticket + creator email; the n8n flow emails the creator that they can refresh the HRIS and test the change.',
   },
+  {
+    slug: 'ticket_assigned',
+    label: 'Ticket Assigned → Email Assignee (n8n)',
+    description:
+      'Fired when a ticket gets a (new) assignee. POSTs the ticket + assignee email (send_to); the n8n flow emails them the full ask. Pairs with the in-app assignment notification.',
+  },
 ];
 
 function uid() {

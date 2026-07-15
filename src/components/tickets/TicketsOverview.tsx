@@ -212,7 +212,7 @@ export default function TicketsOverview({ tickets, loaded, onOpenTicket }: Ticke
                     key={s}
                     className={cn('h-full', STATUS_STYLES[s].dot)}
                     style={{ width: `${(stats.byStatus[s] / stats.total) * 100}%`, minWidth: 6 }}
-                    title={`${STATUS_STYLES[s].label} — ${stats.byStatus[s]} (${Math.round((stats.byStatus[s] / stats.total) * 100)}%)`}
+                    title={`${STATUS_STYLES[s].label}: ${stats.byStatus[s]} (${Math.round((stats.byStatus[s] / stats.total) * 100)}%)`}
                   />
                 ))}
               </div>
@@ -277,7 +277,7 @@ export default function TicketsOverview({ tickets, loaded, onOpenTicket }: Ticke
         {stats.recent.length === 0 ? (
           <EmptyNote>Activity shows up here once tickets start moving.</EmptyNote>
         ) : (
-          <div className="-mx-1.5 grid gap-x-4 gap-y-0.5 sm:grid-cols-2">
+          <div className="-mx-1.5 grid grid-cols-1 gap-x-4 gap-y-0.5 sm:grid-cols-2">
             {stats.recent.map((t) => (
               <button
                 key={t.id}

@@ -508,9 +508,10 @@ export default function NotificationsPanel({
               const isPayrollStart = n.type === 'payroll.processing_started';
               const isPayrollStop  = n.type === 'payroll.processing_stopped';
               const isPayroll = isPayrollStart || isPayrollStop;
-              // Ticket-reply cards wear the board's red-and-black theme: black
-              // surface, solid red accents — deliberately flat, no gradients.
-              const isTicket = n.type === 'ticket.replied';
+              // Ticket cards (replies, assignments) wear the board's
+              // red-and-black theme: black surface, solid red accents —
+              // deliberately flat, no gradients.
+              const isTicket = n.type === 'ticket.replied' || n.type === 'ticket.assigned';
 
               const stripe = isTicket
                 ? 'bg-red-600'

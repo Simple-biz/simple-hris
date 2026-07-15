@@ -46,6 +46,9 @@ export const NOTIFICATION_TYPE_TO_VIEWS: Record<string, AppView[]> = {
   // Employee dashboard's notification panel (everyone who can file a ticket
   // has one), which is also where it's marked read.
   'ticket.replied': ['employee'],
+  // The recipient was assigned a ticket to fix. Same home as replies — the
+  // assignee may hold NO board role, so the message itself carries the ask.
+  'ticket.assigned': ['employee'],
 };
 
 /** Dashboards a notification of `type` belongs to. Unknown types -> none. */
