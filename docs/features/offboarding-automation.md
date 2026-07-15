@@ -99,6 +99,11 @@ For each person (`offboardOnePerson`, run in parallel, sharing one batch timesta
   Workspace account, send the termination email, remove the Hubstaff member at pay rate 0) **and**
   stamps `scheduled_deletion_at = now + 14 days`. The daily cron
   (`/api/cron/process-scheduled-deletions`) fires `offboarding_delete` once the timer elapses.
+- **Reason `temporary_pause`** (any department, overrides the Lead-Gen rule) → phase `deactivate`,
+  `deletion_mode: "none"`, fires `offboarding_deactivate` (suspend only) and stamps **no**
+  `scheduled_deletion_at` — the cron never picks the row up, so the account is suspended but never
+  deleted. Intended for approved time-off; the person returns via re-onboarding (which restores the
+  RBAC snapshot and clears the off-boarded stamps).
 
 ### RBAC snapshot / restore (`offboard-rbac.ts`)
 
@@ -150,9 +155,10 @@ only — no names, no PII**:
 
 ### Offboard teardown payload (multi-employee)
 
-`/api/hr/offboard` coalesces a batch **by phase** and fires **at most two** POSTs (one
-`deactivate`, one `delete`), each carrying an `employees[]` array so a batch of any size is two
-webhooks. The exact envelope emitted (`app/api/hr/offboard/route.ts`):
+`/api/hr/offboard` coalesces a batch **by (phase, deletion_mode)** and fires **at most three**
+POSTs (regular `deactivate`, temporary-pause `deactivate` with `deletion_mode: "none"`, and
+`delete`), each carrying an `employees[]` array. The exact envelope emitted
+(`app/api/hr/offboard/route.ts`):
 
 ```jsonc
 {
@@ -202,8 +208,26 @@ back to the parent envelope.
 
 ## 2026-07 updates
 
-Three changes landed in July 2026 — a new reason, an explicit no-show teardown, and a fix for the
+Four changes landed in July 2026 — two new reasons, an explicit no-show teardown, and a fix for the
 Google "Offboarded" sheet writer that had been leaving key columns blank.
+
+### Temporary Pause reason (suspend-only, 2026-07-15)
+
+`temporary_pause` (**"Temporary Pause"**) was added to the shared reason set for employees who
+request approved time off and are expected back. It reuses the **existing**
+`offboarding_deactivate` n8n automation (Workspace account suspension) but changes the teardown
+plan: phase is always `deactivate` (even for all-Lead-Gen people, who would otherwise be deleted
+immediately), `deletion_mode` is `"none"`, and `scheduled_deletion_at` stays **null** — so the
+daily deletion cron never touches the row and the account is suspended, not deleted. Temporary
+pauses are coalesced into their **own** deactivate envelope (`deletion_mode: "none"`, per-employee
+`reason: "temporary_pause"`) so the n8n flow can branch — e.g. skip the termination email for a
+pause. Bringing the person back is the normal re-onboard flow (`/api/hr/reonboard`), which clears
+the off-boarded stamps and restores the RBAC snapshot; unsuspending the Workspace account itself
+happens on the n8n/Workspace side.
+
+Heads-up: the Google "Offboarded" sheet's Reason column is a data-validation dropdown of human
+labels — **"Temporary Pause" must be added to that dropdown** or the best-effort sheet append will
+fail validation for paused people.
 
 ### NCNS reason
 

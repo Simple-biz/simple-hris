@@ -23,6 +23,7 @@ import {
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
+import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { ArrowLeft, Eye, Menu, Plus, RefreshCw, Search, SquareKanban } from 'lucide-react';
 import { toast } from 'sonner';
@@ -76,6 +77,7 @@ interface BoardData {
 export default function TicketsBoard() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const reduceMotion = useReducedMotion();
   const [tickets, setTickets] = useState<TicketRow[]>([]);
   const [access, setAccess] = useState<'view' | 'edit'>('view');
   const [viewer, setViewer] = useState('');
@@ -552,12 +554,30 @@ export default function TicketsBoard() {
         </p>
       )}
 
+      {/* View swap: quick fade + drift on one exponential ease. `mode="wait"`
+          lets the leaving surface clear before the next one lands; distances
+          collapse under prefers-reduced-motion. */}
+      <AnimatePresence mode="wait" initial={false}>
       {activeView === 'overview' ? (
-        <main className="min-h-0 flex-1 overflow-y-auto">
+        <motion.main
+          key="overview"
+          initial={{ opacity: 0, y: reduceMotion ? 0 : 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: reduceMotion ? 0 : -6 }}
+          transition={{ duration: reduceMotion ? 0 : 0.2, ease: [0.22, 1, 0.36, 1] }}
+          className="min-h-0 flex-1 overflow-y-auto"
+        >
           <TicketsOverview tickets={tickets} loaded={loaded} onOpenTicket={openTicket} />
-        </main>
+        </motion.main>
       ) : (
-      <main className="min-h-0 flex-1 overflow-x-auto overflow-y-hidden">
+      <motion.main
+        key="board"
+        initial={{ opacity: 0, y: reduceMotion ? 0 : 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        exit={{ opacity: 0, y: reduceMotion ? 0 : -6 }}
+        transition={{ duration: reduceMotion ? 0 : 0.2, ease: [0.22, 1, 0.36, 1] }}
+        className="min-h-0 flex-1 overflow-x-auto overflow-y-hidden"
+      >
         {!loaded ? (
           <BoardSkeleton />
         ) : loadError && tickets.length === 0 ? (
@@ -600,8 +620,9 @@ export default function TicketsBoard() {
             </DragOverlay>
           </DndContext>
         )}
-      </main>
+      </motion.main>
       )}
+      </AnimatePresence>
       </div>
 
       <TicketDialog

@@ -24,8 +24,8 @@ interface TicketsSidebarProps {
 }
 
 const NAV: Array<{ key: TicketsView; label: string; icon: typeof SquareKanban }> = [
-  { key: 'board', label: 'Board', icon: SquareKanban },
   { key: 'overview', label: 'Overview', icon: ChartColumn },
+  { key: 'board', label: 'Board', icon: SquareKanban },
 ];
 
 /**

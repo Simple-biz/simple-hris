@@ -1010,10 +1010,24 @@
   animation-delay: calc(70ms + var(--field-i, 0) * 40ms);
 }
 
+/* Overview chart bars grow in once on mount — a state reveal, kept short.
+   scaleX (not width) so the paint stays cheap; origin-left grows from the
+   baseline like the bars themselves. */
+@keyframes ticket-bar-grow {
+  from {
+    transform: scaleX(0);
+  }
+}
+.ticket-bar-grow {
+  transform-origin: left;
+  animation: ticket-bar-grow 420ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .ticket-dialog[data-open],
   .ticket-dialog[data-closed],
-  .ticket-dialog .ticket-field {
+  .ticket-dialog .ticket-field,
+  .ticket-bar-grow {
     animation-duration: 0.01ms;
     animation-delay: 0s;
   }

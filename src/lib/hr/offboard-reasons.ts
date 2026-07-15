@@ -15,6 +15,7 @@ export const VALID_OFFBOARD_REASONS = [
   'performance',
   'attendance',
   'time_manipulation',
+  'temporary_pause',
   'other',
 ] as const;
 
@@ -27,6 +28,9 @@ export const OFFBOARD_REASON_OPTIONS: { value: OffboardReason; label: string }[]
   { value: 'performance', label: 'Performance' },
   { value: 'attendance', label: 'Attendance' },
   { value: 'time_manipulation', label: 'Time manipulation' },
+  // Suspends the Workspace account (offboarding_deactivate) but never schedules
+  // the 14-day delete — for employees taking approved time off who will return.
+  { value: 'temporary_pause', label: 'Temporary Pause' },
   { value: 'other', label: 'Other (note required)' },
 ];
 
@@ -38,6 +42,7 @@ export const OFFBOARD_REASON_LABELS: Record<string, string> = {
   performance: 'Performance',
   attendance: 'Attendance',
   time_manipulation: 'Time manipulation',
+  temporary_pause: 'Temporary Pause',
   other: 'Other',
 };
 

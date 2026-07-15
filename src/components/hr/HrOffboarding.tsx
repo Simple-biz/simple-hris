@@ -47,6 +47,8 @@ type HistoryRow = {
 
 const REASON_LABELS: Record<string, string> = {
   // Canonical (dashboard-set) reason keys.
+  ncns: 'NCNS',
+  temporary_pause: 'Temporary Pause',
   resigned: 'Resigned',
   end_of_contract: 'End of contract',
   performance: 'Performance',

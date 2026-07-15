@@ -421,7 +421,9 @@
       "PowerShell(node \"C:\\\\Users\\\\Kane\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\bundled-skills\\\\2.1.209\\\\46ae355f69cae62d1c0b37e9c1faae5a\\\\dataviz\\\\scripts\\\\validate_palette.js\" \"#3b82f6,#f59e0b,#8b5cf6,#10b981\" --mode dark --surface \"#141414\")",
       "PowerShell(node \"C:\\\\Users\\\\Kane\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\bundled-skills\\\\2.1.209\\\\46ae355f69cae62d1c0b37e9c1faae5a\\\\dataviz\\\\scripts\\\\validate_palette.js\" \"#ef4444,#f97316,#3b82f6,#a1a1aa\" --mode dark --surface \"#141414\")",
       "PowerShell(Select-String -Path \"node_modules\\\\lucide-react\\\\dist\\\\lucide-react.d.ts\" -Pattern \"@name \\(ChartColumn|ChartPie|Gauge|ChartNoAxesColumn\\)\\\\b\" | ForEach-Object { $_.Line.Trim\\(\\) } | Select-Object -First 6)",
-      "PowerShell(npx tsx tmp-debug-rod.ts)"
+      "PowerShell(npx tsx tmp-debug-rod.ts)",
+      "Bash(node scripts/validate_palette.js \"#3b82f6,#f59e0b,#8b5cf6,#10b981\" --mode dark --surface \"#141414\")",
+      "Bash(node scripts/validate_palette.js \"#ef4444,#f97316,#3b82f6,#a1a1aa\" --mode dark --surface \"#141414\")"
     ],
     "additionalDirectories": [
       "c:\\Users\\Itachi\\.claude\\projects\\c--Users-Itachi-Desktop-simple-hris\\memory",

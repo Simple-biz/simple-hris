@@ -12,6 +12,10 @@ import { normalizeDeptToKey } from "@/lib/payroll/normalize-dept-key";
  *                      scheduled_deletion_at = now()+14d. The daily cron
  *                      (/api/cron/process-scheduled-deletions) fires
  *                      `offboarding_delete` once the timer elapses.
+ *   temporary_pause -> fire `offboarding_deactivate` (suspend only) with
+ *                      deletion_mode: "none" and NO scheduled_deletion_at, for
+ *                      ANY department — the account is never deleted; the person
+ *                      is expected back via re-onboarding.
  *
  * The legacy single 'offboarding' slug is retired. URL resolution still goes
  * through the Admin -> Webhooks slug registry (resolveWebhookUrl), so the

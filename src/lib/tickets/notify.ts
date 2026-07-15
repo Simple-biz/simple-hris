@@ -37,6 +37,10 @@ export async function notifyTicketCreated(ticket: TicketRow): Promise<void> {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         event: 'ticket.created',
+        // Who this alert is FOR: the board owner — never the ticket creator.
+        // The n8n Gmail node should use this as its "To" so the recipient is
+        // decided here, in one place, instead of per-workflow.
+        send_to: 'kaner@simple.biz',
         ticket_no: ticket.ticket_no,
         title: ticket.title,
         description: ticket.description ?? '',

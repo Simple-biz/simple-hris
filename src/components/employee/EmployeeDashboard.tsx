@@ -2796,8 +2796,11 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
                   >
                     {technologyBonusAmount > 0 ? `+${formatPHP(technologyBonusAmount)}` : formatPHP(0)}
                   </dd>
-                  <p className="mt-0.5 text-[10px] tabular-nums text-zinc-400 dark:text-zinc-500">
-                    {isTechnologyBonusActive ? 'Unlocked · week 3' : 'Unlocks week 3'}
+                  <p
+                    className="mt-0.5 cursor-help text-[10px] tabular-nums text-zinc-400 underline decoration-dotted underline-offset-2 dark:text-zinc-500"
+                    title="Eligible after 30 days of service — paid on the 3rd paycheck of each month."
+                  >
+                    {isTechnologyBonusActive ? 'Unlocked' : 'Locked'}
                   </p>
                 </div>
               </dl>
