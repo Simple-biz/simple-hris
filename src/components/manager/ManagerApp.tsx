@@ -72,6 +72,7 @@ import ConstructionBanner from '@/components/common/ConstructionBanner';
 import ReadOnlyTab from '@/components/rbac/ReadOnlyTab';
 import { useOnlineEmails, usePublishPresenceTab } from '@/components/presence/PresenceProvider';
 import { humanizeTabId } from '@/lib/presence/page-label';
+import { useTabDocumentTitle } from '@/hooks/useTabDocumentTitle';
 import { TeamAvatar, initialsOf, gradientFor } from '@/components/team/team-ui';
 import { formatCurrentProjects } from '@/lib/skill-set-titles';
 import {
@@ -100,6 +101,7 @@ export default function ManagerApp() {
 
   const [activeTab, setActiveTab] = useState<ManagerTab>('overview');
   usePublishPresenceTab(humanizeTabId(activeTab));
+  useTabDocumentTitle(humanizeTabId(activeTab));
   // When a manager owns both HSL branches and regular departments, the KPI tab
   // shows one calculator at a time (null = default to first-assigned).
   const [kpiCalc, setKpiCalc] = useState<'hsl' | 'dept' | null>(null);

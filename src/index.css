@@ -209,6 +209,27 @@
 
 
 /* ==========================================================================
+   Payroll Wizard "Notes" FAB — one heartbeat every 5 seconds: a quick scale
+   bump with a soft orange ring that expands and fades, then ~4.5s of rest.
+   Only transform / box-shadow animate, so it stays cheap.
+   ========================================================================== */
+
+@keyframes notes-fab-pulse {
+  0%       { transform: scale(1);    box-shadow: 0 0 0 0 rgba(249, 115, 22, 0.45); }
+  5%       { transform: scale(1.09); }
+  10%      { transform: scale(1);    box-shadow: 0 0 0 14px rgba(249, 115, 22, 0); }
+  100%     { transform: scale(1);    box-shadow: 0 0 0 0 rgba(249, 115, 22, 0); }
+}
+.notes-fab-pulse {
+  animation: notes-fab-pulse 5s ease-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .notes-fab-pulse { animation: none; }
+}
+
+
+/* ==========================================================================
    Prism panel — a "new feature" beacon that reads as a diamond catching light.
    Same GPU-safe recipe as the urgent card (registered <angle> + transform +
    opacity only): a slow iridescent rim hugging the border band, plus an
@@ -871,3 +892,71 @@
   animation: ecg-sweep 1.5s linear infinite;
 }
 
+
+/* ============================================================================
+   Tickets board — New ticket / details dialog.
+   A dedicated entrance for the /tickets modal: the panel glides up and
+   sharpens (blur -> crisp) on one exponential ease, then the fields cascade
+   in with a soft 40ms stagger (indexed via --field-i). Unlayered on purpose so
+   it outranks the generic tw-animate data-open:animate-in utilities the shared
+   DialogContent ships with. Exit stays quick (160ms) so closing never lags the
+   user's intent. Pure CSS -> immune to React re-renders mid-animation.
+   ========================================================================== */
+@keyframes ticket-dialog-in {
+  from {
+    opacity: 0;
+    transform: translateY(16px) scale(0.96);
+    filter: blur(6px);
+  }
+  55% {
+    filter: blur(0);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    filter: blur(0);
+  }
+}
+@keyframes ticket-dialog-out {
+  from {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(10px) scale(0.98);
+  }
+}
+/* Note: keyframes animate `transform` only — the -translate-x/y-1/2 centering
+   utilities use the separate `translate` property (Tailwind v4), so the two
+   compose instead of fighting. */
+.ticket-dialog[data-open] {
+  animation: ticket-dialog-in 400ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.ticket-dialog[data-closed] {
+  animation: ticket-dialog-out 160ms cubic-bezier(0.4, 0, 1, 1) both;
+}
+
+@keyframes ticket-field-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.ticket-dialog .ticket-field {
+  animation: ticket-field-in 380ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation-delay: calc(70ms + var(--field-i, 0) * 40ms);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ticket-dialog[data-open],
+  .ticket-dialog[data-closed],
+  .ticket-dialog .ticket-field {
+    animation-duration: 0.01ms;
+    animation-delay: 0s;
+  }
+}

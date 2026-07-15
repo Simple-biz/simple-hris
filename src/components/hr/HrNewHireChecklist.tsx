@@ -19,6 +19,7 @@ import {
   LockOpen,
   Pencil,
   RefreshCw,
+  Search,
   Trash2,
   UserPlus,
   X,
@@ -263,6 +264,8 @@ export default function HrNewHireChecklist({
   const [filterDept, setFilterDept] = useState('');
   const [filterCountry, setFilterCountry] = useState('');
   const [filterHiredBy, setFilterHiredBy] = useState('');
+  // Free-text search across every column of the loaded week (case-insensitive).
+  const [search, setSearch] = useState('');
 
   // Period selector
   const [periodMetas, setPeriodMetas] = useState<PeriodMeta[]>([]);
@@ -442,6 +445,7 @@ export default function HrNewHireChecklist({
     setFilterDept('');
     setFilterCountry('');
     setFilterHiredBy('');
+    setSearch('');
   }, [period]);
 
   // Close the edit-history popover on outside click, Escape, or any scroll.
@@ -835,18 +839,20 @@ export default function HrNewHireChecklist({
     return { departments: sorted(dept), countries: sorted(country), hiredBy: sorted(hiredBy) };
   }, [rows]);
 
-  const anyFilterActive = !!(filterDept || filterCountry || filterHiredBy);
+  const searchQuery = search.trim().toLowerCase();
+  const anyFilterActive = !!(filterDept || filterCountry || filterHiredBy || searchQuery);
 
-  // The rows actually shown — `rows` narrowed by the active filters.
+  // The rows actually shown — `rows` narrowed by the active filters + search.
   const filteredRows = useMemo(() => {
     if (!anyFilterActive) return rows;
     return rows.filter((row) => {
       if (filterDept && (row.department || '').trim() !== filterDept) return false;
       if (filterCountry && (row.country || '').trim() !== filterCountry) return false;
       if (filterHiredBy && (row.hired_by || '').trim() !== filterHiredBy) return false;
+      if (searchQuery && !COLUMNS.some((c) => (row[c.key] || '').toLowerCase().includes(searchQuery))) return false;
       return true;
     });
-  }, [rows, anyFilterActive, filterDept, filterCountry, filterHiredBy]);
+  }, [rows, anyFilterActive, filterDept, filterCountry, filterHiredBy, searchQuery]);
 
   // Drop a filter whose value no longer exists in the loaded rows (e.g. after
   // deleting the last hire in that department) so the grid can't get stuck empty.
@@ -860,11 +866,12 @@ export default function HrNewHireChecklist({
     setFilterDept('');
     setFilterCountry('');
     setFilterHiredBy('');
+    setSearch('');
   }, []);
 
   // Changing a filter changes which rows are visible — drop the selection so a
   // bulk apply / delete can never hit a row that's currently hidden.
-  useEffect(() => { setSelectedIds(new Set()); }, [filterDept, filterCountry, filterHiredBy]);
+  useEffect(() => { setSelectedIds(new Set()); }, [filterDept, filterCountry, filterHiredBy, searchQuery]);
 
   // ── Row multiselect → bulk-apply department / country / delete ──
   // Selection acts on the *visible* (filtered) rows so "select all" is intuitive.
@@ -1261,7 +1268,29 @@ export default function HrNewHireChecklist({
               Available whether or not the week is locked (filtering is read-only). */}
           {!loading && !error && rows.length > 0 && (
             <div className="flex shrink-0 flex-wrap items-center gap-x-2 gap-y-2 rounded-xl border border-zinc-200 bg-white px-3 py-2 dark:border-zinc-800 dark:bg-zinc-900/50">
-              <span className="flex items-center gap-1.5 text-[12px] font-semibold text-zinc-600 dark:text-zinc-300">
+              <div className="relative">
+                <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400" />
+                <input
+                  type="text"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  placeholder="Search hires…"
+                  aria-label="Search hires by name, email, source, or any field"
+                  className="h-8 w-52 rounded-lg border border-zinc-200 bg-white pl-8 pr-7 text-[13px] text-zinc-800 outline-none focus:border-emerald-400 focus:ring-1 focus:ring-emerald-300 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:placeholder:text-zinc-500"
+                />
+                {search && (
+                  <button
+                    type="button"
+                    onClick={() => setSearch('')}
+                    aria-label="Clear search"
+                    className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded p-0.5 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-600 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                )}
+              </div>
+
+              <span className="ml-1 flex items-center gap-1.5 text-[12px] font-semibold text-zinc-600 dark:text-zinc-300">
                 <Filter className="h-3.5 w-3.5" />
                 Filter
               </span>

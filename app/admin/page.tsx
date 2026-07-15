@@ -4,6 +4,7 @@ import { Suspense, useEffect, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { usePublishPresenceTab } from '@/components/presence/PresenceProvider';
 import { humanizeTabId } from '@/lib/presence/page-label';
+import { useTabDocumentTitle } from '@/hooks/useTabDocumentTitle';
 import AdminSidebar from '@/components/admin/AdminSidebar';
 import AdminOverview from '@/components/admin/AdminOverview';
 import AdminRoles from '@/components/admin/AdminRoles';
@@ -52,6 +53,7 @@ function AdminPageInner() {
   const [mounted, setMounted] = useState(false);
   const [activeTab, setActiveTab] = useState('overview');
   usePublishPresenceTab(humanizeTabId(activeTab));
+  useTabDocumentTitle(humanizeTabId(activeTab));
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [adminEmail, setAdminEmail] = useState<string | null>(null);
   const [navCounts, setNavCounts] = useState({

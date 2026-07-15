@@ -40,6 +40,10 @@ export const ROUTE_REQUIRED_ROLES: ReadonlyArray<{ prefix: string; roles: readon
   { prefix: '/orphanage',     roles: ['orphanage_manager', 'admin'] },
   { prefix: '/manager',       roles: ['manager', 'admin'] },
   { prefix: '/qc',            roles: ['qc', 'admin'] },
+  // Shared HRIS-updates Kanban board (hris-updates.vercel.app → /tickets).
+  // Role opens the page; the per-user `tickets` feature grant decides
+  // view-vs-create inside it (see /api/tickets).
+  { prefix: '/tickets',       roles: ['accounting', 'hr_coordinator', 'manager', 'ceo', 'admin'] },
 ];
 
 /**

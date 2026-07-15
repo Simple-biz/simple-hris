@@ -23,6 +23,11 @@ interface UseLiveRefreshOptions {
   /** Gate the whole thing — no subscription, poll, or focus listener while
    *  false (e.g. before the first load, or nothing visible yet). */
   enabled?: boolean;
+  /** Optional: notified when the Realtime channel state changes — 'live' once
+   *  the websocket subscription is up, 'degraded' when it errors/times out
+   *  (the poll + focus fallbacks still keep the view fresh). Lets a view show
+   *  an honest live-vs-polling indicator. */
+  onStatusChange?: (status: 'live' | 'degraded') => void;
 }
 
 /**
@@ -41,12 +46,15 @@ export function useLiveRefresh({
   pollMs = 30_000,
   debounceMs = 600,
   enabled = true,
+  onStatusChange,
 }: UseLiveRefreshOptions) {
   const instanceId = useId();
   // Hold the latest callback in a ref so changing it never re-subscribes the
   // Realtime channel (subscribing/unsubscribing churns the websocket).
   const cbRef = useRef(onRefresh);
   cbRef.current = onRefresh;
+  const statusRef = useRef(onStatusChange);
+  statusRef.current = onStatusChange;
   const timer = useRef<number | null>(null);
   // Stable key so the effect re-runs only when the *set* of tables changes.
   const tableKey = tables.join(',');
@@ -75,7 +83,10 @@ export function useLiveRefresh({
       );
     }
     ch.subscribe((status, err) => {
-      if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+      if (status === 'SUBSCRIBED') {
+        statusRef.current?.('live');
+      } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+        statusRef.current?.('degraded');
         // eslint-disable-next-line no-console
         console.warn(`[${channel}] Realtime ${status}; relying on ${pollMs}ms poll.`, err);
       }

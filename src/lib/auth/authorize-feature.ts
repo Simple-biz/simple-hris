@@ -99,6 +99,19 @@ export async function requireRateVisibilityOrFeatureEdit(
  * grants the required level on that feature. Edit anywhere wins. Admin bypasses.
  */
 export async function requireFeatureEditAnyView(feature: string): Promise<AuthzResult> {
+  return requireFeatureAccessAnyView(feature, 'edit');
+}
+
+/**
+ * Level-aware variant of {@link requireFeatureEditAnyView}: allow when ANY of
+ * the caller's role-mapped views grants at least `level` on the feature
+ * (`edit` satisfies a `view` requirement). Admin bypasses. Used by
+ * cross-view features whose reads are `view`-gated (e.g. the /tickets board).
+ */
+export async function requireFeatureAccessAnyView(
+  feature: string,
+  level: 'view' | 'edit' = 'edit',
+): Promise<AuthzResult> {
   const sess = await resolveSession();
   if (!sess) return { ok: false, status: 401, message: 'Not signed in' };
   if (sess.roles.includes('admin')) return ok(sess.email, sess.roles);
@@ -107,7 +120,10 @@ export async function requireFeatureEditAnyView(feature: string): Promise<AuthzR
   for (const role of sess.roles) {
     const view = ROLE_TO_FEATURE_VIEW[role] as FeatureViewKey | undefined;
     if (!view) continue;
-    if (resolveFeatureAccess(perms, view, feature) === 'edit') return ok(sess.email, sess.roles);
+    const access = resolveFeatureAccess(perms, view, feature);
+    if (access === 'edit' || (level === 'view' && access === 'view')) {
+      return ok(sess.email, sess.roles);
+    }
   }
-  return { ok: false, status: 403, message: `You don't have edit access to this feature.` };
+  return { ok: false, status: 403, message: `You don't have ${level} access to this feature.` };
 }

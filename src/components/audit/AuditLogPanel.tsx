@@ -431,6 +431,14 @@ export function formatActionLabel(action: string, details: Record<string, unknow
       return `Gift shipping deleted: ${String(details?.resource_id ?? details?.personal_email ?? '?')}`;
 
     // ── HR: pending hires / onboarding pipeline ─────────────────────────
+    case 'hr.pending.created':
+      return `Hire staged: ${String(pick(details, 'name', 'personal_email') ?? '?')}${details?.department ? ` (${String(details.department)})` : ''}`;
+    case 'hr.onboarding.submitted':
+      return `Onboarding paperwork submitted: ${String(pick(details, 'name', 'personal_email') ?? '?')}${details?.department ? ` (${String(details.department)})` : ''}${details?.resubmission ? ' · re-submission' : ''}`;
+    case 'hr.orientation.marked':
+      return `Orientation attended: ${String(pick(details, 'name', 'work_email') ?? '?')}${details?.attended_on ? ` — ${String(details.attended_on)}` : ''}${details?.already_marked ? ' · re-marked' : ''}`;
+    case 'hr.orientation.cleared':
+      return `Orientation mark cleared: ${String(pick(details, 'name', 'work_email') ?? '?')}`;
     case 'hr.pending.bulk_promoted': {
       const promoted = String(details?.promoted ?? '?');
       const total = String(details?.total ?? '?');
@@ -606,6 +614,10 @@ function actionDot(action: string): string {
   if (action === 'employee_gift_shipping.deleted') return 'bg-rose-500';
 
   // ── HR: pending hires / onboarding pipeline ──────────────────────────
+  if (action === 'hr.pending.created') return 'bg-sky-500';
+  if (action === 'hr.onboarding.submitted') return 'bg-teal-500';
+  if (action === 'hr.orientation.marked') return 'bg-emerald-500';
+  if (action === 'hr.orientation.cleared') return 'bg-zinc-500';
   if (action === 'hr.pending.bulk_promoted') return 'bg-emerald-600';
   if (action === 'hr.pending.bulk_unpromoted') return 'bg-amber-500';
   if (action === 'hr.pending.promoted') return 'bg-emerald-500';

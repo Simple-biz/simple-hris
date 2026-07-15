@@ -72,6 +72,7 @@ import { normEmail } from '@/lib/email/norm-email';
 import type { PabDayDisputeRow, PabDisputeStatus } from '@/lib/supabase/pab-day-disputes';
 import { usePublishPresenceTab } from '@/components/presence/PresenceProvider';
 import { humanizeTabId } from '@/lib/presence/page-label';
+import { useTabDocumentTitle } from '@/hooks/useTabDocumentTitle';
 
 function isPlausibleEmail(s: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s.trim());
@@ -193,6 +194,7 @@ export default function OrphanageApp() {
     'overview' | 'queue' | 'budget' | 'budget-history' | 'third-party-vendors' | 's-wall' | 'notifications'
   >('overview');
   usePublishPresenceTab(humanizeTabId(activeTab));
+  useTabDocumentTitle(humanizeTabId(activeTab));
   // Sub-tab inside the Orphanage Budget tab — Budget Request form vs Orphanages list.
   const [budgetSubTab, setBudgetSubTab] = useState<'request' | 'orphanages'>('request');
 

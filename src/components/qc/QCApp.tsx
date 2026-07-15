@@ -36,6 +36,7 @@ import { resolveFirstName } from '@/lib/name/first-name';
 import { SESSION_EMAIL_KEY } from '@/lib/rbac/views';
 import { usePublishPresenceTab } from '@/components/presence/PresenceProvider';
 import { humanizeTabId } from '@/lib/presence/page-label';
+import { useTabDocumentTitle } from '@/hooks/useTabDocumentTitle';
 import { usePayWeeks, weekEndFromStart, type PayWeek } from '@/lib/hubstaff/use-pay-weeks';
 import { QC_DEPT_KEYS } from '@/lib/qc/constants';
 import type { EmployeeRow } from '@/lib/supabase/employees';
@@ -122,6 +123,7 @@ export default function QCApp() {
   const [viewerEmail, setViewerEmail] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<QcTab>('overview');
   usePublishPresenceTab(humanizeTabId(activeTab));
+  useTabDocumentTitle(humanizeTabId(activeTab));
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
   useEffect(() => {

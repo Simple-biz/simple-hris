@@ -10,6 +10,7 @@ import {
   redactPendingRowRates,
 } from '@/lib/supabase/hr-pending-employees';
 import { createSupabaseServiceRoleClient } from '@/lib/supabase/server';
+import { insertAuditLog } from '@/lib/supabase/audit-log';
 import { requireFeatureEdit } from '@/lib/auth/authorize-feature';
 import { deniedResponse } from '@/lib/auth/authorize-email';
 import { isLeadGenDepartment } from '@/lib/hr/offboard-webhooks';
@@ -168,6 +169,25 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     });
   }
 
+  void insertAuditLog({
+    user_name: authz.sessionEmail,
+    user_role: 'manager',
+    action: 'hr.orientation.marked',
+    resource: 'hr_pending_employees',
+    resource_id: String(id),
+    details: {
+      name: row?.name ?? null,
+      department: row?.department ?? null,
+      work_email: row?.work_email ?? null,
+      attended_on: row ? manilaDateFromIso(row.orientation_attended_at) : null,
+      already_marked: alreadyMarked,
+      note: body.note?.trim() || null,
+      webhook_fired: webhook ? webhook.fired && webhook.error == null : false,
+      webhook_status: webhook?.status ?? null,
+      webhook_error: webhook?.error ?? null,
+    },
+  });
+
   // Managers must never receive the staged hire's pay rate.
   return NextResponse.json({
     row: redactPendingRowRates(row, hasRateVisibility(feat.roles)),
@@ -190,6 +210,20 @@ export async function DELETE(_req: Request, { params }: { params: Promise<{ id: 
 
   const { row, error } = await clearPendingHireOrientation(id);
   if (error) return NextResponse.json({ error }, { status: 500 });
+
+  void insertAuditLog({
+    user_name: authz.sessionEmail,
+    user_role: 'manager',
+    action: 'hr.orientation.cleared',
+    resource: 'hr_pending_employees',
+    resource_id: String(id),
+    details: {
+      name: row?.name ?? null,
+      department: row?.department ?? null,
+      work_email: row?.work_email ?? null,
+    },
+  });
+
   // Managers must never receive the staged hire's pay rate.
   return NextResponse.json({ row: redactPendingRowRates(row, hasRateVisibility(feat.roles)) });
 }

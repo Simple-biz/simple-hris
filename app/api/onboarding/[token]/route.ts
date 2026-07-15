@@ -14,6 +14,7 @@ import {
 } from "@/lib/hr/calltools-username";
 import { loadTakenCallToolsUsernames } from "@/lib/hr/calltools-username-server";
 import { splitFullName } from "@/lib/hr/work-email";
+import { insertAuditLog } from "@/lib/supabase/audit-log";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -286,6 +287,25 @@ export async function POST(
   if (error) {
     const status = /not found|no longer active/i.test(error) ? 409 : 500;
     return NextResponse.json({ error }, { status });
+  }
+
+  // Public route — no session; the actor is the hire themself. Details carry
+  // identity + pipeline context only, never payment credentials.
+  if (row) {
+    void insertAuditLog({
+      user_name: row.invite_personal_email ?? row.email ?? body.email!.trim(),
+      user_role: "onboarding_form",
+      action: "hr.onboarding.submitted",
+      resource: "hr_onboarding_submissions",
+      resource_id: row.id,
+      details: {
+        name: row.full_name?.trim() || body.full_name!.trim(),
+        personal_email: row.invite_personal_email ?? row.email ?? null,
+        department: row.invite_department ?? null,
+        payment_method: body.payment_method ?? null,
+        resubmission: row.pending_employee_id != null,
+      },
+    });
   }
 
   // Stage the hire the moment their paperwork lands: create the

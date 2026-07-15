@@ -27,7 +27,7 @@ import { canEditFeature, type FeaturePermissionsMap } from '@/lib/rbac/feature-p
 import { readRbacCache, writeRbacCache } from '@/lib/rbac/rbac-cache';
 import ReadOnlyTab from '@/components/rbac/ReadOnlyTab';
 import { usePagesVisibility } from '@/hooks/usePagesVisibility';
-import { useIdleTabTitle } from '@/hooks/useIdleTabTitle';
+import { useTabDocumentTitle } from '@/hooks/useTabDocumentTitle';
 import { pageLabel } from '@/lib/pages/visibility';
 import UnderConstruction from '@/components/common/UnderConstruction';
 import ConstructionBanner from '@/components/common/ConstructionBanner';
@@ -39,6 +39,7 @@ import PayrollLivePublisher from '@/components/payroll-live/PayrollLivePublisher
 import BonusCatalog from '@/components/accounting/BonusCatalog';
 import PeopleTab from '@/components/people/PeopleTab';
 import AccountingTransfers from '@/components/accounting/AccountingTransfers';
+import PayrollWizardNotesFab from '@/components/accounting/PayrollWizardNotesFab';
 
 function isPlausibleEmail(s: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s.trim());
@@ -47,8 +48,8 @@ function isPlausibleEmail(s: string): boolean {
 export default function App({ initialData }: { initialData?: InitialAccountingData | null }) {
   const [activeTab, setActiveTab] = useState('overview');
   usePublishPresenceTab(humanizeTabId(activeTab));
-  // Nudge the tab title when the user wanders off to another tab/app.
-  useIdleTabTitle();
+  // Browser tab title follows the active tab, e.g. "Payroll Wizard - HRIS".
+  useTabDocumentTitle(humanizeTabId(activeTab));
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [roles, setRoles] = useState<string[]>([]);
   const [featurePerms, setFeaturePerms] = useState<FeaturePermissionsMap>({});
@@ -346,6 +347,18 @@ export default function App({ initialData }: { initialData?: InitialAccountingDa
             activity={activeTab === 'payroll-wizard' ? 'In the Payroll Wizard' : 'In Payment Dispatch'}
           />
         )}
+        {/* Floating carry-over Notes checklist. Mounted OUTSIDE the strict
+            ReadOnlyTab wrapper so view-only accountants can still open and
+            read it — only `edit` grants (or admin) can change rows, and the
+            notes API enforces the same grant server-side. */}
+        {activeTab === 'payroll-wizard' &&
+          permsLoaded &&
+          visibilityOf('accounting', 'payroll-wizard') === 'visible' && (
+            <PayrollWizardNotesFab
+              sessionEmail={sessionEmail}
+              canEdit={canEditAccountingTab('payroll-wizard', roles, featurePerms)}
+            />
+          )}
       </main>
       <Toaster position="top-right" theme={isDark ? 'dark' : 'light'} />
     </div>

@@ -24,6 +24,9 @@ export const FEATURE_CATALOG: Record<FeatureViewKey, readonly { key: string; lab
     { key: "notifications",    label: "Notifications" },
     { key: "s_wall",           label: "S-Wall" },
     { key: "settings",         label: "Settings" },
+    // Not a dashboard tab — gates the standalone /tickets Kanban board
+    // (hris-updates.vercel.app). `edit` = create/drag tickets, `view` = watch.
+    { key: "tickets",          label: "Ticket Board" },
   ],
   hr: [
     { key: "overview",            label: "Overview" },
@@ -39,6 +42,7 @@ export const FEATURE_CATALOG: Record<FeatureViewKey, readonly { key: string; lab
     { key: "announcements", label: "Announcements" },
     { key: "s_wall",        label: "S-Wall" },
     { key: "notifications", label: "Notifications" },
+    { key: "tickets",       label: "Ticket Board" },
   ],
   manager: [
     { key: "overview",         label: "Overview" },
@@ -51,6 +55,7 @@ export const FEATURE_CATALOG: Record<FeatureViewKey, readonly { key: string; lab
     { key: "hsl_bonus",        label: "HSL Bonus" },
     { key: "bonus_history",    label: "Bonus History" },
     { key: "notifications",    label: "Notifications" },
+    { key: "tickets",          label: "Ticket Board" },
   ],
   orphanage: [
     { key: "overview",            label: "Overview" },
@@ -69,6 +74,7 @@ export const FEATURE_CATALOG: Record<FeatureViewKey, readonly { key: string; lab
     { key: "announcements", label: "Announcements" },
     { key: "s_wall",        label: "S-Wall" },
     { key: "notifications", label: "Notifications" },
+    { key: "tickets",       label: "Ticket Board" },
   ],
   contractor: [
     { key: "overview", label: "Overview" },

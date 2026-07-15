@@ -11,6 +11,7 @@ import { normEmail } from '@/lib/email/norm-email';
 import { SESSION_EMAIL_KEY, type Role } from '@/lib/rbac/views';
 import { usePublishPresenceTab } from '@/components/presence/PresenceProvider';
 import { humanizeTabId } from '@/lib/presence/page-label';
+import { useTabDocumentTitle } from '@/hooks/useTabDocumentTitle';
 import CeoSidebar, { type CeoTab } from './CeoSidebar';
 import CeoChatBubble from './CeoChatBubble';
 import CeoOverviewKpis from './CeoOverviewKpis';
@@ -39,6 +40,7 @@ export default function CeoApp() {
 
   const [activeTab, setActiveTab] = useState<CeoTab>('overview');
   usePublishPresenceTab(humanizeTabId(activeTab));
+  useTabDocumentTitle(humanizeTabId(activeTab));
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [viewerEmail, setViewerEmail] = useState<string | null>(null);
   const [authChecked, setAuthChecked] = useState(false);

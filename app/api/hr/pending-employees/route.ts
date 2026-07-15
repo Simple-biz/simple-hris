@@ -8,6 +8,7 @@ import {
 import { deniedResponse, requireElevatedSession } from "@/lib/auth/authorize-email";
 import { hasRateVisibility } from "@/lib/auth/elevated-roles";
 import { requireFeatureEdit } from "@/lib/auth/authorize-feature";
+import { insertAuditLog } from "@/lib/supabase/audit-log";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -67,6 +68,22 @@ export async function POST(req: Request) {
     created_by: authz.sessionEmail,
   });
   if (error) return NextResponse.json({ error }, { status: 500 });
+
+  void insertAuditLog({
+    user_name: authz.sessionEmail,
+    user_role: authz.roles[0] ?? "hr",
+    action: "hr.pending.created",
+    resource: "hr_pending_employees",
+    resource_id: row ? String(row.id) : null,
+    details: {
+      name,
+      department,
+      personal_email,
+      work_email: body.work_email?.trim() || null,
+      source: body.source ?? null,
+    },
+  });
+
   // Never echo the staged hire's pay rate back to the HR client.
   return NextResponse.json({ row: redactPendingRowRates(row, hasRateVisibility(authz.roles)) });
 }

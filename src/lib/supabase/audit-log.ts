@@ -39,12 +39,16 @@ export type AuditAction =
   | 'bank_update.otp_verify_failed'
   | 'bank_update.saved'
   // HR Dashboard — pending hires / onboarding pipeline
+  | 'hr.pending.created'
   | 'hr.pending.bulk_promoted'
   | 'hr.pending.bulk_unpromoted'
   | 'hr.pending.promoted'
   | 'hr.pending.unpromoted'
   | 'hr.pending.updated'
   | 'hr.hire.deleted'
+  | 'hr.onboarding.submitted'
+  | 'hr.orientation.marked'
+  | 'hr.orientation.cleared'
   | 'hr.onboarding.link_created'
   | 'hr.onboarding.archived'
   | 'hr.onboarding.deleted'
@@ -60,7 +64,13 @@ export type AuditAction =
   // HR Dashboard — Announcements
   | 'announcement.posted'
   | 'announcement.pin_toggled'
-  | 'announcement.deleted';
+  | 'announcement.deleted'
+  // HRIS Updates — Kanban ticket board (/tickets)
+  | 'ticket.created'
+  | 'ticket.updated'
+  | 'ticket.moved'
+  | 'ticket.deleted'
+  | 'ticket.commented';
 
 /**
  * Cycle context attached to every payroll-wizard audit event so the Reports
