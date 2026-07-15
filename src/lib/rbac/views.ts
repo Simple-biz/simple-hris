@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { readCachedRoles, writeRbacCache } from '@/lib/rbac/rbac-cache';
 
-export type AppView = 'employee' | 'admin' | 'accounting' | 'manager' | 'orphanage' | 'ceo' | 'hr' | 'contractor' | 'qc';
+export type AppView = 'employee' | 'admin' | 'accounting' | 'manager' | 'orphanage' | 'ceo' | 'hr' | 'contractor' | 'qc' | 'tickets';
 export type Role =
   | 'hr_coordinator'
   | 'accounting'
@@ -34,6 +34,7 @@ export const VIEW_ROUTES: Record<AppView, string> = {
   hr: '/hr',
   contractor: '/contractor',
   qc: '/qc',
+  tickets: '/tickets',
 };
 
 export const VIEW_LABELS: Record<AppView, string> = {
@@ -46,9 +47,13 @@ export const VIEW_LABELS: Record<AppView, string> = {
   hr: 'HR',
   contractor: 'Contractor',
   qc: 'QC',
+  tickets: 'Tickets',
 };
 
-const VIEW_PRIORITY: AppView[] = ['admin', 'ceo', 'hr', 'accounting', 'orphanage', 'qc', 'manager', 'contractor', 'employee'];
+// `tickets` sits below every real dashboard on purpose: it's a shared board,
+// never anyone's default landing (a tickets-eligible role always carries at
+// least one dashboard above it).
+const VIEW_PRIORITY: AppView[] = ['admin', 'ceo', 'hr', 'accounting', 'orphanage', 'qc', 'manager', 'tickets', 'contractor', 'employee'];
 
 export const ACTIVE_VIEW_KEY = 'active_view';
 export const SESSION_EMAIL_KEY = 'employee_session_email';
@@ -75,6 +80,11 @@ export function viewsForRoles(roles: Role[]): AppView[] {
   if (roles.includes('qc')) set.add('qc');
   if (roles.includes('admin') || roles.includes('hr_coordinator')) set.add('hr');
   if (roles.includes('contractor')) set.add('contractor');
+  // The shared HRIS-updates ticket board — every role that may open /tickets
+  // gets it in the switcher (mirrors ROUTE_REQUIRED_ROLES in route-access.ts).
+  if (roles.some((r) => (['accounting', 'hr_coordinator', 'manager', 'ceo'] as Role[]).includes(r))) {
+    set.add('tickets');
+  }
   return VIEW_PRIORITY.filter((v) => set.has(v));
 }
 

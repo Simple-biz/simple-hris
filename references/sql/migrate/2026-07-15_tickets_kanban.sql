@@ -4,8 +4,8 @@
 -- One shared board (Azure-DevOps style) where Accounting / HR / Managers /
 -- CEO file "what we want changed in the HRIS" tickets and drag them across
 -- four columns: To Do → In Progress → Testing → Done. Each ticket carries an
--- "Updates" reply thread (`ticket_comments`). Reached at /tickets on the main
--- app and via the hris-updates.vercel.app short link (proxy redirect).
+-- "Updates" reply thread (`ticket_comments`). Reached at /tickets via the
+-- "Tickets" entry in every eligible dashboard's ViewSwitcher.
 --
 -- Access model: the standard two layers —
 --   * roles (accounting / hr_coordinator / manager / ceo / admin) open /tickets

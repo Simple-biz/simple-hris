@@ -23,7 +23,8 @@ import {
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { Eye, Plus, RefreshCw, Search, SquareKanban } from 'lucide-react';
+import { useRouter } from 'next/navigation';
+import { ArrowLeft, Eye, Plus, RefreshCw, Search, SquareKanban } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -70,6 +71,7 @@ interface BoardData {
 }
 
 export default function TicketsBoard() {
+  const router = useRouter();
   const [tickets, setTickets] = useState<TicketRow[]>([]);
   const [access, setAccess] = useState<'view' | 'edit'>('view');
   const [viewer, setViewer] = useState('');
@@ -363,6 +365,15 @@ export default function TicketsBoard() {
     <div className="flex h-screen flex-col bg-background text-foreground">
       <header className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-border px-4 py-3 sm:px-6">
         <div className="flex items-center gap-2.5">
+          <Button
+            variant="ghost"
+            size="icon"
+            aria-label="Back to dashboard"
+            title="Back to dashboard"
+            onClick={() => router.push('/')}
+          >
+            <ArrowLeft />
+          </Button>
           <span className="flex size-8 items-center justify-center rounded-lg bg-primary/10 text-primary">
             <SquareKanban className="size-4.5" />
           </span>

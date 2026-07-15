@@ -192,22 +192,6 @@ export async function proxy(req: NextRequest) {
     // /api/bank-update/* — fall through to the existing rate-limit handling below.
   }
 
-  // -------------------------------------------------------------------------
-  // hris-updates short link. When the request arrives on the dedicated
-  // TICKETS_PUBLIC_HOST (e.g. "hris-updates.vercel.app", added as an extra
-  // domain on this Vercel project), send the visitor to the canonical origin's
-  // /tickets board instead of serving the app on this host. A redirect (not a
-  // rewrite) on purpose: NextAuth cookies + the Google OAuth callback are
-  // pinned to NEXTAUTH_URL's host, so SSO only works there — serving the SPA
-  // on a second hostname would strand users in a login loop. Inert until the
-  // env var is set.
-  // -------------------------------------------------------------------------
-  const ticketsHost = process.env.TICKETS_PUBLIC_HOST?.trim().toLowerCase();
-  if (ticketsHost && req.headers.get('host')?.toLowerCase() === ticketsHost) {
-    const origin = (process.env.NEXTAUTH_URL ?? 'https://simple-hris.vercel.app').replace(/\/$/, '');
-    return NextResponse.redirect(`${origin}/tickets`);
-  }
-
   if (PUBLIC_PATHS.has(pathname)) return NextResponse.next();
 
   // Vercel-scheduled (or external) cron callers carry no NextAuth cookie. Let

@@ -25,7 +25,7 @@ export const FEATURE_CATALOG: Record<FeatureViewKey, readonly { key: string; lab
     { key: "s_wall",           label: "S-Wall" },
     { key: "settings",         label: "Settings" },
     // Not a dashboard tab — gates the standalone /tickets Kanban board
-    // (hris-updates.vercel.app). `edit` = create/drag tickets, `view` = watch.
+    // (ViewSwitcher "Tickets"). `edit` = create/drag tickets, `view` = watch.
     { key: "tickets",          label: "Ticket Board" },
   ],
   hr: [

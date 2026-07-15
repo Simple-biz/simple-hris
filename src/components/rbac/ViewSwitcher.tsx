@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useSession } from 'next-auth/react';
-import { LayoutDashboard, ShieldCheck, Briefcase, ArrowLeftRight, Sparkles, UserCog, HeartHandshake, Crown, Users, HardHat, ClipboardCheck } from 'lucide-react';
+import { LayoutDashboard, ShieldCheck, Briefcase, ArrowLeftRight, Sparkles, UserCog, HeartHandshake, Crown, Users, HardHat, ClipboardCheck, SquareKanban } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { withViewTransition } from '@/lib/theme/with-view-transition';
 import { useNotificationCountsByView } from '@/hooks/useNotificationCountsByView';
@@ -38,6 +38,7 @@ const VIEW_ICONS: Record<AppView, React.ComponentType<{ className?: string }>> =
   hr: Users,
   contractor: HardHat,
   qc: ClipboardCheck,
+  tickets: SquareKanban,
 };
 
 export default function ViewSwitcher({ email, currentView, collapsed = false }: ViewSwitcherProps) {
