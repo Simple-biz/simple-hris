@@ -436,7 +436,7 @@ export default function EmployeeApp() {
           />
         );
       case 'notifications':
-        return <NotificationsPanel viewerEmail={employeeEmail} accent="orange" />;
+        return <NotificationsPanel viewerEmail={employeeEmail} accent="orange" view="employee" />;
       case 's-wall':
         return (
           <div className="flex h-full min-h-0 flex-col">

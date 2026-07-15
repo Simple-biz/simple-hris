@@ -23,8 +23,8 @@ import {
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { useRouter } from 'next/navigation';
-import { ArrowLeft, Eye, Plus, RefreshCw, Search, SquareKanban } from 'lucide-react';
+import { useRouter, useSearchParams } from 'next/navigation';
+import { ArrowLeft, Eye, Menu, Plus, RefreshCw, Search, SquareKanban } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -39,6 +39,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { useLiveRefresh } from '@/hooks/useLiveRefresh';
 import { cn } from '@/lib/utils';
 import {
+  TICKET_BOARD_MOVERS,
   TICKET_PRIORITIES,
   TICKET_STATUSES,
   TICKET_STATUS_LABELS,
@@ -48,6 +49,8 @@ import {
 } from '@/lib/tickets/types';
 import { PRIORITY_STYLES, STATUS_STYLES, TicketCard } from './TicketCard';
 import TicketDialog, { type TicketDraft } from './TicketDialog';
+import TicketsOverview from './TicketsOverview';
+import TicketsSidebar, { type TicketsView } from './TicketsSidebar';
 
 const byPosition = (a: TicketRow, b: TicketRow) =>
   a.position - b.position || a.created_at.localeCompare(b.created_at);
@@ -72,6 +75,7 @@ interface BoardData {
 
 export default function TicketsBoard() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [tickets, setTickets] = useState<TicketRow[]>([]);
   const [access, setAccess] = useState<'view' | 'edit'>('view');
   const [viewer, setViewer] = useState('');
@@ -82,6 +86,10 @@ export default function TicketsBoard() {
   // Optimistic until the Realtime channel reports otherwise; 'degraded' means
   // the websocket is down and the 30s poll / focus refresh are carrying us.
   const [liveStatus, setLiveStatus] = useState<'live' | 'degraded'>('live');
+  // Below `md` the sidebar is a drawer toggled by the header hamburger.
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  // Which tickets surface is showing: the Kanban board or the stats Overview.
+  const [activeView, setActiveView] = useState<TicketsView>('board');
 
   const [search, setSearch] = useState('');
   const [priorityFilter, setPriorityFilter] = useState<'all' | TicketPriority>('all');
@@ -137,11 +145,31 @@ export default function TicketsBoard() {
     onStatusChange: setLiveStatus,
   });
 
+  // Deep link: /tickets?ticket=<id> (from a "View & reply" notification)
+  // auto-opens that ticket's details + Updates thread once the board loads.
+  const deepLinkedRef = useRef(false);
+  useEffect(() => {
+    if (!loaded || deepLinkedRef.current) return;
+    deepLinkedRef.current = true;
+    const id = searchParams?.get('ticket');
+    if (!id) return;
+    const target = tickets.find((t) => t.id === id);
+    if (target) {
+      setDialogTicket(target);
+      setDialogOpen(true);
+    } else {
+      toast.error('That ticket is no longer on the board.');
+    }
+  }, [loaded, searchParams, tickets]);
+
   const canEdit = access === 'edit';
+  // Moving cards is restricted to the board movers allowlist for now (the API
+  // enforces this too) — everyone else creates tickets and replies.
+  const canMove = (TICKET_BOARD_MOVERS as readonly string[]).includes(viewer.toLowerCase());
   const filtersActive = search.trim() !== '' || priorityFilter !== 'all';
   // Dragging a filtered subset would compute positions against hidden
   // neighbors, so sorting pauses while a filter narrows the board.
-  const dragEnabled = canEdit && !filtersActive;
+  const dragEnabled = canEdit && canMove && !filtersActive;
 
   // ── Derived columns ─────────────────────────────────────────────────────────
   const columns = useMemo(() => {
@@ -362,14 +390,48 @@ export default function TicketsBoard() {
 
   // ── Render ──────────────────────────────────────────────────────────────────
   return (
-    <div className="flex h-screen flex-col bg-background text-foreground">
+    // `dark` is forced here (and on every portaled surface below): /tickets is a
+    // fixed black + red console in both global themes, so shared components
+    // always render their dark variants while tickets-theme recolors the tokens.
+    <div className="tickets-theme dark flex h-screen bg-background text-foreground">
+      {/* Mobile drawer backdrop — tap to close */}
+      {mobileNavOpen && (
+        <div
+          className="fixed inset-0 z-40 bg-black/50 md:hidden"
+          aria-label="Close navigation menu"
+          onClick={() => setMobileNavOpen(false)}
+        />
+      )}
+
+      <TicketsSidebar
+        mobileOpen={mobileNavOpen}
+        viewerEmail={viewer || null}
+        active={activeView}
+        onNavigate={(v) => {
+          setActiveView(v);
+          setMobileNavOpen(false);
+        }}
+      />
+
+      <div className="flex h-full min-w-0 flex-1 flex-col">
       <header className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-border px-4 py-3 sm:px-6">
         <div className="flex items-center gap-2.5">
           <Button
             variant="ghost"
             size="icon"
+            aria-label="Open navigation menu"
+            title="Menu"
+            className="md:hidden"
+            onClick={() => setMobileNavOpen(true)}
+          >
+            <Menu />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
             aria-label="Back to dashboard"
             title="Back to dashboard"
+            className="hidden md:inline-flex"
             onClick={() => router.push('/')}
           >
             <ArrowLeft />
@@ -380,7 +442,8 @@ export default function TicketsBoard() {
           <div className="leading-tight">
             <h1 className="text-[15px] font-semibold">HRIS Updates</h1>
             <p className="text-xs text-muted-foreground">
-              Request board · {tickets.length} ticket{tickets.length === 1 ? '' : 's'}
+              {activeView === 'overview' ? 'Overview' : 'Request board'} · {tickets.length} ticket
+              {tickets.length === 1 ? '' : 's'}
             </p>
           </div>
         </div>
@@ -397,12 +460,12 @@ export default function TicketsBoard() {
             >
               <span className="relative flex size-2" aria-hidden>
                 {liveStatus === 'live' && (
-                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-60 motion-reduce:animate-none" />
+                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-red-500 opacity-60 motion-reduce:animate-none" />
                 )}
                 <span
                   className={cn(
                     'relative inline-flex size-2 rounded-full',
-                    liveStatus === 'live' ? 'bg-emerald-500' : 'bg-amber-500',
+                    liveStatus === 'live' ? 'bg-red-500' : 'bg-amber-500',
                   )}
                 />
               </span>
@@ -425,6 +488,8 @@ export default function TicketsBoard() {
               View only
             </span>
           )}
+          {activeView === 'board' && (
+          <>
           <div className="relative">
             <Search className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
             <Input
@@ -440,9 +505,22 @@ export default function TicketsBoard() {
             onValueChange={(v) => v && setPriorityFilter(v as 'all' | TicketPriority)}
           >
             <SelectTrigger aria-label="Filter by priority">
-              <SelectValue />
+              {/* Base UI renders the raw value ('all', 'high') without children. */}
+              <SelectValue>
+                {priorityFilter === 'all' ? (
+                  'All priorities'
+                ) : (
+                  <>
+                    <span
+                      className={cn('size-2 rounded-full', PRIORITY_STYLES[priorityFilter].dot)}
+                      aria-hidden
+                    />
+                    {PRIORITY_STYLES[priorityFilter].label}
+                  </>
+                )}
+              </SelectValue>
             </SelectTrigger>
-            <SelectContent alignItemWithTrigger={false}>
+            <SelectContent alignItemWithTrigger={false} className="tickets-theme dark">
               <SelectItem value="all">All priorities</SelectItem>
               {TICKET_PRIORITIES.map((p) => (
                 <SelectItem key={p} value={p}>
@@ -452,6 +530,8 @@ export default function TicketsBoard() {
               ))}
             </SelectContent>
           </Select>
+          </>
+          )}
           {canEdit && (
             <Button
               onClick={() => {
@@ -466,12 +546,17 @@ export default function TicketsBoard() {
         </div>
       </header>
 
-      {canEdit && filtersActive && (
+      {activeView === 'board' && canEdit && canMove && filtersActive && (
         <p className="border-b border-border bg-muted/40 px-4 py-1.5 text-xs text-muted-foreground sm:px-6">
           Drag-to-move is paused while a search or filter is narrowing the board.
         </p>
       )}
 
+      {activeView === 'overview' ? (
+        <main className="min-h-0 flex-1 overflow-y-auto">
+          <TicketsOverview tickets={tickets} loaded={loaded} onOpenTicket={openTicket} />
+        </main>
+      ) : (
       <main className="min-h-0 flex-1 overflow-x-auto overflow-y-hidden">
         {!loaded ? (
           <BoardSkeleton />
@@ -516,12 +601,15 @@ export default function TicketsBoard() {
           </DndContext>
         )}
       </main>
+      )}
+      </div>
 
       <TicketDialog
         open={dialogOpen}
         onOpenChange={setDialogOpen}
         ticket={dialogTicket}
         canEdit={canEdit}
+        canMove={canMove}
         canDelete={canDeleteDialogTicket}
         saving={saving}
         onCreate={createTicket}
@@ -557,9 +645,9 @@ function BoardColumn({
       ref={setNodeRef}
       aria-label={`${TICKET_STATUS_LABELS[status]} column, ${tickets.length} tickets`}
       className={cn(
-        'flex h-full w-72 shrink-0 flex-col rounded-xl bg-muted/50 sm:w-auto sm:min-w-56 sm:flex-1 dark:bg-muted/30',
+        'flex h-full w-72 shrink-0 flex-col rounded-xl bg-muted/30 sm:w-auto sm:min-w-56 sm:flex-1',
         'transition-[box-shadow,background-color] duration-150 motion-reduce:transition-none',
-        highlighted && 'bg-orange-500/[0.06] ring-1 ring-orange-500/35 dark:bg-orange-400/[0.07]',
+        highlighted && 'bg-red-500/[0.07] ring-1 ring-red-500/40',
       )}
     >
       <header className="flex items-center gap-2 px-3 pt-3 pb-2">
@@ -640,7 +728,7 @@ function BoardSkeleton() {
       {TICKET_STATUSES.map((status) => (
         <div
           key={status}
-          className="flex h-full w-72 shrink-0 flex-col rounded-xl bg-muted/50 sm:w-auto sm:min-w-56 sm:flex-1 dark:bg-muted/30"
+          className="flex h-full w-72 shrink-0 flex-col rounded-xl bg-muted/30 sm:w-auto sm:min-w-56 sm:flex-1"
         >
           <div className="flex items-center gap-2 px-3 pt-3 pb-2">
             <span className={cn('size-2 rounded-full', STATUS_STYLES[status].dot)} aria-hidden />
@@ -648,7 +736,7 @@ function BoardSkeleton() {
           </div>
           <div className="flex flex-col gap-2 px-2 pb-2">
             {Array.from({ length: status === 'done' ? 1 : 2 + (status === 'todo' ? 1 : 0) }).map((_, i) => (
-              <div key={i} className="rounded-lg border border-border bg-white p-3 dark:bg-[#151b29]">
+              <div key={i} className="rounded-lg border border-border bg-card p-3">
                 <div className="flex items-center justify-between">
                   <Skeleton className="h-3 w-8" />
                   <Skeleton className="h-4 w-14 rounded-full" />

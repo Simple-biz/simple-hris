@@ -66,7 +66,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
   const { data: ticket, error: ticketErr } = await supabase
     .from('tickets')
-    .select('id, ticket_no, title')
+    .select('id, ticket_no, title, created_by')
     .eq('id', id)
     .maybeSingle();
   if (ticketErr) return NextResponse.json({ error: ticketErr.message }, { status: 500 });
@@ -94,6 +94,33 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     resource_id: String((ticket as { ticket_no: number }).ticket_no),
     details: { title: (ticket as { title: string }).title, preview: body.slice(0, 120) },
   });
+
+  // In-app HRIS notification for the ticket's creator — someone answered their
+  // request. Skipped when they reply on their own ticket. Best-effort: a
+  // notification hiccup must not fail the reply that's already saved.
+  const t = ticket as { ticket_no: number; title: string; created_by: string };
+  const creator = (t.created_by ?? '').trim().toLowerCase();
+  if (creator && creator !== authz.sessionEmail) {
+    const replier = authorName ?? authz.sessionEmail;
+    void supabase
+      .from('employee_notifications')
+      .insert({
+        recipient_email: creator,
+        type: 'ticket.replied',
+        tone: 'neutral',
+        title: `New reply on your ticket #${t.ticket_no}`,
+        message: `${replier} replied on "${t.title}": ${body.slice(0, 140)}${body.length > 140 ? '…' : ''}`,
+        details: {
+          ticket_id: id,
+          ticket_no: t.ticket_no,
+          comment_id: (data as TicketComment).id,
+          author_email: authz.sessionEmail,
+        },
+      })
+      .then(({ error: notifErr }) => {
+        if (notifErr) console.warn('[tickets] reply notification failed:', notifErr.message);
+      });
+  }
 
   return NextResponse.json({ comment: data as TicketComment });
 }

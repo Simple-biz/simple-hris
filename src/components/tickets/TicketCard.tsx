@@ -85,14 +85,15 @@ export const TicketCard = forwardRef<HTMLDivElement, TicketCardProps>(function T
     <div
       ref={ref}
       className={cn(
-        'group/card relative rounded-lg border border-border bg-white p-3 shadow-xs outline-none dark:bg-[#151b29]',
-        'transition-[box-shadow,transform,opacity] duration-150 ease-out motion-reduce:transition-none',
+        'group/card relative rounded-lg border border-border bg-card p-3 shadow-xs outline-none',
+        'transition-[box-shadow,transform,opacity,border-color] duration-150 ease-out motion-reduce:transition-none',
         'focus-visible:ring-2 focus-visible:ring-ring/60',
-        canDrag && !overlay && 'cursor-grab hover:-translate-y-px hover:shadow-md active:cursor-grabbing',
-        !canDrag && !overlay && 'cursor-pointer hover:shadow-md',
+        // Shadows vanish on a black board, so hover feedback rides the border.
+        canDrag && !overlay && 'cursor-grab hover:-translate-y-px hover:border-red-500/45 active:cursor-grabbing',
+        !canDrag && !overlay && 'cursor-pointer hover:border-red-500/45',
         ghosted && 'opacity-40',
         overlay &&
-          'rotate-2 scale-[1.03] cursor-grabbing shadow-xl ring-1 ring-orange-500/25 dark:shadow-black/50',
+          'rotate-2 scale-[1.03] cursor-grabbing shadow-xl shadow-black/50 ring-1 ring-red-500/40',
         className,
       )}
       {...props}

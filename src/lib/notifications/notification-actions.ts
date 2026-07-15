@@ -16,12 +16,17 @@ import type { AppView } from '@/lib/rbac/views';
  * a matching `view` + `onNavigate`.
  */
 export interface NotificationActionTarget {
-  /** Top-level dashboard tab id to switch to (e.g. an `HrTab`). */
-  tab: string;
+  /** Top-level dashboard tab id to switch to (e.g. an `HrTab`). Omitted for
+   *  URL-based targets (see {@link NotificationActionTarget.href}). */
+  tab?: string;
   /** Optional sub-tab within that tab's component (e.g. HrOnboarding's `subTab`). */
   subTab?: string;
   /** Optional id of the specific entity to open (e.g. an onboarding submission). */
   entityId?: string | null;
+  /** URL-based target for actions that live OUTSIDE the host dashboard's tab
+   *  state (e.g. the /tickets board). The NotificationsPanel routes to it
+   *  itself, so hosts don't need an `onNavigate` handler for these. */
+  href?: string;
 }
 
 export interface ResolvedNotificationAction extends NotificationActionTarget {
@@ -64,6 +69,18 @@ const ACTIONS: Partial<Record<AppView, Record<string, ActionResolver>>> = {
       subTab: 'queue',
       label: 'Review request',
     }),
+  },
+  employee: {
+    // Someone replied on the recipient's HRIS-updates ticket → jump to the
+    // /tickets board with the ticket auto-opened on its Updates thread.
+    // `details.ticket_id` is stamped by POST /api/tickets/[id]/comments.
+    'ticket.replied': (details) => {
+      const id = readString(details, 'ticket_id');
+      return {
+        href: id ? `/tickets?ticket=${encodeURIComponent(id)}` : '/tickets',
+        label: 'View & reply',
+      };
+    },
   },
 };
 

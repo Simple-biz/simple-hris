@@ -42,6 +42,10 @@ export const NOTIFICATION_TYPE_TO_VIEWS: Record<string, AppView[]> = {
   'people.banking.self_updated': ['accounting', 'admin', 'ceo'],
   'payroll.processing_started': ['admin', 'hr', 'accounting'],
   'payroll.processing_stopped': ['admin', 'hr', 'accounting'],
+  // Someone replied on the recipient's HRIS-updates ticket. Lives in the
+  // Employee dashboard's notification panel (everyone who can file a ticket
+  // has one), which is also where it's marked read.
+  'ticket.replied': ['employee'],
 };
 
 /** Dashboards a notification of `type` belongs to. Unknown types -> none. */

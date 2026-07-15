@@ -14,6 +14,12 @@ export const TICKET_STATUS_LABELS: Record<TicketStatus, string> = {
   done: 'Done',
 };
 
+/** Who may MOVE cards between columns (drag, or the dialog's Column select).
+ *  Deliberately a tiny allowlist "for now" — the board owner curates progress
+ *  while everyone else creates tickets and replies. Enforced server-side in
+ *  PATCH /api/tickets/[id]; the UI reads it to disable dragging. Lowercase. */
+export const TICKET_BOARD_MOVERS = ['kaner@simple.biz'] as const;
+
 export const TICKET_PRIORITIES = ['low', 'medium', 'high', 'urgent'] as const;
 export type TicketPriority = (typeof TICKET_PRIORITIES)[number];
 

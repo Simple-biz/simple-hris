@@ -7,6 +7,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Copy,
+  Mail,
   RefreshCw,
   Search,
   Share2,
@@ -25,7 +26,13 @@ import { addWeeks, formatWeekLabel, sundayIso } from '@/lib/hr/hiring-week';
  * (or all-time), defaulting to the current week.
  */
 
-type Referral = { hire: string; referredBy: string };
+type Referral = {
+  hire: string;
+  referredBy: string;
+  referredByEmail: string;
+  /** True when the email matched an offboarded (former) employee. */
+  referredByOffboarded: boolean;
+};
 
 // RFC-4180-ish escaping: quote when the value carries a comma, quote, or newline.
 function csvCell(v: string | number | null | undefined): string {
@@ -67,21 +74,34 @@ export default function ReferralsWeekSection() {
 
   useEffect(load, [week]);
 
-  // Filter by new-hire OR referrer name (case-insensitive substring).
+  // Filter by new-hire, referrer name, OR referrer email (case-insensitive substring).
   const q = query.trim().toLowerCase();
   const filtered = useMemo(
     () =>
       q
-        ? referrals.filter((r) => r.hire.toLowerCase().includes(q) || r.referredBy.toLowerCase().includes(q))
+        ? referrals.filter(
+            (r) =>
+              r.hire.toLowerCase().includes(q) ||
+              r.referredBy.toLowerCase().includes(q) ||
+              r.referredByEmail.toLowerCase().includes(q),
+          )
         : referrals,
     [referrals, q],
   );
 
   const copyCsv = async () => {
-    const header = ['New Hire that was Referred', 'Referred By'];
+    const header = ['New Hire that was Referred', 'Referred By', 'Referrer Simple.biz Email'];
     const lines = [
       header.join(','),
-      ...filtered.map((r) => [r.hire, r.referredBy].map(csvCell).join(',')),
+      ...filtered.map((r) =>
+        [
+          r.hire,
+          r.referredBy,
+          r.referredByEmail + (r.referredByEmail && r.referredByOffboarded ? ' (offboarded)' : ''),
+        ]
+          .map(csvCell)
+          .join(','),
+      ),
     ];
     try {
       await navigator.clipboard.writeText(lines.join('\r\n'));
@@ -208,6 +228,7 @@ export default function ReferralsWeekSection() {
                   <div key={i} className="flex items-center gap-3 px-3 py-2.5">
                     <span className="h-3 flex-1 animate-pulse rounded bg-zinc-100 dark:bg-zinc-800" />
                     <span className="h-3 flex-1 animate-pulse rounded bg-zinc-100 dark:bg-zinc-800" />
+                    <span className="h-3 flex-1 animate-pulse rounded bg-zinc-100 dark:bg-zinc-800" />
                   </div>
                 ))}
               </div>
@@ -233,7 +254,7 @@ export default function ReferralsWeekSection() {
                 type="text"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                placeholder="Search new hire or referrer…"
+                placeholder="Search new hire, referrer, or email…"
                 aria-label="Search referrals"
                 className="h-9 w-full rounded-xl border border-zinc-300 bg-white pl-9 pr-9 text-[13px] text-zinc-900 outline-none transition placeholder:text-zinc-400 focus:border-emerald-400 focus:ring-2 focus:ring-emerald-300/50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:focus:border-emerald-500"
               />
@@ -270,6 +291,12 @@ export default function ReferralsWeekSection() {
                           Referred By
                         </span>
                       </th>
+                      <th className="px-3 py-2">
+                        <span className="flex items-center gap-1.5">
+                          <Mail className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
+                          Referrer Simple.biz Email
+                        </span>
+                      </th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800">
@@ -284,12 +311,34 @@ export default function ReferralsWeekSection() {
                         <td className="px-3 py-2 text-zinc-700 dark:text-zinc-300">
                           {r.referredBy || <span className="text-zinc-400 dark:text-zinc-500">—</span>}
                         </td>
+                        <td className="px-3 py-2 text-zinc-700 dark:text-zinc-300">
+                          {r.referredByEmail ? (
+                            <span className="flex items-center gap-1.5">
+                              <a
+                                href={`mailto:${r.referredByEmail}`}
+                                className="text-emerald-700 hover:underline dark:text-emerald-400"
+                              >
+                                {r.referredByEmail}
+                              </a>
+                              {r.referredByOffboarded && (
+                                <span
+                                  title="This referrer has been offboarded — the address may no longer be active"
+                                  className="rounded-full bg-amber-100 px-1.5 py-px text-[10px] font-semibold text-amber-700 dark:bg-amber-900/50 dark:text-amber-300"
+                                >
+                                  Offboarded
+                                </span>
+                              )}
+                            </span>
+                          ) : (
+                            <span className="text-zinc-400 dark:text-zinc-500">—</span>
+                          )}
+                        </td>
                       </tr>
                     ))}
                   </tbody>
                   <tfoot>
                     <tr className="border-t border-zinc-200 bg-zinc-50/60 font-semibold dark:border-zinc-700 dark:bg-zinc-900/60">
-                      <td className="px-3 py-2 text-zinc-700 dark:text-zinc-300" colSpan={2}>
+                      <td className="px-3 py-2 text-zinc-700 dark:text-zinc-300" colSpan={3}>
                         {filtered.length} {filtered.length === 1 ? 'referral' : 'referrals'}
                         {q && filtered.length !== referrals.length ? ` of ${referrals.length}` : ''}
                       </td>

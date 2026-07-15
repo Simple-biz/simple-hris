@@ -3,6 +3,7 @@ import {
   createSupabaseServiceRoleClient,
 } from "./server";
 import { isReferralSource } from "@/lib/hr/referral-source";
+import { nameTokens } from "@/lib/name/name-tokens";
 
 /**
  * Data access for the HR "New Hire Checklist" tab — a free-form, spreadsheet
@@ -595,17 +596,145 @@ export async function listHrNewHireChecklistRecruiterCounts(periodStart?: string
   return { recruiters, totalHires, totalInterviewed, error: null };
 }
 
+export type ResolvedReferrerEmail = { email: string; offboarded: boolean };
+
+/** One name→email index. `byLiteral` keys the verbatim (case/whitespace-folded)
+ *  name; `byExactKey` the full-token-set key; `entries` backs subset matching.
+ *  A null map value = two DIFFERENT emails share that key (ambiguous). */
+type ReferrerNameIndex = {
+  byLiteral: Map<string, string | null>;
+  byExactKey: Map<string, string | null>;
+  entries: { tokens: Set<string>; email: string }[];
+};
+
+/** Verbatim-name key: case + whitespace folded, punctuation KEPT — so a
+ *  referred_by pasted straight off a master row hits that exact row even when
+ *  a duplicate row for the same human token-collides with it. */
+function literalNameKey(name: string): string {
+  return name.normalize("NFKC").toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+function addNameIndexEntry(
+  index: ReferrerNameIndex,
+  name: string | null,
+  email: string | null,
+): void {
+  const n = clean(name);
+  const e = clean(email)?.toLowerCase();
+  if (!n || !e) return;
+  const tokens = nameTokens(n);
+  if (tokens.length === 0) return;
+  const lit = literalNameKey(n);
+  index.byLiteral.set(lit, index.byLiteral.has(lit) && index.byLiteral.get(lit) !== e ? null : e);
+  const key = tokens.join(" ");
+  index.byExactKey.set(key, index.byExactKey.has(key) && index.byExactKey.get(key) !== e ? null : e);
+  index.entries.push({ tokens: new Set(tokens), email: e });
+}
+
+/** Verbatim full-name match wins, then exact token-set match, then tokens that
+ *  are a subset of EXACTLY ONE entry. A single-letter token is treated as an
+ *  initial ("Rudith C" matches a "Rudith Cabana"), still subject to uniqueness.
+ *  `ambiguous` = the name fits 2+ different people, so the caller must NOT fall
+ *  through to a weaker tier (it could pick the wrong one). */
+function matchNameIndex(
+  index: ReferrerNameIndex,
+  name: string,
+  tokens: string[],
+): { hit: string | null; ambiguous: boolean } {
+  const literal = index.byLiteral.get(literalNameKey(name));
+  if (literal !== undefined) return { hit: literal, ambiguous: literal === null };
+  const exact = index.byExactKey.get(tokens.join(" "));
+  if (exact !== undefined) return { hit: exact, ambiguous: exact === null };
+  const tokenFits = (t: string, entryTokens: Set<string>): boolean =>
+    t.length === 1
+      ? [...entryTokens].some((et) => et.startsWith(t))
+      : entryTokens.has(t);
+  let hit: string | null = null;
+  for (const e of index.entries) {
+    if (!tokens.every((t) => tokenFits(t, e.tokens))) continue;
+    if (hit !== null && hit !== e.email) return { hit: null, ambiguous: true };
+    hit = e.email;
+  }
+  return { hit, ambiguous: false };
+}
+
+/**
+ * Resolve free-text referrer names to @simple.biz work emails by token-matching
+ * against the master list, in two tiers: ACTIVE employees first, then
+ * OFFBOARDED ones (master rows stamped `off_boarded_at` + the `offboarded_sheet`
+ * snapshot, which also covers people already deleted from the master), so a
+ * referrer who has since left still shows their address — flagged
+ * `offboarded: true`. Within a tier an exact token-set match wins, then a
+ * unique-subset match (so "Kane Reroma" finds "Jan Kane Reroma"); a name fitting
+ * 2+ people resolves blank rather than guessing. Degrades to an all-blank
+ * resolver on a master query error — the referrals table must not fail because
+ * the email join did.
+ */
+async function buildReferrerEmailResolver(
+  sb: ReturnType<typeof client>,
+): Promise<(name: string) => ResolvedReferrerEmail> {
+  const NONE: ResolvedReferrerEmail = { email: "", offboarded: false };
+  const PAGE = 1000; // PostgREST caps a response at db.max-rows; paginate past it
+  const fetchAll = async (table: string, select: string): Promise<Record<string, unknown>[] | null> => {
+    const out: Record<string, unknown>[] = [];
+    let from = 0;
+    while (true) {
+      const { data, error } = await sb.from(table).select(select).range(from, from + PAGE - 1);
+      if (error) return null;
+      const page = (data ?? []) as unknown as Record<string, unknown>[];
+      out.push(...page);
+      if (page.length < PAGE) break;
+      from += PAGE;
+    }
+    return out;
+  };
+
+  const masterRows = await fetchAll("global_master_list", 'Name,"Work Email",off_boarded_at');
+  if (!masterRows) return () => NONE;
+
+  const active: ReferrerNameIndex = { byLiteral: new Map(), byExactKey: new Map(), entries: [] };
+  const offboarded: ReferrerNameIndex = { byLiteral: new Map(), byExactKey: new Map(), entries: [] };
+  for (const r of masterRows) {
+    const tier = r.off_boarded_at ? offboarded : active;
+    addNameIndexEntry(tier, r.Name as string | null, r["Work Email"] as string | null);
+  }
+  // Offboarded-sheet snapshot — best-effort (a failure just loses this tier's extras).
+  const sheetRows = await fetchAll("offboarded_sheet", "name, work_email");
+  for (const r of sheetRows ?? []) {
+    addNameIndexEntry(offboarded, r.name as string | null, r.work_email as string | null);
+  }
+
+  return (name: string): ResolvedReferrerEmail => {
+    const tokens = nameTokens(name);
+    if (tokens.length === 0) return NONE;
+    const a = matchNameIndex(active, name, tokens);
+    if (a.hit) return { email: a.hit, offboarded: false };
+    if (a.ambiguous) return NONE;
+    const o = matchNameIndex(offboarded, name, tokens);
+    if (o.hit) return { email: o.hit, offboarded: true };
+    return NONE;
+  };
+}
+
 /**
  * Employee referrals — one row per REFERRAL hire (a checklist row whose `source`
  * is a referral, see `isReferralSource`; every other channel + blank source is
  * dropped). Each entry pairs the new hire's name with WHO referred them
- * (`referred_by`, blank if not filled in). Scoped to ALL weeks by default, or
- * one Sun-anchored week when `periodStart` (YYYY-MM-DD) is given. Sorted by
- * referrer then hire so a referrer's people group together. Powers the HR
- * Overview "Referrals" table (New Hire that was Referred · Referred By).
+ * (`referred_by`, blank if not filled in) and the referrer's @simple.biz work
+ * email token-matched off the master list — active employees first, falling
+ * back to offboarded ones (`referredByOffboarded: true`); blank when unmatched
+ * or ambiguous. Scoped to ALL weeks by default, or one Sun-anchored week when
+ * `periodStart` (YYYY-MM-DD) is given. Sorted by referrer then hire so a
+ * referrer's people group together. Powers the HR Overview "Referrals" table
+ * (New Hire that was Referred · Referred By · Referrer Simple.biz Email).
  */
 export async function listHrNewHireChecklistReferrals(periodStart?: string): Promise<{
-  referrals: { hire: string; referredBy: string }[];
+  referrals: {
+    hire: string;
+    referredBy: string;
+    referredByEmail: string;
+    referredByOffboarded: boolean;
+  }[];
   total: number;
   error: string | null;
 }> {
@@ -613,13 +742,28 @@ export async function listHrNewHireChecklistReferrals(periodStart?: string): Pro
   const period = clean(periodStart ?? null);
   let query = sb.from(TABLE).select("source, name, referred_by").range(0, 9999);
   if (period) query = query.eq("period_start", period);
-  const { data, error } = await query;
+  const [{ data, error }, resolveEmail] = await Promise.all([
+    query,
+    buildReferrerEmailResolver(sb),
+  ]);
   if (error) return { referrals: [], total: 0, error: error.message };
   const rows = (data ?? []) as { source: string | null; name: string | null; referred_by: string | null }[];
-  const referrals: { hire: string; referredBy: string }[] = [];
+  const referrals: {
+    hire: string;
+    referredBy: string;
+    referredByEmail: string;
+    referredByOffboarded: boolean;
+  }[] = [];
   for (const r of rows) {
     if (!isReferralSource(r.source ?? "")) continue; // ONLY referral hires
-    referrals.push({ hire: clean(r.name) ?? "", referredBy: clean(r.referred_by) ?? "" });
+    const referredBy = clean(r.referred_by) ?? "";
+    const resolved = referredBy ? resolveEmail(referredBy) : { email: "", offboarded: false };
+    referrals.push({
+      hire: clean(r.name) ?? "",
+      referredBy,
+      referredByEmail: resolved.email,
+      referredByOffboarded: resolved.offboarded,
+    });
   }
   referrals.sort(
     (a, b) => a.referredBy.localeCompare(b.referredBy) || a.hire.localeCompare(b.hire),

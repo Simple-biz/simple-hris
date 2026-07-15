@@ -5,6 +5,7 @@ import { deniedResponse } from '@/lib/auth/authorize-email';
 import { getSessionActor } from '@/lib/auth/session-actor';
 import { lookupFullNameForEmail } from '@/lib/supabase/announcements';
 import { insertAuditLog } from '@/lib/supabase/audit-log';
+import { notifyTicketCreated } from '@/lib/tickets/notify';
 import { TICKET_STATUSES, TICKET_PRIORITIES, type TicketRow } from '@/lib/tickets/types';
 
 export const dynamic = 'force-dynamic';
@@ -106,6 +107,10 @@ export async function POST(req: NextRequest) {
     resource_id: String((data as TicketRow).ticket_no),
     details: { title, priority },
   });
+
+  // Email-the-admin automation: fire the ticket_created webhook (n8n) with the
+  // full request details. Fire-and-forget — see notifyTicketCreated.
+  void notifyTicketCreated(data as TicketRow);
 
   return NextResponse.json({ ticket: data as TicketRow });
 }

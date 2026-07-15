@@ -9,12 +9,15 @@ const PERIOD_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 /**
  * GET /api/hr/new-hire-checklist/referrals[?period=YYYY-MM-DD]
- *   → { referrals: [{ hire, referredBy }], total }
+ *   → { referrals: [{ hire, referredBy, referredByEmail, referredByOffboarded }], total }
  *
  * One row per referral hire (source is a referral) — the new hire's name paired
- * with who referred them (`referred_by`). Across every week by default, or one
- * Sun-anchored week when `period` is given. Powers the HR Overview "Referrals"
- * table (New Hire that was Referred · Referred By).
+ * with who referred them (`referred_by`) and the referrer's @simple.biz work
+ * email (token-matched off the master list — active first, then offboarded
+ * rows/sheet with `referredByOffboarded: true`; blank when unmatched).
+ * Across every week by default, or one Sun-anchored week when `period` is
+ * given. Powers the HR Overview "Referrals" table (New Hire that was Referred ·
+ * Referred By · Referrer Simple.biz Email).
  */
 export async function GET(request: Request) {
   const authz = await requireElevatedSession();

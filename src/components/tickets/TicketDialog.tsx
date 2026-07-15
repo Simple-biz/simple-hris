@@ -47,6 +47,8 @@ interface TicketDialogProps {
   /** null → create mode; a row → view/edit mode. */
   ticket: TicketRow | null;
   canEdit: boolean;
+  /** Whether this viewer may change the ticket's column (movers allowlist). */
+  canMove: boolean;
   canDelete: boolean;
   saving: boolean;
   onCreate: (draft: TicketDraft) => Promise<boolean>;
@@ -72,6 +74,7 @@ export default function TicketDialog({
   onOpenChange,
   ticket,
   canEdit,
+  canMove,
   canDelete,
   saving,
   onCreate,
@@ -109,8 +112,15 @@ export default function TicketDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="ticket-dialog max-h-[88dvh] overflow-y-auto sm:max-w-md">
-        <DialogHeader className="ticket-field" style={fieldIndex(0)}>
+      {/* Pinned header + footer with a scrollable middle: on a tall ticket
+          (long details + reply thread) only the fields scroll, so the close
+          button and action buttons never drift out of reach. */}
+      {/* `tickets-theme dark`: the dialog portals outside the board wrapper, so
+          it re-opts into the /tickets black+red console palette here (the
+          `.ticket-dialog` rules in src/index.css swap the shared gradient
+          surface for the console black in both global themes). */}
+      <DialogContent className="tickets-theme dark ticket-dialog flex max-h-[88dvh] flex-col gap-0 overflow-hidden p-0 sm:max-w-md">
+        <DialogHeader className="ticket-field px-4 pt-4 pb-3" style={fieldIndex(0)}>
           <DialogTitle>
             {isCreate ? 'New ticket' : (
               <span className="flex items-center gap-2">
@@ -126,6 +136,7 @@ export default function TicketDialog({
           </DialogDescription>
         </DialogHeader>
 
+        <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-4">
         <form
           className="grid gap-3.5"
           onSubmit={(e) => {
@@ -213,19 +224,28 @@ export default function TicketDialog({
           </div>
 
           {!isCreate && (
-            <div className="ticket-field grid grid-cols-2 gap-3" style={fieldIndex(4)}>
+            <div className="ticket-field grid gap-3 sm:grid-cols-2" style={fieldIndex(4)}>
               <div className="grid gap-1.5">
-                <Label>Column</Label>
+                <Label title={canMove ? undefined : 'Only the board owner can move tickets for now'}>
+                  Column
+                </Label>
                 <Select
                   value={draft.status}
                   onValueChange={(v) =>
                     v && setDraft((d) => ({ ...d, status: v as TicketStatus }))
                   }
                 >
-                  <SelectTrigger className="w-full" disabled={readOnly || saving}>
-                    <SelectValue />
+                  <SelectTrigger className="w-full" disabled={readOnly || saving || !canMove}>
+                    {/* Base UI renders the raw value ('in_progress') without children. */}
+                    <SelectValue>
+                      <span
+                        className={cn('size-2 rounded-full', STATUS_STYLES[draft.status].dot)}
+                        aria-hidden
+                      />
+                      {STATUS_STYLES[draft.status].label}
+                    </SelectValue>
                   </SelectTrigger>
-                  <SelectContent alignItemWithTrigger={false}>
+                  <SelectContent alignItemWithTrigger={false} className="tickets-theme dark">
                     {TICKET_STATUSES.map((s) => (
                       <SelectItem key={s} value={s}>
                         <span className={cn('size-2 rounded-full', STATUS_STYLES[s].dot)} aria-hidden />
@@ -251,13 +271,14 @@ export default function TicketDialog({
         </form>
 
         {!isCreate && (
-          <div className="ticket-field grid gap-2 border-t border-border pt-3" style={fieldIndex(5)}>
+          <div className="ticket-field mt-3.5 grid gap-2 border-t border-border pt-3" style={fieldIndex(5)}>
             <CommentsThread ticketId={ticket.id} />
           </div>
         )}
+        </div>
 
         <DialogFooter
-          className={cn('ticket-field', !isCreate && canDelete && 'sm:justify-between')}
+          className={cn('ticket-field mx-0 mb-0', !isCreate && canDelete && 'sm:justify-between')}
           style={fieldIndex(isCreate ? 4 : 6)}
         >
           {!isCreate && canDelete && (

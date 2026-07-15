@@ -1,7 +1,8 @@
 'use client';
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Bell, CheckCheck, CheckCircle2, Lock, Unlock, AlertTriangle, PartyPopper, BadgeDollarSign, X, Search, ChevronLeft, ChevronRight, ArrowRight } from 'lucide-react';
+import { useRouter } from 'next/navigation';
+import { Bell, CheckCheck, CheckCircle2, Lock, Unlock, AlertTriangle, PartyPopper, BadgeDollarSign, MessagesSquare, X, Search, ChevronLeft, ChevronRight, ArrowRight } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useDispatchLock } from '@/hooks/useDispatchLock';
 import { getSupabaseBrowserClient } from '@/lib/supabase/browser';
@@ -280,6 +281,9 @@ export default function NotificationsPanel({
 
   // Click-through: mark this one read (best-effort — the panel is about to
   // unmount as the dashboard switches tabs) and hand the target to the host.
+  // URL-based targets (`href`) are routed here directly, so hosts don't need
+  // an onNavigate handler for cross-page jumps like the /tickets board.
+  const router = useRouter();
   const handleNavigate = useCallback(
     (id: string, target: NotificationActionTarget) => {
       if (normEmail) {
@@ -289,9 +293,13 @@ export default function NotificationsPanel({
           body: JSON.stringify({ ids: [id] }),
         }).catch(() => {});
       }
+      if (target.href) {
+        router.push(target.href);
+        return;
+      }
       onNavigate?.(target);
     },
-    [normEmail, onNavigate],
+    [normEmail, onNavigate, router],
   );
 
   const [search, setSearch] = useState('');
@@ -500,39 +508,54 @@ export default function NotificationsPanel({
               const isPayrollStart = n.type === 'payroll.processing_started';
               const isPayrollStop  = n.type === 'payroll.processing_stopped';
               const isPayroll = isPayrollStart || isPayrollStop;
+              // Ticket-reply cards wear the board's red-and-black theme: black
+              // surface, solid red accents — deliberately flat, no gradients.
+              const isTicket = n.type === 'ticket.replied';
 
-              const stripe = isPayrollStart
+              const stripe = isTicket
+                ? 'bg-red-600'
+                : isPayrollStart
                 ? 'bg-gradient-to-r from-amber-400 to-orange-500'
                 : isPayrollStop
                   ? 'bg-gradient-to-r from-zinc-300 to-zinc-400 dark:from-zinc-600 dark:to-zinc-500'
                   : positive
                     ? 'bg-gradient-to-r from-emerald-400 to-teal-500'
                     : 'bg-gradient-to-r from-zinc-300 to-zinc-400 dark:from-zinc-700 dark:to-zinc-600';
-              const ringCls = isPayrollStart
+              const ringCls = isTicket
+                ? 'border-red-900/70'
+                : isPayrollStart
                 ? 'border-amber-200/80 dark:border-amber-900/40'
                 : isPayrollStop
                   ? 'border-zinc-200 dark:border-zinc-800'
                   : positive
                     ? 'border-emerald-200/80 dark:border-emerald-900/40'
                     : 'border-zinc-200 dark:border-zinc-800';
-              const iconWrap = isPayrollStart
+              const iconWrap = isTicket
+                ? 'bg-red-950 ring-red-900/70'
+                : isPayrollStart
                 ? 'bg-amber-50 ring-amber-200 dark:bg-amber-950/30 dark:ring-amber-900/50'
                 : isPayrollStop
                   ? 'bg-zinc-100 ring-zinc-200 dark:bg-zinc-800/60 dark:ring-zinc-700'
                   : positive
                     ? 'bg-emerald-50 ring-emerald-200 dark:bg-emerald-950/30 dark:ring-emerald-900/50'
                     : 'bg-zinc-100 ring-zinc-200 dark:bg-zinc-800/60 dark:ring-zinc-700';
-              const iconCls = isPayrollStart
+              const iconCls = isTicket
+                ? 'text-red-500'
+                : isPayrollStart
                 ? 'text-amber-600 dark:text-amber-400'
                 : isPayrollStop
                   ? 'text-zinc-500 dark:text-zinc-400'
                   : positive
                     ? 'text-emerald-600 dark:text-emerald-400'
                     : 'text-zinc-500 dark:text-zinc-400';
-              const Icon = isPayrollStart ? Lock : isPayrollStop ? Unlock : positive ? PartyPopper : BadgeDollarSign;
-              const action = onNavigate
+              const Icon = isTicket ? MessagesSquare : isPayrollStart ? Lock : isPayrollStop ? Unlock : positive ? PartyPopper : BadgeDollarSign;
+              // Resolve whenever the host declared its view; keep the action
+              // only if we can actually act on it (self-routed href, or a
+              // host-provided tab navigator).
+              const resolved = view
                 ? resolveNotificationAction(view, n.type, n.details as Record<string, unknown> | null)
                 : null;
+              const action = resolved && (resolved.href || onNavigate) ? resolved : null;
               // For an offboarding request, check whether its queue row has since
               // been actioned so we can detail the outcome instead of the CTA.
               const offboardResolution =
@@ -555,7 +578,12 @@ export default function NotificationsPanel({
                   className={cn(
                     'overflow-hidden rounded-xl border bg-white shadow-sm dark:bg-zinc-900/80',
                     ringCls,
-                    !n.read_at && 'ring-1 ring-emerald-200/50 dark:ring-emerald-900/30',
+                    !n.read_at &&
+                      (isTicket
+                        ? 'ring-1 ring-red-900/40'
+                        : 'ring-1 ring-emerald-200/50 dark:ring-emerald-900/30'),
+                    // Red-and-black ticket card: black in both themes.
+                    isTicket && 'bg-zinc-950 dark:bg-zinc-950',
                   )}
                 >
                   <div className={cn('h-1 w-full', stripe)} />
@@ -569,11 +597,23 @@ export default function NotificationsPanel({
                       </div>
                       <div className="min-w-0 flex-1">
                         <div className="flex flex-wrap items-center gap-2">
-                          <p className="text-[14px] font-semibold leading-snug text-zinc-900 dark:text-zinc-100">
+                          <p
+                            className={cn(
+                              'text-[14px] font-semibold leading-snug text-zinc-900 dark:text-zinc-100',
+                              isTicket && 'text-zinc-50',
+                            )}
+                          >
                             {n.title}
                           </p>
                           {!n.read_at && (
-                            <span className="inline-flex items-center rounded-full bg-emerald-100 px-2 py-0.5 text-[10.5px] font-semibold text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-400">
+                            <span
+                              className={cn(
+                                'inline-flex items-center rounded-full px-2 py-0.5 text-[10.5px] font-semibold',
+                                isTicket
+                                  ? 'bg-red-500/15 text-red-400'
+                                  : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-400',
+                              )}
+                            >
                               New
                             </span>
                           )}
@@ -589,7 +629,12 @@ export default function NotificationsPanel({
                             </button>
                           )}
                         </div>
-                        <p className="mt-1.5 text-[13px] leading-relaxed text-zinc-600 dark:text-zinc-400">
+                        <p
+                          className={cn(
+                            'mt-1.5 text-[13px] leading-relaxed text-zinc-600 dark:text-zinc-400',
+                            isTicket && 'text-zinc-300',
+                          )}
+                        >
                           {n.message}
                         </p>
 
@@ -620,7 +665,12 @@ export default function NotificationsPanel({
                           <button
                             type="button"
                             onClick={() => handleNavigate(n.id, action)}
-                            className="group mt-3 inline-flex items-center gap-1.5 rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-1.5 text-[12px] font-semibold text-emerald-700 transition-colors hover:border-emerald-400 hover:bg-emerald-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/50 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300 dark:hover:border-emerald-700 dark:hover:bg-emerald-950/70"
+                            className={cn(
+                              'group mt-3 inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-[12px] font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2',
+                              isTicket
+                                ? 'border-red-700 bg-red-600 text-white hover:border-red-600 hover:bg-red-500 focus-visible:ring-red-500/50'
+                                : 'border-blue-900 bg-blue-900 text-white hover:border-blue-800 hover:bg-blue-800 focus-visible:ring-blue-500/50 dark:border-blue-800/80 dark:bg-blue-950 dark:text-blue-100 dark:hover:border-blue-700 dark:hover:bg-blue-900',
+                            )}
                           >
                             {action.label}
                             <ArrowRight className="h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5" />
@@ -661,7 +711,12 @@ export default function NotificationsPanel({
                           </div>
                         )}
 
-                        <div className="mt-3 border-t border-zinc-100 pt-2 dark:border-zinc-800">
+                        <div
+                          className={cn(
+                            'mt-3 border-t border-zinc-100 pt-2 dark:border-zinc-800',
+                            isTicket && 'border-zinc-800',
+                          )}
+                        >
                           <span className="text-[11.5px] text-zinc-400 dark:text-zinc-500">
                             {formatRelative(n.details?.submitted_at ?? n.created_at)}
                           </span>

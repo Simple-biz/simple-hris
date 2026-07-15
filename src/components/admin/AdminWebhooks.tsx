@@ -93,6 +93,18 @@ const KNOWN_SLUGS: Array<{ slug: string; label: string; description: string }> =
     description:
       'Fired when a manager marks a LEAD GEN hire as having attended orientation (Manager → Newly Hired; bulk fires one event per hire; other departments fire nothing). Payload carries the hire\'s identity, calltools_nickname + calltools_username from their paperwork (e.g. "Mikey J. T.", minted at mark time for pre-feature paperwork), and pay_rate / regular_rate / ot_rate so n8n can provision the CallTools agent. Re-marks (date edits) re-fire with already_marked: true — the flow must not create a second account.',
   },
+  {
+    slug: 'ticket_created',
+    label: 'Ticket Created → Email Admin (n8n)',
+    description:
+      'Fired when a ticket is created on the /tickets HRIS-updates board. POSTs the full request (ticket #, title, details, priority, requester); the n8n flow emails the board owner.',
+  },
+  {
+    slug: 'ticket_done',
+    label: 'Ticket Done → Email Creator (n8n)',
+    description:
+      'Fired when a ticket is moved into the Done column. POSTs the ticket + creator email; the n8n flow emails the creator that they can refresh the HRIS and test the change.',
+  },
 ];
 
 function uid() {

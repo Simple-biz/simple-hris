@@ -322,6 +322,36 @@
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
 }
 
+/* ── shadcn semantic color bridge (Tailwind v4) ────────────────────────────────
+   Maps the HSL theme variables below (:root / .dark) into Tailwind's theme so
+   `bg-popover`, `bg-primary`, `text-muted-foreground`, `border-input`,
+   `ring-ring`, … actually generate CSS. Without this block those utilities
+   silently compile to NOTHING (transparent popovers, invisible tints) — the
+   long-standing reason ad-hoc `bg-zinc-900` overrides appear on dropdowns.
+   `inline` is required: the underlying vars swap per theme (.dark), so values
+   must be resolved at use-site, not frozen at definition. */
+@theme inline {
+  --color-background: hsl(var(--background));
+  --color-foreground: hsl(var(--foreground));
+  --color-card: hsl(var(--card));
+  --color-card-foreground: hsl(var(--card-foreground));
+  --color-popover: hsl(var(--popover));
+  --color-popover-foreground: hsl(var(--popover-foreground));
+  --color-primary: hsl(var(--primary));
+  --color-primary-foreground: hsl(var(--primary-foreground));
+  --color-secondary: hsl(var(--secondary));
+  --color-secondary-foreground: hsl(var(--secondary-foreground));
+  --color-muted: hsl(var(--muted));
+  --color-muted-foreground: hsl(var(--muted-foreground));
+  --color-accent: hsl(var(--accent));
+  --color-accent-foreground: hsl(var(--accent-foreground));
+  --color-destructive: hsl(var(--destructive));
+  --color-destructive-foreground: hsl(var(--destructive-foreground));
+  --color-border: hsl(var(--border));
+  --color-input: hsl(var(--input));
+  --color-ring: hsl(var(--ring));
+}
+
 @layer base {
   /* Light theme — Orange primary · Blue secondary · White surfaces */
   :root {
@@ -372,6 +402,34 @@
     --border: 217 33% 17%;
     --input: 217 33% 17%;
     --ring: 25 94% 60%;
+  }
+
+  /* /tickets theme — black + signal-red console. The board + its portaled
+     dialog/selects opt in via the `tickets-theme` class (paired with a forced
+     `dark` class so shared components render their dark variants); custom
+     properties inherit, so every semantic token (bg-background, bg-muted,
+     border-border…) inside goes near-black with red actions while the rest of
+     the app keeps its default palette in BOTH global themes. */
+  .tickets-theme {
+    --background: 0 0% 4%;
+    --foreground: 0 0% 96%;
+    --card: 0 0% 8%;
+    --card-foreground: 0 0% 96%;
+    --popover: 0 0% 7%;
+    --popover-foreground: 0 0% 96%;
+    --primary: 0 74% 48%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 0 0% 15%;
+    --secondary-foreground: 0 0% 96%;
+    --muted: 0 0% 12%;
+    --muted-foreground: 0 0% 65%;
+    --accent: 0 74% 48%;
+    --accent-foreground: 0 0% 100%;
+    --destructive: 0 80% 58%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 0 0% 16%;
+    --input: 0 0% 17%;
+    --ring: 0 84% 60%;
   }
 }
 
@@ -959,4 +1017,18 @@
     animation-duration: 0.01ms;
     animation-delay: 0s;
   }
+}
+
+/* The shared DialogContent/DialogFooter ship hardcoded orange/blue gradient
+   surfaces (light + dark variants). The /tickets console is always black, so
+   these unlayered rules outrank those utilities in both global themes and let
+   the tickets-theme tokens carry the surface instead. */
+.ticket-dialog {
+  background-image: none;
+  background-color: hsl(var(--popover));
+}
+.ticket-dialog [data-slot='dialog-footer'] {
+  background-image: none;
+  background-color: hsl(0 0% 6%);
+  border-color: hsl(var(--border));
 }

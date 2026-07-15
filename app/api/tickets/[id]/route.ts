@@ -4,7 +4,9 @@ import { requireFeatureEditAnyView } from '@/lib/auth/authorize-feature';
 import { deniedResponse } from '@/lib/auth/authorize-email';
 import { getSessionActor } from '@/lib/auth/session-actor';
 import { insertAuditLog } from '@/lib/supabase/audit-log';
+import { notifyTicketDone } from '@/lib/tickets/notify';
 import {
+  TICKET_BOARD_MOVERS,
   TICKET_STATUSES,
   TICKET_PRIORITIES,
   type TicketRow,
@@ -95,6 +97,21 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     return NextResponse.json({ error: 'Nothing to update' }, { status: 400 });
   }
 
+  // Moving a card (column or in-column position) is restricted to the board
+  // movers allowlist for now — everyone else may still create tickets, edit
+  // their fields, and reply. Compared against the CURRENT row so a no-op
+  // status echo from the edit dialog doesn't trip it.
+  const beforeRow = before as TicketRow;
+  const wantsMove =
+    (patch.status !== undefined && patch.status !== beforeRow.status) ||
+    (patch.position !== undefined && patch.position !== beforeRow.position);
+  if (wantsMove && !(TICKET_BOARD_MOVERS as readonly string[]).includes(authz.sessionEmail)) {
+    return NextResponse.json(
+      { error: 'Only the board owner can move tickets between columns for now.' },
+      { status: 403 },
+    );
+  }
+
   const { data, error } = await supabase
     .from('tickets')
     .update(patch)
@@ -104,7 +121,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
   const ticket = data as TicketRow;
-  const moved = patch.status !== undefined && patch.status !== (before as TicketRow).status;
+  const moved = patch.status !== undefined && patch.status !== beforeRow.status;
   const actor = await getSessionActor();
   void insertAuditLog({
     ...actor,
@@ -112,9 +129,15 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     resource: 'tickets',
     resource_id: String(ticket.ticket_no),
     details: moved
-      ? { title: ticket.title, from: (before as TicketRow).status, to: ticket.status }
+      ? { title: ticket.title, from: beforeRow.status, to: ticket.status }
       : { title: ticket.title, fields: Object.keys(patch) },
   });
+
+  // Landed in Done → email the creator that their request is ready to test.
+  // Fires only on the transition (not on later edits to an already-done card).
+  if (moved && ticket.status === 'done') {
+    void notifyTicketDone(ticket, authz.sessionEmail);
+  }
 
   return NextResponse.json({ ticket });
 }
