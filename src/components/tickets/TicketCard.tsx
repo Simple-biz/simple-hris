@@ -1,7 +1,7 @@
 'use client';
 
 import { forwardRef, type ComponentPropsWithoutRef } from 'react';
-import { MessageSquare } from 'lucide-react';
+import { MessageSquare, UserCog } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { TicketRow, TicketPriority, TicketStatus } from '@/lib/tickets/types';
 
@@ -70,16 +70,22 @@ interface TicketCardProps extends ComponentPropsWithoutRef<'div'> {
   /** Rendered inside the DragOverlay — lifted look, no hover states. */
   overlay?: boolean;
   canDrag?: boolean;
+  /** Display name of the assigned developer (resolved from the members list);
+   *  when the ticket is assigned but no name resolves, the email prefix shows. */
+  assigneeName?: string | null;
 }
 
 /** Presentational card. Sorting/drag behavior is attached by the board via the
  *  ref + spread props (dnd-kit listeners), so this stays a pure visual. */
 export const TicketCard = forwardRef<HTMLDivElement, TicketCardProps>(function TicketCard(
-  { ticket, ghosted = false, overlay = false, canDrag = false, className, ...props },
+  { ticket, ghosted = false, overlay = false, canDrag = false, assigneeName, className, ...props },
   ref,
 ) {
   const prio = PRIORITY_STYLES[ticket.priority] ?? PRIORITY_STYLES.medium;
   const creator = ticket.created_by_name ?? ticket.created_by.split('@')[0];
+  const assignee = ticket.assigned_to
+    ? (assigneeName ?? ticket.assigned_to.split('@')[0])
+    : null;
 
   return (
     <div
@@ -121,6 +127,20 @@ export const TicketCard = forwardRef<HTMLDivElement, TicketCardProps>(function T
           {ticket.description}
         </p>
       ) : null}
+
+      {/* Assigned-developer label — who owns this ticket, visible at a glance
+          on the board. Teal keeps it distinct from priority + status hues. */}
+      {assignee && (
+        <div className="mt-2 flex">
+          <span
+            className="inline-flex h-5 max-w-full items-center gap-1 rounded-full bg-teal-500/10 px-2 text-[11px] font-medium text-teal-700 dark:bg-teal-500/15 dark:text-teal-400"
+            title={`Assigned to ${assignee} (${ticket.assigned_to})`}
+          >
+            <UserCog className="size-3 shrink-0" aria-hidden />
+            <span className="truncate">{assignee}</span>
+          </span>
+        </div>
+      )}
 
       <div className="mt-2.5 flex items-center gap-1.5">
         <span

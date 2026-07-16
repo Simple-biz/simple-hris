@@ -5,8 +5,10 @@ import { deniedResponse } from '@/lib/auth/authorize-email';
 import { getSessionActor } from '@/lib/auth/session-actor';
 import { lookupFullNameForEmail } from '@/lib/supabase/announcements';
 import { insertAuditLog } from '@/lib/supabase/audit-log';
-import { notifyTicketCreated } from '@/lib/tickets/notify';
-import { TICKET_STATUSES, TICKET_PRIORITIES, type TicketRow } from '@/lib/tickets/types';
+import { logTicketEvent } from '@/lib/tickets/events';
+import { listTicketMembers } from '@/lib/tickets/members';
+import { notifyTicketCreated, sendTicketAssignedNotifications } from '@/lib/tickets/notify';
+import { TICKET_PRIORITIES, isAssignableDeveloper, type TicketRow } from '@/lib/tickets/types';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -16,11 +18,13 @@ function getClient() {
 }
 
 const SELECT_COLS =
-  'id, ticket_no, title, description, status, priority, position, created_by, created_by_name, assigned_to, created_at, updated_at';
+  'id, ticket_no, title, description, status, priority, position, created_by, created_by_name, assigned_to, created_at, updated_at, archived_at, archived_by';
 
-// GET /api/tickets — the whole board, plus the caller's own access level so
-// the UI knows whether to offer create/drag (`edit`) or render read-only.
-export async function GET() {
+// GET /api/tickets — the live board (archived tickets excluded), plus the
+// caller's own access level so the UI knows whether to offer create/drag
+// (`edit`) or render read-only. `?archived=1` returns the archive instead,
+// newest-archived first, for the board's Archived view.
+export async function GET(req: NextRequest) {
   const viewz = await requireFeatureAccessAnyView('tickets', 'view');
   if (!viewz.ok) return deniedResponse(viewz);
   const editz = await requireFeatureAccessAnyView('tickets', 'edit');
@@ -28,11 +32,15 @@ export async function GET() {
   const supabase = getClient();
   if (!supabase) return NextResponse.json({ error: 'Supabase not configured' }, { status: 500 });
 
-  const { data, error } = await supabase
-    .from('tickets')
-    .select(`${SELECT_COLS}, ticket_comments(count)`)
-    .order('position', { ascending: true })
-    .order('created_at', { ascending: false });
+  const wantArchived = req.nextUrl.searchParams.get('archived') === '1';
+  let query = supabase.from('tickets').select(`${SELECT_COLS}, ticket_comments(count)`);
+  query = wantArchived
+    ? query.not('archived_at', 'is', null).order('archived_at', { ascending: false })
+    : query
+        .is('archived_at', null)
+        .order('position', { ascending: true })
+        .order('created_at', { ascending: false });
+  const { data, error } = await query;
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
   // Flatten the nested count aggregate into a plain number per ticket.
@@ -49,7 +57,7 @@ export async function GET() {
 }
 
 // POST /api/tickets — create a ticket in the "To Do" column (top of the column).
-// Body: { title, description?, priority? }
+// Body: { title, description?, priority?, assigned_to? }
 export async function POST(req: NextRequest) {
   const authz = await requireFeatureEditAnyView('tickets');
   if (!authz.ok) return deniedResponse(authz);
@@ -57,7 +65,7 @@ export async function POST(req: NextRequest) {
   const supabase = getClient();
   if (!supabase) return NextResponse.json({ error: 'Supabase not configured' }, { status: 500 });
 
-  let body: { title?: string; description?: string; priority?: string };
+  let body: { title?: string; description?: string; priority?: string; assigned_to?: string | null };
   try {
     body = await req.json();
   } catch {
@@ -70,6 +78,30 @@ export async function POST(req: NextRequest) {
   const priority = (body.priority ?? 'medium').trim().toLowerCase();
   if (!TICKET_PRIORITIES.includes(priority as (typeof TICKET_PRIORITIES)[number])) {
     return NextResponse.json({ error: `priority must be one of: ${TICKET_PRIORITIES.join(', ')}` }, { status: 400 });
+  }
+
+  // Optional developer assignment at creation — same rule as PATCH: the
+  // assignee must hold Edit access to the Ticket Board (Roles & Permissions)
+  // or be an admin, i.e. appear in the /api/tickets/members pool as edit/admin.
+  const assignedTo = (body.assigned_to ?? '').trim().toLowerCase() || null;
+  if (assignedTo) {
+    try {
+      const members = await listTicketMembers(supabase);
+      if (!members.some((m) => m.email === assignedTo && isAssignableDeveloper(m))) {
+        return NextResponse.json(
+          {
+            error:
+              'Only developers with Edit access to the Ticket Board can be assigned. Grant it in Admin → Roles & Permissions first.',
+          },
+          { status: 400 },
+        );
+      }
+    } catch (e) {
+      return NextResponse.json(
+        { error: e instanceof Error ? e.message : 'Could not verify the assignee' },
+        { status: 500 },
+      );
+    }
   }
 
   // New cards land on top of "To Do": one slot above the column's current top.
@@ -94,6 +126,7 @@ export async function POST(req: NextRequest) {
       position,
       created_by: authz.sessionEmail,
       created_by_name: createdByName,
+      assigned_to: assignedTo,
     })
     .select(SELECT_COLS)
     .single();
@@ -108,9 +141,23 @@ export async function POST(req: NextRequest) {
     details: { title, priority },
   });
 
+  // First entry on the ticket's history trail.
+  logTicketEvent(supabase, {
+    ticketId: (data as TicketRow).id,
+    action: 'created',
+    actorEmail: authz.sessionEmail,
+    actorName: createdByName,
+  });
+
   // Email-the-admin automation: fire the ticket_created webhook (n8n) with the
   // full request details. Fire-and-forget — see notifyTicketCreated.
   void notifyTicketCreated(data as TicketRow);
+
+  // Assigned at creation → tell the developer right away (in-app + email),
+  // unless the creator assigned themselves.
+  if (assignedTo && assignedTo !== authz.sessionEmail) {
+    sendTicketAssignedNotifications(supabase, data as TicketRow, authz.sessionEmail);
+  }
 
   return NextResponse.json({ ticket: data as TicketRow });
 }

@@ -25,7 +25,7 @@ import {
 import { CSS } from '@dnd-kit/utilities';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { ArrowLeft, Eye, Menu, Plus, RefreshCw, Search, SquareKanban } from 'lucide-react';
+import { Archive, ArrowLeft, Eye, Menu, Plus, RefreshCw, Search, SquareKanban } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -44,11 +44,12 @@ import {
   TICKET_PRIORITIES,
   TICKET_STATUSES,
   TICKET_STATUS_LABELS,
+  type TicketMember,
   type TicketPriority,
   type TicketRow,
   type TicketStatus,
 } from '@/lib/tickets/types';
-import { PRIORITY_STYLES, STATUS_STYLES, TicketCard } from './TicketCard';
+import { PRIORITY_STYLES, STATUS_STYLES, TicketCard, initialsFor, relativeTime } from './TicketCard';
 import TicketDialog, { type TicketDraft } from './TicketDialog';
 import TicketsOverview from './TicketsOverview';
 import TicketsSidebar, { type TicketsView } from './TicketsSidebar';
@@ -135,14 +136,61 @@ export default function TicketsBoard() {
     }
   }, []);
 
+  // Board members — powers the assignee pickers (dialog + admin), the card's
+  // "assigned developer" label, and the Overview Members rail. Grants change
+  // rarely; one fetch per mount plus the header refresh button is enough.
+  const [members, setMembers] = useState<TicketMember[] | null>(null);
+  const [membersError, setMembersError] = useState<string | null>(null);
+  const fetchMembers = useCallback(async () => {
+    try {
+      const res = await fetch('/api/tickets/members', { cache: 'no-store' });
+      if (!res.ok) {
+        const j = (await res.json().catch(() => null)) as { error?: string } | null;
+        throw new Error(j?.error ?? `Request failed (${res.status})`);
+      }
+      const j = (await res.json()) as { members?: TicketMember[] };
+      setMembers(j.members ?? []);
+      setMembersError(null);
+    } catch (e) {
+      setMembers((prev) => prev ?? []);
+      setMembersError(e instanceof Error ? e.message : 'Could not load members');
+    }
+  }, []);
+
+  // The Archived view's list — fetched lazily when the view opens, refreshed
+  // alongside the board so a restore/archive elsewhere shows up live.
+  const [archivedTickets, setArchivedTickets] = useState<TicketRow[]>([]);
+  const [archivedLoaded, setArchivedLoaded] = useState(false);
+  const fetchArchived = useCallback(async () => {
+    try {
+      const res = await fetch('/api/tickets?archived=1', { cache: 'no-store' });
+      if (!res.ok) return;
+      const j = (await res.json()) as { tickets?: TicketRow[] };
+      setArchivedTickets(j.tickets ?? []);
+      setArchivedLoaded(true);
+    } catch {
+      // Best-effort; the view shows a retry via the header refresh button.
+    }
+  }, []);
+
   useEffect(() => {
     void fetchBoard();
-  }, [fetchBoard]);
+    void fetchMembers();
+  }, [fetchBoard, fetchMembers]);
+
+  useEffect(() => {
+    if (activeView === 'archived') void fetchArchived();
+  }, [activeView, fetchArchived]);
 
   useLiveRefresh({
     tables: ['tickets', 'ticket_comments'],
     channel: 'tickets-board',
-    onRefresh: () => void fetchBoard(),
+    onRefresh: () => {
+      void fetchBoard();
+      // useLiveRefresh always runs the latest closure, so this sees the
+      // current view; the archive list only refetches while it's on screen.
+      if (activeView === 'archived') void fetchArchived();
+    },
     enabled: loaded,
     onStatusChange: setLiveStatus,
   });
@@ -165,13 +213,36 @@ export default function TicketsBoard() {
   }, [loaded, searchParams, tickets]);
 
   const canEdit = access === 'edit';
-  // Moving cards is restricted to the board movers allowlist for now (the API
-  // enforces this too) — everyone else creates tickets and replies.
-  const canMove = (TICKET_BOARD_MOVERS as readonly string[]).includes(viewer.toLowerCase());
+  // Moving cards: the board movers allowlist can move anything; a ticket's
+  // assigned developer can move THAT ticket (the API enforces the same rule).
+  // Everyone else creates tickets and replies.
+  const isMover = (TICKET_BOARD_MOVERS as readonly string[]).includes(viewer.toLowerCase());
+  const canMoveTicket = useCallback(
+    (t: TicketRow) =>
+      isMover || (!!t.assigned_to && t.assigned_to.toLowerCase() === viewer.toLowerCase()),
+    [isMover, viewer],
+  );
+
+  // email → display name for the cards' "assigned developer" label. Emails are
+  // normalized lowercase on both sides (the API lowers assigned_to on write,
+  // members come back canonical).
+  const memberNameByEmail = useMemo(() => {
+    const map = new Map<string, string | null>();
+    for (const m of members ?? []) map.set(m.email, m.name);
+    return map;
+  }, [members]);
+  const assigneeNameFor = useCallback(
+    (t: TicketRow) => (t.assigned_to ? (memberNameByEmail.get(t.assigned_to) ?? null) : null),
+    [memberNameByEmail],
+  );
   const filtersActive = search.trim() !== '' || priorityFilter !== 'all';
   // Dragging a filtered subset would compute positions against hidden
-  // neighbors, so sorting pauses while a filter narrows the board.
-  const dragEnabled = canEdit && canMove && !filtersActive;
+  // neighbors, so sorting pauses while a filter narrows the board. Whether a
+  // GIVEN card can then be picked up is canMoveTicket, per card.
+  const dragActive = canEdit && !filtersActive;
+  // Does this viewer move anything at all? (drives the filters-pause banner)
+  const viewerMovesSomething =
+    isMover || tickets.some((t) => (t.assigned_to ?? '').toLowerCase() === viewer.toLowerCase());
 
   // ── Derived columns ─────────────────────────────────────────────────────────
   const columns = useMemo(() => {
@@ -237,6 +308,7 @@ export default function TicketsBoard() {
           title: draft.title,
           description: draft.description,
           priority: draft.priority,
+          assigned_to: draft.assigned_to || null,
         }),
       });
       if (!res.ok) {
@@ -271,24 +343,52 @@ export default function TicketsBoard() {
     [patchTicket],
   );
 
-  const deleteTicket = useCallback(
+  // Archive = soft delete: the ticket leaves the board but keeps its history
+  // and Updates thread, and stays restorable from the Archived view.
+  const archiveTicket = useCallback(
     async (id: string): Promise<boolean> => {
       setSaving(true);
       try {
         const res = await fetch(`/api/tickets/${id}`, { method: 'DELETE' });
         if (!res.ok) {
           const j = (await res.json().catch(() => null)) as { error?: string } | null;
-          toast.error(j?.error ?? 'Could not delete the ticket');
+          toast.error(j?.error ?? 'Could not archive the ticket');
           return false;
         }
         setTickets((prev) => prev.filter((t) => t.id !== id));
-        toast.success('Ticket deleted');
+        toast.success('Ticket archived');
+        void fetchArchived();
         return true;
       } finally {
         setSaving(false);
       }
     },
-    [],
+    [fetchArchived],
+  );
+
+  const restoreTicket = useCallback(
+    async (id: string): Promise<boolean> => {
+      setSaving(true);
+      try {
+        const res = await fetch(`/api/tickets/${id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ archived: false }),
+        });
+        if (!res.ok) {
+          const j = (await res.json().catch(() => null)) as { error?: string } | null;
+          toast.error(j?.error ?? 'Could not restore the ticket');
+          return false;
+        }
+        setArchivedTickets((prev) => prev.filter((t) => t.id !== id));
+        toast.success('Ticket restored to the board');
+        void fetchBoard();
+        return true;
+      } finally {
+        setSaving(false);
+      }
+    },
+    [fetchBoard],
   );
 
   // ── Drag and drop ───────────────────────────────────────────────────────────
@@ -385,7 +485,7 @@ export default function TicketsBoard() {
     setDialogOpen(true);
   };
 
-  const canDeleteDialogTicket =
+  const canArchiveDialogTicket =
     dialogTicket !== null &&
     canEdit &&
     (isAdmin || dialogTicket.created_by.toLowerCase() === viewer.toLowerCase());
@@ -444,8 +544,12 @@ export default function TicketsBoard() {
           <div className="leading-tight">
             <h1 className="text-[15px] font-semibold">HRIS Updates</h1>
             <p className="text-xs text-muted-foreground">
-              {activeView === 'overview' ? 'Overview' : 'Request board'} · {tickets.length} ticket
-              {tickets.length === 1 ? '' : 's'}
+              {activeView === 'overview'
+                ? 'Overview'
+                : activeView === 'archived'
+                  ? 'Archive'
+                  : 'Request board'}{' '}
+              · {tickets.length} ticket{tickets.length === 1 ? '' : 's'}
             </p>
           </div>
         </div>
@@ -480,7 +584,11 @@ export default function TicketsBoard() {
             aria-label="Refresh board"
             title="Refresh board"
             disabled={!loaded}
-            onClick={() => void fetchBoard()}
+            onClick={() => {
+              void fetchBoard();
+              void fetchMembers();
+              if (activeView === 'archived') void fetchArchived();
+            }}
           >
             <RefreshCw className={cn(refreshing && 'animate-spin')} />
           </Button>
@@ -548,7 +656,7 @@ export default function TicketsBoard() {
         </div>
       </header>
 
-      {activeView === 'board' && canEdit && canMove && filtersActive && (
+      {activeView === 'board' && canEdit && viewerMovesSomething && filtersActive && (
         <p className="border-b border-border bg-muted/40 px-4 py-1.5 text-xs text-muted-foreground sm:px-6">
           Drag-to-move is paused while a search or filter is narrowing the board.
         </p>
@@ -567,7 +675,24 @@ export default function TicketsBoard() {
           transition={{ duration: reduceMotion ? 0 : 0.2, ease: [0.22, 1, 0.36, 1] }}
           className="min-h-0 flex-1 overflow-y-auto"
         >
-          <TicketsOverview tickets={tickets} loaded={loaded} onOpenTicket={openTicket} />
+          <TicketsOverview
+            tickets={tickets}
+            loaded={loaded}
+            onOpenTicket={openTicket}
+            members={members}
+            membersError={membersError}
+          />
+        </motion.main>
+      ) : activeView === 'archived' ? (
+        <motion.main
+          key="archived"
+          initial={{ opacity: 0, y: reduceMotion ? 0 : 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: reduceMotion ? 0 : -6 }}
+          transition={{ duration: reduceMotion ? 0 : 0.2, ease: [0.22, 1, 0.36, 1] }}
+          className="min-h-0 flex-1 overflow-y-auto"
+        >
+          <ArchivedPanel tickets={archivedTickets} loaded={archivedLoaded} onOpen={openTicket} />
         </motion.main>
       ) : (
       <motion.main
@@ -604,10 +729,12 @@ export default function TicketsBoard() {
                   key={status}
                   status={status}
                   tickets={columns[status]}
-                  dragEnabled={dragEnabled}
+                  dragActive={dragActive}
+                  canMoveTicket={canMoveTicket}
                   highlighted={activeTicket !== null && overColumn === status}
                   activeId={activeTicket?.id ?? null}
                   onOpen={openTicket}
+                  assigneeNameFor={assigneeNameFor}
                 />
               ))}
             </div>
@@ -615,7 +742,12 @@ export default function TicketsBoard() {
               dropAnimation={{ duration: 220, easing: 'cubic-bezier(0.2, 0, 0, 1)' }}
             >
               {activeTicket ? (
-                <TicketCard ticket={activeTicket} overlay className="w-72" />
+                <TicketCard
+                  ticket={activeTicket}
+                  overlay
+                  assigneeName={assigneeNameFor(activeTicket)}
+                  className="w-72"
+                />
               ) : null}
             </DragOverlay>
           </DndContext>
@@ -630,12 +762,15 @@ export default function TicketsBoard() {
         onOpenChange={setDialogOpen}
         ticket={dialogTicket}
         canEdit={canEdit}
-        canMove={canMove}
-        canDelete={canDeleteDialogTicket}
+        canMove={dialogTicket ? canMoveTicket(dialogTicket) : isMover}
+        viewerEmail={viewer.toLowerCase()}
+        canArchive={canArchiveDialogTicket}
         saving={saving}
+        members={members}
         onCreate={createTicket}
         onSave={saveTicket}
-        onDelete={deleteTicket}
+        onArchive={archiveTicket}
+        onRestore={restoreTicket}
       />
     </div>
   );
@@ -646,17 +781,23 @@ export default function TicketsBoard() {
 function BoardColumn({
   status,
   tickets,
-  dragEnabled,
+  dragActive,
+  canMoveTicket,
   highlighted,
   activeId,
   onOpen,
+  assigneeNameFor,
 }: {
   status: TicketStatus;
   tickets: TicketRow[];
-  dragEnabled: boolean;
+  /** Board-wide drag preconditions (edit access, no filters). */
+  dragActive: boolean;
+  /** Per-card rule: board mover, or that ticket's assigned developer. */
+  canMoveTicket: (t: TicketRow) => boolean;
   highlighted: boolean;
   activeId: string | null;
   onOpen: (t: TicketRow) => void;
+  assigneeNameFor: (t: TicketRow) => string | null;
 }) {
   const { setNodeRef } = useDroppable({ id: columnDroppableId(status) });
   const style = STATUS_STYLES[status];
@@ -682,7 +823,7 @@ function BoardColumn({
       <SortableContext
         items={tickets.map((t) => t.id)}
         strategy={verticalListSortingStrategy}
-        disabled={!dragEnabled}
+        disabled={!dragActive}
       >
         <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto px-2 pb-2">
           {tickets.length === 0 ? (
@@ -694,9 +835,10 @@ function BoardColumn({
               <SortableTicketCard
                 key={t.id}
                 ticket={t}
-                dragEnabled={dragEnabled}
+                dragEnabled={dragActive && canMoveTicket(t)}
                 ghosted={t.id === activeId}
                 onOpen={onOpen}
+                assigneeName={assigneeNameFor(t)}
               />
             ))
           )}
@@ -713,11 +855,13 @@ function SortableTicketCard({
   dragEnabled,
   ghosted,
   onOpen,
+  assigneeName,
 }: {
   ticket: TicketRow;
   dragEnabled: boolean;
   ghosted: boolean;
   onOpen: (t: TicketRow) => void;
+  assigneeName: string | null;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: ticket.id,
@@ -730,6 +874,7 @@ function SortableTicketCard({
       ticket={ticket}
       canDrag={dragEnabled}
       ghosted={ghosted || isDragging}
+      assigneeName={assigneeName}
       style={{ transform: CSS.Transform.toString(transform), transition }}
       onClick={() => onOpen(ticket)}
       onKeyDown={(e) => {
@@ -738,6 +883,89 @@ function SortableTicketCard({
       {...attributes}
       {...listeners}
     />
+  );
+}
+
+// ── Archived view ─────────────────────────────────────────────────────────────
+
+/** Flat list of archived tickets. Rows open the same details dialog in its
+ *  frozen (archived) state, where the creator or an admin can restore. */
+function ArchivedPanel({
+  tickets,
+  loaded,
+  onOpen,
+}: {
+  tickets: TicketRow[];
+  loaded: boolean;
+  onOpen: (t: TicketRow) => void;
+}) {
+  if (!loaded) {
+    return (
+      <div className="mx-auto grid w-full max-w-3xl gap-2 p-4 sm:p-6">
+        {Array.from({ length: 3 }).map((_, i) => (
+          <Skeleton key={i} className="h-16 w-full rounded-lg" />
+        ))}
+      </div>
+    );
+  }
+  if (tickets.length === 0) {
+    return (
+      <div className="flex h-full flex-col items-center justify-center gap-2 p-6 text-center">
+        <Archive className="size-6 text-muted-foreground/60" aria-hidden />
+        <p className="text-sm text-muted-foreground">
+          Nothing archived yet — archiving a ticket parks it here instead of deleting it.
+        </p>
+      </div>
+    );
+  }
+  return (
+    <div className="mx-auto grid w-full max-w-3xl gap-2 p-4 sm:p-6">
+      {tickets.map((t) => {
+        const prio = PRIORITY_STYLES[t.priority] ?? PRIORITY_STYLES.medium;
+        return (
+          <button
+            key={t.id}
+            type="button"
+            onClick={() => onOpen(t)}
+            className={cn(
+              'group flex w-full items-center gap-3 rounded-lg border border-border bg-card p-3 text-left outline-none',
+              'transition-[border-color,transform] duration-150 ease-out motion-reduce:transition-none',
+              'hover:border-red-500/45 focus-visible:ring-2 focus-visible:ring-ring/60',
+            )}
+          >
+            <span
+              className="flex size-6 shrink-0 items-center justify-center rounded-full bg-muted text-[10px] font-semibold text-muted-foreground"
+              aria-hidden
+            >
+              {initialsFor(t.created_by_name, t.created_by)}
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="flex items-center gap-2">
+                <span className="font-mono text-[11px] text-muted-foreground">#{t.ticket_no}</span>
+                <span className="truncate text-sm font-medium">{t.title}</span>
+                <span
+                  className={cn(
+                    'inline-flex h-5 shrink-0 items-center gap-1 rounded-full px-2 text-[11px] font-medium',
+                    prio.chip,
+                  )}
+                >
+                  <span className={cn('size-1.5 rounded-full', prio.dot)} aria-hidden />
+                  {prio.label}
+                </span>
+              </span>
+              <span className="mt-0.5 block truncate text-xs text-muted-foreground">
+                Archived {t.archived_at ? relativeTime(t.archived_at) : ''}
+                {t.archived_by ? ` by ${t.archived_by.split('@')[0]}` : ''} · was in{' '}
+                {STATUS_STYLES[t.status].label}
+              </span>
+            </span>
+            <span className="shrink-0 text-[11px] text-muted-foreground/70 opacity-0 transition-opacity group-hover:opacity-100">
+              View &amp; restore
+            </span>
+          </button>
+        );
+      })}
+    </div>
   );
 }
 

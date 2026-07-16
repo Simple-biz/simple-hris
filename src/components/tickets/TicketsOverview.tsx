@@ -1,25 +1,31 @@
 'use client';
 
-import { useMemo, type ReactNode } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
+import { ChevronLeft, ChevronRight } from 'lucide-react';
+import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
 import {
   TICKET_PRIORITIES,
   TICKET_STATUSES,
+  type TicketMember,
   type TicketPriority,
   type TicketRow,
   type TicketStatus,
 } from '@/lib/tickets/types';
-import { PRIORITY_STYLES, STATUS_STYLES, relativeTime } from './TicketCard';
+import { PRIORITY_STYLES, STATUS_STYLES, initialsFor, relativeTime } from './TicketCard';
 
 /**
  * /tickets → Overview: headline counts and breakdowns computed client-side
  * from the same board fetch (no extra endpoint; realtime refreshes flow in).
  *
- * Layout: one lead figure (Open now — the number this board exists to drive
- * down) plus four compact stat tiles, then the two breakdowns, then a
- * full-width recent-activity list. Per-status counts live only in the Board
- * split legend; they used to be duplicated as a KPI tile per status.
+ * Layout: two columns on lg+. The left/middle two-thirds carry the numbers —
+ * one lead figure (Open now — the number this board exists to drive down),
+ * four compact stat tiles, the two breakdowns, then the recent-activity list.
+ * The right third is the Members rail (who can see this board — the one
+ * server-fetched block, from /api/tickets/members). Everything stacks on
+ * smaller screens. Per-status counts live only in the Board split legend;
+ * they used to be duplicated as a KPI tile per status.
  *
  * Chart-color note: the bars reuse the board's exact status/priority hues so
  * every surface speaks one color vocabulary (color follows the entity). CVD
@@ -33,6 +39,10 @@ interface TicketsOverviewProps {
   tickets: TicketRow[];
   loaded: boolean;
   onOpenTicket: (t: TicketRow) => void;
+  /** Board members, fetched once by TicketsBoard (shared with the assignee
+   *  pickers and card labels). `null` = still loading. */
+  members: TicketMember[] | null;
+  membersError: string | null;
 }
 
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
@@ -50,7 +60,13 @@ function weekDelta(cur: number, prev: number): string | undefined {
   return `${d > 0 ? '+' : ''}${d} vs prior week`;
 }
 
-export default function TicketsOverview({ tickets, loaded, onOpenTicket }: TicketsOverviewProps) {
+export default function TicketsOverview({
+  tickets,
+  loaded,
+  onOpenTicket,
+  members,
+  membersError,
+}: TicketsOverviewProps) {
   const stats = useMemo(() => {
     const byStatus = Object.fromEntries(TICKET_STATUSES.map((s) => [s, 0])) as Record<
       TicketStatus,
@@ -112,27 +128,31 @@ export default function TicketsOverview({ tickets, loaded, onOpenTicket }: Ticke
 
   if (!loaded) {
     return (
-      <div className="mx-auto w-full max-w-6xl space-y-4 p-4 sm:p-6">
-        <div className="grid grid-cols-2 gap-3 xl:grid-cols-6">
-          <Skeleton className="col-span-2 h-36 rounded-xl" />
-          {Array.from({ length: 4 }).map((_, i) => (
-            <Skeleton key={i} className="h-36 rounded-xl" />
-          ))}
+      <div className="mx-auto grid w-full max-w-7xl items-start gap-4 p-4 sm:p-6 lg:grid-cols-3">
+        <div className="min-w-0 space-y-4 lg:col-span-2">
+          <div className="grid grid-cols-2 gap-3 xl:grid-cols-6">
+            <Skeleton className="col-span-2 h-36 rounded-xl" />
+            {Array.from({ length: 4 }).map((_, i) => (
+              <Skeleton key={i} className="h-36 rounded-xl" />
+            ))}
+          </div>
+          <div className="grid gap-3 lg:grid-cols-2">
+            <Skeleton className="h-48 rounded-xl" />
+            <Skeleton className="h-48 rounded-xl" />
+          </div>
+          <Skeleton className="h-44 rounded-xl" />
         </div>
-        <div className="grid gap-3 lg:grid-cols-2">
-          <Skeleton className="h-48 rounded-xl" />
-          <Skeleton className="h-48 rounded-xl" />
-        </div>
-        <Skeleton className="h-44 rounded-xl" />
+        <Skeleton className="h-80 rounded-xl" />
       </div>
     );
   }
 
   return (
-    <div className="mx-auto w-full max-w-6xl space-y-4 p-4 sm:p-6">
-      {/* ── KPI row: one lead figure + four compact tiles ───────────────────── */}
-      <div className="grid grid-cols-2 gap-3 xl:grid-cols-6">
-        <section className="col-span-2 rounded-xl border border-border bg-card p-4 sm:p-5">
+    <div className="mx-auto grid w-full max-w-7xl items-start gap-4 p-4 sm:p-6 lg:grid-cols-3">
+      <div className="min-w-0 space-y-4 lg:col-span-2">
+      {/* ── KPI block: one full-width lead figure + four compact tiles ──────── */}
+      <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
+        <section className="col-span-2 rounded-xl border border-border bg-card p-4 sm:p-5 xl:col-span-4">
           <div className="flex items-center justify-between gap-2">
             <p className="text-xs text-muted-foreground">Open now</p>
             {stats.urgentOpen > 0 && (
@@ -301,6 +321,171 @@ export default function TicketsOverview({ tickets, loaded, onOpenTicket }: Ticke
           </div>
         )}
       </OverviewCard>
+      </div>
+
+      {/* ── Members rail (right column) ─────────────────────────────────────── */}
+      <div className="min-w-0">
+        <OverviewCard
+          title="Members"
+          caption={`Everyone with access to this board${members && members.length > 0 ? ` · ${members.length}` : ''}`}
+        >
+          <MembersTable members={members} error={membersError} />
+        </OverviewCard>
+      </div>
+    </div>
+  );
+}
+
+// ── Members table ─────────────────────────────────────────────────────────────
+
+const ACCESS_STYLES: Record<TicketMember['access'], { label: string; chip: string; dot: string }> = {
+  admin: {
+    label: 'Admin',
+    chip: 'bg-red-500/10 text-red-700 dark:bg-red-500/15 dark:text-red-400',
+    dot: 'bg-red-500',
+  },
+  edit: {
+    label: 'Edit',
+    chip: 'bg-emerald-500/10 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-400',
+    dot: 'bg-emerald-500',
+  },
+  view: {
+    label: 'View',
+    chip: 'bg-muted text-muted-foreground',
+    dot: 'bg-muted-foreground/60',
+  },
+};
+
+/** Rows per Members page — sized so the rail stays about as tall as the left
+ *  column instead of scrolling the whole Overview. */
+const MEMBERS_PAGE_SIZE = 8;
+
+/** Profile photo with an initials fallback (missing URL or a broken image). */
+function MemberAvatar({ member }: { member: TicketMember }) {
+  const [broken, setBroken] = useState(false);
+  const showPhoto = Boolean(member.photo_url) && !broken;
+  return (
+    <span
+      className="flex size-8 shrink-0 items-center justify-center overflow-hidden rounded-full bg-muted text-[11px] font-semibold text-muted-foreground"
+      aria-hidden
+    >
+      {showPhoto ? (
+        // eslint-disable-next-line @next/next/no-img-element -- external avatar hosts (Google SSO, Supabase Storage) aren't in next/image's allowlist
+        <img
+          src={member.photo_url as string}
+          alt=""
+          className="size-full object-cover"
+          referrerPolicy="no-referrer"
+          onError={() => setBroken(true)}
+        />
+      ) : (
+        initialsFor(member.name, member.email)
+      )}
+    </span>
+  );
+}
+
+function MembersTable({ members, error }: { members: TicketMember[] | null; error: string | null }) {
+  const [page, setPage] = useState(0);
+
+  if (members === null) {
+    return (
+      <div className="space-y-2.5">
+        {Array.from({ length: MEMBERS_PAGE_SIZE }).map((_, i) => (
+          <div key={i} className="flex items-center gap-3">
+            <Skeleton className="size-8 shrink-0 rounded-full" />
+            <Skeleton className="h-4 flex-1" />
+            <Skeleton className="h-4 w-12 shrink-0" />
+          </div>
+        ))}
+      </div>
+    );
+  }
+  if (members.length === 0) {
+    return <EmptyNote>{error ?? 'No one has been granted access to this board yet.'}</EmptyNote>;
+  }
+
+  const pages = Math.ceil(members.length / MEMBERS_PAGE_SIZE);
+  const safePage = Math.min(page, pages - 1);
+  const start = safePage * MEMBERS_PAGE_SIZE;
+  const pageMembers = members.slice(start, start + MEMBERS_PAGE_SIZE);
+
+  return (
+    <div>
+      <table className="w-full table-fixed border-collapse text-sm">
+        <thead>
+          <tr className="border-b border-border text-left text-xs text-muted-foreground">
+            <th className="pr-1 pb-2 font-medium">Member</th>
+            <th className="w-[5.5rem] px-1 pb-2 font-medium">Dept</th>
+            <th className="w-14 pb-2 text-right font-medium">Access</th>
+          </tr>
+        </thead>
+        <tbody>
+          {pageMembers.map((m) => {
+            const access = ACCESS_STYLES[m.access] ?? ACCESS_STYLES.view;
+            return (
+              <tr key={m.email} className="border-b border-border/60 last:border-b-0">
+                <td className="py-2 pr-1">
+                  <span className="flex items-center gap-2.5">
+                    <MemberAvatar member={m} />
+                    <span className="min-w-0 leading-tight">
+                      <span className="block truncate font-medium" title={m.name ?? m.email}>
+                        {m.name ?? m.email.split('@')[0]}
+                      </span>
+                      <span className="block truncate text-xs text-muted-foreground" title={m.email}>
+                        {m.email}
+                      </span>
+                    </span>
+                  </span>
+                </td>
+                <td className="truncate px-1 py-2 text-xs text-muted-foreground" title={m.department ?? undefined}>
+                  {m.department ?? '—'}
+                </td>
+                <td className="py-2 text-right">
+                  <span
+                    className={cn(
+                      'inline-flex h-5 items-center gap-1.5 rounded-full px-2 text-[11px] font-medium whitespace-nowrap',
+                      access.chip,
+                    )}
+                    title={`${access.label} access`}
+                  >
+                    <span className={cn('size-1.5 shrink-0 rounded-full', access.dot)} aria-hidden />
+                    {access.label}
+                  </span>
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+
+      {pages > 1 && (
+        <div className="mt-3 flex items-center justify-between">
+          <p className="text-xs text-muted-foreground tabular-nums">
+            {start + 1}–{Math.min(start + MEMBERS_PAGE_SIZE, members.length)} of {members.length}
+          </p>
+          <div className="flex items-center gap-1">
+            <Button
+              variant="outline"
+              size="icon-sm"
+              aria-label="Previous members page"
+              disabled={safePage === 0}
+              onClick={() => setPage(safePage - 1)}
+            >
+              <ChevronLeft />
+            </Button>
+            <Button
+              variant="outline"
+              size="icon-sm"
+              aria-label="Next members page"
+              disabled={safePage >= pages - 1}
+              onClick={() => setPage(safePage + 1)}
+            >
+              <ChevronRight />
+            </Button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

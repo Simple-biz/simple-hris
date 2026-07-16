@@ -84,6 +84,17 @@ const SYSTEM_PROMPT = [
   '- Use get_financial_summary for a monthly company financial statement',
   '  ("financials for May 2026", "how much did payroll cost last month"). It also',
   '  returns the prior month\'s figures + % change so you can write an insight.',
+  '- Use get_hours_uploads to see the weekly hours batches uploaded through the',
+  '  Payroll Wizard ("is this week\'s hours data in yet", "when was the last',
+  '  upload and who did it"). It also tells you which batch is the CURRENT one.',
+  '- Use get_uploaded_hours for the RAW HOURS inside an uploaded batch — time',
+  '  logged per person BEFORE rates and bonuses ("how many hours did X log this',
+  '  week", "who logged the most hours in the current upload"). For money',
+  '  questions use get_employee_pay / get_payroll_report instead. Pass work_email',
+  '  (from find_employee) for one person; omit it for a company summary.',
+  "- Use get_payroll_wizard_notes for the payroll clerks' carry-over notes board",
+  '  ("anything pending for next payroll", "what did the clerks flag"). These are',
+  '  working notes — verify figures with the pay tools before quoting them.',
   '- Use get_employee_access for ACCESS / PERMISSION questions — "how much access',
   '  does X have", "what can X see or edit", "is X an admin", "which dashboards can',
   '  X open", "what departments does X manage", "can X see pay rates". It returns',
@@ -182,6 +193,48 @@ const SYSTEM_PROMPT = [
   'records, tell the CEO plainly rather than making something up.',
 ].join('\n');
 
+/**
+ * The static prompt plus a per-request "today is …" section, so Penny can
+ * resolve relative dates ("this week", "last month") instead of guessing.
+ * Asia/Manila is the company clock — the same convention the rest of the
+ * system uses (hire start dates, transfers).
+ */
+function buildSystemPrompt(now: Date): string {
+  const manila = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Manila',
+    weekday: 'long',
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+  }).format(now);
+  const isoDate = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Manila',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(now);
+  return [
+    SYSTEM_PROMPT,
+    '',
+    '## Current date and time',
+    '',
+    `Right now it is ${manila} in Asia/Manila (the company's timezone). Today's`,
+    `date is ${isoDate}.`,
+    'Resolve every relative date against this: "today", "yesterday", "this',
+    'week", "last month", "so far this year". For get_financial_summary, compute',
+    'the "YYYY-MM" month from this date (e.g. "last month" = the month before',
+    `${isoDate.slice(0, 7)}).`,
+    'Payroll runs in weekly cycles and data lands after a cycle ends, so the',
+    'newest records may lag today by several days. Always state the period a',
+    'figure actually covers; if the latest pay week ends before the period the',
+    'user asked about, say the data is not in yet rather than presenting older',
+    'numbers as current.',
+  ].join('\n');
+}
+
 type ChatMessage = { role: 'user' | 'assistant'; content: string };
 
 function sessionRoles(session: unknown): string[] {
@@ -248,6 +301,7 @@ export async function POST(request: Request) {
   const MAX_TURNS = 6; // safety backstop against a tool-call loop
   const encoder = new TextEncoder();
   const toolsUsed: string[] = [];
+  const systemPrompt = buildSystemPrompt(new Date()); // stamp once per request
 
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
@@ -260,7 +314,7 @@ export async function POST(request: Request) {
             max_tokens: MAX_TOKENS,
             thinking: { type: 'disabled' },
             output_config: { effort: 'medium' },
-            system: SYSTEM_PROMPT,
+            system: systemPrompt,
             tools: CEO_TOOLS,
             messages: convo,
           });

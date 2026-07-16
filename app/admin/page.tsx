@@ -168,7 +168,7 @@ function AdminPageInner() {
       case 'webhooks':
         return <AdminWebhooks />;
       case 'design-specs':
-        return <AdminDesignSpecs />;
+        return <AdminDesignSpecs onNavigate={navigate} />;
       case 'pages':
         return (
           <div className="flex flex-col lg:min-h-0 lg:flex-1 lg:overflow-hidden">

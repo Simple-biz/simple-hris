@@ -11,6 +11,14 @@ import {
   createSupabaseServerClient,
 } from '@/lib/supabase/server';
 import { listDisbursementReports } from '@/lib/payroll/disbursement-reports';
+import {
+  listHubstaffUploads,
+  fetchHubstaffRowsOrdered,
+  fetchHubstaffRowsBySourceFile,
+  rowsToPayrollRows,
+} from '@/lib/supabase/hubstaff-hours-db';
+import { periodLabelFromFilename } from '@/lib/hubstaff/period-label';
+import { listPayrollWizardNotes } from '@/lib/supabase/payroll-wizard-notes';
 import { DEPARTMENTS } from '@/lib/payroll/department-bonus';
 import { getSkillSet } from '@/lib/supabase/employee-skill-sets';
 import { getProfilePhotoUrlForEmail } from '@/lib/supabase/employee-profile-photo';
@@ -177,6 +185,62 @@ export const CEO_TOOLS: Anthropic.Tool[] = [
       required: ['work_email'],
     },
   },
+  {
+    name: 'get_hours_uploads',
+    description:
+      'List the weekly hours batches uploaded through the Payroll Wizard (newest first) — the raw Hubstaff time data each pay run is built from. Use for "is this week\'s hours data in yet", "when was the latest upload and who uploaded it", or to find the exact source_file to pass to get_uploaded_hours. Returns each batch\'s source_file, pay-period label and dates, upload time, uploader, row count, and which batch is the wizard\'s CURRENT working one.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        limit: {
+          type: 'integer',
+          description: 'How many recent uploads to list (1–26). Default 8.',
+        },
+      },
+      required: [],
+    },
+  },
+  {
+    name: 'get_uploaded_hours',
+    description:
+      'Read the raw HOURS inside one Payroll Wizard hours upload — time logged per person BEFORE rates or bonuses are applied (for money, use get_employee_pay / get_payroll_report instead). Use for "how many hours did X log this week", "who logged the most hours in the current upload", or "how many hours came in for this pay period". Defaults to the wizard\'s CURRENT batch; pass a source_file from get_hours_uploads for an older week. Pass work_email (from find_employee) to scope to one person; otherwise returns a company summary plus the top people by hours.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        source_file: {
+          type: 'string',
+          description:
+            'A batch source_file exactly as returned by get_hours_uploads. Omit for the current batch.',
+        },
+        work_email: {
+          type: 'string',
+          description:
+            "One employee's work email (from find_employee) to return just their uploaded hours.",
+        },
+        limit: {
+          type: 'integer',
+          description:
+            'How many top-by-hours people to include in the company view (1–25). Default 10. Ignored when work_email is given.',
+        },
+      },
+      required: [],
+    },
+  },
+  {
+    name: 'get_payroll_wizard_notes',
+    description:
+      'Read the Payroll Wizard\'s carry-over Notes board — the running checklist payroll clerks keep between weekly runs (missed bonuses, staged rate changes, deductions to apply, follow-ups). Use for "anything pending for the next payroll", "what did the clerks flag", or "is there unfinished payroll business". Returns open items by default, grouped under the clerk who wrote them; set include_done=true to also see completed items.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        include_done: {
+          type: 'boolean',
+          description: 'Also include items already ticked Done. Default false (open items only).',
+        },
+      },
+      required: [],
+    },
+  },
 ];
 
 // ── execution ────────────────────────────────────────────────────────────────
@@ -205,6 +269,12 @@ export async function runCeoTool(
         return await getEmployeeAccess(str(input.work_email));
       case 'get_financial_summary':
         return await getFinancialSummary(input.month);
+      case 'get_hours_uploads':
+        return await getHoursUploads(input.limit);
+      case 'get_uploaded_hours':
+        return await getUploadedHours(input.source_file, input.work_email, input.limit);
+      case 'get_payroll_wizard_notes':
+        return await getPayrollWizardNotes(input.include_done);
       default:
         return { error: `Unknown tool: ${name}` };
     }
@@ -1049,6 +1119,184 @@ async function getEmployeeAccess(workEmailInput: string): Promise<ToolResult> {
     feature_permissions: featurePermissions,
     field_notes:
       "ACCESS MODEL — three layers. (1) roles (from employee_roles) decide which staff DASHBOARDS a person can open (see dashboards_can_open); no role = a regular employee who only sees their own /employee self-service portal. (2) feature_permissions is a per-TAB overlay on top of the role: each tab is 'hidden' (not visible at all — the default for any tab without an explicit grant), 'view' (read-only), or 'edit' (can change things). (3) admin holds the keys to the castle: is_admin=true means every tab in every dashboard is effectively edit regardless of grants (shown as 'edit (admin bypass)'). is_elevated=true means they may view/act on OTHER employees' data (admin, accounting, hr_coordinator). can_see_pay_rates=true means they're allowed to see numeric pay rates (admin, accounting, ceo — NOT hr_coordinator). managed_departments lists the teams a manager oversees. This describes what the person CAN access, not what they have done.",
+  };
+}
+
+/** The `YYYY-MM-DD_to_YYYY-MM-DD` block every wizard batch filename carries
+ *  (manual CSV exports and API syncs alike) — parsed as plain strings so no
+ *  timezone math can shift a day. */
+function periodDatesFromSourceFile(
+  file: string | null | undefined,
+): { start: string | null; end: string | null } {
+  const m = /(\d{4}-\d{2}-\d{2})_to_(\d{4}-\d{2}-\d{2})/.exec(file ?? '');
+  return { start: m?.[1] ?? null, end: m?.[2] ?? null };
+}
+
+async function getHoursUploads(limitRaw: unknown): Promise<ToolResult> {
+  const limit = clampInt(limitRaw, 1, 26, 8);
+  const uploads = await listHubstaffUploads();
+  if (uploads.length === 0) {
+    return { uploads: [], note: 'No hours batches have been uploaded through the Payroll Wizard yet.' };
+  }
+
+  const shown = uploads.slice(0, limit).map((u) => {
+    const { start, end } = periodDatesFromSourceFile(u.source_file);
+    return {
+      source_file: u.source_file,
+      period: periodLabelFromFilename(u.source_file),
+      period_start: start,
+      period_end: end,
+      uploaded_at: u.uploaded_at,
+      uploaded_by: u.uploaded_by,
+      row_count: u.row_count,
+      is_current: u.is_current,
+    };
+  });
+
+  return {
+    uploads_returned: shown.length,
+    total_uploads: uploads.length,
+    field_notes:
+      'One entry per weekly hours batch uploaded through the Payroll Wizard, newest first. is_current = the batch the wizard is working from right now. period_start/period_end come from the filename\'s date block; uploaded_at is when it was loaded into the system (may be days after the period ended). Pass source_file to get_uploaded_hours to read the hours inside a batch.',
+    uploads: shown,
+  };
+}
+
+async function getUploadedHours(
+  sourceFileRaw: unknown,
+  workEmailRaw: unknown,
+  limitRaw: unknown,
+): Promise<ToolResult> {
+  const limit = clampInt(limitRaw, 1, 25, 10);
+  const sourceFile = typeof sourceFileRaw === 'string' ? sourceFileRaw.trim() : '';
+
+  const { rows } = sourceFile
+    ? await fetchHubstaffRowsBySourceFile(sourceFile)
+    : await fetchHubstaffRowsOrdered();
+
+  if (rows.length === 0) {
+    return {
+      note: sourceFile
+        ? `No uploaded hours found for batch "${sourceFile}". Check the exact source_file via get_hours_uploads.`
+        : 'No current hours batch found — the Payroll Wizard may not have this week\'s upload yet. Check get_hours_uploads.',
+    };
+  }
+
+  const batchFile = sourceFile || String(rows[0]?.source_file ?? '') || null;
+  const period = periodLabelFromFilename(batchFile);
+
+  // Drop the Hubstaff grand-total phantom row before any aggregation.
+  const people = rowsToPayrollRows(rows).filter(
+    (r) => r.hoursDecimal <= MAX_PLAUSIBLE_WEEKLY_HOURS,
+  );
+
+  const batch = { source_file: batchFile, period, is_current_batch: !sourceFile };
+
+  // One person's hours — match on any of their known email aliases, since a
+  // Hubstaff row may be keyed on a work alias or the personal email.
+  const workEmail = normEmail(str(workEmailRaw));
+  if (workEmail) {
+    if (!isSafeEmail(workEmail)) return { error: 'Invalid work_email.' };
+    const aliases = new Set<string>([workEmail]);
+    try {
+      const { employee } = await getEmployeeMasterRecord(workEmail);
+      for (const a of [
+        employee?.work_email,
+        employee?.personal_email,
+        employee?.alternate_work_email,
+        employee?.alternate_work_email_2,
+      ]) {
+        const n = normEmail(a ?? '');
+        if (n) aliases.add(n);
+      }
+    } catch {
+      // fall back to just the input email
+    }
+    const mine = people.filter((r) => {
+      const n = normEmail(r.email ?? '');
+      return !!n && aliases.has(n);
+    });
+    if (mine.length === 0) {
+      return {
+        ...batch,
+        work_email: workEmail,
+        note: 'This person has no row in this hours batch — they may not have tracked time that week, or their hours land under an email not on their record.',
+      };
+    }
+    return {
+      ...batch,
+      work_email: workEmail,
+      field_notes:
+        'Raw hours from the uploaded batch, BEFORE rates and bonuses. hours = total worked (includes overtime); ot_hours = the overtime portion. For what this became in pay, use get_employee_pay.',
+      entries: mine.map((r) => ({
+        name: r.name,
+        email: r.email,
+        department: r.department,
+        hours: round2(r.hoursDecimal),
+        ot_hours: round2(r.overtimeDecimal),
+      })),
+      totals: {
+        hours: round2(mine.reduce((s, r) => s + r.hoursDecimal, 0)),
+        ot_hours: round2(mine.reduce((s, r) => s + r.overtimeDecimal, 0)),
+      },
+    };
+  }
+
+  // Company view — summary plus the top people by hours.
+  const withEmail = people.filter((r) => !!normEmail(r.email ?? ''));
+  const top = [...people]
+    .sort((a, b) => b.hoursDecimal - a.hoursDecimal)
+    .slice(0, limit)
+    .map((r) => ({
+      name: r.name,
+      email: r.email,
+      department: r.department,
+      hours: round2(r.hoursDecimal),
+      ot_hours: round2(r.overtimeDecimal),
+    }));
+
+  return {
+    ...batch,
+    field_notes:
+      'Raw hours from the uploaded batch, BEFORE rates and bonuses (money lives in get_payroll_report / get_employee_pay). hours = total worked (includes overtime); ot_hours = the overtime portion. top_by_hours is ranked by total hours, highest first.',
+    totals: {
+      people: new Set(withEmail.map((r) => normEmail(r.email ?? ''))).size || people.length,
+      rows: people.length,
+      hours: round2(people.reduce((s, r) => s + r.hoursDecimal, 0)),
+      ot_hours: round2(people.reduce((s, r) => s + r.overtimeDecimal, 0)),
+    },
+    top_by_hours: top,
+  };
+}
+
+async function getPayrollWizardNotes(includeDoneRaw: unknown): Promise<ToolResult> {
+  const includeDone = includeDoneRaw === true;
+  const { rows, error } = await listPayrollWizardNotes();
+  if (error) return { error };
+
+  // The board keeps blank seeded lines waiting for each clerk — skip those.
+  const blank = (v: string | null) => !(v ?? '').trim();
+  const real = rows.filter((r) => r.done || !blank(r.note_date) || !blank(r.worker) || !blank(r.notes));
+
+  const openCount = real.filter((r) => !r.done).length;
+  const shown = real
+    .filter((r) => includeDone || !r.done)
+    .slice(0, 200)
+    .map((r) => ({
+      payroll_clerk: r.payroll_clerk,
+      note_date: r.note_date,
+      worker: r.worker,
+      notes: r.notes,
+      done: r.done,
+    }));
+
+  return {
+    open_count: openCount,
+    done_count: real.length - openCount,
+    showing: includeDone ? 'open + done items' : 'open items only',
+    field_notes:
+      'The Payroll Wizard\'s carry-over notes board — free-form items payroll clerks stage for a following week (missed bonuses, rate changes, deductions). payroll_clerk = who wrote it; worker = who it is about (free text); done = already applied in a later run. These are working notes, not final records — verify money figures against the pay tools before quoting them.',
+    notes: shown,
   };
 }
 

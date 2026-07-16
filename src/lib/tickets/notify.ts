@@ -1,3 +1,4 @@
+import type { SupabaseClient } from '@supabase/supabase-js';
 import { resolveWebhookUrl } from '@/lib/webhooks/resolve-webhook';
 import { lookupFullNameForEmail } from '@/lib/supabase/announcements';
 import {
@@ -147,4 +148,48 @@ export async function notifyTicketAssigned(ticket: TicketRow, assignedBy: string
   } catch {
     // Best-effort only — the assignment is already saved.
   }
+}
+
+/**
+ * Both legs of "you've been assigned this ticket", fired the moment a ticket
+ * gets a new developer: the in-app HRIS notification (lands instantly in the
+ * assignee's Notifications panel) and the `ticket_assigned` n8n email hook.
+ * The in-app message carries the full ask (title, priority, details excerpt),
+ * so it stands on its own even for someone with no access to the /tickets
+ * board. Callers gate on "assignee actually changed, and isn't the actor" —
+ * shared by PATCH (re-assignment) and POST (assigned at creation).
+ * Fire-and-forget: a notification hiccup must not fail the saved write.
+ */
+export function sendTicketAssignedNotifications(
+  supabase: SupabaseClient,
+  ticket: TicketRow,
+  assignedBy: string,
+): void {
+  const assignee = (ticket.assigned_to ?? '').trim().toLowerCase();
+  if (!assignee) return;
+
+  void notifyTicketAssigned(ticket, assignedBy);
+
+  const details = (ticket.description ?? '').trim();
+  void supabase
+    .from('employee_notifications')
+    .insert({
+      recipient_email: assignee,
+      type: 'ticket.assigned',
+      tone: 'neutral',
+      title: `You've been assigned ticket #${ticket.ticket_no}`,
+      message:
+        `${assignedBy} assigned you "${ticket.title}" ` +
+        `(${TICKET_PRIORITY_LABELS[ticket.priority] ?? ticket.priority} priority).` +
+        (details ? ` Details: ${details.slice(0, 200)}${details.length > 200 ? '…' : ''}` : ''),
+      details: {
+        ticket_id: ticket.id,
+        ticket_no: ticket.ticket_no,
+        assigned_by: assignedBy,
+        priority: ticket.priority,
+      },
+    })
+    .then(({ error }) => {
+      if (error) console.warn('[tickets] assignment notification failed:', error.message);
+    });
 }

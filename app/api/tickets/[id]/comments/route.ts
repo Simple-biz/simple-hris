@@ -66,11 +66,17 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
   const { data: ticket, error: ticketErr } = await supabase
     .from('tickets')
-    .select('id, ticket_no, title, created_by')
+    .select('id, ticket_no, title, created_by, archived_at')
     .eq('id', id)
     .maybeSingle();
   if (ticketErr) return NextResponse.json({ error: ticketErr.message }, { status: 500 });
   if (!ticket) return NextResponse.json({ error: 'Ticket not found' }, { status: 404 });
+  if ((ticket as { archived_at: string | null }).archived_at) {
+    return NextResponse.json(
+      { error: 'This ticket is archived — restore it to keep the conversation going.' },
+      { status: 409 },
+    );
+  }
 
   const authorName = await lookupFullNameForEmail(authz.sessionEmail);
 
