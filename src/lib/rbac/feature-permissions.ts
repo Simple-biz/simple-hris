@@ -24,9 +24,6 @@ export const FEATURE_CATALOG: Record<FeatureViewKey, readonly { key: string; lab
     { key: "notifications",    label: "Notifications" },
     { key: "s_wall",           label: "S-Wall" },
     { key: "settings",         label: "Settings" },
-    // Not a dashboard tab — gates the standalone /tickets Kanban board
-    // (ViewSwitcher "Tickets"). `edit` = create/drag tickets, `view` = watch.
-    { key: "tickets",          label: "Ticket Board" },
   ],
   hr: [
     { key: "overview",            label: "Overview" },
@@ -42,7 +39,6 @@ export const FEATURE_CATALOG: Record<FeatureViewKey, readonly { key: string; lab
     { key: "announcements", label: "Announcements" },
     { key: "s_wall",        label: "S-Wall" },
     { key: "notifications", label: "Notifications" },
-    { key: "tickets",       label: "Ticket Board" },
   ],
   manager: [
     { key: "overview",         label: "Overview" },
@@ -55,7 +51,6 @@ export const FEATURE_CATALOG: Record<FeatureViewKey, readonly { key: string; lab
     { key: "hsl_bonus",        label: "HSL Bonus" },
     { key: "bonus_history",    label: "Bonus History" },
     { key: "notifications",    label: "Notifications" },
-    { key: "tickets",          label: "Ticket Board" },
   ],
   orphanage: [
     { key: "overview",            label: "Overview" },
@@ -74,7 +69,6 @@ export const FEATURE_CATALOG: Record<FeatureViewKey, readonly { key: string; lab
     { key: "announcements", label: "Announcements" },
     { key: "s_wall",        label: "S-Wall" },
     { key: "notifications", label: "Notifications" },
-    { key: "tickets",       label: "Ticket Board" },
   ],
   contractor: [
     { key: "overview", label: "Overview" },
@@ -87,8 +81,9 @@ export const FEATURE_CATALOG: Record<FeatureViewKey, readonly { key: string; lab
     { key: "notifications",  label: "Notifications" },
   ],
   // The standalone /tickets board for holders of the dedicated `tickets` role.
-  // (Dashboard roles reach the same board via the `tickets` feature key in
-  // their own catalogs above.)
+  // This is the ONLY catalog that carries the `tickets` feature: the board is a
+  // dedicated-role surface, NOT a per-dashboard tab. Assigning Accounting / HR /
+  // Manager / CEO no longer confers ticket access — the `tickets` role does.
   tickets: [
     { key: "tickets", label: "Ticket Board" },
   ],

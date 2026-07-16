@@ -1,6 +1,6 @@
 # MESA (Medical Emergency Savings Account)
 
-> **Status:** Requests flow shipped 2026-06-01; contribution ledger backfilled + surfaced 2026-06-26; roster-grounded All Members / Active Members tabs, the temporary Opt In/Out bridge, and the `mesa_notes` internal notes log shipped 2026-07-16. This doc covers the whole feature. For the accounting-side payout mechanics (Urgent Payments queue, weekly Sun–Sat reconciliation) see [urgent-payments.md](urgent-payments.md); for the underlying tables see [data-sources.md §10 (`mesa_requests`) and §15 (`mesa_ledger`)](../reference/data-sources.md).
+> **Status:** Requests flow shipped 2026-06-01; contribution ledger backfilled + surfaced 2026-06-26; roster-grounded Non Members (never-joined: not opted in, no start date) / Active Members tabs with bulk Opt In/Out + Requests bulk review, the temporary manual-enrollment bridge, an Active-sheet membership seed, and the `mesa_notes` internal notes log shipped 2026-07-16. This doc covers the whole feature. For the accounting-side payout mechanics (Urgent Payments queue, weekly Sun–Sat reconciliation) see [urgent-payments.md](urgent-payments.md); for the underlying tables see [data-sources.md §10 (`mesa_requests`) and §15 (`mesa_ledger`)](../reference/data-sources.md).
 
 MESA is an **employee savings / contribution program** framed as a *Medical Emergency Savings Account*. Enrolled members have **₱100 deducted from their paycheck each week**, which Simple.biz **matches three times over (+₱300)** — so the account grows by **₱400/week**. Funds are meant for infrequent emergencies: medical needs for the member or immediate family (spouse + children only), natural disasters, or a necessary primary-computer repair. Program rules (from the About tab): one disbursement per 90 days, receipts within 14 days / 30 calendar days, and temporary removal for non-compliance.
 
@@ -51,9 +51,13 @@ Employees submit from the **Employee → MESA → Request** tab (`src/components
 
 `src/components/payroll/AccountingMesa.tsx` (Accounting → MESA) has three views:
 
-- **Requests** — the review queue for `opt_out` / `disbursement` / `return` (opt-in is filtered out; that's HR's). Search + status/type filters, paginated (15/page), stat cards (Total / Pending / Approved / Denied). Each pending row → **Review** modal to Approve/Deny with a note. Reviewed rows can be **revoked** (back to pending) or **deleted** — both blocked once `dispatched_at` is set (the money is already sent).
-- **All Members** — every current employee (Global Master List, joined against `employee_hourly_rates.mesa_member`), with **View** and a conditional **Opt In** / **Opt Out** button per row that calls `POST /api/toggle-mesa-member` directly. This is a **temporary manual bridge** — added so Accounting can enroll/unenroll anyone before employees self-serve via the Employee Dashboard's MESA Request tab (which goes through the `mesa_requests` review queue below). Remove this direct-toggle path once that's the primary way members join.
-- **MESA Active Members** — the ledger rollup (below), now roster-grounded so a brand-new enrollee shows up (at ₱0) even before their first ledger row lands.
+- **Requests** — the review queue for `opt_out` / `disbursement` / `return` (opt-in is filtered out; that's HR's). Search + status/type filters, paginated (15/page), stat cards (Total / Pending / Approved / Denied). Each pending row → **Review** modal to Approve/Deny with a note. Reviewed rows can be **revoked** (back to pending) or **deleted** — both blocked once `dispatched_at` is set (the money is already sent). **Bulk**: select rows → bulk Approve / Deny (pending only; approving an `opt_out` also unenrolls) / Delete (skips dispatched).
+- **Non Members** — employees who have **never joined** MESA: `mesa_member = false` **and** `mesa_member_since` is null. Opted-out ex-members keep their start date (`toggle-mesa-member` leaves it in place), so they are **excluded** here — they're former members, still visible via the ledger/requests, and don't appear on either the Non Members or Active Members tab. Each row has **View** + **Opt In**; **bulk Opt In** via row checkboxes. Calls `POST /api/toggle-mesa-member` directly. This is a **temporary manual bridge** — added so Accounting can enroll anyone before employees self-serve via the Employee Dashboard's MESA Request tab (which goes through the `mesa_requests` review queue below). Remove this direct-toggle path once that's the primary way members join.
+- **MESA Active Members** — the enrolled members (`employee_hourly_rates.mesa_member = true`), roster-grounded so a brand-new enrollee shows up (at ₱0) even before their first ledger row lands. Financial rollup (Contributed / Matched / Disbursed / Balance) from `mesa_ledger`. Each row has **View** + **Opt Out**; **bulk Opt Out** via row checkboxes. Initial membership is seeded from the Active sheet — see below.
+
+### Seeding active membership (from the Active sheet)
+
+`references/sql/seed/seed_mesa_active_membership.sql` flags the ~273 non-Inactive members on the Active sheet (`references/docs/mesa_active_export.csv`) as `mesa_member = true` on `employee_hourly_rates`, anchoring `mesa_member_since` to each member's earliest recorded deposit. Run once in the Supabase SQL Editor; idempotent. Mirrors the scope of `scripts/preload-mesa-membership.mjs` (which does the same from the `mesa_ledger` table when it's populated) but is self-contained from the CSV, so it works even if the ledger was never backfilled. Members flagged here populate the **MESA Active Members** tab; roster employees who have never joined fall to **Non Members** (opted-out ex-members, who keep a start date, appear on neither).
 
 Reviews go through `PATCH /api/mesa-requests/[id]` (`requireFeatureEditAnyView('mesa')`). Approving an `opt_out` also fires `POST /api/toggle-mesa-member` with `mesaMember: false` to stop the deduction; revoking re-enrolls.
 
@@ -112,7 +116,7 @@ Approving a disbursement in Accounting is a *signal*, not a payment. The actual 
 | Approve / deny / revoke / delete a request | `requireFeatureEditAnyView('mesa')` |
 | Dispatch an approved disbursement | Elevated session (see urgent-payments.md) |
 | List / add a member's internal note (`/api/mesa-notes`) | `requireElevatedSession` (list) / `requireFeatureEditAnyView('mesa')` (add) |
-| Directly toggle a member's enrollment from Accounting → MESA → All Members (temporary bridge, bypasses the request queue) | `requireFeatureEditAnyView('mesa')` |
+| Directly toggle a member's enrollment from Accounting → MESA → Non Members (temporary bridge, bypasses the request queue) | `requireFeatureEditAnyView('mesa')` |
 
 ---
 
@@ -121,7 +125,7 @@ Approving a disbursement in Accounting is a *signal*, not a payment. The actual 
 | Path | Role |
 |---|---|
 | `src/components/employee/EmployeeMesa.tsx` | Employee About / Request / History tabs |
-| `src/components/payroll/AccountingMesa.tsx` | Accounting Requests queue + All Members (temp Opt In/Out) + MESA Active Members + View drill-down |
+| `src/components/payroll/AccountingMesa.tsx` | Accounting Requests queue + Non Members (temp Opt In/Out) + MESA Active Members + View drill-down |
 | `src/components/hr/HrMesa.tsx` | HR Eligible / opt-in Requests / FPU tabs |
 | `src/components/PayrollWizard.tsx` | Weekly deduction + disbursement folded into Final pay |
 | `src/lib/mesa/ledger.ts` | Shared ledger types + `summarizeMember` / `summarizeMembers` |
@@ -130,11 +134,12 @@ Approving a disbursement in Accounting is a *signal*, not a payment. The actual 
 | `app/api/mesa-requests/[id]/dispatch/route.ts` | Pay out an approved disbursement |
 | `app/api/mesa-ledger/route.ts` | Per-member or program-wide contribution rollup |
 | `app/api/mesa-notes/route.ts` | GET (list) + POST (add) a member's internal notes |
-| `app/api/toggle-mesa-member/route.ts` | Direct enrollment flip — used by request approvals and the temporary All Members Opt In/Out buttons |
+| `app/api/toggle-mesa-member/route.ts` | Direct enrollment flip — used by request approvals and the temporary Non Members Opt In/Out buttons |
 | `references/sql/create/mesa_ledger_ddl.sql` | Ledger table DDL |
 | `references/sql/create/backfill_mesa_ledger.sql` | Ledger data backfill (loaded via script, not SQL Editor) |
 | `references/sql/create/add_mesa_requests.sql` | `mesa_requests` table |
 | `references/sql/create/create_mesa_notes.sql` | `mesa_notes` table |
+| `references/sql/seed/seed_mesa_active_membership.sql` | Seeds `mesa_member=true` for the Active-sheet members |
 | `references/sql/alter/add_mesa_dispatched_at.sql` | `mesa_requests.dispatched_at` + urgent-queue index |
 | `scripts/load-mesa-ledger.mjs` | Batched REST upsert of the ledger backfill |
 | `scripts/preload-mesa-membership.mjs` | Seeds `mesa_member` / `mesa_member_since` from the ledger |

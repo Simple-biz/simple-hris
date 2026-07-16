@@ -40,10 +40,11 @@ export const ROUTE_REQUIRED_ROLES: ReadonlyArray<{ prefix: string; roles: readon
   { prefix: '/orphanage',     roles: ['orphanage_manager', 'admin'] },
   { prefix: '/manager',       roles: ['manager', 'admin'] },
   { prefix: '/qc',            roles: ['qc', 'admin'] },
-  // Shared HRIS-updates Kanban board, reached via the ViewSwitcher "Tickets"
-  // entry. Role opens the page; the per-user `tickets` feature grant decides
-  // view-vs-create inside it (see /api/tickets).
-  { prefix: '/tickets',       roles: ['accounting', 'hr_coordinator', 'manager', 'ceo', 'tickets', 'admin'] },
+  // Dedicated HRIS-updates Kanban board, reached via the ViewSwitcher "Tickets"
+  // entry. Only the standalone `tickets` role (or admin) may open it — dashboard
+  // roles no longer confer access. The per-user `tickets` feature grant then
+  // decides view-vs-create inside it (see /api/tickets).
+  { prefix: '/tickets',       roles: ['tickets', 'admin'] },
 ];
 
 /**

@@ -12,11 +12,18 @@ const ACCESS_RANK: Record<TicketMember['access'], number> = { view: 0, edit: 1, 
 
 /**
  * Everyone with access to the /tickets board: each active `tickets` feature
- * grant (any view catalog, view or edit) plus every admin (admins bypass
- * feature gates, so they never get a grant row). Enriched with name /
- * department / photo from the master list; two grant emails that resolve to
- * the same master row collapse into one person keeping their most permissive
- * access. Sorted admins → edit → view, then by name.
+ * grant (view or edit) plus every admin (admins bypass feature gates, so they
+ * never get a grant row). Enriched with name / department / photo from the
+ * master list; two grant emails that resolve to the same master row collapse
+ * into one person keeping their most permissive access. Sorted admins → edit →
+ * view, then by name.
+ *
+ * The board is a dedicated-role surface, so we count ONLY grants under the
+ * `tickets` view (the sole catalog carrying the feature). A tickets grant is
+ * provisioned when the standalone `tickets` role is assigned; dashboard roles
+ * no longer confer one. Filtering by view_key keeps stray legacy rows from
+ * older per-dashboard `tickets` tabs from leaking in even before the cleanup
+ * migration runs.
  *
  * Shared by GET /api/tickets/members (the pickers' source) and by the ticket
  * write routes, which validate `assigned_to` against this same list — so "who
@@ -29,6 +36,7 @@ export async function listTicketMembers(supabase: SupabaseClient): Promise<Ticke
         .from('employee_feature_permissions')
         .select('work_email, access')
         .eq('feature', 'tickets')
+        .eq('view_key', 'tickets')
         .is('revoked_at', null),
       supabase.from('employee_roles').select('work_email').eq('role', 'admin').is('revoked_at', null),
       getEmployeesForAuthorizedServerRoute(),

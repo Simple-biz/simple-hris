@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   HeartHandshake,
   CheckCircle2,
@@ -41,7 +41,7 @@ import type { MesaLedgerEvent, MesaMemberSummary } from '@/lib/mesa/ledger';
 import type { EmployeeRow } from '@/lib/supabase/employees';
 import type { EmployeeHourlyRateRow } from '@/lib/supabase/employee-hourly-rates';
 
-type MesaView = 'requests' | 'all-members' | 'active-members';
+type MesaView = 'requests' | 'non-members' | 'active-members';
 
 /** Peso, two decimals — follows the app-wide money convention. */
 const formatPHP = (n: number) =>
@@ -93,6 +93,119 @@ const TYPE_COLORS: Record<MesaRequestType, string> = {
   return: 'border-violet-200 bg-violet-50 text-violet-700 dark:border-violet-500/40 dark:bg-violet-500/15 dark:text-violet-200',
 };
 
+// ── Bulk row selection ───────────────────────────────────────────────────────
+
+/** Checkbox multi-select over a list of rows keyed by a stable string.
+ *  `rows` should be the *filtered* set, so select-all covers everything the
+ *  user can currently see (across pages) and `selectedRows` never includes a
+ *  row hidden by the active search/filter. */
+function useRowSelection<T>(rows: T[], keyOf: (t: T) => string) {
+  const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
+  const keys = rows.map(keyOf);
+  const allSelected = keys.length > 0 && keys.every((k) => selectedKeys.has(k));
+  const someSelected = keys.some((k) => selectedKeys.has(k));
+  const toggle = (k: string) =>
+    setSelectedKeys((prev) => {
+      const next = new Set(prev);
+      if (next.has(k)) next.delete(k);
+      else next.add(k);
+      return next;
+    });
+  const toggleAll = () =>
+    setSelectedKeys((prev) => {
+      const next = new Set(prev);
+      if (keys.every((k) => next.has(k))) keys.forEach((k) => next.delete(k));
+      else keys.forEach((k) => next.add(k));
+      return next;
+    });
+  const clear = () => setSelectedKeys(new Set());
+  const selectedRows = rows.filter((r) => selectedKeys.has(keyOf(r)));
+  return { selectedKeys, selectedRows, allSelected, someSelected, toggle, toggleAll, clear };
+}
+
+function SelectCheckbox({
+  checked,
+  indeterminate,
+  onChange,
+  ariaLabel,
+}: {
+  checked: boolean;
+  indeterminate?: boolean;
+  onChange: () => void;
+  ariaLabel: string;
+}) {
+  const ref = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (ref.current) ref.current.indeterminate = !!indeterminate && !checked;
+  }, [indeterminate, checked]);
+  return (
+    <input
+      ref={ref}
+      type="checkbox"
+      checked={checked}
+      onChange={onChange}
+      aria-label={ariaLabel}
+      onClick={(e) => e.stopPropagation()}
+      className="h-3.5 w-3.5 cursor-pointer rounded border-zinc-300 accent-teal-600 dark:border-zinc-600"
+    />
+  );
+}
+
+/** Sticky bar shown above a table when ≥1 row is selected. */
+function BulkBar({ count, children, onClear }: { count: number; children: React.ReactNode; onClear: () => void }) {
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-2 border-b border-teal-100/80 bg-teal-50/70 px-4 py-2 dark:border-teal-900/40 dark:bg-teal-950/40">
+      <span className="text-xs font-semibold text-zinc-700 dark:text-zinc-200">{count} selected</span>
+      <div className="flex flex-wrap items-center gap-1.5">
+        {children}
+        <Button type="button" size="sm" variant="ghost" onClick={onClear} className="h-7 text-[11px] text-zinc-500 hover:text-zinc-700 dark:text-zinc-400">
+          Clear
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+/** Run an async op over each item sequentially, tallying success/failure. */
+async function runBulk<T>(items: T[], fn: (item: T) => Promise<void>): Promise<{ ok: number; fail: number }> {
+  let ok = 0;
+  let fail = 0;
+  for (const item of items) {
+    try {
+      await fn(item);
+      ok += 1;
+    } catch {
+      fail += 1;
+    }
+  }
+  return { ok, fail };
+}
+
+/** Summarize a bulk run as a toast. */
+function reportBulk(verb: string, ok: number, fail: number) {
+  if (ok && !fail) toast.success(`${verb} ${ok}`);
+  else if (ok && fail) toast.warning(`${verb} ${ok}, ${fail} failed`);
+  else toast.error(`Nothing ${verb.toLowerCase()} — ${fail} failed`);
+}
+
+/** POST the enrollment flip for one roster row. Throws on non-OK. */
+async function postToggleMesa(row: MesaRosterRow, mesaMember: boolean): Promise<void> {
+  const res = await fetch('/api/toggle-mesa-member', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      workEmail: row.workEmail ?? undefined,
+      personalEmail: row.workEmail ? undefined : row.personalEmail ?? undefined,
+      mesaMember,
+      name: row.name,
+    }),
+  });
+  if (!res.ok) {
+    const j = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(j.error ?? `HTTP ${res.status}`);
+  }
+}
+
 export default function AccountingMesa() {
   const [view, setView] = useState<MesaView>('requests');
   const [rows, setRows] = useState<MesaRequest[]>(
@@ -109,6 +222,7 @@ export default function AccountingMesa() {
   const [reviewing, setReviewing] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<MesaRequest | null>(null);
+  const [bulkBusy, setBulkBusy] = useState(false);
 
   const load = async (showSpinner = true) => {
     if (showSpinner) setLoading(true); else setRefreshing(true);
@@ -162,6 +276,8 @@ export default function AccountingMesa() {
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const safePage = Math.min(page, totalPages - 1);
   const pageRows = filtered.slice(safePage * PAGE_SIZE, (safePage + 1) * PAGE_SIZE);
+
+  const sel = useRowSelection(filtered, (r) => r.id);
 
   const stats = useMemo(() => ({
     total: rows.length,
@@ -278,6 +394,63 @@ export default function AccountingMesa() {
     }
   };
 
+  // Bulk approve/deny — only acts on the selected rows that are still pending.
+  // Approving an opt_out also unenrolls the member (mirrors submitReview).
+  const bulkReview = async (status: 'approved' | 'denied') => {
+    const targets = sel.selectedRows.filter((r) => r.status === 'pending');
+    if (targets.length === 0) {
+      toast.error('No pending requests selected');
+      return;
+    }
+    setBulkBusy(true);
+    const { ok, fail } = await runBulk(targets, async (r) => {
+      const res = await fetch(`/api/mesa-requests/${r.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status, review_notes: null }),
+      });
+      if (!res.ok) {
+        const j = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(j.error ?? `HTTP ${res.status}`);
+      }
+      if (status === 'approved' && r.request_type === 'opt_out') {
+        // Best-effort unenroll; don't fail the whole request on this.
+        await fetch('/api/toggle-mesa-member', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ workEmail: r.work_email, mesaMember: false, name: r.full_name }),
+        }).catch(() => {});
+      }
+    });
+    reportBulk(status === 'approved' ? 'Approved' : 'Denied', ok, fail);
+    sel.clear();
+    setBulkBusy(false);
+    clearTabCache(TAB_CACHE_KEYS.mesaRequests);
+    await load(false);
+  };
+
+  // Bulk delete — skips rows already dispatched (the API blocks those).
+  const bulkDelete = async () => {
+    const targets = sel.selectedRows.filter((r) => !r.dispatched_at);
+    if (targets.length === 0) {
+      toast.error('Selected requests are already paid out and cannot be deleted');
+      return;
+    }
+    setBulkBusy(true);
+    const { ok, fail } = await runBulk(targets, async (r) => {
+      const res = await fetch(`/api/mesa-requests/${r.id}`, { method: 'DELETE' });
+      if (!res.ok) {
+        const j = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(j.error ?? `HTTP ${res.status}`);
+      }
+    });
+    reportBulk('Deleted', ok, fail);
+    sel.clear();
+    setBulkBusy(false);
+    clearTabCache(TAB_CACHE_KEYS.mesaRequests);
+    await load(false);
+  };
+
   return (
     <div className="flex h-full min-h-0 flex-col overflow-y-auto bg-gradient-to-br from-white via-teal-50/30 to-emerald-50/20 p-4 sm:p-6 dark:bg-none dark:bg-[#0d1117]">
       <div className="mx-auto w-full max-w-6xl space-y-5">
@@ -297,8 +470,8 @@ export default function AccountingMesa() {
             <p className="mt-1 max-w-2xl text-sm leading-relaxed text-zinc-600 dark:text-zinc-400">
               {view === 'requests'
                 ? 'Opt-out, disbursement, and return requests submitted by members. Opt-in requests are handled by HR.'
-                : view === 'all-members'
-                ? 'Every current employee, with a temporary manual Opt In / Opt Out until members self-serve from the Employee Dashboard.'
+                : view === 'non-members'
+                ? 'Employees who have never joined MESA — not opted in and with no MESA start date. Temporary manual Opt In until members self-serve from the Employee Dashboard.'
                 : 'Employees currently enrolled in MESA, with their contribution, match, and balance to date.'}
             </p>
           </div>
@@ -311,12 +484,12 @@ export default function AccountingMesa() {
           className="relative inline-flex items-center gap-1 self-start rounded-lg border border-teal-100/80 bg-white/70 p-1 shadow-sm backdrop-blur dark:border-teal-900/40 dark:bg-zinc-900/60"
         >
           <ViewTabButton active={view === 'requests'} onClick={() => setView('requests')} icon={ClipboardList} label="Requests" />
-          <ViewTabButton active={view === 'all-members'} onClick={() => setView('all-members')} icon={Users} label="All Members" />
+          <ViewTabButton active={view === 'non-members'} onClick={() => setView('non-members')} icon={Users} label="Non Members" />
           <ViewTabButton active={view === 'active-members'} onClick={() => setView('active-members')} icon={Wallet} label="MESA Active Members" />
         </div>
 
-        {view === 'all-members' ? (
-          <MesaAllMembers />
+        {view === 'non-members' ? (
+          <MesaNonMembers />
         ) : view === 'active-members' ? (
           <MesaActiveMembers />
         ) : (
@@ -388,6 +561,19 @@ export default function AccountingMesa() {
             </CardTitle>
           </CardHeader>
           <CardContent className="p-0">
+            {sel.selectedRows.length > 0 && (
+              <BulkBar count={sel.selectedRows.length} onClear={sel.clear}>
+                <Button type="button" size="sm" disabled={bulkBusy} onClick={() => bulkReview('approved')} className="h-7 bg-teal-600 text-[11px] text-white hover:bg-teal-700 dark:bg-teal-600 dark:hover:bg-teal-500">
+                  <CheckCircle2 className="mr-1 h-3 w-3" />Approve
+                </Button>
+                <Button type="button" size="sm" variant="outline" disabled={bulkBusy} onClick={() => bulkReview('denied')} className="h-7 border-rose-200 bg-rose-50 text-[11px] text-rose-700 hover:bg-rose-100 dark:border-rose-700/50 dark:bg-rose-950/30 dark:text-rose-300">
+                  <XCircle className="mr-1 h-3 w-3" />Deny
+                </Button>
+                <Button type="button" size="sm" variant="outline" disabled={bulkBusy} onClick={bulkDelete} className="h-7 border-rose-200 bg-rose-50 text-[11px] text-rose-700 hover:bg-rose-100 dark:border-rose-700/50 dark:bg-rose-950/30 dark:text-rose-300">
+                  <Trash2 className="mr-1 h-3 w-3" />Delete
+                </Button>
+              </BulkBar>
+            )}
             {loading ? (
               <SkeletonRows count={6} />
             ) : filtered.length === 0 ? (
@@ -400,6 +586,9 @@ export default function AccountingMesa() {
                 <table className="w-full text-left text-xs">
                   <thead className="border-b border-teal-100/80 bg-teal-50/40 text-[11px] font-semibold uppercase tracking-wide text-teal-700 dark:border-teal-900/40 dark:bg-teal-950/30 dark:text-teal-300">
                     <tr>
+                      <th className="w-8 px-3 py-2.5">
+                        <SelectCheckbox checked={sel.allSelected} indeterminate={sel.someSelected} onChange={sel.toggleAll} ariaLabel="Select all requests" />
+                      </th>
                       <th className="px-4 py-2.5">Employee</th>
                       <th className="px-4 py-2.5">Department</th>
                       <th className="px-4 py-2.5">Type</th>
@@ -414,8 +603,11 @@ export default function AccountingMesa() {
                     {pageRows.map((r) => (
                       <tr
                         key={r.id}
-                        className="transition-colors hover:bg-teal-50/40 dark:hover:bg-teal-950/20"
+                        className={cn('transition-colors hover:bg-teal-50/40 dark:hover:bg-teal-950/20', sel.selectedKeys.has(r.id) && 'bg-teal-50/60 dark:bg-teal-950/30')}
                       >
+                        <td className="px-3 py-3" data-label="Select">
+                          <SelectCheckbox checked={sel.selectedKeys.has(r.id)} onChange={() => sel.toggle(r.id)} ariaLabel={`Select ${r.full_name}`} />
+                        </td>
                         <td className="px-4 py-3" data-label="Employee">
                           <div className="font-medium text-zinc-900 dark:text-zinc-100">{r.full_name}</div>
                           <div className="mt-0.5 font-mono text-[11px] text-zinc-500 dark:text-zinc-500">
@@ -883,31 +1075,35 @@ function rosterRowToSummary(row: MesaRosterRow): MesaMemberSummary {
 
 const BALANCES_PAGE_SIZE = 20;
 
-// ── All Members ──────────────────────────────────────────────────────────────
+// ── Non Members ────────────────────────────────────────────────────────────
 //
-// Every current employee (Global Master List), with a temporary manual
-// Opt In / Opt Out — a stopgap so Accounting can enroll/unenroll anyone right
-// now, before employees self-serve via the Employee Dashboard's MESA Request
-// tab (EmployeeMesa.tsx), which goes through the mesa_requests review queue.
-// Remove this direct-toggle path once that's the primary way members join.
+// Employees who have never joined MESA — not opted in (mesa_member = false)
+// AND with no MESA start date (mesa_member_since is null). Opted-out
+// ex-members keep their start date (see toggle-mesa-member), so they're
+// excluded here — they're former members, tracked via the ledger/requests.
+// Each non-member has a temporary manual Opt In — a stopgap so Accounting can
+// enroll anyone right now, before employees self-serve via the Employee
+// Dashboard's MESA Request tab (EmployeeMesa.tsx), which goes through the
+// mesa_requests review queue. Remove this direct-toggle path once that's the
+// primary way members join.
 
-function MesaAllMembers() {
+function MesaNonMembers() {
   const [rows, setRows] = useState<MesaRosterRow[]>(
-    () => getTabCache<MesaRosterRow[]>(TAB_CACHE_KEYS.mesaAllMembers) ?? [],
+    () => getTabCache<MesaRosterRow[]>(TAB_CACHE_KEYS.mesaNonMembers) ?? [],
   );
-  const [loading, setLoading] = useState(!hasTabCache(TAB_CACHE_KEYS.mesaAllMembers));
+  const [loading, setLoading] = useState(!hasTabCache(TAB_CACHE_KEYS.mesaNonMembers));
   const [refreshing, setRefreshing] = useState(false);
   const [query, setQuery] = useState('');
   const [page, setPage] = useState(0);
   const [viewTarget, setViewTarget] = useState<MesaRosterRow | null>(null);
-  const [toggleTarget, setToggleTarget] = useState<MesaRosterRow | null>(null);
+  const [optInTargets, setOptInTargets] = useState<MesaRosterRow[] | null>(null);
   const [toggling, setToggling] = useState(false);
 
   const load = async (showSpinner = true) => {
     if (showSpinner) setLoading(true); else setRefreshing(true);
     try {
       const data = await fetchMesaRoster();
-      setTabCache(TAB_CACHE_KEYS.mesaAllMembers, data);
+      setTabCache(TAB_CACHE_KEYS.mesaNonMembers, data);
       setRows(data);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Failed to load employee roster');
@@ -918,14 +1114,19 @@ function MesaAllMembers() {
   };
 
   useEffect(() => {
-    void load(!hasTabCache(TAB_CACHE_KEYS.mesaAllMembers));
+    void load(!hasTabCache(TAB_CACHE_KEYS.mesaNonMembers));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Non Members = never joined MESA: not opted in (mesa_member = false) AND no
+  // MESA start date (mesa_member_since is null). Excludes opted-out ex-members,
+  // who retain their start date — they're former members, not never-members.
+  // Enrolled members live on the "MESA Active Members" tab.
   const filtered = useMemo(() => {
+    const base = rows.filter((r) => !r.mesaMember && !r.mesaMemberSince);
     const q = query.trim().toLowerCase();
-    if (!q) return rows;
-    return rows.filter(
+    if (!q) return base;
+    return base.filter(
       (r) =>
         r.name.toLowerCase().includes(q) ||
         (r.workEmail ?? '').toLowerCase().includes(q) ||
@@ -936,56 +1137,46 @@ function MesaAllMembers() {
   useEffect(() => { setPage(0); }, [query]);
 
   const enrolledCount = useMemo(() => rows.filter((r) => r.mesaMember).length, [rows]);
+  // Strict non-members: never joined (not opted in AND no start date) — matches
+  // the filtered table above, so the stat card can't disagree with the list.
+  const nonMemberCount = useMemo(
+    () => rows.filter((r) => !r.mesaMember && !r.mesaMemberSince).length,
+    [rows],
+  );
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / BALANCES_PAGE_SIZE));
   const safePage = Math.min(page, totalPages - 1);
   const pageRows = filtered.slice(safePage * BALANCES_PAGE_SIZE, (safePage + 1) * BALANCES_PAGE_SIZE);
 
+  const sel = useRowSelection(filtered, (r) => r.key);
+
   const handleRefresh = async () => {
-    clearTabCache(TAB_CACHE_KEYS.mesaAllMembers);
+    clearTabCache(TAB_CACHE_KEYS.mesaNonMembers);
     await load(false);
     toast.success('Refreshed employee roster');
   };
 
-  const confirmToggle = async () => {
-    if (!toggleTarget) return;
-    const nextMesaMember = !toggleTarget.mesaMember;
+  // Opt one or many not-yet-enrolled employees into MESA. Direct enrollment
+  // flip — bypasses the mesa_requests review queue (temporary bridge).
+  const confirmOptIn = async () => {
+    if (!optInTargets || optInTargets.length === 0) return;
     setToggling(true);
-    try {
-      const res = await fetch('/api/toggle-mesa-member', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          workEmail: toggleTarget.workEmail ?? undefined,
-          personalEmail: toggleTarget.workEmail ? undefined : toggleTarget.personalEmail ?? undefined,
-          mesaMember: nextMesaMember,
-          name: toggleTarget.name,
-        }),
-      });
-      if (!res.ok) {
-        const j = (await res.json()) as { error?: string };
-        throw new Error(j.error ?? `HTTP ${res.status}`);
-      }
-      toast.success(
-        nextMesaMember ? `${toggleTarget.name} opted in to MESA` : `${toggleTarget.name} opted out of MESA`,
-      );
-      setToggleTarget(null);
-      clearTabCache(TAB_CACHE_KEYS.mesaAllMembers);
-      clearTabCache(TAB_CACHE_KEYS.mesaActiveMembers);
-      await load(false);
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Failed to update MESA enrollment');
-    } finally {
-      setToggling(false);
-    }
+    const { ok, fail } = await runBulk(optInTargets, (t) => postToggleMesa(t, true));
+    reportBulk('Opted in', ok, fail);
+    setOptInTargets(null);
+    sel.clear();
+    setToggling(false);
+    clearTabCache(TAB_CACHE_KEYS.mesaNonMembers);
+    clearTabCache(TAB_CACHE_KEYS.mesaActiveMembers);
+    await load(false);
   };
 
   return (
     <div className="space-y-5">
       {/* Summary */}
       <div className="grid gap-3 sm:grid-cols-2">
-        <StatCard label="Employees" value={rows.length} tone="zinc" />
-        <StatCard label="Enrolled in MESA" value={enrolledCount} tone="teal" />
+        <StatCard label="Non members" value={nonMemberCount} tone="zinc" />
+        <StatCard label="Enrolled (MESA Active)" value={enrolledCount} tone="teal" />
       </div>
 
       {/* Toolbar */}
@@ -1013,28 +1204,40 @@ function MesaAllMembers() {
           </CardTitle>
         </CardHeader>
         <CardContent className="p-0">
+          {sel.selectedRows.length > 0 && (
+            <BulkBar count={sel.selectedRows.length} onClear={sel.clear}>
+              <Button type="button" size="sm" disabled={toggling} onClick={() => setOptInTargets(sel.selectedRows)} className="h-7 bg-teal-600 text-[11px] text-white hover:bg-teal-700 dark:bg-teal-600 dark:hover:bg-teal-500">
+                <UserPlus className="mr-1 h-3 w-3" />Opt In
+              </Button>
+            </BulkBar>
+          )}
           {loading ? (
             <SkeletonRows count={8} />
           ) : filtered.length === 0 ? (
             <div className="flex flex-col items-center justify-center gap-2 px-5 py-12 text-center text-sm text-zinc-500 dark:text-zinc-400">
               <Inbox className="h-6 w-6 text-zinc-400" />
-              {rows.length === 0 ? 'No employees found.' : 'No results match your search.'}
+              {nonMemberCount === 0 ? 'No non-members — everyone on the roster has joined MESA at some point.' : 'No results match your search.'}
             </div>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-left text-xs">
                 <thead className="border-b border-teal-100/80 bg-teal-50/40 text-[11px] font-semibold uppercase tracking-wide text-teal-700 dark:border-teal-900/40 dark:bg-teal-950/30 dark:text-teal-300">
                   <tr>
+                    <th className="w-8 px-3 py-2.5">
+                      <SelectCheckbox checked={sel.allSelected} indeterminate={sel.someSelected} onChange={sel.toggleAll} ariaLabel="Select all employees" />
+                    </th>
                     <th className="px-4 py-2.5">Name</th>
                     <th className="px-4 py-2.5">Department</th>
                     <th className="px-4 py-2.5">Email</th>
-                    <th className="px-4 py-2.5 text-right">Status</th>
                     <th className="px-4 py-2.5 text-right">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-teal-100/60 dark:divide-teal-900/40">
                   {pageRows.map((r) => (
-                    <tr key={r.key} className="transition-colors hover:bg-teal-50/40 dark:hover:bg-teal-950/20">
+                    <tr key={r.key} className={cn('transition-colors hover:bg-teal-50/40 dark:hover:bg-teal-950/20', sel.selectedKeys.has(r.key) && 'bg-teal-50/60 dark:bg-teal-950/30')}>
+                      <td className="px-3 py-3" data-label="Select">
+                        <SelectCheckbox checked={sel.selectedKeys.has(r.key)} onChange={() => sel.toggle(r.key)} ariaLabel={`Select ${r.name}`} />
+                      </td>
                       <td className="px-4 py-3 font-medium text-zinc-900 dark:text-zinc-100" data-label="Name">
                         {r.name}
                       </td>
@@ -1045,17 +1248,6 @@ function MesaAllMembers() {
                       </td>
                       <td className="px-4 py-3 font-mono text-[11px] text-zinc-500 dark:text-zinc-500" data-label="Email">
                         {r.workEmail ?? r.personalEmail ?? '—'}
-                      </td>
-                      <td className="px-4 py-3 text-right" data-label="Status">
-                        {r.mesaMember ? (
-                          <Badge variant="outline" className="border-teal-200 bg-teal-50 text-[10.5px] font-semibold uppercase tracking-wide text-teal-700 dark:border-teal-500/40 dark:bg-teal-500/15 dark:text-teal-200">
-                            <CheckCircle2 className="mr-1 h-3 w-3" />Active member
-                          </Badge>
-                        ) : (
-                          <Badge variant="outline" className="border-zinc-300 bg-zinc-50 text-[10.5px] font-semibold uppercase tracking-wide text-zinc-600 dark:border-zinc-600 dark:bg-zinc-800/50 dark:text-zinc-300">
-                            Not enrolled
-                          </Badge>
-                        )}
                       </td>
                       <td className="px-4 py-3 text-right" data-label="Actions">
                         <div className="flex items-center justify-end gap-1.5">
@@ -1069,29 +1261,17 @@ function MesaAllMembers() {
                             <Eye className="h-3 w-3" />
                             View
                           </Button>
-                          {r.mesaMember ? (
-                            <Button
-                              type="button"
-                              size="sm"
-                              variant="outline"
-                              onClick={() => setToggleTarget(r)}
-                              className="h-7 gap-1 border-amber-200 bg-amber-50/60 text-[11px] font-semibold text-amber-700 hover:bg-amber-100 dark:border-amber-700/50 dark:bg-amber-950/30 dark:text-amber-300 dark:hover:bg-amber-950/60"
-                            >
-                              <UserMinus className="h-3 w-3" />
-                              Opt Out
-                            </Button>
-                          ) : (
-                            <Button
-                              type="button"
-                              size="sm"
-                              variant="outline"
-                              onClick={() => setToggleTarget(r)}
-                              className="h-7 gap-1 border-teal-200 bg-teal-50/60 text-[11px] font-semibold text-teal-700 hover:bg-teal-100 dark:border-teal-700/50 dark:bg-teal-950/30 dark:text-teal-300 dark:hover:bg-teal-950/60"
-                            >
-                              <UserPlus className="h-3 w-3" />
-                              Opt In
-                            </Button>
-                          )}
+                          {/* This tab only lists not-yet-enrolled employees, so the row action is always Opt In. */}
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            onClick={() => setOptInTargets([r])}
+                            className="h-7 gap-1 border-teal-200 bg-teal-50/60 text-[11px] font-semibold text-teal-700 hover:bg-teal-100 dark:border-teal-700/50 dark:bg-teal-950/30 dark:text-teal-300 dark:hover:bg-teal-950/60"
+                          >
+                            <UserPlus className="h-3 w-3" />
+                            Opt In
+                          </Button>
                         </div>
                       </td>
                     </tr>
@@ -1129,49 +1309,43 @@ function MesaAllMembers() {
         <MesaMemberDetail member={rosterRowToSummary(viewTarget)} onClose={() => setViewTarget(null)} />
       )}
 
-      {/* Opt In / Opt Out confirmation — direct enrollment toggle, bypassing
+      {/* Opt In confirmation — direct enrollment flip for one or many, bypassing
           the mesa_requests review queue. Temporary bridge (see comment above). */}
-      {toggleTarget && (
+      {optInTargets && optInTargets.length > 0 && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-[2px] p-4 animate-in fade-in duration-200 ease-out motion-reduce:animate-none">
           <div className="w-full max-w-sm rounded-2xl border border-zinc-200 bg-white shadow-2xl dark:border-zinc-800 dark:bg-zinc-950 animate-in fade-in zoom-in-95 slide-in-from-bottom-2 duration-200 ease-out motion-reduce:animate-none">
             <div className="flex items-start gap-3 px-5 py-5">
-              <div className={cn(
-                'flex h-10 w-10 shrink-0 items-center justify-center rounded-full',
-                toggleTarget.mesaMember
-                  ? 'bg-amber-100 text-amber-600 dark:bg-amber-950/40 dark:text-amber-400'
-                  : 'bg-teal-100 text-teal-600 dark:bg-teal-950/40 dark:text-teal-400',
-              )}>
-                {toggleTarget.mesaMember ? <UserMinus className="h-5 w-5" /> : <UserPlus className="h-5 w-5" />}
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-teal-100 text-teal-600 dark:bg-teal-950/40 dark:text-teal-400">
+                <UserPlus className="h-5 w-5" />
               </div>
               <div className="min-w-0">
                 <h3 className="text-base font-bold text-zinc-900 dark:text-white">
-                  {toggleTarget.mesaMember ? 'Opt out of MESA?' : 'Opt in to MESA?'}
+                  {optInTargets.length === 1 ? 'Opt in to MESA?' : `Opt ${optInTargets.length} employees in to MESA?`}
                 </h3>
                 <p className="mt-1 text-sm leading-relaxed text-zinc-600 dark:text-zinc-400">
-                  {toggleTarget.mesaMember
-                    ? <>Stops the ₱100 weekly deduction for <span className="font-medium text-zinc-800 dark:text-zinc-200">{toggleTarget.name}</span> going forward.</>
-                    : <>Starts the ₱100 weekly deduction (+ ₱300 Simple.biz match) for <span className="font-medium text-zinc-800 dark:text-zinc-200">{toggleTarget.name}</span>, effective today.</>}
+                  Starts the ₱100 weekly deduction (+ ₱300 Simple.biz match)
+                  {optInTargets.length === 1 ? (
+                    <> for <span className="font-medium text-zinc-800 dark:text-zinc-200">{optInTargets[0].name}</span></>
+                  ) : (
+                    <> for the selected employees</>
+                  )}, effective today.
                   {' '}This is a direct enrollment change — it does not go through the request queue.
                 </p>
               </div>
             </div>
             <div className="flex items-center justify-end gap-2 border-t border-zinc-200 px-5 py-4 dark:border-zinc-800">
-              <Button type="button" variant="outline" size="sm" onClick={() => setToggleTarget(null)} disabled={toggling}>
+              <Button type="button" variant="outline" size="sm" onClick={() => setOptInTargets(null)} disabled={toggling}>
                 Cancel
               </Button>
               <Button
                 type="button"
                 size="sm"
                 disabled={toggling}
-                onClick={confirmToggle}
-                className={cn(
-                  toggleTarget.mesaMember
-                    ? 'bg-amber-600 text-white hover:bg-amber-700 dark:bg-amber-600 dark:hover:bg-amber-500'
-                    : 'bg-teal-600 text-white hover:bg-teal-700 dark:bg-teal-600 dark:hover:bg-teal-500',
-                )}
+                onClick={confirmOptIn}
+                className="bg-teal-600 text-white hover:bg-teal-700 dark:bg-teal-600 dark:hover:bg-teal-500"
               >
-                {toggleTarget.mesaMember ? <UserMinus className="mr-1.5 h-3.5 w-3.5" /> : <UserPlus className="mr-1.5 h-3.5 w-3.5" />}
-                {toggleTarget.mesaMember ? 'Opt Out' : 'Opt In'}
+                <UserPlus className="mr-1.5 h-3.5 w-3.5" />
+                {optInTargets.length === 1 ? 'Opt In' : `Opt In (${optInTargets.length})`}
               </Button>
             </div>
           </div>
@@ -1186,7 +1360,7 @@ function MesaAllMembers() {
 // Employees currently enrolled (employee_hourly_rates.mesa_member = true),
 // roster-grounded so a brand-new enrollee shows up at ₱0 even before their
 // first ledger row lands. Financial rollup comes from mesa_ledger when
-// present. Read-only here — enrollment changes happen on the All Members tab
+// present. Read-only here — enrollment changes happen on the Non Members tab
 // (temporary) or via the mesa_requests review queue.
 
 function MesaActiveMembers() {
@@ -1198,6 +1372,8 @@ function MesaActiveMembers() {
   const [query, setQuery] = useState('');
   const [page, setPage] = useState(0);
   const [viewTarget, setViewTarget] = useState<MesaRosterRow | null>(null);
+  const [optOutTargets, setOptOutTargets] = useState<MesaRosterRow[] | null>(null);
+  const [toggling, setToggling] = useState(false);
 
   const load = async (showSpinner = true) => {
     if (showSpinner) setLoading(true); else setRefreshing(true);
@@ -1247,10 +1423,27 @@ function MesaActiveMembers() {
   const safePage = Math.min(page, totalPages - 1);
   const pageRows = filtered.slice(safePage * BALANCES_PAGE_SIZE, (safePage + 1) * BALANCES_PAGE_SIZE);
 
+  const sel = useRowSelection(filtered, (r) => r.key);
+
   const handleRefresh = async () => {
     clearTabCache(TAB_CACHE_KEYS.mesaActiveMembers);
     await load(false);
     toast.success('Refreshed MESA balances');
+  };
+
+  // Opt one or many enrolled members out of MESA. Direct enrollment flip —
+  // bypasses the mesa_requests review queue (temporary bridge).
+  const confirmOptOut = async () => {
+    if (!optOutTargets || optOutTargets.length === 0) return;
+    setToggling(true);
+    const { ok, fail } = await runBulk(optOutTargets, (t) => postToggleMesa(t, false));
+    reportBulk('Opted out', ok, fail);
+    setOptOutTargets(null);
+    sel.clear();
+    setToggling(false);
+    clearTabCache(TAB_CACHE_KEYS.mesaActiveMembers);
+    clearTabCache(TAB_CACHE_KEYS.mesaNonMembers);
+    await load(false);
   };
 
   const fmtSince = (d: string | null) =>
@@ -1291,6 +1484,13 @@ function MesaActiveMembers() {
           </CardTitle>
         </CardHeader>
         <CardContent className="p-0">
+          {sel.selectedRows.length > 0 && (
+            <BulkBar count={sel.selectedRows.length} onClear={sel.clear}>
+              <Button type="button" size="sm" variant="outline" disabled={toggling} onClick={() => setOptOutTargets(sel.selectedRows)} className="h-7 border-amber-200 bg-amber-50 text-[11px] text-amber-700 hover:bg-amber-100 dark:border-amber-700/50 dark:bg-amber-950/30 dark:text-amber-300">
+                <UserMinus className="mr-1 h-3 w-3" />Opt Out
+              </Button>
+            </BulkBar>
+          )}
           {loading ? (
             <SkeletonRows count={8} />
           ) : filtered.length === 0 ? (
@@ -1303,6 +1503,9 @@ function MesaActiveMembers() {
               <table className="w-full text-left text-xs">
                 <thead className="border-b border-teal-100/80 bg-teal-50/40 text-[11px] font-semibold uppercase tracking-wide text-teal-700 dark:border-teal-900/40 dark:bg-teal-950/30 dark:text-teal-300">
                   <tr>
+                    <th className="w-8 px-3 py-2.5">
+                      <SelectCheckbox checked={sel.allSelected} indeterminate={sel.someSelected} onChange={sel.toggleAll} ariaLabel="Select all members" />
+                    </th>
                     <th className="px-4 py-2.5">Member</th>
                     <th className="px-4 py-2.5">Department</th>
                     <th className="px-4 py-2.5 text-right">Contributed</th>
@@ -1315,7 +1518,10 @@ function MesaActiveMembers() {
                 </thead>
                 <tbody className="divide-y divide-teal-100/60 dark:divide-teal-900/40">
                   {pageRows.map((r) => (
-                    <tr key={r.key} className="transition-colors hover:bg-teal-50/40 dark:hover:bg-teal-950/20">
+                    <tr key={r.key} className={cn('transition-colors hover:bg-teal-50/40 dark:hover:bg-teal-950/20', sel.selectedKeys.has(r.key) && 'bg-teal-50/60 dark:bg-teal-950/30')}>
+                      <td className="px-3 py-3" data-label="Select">
+                        <SelectCheckbox checked={sel.selectedKeys.has(r.key)} onChange={() => sel.toggle(r.key)} ariaLabel={`Select ${r.name}`} />
+                      </td>
                       <td className="px-4 py-3" data-label="Member">
                         <div className="font-medium text-zinc-900 dark:text-zinc-100">{r.name}</div>
                         <div className="mt-0.5 font-mono text-[11px] text-zinc-500 dark:text-zinc-500">{r.workEmail ?? r.personalEmail}</div>
@@ -1342,16 +1548,28 @@ function MesaActiveMembers() {
                         {fmtSince(r.mesaMemberSince)}
                       </td>
                       <td className="px-4 py-3 text-right" data-label="Actions">
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="outline"
-                          onClick={() => setViewTarget(r)}
-                          className="h-7 gap-1 border-teal-200 bg-teal-50/60 text-[11px] font-semibold text-teal-700 hover:bg-teal-100 dark:border-teal-700/50 dark:bg-teal-950/30 dark:text-teal-300 dark:hover:bg-teal-950/60"
-                        >
-                          <Eye className="h-3 w-3" />
-                          View
-                        </Button>
+                        <div className="flex items-center justify-end gap-1.5">
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            onClick={() => setViewTarget(r)}
+                            className="h-7 gap-1 border-teal-200 bg-teal-50/60 text-[11px] font-semibold text-teal-700 hover:bg-teal-100 dark:border-teal-700/50 dark:bg-teal-950/30 dark:text-teal-300 dark:hover:bg-teal-950/60"
+                          >
+                            <Eye className="h-3 w-3" />
+                            View
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            onClick={() => setOptOutTargets([r])}
+                            className="h-7 gap-1 border-amber-200 bg-amber-50/60 text-[11px] font-semibold text-amber-700 hover:bg-amber-100 dark:border-amber-700/50 dark:bg-amber-950/30 dark:text-amber-300 dark:hover:bg-amber-950/60"
+                          >
+                            <UserMinus className="h-3 w-3" />
+                            Opt Out
+                          </Button>
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -1386,6 +1604,49 @@ function MesaActiveMembers() {
 
       {viewTarget && (
         <MesaMemberDetail member={rosterRowToSummary(viewTarget)} onClose={() => setViewTarget(null)} />
+      )}
+
+      {/* Opt Out confirmation — direct enrollment flip for one or many,
+          bypassing the mesa_requests review queue. Temporary bridge. */}
+      {optOutTargets && optOutTargets.length > 0 && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-[2px] p-4 animate-in fade-in duration-200 ease-out motion-reduce:animate-none">
+          <div className="w-full max-w-sm rounded-2xl border border-zinc-200 bg-white shadow-2xl dark:border-zinc-800 dark:bg-zinc-950 animate-in fade-in zoom-in-95 slide-in-from-bottom-2 duration-200 ease-out motion-reduce:animate-none">
+            <div className="flex items-start gap-3 px-5 py-5">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-amber-100 text-amber-600 dark:bg-amber-950/40 dark:text-amber-400">
+                <UserMinus className="h-5 w-5" />
+              </div>
+              <div className="min-w-0">
+                <h3 className="text-base font-bold text-zinc-900 dark:text-white">
+                  {optOutTargets.length === 1 ? 'Opt out of MESA?' : `Opt ${optOutTargets.length} members out of MESA?`}
+                </h3>
+                <p className="mt-1 text-sm leading-relaxed text-zinc-600 dark:text-zinc-400">
+                  Stops the ₱100 weekly deduction
+                  {optOutTargets.length === 1 ? (
+                    <> for <span className="font-medium text-zinc-800 dark:text-zinc-200">{optOutTargets[0].name}</span></>
+                  ) : (
+                    <> for the selected members</>
+                  )} going forward.
+                  {' '}This is a direct enrollment change — it does not go through the request queue.
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center justify-end gap-2 border-t border-zinc-200 px-5 py-4 dark:border-zinc-800">
+              <Button type="button" variant="outline" size="sm" onClick={() => setOptOutTargets(null)} disabled={toggling}>
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                disabled={toggling}
+                onClick={confirmOptOut}
+                className="bg-amber-600 text-white hover:bg-amber-700 dark:bg-amber-600 dark:hover:bg-amber-500"
+              >
+                <UserMinus className="mr-1.5 h-3.5 w-3.5" />
+                {optOutTargets.length === 1 ? 'Opt Out' : `Opt Out (${optOutTargets.length})`}
+              </Button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

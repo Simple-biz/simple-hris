@@ -90,7 +90,7 @@ export const TAB_CACHE_KEYS = {
   ratesSummary: 'rates:summary',
   dispatchQueue: 'dispatch:queue',
   mesaRequests: 'mesa:requests',
-  mesaAllMembers: 'mesa:all-members',
+  mesaNonMembers: 'mesa:non-members',
   mesaActiveMembers: 'mesa:active-members',
   pabReasonCodes: 'pab-disputes:reason-codes',
   // PAB disputes are cached per status filter, e.g. `pab-disputes:pending`.

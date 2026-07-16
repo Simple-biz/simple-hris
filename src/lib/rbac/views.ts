@@ -81,11 +81,12 @@ export function viewsForRoles(roles: Role[]): AppView[] {
   if (roles.includes('qc')) set.add('qc');
   if (roles.includes('admin') || roles.includes('hr_coordinator')) set.add('hr');
   if (roles.includes('contractor')) set.add('contractor');
-  // The shared HRIS-updates ticket board — every role that may open /tickets
-  // gets it in the switcher (mirrors ROUTE_REQUIRED_ROLES in route-access.ts).
-  // `tickets` is also a standalone assignable role, so an admin can hand the
-  // board to someone who holds no dashboard role at all.
-  if (roles.some((r) => (['accounting', 'hr_coordinator', 'manager', 'ceo', 'tickets'] as Role[]).includes(r))) {
+  // The shared HRIS-updates ticket board is a DEDICATED-ROLE surface: only the
+  // standalone `tickets` role unlocks it (admins get it via the keys-to-the-castle
+  // branch above). Holding a dashboard role no longer surfaces the board — an
+  // admin must explicitly assign `tickets` in Roles & Permissions. Mirrors
+  // ROUTE_REQUIRED_ROLES in route-access.ts.
+  if (roles.includes('tickets')) {
     set.add('tickets');
   }
   return VIEW_PRIORITY.filter((v) => set.has(v));
