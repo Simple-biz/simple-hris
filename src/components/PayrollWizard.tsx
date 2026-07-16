@@ -2559,6 +2559,7 @@ export default function PayrollWizard({
           mesa_member: null,
           mesa_member_since: null,
           mesa_fpu_completed_on: null,
+          mesa_account_number: null,
         };
         for (const em of emails) idx.set(em, synthetic);
       }

@@ -88,6 +88,7 @@ export async function GET(req: NextRequest) {
           mesa_member: row?.mesa_member ?? null,
           mesa_member_since: row?.mesa_member_since ?? null,
           mesa_fpu_completed_on: row?.mesa_fpu_completed_on ?? null,
+          mesa_account_number: row?.mesa_account_number ?? null,
           regular_rate: String(applied.regPhp),
           ot_rate: String(applied.otPhp),
         };

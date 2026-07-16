@@ -1,6 +1,6 @@
 # MESA (Medical Emergency Savings Account)
 
-> **Status:** Requests flow shipped 2026-06-01; contribution ledger backfilled + surfaced 2026-06-26; roster-grounded Non Members (never-joined: not opted in, no start date) / Active Members tabs with bulk Opt In/Out + Requests bulk review, the temporary manual-enrollment bridge, an Active-sheet membership seed, and the `mesa_notes` internal notes log shipped 2026-07-16. This doc covers the whole feature. For the accounting-side payout mechanics (Urgent Payments queue, weekly Sun–Sat reconciliation) see [urgent-payments.md](urgent-payments.md); for the underlying tables see [data-sources.md §10 (`mesa_requests`) and §15 (`mesa_ledger`)](../reference/data-sources.md).
+> **Status:** Requests flow shipped 2026-06-01; contribution ledger backfilled + surfaced 2026-06-26; roster-grounded Non Members (never-joined: not opted in, no start date) / Active Members tabs with bulk Opt In/Out + Requests bulk review, the temporary manual-enrollment bridge, an Active-sheet membership seed, and the `mesa_notes` internal notes log shipped 2026-07-16. **Per-stint MESA accounts** (`mesa_accounts` + `YY-MM-#####` account numbers, opt-out closes/zeroes the account, re-opt-in opens a fresh one) also shipped 2026-07-16 — run `references/sql/migrate/2026-07-16_mesa_accounts.sql` then `node scripts/seed-mesa-accounts.mjs --apply`. This doc covers the whole feature. For the accounting-side payout mechanics (Urgent Payments queue, weekly Sun–Sat reconciliation) see [urgent-payments.md](urgent-payments.md); for the underlying tables see [data-sources.md §10 (`mesa_requests`) and §15 (`mesa_ledger`)](../reference/data-sources.md).
 
 MESA is an **employee savings / contribution program** framed as a *Medical Emergency Savings Account*. Enrolled members have **₱100 deducted from their paycheck each week**, which Simple.biz **matches three times over (+₱300)** — so the account grows by **₱400/week**. Funds are meant for infrequent emergencies: medical needs for the member or immediate family (spouse + children only), natural disasters, or a necessary primary-computer repair. Program rules (from the About tab): one disbursement per 90 days, receipts within 14 days / 30 calendar days, and temporary removal for non-compliance.
 
@@ -16,12 +16,13 @@ Contribution amounts are single-sourced in `EmployeeMesa.tsx`:
 
 ---
 
-## The three data sources
+## The four data sources
 
-MESA is backed by a **request queue**, a **contribution ledger**, and an **internal notes log** — three separate concerns.
+MESA is backed by a **request queue**, a **contribution ledger**, an **account registry**, and an **internal notes log** — four separate concerns.
 
 - **`mesa_requests`** — employee-submitted opt-in / opt-out / disbursement / return requests, plus their review + dispatch state. This is the *workflow* table.
-- **`mesa_ledger`** — a faithful 1:1 backfill of the external MESA program tracker (~7,235 event rows, 295 members). Each row is one event: a weekly deposit, a disbursement, or a status snapshot. This is the *historical record* of money in/out. The app never mutates it; it is imported once. Two of its columns, `notes` / `additional_notes`, are frozen free text carried over from that same backfill — read-only, surfaced (when present) inline on the Accounting View drill-down's Timeline tab.
+- **`mesa_ledger`** — a faithful 1:1 mirror of the external MESA program tracker (originally backfilled 2026-06-26 with ~7,235 event rows; reloaded from the 2026-07-16 Active-sheet export to 8,076 rows). Each row is one event: a weekly deposit, a disbursement, or a status snapshot. This is the *historical record* of money in/out. The app never mutates it; it is **refreshed from sheet exports** (see "Refreshing the ledger" below). Two of its columns, `notes` / `additional_notes`, are frozen free text carried over from the tracker — read-only, surfaced (when present) inline on the Accounting View drill-down's Timeline tab.
+- **`mesa_accounts`** (`references/sql/migrate/2026-07-16_mesa_accounts.sql`) — one row per **enrollment stint**, each with a unique **account number `YY-MM-#####`** (opening year+month + per-month serial, e.g. `26-07-00001`). Opting out **closes** the open account (`closed_on`) — it is settled/"zeroed"; opting back in opens a **new** account with a **new** number. The member's current account number is also denormalized onto `employee_hourly_rates.mesa_account_number` (same pattern as `mesa_member`) so it flows through the existing rates plumbing. Backfilled by `scripts/seed-mesa-accounts.mjs` (stints derived from ledger termination events — an `Inactive` status row or an `Opt-out`/`Termination` disbursement, resolved per sheet member id so re-issued/concurrent ids don't split an account).
 - **`mesa_notes`** (`references/sql/create/create_mesa_notes.sql`) — an ongoing, append-only internal annotation log per member, added via `POST /api/mesa-notes` from the View drill-down's Notes tab. Unlike the ledger's frozen notes, this is a live, growing log with no historical backfill.
 
 See [data-sources.md](../reference/data-sources.md) for full column shapes.
@@ -30,7 +31,13 @@ See [data-sources.md](../reference/data-sources.md) for full column shapes.
 
 The DDL (`references/sql/create/mesa_ledger_ddl.sql`) is small and pastes into the Supabase SQL Editor fine. The **data backfill (`references/sql/create/backfill_mesa_ledger.sql`) is too large** — the SQL Editor rejects it as "query too large." It is instead loaded by **`scripts/load-mesa-ledger.mjs`**, which parses the file's `INSERT … VALUES` tuples and upserts them over the Supabase REST API (service-role key) in batches of 500. Idempotent (`upsert onConflict: id`); `--dry` parses without writing. Run the DDL once first.
 
+### Refreshing the ledger (ongoing)
+
+The tracker sheet keeps accruing weekly deposit rows, so the mirror goes stale (the 2026-06-26 backfill froze the tab at 1 contribution week for everyone). To refresh, export the sheet's Active tab as CSV and run **`scripts/load-mesa-ledger-from-csv.mjs "<export>.csv" --apply`** (dry-run without the flag). It re-mirrors the table with `id` = export row order, then **re-appends any DB-only money history the export no longer carries** — the Active tab drops old disbursement rows over time (the 2026-07-16 export kept only 4 of 128; the other 124, ~₱995k, would otherwise vanish and inflate balances). The 2026-07-16 refresh is also captured as `references/sql/migrate/2026-07-16_reload_mesa_ledger_from_active_sheet.sql` (Section 1 = sheet rows, Section 2 = preserved history) — but at ~1.7 MB the SQL Editor likely rejects the paste, so the script is the practical path.
+
 Aggregation is centralized in **`src/lib/mesa/ledger.ts`** (imported by both the API route and the client views, so it stays free of server-only / `'use client'` imports): `summarizeMember()` rolls a member's events into contributed / matched / deposited / disbursed / **balance (= deposited − disbursed)** with deposit & disbursement counts, first/last dates, and latest status → `isActive`.
+
+**Account scoping:** when a member has an OPEN `mesa_accounts` row, `/api/mesa-ledger` returns `summarizeMemberAccount()` instead — the same rollup restricted to events dated **on/after the account's `opened_on`** (undated snapshot rows sort as `''` and never leak in). So an opt-out zeroes the visible balance (the closed account keeps its history in the ledger but no longer feeds the figures), and a re-joined member restarts from ₱0 accruing only the latest values under their new account number. The summary then carries `accountNumber` / `accountOpenedOn`. Members with no open account (ex-members, or before the migration/seed have run) keep the full-history rollup with no account number — nothing breaks on deploy order.
 
 ---
 
@@ -47,13 +54,17 @@ Employees submit from the **Employee → MESA → Request** tab (`src/components
 
 **Routing:** opt-in goes to HR because FPU/enrollment is HR's domain; the money-related types go to Accounting.
 
+### Global Master List is the source of truth
+
+Every MESA tab is gated on the active roster (`GET /api/employees` = `active_employees`, the Global Master List minus offboarded people). The Non Members / Active Members / Eligible lists are built *from* the roster; the request queues (Accounting Requests, HR Opt-In) and the FPU sign-ups list are raw `mesa_requests` / form rows filtered against the roster's email set — work, personal, and both alternate work emails (`src/lib/roster/roster-emails.ts`). Rows for people who fall off the roster are **hidden, not deleted**: they reappear if the person is restored (relevant given the master-list sync race — see `memory/master-list-sync-race.md`). Each gated list shows an amber **"N hidden — not on the Global Master List"** note whenever the gate dropped rows, so a silent disappearance (offboard, sync race, or a mistyped FPU form email) is always visible to the reviewer. Payment flows (Urgent Payments queue, Payroll Wizard, dispatch) are deliberately *not* roster-gated so an approved payout can't silently vanish mid-flight.
+
 ### Accounting tab — `AccountingMesa.tsx`
 
 `src/components/payroll/AccountingMesa.tsx` (Accounting → MESA) has three views:
 
 - **Requests** — the review queue for `opt_out` / `disbursement` / `return` (opt-in is filtered out; that's HR's). Search + status/type filters, paginated (15/page), stat cards (Total / Pending / Approved / Denied). Each pending row → **Review** modal to Approve/Deny with a note. Reviewed rows can be **revoked** (back to pending) or **deleted** — both blocked once `dispatched_at` is set (the money is already sent). **Bulk**: select rows → bulk Approve / Deny (pending only; approving an `opt_out` also unenrolls) / Delete (skips dispatched).
 - **Non Members** — employees who have **never joined** MESA: `mesa_member = false` **and** `mesa_member_since` is null. Opted-out ex-members keep their start date (`toggle-mesa-member` leaves it in place), so they are **excluded** here — they're former members, still visible via the ledger/requests, and don't appear on either the Non Members or Active Members tab. Each row has **View** + **Opt In**; **bulk Opt In** via row checkboxes. Calls `POST /api/toggle-mesa-member` directly. This is a **temporary manual bridge** — added so Accounting can enroll anyone before employees self-serve via the Employee Dashboard's MESA Request tab (which goes through the `mesa_requests` review queue below). Remove this direct-toggle path once that's the primary way members join.
-- **MESA Active Members** — the enrolled members (`employee_hourly_rates.mesa_member = true`), roster-grounded so a brand-new enrollee shows up (at ₱0) even before their first ledger row lands. Financial rollup (Contributed / Matched / Disbursed / Balance) from `mesa_ledger`. Each row has **View** + **Opt Out**; **bulk Opt Out** via row checkboxes. Initial membership is seeded from the Active sheet — see below.
+- **MESA Active Members** — the enrolled members (`employee_hourly_rates.mesa_member = true`), roster-grounded so a brand-new enrollee shows up (at ₱0) even before their first ledger row lands. Financial rollup (Contributed / Matched / Disbursed / Balance) from `mesa_ledger`, scoped to the member's **open account**; an **Account #** column shows the `YY-MM-#####` number (searchable, also echoed in the View drill-down header). Each row has **View** + **Opt Out**; **bulk Opt Out** via row checkboxes. Opting out closes the account (zeroing the visible balance); a later re-opt-in mints a fresh account number. Initial membership is seeded from the Active sheet — see below.
 
 ### Seeding active membership (from the Active sheet)
 
@@ -134,12 +145,17 @@ Approving a disbursement in Accounting is a *signal*, not a payment. The actual 
 | `app/api/mesa-requests/[id]/dispatch/route.ts` | Pay out an approved disbursement |
 | `app/api/mesa-ledger/route.ts` | Per-member or program-wide contribution rollup |
 | `app/api/mesa-notes/route.ts` | GET (list) + POST (add) a member's internal notes |
-| `app/api/toggle-mesa-member/route.ts` | Direct enrollment flip — used by request approvals and the temporary Non Members Opt In/Out buttons |
+| `app/api/toggle-mesa-member/route.ts` | Direct enrollment flip — used by request approvals and the temporary Non Members Opt In/Out buttons. Opt-in opens a `mesa_accounts` row (minting the next `YY-MM-#####`), opt-out closes it and clears `mesa_account_number` |
+| `src/lib/supabase/mesa-accounts.ts` | Account registry helpers: list/get open accounts, `openMesaAccount` (serial minting, collision-retried), `closeMesaAccounts` — all tolerant of the migration not having run |
+| `references/sql/migrate/2026-07-16_mesa_accounts.sql` | `mesa_accounts` DDL + `employee_hourly_rates.mesa_account_number` + view recreate (run in the SQL Editor) |
+| `scripts/seed-mesa-accounts.mjs` | Backfills one account per historical enrollment stint + stamps open account numbers onto rates rows (dry-run default, `--apply` to write) |
 | `references/sql/create/mesa_ledger_ddl.sql` | Ledger table DDL |
 | `references/sql/create/backfill_mesa_ledger.sql` | Ledger data backfill (loaded via script, not SQL Editor) |
 | `references/sql/create/add_mesa_requests.sql` | `mesa_requests` table |
 | `references/sql/create/create_mesa_notes.sql` | `mesa_notes` table |
 | `references/sql/seed/seed_mesa_active_membership.sql` | Seeds `mesa_member=true` for the Active-sheet members |
 | `references/sql/alter/add_mesa_dispatched_at.sql` | `mesa_requests.dispatched_at` + urgent-queue index |
-| `scripts/load-mesa-ledger.mjs` | Batched REST upsert of the ledger backfill |
-| `scripts/preload-mesa-membership.mjs` | Seeds `mesa_member` / `mesa_member_since` from the ledger |
+| `scripts/load-mesa-ledger.mjs` | Batched REST upsert of the original ledger backfill |
+| `scripts/load-mesa-ledger-from-csv.mjs` | Refresh the ledger from a new Active-sheet CSV export (preserves dropped disbursement history) |
+| `references/sql/migrate/2026-07-16_reload_mesa_ledger_from_active_sheet.sql` | The 2026-07-16 ledger reload as SQL (likely too large for the SQL Editor — use the script) |
+| `scripts/preload-mesa-membership.mjs` | Seeds `mesa_member` / `mesa_member_since` from the ledger (run 2026-07-16 against the reloaded ledger — fixed the 13 members the stale Active-sheet seed missed, incl. april@simple.biz's re-join) |

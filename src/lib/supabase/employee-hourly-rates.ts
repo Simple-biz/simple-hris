@@ -30,6 +30,12 @@ export type EmployeeHourlyRateRow = {
    * export. Pre-fills the employee Opt-in form's "Date you completed FPU" field.
    */
   mesa_fpu_completed_on: string | null;
+  /**
+   * The member's CURRENT (open) MESA account number ("YY-MM-#####"). NULL when
+   * not enrolled — opt-out closes the account and clears this; a re-opt-in
+   * opens a new account with a new number. See mesa_accounts.
+   */
+  mesa_account_number: string | null;
 };
 
 type RawRow = Record<string, unknown>;
@@ -158,6 +164,7 @@ export function mapEmployeeHourlyRateRow(row: RawRow): EmployeeHourlyRateRow {
   const mesa_member_raw = getField(idx, ['mesa_member', 'Mesa Member', 'MESA Member', 'mesa member']);
   const mesa_member_since = getField(idx, ['mesa_member_since', 'MESA Member Since', 'mesa member since', 'Mesa Member Since']);
   const mesa_fpu_completed_on = getField(idx, ['mesa_fpu_completed_on', 'MESA FPU Completed On', 'mesa fpu completed on']);
+  const mesa_account_number = getField(idx, ['mesa_account_number', 'MESA Account Number', 'mesa account number']);
 
   return {
     work_email: toStr(work_email),
@@ -186,6 +193,7 @@ export function mapEmployeeHourlyRateRow(row: RawRow): EmployeeHourlyRateRow {
       const s = toStr(mesa_fpu_completed_on);
       return s ? s.slice(0, 10) : null;
     })(),
+    mesa_account_number: toStr(mesa_account_number),
   };
 }
 

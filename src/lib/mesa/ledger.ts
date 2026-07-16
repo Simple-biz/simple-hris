@@ -58,14 +58,25 @@ export interface MesaMemberSummary {
   firstDeposit: string | null;
   lastDeposit: string | null;
   lastDisbursement: string | null;
+  /**
+   * The member's CURRENT (open) mesa_accounts number ("YY-MM-#####"), when the
+   * accounts registry is populated. When set, every figure above is scoped to
+   * that account (events on/after accountOpenedOn) — an opt-out closes the
+   * account, so a re-joined member starts from ₱0 on a fresh number.
+   */
+  accountNumber?: string | null;
+  accountOpenedOn?: string | null;
 }
 
 const num = (v: number | null | undefined): number => (typeof v === 'number' && !Number.isNaN(v) ? v : 0);
 
-/** Best available date on an event, for "latest status" ordering. */
-function eventDate(e: MesaLedgerEvent): string {
+/** Best available date on an event, for "latest status" ordering and for
+ *  scoping events to a MESA account window (undated snapshot rows sort as ''
+ *  and therefore never leak into an account opened later). */
+export function mesaEventDate(e: MesaLedgerEvent): string {
   return e.deposit_date ?? e.disbursement_date ?? '';
 }
+const eventDate = mesaEventDate;
 
 /** Roll a single member's events up into a summary. Assumes all events share an email. */
 export function summarizeMember(events: MesaLedgerEvent[]): MesaMemberSummary {
@@ -131,8 +142,56 @@ export function summarizeMember(events: MesaLedgerEvent[]): MesaMemberSummary {
   };
 }
 
-/** Group raw events by lowercased email and summarize each member. Rows with no email are dropped. */
-export function summarizeMembers(events: MesaLedgerEvent[]): MesaMemberSummary[] {
+/** Minimal shape of a member's OPEN mesa_accounts row (kept local so this
+ *  module stays importable from client components). */
+export interface MesaOpenAccountRef {
+  account_number: string;
+  opened_on: string; // YYYY-MM-DD
+}
+
+/**
+ * Roll up ONLY the member's current account: events dated on/after the open
+ * account's opened_on. An opt-out closes the account, so a re-joined member's
+ * figures restart from ₱0 — the old (closed) account is settled/"zeroed" and
+ * its history no longer feeds the visible balance. With no event in the window
+ * yet (brand-new enrollee) the summary is all-zero but keeps the member's
+ * identity from their full history.
+ */
+export function summarizeMemberAccount(
+  events: MesaLedgerEvent[],
+  account: MesaOpenAccountRef,
+): MesaMemberSummary {
+  const scoped = events.filter((e) => mesaEventDate(e) >= account.opened_on);
+  const base = scoped.length
+    ? summarizeMember(scoped)
+    : {
+        ...summarizeMember(events),
+        status: null,
+        isActive: false,
+        contributed: 0,
+        matched: 0,
+        deposited: 0,
+        disbursed: 0,
+        balance: 0,
+        depositCount: 0,
+        disbursementCount: 0,
+        firstDeposit: null,
+        lastDeposit: null,
+        lastDisbursement: null,
+      };
+  return { ...base, accountNumber: account.account_number, accountOpenedOn: account.opened_on };
+}
+
+/**
+ * Group raw events by lowercased email and summarize each member. Rows with no
+ * email are dropped. When `openAccounts` (email → open account) is provided,
+ * members with an open account are scoped to it via summarizeMemberAccount;
+ * members without one keep the full-history rollup.
+ */
+export function summarizeMembers(
+  events: MesaLedgerEvent[],
+  openAccounts?: Map<string, MesaOpenAccountRef> | null,
+): MesaMemberSummary[] {
   const byEmail = new Map<string, MesaLedgerEvent[]>();
   for (const e of events) {
     const key = normEmail(e.email);
@@ -142,7 +201,10 @@ export function summarizeMembers(events: MesaLedgerEvent[]): MesaMemberSummary[]
     else byEmail.set(key, [e]);
   }
   const out: MesaMemberSummary[] = [];
-  for (const bucket of byEmail.values()) out.push(summarizeMember(bucket));
+  for (const [key, bucket] of byEmail) {
+    const account = openAccounts?.get(key);
+    out.push(account ? summarizeMemberAccount(bucket, account) : summarizeMember(bucket));
+  }
   out.sort((a, b) => (a.name ?? '').localeCompare(b.name ?? ''));
   return out;
 }

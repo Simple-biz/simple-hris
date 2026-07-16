@@ -1,6 +1,7 @@
 import { createSupabaseServiceRoleClient, createSupabaseServerClient } from '@/lib/supabase/server';
 import { insertAuditLog } from '@/lib/supabase/audit-log';
 import { invalidateRateProfilesCache } from '@/lib/supabase/employee-rate-profiles';
+import { closeMesaAccounts, openMesaAccount } from '@/lib/supabase/mesa-accounts';
 import { NextResponse } from 'next/server';
 
 export const dynamic = 'force-dynamic';
@@ -56,13 +57,38 @@ export async function POST(req: Request) {
     }).format(new Date());
     const sinceIso = (since ?? '').trim().slice(0, 10) || manilaToday;
 
+    // MESA account lifecycle: opting in opens an account (a fresh YY-MM-#####
+    // number unless one is already open); opting out CLOSES it — the account is
+    // settled ("zeroed": balances aggregate ledger events from the OPEN
+    // account's opened_on, so an ex-member re-joining starts a new account at
+    // ₱0 with only the latest values). Best-effort: null until the
+    // 2026-07-16_mesa_accounts migration has run.
+    const accountEmail = (workEmail || personalEmail)!.trim().toLowerCase();
+    let accountNumber: string | null = null;
+    let closedAccounts: string[] = [];
+    if (mesaMember) {
+      const account = await openMesaAccount(accountEmail, name ?? null, sinceIso);
+      accountNumber = account?.account_number ?? null;
+    } else {
+      closedAccounts = await closeMesaAccounts(accountEmail, manilaToday);
+    }
+
     const update: Record<string, unknown> = { mesa_member: mesaMember };
     if (mesaMember) update.mesa_member_since = sinceIso;
 
-    const { error } = await supabase
-      .from(RATES_TABLE)
-      .update(update)
-      .eq(matchCol, matchVal);
+    // Carry the current account number on the rates rows (same denormalized
+    // path as mesa_member). Tiered like the roster selects: if the column
+    // isn't there yet (migration pending), retry without it so enrollment
+    // itself never breaks on deploy order.
+    const doUpdate = (withAccount: boolean) =>
+      supabase
+        .from(RATES_TABLE)
+        .update(withAccount ? { ...update, mesa_account_number: mesaMember ? accountNumber : null } : update)
+        .eq(matchCol, matchVal);
+    let { error } = await doUpdate(true);
+    if (error && /mesa_account_number/i.test(error.message) && /does not exist|schema cache/i.test(error.message)) {
+      ({ error } = await doUpdate(false));
+    }
 
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
@@ -75,10 +101,18 @@ export async function POST(req: Request) {
       action: mesaMember ? 'employee.mesa.enroll' : 'employee.mesa.unenroll',
       resource: 'employee_hourly_rates',
       resource_id: workEmail || personalEmail,
-      details: { name: name ?? null, work_email: workEmail ?? null, personal_email: personalEmail ?? null, mesa_member: mesaMember, mesa_member_since: mesaMember ? sinceIso : null },
+      details: {
+        name: name ?? null,
+        work_email: workEmail ?? null,
+        personal_email: personalEmail ?? null,
+        mesa_member: mesaMember,
+        mesa_member_since: mesaMember ? sinceIso : null,
+        mesa_account_number: mesaMember ? accountNumber : null,
+        mesa_accounts_closed: mesaMember ? null : closedAccounts,
+      },
     });
 
-    return NextResponse.json({ success: true });
+    return NextResponse.json({ success: true, accountNumber: mesaMember ? accountNumber : null });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     return NextResponse.json({ error: msg }, { status: 500 });

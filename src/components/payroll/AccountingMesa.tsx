@@ -37,6 +37,7 @@ import { SmoothSelect } from '@/components/ui/smooth-select';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import { clearTabCache, getTabCache, hasTabCache, setTabCache, TAB_CACHE_KEYS } from '@/lib/accounting/tab-cache';
+import { fetchRosterEmailSet, isOnRoster } from '@/lib/roster/roster-emails';
 import type { MesaLedgerEvent, MesaMemberSummary } from '@/lib/mesa/ledger';
 import type { EmployeeRow } from '@/lib/supabase/employees';
 import type { EmployeeHourlyRateRow } from '@/lib/supabase/employee-hourly-rates';
@@ -213,9 +214,13 @@ export default function AccountingMesa() {
   );
   const [loading, setLoading] = useState(!hasTabCache(TAB_CACHE_KEYS.mesaRequests));
   const [refreshing, setRefreshing] = useState(false);
+  /** Requests dropped by the roster gate on the last successful load. */
+  const [hiddenCount, setHiddenCount] = useState(0);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [filterStatus, setFilterStatus] = useState<MesaRequestStatus | ''>('');
   const [filterType, setFilterType] = useState<MesaRequestType | ''>('');
+  const [filterDepartment, setFilterDepartment] = useState('');
   const [page, setPage] = useState(0);
   const [reviewTarget, setReviewTarget] = useState<MesaRequest | null>(null);
   const [reviewNotes, setReviewNotes] = useState('');
@@ -231,16 +236,30 @@ export default function AccountingMesa() {
       // Opt-in requests are routed to HR.
       const params = new URLSearchParams();
       ['opt_out', 'disbursement', 'return'].forEach((t) => params.append('request_type', t));
-      const res = await fetch(`/api/mesa-requests?${params}`, { cache: 'no-store' });
+      const [res, rosterEmails] = await Promise.all([
+        fetch(`/api/mesa-requests?${params}`, { cache: 'no-store' }),
+        fetchRosterEmailSet(),
+      ]);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const json = (await res.json()) as { rows?: MesaRequest[] };
-      const data = (json.rows ?? []).filter(
+      // The Global Master List is the source of truth for MESA — requests from
+      // people no longer on the active roster are hidden (the request row
+      // itself is kept; it reappears if they're restored to the roster). The
+      // hidden count is surfaced above the table so a drop never goes unseen —
+      // e.g. an approved-but-unpaid disbursement, or a sync race transiently
+      // shrinking the roster (memory/master-list-sync-race.md).
+      const accountingRows = (json.rows ?? []).filter(
         (r) => r.request_type === 'opt_out' || r.request_type === 'disbursement' || r.request_type === 'return',
       );
+      const data = accountingRows.filter((r) => isOnRoster(rosterEmails, r.work_email));
+      setHiddenCount(accountingRows.length - data.length);
+      setLoadError(null);
       setTabCache(TAB_CACHE_KEYS.mesaRequests, data);
       setRows(data);
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Failed to load MESA requests');
+      const msg = e instanceof Error ? e.message : 'Failed to load MESA requests';
+      setLoadError(msg);
+      toast.error(msg);
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -254,11 +273,17 @@ export default function AccountingMesa() {
     void load(!hasTabCache(TAB_CACHE_KEYS.mesaRequests));
   }, []);
 
+  const departments = useMemo(
+    () => Array.from(new Set(rows.map((r) => r.department).filter(Boolean))).sort((a, b) => a.localeCompare(b)),
+    [rows],
+  );
+
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     return rows.filter((r) => {
       if (filterStatus && r.status !== filterStatus) return false;
       if (filterType && r.request_type !== filterType) return false;
+      if (filterDepartment && r.department !== filterDepartment) return false;
       if (q) {
         return (
           r.work_email.toLowerCase().includes(q) ||
@@ -269,9 +294,9 @@ export default function AccountingMesa() {
       }
       return true;
     });
-  }, [rows, query, filterStatus, filterType]);
+  }, [rows, query, filterStatus, filterType, filterDepartment]);
 
-  useEffect(() => { setPage(0); }, [query, filterStatus, filterType]);
+  useEffect(() => { setPage(0); }, [query, filterStatus, filterType, filterDepartment]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const safePage = Math.min(page, totalPages - 1);
@@ -539,6 +564,16 @@ export default function AccountingMesa() {
                 { value: 'return', label: 'Return' },
               ]}
             />
+            <SmoothSelect
+              aria-label="Filter by department"
+              value={filterDepartment}
+              onChange={setFilterDepartment}
+              triggerClassName="w-44"
+              options={[
+                { value: '', label: 'All departments' },
+                ...departments.map((d) => ({ value: d, label: d })),
+              ]}
+            />
           </div>
           <Button
             type="button"
@@ -559,6 +594,11 @@ export default function AccountingMesa() {
             <CardTitle className="text-sm font-semibold text-zinc-900 dark:text-white">
               {loading ? 'Loading...' : `${filtered.length} request${filtered.length === 1 ? '' : 's'}`}
             </CardTitle>
+            {!loading && hiddenCount > 0 && (
+              <p className="text-[11px] font-medium text-amber-700 dark:text-amber-400">
+                {hiddenCount} request{hiddenCount === 1 ? '' : 's'} hidden — requester not on the Global Master List
+              </p>
+            )}
           </CardHeader>
           <CardContent className="p-0">
             {sel.selectedRows.length > 0 && (
@@ -579,7 +619,11 @@ export default function AccountingMesa() {
             ) : filtered.length === 0 ? (
               <div className="flex flex-col items-center justify-center gap-2 px-5 py-12 text-center text-sm text-zinc-500 dark:text-zinc-400">
                 <Inbox className="h-6 w-6 text-zinc-400" />
-                {rows.length === 0 ? 'No MESA requests yet.' : 'No results match your filters.'}
+                {rows.length === 0
+                  ? loadError
+                    ? `Couldn't load requests — ${loadError}. Use Refresh to retry.`
+                    : 'No MESA requests yet.'
+                  : 'No results match your filters.'}
               </div>
             ) : (
               <div className="overflow-x-auto">
@@ -997,6 +1041,9 @@ interface MesaRosterRow {
   department: string | null;
   mesaMember: boolean;
   mesaMemberSince: string | null;
+  /** Current (open) MESA account number, "YY-MM-#####" — null until the
+   *  mesa_accounts migration + seed have run (or when not enrolled). */
+  accountNumber: string | null;
   ledger: MesaMemberSummary | null;
 }
 
@@ -1008,8 +1055,14 @@ async function fetchMesaRoster(): Promise<MesaRosterRow[]> {
   ]);
   if (!employeesRes.ok) throw new Error(`employees HTTP ${employeesRes.status}`);
   if (!ratesRes.ok) throw new Error(`rates HTTP ${ratesRes.status}`);
-  const employeesJson = (await employeesRes.json()) as { employees?: EmployeeRow[] };
+  const employeesJson = (await employeesRes.json()) as { employees?: EmployeeRow[]; error?: string | null };
   const ratesJson = (await ratesRes.json()) as { rows?: EmployeeHourlyRateRow[] };
+  // /api/employees reports DB failures as 200 + { employees: [], error }, and
+  // a real roster is never empty — fail loudly instead of rendering (and
+  // caching) an empty MESA roster. Mirrors fetchRosterEmailSet.
+  if ((employeesJson.employees ?? []).length === 0) {
+    throw new Error(employeesJson.error ?? 'Employee roster unavailable');
+  }
   // Ledger is best-effort — a failure here shouldn't blank out the roster.
   const ledgerJson = ledgerRes.ok
     ? ((await ledgerRes.json()) as { members?: MesaMemberSummary[] })
@@ -1042,6 +1095,7 @@ async function fetchMesaRoster(): Promise<MesaRosterRow[]> {
         department: e.department ?? rate?.department ?? null,
         mesaMember: rate?.mesa_member === true,
         mesaMemberSince: rate?.mesa_member_since ?? null,
+        accountNumber: rate?.mesa_account_number ?? ledger?.accountNumber ?? null,
         ledger,
       } as MesaRosterRow;
     })
@@ -1053,7 +1107,9 @@ async function fetchMesaRoster(): Promise<MesaRosterRow[]> {
  *  View drill-down (which fetches its own data by email anyway) always has a
  *  valid starting shape to render before that fetch resolves. */
 function rosterRowToSummary(row: MesaRosterRow): MesaMemberSummary {
-  if (row.ledger) return row.ledger;
+  if (row.ledger) {
+    return { ...row.ledger, accountNumber: row.ledger.accountNumber ?? row.accountNumber };
+  }
   return {
     email: row.workEmail ?? row.personalEmail ?? '',
     name: row.name,
@@ -1070,6 +1126,7 @@ function rosterRowToSummary(row: MesaRosterRow): MesaMemberSummary {
     firstDeposit: null,
     lastDeposit: null,
     lastDisbursement: null,
+    accountNumber: row.accountNumber,
   };
 }
 
@@ -1094,6 +1151,7 @@ function MesaNonMembers() {
   const [loading, setLoading] = useState(!hasTabCache(TAB_CACHE_KEYS.mesaNonMembers));
   const [refreshing, setRefreshing] = useState(false);
   const [query, setQuery] = useState('');
+  const [filterDepartment, setFilterDepartment] = useState('');
   const [page, setPage] = useState(0);
   const [viewTarget, setViewTarget] = useState<MesaRosterRow | null>(null);
   const [optInTargets, setOptInTargets] = useState<MesaRosterRow[] | null>(null);
@@ -1122,8 +1180,22 @@ function MesaNonMembers() {
   // MESA start date (mesa_member_since is null). Excludes opted-out ex-members,
   // who retain their start date — they're former members, not never-members.
   // Enrolled members live on the "MESA Active Members" tab.
+  const departments = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          rows
+            .filter((r) => !r.mesaMember && !r.mesaMemberSince)
+            .map((r) => r.department)
+            .filter((d): d is string => !!d),
+        ),
+      ).sort((a, b) => a.localeCompare(b)),
+    [rows],
+  );
+
   const filtered = useMemo(() => {
-    const base = rows.filter((r) => !r.mesaMember && !r.mesaMemberSince);
+    let base = rows.filter((r) => !r.mesaMember && !r.mesaMemberSince);
+    if (filterDepartment) base = base.filter((r) => r.department === filterDepartment);
     const q = query.trim().toLowerCase();
     if (!q) return base;
     return base.filter(
@@ -1132,9 +1204,9 @@ function MesaNonMembers() {
         (r.workEmail ?? '').toLowerCase().includes(q) ||
         (r.department ?? '').toLowerCase().includes(q),
     );
-  }, [rows, query]);
+  }, [rows, query, filterDepartment]);
 
-  useEffect(() => { setPage(0); }, [query]);
+  useEffect(() => { setPage(0); }, [query, filterDepartment]);
 
   const enrolledCount = useMemo(() => rows.filter((r) => r.mesaMember).length, [rows]);
   // Strict non-members: never joined (not opted in AND no start date) — matches
@@ -1188,6 +1260,19 @@ function MesaNonMembers() {
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search name, email, department..."
             className="h-9 border-zinc-200 bg-white pl-9 text-sm focus:border-teal-500 focus:ring-2 focus:ring-teal-500/20 dark:border-zinc-800 dark:bg-zinc-900/60"
+          />
+        </div>
+        <div className="flex items-center gap-1.5">
+          <Filter className="h-3.5 w-3.5 text-zinc-400" />
+          <SmoothSelect
+            aria-label="Filter by department"
+            value={filterDepartment}
+            onChange={setFilterDepartment}
+            triggerClassName="w-44"
+            options={[
+              { value: '', label: 'All departments' },
+              ...departments.map((d) => ({ value: d, label: d })),
+            ]}
           />
         </div>
         <Button type="button" variant="outline" size="sm" onClick={handleRefresh} disabled={refreshing || loading} className="gap-1.5">
@@ -1370,6 +1455,7 @@ function MesaActiveMembers() {
   const [loading, setLoading] = useState(!hasTabCache(TAB_CACHE_KEYS.mesaActiveMembers));
   const [refreshing, setRefreshing] = useState(false);
   const [query, setQuery] = useState('');
+  const [filterDepartment, setFilterDepartment] = useState('');
   const [page, setPage] = useState(0);
   const [viewTarget, setViewTarget] = useState<MesaRosterRow | null>(null);
   const [optOutTargets, setOptOutTargets] = useState<MesaRosterRow[] | null>(null);
@@ -1394,18 +1480,28 @@ function MesaActiveMembers() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const departments = useMemo(
+    () =>
+      Array.from(new Set(rows.map((r) => r.department).filter((d): d is string => !!d))).sort((a, b) =>
+        a.localeCompare(b),
+      ),
+    [rows],
+  );
+
   const filtered = useMemo(() => {
+    const base = filterDepartment ? rows.filter((r) => r.department === filterDepartment) : rows;
     const q = query.trim().toLowerCase();
-    if (!q) return rows;
-    return rows.filter(
+    if (!q) return base;
+    return base.filter(
       (r) =>
         r.name.toLowerCase().includes(q) ||
         (r.workEmail ?? '').toLowerCase().includes(q) ||
-        (r.department ?? '').toLowerCase().includes(q),
+        (r.department ?? '').toLowerCase().includes(q) ||
+        (r.accountNumber ?? '').toLowerCase().includes(q),
     );
-  }, [rows, query]);
+  }, [rows, query, filterDepartment]);
 
-  useEffect(() => { setPage(0); }, [query]);
+  useEffect(() => { setPage(0); }, [query, filterDepartment]);
 
   const totals = useMemo(() => {
     let contributed = 0, matched = 0, disbursed = 0, balance = 0;
@@ -1470,6 +1566,19 @@ function MesaActiveMembers() {
             className="h-9 border-zinc-200 bg-white pl-9 text-sm focus:border-teal-500 focus:ring-2 focus:ring-teal-500/20 dark:border-zinc-800 dark:bg-zinc-900/60"
           />
         </div>
+        <div className="flex items-center gap-1.5">
+          <Filter className="h-3.5 w-3.5 text-zinc-400" />
+          <SmoothSelect
+            aria-label="Filter by department"
+            value={filterDepartment}
+            onChange={setFilterDepartment}
+            triggerClassName="w-44"
+            options={[
+              { value: '', label: 'All departments' },
+              ...departments.map((d) => ({ value: d, label: d })),
+            ]}
+          />
+        </div>
         <Button type="button" variant="outline" size="sm" onClick={handleRefresh} disabled={refreshing || loading} className="gap-1.5">
           <RefreshCw className={cn('h-3.5 w-3.5', refreshing && 'animate-spin')} />
           Refresh
@@ -1507,6 +1616,7 @@ function MesaActiveMembers() {
                       <SelectCheckbox checked={sel.allSelected} indeterminate={sel.someSelected} onChange={sel.toggleAll} ariaLabel="Select all members" />
                     </th>
                     <th className="px-4 py-2.5">Member</th>
+                    <th className="px-4 py-2.5">Account #</th>
                     <th className="px-4 py-2.5">Department</th>
                     <th className="px-4 py-2.5 text-right">Contributed</th>
                     <th className="px-4 py-2.5 text-right">Matched</th>
@@ -1525,6 +1635,13 @@ function MesaActiveMembers() {
                       <td className="px-4 py-3" data-label="Member">
                         <div className="font-medium text-zinc-900 dark:text-zinc-100">{r.name}</div>
                         <div className="mt-0.5 font-mono text-[11px] text-zinc-500 dark:text-zinc-500">{r.workEmail ?? r.personalEmail}</div>
+                      </td>
+                      <td className="px-4 py-3" data-label="Account #">
+                        {r.accountNumber ? (
+                          <span className="inline-flex rounded-md border border-teal-200 bg-teal-50/60 px-1.5 py-0.5 font-mono text-[11px] font-semibold tabular-nums text-teal-700 dark:border-teal-700/50 dark:bg-teal-950/30 dark:text-teal-300">
+                            {r.accountNumber}
+                          </span>
+                        ) : <span className="text-zinc-400">—</span>}
                       </td>
                       <td className="px-4 py-3 text-zinc-600 dark:text-zinc-400" data-label="Department">
                         {r.department ? (
@@ -1786,6 +1903,7 @@ function MesaMemberDetail({
             <p className="mt-0.5 truncate font-mono text-[11px] text-zinc-500 dark:text-zinc-500">
               {summary.email}
               {summary.department ? ` · ${summary.department}` : ''}
+              {summary.accountNumber ? ` · Acct ${summary.accountNumber}` : ''}
             </p>
           </div>
           <button

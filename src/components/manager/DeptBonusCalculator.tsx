@@ -107,7 +107,14 @@ const PAGED_DEPTS: Record<string, number> = { lead_gen: 8 };
  *  keyed by the email the manager types, receives the department's common /
  *  team bonuses like everyone else, and persists purely through their saved
  *  applied rows (the same rows payroll pays). */
-const EXTERNAL_MEMBER_DEPTS = new Set(['edit']);
+const EXTERNAL_MEMBER_DEPTS = new Set([
+  'edit',
+  'client_va',
+  'lead_gen',
+  'pm_team',
+  'site_building',
+  'smm',
+]);
 
 /** Per-member, per-bonus applied state. `vars` holds formula inputs as strings. */
 interface AppliedState {

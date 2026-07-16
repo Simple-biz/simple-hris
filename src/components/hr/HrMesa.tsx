@@ -25,6 +25,7 @@ import { AnimatePresence, motion } from 'motion/react';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import HrFpuEnrollments from './HrFpuEnrollments';
+import { fetchRosterEmailSet, isOnRoster } from '@/lib/roster/roster-emails';
 import type { EmployeeHourlyRateRow } from '@/lib/supabase/employee-hourly-rates';
 import type { EmployeeRow } from '@/lib/supabase/employees';
 import type { MesaMemberSummary } from '@/lib/mesa/ledger';
@@ -606,6 +607,9 @@ function MesaOptInQueue() {
   const [rows, setRows] = useState<OptInRequest[]>(() => cachedOptInRequests ?? []);
   const [loading, setLoading] = useState(cachedOptInRequests === null);
   const [refreshing, setRefreshing] = useState(false);
+  /** Requests dropped by the roster gate on the last successful load. */
+  const [hiddenCount, setHiddenCount] = useState(0);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [filterStatus, setFilterStatus] = useState('');
   const [page, setPage] = useState(0);
@@ -616,14 +620,25 @@ function MesaOptInQueue() {
   const load = async (showSpinner = true) => {
     if (showSpinner) setLoading(true); else setRefreshing(true);
     try {
-      const res = await fetch('/api/mesa-requests?request_type=opt_in', { cache: 'no-store' });
+      const [res, rosterEmails] = await Promise.all([
+        fetch('/api/mesa-requests?request_type=opt_in', { cache: 'no-store' }),
+        fetchRosterEmailSet(),
+      ]);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const json = (await res.json()) as { rows?: OptInRequest[] };
-      const data = json.rows ?? [];
+      // The Global Master List is the source of truth for MESA — opt-in
+      // requests from people no longer on the active roster are hidden, with
+      // the drop count surfaced above the table.
+      const all = json.rows ?? [];
+      const data = all.filter((r) => isOnRoster(rosterEmails, r.work_email));
+      setHiddenCount(all.length - data.length);
+      setLoadError(null);
       cachedOptInRequests = data;
       setRows(data);
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Failed to load opt-in requests');
+      const msg = e instanceof Error ? e.message : 'Failed to load opt-in requests';
+      setLoadError(msg);
+      toast.error(msg);
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -631,8 +646,11 @@ function MesaOptInQueue() {
   };
 
   useEffect(() => {
-    if (cachedOptInRequests !== null) return;
-    void load(true);
+    // Revalidate on every mount — a warm cache only suppresses the spinner.
+    // (The cache is roster-gated, so a stale snapshot could otherwise pin an
+    // over-filtered list for the whole session after a transient roster dip.)
+    void load(cachedOptInRequests === null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const filtered = useMemo(() => {
@@ -756,6 +774,11 @@ function MesaOptInQueue() {
           <CardTitle className="text-sm font-semibold text-zinc-900 dark:text-white">
             {loading ? 'Loading...' : `${filtered.length} opt-in request${filtered.length === 1 ? '' : 's'}`}
           </CardTitle>
+          {!loading && hiddenCount > 0 && (
+            <p className="text-[11px] font-medium text-amber-700 dark:text-amber-400">
+              {hiddenCount} request{hiddenCount === 1 ? '' : 's'} hidden — requester not on the Global Master List
+            </p>
+          )}
         </CardHeader>
         <CardContent className="p-0">
           {loading ? (
@@ -771,7 +794,11 @@ function MesaOptInQueue() {
           ) : filtered.length === 0 ? (
             <div className="flex flex-col items-center justify-center gap-2 px-5 py-12 text-center text-sm text-zinc-500 dark:text-zinc-400">
               <Inbox className="h-6 w-6 text-zinc-400" />
-              {rows.length === 0 ? 'No opt-in requests yet.' : 'No results match your search.'}
+              {rows.length === 0
+                ? loadError
+                  ? `Couldn't load requests — ${loadError}. Use Refresh to retry.`
+                  : 'No opt-in requests yet.'
+                : 'No results match your search.'}
             </div>
           ) : (
             <div className="overflow-x-auto">

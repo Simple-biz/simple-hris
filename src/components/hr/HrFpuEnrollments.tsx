@@ -16,6 +16,7 @@ import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { toast } from 'sonner';
+import { fetchRosterEmailSet, isOnRoster } from '@/lib/roster/roster-emails';
 
 type FpuEnrollment = {
   id: string;
@@ -54,16 +55,27 @@ export default function HrFpuEnrollments() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** Sign-ups dropped by the roster gate on the last successful load. */
+  const [hiddenCount, setHiddenCount] = useState(0);
   const [query, setQuery] = useState('');
 
   const load = async (showSpinner = true) => {
     if (showSpinner) setLoading(true);
     else setRefreshing(true);
     try {
-      const res = await fetch('/api/hr/fpu-enrollments', { cache: 'no-store' });
+      const [res, rosterEmails] = await Promise.all([
+        fetch('/api/hr/fpu-enrollments', { cache: 'no-store' }),
+        fetchRosterEmailSet(),
+      ]);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const json = (await res.json()) as ApiResponse;
-      setRows(json.rows ?? []);
+      // The Global Master List is the source of truth for MESA — sign-ups
+      // whose email doesn't match anyone on the active roster are hidden,
+      // with the drop count surfaced so a mistyped form email is noticeable.
+      const all = json.rows ?? [];
+      const kept = all.filter((r) => isOnRoster(rosterEmails, r.email));
+      setHiddenCount(all.length - kept.length);
+      setRows(kept);
       setSource(json.source ?? null);
       setError(json.error ?? null);
     } catch (e) {
@@ -171,6 +183,12 @@ export default function HrFpuEnrollments() {
         {error && (
           <div className="rounded-lg border border-rose-200/80 bg-rose-50/70 px-4 py-2.5 text-xs text-rose-900 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-100">
             {error}
+          </div>
+        )}
+        {!loading && hiddenCount > 0 && (
+          <div className="rounded-lg border border-amber-200/80 bg-amber-50/70 px-4 py-2.5 text-xs leading-relaxed text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-100">
+            {hiddenCount} sign-up{hiddenCount === 1 ? '' : 's'} hidden — submitted email doesn&rsquo;t match
+            anyone on the Global Master List (check for typos in the form email).
           </div>
         )}
 

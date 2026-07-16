@@ -7,10 +7,13 @@ import {
 } from '@/lib/auth/authorize-email';
 import {
   MESA_LEDGER_SELECT,
+  mesaEventDate,
   summarizeMember,
+  summarizeMemberAccount,
   summarizeMembers,
   type MesaLedgerEvent,
 } from '@/lib/mesa/ledger';
+import { getOpenMesaAccount, listOpenMesaAccounts } from '@/lib/supabase/mesa-accounts';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -57,22 +60,40 @@ export async function GET(request: Request) {
 
     // Self/elevated single-member view — scope to the authorized effective email.
     if (email && authz.ok) {
-      const { rows, error } = await fetchAllEvents(supabase, authz.effectiveEmail);
+      const [{ rows, error }, account] = await Promise.all([
+        fetchAllEvents(supabase, authz.effectiveEmail),
+        getOpenMesaAccount(authz.effectiveEmail),
+      ]);
       if (error) return NextResponse.json({ error }, { status: 500 });
-      const summary = rows.length ? summarizeMember(rows) : null;
+      // With an open account, the member's figures + timeline cover ONLY that
+      // account (events on/after opened_on): opting out settles ("zeroes") the
+      // old account, and a re-join starts a fresh one from ₱0.
+      const scoped = account ? rows.filter((r) => mesaEventDate(r) >= account.opened_on) : rows;
+      const summary = account
+        ? rows.length
+          ? summarizeMemberAccount(rows, account)
+          : null
+        : rows.length
+          ? summarizeMember(rows)
+          : null;
       // Newest-first timeline for the member's history table.
       const events = includeEvents
-        ? rows
+        ? scoped
             .slice()
             .sort((a, b) => (b.deposit_date ?? b.disbursement_date ?? '').localeCompare(a.deposit_date ?? a.disbursement_date ?? ''))
         : [];
       return NextResponse.json({ summary, events });
     }
 
-    // Elevated program-wide view — aggregate per member.
-    const { rows, error } = await fetchAllEvents(supabase);
+    // Elevated program-wide view — aggregate per member, each scoped to their
+    // open MESA account when the accounts registry is populated (null until
+    // the 2026-07-16_mesa_accounts migration runs → full-history fallback).
+    const [{ rows, error }, openAccounts] = await Promise.all([
+      fetchAllEvents(supabase),
+      listOpenMesaAccounts(),
+    ]);
     if (error) return NextResponse.json({ error }, { status: 500 });
-    const members = summarizeMembers(rows);
+    const members = summarizeMembers(rows, openAccounts);
     return NextResponse.json({ members });
   } catch (e) {
     return NextResponse.json({ error: String(e) }, { status: 500 });

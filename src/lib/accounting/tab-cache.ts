@@ -89,7 +89,8 @@ export function markFetchedThisSession(key: string): void {
 export const TAB_CACHE_KEYS = {
   ratesSummary: 'rates:summary',
   dispatchQueue: 'dispatch:queue',
-  mesaRequests: 'mesa:requests',
+  // v2: rows are roster-gated — the bump orphans pre-gate (unfiltered) entries.
+  mesaRequests: 'mesa:requests:v2',
   mesaNonMembers: 'mesa:non-members',
   mesaActiveMembers: 'mesa:active-members',
   pabReasonCodes: 'pab-disputes:reason-codes',
