@@ -1,6 +1,6 @@
 # MESA (Medical Emergency Savings Account)
 
-> **Status:** Requests flow shipped 2026-06-01; contribution ledger backfilled + surfaced 2026-06-26. This doc covers the whole feature. For the accounting-side payout mechanics (Urgent Payments queue, weekly Sun–Sat reconciliation) see [urgent-payments.md](urgent-payments.md); for the underlying tables see [data-sources.md §10 (`mesa_requests`) and §15 (`mesa_ledger`)](../reference/data-sources.md).
+> **Status:** Requests flow shipped 2026-06-01; contribution ledger backfilled + surfaced 2026-06-26; roster-grounded All Members / Active Members tabs, the temporary Opt In/Out bridge, and the `mesa_notes` internal notes log shipped 2026-07-16. This doc covers the whole feature. For the accounting-side payout mechanics (Urgent Payments queue, weekly Sun–Sat reconciliation) see [urgent-payments.md](urgent-payments.md); for the underlying tables see [data-sources.md §10 (`mesa_requests`) and §15 (`mesa_ledger`)](../reference/data-sources.md).
 
 MESA is an **employee savings / contribution program** framed as a *Medical Emergency Savings Account*. Enrolled members have **₱100 deducted from their paycheck each week**, which Simple.biz **matches three times over (+₱300)** — so the account grows by **₱400/week**. Funds are meant for infrequent emergencies: medical needs for the member or immediate family (spouse + children only), natural disasters, or a necessary primary-computer repair. Program rules (from the About tab): one disbursement per 90 days, receipts within 14 days / 30 calendar days, and temporary removal for non-compliance.
 
@@ -16,12 +16,13 @@ Contribution amounts are single-sourced in `EmployeeMesa.tsx`:
 
 ---
 
-## The two data sources
+## The three data sources
 
-MESA is backed by a **request queue** and a **contribution ledger** — they are separate concerns.
+MESA is backed by a **request queue**, a **contribution ledger**, and an **internal notes log** — three separate concerns.
 
 - **`mesa_requests`** — employee-submitted opt-in / opt-out / disbursement / return requests, plus their review + dispatch state. This is the *workflow* table.
-- **`mesa_ledger`** — a faithful 1:1 backfill of the external MESA program tracker (~7,235 event rows, 295 members). Each row is one event: a weekly deposit, a disbursement, or a status snapshot. This is the *historical record* of money in/out. The app never mutates it; it is imported once.
+- **`mesa_ledger`** — a faithful 1:1 backfill of the external MESA program tracker (~7,235 event rows, 295 members). Each row is one event: a weekly deposit, a disbursement, or a status snapshot. This is the *historical record* of money in/out. The app never mutates it; it is imported once. Two of its columns, `notes` / `additional_notes`, are frozen free text carried over from that same backfill — read-only, surfaced (when present) inline on the Accounting View drill-down's Timeline tab.
+- **`mesa_notes`** (`references/sql/create/create_mesa_notes.sql`) — an ongoing, append-only internal annotation log per member, added via `POST /api/mesa-notes` from the View drill-down's Notes tab. Unlike the ledger's frozen notes, this is a live, growing log with no historical backfill.
 
 See [data-sources.md](../reference/data-sources.md) for full column shapes.
 
@@ -48,10 +49,11 @@ Employees submit from the **Employee → MESA → Request** tab (`src/components
 
 ### Accounting tab — `AccountingMesa.tsx`
 
-`src/components/payroll/AccountingMesa.tsx` (Accounting → MESA) has two views:
+`src/components/payroll/AccountingMesa.tsx` (Accounting → MESA) has three views:
 
 - **Requests** — the review queue for `opt_out` / `disbursement` / `return` (opt-in is filtered out; that's HR's). Search + status/type filters, paginated (15/page), stat cards (Total / Pending / Approved / Denied). Each pending row → **Review** modal to Approve/Deny with a note. Reviewed rows can be **revoked** (back to pending) or **deleted** — both blocked once `dispatched_at` is set (the money is already sent).
-- **Member Balances** — the ledger rollup (below).
+- **All Members** — every current employee (Global Master List, joined against `employee_hourly_rates.mesa_member`), with **View** and a conditional **Opt In** / **Opt Out** button per row that calls `POST /api/toggle-mesa-member` directly. This is a **temporary manual bridge** — added so Accounting can enroll/unenroll anyone before employees self-serve via the Employee Dashboard's MESA Request tab (which goes through the `mesa_requests` review queue below). Remove this direct-toggle path once that's the primary way members join.
+- **MESA Active Members** — the ledger rollup (below), now roster-grounded so a brand-new enrollee shows up (at ₱0) even before their first ledger row lands.
 
 Reviews go through `PATCH /api/mesa-requests/[id]` (`requireFeatureEditAnyView('mesa')`). Approving an `opt_out` also fires `POST /api/toggle-mesa-member` with `mesaMember: false` to stop the deduction; revoking re-enrolls.
 
@@ -65,9 +67,13 @@ Reviews go through `PATCH /api/mesa-requests/[id]` (`requireFeatureEditAnyView('
 
 All three dashboards read the same ledger via `GET /api/mesa-ledger` and render with `src/lib/mesa/ledger.ts` types.
 
-### Accounting — Member Balances
+### Accounting — MESA Active Members
 
-`AccountingMesa.tsx` → Member Balances view. Program-wide per-member table (`GET /api/mesa-ledger`, no `?email=` → `requireElevatedSession`): Contributed / Matched / Disbursed / Balance / Active status, with summary cards for the totals. Searchable, paginated (20/page). Each row has a **View** button opening a drill-down modal (`MesaMemberDetail`) that fetches `/api/mesa-ledger?email=` and shows the member's **full timeline of deposits + disbursements with dates**, their totals, and first/last deposit + last disbursement dates.
+`AccountingMesa.tsx` → MESA Active Members view. Roster-grounded per-member table (Global Master List × `employee_hourly_rates.mesa_member` × `GET /api/mesa-ledger` program-wide summaries): Contributed / Matched / Disbursed / Balance / Member since, with summary cards for the totals. Searchable, paginated (20/page). Each row has a **View** button opening a drill-down modal (`MesaMemberDetail`) with three tabs, fetched in parallel on open:
+
+- **Timeline** — the member's full deposit + disbursement history (`GET /api/mesa-ledger?email=`), with any frozen legacy `notes` / `additional_notes` from that event shown inline.
+- **Requests** — the member's full `mesa_requests` history (`GET /api/mesa-requests?email=`), including `opt_in` (HR's, but shown here for the complete picture) and each request's review notes.
+- **Notes** — the ongoing `mesa_notes` log (`GET`/`POST /api/mesa-notes`), with a composer to add a new internal note on the spot.
 
 ### HR — Eligible list
 
@@ -105,6 +111,8 @@ Approving a disbursement in Accounting is a *signal*, not a payment. The actual 
 | List all requests / program-wide balances | `requireElevatedSession` |
 | Approve / deny / revoke / delete a request | `requireFeatureEditAnyView('mesa')` |
 | Dispatch an approved disbursement | Elevated session (see urgent-payments.md) |
+| List / add a member's internal note (`/api/mesa-notes`) | `requireElevatedSession` (list) / `requireFeatureEditAnyView('mesa')` (add) |
+| Directly toggle a member's enrollment from Accounting → MESA → All Members (temporary bridge, bypasses the request queue) | `requireFeatureEditAnyView('mesa')` |
 
 ---
 
@@ -113,7 +121,7 @@ Approving a disbursement in Accounting is a *signal*, not a payment. The actual 
 | Path | Role |
 |---|---|
 | `src/components/employee/EmployeeMesa.tsx` | Employee About / Request / History tabs |
-| `src/components/payroll/AccountingMesa.tsx` | Accounting Requests queue + Member Balances + View drill-down |
+| `src/components/payroll/AccountingMesa.tsx` | Accounting Requests queue + All Members (temp Opt In/Out) + MESA Active Members + View drill-down |
 | `src/components/hr/HrMesa.tsx` | HR Eligible / opt-in Requests / FPU tabs |
 | `src/components/PayrollWizard.tsx` | Weekly deduction + disbursement folded into Final pay |
 | `src/lib/mesa/ledger.ts` | Shared ledger types + `summarizeMember` / `summarizeMembers` |
@@ -121,9 +129,12 @@ Approving a disbursement in Accounting is a *signal*, not a payment. The actual 
 | `app/api/mesa-requests/[id]/route.ts` | PATCH (approve/deny/revoke) + DELETE |
 | `app/api/mesa-requests/[id]/dispatch/route.ts` | Pay out an approved disbursement |
 | `app/api/mesa-ledger/route.ts` | Per-member or program-wide contribution rollup |
+| `app/api/mesa-notes/route.ts` | GET (list) + POST (add) a member's internal notes |
+| `app/api/toggle-mesa-member/route.ts` | Direct enrollment flip — used by request approvals and the temporary All Members Opt In/Out buttons |
 | `references/sql/create/mesa_ledger_ddl.sql` | Ledger table DDL |
 | `references/sql/create/backfill_mesa_ledger.sql` | Ledger data backfill (loaded via script, not SQL Editor) |
 | `references/sql/create/add_mesa_requests.sql` | `mesa_requests` table |
+| `references/sql/create/create_mesa_notes.sql` | `mesa_notes` table |
 | `references/sql/alter/add_mesa_dispatched_at.sql` | `mesa_requests.dispatched_at` + urgent-queue index |
 | `scripts/load-mesa-ledger.mjs` | Batched REST upsert of the ledger backfill |
 | `scripts/preload-mesa-membership.mjs` | Seeds `mesa_member` / `mesa_member_since` from the ledger |

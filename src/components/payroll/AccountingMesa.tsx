@@ -23,6 +23,10 @@ import {
   CalendarClock,
   ArrowDownCircle,
   ArrowUpCircle,
+  Users,
+  UserPlus,
+  UserMinus,
+  StickyNote,
 } from 'lucide-react';
 import { motion } from 'motion/react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -34,8 +38,10 @@ import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import { clearTabCache, getTabCache, hasTabCache, setTabCache, TAB_CACHE_KEYS } from '@/lib/accounting/tab-cache';
 import type { MesaLedgerEvent, MesaMemberSummary } from '@/lib/mesa/ledger';
+import type { EmployeeRow } from '@/lib/supabase/employees';
+import type { EmployeeHourlyRateRow } from '@/lib/supabase/employee-hourly-rates';
 
-type MesaView = 'requests' | 'balances';
+type MesaView = 'requests' | 'all-members' | 'active-members';
 
 /** Peso, two decimals — follows the app-wide money convention. */
 const formatPHP = (n: number) =>
@@ -59,6 +65,15 @@ interface MesaRequest {
   reviewed_by: string | null;
   reviewed_at: string | null;
   dispatched_at: string | null;
+  created_at: string;
+}
+
+interface MesaNote {
+  id: string;
+  member_email: string;
+  body: string;
+  author_email: string;
+  author_name: string | null;
   created_at: string;
 }
 
@@ -280,7 +295,11 @@ export default function AccountingMesa() {
               MESA — Disbursements &amp; Changes
             </h2>
             <p className="mt-1 max-w-2xl text-sm leading-relaxed text-zinc-600 dark:text-zinc-400">
-              Opt-out, disbursement, and return requests submitted by members. Opt-in requests are handled by HR.
+              {view === 'requests'
+                ? 'Opt-out, disbursement, and return requests submitted by members. Opt-in requests are handled by HR.'
+                : view === 'all-members'
+                ? 'Every current employee, with a temporary manual Opt In / Opt Out until members self-serve from the Employee Dashboard.'
+                : 'Employees currently enrolled in MESA, with their contribution, match, and balance to date.'}
             </p>
           </div>
         </div>
@@ -292,11 +311,14 @@ export default function AccountingMesa() {
           className="relative inline-flex items-center gap-1 self-start rounded-lg border border-teal-100/80 bg-white/70 p-1 shadow-sm backdrop-blur dark:border-teal-900/40 dark:bg-zinc-900/60"
         >
           <ViewTabButton active={view === 'requests'} onClick={() => setView('requests')} icon={ClipboardList} label="Requests" />
-          <ViewTabButton active={view === 'balances'} onClick={() => setView('balances')} icon={Wallet} label="Member Balances" />
+          <ViewTabButton active={view === 'all-members'} onClick={() => setView('all-members')} icon={Users} label="All Members" />
+          <ViewTabButton active={view === 'active-members'} onClick={() => setView('active-members')} icon={Wallet} label="MESA Active Members" />
         </div>
 
-        {view === 'balances' ? (
-          <MesaBalances />
+        {view === 'all-members' ? (
+          <MesaAllMembers />
+        ) : view === 'active-members' ? (
+          <MesaActiveMembers />
         ) : (
         <>
         {/* Stats */}
@@ -727,11 +749,16 @@ function ViewTabButton({
   onClick,
   icon: Icon,
   label,
+  layoutId = 'accounting-mesa-view-pill',
 }: {
   active: boolean;
   onClick: () => void;
   icon: React.ComponentType<{ className?: string }>;
   label: string;
+  /** Distinct per independent tab group — two groups sharing one id (e.g. the
+   *  outer switcher and a modal's tabs open at the same time) would fight
+   *  each other for the same framer-motion layout animation. */
+  layoutId?: string;
 }) {
   return (
     <button
@@ -748,7 +775,7 @@ function ViewTabButton({
     >
       {active && (
         <motion.span
-          layoutId="accounting-mesa-view-pill"
+          layoutId={layoutId}
           aria-hidden
           className="absolute inset-0 rounded-md bg-gradient-to-r from-teal-500 to-emerald-500 shadow-sm"
           transition={{ type: 'spring', stiffness: 380, damping: 32 }}
@@ -762,34 +789,422 @@ function ViewTabButton({
   );
 }
 
-// ── Member Balances ──────────────────────────────────────────────────────────
+// ── Shared roster join (Global Master List × MESA enrollment × ledger) ─────
 //
-// Per-member contribution rollup from the mesa_ledger backfill: how much each
-// person has put in, how much Simple.biz matched, what's been disbursed, and
-// what's left. Read-only — the ledger is the historical record; membership
-// changes flow through the request queue.
+// Both tabs below are grounded in the current employee roster (not just the
+// mesa_ledger backfill), so someone with no ledger history yet — a brand-new
+// hire, or someone opted in today — still shows up. Mirrors the join
+// HrMesa.tsx's MesaEligibleList already does (roster × employee_hourly_rates
+// .mesa_member × mesa_ledger), minus its mesa_member=true pre-filter.
+
+interface MesaRosterRow {
+  key: string;
+  name: string;
+  workEmail: string | null;
+  personalEmail: string | null;
+  department: string | null;
+  mesaMember: boolean;
+  mesaMemberSince: string | null;
+  ledger: MesaMemberSummary | null;
+}
+
+async function fetchMesaRoster(): Promise<MesaRosterRow[]> {
+  const [employeesRes, ratesRes, ledgerRes] = await Promise.all([
+    fetch('/api/employees', { cache: 'no-store' }),
+    fetch('/api/employee-hourly-rates', { cache: 'no-store' }),
+    fetch('/api/mesa-ledger', { cache: 'no-store' }),
+  ]);
+  if (!employeesRes.ok) throw new Error(`employees HTTP ${employeesRes.status}`);
+  if (!ratesRes.ok) throw new Error(`rates HTTP ${ratesRes.status}`);
+  const employeesJson = (await employeesRes.json()) as { employees?: EmployeeRow[] };
+  const ratesJson = (await ratesRes.json()) as { rows?: EmployeeHourlyRateRow[] };
+  // Ledger is best-effort — a failure here shouldn't blank out the roster.
+  const ledgerJson = ledgerRes.ok
+    ? ((await ledgerRes.json()) as { members?: MesaMemberSummary[] })
+    : { members: [] };
+
+  const ledgerByEmail = new Map<string, MesaMemberSummary>();
+  for (const m of ledgerJson.members ?? []) {
+    if (m.email) ledgerByEmail.set(m.email.toLowerCase(), m);
+  }
+  const rateByEmail = new Map<string, EmployeeHourlyRateRow>();
+  for (const r of ratesJson.rows ?? []) {
+    const we = r.work_email?.toLowerCase().trim();
+    const pe = r.personal_email?.toLowerCase().trim();
+    if (we) rateByEmail.set(we, r);
+    if (pe) rateByEmail.set(pe, r);
+  }
+
+  return (employeesJson.employees ?? [])
+    .map((e) => {
+      const we = e.work_email?.toLowerCase().trim() || null;
+      const pe = e.personal_email?.toLowerCase().trim() || null;
+      if (!we && !pe) return null; // nothing to key an enrollment toggle on
+      const rate = (we && rateByEmail.get(we)) || (pe && rateByEmail.get(pe)) || null;
+      const ledger = (we && ledgerByEmail.get(we)) || (pe && ledgerByEmail.get(pe)) || null;
+      return {
+        key: we || pe!,
+        name: e.name ?? we ?? pe!,
+        workEmail: e.work_email ?? null,
+        personalEmail: e.personal_email ?? null,
+        department: e.department ?? rate?.department ?? null,
+        mesaMember: rate?.mesa_member === true,
+        mesaMemberSince: rate?.mesa_member_since ?? null,
+        ledger,
+      } as MesaRosterRow;
+    })
+    .filter((r): r is MesaRosterRow => r !== null)
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/** Stub summary for a roster row with no mesa_ledger history yet, so the
+ *  View drill-down (which fetches its own data by email anyway) always has a
+ *  valid starting shape to render before that fetch resolves. */
+function rosterRowToSummary(row: MesaRosterRow): MesaMemberSummary {
+  if (row.ledger) return row.ledger;
+  return {
+    email: row.workEmail ?? row.personalEmail ?? '',
+    name: row.name,
+    department: row.department,
+    status: null,
+    isActive: row.mesaMember,
+    contributed: 0,
+    matched: 0,
+    deposited: 0,
+    disbursed: 0,
+    balance: 0,
+    depositCount: 0,
+    disbursementCount: 0,
+    firstDeposit: null,
+    lastDeposit: null,
+    lastDisbursement: null,
+  };
+}
 
 const BALANCES_PAGE_SIZE = 20;
 
-function MesaBalances() {
-  const [members, setMembers] = useState<MesaMemberSummary[]>(
-    () => getTabCache<MesaMemberSummary[]>(TAB_CACHE_KEYS.mesaBalances) ?? [],
+// ── All Members ──────────────────────────────────────────────────────────────
+//
+// Every current employee (Global Master List), with a temporary manual
+// Opt In / Opt Out — a stopgap so Accounting can enroll/unenroll anyone right
+// now, before employees self-serve via the Employee Dashboard's MESA Request
+// tab (EmployeeMesa.tsx), which goes through the mesa_requests review queue.
+// Remove this direct-toggle path once that's the primary way members join.
+
+function MesaAllMembers() {
+  const [rows, setRows] = useState<MesaRosterRow[]>(
+    () => getTabCache<MesaRosterRow[]>(TAB_CACHE_KEYS.mesaAllMembers) ?? [],
   );
-  const [loading, setLoading] = useState(!hasTabCache(TAB_CACHE_KEYS.mesaBalances));
+  const [loading, setLoading] = useState(!hasTabCache(TAB_CACHE_KEYS.mesaAllMembers));
   const [refreshing, setRefreshing] = useState(false);
   const [query, setQuery] = useState('');
   const [page, setPage] = useState(0);
-  const [viewTarget, setViewTarget] = useState<MesaMemberSummary | null>(null);
+  const [viewTarget, setViewTarget] = useState<MesaRosterRow | null>(null);
+  const [toggleTarget, setToggleTarget] = useState<MesaRosterRow | null>(null);
+  const [toggling, setToggling] = useState(false);
 
   const load = async (showSpinner = true) => {
     if (showSpinner) setLoading(true); else setRefreshing(true);
     try {
-      const res = await fetch('/api/mesa-ledger', { cache: 'no-store' });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const json = (await res.json()) as { members?: MesaMemberSummary[] };
-      const data = json.members ?? [];
-      setTabCache(TAB_CACHE_KEYS.mesaBalances, data);
-      setMembers(data);
+      const data = await fetchMesaRoster();
+      setTabCache(TAB_CACHE_KEYS.mesaAllMembers, data);
+      setRows(data);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to load employee roster');
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  };
+
+  useEffect(() => {
+    void load(!hasTabCache(TAB_CACHE_KEYS.mesaAllMembers));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return rows;
+    return rows.filter(
+      (r) =>
+        r.name.toLowerCase().includes(q) ||
+        (r.workEmail ?? '').toLowerCase().includes(q) ||
+        (r.department ?? '').toLowerCase().includes(q),
+    );
+  }, [rows, query]);
+
+  useEffect(() => { setPage(0); }, [query]);
+
+  const enrolledCount = useMemo(() => rows.filter((r) => r.mesaMember).length, [rows]);
+
+  const totalPages = Math.max(1, Math.ceil(filtered.length / BALANCES_PAGE_SIZE));
+  const safePage = Math.min(page, totalPages - 1);
+  const pageRows = filtered.slice(safePage * BALANCES_PAGE_SIZE, (safePage + 1) * BALANCES_PAGE_SIZE);
+
+  const handleRefresh = async () => {
+    clearTabCache(TAB_CACHE_KEYS.mesaAllMembers);
+    await load(false);
+    toast.success('Refreshed employee roster');
+  };
+
+  const confirmToggle = async () => {
+    if (!toggleTarget) return;
+    const nextMesaMember = !toggleTarget.mesaMember;
+    setToggling(true);
+    try {
+      const res = await fetch('/api/toggle-mesa-member', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          workEmail: toggleTarget.workEmail ?? undefined,
+          personalEmail: toggleTarget.workEmail ? undefined : toggleTarget.personalEmail ?? undefined,
+          mesaMember: nextMesaMember,
+          name: toggleTarget.name,
+        }),
+      });
+      if (!res.ok) {
+        const j = (await res.json()) as { error?: string };
+        throw new Error(j.error ?? `HTTP ${res.status}`);
+      }
+      toast.success(
+        nextMesaMember ? `${toggleTarget.name} opted in to MESA` : `${toggleTarget.name} opted out of MESA`,
+      );
+      setToggleTarget(null);
+      clearTabCache(TAB_CACHE_KEYS.mesaAllMembers);
+      clearTabCache(TAB_CACHE_KEYS.mesaActiveMembers);
+      await load(false);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to update MESA enrollment');
+    } finally {
+      setToggling(false);
+    }
+  };
+
+  return (
+    <div className="space-y-5">
+      {/* Summary */}
+      <div className="grid gap-3 sm:grid-cols-2">
+        <StatCard label="Employees" value={rows.length} tone="zinc" />
+        <StatCard label="Enrolled in MESA" value={enrolledCount} tone="teal" />
+      </div>
+
+      {/* Toolbar */}
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="relative min-w-[200px] flex-1">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400" />
+          <Input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search name, email, department..."
+            className="h-9 border-zinc-200 bg-white pl-9 text-sm focus:border-teal-500 focus:ring-2 focus:ring-teal-500/20 dark:border-zinc-800 dark:bg-zinc-900/60"
+          />
+        </div>
+        <Button type="button" variant="outline" size="sm" onClick={handleRefresh} disabled={refreshing || loading} className="gap-1.5">
+          <RefreshCw className={cn('h-3.5 w-3.5', refreshing && 'animate-spin')} />
+          Refresh
+        </Button>
+      </div>
+
+      {/* Table */}
+      <Card className="overflow-hidden border-teal-100/80 shadow-sm dark:border-teal-900/40">
+        <CardHeader className="border-b border-teal-100/80 bg-teal-50/30 px-5 py-3 dark:border-teal-900/40 dark:bg-teal-950/20">
+          <CardTitle className="text-sm font-semibold text-zinc-900 dark:text-white">
+            {loading ? 'Loading employees...' : `${filtered.length} employee${filtered.length === 1 ? '' : 's'}`}
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="p-0">
+          {loading ? (
+            <SkeletonRows count={8} />
+          ) : filtered.length === 0 ? (
+            <div className="flex flex-col items-center justify-center gap-2 px-5 py-12 text-center text-sm text-zinc-500 dark:text-zinc-400">
+              <Inbox className="h-6 w-6 text-zinc-400" />
+              {rows.length === 0 ? 'No employees found.' : 'No results match your search.'}
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs">
+                <thead className="border-b border-teal-100/80 bg-teal-50/40 text-[11px] font-semibold uppercase tracking-wide text-teal-700 dark:border-teal-900/40 dark:bg-teal-950/30 dark:text-teal-300">
+                  <tr>
+                    <th className="px-4 py-2.5">Name</th>
+                    <th className="px-4 py-2.5">Department</th>
+                    <th className="px-4 py-2.5">Email</th>
+                    <th className="px-4 py-2.5 text-right">Status</th>
+                    <th className="px-4 py-2.5 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-teal-100/60 dark:divide-teal-900/40">
+                  {pageRows.map((r) => (
+                    <tr key={r.key} className="transition-colors hover:bg-teal-50/40 dark:hover:bg-teal-950/20">
+                      <td className="px-4 py-3 font-medium text-zinc-900 dark:text-zinc-100" data-label="Name">
+                        {r.name}
+                      </td>
+                      <td className="px-4 py-3 text-zinc-600 dark:text-zinc-400" data-label="Department">
+                        {r.department ? (
+                          <span className="inline-flex items-center gap-1"><Building2 className="h-3 w-3 text-zinc-400" />{r.department}</span>
+                        ) : <span className="text-zinc-400">—</span>}
+                      </td>
+                      <td className="px-4 py-3 font-mono text-[11px] text-zinc-500 dark:text-zinc-500" data-label="Email">
+                        {r.workEmail ?? r.personalEmail ?? '—'}
+                      </td>
+                      <td className="px-4 py-3 text-right" data-label="Status">
+                        {r.mesaMember ? (
+                          <Badge variant="outline" className="border-teal-200 bg-teal-50 text-[10.5px] font-semibold uppercase tracking-wide text-teal-700 dark:border-teal-500/40 dark:bg-teal-500/15 dark:text-teal-200">
+                            <CheckCircle2 className="mr-1 h-3 w-3" />Active member
+                          </Badge>
+                        ) : (
+                          <Badge variant="outline" className="border-zinc-300 bg-zinc-50 text-[10.5px] font-semibold uppercase tracking-wide text-zinc-600 dark:border-zinc-600 dark:bg-zinc-800/50 dark:text-zinc-300">
+                            Not enrolled
+                          </Badge>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-right" data-label="Actions">
+                        <div className="flex items-center justify-end gap-1.5">
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            onClick={() => setViewTarget(r)}
+                            className="h-7 gap-1 border-teal-200 bg-teal-50/60 text-[11px] font-semibold text-teal-700 hover:bg-teal-100 dark:border-teal-700/50 dark:bg-teal-950/30 dark:text-teal-300 dark:hover:bg-teal-950/60"
+                          >
+                            <Eye className="h-3 w-3" />
+                            View
+                          </Button>
+                          {r.mesaMember ? (
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              onClick={() => setToggleTarget(r)}
+                              className="h-7 gap-1 border-amber-200 bg-amber-50/60 text-[11px] font-semibold text-amber-700 hover:bg-amber-100 dark:border-amber-700/50 dark:bg-amber-950/30 dark:text-amber-300 dark:hover:bg-amber-950/60"
+                            >
+                              <UserMinus className="h-3 w-3" />
+                              Opt Out
+                            </Button>
+                          ) : (
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              onClick={() => setToggleTarget(r)}
+                              className="h-7 gap-1 border-teal-200 bg-teal-50/60 text-[11px] font-semibold text-teal-700 hover:bg-teal-100 dark:border-teal-700/50 dark:bg-teal-950/30 dark:text-teal-300 dark:hover:bg-teal-950/60"
+                            >
+                              <UserPlus className="h-3 w-3" />
+                              Opt In
+                            </Button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          {!loading && filtered.length > BALANCES_PAGE_SIZE && (
+            <div data-readonly-allow className="flex items-center justify-between border-t border-teal-100/80 px-5 py-2.5 dark:border-teal-900/40">
+              <p className="text-[11px] text-zinc-400">
+                {safePage * BALANCES_PAGE_SIZE + 1}–{Math.min((safePage + 1) * BALANCES_PAGE_SIZE, filtered.length)} of {filtered.length}
+              </p>
+              <div className="flex items-center gap-1">
+                <Button variant="outline" size="icon" className="h-7 w-7" disabled={safePage === 0} onClick={() => setPage(0)} aria-label="First page">
+                  <ChevronLeft className="h-3 w-3" /><ChevronLeft className="-ml-2 h-3 w-3" />
+                </Button>
+                <Button variant="outline" size="icon" className="h-7 w-7" disabled={safePage === 0} onClick={() => setPage((p) => Math.max(0, p - 1))} aria-label="Previous page">
+                  <ChevronLeft className="h-3 w-3" />
+                </Button>
+                <span className="min-w-[4rem] text-center text-[11px] text-zinc-500">{safePage + 1} / {totalPages}</span>
+                <Button variant="outline" size="icon" className="h-7 w-7" disabled={safePage >= totalPages - 1} onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))} aria-label="Next page">
+                  <ChevronRight className="h-3 w-3" />
+                </Button>
+                <Button variant="outline" size="icon" className="h-7 w-7" disabled={safePage >= totalPages - 1} onClick={() => setPage(totalPages - 1)} aria-label="Last page">
+                  <ChevronRight className="h-3 w-3" /><ChevronRight className="-ml-2 h-3 w-3" />
+                </Button>
+              </div>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {viewTarget && (
+        <MesaMemberDetail member={rosterRowToSummary(viewTarget)} onClose={() => setViewTarget(null)} />
+      )}
+
+      {/* Opt In / Opt Out confirmation — direct enrollment toggle, bypassing
+          the mesa_requests review queue. Temporary bridge (see comment above). */}
+      {toggleTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-[2px] p-4 animate-in fade-in duration-200 ease-out motion-reduce:animate-none">
+          <div className="w-full max-w-sm rounded-2xl border border-zinc-200 bg-white shadow-2xl dark:border-zinc-800 dark:bg-zinc-950 animate-in fade-in zoom-in-95 slide-in-from-bottom-2 duration-200 ease-out motion-reduce:animate-none">
+            <div className="flex items-start gap-3 px-5 py-5">
+              <div className={cn(
+                'flex h-10 w-10 shrink-0 items-center justify-center rounded-full',
+                toggleTarget.mesaMember
+                  ? 'bg-amber-100 text-amber-600 dark:bg-amber-950/40 dark:text-amber-400'
+                  : 'bg-teal-100 text-teal-600 dark:bg-teal-950/40 dark:text-teal-400',
+              )}>
+                {toggleTarget.mesaMember ? <UserMinus className="h-5 w-5" /> : <UserPlus className="h-5 w-5" />}
+              </div>
+              <div className="min-w-0">
+                <h3 className="text-base font-bold text-zinc-900 dark:text-white">
+                  {toggleTarget.mesaMember ? 'Opt out of MESA?' : 'Opt in to MESA?'}
+                </h3>
+                <p className="mt-1 text-sm leading-relaxed text-zinc-600 dark:text-zinc-400">
+                  {toggleTarget.mesaMember
+                    ? <>Stops the ₱100 weekly deduction for <span className="font-medium text-zinc-800 dark:text-zinc-200">{toggleTarget.name}</span> going forward.</>
+                    : <>Starts the ₱100 weekly deduction (+ ₱300 Simple.biz match) for <span className="font-medium text-zinc-800 dark:text-zinc-200">{toggleTarget.name}</span>, effective today.</>}
+                  {' '}This is a direct enrollment change — it does not go through the request queue.
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center justify-end gap-2 border-t border-zinc-200 px-5 py-4 dark:border-zinc-800">
+              <Button type="button" variant="outline" size="sm" onClick={() => setToggleTarget(null)} disabled={toggling}>
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                disabled={toggling}
+                onClick={confirmToggle}
+                className={cn(
+                  toggleTarget.mesaMember
+                    ? 'bg-amber-600 text-white hover:bg-amber-700 dark:bg-amber-600 dark:hover:bg-amber-500'
+                    : 'bg-teal-600 text-white hover:bg-teal-700 dark:bg-teal-600 dark:hover:bg-teal-500',
+                )}
+              >
+                {toggleTarget.mesaMember ? <UserMinus className="mr-1.5 h-3.5 w-3.5" /> : <UserPlus className="mr-1.5 h-3.5 w-3.5" />}
+                {toggleTarget.mesaMember ? 'Opt Out' : 'Opt In'}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── MESA Active Members ──────────────────────────────────────────────────────
+//
+// Employees currently enrolled (employee_hourly_rates.mesa_member = true),
+// roster-grounded so a brand-new enrollee shows up at ₱0 even before their
+// first ledger row lands. Financial rollup comes from mesa_ledger when
+// present. Read-only here — enrollment changes happen on the All Members tab
+// (temporary) or via the mesa_requests review queue.
+
+function MesaActiveMembers() {
+  const [rows, setRows] = useState<MesaRosterRow[]>(
+    () => getTabCache<MesaRosterRow[]>(TAB_CACHE_KEYS.mesaActiveMembers) ?? [],
+  );
+  const [loading, setLoading] = useState(!hasTabCache(TAB_CACHE_KEYS.mesaActiveMembers));
+  const [refreshing, setRefreshing] = useState(false);
+  const [query, setQuery] = useState('');
+  const [page, setPage] = useState(0);
+  const [viewTarget, setViewTarget] = useState<MesaRosterRow | null>(null);
+
+  const load = async (showSpinner = true) => {
+    if (showSpinner) setLoading(true); else setRefreshing(true);
+    try {
+      const data = (await fetchMesaRoster()).filter((r) => r.mesaMember);
+      setTabCache(TAB_CACHE_KEYS.mesaActiveMembers, data);
+      setRows(data);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Failed to load MESA balances');
     } finally {
@@ -799,44 +1214,47 @@ function MesaBalances() {
   };
 
   useEffect(() => {
-    void load(!hasTabCache(TAB_CACHE_KEYS.mesaBalances));
+    void load(!hasTabCache(TAB_CACHE_KEYS.mesaActiveMembers));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return members;
-    return members.filter(
-      (m) =>
-        (m.name ?? '').toLowerCase().includes(q) ||
-        m.email.toLowerCase().includes(q) ||
-        (m.department ?? '').toLowerCase().includes(q),
+    if (!q) return rows;
+    return rows.filter(
+      (r) =>
+        r.name.toLowerCase().includes(q) ||
+        (r.workEmail ?? '').toLowerCase().includes(q) ||
+        (r.department ?? '').toLowerCase().includes(q),
     );
-  }, [members, query]);
+  }, [rows, query]);
 
   useEffect(() => { setPage(0); }, [query]);
 
   const totals = useMemo(() => {
-    let contributed = 0, matched = 0, disbursed = 0, balance = 0, active = 0;
-    for (const m of members) {
-      contributed += m.contributed;
-      matched += m.matched;
-      disbursed += m.disbursed;
-      balance += m.balance;
-      if (m.isActive) active += 1;
+    let contributed = 0, matched = 0, disbursed = 0, balance = 0;
+    for (const r of rows) {
+      if (!r.ledger) continue;
+      contributed += r.ledger.contributed;
+      matched += r.ledger.matched;
+      disbursed += r.ledger.disbursed;
+      balance += r.ledger.balance;
     }
-    return { contributed, matched, disbursed, balance, active };
-  }, [members]);
+    return { contributed, matched, disbursed, balance };
+  }, [rows]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / BALANCES_PAGE_SIZE));
   const safePage = Math.min(page, totalPages - 1);
   const pageRows = filtered.slice(safePage * BALANCES_PAGE_SIZE, (safePage + 1) * BALANCES_PAGE_SIZE);
 
   const handleRefresh = async () => {
-    clearTabCache(TAB_CACHE_KEYS.mesaBalances);
+    clearTabCache(TAB_CACHE_KEYS.mesaActiveMembers);
     await load(false);
     toast.success('Refreshed MESA balances');
   };
+
+  const fmtSince = (d: string | null) =>
+    d ? new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—';
 
   return (
     <div className="space-y-5">
@@ -845,7 +1263,7 @@ function MesaBalances() {
         <BalanceStat icon={PiggyBank} label="Members contributed" value={formatPHP(totals.contributed)} tone="zinc" />
         <BalanceStat icon={HeartHandshake} label="Simple.biz matched" value={formatPHP(totals.matched)} tone="teal" />
         <BalanceStat icon={Wallet} label="Total balance" value={formatPHP(totals.balance)} tone="teal" />
-        <BalanceStat icon={CheckCircle2} label="Active members" value={`${totals.active} / ${members.length}`} tone="amber" />
+        <BalanceStat icon={CheckCircle2} label="Enrolled members" value={String(rows.length)} tone="amber" />
       </div>
 
       {/* Toolbar */}
@@ -878,7 +1296,7 @@ function MesaBalances() {
           ) : filtered.length === 0 ? (
             <div className="flex flex-col items-center justify-center gap-2 px-5 py-12 text-center text-sm text-zinc-500 dark:text-zinc-400">
               <Inbox className="h-6 w-6 text-zinc-400" />
-              {members.length === 0 ? 'No MESA ledger data found.' : 'No results match your search.'}
+              {rows.length === 0 ? 'No MESA members enrolled yet.' : 'No results match your search.'}
             </div>
           ) : (
             <div className="overflow-x-auto">
@@ -891,52 +1309,44 @@ function MesaBalances() {
                     <th className="px-4 py-2.5 text-right">Matched</th>
                     <th className="px-4 py-2.5 text-right">Disbursed</th>
                     <th className="px-4 py-2.5 text-right">Balance</th>
-                    <th className="px-4 py-2.5 text-right">Status</th>
+                    <th className="px-4 py-2.5 text-right">Member since</th>
                     <th className="px-4 py-2.5 text-right">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-teal-100/60 dark:divide-teal-900/40">
-                  {pageRows.map((m) => (
-                    <tr key={m.email} className="transition-colors hover:bg-teal-50/40 dark:hover:bg-teal-950/20">
+                  {pageRows.map((r) => (
+                    <tr key={r.key} className="transition-colors hover:bg-teal-50/40 dark:hover:bg-teal-950/20">
                       <td className="px-4 py-3" data-label="Member">
-                        <div className="font-medium text-zinc-900 dark:text-zinc-100">{m.name ?? m.email}</div>
-                        <div className="mt-0.5 font-mono text-[11px] text-zinc-500 dark:text-zinc-500">{m.email}</div>
+                        <div className="font-medium text-zinc-900 dark:text-zinc-100">{r.name}</div>
+                        <div className="mt-0.5 font-mono text-[11px] text-zinc-500 dark:text-zinc-500">{r.workEmail ?? r.personalEmail}</div>
                       </td>
                       <td className="px-4 py-3 text-zinc-600 dark:text-zinc-400" data-label="Department">
-                        {m.department ? (
-                          <span className="inline-flex items-center gap-1"><Building2 className="h-3 w-3 text-zinc-400" />{m.department}</span>
+                        {r.department ? (
+                          <span className="inline-flex items-center gap-1"><Building2 className="h-3 w-3 text-zinc-400" />{r.department}</span>
                         ) : <span className="text-zinc-400">—</span>}
                       </td>
                       <td className="px-4 py-3 text-right font-mono tabular-nums text-zinc-700 dark:text-zinc-300" data-label="Contributed">
-                        {formatPHP(m.contributed)}
-                        <div className="text-[10px] font-normal text-zinc-400">{m.depositCount} wk{m.depositCount === 1 ? '' : 's'}</div>
+                        {formatPHP(r.ledger?.contributed ?? 0)}
+                        <div className="text-[10px] font-normal text-zinc-400">{r.ledger?.depositCount ?? 0} wk{(r.ledger?.depositCount ?? 0) === 1 ? '' : 's'}</div>
                       </td>
                       <td className="px-4 py-3 text-right font-mono tabular-nums text-teal-700 dark:text-teal-300" data-label="Matched">
-                        {formatPHP(m.matched)}
+                        {formatPHP(r.ledger?.matched ?? 0)}
                       </td>
                       <td className="px-4 py-3 text-right font-mono tabular-nums text-amber-700 dark:text-amber-300" data-label="Disbursed">
-                        {m.disbursed > 0 ? formatPHP(m.disbursed) : <span className="text-zinc-400">—</span>}
+                        {(r.ledger?.disbursed ?? 0) > 0 ? formatPHP(r.ledger!.disbursed) : <span className="text-zinc-400">—</span>}
                       </td>
                       <td className="px-4 py-3 text-right font-mono font-semibold tabular-nums text-zinc-900 dark:text-white" data-label="Balance">
-                        {formatPHP(m.balance)}
+                        {formatPHP(r.ledger?.balance ?? 0)}
                       </td>
-                      <td className="px-4 py-3 text-right" data-label="Status">
-                        {m.isActive ? (
-                          <Badge variant="outline" className="border-teal-200 bg-teal-50 text-[10.5px] font-semibold uppercase tracking-wide text-teal-700 dark:border-teal-500/40 dark:bg-teal-500/15 dark:text-teal-200">
-                            <CheckCircle2 className="mr-1 h-3 w-3" />Active
-                          </Badge>
-                        ) : (
-                          <Badge variant="outline" className="border-zinc-300 bg-zinc-50 text-[10.5px] font-semibold uppercase tracking-wide text-zinc-600 dark:border-zinc-600 dark:bg-zinc-800/50 dark:text-zinc-300">
-                            {m.status ?? 'Inactive'}
-                          </Badge>
-                        )}
+                      <td className="px-4 py-3 text-right text-zinc-500 dark:text-zinc-400" data-label="Member since">
+                        {fmtSince(r.mesaMemberSince)}
                       </td>
                       <td className="px-4 py-3 text-right" data-label="Actions">
                         <Button
                           type="button"
                           size="sm"
                           variant="outline"
-                          onClick={() => setViewTarget(m)}
+                          onClick={() => setViewTarget(r)}
                           className="h-7 gap-1 border-teal-200 bg-teal-50/60 text-[11px] font-semibold text-teal-700 hover:bg-teal-100 dark:border-teal-700/50 dark:bg-teal-950/30 dark:text-teal-300 dark:hover:bg-teal-950/60"
                         >
                           <Eye className="h-3 w-3" />
@@ -975,14 +1385,15 @@ function MesaBalances() {
       </Card>
 
       {viewTarget && (
-        <MesaMemberDetail member={viewTarget} onClose={() => setViewTarget(null)} />
+        <MesaMemberDetail member={rosterRowToSummary(viewTarget)} onClose={() => setViewTarget(null)} />
       )}
     </div>
   );
 }
 
-// Drill-down modal: a member's full contribution timeline (deposits + disbursements
-// with dates) plus their totals. Fetches /api/mesa-ledger?email= on open.
+// Drill-down modal: a member's full MESA history — contribution timeline,
+// request history, and internal notes. Fetches /api/mesa-ledger,
+// /api/mesa-requests, and /api/mesa-notes (all ?email=) in parallel on open.
 function MesaMemberDetail({
   member,
   onClose,
@@ -992,24 +1403,44 @@ function MesaMemberDetail({
 }) {
   const [events, setEvents] = useState<MesaLedgerEvent[]>([]);
   const [summary, setSummary] = useState<MesaMemberSummary>(member);
+  const [requests, setRequests] = useState<MesaRequest[]>([]);
+  const [notes, setNotes] = useState<MesaNote[]>([]);
   const [loading, setLoading] = useState(true);
+  const [tab, setTab] = useState<'timeline' | 'requests' | 'notes'>('timeline');
+  const [noteBody, setNoteBody] = useState('');
+  const [postingNote, setPostingNote] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    fetch(`/api/mesa-ledger?email=${encodeURIComponent(member.email)}`, { cache: 'no-store' })
-      .then((r) => (r.ok ? r.json() : { summary: member, events: [] }))
-      .then((j: { summary?: MesaMemberSummary | null; events?: MesaLedgerEvent[] }) => {
+    const email = encodeURIComponent(member.email);
+    Promise.all([
+      fetch(`/api/mesa-ledger?email=${email}`, { cache: 'no-store' })
+        .then((r) => (r.ok ? r.json() : { summary: member, events: [] }))
+        .catch(() => ({ summary: member, events: [] })) as Promise<{
+        summary?: MesaMemberSummary | null;
+        events?: MesaLedgerEvent[];
+      }>,
+      fetch(`/api/mesa-requests?email=${email}`, { cache: 'no-store' })
+        .then((r) => (r.ok ? r.json() : { rows: [] }))
+        .catch(() => ({ rows: [] })) as Promise<{ rows?: MesaRequest[] }>,
+      fetch(`/api/mesa-notes?email=${email}`, { cache: 'no-store' })
+        .then((r) => (r.ok ? r.json() : { notes: [] }))
+        .catch(() => ({ notes: [] })) as Promise<{ notes?: MesaNote[] }>,
+    ])
+      .then(([ledgerJson, requestsJson, notesJson]) => {
         if (cancelled) return;
-        if (j.summary) setSummary(j.summary);
-        setEvents(j.events ?? []);
+        if (ledgerJson.summary) setSummary(ledgerJson.summary);
+        setEvents(ledgerJson.events ?? []);
+        setRequests(requestsJson.rows ?? []);
+        setNotes(notesJson.notes ?? []);
       })
-      .catch(() => {})
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
   }, [member.email, member]);
 
-  // Build a unified, newest-first timeline of deposits and disbursements.
+  // Build a unified, newest-first timeline of deposits and disbursements,
+  // carrying along each event's frozen legacy notes (if any).
   const lines = useMemo(() => {
     const out: {
       key: string;
@@ -1019,6 +1450,8 @@ function MesaMemberDetail({
       company: number;
       total: number;
       label: string | null;
+      notes: string | null;
+      additionalNotes: string | null;
     }[] = [];
     for (const e of events) {
       if ((e.total_daily_deposit_php ?? 0) > 0 && e.deposit_date) {
@@ -1030,6 +1463,8 @@ function MesaMemberDetail({
           company: e.simple_match_php ?? 0,
           total: e.total_daily_deposit_php ?? 0,
           label: null,
+          notes: e.notes,
+          additionalNotes: e.additional_notes,
         });
       }
       if ((e.disbursement_amount_php ?? 0) > 0 && e.disbursement_date) {
@@ -1041,12 +1476,36 @@ function MesaMemberDetail({
           company: 0,
           total: -(e.disbursement_amount_php ?? 0),
           label: e.disbursement_type || 'Disbursement',
+          notes: e.notes,
+          additionalNotes: e.additional_notes,
         });
       }
     }
     out.sort((a, b) => (b.date ?? '').localeCompare(a.date ?? ''));
     return out;
   }, [events]);
+
+  const submitNote = async () => {
+    const trimmed = noteBody.trim();
+    if (!trimmed) return;
+    setPostingNote(true);
+    try {
+      const res = await fetch('/api/mesa-notes', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ member_email: member.email, body: trimmed }),
+      });
+      const j = (await res.json()) as { note?: MesaNote; error?: string };
+      if (!res.ok) throw new Error(j.error ?? `HTTP ${res.status}`);
+      if (j.note) setNotes((prev) => [j.note!, ...prev]);
+      setNoteBody('');
+      toast.success('Note added');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to add note');
+    } finally {
+      setPostingNote(false);
+    }
+  };
 
   const fmtDate = (d: string | null) =>
     d ? new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—';
@@ -1095,65 +1554,196 @@ function MesaMemberDetail({
           )}
         </div>
 
-        {/* Timeline */}
-        <div className="min-h-0 flex-1 overflow-y-auto">
-          {loading ? (
-            <div className="space-y-2 p-5">
-              {[1, 2, 3, 4].map((i) => (
-                <div key={i} className="h-9 w-full animate-pulse rounded-lg bg-zinc-100 dark:bg-zinc-800" />
-              ))}
+        {/* Tabs */}
+        <div className="border-b border-zinc-100 px-5 py-2 dark:border-zinc-800/80">
+          <div
+            role="tablist"
+            aria-label="Member detail sections"
+            className="inline-flex items-center gap-1 rounded-lg border border-zinc-200 bg-zinc-50/70 p-1 dark:border-zinc-800 dark:bg-zinc-900/40"
+          >
+            <ViewTabButton active={tab === 'timeline'} onClick={() => setTab('timeline')} icon={Wallet} label={`Timeline (${lines.length})`} layoutId="mesa-detail-tab-pill" />
+            <ViewTabButton active={tab === 'requests'} onClick={() => setTab('requests')} icon={ClipboardList} label={`Requests (${requests.length})`} layoutId="mesa-detail-tab-pill" />
+            <ViewTabButton active={tab === 'notes'} onClick={() => setTab('notes')} icon={StickyNote} label={`Notes (${notes.length})`} layoutId="mesa-detail-tab-pill" />
+          </div>
+        </div>
+
+        {/* Tab content */}
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+          {tab === 'timeline' && (
+            <div className="min-h-0 flex-1 overflow-y-auto">
+              {loading ? (
+                <div className="space-y-2 p-5">
+                  {[1, 2, 3, 4].map((i) => (
+                    <div key={i} className="h-9 w-full animate-pulse rounded-lg bg-zinc-100 dark:bg-zinc-800" />
+                  ))}
+                </div>
+              ) : lines.length === 0 ? (
+                <div className="flex flex-col items-center justify-center gap-2 px-5 py-12 text-center text-sm text-zinc-500 dark:text-zinc-400">
+                  <Inbox className="h-6 w-6 text-zinc-400" />
+                  No recorded deposits or disbursements.
+                </div>
+              ) : (
+                <table className="w-full text-left text-xs">
+                  <thead className="sticky top-0 border-b border-zinc-100 bg-zinc-50/95 text-[11px] font-semibold uppercase tracking-wide text-zinc-500 backdrop-blur dark:border-zinc-800/80 dark:bg-zinc-900/95 dark:text-zinc-400">
+                    <tr>
+                      <th className="px-5 py-2">Date</th>
+                      <th className="px-4 py-2">Type</th>
+                      <th className="px-4 py-2 text-right">You</th>
+                      <th className="px-4 py-2 text-right">Simple.biz</th>
+                      <th className="px-5 py-2 text-right">Amount</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800/80">
+                    {lines.map((l) => (
+                      <React.Fragment key={l.key}>
+                        <tr className={cn(l.kind === 'disbursement' && 'bg-amber-50/40 dark:bg-amber-500/5')}>
+                          <td className="px-5 py-2 font-medium text-zinc-700 dark:text-zinc-300" data-label="Date">{fmtDate(l.date)}</td>
+                          <td className="px-4 py-2" data-label="Type">
+                            {l.kind === 'deposit' ? (
+                              <span className="inline-flex items-center gap-1 text-teal-700 dark:text-teal-300">
+                                <ArrowDownCircle className="h-3 w-3" /> Deposit
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1 text-amber-700 dark:text-amber-300">
+                                <ArrowUpCircle className="h-3 w-3" /> {l.label}
+                              </span>
+                            )}
+                          </td>
+                          <td className="px-4 py-2 text-right tabular-nums text-zinc-600 dark:text-zinc-400" data-label="You">
+                            {l.kind === 'deposit' ? formatPHP(l.you) : '—'}
+                          </td>
+                          <td className="px-4 py-2 text-right tabular-nums text-zinc-600 dark:text-zinc-400" data-label="Simple.biz">
+                            {l.kind === 'deposit' ? formatPHP(l.company) : '—'}
+                          </td>
+                          <td className={cn('px-5 py-2 text-right font-semibold tabular-nums', l.total < 0 ? 'text-amber-700 dark:text-amber-300' : 'text-zinc-900 dark:text-white')} data-label="Amount">
+                            {l.total < 0 ? `−${formatPHP(Math.abs(l.total))}` : formatPHP(l.total)}
+                          </td>
+                        </tr>
+                        {(l.notes || l.additionalNotes) && (
+                          <tr className={cn(l.kind === 'disbursement' && 'bg-amber-50/40 dark:bg-amber-500/5')}>
+                            <td colSpan={5} className="px-5 pb-2 text-[11px] italic text-zinc-500 dark:text-zinc-500">
+                              {l.notes && <div>Note: {l.notes}</div>}
+                              {l.additionalNotes && <div>Additional: {l.additionalNotes}</div>}
+                            </td>
+                          </tr>
+                        )}
+                      </React.Fragment>
+                    ))}
+                  </tbody>
+                </table>
+              )}
             </div>
-          ) : lines.length === 0 ? (
-            <div className="flex flex-col items-center justify-center gap-2 px-5 py-12 text-center text-sm text-zinc-500 dark:text-zinc-400">
-              <Inbox className="h-6 w-6 text-zinc-400" />
-              No recorded deposits or disbursements.
-            </div>
-          ) : (
-            <table className="w-full text-left text-xs">
-              <thead className="sticky top-0 border-b border-zinc-100 bg-zinc-50/95 text-[11px] font-semibold uppercase tracking-wide text-zinc-500 backdrop-blur dark:border-zinc-800/80 dark:bg-zinc-900/95 dark:text-zinc-400">
-                <tr>
-                  <th className="px-5 py-2">Date</th>
-                  <th className="px-4 py-2">Type</th>
-                  <th className="px-4 py-2 text-right">You</th>
-                  <th className="px-4 py-2 text-right">Simple.biz</th>
-                  <th className="px-5 py-2 text-right">Amount</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800/80">
-                {lines.map((l) => (
-                  <tr key={l.key} className={cn(l.kind === 'disbursement' && 'bg-amber-50/40 dark:bg-amber-500/5')}>
-                    <td className="px-5 py-2 font-medium text-zinc-700 dark:text-zinc-300" data-label="Date">{fmtDate(l.date)}</td>
-                    <td className="px-4 py-2" data-label="Type">
-                      {l.kind === 'deposit' ? (
-                        <span className="inline-flex items-center gap-1 text-teal-700 dark:text-teal-300">
-                          <ArrowDownCircle className="h-3 w-3" /> Deposit
+          )}
+
+          {tab === 'requests' && (
+            <div className="min-h-0 flex-1 overflow-y-auto">
+              {loading ? (
+                <div className="space-y-2 p-5">
+                  {[1, 2, 3].map((i) => (
+                    <div key={i} className="h-9 w-full animate-pulse rounded-lg bg-zinc-100 dark:bg-zinc-800" />
+                  ))}
+                </div>
+              ) : requests.length === 0 ? (
+                <div className="flex flex-col items-center justify-center gap-2 px-5 py-12 text-center text-sm text-zinc-500 dark:text-zinc-400">
+                  <Inbox className="h-6 w-6 text-zinc-400" />
+                  No MESA requests from this member yet.
+                </div>
+              ) : (
+                <div className="divide-y divide-zinc-100 dark:divide-zinc-800/80">
+                  {requests.map((r) => (
+                    <div key={r.id} className="px-5 py-3">
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2">
+                          <Badge variant="outline" className={cn('text-[10.5px] font-semibold uppercase tracking-wide', TYPE_COLORS[r.request_type])}>
+                            {TYPE_LABELS[r.request_type]}
+                          </Badge>
+                          <StatusBadge status={r.status} />
+                        </div>
+                        <span className="text-[11px] text-zinc-400">
+                          {new Date(r.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
                         </span>
-                      ) : (
-                        <span className="inline-flex items-center gap-1 text-amber-700 dark:text-amber-300">
-                          <ArrowUpCircle className="h-3 w-3" /> {l.label}
-                        </span>
+                      </div>
+                      {r.amount_needed != null && (
+                        <p className="mt-1 font-mono text-xs text-zinc-700 dark:text-zinc-300">{formatPHP(r.amount_needed)}</p>
                       )}
-                    </td>
-                    <td className="px-4 py-2 text-right tabular-nums text-zinc-600 dark:text-zinc-400" data-label="You">
-                      {l.kind === 'deposit' ? formatPHP(l.you) : '—'}
-                    </td>
-                    <td className="px-4 py-2 text-right tabular-nums text-zinc-600 dark:text-zinc-400" data-label="Simple.biz">
-                      {l.kind === 'deposit' ? formatPHP(l.company) : '—'}
-                    </td>
-                    <td className={cn('px-5 py-2 text-right font-semibold tabular-nums', l.total < 0 ? 'text-amber-700 dark:text-amber-300' : 'text-zinc-900 dark:text-white')} data-label="Amount">
-                      {l.total < 0 ? `−${formatPHP(Math.abs(l.total))}` : formatPHP(l.total)}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+                      {r.disbursement_reason && (
+                        <p className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">{r.disbursement_reason}</p>
+                      )}
+                      {r.explanation && (
+                        <p className="mt-1 text-xs italic text-zinc-500 dark:text-zinc-500">{r.explanation}</p>
+                      )}
+                      {r.status !== 'pending' && r.review_notes && (
+                        <p className="mt-1 text-xs italic text-zinc-500 dark:text-zinc-500">Review: {r.review_notes}</p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {tab === 'notes' && (
+            <>
+              <div className="border-b border-zinc-100 p-4 dark:border-zinc-800/80">
+                <textarea
+                  value={noteBody}
+                  onChange={(e) => setNoteBody(e.target.value.slice(0, 500))}
+                  rows={3}
+                  placeholder="Add an internal note about this member..."
+                  className="w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 placeholder-zinc-400 focus:border-teal-500 focus:outline-none focus:ring-2 focus:ring-teal-500/20 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
+                />
+                <div className="mt-1.5 flex items-center justify-between">
+                  <span className="text-[11px] text-zinc-400">{noteBody.length}/500 characters</span>
+                  <Button
+                    type="button"
+                    size="sm"
+                    disabled={!noteBody.trim() || postingNote}
+                    onClick={submitNote}
+                    className="h-7 bg-teal-600 text-white hover:bg-teal-700 dark:bg-teal-600 dark:hover:bg-teal-500"
+                  >
+                    Add note
+                  </Button>
+                </div>
+              </div>
+              <div className="min-h-0 flex-1 overflow-y-auto">
+                {loading ? (
+                  <div className="space-y-2 p-5">
+                    {[1, 2].map((i) => (
+                      <div key={i} className="h-9 w-full animate-pulse rounded-lg bg-zinc-100 dark:bg-zinc-800" />
+                    ))}
+                  </div>
+                ) : notes.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center gap-2 px-5 py-12 text-center text-sm text-zinc-500 dark:text-zinc-400">
+                    <Inbox className="h-6 w-6 text-zinc-400" />
+                    No notes yet — add the first one above.
+                  </div>
+                ) : (
+                  <div className="divide-y divide-zinc-100 dark:divide-zinc-800/80">
+                    {notes.map((n) => (
+                      <div key={n.id} className="px-5 py-3">
+                        <p className="text-sm text-zinc-700 dark:text-zinc-300">{n.body}</p>
+                        <p className="mt-1 text-[11px] text-zinc-400">
+                          {n.author_name ?? n.author_email} · {new Date(n.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </>
           )}
         </div>
 
         {/* Footer */}
         <div className="flex items-center justify-between border-t border-zinc-200 px-5 py-3 dark:border-zinc-800">
           <span className="text-[11px] text-zinc-400">
-            {loading ? 'Loading…' : `${lines.length} event${lines.length === 1 ? '' : 's'}`}
+            {loading
+              ? 'Loading…'
+              : tab === 'timeline'
+              ? `${lines.length} event${lines.length === 1 ? '' : 's'}`
+              : tab === 'requests'
+              ? `${requests.length} request${requests.length === 1 ? '' : 's'}`
+              : `${notes.length} note${notes.length === 1 ? '' : 's'}`}
           </span>
           <Button type="button" variant="outline" size="sm" onClick={onClose}>Close</Button>
         </div>

@@ -130,9 +130,12 @@ export default function Sidebar({ activeTab, setActiveTab, mobileOpen, allowedTa
       id="accounting-sidebar-nav"
       ariaLabel="Accounting navigation"
       className={cn(
-        'flex h-dvh w-64 max-w-[min(100vw,16rem)] shrink-0 flex-col border-r border-orange-100 bg-gradient-to-b from-white to-orange-50/40 text-zinc-600 shadow-xl dark:border-blue-950/60 dark:from-[#0d1117] dark:to-[#0f1729] dark:text-zinc-400 md:max-w-none md:shadow-none',
-        'fixed inset-y-0 left-0 z-50 transition-[transform,width] duration-300 ease-out md:static md:z-auto md:translate-x-0',
-        mobileOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0',
+        'flex h-dvh w-[85vw] max-w-[20rem] shrink-0 flex-col border-r border-orange-100 bg-gradient-to-b from-white to-orange-50/40 text-zinc-600 dark:border-blue-950/60 dark:from-[#0d1117] dark:to-[#0f1729] dark:text-zinc-400 md:w-64 md:max-w-none md:shadow-none',
+        'fixed inset-y-0 left-0 z-50 transform-gpu will-change-transform md:static md:z-auto md:translate-x-0 md:opacity-100',
+        'transition-[transform,opacity,box-shadow,width] duration-[360ms] ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none',
+        mobileOpen
+          ? 'translate-x-0 opacity-100 shadow-2xl shadow-black/25'
+          : '-translate-x-full opacity-0 shadow-none md:translate-x-0 md:opacity-100',
       )}
     >
       <div className="flex min-h-0 flex-1 flex-col p-6">
@@ -142,13 +145,19 @@ export default function Sidebar({ activeTab, setActiveTab, mobileOpen, allowedTa
 
         <ScrollArea className="-mx-2 min-h-0 flex-1">
           <nav className="space-y-1 px-2">
-            {visibleNavItems.filter((item) => item.id !== 's-wall').map((item) => (
+            {visibleNavItems.filter((item) => item.id !== 's-wall').map((item, index) => (
               <button
                 key={item.id}
                 onClick={() => setActiveTab(item.id)}
                 title={collapsed ? item.label : undefined}
+                style={{
+                  transitionDelay: mobileOpen ? `${60 + index * 35}ms` : '0ms',
+                }}
                 className={cn(
-                  'group flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-all duration-200',
+                  'group flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-[background-color,color,transform,box-shadow,opacity] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none',
+                  mobileOpen
+                    ? 'translate-x-0 opacity-100'
+                    : '-translate-x-6 opacity-0 md:translate-x-0 md:opacity-100',
                   activeTab === item.id
                     ? 'bg-gradient-to-r from-orange-100 to-orange-50 text-orange-900 shadow-sm dark:from-blue-950/70 dark:to-blue-950/40 dark:text-white'
                     : 'hover:bg-orange-50 hover:text-zinc-900 dark:hover:bg-blue-950/30 dark:hover:text-zinc-200',
@@ -210,8 +219,14 @@ export default function Sidebar({ activeTab, setActiveTab, mobileOpen, allowedTa
               <button
                 onClick={() => setActiveTab('s-wall')}
                 title={collapsed ? 'S-Wall' : undefined}
+                style={{
+                  transitionDelay: mobileOpen ? `${60 + visibleNavItems.length * 35}ms` : '0ms',
+                }}
                 className={cn(
-                  'group/sw flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-all duration-200',
+                  'group/sw flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-[background-color,color,transform,box-shadow,opacity] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none',
+                  mobileOpen
+                    ? 'translate-x-0 opacity-100'
+                    : '-translate-x-6 opacity-0 md:translate-x-0 md:opacity-100',
                   activeTab === 's-wall'
                     ? 'bg-gradient-to-r from-violet-100 to-violet-50 text-violet-900 shadow-sm dark:from-violet-950/70 dark:to-violet-950/40 dark:text-white'
                     : 'hover:bg-violet-50 hover:text-zinc-900 dark:hover:bg-violet-950/30 dark:hover:text-zinc-200',
@@ -233,29 +248,44 @@ export default function Sidebar({ activeTab, setActiveTab, mobileOpen, allowedTa
               </button>
             )}
           </nav>
+
+          {/* ViewSwitcher + theme toggle live INSIDE the scroll surface so they
+              stay reachable via the same scrollbar on short viewports (matches HR/Employee). */}
+          <div className="mt-5 px-2">
+            <div className="border-t border-orange-100 pt-4 dark:border-blue-950/60">
+              <ViewSwitcher email={email} currentView="accounting" collapsed={collapsed} />
+              <button
+                onClick={() => withViewTransition(() => setTheme(isDark ? 'light' : 'dark'))}
+                title={collapsed ? (isDark ? 'Dark mode' : 'Light mode') : undefined}
+                className="mt-3 flex w-full items-center justify-between rounded-md border border-orange-100 bg-orange-50/60 px-3 py-2 transition-colors hover:bg-orange-100/80 dark:border-blue-950/60 dark:bg-blue-950/20 dark:hover:bg-blue-950/40"
+                aria-label="Toggle dark mode"
+              >
+                <div className="flex items-center gap-2 text-zinc-700 dark:text-zinc-300">
+                  {isDark ? <Moon className="h-4 w-4 shrink-0" /> : <Sun className="h-4 w-4 shrink-0" />}
+                  <span className={cn('text-xs font-medium sb-collapse-fade')}>{isDark ? 'Dark mode' : 'Light mode'}</span>
+                </div>
+                <div className={cn('flex h-6 w-6 items-center justify-center rounded-md bg-white shadow-sm transition-opacity duration-[var(--sb-collapse-ms)] ease-[var(--sb-collapse-ease)] dark:bg-blue-950/60', collapsed && 'md:opacity-0')}>
+                  {isDark ? (
+                    <Sun className="h-3.5 w-3.5 text-orange-400" />
+                  ) : (
+                    <Moon className="h-3.5 w-3.5 text-blue-500" />
+                  )}
+                </div>
+              </button>
+            </div>
+          </div>
         </ScrollArea>
       </div>
 
-      <div className="mt-auto border-t border-orange-100 p-4 dark:border-blue-950/60">
-        <ViewSwitcher email={email} currentView="accounting" collapsed={collapsed} />
-        <button
-          onClick={() => withViewTransition(() => setTheme(isDark ? 'light' : 'dark'))}
-          title={collapsed ? (isDark ? 'Dark mode' : 'Light mode') : undefined}
-          className="mb-2 flex w-full items-center justify-between rounded-md border border-orange-100 bg-orange-50/60 px-3 py-2 transition-colors hover:bg-orange-100/80 dark:border-blue-950/60 dark:bg-blue-950/20 dark:hover:bg-blue-950/40"
-          aria-label="Toggle dark mode"
-        >
-          <div className="flex items-center gap-2 text-zinc-700 dark:text-zinc-300">
-            {isDark ? <Moon className="h-4 w-4 shrink-0" /> : <Sun className="h-4 w-4 shrink-0" />}
-            <span className={cn('text-xs font-medium sb-collapse-fade')}>{isDark ? 'Dark mode' : 'Light mode'}</span>
-          </div>
-          <div className={cn('flex h-6 w-6 items-center justify-center rounded-md bg-white shadow-sm transition-opacity duration-[var(--sb-collapse-ms)] ease-[var(--sb-collapse-ease)] dark:bg-blue-950/60', collapsed && 'md:opacity-0')}>
-            {isDark ? (
-              <Sun className="h-3.5 w-3.5 text-orange-400" />
-            ) : (
-              <Moon className="h-3.5 w-3.5 text-blue-500" />
-            )}
-          </div>
-        </button>
+      <div
+        style={{
+          transitionDelay: mobileOpen ? `${60 + visibleNavItems.length * 35}ms` : '0ms',
+        }}
+        className={cn(
+          'mt-auto border-t border-orange-100 p-4 transition-[transform,opacity] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none dark:border-blue-950/60',
+          mobileOpen ? 'translate-x-0 opacity-100' : '-translate-x-6 opacity-0 md:translate-x-0 md:opacity-100',
+        )}
+      >
         <div className="mb-4 flex items-center gap-2.5 rounded-md border border-orange-100 bg-orange-50/60 px-2.5 py-2 dark:border-blue-950/60 dark:bg-blue-950/20">
           <EmployeeAvatar
             photoUrl={profilePhotoUrl}

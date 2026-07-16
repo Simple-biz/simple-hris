@@ -10553,6 +10553,7 @@ export default function PayrollWizard({
                             <th className="px-3 py-2.5 text-right">KPI Bonus</th>
                             {pabColShownHsl && <th className="px-3 py-2.5 text-center">PAB</th>}
                             {techColShownHsl && <th className="px-3 py-2.5 text-center">Tech Bonus</th>}
+                            <th className="px-3 py-2.5 text-right" title="MESA — ₱100/paycheck deduction for enrolled members, plus any accounting-approved disbursement (paid out this run). Both fold into Total Pay.">MESA</th>
                             <th className="px-3 py-2.5 text-right">Adjustment</th>
                             <th className="px-3 py-2.5 text-right" title="Orphanage pay — a manual amount added on top of total pay; appears as its own paystub line.">Orphanage</th>
                             <th className="px-3 py-2.5 text-right">Total Pay</th>
@@ -10575,7 +10576,14 @@ export default function PayrollWizard({
                             // Orphanage pay — manual positive amount added on top of total pay.
                             const hasOrphanage = orphanageAmounts[r.email] !== undefined;
                             const orphanagePay = orphanageAmounts[r.email] ?? 0;
-                            const totalPay = (r.initialPay ?? 0) + effectiveBonus + pabAmt + techAmt + orphanagePay;
+                            // MESA — ₱100/paycheck deduction for enrolled members, plus any
+                            // accounting-approved disbursement paid out this run. Mirrors the
+                            // Additions tab + the final-pay compute so Total Pay matches the paystub.
+                            const hslMesaEmail = normEmail(r.email) ?? '';
+                            const hslRateRow = ratesByEmail.get(hslMesaEmail);
+                            const empMesaDisbursement = mesaDisbursements.get(hslMesaEmail) ?? 0;
+                            const empMesaDeduction = (r.initialPay != null && (hslRateRow?.mesa_member || empMesaDisbursement > 0)) ? 100 : 0;
+                            const totalPay = (r.initialPay ?? 0) + effectiveBonus + pabAmt + techAmt + orphanagePay - empMesaDeduction + empMesaDisbursement;
 
                             return (
                               <tr key={r.email} className="transition-colors hover:bg-violet-50/30 dark:hover:bg-violet-950/10">
@@ -10676,6 +10684,35 @@ export default function PayrollWizard({
                                   )}
                                 </td>
                                 )}
+                                {/* MESA — automatic -₱100 contribution for members, plus any
+                                    accounting-approved disbursement (paid out this run). Both fold into Total Pay. */}
+                                <td
+                                  className={cn(
+                                    'px-3 py-3 text-right font-mono text-xs tabular-nums',
+                                    empMesaDisbursement > 0
+                                      ? 'font-semibold text-emerald-600 dark:text-emerald-400'
+                                      : empMesaDeduction > 0
+                                        ? 'font-semibold text-rose-600 dark:text-rose-400'
+                                        : 'text-zinc-300 dark:text-zinc-700',
+                                  )}
+                                  title={[
+                                    empMesaDisbursement > 0 ? `Approved disbursement +${formatPHP(empMesaDisbursement)} (added to Total Pay)` : null,
+                                    empMesaDeduction > 0 ? `MESA member — ${formatPHP(empMesaDeduction)} contribution deducted` : null,
+                                  ].filter(Boolean).join(' · ') || 'Not enrolled in MESA'}
+                                >
+                                  {empMesaDisbursement > 0 ? (
+                                    <div className="flex flex-col items-end leading-tight">
+                                      <span>+{formatPHP(empMesaDisbursement)}</span>
+                                      {empMesaDeduction > 0 && (
+                                        <span className="text-[9px] text-rose-500 dark:text-rose-400">-{formatPHP(empMesaDeduction)}</span>
+                                      )}
+                                    </div>
+                                  ) : empMesaDeduction > 0 ? (
+                                    `-${formatPHP(empMesaDeduction)}`
+                                  ) : (
+                                    '—'
+                                  )}
+                                </td>
                                 <td className="px-3 py-3 text-right">
                                   {override !== null ? (
                                     <div className="flex items-center justify-end gap-1">
@@ -10765,7 +10802,7 @@ export default function PayrollWizard({
                         </tbody>
                         <tfoot className="border-t-2 border-zinc-200 bg-zinc-50/60 dark:border-zinc-800 dark:bg-zinc-900/40">
                           {(() => {
-                            let totalInitialPay = 0, totalPab = 0, totalTech = 0, totalKpi = 0, totalAdj = 0, totalOrphanage = 0, totalWkndPremium = 0;
+                            let totalInitialPay = 0, totalPab = 0, totalTech = 0, totalKpi = 0, totalAdj = 0, totalOrphanage = 0, totalWkndPremium = 0, totalMesaDeduction = 0, totalMesaDisbursement = 0;
                             for (const r of visibleHslRows) {
                               const em = (r.email ?? '').toLowerCase();
                               totalInitialPay += r.initialPay ?? 0;
@@ -10777,6 +10814,11 @@ export default function PayrollWizard({
                               if (techBonusEligible.has(r.email) && isTechDeptEligible(r.email)) totalTech += techAmountPhp;
                               const wp = weekendPremiumByEmail.get(em);
                               if (wp) totalWkndPremium += wp.regPremiumPHP + wp.otPremiumPHP;
+                              const memail = normEmail(r.email) ?? '';
+                              const disb = mesaDisbursements.get(memail) ?? 0;
+                              const ded = (r.initialPay != null && (ratesByEmail.get(memail)?.mesa_member || disb > 0)) ? 100 : 0;
+                              totalMesaDisbursement += disb;
+                              totalMesaDeduction += ded;
                             }
                             return (
                               <tr>
@@ -10802,6 +10844,20 @@ export default function PayrollWizard({
                                   {totalTech > 0 ? `+${formatPHP(totalTech)}` : <span className="text-zinc-400 dark:text-zinc-600">—</span>}
                                 </td>
                                 )}
+                                <td className="px-3 py-2.5 text-right font-mono text-sm font-bold tabular-nums">
+                                  {totalMesaDisbursement > 0 ? (
+                                    <div className="flex flex-col items-end leading-tight">
+                                      <span className="text-emerald-600 dark:text-emerald-400">+{formatPHP(totalMesaDisbursement)}</span>
+                                      {totalMesaDeduction > 0 && (
+                                        <span className="text-[10px] text-rose-500 dark:text-rose-400">-{formatPHP(totalMesaDeduction)}</span>
+                                      )}
+                                    </div>
+                                  ) : totalMesaDeduction > 0 ? (
+                                    <span className="text-rose-600 dark:text-rose-400">-{formatPHP(totalMesaDeduction)}</span>
+                                  ) : (
+                                    <span className="text-zinc-400 dark:text-zinc-600">—</span>
+                                  )}
+                                </td>
                                 <td className="px-3 py-2.5 text-right font-mono text-sm font-bold tabular-nums text-amber-600 dark:text-amber-400">
                                   {totalAdj !== 0 ? `${totalAdj > 0 ? '+' : ''}${formatPHP(totalAdj)}` : <span className="text-zinc-400 dark:text-zinc-600">—</span>}
                                 </td>
@@ -10810,7 +10866,7 @@ export default function PayrollWizard({
                                 </td>
                                 <td className="px-3 py-2.5 text-right">
                                   <PhpWithUsd
-                                    php={totalInitialPay + totalKpi + totalAdj + totalOrphanage + totalPab + totalTech}
+                                    php={totalInitialPay + totalKpi + totalAdj + totalOrphanage + totalPab + totalTech - totalMesaDeduction + totalMesaDisbursement}
                                     usdToPhp={usdToPhpRate}
                                     phpClassName="font-mono text-sm font-bold tabular-nums text-zinc-900 dark:text-zinc-100"
                                   />

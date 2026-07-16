@@ -424,6 +424,7 @@
       "PowerShell(npx tsx tmp-debug-rod.ts)",
       "Bash(node scripts/validate_palette.js \"#3b82f6,#f59e0b,#8b5cf6,#10b981\" --mode dark --surface \"#141414\")",
       "Bash(node scripts/validate_palette.js \"#ef4444,#f97316,#3b82f6,#a1a1aa\" --mode dark --surface \"#141414\")",
+<<<<<<< Updated upstream
       "Bash(git config *)",
       "Bash(git merge *)",
       "Bash(git stash *)",
@@ -440,6 +441,18 @@
       "Bash(git fetch *)",
       "Bash(git -C \"e:/Users/Itachi/Desktop/simple-hris\" log --oneline -3 origin/main)",
       "Bash(npx vercel *)"
+=======
+      "Bash(grep -oE \"\\\\\\([0-9]+,.*\\(deposit|Return|Disbursement|[0-9]{2}\\\\.00\\).*\")",
+      "Bash(sed -E \"s/'[0-9]+', DATE '[0-9-]+', \\(DATE '[0-9-]+'|NULL\\), //\")",
+      "Bash(git -C /c/Users/Kane/Desktop/simple-hris log -5 --format=\"%ad %h %s\" --date=short -- references/sql/migrate/)",
+      "Bash(git -C /c/Users/Kane/Desktop/simple-hris log -10 --format=\"%ad %h %s\" --date=short -- references/sql/)",
+      "Bash(git -C /c/Users/Kane/Desktop/simple-hris show --stat 7c7cb5c)",
+      "Bash(git -C /c/Users/Kane/Desktop/simple-hris show --stat 75ff060)",
+      "Bash(git -C /c/Users/Kane/Desktop/simple-hris show --stat dbda06e)",
+      "Bash(node -e \"const p=require\\('/c/Users/Kane/Desktop/simple-hris/package.json'\\); console.log\\(JSON.stringify\\(p.scripts,null,2\\)\\)\")",
+      "Bash(node -e \"const p=require\\('./package.json'\\); console.log\\(JSON.stringify\\(p.scripts,null,2\\)\\)\")",
+      "Bash(echo \"EXIT_CODE=$?\")"
+>>>>>>> Stashed changes
     ],
     "additionalDirectories": [
       "c:\\Users\\Itachi\\.claude\\projects\\c--Users-Itachi-Desktop-simple-hris\\memory",

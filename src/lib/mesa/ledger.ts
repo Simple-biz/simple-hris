@@ -23,11 +23,14 @@ export interface MesaLedgerEvent {
   disbursement_amount_php: number | null;
   disbursement_date: string | null;
   disbursement_type: string | null;
+  /** Frozen, per-event free text from the original CSV backfill (read-only). */
+  notes: string | null;
+  additional_notes: string | null;
 }
 
 /** Columns to SELECT from mesa_ledger to build the shapes below. */
 export const MESA_LEDGER_SELECT =
-  'id, email, name, department, status, worker_contribution_php, simple_match_php, total_daily_deposit_php, deposit_date, disbursement_amount_php, disbursement_date, disbursement_type';
+  'id, email, name, department, status, worker_contribution_php, simple_match_php, total_daily_deposit_php, deposit_date, disbursement_amount_php, disbursement_date, disbursement_type, notes, additional_notes';
 
 /** Per-member rollup — "how much they've contributed, and what's left". */
 export interface MesaMemberSummary {
