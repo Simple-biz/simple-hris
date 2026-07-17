@@ -67,9 +67,13 @@ function EarningRow({
 export function PayStubStatement({
   view,
   paidAt,
+  estimated = false,
 }: {
   view: PayStubView;
   paidAt?: string | null;
+  /** Reconstructed-from-hours week (never locked): shows an amber Estimate badge
+   *  and a footnote instead of claiming it's a final/paid statement. */
+  estimated?: boolean;
 }) {
   const paidLabel = formatPaidAt(paidAt);
   return (
@@ -99,6 +103,11 @@ export function PayStubStatement({
             <div className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-2.5 py-1 text-[11px] font-semibold text-emerald-700 ring-1 ring-emerald-200">
               <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
               Paid {paidLabel}
+            </div>
+          ) : estimated ? (
+            <div className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-amber-50 px-2.5 py-1 text-[11px] font-semibold text-amber-700 ring-1 ring-amber-200">
+              <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />
+              Estimate
             </div>
           ) : (
             <div className="mt-[5px] text-[11px] leading-4 text-[#556377]">Confidential pay record</div>
@@ -229,6 +238,17 @@ export function PayStubStatement({
             </tbody>
           </table>
         </div>
+
+        {/* Estimate notice — reconstructed weeks only */}
+        {estimated && (
+          <div className="px-8 pb-1 pt-2.5">
+            <div className="rounded-[10px] border border-amber-200 bg-amber-50 px-3.5 py-2 text-[11px] leading-4 text-amber-800">
+              <strong className="text-amber-900">Estimate:</strong> reconstructed from your logged
+              hours and standard rates/bonuses. It excludes any discretionary bonus, manual
+              adjustment, or MESA reimbursement, so your actual pay for this week may differ.
+            </div>
+          </div>
+        )}
 
         {/* Confidential */}
         <div className="px-8 pb-4 pt-2.5">

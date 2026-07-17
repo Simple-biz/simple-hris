@@ -11,6 +11,8 @@ interface PayStubResponse {
   available: boolean;
   paidAt: string | null;
   status?: string | null;
+  /** True when reconstructed from hours (an unlocked week) — shows an Estimate badge. */
+  estimated?: boolean;
 }
 
 /**
@@ -124,7 +126,7 @@ export function PayStubModal({
                 <p className="text-sm font-medium text-zinc-700">{error}</p>
               </div>
             ) : data?.paystub && data.available ? (
-              <PayStubStatement view={data.paystub} paidAt={data.paidAt} />
+              <PayStubStatement view={data.paystub} paidAt={data.paidAt} estimated={data.estimated} />
             ) : (
               <div className="flex min-h-[240px] w-full max-w-[560px] flex-col items-center justify-center gap-3 rounded-[17px] bg-white px-8 text-center shadow-2xl">
                 <FileWarning className="h-8 w-8 text-zinc-400" />

@@ -739,38 +739,33 @@ export default function EmployeeProfile({
   // the per-week modal, and the all-weeks PDF/XLSX export.
   const [payStubs, setPayStubs] = useState<PayStubWeek[]>([]);
   const [payStubsLoading, setPayStubsLoading] = useState(false);
-  const [payStubsLoaded, setPayStubsLoaded] = useState(false);
   const [payStubsError, setPayStubsError] = useState<string | null>(null);
   const [payStubModalFile, setPayStubModalFile] = useState<string | null>(null);
   const [exportingPdf, setExportingPdf] = useState(false);
   const [exportingXlsx, setExportingXlsx] = useState(false);
+  // Fetch the all-weeks statement set exactly once — the first time the tab is
+  // opened. A ref (not state) gates it, so flipping `loading` can't re-trigger
+  // the effect and cancel its own in-flight request. EmployeeProfile stays
+  // mounted across tab switches, so no cleanup/cancellation is needed.
+  const payStubsRequestedRef = useRef(false);
 
   useEffect(() => {
-    if (activeTab !== 'payStubs' || payStubsLoaded || payStubsLoading) return;
-    let cancelled = false;
+    if (activeTab !== 'payStubs' || payStubsRequestedRef.current) return;
+    payStubsRequestedRef.current = true;
     setPayStubsLoading(true);
     setPayStubsError(null);
     void fetch('/api/employee/paystub?all=1', { cache: 'no-store' })
       .then(async (r) => {
         const json = (await r.json()) as { stubs?: PayStubWeek[]; error?: string };
-        if (cancelled) return;
         if (!r.ok) {
           setPayStubsError(json.error || 'Could not load your pay stubs.');
           return;
         }
         setPayStubs(json.stubs ?? []);
       })
-      .catch(() => {
-        if (!cancelled) setPayStubsError('Could not load your pay stubs.');
-      })
-      .finally(() => {
-        if (!cancelled) {
-          setPayStubsLoading(false);
-          setPayStubsLoaded(true);
-        }
-      });
-    return () => { cancelled = true; };
-  }, [activeTab, payStubsLoaded, payStubsLoading]);
+      .catch(() => setPayStubsError('Could not load your pay stubs.'))
+      .finally(() => setPayStubsLoading(false));
+  }, [activeTab]);
 
   // Skill Sets - editable by the employee, read-only on the My Team page.
   const [skillSet, setSkillSet] = useState<SkillSetFields>(EMPTY_SKILL_SET);
@@ -1576,21 +1571,34 @@ export default function EmployeeProfile({
                                   <Receipt className="h-4 w-4" aria-hidden />
                                 </span>
                                 <div className="min-w-0">
-                                  <p className="truncate text-[13.5px] font-medium text-zinc-900 dark:text-zinc-100">
-                                    Period ending {w.view.weekHuman || '—'}
-                                  </p>
+                                  <div className="flex items-center gap-1.5">
+                                    <p className="truncate text-[13.5px] font-medium text-zinc-900 dark:text-zinc-100">
+                                      Period ending {w.view.weekHuman || '—'}
+                                    </p>
+                                    {w.estimated && (
+                                      <span className="shrink-0 rounded-full bg-amber-50 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-amber-700 ring-1 ring-inset ring-amber-200 dark:bg-amber-500/10 dark:text-amber-400 dark:ring-amber-500/20">
+                                        Estimate
+                                      </span>
+                                    )}
+                                  </div>
                                   <p className="mt-0.5 text-[11.5px] text-zinc-500 dark:text-zinc-400">
-                                    {w.paidAt ? `Paid ${formatStartDate(w.paidAt)}` : 'Paid'}
+                                    {w.paidAt
+                                      ? `Paid ${formatStartDate(w.paidAt)}`
+                                      : w.estimated
+                                        ? 'Reconstructed from hours'
+                                        : w.view.salaryDate
+                                          ? `Pay date ${formatStartDate(w.view.salaryDate)}`
+                                          : 'Statement ready'}
                                   </p>
                                 </div>
                               </div>
                               <div className="flex shrink-0 items-center gap-3">
                                 <div className="text-right">
                                   <p className="text-[13.5px] font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">
-                                    {formatPHP(w.view.totalPayPhp)}
+                                    {w.estimated ? '~' : ''}{formatPHP(w.view.totalPayPhp)}
                                   </p>
                                   <p className="text-[11px] tabular-nums text-zinc-400 dark:text-zinc-500">
-                                    ${w.view.totalPayUsd.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD
+                                    {w.estimated ? '~' : ''}${w.view.totalPayUsd.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD
                                   </p>
                                 </div>
                                 <Button
@@ -1613,9 +1621,11 @@ export default function EmployeeProfile({
 
                   {payStubs.length > 0 && (
                     <p className="px-1 text-[12px] leading-relaxed text-zinc-500 dark:text-zinc-400">
-                      The PDF and XLSX exports cover all {payStubs.length} paid{' '}
-                      {payStubs.length === 1 ? 'week' : 'weeks'} with the full earnings breakdown —
-                      the same figures on your emailed statements.
+                      The PDF and XLSX exports cover all {payStubs.length}{' '}
+                      {payStubs.length === 1 ? 'week' : 'weeks'} with the full earnings breakdown.
+                      {payStubs.some((w) => w.estimated)
+                        ? ' Weeks marked Estimate are reconstructed from your logged hours and standard rates/bonuses — they exclude discretionary bonuses, manual adjustments, and MESA reimbursements, so your actual pay may differ.'
+                        : ' These match the figures on your emailed statements.'}
                     </p>
                   )}
                 </>
