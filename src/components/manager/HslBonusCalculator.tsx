@@ -3,18 +3,21 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
-  CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, Download, Eye,
-  Filter, Lock, RefreshCw, RotateCcw, Save, Search, Users, X,
+  AlertTriangle, Check, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight,
+  Download, Eye, Filter, Loader2, Lock, Minus, Plus, RefreshCw, RotateCcw,
+  Save, Search, Trash2, UserPlus, Users, X,
 } from 'lucide-react';
 
 const COLLAPSE_EASE = [0.22, 1, 0.36, 1] as const;
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
+import { normEmail } from '@/lib/email/norm-email';
 import {
   BonusStatus, DeptConfig, HslDeptKey, HSL_DEPTS, HSL_DEPT_KEYS,
-  KpiData, SubTeamName, TeamSplitRule, TieredRule,
-  calcBonus, calcTeamSplitShare, canAccessHslDept, formatPeso,
+  HSL_MANAGERS, HSL_MANAGERS_BY_EMAIL, KpiData, ManagerComponent,
+  SubTeamName, TeamSplitRule, TieredRule,
+  calcBonus, calcManagerBonus, calcTeamSplitShare, canAccessHslDept, formatPeso,
 } from '@/lib/hsl-bonus/schema';
 import { parseDateRangeFromFilename } from '@/lib/hubstaff/calendar-column-dedupe';
 import {
@@ -48,6 +51,10 @@ interface DeptState {
   subTeams: Record<SubTeamName, SubTeamState>;
   dirty: boolean;
   saving: boolean;
+  /** Emails belonging to the dept's true roster (hsl_team_members, or HSL_MANAGERS
+   *  for the Managers dept). Any entry whose email is NOT here was added manually
+   *  as an external member and can be removed. */
+  rosterEmails: Set<string>;
 }
 
 type AllDeptState = Record<HslDeptKey, DeptState>;
@@ -192,6 +199,24 @@ export function recomputeSsdEntries(
   });
 }
 
+/**
+ * Per-employee bonus recompute for the Managers Weekly dept (perEmployee).
+ * Each manager's `calculated_bonus` is the sum of their ticked incentive
+ * components (calcManagerBonus). `calcBonus` returns 0 for this dept because it
+ * has no uniform rules, so this keeps the persisted amount canonical.
+ * Pass-through for any other dept.
+ */
+export function recomputeManagerEntries(
+  deptKey: HslDeptKey,
+  entries: EntryRow[],
+): EntryRow[] {
+  if (!HSL_DEPTS[deptKey].perEmployee) return entries;
+  return entries.map((e) => {
+    const bonus = calcManagerBonus(e.employee_email, e.kpi_data);
+    return e.calculated_bonus === bonus ? e : { ...e, calculated_bonus: bonus };
+  });
+}
+
 function periodLabel(dept: DeptConfig, start: string): string {
   if (dept.cadence === 'weekly') {
     const s = new Date(start + 'T00:00:00');
@@ -212,6 +237,92 @@ interface HslMember {
   hsl_name: string | null;
   is_manager: boolean;
   sub_team: SubTeamName | null;
+}
+
+// ── Shared entry primitives ───────────────────────────────────────────────────
+
+/** Peso amount that gives a quick "counted" pop whenever it changes, so the
+ *  operator sees their entry land. CSS-only; self-disables under reduced motion. */
+export function AnimatedPeso({
+  amount,
+  currency = 'PHP',
+  className,
+}: {
+  amount: number;
+  currency?: 'PHP' | 'USD';
+  className?: string;
+}) {
+  const [pulse, setPulse] = useState(0);
+  const prev = React.useRef(amount);
+  useEffect(() => {
+    if (prev.current !== amount) {
+      prev.current = amount;
+      setPulse((p) => p + 1);
+    }
+  }, [amount]);
+  return (
+    <span
+      key={pulse}
+      className={cn('inline-block tabular-nums', pulse > 0 && 'kpi-value-pop', className)}
+    >
+      {formatPeso(amount, currency)}
+    </span>
+  );
+}
+
+/** Compact number stepper for KPI counts: type a value or nudge with −/+.
+ *  Focus selects the field so typing replaces; values never drop below 0. The
+ *  native spinners are hidden in favour of larger, touch-friendly buttons. */
+function StepperInput({
+  value,
+  onChange,
+  disabled,
+  ariaLabel,
+}: {
+  value: number;
+  onChange: (n: number) => void;
+  disabled?: boolean;
+  ariaLabel?: string;
+}) {
+  const set = (n: number) => onChange(Math.max(0, Number.isFinite(n) ? n : 0));
+  const btn =
+    'flex h-7 w-6 items-center justify-center border-zinc-300 bg-zinc-50 text-zinc-500 transition-all hover:bg-zinc-100 hover:text-zinc-900 active:scale-90 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-zinc-50 disabled:hover:text-zinc-500 dark:border-zinc-700 dark:bg-zinc-800/70 dark:text-zinc-400 dark:hover:bg-zinc-700 dark:hover:text-zinc-100';
+  return (
+    <div className="inline-flex items-center">
+      <button
+        type="button"
+        tabIndex={-1}
+        aria-label={`Decrease ${ariaLabel ?? ''}`.trim()}
+        disabled={disabled || value <= 0}
+        onClick={() => set(value - 1)}
+        className={cn(btn, 'rounded-l-md border border-r-0')}
+      >
+        <Minus className="h-3 w-3" aria-hidden />
+      </button>
+      <input
+        type="number"
+        inputMode="numeric"
+        min={0}
+        aria-label={ariaLabel}
+        className="h-7 w-12 border-y border-zinc-300 bg-white px-1 text-center font-mono text-xs font-medium tabular-nums text-zinc-900 outline-none transition-colors focus:border-blue-400 focus:ring-1 focus:ring-blue-200 disabled:opacity-40 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:focus:border-zinc-500 dark:focus:ring-zinc-700 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+        value={value === 0 ? '' : String(value)}
+        placeholder="0"
+        disabled={disabled}
+        onFocus={(e) => e.currentTarget.select()}
+        onChange={(e) => set(parseInt(e.target.value.replace(/[^\d]/g, ''), 10) || 0)}
+      />
+      <button
+        type="button"
+        tabIndex={-1}
+        aria-label={`Increase ${ariaLabel ?? ''}`.trim()}
+        disabled={disabled}
+        onClick={() => set(value + 1)}
+        className={cn(btn, 'rounded-r-md border border-l-0')}
+      >
+        <Plus className="h-3 w-3" aria-hidden />
+      </button>
+    </div>
+  );
 }
 
 // ── Props ─────────────────────────────────────────────────────────────────────
@@ -247,6 +358,7 @@ export default function HslBonusCalculator({
         subTeams: { ...DEFAULT_SUB_TEAMS },
         dirty: false,
         saving: false,
+        rosterEmails: new Set(),
       };
     }
     return init;
@@ -265,6 +377,8 @@ export default function HslBonusCalculator({
   // "All" shows a collapsed overview and a single dept can be focused.
   const [activeFilter, setActiveFilter] = useState<HslDeptKey | 'all'>('all');
   const [manualOpen, setManualOpen] = useState<Record<string, boolean>>({});
+  /** Which dept's "add external member" modal is open (null = closed). */
+  const [addingMemberDept, setAddingMemberDept] = useState<HslDeptKey | null>(null);
 
   function periodStart(dept: DeptConfig): string {
     return dept.cadence === 'weekly' ? weekStart : monthStart;
@@ -288,6 +402,62 @@ export default function HslBonusCalculator({
         },
       };
     });
+  }
+
+  // ── External members ───────────────────────────────────────────────────────
+  // "Add external member" appends an off-roster person to a dept's calculator.
+  // No employee/roster record is created — the saved hsl_bonus_entries row is the
+  // single source of truth, so they flow to payroll through the normal Save →
+  // Mark Ready path exactly like a roster member.
+
+  /** Add an off-roster person to `key`. Returns an error to surface, or null. */
+  function addMember(key: HslDeptKey, name: string, emailRaw: string): string | null {
+    const email = normEmail(emailRaw) ?? '';
+    if (!email) return 'A valid email is required.';
+    const d = deptState[key];
+    if (!d) return 'This department has not finished loading yet.';
+    if (d.entries.some((e) => e.employee_email === email)) {
+      return 'Someone with this email is already on this calculator.';
+    }
+    const entry: EntryRow = {
+      employee_email: email,
+      employee_name: name.trim() || email,
+      is_manager: false,
+      kpi_data: {},
+      calculated_bonus: 0,
+    };
+    setDeptState((prev) => {
+      const cur = prev[key]!;
+      const entries = [...cur.entries, entry].sort((a, b) =>
+        a.employee_name.localeCompare(b.employee_name),
+      );
+      return { ...prev, [key]: { ...cur, entries, dirty: true } };
+    });
+    return null;
+  }
+
+  /** Remove a manually-added external member. Always fire the DELETE (it's keyed
+   *  by dept+period_start+email and is idempotent): a member added and saved in
+   *  the same session has no local `id` yet, so gating on `id` would leave the
+   *  saved row behind and it would reappear — still paid — on the next reload. */
+  async function removeMember(key: HslDeptKey, email: string) {
+    setDeptState((prev) => {
+      const cur = prev[key]!;
+      return {
+        ...prev,
+        [key]: { ...cur, dirty: true, entries: cur.entries.filter((e) => e.employee_email !== email) },
+      };
+    });
+    const start = periodStart(HSL_DEPTS[key]);
+    try {
+      await fetch(
+        `/api/hsl-bonus/entries?dept=${key}&period_start=${start}&email=${encodeURIComponent(email)}`,
+        { method: 'DELETE' },
+      );
+    } catch {
+      // best-effort — the local removal is already applied; a DELETE for a row
+      // that was never persisted is a harmless no-op.
+    }
   }
 
   // ── Load entries from DB and merge with roster auto-population ─────────────
@@ -324,9 +494,14 @@ export default function HslBonusCalculator({
 
       // Seed any roster members from hsl_team_members who aren't in entries yet.
       // Pre-fill kpi_data.sub_team for SSD so the dropdown reflects the seeded assignment.
+      // rosterEmails tracks the true roster so manually-added external members
+      // (email not in the roster) can be tagged + removed.
+      const rosterEmails = new Set<string>();
       (membersJson.rows ?? []).forEach((m) => {
         const email = m.email.toLowerCase();
-        if (!email || byEmail.has(email)) return;
+        if (!email) return;
+        rosterEmails.add(email);
+        if (byEmail.has(email)) return;
         const kpi: KpiData = {};
         if (m.sub_team) (kpi as unknown as Record<string, string>).sub_team = m.sub_team;
         byEmail.set(email, {
@@ -338,17 +513,37 @@ export default function HslBonusCalculator({
         });
       });
 
+      // Managers Weekly dept: the roster is the hardcoded HSL_MANAGERS cohort,
+      // not hsl_team_members. Seed any manager not already present so the dept
+      // always shows its full lineup even before anything has been scored.
+      if (dept.perEmployee) {
+        HSL_MANAGERS.forEach((mgr) => {
+          const email = mgr.email.toLowerCase();
+          rosterEmails.add(email);
+          if (byEmail.has(email)) return;
+          byEmail.set(email, {
+            employee_email: email,
+            employee_name: mgr.name,
+            is_manager: true,
+            kpi_data: {},
+            calculated_bonus: 0,
+          });
+        });
+      }
+
       const sortedEntries = Array.from(byEmail.values()).sort((a, b) =>
         a.employee_name.localeCompare(b.employee_name),
       );
       const status: BonusStatus = statusJson.rows?.[0]?.status ?? 'draft';
-      // After load, recompute SSD per-employee shares so the dept total +
-      // table read from the right values (DB persists 0 for legacy entries).
+      // After load, recompute per-employee amounts (SSD team-split shares and
+      // Managers Weekly component sums) so the dept total + table read the right
+      // values (DB persists 0 for legacy/unscored entries).
       setDeptState((prev) => {
-        const recomputed = recomputeSsdEntries(key, sortedEntries, prev[key]!.subTeams);
+        let recomputed = recomputeSsdEntries(key, sortedEntries, prev[key]!.subTeams);
+        recomputed = recomputeManagerEntries(key, recomputed);
         return {
           ...prev,
-          [key]: { ...prev[key]!, entries: recomputed, status, dirty: false },
+          [key]: { ...prev[key]!, entries: recomputed, status, dirty: false, rosterEmails },
         };
       });
     } catch {
@@ -660,7 +855,7 @@ export default function HslBonusCalculator({
             <div className="flex items-center gap-2 rounded-lg border border-zinc-200 bg-white px-3 py-1.5 shadow-sm dark:border-zinc-800 dark:bg-zinc-900/60">
               <span className="font-mono text-[10px] uppercase tracking-[0.15em] text-zinc-500">Total</span>
               <span className="font-mono text-sm font-bold text-emerald-600 dark:text-emerald-400">
-                {formatPeso(grandTotal)}
+                <AnimatedPeso amount={grandTotal} />
               </span>
               <span className="font-mono text-[10px] text-zinc-500">{totalPeople} ppl</span>
             </div>
@@ -751,7 +946,11 @@ export default function HslBonusCalculator({
                   return {
                     ...e,
                     kpi_data: newKpi,
-                    calculated_bonus: calcBonus(newKpi, HSL_DEPTS[key], e.is_manager),
+                    // Managers dept sums per-manager components; others use the
+                    // uniform rule engine.
+                    calculated_bonus: HSL_DEPTS[key].perEmployee
+                      ? calcManagerBonus(email, newKpi)
+                      : calcBonus(newKpi, HSL_DEPTS[key], e.is_manager),
                   };
                 });
                 // For SSD, sub_team changes affect every team member's share —
@@ -769,7 +968,9 @@ export default function HslBonusCalculator({
                   return {
                     ...e,
                     is_manager: newIsManager,
-                    calculated_bonus: calcBonus(e.kpi_data, HSL_DEPTS[key], newIsManager),
+                    calculated_bonus: HSL_DEPTS[key].perEmployee
+                      ? calcManagerBonus(email, e.kpi_data)
+                      : calcBonus(e.kpi_data, HSL_DEPTS[key], newIsManager),
                   };
                 });
                 // Re-share for SSD — toggling someone's manager flag doesn't
@@ -779,6 +980,9 @@ export default function HslBonusCalculator({
                 return { ...prev, [key]: { ...d, entries: finalEntries, dirty: true } };
               });
             }}
+            rosterEmails={deptState[key]!.rosterEmails}
+            onAddMember={() => setAddingMemberDept(key)}
+            onRemoveMember={(email) => void removeMember(key, email)}
             onSave={() => void saveDept(key)}
             onMarkReady={() => void markReady(key)}
             onMarkUnready={() => void reopenToDraft(key)}
@@ -831,6 +1035,18 @@ export default function HslBonusCalculator({
         onReopen={() => viewingDept && void reopenToDraft(viewingDept)}
         onClose={() => setViewingDept(null)}
       />
+
+      {/* Add-external-member modal — search the Global Master List and pick. */}
+      <AnimatePresence>
+        {addingMemberDept && (
+          <HslAddMemberModal
+            deptName={HSL_DEPTS[addingMemberDept].name}
+            color={HSL_DEPTS[addingMemberDept].color}
+            onAdd={(name, email) => addMember(addingMemberDept, name, email)}
+            onClose={() => setAddingMemberDept(null)}
+          />
+        )}
+      </AnimatePresence>
     </div>
   );
 }
@@ -885,6 +1101,9 @@ interface DeptBlockProps {
   ssdShareForTeam?: (subTeam: SubTeamName, memberCount: number) => number;
   payrollLocked: boolean;
   markUnreadySubmitting: boolean;
+  rosterEmails: Set<string>;
+  onAddMember: () => void;
+  onRemoveMember: (email: string) => void;
 }
 
 const DEPT_PAGE_SIZE = 10;
@@ -894,12 +1113,17 @@ function DeptBlock({
   onKpiChange, onToggleManager,
   onSave, onMarkReady, onMarkUnready, onView, onSubTeamChange, ssdShareForTeam,
   payrollLocked, markUnreadySubmitting,
+  rosterEmails, onAddMember, onRemoveMember,
 }: DeptBlockProps) {
   const dept = HSL_DEPTS[deptKey];
   const deptTotal = state.entries.reduce((s, e) => s + e.calculated_bonus, 0);
   const isTeamSplit = dept.rules[0]?.type === 'team_split';
   const tieredRule = dept.rules.find((r): r is TieredRule => r.type === 'tiered');
   const isLocked = state.status === 'locked';
+  // Scoring is editable only in draft. Once a period is 'ready' (sent to
+  // Accounting) or 'locked', inputs go read-only until it's reopened — this stops
+  // silent edits that never get saved to the DB Accounting actually reads.
+  const readOnly = state.status !== 'draft' || payrollLocked;
 
   function subTeamMemberCount(subTeam: SubTeamName): number {
     return state.entries.filter((e) => (e.kpi_data.sub_team as unknown as string) === subTeam).length;
@@ -1014,7 +1238,7 @@ function DeptBlock({
         <div className="flex shrink-0 items-center gap-3">
           <span className="font-mono text-[10px] text-zinc-500">{state.entries.length} ppl</span>
           <span className="font-mono text-base font-bold tabular-nums" style={{ color: dept.color }}>
-            {formatPeso(deptTotal)}
+            <AnimatedPeso amount={deptTotal} />
           </span>
         </div>
       </header>
@@ -1031,6 +1255,32 @@ function DeptBlock({
         className="overflow-hidden"
       >
       <div className="space-y-4 px-5 py-5">
+        {/* Action row. Add member (any dept, even empty) is a draft-only edit:
+            in 'ready'/'locked' the row instead shows why scoring is read-only, so
+            nobody makes changes that never reach Accounting. */}
+        <div className="flex items-center justify-between gap-2">
+          <span className="font-mono text-[10px] uppercase tracking-[0.12em] text-zinc-500">
+            {state.entries.length} {state.entries.length === 1 ? 'person' : 'people'}
+          </span>
+          {state.status === 'draft' ? (
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-7 gap-1.5 text-xs"
+              disabled={payrollLocked}
+              onClick={onAddMember}
+              title={payrollLocked ? 'Locked while payroll is processing' : 'Add someone who is not on the HSL roster'}
+            >
+              <UserPlus className="h-3.5 w-3.5" /> Add member
+            </Button>
+          ) : (
+            <span className="inline-flex items-center gap-1.5 font-mono text-[10px] text-zinc-500">
+              <Lock className="h-3 w-3" />
+              {isLocked ? 'Locked for the period' : 'Read-only — Mark as Unready to edit'}
+            </span>
+          )}
+        </div>
+
         {/* Search + pagination toolbar */}
         {state.entries.length > 0 && (
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
@@ -1120,14 +1370,28 @@ function DeptBlock({
           </div>
         )}
 
-        {!dept.noKpi && !isTeamSplit && (
+        {!dept.noKpi && !isTeamSplit && !dept.perEmployee && (
           <KpiTable
             dept={dept}
             entries={pagedEntries}
             subtotal={deptTotal}
-            isLocked={isLocked}
+            isLocked={readOnly}
             onKpiChange={onKpiChange}
             onToggleManager={onToggleManager}
+            rosterEmails={rosterEmails}
+            onRemoveMember={onRemoveMember}
+          />
+        )}
+
+        {/* Managers Weekly — each manager has a bespoke incentive checklist. */}
+        {dept.perEmployee && (
+          <HslManagersTable
+            entries={pagedEntries}
+            subtotal={deptTotal}
+            isLocked={readOnly}
+            onKpiChange={onKpiChange}
+            rosterEmails={rosterEmails}
+            onRemoveMember={onRemoveMember}
           />
         )}
 
@@ -1140,7 +1404,7 @@ function DeptBlock({
             <div className="flex min-w-0 flex-col">
               <SsdSubTeamGrid
                 subTeams={state.subTeams}
-                isLocked={isLocked}
+                isLocked={readOnly}
                 onSubTeamChange={onSubTeamChange}
                 ssdShareForTeam={ssdShareForTeam}
                 subTeamMemberCount={subTeamMemberCount}
@@ -1152,13 +1416,15 @@ function DeptBlock({
               <SsdEmployeeTable
                 entries={pagedEntries}
                 allEntries={state.entries}
-                isLocked={isLocked}
+                isLocked={readOnly}
                 ssdShareForTeam={ssdShareForTeam}
                 onSubTeamAssign={(email, subTeam) =>
                   onKpiChange(email, 'sub_team', subTeam as unknown as number)
                 }
                 activeFilter={subTeamFilter}
                 onFilterChange={setSubTeamFilter}
+                rosterEmails={rosterEmails}
+                onRemoveMember={onRemoveMember}
               />
             </div>
           </div>
@@ -1169,7 +1435,7 @@ function DeptBlock({
         {isTeamSplit && ssdShareForTeam && dept.noKpi && (
           <SsdSubTeamGrid
             subTeams={state.subTeams}
-            isLocked={isLocked}
+            isLocked={readOnly}
             onSubTeamChange={onSubTeamChange}
             ssdShareForTeam={ssdShareForTeam}
             subTeamMemberCount={subTeamMemberCount}
@@ -1277,9 +1543,11 @@ interface KpiTableProps {
   isLocked: boolean;
   onKpiChange: (email: string, key: string, val: number | boolean) => void;
   onToggleManager: (email: string) => void;
+  rosterEmails?: Set<string>;
+  onRemoveMember?: (email: string) => void;
 }
 
-export function KpiTable({ dept, entries, subtotal, isLocked, onKpiChange, onToggleManager }: KpiTableProps) {
+export function KpiTable({ dept, entries, subtotal, isLocked, onKpiChange, onToggleManager, rosterEmails, onRemoveMember }: KpiTableProps) {
   const rules = dept.rules.filter((r) => r.type !== 'team_split');
 
   return (
@@ -1310,11 +1578,35 @@ export function KpiTable({ dept, entries, subtotal, isLocked, onKpiChange, onTog
               </td>
             </tr>
           )}
-          {entries.map((e) => (
+          {entries.map((e) => {
+            const isExternal = !!rosterEmails && !rosterEmails.has(e.employee_email);
+            return (
             <tr key={e.employee_email} className="border-b border-zinc-100 hover:bg-zinc-50/60 dark:border-zinc-800/60 dark:hover:bg-zinc-900/40">
               <td className="px-3 py-2">
-                <div className="font-medium text-zinc-900 dark:text-zinc-100">{e.employee_name}</div>
-                <div className="font-mono text-[10px] text-zinc-500">{e.employee_email}</div>
+                <div className="flex items-center gap-1.5">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-1.5 font-medium text-zinc-900 dark:text-zinc-100">
+                      <span className="truncate">{e.employee_name}</span>
+                      {isExternal && (
+                        <span className="shrink-0 rounded bg-amber-100 px-1 py-0.5 font-mono text-[8px] font-semibold uppercase tracking-wider text-amber-700 dark:bg-amber-950/50 dark:text-amber-300">
+                          ext
+                        </span>
+                      )}
+                    </div>
+                    <div className="font-mono text-[10px] text-zinc-500">{e.employee_email}</div>
+                  </div>
+                  {isExternal && onRemoveMember && !isLocked && (
+                    <button
+                      type="button"
+                      onClick={() => onRemoveMember(e.employee_email)}
+                      title="Remove external member"
+                      aria-label={`Remove ${e.employee_name}`}
+                      className="ml-auto shrink-0 rounded p-1 text-zinc-400 transition-colors hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950/30 dark:hover:text-red-400"
+                    >
+                      <Trash2 className="h-3 w-3" />
+                    </button>
+                  )}
+                </div>
               </td>
               <td className="px-2 py-2 text-center">
                 <input
@@ -1340,32 +1632,172 @@ export function KpiTable({ dept, entries, subtotal, isLocked, onKpiChange, onTog
                       />
                     )
                   ) : (
-                    <input
-                      type="number"
-                      min={0}
-                      className="w-16 rounded border border-zinc-300 bg-white px-1.5 py-0.5 text-right font-mono text-xs text-zinc-900 outline-none transition-colors focus:border-blue-400 focus:ring-1 focus:ring-blue-200 disabled:opacity-40 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-100 dark:focus:border-zinc-500 dark:focus:ring-zinc-700"
-                      value={String(e.kpi_data[r.key] ?? '')}
+                    <StepperInput
+                      value={Number(e.kpi_data[r.key] ?? 0)}
                       disabled={isLocked}
-                      onChange={(ev) => onKpiChange(e.employee_email, r.key, Number(ev.target.value))}
+                      ariaLabel={`${r.label} for ${e.employee_name}`}
+                      onChange={(n) => onKpiChange(e.employee_email, r.key, n)}
                     />
                   )}
                 </td>
               ))}
               <td className="px-3 py-2 text-right font-mono font-bold tabular-nums text-emerald-600 dark:text-emerald-400">
-                {formatPeso(e.calculated_bonus)}
+                <AnimatedPeso amount={e.calculated_bonus} />
               </td>
             </tr>
-          ))}
+            );
+          })}
           <tr className="border-t border-zinc-300 bg-zinc-100/70 dark:border-zinc-700 dark:bg-zinc-900/60">
             <td colSpan={rules.length + 2} className="px-3 py-2 font-mono text-[10px] uppercase tracking-[0.15em] text-zinc-500">
               Subtotal
             </td>
             <td className="px-3 py-2 text-right font-mono font-bold text-zinc-900 dark:text-zinc-100">
-              {formatPeso(subtotal)}
+              <AnimatedPeso amount={subtotal} />
             </td>
           </tr>
         </tbody>
       </table>
+    </div>
+  );
+}
+
+// ── Managers Weekly Table ─────────────────────────────────────────────────────
+
+interface HslManagersTableProps {
+  entries: EntryRow[];
+  subtotal: number;
+  isLocked: boolean;
+  onKpiChange: (email: string, key: string, val: number | boolean) => void;
+  rosterEmails?: Set<string>;
+  onRemoveMember?: (email: string) => void;
+}
+
+/** The Managers Weekly dept renders one row per manager, each showing that
+ *  person's own hardcoded incentive checklist (HSL_MANAGERS). Ticking a component
+ *  adds its fixed amount; the row total sums every ticked component. */
+export function HslManagersTable({
+  entries, subtotal, isLocked, onKpiChange, rosterEmails, onRemoveMember,
+}: HslManagersTableProps) {
+  return (
+    <div className="overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
+      <table className="table-keep w-full min-w-[600px] text-xs">
+        <thead>
+          <tr className="border-b border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900/60">
+            <th className="px-3 py-2 text-left font-mono text-[9px] uppercase tracking-[0.15em] text-zinc-500">Manager</th>
+            <th className="px-3 py-2 text-left font-mono text-[9px] uppercase tracking-[0.15em] text-zinc-500">
+              Incentives — tick what was met
+            </th>
+            <th className="px-3 py-2 text-right font-mono text-[9px] uppercase tracking-[0.15em] text-zinc-500">Bonus</th>
+          </tr>
+        </thead>
+        <tbody>
+          {entries.length === 0 && (
+            <tr>
+              <td colSpan={3} className="px-3 py-6 text-center font-mono text-[10px] text-zinc-500">
+                No managers on this page.
+              </td>
+            </tr>
+          )}
+          {entries.map((e) => {
+            const spec = HSL_MANAGERS_BY_EMAIL[e.employee_email.toLowerCase()];
+            const components: ManagerComponent[] = spec?.components ?? [];
+            const isExternal = !!rosterEmails && !rosterEmails.has(e.employee_email);
+            return (
+              <tr
+                key={e.employee_email}
+                className="border-b border-zinc-100 align-top hover:bg-zinc-50/60 dark:border-zinc-800/60 dark:hover:bg-zinc-900/40"
+              >
+                <td className="px-3 py-2.5">
+                  <div className="flex items-center gap-1.5">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-1.5 font-medium text-zinc-900 dark:text-zinc-100">
+                        <span className="truncate">{e.employee_name}</span>
+                        {isExternal && (
+                          <span className="shrink-0 rounded bg-amber-100 px-1 py-0.5 font-mono text-[8px] font-semibold uppercase tracking-wider text-amber-700 dark:bg-amber-950/50 dark:text-amber-300">
+                            ext
+                          </span>
+                        )}
+                      </div>
+                      <div className="font-mono text-[10px] text-zinc-500">{e.employee_email}</div>
+                    </div>
+                    {isExternal && onRemoveMember && !isLocked && (
+                      <button
+                        type="button"
+                        onClick={() => onRemoveMember(e.employee_email)}
+                        title="Remove external member"
+                        aria-label={`Remove ${e.employee_name}`}
+                        className="ml-auto shrink-0 rounded p-1 text-zinc-400 transition-colors hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950/30 dark:hover:text-red-400"
+                      >
+                        <Trash2 className="h-3 w-3" />
+                      </button>
+                    )}
+                  </div>
+                </td>
+                <td className="px-3 py-2.5">
+                  {components.length === 0 ? (
+                    <span className="font-mono text-[10px] text-zinc-400">
+                      No incentives configured for this person.
+                    </span>
+                  ) : (
+                    <div className="flex flex-col gap-1.5">
+                      {components.map((c) => {
+                        const checked = Boolean(e.kpi_data[c.key]);
+                        return (
+                          <label
+                            key={c.key}
+                            className={cn(
+                              'flex items-center gap-2.5 rounded-lg border px-2.5 py-1.5 transition-colors duration-150',
+                              checked
+                                ? 'border-purple-300 bg-purple-50/80 text-purple-700 kpi-row-confirm dark:border-purple-700/70 dark:bg-purple-950/40 dark:text-purple-300'
+                                : 'border-zinc-200 bg-white text-zinc-600 hover:border-zinc-300 hover:bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900/40 dark:text-zinc-400 dark:hover:bg-zinc-900',
+                              isLocked ? 'cursor-default' : 'cursor-pointer',
+                            )}
+                          >
+                            <input
+                              type="checkbox"
+                              className="h-4 w-4 shrink-0 accent-purple-600"
+                              checked={checked}
+                              disabled={isLocked}
+                              onChange={(ev) => onKpiChange(e.employee_email, c.key, ev.target.checked)}
+                            />
+                            <span className={cn('flex-1 text-[12px] leading-snug', checked && 'font-medium text-zinc-900 dark:text-zinc-100')}>
+                              {c.label}
+                            </span>
+                            {c.cadence === 'monthly' && (
+                              <span className="shrink-0 rounded bg-zinc-100 px-1 py-0.5 font-mono text-[8px] uppercase tracking-wider text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
+                                monthly
+                              </span>
+                            )}
+                            <span className={cn('shrink-0 font-mono text-[11px] tabular-nums', checked ? 'font-semibold text-purple-700 dark:text-purple-300' : 'text-zinc-400')}>
+                              {formatPeso(c.amount)}
+                            </span>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  )}
+                </td>
+                <td className="px-3 py-2.5 text-right font-mono font-bold tabular-nums text-emerald-600 dark:text-emerald-400">
+                  <AnimatedPeso amount={e.calculated_bonus} />
+                </td>
+              </tr>
+            );
+          })}
+          <tr className="border-t border-zinc-300 bg-zinc-100/70 dark:border-zinc-700 dark:bg-zinc-900/60">
+            <td colSpan={2} className="px-3 py-2 font-mono text-[10px] uppercase tracking-[0.15em] text-zinc-500">
+              Subtotal
+            </td>
+            <td className="px-3 py-2 text-right font-mono font-bold text-zinc-900 dark:text-zinc-100">
+              <AnimatedPeso amount={subtotal} />
+            </td>
+          </tr>
+        </tbody>
+      </table>
+      <p className="border-t border-zinc-200 bg-zinc-50/60 px-3 py-1.5 font-mono text-[9px] text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900/40">
+        Tiers stack — tick every threshold that was met. Items tagged
+        <span className="mx-1 rounded bg-zinc-100 px-1 py-0.5 uppercase tracking-wider dark:bg-zinc-800">monthly</span>
+        are earned only in the last payroll week of the month.
+      </p>
     </div>
   );
 }
@@ -1464,6 +1896,7 @@ export function SsdSubTeamGrid({
                       value={st.pct}
                       disabled={isLocked}
                       placeholder="0.00"
+                      onFocus={(e) => e.currentTarget.select()}
                       onChange={(e) => onSubTeamChange(name, 'pct', e.target.value)}
                     />
                     <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 font-mono text-[10px] text-zinc-400">%</span>
@@ -1479,6 +1912,7 @@ export function SsdSubTeamGrid({
                     value={st.records}
                     disabled={isLocked}
                     placeholder="0"
+                    onFocus={(e) => e.currentTarget.select()}
                     onChange={(e) => onSubTeamChange(name, 'records', e.target.value)}
                   />
                 </div>
@@ -1505,7 +1939,7 @@ export function SsdSubTeamGrid({
                 </div>
                 <div className="text-right">
                   <div className={cn('font-mono text-base font-bold tabular-nums leading-none', palette.accent)}>
-                    {formatPeso(share)}
+                    <AnimatedPeso amount={share} />
                   </div>
                   <div className="mt-1 font-mono text-[9px] uppercase tracking-[0.12em] text-zinc-500">
                     per member
@@ -1532,6 +1966,8 @@ interface SsdEmployeeTableProps {
   activeFilter?: SubTeamFilter;
   /** Set the active roster filter. */
   onFilterChange?: (f: SubTeamFilter) => void;
+  rosterEmails?: Set<string>;
+  onRemoveMember?: (email: string) => void;
 }
 
 /** Colored sub-team chip picker. Replaces the native <select> — clicking a chip
@@ -1597,7 +2033,7 @@ export function SubTeamChips({
 
 export function SsdEmployeeTable({
   entries, allEntries, isLocked, ssdShareForTeam, onSubTeamAssign,
-  activeFilter = 'ALL', onFilterChange,
+  activeFilter = 'ALL', onFilterChange, rosterEmails, onRemoveMember,
 }: SsdEmployeeTableProps) {
   const SUB_TEAM_NAMES: SubTeamName[] = ['BLUE', 'GREEN', 'YELLOW', 'ORANGE', 'PURPLE', 'RED'];
 
@@ -1871,8 +2307,30 @@ export function SsdEmployeeTable({
                     />
                   </td>
                   <td className="px-3 py-2">
-                    <div className="font-medium text-zinc-900 dark:text-zinc-100">{e.employee_name}</div>
-                    <div className="font-mono text-[10px] text-zinc-500">{e.employee_email}</div>
+                    <div className="flex items-center gap-1.5">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-1.5 font-medium text-zinc-900 dark:text-zinc-100">
+                          <span className="truncate">{e.employee_name}</span>
+                          {!!rosterEmails && !rosterEmails.has(e.employee_email) && (
+                            <span className="shrink-0 rounded bg-amber-100 px-1 py-0.5 font-mono text-[8px] font-semibold uppercase tracking-wider text-amber-700 dark:bg-amber-950/50 dark:text-amber-300">
+                              ext
+                            </span>
+                          )}
+                        </div>
+                        <div className="font-mono text-[10px] text-zinc-500">{e.employee_email}</div>
+                      </div>
+                      {!!rosterEmails && !rosterEmails.has(e.employee_email) && onRemoveMember && !isLocked && (
+                        <button
+                          type="button"
+                          onClick={() => onRemoveMember(e.employee_email)}
+                          title="Remove external member"
+                          aria-label={`Remove ${e.employee_name}`}
+                          className="ml-auto shrink-0 rounded p-1 text-zinc-400 transition-colors hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950/30 dark:hover:text-red-400"
+                        >
+                          <Trash2 className="h-3 w-3" />
+                        </button>
+                      )}
+                    </div>
                   </td>
                   <td className="px-2 py-2">
                     <SubTeamChips
@@ -1887,7 +2345,7 @@ export function SsdEmployeeTable({
                       palette ? palette.accent : 'text-zinc-300 dark:text-zinc-700',
                     )}
                   >
-                    {subTeam ? formatPeso(share) : '—'}
+                    {subTeam ? <AnimatedPeso amount={share} /> : '—'}
                   </td>
                 </tr>
               );
@@ -1896,5 +2354,258 @@ export function SsdEmployeeTable({
         </table>
       </div>
     </div>
+  );
+}
+
+// ── Add External Member modal ─────────────────────────────────────────────────
+
+interface ExternalCandidate {
+  name: string;
+  department: string | null;
+  work_email: string | null;
+  personal_email: string | null;
+}
+
+/** The email an external candidate is keyed under — personal first, matching how
+ *  the roster keys members elsewhere. */
+function candidateEmail(c: ExternalCandidate): string {
+  return normEmail(c.personal_email) || normEmail(c.work_email) || '';
+}
+
+/** "Add external member": search the Global Master List (the same endpoint the
+ *  transfer picker uses, so a plain manager needs no extra permission), pick
+ *  someone, then confirm. On confirm the person is appended to the dept's
+ *  calculator and flows to payroll via the normal Save → Mark Ready path. */
+function HslAddMemberModal({
+  deptName,
+  color,
+  onAdd,
+  onClose,
+}: {
+  deptName: string;
+  color: string;
+  /** Attempt the add; return an error message to surface, or null on success. */
+  onAdd: (name: string, email: string) => string | null;
+  onClose: () => void;
+}) {
+  const [query, setQuery] = useState('');
+  const [candidates, setCandidates] = useState<ExternalCandidate[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [selected, setSelected] = useState<ExternalCandidate | null>(null);
+  const [phase, setPhase] = useState<'pick' | 'confirm'>('pick');
+  const [error, setError] = useState<string | null>(null);
+  const searchRef = React.useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    document.addEventListener('keydown', onKey);
+    const t = window.setTimeout(() => searchRef.current?.focus(), 60);
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      window.clearTimeout(t);
+    };
+  }, [onClose]);
+
+  // Debounced Global-Master-List search. The endpoint already excludes the
+  // manager's own departments, so everyone it returns is external to the team.
+  useEffect(() => {
+    let cancelled = false;
+    const handle = setTimeout(() => {
+      setLoading(true);
+      const params = new URLSearchParams();
+      if (query.trim()) params.set('q', query.trim());
+      fetch(`/api/manager/transfer-candidates?${params.toString()}`, { cache: 'no-store' })
+        .then((r) => r.json())
+        .then((j: { people?: ExternalCandidate[] }) => {
+          if (!cancelled) setCandidates(j.people ?? []);
+        })
+        .catch(() => {
+          if (!cancelled) setCandidates([]);
+        })
+        .finally(() => {
+          if (!cancelled) setLoading(false);
+        });
+    }, 250);
+    return () => {
+      cancelled = true;
+      clearTimeout(handle);
+    };
+  }, [query]);
+
+  const selectedEmail = selected ? candidateEmail(selected) : '';
+
+  function handleConfirm() {
+    if (!selected) return;
+    const err = onAdd(selected.name, candidateEmail(selected));
+    if (err) {
+      setError(err);
+      setPhase('pick');
+      return;
+    }
+    onClose();
+  }
+
+  return (
+    <motion.div
+      className="fixed inset-0 z-[80] flex items-center justify-center p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Add external member"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      transition={{ duration: 0.24, ease: COLLAPSE_EASE }}
+    >
+      <button
+        type="button"
+        aria-label="Close"
+        onClick={onClose}
+        className="absolute inset-0 cursor-default bg-zinc-950/45 backdrop-blur-md dark:bg-black/65"
+      />
+      <motion.div
+        className="relative flex max-h-[min(620px,90vh)] w-full max-w-md flex-col overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-2xl dark:border-zinc-800 dark:bg-[#0e1117]"
+        initial={{ opacity: 0, scale: 0.94, y: 12 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        exit={{ opacity: 0, scale: 0.97, y: 4 }}
+        transition={{ duration: 0.32, ease: COLLAPSE_EASE }}
+      >
+        {phase === 'pick' ? (
+          <div className="flex min-h-0 flex-col gap-3 px-6 py-6">
+            <div className="flex items-center gap-3">
+              <span
+                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full"
+                style={{ backgroundColor: `${color}24`, color }}
+              >
+                <UserPlus className="h-5 w-5" aria-hidden />
+              </span>
+              <div className="min-w-0">
+                <div className="text-base font-bold text-zinc-900 dark:text-zinc-100">Add External Member</div>
+                <p className="font-mono text-[10.5px] text-zinc-500 dark:text-zinc-400">{deptName} · KPI Calculator</p>
+              </div>
+            </div>
+            <p className="text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">
+              Pick someone from the{' '}
+              <span className="font-semibold text-zinc-700 dark:text-zinc-300">Global Master List</span> who isn’t on the{' '}
+              {deptName} roster. They’ll be scored in this period and go to payroll with the rest of the team.
+            </p>
+            <div className="relative">
+              <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400" aria-hidden />
+              <input
+                ref={searchRef}
+                type="search"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Search by name or email…"
+                className="h-9 w-full rounded-md border border-zinc-200 bg-white pl-8 pr-2.5 text-[13px] text-zinc-900 outline-none transition-colors focus:border-emerald-400 focus:ring-1 focus:ring-emerald-200 dark:border-zinc-700 dark:bg-zinc-900/60 dark:text-zinc-100"
+              />
+            </div>
+            <div className="min-h-0 flex-1 overflow-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
+              {loading ? (
+                <div className="flex items-center justify-center gap-2 px-3 py-10 text-xs text-zinc-400">
+                  <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> Searching the master list…
+                </div>
+              ) : candidates.length === 0 ? (
+                <div className="px-3 py-10 text-center text-xs text-zinc-400">
+                  No one on the master list matches{query.trim() ? ` “${query.trim()}”` : ''}.
+                </div>
+              ) : (
+                candidates.map((c) => {
+                  const email = candidateEmail(c);
+                  const isSelected = !!selected && candidateEmail(selected) === email && selected.name === c.name;
+                  const noEmail = !email;
+                  return (
+                    <button
+                      key={`${c.name}:${email || c.department || ''}`}
+                      type="button"
+                      disabled={noEmail}
+                      onClick={() => {
+                        setSelected(c);
+                        setError(null);
+                      }}
+                      title={noEmail ? 'No email on file — cannot be added' : undefined}
+                      className={cn(
+                        'flex w-full items-center gap-2.5 border-b border-zinc-100 px-3 py-2 text-left transition-colors last:border-0 dark:border-zinc-800/60',
+                        noEmail
+                          ? 'cursor-not-allowed opacity-45'
+                          : isSelected
+                            ? 'bg-emerald-50 dark:bg-emerald-950/30'
+                            : 'hover:bg-zinc-50 dark:hover:bg-zinc-900/50',
+                      )}
+                    >
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-[12.5px] font-medium text-zinc-800 dark:text-zinc-100">
+                          {c.name}
+                        </span>
+                        <span className="block truncate font-mono text-[10px] text-zinc-400">
+                          {email || 'no email on file'}
+                        </span>
+                      </span>
+                      {c.department && (
+                        <span className="shrink-0 rounded bg-zinc-100 px-1.5 py-0.5 font-mono text-[9px] font-semibold text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
+                          {c.department}
+                        </span>
+                      )}
+                      {isSelected && <Check className="h-3.5 w-3.5 shrink-0 text-emerald-600 dark:text-emerald-400" aria-hidden />}
+                    </button>
+                  );
+                })
+              )}
+            </div>
+            {error && (
+              <p className="flex items-start gap-1.5 text-xs font-medium text-red-600 dark:text-red-400">
+                <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden /> {error}
+              </p>
+            )}
+            <div className="mt-1 flex justify-end gap-2">
+              <Button size="sm" variant="outline" className="h-8 text-xs" onClick={onClose}>
+                Cancel
+              </Button>
+              <Button
+                size="sm"
+                className="h-8 gap-1.5 bg-emerald-600 text-xs text-white hover:bg-emerald-700 disabled:opacity-60"
+                disabled={!selected || !selectedEmail}
+                onClick={() => setPhase('confirm')}
+              >
+                Continue
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <div className="flex flex-col items-center gap-3 px-6 py-7 text-center">
+            <span className="flex h-14 w-14 items-center justify-center rounded-full bg-amber-100 dark:bg-amber-950/50">
+              <AlertTriangle className="h-7 w-7 text-amber-600 dark:text-amber-400" aria-hidden />
+            </span>
+            <div className="text-base font-bold text-zinc-900 dark:text-zinc-100">Double-check before adding</div>
+            <div className="w-full rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2.5 text-left dark:border-zinc-800 dark:bg-zinc-900/60">
+              <div className="truncate text-[13px] font-semibold text-zinc-900 dark:text-zinc-100" title={selected?.name}>
+                {selected?.name}
+              </div>
+              <div className="truncate font-mono text-[11px] text-zinc-500 dark:text-zinc-400" title={selectedEmail}>
+                {selectedEmail}
+              </div>
+              {selected?.department && (
+                <div className="mt-0.5 truncate font-mono text-[10px] text-zinc-400">
+                  Currently in: {selected.department}
+                </div>
+              )}
+            </div>
+            <p className="text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">
+              This person is outside the {deptName} roster. Once added they’ll be scored in this period’s KPI submission and
+              paid under the details above — make sure it’s the right person. You can remove them any time before Mark Ready.
+            </p>
+            <div className="mt-1 flex gap-2">
+              <Button size="sm" variant="outline" className="h-8 text-xs" onClick={() => setPhase('pick')}>
+                Go back
+              </Button>
+              <Button size="sm" className="h-8 gap-1.5 bg-emerald-600 text-xs text-white hover:bg-emerald-700" onClick={handleConfirm}>
+                <UserPlus className="h-3.5 w-3.5" /> Confirm &amp; Add
+              </Button>
+            </div>
+          </div>
+        )}
+      </motion.div>
+    </motion.div>
   );
 }

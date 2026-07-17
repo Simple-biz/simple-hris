@@ -914,3 +914,222 @@ export async function probeRates(): Promise<ProbeResult> {
     return { status: 'unknown', summary: 'Rates probe error.', details: [trimError(e)], suggestedChecks: [] };
   }
 }
+
+/** Tickets Kanban board — `tickets` (+ ticket_comments / ticket_events). Reads
+ *  the board so a missing migration or lost SELECT grant surfaces as a warning. */
+export async function probeTickets(): Promise<ProbeResult> {
+  const supabase = createSupabaseServiceRoleClient() ?? createSupabaseServerClient();
+  if (!supabase) {
+    return { status: 'unknown', summary: 'No Supabase client.', details: [], suggestedChecks: [] };
+  }
+  try {
+    const [activeRes, doneRes] = await Promise.all([
+      supabase
+        .from('tickets')
+        .select('*', { head: true, count: 'exact' })
+        .is('archived_at', null),
+      supabase
+        .from('tickets')
+        .select('*', { head: true, count: 'exact' })
+        .is('archived_at', null)
+        .eq('status', 'done'),
+    ]);
+    if (activeRes.error) {
+      return {
+        status: 'warning',
+        summary: 'Could not read tickets.',
+        details: [trimError(activeRes.error)],
+        suggestedChecks: [
+          'Verify the tickets table exists (run the tickets-board migration).',
+          'Confirm service role has SELECT on tickets.',
+        ],
+      };
+    }
+    const active = activeRes.count ?? 0;
+    const done = doneRes.count ?? 0;
+    return {
+      status: 'healthy',
+      summary: `${active} active ticket(s) on the board.`,
+      details: [
+        `${done} in Done; ${Math.max(0, active - done)} still open.`,
+        'Kanban board at /tickets — gated by the dedicated tickets role.',
+        'Backed by tickets + ticket_comments + ticket_events.',
+      ],
+      suggestedChecks: [
+        'Confirm ticket_comments and ticket_events tables also exist.',
+        'Re-grant the tickets role to anyone who should keep board access.',
+      ],
+    };
+  } catch (e) {
+    return { status: 'unknown', summary: 'Tickets probe error.', details: [trimError(e)], suggestedChecks: [] };
+  }
+}
+
+/** Time Adjustment Requests — `time_adjustment_requests`. Surfaces the two-stage
+ *  review backlog; a request stuck > 14 days is a warning. */
+export async function probeTimeAdjustments(): Promise<ProbeResult> {
+  const supabase = createSupabaseServiceRoleClient() ?? createSupabaseServerClient();
+  if (!supabase) {
+    return { status: 'unknown', summary: 'No Supabase client.', details: [], suggestedChecks: [] };
+  }
+  try {
+    const fourteenDaysAgo = new Date(Date.now() - 14 * 86_400_000).toISOString();
+    const [awaitingMgrRes, awaitingAcctRes, staleRes] = await Promise.all([
+      supabase
+        .from('time_adjustment_requests')
+        .select('*', { head: true, count: 'exact' })
+        .eq('status', 'pending'),
+      supabase
+        .from('time_adjustment_requests')
+        .select('*', { head: true, count: 'exact' })
+        .eq('status', 'manager_approved'),
+      supabase
+        .from('time_adjustment_requests')
+        .select('*', { head: true, count: 'exact' })
+        .in('status', ['pending', 'manager_approved'])
+        .lt('created_at', fourteenDaysAgo),
+    ]);
+    if (awaitingMgrRes.error) {
+      return {
+        status: 'warning',
+        summary: 'Could not read time_adjustment_requests.',
+        details: [trimError(awaitingMgrRes.error)],
+        suggestedChecks: [
+          'Verify the time_adjustment_requests table exists (run the create + requested_segments alter SQL).',
+          'Confirm service role has SELECT.',
+        ],
+      };
+    }
+    const awaitingMgr = awaitingMgrRes.count ?? 0;
+    const awaitingAcct = awaitingAcctRes.count ?? 0;
+    const stale = staleRes.count ?? 0;
+    const details = [
+      `${awaitingMgr} awaiting manager review; ${awaitingAcct} awaiting Accounting.`,
+      'Two-stage flow: employee → manager → Accounting; approval SET-overrides the day.',
+      'Never mutates hubstaff_hours — overrides apply at pay-calc time.',
+    ];
+    if (stale > 0) {
+      return {
+        status: 'warning',
+        summary: `${stale} request(s) pending > 14 days.`,
+        details,
+        suggestedChecks: [
+          'Clear the backlog in Manager → Time Adjustments / the Accounting review panel.',
+          'Confirm managers have department assignments so they can act.',
+        ],
+      };
+    }
+    return {
+      status: 'healthy',
+      summary: `${awaitingMgr + awaitingAcct} open request(s) in the queue.`,
+      details,
+      suggestedChecks: [
+        'Spot-check that an approved override lands on the pay calc.',
+        'Verify evidence images sign correctly in the review panel.',
+      ],
+    };
+  } catch (e) {
+    return { status: 'unknown', summary: 'Time adjustments probe error.', details: [trimError(e)], suggestedChecks: [] };
+  }
+}
+
+/** Payroll Wizard Notes — `payroll_wizard_notes`. Low-risk carry-over checklist;
+ *  a table read confirms the board + wizard bridge can load. */
+export async function probePayrollWizardNotes(): Promise<ProbeResult> {
+  const supabase = createSupabaseServiceRoleClient() ?? createSupabaseServerClient();
+  if (!supabase) {
+    return { status: 'unknown', summary: 'No Supabase client.', details: [], suggestedChecks: [] };
+  }
+  try {
+    const [totalRes, openRes] = await Promise.all([
+      supabase.from('payroll_wizard_notes').select('*', { head: true, count: 'exact' }),
+      supabase
+        .from('payroll_wizard_notes')
+        .select('*', { head: true, count: 'exact' })
+        .eq('done', false),
+    ]);
+    if (totalRes.error) {
+      return {
+        status: 'warning',
+        summary: 'Could not read payroll_wizard_notes.',
+        details: [trimError(totalRes.error)],
+        suggestedChecks: [
+          'Verify the payroll_wizard_notes table exists (run create + the adjustment/week_start alter SQL).',
+          'Confirm service role has SELECT.',
+        ],
+      };
+    }
+    const total = totalRes.count ?? 0;
+    const open = openRes.count ?? 0;
+    return {
+      status: 'healthy',
+      summary: `${open} open note(s); ${total} total.`,
+      details: [
+        'Carry-over checklist for the payroll week — missed bonuses, rate changes, deductions.',
+        'Bridges the wizard Additions "Adj." column both ways.',
+        'week_start = Manila Monday; blank rows seed per edit-granted clerk.',
+      ],
+      suggestedChecks: [
+        'Confirm the week selector shows the current Manila week.',
+        'Verify a wizard Adj. override mirrors onto the board.',
+      ],
+    };
+  } catch (e) {
+    return { status: 'unknown', summary: 'Payroll notes probe error.', details: [trimError(e)], suggestedChecks: [] };
+  }
+}
+
+/** MESA program — `mesa_ledger` (event backfill) plus the optional `mesa_accounts`
+ *  registry. Accounts read is best-effort so a pre-migration env still probes. */
+export async function probeMesa(): Promise<ProbeResult> {
+  const supabase = createSupabaseServiceRoleClient() ?? createSupabaseServerClient();
+  if (!supabase) {
+    return { status: 'unknown', summary: 'No Supabase client.', details: [], suggestedChecks: [] };
+  }
+  try {
+    const { count, error } = await supabase
+      .from('mesa_ledger')
+      .select('*', { head: true, count: 'exact' });
+    if (error) {
+      return {
+        status: 'warning',
+        summary: 'Could not read mesa_ledger.',
+        details: [trimError(error)],
+        suggestedChecks: [
+          'Verify mesa_ledger exists (run references/sql/create/backfill_mesa_ledger.sql).',
+          'Confirm service role has SELECT.',
+        ],
+      };
+    }
+    // Accounts registry is optional (per-stint migration may not have run yet).
+    let accountsNote = 'mesa_accounts registry not detected (per-stint numbering off).';
+    const acctRes = await supabase
+      .from('mesa_accounts')
+      .select('*', { head: true, count: 'exact' })
+      .is('closed_on', null);
+    if (!acctRes.error) accountsNote = `${acctRes.count ?? 0} open MESA account(s).`;
+    if (!count || count === 0) {
+      return {
+        status: 'warning',
+        summary: 'mesa_ledger is empty.',
+        details: ['No MESA ledger events on file — the backfill may not have run.', accountsNote],
+        suggestedChecks: ['Run references/sql/create/backfill_mesa_ledger.sql.'],
+      };
+    }
+    return {
+      status: 'healthy',
+      summary: `${count} MESA ledger event(s) on file.`,
+      details: [
+        '1:1 backfill of the external MESA tracker: deposits, disbursements, status snapshots.',
+        accountsNote,
+        "Balances scope to each member's current (open) account number.",
+      ],
+      suggestedChecks: [
+        'Spot-check a member rollup against the external tracker.',
+        'Confirm opt-out closes the account and a re-join mints a new number.',
+      ],
+    };
+  } catch (e) {
+    return { status: 'unknown', summary: 'MESA probe error.', details: [trimError(e)], suggestedChecks: [] };
+  }
+}

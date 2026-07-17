@@ -111,6 +111,12 @@ either returns fresh probe data or fails loudly and drops the map to `Unknown`.
 | `auth-login` | recent login events from `audit_log` (24h window) | Supabase service-role | always `warning` until admin gate is enforced server-side; probe adds context |
 | `audit-log` | most recent `audit_log` entry, age | Supabase service-role | `healthy` < 7d, `warning` if older or empty |
 | `disbursement-records` | row count from `disbursement_records` | Supabase service-role | `healthy` if table reads |
+| `tickets` | active vs done counts on `tickets` (archived excluded) | Supabase service-role | `healthy` if table reads, `warning` if missing/no SELECT |
+| `time-adjust` | pending / manager_approved counts on `time_adjustment_requests`, plus stale > 14d | Supabase service-role | `warning` if any request pending > 14d or table missing, else `healthy` |
+| `payroll-notes` | open (`done = false`) vs total count on `payroll_wizard_notes` | Supabase service-role | `healthy` if table reads, `warning` if missing/no SELECT |
+| `mesa` | event count on `mesa_ledger` + open-account count on `mesa_accounts` (best-effort) | Supabase service-role | `warning` if ledger empty/missing, else `healthy` |
+
+> These four cards were added 2026-07-17 so the newer subsystems (Tickets, Time Adjustments, Payroll Wizard Notes, MESA) surface on the health map. The MESA/GML **exports** are pure browser-side formatters, so they have no server node to probe.
 
 Each probe runs with a **4-second timeout** via `withProbeTimeout()`. If a probe doesn't complete, it returns `critical` with `"Probe timed out."` so a hung Supabase doesn't stall the entire response.
 

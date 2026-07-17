@@ -256,16 +256,35 @@ async function fetchMasterMin(
   // active_employees view has the master columns we need (Work Email,
   // Personal Email, Alternate Work Email(s), Start Date, Department).
   // Quoted PascalCase column names.
-  const { data, error } = await supabase
-    .from("active_employees")
-    .select(
-      '"Work Email", "Personal Email", "Alternate Work Email", "Alternate Work Email 2", "Start Date", "Department"',
-    );
-  if (error || !data) {
-    console.warn("[current-pay] fetchMasterMin failed:", error?.message);
-    return [];
+  // PostgREST caps a plain `.select()` at 1000 rows (db.max-rows on this
+  // project). active_employees exceeds 1000, so an un-paginated read silently
+  // dropped every master employee past row 1000. Those people then failed the
+  // Payment Dispatch `inMaster` gate and vanished from the queue entirely —
+  // despite having hours and a valid pay computation. Paginate until a short
+  // page, exactly like getEmployeeHourlyRatesRows.
+  const PAGE = 1000;
+  const raw: Array<Record<string, unknown>> = [];
+  let from = 0;
+  while (true) {
+    const { data, error } = await supabase
+      .from("active_employees")
+      .select(
+        '"Work Email", "Personal Email", "Alternate Work Email", "Alternate Work Email 2", "Start Date", "Department"',
+      )
+      .range(from, from + PAGE - 1);
+    if (error) {
+      console.warn("[current-pay] fetchMasterMin failed:", error.message);
+      // Return whatever pages we already pulled — a partial master set still
+      // beats blanking the queue. An empty result makes the caller fail open
+      // (inMaster shows everyone) rather than silently drop people.
+      break;
+    }
+    const page = (data ?? []) as Array<Record<string, unknown>>;
+    raw.push(...page);
+    if (page.length < PAGE) break;
+    from += PAGE;
   }
-  return (data as Array<Record<string, unknown>>).map((r) => ({
+  return raw.map((r) => ({
     work_email: typeof r["Work Email"] === "string" ? (r["Work Email"] as string) : null,
     personal_email:
       typeof r["Personal Email"] === "string" ? (r["Personal Email"] as string) : null,
@@ -510,7 +529,9 @@ export async function computeCurrentPay(
   // Index rates by both work_email and personal_email (lowercased) so a
   // hubstaff row keyed on either still resolves to a rate.
   const rateByEmail = new Map<string, { reg: number | null; ot: number | null }>();
-  const mesaEmails = new Set<string>();
+  // MESA members: email → enrollment effective date (null = legacy member,
+  // always contributing). Used to skip weeks before the member joined.
+  const mesaSinceByEmail = new Map<string, string | null>();
   // email → department NAME, so the catalog's department-scoped pay structures
   // can be resolved for employees who have no per-person structure.
   const deptByEmail = new Map<string, string>();
@@ -527,8 +548,9 @@ export async function computeCurrentPay(
       if (pe && !deptByEmail.has(pe)) deptByEmail.set(pe, r.department);
     }
     if (r.mesa_member === true) {
-      if (we) mesaEmails.add(we);
-      if (pe) mesaEmails.add(pe);
+      const since = r.mesa_member_since ?? null;
+      if (we) mesaSinceByEmail.set(we, since);
+      if (pe) mesaSinceByEmail.set(pe, since);
     }
   }
 
@@ -609,7 +631,10 @@ export async function computeCurrentPay(
     pabExcludedEmails = parsePabPeriodExclusions(pabExclusionsValue).get(monthKey) ?? new Set<string>();
 
     if (periodEnd) {
-      weekIsFinalPab = gateIsFinalPabWeek(periodEnd, pabRange.end);
+      // Containment gate: this upload's week must CONTAIN the PAB period end,
+      // not merely end on/after it — otherwise every week after the payout
+      // week re-attaches PAB (see isFinalPabWeek).
+      weekIsFinalPab = gateIsFinalPabWeek(periodStart, periodEnd, pabRange.end);
     }
     weekIsTechBonus = gateIsTechBonusWeek(weekMonday);
   }
@@ -849,9 +874,15 @@ export async function computeCurrentPay(
       techDeptEligible: isDeptEligible(sysBonuses.tech, empDeptKey),
     });
 
-    // MESA: ₱100 deducted from members with a rates row. Accumulate into the
-    // stash total so the dispatch screen can show the pool being built.
-    const mesaDeductionPHP = hasRates && mesaEmails.has(em) ? 100 : 0;
+    // MESA: ₱100 deducted from members with a rates row, but only when this
+    // cycle's week ends on/after the member's enrollment date (lexical
+    // YYYY-MM-DD compare; null since = legacy member, always contributing).
+    // Mirrors the Payroll Wizard dispatch gate. Accumulate into the stash
+    // total so the dispatch screen can show the pool being built.
+    const mesaSince = mesaSinceByEmail.has(em) ? mesaSinceByEmail.get(em) ?? null : undefined;
+    const mesaEnrolledThisWeek =
+      mesaSince !== undefined && (!mesaSince || !periodEndIso || mesaSince <= periodEndIso);
+    const mesaDeductionPHP = hasRates && mesaEnrolledThisWeek ? 100 : 0;
     if (mesaDeductionPHP > 0) stashedMesaTotalPHP += mesaDeductionPHP;
 
     const totalPayPHP =

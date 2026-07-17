@@ -908,7 +908,13 @@ function LatestRequestHero({
           </span>
           {latestPending.requested_hours != null && (
             <span className="font-medium text-zinc-700 dark:text-zinc-300">
+              {(latestPending.requested_segments ?? []).length > 0 ? '+' : ''}
               {latestPending.requested_hours}h requested
+            </span>
+          )}
+          {(latestPending.requested_segments ?? []).length > 0 && (
+            <span className="font-mono text-zinc-600 dark:text-zinc-400">
+              {fmtAdjustmentSegments(latestPending.requested_segments)}
             </span>
           )}
         </div>
@@ -1388,7 +1394,7 @@ function ManagerAnnouncementsTab({
 // ─── Time Adjustment Approvals ──────────────────────────────────────────────
 
 import type { TimeAdjustmentRow } from '@/lib/supabase/time-adjustments';
-import { TIME_ADJUSTMENT_REASONS } from '@/lib/supabase/time-adjustments';
+import { TIME_ADJUSTMENT_REASONS, fmtAdjustmentSegments } from '@/lib/supabase/time-adjustments';
 
 const TA_REASON_LABEL = (code: string) =>
   TIME_ADJUSTMENT_REASONS.find((r) => r.code === code)?.label ?? code;
@@ -1639,7 +1645,10 @@ function ManagerTimeAdjustments({ onCountChange }: { onCountChange: (n: number) 
                           {row.approved_hours != null ? (
                             <span className="font-medium text-zinc-600 dark:text-zinc-300">{row.approved_hours}h</span>
                           ) : row.requested_hours != null ? (
-                            <span className="text-zinc-400 dark:text-zinc-500">{row.requested_hours}h req</span>
+                            <span className="text-zinc-400 dark:text-zinc-500">
+                              {(row.requested_segments ?? []).length > 0 ? '+' : ''}
+                              {row.requested_hours}h req
+                            </span>
                           ) : null}
                           <span className="ml-auto flex shrink-0 items-center gap-1.5">
                             {decidedOn && (
@@ -1871,7 +1880,15 @@ function ManagerAdjustmentCard({
                   {TA_REASON_LABEL(row.reason)}
                 </span>
                 {row.requested_hours != null && (
-                  <span className="font-medium text-zinc-700 dark:text-zinc-300">{row.requested_hours}h requested</span>
+                  <span className="font-medium text-zinc-700 dark:text-zinc-300">
+                    {(row.requested_segments ?? []).length > 0 ? '+' : ''}
+                    {row.requested_hours}h requested
+                  </span>
+                )}
+                {(row.requested_segments ?? []).length > 0 && (
+                  <span className="font-mono text-zinc-600 dark:text-zinc-400">
+                    {fmtAdjustmentSegments(row.requested_segments)}
+                  </span>
                 )}
               </p>
             </div>
@@ -2035,7 +2052,15 @@ function ManagerHistoryDetail({
             {TA_REASON_LABEL(row.reason)}
           </span>
           {row.requested_hours != null && (
-            <span className="font-medium text-zinc-700 dark:text-zinc-300">{row.requested_hours}h requested</span>
+            <span className="font-medium text-zinc-700 dark:text-zinc-300">
+              {(row.requested_segments ?? []).length > 0 ? '+' : ''}
+              {row.requested_hours}h requested
+            </span>
+          )}
+          {(row.requested_segments ?? []).length > 0 && (
+            <span className="font-mono text-zinc-600 dark:text-zinc-400">
+              {fmtAdjustmentSegments(row.requested_segments)}
+            </span>
           )}
           {row.approved_hours != null && (
             <span className="rounded bg-emerald-50 px-1.5 py-0.5 font-medium text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300">

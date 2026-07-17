@@ -57,6 +57,8 @@ interface EmployeeSidebarProps {
   bankInfoNudge?: boolean;
   /** Unread notification count — drives the bell badge in the sidebar. */
   unreadNotifications?: number;
+  /** New MESA contributions since the member last opened MESA — badges that tab. */
+  mesaNewCount?: number;
   /** Tab ids an admin hid in Pages settings — removed from the menu. */
   hiddenTabs?: readonly string[];
   /** Tab ids an admin marked "under construction" — shown with a badge. */
@@ -91,6 +93,7 @@ export default function EmployeeSidebar({
   profileSetupCount = 0,
   bankInfoNudge = false,
   unreadNotifications = 0,
+  mesaNewCount = 0,
   hiddenTabs = [],
   constructionTabs = [],
 }: EmployeeSidebarProps) {
@@ -176,6 +179,10 @@ export default function EmployeeSidebar({
                   {item.id === 'notifications' && unreadNotifications > 0 && activeTab !== 'notifications' && (
                     <SidebarCollapsedDot collapsed={collapsed} tone="bg-red-500" />
                   )}
+                  {/* Collapsed rail clips the MESA pill — keep a dot on the icon. */}
+                  {item.id === 'mesa' && mesaNewCount > 0 && activeTab !== 'mesa' && (
+                    <SidebarCollapsedDot collapsed={collapsed} tone="bg-emerald-500" />
+                  )}
                 </span>
                 <span className={cn('truncate text-left sb-collapse-fade')}>{item.label}</span>
                 {isConstr(item.id) && <span className={cn('sb-collapse-fade')}><ConstructionMark active={activeTab === item.id} /></span>}
@@ -220,9 +227,22 @@ export default function EmployeeSidebar({
                     {unreadNotifications > 99 ? '99+' : unreadNotifications}
                   </span>
                 )}
+                {item.id === 'mesa' && mesaNewCount > 0 && (
+                  <span
+                    className={cn(
+                      'ml-auto flex h-5 min-w-5 items-center justify-center rounded-full px-1.5 text-[10px] font-semibold leading-none text-white sb-collapse-fade',
+                      activeTab === item.id ? 'bg-white/25 dark:bg-white/20' : 'bg-emerald-500',
+                    )}
+                    aria-label={`${mesaNewCount} new MESA ${mesaNewCount === 1 ? 'contribution' : 'contributions'}`}
+                    title={`${mesaNewCount} new MESA contribution${mesaNewCount === 1 ? '' : 's'} deposited`}
+                  >
+                    {mesaNewCount > 99 ? '99+' : mesaNewCount}
+                  </span>
+                )}
                 {activeTab === item.id
                   && !(item.id === 'disputes' && payrollLocked)
-                  && !(item.id === 'notifications' && unreadNotifications > 0) && (
+                  && !(item.id === 'notifications' && unreadNotifications > 0)
+                  && !(item.id === 'mesa' && mesaNewCount > 0) && (
                   <ChevronRight className="ml-auto h-3 w-3 text-orange-400 dark:text-orange-500/70 sb-collapse-fade" />
                 )}
               </button>

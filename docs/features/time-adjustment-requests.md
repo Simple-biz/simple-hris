@@ -76,7 +76,7 @@ Four reason cards in a 2-column grid. Each shows a contextual lucide icon, label
 
 #### Step 2 — Details
 
-- **Correct total (optional):** numeric hours input (0–24, 0.5 step). When filled the Review step shows the delta callout.
+- **Missed time (required):** one or more **time in / time out** ranges (`<input type="time">`, up to `MAX_ADJUSTMENT_SEGMENTS = 6`) pointing at exactly the time that was NOT tracked — e.g. forgot the tracker 9:00–10:00 AM → one 1-hour range. Employees do **not** enter their whole shift; already-tracked time stays as is. Ranges must be complete, non-overlapping, with time out after time in (no crossing midnight — a stretch past midnight is a separate request for the next day). Stored in `requested_segments` (jsonb); `requested_hours` is computed server-side as the sum of the ranges = **hours to ADD** (note: legacy rows without segments stored a claimed day total instead).
 - **Explanation (required):** free-text paragraph. Required for all reason codes.
 
 #### Step 3 — Proof (evidence upload)
@@ -85,7 +85,7 @@ Drag-and-drop image uploader capped at 5 images (`MAX_ADJUSTMENT_IMAGES = 5`). F
 
 #### Step 4 — Review
 
-Shows a **delta callout card** when a corrected total was entered:
+Lists the missed ranges, the time to add, and the corrected total (tracked + missed), plus a **delta callout card**:
 
 | Scenario | Card | Text |
 |---|---|---|
@@ -95,9 +95,11 @@ Shows a **delta callout card** when a corrected total was entered:
 
 The callout shows the progression: `1.0h tracked → 8.0h corrected (+7.0h)`. A deadline / carry-over notice (amber) reminds the employee to submit before the next payroll cycle.
 
-#### Existing-request read-only view
+#### Existing-request read-only view + editing while pending
 
-When `existingRequest` is set, the dialog renders a status card instead of the wizard. Status labels are human-readable:
+When `existingRequest` is set, the dialog renders a status card instead of the wizard. While the request is still `pending` (manager hasn't acted), the card shows an **Edit request** button that reopens the wizard prefilled with the request's reason, explanation, and missed-time ranges — so employees can fix mistakes or add more untracked stretches for the same day before review. Previously uploaded evidence appears as "Saved image N" chips (no thumbnails — the bucket is private) that can be individually removed; kept paths are resubmitted alongside any new uploads (combined cap still 5). Saving overwrites the pending row via the existing `(work_email, adjust_date)` upsert and returns it to the manager's queue; the audit log entry carries `resubmission: true`. Once a manager or Accounting has decided, editing is blocked server-side ("already been reviewed", HTTP 409). The POST route also validates that every `image_paths` entry lives under the session's or target employee's own storage folder (`adjustmentEvidencePrefix`).
+
+Status labels are human-readable:
 
 | Status | Label shown to employee |
 |---|---|
@@ -209,7 +211,8 @@ newInitialPay = initialPay ± adjPesos
 | `adjust_date` | date | The day being corrected (YYYY-MM-DD) |
 | `reason` | text | One of the four reason codes |
 | `explanation` | text nullable | Employee's paragraph |
-| `requested_hours` | numeric nullable | Employee's claimed total |
+| `requested_hours` | numeric nullable | Claimed MISSED hours to add (= sum of `requested_segments`); legacy rows: claimed day total |
+| `requested_segments` | jsonb (default `[]`) | Missed time in/out ranges: `[{time_in:"HH:MM",time_out:"HH:MM"}]` (2026-07-17 alter) |
 | `image_paths` | text[] | Storage object paths (not URLs); max 5 enforced in app |
 | `status` | text | `pending` \| `manager_approved` \| `manager_denied` \| `approved` \| `denied` |
 | `approved_hours` | numeric nullable | Set by Accounting on approval; the override value |

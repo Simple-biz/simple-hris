@@ -2,7 +2,7 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Bell, CheckCheck, CheckCircle2, Lock, Unlock, AlertTriangle, PartyPopper, BadgeDollarSign, MessagesSquare, X, Search, ChevronLeft, ChevronRight, ArrowRight } from 'lucide-react';
+import { Bell, CheckCheck, CheckCircle2, Lock, Unlock, AlertTriangle, PartyPopper, BadgeDollarSign, MessagesSquare, X, Search, ChevronLeft, ChevronRight, ArrowRight, Receipt } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useDispatchLock } from '@/hooks/useDispatchLock';
 import { getSupabaseBrowserClient } from '@/lib/supabase/browser';
@@ -11,6 +11,7 @@ import {
   resolveNotificationAction,
   type NotificationActionTarget,
 } from '@/lib/notifications/notification-actions';
+import { PayStubModal } from '@/components/paystub/PayStubModal';
 
 interface EmployeeNotification {
   id: string;
@@ -28,6 +29,8 @@ interface EmployeeNotification {
     submission_id?: string | null;
     /** For offboarding.requested: the offboarding_queue row id(s) this alert covers. */
     request_ids?: string[] | null;
+    /** For payroll.paid: the pay-week file whose stub the "Open Pay Stub" button opens. */
+    source_file?: string | null;
   } | null;
   read_at: string | null;
   created_at: string;
@@ -134,6 +137,8 @@ export default function NotificationsPanel({
   // request has already been actioned (offboarded / dismissed / returned /
   // withdrawn) rather than dangling a stale "Review request" button.
   const [queueStatus, setQueueStatus] = useState<Record<string, QueueStatusInfo>>({});
+  // Pay-week file for the paystub modal opened from a "Salary Paid" card (null = closed).
+  const [paystubFile, setPaystubFile] = useState<string | null>(null);
 
   const normEmail = useMemo(
     () => (viewerEmail ? viewerEmail.trim().toLowerCase() : null),
@@ -512,6 +517,13 @@ export default function NotificationsPanel({
               // red-and-black theme: black surface, solid red accents —
               // deliberately flat, no gradients.
               const isTicket = n.type === 'ticket.replied' || n.type === 'ticket.assigned';
+              // Payment Dispatch marked this person paid → card carries an
+              // "Open Pay Stub" button that opens the emailed statement in a modal.
+              const isPaidStub = n.type === 'payroll.paid';
+              const paidStubFile =
+                isPaidStub && typeof n.details?.source_file === 'string'
+                  ? n.details.source_file
+                  : null;
 
               const stripe = isTicket
                 ? 'bg-red-600'
@@ -549,7 +561,7 @@ export default function NotificationsPanel({
                   : positive
                     ? 'text-emerald-600 dark:text-emerald-400'
                     : 'text-zinc-500 dark:text-zinc-400';
-              const Icon = isTicket ? MessagesSquare : isPayrollStart ? Lock : isPayrollStop ? Unlock : positive ? PartyPopper : BadgeDollarSign;
+              const Icon = isPaidStub ? BadgeDollarSign : isTicket ? MessagesSquare : isPayrollStart ? Lock : isPayrollStop ? Unlock : positive ? PartyPopper : BadgeDollarSign;
               // Resolve whenever the host declared its view; keep the action
               // only if we can actually act on it (self-routed href, or a
               // host-provided tab navigator).
@@ -677,6 +689,18 @@ export default function NotificationsPanel({
                             <ArrowRight className="h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5" />
                           </button>
                         ) : null}
+
+                        {paidStubFile && (
+                          <button
+                            type="button"
+                            onClick={() => setPaystubFile(paidStubFile)}
+                            className="group mt-3 inline-flex items-center gap-1.5 rounded-lg border border-emerald-600 bg-emerald-600 px-3 py-1.5 text-[12px] font-semibold text-white transition-colors hover:border-emerald-500 hover:bg-emerald-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/50 dark:border-emerald-700 dark:bg-emerald-700 dark:hover:border-emerald-600 dark:hover:bg-emerald-600"
+                          >
+                            <Receipt className="h-3.5 w-3.5" />
+                            Open Pay Stub
+                            <ArrowRight className="h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5" />
+                          </button>
+                        )}
 
                         {isRate && (
                           <div className="mt-3 grid grid-cols-2 gap-2 rounded-lg border border-zinc-100 bg-zinc-50/60 p-3 text-[12px] dark:border-zinc-800 dark:bg-zinc-900/40">
@@ -810,6 +834,12 @@ export default function NotificationsPanel({
           </div>
         )}
       </div>
+
+      <PayStubModal
+        open={paystubFile !== null}
+        sourceFile={paystubFile}
+        onClose={() => setPaystubFile(null)}
+      />
     </div>
   );
 }

@@ -24,6 +24,7 @@ import { Lock, Menu, Unlock } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useDispatchLock } from '@/hooks/useDispatchLock';
 import { useEmployeeNotificationsUnread } from '@/hooks/useEmployeeNotificationsUnread';
+import { useMesaNewDeposits } from '@/hooks/useMesaNewDeposits';
 import { useBankInfoRequest } from '@/hooks/useBankInfoRequest';
 import { usePagesVisibility } from '@/hooks/usePagesVisibility';
 import { dashboardPages, pageLabel } from '@/lib/pages/visibility';
@@ -106,6 +107,9 @@ export default function EmployeeApp() {
   // indicator, and one-time toast notifications when the state flips.
   const { state: lockState, loading: lockLoading } = useDispatchLock();
   const unreadNotifications = useEmployeeNotificationsUnread(employeeEmail);
+  // New MESA contribution alert — badges the MESA tab when a deposit lands
+  // (a CSV deposit loaded since the member last opened MESA); clears on open.
+  const { newCount: mesaNewDeposits, markSeen: markMesaSeen } = useMesaNewDeposits(employeeEmail);
   // Did accounting/CEO ask this person (from the People tab) to add missing
   // payout details? Escalates the Profile → Payment nudge from amber to rose.
   const bankInfoRequested = useBankInfoRequest(employeeEmail);
@@ -318,6 +322,11 @@ export default function EmployeeApp() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pagesReady, hiddenEmployeeKey, activeTab]);
 
+  // Opening MESA marks its contributions as seen, clearing the tab badge.
+  useEffect(() => {
+    if (activeTab === 'mesa') markMesaSeen();
+  }, [activeTab, markMesaSeen]);
+
   const navigate = (tab: string, profileTarget?: EmployeeProfileFocusTab) => {
     if (tab === 'profile' && profileTarget) setProfileFocusTab(profileTarget);
     setActiveTab(tab);
@@ -484,6 +493,7 @@ export default function EmployeeApp() {
         profileSetupCount={profileSetupCount}
         bankInfoNudge={bankInfoNudge}
         unreadNotifications={unreadNotifications}
+        mesaNewCount={mesaNewDeposits}
         hiddenTabs={hiddenEmployeeTabs}
         constructionTabs={constructionEmployeeTabs}
       />

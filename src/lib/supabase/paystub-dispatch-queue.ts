@@ -148,6 +148,36 @@ export async function getPaystubDispatchEntry(
   return { row: (data as PaystubQueueEntry | null) ?? null, error: null };
 }
 
+/**
+ * Every cycle for one employee that has a renderable staged paystub (payload not
+ * null). Lightweight — the heavy `payload`/`pay_period` columns are filtered on
+ * but never selected. Backs the employee-facing "Open Paystubs" affordance,
+ * which is then intersected with PAID payment_dispatches so an employee only
+ * opens statements for weeks they were actually paid.
+ */
+export async function listPaystubEntriesForEmployee(
+  email: string,
+): Promise<{
+  rows: Array<{ cycle_source_file: string; sent_at: string | null }>;
+  error: string | null;
+}> {
+  const supabase = createSupabaseServiceRoleClient() ?? createSupabaseServerClient();
+  if (!supabase) return { rows: [], error: "Supabase client unavailable" };
+
+  const { data, error } = await supabase
+    .from("paystub_dispatch_queue")
+    .select("cycle_source_file, sent_at")
+    .eq("recipient_email", norm(email))
+    .not("payload", "is", null);
+
+  if (error) return { rows: [], error: error.message };
+  const rows = (data ?? []).map((r) => {
+    const row = r as { cycle_source_file: string; sent_at: string | null };
+    return { cycle_source_file: row.cycle_source_file, sent_at: row.sent_at ?? null };
+  });
+  return { rows, error: null };
+}
+
 /** Lightweight list for a cycle — drives the queue's Excluded-bucket routing. */
 export async function listPaystubDispatchQueue(
   sourceFile: string,

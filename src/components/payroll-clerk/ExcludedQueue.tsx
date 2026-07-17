@@ -93,9 +93,15 @@ const REASON_META: Record<
     tone: 'border-violet-200 bg-violet-50 text-violet-700 dark:border-violet-500/30 dark:bg-violet-500/10 dark:text-violet-300',
     activeTone: 'border-violet-500 bg-violet-500 text-white shadow-sm shadow-violet-500/30 dark:border-violet-400 dark:bg-violet-500 dark:text-white',
   },
+  no_rate: {
+    label: 'No rate on file',
+    Icon: Banknote,
+    tone: 'border-sky-200 bg-sky-50 text-sky-700 dark:border-sky-500/30 dark:bg-sky-500/10 dark:text-sky-300',
+    activeTone: 'border-sky-500 bg-sky-500 text-white shadow-sm shadow-sky-500/30 dark:border-sky-400 dark:bg-sky-500 dark:text-white',
+  },
 };
 
-const REASON_ORDER: ExclusionReason[] = ['no_bank', 'no_pay', 'no_hours', 'do_not_pay'];
+const REASON_ORDER: ExclusionReason[] = ['no_bank', 'no_pay', 'no_hours', 'no_rate', 'do_not_pay'];
 
 function avatarColors(seed: string) {
   const palettes = [
@@ -145,7 +151,7 @@ export default function ExcludedQueue({ rows, onMarkPaid }: ExcludedQueueProps) 
 
   // Aggregate counts per reason for the header summary chips.
   const counts = useMemo(() => {
-    const c: Record<ExclusionReason, number> = { no_bank: 0, no_pay: 0, no_hours: 0, do_not_pay: 0 };
+    const c: Record<ExclusionReason, number> = { no_bank: 0, no_pay: 0, no_hours: 0, do_not_pay: 0, no_rate: 0 };
     for (const r of rows) for (const reason of r.reasons) c[reason] += 1;
     return c;
   }, [rows]);

@@ -66,7 +66,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
   const { data: ticket, error: ticketErr } = await supabase
     .from('tickets')
-    .select('id, ticket_no, title, created_by, archived_at')
+    .select('id, ticket_no, title, created_by, assigned_to, archived_at')
     .eq('id', id)
     .maybeSingle();
   if (ticketErr) return NextResponse.json({ error: ticketErr.message }, { status: 500 });
@@ -101,21 +101,43 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     details: { title: (ticket as { title: string }).title, preview: body.slice(0, 120) },
   });
 
-  // In-app HRIS notification for the ticket's creator — someone answered their
-  // request. Skipped when they reply on their own ticket. Best-effort: a
+  // In-app HRIS notification (which chimes + toasts for the recipient) for the
+  // two people a reply concerns: the ticket's CREATOR — someone answered their
+  // request — and its ASSIGNED DEVELOPER — there's new activity on a ticket
+  // they're working. Each is skipped when they're the one replying, and nobody
+  // is notified twice when they're both creator and assignee. Best-effort: a
   // notification hiccup must not fail the reply that's already saved.
-  const t = ticket as { ticket_no: number; title: string; created_by: string };
+  const t = ticket as {
+    ticket_no: number;
+    title: string;
+    created_by: string;
+    assigned_to: string | null;
+  };
+  const replier = authorName ?? authz.sessionEmail;
+  const preview = `${body.slice(0, 140)}${body.length > 140 ? '…' : ''}`;
   const creator = (t.created_by ?? '').trim().toLowerCase();
+  const assignee = (t.assigned_to ?? '').trim().toLowerCase();
+
+  const recipients: Array<{ email: string; title: string }> = [];
   if (creator && creator !== authz.sessionEmail) {
-    const replier = authorName ?? authz.sessionEmail;
+    recipients.push({ email: creator, title: `New reply on your ticket #${t.ticket_no}` });
+  }
+  if (assignee && assignee !== authz.sessionEmail && assignee !== creator) {
+    recipients.push({
+      email: assignee,
+      title: `New reply on ticket #${t.ticket_no} assigned to you`,
+    });
+  }
+
+  for (const r of recipients) {
     void supabase
       .from('employee_notifications')
       .insert({
-        recipient_email: creator,
+        recipient_email: r.email,
         type: 'ticket.replied',
         tone: 'neutral',
-        title: `New reply on your ticket #${t.ticket_no}`,
-        message: `${replier} replied on "${t.title}": ${body.slice(0, 140)}${body.length > 140 ? '…' : ''}`,
+        title: r.title,
+        message: `${replier} replied on "${t.title}": ${preview}`,
         details: {
           ticket_id: id,
           ticket_no: t.ticket_no,

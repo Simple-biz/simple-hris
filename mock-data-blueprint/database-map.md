@@ -736,7 +736,7 @@ Database: **Supabase PostgreSQL** (public schema).
 | created_at | timestamptz | |
 | updated_at | timestamptz | |
 
-**HSL dept_key values:** ssd_medical_records, care_team, case_manager, filing_specialist, intake_specialist, post_hearing_prep, collections, healthcare_team_lead, collections_tl, chelzy_asst, vicky_asst_tl, case_mgmt_asst_tl, case_mgr_no_kpi
+**HSL dept_key values:** ssd_medical_records, medical_records, care_team, callback_team, simple_texting, filing_specialist, intake_specialist, post_hearing_prep, collections, healthcare_team_lead, collections_tl, hsl_managers (Managers Weekly — cohort hardcoded in HSL_MANAGERS, needs no roster rows)
 
 ---
 

@@ -258,31 +258,55 @@ export function getHslAdjustedEnd(
 /**
  * The current pay period's Monday from a Hubstaff date column.
  * Hubstaff CSVs run Sunday→Saturday; the "week" the wizard treats as a
- * pay period starts on the Monday inside that range.
+ * pay period starts on the Monday INSIDE that range — so a Sunday
+ * weekStart resolves to the NEXT day, not back to the previous week's
+ * Monday (walking back mis-attributed e.g. a Jul 5 Sunday start to June).
+ * Mid-week and Monday inputs keep resolving to their own week's Monday.
  */
 export function pabMonthFromWeekStart(weekStart: Date): { year: number; month: number } {
   const dow = weekStart.getDay();
-  const daysBackToMon = dow === 0 ? 6 : dow - 1;
-  const mon = new Date(
-    weekStart.getFullYear(),
-    weekStart.getMonth(),
-    weekStart.getDate() - daysBackToMon,
-  );
+  const mon =
+    dow === 0
+      ? new Date(weekStart.getFullYear(), weekStart.getMonth(), weekStart.getDate() + 1)
+      : new Date(
+          weekStart.getFullYear(),
+          weekStart.getMonth(),
+          weekStart.getDate() - (dow - 1),
+        );
   return { year: mon.getFullYear(), month: mon.getMonth() };
 }
 
 /**
- * `true` when the dispatch week's last day is on or after the PAB period's
- * end — i.e. this is the paycheck that closes the month and should carry
- * the PAB bonus.
+ * `true` when the dispatch week CONTAINS the PAB period's end day — i.e. this
+ * is the ONE paycheck that closes the month and should carry the PAB bonus.
+ *
+ * Containment (weekStart ≤ periodEnd ≤ weekEnd), NOT a bare `weekEnd >=
+ * periodEnd`: the old lower-bound-only check kept PAB attached to every later
+ * week of the month whenever an override/manual range ended before the month's
+ * last payroll week ("PAB still on after the payout week"). Payroll weeks are
+ * contiguous, so exactly one week contains the period end.
+ *
+ * Single source of truth — the Payroll Wizard, Payment Dispatch
+ * (current-pay), Employee Dashboard, member monthly modal, and the HSL
+ * snapshotter must all call this.
  */
-export function isFinalPabWeek(weekEnd: Date, pabPeriodEnd: Date): boolean {
+export function isFinalPabWeek(weekStart: Date, weekEnd: Date, pabPeriodEnd: Date): boolean {
   const endMid = new Date(
     pabPeriodEnd.getFullYear(),
     pabPeriodEnd.getMonth(),
     pabPeriodEnd.getDate(),
   ).getTime();
-  return weekEnd.getTime() >= endMid;
+  const startMid = new Date(
+    weekStart.getFullYear(),
+    weekStart.getMonth(),
+    weekStart.getDate(),
+  ).getTime();
+  const wEndMid = new Date(
+    weekEnd.getFullYear(),
+    weekEnd.getMonth(),
+    weekEnd.getDate(),
+  ).getTime();
+  return startMid <= endMid && wEndMid >= endMid;
 }
 
 /**

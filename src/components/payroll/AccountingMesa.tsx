@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   HeartHandshake,
   CheckCircle2,
@@ -27,8 +27,14 @@ import {
   UserPlus,
   UserMinus,
   StickyNote,
+  Download,
+  ChevronDown,
+  FileText,
+  FileSpreadsheet,
+  Table2,
+  Loader2,
 } from 'lucide-react';
-import { motion } from 'motion/react';
+import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -37,6 +43,12 @@ import { SmoothSelect } from '@/components/ui/smooth-select';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import { clearTabCache, getTabCache, hasTabCache, setTabCache, TAB_CACHE_KEYS } from '@/lib/accounting/tab-cache';
+import {
+  downloadMesaCsv,
+  downloadMesaPdf,
+  downloadMesaXlsx,
+  type MesaExportSpec,
+} from '@/lib/accounting/mesa-export';
 import { fetchRosterEmailSet, isOnRoster } from '@/lib/roster/roster-emails';
 import type { MesaLedgerEvent, MesaMemberSummary } from '@/lib/mesa/ledger';
 import type { EmployeeRow } from '@/lib/supabase/employees';
@@ -207,6 +219,134 @@ async function postToggleMesa(row: MesaRosterRow, mesaMember: boolean): Promise<
   }
 }
 
+// ── Export menu (PDF · XLSX · CSV — themed like the CEO dashboard) ──────────
+//
+// Same interaction + look as the HR Global Master List's ExportMenu: an
+// outline trigger opening a small menu whose icons carry the CEO dashboard's
+// orange→rose gradient. Each tab builds its own MesaExportSpec (columns, stat
+// band, scope label) over its *filtered* rows, so what you see is what exports.
+
+/** 'PHP 1,234.56' — exports spell out the currency code because the ₱ glyph
+ *  isn't in the PDF's WinAnsi Helvetica encoding. */
+const formatPhpExport = (n: number) =>
+  `PHP ${n.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+const EXPORT_EASE = [0.22, 1, 0.36, 1] as const;
+
+type ExportFormat = 'pdf' | 'xlsx' | 'csv';
+
+function MesaExportMenu({ spec }: { spec: MesaExportSpec }) {
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState<ExportFormat | null>(null);
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const reduce = useReducedMotion();
+
+  // Close on outside click / Escape.
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false);
+    };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+
+  const noun = spec.rows.length === 1 ? spec.countNoun[0] : spec.countNoun[1];
+
+  const runExport = useCallback(
+    async (format: ExportFormat) => {
+      if (spec.rows.length === 0) {
+        toast.error('Nothing to export in this view.');
+        return;
+      }
+      setBusy(format);
+      setOpen(false);
+      try {
+        if (format === 'csv') {
+          downloadMesaCsv(spec);
+        } else if (format === 'xlsx') {
+          downloadMesaXlsx(spec);
+        } else {
+          await downloadMesaPdf(spec);
+        }
+        const n = spec.rows.length;
+        toast.success(`Exported ${n.toLocaleString()} ${n === 1 ? spec.countNoun[0] : spec.countNoun[1]} as ${format.toUpperCase()}.`);
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : `Failed to export ${format.toUpperCase()}`);
+      } finally {
+        setBusy(null);
+      }
+    },
+    [spec],
+  );
+
+  const items: { format: ExportFormat; label: string; hint: string; Icon: typeof FileText }[] = [
+    { format: 'pdf', label: 'PDF', hint: 'Branded document', Icon: FileText },
+    { format: 'xlsx', label: 'Excel', hint: 'XLSX workbook', Icon: FileSpreadsheet },
+    { format: 'csv', label: 'CSV', hint: 'Plain data', Icon: Table2 },
+  ];
+
+  return (
+    <div ref={wrapRef} className="relative">
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        onClick={() => setOpen((o) => !o)}
+        disabled={busy !== null}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        className="gap-1.5"
+      >
+        {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
+        {busy ? `Exporting ${busy.toUpperCase()}…` : 'Export'}
+        <ChevronDown className={cn('h-3.5 w-3.5 transition-transform', open && 'rotate-180')} aria-hidden />
+      </Button>
+
+      <AnimatePresence>
+        {open && (
+          <motion.div
+            role="menu"
+            initial={reduce ? { opacity: 0 } : { opacity: 0, y: -6, scale: 0.98 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={reduce ? { opacity: 0 } : { opacity: 0, y: -6, scale: 0.98 }}
+            transition={{ duration: 0.15, ease: EXPORT_EASE }}
+            className="absolute right-0 z-30 mt-2 w-56 overflow-hidden rounded-xl border border-zinc-200 bg-white p-1 shadow-xl shadow-zinc-900/10 dark:border-zinc-700 dark:bg-zinc-900"
+          >
+            <p className="px-2.5 pb-1 pt-1.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-400 dark:text-zinc-500">
+              Export {spec.rows.length.toLocaleString()} {noun}
+            </p>
+            {items.map(({ format, label, hint, Icon }) => (
+              <button
+                key={format}
+                type="button"
+                role="menuitem"
+                onClick={() => void runExport(format)}
+                className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left transition-colors hover:bg-amber-50 dark:hover:bg-amber-950/30"
+              >
+                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-orange-500 to-rose-500 text-white shadow-sm">
+                  <Icon className="h-4 w-4" aria-hidden />
+                </span>
+                <span className="min-w-0">
+                  <span className="block text-sm font-medium text-zinc-900 dark:text-zinc-100">{label}</span>
+                  <span className="block text-[11px] text-zinc-500 dark:text-zinc-400">{hint}</span>
+                </span>
+              </button>
+            ))}
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
 export default function AccountingMesa() {
   const [view, setView] = useState<MesaView>('requests');
   const [rows, setRows] = useState<MesaRequest[]>(
@@ -310,6 +450,60 @@ export default function AccountingMesa() {
     approved: rows.filter((r) => r.status === 'approved').length,
     denied: rows.filter((r) => r.status === 'denied').length,
   }), [rows]);
+
+  // Export of the rows currently in view — stat band recomputed over the
+  // filtered set so the document is internally consistent with its row count.
+  const exportSpec = useMemo<MesaExportSpec>(() => {
+    const scopeParts = [
+      filterType ? TYPE_LABELS[filterType] : null,
+      filterStatus ? filterStatus.charAt(0).toUpperCase() + filterStatus.slice(1) : null,
+      filterDepartment || null,
+      query.trim() ? `matching "${query.trim()}"` : null,
+    ].filter(Boolean);
+    const details = (r: MesaRequest): string => {
+      if (r.request_type === 'disbursement')
+        return [r.disbursement_reason, r.explanation].filter(Boolean).join(' — ') || '-';
+      if (r.request_type === 'return') return r.explanation || '-';
+      if (r.request_type === 'opt_in' && r.fpu_date) return `FPU: ${r.fpu_date}`;
+      return '-';
+    };
+    return {
+      eyebrow: 'Accounting - MESA',
+      title: 'MESA Requests',
+      sheetName: 'MESA Requests',
+      fileBase: 'mesa-requests',
+      scopeLabel: scopeParts.length ? scopeParts.join(' · ') : 'All money-related requests',
+      countNoun: ['request', 'requests'],
+      stats: [
+        { label: 'In this export', value: filtered.length.toLocaleString() },
+        { label: 'Pending', value: filtered.filter((r) => r.status === 'pending').length.toLocaleString() },
+        { label: 'Approved', value: filtered.filter((r) => r.status === 'approved').length.toLocaleString() },
+        { label: 'Denied', value: filtered.filter((r) => r.status === 'denied').length.toLocaleString() },
+      ],
+      columns: [
+        { header: 'Employee', pdfWeight: 78, xlsxWidth: 26 },
+        { header: 'Email', pdfWeight: 105, xlsxWidth: 32 },
+        { header: 'Department', pdfWeight: 60, xlsxWidth: 20 },
+        { header: 'Type', pdfWeight: 52, xlsxWidth: 14 },
+        { header: 'Details', pdfWeight: 95, xlsxWidth: 40 },
+        { header: 'Amount', align: 'right', pdfWeight: 58, xlsxWidth: 15 },
+        { header: 'Status', pdfWeight: 46, xlsxWidth: 12 },
+        { header: 'Submitted', pdfWeight: 52, xlsxWidth: 14 },
+        { header: 'Reviewed by', pdfWeight: 62, xlsxWidth: 22 },
+      ],
+      rows: filtered.map((r) => [
+        r.full_name,
+        r.work_email,
+        r.department || '-',
+        TYPE_LABELS[r.request_type],
+        details(r),
+        r.amount_needed != null ? formatPhpExport(r.amount_needed) : '-',
+        r.status.charAt(0).toUpperCase() + r.status.slice(1),
+        new Date(r.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
+        r.reviewed_by ?? '-',
+      ]),
+    };
+  }, [filtered, filterStatus, filterType, filterDepartment, query]);
 
   const handleRefresh = async () => {
     clearTabCache(TAB_CACHE_KEYS.mesaRequests);
@@ -586,6 +780,7 @@ export default function AccountingMesa() {
             <RefreshCw className={cn('h-3.5 w-3.5', refreshing && 'animate-spin')} />
             Refresh
           </Button>
+          <MesaExportMenu spec={exportSpec} />
         </div>
 
         {/* Table */}
@@ -1216,6 +1411,34 @@ function MesaNonMembers() {
     [rows],
   );
 
+  const exportSpec = useMemo<MesaExportSpec>(() => {
+    const scopeParts = [
+      filterDepartment || null,
+      query.trim() ? `matching "${query.trim()}"` : null,
+    ].filter(Boolean);
+    return {
+      eyebrow: 'Accounting - MESA',
+      title: 'MESA Non Members',
+      sheetName: 'MESA Non Members',
+      fileBase: 'mesa-non-members',
+      scopeLabel: scopeParts.length ? scopeParts.join(' · ') : 'All departments',
+      countNoun: ['employee', 'employees'],
+      stats: [
+        { label: 'Non members', value: nonMemberCount.toLocaleString() },
+        { label: 'Enrolled (MESA Active)', value: enrolledCount.toLocaleString() },
+      ],
+      columns: [
+        { header: 'Name', pdfWeight: 150, xlsxWidth: 28 },
+        { header: 'Department', pdfWeight: 110, xlsxWidth: 22 },
+        { header: 'Email', pdfWeight: 210, xlsxWidth: 34 },
+      ],
+      rows: filtered.map((r) => [r.name, r.department ?? '-', r.workEmail ?? r.personalEmail ?? '-']),
+      notes: [
+        'Non members = employees who have never joined MESA (not opted in and no MESA start date). Opted-out ex-members are not listed here — their closed accounts remain on record in the MESA ledger.',
+      ],
+    };
+  }, [filtered, nonMemberCount, enrolledCount, filterDepartment, query]);
+
   const totalPages = Math.max(1, Math.ceil(filtered.length / BALANCES_PAGE_SIZE));
   const safePage = Math.min(page, totalPages - 1);
   const pageRows = filtered.slice(safePage * BALANCES_PAGE_SIZE, (safePage + 1) * BALANCES_PAGE_SIZE);
@@ -1279,6 +1502,7 @@ function MesaNonMembers() {
           <RefreshCw className={cn('h-3.5 w-3.5', refreshing && 'animate-spin')} />
           Refresh
         </Button>
+        <MesaExportMenu spec={exportSpec} />
       </div>
 
       {/* Table */}
@@ -1545,6 +1769,67 @@ function MesaActiveMembers() {
   const fmtSince = (d: string | null) =>
     d ? new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—';
 
+  // Export of the members currently in view. Money figures are recomputed over
+  // the filtered set so the stat band always matches the exported rows. The
+  // per-stint account caveat rides along as a note: opt-out closes the account
+  // (history retained under the old number), re-join mints a fresh one.
+  const exportSpec = useMemo<MesaExportSpec>(() => {
+    const scopeParts = [
+      filterDepartment || null,
+      query.trim() ? `matching "${query.trim()}"` : null,
+    ].filter(Boolean);
+    let contributed = 0;
+    let matched = 0;
+    let balance = 0;
+    for (const r of filtered) {
+      if (!r.ledger) continue;
+      contributed += r.ledger.contributed;
+      matched += r.ledger.matched;
+      balance += r.ledger.balance;
+    }
+    return {
+      eyebrow: 'Accounting - MESA',
+      title: 'MESA Active Members',
+      sheetName: 'MESA Active Members',
+      fileBase: 'mesa-active-members',
+      scopeLabel: scopeParts.length ? scopeParts.join(' · ') : 'All departments',
+      countNoun: ['member', 'members'],
+      stats: [
+        { label: 'Members contributed', value: formatPhpExport(contributed) },
+        { label: 'Simple.biz matched', value: formatPhpExport(matched) },
+        { label: 'Total balance', value: formatPhpExport(balance) },
+        { label: 'Members', value: filtered.length.toLocaleString() },
+      ],
+      columns: [
+        { header: 'Member', pdfWeight: 84, xlsxWidth: 26 },
+        { header: 'Email', pdfWeight: 108, xlsxWidth: 32 },
+        { header: 'Account #', pdfWeight: 58, xlsxWidth: 14 },
+        { header: 'Department', pdfWeight: 58, xlsxWidth: 20 },
+        { header: 'Contributed', align: 'right', pdfWeight: 56, xlsxWidth: 15 },
+        { header: 'Matched', align: 'right', pdfWeight: 54, xlsxWidth: 15 },
+        { header: 'Disbursed', align: 'right', pdfWeight: 54, xlsxWidth: 15 },
+        { header: 'Balance', align: 'right', pdfWeight: 56, xlsxWidth: 15 },
+        { header: 'Member since', pdfWeight: 56, xlsxWidth: 14 },
+      ],
+      rows: filtered.map((r) => [
+        r.name,
+        r.workEmail ?? r.personalEmail ?? '-',
+        r.accountNumber ?? '-',
+        r.department ?? '-',
+        formatPhpExport(r.ledger?.contributed ?? 0),
+        formatPhpExport(r.ledger?.matched ?? 0),
+        (r.ledger?.disbursed ?? 0) > 0 ? formatPhpExport(r.ledger!.disbursed) : '-',
+        formatPhpExport(r.ledger?.balance ?? 0),
+        r.mesaMemberSince
+          ? new Date(r.mesaMemberSince).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+          : '-',
+      ]),
+      notes: [
+        "Figures are scoped to each member's current (open) MESA account number. Opting out closes that account — its history is retained in the MESA ledger under the previous account number (nothing is deleted) — and a re-join opens a fresh account number starting from PHP 0.00.",
+      ],
+    };
+  }, [filtered, filterDepartment, query]);
+
   return (
     <div className="space-y-5">
       {/* Summary cards */}
@@ -1583,6 +1868,7 @@ function MesaActiveMembers() {
           <RefreshCw className={cn('h-3.5 w-3.5', refreshing && 'animate-spin')} />
           Refresh
         </Button>
+        <MesaExportMenu spec={exportSpec} />
       </div>
 
       {/* Table */}

@@ -132,6 +132,13 @@ import {
 } from '@/lib/fx/currency-fx';
 import { logAudit, valuesDiffer } from '@/lib/audit/client-log';
 import type { AuditCycleContext } from '@/lib/supabase/audit-log';
+import {
+  APPLY_NOTE_ADJUSTMENTS_EVENT,
+  NOTE_ADJUSTMENT_REMOVED_EVENT,
+  adjustmentToPhp,
+  parseAdjustmentAmount,
+} from '@/lib/payroll/adjustment-bridge';
+import type { PayrollWizardNoteRow } from '@/lib/supabase/payroll-wizard-notes';
 import AuditTrailPanel from '@/components/payroll-clerk/AuditTrailPanel';
 import TimeAdjustmentReviewPanel from '@/components/payroll/TimeAdjustmentReviewPanel';
 import {
@@ -142,6 +149,7 @@ import { downloadPayrollReportPdf, type PayrollReportRow } from '@/lib/payroll-w
 import { usePabPeriodSettings } from '@/hooks/usePabPeriodSettings';
 import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
 import { isFinalPayrollWeekOfMonth } from '@/lib/payroll/bonus-cadence';
+import { isFinalPabWeek as gateIsFinalPabWeek } from '@/lib/payroll/dispatch-bonuses';
 import { parseLocalDateFromIso, resolvePabRangeForMonth, yearMonthKey, PAB_PERIOD_EXCLUSIONS_KEY } from '@/lib/pab-period-settings';
 import {
   US_HOLIDAYS_ENABLED_KEY,
@@ -159,7 +167,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { HSL_DEPT_KEYS, HSL_DEPTS } from '@/lib/hsl-bonus/schema';
+import { HSL_DEPT_KEYS, HSL_DEPTS, calcManagerBonus } from '@/lib/hsl-bonus/schema';
 import WizardCursorOverlay, { type WizardCursorOverlayHandle } from '@/components/payroll/WizardCursorOverlay';
 
 function findHeaderColumn(header: string[], ...labels: string[]): number {
@@ -1177,7 +1185,6 @@ export default function PayrollWizard({
   const [payStructures, setPayStructures] = useState<PayStructure[]>([]);
 
   // ── HSL step: per-dept KPI bonus data loaded on demand (step 4) ─────────────
-  const [hslStepBonusByEmail, setHslStepBonusByEmail] = useState<Record<string, number>>({});
   const [hslStepPeriods, setHslStepPeriods] = useState<{
     department: string;
     period_start: string;
@@ -1327,14 +1334,21 @@ export default function PayrollWizard({
    * `hsl_team_members` with `dept_key='ssd_medical_records'` are eligible.
    * Powers the Hogan Smith Law tab's KPI Bonus column.
    */
-  const [ssdMemberEmails, setSsdMemberEmails] = useState<Set<string>>(new Set());
-  const [ssdKpiAmounts, setSsdKpiAmounts] = useState<Record<string, number>>({});
-  const [ssdKpiPeriod, setSsdKpiPeriod] = useState<{
+  // Authoritative HSL KPI bonus for DISPATCH: sums calculated_bonus across all
+  // WEEKLY HSL sub-departments (SSD, Medical Records, Callback, Simple Texting,
+  // Care, Filing, Intake, Pre/Post-Hearing, Managers Weekly) for the processed
+  // Hubstaff week, pinned. Monthly-cadence HSL depts (Collections, Healthcare TL,
+  // Collections TL) are intentionally excluded — they remain on the manual
+  // Adjustment path, exactly as before. Feeds the Additions "KPI Bonus" toggle
+  // and the step-4 review totals so what accounting sees is what dispatches.
+  const [hslKpiAmounts, setHslKpiAmounts] = useState<Record<string, number>>({});
+  const [hslKpiEligible, setHslKpiEligible] = useState<Set<string>>(new Set());
+  const [hslKpiPeriod, setHslKpiPeriod] = useState<{
     period_start: string;
     period_end: string;
     status: 'ready' | 'locked';
   } | null>(null);
-  const [ssdKpiLoading, setSsdKpiLoading] = useState(true);
+  const [hslKpiLoading, setHslKpiLoading] = useState(true);
 
   /** ISO week-start (YYYY-MM-DD) of the active Hubstaff source file.
    *  Both KPI load effects pin to this week when it is known. */
@@ -1444,80 +1458,111 @@ export default function PayrollWizard({
 
   useEffect(() => {
     let cancelled = false;
-    setSsdKpiLoading(true);
+    setHslKpiLoading(true);
     (async () => {
       try {
-        const [membersRes, statusRes] = await Promise.all([
-          fetch('/api/hsl-bonus/team-members?dept=ssd_medical_records', { cache: 'no-store' }),
-          fetch('/api/hsl-bonus/period-status?dept=ssd_medical_records', { cache: 'no-store' }),
-        ]);
-        const membersJson = (await membersRes.json()) as {
-          rows?: { email: string }[];
-        };
-        const statusJson = (await statusRes.json()) as {
-          rows?: { period_start: string; period_end: string; status: 'draft' | 'ready' | 'locked' }[];
-        };
-        if (cancelled) return;
-
-        const memberSet = new Set<string>();
-        for (const m of membersJson.rows ?? []) {
-          if (m.email) memberSet.add(m.email.toLowerCase());
-        }
-        setSsdMemberEmails(memberSet);
-
-        // When the Hubstaff week is known, pin to that exact week.
-        // Fall back to latest ready/locked only if no source file is loaded yet.
-        const periods = (statusJson.rows ?? []).filter(
-          (p) => p.status === 'ready' || p.status === 'locked',
-        );
-        let pick: { period_start: string; period_end: string; status: string } | null = null;
-        if (hubstaffWeekStart) {
-          pick = periods.find((p) => p.period_start === hubstaffWeekStart) ?? null;
-        } else if (periods.length > 0) {
-          periods.sort((a, b) => {
-            if (a.period_start !== b.period_start) {
-              return b.period_start.localeCompare(a.period_start);
-            }
-            return a.status === 'locked' ? -1 : b.status === 'locked' ? 1 : 0;
-          });
-          pick = periods[0]!;
-        }
-        if (!pick) {
-          setSsdKpiPeriod(null);
-          setSsdKpiAmounts({});
+        // No processed week yet → nothing auto-dispatches. Requiring the pinned
+        // week avoids ever paying a different week's score before a Hubstaff file
+        // is loaded.
+        if (!hubstaffWeekStart) {
+          if (!cancelled) {
+            setHslKpiPeriod(null);
+            setHslKpiAmounts({});
+            setHslKpiEligible(new Set());
+          }
           return;
         }
-        setSsdKpiPeriod({
-          period_start: pick.period_start,
-          period_end: pick.period_end,
-          status: pick.status as 'ready' | 'locked',
-        });
-
-        const entriesRes = await fetch(
-          `/api/hsl-bonus/entries?dept=ssd_medical_records&period_start=${pick.period_start}`,
-          { cache: 'no-store' },
+        const isFinalWeek = isFinalPayrollWeekOfMonth(hubstaffWeekStart);
+        // Weekly HSL sub-departments only — the set that auto-dispatches. Monthly-
+        // cadence depts (collections / healthcare TL / collections TL) stay manual.
+        const weeklySet = new Set<string>(
+          HSL_DEPT_KEYS.filter((k) => HSL_DEPTS[k].cadence === 'weekly'),
         );
-        const entriesJson = (await entriesRes.json()) as {
-          rows?: { employee_email: string; calculated_bonus: number }[];
+        const statusRes = await fetch('/api/hsl-bonus/period-status', { cache: 'no-store' });
+        const statusJson = (await statusRes.json()) as {
+          rows?: { department: string; period_start: string; period_end: string; status: 'draft' | 'ready' | 'locked' }[];
         };
         if (cancelled) return;
-        const amounts: Record<string, number> = {};
-        for (const e of entriesJson.rows ?? []) {
-          if (e.employee_email) {
-            amounts[e.employee_email.toLowerCase()] = Math.round(e.calculated_bonus ?? 0);
+
+        // Pin every weekly dept to the processed Hubstaff week; locked beats ready.
+        const chosen = new Map<string, { period_start: string; period_end: string; status: 'ready' | 'locked' }>();
+        for (const row of statusJson.rows ?? []) {
+          if (!weeklySet.has(row.department)) continue;
+          if (row.status !== 'ready' && row.status !== 'locked') continue;
+          if (row.period_start !== hubstaffWeekStart) continue;
+          const cur = chosen.get(row.department);
+          if (!cur || (cur.status !== 'locked' && row.status === 'locked')) {
+            chosen.set(row.department, {
+              period_start: row.period_start,
+              period_end: row.period_end,
+              status: row.status,
+            });
           }
         }
-        setSsdKpiAmounts(amounts);
+
+        if (chosen.size === 0) {
+          if (!cancelled) {
+            setHslKpiPeriod(null);
+            setHslKpiAmounts({});
+            setHslKpiEligible(new Set());
+          }
+          return;
+        }
+
+        // Fetch each chosen dept-week's entries and sum per employee. SSD is
+        // included here, so this fully replaces the old SSD-only amount (no double
+        // count). For the Managers dept, recompute from kpi_data so monthly-cadence
+        // components (e.g. Gyd's ₱25k) only count in the final payroll week.
+        const amounts: Record<string, number> = {};
+        await Promise.all(
+          Array.from(chosen.entries()).map(async ([dept, info]) => {
+            const res = await fetch(
+              `/api/hsl-bonus/entries?dept=${dept}&period_start=${info.period_start}`,
+              { cache: 'no-store' },
+            );
+            const json = (await res.json()) as {
+              rows?: { employee_email: string; calculated_bonus: number; kpi_data?: Record<string, unknown> }[];
+            };
+            const perEmployee = (HSL_DEPTS as Record<string, { perEmployee?: boolean }>)[dept]?.perEmployee;
+            for (const e of json.rows ?? []) {
+              const em = (e.employee_email ?? '').toLowerCase();
+              if (!em || em === '__dept_meta__') continue;
+              const amt = perEmployee
+                ? calcManagerBonus(em, (e.kpi_data ?? {}) as Record<string, number | boolean>, { includeMonthly: isFinalWeek })
+                : Math.round(e.calculated_bonus ?? 0);
+              amounts[em] = Math.round((amounts[em] ?? 0) + amt);
+            }
+          }),
+        );
+        if (cancelled) return;
+
+        // Eligibility = anyone with a positive scored amount this week.
+        const eligible = new Set<string>();
+        for (const [em, amt] of Object.entries(amounts)) if (amt > 0) eligible.add(em);
+
+        const picks = Array.from(chosen.values());
+        setHslKpiAmounts(amounts);
+        setHslKpiEligible(eligible);
+        setHslKpiPeriod({
+          period_start: hubstaffWeekStart,
+          period_end: picks.find((p) => p.period_end)?.period_end ?? '',
+          status: picks.every((p) => p.status === 'locked') ? 'locked' : 'ready',
+        });
       } catch {
-        // Silent — empty state is fine; the column will show "no week ready".
+        // On failure, clear rather than keep a possibly-stale other-week amount.
+        if (!cancelled) {
+          setHslKpiPeriod(null);
+          setHslKpiAmounts({});
+          setHslKpiEligible(new Set());
+        }
       } finally {
-        if (!cancelled) setSsdKpiLoading(false);
+        if (!cancelled) setHslKpiLoading(false);
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [hubstaffWeekStart]);
+  }, [hubstaffWeekStart, hslRefreshKey]);
 
   // ── Overtime settings from System Settings ──────────────────────────────────
   const [otGlobalSuspended, setOtGlobalSuspended] = useState(false);
@@ -1542,9 +1587,16 @@ export default function PayrollWizard({
     if (!calcSourceFile) return null;
     const r = parseDateRangeFromFilename(calcSourceFile);
     if (!r) return null;
+    // The week's OWNING Monday. Hubstaff files start on Sunday → the owning
+    // Monday is the NEXT day. Walking *back* from a Sunday (the old bug, same
+    // one fixed in the dispatch memo's weekPabMonth) attributed e.g. the
+    // Jul 5–11 file to JUNE — so the Additions tab evaluated the finished June
+    // period and showed +₱5,000 "Eligible" pills a week after the payout.
     const dow = r.start.getDay();
-    const daysBackToMon = dow === 0 ? 6 : dow - 1;
-    const mon = new Date(r.start.getFullYear(), r.start.getMonth(), r.start.getDate() - daysBackToMon);
+    const mon =
+      dow === 0
+        ? new Date(r.start.getFullYear(), r.start.getMonth(), r.start.getDate() + 1)
+        : new Date(r.start.getFullYear(), r.start.getMonth(), r.start.getDate() - (dow - 1));
     return { year: mon.getFullYear(), month: mon.getMonth() };
   }, [calcSourceFile]);
 
@@ -1682,7 +1734,14 @@ export default function PayrollWizard({
       setEmployeeBonuses(data.employeeBonuses ?? {});
       setTechBonusManualGrants(new Set(data.techBonusManualGrants ?? []));
       setTechBonusManualRevokes(new Set(data.techBonusManualRevokes ?? []));
-      setLockedPabSnapshot((data.pabStatusSnapshot ?? {}) as Record<string, 'eligible' | 'ineligible' | 'in_progress'>);
+      // Only lock verdicts when the saved payload actually carries a non-empty
+      // snapshot. Setting `{}` here (old behavior) made `effectivePabStatus`
+      // adopt an EMPTY snapshot for files with no saved progress (or progress
+      // saved before pabStatusSnapshot existed) — every lookup missed and the
+      // whole board fell back to "In Progress", so replaying a payout week
+      // showed no one earning PAB. `null` → live computation takes over.
+      const savedPabSnapshot = data.pabStatusSnapshot as Record<string, 'eligible' | 'ineligible' | 'in_progress'> | undefined;
+      setLockedPabSnapshot(savedPabSnapshot && Object.keys(savedPabSnapshot).length > 0 ? savedPabSnapshot : null);
       if (data.employeeDepts) setEmployeeDepts(data.employeeDepts);
       if (json.value) {
         setAdditionsSavedAt(new Date()); // Mark as having a saved state
@@ -2686,11 +2745,15 @@ export default function PayrollWizard({
             if (!cancelled) setHslDeptByEmail(deptMap);
           } catch { /* roster unavailable — keep the existing map */ }
         }
-        // Pick latest ready/locked period per HSL dept (locked beats ready on tie)
+        // Pick the period per HSL dept: WEEKLY depts pin to the processed Hubstaff
+        // week (so the review cards match what actually dispatches); monthly depts
+        // take the latest ready/locked. locked beats ready on a tie.
         const chosen = new Map<string, { period_start: string; period_end: string; period_type: string; status: string }>();
         for (const row of statusJson.rows ?? []) {
           if (!hslKeys.has(row.department)) continue;
           if (row.status !== 'ready' && row.status !== 'locked') continue;
+          const cfg = (HSL_DEPTS as Record<string, { cadence?: string }>)[row.department];
+          if (cfg?.cadence === 'weekly' && hubstaffWeekStart && row.period_start !== hubstaffWeekStart) continue;
           const cur = chosen.get(row.department);
           if (!cur || row.period_start > cur.period_start || (row.period_start === cur.period_start && row.status === 'locked')) {
             chosen.set(row.department, { period_start: row.period_start, period_end: row.period_end, period_type: row.period_type, status: row.status });
@@ -2699,7 +2762,6 @@ export default function PayrollWizard({
         if (cancelled) return;
         type HslEntry = { employee_email: string; employee_name: string; is_manager: boolean; calculated_bonus: number };
         const periods: typeof hslStepPeriods = [];
-        const bonusMap: Record<string, number> = {};
         await Promise.all(
           Array.from(chosen.entries()).map(async ([dept, info]) => {
             const res = await fetch(`/api/hsl-bonus/entries?dept=${dept}&period_start=${info.period_start}`, { cache: 'no-store' });
@@ -2707,11 +2769,8 @@ export default function PayrollWizard({
             const entries = (json.rows ?? []).filter(r => r.employee_email && r.employee_email !== '__dept_meta__');
             let total = 0;
             for (const e of entries) {
-              const em = (e.employee_email ?? '').toLowerCase();
-              if (!em) continue;
-              const amt = Math.round(e.calculated_bonus ?? 0);
-              bonusMap[em] = (bonusMap[em] ?? 0) + amt;
-              total += amt;
+              if (!e.employee_email) continue;
+              total += Math.round(e.calculated_bonus ?? 0);
             }
             periods.push({ department: dept, ...info, total_bonus: total, entries });
           }),
@@ -2719,7 +2778,6 @@ export default function PayrollWizard({
         if (cancelled) return;
         periods.sort((a, b) => a.department.localeCompare(b.department));
         setHslStepPeriods(periods);
-        setHslStepBonusByEmail(bonusMap);
       } catch (e) {
         if (!cancelled) setHslStepError(e instanceof Error ? e.message : 'Failed to load HSL bonus data');
       } finally {
@@ -2769,10 +2827,15 @@ export default function PayrollWizard({
       const d = parseColDate(col);
       if (!d) continue;
       const y = d.getFullYear();
-      // Figure out which PAB month this date belongs to: use the Monday of that week.
+      // Figure out which PAB month this date belongs to: the OWNING Monday of
+      // its pay week. A Sunday column belongs to the week starting the NEXT
+      // day (Sun–Sat weeks are owned by their Monday), so walk forward — not
+      // back to the previous week's Monday (mirrors fileMonth / weekPabMonth).
       const dow = d.getDay();
-      const daysBackToMon = dow === 0 ? 6 : dow - 1;
-      const mon = new Date(y, d.getMonth(), d.getDate() - daysBackToMon);
+      const mon =
+        dow === 0
+          ? new Date(y, d.getMonth(), d.getDate() + 1)
+          : new Date(y, d.getMonth(), d.getDate() - (dow - 1));
       const key = `${mon.getFullYear()}-${String(mon.getMonth() + 1).padStart(2, '0')}`;
       map.set(key, (map.get(key) ?? 0) + 1);
     }
@@ -3322,8 +3385,16 @@ export default function PayrollWizard({
 
   // When a locked snapshot exists, use it so values don't change on refresh.
   const effectivePabStatus = useMemo<Map<string, 'eligible' | 'ineligible' | 'in_progress'>>(() => {
-    if (!lockedPabSnapshot) return pabStatusByEmail;
+    // Empty snapshot = no snapshot (defensive twin of loadAdditionsProgress's
+    // null-when-empty rule) — never let it shadow the live computation.
+    if (!lockedPabSnapshot || Object.keys(lockedPabSnapshot).length === 0) return pabStatusByEmail;
     const snap = new Map(Object.entries(lockedPabSnapshot)) as Map<string, 'eligible' | 'ineligible' | 'in_progress'>;
+    // Employees absent from the frozen snapshot (added to the roster/dept after
+    // the lock) still get their LIVE verdict instead of the pill's
+    // 'in_progress' lookup-miss default.
+    for (const [email, status] of pabStatusByEmail.entries()) {
+      if (!snap.has(email)) snap.set(email, status);
+    }
     // A snapshot frozen mid-period carries 'in_progress' verdicts. Once the PAB
     // period has ended, those employees are locked-in eligible for the rest of the
     // interim (until the next PAB is initiated) — "In Progress" is now stale. Resolve
@@ -3509,6 +3580,202 @@ export default function PayrollWizard({
     deptMetrics,
   ]);
 
+  // ── Payroll Notes ↔ Additions "Adj." bridge ────────────────────────────────
+  // The board's Adjustment column and the Additions override hold the same
+  // fact. Wizard → board: every manual Adj. edit is mirrored (debounced) onto
+  // the worker's live-week note row. Board → wizard: entering the HSL/Additions
+  // steps pre-fills Adj. from open board rows whose Adjustment parses as a pure
+  // amount — never overwriting an override that already exists.
+
+  /** Per-email debounce for mirroring Adj. edits — the input fires per keystroke. */
+  const adjustmentBridgeTimers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
+  const scheduleAdjustmentBridge = React.useCallback((email: string, amount: number | null) => {
+    const timers = adjustmentBridgeTimers.current;
+    const pending = timers.get(email);
+    if (pending) clearTimeout(pending);
+    timers.set(
+      email,
+      setTimeout(() => {
+        timers.delete(email);
+        // Best-effort mirror: a board hiccup must never block payroll edits.
+        void fetch('/api/payroll-wizard/notes/adjustment', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ work_email: email, amount }),
+        }).catch(() => {});
+      }, 900),
+    );
+  }, []);
+  useEffect(() => {
+    const timers = adjustmentBridgeTimers.current;
+    return () => {
+      for (const t of timers.values()) clearTimeout(t);
+    };
+  }, []);
+
+  /** Pre-fill Adj. overrides from the Payroll Notes board (open rows linked to
+   *  a worker email whose Adjustment text is a pure signed amount — in ₱, $,
+   *  or COP; non-PHP amounts convert at the live fx rates since the override
+   *  is PHP-denominated).
+   *
+   *  Default (automatic, on step entry): merge-only — existing overrides,
+   *  saved or just typed, always win. `force` (a clerk's "Apply Changes"
+   *  button on their board section): the board is the source of truth and its
+   *  amounts OVERWRITE the matching overrides, with explicit result toasts
+   *  either way. `onlyRowIds` scopes the apply to one clerk's rows. */
+  const pullNotesAdjustments = React.useCallback(async (opts?: { force?: boolean; onlyRowIds?: string[] }) => {
+    if (isReplayRef.current) return;
+    const force = opts?.force === true;
+    const only = opts?.onlyRowIds?.length ? new Set(opts.onlyRowIds) : null;
+    try {
+      const res = await fetch('/api/payroll-wizard/notes', { cache: 'no-store' });
+      const json = (await res.json()) as { rows?: PayrollWizardNoteRow[] };
+      if (!res.ok) return;
+      // Newest-written row wins when a worker has several open amounts.
+      // `rowId` is the winning row for that email — the row that actually gets
+      // applied, so it's the one we file as Done afterwards (force only).
+      const byEmail = new Map<string, { amount: number; note: string; rowId: string }>();
+      const rows = [...(json.rows ?? [])].sort((a, b) => a.updated_at.localeCompare(b.updated_at));
+      for (const r of rows) {
+        if (r.done) continue;
+        if (only && !only.has(r.id)) continue;
+        const email = (r.worker_email ?? '').trim().toLowerCase();
+        const parsed = parseAdjustmentAmount(r.adjustment);
+        if (!email || !parsed) continue;
+        const amount = adjustmentToPhp(parsed, fxRates);
+        if (amount === null) continue;
+        const baseNote = r.notes?.trim() || `From Payroll Notes (${r.payroll_clerk ?? 'board'})`;
+        byEmail.set(email, {
+          amount,
+          // Converted amounts keep their origin visible next to the ₱ figure.
+          note:
+            parsed.currency === 'PHP'
+              ? baseNote
+              : `${baseNote} · from ${(r.adjustment ?? '').trim()} ${parsed.currency}`,
+          rowId: r.id,
+        });
+      }
+      const existing = auditCtxRef.current.bonusOverrides;
+      const adds = force
+        ? [...byEmail.entries()]
+        : [...byEmail.entries()].filter(([email]) => existing[email] === undefined);
+      if (adds.length === 0) {
+        if (force) {
+          toast.info('No board adjustments to apply', {
+            description:
+              'A row applies when its Worker was picked from the suggestion list and its Adjustment is a plain amount like +₱500, -$25, or COP 50,000.',
+          });
+        }
+        return;
+      }
+      // Spread order decides who wins: force = the board overwrites; the
+      // automatic pull is merge-only (anything already in prev wins).
+      const amounts = Object.fromEntries(adds.map(([email, a]) => [email, a.amount]));
+      const notes = Object.fromEntries(adds.map(([email, a]) => [email, a.note]));
+      setBonusOverrides(prev => (force ? { ...prev, ...amounts } : { ...amounts, ...prev }));
+      setBonusOverrideNotes(prev => (force ? { ...prev, ...notes } : { ...notes, ...prev }));
+      toast.success(
+        `${adds.length} adjustment${adds.length === 1 ? '' : 's'} ${force ? 'applied' : 'pre-filled'} from Payroll Notes`,
+        force
+          ? { description: 'The Adj. column in the HSL and Additions steps now shows the board values.' }
+          : undefined,
+      );
+      // An explicit "Apply Changes" commits these rows, so file them as Done on
+      // the board. This runs ONLY here — after the read/apply above — so it can
+      // never race the `if (r.done) continue` filter and skip the very rows it
+      // is applying. A later edit to a Worker/Adjustment reopens the row
+      // (cleared board-side), so a fresh change is never left marked Done.
+      if (force) {
+        void Promise.all(
+          adds.map(([, a]) =>
+            fetch('/api/payroll-wizard/notes', {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ id: a.rowId, values: { done: true } }),
+            }).catch(() => {
+              /* board-side Done is a convenience — never fail the apply over it */
+            }),
+          ),
+        );
+      }
+    } catch {
+      /* the board is an enhancement here — never block the wizard */
+    }
+  }, [fxRates]);
+
+  // Pull when the clerk lands on a step that shows the Adjustment column
+  // (HSL = 4, Additions = 5) with a live pay period loaded.
+  useEffect(() => {
+    if ((currentStep === 4 || currentStep === 5) && !isReplay && calcSourceFile) {
+      void pullNotesAdjustments();
+    }
+  }, [currentStep, isReplay, calcSourceFile, pullNotesAdjustments]);
+
+  // The Notes board's per-clerk "Apply Changes" buttons (detail.rowIds = that
+  // clerk's rows). preventDefault() is the handshake telling the board the
+  // wizard took it — left unhandled (replay / no pay period loaded), the
+  // board explains instead.
+  useEffect(() => {
+    const onApply = (e: Event) => {
+      if (isReplayRef.current || !calcSourceFile) return;
+      e.preventDefault();
+      const detail = (e as CustomEvent<{ rowIds?: string[] }>).detail;
+      void pullNotesAdjustments({ force: true, onlyRowIds: detail?.rowIds });
+    };
+    window.addEventListener(APPLY_NOTE_ADJUSTMENTS_EVENT, onApply);
+    return () => window.removeEventListener(APPLY_NOTE_ADJUSTMENTS_EVENT, onApply);
+  }, [calcSourceFile, pullNotesAdjustments]);
+
+  // A linked note left the board (row deleted / Adjustment cell cleared): the
+  // adjustment it applied goes with it. Guarded by a value match — the Adj.
+  // override is cleared ONLY while it still equals that note's amount (at the
+  // live fx rates), so a figure accounting typed by hand is never deleted by
+  // a stale or unrelated board row.
+  useEffect(() => {
+    const onRemoved = (e: Event) => {
+      if (isReplayRef.current) return;
+      const detail = (e as CustomEvent<{ workerEmail?: string; adjustment?: string }>).detail;
+      const email = (detail?.workerEmail ?? '').trim().toLowerCase();
+      const parsed = parseAdjustmentAmount(detail?.adjustment);
+      if (!email || !parsed) return;
+      const php = adjustmentToPhp(parsed, fxRates);
+      const ctx = auditCtxRef.current;
+      const current = ctx.bonusOverrides[email];
+      if (php === null || current === undefined || Math.abs(current - php) > 0.01) return;
+      setBonusOverrides(prev => {
+        const next = { ...prev };
+        delete next[email];
+        return next;
+      });
+      setBonusOverrideNotes(prev => {
+        if (!(email in prev)) return prev;
+        const next = { ...prev };
+        delete next[email];
+        return next;
+      });
+      void logAudit({
+        user_name: ctx.sessionEmail ?? 'anonymous',
+        user_role: sessionRole ?? 'user',
+        action: 'wizard.bonus_edited',
+        resource: 'bonus_override',
+        resource_id: email,
+        cycle: ctx.auditCycle,
+        details: {
+          employee_email: email,
+          field: 'bonus_override_php',
+          previous_value: current,
+          new_value: null,
+          reason: 'payroll_notes_adjustment_removed',
+        },
+      });
+      toast.info('Adjustment cleared', {
+        description: `${email} — its Payroll Notes row was removed.`,
+      });
+    };
+    window.addEventListener(NOTE_ADJUSTMENT_REMOVED_EVENT, onRemoved);
+    return () => window.removeEventListener(NOTE_ADJUSTMENT_REMOVED_EVENT, onRemoved);
+  }, [fxRates, sessionRole]);
+
   const toggleEmployeeBonus = React.useCallback((email: string, bonusId: string, enabled: boolean) => {
     if (isReplayRef.current) return; // view-only replay of a past period
     const ctx = auditCtxRef.current;
@@ -3691,6 +3958,9 @@ export default function PayrollWizard({
       else next[email] = value;
       return next;
     });
+    // Mirror the edit onto the worker's Payroll Notes row (debounced — the
+    // board and this column hold the adjustment together).
+    scheduleAdjustmentBridge(email, value);
     // Clearing the adjustment also drops its note — they have no meaning apart.
     if (value === null) {
       setBonusOverrideNotes(prev => {
@@ -3716,7 +3986,7 @@ export default function PayrollWizard({
         },
       });
     }
-  }, []);
+  }, [scheduleAdjustmentBridge]);
 
   /** Set/clear the free-text note attached to an employee's adjustment. Empty text removes it. */
   const updateBonusOverrideNote = React.useCallback((email: string, note: string) => {
@@ -4306,6 +4576,12 @@ export default function PayrollWizard({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [techBonusEligible]);
 
+  // NOTE: the HSL KPI bonus is auto-applied UNCONDITIONALLY in `bonusTotals` (a
+  // dedicated hogan_smith_law pass), not via the toggle — so there is no
+  // auto-toggle effect here. This keeps the dispatched paystub equal to the
+  // step-4 review by construction and avoids a toggle that can't be reliably
+  // turned off. Exceptions go through the Adjustment column.
+
   /**
    * Manager-submitted bonuses resolved to each wizard row's identity. The wizard
    * keys rows by Hubstaff email; manager entries are keyed by personal/work email,
@@ -4426,13 +4702,10 @@ export default function PayrollWizard({
           let total = 0;
           for (const db of dept.bonuses) {
             if (!toggles[db.id]) continue;
-            // KPI Bonus: per-employee amount from the latest SSD KPI sheet.
-            // Non-SSD members resolve to 0, so toggling is a no-op.
-            if (db.id === KPI_BONUS_ID) {
-              total += ssdKpiAmounts[emp.email.toLowerCase()] ?? 0;
-            } else {
-              total += db.amount;
-            }
+            // The HSL KPI bonus (KPI_BONUS_ID, a ₱0 sentinel) is no longer toggle-
+            // driven — it's auto-applied unconditionally in the dedicated pass
+            // below. Every other dept bonus adds its flat amount when toggled.
+            total += db.amount;
           }
           result[emp.email] = (result[emp.email] ?? 0) + total;
         }
@@ -4456,8 +4729,20 @@ export default function PayrollWizard({
       result[email] = (result[email] ?? 0) + commonTotal;
     }
 
+    // HSL weekly KPI bonus — auto-applied for every hogan_smith_law employee with
+    // a scored amount for the processed week. Added UNCONDITIONALLY (no toggle) so
+    // the dispatched paystub always equals the step-4 review Total Pay. This runs
+    // regardless of the resolvedManagerBonus short-circuit above, so a dual-dept
+    // person still gets their HSL KPI. For a one-off exception use the Adjustment
+    // column; do NOT also key HSL KPI amounts into Adjustment by hand (double-pay).
+    for (const [email, deptKey] of Object.entries(employeeDepts)) {
+      if (deptKey !== 'hogan_smith_law') continue;
+      const amt = hslKpiAmounts[email.toLowerCase()] ?? 0;
+      if (amt) result[email] = (result[email] ?? 0) + amt;
+    }
+
     return result;
-  }, [effectiveCalcResults, employeeDepts, employeeBonuses, employeeMetrics, deptMetrics, ssdKpiAmounts, resolvedManagerBonus, sysBonusCfg, pabAmountPhp, techAmountPhp]);
+  }, [effectiveCalcResults, employeeDepts, employeeBonuses, employeeMetrics, deptMetrics, hslKpiAmounts, resolvedManagerBonus, sysBonusCfg, pabAmountPhp, techAmountPhp]);
 
   /**
    * Effective bonus per employee: the auto-computed subtotal (PAB + Tech + KPI +
@@ -4569,15 +4854,16 @@ export default function PayrollWizard({
       : null;
 
     const isFinalPabWeek = (() => {
-      if (!weekEndDate) return false;
+      if (!weekStartDate || !weekEndDate) return false;
       const manualEnd = pabPeriodSettings.validManualRange?.end;
       const periodEnd = manualEnd ?? weekPabRange?.end;
       if (!periodEnd) return false;
-      return weekEndDate.getTime() >= new Date(
-        periodEnd.getFullYear(),
-        periodEnd.getMonth(),
-        periodEnd.getDate(),
-      ).getTime();
+      // Shared containment gate (dispatch-bonuses.isFinalPabWeek): PAB attaches
+      // to the ONE payroll week that CONTAINS the period end — not every week
+      // on/after it. The old `weekEnd >= periodEnd` check kept PAB attached to
+      // every later week of the month whenever an override/manual range ended
+      // before the month's last payroll week ("PAB still on after payout week").
+      return gateIsFinalPabWeek(weekStartDate, weekEndDate, periodEnd);
     })();
     /**
      * Tech Bonus rule: paid in the *3rd paycheck* of the month (the weekly pay
@@ -4783,6 +5069,10 @@ export default function PayrollWizard({
     calcSourceFile,
     hubstaffColsForPab,
     pabPeriodSettings.validManualRange,
+    // weekPabRange resolves per-month override windows inside this memo — without
+    // this dep the staged dispatch keeps gating PAB against the overrides that were
+    // loaded when the memo last ran (e.g. the empty pre-fetch map).
+    pabPeriodSettings.overrides,
     pabAmountPhp,
     techAmountPhp,
     isPabDeptEligible,
@@ -9028,17 +9318,17 @@ export default function PayrollWizard({
                     </CardHeader>
                     <CardContent className="space-y-3 pb-4">
                       {activeDept.bonuses.map(bonus => {
-                        // KPI Bonus: only SSD members are eligible. Apply All
-                        // restricts the bulk action to that subset.
+                        // KPI Bonus: eligible = anyone with a scored weekly-HSL KPI
+                        // amount for the week. Apply All restricts to that subset.
                         const eligibleEmails = bonus.id === KPI_BONUS_ID
                           ? deptEmployees
-                              .filter(e => ssdMemberEmails.has(e.email.toLowerCase()))
+                              .filter(e => hslKpiEligible.has(e.email.toLowerCase()))
                               .map(e => e.email)
                           : deptEmployees.map(e => e.email);
                         const allChecked =
                           eligibleEmails.length > 0 &&
                           eligibleEmails.every(em => employeeBonuses[em]?.[bonus.id]);
-                        const ssdReady = bonus.id === KPI_BONUS_ID && ssdKpiPeriod != null;
+                        const hslKpiReady = bonus.id === KPI_BONUS_ID && hslKpiPeriod != null;
                         return (
                           <div key={bonus.id} className="flex items-center justify-between gap-3">
                             <div className="min-w-0 flex-1">
@@ -9046,20 +9336,20 @@ export default function PayrollWizard({
                                 <span className="truncate">{bonus.label}</span>
                                 {bonus.id === KPI_BONUS_ID && (
                                   <span className="rounded bg-emerald-100 px-1 py-0.5 font-mono text-[8px] uppercase tracking-wider text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300">
-                                    SSD only
+                                    all HSL · weekly
                                   </span>
                                 )}
                               </div>
                               <div className="font-mono text-xs font-bold text-violet-600 dark:text-violet-400">
                                 {bonus.id === KPI_BONUS_ID ? (
-                                  ssdReady ? (
+                                  hslKpiReady ? (
                                     <>
-                                      wk of {ssdKpiPeriod!.period_start}
+                                      wk of {hslKpiPeriod!.period_start}
                                       <span className="ml-1 font-normal text-zinc-500">
                                         · {eligibleEmails.length} eligible
                                       </span>
                                     </>
-                                  ) : ssdKpiLoading ? (
+                                  ) : hslKpiLoading ? (
                                     <span className="text-zinc-400">loading…</span>
                                   ) : (
                                     <span className="text-amber-600 dark:text-amber-400">no KPI ready yet</span>
@@ -9069,28 +9359,37 @@ export default function PayrollWizard({
                                 )}
                               </div>
                             </div>
-                            <Button
-                              type="button"
-                              variant="outline"
-                              size="sm"
-                              className={cn(
-                                'h-7 shrink-0 border px-2 text-[10px] font-semibold',
-                                allChecked
-                                  ? 'border-red-200 bg-red-50 text-red-600 hover:bg-red-100 dark:border-red-800 dark:bg-red-950/30 dark:text-red-400'
-                                  : 'border-zinc-200 text-zinc-600 hover:border-violet-300 hover:text-violet-600 dark:border-zinc-700 dark:text-zinc-400',
-                              )}
-                              disabled={eligibleEmails.length === 0}
-                              onClick={() =>
-                                applyBonusToAllInDept(
-                                  bonus.id,
-                                  activeDeptTab,
-                                  !allChecked,
-                                  eligibleEmails,
-                                )
-                              }
-                            >
-                              {allChecked ? 'Remove All' : 'Apply All'}
-                            </Button>
+                            {bonus.id === KPI_BONUS_ID ? (
+                              <span
+                                className="inline-flex h-7 shrink-0 items-center gap-1 rounded border border-emerald-200 bg-emerald-50 px-2 text-[10px] font-semibold text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-300"
+                                title="Applied automatically to every HSL employee with a scored weekly KPI this week — no toggle needed. Use the Adjustment column for a one-off exception."
+                              >
+                                auto-applied
+                              </span>
+                            ) : (
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                className={cn(
+                                  'h-7 shrink-0 border px-2 text-[10px] font-semibold',
+                                  allChecked
+                                    ? 'border-red-200 bg-red-50 text-red-600 hover:bg-red-100 dark:border-red-800 dark:bg-red-950/30 dark:text-red-400'
+                                    : 'border-zinc-200 text-zinc-600 hover:border-violet-300 hover:text-violet-600 dark:border-zinc-700 dark:text-zinc-400',
+                                )}
+                                disabled={eligibleEmails.length === 0}
+                                onClick={() =>
+                                  applyBonusToAllInDept(
+                                    bonus.id,
+                                    activeDeptTab,
+                                    !allChecked,
+                                    eligibleEmails,
+                                  )
+                                }
+                              >
+                                {allChecked ? 'Remove All' : 'Apply All'}
+                              </Button>
+                            )}
                           </div>
                         );
                       })}
@@ -9408,9 +9707,9 @@ export default function PayrollWizard({
                                     <span className="line-clamp-2">{b.label}</span>
                                     <br />
                                     <span className="font-mono text-[8px] font-normal text-zinc-500 dark:text-zinc-400">
-                                      {ssdKpiPeriod
-                                        ? `wk ${ssdKpiPeriod.period_start.slice(5)} · ${ssdKpiPeriod.status}`
-                                        : ssdKpiLoading
+                                      {hslKpiPeriod
+                                        ? `wk ${hslKpiPeriod.period_start.slice(5)} · ${hslKpiPeriod.status}`
+                                        : hslKpiLoading
                                           ? 'loading…'
                                           : 'no KPI ready'}
                                     </span>
@@ -9520,19 +9819,20 @@ export default function PayrollWizard({
                                       </TableCell>
                                     );
                                   }
-                                  const rawStatus = effectivePabStatus.get(normEmpEmail) ?? 'in_progress';
-                                  // "In progress" means no weekday has been failed yet — the employee is
-                                  // effectively eligible for this period and stays eligible until the next PAB
-                                  // is initiated. Show it green with the Payment-Catalog PAB amount rather than
-                                  // a neutral "In Progress"; only an actual failed day locks it to Ineligible.
-                                  const status = rawStatus === 'in_progress' ? 'eligible' : rawStatus;
+                                  const status = effectivePabStatus.get(normEmpEmail) ?? 'in_progress';
+                                  // Honest tri-state (matches the HSL table): a RUNNING period shows a
+                                  // neutral "In Progress" — never the green +₱ amount, which read as "PAB
+                                  // pays this week" right after the previous payout. The post-period
+                                  // "stays eligible until the next PAB is initiated" behavior is handled
+                                  // upstream: effectivePabStatus resolves stale in_progress verdicts to
+                                  // Eligible once the period has ended, and those render green +₱ here.
                                   const label =
                                     status === 'eligible' ? '✓ Eligible'
                                     : status === 'ineligible' ? '✗ Ineligible'
                                     : '⏳ In Progress';
                                   const titleText =
-                                    rawStatus === 'ineligible' ? 'Already failed at least one past weekday — locked for this period. Click to see which day.'
-                                    : rawStatus === 'in_progress' ? 'No failed weekday so far — eligible for this period until the next PAB is initiated. Click to see the calendar.'
+                                    status === 'ineligible' ? 'Already failed at least one past weekday — locked for this period. Click to see which day.'
+                                    : status === 'in_progress' ? 'No failed weekday so far — PAB period is still running; pays on the payout week if every weekday passes. Click to see the calendar.'
                                     : 'Passed every Mon–Fri in the PAB period — click to see the calendar.';
                                   return (
                                     <TableCell className="px-1 py-1.5 text-center">
@@ -9621,14 +9921,14 @@ export default function PayrollWizard({
                                 {!FORMULA_DEPT_KEYS.has(activeDeptTab) && activeDept.bonuses.map(bonus => {
                                   if (bonus.id === KPI_BONUS_ID) {
                                     const lc = emp.email.toLowerCase();
-                                    const isSSD = ssdMemberEmails.has(lc);
-                                    const amount = ssdKpiAmounts[lc] ?? 0;
-                                    if (!isSSD) {
+                                    const eligible = hslKpiEligible.has(lc);
+                                    const amount = hslKpiAmounts[lc] ?? 0;
+                                    if (!eligible) {
                                       return (
                                         <TableCell
                                           key={bonus.id}
                                           className="px-1 py-1.5 text-center"
-                                          title="Not in SSD Medical Records team — KPI Bonus only applies to SSD"
+                                          title="No scored HSL KPI bonus for this employee in the current week"
                                         >
                                           <span className="font-mono text-[10px] text-zinc-300 dark:text-zinc-700">—</span>
                                         </TableCell>
@@ -9637,26 +9937,14 @@ export default function PayrollWizard({
                                     return (
                                       <TableCell key={bonus.id} className="px-1 py-1.5 text-center">
                                         <div className="flex flex-col items-center gap-0.5">
-                                          <Switch
-                                            checked={employeeBonuses[emp.email]?.[bonus.id] ?? false}
-                                            onCheckedChange={v => toggleEmployeeBonus(emp.email, bonus.id, v)}
-                                            className="data-[state=checked]:bg-indigo-600"
-                                            disabled={amount === 0 || isReplay}
-                                          />
                                           <span
-                                            className={cn(
-                                              'font-mono text-[9px] tabular-nums',
-                                              amount > 0
-                                                ? 'text-emerald-600 dark:text-emerald-400'
-                                                : 'text-zinc-400 dark:text-zinc-600',
-                                            )}
-                                            title={
-                                              amount === 0
-                                                ? 'No KPI score recorded for this employee in the current week'
-                                                : `KPI calculated bonus`
-                                            }
+                                            className="font-mono text-[11px] font-semibold tabular-nums text-emerald-600 dark:text-emerald-400"
+                                            title="Auto-applied HSL weekly KPI bonus — paid without a toggle. Use the Adjustment column for a one-off exception; do not also key it into Adjustment by hand."
                                           >
-                                            {amount > 0 ? formatPHP(amount) : '₱0'}
+                                            {formatPHP(amount)}
+                                          </span>
+                                          <span className="rounded bg-emerald-100 px-1 font-mono text-[7px] uppercase tracking-wider text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300">
+                                            auto
                                           </span>
                                         </div>
                                       </TableCell>
@@ -10256,7 +10544,13 @@ export default function PayrollWizard({
         const techColShownHsl = isDeptEligible(sysBonusCfg.tech, 'hogan_smith_law');
 
         const totalHslInitialPay = hslCalcRows.reduce((s, r) => s + (r.initialPay ?? 0), 0);
-        const totalHslKpiBonuses = Object.values(hslStepBonusByEmail).reduce((s, v) => s + v, 0);
+        // Scope the header total to THIS run's HSL rows with a pay rate, so it
+        // equals the sum of the KPI column below (not every scorer in the DB).
+        const totalHslKpiBonuses = hslCalcRows.reduce((s, r) => {
+          const em = (r.email ?? '').toLowerCase();
+          const hasRates = r.regularRate != null || r.otRate != null;
+          return s + (hasRates ? (hslKpiAmounts[em] ?? 0) : 0);
+        }, 0);
 
         const monthLabelHsl = pabMonthRange
           ? `${pabMonthRange.monthName} ${pabMonthRange.year}`
@@ -10455,8 +10749,16 @@ export default function PayrollWizard({
                           <div className="truncate text-xs font-semibold text-zinc-800 dark:text-zinc-200">
                             {cfg?.name ?? p.department}
                           </div>
-                          <div className="mt-0.5 text-[10px] text-zinc-500 dark:text-zinc-400">
-                            {fmtPeriod(p)} &middot; {p.entries.length} employee{p.entries.length !== 1 ? 's' : ''}
+                          <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[10px] text-zinc-500 dark:text-zinc-400">
+                            <span>{fmtPeriod(p)} &middot; {p.entries.length} employee{p.entries.length !== 1 ? 's' : ''}</span>
+                            {p.period_type === 'monthly' && (
+                              <span
+                                className="rounded bg-zinc-200 px-1 py-0.5 font-mono text-[8px] font-semibold uppercase tracking-wide text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300"
+                                title="Monthly bonus — NOT auto-dispatched. Apply this amount via the Adjustment column."
+                              >
+                                manual · Adjustment
+                              </span>
+                            )}
                           </div>
                         </div>
                         <div className="shrink-0 text-right">
@@ -10563,7 +10865,10 @@ export default function PayrollWizard({
                         <tbody className="divide-y divide-zinc-100 bg-white dark:divide-zinc-800/60 dark:bg-zinc-950/40">
                           {pagedHsl.map(r => {
                             const em = (r.email ?? '').toLowerCase();
-                            const kpiBonus = hslStepBonusByEmail[em] ?? 0;
+                            // Match dispatch: bonuses are zeroed for rows without a
+                            // pay rate, so gate the KPI the same way here.
+                            const hasRates = r.regularRate != null || r.otRate != null;
+                            const kpiBonus = hasRates ? (hslKpiAmounts[em] ?? 0) : 0;
                             const override = bonusOverrides[r.email] ?? null;
                             // Adj. is a signed delta added on top of the KPI bonus, never a replacement.
                             const effectiveBonus = kpiBonus + (override ?? 0);
@@ -10807,7 +11112,7 @@ export default function PayrollWizard({
                             for (const r of visibleHslRows) {
                               const em = (r.email ?? '').toLowerCase();
                               totalInitialPay += r.initialPay ?? 0;
-                              totalKpi += hslStepBonusByEmail[em] ?? 0;
+                              totalKpi += (r.regularRate != null || r.otRate != null) ? (hslKpiAmounts[em] ?? 0) : 0;
                               totalAdj += bonusOverrides[r.email] ?? 0;
                               totalOrphanage += orphanageAmounts[r.email] ?? 0;
                               const st = effectivePabStatus.get(em) ?? 'in_progress';

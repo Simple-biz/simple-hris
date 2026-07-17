@@ -10,6 +10,7 @@ import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import {
   TIME_ADJUSTMENT_REASONS,
+  fmtAdjustmentSegments,
   type TimeAdjustmentRow,
 } from '@/lib/supabase/time-adjustments';
 
@@ -183,7 +184,12 @@ export default function TimeAdjustmentReviewPanel({
 
         {/* Actionable: manager already approved, Accounting can decide */}
         {actionable.map((a) => {
-          const draft = hoursDraft[a.id] ?? (a.requested_hours != null ? String(a.requested_hours) : '');
+          const hasSegments = (a.requested_segments ?? []).length > 0;
+          // Segment-based requests claim MISSED time to add on top of tracked hours, so the
+          // requested amount is not a valid prefill for the "Set time" day-total override.
+          const draft =
+            hoursDraft[a.id] ??
+            (!hasSegments && a.requested_hours != null ? String(a.requested_hours) : '');
           const draftHM = splitHM(draft);
           const isDeciding = decidingId === a.id;
           return (
@@ -201,7 +207,17 @@ export default function TimeAdjustmentReviewPanel({
                     {a.requested_hours != null && (
                       <>
                         <span className="mx-1.5 text-zinc-300">&middot;</span>
-                        requested {fmtHM(a.requested_hours)}
+                        {hasSegments
+                          ? <span className="font-medium text-emerald-700 dark:text-emerald-400">+{fmtHM(a.requested_hours)} missing</span>
+                          : <>requested {fmtHM(a.requested_hours)}</>}
+                      </>
+                    )}
+                    {hasSegments && (
+                      <>
+                        <span className="mx-1.5 text-zinc-300">&middot;</span>
+                        <span className="font-mono text-zinc-700 dark:text-zinc-300">
+                          {fmtAdjustmentSegments(a.requested_segments)}
+                        </span>
                       </>
                     )}
                     {a.period_label && (
@@ -258,7 +274,12 @@ export default function TimeAdjustmentReviewPanel({
               )}
 
               {/* Decision controls */}
-              <div className="mt-3 flex flex-wrap items-center gap-2">
+              {hasSegments && (
+                <p className="mt-3 text-[10.5px] text-zinc-500 dark:text-zinc-400">
+                  Set time = the employee&apos;s FINAL total for this day (tracked hours + the missed time above).
+                </p>
+              )}
+              <div className={`flex flex-wrap items-center gap-2 ${hasSegments ? 'mt-1.5' : 'mt-3'}`}>
                 <label className="text-[11px] font-medium text-zinc-600 dark:text-zinc-400">Set time</label>
                 <Input
                   type="number"
@@ -330,9 +351,14 @@ export default function TimeAdjustmentReviewPanel({
                 <span className="truncate text-zinc-600 dark:text-zinc-400">{a.work_email}</span>
                 <span className="text-zinc-400">&middot;</span>
                 <span className="text-zinc-500">{reasonLabel(a.reason)}</span>
-                {a.requested_hours != null && (
+                {(a.requested_segments ?? []).length > 0 ? (
+                  <span className="ml-auto font-mono text-zinc-500">
+                    {fmtAdjustmentSegments(a.requested_segments)}
+                    {a.requested_hours != null ? ` (+${fmtHM(a.requested_hours)})` : ''}
+                  </span>
+                ) : a.requested_hours != null ? (
                   <span className="ml-auto text-zinc-500">{fmtHM(a.requested_hours)} requested</span>
-                )}
+                ) : null}
               </div>
             ))}
           </div>

@@ -12,8 +12,93 @@ import { listDepartmentsForManager } from './department-managers';
 
 export const TIME_ADJUSTMENT_BUCKET = 'time-adjustment-evidence';
 export const MAX_ADJUSTMENT_IMAGES = 5;
+export const MAX_ADJUSTMENT_SEGMENTS = 6;
 
 const TABLE = 'time_adjustment_requests';
+
+/**
+ * One MISSED (untracked) time range within the adjusted day. 24h "HH:MM", day-local.
+ * Segments are only the time to be ADDED on top of tracked hours — not the full shift.
+ */
+export type TimeAdjustmentSegment = { time_in: string; time_out: string };
+
+const HHMM_RE = /^([01]\d|2[0-3]):([0-5]\d)$/;
+
+function hhmmToMinutes(v: string): number | null {
+  const m = HHMM_RE.exec(v);
+  if (!m) return null;
+  return parseInt(m[1]!, 10) * 60 + parseInt(m[2]!, 10);
+}
+
+/**
+ * Validate + normalize employee-supplied segments. Requires at least one segment;
+ * each needs valid HH:MM stamps with time_out after time_in; segments may not
+ * overlap. Returns the segments sorted by time_in, or an error message.
+ */
+export function sanitizeAdjustmentSegments(
+  input: unknown,
+): { segments: TimeAdjustmentSegment[] | null; error: string | null } {
+  if (!Array.isArray(input) || input.length === 0) {
+    return { segments: null, error: 'At least one time in / time out is required' };
+  }
+  if (input.length > MAX_ADJUSTMENT_SEGMENTS) {
+    return { segments: null, error: `At most ${MAX_ADJUSTMENT_SEGMENTS} time ranges` };
+  }
+  const parsed: Array<TimeAdjustmentSegment & { inMin: number; outMin: number }> = [];
+  for (const raw of input) {
+    const seg = raw as Partial<TimeAdjustmentSegment> | null;
+    const timeIn = typeof seg?.time_in === 'string' ? seg.time_in.trim() : '';
+    const timeOut = typeof seg?.time_out === 'string' ? seg.time_out.trim() : '';
+    const inMin = hhmmToMinutes(timeIn);
+    const outMin = hhmmToMinutes(timeOut);
+    if (inMin == null || outMin == null) {
+      return { segments: null, error: 'Each time range needs a valid time in and time out (HH:MM)' };
+    }
+    if (outMin <= inMin) {
+      return { segments: null, error: 'Time out must be after time in for each range' };
+    }
+    parsed.push({ time_in: timeIn, time_out: timeOut, inMin, outMin });
+  }
+  parsed.sort((a, b) => a.inMin - b.inMin);
+  for (let i = 1; i < parsed.length; i++) {
+    if (parsed[i]!.inMin < parsed[i - 1]!.outMin) {
+      return { segments: null, error: 'Time ranges must not overlap' };
+    }
+  }
+  return {
+    segments: parsed.map(({ time_in, time_out }) => ({ time_in, time_out })),
+    error: null,
+  };
+}
+
+/** Total decimal hours covered by the segments. Invalid entries count as 0. */
+export function adjustmentSegmentsTotalHours(segments: TimeAdjustmentSegment[]): number {
+  let minutes = 0;
+  for (const s of segments) {
+    const inMin = hhmmToMinutes(s.time_in);
+    const outMin = hhmmToMinutes(s.time_out);
+    if (inMin != null && outMin != null && outMin > inMin) minutes += outMin - inMin;
+  }
+  return minutes / 60;
+}
+
+/** "09:00" -> "9:00 AM" for display. Falls back to the raw string. */
+export function fmtAdjustmentClock(hhmm: string): string {
+  const min = hhmmToMinutes(hhmm);
+  if (min == null) return hhmm;
+  const h24 = Math.floor(min / 60);
+  const m = min % 60;
+  const suffix = h24 < 12 ? 'AM' : 'PM';
+  const h12 = h24 % 12 === 0 ? 12 : h24 % 12;
+  return `${h12}:${String(m).padStart(2, '0')} ${suffix}`;
+}
+
+/** "9:00 AM - 11:30 AM, 1:00 PM - 3:00 PM" summary line for reviewer views. */
+export function fmtAdjustmentSegments(segments: TimeAdjustmentSegment[]): string {
+  return segments
+    .map((s) => `${fmtAdjustmentClock(s.time_in)} - ${fmtAdjustmentClock(s.time_out)}`)
+    .join(', ');
+}
 
 /**
  * Status lifecycle:
@@ -34,6 +119,7 @@ export type TimeAdjustmentRow = {
   reason: string;
   explanation: string | null;
   requested_hours: number | null;
+  requested_segments: TimeAdjustmentSegment[];
   image_paths: string[];
   status: TimeAdjustmentStatus;
   approved_hours: number | null;
@@ -125,7 +211,7 @@ export async function createTimeAdjustment(params: {
   adjust_date: string;
   reason: string;
   explanation?: string | null;
-  requested_hours?: number | null;
+  requested_segments: TimeAdjustmentSegment[];
   image_paths?: string[];
   created_by?: string | null;
 }): Promise<{ id: string | null; error: string | null }> {
@@ -136,17 +222,22 @@ export async function createTimeAdjustment(params: {
     return { id: null, error: `Invalid reason code: ${params.reason}` };
   }
 
+  // Segments (the missed time ranges) are the source of truth; requested_hours is the
+  // sum of them = the hours the employee claims should be ADDED to the day.
+  const { segments, error: segError } = sanitizeAdjustmentSegments(params.requested_segments);
+  if (segError || !segments) return { id: null, error: segError ?? 'Invalid time ranges' };
+
   const email = normEmail(params.work_email) ?? params.work_email.trim().toLowerCase();
   const paths = (params.image_paths ?? []).filter(Boolean).slice(0, MAX_ADJUSTMENT_IMAGES);
-  const reqHours =
-    params.requested_hours != null && params.requested_hours >= 0 ? params.requested_hours : null;
+  const reqHours = adjustmentSegmentsTotalHours(segments);
   const nowIso = new Date().toISOString();
 
-  // Upsert on (work_email, adjust_date) so a re-request for the same day overwrites the
-  // prior PENDING row rather than failing the unique index. Decided rows are protected below.
+  // Upsert on (work_email, adjust_date) so editing/re-requesting the same day overwrites
+  // the prior PENDING row rather than failing the unique index. Once a manager or
+  // Accounting has acted, the row is locked against employee edits.
   const { row: existing } = await getTimeAdjustmentByEmailDate(email, params.adjust_date);
   if (existing && existing.status !== 'pending') {
-    return { id: null, error: 'A decided request already exists for this date' };
+    return { id: null, error: 'This day\'s request has already been reviewed and can no longer be changed' };
   }
 
   const payload = {
@@ -155,6 +246,7 @@ export async function createTimeAdjustment(params: {
     reason: params.reason,
     explanation: params.explanation?.trim() || null,
     requested_hours: reqHours,
+    requested_segments: segments,
     image_paths: paths,
     status: 'pending' as const,
     period_label: periodLabelFor(new Date()),
@@ -180,7 +272,13 @@ export async function createTimeAdjustment(params: {
       action: 'time_adjustment.submitted',
       resource: TABLE,
       resource_id: id ?? undefined,
-      details: { employee: email, adjust_date: params.adjust_date, reason: params.reason },
+      details: {
+        employee: email,
+        adjust_date: params.adjust_date,
+        reason: params.reason,
+        // True when the employee edited a still-pending request (row overwritten).
+        resubmission: !!existing,
+      },
     });
   })();
 
@@ -477,6 +575,14 @@ export async function deleteTimeAdjustment(
 }
 
 /**
+ * Storage folder prefix that owns an employee's evidence objects. Keep in sync with
+ * uploadTimeAdjustmentImage; used to verify submitted image_paths belong to the caller.
+ */
+export function adjustmentEvidencePrefix(email: string): string {
+  return `${(email || 'unknown').toLowerCase().replace(/[^a-z0-9._-]/g, '_')}/`;
+}
+
+/**
  * Uploads one evidence image to the private bucket. Returns the object PATH (not a URL).
  * Path: <sanitized-email>/<requestKey>/<idx>-<ts>.<ext>
  */
@@ -491,9 +597,8 @@ export async function uploadTimeAdjustmentImage(
   const supabase = createSupabaseServiceRoleClient();
   if (!supabase) return { path: null, error: 'Supabase not configured' };
 
-  const safeEmail = (email || 'unknown').toLowerCase().replace(/[^a-z0-9._-]/g, '_');
   const safeExt = (ext || 'jpg').toLowerCase().replace(/[^a-z0-9]/g, '') || 'jpg';
-  const path = `${safeEmail}/${requestKey}/${idx}-${Date.now()}.${safeExt}`;
+  const path = `${adjustmentEvidencePrefix(email)}${requestKey}/${idx}-${Date.now()}.${safeExt}`;
 
   const { error } = await supabase.storage
     .from(TIME_ADJUSTMENT_BUCKET)

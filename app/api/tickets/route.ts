@@ -8,7 +8,7 @@ import { insertAuditLog } from '@/lib/supabase/audit-log';
 import { logTicketEvent } from '@/lib/tickets/events';
 import { listTicketMembers } from '@/lib/tickets/members';
 import { notifyTicketCreated, sendTicketAssignedNotifications } from '@/lib/tickets/notify';
-import { TICKET_PRIORITIES, isAssignableDeveloper, type TicketRow } from '@/lib/tickets/types';
+import { TICKET_BOARD_OWNER, TICKET_PRIORITIES, isAssignableDeveloper, type TicketRow } from '@/lib/tickets/types';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -80,11 +80,18 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: `priority must be one of: ${TICKET_PRIORITIES.join(', ')}` }, { status: 400 });
   }
 
-  // Optional developer assignment at creation — same rule as PATCH: the
-  // assignee must hold Edit access to the Ticket Board (Roles & Permissions)
-  // or be an admin, i.e. appear in the /api/tickets/members pool as edit/admin.
-  const assignedTo = (body.assigned_to ?? '').trim().toLowerCase() || null;
-  if (assignedTo) {
+  // Assignment is owner-only. Every new ticket lands on the board owner's desk
+  // by default — that's the triage inbox. ONLY the owner may route a ticket
+  // straight to a developer at creation; everyone else's requests default to
+  // the owner regardless of what they send (reassignment later is likewise
+  // owner-only — see PATCH). A developer pick must hold Edit access to the
+  // Ticket Board (Roles & Permissions) or be an admin, i.e. appear in the
+  // /api/tickets/members pool as edit/admin — the owner themselves is always
+  // valid, so the default skips the lookup.
+  const isOwner = authz.sessionEmail === TICKET_BOARD_OWNER;
+  const requestedAssignee = (body.assigned_to ?? '').trim().toLowerCase();
+  const assignedTo = isOwner ? requestedAssignee || TICKET_BOARD_OWNER : TICKET_BOARD_OWNER;
+  if (assignedTo !== TICKET_BOARD_OWNER) {
     try {
       const members = await listTicketMembers(supabase);
       if (!members.some((m) => m.email === assignedTo && isAssignableDeveloper(m))) {
@@ -153,9 +160,11 @@ export async function POST(req: NextRequest) {
   // full request details. Fire-and-forget — see notifyTicketCreated.
   void notifyTicketCreated(data as TicketRow);
 
-  // Assigned at creation → tell the developer right away (in-app + email),
-  // unless the creator assigned themselves.
-  if (assignedTo && assignedTo !== authz.sessionEmail) {
+  // Owner routed a ticket to a developer at creation → tell them right away
+  // (in-app + email). Skipped for the owner-by-default case: those tickets land
+  // on the owner's own desk, and the owner already learns of every new ticket
+  // via the ticket_created webhook — no need for a redundant "assigned to you".
+  if (isOwner && assignedTo !== authz.sessionEmail) {
     sendTicketAssignedNotifications(supabase, data as TicketRow, authz.sessionEmail);
   }
 

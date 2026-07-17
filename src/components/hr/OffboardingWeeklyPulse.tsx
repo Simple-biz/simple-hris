@@ -1,9 +1,10 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { motion, useReducedMotion } from 'motion/react';
+import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import {
   Activity,
+  Building2,
   CalendarClock,
   ChevronLeft,
   ChevronRight,
@@ -31,7 +32,7 @@ import { getHrTabCache, setHrTabCache, HR_TAB_CACHE_KEYS } from '@/lib/hr/tab-ca
  * ratio across every recorded separation.
  */
 
-type PulseRow = { off_boarded_at: string | null };
+type PulseRow = { off_boarded_at: string | null; Department: string | null };
 
 /** Shared easing — matches the offboarding section's other motion transitions. */
 const EASE = [0.22, 1, 0.36, 1] as const;
@@ -158,6 +159,22 @@ export default function OffboardingWeeklyPulse({
   // Meter fills across a 0–30% window so healthy → alarming reads at a glance.
   const meterPct = Math.max(4, Math.min(100, (displayRate / 30) * 100));
 
+  // Per-department breakdown for the selected period, ranked by count. Blank
+  // departments bucket into "Unspecified" so the rows reconcile with the total.
+  const deptRows = useMemo(() => {
+    const inScope =
+      week === null ? rows : rows.filter((r) => rowWeek(r.off_boarded_at) === week);
+    const m = new Map<string, number>();
+    for (const r of inScope) {
+      const d = (r.Department ?? '').trim() || 'Unspecified';
+      m.set(d, (m.get(d) ?? 0) + 1);
+    }
+    const list = Array.from(m.entries())
+      .map(([dept, count]) => ({ dept, count }))
+      .sort((a, b) => b.count - a.count || a.dept.localeCompare(b.dept));
+    return { list, max: Math.max(1, ...list.map((d) => d.count)) };
+  }, [rows, week]);
+
   // 8-week sparkline ending at the selected week (or the current week in All time).
   const anchor = week ?? currentSunday;
   const spark = useMemo(() => {
@@ -173,10 +190,7 @@ export default function OffboardingWeeklyPulse({
   const rateTag = week === null ? 'all-time' : 'annualized';
 
   return (
-    <motion.section
-      initial={animate ? { opacity: 0, y: 8 } : false}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.4, ease: EASE }}
+    <section
       className="flex flex-col gap-3"
       aria-label="Weekly offboarding overview"
     >
@@ -374,7 +388,80 @@ export default function OffboardingWeeklyPulse({
           </div>
         </div>
       </div>
-    </motion.section>
+
+      {/* ── Department breakdown — full-width, its own panel so the list has room
+          to spread across columns. Scoped to the same selected week. ────────── */}
+      <div className="rounded-2xl border border-rose-100/90 bg-white p-5 shadow-sm ring-1 ring-rose-500/5 dark:border-rose-950/60 dark:bg-zinc-950 dark:ring-rose-400/10">
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-zinc-400">
+            <Building2 className="h-3.5 w-3.5 text-rose-500" /> Offboarded by department
+          </div>
+          {deptRows.list.length > 0 && (
+            <span className="text-[11px] tabular-nums text-zinc-400">
+              {deptRows.list.length} {deptRows.list.length === 1 ? 'department' : 'departments'}
+              {' · '}
+              {separations} total
+            </span>
+          )}
+        </div>
+
+        {loading ? (
+          <div className="mt-3 grid grid-cols-1 gap-x-8 gap-y-2.5 sm:grid-cols-2 xl:grid-cols-3" aria-hidden>
+            {Array.from({ length: 6 }).map((_, i) => (
+              <div key={i} className="flex items-center gap-3">
+                <span className="h-3 flex-1 animate-pulse rounded bg-zinc-100 dark:bg-zinc-800" />
+                <span className="h-2 w-24 animate-pulse rounded-full bg-zinc-100 dark:bg-zinc-800" />
+                <span className="h-3 w-5 animate-pulse rounded bg-zinc-100 dark:bg-zinc-800" />
+              </div>
+            ))}
+          </div>
+        ) : deptRows.list.length === 0 ? (
+          <div className="mt-3 flex flex-col items-center gap-1.5 rounded-xl border border-dashed border-rose-200/70 py-8 text-center dark:border-rose-900/40">
+            <Building2 className="h-6 w-6 text-rose-200 dark:text-rose-900" />
+            <p className="text-[13px] text-zinc-500 dark:text-zinc-400">
+              No one was offboarded {week ? `in ${formatWeekLabel(week)}` : 'on record'}.
+            </p>
+          </div>
+        ) : (
+          <motion.ul
+            layout={animate ? 'position' : false}
+            className="mt-3 grid grid-cols-1 gap-x-8 gap-y-2.5 sm:grid-cols-2 xl:grid-cols-3"
+          >
+            <AnimatePresence initial={false}>
+              {deptRows.list.map((d) => (
+                <motion.li
+                  key={d.dept}
+                  layout={animate ? 'position' : false}
+                  initial={animate ? { opacity: 0, y: 4 } : false}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={animate ? { opacity: 0 } : undefined}
+                  transition={{ duration: 0.28, ease: EASE }}
+                  className="flex items-center gap-3 text-[13px]"
+                >
+                  <span
+                    className="min-w-0 flex-1 truncate text-zinc-700 dark:text-zinc-300"
+                    title={d.dept}
+                  >
+                    {d.dept}
+                  </span>
+                  <span className="h-2 w-20 shrink-0 overflow-hidden rounded-full bg-rose-100/80 sm:w-24 dark:bg-rose-950/50">
+                    <motion.span
+                      className="block h-full rounded-full bg-gradient-to-r from-rose-400 to-rose-600 dark:from-rose-500 dark:to-rose-400"
+                      initial={false}
+                      animate={{ width: `${Math.max(6, (d.count / deptRows.max) * 100)}%` }}
+                      transition={{ duration: animate ? 0.5 : 0, ease: EASE }}
+                    />
+                  </span>
+                  <span className="w-6 shrink-0 text-right font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">
+                    <CountInt value={d.count} animate={animate} />
+                  </span>
+                </motion.li>
+              ))}
+            </AnimatePresence>
+          </motion.ul>
+        )}
+      </div>
+    </section>
   );
 }
 

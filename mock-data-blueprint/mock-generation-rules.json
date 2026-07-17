@@ -371,19 +371,17 @@
     "hsl_team_members": {
       "count": 80,
       "department_distribution": {
-        "case_manager": 20,
+        "medical_records": 12,
         "filing_specialist": 8,
         "intake_specialist": 10,
         "ssd_medical_records": 8,
         "post_hearing_prep": 8,
         "collections": 6,
         "care_team": 5,
-        "case_mgmt_asst_tl": 7,
+        "callback_team": 9,
+        "simple_texting": 9,
         "collections_tl": 3,
-        "healthcare_team_lead": 2,
-        "chelzy_asst": 1,
-        "vicky_asst_tl": 1,
-        "case_mgr_no_kpi": 1
+        "healthcare_team_lead": 2
       },
       "field_rules": {
         "email": "firstinitial.surname@demo.biz (same pool as global_master_list)",

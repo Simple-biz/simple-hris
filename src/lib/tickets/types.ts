@@ -14,13 +14,21 @@ export const TICKET_STATUS_LABELS: Record<TicketStatus, string> = {
   done: 'Done',
 };
 
+/** The board owner — the single account that owns ticket triage. Every new
+ *  ticket defaults to this assignee, and ONLY this account may set, change, or
+ *  clear a ticket's `assigned_to` (POST + PATCH /api/tickets enforce it
+ *  server-side; the ticket dialog and Admin → Design & Specs pickers render
+ *  read-only for everyone else). Distinct from "who can move cards" — see
+ *  TICKET_BOARD_MOVERS. Lowercase. */
+export const TICKET_BOARD_OWNER = 'kaner@simple.biz';
+
 /** Who may MOVE cards between columns (drag, or the dialog's Column select):
  *  this allowlist (the board owner) PLUS each ticket's assigned developer,
  *  who walks their own ticket across the workflow as they work it. Everyone
  *  else creates tickets and replies. Enforced server-side in
  *  PATCH /api/tickets/[id]; the UI reads the same rule to gate dragging
  *  per card. Lowercase. */
-export const TICKET_BOARD_MOVERS = ['kaner@simple.biz'] as const;
+export const TICKET_BOARD_MOVERS = [TICKET_BOARD_OWNER] as const;
 
 export const TICKET_PRIORITIES = ['low', 'medium', 'high', 'urgent'] as const;
 export type TicketPriority = (typeof TICKET_PRIORITIES)[number];

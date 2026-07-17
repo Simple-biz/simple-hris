@@ -4,7 +4,9 @@
 -- The Payroll Wizard's floating "Notes" checklist — a running list of
 -- carry-over items for the next payroll week (missed bonuses, rate changes,
 -- deductions in progress). Mirrors the "Phase 5: Adjustments" block of the
--- old payroll spreadsheet: Date | Payroll Clerk | Done | Worker | Notes.
+-- old payroll spreadsheet: Date | Payroll Clerk | Done | Worker | Adjustment | Notes
+-- (Adjustment + week_start added 2026-07-17, see
+-- alter/add_adjustment_and_week_start_to_payroll_wizard_notes.sql).
 --
 -- One flat list (no per-week partitioning): items are added as they come up
 -- and ticked Done once applied in a following week. Access is enforced at the
@@ -20,8 +22,11 @@ CREATE TABLE IF NOT EXISTS public.payroll_wizard_notes (
   note_date     TEXT,                             -- free text, e.g. "7/10"
   payroll_clerk TEXT,                             -- who logged / owns the item
   done          BOOLEAN NOT NULL DEFAULT FALSE,   -- applied in a later week
-  worker        TEXT,                             -- affected worker (email/name)
+  worker        TEXT,                             -- affected worker (display name, free text)
+  worker_email  TEXT,                             -- work email link when picked from the suggestion list (bridge key)
+  adjustment    TEXT,                             -- the pay change, e.g. "+₱500" (bridged to the wizard's Adj. override)
   notes         TEXT,                             -- what needs to happen
+  week_start    DATE,                             -- Manila Monday of the week it was written (API-stamped; null = blank seed)
   created_by    TEXT,
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -34,6 +39,9 @@ BEGIN
   RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
+
+CREATE INDEX IF NOT EXISTS payroll_wizard_notes_worker_week_idx
+  ON public.payroll_wizard_notes (worker_email, week_start);
 
 DROP TRIGGER IF EXISTS trg_pwn_touch ON public.payroll_wizard_notes;
 CREATE TRIGGER trg_pwn_touch

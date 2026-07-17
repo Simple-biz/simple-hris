@@ -47,6 +47,13 @@ interface TicketsOverviewProps {
 
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 
+/** Smoked-glass surface for the KPI cards: a dark, tinted, translucent panel
+ *  with only a hint of backdrop blur — crisp and smoky, not the milky haze a
+ *  heavy blur gives. The soft red glow behind the KPI row still shows through
+ *  the tint (over flat black there'd be nothing to see through). */
+const GLASS_CARD =
+  'border border-white/10 bg-card/65 shadow-xl shadow-black/40 backdrop-blur-[3px]';
+
 function ageDays(iso: string): string {
   const days = Math.floor((Date.now() - Date.parse(iso)) / 86_400_000);
   return days < 1 ? '<1d' : `${days}d`;
@@ -151,10 +158,33 @@ export default function TicketsOverview({
     <div className="mx-auto grid w-full max-w-7xl items-start gap-4 p-4 sm:p-6 lg:grid-cols-3">
       <div className="min-w-0 space-y-4 lg:col-span-2">
       {/* ── KPI block: one full-width lead figure + four compact tiles ──────── */}
-      <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
-        <section className="col-span-2 rounded-xl border border-border bg-card p-4 sm:p-5 xl:col-span-4">
+      <div className="relative grid grid-cols-2 gap-3 xl:grid-cols-4">
+        {/* Ambient red glow behind the frosted KPI cards — absolutely
+            positioned so it fills the grid box without taking a cell; the
+            cards' backdrop-blur refracts it. */}
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-0 overflow-hidden rounded-2xl"
+        >
+          <div className="absolute -top-12 -left-10 size-56 rounded-full bg-red-500/20 blur-3xl" />
+          <div className="absolute top-1/4 -right-8 size-44 rounded-full bg-rose-500/15 blur-3xl" />
+          <div className="absolute -bottom-10 left-1/3 size-48 rounded-full bg-red-600/15 blur-3xl" />
+        </div>
+        <section className={cn('relative col-span-2 overflow-hidden rounded-xl p-4 sm:p-5 xl:col-span-4', GLASS_CARD)}>
+          {/* Warm-red gradient strip — the design's top accent, recolored from
+              its violet→pink original to stay inside the black+red console. */}
+          <span
+            className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-red-600 via-red-500 to-rose-400"
+            aria-hidden
+          />
+          {/* Window-chrome row: control dots + a quiet "open · now" tag. */}
           <div className="flex items-center justify-between gap-2">
-            <p className="text-xs text-muted-foreground">Open now</p>
+            <WindowDots />
+            <span className="text-xs text-muted-foreground">open · now</span>
+          </div>
+          {/* Metric label + urgent flag on one line, the lead figure below. */}
+          <div className="mt-3 flex items-center justify-between gap-2">
+            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Open now</p>
             {stats.urgentOpen > 0 && (
               <span
                 className={cn(
@@ -167,9 +197,10 @@ export default function TicketsOverview({
               </span>
             )}
           </div>
-          <p className="mt-2 text-5xl leading-none font-semibold">{stats.open}</p>
+          <p className="mt-1.5 text-5xl leading-none font-semibold">{stats.open}</p>
+          <div className="mt-4 border-t border-border" />
           {stats.oldestOpen ? (
-            <div className="-mx-2 mt-3.5">
+            <div className="-mx-2 mt-1">
               <button
                 type="button"
                 onClick={() => onOpenTicket(stats.oldestOpen as TicketRow)}
@@ -187,7 +218,7 @@ export default function TicketsOverview({
               </button>
             </div>
           ) : (
-            <p className="mt-4 text-xs text-muted-foreground">
+            <p className="mt-3 text-xs text-muted-foreground">
               {stats.total > 0
                 ? 'All caught up. Nothing is open right now.'
                 : 'No tickets yet. New requests land here.'}
@@ -492,12 +523,44 @@ function MembersTable({ members, error }: { members: TicketMember[] | null; erro
 
 // ── Building blocks ───────────────────────────────────────────────────────────
 
-function StatTile({ label, value, sub }: { label: string; value: number; sub?: string }) {
+/** macOS-style window control dots — the design's per-card chrome motif. Against
+ *  the black console cards they read as terminal window buttons; decorative, so
+ *  hidden from assistive tech. */
+function WindowDots({ className }: { className?: string }) {
   return (
-    <div className="rounded-xl border border-border bg-card p-4 sm:p-5">
+    <span className={cn('flex items-center gap-1.5', className)} aria-hidden>
+      <span className="size-2 rounded-full bg-red-500" />
+      <span className="size-2 rounded-full bg-amber-400" />
+      <span className="size-2 rounded-full bg-emerald-500" />
+    </span>
+  );
+}
+
+/** Tone for a stat's sub-line: signed week-over-week deltas read green up / red
+ *  down (matching the reference); unsigned captions (percentages, "Across this
+ *  board") stay muted. */
+function deltaTone(sub?: string): 'up' | 'down' | 'muted' {
+  if (sub?.startsWith('+')) return 'up';
+  if (sub?.startsWith('-')) return 'down';
+  return 'muted';
+}
+
+function StatTile({ label, value, sub }: { label: string; value: number; sub?: string }) {
+  const tone = deltaTone(sub);
+  return (
+    <div className={cn('relative rounded-xl p-4 sm:p-5', GLASS_CARD)}>
+      <WindowDots className="mb-3" />
       <p className="text-xs text-muted-foreground">{label}</p>
       <p className="mt-2 text-3xl leading-none font-semibold">{value}</p>
-      <p className={cn('mt-1.5 h-4 truncate text-[11px] text-muted-foreground/80', !sub && 'invisible')}>
+      <p
+        className={cn(
+          'mt-1.5 h-4 truncate text-[11px]',
+          tone === 'up' && 'text-emerald-600 dark:text-emerald-400',
+          tone === 'down' && 'text-red-600 dark:text-red-400',
+          tone === 'muted' && 'text-muted-foreground/80',
+          !sub && 'invisible',
+        )}
+      >
         {sub ?? ' '}
       </p>
     </div>
@@ -515,6 +578,7 @@ function OverviewCard({
 }) {
   return (
     <section className="rounded-xl border border-border bg-card p-4 sm:p-5">
+      <WindowDots className="mb-3" />
       <header className="mb-3.5">
         <h2 className="text-sm font-semibold">{title}</h2>
         {caption && <p className="mt-0.5 text-xs text-muted-foreground">{caption}</p>}

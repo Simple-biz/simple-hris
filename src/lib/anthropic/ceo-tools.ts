@@ -1276,7 +1276,9 @@ async function getPayrollWizardNotes(includeDoneRaw: unknown): Promise<ToolResul
 
   // The board keeps blank seeded lines waiting for each clerk — skip those.
   const blank = (v: string | null) => !(v ?? '').trim();
-  const real = rows.filter((r) => r.done || !blank(r.note_date) || !blank(r.worker) || !blank(r.notes));
+  const real = rows.filter(
+    (r) => r.done || !blank(r.note_date) || !blank(r.worker) || !blank(r.adjustment) || !blank(r.notes),
+  );
 
   const openCount = real.filter((r) => !r.done).length;
   const shown = real
@@ -1285,7 +1287,9 @@ async function getPayrollWizardNotes(includeDoneRaw: unknown): Promise<ToolResul
     .map((r) => ({
       payroll_clerk: r.payroll_clerk,
       note_date: r.note_date,
+      week_of: r.week_start,
       worker: r.worker,
+      adjustment: r.adjustment,
       notes: r.notes,
       done: r.done,
     }));
@@ -1295,7 +1299,7 @@ async function getPayrollWizardNotes(includeDoneRaw: unknown): Promise<ToolResul
     done_count: real.length - openCount,
     showing: includeDone ? 'open + done items' : 'open items only',
     field_notes:
-      'The Payroll Wizard\'s carry-over notes board — free-form items payroll clerks stage for a following week (missed bonuses, rate changes, deductions). payroll_clerk = who wrote it; worker = who it is about (free text); done = already applied in a later run. These are working notes, not final records — verify money figures against the pay tools before quoting them.',
+      'The Payroll Wizard\'s carry-over notes board — free-form items payroll clerks stage for a following week (missed bonuses, rate changes, deductions). payroll_clerk = who wrote it; week_of = Monday of the payroll week it was written; worker = who it is about (free text); adjustment = the pay change called for (free text, e.g. "+₱500", "-$25"); done = already applied in a later run. These are working notes, not final records — verify money figures against the pay tools before quoting them.',
     notes: shown,
   };
 }

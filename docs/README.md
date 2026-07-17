@@ -43,8 +43,12 @@ docs/
 | [third-party-vendors.md](./features/third-party-vendors.md) | Orphanage 3rd Party Vendors tab: vendor directory (dual banking) + SIMPLE-branded invoice builder with PAID watermark; deliberately separate from Payment Dispatch (own tables, no n8n) |
 | [delete-authorization.md](./features/delete-authorization.md) | Who can delete what, and the audit trail |
 | [system-diagnostics.md](./features/system-diagnostics.md) | Admin diagnostics service map + probes; live auto re-probe feed for watching the DB during an outage |
-| [mesa.md](./features/mesa.md) | MESA savings program: `mesa_requests` (opt-in/out/disbursement/return) + backfilled `mesa_ledger`; contribution displays across HR/Accounting/Employee dashboards; Wizard ₱100 deduction flag |
-| [offboarding-automation.md](./features/offboarding-automation.md) | Manager multi-select → HR one-by-one offboard queue; RBAC snapshot/restore; n8n `manager-offboard-notify` (count-only email to alissar@) + multi-employee `employee.offboarded` teardown payload |
+| [mesa.md](./features/mesa.md) | MESA savings program: `mesa_requests` (opt-in/out/disbursement/return) + backfilled `mesa_ledger`; contribution displays across HR/Accounting/Employee dashboards; Wizard ₱100 deduction flag; per-stint `mesa_accounts` (`YY-MM-#####`); Global Master List source-of-truth gating |
+| [tickets-board.md](./features/tickets-board.md) | `/tickets` HRIS Updates Kanban: dedicated `tickets` role, owner-only assignment (kaner@), movers, comments + `ticket_events` history, archive/restore, n8n assignee email, black+red console theme |
+| [payroll-wizard-notes.md](./features/payroll-wizard-notes.md) | Payroll Wizard floating Notes checklist: Date/Clerk/Done/Worker/**Adjustment**/Notes, Manila-Monday `week_start` stamping + period selector, realtime, CEO-tool readable. Adjustment/week_start migration PENDING |
+| [hr-global-master-list-export.md](./features/hr-global-master-list-export.md) | HR Global Master List: client-side PDF/XLSX/CSV export (CEO-themed PDF), per-card View detail dialog, Sync-deprecation warning dialog |
+| [accounting-mesa-export.md](./features/accounting-mesa-export.md) | Accounting MESA: per-tab PDF/XLSX/CSV export (CEO-themed, spec-driven `mesa-export.ts`); Active Members export carries the per-stint account-number caveat (opt-out closes the account, history retained) |
+| [offboarding-automation.md](./features/offboarding-automation.md) | Manager multi-select → HR one-by-one offboard queue; RBAC snapshot/restore; n8n `manager-offboard-notify` (count-only email to alissar@) + multi-employee `employee.offboarded` teardown payload; Weekly Pulse KPI cards (weekly offboards + attrition) |
 | [time-adjustment-requests.md](./features/time-adjustment-requests.md) | Employee time adjustment requests: wizard, evidence upload, Accounting review, pay wiring |
 | [identity-resolution.md](./features/identity-resolution.md) | Master-authoritative identity + Department; alternate-work-email bridging for hours/rate matching across Rates & Profiles, Payroll Wizard, manager + employee dashboards |
 | [manager-my-team.md](./features/manager-my-team.md) | Manager portal → My Team: roster, rates/pay hidden on every surface, Recognition-medal card, attendance-only Hours tab (HSL rule via `department` prop) |
@@ -93,6 +97,7 @@ docs/
 
 | Doc |
 |---|
+| [audit-2026-07-17-session-log.md](./audits/audit-2026-07-17-session-log.md) — log of the 20 most recent Claude sessions (Jul 15–17): MESA overhaul, tickets hardening, PAB payout-week fixes, GML export + open deploy steps |
 | [audit-2026-07-10-session-log.md](./audits/audit-2026-07-10-session-log.md) — log of the 20 most recent Claude sessions (Jul 8–10) |
 | [audit-2026-07-07-session-log.md](./audits/audit-2026-07-07-session-log.md) — log of the 20 most recent Claude sessions (Jul 6–7) |
 | [audit-2026-06-16.md](./audits/audit-2026-06-16.md) |

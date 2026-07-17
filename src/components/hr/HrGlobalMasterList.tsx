@@ -13,10 +13,25 @@ import {
 import { toast } from 'sonner';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import {
+  AlertTriangle,
+  ArrowRight,
+  Building2,
+  Calendar,
+  CalendarDays,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
+  Clock,
+  Download,
+  Eye,
+  FileSpreadsheet,
+  FileText,
+  IdCard,
   LayoutGrid,
   Loader2,
+  Mail,
+  MapPin,
+  Phone,
   RefreshCw,
   Search,
   SearchX,
@@ -28,6 +43,14 @@ import {
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import type { EmployeeRow } from '@/lib/supabase/employees';
 import { useLiveRefresh } from '@/hooks/useLiveRefresh';
 import { getHrTabCache, hasHrTabCache, setHrTabCache, HR_TAB_CACHE_KEYS } from '@/lib/hr/tab-cache';
@@ -36,6 +59,13 @@ import { cn } from '@/lib/utils';
 import { usePresenceDetails, type PresenceDetail } from '@/components/presence/PresenceProvider';
 import { dashboardLabelForPathname } from '@/lib/presence/page-label';
 import { formatLastSeen, TeamAvatar } from '@/components/team/team-ui';
+import {
+  buildMasterListExport,
+  downloadMasterListCsv,
+  downloadMasterListPdf,
+  downloadMasterListXlsx,
+} from '@/lib/hr/global-master-list-export';
+import { manilaWeekStart, mondayOf, weekEndFromStart, weekRangeLabel } from '@/lib/payroll/manila-week';
 import DeptFilter from './DeptFilter';
 
 // Cards page in 15s (fills the 3-column grid evenly); the table keeps 10.
@@ -75,6 +105,22 @@ function tenure(iso: string | null | undefined): string {
   if (months > 0) return `${months}mo`;
   const days = Math.floor((now.getTime() - start.getTime()) / 86400000);
   return days <= 0 ? 'New' : `${days}d`;
+}
+
+/** Normalize a start-date string to a comparable YYYY-MM-DD, or null when
+ *  missing/unparseable. Lets the week filter compare against a Manila week end. */
+function toIsoDate(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toISOString().slice(0, 10);
+}
+
+/** The Monday `weeks` payroll-weeks before a Monday ISO date (negative = later). */
+function shiftWeekIso(mondayIso: string, weeks: number): string {
+  const [y, m, d] = mondayIso.split('-').map(Number);
+  const dt = new Date(Date.UTC(y!, m! - 1, d! + weeks * 7));
+  return dt.toISOString().slice(0, 10);
 }
 
 function rowKey(r: EmployeeRow, i: number): string {
@@ -213,11 +259,13 @@ const RosterCard = memo(function RosterCard({
   online,
   statusText,
   delay,
+  onView,
 }: {
   row: EmployeeRow;
   online: boolean;
   statusText: string;
   delay: number;
+  onView: (entry: RosterEntry) => void;
 }) {
   const reduce = useReducedMotion();
   return (
@@ -279,16 +327,24 @@ const RosterCard = memo(function RosterCard({
         </div>
       </dl>
 
-      <div className="mt-auto pt-3">
+      <div className="mt-auto flex items-center justify-between gap-2 border-t border-zinc-100 pt-3 dark:border-zinc-800">
         <p
           title={statusText}
           className={cn(
-            'truncate border-t border-zinc-100 pt-2.5 text-[11px] dark:border-zinc-800',
+            'min-w-0 flex-1 truncate text-[11px]',
             online ? 'font-medium text-emerald-700 dark:text-emerald-400' : 'text-zinc-500 dark:text-zinc-400',
           )}
         >
           {statusText}
         </p>
+        <button
+          type="button"
+          onClick={() => onView({ row, online, statusText })}
+          className="inline-flex shrink-0 items-center gap-1 rounded-md border border-emerald-200 bg-emerald-50 px-2 py-1 text-[11px] font-medium text-emerald-700 transition-colors hover:bg-emerald-100 dark:border-emerald-900/50 dark:bg-emerald-950/40 dark:text-emerald-300 dark:hover:bg-emerald-900/40"
+          aria-label={`View ${row.name ?? 'record'}`}
+        >
+          <Eye className="h-3 w-3" aria-hidden /> View
+        </button>
       </div>
     </motion.li>
   );
@@ -360,12 +416,135 @@ const RosterRow = memo(function RosterRow({
   );
 });
 
+/* ── Employee detail dialog (opened by a card's "View" button) ─────────────── */
+
+/** One labelled read-only tile in the detail grid — mirrors the Admin master-list
+ *  record fields. Auto-dims when empty. */
+function DetailField({
+  icon: Icon,
+  label,
+  value,
+  mono,
+}: {
+  icon: typeof Mail;
+  label: string;
+  value: string | null | undefined;
+  mono?: boolean;
+}) {
+  const shown = value && value.trim() ? value : '—';
+  const empty = shown === '—';
+  return (
+    <div className="min-w-0 rounded-lg border border-zinc-200/90 bg-white/70 px-3 py-2 dark:border-zinc-800 dark:bg-zinc-900/50">
+      <p className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-500">
+        <Icon className="h-3 w-3 shrink-0" aria-hidden />
+        {label}
+      </p>
+      <p
+        className={cn(
+          'mt-0.5 break-words text-[13px] text-zinc-900 dark:text-zinc-100',
+          mono && 'font-mono text-[12px]',
+          empty && 'text-zinc-400 dark:text-zinc-600',
+        )}
+      >
+        {shown}
+      </p>
+    </div>
+  );
+}
+
+function EmployeeDetailDialog({ entry, onClose }: { entry: RosterEntry | null; onClose: () => void }) {
+  const row = entry?.row ?? null;
+  const online = entry?.online ?? false;
+  const email = row?.work_email ?? row?.personal_email ?? null;
+  const alternateEmails = [row?.alternate_work_email, row?.alternate_work_email_2]
+    .map((e) => e?.trim())
+    .filter(Boolean)
+    .join(', ');
+  const location =
+    row?.location?.trim() ||
+    [row?.city, row?.province].map((s) => s?.trim()).filter(Boolean).join(', ') ||
+    row?.full_address?.trim() ||
+    '';
+
+  return (
+    <Dialog open={!!entry} onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent className="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle className="sr-only">Master list record</DialogTitle>
+          <DialogDescription className="sr-only">
+            The synced master-list record for {row?.name ?? 'this person'}.
+          </DialogDescription>
+          <div className="flex items-start gap-3.5 pr-6">
+            <div className="relative shrink-0">
+              <TeamAvatar size="xl" name={row?.name ?? ''} email={email} />
+              <span
+                className={cn(
+                  'absolute -bottom-0.5 -right-0.5 h-3.5 w-3.5 rounded-full ring-2 ring-white dark:ring-[#0d1117]',
+                  online ? 'bg-emerald-500' : 'bg-zinc-300 dark:bg-zinc-600',
+                )}
+                aria-hidden
+              />
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-lg font-semibold text-zinc-900 dark:text-white">{row?.name ?? '—'}</p>
+              <p className="mt-0.5 truncate font-mono text-xs text-zinc-500 dark:text-zinc-400">
+                {row?.employee_id ?? '—'}
+              </p>
+              <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                {row?.department && (
+                  <span className="rounded-full border border-zinc-200 bg-zinc-50 px-2 py-0.5 text-[10px] font-medium text-zinc-600 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300">
+                    {row.department}
+                  </span>
+                )}
+                <span
+                  className={cn(
+                    'inline-flex max-w-full items-center gap-1.5 rounded-full px-2 py-0.5 text-[10px] font-semibold',
+                    online
+                      ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300'
+                      : 'bg-zinc-200/70 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400',
+                  )}
+                >
+                  <span
+                    className={cn('h-1.5 w-1.5 shrink-0 rounded-full', online ? 'bg-emerald-500' : 'bg-zinc-400 dark:bg-zinc-500')}
+                    aria-hidden
+                  />
+                  <span className="truncate">{entry?.statusText ?? 'Offline'}</span>
+                </span>
+              </div>
+            </div>
+          </div>
+        </DialogHeader>
+
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+          <DetailField icon={IdCard} label="Employee ID" value={row?.employee_id} mono />
+          <DetailField icon={Building2} label="Department" value={row?.department} />
+          <DetailField icon={Mail} label="Work email" value={row?.work_email} mono />
+          <DetailField icon={Mail} label="Personal email" value={row?.personal_email} mono />
+          {alternateEmails && <DetailField icon={Mail} label="Alternate emails" value={alternateEmails} mono />}
+          {row?.phone_number && <DetailField icon={Phone} label="Phone" value={row.phone_number} />}
+          <DetailField icon={Calendar} label="Start date" value={fmtDate(row?.start_date)} />
+          <DetailField icon={Clock} label="Tenure" value={tenure(row?.start_date)} />
+          {location && <DetailField icon={MapPin} label="Location" value={location} />}
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 /* ── The keyed pane: remounts (and cascades) on view / page / dept change,
       but NOT on search keystrokes — persisting rows never re-animate, so
       typing feels instant. Rows mounted after the ~600ms entrance window
       (i.e. search results streaming in) fade in with zero stagger delay. ─── */
 
-function RosterPane({ view, entries }: { view: ViewMode; entries: RosterEntry[] }) {
+function RosterPane({
+  view,
+  entries,
+  onView,
+}: {
+  view: ViewMode;
+  entries: RosterEntry[];
+  onView: (entry: RosterEntry) => void;
+}) {
   const reduce = useReducedMotion();
   const mountTs = useRef(Date.now());
   const cascading = Date.now() - mountTs.current < 600;
@@ -392,6 +571,7 @@ function RosterPane({ view, entries }: { view: ViewMode; entries: RosterEntry[] 
               online={e.online}
               statusText={e.statusText}
               delay={delayFor(i)}
+              onView={onView}
             />
           ))}
         </ul>
@@ -541,6 +721,283 @@ function NoMatches({ query, dept, onClear }: { query: string; dept: string; onCl
   );
 }
 
+/* ── Week selector (scopes the roster + export to "as of" a payroll week) ──── */
+
+function WeekSelector({
+  value,
+  currentWeek,
+  options,
+  onChange,
+}: {
+  value: string;
+  currentWeek: string;
+  options: string[]; // sorted newest-first; always contains value + currentWeek
+  onChange: (weekStart: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const reduce = useReducedMotion();
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false);
+    };
+    document.addEventListener('mousedown', onDoc);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDoc);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+
+  const idx = options.indexOf(value);
+  const isLive = value === currentWeek;
+  const hasOlder = idx >= 0 && idx < options.length - 1;
+  const hasNewer = idx > 0;
+
+  const arrowCls =
+    'rounded-md border border-zinc-200 bg-white p-1 text-zinc-500 transition-colors hover:bg-emerald-50 hover:text-emerald-700 disabled:cursor-not-allowed disabled:opacity-40 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400 dark:hover:bg-emerald-950/40';
+
+  return (
+    <div ref={ref} className="relative inline-flex items-center gap-1">
+      <button
+        type="button"
+        aria-label="Earlier week"
+        disabled={!hasOlder}
+        onClick={() => hasOlder && onChange(options[idx + 1]!)}
+        className={arrowCls}
+      >
+        <ChevronLeft className="h-3.5 w-3.5" />
+      </button>
+
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        aria-haspopup="true"
+        title="Show the roster as of a payroll week"
+        className="inline-flex h-9 items-center gap-2 rounded-lg border border-zinc-200 bg-white px-2.5 text-left transition-colors hover:bg-emerald-50 dark:border-zinc-700 dark:bg-zinc-900 dark:hover:bg-emerald-950/40"
+      >
+        <CalendarDays className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
+        <span className="text-xs font-semibold tracking-tight text-zinc-800 dark:text-zinc-100">
+          {weekRangeLabel(value)}
+        </span>
+        <span
+          className={cn(
+            'rounded-full px-1.5 py-0.5 font-mono text-[8px] font-semibold uppercase tracking-wide',
+            isLive
+              ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300'
+              : 'bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400',
+          )}
+        >
+          {isLive ? 'Live' : 'Past'}
+        </span>
+        <ChevronDown className={cn('h-3.5 w-3.5 text-zinc-400 transition-transform', open && 'rotate-180')} />
+      </button>
+
+      <button
+        type="button"
+        aria-label="Later week"
+        disabled={!hasNewer}
+        onClick={() => hasNewer && onChange(options[idx - 1]!)}
+        className={arrowCls}
+      >
+        <ChevronRight className="h-3.5 w-3.5" />
+      </button>
+
+      <AnimatePresence>
+        {open && (
+          <motion.div
+            initial={reduce ? { opacity: 0 } : { opacity: 0, y: -6, scale: 0.98 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={reduce ? { opacity: 0 } : { opacity: 0, y: -6, scale: 0.98 }}
+            transition={{ duration: 0.16, ease: EASE }}
+            className="absolute left-0 top-full z-30 mt-1.5 w-60 overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-xl dark:border-zinc-700 dark:bg-zinc-900"
+          >
+            <div className="flex items-center justify-between border-b border-zinc-100 px-3 py-2 dark:border-zinc-800">
+              <span className="font-mono text-[9px] font-semibold uppercase tracking-[0.16em] text-zinc-500">
+                Roster as of week
+              </span>
+              {!isLive && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    onChange(currentWeek);
+                    setOpen(false);
+                  }}
+                  className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-1.5 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-wide text-emerald-700 transition-colors hover:bg-emerald-100 dark:bg-emerald-950/40 dark:text-emerald-300 dark:hover:bg-emerald-950/70"
+                >
+                  This week
+                </button>
+              )}
+            </div>
+            <ul className="max-h-64 overflow-y-auto py-1" role="listbox">
+              {options.map((w) => {
+                const selected = w === value;
+                const live = w === currentWeek;
+                return (
+                  <li key={w}>
+                    <button
+                      type="button"
+                      role="option"
+                      aria-selected={selected}
+                      onClick={() => {
+                        onChange(w);
+                        setOpen(false);
+                      }}
+                      className={cn(
+                        'flex w-full items-center justify-between px-3 py-1.5 text-left text-xs transition-colors',
+                        selected
+                          ? 'bg-emerald-50 font-semibold text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300'
+                          : 'text-zinc-700 hover:bg-emerald-50/60 dark:text-zinc-200 dark:hover:bg-emerald-950/30',
+                      )}
+                    >
+                      {weekRangeLabel(w)}
+                      {live && (
+                        <span className="rounded-full bg-emerald-100 px-1.5 py-0.5 font-mono text-[8px] font-semibold uppercase tracking-wide text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300">
+                          Live
+                        </span>
+                      )}
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+/* ── Export menu (PDF · XLSX · CSV — themed like the CEO dashboard) ────────── */
+
+type ExportFormat = 'pdf' | 'xlsx' | 'csv';
+
+function ExportMenu({
+  rows,
+  totalRoster,
+  scopeLabel,
+}: {
+  rows: EmployeeRow[];
+  totalRoster: number;
+  scopeLabel: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState<ExportFormat | null>(null);
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const reduce = useReducedMotion();
+
+  // Close on outside click / Escape.
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false);
+    };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+
+  const runExport = useCallback(
+    async (format: ExportFormat) => {
+      if (rows.length === 0) {
+        toast.error('Nothing to export in this view.');
+        return;
+      }
+      setBusy(format);
+      setOpen(false);
+      try {
+        const model = buildMasterListExport({
+          rows,
+          totalRoster,
+          scopeLabel,
+        });
+        if (format === 'csv') {
+          downloadMasterListCsv(model);
+        } else if (format === 'xlsx') {
+          downloadMasterListXlsx(model);
+        } else {
+          await downloadMasterListPdf(model);
+        }
+        toast.success(`Exported ${rows.length.toLocaleString()} ${rows.length === 1 ? 'person' : 'people'} as ${format.toUpperCase()}.`);
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : `Failed to export ${format.toUpperCase()}`);
+      } finally {
+        setBusy(null);
+      }
+    },
+    [rows, totalRoster, scopeLabel],
+  );
+
+  const items: { format: ExportFormat; label: string; hint: string; Icon: typeof FileText }[] = [
+    { format: 'pdf', label: 'PDF', hint: 'Branded document', Icon: FileText },
+    { format: 'xlsx', label: 'Excel', hint: 'XLSX workbook', Icon: FileSpreadsheet },
+    { format: 'csv', label: 'CSV', hint: 'Plain data', Icon: Table2 },
+  ];
+
+  return (
+    <div ref={wrapRef} className="relative">
+      <Button
+        type="button"
+        variant="outline"
+        onClick={() => setOpen((o) => !o)}
+        disabled={busy !== null}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        className="h-9 gap-1.5 border-zinc-200 bg-white text-zinc-700 hover:bg-emerald-50 hover:text-emerald-800 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-emerald-950/40 dark:hover:text-emerald-200"
+      >
+        {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+        {busy ? `Exporting ${busy.toUpperCase()}…` : 'Export'}
+        <ChevronDown className={cn('h-3.5 w-3.5 transition-transform', open && 'rotate-180')} aria-hidden />
+      </Button>
+
+      <AnimatePresence>
+        {open && (
+          <motion.div
+            role="menu"
+            initial={reduce ? { opacity: 0 } : { opacity: 0, y: -6, scale: 0.98 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={reduce ? { opacity: 0 } : { opacity: 0, y: -6, scale: 0.98 }}
+            transition={{ duration: 0.15, ease: EASE }}
+            className="absolute right-0 z-30 mt-2 w-56 overflow-hidden rounded-xl border border-zinc-200 bg-white p-1 shadow-xl shadow-zinc-900/10 dark:border-zinc-700 dark:bg-zinc-900"
+          >
+            <p className="px-2.5 pb-1 pt-1.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-400 dark:text-zinc-500">
+              Export {rows.length.toLocaleString()} {rows.length === 1 ? 'person' : 'people'}
+            </p>
+            {items.map(({ format, label, hint, Icon }) => (
+              <button
+                key={format}
+                type="button"
+                role="menuitem"
+                onClick={() => void runExport(format)}
+                className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left transition-colors hover:bg-amber-50 dark:hover:bg-amber-950/30"
+              >
+                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-orange-500 to-rose-500 text-white shadow-sm">
+                  <Icon className="h-4 w-4" aria-hidden />
+                </span>
+                <span className="min-w-0">
+                  <span className="block text-sm font-medium text-zinc-900 dark:text-zinc-100">{label}</span>
+                  <span className="block text-[11px] text-zinc-500 dark:text-zinc-400">{hint}</span>
+                </span>
+              </button>
+            ))}
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
 /* ── Page ──────────────────────────────────────────────────────────────────── */
 
 export default function HrGlobalMasterList() {
@@ -549,10 +1006,20 @@ export default function HrGlobalMasterList() {
   );
   const [loading, setLoading] = useState(() => !hasHrTabCache(HR_TAB_CACHE_KEYS.globalMasterList));
   const [syncing, setSyncing] = useState(false);
+  // Sync is being phased out in favour of the HRIS — clicking it opens a
+  // deprecation notice first, and only proceeds if the user confirms.
+  const [syncConfirmOpen, setSyncConfirmOpen] = useState(false);
+  // The card whose full master-list record is open in the detail dialog.
+  const [viewing, setViewing] = useState<RosterEntry | null>(null);
   const [search, setSearch] = useState('');
   const [dept, setDept] = useState('');
   const [page, setPage] = useState(0);
   const [view, setView] = useState<ViewMode>(() => viewMemory);
+  // Week scope: show the roster "as of" a payroll week (everyone who had started
+  // by that week's end). Defaults to — and follows — the live Manila week.
+  const currentWeek = manilaWeekStart();
+  const [week, setWeek] = useState<string>(currentWeek);
+  const isLiveWeek = week === currentWeek;
   const reduceMotion = useReducedMotion();
 
   // The input stays perfectly responsive; the (heavier) filter over ~1000 rows
@@ -653,14 +1120,22 @@ export default function HrGlobalMasterList() {
     setDept('');
     setPage(0);
   }, []);
+  const handleWeekChange = useCallback((w: string) => {
+    setWeek(w);
+    setPage(0);
+  }, []);
+  // Stable so the memoized RosterCard never re-renders just because this changed.
+  const handleView = useCallback((entry: RosterEntry) => setViewing(entry), []);
 
-  // Precomputed lowercase haystack per row — a keystroke only does a cheap
-  // .includes() sweep instead of rebuilding + lowercasing 5 fields × 1000 rows.
+  // Precomputed lowercase haystack + normalized start date per row — a keystroke
+  // only does a cheap .includes() sweep instead of rebuilding + lowercasing 5
+  // fields × 1000 rows, and the week filter compares a ready ISO date.
   const indexed = useMemo(
     () =>
       roster.map((r) => ({
         r,
         dept: (r.department ?? '').trim(),
+        startIso: toIsoDate(r.start_date),
         hay: [r.name, r.work_email, r.personal_email, r.department, r.employee_id]
           .filter(Boolean)
           .join(' ')
@@ -669,16 +1144,62 @@ export default function HrGlobalMasterList() {
     [roster],
   );
 
+  // The weeks the selector offers: the live week back to the earliest hire on
+  // the roster (capped so a stray ancient date can't balloon the list). Always
+  // includes the current + selected week so navigation stays consistent.
+  const weekOptions = useMemo(() => {
+    const CAP = 260; // ~5 years of weeks — the dropdown scrolls past a year
+    let earliest = currentWeek;
+    for (const e of indexed) {
+      if (e.startIso) {
+        const wk = mondayOf(e.startIso);
+        if (wk < earliest) earliest = wk;
+      }
+    }
+    const weeks: string[] = [];
+    let cur = currentWeek;
+    while (weeks.length < CAP) {
+      weeks.push(cur);
+      if (cur <= earliest) break;
+      cur = shiftWeekIso(cur, -1);
+    }
+    if (!weeks.includes(week)) weeks.push(week);
+    return [...new Set(weeks)].sort((a, b) => b.localeCompare(a));
+  }, [indexed, currentWeek, week]);
+
+  // The selected week's Sunday — the "as of" cutoff. A person is on the roster
+  // for a week once their start date is on or before that Sunday.
+  const weekEnd = useMemo(() => weekEndFromStart(week), [week]);
+
   const filtered = useMemo(() => {
     const q = deferredSearch.trim().toLowerCase();
     const out: EmployeeRow[] = [];
     for (const e of indexed) {
+      // "As of" the selected week: drop anyone who hadn't started by its end.
+      // Undated rows are kept — we can't prove they started later, and hiding a
+      // real person over missing data is worse than an approximate past view.
+      if (e.startIso && e.startIso > weekEnd) continue;
       if (dept && e.dept !== dept) continue;
       if (q && !e.hay.includes(q)) continue;
       out.push(e.r);
     }
     return out;
-  }, [indexed, deferredSearch, dept]);
+  }, [indexed, deferredSearch, dept, weekEnd]);
+
+  // Human-readable description of the active filter — carried into the export
+  // headings so a scoped export is self-documenting.
+  const scopeLabel = useMemo(() => {
+    const q = deferredSearch.trim();
+    const parts: string[] = [];
+    parts.push(dept ? dept : 'All departments');
+    if (q) parts.push(`matching "${q}"`);
+    parts.push(
+      isLiveWeek
+        ? `week of ${weekRangeLabel(week)} (current)`
+        : `as of week of ${weekRangeLabel(week)}`,
+    );
+    return parts.join(' · ');
+  }, [dept, deferredSearch, week, isLiveWeek]);
 
   const pageSize = view === 'cards' ? CARD_PAGE_SIZE : TABLE_PAGE_SIZE;
   const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
@@ -769,7 +1290,7 @@ export default function HrGlobalMasterList() {
           <div className="flex shrink-0 flex-wrap items-center gap-2">
             <Button
               type="button"
-              onClick={handleSync}
+              onClick={() => setSyncConfirmOpen(true)}
               disabled={syncing}
               className="gap-2 bg-white/15 text-white backdrop-blur-sm hover:bg-white/25"
             >
@@ -780,8 +1301,9 @@ export default function HrGlobalMasterList() {
         </div>
       </header>
 
-      {/* Roster */}
-      <Card className="border-zinc-100 shadow-sm dark:border-zinc-800">
+      {/* Roster — overflow-visible so the Export dropdown isn't clipped when the
+          filtered result set is short (the table keeps its own overflow-x-auto). */}
+      <Card className="overflow-visible border-zinc-100 shadow-sm dark:border-zinc-800">
         <CardHeader className="border-b border-zinc-100 px-4 py-3 dark:border-zinc-800">
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
             <div>
@@ -800,6 +1322,13 @@ export default function HrGlobalMasterList() {
                 isSearching={isSearching}
                 resultCount={filtered.length}
               />
+              <WeekSelector
+                value={week}
+                currentWeek={currentWeek}
+                options={weekOptions}
+                onChange={handleWeekChange}
+              />
+              <ExportMenu rows={filtered} totalRoster={roster.length} scopeLabel={scopeLabel} />
               <ViewToggle view={view} onChange={handleViewChange} />
             </div>
           </div>
@@ -819,7 +1348,7 @@ export default function HrGlobalMasterList() {
                 <NoMatches query={search.trim()} dept={dept} onClear={handleClearFilters} />
               </FadePane>
             ) : (
-              <RosterPane key={`${view}:${safePage}:${dept}`} view={view} entries={entries} />
+              <RosterPane key={`${view}:${safePage}:${dept}`} view={view} entries={entries} onView={handleView} />
             )}
           </AnimatePresence>
 
@@ -894,6 +1423,50 @@ export default function HrGlobalMasterList() {
           )}
         </CardContent>
       </Card>
+
+      {/* Per-person master-list record, opened by a card's "View" button. */}
+      <EmployeeDetailDialog entry={viewing} onClose={() => setViewing(null)} />
+
+      {/* Deprecation notice — Sync is being retired as we move onto the HRIS. */}
+      <Dialog open={syncConfirmOpen} onOpenChange={setSyncConfirmOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <div className="flex h-11 w-11 items-center justify-center rounded-full bg-amber-100 text-amber-600 dark:bg-amber-950/50 dark:text-amber-400">
+              <AlertTriangle className="h-5 w-5" aria-hidden />
+            </div>
+            <DialogTitle>Sync is being phased out</DialogTitle>
+            <DialogDescription>
+              Syncing the roster from the Google Sheet will soon be{' '}
+              <span className="font-semibold text-zinc-700 dark:text-zinc-200">deprecated</span> as we
+              transition to managing everyone directly in the HRIS. You can still sync for now, but
+              going forward, new hires and edits should be made in the HRIS rather than the Sheet.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setSyncConfirmOpen(false)}
+              disabled={syncing}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              onClick={() => {
+                setSyncConfirmOpen(false);
+                void handleSync();
+              }}
+              disabled={syncing}
+              className="gap-1.5"
+            >
+              {syncing ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+              Sync anyway
+              <ArrowRight className="h-3.5 w-3.5" aria-hidden />
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

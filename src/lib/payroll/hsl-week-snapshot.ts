@@ -181,7 +181,14 @@ export async function snapshotSourceFile(
     const overrides = parsePabOverrides(opts.pabOverridesValue);
     const ov = overrides.get(pabMonthKey);
     const pabRange = ov ?? getPabMonthRange(pm.year, pm.month);
-    if (periodEnd) weekIsFinalPab = periodEnd.getTime() >= localMidnight(pabRange.end);
+    // Containment (mirror of dispatch-bonuses.isFinalPabWeek): the upload week
+    // must CONTAIN the PAB period end, not merely end on/after it — otherwise
+    // every week after the payout week re-attaches PAB.
+    if (periodStart && periodEnd) {
+      weekIsFinalPab =
+        localMidnight(periodStart) <= localMidnight(pabRange.end) &&
+        localMidnight(periodEnd) >= localMidnight(pabRange.end);
+    }
     weekIsTechBonus = isTechBonusWeekMonSun(weekMonday);
   }
 

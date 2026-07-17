@@ -544,14 +544,16 @@ export async function computeMemberMonthlyPay(args: {
   const otRate = empCat?.otPhp ?? baseOt;
   const hasRates = regularRate != null || otRate != null;
   const mesaMember = rateRow?.mesa_member === true;
+  // Enrollment effective date: members only contribute for pay weeks ending
+  // on/after this date. NULL = legacy member (always contributing) — mirrors
+  // the Payroll Wizard dispatch gate exactly.
+  const mesaSince = rateRow?.mesa_member_since ?? null;
 
   // System-bonus dept eligibility (master department wins, rate dept is fallback).
   const empDeptKey = normalizeDeptToKey(masterRow?.department ?? rateRow?.department ?? null);
   const pabDeptEligible = isDeptEligible(sysBonuses.pab, empDeptKey);
   const techDeptEligible = isDeptEligible(sysBonuses.tech, empDeptKey);
-  // Per-week MESA contribution. When the `mesa_start_date` column lands on
-  // `employee_hourly_rates`, gate this by `week_start >= mesa_start_date` —
-  // for now every MESA member with rates contributes ₱100 every active week.
+  // Per-week MESA contribution, gated per week by `mesa_member_since` below.
   const MESA_DEDUCTION_PHP = 100;
   // Per-email rate-history list (sorted desc by effective_from), used by the
   // per-day prorating loop. May be undefined when no history exists yet.
@@ -583,10 +585,10 @@ export async function computeMemberMonthlyPay(args: {
   // Keep legacy alias so the loop body below compiles without rename.
   const weekMondays = weekStarts;
 
-  // For PAB eligibility checks: any week is `isFinalPabWeek` based on its
-  // weekEnd vs the PAB month's adjusted end. We pre-compute eligibility for
-  // every PAB month touched by these weeks once (eligibility is per-employee
-  // per-PAB-month, not per-week).
+  // For PAB eligibility checks: the ONE week that CONTAINS the PAB month's end
+  // is `isFinalPabWeek` (shared containment gate). We pre-compute eligibility
+  // for every PAB month touched by these weeks once (eligibility is
+  // per-employee per-PAB-month, not per-week).
   const overrides = parsePabPeriodOverrides(pabOverridesValue);
   // Accountant exclusions (Payroll Wizard → PAB settings). An excluded month
   // forfeits PAB for this employee even when attendance passes — mirror dispatch.
@@ -761,7 +763,11 @@ export async function computeMemberMonthlyPay(args: {
       pabRange.end.getDate(),
     );
     const pabMonthComplete = todayMid.getTime() > pabEndMid.getTime();
-    const isFinalPab = pabBelongsToViewedMonth && gateIsFinalPabWeek(weekEnd, pabRange.end);
+    // Containment gate (mirrors the wizard): the week must CONTAIN the PAB
+    // period end. Without weekMon in the check, every later week of the month
+    // also passed `weekEnd >= end` and PAB was double-counted after an
+    // override ended mid-month.
+    const isFinalPab = pabBelongsToViewedMonth && gateIsFinalPabWeek(weekMon, weekEnd, pabRange.end);
     // Tech bonus timing uses the Monday of the week regardless of Sun-Sat vs Mon-Sun.
     const isTechWeek = gateIsTechBonusWeek(weekMonForPab);
     // Salary date = week's Monday + 8 days.
@@ -784,13 +790,15 @@ export async function computeMemberMonthlyPay(args: {
       techDeptEligible,
     });
 
-    // MESA deduction: ₱100 per week, applied only to weeks where the
-    // employee has rates AND actually worked some in-month hours. Future
-    // refinement (TODO): gate by an `employee_hourly_rates.mesa_start_date`
-    // column so contributions don't accrue for weeks before the employee
-    // joined the program.
+    // MESA deduction: ₱100 per week, applied only to weeks where the employee
+    // has rates AND actually worked some in-month hours AND was already
+    // enrolled — the week must END on/after `mesa_member_since` (both are
+    // YYYY-MM-DD, so the compare is lexical; null = legacy member, always
+    // contributing). Mirrors the Payroll Wizard dispatch gate so the employee
+    // sees the same contributions Accounting actually collects.
+    const enrolledForThisWeek = mesaMember && (!mesaSince || mesaSince <= fmtIso(weekEnd));
     const mesaDeductionPHP =
-      mesaMember && hasRates && weekTotalSec > 0 ? MESA_DEDUCTION_PHP : 0;
+      enrolledForThisWeek && hasRates && weekTotalSec > 0 ? MESA_DEDUCTION_PHP : 0;
 
     const weekTotalPay =
       regularPayPHP != null && otPayPHP != null

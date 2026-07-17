@@ -11,9 +11,11 @@ export type BonusEmployee = { email: string; name: string };
 
 /**
  * Special bonus id whose amount is **per-employee** rather than a flat dept-wide
- * amount. The amount comes from the latest ready/locked SSD Medical Records KPI
- * sheet (`hsl_bonus_entries.calculated_bonus`). Surfaces on the Hogan Smith Law
- * tab; only members of the SSD Medical Records team are eligible.
+ * amount. The amount is summed across every WEEKLY HSL sub-department's
+ * ready/locked KPI sheet for the processed week (`hsl_bonus_entries.calculated_bonus`,
+ * with Managers-dept monthly components gated to the final payroll week). Surfaces
+ * on the Hogan Smith Law tab and is AUTO-APPLIED (no manual toggle) to every HSL
+ * employee with a scored amount; see `hslKpiAmounts` in PayrollWizard.
  */
 export const KPI_BONUS_ID = 'kpi_bonus';
 
@@ -35,9 +37,10 @@ export const DEPARTMENTS: {
   {
     key: 'hogan_smith_law',
     name: 'Hogan Smith Law',
-    // The KPI Bonus amount is sourced from `hsl_bonus_entries` per employee
-    // (latest ready/locked SSD Medical Records week). The `amount: 0` here is
-    // a sentinel; the actual value is read from `ssdKpiAmounts[email]`.
+    // The KPI Bonus amount is sourced per employee from `hsl_bonus_entries`,
+    // summed across every WEEKLY HSL sub-department for the processed week. The
+    // `amount: 0` here is a sentinel; the real value is read from
+    // `hslKpiAmounts[email]` and auto-applied (no toggle) in PayrollWizard.
     bonuses: [
       { id: KPI_BONUS_ID, label: 'KPI Bonus', amount: 0 },
     ],

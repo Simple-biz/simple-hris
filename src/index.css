@@ -757,6 +757,35 @@
   }
 }
 
+/* KPI Calculator — a brief pop on a computed bonus value when it changes, so the
+   operator gets an immediate, legible confirmation that their entry registered.
+   Applied to an inline-block span so the scale never reflows the table. */
+@keyframes kpi-value-pop {
+  0%   { transform: scale(1); }
+  32%  { transform: scale(1.16); }
+  100% { transform: scale(1); }
+}
+.kpi-value-pop {
+  animation: kpi-value-pop 0.28s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* KPI Calculator — a soft tint sweep across a row when its incentive is toggled
+   on, reinforcing the "this counted" moment on the Managers checklist. */
+@keyframes kpi-row-confirm {
+  0%   { background-color: color-mix(in oklab, currentColor 22%, transparent); }
+  100% { background-color: transparent; }
+}
+.kpi-row-confirm {
+  animation: kpi-row-confirm 0.5s ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .kpi-value-pop,
+  .kpi-row-confirm {
+    animation: none;
+  }
+}
+
 /* ────────────────────────────────────────────────────────────────────────
    Global responsive tables — below the sm breakpoint (<640px) every
    <table> collapses into a vertical stack of "card" rows. Each <tr>

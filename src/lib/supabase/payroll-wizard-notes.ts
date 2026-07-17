@@ -3,6 +3,8 @@ import {
   createSupabaseServiceRoleClient,
 } from "./server";
 import { listActiveMasterListPeople } from "./global-master-list-db";
+import { manilaMonthDayStamp, manilaWeekStart } from "@/lib/payroll/manila-week";
+import { formatAdjustmentText } from "@/lib/payroll/adjustment-bridge";
 
 /**
  * Data access for the Payroll Wizard's floating "Notes" checklist (see
@@ -22,6 +24,8 @@ export const PAYROLL_WIZARD_NOTE_FIELDS = [
   "note_date",
   "payroll_clerk",
   "worker",
+  "worker_email",
+  "adjustment",
   "notes",
 ] as const;
 
@@ -33,7 +37,17 @@ export type PayrollWizardNoteRow = {
   payroll_clerk: string | null;
   done: boolean;
   worker: string | null;
+  /** Work email behind the Worker text — set when the worker was picked from
+   *  the suggestion list (or bridged from the wizard), cleared when the text
+   *  is hand-edited away from a known person. Links the row to the wizard's
+   *  Additions "Adj." override; never rendered as its own column. */
+  worker_email: string | null;
+  adjustment: string | null;
   notes: string | null;
+  /** Monday (ISO date) of the payroll week the note was WRITTEN — stamped
+   *  server-side, never client-editable. Null = a blank seeded line that
+   *  hasn't been filled in yet. Drives the board's week selector. */
+  week_start: string | null;
   created_by: string | null;
   created_at: string;
   updated_at: string;
@@ -65,6 +79,8 @@ function toPayload(values: PayrollWizardNoteValues): Record<string, unknown> {
   for (const f of PAYROLL_WIZARD_NOTE_FIELDS) {
     if (f in values) out[f] = clean(values[f]);
   }
+  // Emails are matched case-insensitively everywhere else — store them lowered.
+  if (typeof out.worker_email === "string") out.worker_email = out.worker_email.toLowerCase();
   if ("done" in values) out.done = values.done === true;
   return out;
 }
@@ -88,7 +104,9 @@ export async function listPayrollWizardNotes(): Promise<{
 }
 
 /** Insert ONE note. Blank rows are allowed — "Add Row" creates an empty line
- *  the clerk fills in place, exactly like the spreadsheet did. */
+ *  the clerk fills in place, exactly like the spreadsheet did. Every added row
+ *  is stamped with the current payroll week (the seeded blanks are not — they
+ *  get their stamp when first filled in, see updatePayrollWizardNote). */
 export async function insertPayrollWizardNote(
   values: PayrollWizardNoteValues,
   opts: { createdBy?: string | null } = {},
@@ -96,6 +114,7 @@ export async function insertPayrollWizardNote(
   const sb = client();
   const payload = {
     ...toPayload(values),
+    week_start: manilaWeekStart(),
     created_by: clean(opts.createdBy)?.toLowerCase() ?? null,
   };
   const { data, error } = await sb.from(TABLE).insert(payload).select("*").single();
@@ -121,7 +140,22 @@ export async function updatePayrollWizardNote(
     .maybeSingle();
   if (error) return { row: null, error: error.message };
   if (!data) return { row: null, error: "That note no longer exists — it may have just been deleted." };
-  return { row: data as PayrollWizardNoteRow, error: null };
+
+  // A blank seeded line gets its week stamp the moment it stops being blank —
+  // the week it was WRITTEN, not the week its empty shell was seeded. (Never
+  // re-stamped afterwards, so later edits/ticks don't move a note between weeks.)
+  let row = data as PayrollWizardNoteRow;
+  if (row.week_start === null && !isBlankNoteRow(row)) {
+    const { data: stamped } = await sb
+      .from(TABLE)
+      .update({ week_start: manilaWeekStart() })
+      .eq("id", rowId)
+      .is("week_start", null)
+      .select("*")
+      .maybeSingle();
+    if (stamped) row = stamped as PayrollWizardNoteRow;
+  }
+  return { row, error: null };
 }
 
 // ── Per-clerk blank-row seeding (the spreadsheet's "empty lines ready") ──────
@@ -130,8 +164,16 @@ export async function updatePayrollWizardNote(
 const BLANK_ROWS_PER_CLERK = 5;
 
 /** A seeded/unused line: nothing filled in yet and not ticked Done. */
-function isBlankNoteRow(r: Pick<PayrollWizardNoteRow, "note_date" | "worker" | "notes" | "done">): boolean {
-  return !r.done && clean(r.note_date) === null && clean(r.worker) === null && clean(r.notes) === null;
+function isBlankNoteRow(
+  r: Pick<PayrollWizardNoteRow, "note_date" | "worker" | "adjustment" | "notes" | "done">,
+): boolean {
+  return (
+    !r.done &&
+    clean(r.note_date) === null &&
+    clean(r.worker) === null &&
+    clean(r.adjustment) === null &&
+    clean(r.notes) === null
+  );
 }
 
 /**
@@ -298,6 +340,210 @@ export async function ensurePayrollWizardNoteSeeds(
   const { error } = await sb.from(TABLE).insert(inserts);
   if (error) return { seeded: false, error: error.message };
   return { seeded: true, error: null };
+}
+
+// ── Worker suggestions (Global Master List + recently offboarded) ───────────
+
+/** One pickable person for the board's Worker cell. */
+export type PayrollWorkerOption = {
+  /** "First Last" display name (master-list surname-first form unwound). */
+  name: string;
+  department: string | null;
+  work_email: string | null;
+  /** Set ONLY for recently offboarded people (ISO timestamp) — they're off the
+   *  active master list but still need Last Pay handling on the board. */
+  off_boarded_at: string | null;
+};
+
+/** How far back "recently offboarded" reaches. Last pays settle within a few
+ *  payroll cycles; 90 days is a generous ceiling without dredging the full
+ *  3000-row offboard history into every picker load. */
+const OFFBOARDED_LOOKBACK_DAYS = 90;
+
+/**
+ * Everyone the Worker cell should suggest: the active Global Master List
+ * (A→Z), plus people offboarded in the last {@link OFFBOARDED_LOOKBACK_DAYS}
+ * days (newest first) — offboarded folks drop off `active_employees`, but
+ * their Last Pays are exactly what the board tracks. A person on both lists
+ * (re-hired) counts as active. The offboarded read is best-effort: if it
+ * fails, the active list alone still serves the picker.
+ */
+export async function listPayrollWorkerOptions(): Promise<{
+  workers: PayrollWorkerOption[];
+  error: string | null;
+}> {
+  const { people, error: activeErr } = await listActiveMasterListPeople();
+  if (activeErr) return { workers: [], error: activeErr };
+
+  const byKey = new Map<string, PayrollWorkerOption>();
+  for (const p of people) {
+    const display = firstLastFromMasterName(p.name);
+    if (!display) continue;
+    const key = display.toLowerCase();
+    const existing = byKey.get(key);
+    if (existing) {
+      // Same human on the list under several departments — one suggestion.
+      if (p.department && existing.department && !existing.department.includes(p.department)) {
+        existing.department += ` / ${p.department}`;
+      } else if (!existing.department) {
+        existing.department = p.department;
+      }
+      if (!existing.work_email) existing.work_email = p.work_email;
+    } else {
+      byKey.set(key, {
+        name: display,
+        department: p.department,
+        work_email: p.work_email,
+        off_boarded_at: null,
+      });
+    }
+  }
+
+  const sb = client();
+  const since = new Date(Date.now() - OFFBOARDED_LOOKBACK_DAYS * 86_400_000).toISOString();
+  const { data: off } = await sb
+    .from("offboarded_sheet")
+    .select("name, department, work_email, off_boarded_at")
+    .gte("off_boarded_at", since)
+    .order("off_boarded_at", { ascending: false })
+    .range(0, 499);
+  for (const r of (off ?? []) as {
+    name: string | null;
+    department: string | null;
+    work_email: string | null;
+    off_boarded_at: string | null;
+  }[]) {
+    const display = firstLastFromMasterName((r.name ?? "").trim());
+    if (!display) continue;
+    const key = display.toLowerCase();
+    if (byKey.has(key)) continue; // re-hired — already suggested as active
+    byKey.set(key, {
+      name: display,
+      department: clean(r.department),
+      work_email: clean(r.work_email)?.toLowerCase() ?? null,
+      off_boarded_at: r.off_boarded_at,
+    });
+  }
+
+  return { workers: [...byKey.values()], error: null };
+}
+
+/**
+ * "First Last" for a worker by work email — like {@link resolvePayrollClerkName}
+ * but offboarding-aware: someone in their Last Pay week has already left
+ * `active_employees`, so the offboarded sheet is checked next. Falls back to
+ * the caller-provided name, then a prettified email prefix.
+ */
+async function resolveWorkerDisplayName(
+  email: string,
+  fallbackName?: string | null,
+): Promise<string> {
+  const sb = client();
+  try {
+    const { data } = await sb
+      .from("active_employees")
+      .select('"Name"')
+      .ilike("Work Email", email)
+      .limit(1)
+      .maybeSingle();
+    const name = (data as { Name?: string | null } | null)?.Name?.trim();
+    if (name) return firstLastFromMasterName(name);
+  } catch {
+    /* fall through */
+  }
+  try {
+    const { data } = await sb
+      .from("offboarded_sheet")
+      .select("name")
+      .ilike("work_email", email)
+      .order("off_boarded_at", { ascending: false, nullsFirst: false })
+      .limit(1)
+      .maybeSingle();
+    const name = (data as { name?: string | null } | null)?.name?.trim();
+    if (name) return firstLastFromMasterName(name);
+  } catch {
+    /* fall through */
+  }
+  return clean(fallbackName) ?? nameFromEmail(email);
+}
+
+// ── Wizard → board adjustment bridge ─────────────────────────────────────────
+
+/**
+ * Mirror a wizard Additions "Adj." override onto the notes board, so the two
+ * surfaces hold the adjustment together (the other direction — board → wizard
+ * — is a pull: the wizard pre-fills its Adj. cells from open board rows).
+ *
+ * Targets the LIVE week's row for that worker (matched on worker_email, open
+ * rows first, newest last-written): updates its Adjustment text, or creates a
+ * fresh stamped row when the worker has none this week. Clearing the override
+ * (amount=null) clears the linked row's Adjustment text but never deletes the
+ * row — the trail of "someone touched this worker's pay" stays on the board.
+ */
+export async function bridgeWizardAdjustment(params: {
+  workEmail: string;
+  amount: number | null;
+  /** Session identity — the created row's clerk stamp and owner. */
+  sessionEmail: string | null;
+  sessionName?: string | null;
+  /** Display name for a fresh row when the master list doesn't know the email. */
+  workerName?: string | null;
+}): Promise<{ row: PayrollWizardNoteRow | null; created: boolean; error: string | null }> {
+  const email = clean(params.workEmail)?.toLowerCase();
+  if (!email) return { row: null, created: false, error: "A worker email is required." };
+
+  const sb = client();
+  const week = manilaWeekStart();
+  const { data: existing, error: findErr } = await sb
+    .from(TABLE)
+    .select("*")
+    .eq("worker_email", email)
+    .eq("week_start", week)
+    .order("done", { ascending: true })
+    .order("updated_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (findErr) return { row: null, created: false, error: findErr.message };
+
+  const adjustment = params.amount === null ? null : formatAdjustmentText(params.amount);
+
+  if (existing) {
+    const { data, error } = await sb
+      .from(TABLE)
+      .update({ adjustment })
+      .eq("id", (existing as PayrollWizardNoteRow).id)
+      .select("*")
+      .maybeSingle();
+    if (error) return { row: null, created: false, error: error.message };
+    return { row: (data ?? existing) as PayrollWizardNoteRow, created: false, error: null };
+  }
+
+  // Clearing an override the board never heard about needs no row; nor does a
+  // bare 0 (the wizard's "—" click opens the input with a 0 placeholder — only
+  // an EXISTING linked row should mirror an explicit zero).
+  if (adjustment === null || params.amount === 0) return { row: null, created: false, error: null };
+
+  // A fresh board line, shaped exactly like one the clerk would have written.
+  const [clerk, worker] = await Promise.all([
+    resolvePayrollClerkName(params.sessionEmail, params.sessionName),
+    resolveWorkerDisplayName(email, params.workerName),
+  ]);
+  const { data, error } = await sb
+    .from(TABLE)
+    .insert({
+      note_date: manilaMonthDayStamp(),
+      payroll_clerk: clerk,
+      worker,
+      worker_email: email,
+      adjustment,
+      notes: "Adjustment set in the Payroll Wizard (Additions tab).",
+      week_start: week,
+      created_by: clean(params.sessionEmail)?.toLowerCase() ?? null,
+    })
+    .select("*")
+    .single();
+  if (error) return { row: null, created: false, error: error.message };
+  return { row: data as PayrollWizardNoteRow, created: true, error: null };
 }
 
 /** Delete notes by id (one or many). When `ownedBy` is given, only rows that

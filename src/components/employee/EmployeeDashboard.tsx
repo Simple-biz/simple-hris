@@ -15,9 +15,11 @@ import {
   RefreshCw,
   CircleHelp,
   Sparkles,
+  Receipt,
 } from 'lucide-react';
 import { motion } from 'motion/react';
 import ProfileCompletionCard from './ProfileCompletionCard';
+import { PayStubModal } from '@/components/paystub/PayStubModal';
 import { ConnectionStatusBanner } from '@/components/ConnectionStatusBanner';
 import { cleanErrorMessage, looksLikeHtmlError } from '@/lib/clean-error-message';
 import type { ResourceStatus } from '@/hooks/useResilientResource';
@@ -40,6 +42,7 @@ import {
   type ResolvedSystemBonuses,
 } from '@/lib/payment-catalog/system-bonus';
 import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
+import { isFinalPabWeek as gateIsFinalPabWeek } from '@/lib/payroll/dispatch-bonuses';
 import {
   OFFICIAL_USD_TO_PHP_RATE,
   effectiveUsdToPhpRateFromStored,
@@ -430,6 +433,24 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
   const [manualFileSelect, setManualFileSelect] = useState(false);
   const [sourceMenuOpen, setSourceMenuOpen] = useState(false);
   const sourceMenuRef = useRef<HTMLDivElement | null>(null);
+  // Pay-week files this employee can open a stub for (paid + emailed). Drives the
+  // "Open Paystubs" button beside the selector; the modal itself is session-scoped.
+  const [paidPaystubWeeks, setPaidPaystubWeeks] = useState<Set<string>>(new Set());
+  const [paystubModalFile, setPaystubModalFile] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    fetch('/api/employee/paystub', { cache: 'no-store' })
+      .then((r) => (r.ok ? r.json() : { weeks: [] }))
+      .then((json: { weeks?: string[] }) => {
+        if (!cancelled) setPaidPaystubWeeks(new Set(json.weeks ?? []));
+      })
+      .catch(() => {
+        /* button just stays disabled if we can't load the paid-week list */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
   useEffect(() => {
     if (!sourceMenuOpen) return;
     const onDown = (e: MouseEvent) => {
@@ -1584,10 +1605,15 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
     return { pabMonth: { year: mon.getFullYear(), month: mon.getMonth() }, start: range.start, end: range.end };
   }, [selectedFileWeek, pabPeriodSettings.validManualRange, pabPeriodSettings.overrides]);
 
-  /** When viewing a specific weekly file, PAB attaches only to the final week of that week's PAB month. */
+  /**
+   * When viewing a specific weekly file, PAB attaches only to the ONE week that
+   * CONTAINS the PAB period end (shared gate — same rule as the Payroll Wizard,
+   * which is the source of truth). The old `weekEnd >= periodEnd` check kept
+   * PAB on every week after the payout week.
+   */
   const isFinalPabWeekForSelected = useMemo(() => {
     if (!selectedFileWeek || !weekPabRange) return false;
-    return selectedFileWeek.end.getTime() >= weekPabRange.end.getTime();
+    return gateIsFinalPabWeek(selectedFileWeek.start, selectedFileWeek.end, weekPabRange.end);
   }, [selectedFileWeek, weekPabRange]);
 
   /**
@@ -2362,7 +2388,8 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
 
           {/* Pay-week selector — which weekly Hubstaff upload drives the numbers above */}
           {sourceFiles.length > 0 && (
-            <div ref={sourceMenuRef} className="relative mt-3 inline-block max-w-full">
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <div ref={sourceMenuRef} className="relative inline-block max-w-full">
               <button
                 type="button"
                 aria-haspopup="listbox"
@@ -2442,6 +2469,28 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
                   })}
                 </motion.div>
               )}
+              </div>
+              {/* Open the emailed pay statement for the selected paid week */}
+              {(() => {
+                const canOpen =
+                  selectedFile != null &&
+                  selectedFile !== '__all__' &&
+                  paidPaystubWeeks.has(selectedFile);
+                return (
+                  <button
+                    type="button"
+                    disabled={!canOpen}
+                    onClick={() => selectedFile && setPaystubModalFile(selectedFile)}
+                    title={canOpen ? 'Open your pay statement for this week' : 'Available once your pay for this week has been sent'}
+                    className="group inline-flex shrink-0 items-center gap-2 rounded-xl border border-emerald-200/80 bg-white/80 py-1.5 pl-2 pr-3.5 text-left text-[13px] font-medium text-emerald-700 shadow-sm backdrop-blur-md transition-colors hover:border-emerald-300 hover:bg-emerald-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/40 disabled:cursor-not-allowed disabled:opacity-50 dark:border-emerald-900/40 dark:bg-zinc-900/70 dark:text-emerald-300 dark:hover:border-emerald-800/70 dark:hover:bg-emerald-950/30"
+                  >
+                    <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-emerald-100 to-teal-100 text-emerald-600 dark:from-emerald-950/60 dark:to-teal-950/40 dark:text-emerald-300">
+                      <Receipt className="h-4 w-4" aria-hidden />
+                    </span>
+                    Open Paystubs
+                  </button>
+                );
+              })()}
             </div>
           )}
         </div>
@@ -3544,6 +3593,12 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
           </DialogContent>
         </Dialog>
       )}
+
+      <PayStubModal
+        open={paystubModalFile !== null}
+        sourceFile={paystubModalFile}
+        onClose={() => setPaystubModalFile(null)}
+      />
 
     </div>
   );

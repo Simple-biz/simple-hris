@@ -239,6 +239,15 @@ async function loadAll(
   // staged paystub). Keyed by lowercased work email; carries the last paystub
   // send timestamp for a per-row badge.
   const wizardExcluded = new Map<string, { sentAt: string | null; departmentKey: string | null }>();
+  // Every email the Payroll Wizard LOCKED IN for this cycle (payable AND
+  // excluded). This staged set is the payroll-authoritative payee list — anyone
+  // the wizard locked in must appear in Payment Dispatch. We use it below to
+  // (1) stop the master-list gate from dropping people the wizard already
+  // vouched for (re-hires / sync-lagged employees not yet in active_employees),
+  // and (2) as a safety-net: synthesize a row for anyone locked in that the
+  // rates-only queue build couldn't produce, so nobody ever silently vanishes.
+  const stagedEmails = new Set<string>();
+  const stagedItems: PaystubQueueListItem[] = [];
   if (period.sourceFile) {
     try {
       const stageRes = await fetch(
@@ -247,6 +256,10 @@ async function loadAll(
       );
       const stageJson = (await stageRes.json()) as { rows?: PaystubQueueListItem[] };
       for (const r of stageJson.rows ?? []) {
+        stagedItems.push(r);
+        const re = r.recipient_email?.trim().toLowerCase();
+        if (re) stagedEmails.add(re);
+        if (r.personal_email) stagedEmails.add(r.personal_email.trim().toLowerCase());
         if (r.excluded) {
           wizardExcluded.set(r.recipient_email.trim().toLowerCase(), {
             sentAt: r.sent_at,
@@ -333,14 +346,22 @@ async function loadAll(
       : null;
   const inMaster = <T extends { id: string; email: string }>(r: T): boolean =>
     masterSet == null || masterSet.has(r.id) || masterSet.has(r.email.trim().toLowerCase());
+  // A person the Payroll Wizard locked in this cycle is authoritative — never
+  // let the master-list gate drop them. This recovers employees who are staged
+  // + payable but missing from active_employees (master-list sync lag, re-hire
+  // row reuse). Non-staged stale rates rows are still pruned by inMaster, and
+  // the staged set only contains people with hours THIS cycle, so this can't
+  // resurrect off-boarded people.
+  const inMasterOrStaged = <T extends { id: string; email: string }>(r: T): boolean =>
+    inMaster(r) || stagedEmails.has(r.id) || stagedEmails.has(r.email.trim().toLowerCase());
 
   const pendingActive = active
     .filter((r) => !paidEmails.has(r.id))
-    .filter(inMaster)
+    .filter(inMasterOrStaged)
     .map(applyWizardFinal);
   const excludedBase = excluded
     .filter((r) => !paidEmails.has(r.id))
-    .filter(inMaster)
+    .filter(inMasterOrStaged)
     .map(applyWizardFinal);
 
   // Split pending into truly-pending vs wizard-excluded.
@@ -429,6 +450,48 @@ async function loadAll(
       reasons: ['do_not_pay'],
       payable: base ? { ...base, amountPHP: ar.totalPHP, amountUSD: ar.totalUSD } : null,
       arrears: ar,
+    });
+  }
+
+  // ── Safety-net: never let a wizard-locked person vanish ────────────────────
+  // The queue above is built from employee_hourly_rates. Anyone the wizard
+  // locked in (staged) whose pay came from the employee/department CATALOG has
+  // no rates row, so buildQueueFromRates never emitted them — they'd disappear
+  // from Payment Dispatch entirely despite being owed money. Surface every
+  // staged person we haven't already placed (pending / excluded / paid) into the
+  // Excluded tab, flagged 'no_rate' (+ 'do_not_pay' when the wizard excluded
+  // them in validation), so accounting can see them and set up a rate/bank.
+  const representedEmails = new Set<string>();
+  for (const r of pendingQueue) {
+    representedEmails.add(r.id);
+    representedEmails.add(r.email.trim().toLowerCase());
+  }
+  for (const r of withArrears) {
+    representedEmails.add(r.id);
+    representedEmails.add(r.email.trim().toLowerCase());
+  }
+  for (const e of paidEmails) representedEmails.add(e);
+  for (const s of stagedItems) {
+    const email = s.recipient_email.trim().toLowerCase();
+    const personal = s.personal_email?.trim().toLowerCase() ?? null;
+    if (representedEmails.has(email) || (personal && representedEmails.has(personal))) continue;
+    representedEmails.add(email);
+    const reasons: ExclusionReason[] = ['no_rate'];
+    if (s.excluded) reasons.push('do_not_pay');
+    withArrears.push({
+      id: email,
+      name: s.recipient_name?.trim() || s.recipient_email,
+      email: s.recipient_email,
+      totalHours: null,
+      amountUSD: s.amount_usd,
+      amountPHP: s.amount_php,
+      amountCOP: null,
+      bankPreferredRaw: null,
+      reasons,
+      departmentKey: s.department_key ?? null,
+      departmentName: deptNameFromKey(s.department_key),
+      payable: null,
+      paystubSentAt: s.sent_at,
     });
   }
 

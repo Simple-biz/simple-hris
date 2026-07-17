@@ -30,10 +30,14 @@ import {
   probeHrOnboarding,
   probeHubstaffCsv,
   probeMasterList,
+  probeMesa,
+  probePayrollWizardNotes,
   probePgPool,
   probeRateHistory,
   probeRates,
   probeSupabase,
+  probeTickets,
+  probeTimeAdjustments,
   withProbeTimeout,
   type ProbeResult,
   type ProbeStatus,
@@ -57,7 +61,11 @@ type DiagnosticCategory =
   | 'integration'
   | 'manager'
   | 'hr-onboarding'
-  | 'hr-offboarding';
+  | 'hr-offboarding'
+  | 'tickets'
+  | 'time-adjust'
+  | 'payroll-notes'
+  | 'mesa';
 
 type DiagnosticNode = {
   id: string;
@@ -136,6 +144,10 @@ export async function GET() {
     rateHistoryProbe,
     hrOnboardingProbe,
     hrOffboardingProbe,
+    ticketsProbe,
+    timeAdjustProbe,
+    payrollNotesProbe,
+    mesaProbe,
   ] = await Promise.all([
     withProbeTimeout(probeSupabase(), fallback),
     withProbeTimeout(probePgPool(), fallback),
@@ -151,6 +163,10 @@ export async function GET() {
     withProbeTimeout(probeRateHistory(), fallback),
     withProbeTimeout(probeHrOnboarding(), fallback),
     withProbeTimeout(probeHrOffboarding(), fallback),
+    withProbeTimeout(probeTickets(), fallback),
+    withProbeTimeout(probeTimeAdjustments(), fallback),
+    withProbeTimeout(probePayrollWizardNotes(), fallback),
+    withProbeTimeout(probeMesa(), fallback),
   ]);
 
   // Compose nodes — service-map identifiers must match the client's NODE_POSITIONS.
@@ -231,6 +247,10 @@ export async function GET() {
     node('rate-history', 'Rate History', 'rates', rateHistoryProbe),
     node('hr-onboarding', 'HR Onboarding Pipeline', 'hr-onboarding', hrOnboardingProbe),
     node('hr-offboarding', 'HR Offboarding Pipeline', 'hr-offboarding', hrOffboardingProbe),
+    node('tickets', 'Tickets Board', 'tickets', ticketsProbe),
+    node('time-adjust', 'Time Adjustment Requests', 'time-adjust', timeAdjustProbe),
+    node('payroll-notes', 'Payroll Wizard Notes', 'payroll-notes', payrollNotesProbe),
+    node('mesa', 'MESA Program', 'mesa', mesaProbe),
   ];
 
   // Generate alerts from any non-healthy node.

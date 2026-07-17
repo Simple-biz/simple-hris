@@ -11,6 +11,8 @@ import {
   markPaystubSendError,
 } from "@/lib/supabase/paystub-dispatch-queue";
 import { forwardPaystubDispatch } from "@/lib/payroll/paystub-dispatch";
+import { mapPayloadToPayStub } from "@/lib/payroll/paystub-view";
+import { createSupabaseServiceRoleClient } from "@/lib/supabase/server";
 import { insertAuditLog } from "@/lib/supabase/audit-log";
 import { getSessionActor } from "@/lib/auth/session-actor";
 import { requireFeatureEdit, requireRateVisibilityOrFeatureEdit } from "@/lib/auth/authorize-feature";
@@ -137,6 +139,57 @@ export async function POST(req: NextRequest) {
       );
       if (staged?.payload) {
         paystub.staged = true;
+
+        // Notify the employee their pay landed. The card's "Open Pay Stub"
+        // button opens the exact statement we email, so we only fire this when a
+        // renderable paystub is staged. Best-effort + de-duped on
+        // (recipient, source_file) so an undo→re-pay doesn't double-notify; a
+        // failed notification never fails the payment.
+        void (async () => {
+          try {
+            const sb = createSupabaseServiceRoleClient();
+            if (!sb) return;
+            const { data: existing } = await sb
+              .from("employee_notifications")
+              .select("id")
+              .eq("recipient_email", row.recipient_email)
+              .eq("type", "payroll.paid")
+              .eq("details->>source_file", row.cycle_source_file as string)
+              .limit(1);
+            if (existing && existing.length > 0) return;
+
+            const view = mapPayloadToPayStub(staged.payload, staged.pay_period);
+            const amountLabel =
+              row.amount_php != null
+                ? `₱${Number(row.amount_php).toLocaleString("en-US", {
+                    minimumFractionDigits: 2,
+                    maximumFractionDigits: 2,
+                  })}`
+                : null;
+            const weekPhrase = view.weekHuman ? ` for ${view.weekHuman}` : "";
+            await sb.from("employee_notifications").insert({
+              recipient_email: row.recipient_email,
+              type: "payroll.paid",
+              tone: "positive",
+              title: "Salary Paid",
+              message: amountLabel
+                ? `Your pay${weekPhrase} has been sent — ${amountLabel}. Open your pay stub for the full breakdown.`
+                : `Your pay${weekPhrase} has been sent. Open your pay stub for the full breakdown.`,
+              details: {
+                source_file: row.cycle_source_file,
+                amount_php: row.amount_php,
+                amount_usd: row.amount_usd,
+                sent_date: row.sent_date,
+                week: view.weekStart && view.weekEnd
+                  ? { start: view.weekStart, end: view.weekEnd }
+                  : null,
+              },
+            });
+          } catch {
+            /* best-effort — never block the payment record */
+          }
+        })();
+
         const result = await forwardPaystubDispatch({
           pay_period: staged.pay_period,
           employees: [staged.payload],

@@ -294,6 +294,30 @@ reuses the same `fieldForHeader` / `formatOffboardDate` helpers. A real run writ
 
 ---
 
+## Weekly Pulse KPI cards (HR → Offboarding)
+
+Added 2026-07-17 (Teal's request, commit `87053fb`):
+`src/components/hr/OffboardingWeeklyPulse.tsx`, mounted in `HrOffboarding.tsx`
+between the hero header and the tabbed Queue/HRIS/Offboarded card — Offboarding
+section only.
+
+- **Own week selector** — a rose-recolored twin of the HR-dashboard picker
+  (All time / By week toggle, prev/next chevrons, week-label pill with
+  this-week/last-week badge), independent of the tab filters; next-week is
+  disabled.
+- **Card 1 · Offboarded** — weekly count from `off_boarded_at` (Sun–Sat
+  weeks), a +N/−N vs-last-week chip, and an 8-week bar sparkline with the
+  selected week highlighted.
+- **Card 2 · Attrition rate** — reuses the HR Overview formula
+  (`separations / (activeHeadcount + separations/2)`); by-week mode shows an
+  **annualized (×52) run-rate** against the Overview's grade thresholds,
+  all-time shows the raw ratio; raw counts printed beneath. Headcount comes
+  from the shared `overviewRoster` cache.
+- Motion: house rAF ease-out-cubic count-up, staggered bar draw-in, eased
+  grade meter — transform/opacity only, all gated behind
+  `prefers-reduced-motion`. Loading shimmer, zero-week, unknown-headcount, and
+  light/dark states covered.
+
 ## Related
 
 - **Resignation flow** — Profile → Resign → manager approval → offboarding queue (same queue this

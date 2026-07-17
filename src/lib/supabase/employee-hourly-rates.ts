@@ -307,6 +307,14 @@ export async function getEmployeeHourlyRatesRows(): Promise<{
  * Server-side single-row lookup by email — used by the employee portal so it
  * doesn't have to download the entire rates table just to find itself.
  * Matches on `"Work Email"` first, then `"Personal Email"` (case-insensitive).
+ *
+ * Reads the SAME deduplicated view (`employee_hourly_rates_current`: one row per
+ * email, latest upload_id then created_at) that the Accounting roster and the
+ * MESA opt-in toggle resolve against. Reading the raw base table with an
+ * unordered `.limit(1)` could return a stale duplicate row whose `mesa_member`
+ * flag was never toggled — so an opt-in set from Accounting → MESA would not
+ * surface on the employee dashboard. Falls back to the base table when the view
+ * isn't present (migration not yet run / reverted), matching getEmployeeHourlyRatesRows.
  */
 export async function getEmployeeHourlyRateRowByEmail(
   email: string,
@@ -327,13 +335,23 @@ export async function getEmployeeHourlyRateRowByEmail(
   const table =
     process.env.NEXT_PUBLIC_SUPABASE_EMPLOYEE_HOURLY_RATES_TABLE?.trim() ||
     "employee_hourly_rates";
+  const VIEW_NAME = "employee_hourly_rates_current";
 
-  const tryColumn = async (col: string) =>
-    supabase.from(table).select("*").ilike(col, target).limit(1).maybeSingle();
+  // Work Email first, then Personal Email — both case-insensitive.
+  const lookup = async (source: string) => {
+    const tryColumn = async (col: string) =>
+      supabase.from(source).select("*").ilike(col, target).limit(1).maybeSingle();
+    let res = await tryColumn('"Work Email"');
+    if (!res.data && !res.error) {
+      res = await tryColumn('"Personal Email"');
+    }
+    return res;
+  };
 
-  let res = await tryColumn('"Work Email"');
-  if (!res.data && !res.error) {
-    res = await tryColumn('"Personal Email"');
+  let res = await lookup(VIEW_NAME);
+  // View unavailable (relation missing) — fall back to the base-table read.
+  if (res.error) {
+    res = await lookup(table);
   }
   if (res.error) return { row: null, error: res.error.message };
   if (!res.data) return { row: null, error: null };

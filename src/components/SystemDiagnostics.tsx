@@ -50,6 +50,7 @@ import {
   AlertTriangle,
   BarChart3,
   Banknote,
+  CalendarClock,
   CheckCircle2,
   CircleDashed,
   Clock,
@@ -60,6 +61,8 @@ import {
   Image as ImageIcon,
   KeyRound,
   LayoutDashboard,
+  NotebookPen,
+  PiggyBank,
   Plug,
   Settings,
   RefreshCw,
@@ -70,6 +73,7 @@ import {
   ShieldAlert,
   Sparkles,
   Tag,
+  Ticket,
   UserMinus,
   UserPlus,
   Users,
@@ -102,7 +106,11 @@ export type DiagnosticCategory =
   | 'integration'
   | 'manager'
   | 'hr-onboarding'
-  | 'hr-offboarding';
+  | 'hr-offboarding'
+  | 'tickets'
+  | 'time-adjust'
+  | 'payroll-notes'
+  | 'mesa';
 
 /** A concrete remediation step. `kind` lets the UI hint at the type of action:
  *  config = settings/env tweak, code = source change, db = SQL/migration,
@@ -234,6 +242,10 @@ const CATEGORY_LABEL: Record<DiagnosticCategory, string> = {
   manager: 'manager',
   'hr-onboarding': 'hr_onboarding',
   'hr-offboarding': 'hr_offboarding',
+  tickets: 'tickets',
+  'time-adjust': 'time_adjust',
+  'payroll-notes': 'payroll_notes',
+  mesa: 'mesa',
 };
 
 /** Category-specific glyph for the node header — gives each card a visual
@@ -255,6 +267,10 @@ const CATEGORY_ICON: Record<DiagnosticCategory, React.ComponentType<{ className?
   manager: ImageIcon,
   'hr-onboarding': UserPlus,
   'hr-offboarding': UserMinus,
+  tickets: Ticket,
+  'time-adjust': CalendarClock,
+  'payroll-notes': NotebookPen,
+  mesa: PiggyBank,
 };
 
 const FIX_KIND_LABEL: Record<NonNullable<DiagnosticFix['kind']>, string> = {
@@ -632,6 +648,70 @@ function buildMockDiagnostics(now = new Date()): DiagnosticsHealthResponse {
       ],
       lastChecked: iso,
     },
+    {
+      id: 'tickets',
+      label: 'Tickets Board',
+      category: 'tickets',
+      status: 'healthy',
+      summary: 'Kanban board reachable.',
+      details: [
+        'Kanban board at /tickets — gated by the dedicated tickets role.',
+        'Backed by tickets + ticket_comments + ticket_events.',
+      ],
+      suggestedChecks: [
+        'Confirm ticket_comments and ticket_events tables also exist.',
+        'Re-grant the tickets role to anyone who should keep board access.',
+      ],
+      lastChecked: iso,
+    },
+    {
+      id: 'time-adjust',
+      label: 'Time Adjustment Requests',
+      category: 'time-adjust',
+      status: 'healthy',
+      summary: 'Two-stage adjustment queue reachable.',
+      details: [
+        'Employee → manager → Accounting; approval SET-overrides the day.',
+        'Never mutates hubstaff_hours — overrides apply at pay-calc time.',
+      ],
+      suggestedChecks: [
+        'Spot-check that an approved override lands on the pay calc.',
+        'Verify evidence images sign correctly in the review panel.',
+      ],
+      lastChecked: iso,
+    },
+    {
+      id: 'payroll-notes',
+      label: 'Payroll Wizard Notes',
+      category: 'payroll-notes',
+      status: 'healthy',
+      summary: 'Carry-over notes board reachable.',
+      details: [
+        'Carry-over checklist for the payroll week — missed bonuses, rate changes, deductions.',
+        'Bridges the wizard Additions “Adj.” column both ways; week_start = Manila Monday.',
+      ],
+      suggestedChecks: [
+        'Confirm the week selector shows the current Manila week.',
+        'Verify a wizard Adj. override mirrors onto the board.',
+      ],
+      lastChecked: iso,
+    },
+    {
+      id: 'mesa',
+      label: 'MESA Program',
+      category: 'mesa',
+      status: 'healthy',
+      summary: 'MESA ledger reachable.',
+      details: [
+        '1:1 backfill of the external MESA tracker: deposits, disbursements, status snapshots.',
+        'Balances scope to each member’s current (open) account number.',
+      ],
+      suggestedChecks: [
+        'Spot-check a member rollup against the external tracker.',
+        'Confirm opt-out closes the account and a re-join mints a new number.',
+      ],
+      lastChecked: iso,
+    },
   ];
 
   const alerts: DiagnosticAlert[] = [
@@ -705,6 +785,10 @@ const NODE_POSITIONS: Record<string, { x: number; y: number }> = {
   'payroll-wizard':        { x: COL.feature, y: 0    },
   rates:                   { x: COL.feature, y: 280  },
   'app-settings':          { x: COL.feature, y: 560  },
+  'time-adjust':           { x: COL.feature, y: 840  },
+  'payroll-notes':         { x: COL.feature, y: 1120 },
+  tickets:                 { x: COL.feature, y: 1400 },
+  mesa:                    { x: COL.feature, y: 1680 },
   // Col 2 — data tables / imports
   'hubstaff-csv':          { x: COL.data,    y: 0    },
   'master-list':           { x: COL.data,    y: 280  },
@@ -744,6 +828,16 @@ const EDGES: { source: string; target: string }[] = [
   { source: 'auth-login', target: 'app-settings' },
   { source: 'rates', target: 'rate-history' },
   { source: 'rate-history', target: 'supabase-client' },
+  // Newer subsystems — shell hosts the feature area, feature reads the DB.
+  { source: 'admin-shell', target: 'tickets' },
+  { source: 'admin-shell', target: 'time-adjust' },
+  { source: 'admin-shell', target: 'mesa' },
+  { source: 'payroll-wizard', target: 'payroll-notes' },
+  { source: 'tickets', target: 'supabase-client' },
+  { source: 'time-adjust', target: 'supabase-client' },
+  { source: 'time-adjust', target: 'audit-log' },
+  { source: 'payroll-notes', target: 'supabase-client' },
+  { source: 'mesa', target: 'supabase-client' },
 ];
 
 // v2: bumped when the template moved to the collision-free grid so any stale

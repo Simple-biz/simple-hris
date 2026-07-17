@@ -32,6 +32,7 @@ import {
 import { cn } from '@/lib/utils';
 import { useLiveRefresh } from '@/hooks/useLiveRefresh';
 import {
+  TICKET_BOARD_OWNER,
   TICKET_PRIORITIES,
   TICKET_PRIORITY_LABELS,
   TICKET_STATUSES,
@@ -113,6 +114,10 @@ export default function TicketDialog({
 }: TicketDialogProps) {
   const isCreate = ticket === null;
   const isArchived = !isCreate && Boolean(ticket.archived_at);
+  // Assignment is owner-only: only the board owner sees/uses the developer
+  // picker. Everyone else's new tickets default to the owner server-side, and
+  // an existing ticket's assignee shows read-only.
+  const isOwner = viewerEmail === TICKET_BOARD_OWNER;
   const [draft, setDraft] = useState<TicketDraft>(EMPTY_DRAFT);
   const [confirmingArchive, setConfirmingArchive] = useState(false);
 
@@ -128,9 +133,11 @@ export default function TicketDialog({
             status: ticket.status,
             assigned_to: ticket.assigned_to ?? '',
           }
-        : EMPTY_DRAFT,
+        : // New tickets default to the owner's desk; the owner can then route to
+          // a developer. Non-owners never send an assignee (picker is hidden).
+          { ...EMPTY_DRAFT, assigned_to: isOwner ? viewerEmail : '' },
     );
-  }, [open, ticket]);
+  }, [open, ticket, isOwner, viewerEmail]);
 
   const titleValid = draft.title.trim().length > 0;
   // Archived tickets are frozen: restore first, then edit.
@@ -283,15 +290,19 @@ export default function TicketDialog({
           </div>
 
           {isCreate ? (
-            <div className="ticket-field grid gap-1.5" style={fieldIndex(4)}>
-              <Label>Assign developer (optional)</Label>
-              <DeveloperSelect
-                value={draft.assigned_to}
-                onChange={(email) => setDraft((d) => ({ ...d, assigned_to: email }))}
-                disabled={saving}
-                members={members}
-              />
-            </div>
+            // Assignment is owner-only, so only the owner gets the picker.
+            // Everyone else's ticket defaults to the owner's desk server-side.
+            isOwner && (
+              <div className="ticket-field grid gap-1.5" style={fieldIndex(4)}>
+                <Label>Assign developer (optional)</Label>
+                <DeveloperSelect
+                  value={draft.assigned_to}
+                  onChange={(email) => setDraft((d) => ({ ...d, assigned_to: email }))}
+                  disabled={saving}
+                  members={members}
+                />
+              </div>
+            )
           ) : (
             <div className="ticket-field grid gap-3 sm:grid-cols-2" style={fieldIndex(4)}>
               <div className="grid gap-1.5">
@@ -331,12 +342,17 @@ export default function TicketDialog({
                 </Select>
               </div>
               <div className="grid gap-1.5">
-                <Label>Assigned developer</Label>
+                <Label
+                  title={isOwner ? undefined : 'Only the board owner can assign or reassign a ticket'}
+                >
+                  Assigned developer
+                </Label>
                 <DeveloperSelect
                   value={draft.assigned_to}
                   onChange={(email) => setDraft((d) => ({ ...d, assigned_to: email }))}
-                  disabled={readOnly || saving}
+                  disabled={readOnly || saving || !isOwner}
                   members={members}
+                  locked={!isOwner}
                 />
               </div>
             </div>
@@ -428,11 +444,15 @@ function DeveloperSelect({
   onChange,
   disabled,
   members,
+  locked = false,
 }: {
   value: string;
   onChange: (email: string) => void;
   disabled: boolean;
   members: TicketMember[] | null;
+  /** Read-only because the viewer isn't the board owner — the picker shows the
+   *  current assignee but can't change it, and the caption says why. */
+  locked?: boolean;
 }) {
   const developers = useMemo(() => (members ?? []).filter(isAssignableDeveloper), [members]);
   const loading = members === null;
@@ -477,9 +497,11 @@ function DeveloperSelect({
         </SelectContent>
       </Select>
       <p className="text-[11px] leading-4 text-muted-foreground/80">
-        {!loading && developers.length === 0
-          ? 'No developers yet — grant Tickets “Edit” in Admin → Roles & Permissions.'
-          : 'Developers with Edit access to the Ticket Board. Assignees are notified instantly and can move their ticket between columns.'}
+        {locked
+          ? 'Only the board owner can assign or reassign a ticket.'
+          : !loading && developers.length === 0
+            ? 'No developers yet — grant Tickets “Edit” in Admin → Roles & Permissions.'
+            : 'Developers with Edit access to the Ticket Board. Assignees are notified instantly and can move their ticket between columns.'}
       </p>
     </div>
   );

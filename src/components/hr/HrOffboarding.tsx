@@ -9,6 +9,7 @@ import {
   Clock,
   FileX,
   Inbox,
+  LayoutDashboard,
   Loader2,
   Play,
   RefreshCw,
@@ -104,10 +105,10 @@ function PaginationBar({
   );
 }
 
-type OffboardTab = 'queue' | 'hris' | 'offboarded';
+type OffboardTab = 'overview' | 'queue' | 'hris' | 'offboarded';
 
 export default function HrOffboarding() {
-  const [activeTab, setActiveTab] = useState<OffboardTab>('queue');
+  const [activeTab, setActiveTab] = useState<OffboardTab>('overview');
 
   const [history, setHistory] = useState<HistoryRow[]>(
     () => getHrTabCache<HistoryRow[]>(HR_TAB_CACHE_KEYS.offboardHistory) ?? [],
@@ -393,11 +394,6 @@ export default function HrOffboarding() {
         </div>
       </header>
 
-      {/* Weekly overview — two KPI cards (offboarded + attrition rate) with their
-          own week selector. Fed by the same offboard-history rows the Offboarded
-          tab uses, so no extra fetch for the counts. */}
-      <OffboardingWeeklyPulse rows={history} loading={historyLoading && history.length === 0} />
-
       {/* Main card with tabs */}
       <Card className="border-emerald-100/80 bg-gradient-to-br from-white via-emerald-50/30 to-white shadow-md ring-1 ring-emerald-500/8 dark:border-emerald-950/55 dark:from-zinc-950 dark:via-emerald-950/12 dark:to-zinc-950 dark:ring-emerald-400/10">
         <CardHeader className="flex flex-col gap-3 border-b border-emerald-100/60 pb-4 dark:border-emerald-900/40">
@@ -405,6 +401,28 @@ export default function HrOffboarding() {
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             {/* Tabs */}
             <div role="tablist" aria-label="Offboarding views" className="flex items-center gap-1 rounded-lg border border-emerald-100/80 bg-emerald-50/60 p-1 dark:border-emerald-900/50 dark:bg-emerald-950/30">
+              <button
+                type="button"
+                role="tab"
+                aria-selected={activeTab === 'overview'}
+                onClick={() => setActiveTab('overview')}
+                className={cn(
+                  'relative flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors',
+                  activeTab === 'overview' ? 'text-white' : 'text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100',
+                )}
+              >
+                {activeTab === 'overview' && (
+                  <motion.span
+                    layoutId="offboardTabPill"
+                    className="absolute inset-0 rounded-md bg-gradient-to-r from-rose-500 to-rose-700 shadow-sm"
+                    transition={{ type: 'spring', stiffness: 400, damping: 32 }}
+                  />
+                )}
+                <span className="relative flex items-center gap-1.5">
+                  <LayoutDashboard className="h-3.5 w-3.5" />
+                  Overview
+                </span>
+              </button>
               <button
                 type="button"
                 role="tab"
@@ -494,7 +512,11 @@ export default function HrOffboarding() {
                 transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
                 className="flex items-center gap-2"
               >
-                {activeTab === 'queue' ? (
+                {activeTab === 'overview' ? (
+                  <Button variant="outline" size="sm" onClick={() => void fetchHistory()} disabled={historyLoading} className="shrink-0" title="Refresh offboarding metrics">
+                    <RefreshCw className={cn('h-3.5 w-3.5', historyLoading && 'animate-spin')} />
+                  </Button>
+                ) : activeTab === 'queue' ? (
                   <>
                     <div className="relative w-full sm:w-64">
                       <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" />
@@ -558,14 +580,17 @@ export default function HrOffboarding() {
             </AnimatePresence>
           </div>
 
-          {/* Sub-label */}
-          <p className="text-xs text-muted-foreground">
-            {activeTab === 'queue'
-              ? queueLoading ? 'Loading queue…' : `${pendingCount} pending · ${queueOpenTotal} open request${queueOpenTotal === 1 ? '' : 's'} from managers`
-              : activeTab === 'hris'
-              ? queueLoading ? 'Loading…' : `${filteredHris.length} of ${hrisOffboarded.length} offboarded through HRIS`
-              : historyLoading ? 'Loading…' : `${historyUniqueFiltered} of ${historyUniqueTotal} off-boarded`}
-          </p>
+          {/* Sub-label (the Overview tab carries its own context line inside the
+              weekly-pulse panel, so it's skipped here). */}
+          {activeTab !== 'overview' && (
+            <p className="text-xs text-muted-foreground">
+              {activeTab === 'queue'
+                ? queueLoading ? 'Loading queue…' : `${pendingCount} pending · ${queueOpenTotal} open request${queueOpenTotal === 1 ? '' : 's'} from managers`
+                : activeTab === 'hris'
+                ? queueLoading ? 'Loading…' : `${filteredHris.length} of ${hrisOffboarded.length} offboarded through HRIS`
+                : historyLoading ? 'Loading…' : `${historyUniqueFiltered} of ${historyUniqueTotal} off-boarded`}
+            </p>
+          )}
         </CardHeader>
 
         <CardContent className="pt-4">
@@ -577,7 +602,10 @@ export default function HrOffboarding() {
               exit={{ opacity: 0, y: -6 }}
               transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
             >
-          {activeTab === 'queue' ? (
+          {activeTab === 'overview' ? (
+            /* ── Weekly overview — KPI cards + week selector ── */
+            <OffboardingWeeklyPulse rows={history} loading={historyLoading && history.length === 0} />
+          ) : activeTab === 'queue' ? (
             /* ── Manager-request Queue ── */
             queueLoading ? (
               <div className="flex items-center justify-center py-10 text-zinc-500">

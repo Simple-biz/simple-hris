@@ -85,7 +85,7 @@ export const DISPATCH_PROCESSORS: ProcessorMeta[] = PROCESSORS.filter(
  * No Current Pay / No Hours" tab so Lenny can see why someone is missing from
  * the active queue rather than them silently disappearing.
  */
-export type ExclusionReason = 'no_bank' | 'no_pay' | 'no_hours' | 'do_not_pay';
+export type ExclusionReason = 'no_bank' | 'no_pay' | 'no_hours' | 'do_not_pay' | 'no_rate';
 
 export interface ExcludedRow {
   id: string;

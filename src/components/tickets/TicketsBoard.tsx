@@ -92,7 +92,8 @@ export default function TicketsBoard() {
   // Below `md` the sidebar is a drawer toggled by the header hamburger.
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   // Which tickets surface is showing: the Kanban board or the stats Overview.
-  const [activeView, setActiveView] = useState<TicketsView>('board');
+  // Overview is the default landing view on load/refresh.
+  const [activeView, setActiveView] = useState<TicketsView>('overview');
 
   const [search, setSearch] = useState('');
   const [priorityFilter, setPriorityFilter] = useState<'all' | TicketPriority>('all');

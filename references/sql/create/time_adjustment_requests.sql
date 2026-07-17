@@ -16,7 +16,8 @@ create table if not exists public.time_adjustment_requests (
   adjust_date     date not null,                  -- the day being corrected
   reason          text not null,                  -- reason code (see TIME_ADJUSTMENT_REASONS)
   explanation     text,                           -- employee's paragraph
-  requested_hours numeric,                        -- employee's claimed correct total (nullable)
+  requested_hours numeric,                        -- claimed MISSED hours to add (sum of segments); legacy rows: claimed day total
+  requested_segments jsonb not null default '[]'::jsonb, -- missed time ranges [{time_in:"HH:MM",time_out:"HH:MM"}] day-local
   image_paths     text[] not null default '{}',   -- storage object paths (max 5, enforced in app)
   status          text not null default 'pending',-- pending | approved | denied
   approved_hours  numeric,                         -- accounting-set hours; SET-semantics override

@@ -10,6 +10,7 @@ import { listTicketMembers } from '@/lib/tickets/members';
 import { notifyTicketDone, sendTicketAssignedNotifications } from '@/lib/tickets/notify';
 import {
   TICKET_BOARD_MOVERS,
+  TICKET_BOARD_OWNER,
   TICKET_STATUSES,
   TICKET_PRIORITIES,
   isAssignableDeveloper,
@@ -155,13 +156,30 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     return NextResponse.json({ error: 'Nothing to update' }, { status: 400 });
   }
 
-  // Assigning a developer: the pool is exactly the people with an Edit grant
-  // on the Ticket Board (Roles & Permissions) or the admin role — the same
-  // list the pickers show (/api/tickets/members). Checked only when the
-  // assignee actually changes, so tickets carrying a legacy/free-text
-  // assignee can still have their other fields edited. Unassigning is free.
+  // Assignment is owner-only. Only the board owner (TICKET_BOARD_OWNER) may
+  // set, change, or clear a ticket's developer. Everyone else can still edit
+  // the other fields and — if they're the assignee — move the card, but never
+  // touch `assigned_to`. Gated on an ACTUAL change so a no-op echo of the
+  // current assignee (e.g. a developer saving the dialog to move their own
+  // ticket) still goes through.
+  const isOwner = authz.sessionEmail === TICKET_BOARD_OWNER;
   const requestedAssignee = patch.assigned_to as string | null | undefined;
-  if (requestedAssignee && requestedAssignee !== (beforeRow.assigned_to ?? '').trim().toLowerCase()) {
+  const assigneeChanged =
+    patch.assigned_to !== undefined &&
+    (requestedAssignee ?? '') !== (beforeRow.assigned_to ?? '').trim().toLowerCase();
+  if (assigneeChanged && !isOwner) {
+    return NextResponse.json(
+      { error: 'Only the board owner can assign or reassign a ticket.' },
+      { status: 403 },
+    );
+  }
+
+  // The owner's developer pick must be in the assignable pool: the people with
+  // an Edit grant on the Ticket Board (Roles & Permissions) or the admin role —
+  // the same list the pickers show (/api/tickets/members). Checked only when
+  // the assignee actually changes, so tickets carrying a legacy/free-text
+  // assignee can still have their other fields edited. Unassigning is free.
+  if (requestedAssignee && assigneeChanged) {
     try {
       const members = await listTicketMembers(supabase);
       const developer = members.find(
@@ -186,11 +204,11 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
   // Moving a card (column or in-column position) is allowed for the board
   // movers allowlist AND the ticket's assigned developer, who walks their own
-  // ticket across the workflow. The assignee is evaluated AFTER this write
-  // (patch wins over the stored row), so a developer can self-assign and set
-  // the column in one save. Everyone else may still create tickets, edit
-  // fields, and reply. Compared against the CURRENT row so a no-op status
-  // echo from the edit dialog doesn't trip it.
+  // ticket across the workflow. (Assignment itself is owner-only — gated
+  // above — so a developer only ever moves a ticket the owner routed to them.)
+  // Everyone else may still create tickets, edit fields, and reply. Compared
+  // against the CURRENT row so a no-op status echo from the edit dialog
+  // doesn't trip it.
   const wantsMove =
     (patch.status !== undefined && patch.status !== beforeRow.status) ||
     (patch.position !== undefined && patch.position !== beforeRow.position);

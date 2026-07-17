@@ -1,6 +1,6 @@
 import { createSupabaseServiceRoleClient } from './server';
 import { DEPARTMENTS } from '@/lib/payroll/department-bonus';
-import { HSL_DEPTS, type HslDeptKey } from '@/lib/hsl-bonus/schema';
+import { HSL_DEPTS, HSL_MANAGERS_BY_EMAIL, type HslDeptKey } from '@/lib/hsl-bonus/schema';
 
 // Employee-facing KPI results.
 //
@@ -109,6 +109,7 @@ type AppliedRow = {
 
 type HslEntryRow = {
   department: string;
+  employee_email: string | null;
   period_type: string | null;
   period_start: string;
   period_end: string | null;
@@ -150,7 +151,7 @@ export async function getEmployeeKpiResults(
       .in('employee_email', targets),
     supabase
       .from(HSL_ENTRIES)
-      .select('department, period_type, period_start, period_end, kpi_data, calculated_bonus')
+      .select('department, employee_email, period_type, period_start, period_end, kpi_data, calculated_bonus')
       .in('employee_email', targets),
   ]);
 
@@ -237,8 +238,26 @@ export async function getEmployeeKpiResults(
     if (!visible(s)) continue;
     const p = ensurePeriod(key, 'hsl', r.department, r.period_start, r.period_end ?? '', s);
     p.total += num(r.calculated_bonus);
-    const meta = hslRuleMeta(r.department);
     const data = r.kpi_data ?? {};
+
+    // Managers Weekly (perEmployee): kpi_data holds boolean component ticks and
+    // the dept has no uniform rules, so build the breakdown from the manager's
+    // own spec — each ticked component is a line carrying its fixed PHP amount.
+    if (HSL_DEPTS[r.department as HslDeptKey]?.perEmployee) {
+      const spec = HSL_MANAGERS_BY_EMAIL[(r.employee_email ?? '').toLowerCase()];
+      for (const c of spec?.components ?? []) {
+        if (!data[c.key]) continue;
+        p.items.push({
+          label: c.label,
+          amount: c.amount,
+          value: null,
+          detail: c.cadence === 'monthly' ? 'monthly' : null,
+        });
+      }
+      continue;
+    }
+
+    const meta = hslRuleMeta(r.department);
     for (const [k, raw] of Object.entries(data)) {
       const value = num(raw);
       if (value === 0) continue; // hide untouched metrics

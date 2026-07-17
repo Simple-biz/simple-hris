@@ -52,6 +52,9 @@ Every shell component this is derived from:
 - `app/orphanage/page.tsx`
 - `src/components/employee/EmployeeApp.tsx`
 - `src/components/payroll-clerk/PayrollClerkApp.tsx`
+- `src/components/contractor/ContractorApp.tsx`
+- `src/components/tickets/TicketsBoard.tsx` (standalone `/tickets` page — same
+  shell mechanics, but a fixed black+red theme; see § 1.4)
 
 Reasons for the shape:
 
@@ -75,16 +78,23 @@ Reasons for the shape:
 | Manager        | Editorial zinc | `bg-white` / `dark:bg-zinc-950`     | `bg-[#18181b] text-white`                                               | Lowercase `s` tile       |
 | Orphanage      | Pink / rose    | (per-section)                        | per-section                                                             | Heart icon               |
 | Employee       | Orange / blue (matches Accounting) | `bg-gradient-to-b from-white to-orange-50/40` | `bg-gradient-to-r from-orange-100 to-orange-50` | Orange tile + `simple-logo.png` |
+| Contractor     | Blue (branded family, blue instead of orange) | `bg-gradient-to-b from-white to-blue-50/40` (light) / `from-[#0d1117] to-[#0f1729]` (dark) | `bg-gradient-to-r from-blue-100 to-blue-50 text-blue-900` (light) / `dark:from-blue-950/70 dark:to-blue-950/40` | Blue tile (`from-blue-500 to-blue-700`) + `simple-logo.png` |
+| Tickets        | Black + signal red (fixed — no light variant) | `bg-gradient-to-b from-[#0d0d0e] to-[#080809]` | `bg-gradient-to-r from-red-950/70 to-red-950/30 text-white` | Red tile (`from-red-500 to-red-800`) + `simple-logo.png` |
 
-Two distinct visual families:
+Three distinct visual families:
 
-1. **Branded** — Accounting and Employee use the orange/blue gradient family
+1. **Branded** — Accounting, Employee, and Contractor use the gradient family
    with marketing-style hero numbers and decorative blobs (`PayrollDispatch`,
-   `Overview`).
+   `Overview`). Accounting/Employee are the orange/blue originals; Contractor
+   is the same anatomy recolored blue.
 2. **Editorial** — Admin, Payroll Clerk, Manager, CEO use a near-monochrome
    zinc palette, hairline borders, monospace numerals, and dense per-row UI
    (`AdminGlobalMasterList`, `Rates`, `AdminOverview`). When in doubt for a new admin
    surface, follow the editorial family.
+3. **Console (Tickets only)** — the `/tickets` board is a fixed near-black
+   surface with red actions in **both** global themes. It is deliberately
+   scoped to that one page; don't reuse the black+red look on any dashboard
+   (§ 1.4).
 
 ### 1.3 Page background tokens
 
@@ -95,9 +105,35 @@ Two distinct visual families:
 | Soft canvas (under cards) | `bg-[#fafaf8]` / `bg-zinc-50/40` | `bg-[#0a0d12]` / `bg-zinc-950` |
 | Subtle gradient (Accounting/Employee dashboards) | `bg-gradient-to-br from-white via-orange-50/30 to-blue-50/20` | `dark:bg-none dark:bg-[#0d1117]` |
 
-The gradient hero tone is reserved for the two **branded** surfaces. Don't
+The gradient hero tone is reserved for the **branded** surfaces. Don't
 introduce it on Admin / Payroll Clerk / CEO / Manager — the editorial family
 expects flat backgrounds with hairline borders.
+
+### 1.4 Tickets console theme (`.tickets-theme`)
+
+The `/tickets` Kanban board is themed by **CSS custom-property override**, not
+by per-component classes. `src/index.css` defines a `.tickets-theme` class that
+re-points every semantic token (`--background`, `--card`, `--primary`,
+`--border`, …) to a near-black palette with signal-red actions
+(`--primary: 0 74% 48%`). Rules:
+
+- The board root carries `tickets-theme dark` — the forced `dark` class makes
+  shared components render their dark variants while the custom properties
+  carry the black+red surface. This holds in **both** global themes: the board
+  never goes light, so its rail has **no theme toggle** (it would visibly do
+  nothing).
+- **Any portaled surface** opened from the board (Dialog, Select content,
+  dropdowns) renders outside the board's DOM subtree and must re-apply
+  `tickets-theme dark` on its own content element, or it falls back to the
+  app palette.
+- Inside the theme, style with **semantic tokens** (`bg-background`,
+  `bg-card`, `border-border`, `text-muted-foreground`) so the override does
+  the work — avoid hard-coded zinc/orange utilities.
+- The accent is **red only**. No orange, no navy — status/priority pills on
+  the board use red/zinc ramps (`PRIORITY_STYLES` / `STATUS_STYLES` in
+  `TicketCard.tsx`).
+- Scope: this theme exists for exactly one surface. New dashboards pick
+  branded or editorial (§ 1.2); don't opt anything else into `.tickets-theme`.
 
 ---
 
@@ -1239,11 +1275,48 @@ Every new surface must:
 - Per-employee landing with hero, hours summary, dispute filing,
   announcements; all ScrollArea-bounded
 
+### 17.8 Contractor (`/contractor`)
+
+- Family: branded, **blue** accent — the Employee anatomy recolored
+  (`ContractorApp.tsx` / `ContractorSidebar.tsx` mirror `EmployeeApp`)
+- Sidebar: 256px branded rail, `from-white to-blue-50/40` gradient
+  (`from-[#0d1117] to-[#0f1729]` dark), selected nav
+  `from-blue-100 to-blue-50 text-blue-900`, blue `SidebarLogoHeader` tile
+  (`from-blue-500 to-blue-700`); same `CollapsibleSidebarShell` +
+  `ViewSwitcher` + theme toggle + red-hover sign-out slots as every rail
+- Tabs: Overview / Profile / Invoices, filtered by the feature-permission
+  overlay (`allowedTabs`)
+- Identity comes from `?email=` synced to sessionStorage
+  (`contractor_session_email`), else redirect to `/login`
+- When adding a Contractor surface, treat blue as this dashboard's primary the
+  way orange is Accounting's — don't mix orange in
+
+### 17.9 Tickets (`/tickets`)
+
+- Family: **console** — fixed black + signal-red in both global themes (§ 1.4)
+- Standalone page: `TicketsBoard.tsx` owns the whole route; views are Overview
+  (default landing) / Board (dnd-kit Kanban) / Archived, navigated via
+  `TicketsSidebar` (whose rail still mounts `ViewSwitcher` so the viewer can
+  jump back to their dashboards)
+- Sidebar: 256px, `from-[#0d0d0e] to-[#080809]`, selected nav
+  `from-red-950/70 to-red-950/30 text-white`, red logo tile
+  (`from-red-500 to-red-800`), **no theme toggle** (surface never goes light);
+  identity card recolored `border-red-950/40` with the viewer's avatar
+- Portaled surfaces (TicketDialog, Select content) must re-apply
+  `tickets-theme dark` — see § 1.4
+- KPI cards on the Overview use the smoked-glass treatment: `bg-card/65` +
+  `backdrop-blur-[3px]` + white/10 hairline rim over a soft red ambient glow —
+  deliberately *not* the § 6.3 stat-tile palette; keep glass scoped to this
+  surface
+- Access: dedicated `tickets` role (plus admin) via the `/tickets` layout
+  guard; the per-user `tickets` feature grant decides create/drag vs read-only
+
 ---
 
 ## 18. Adding a new surface — checklist
 
-1. Pick a family (branded vs editorial).
+1. Pick a family (branded vs editorial — the Tickets console theme is not a
+   candidate, § 1.4).
 2. Build the shell: `h-dvh max-h-dvh overflow-hidden flex` root, `<Sidebar>` +
    `<main>` with mobile header (§ 1.1, § 3.1).
 3. Add the surface to `@/lib/rbac/views.ts` and update `ViewSwitcher` if it's

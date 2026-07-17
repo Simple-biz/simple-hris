@@ -4,8 +4,11 @@ import {
   createTimeAdjustment,
   signTimeAdjustmentImageUrls,
   isValidAdjustmentReason,
+  sanitizeAdjustmentSegments,
+  adjustmentEvidencePrefix,
   MAX_ADJUSTMENT_IMAGES,
   type TimeAdjustmentStatus,
+  type TimeAdjustmentSegment,
 } from '@/lib/supabase/time-adjustments';
 import { normEmail } from '@/lib/email/norm-email';
 import {
@@ -69,7 +72,7 @@ export async function POST(request: Request) {
       adjust_date?: string;
       reason?: string;
       explanation?: string | null;
-      requested_hours?: number | null;
+      requested_segments?: TimeAdjustmentSegment[];
       image_paths?: string[];
       created_by?: string | null;
     };
@@ -104,19 +107,42 @@ export async function POST(request: Request) {
     if (imagePaths.length > MAX_ADJUSTMENT_IMAGES) {
       return NextResponse.json({ error: `At most ${MAX_ADJUSTMENT_IMAGES} images` }, { status: 400 });
     }
+    // Evidence paths must live in the caller's or target employee's own storage folder
+    // (uploads are keyed by session email; edits resubmit previously-uploaded paths;
+    // nobody may attach someone else's evidence).
+    const allowedPrefixes = [
+      adjustmentEvidencePrefix(authz.effectiveEmail),
+      adjustmentEvidencePrefix(authz.sessionEmail),
+    ];
+    if (
+      imagePaths.some(
+        (p) => typeof p !== 'string' || !allowedPrefixes.some((pre) => p.startsWith(pre)),
+      )
+    ) {
+      return NextResponse.json({ error: 'Invalid evidence image path' }, { status: 400 });
+    }
+
+    // Employees must point at the exact time ranges being corrected (time in / time out).
+    const { segments, error: segError } = sanitizeAdjustmentSegments(body.requested_segments);
+    if (segError || !segments) {
+      return NextResponse.json(
+        { error: segError ?? 'At least one time in / time out is required' },
+        { status: 400 },
+      );
+    }
 
     const { id, error } = await createTimeAdjustment({
       work_email: authz.effectiveEmail,
       adjust_date,
       reason,
       explanation: body.explanation,
-      requested_hours: body.requested_hours,
+      requested_segments: segments,
       image_paths: imagePaths,
       created_by: body.created_by ?? authz.effectiveEmail,
     });
 
     if (error) {
-      return NextResponse.json({ error }, { status: error.includes('already exists') ? 409 : 500 });
+      return NextResponse.json({ error }, { status: error.includes('already') ? 409 : 500 });
     }
     return NextResponse.json({ success: true, id, error: null });
   } catch (e) {

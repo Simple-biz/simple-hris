@@ -13,7 +13,10 @@ import {
   ImagePlus,
   Info,
   Loader2,
+  Pencil,
+  Plus,
   Send,
+  Trash2,
   WifiOff,
   X,
   Zap,
@@ -32,7 +35,11 @@ import { Badge } from '@/components/ui/badge';
 import {
   TIME_ADJUSTMENT_REASONS,
   MAX_ADJUSTMENT_IMAGES,
+  MAX_ADJUSTMENT_SEGMENTS,
+  adjustmentSegmentsTotalHours,
+  fmtAdjustmentClock,
   type TimeAdjustmentRow,
+  type TimeAdjustmentSegment,
 } from '@/lib/supabase/time-adjustments';
 
 type TimeAdjustmentDialogProps = {
@@ -73,22 +80,35 @@ const REASON_ICONS: Record<string, typeof AlarmClock> = {
 
 const STEPS = [
   { key: 'reason', label: 'Reason', title: 'What happened?', subtitle: 'Pick the reason your time was not tracked on this day.', Icon: HelpCircle },
-  { key: 'details', label: 'Details', title: 'The correct time', subtitle: 'Tell Accounting the right total and what you worked on.', Icon: Clock },
+  { key: 'details', label: 'Details', title: 'The missed time', subtitle: 'Point at the exact time in and time out that was not tracked.', Icon: Clock },
   { key: 'evidence', label: 'Proof', title: 'Add proof', subtitle: 'Attach screenshots that back up your work.', Icon: ImagePlus },
   { key: 'review', label: 'Review', title: 'Review & submit', subtitle: 'Confirm everything before sending to Accounting.', Icon: CheckCircle2 },
 ] as const;
 
 const LAST_STEP = STEPS.length - 1;
 
-// Combine hour + minute inputs into a single decimal-hours value (or null if both blank).
-function toDecimalHours(h: string, m: string): number | null {
-  const hTrim = h.trim();
-  const mTrim = m.trim();
-  if (!hTrim && !mTrim) return null;
-  const hh = hTrim ? parseInt(hTrim, 10) : 0;
-  const mm = mTrim ? parseInt(mTrim, 10) : 0;
-  if (!Number.isFinite(hh) || !Number.isFinite(mm)) return null;
-  return hh + mm / 60;
+type SegmentDraft = { timeIn: string; timeOut: string };
+
+const EMPTY_SEGMENT: SegmentDraft = { timeIn: '', timeOut: '' };
+
+// "HH:MM" strings compare correctly lexicographically, so plain < / > works.
+function segmentProblem(segments: SegmentDraft[]): string | null {
+  if (segments.every((s) => !s.timeIn && !s.timeOut)) {
+    return 'Enter at least one time in and time out';
+  }
+  for (const s of segments) {
+    if (!s.timeIn || !s.timeOut) return 'Each time range needs both a time in and a time out';
+    if (s.timeOut <= s.timeIn) return 'Time out must be after time in';
+  }
+  const sorted = [...segments].sort((a, b) => a.timeIn.localeCompare(b.timeIn));
+  for (let i = 1; i < sorted.length; i++) {
+    if (sorted[i]!.timeIn < sorted[i - 1]!.timeOut) return 'Time ranges must not overlap';
+  }
+  return null;
+}
+
+function toSegmentPayload(segments: SegmentDraft[]): TimeAdjustmentSegment[] {
+  return segments.map((s) => ({ time_in: s.timeIn, time_out: s.timeOut }));
 }
 
 // Render decimal hours as a human "8h 30m" string.
@@ -130,9 +150,12 @@ export default function TimeAdjustmentDialog({
   const [direction, setDirection] = useState(1);
   const [selectedReason, setSelectedReason] = useState('');
   const [explanation, setExplanation] = useState('');
-  const [requestedHrs, setRequestedHrs] = useState('');
-  const [requestedMins, setRequestedMins] = useState('');
+  const [segments, setSegments] = useState<SegmentDraft[]>([EMPTY_SEGMENT]);
   const [previews, setPreviews] = useState<Preview[]>([]);
+  // Evidence paths carried over from the request being edited (kept unless removed).
+  const [keptPaths, setKeptPaths] = useState<string[]>([]);
+  // True while re-editing a still-pending request (resubmit overwrites the row).
+  const [editing, setEditing] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [isDragOver, setIsDragOver] = useState(false);
   const dragCounterRef = useRef(0);
@@ -150,19 +173,40 @@ export default function TimeAdjustmentDialog({
       setDirection(1);
       setSelectedReason('');
       setExplanation('');
-      setRequestedHrs('');
-      setRequestedMins('');
+      setSegments([EMPTY_SEGMENT]);
+      setKeptPaths([]);
       setPreviews((prev) => {
         prev.forEach((p) => URL.revokeObjectURL(p.url));
         return [];
       });
     }
+    if (open) setEditing(false);
   }, [open, existingRequest]);
+
+  // Switch the read-only status view into the wizard, prefilled from the pending request.
+  const startEdit = () => {
+    if (!existingRequest) return;
+    setSelectedReason(existingRequest.reason);
+    setExplanation(existingRequest.explanation ?? '');
+    const segs = (existingRequest.requested_segments ?? []).map((s) => ({
+      timeIn: s.time_in,
+      timeOut: s.time_out,
+    }));
+    setSegments(segs.length > 0 ? segs : [EMPTY_SEGMENT]);
+    setKeptPaths(existingRequest.image_paths ?? []);
+    setPreviews((prev) => {
+      prev.forEach((p) => URL.revokeObjectURL(p.url));
+      return [];
+    });
+    setStep(0);
+    setDirection(1);
+    setEditing(true);
+  };
 
   const addImages = useCallback((files: FileList | File[]) => {
     const arr = Array.from(files).filter((f) => f.type.startsWith('image/'));
     setPreviews((prev) => {
-      const remaining = MAX_ADJUSTMENT_IMAGES - prev.length;
+      const remaining = MAX_ADJUSTMENT_IMAGES - keptPaths.length - prev.length;
       if (remaining <= 0) {
         toast.error(`Up to ${MAX_ADJUSTMENT_IMAGES} images only`);
         return prev;
@@ -171,7 +215,7 @@ export default function TimeAdjustmentDialog({
       if (arr.length > remaining) toast.error(`Up to ${MAX_ADJUSTMENT_IMAGES} images only`);
       return [...prev, ...toAdd];
     });
-  }, []);
+  }, [keptPaths.length]);
 
   const removeImage = (idx: number) => {
     setPreviews((prev) => {
@@ -201,16 +245,18 @@ export default function TimeAdjustmentDialog({
     if (e.dataTransfer.files.length > 0) addImages(e.dataTransfer.files);
   };
 
+  const segmentIssue = segmentProblem(segments);
+
   const canAdvance = (s: number): boolean => {
     if (s === 0) return !!selectedReason;
-    if (s === 1) return explanation.trim().length > 0;
+    if (s === 1) return !segmentIssue && explanation.trim().length > 0;
     return true;
   };
 
   const goNext = () => {
     if (!canAdvance(step)) {
       if (step === 0) toast.error('Please select a reason');
-      else if (step === 1) toast.error('Please describe what you were working on');
+      else if (step === 1) toast.error(segmentIssue ?? 'Please describe what you were working on');
       return;
     }
     setDirection(1);
@@ -222,8 +268,9 @@ export default function TimeAdjustmentDialog({
   };
 
   const handleSubmit = useCallback(async () => {
-    if (!selectedReason || !explanation.trim()) {
-      toast.error('Please complete the required fields');
+    const segIssue = segmentProblem(segments);
+    if (!selectedReason || !explanation.trim() || segIssue) {
+      toast.error(segIssue ?? 'Please complete the required fields');
       return;
     }
     setSubmitting(true);
@@ -242,7 +289,6 @@ export default function TimeAdjustmentDialog({
         }),
       );
 
-      const reqHours = toDecimalHours(requestedHrs, requestedMins);
       const res = await fetch('/api/time-adjustments', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -251,14 +297,18 @@ export default function TimeAdjustmentDialog({
           adjust_date: adjustDate,
           reason: selectedReason,
           explanation: explanation.trim(),
-          requested_hours: Number.isFinite(reqHours as number) ? reqHours : null,
-          image_paths: paths,
+          requested_segments: toSegmentPayload(segments),
+          image_paths: [...keptPaths, ...paths],
           created_by: employeeName ?? employeeEmail,
         }),
       });
       const json = (await res.json()) as { error?: string };
       if (!res.ok) throw new Error(json.error ?? 'Failed to submit request');
-      toast.success('Time adjustment submitted for Accounting review');
+      toast.success(
+        editing
+          ? 'Time adjustment updated — back in your manager\'s queue'
+          : 'Time adjustment submitted for Accounting review',
+      );
       onOpenChange(false);
       onSubmitted?.();
     } catch (e) {
@@ -269,9 +319,10 @@ export default function TimeAdjustmentDialog({
   }, [
     selectedReason,
     explanation,
-    requestedHrs,
-    requestedMins,
+    segments,
     previews,
+    keptPaths,
+    editing,
     requestKey,
     employeeEmail,
     employeeName,
@@ -285,8 +336,8 @@ export default function TimeAdjustmentDialog({
   const selectedReasonLabel =
     TIME_ADJUSTMENT_REASONS.find((r) => r.code === selectedReason)?.label ?? '';
 
-  // ── Existing request: read-only status view ──────────────────────────────
-  if (existingRequest) {
+  // ── Existing request: read-only status view (unless the employee is editing) ──
+  if (existingRequest && !editing) {
     const reasonLabel =
       TIME_ADJUSTMENT_REASONS.find((r) => r.code === existingRequest.reason)?.label ??
       existingRequest.reason;
@@ -305,8 +356,26 @@ export default function TimeAdjustmentDialog({
               </Badge>
             </div>
             <div><span className="text-zinc-600 dark:text-zinc-400">Reason:</span> {reasonLabel}</div>
+            {(existingRequest.requested_segments ?? []).length > 0 && (
+              <div>
+                <span className="text-zinc-600 dark:text-zinc-400">Missed time:</span>
+                <ul className="mt-1 space-y-0.5">
+                  {existingRequest.requested_segments.map((s, i) => (
+                    <li key={i} className="font-mono text-xs text-zinc-800 dark:text-zinc-200">
+                      {fmtAdjustmentClock(s.time_in)} &ndash; {fmtAdjustmentClock(s.time_out)}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
             {existingRequest.requested_hours != null && (
-              <div><span className="text-zinc-600 dark:text-zinc-400">Requested time:</span> {fmtHM(existingRequest.requested_hours)}</div>
+              <div>
+                <span className="text-zinc-600 dark:text-zinc-400">
+                  {(existingRequest.requested_segments ?? []).length > 0 ? 'Time to add:' : 'Requested time:'}
+                </span>{' '}
+                {(existingRequest.requested_segments ?? []).length > 0 ? '+' : ''}
+                {fmtHM(existingRequest.requested_hours)}
+              </div>
             )}
             {existingRequest.explanation && (
               <div>
@@ -340,9 +409,24 @@ export default function TimeAdjustmentDialog({
                 )}
               </div>
             )}
+            {existingRequest.status === 'pending' && (
+              <p className="flex gap-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-[11px] leading-relaxed text-blue-700 dark:border-blue-800 dark:bg-blue-950/30 dark:text-blue-400">
+                <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                <span>
+                  Spotted a mistake, or missed another stretch of time this day? You can still edit
+                  this request until your manager reviews it.
+                </span>
+              </p>
+            )}
           </div>
           <DialogFooter>
             <Button variant="outline" size="sm" onClick={() => onOpenChange(false)}>Close</Button>
+            {existingRequest.status === 'pending' && (
+              <Button size="sm" onClick={startEdit}>
+                <Pencil className="mr-1.5 h-3.5 w-3.5" />
+                Edit request
+              </Button>
+            )}
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -362,7 +446,7 @@ export default function TimeAdjustmentDialog({
               <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-indigo-600/10 text-indigo-600 ring-1 ring-inset ring-indigo-600/20 dark:bg-indigo-500/15 dark:text-indigo-300">
                 <Clock className="h-3.5 w-3.5" />
               </span>
-              Request time adjustment
+              {editing ? 'Edit time adjustment' : 'Request time adjustment'}
             </DialogTitle>
             <DialogDescription className="text-xs text-zinc-500 dark:text-zinc-400">
               For <span className="font-medium text-zinc-800 dark:text-zinc-300">{dateDisplay}</span>
@@ -488,36 +572,91 @@ export default function TimeAdjustmentDialog({
                 {step === 1 && (
                   <div className="space-y-4">
                     <div className="space-y-1.5">
-                      <label className="text-xs font-medium text-zinc-700 dark:text-zinc-300">
-                        What was the correct total for this day? <span className="text-zinc-500 dark:text-zinc-400">(optional)</span>
-                      </label>
-                      <div className="flex items-center gap-2">
-                        <input
-                          type="number"
-                          min={0}
-                          max={24}
-                          step={1}
-                          value={requestedHrs}
-                          onChange={(e) => setRequestedHrs(e.target.value)}
-                          placeholder="e.g. 8"
-                          className="w-20 rounded-md border border-zinc-200 bg-white px-2.5 py-2 text-sm text-zinc-900 placeholder:text-zinc-400 focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
-                        />
-                        <span className="text-xs text-zinc-600 dark:text-zinc-400">hr</span>
-                        <input
-                          type="number"
-                          min={0}
-                          max={59}
-                          step={5}
-                          value={requestedMins}
-                          onChange={(e) => setRequestedMins(e.target.value)}
-                          placeholder="e.g. 30"
-                          className="w-20 rounded-md border border-zinc-200 bg-white px-2.5 py-2 text-sm text-zinc-900 placeholder:text-zinc-400 focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
-                        />
-                        <span className="text-xs text-zinc-600 dark:text-zinc-400">min</span>
-                        <span className="ml-auto text-[11px] text-zinc-500 dark:text-zinc-400">
+                      <div className="flex items-center justify-between">
+                        <label className="text-xs font-medium text-zinc-700 dark:text-zinc-300">
+                          Which time was not tracked? <span className="text-rose-500">*</span>
+                        </label>
+                        <span className="text-[11px] text-zinc-500 dark:text-zinc-400">
                           Hubstaff: <span className="font-mono">{trackedHours}h</span>
                         </span>
                       </div>
+                      <div className="space-y-2">
+                        {segments.map((seg, idx) => {
+                          const rowInvalid = !!seg.timeIn && !!seg.timeOut && seg.timeOut <= seg.timeIn;
+                          return (
+                            <div key={idx} className="flex items-center gap-2">
+                              <div className="flex flex-1 items-center gap-2">
+                                <div className="flex-1 space-y-0.5">
+                                  {idx === 0 && (
+                                    <span className="text-[10px] font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Time in</span>
+                                  )}
+                                  <input
+                                    type="time"
+                                    value={seg.timeIn}
+                                    onChange={(e) =>
+                                      setSegments((prev) => prev.map((s, i) => (i === idx ? { ...s, timeIn: e.target.value } : s)))
+                                    }
+                                    className="w-full rounded-md border border-zinc-200 bg-white px-2.5 py-2 text-sm text-zinc-900 focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:[color-scheme:dark]"
+                                  />
+                                </div>
+                                <span className={`text-xs text-zinc-400 dark:text-zinc-500 ${idx === 0 ? 'mt-4' : ''}`}>&ndash;</span>
+                                <div className="flex-1 space-y-0.5">
+                                  {idx === 0 && (
+                                    <span className="text-[10px] font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Time out</span>
+                                  )}
+                                  <input
+                                    type="time"
+                                    value={seg.timeOut}
+                                    onChange={(e) =>
+                                      setSegments((prev) => prev.map((s, i) => (i === idx ? { ...s, timeOut: e.target.value } : s)))
+                                    }
+                                    className={`w-full rounded-md border bg-white px-2.5 py-2 text-sm text-zinc-900 focus:outline-none focus:ring-2 dark:bg-zinc-900 dark:text-zinc-100 dark:[color-scheme:dark] ${
+                                      rowInvalid
+                                        ? 'border-rose-400 focus:border-rose-400 focus:ring-rose-500/20 dark:border-rose-600'
+                                        : 'border-zinc-200 focus:border-indigo-400 focus:ring-indigo-500/20 dark:border-zinc-700'
+                                    }`}
+                                  />
+                                </div>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => setSegments((prev) => prev.filter((_, i) => i !== idx))}
+                                disabled={segments.length === 1}
+                                aria-label="Remove time range"
+                                className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-zinc-400 transition hover:bg-rose-50 hover:text-rose-500 disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-zinc-400 dark:hover:bg-rose-950/30 dark:hover:text-rose-400 ${idx === 0 ? 'mt-4' : ''}`}
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                      <div className="flex items-center justify-between pt-0.5">
+                        <button
+                          type="button"
+                          onClick={() => setSegments((prev) => [...prev, EMPTY_SEGMENT])}
+                          disabled={segments.length >= MAX_ADJUSTMENT_SEGMENTS}
+                          className="inline-flex items-center gap-1 rounded-md border border-dashed border-zinc-300 px-2 py-1 text-[11px] font-medium text-zinc-600 transition hover:border-indigo-300 hover:bg-indigo-50/50 hover:text-indigo-600 disabled:opacity-40 dark:border-zinc-700 dark:text-zinc-400 dark:hover:border-indigo-700 dark:hover:bg-indigo-950/30 dark:hover:text-indigo-300"
+                        >
+                          <Plus className="h-3 w-3" />
+                          Add another time range
+                        </button>
+                        <span className="text-[11px] text-zinc-500 dark:text-zinc-400">
+                          Time to add:{' '}
+                          <span className="font-mono font-semibold text-emerald-700 dark:text-emerald-400">
+                            +{fmtHM(adjustmentSegmentsTotalHours(toSegmentPayload(segments)))}
+                          </span>
+                        </span>
+                      </div>
+                      {segmentIssue && segments.some((s) => s.timeIn || s.timeOut) && (
+                        <p className="text-[11px] text-rose-600 dark:text-rose-400">{segmentIssue}</p>
+                      )}
+                      <p className="text-[10.5px] text-zinc-500 dark:text-zinc-400">
+                        Only the missed time — e.g. forgot the tracker from 9:00 AM to 10:00 AM, add
+                        just that hour. Time Hubstaff already tracked stays as is; don&apos;t enter your
+                        whole shift. If a missed stretch crosses midnight, submit a separate request
+                        for the next day.
+                      </p>
                     </div>
 
                     <div className="space-y-1.5">
@@ -560,7 +699,7 @@ export default function TimeAdjustmentDialog({
                         Drag &amp; drop, or click to browse
                       </p>
                       <p className="text-[10.5px] text-zinc-500 dark:text-zinc-400">
-                        {previews.length}/{MAX_ADJUSTMENT_IMAGES} images
+                        {keptPaths.length + previews.length}/{MAX_ADJUSTMENT_IMAGES} images
                       </p>
                     </div>
                     <input
@@ -571,6 +710,34 @@ export default function TimeAdjustmentDialog({
                       className="hidden"
                       onChange={(e) => { if (e.target.files) addImages(e.target.files); e.target.value = ''; }}
                     />
+
+                    {/* Evidence kept from the request being edited (private bucket — no preview) */}
+                    {keptPaths.length > 0 && (
+                      <div className="flex flex-wrap gap-2">
+                        {keptPaths.map((p, idx) => (
+                          <div
+                            key={p}
+                            className="group flex items-center gap-1.5 rounded-lg border border-zinc-200 bg-zinc-50 py-1.5 pl-2 pr-1 dark:border-zinc-700 dark:bg-zinc-900"
+                          >
+                            <ImagePlus className="h-3.5 w-3.5 shrink-0 text-zinc-400" />
+                            <span className="text-[11px] text-zinc-600 dark:text-zinc-400">
+                              Saved image {idx + 1}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setKeptPaths((prev) => prev.filter((kp) => kp !== p));
+                              }}
+                              className="rounded-full p-0.5 text-zinc-400 transition-colors hover:bg-zinc-200 hover:text-zinc-600 dark:hover:bg-zinc-700 dark:hover:text-zinc-300"
+                              aria-label={`Remove saved image ${idx + 1}`}
+                            >
+                              <X className="h-3 w-3" />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
 
                     {previews.length > 0 && (
                       <div className="flex flex-wrap gap-2">
@@ -604,8 +771,10 @@ export default function TimeAdjustmentDialog({
 
                 {/* STEP 4 — Review */}
                 {step === 3 && (() => {
-                  const parsedRequested = toDecimalHours(requestedHrs, requestedMins);
-                  const delta = parsedRequested != null ? parsedRequested - hoursWorked / 3600 : null;
+                  // Segments are the MISSED time; the corrected day = tracked + missed.
+                  const missedTotal = adjustmentSegmentsTotalHours(toSegmentPayload(segments));
+                  const parsedRequested = hoursWorked / 3600 + missedTotal;
+                  const delta = missedTotal;
                   const deltaAbs = delta != null ? Math.abs(delta) : null;
                   const deltaAdded = delta != null && delta > 0;
                   const deltaRemoved = delta != null && delta < 0;
@@ -667,16 +836,34 @@ export default function TimeAdjustmentDialog({
                         <dt className="text-zinc-600 dark:text-zinc-400">Tracked hours</dt>
                         <dd className="font-mono font-medium text-zinc-800 dark:text-zinc-200">{trackedHours}h</dd>
                       </div>
+                      <div className="flex items-start justify-between gap-3 px-3 py-2">
+                        <dt className="text-zinc-600 dark:text-zinc-400">Missed time</dt>
+                        <dd className="text-right font-mono font-medium text-zinc-800 dark:text-zinc-200">
+                          {segments
+                            .filter((s) => s.timeIn && s.timeOut)
+                            .map((s, i) => (
+                              <div key={i}>
+                                {fmtAdjustmentClock(s.timeIn)} &ndash; {fmtAdjustmentClock(s.timeOut)}
+                              </div>
+                            ))}
+                        </dd>
+                      </div>
+                      <div className="flex items-center justify-between gap-3 px-3 py-2">
+                        <dt className="text-zinc-600 dark:text-zinc-400">Time to add</dt>
+                        <dd className="font-mono font-medium text-emerald-700 dark:text-emerald-400">
+                          +{fmtHM(missedTotal)}
+                        </dd>
+                      </div>
                       <div className="flex items-center justify-between gap-3 px-3 py-2">
                         <dt className="text-zinc-600 dark:text-zinc-400">Corrected total</dt>
                         <dd className="font-mono font-medium text-zinc-800 dark:text-zinc-200">
-                          {parsedRequested != null ? fmtHM(parsedRequested) : 'Not specified'}
+                          {fmtHM(parsedRequested)}
                         </dd>
                       </div>
                       <div className="flex items-center justify-between gap-3 px-3 py-2">
                         <dt className="text-zinc-600 dark:text-zinc-400">Evidence</dt>
                         <dd className="font-medium text-zinc-800 dark:text-zinc-200">
-                          {previews.length} image{previews.length === 1 ? '' : 's'}
+                          {keptPaths.length + previews.length} image{keptPaths.length + previews.length === 1 ? '' : 's'}
                         </dd>
                       </div>
                       <div className="px-3 py-2">
@@ -685,7 +872,7 @@ export default function TimeAdjustmentDialog({
                       </div>
                     </dl>
 
-                    {previews.length === 0 && (
+                    {keptPaths.length + previews.length === 0 && (
                       <p className="flex gap-2 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-[11px] text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900/60 dark:text-zinc-400">
                         <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />
                         <span>No evidence attached. Requests with proof are reviewed faster - you can go back to add some.</span>
@@ -710,7 +897,12 @@ export default function TimeAdjustmentDialog({
         {/* Footer nav */}
         <DialogFooter className="mx-0 mb-0 flex-row items-center justify-between gap-2 px-5 py-3 sm:justify-between">
           {step === 0 ? (
-            <Button variant="ghost" size="sm" onClick={() => onOpenChange(false)} disabled={submitting}>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => (editing ? setEditing(false) : onOpenChange(false))}
+              disabled={submitting}
+            >
               Cancel
             </Button>
           ) : (
@@ -730,7 +922,7 @@ export default function TimeAdjustmentDialog({
             ) : (
               <Button size="sm" onClick={handleSubmit} disabled={submitting}>
                 {submitting ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Send className="mr-1.5 h-3.5 w-3.5" />}
-                Submit request
+                {editing ? 'Save changes' : 'Submit request'}
               </Button>
             )}
           </div>

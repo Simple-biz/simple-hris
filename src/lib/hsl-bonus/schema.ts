@@ -67,24 +67,27 @@ export interface DeptConfig {
   rules: BonusRule[];
   monthlyMax?: number;     // PHP cap per employee
   noKpi?: boolean;         // roster-only, no inputs
+  // Per-employee bespoke incentive sets (the "Managers Weekly" dept): each person
+  // has their own hardcoded checklist of components rather than uniform dept rules.
+  // The component sets live in HSL_MANAGERS; scoring uses calcManagerBonus.
+  perEmployee?: boolean;
 }
 
 // ── Department keys ──────────────────────────────────────────────────────────
 
 export const HSL_DEPT_KEYS = [
   'ssd_medical_records',
+  'medical_records',
   'care_team',
-  'case_manager',
+  'callback_team',
+  'simple_texting',
   'filing_specialist',
   'intake_specialist',
   'post_hearing_prep',
   'collections',
   'healthcare_team_lead',
   'collections_tl',
-  'chelzy_asst',
-  'vicky_asst_tl',
-  'case_mgmt_asst_tl',
-  'case_mgr_no_kpi',
+  'hsl_managers',
 ] as const;
 
 export type HslDeptKey = (typeof HSL_DEPT_KEYS)[number];
@@ -134,6 +137,19 @@ export const HSL_DEPTS: Record<HslDeptKey, DeptConfig> = {
     ],
   },
 
+  medical_records: {
+    key: 'medical_records',
+    name: 'Medical Records',
+    cadence: 'weekly',
+    color: '#06b6d4',
+    headerBg: 'bg-cyan-950/40',
+    badgeCls: 'bg-cyan-900/60 text-cyan-300',
+    rules: [
+      { type: 'per_unit', key: 'portal_login', label: 'Patient Portal Log Ins', rate: 250 },
+      { type: 'per_unit', key: 'rfc_form',     label: 'RFC',                     rate: 250 },
+    ],
+  },
+
   care_team: {
     key: 'care_team',
     name: 'Care Team',
@@ -146,20 +162,28 @@ export const HSL_DEPTS: Record<HslDeptKey, DeptConfig> = {
     ],
   },
 
-  case_manager: {
-    key: 'case_manager',
-    name: 'Case Manager',
+  callback_team: {
+    key: 'callback_team',
+    name: 'Callback Team',
     cadence: 'weekly',
-    color: '#8b5cf6',
-    headerBg: 'bg-violet-950/40',
-    badgeCls: 'bg-violet-900/60 text-violet-300',
+    color: '#0ea5e9',
+    headerBg: 'bg-sky-950/40',
+    badgeCls: 'bg-sky-900/60 text-sky-300',
     rules: [
-      { type: 'per_unit', key: 'five_star_reviews',   label: '5-Star Reviews',      rate: 250 },
-      { type: 'per_unit', key: 'rfc_form',            label: 'RFC Form',             rate: 250 },
-      { type: 'per_unit', key: 'portal_login',        label: 'Portal Login',         rate: 100 },
-      { type: 'per_unit', key: 'dme_prescriptions',   label: 'DME Prescriptions',    rate: 250 },
-      { type: 'per_unit', key: 'completed_tasks',     label: 'Completed Tasks',      rate: 250 },
-      { type: 'per_unit', key: 'converted_referral',  label: 'Converted Referral',   rate: 250 },
+      { type: 'per_unit', key: 'medicare_signups', label: 'Medicare Sign Ups', rate: 250 },
+    ],
+  },
+
+  simple_texting: {
+    key: 'simple_texting',
+    name: 'Simple Texting',
+    cadence: 'weekly',
+    color: '#d946ef',
+    headerBg: 'bg-fuchsia-950/40',
+    badgeCls: 'bg-fuchsia-900/60 text-fuchsia-300',
+    rules: [
+      { type: 'per_unit', key: 'transferred_calls', label: 'Successfully Transferred Calls', rate: 50 },
+      { type: 'per_unit', key: 'sign_ups',          label: 'Sign Ups',                       rate: 250 },
     ],
   },
 
@@ -203,7 +227,7 @@ export const HSL_DEPTS: Record<HslDeptKey, DeptConfig> = {
 
   post_hearing_prep: {
     key: 'post_hearing_prep',
-    name: 'Post-Hearing Prep Team',
+    name: 'Pre-Hearing / Post-Hearing Prep',
     cadence: 'weekly',
     color: '#6366f1',
     headerBg: 'bg-indigo-950/40',
@@ -252,49 +276,16 @@ export const HSL_DEPTS: Record<HslDeptKey, DeptConfig> = {
     ],
   },
 
-  chelzy_asst: {
-    key: 'chelzy_asst',
-    name: "Chelzy's Assistant",
-    cadence: 'monthly',
-    color: '#71717a',
-    headerBg: 'bg-zinc-800/60',
-    badgeCls: 'bg-zinc-700/60 text-zinc-300',
-    rules: [
-      { type: 'flat', key: 'monthly_flat', label: 'Monthly Flat ($10 USD)', amount: 10, currency: 'USD' },
-    ],
-  },
-
-  vicky_asst_tl: {
-    key: 'vicky_asst_tl',
-    name: "Vicky's Asst TL",
-    cadence: 'monthly',
-    color: '#64748b',
-    headerBg: 'bg-slate-800/60',
-    badgeCls: 'bg-slate-700/60 text-slate-300',
-    rules: [
-      { type: 'flat', key: 'monthly_flat', label: 'Monthly Flat Bonus', amount: 2500 },
-    ],
-  },
-
-  case_mgmt_asst_tl: {
-    key: 'case_mgmt_asst_tl',
-    name: 'Case Mgmt Asst Team Leader',
-    cadence: 'monthly',
-    color: '#78716c',
-    headerBg: 'bg-stone-800/60',
-    badgeCls: 'bg-stone-700/60 text-stone-300',
-    noKpi: true,
-    rules: [],
-  },
-
-  case_mgr_no_kpi: {
-    key: 'case_mgr_no_kpi',
-    name: 'Case Manager (No KPI)',
+  hsl_managers: {
+    key: 'hsl_managers',
+    name: 'Managers Weekly',
     cadence: 'weekly',
-    color: '#a3a3a3',
-    headerBg: 'bg-neutral-800/60',
-    badgeCls: 'bg-neutral-700/60 text-neutral-300',
-    noKpi: true,
+    color: '#a855f7',
+    headerBg: 'bg-purple-950/40',
+    badgeCls: 'bg-purple-900/60 text-purple-300',
+    // Bespoke per-manager incentive sets — see HSL_MANAGERS / calcManagerBonus.
+    // No uniform rules; the calculator renders each manager's own checklist.
+    perEmployee: true,
     rules: [],
   },
 };
@@ -349,4 +340,150 @@ export function formatPeso(amount: number, currency: 'PHP' | 'USD' = 'PHP'): str
   // Always show centavos so a fractional bonus (e.g. a team-split share divided
   // across members) is never silently rounded to whole pesos in the display.
   return `₱${amount.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+// ── Managers Weekly — bespoke per-manager incentives ──────────────────────────
+// The "Managers Weekly" dept (key: hsl_managers) is the one dept whose scoring
+// differs per person: each manager has their own hardcoded checklist of incentive
+// components, each a fixed PHP amount earned when ticked. Amounts are sourced from
+// docs/reference/managers-logic.md (the "Julie" sheet).
+//
+// Deliberately NOT modeled here: the per-manager "Attendance" (₱5,000) and
+// "Tech Allowance" (₱1,850) lines from that sheet — those are already paid by the
+// Perfect-Attendance (PAB) + Technology bonus engine, so including them here would
+// double-pay. Cumulative tiers are expressed as independent checkboxes: hitting a
+// higher tier means the scorer ticks every lower tier too (they SUM), matching the
+// sheet's =SUM(...) totals (e.g. Andre "< 2 Days" ⇒ <3 + <2.5 + <2 ⇒ ₱7,500).
+// Monthly components (cadence: 'monthly') are ticked only in the final payroll
+// week of the month.
+
+export interface ManagerComponent {
+  key: string;
+  label: string;
+  amount: number;                  // PHP earned when this component is ticked
+  cadence?: 'weekly' | 'monthly';  // 'monthly' → earned in the last week of the month
+}
+
+export interface HslManagerSpec {
+  email: string;
+  name: string;
+  components: ManagerComponent[];
+}
+
+export const HSL_MANAGERS: HslManagerSpec[] = [
+  {
+    email: 'gyd@simple.biz',
+    name: 'Tura, Gyd',
+    components: [
+      { key: 'monthly_bonus', label: 'Monthly Bonus (last week of the month)', amount: 25000, cadence: 'monthly' },
+    ],
+  },
+  {
+    email: 'eulap@simple.biz',
+    name: 'Pacheco, Eula Jane J.',
+    components: [
+      { key: 'csm_9000',    label: '> 9,000 Outbound Case Status Messages',  amount: 2500 },
+      { key: 'csm_12500',   label: '> 12,500 Outbound Case Status Messages', amount: 1250 },
+      { key: 'rfc_dme_75',  label: '75 or More RFCs and DME',                amount: 2500 },
+      { key: 'rfc_dme_100', label: '100 or More RFCs and DME',              amount: 1250 },
+    ],
+  },
+  {
+    email: 'andret@simple.biz',
+    name: 'Tolentino, Romel T. "Andre"',
+    components: [
+      { key: 'awaiting_3',   label: 'New Clients Awaiting Filing < 3 Days',   amount: 5000 },
+      { key: 'awaiting_2_5', label: 'New Clients Awaiting Filing < 2.5 Days', amount: 1250 },
+      { key: 'awaiting_2',   label: 'New Clients Awaiting Filing < 2 Days',   amount: 1250 },
+    ],
+  },
+  {
+    email: 'veec@simple.biz',
+    name: 'Mortos, Veronela Clarissa "Vee"',
+    components: [
+      { key: 'incomplete_5',  label: 'Hearing with Incomplete Medical Records < 5%',  amount: 2500 },
+      { key: 'incomplete_10', label: 'Hearing with Incomplete Medical Records < 10%', amount: 2500 },
+    ],
+  },
+  {
+    email: 'emss@simple.biz',
+    name: 'Solon, Emily "Ems"',
+    components: [
+      { key: 'monthly_perf', label: 'Monthly Performance Bonus', amount: 2500, cadence: 'monthly' },
+    ],
+  },
+  {
+    email: 'stara@simple.biz',
+    name: 'Abella, Esterlita I. "Star"',
+    components: [
+      { key: 'monthly_perf', label: 'Monthly Performance Bonus', amount: 2500, cadence: 'monthly' },
+    ],
+  },
+  {
+    email: 'jazzr@simple.biz',
+    name: 'Redulla, Jazz',
+    components: [
+      { key: 'monthly_perf', label: 'Monthly Performance Bonus', amount: 2500, cadence: 'monthly' },
+    ],
+  },
+  {
+    email: 'mariely@simple.biz',
+    name: 'Yungco, Marielace "Mariel" Buena Fe',
+    components: [
+      { key: 'closes_30',       label: 'Closes over 30% of overall leads',   amount: 2500 },
+      { key: 'form_response_1', label: 'Average Form Response < 1.0 Minutes', amount: 2500 },
+    ],
+  },
+  {
+    email: 'dana@simple.biz',
+    name: 'Abad, Danilo Jr "Dan"',
+    components: [
+      { key: 'closes_30',       label: 'Closes over 30% of overall leads',   amount: 2500 },
+      { key: 'form_response_1', label: 'Average Form Response < 1.0 Minutes', amount: 2500 },
+    ],
+  },
+  {
+    email: 'juliec@simple.biz',
+    name: 'Julie Credo',
+    components: [
+      { key: 'closes_30',       label: 'Closes over 30% of overall leads',   amount: 1250 },
+      { key: 'form_response_1', label: 'Average Form Response < 1.0 Minutes', amount: 1250 },
+    ],
+  },
+  {
+    email: 'jayh@simple.biz',
+    name: 'John Michael Hernandez',
+    components: [
+      { key: 'closes_30',       label: 'Closes over 30% of overall leads',   amount: 1250 },
+      { key: 'form_response_1', label: 'Average Form Response < 1.0 Minutes', amount: 1250 },
+    ],
+  },
+];
+
+export const HSL_MANAGERS_BY_EMAIL: Record<string, HslManagerSpec> =
+  Object.fromEntries(HSL_MANAGERS.map((m) => [m.email.toLowerCase(), m]));
+
+/** Sum a manager's ticked incentive components. Unknown emails (e.g. an external
+ *  member added to the Managers dept) have no components and score ₱0.
+ *
+ *  `includeMonthly` (default true) controls whether monthly-cadence components
+ *  (e.g. Gyd's ₱25,000 monthly bonus) are counted. The calculator's live display
+ *  keeps the default (managers see their full potential); the payroll dispatch
+ *  path passes `false` outside the final payroll week of the month so a monthly
+ *  bonus pays exactly once, in the final week — matching how PAB/catalog monthly
+ *  bonuses behave. */
+export function calcManagerBonus(
+  email: string,
+  kpiData: KpiData,
+  opts?: { includeMonthly?: boolean },
+): number {
+  const spec = HSL_MANAGERS_BY_EMAIL[email.toLowerCase()];
+  if (!spec) return 0;
+  const includeMonthly = opts?.includeMonthly ?? true;
+  let total = 0;
+  for (const c of spec.components) {
+    if (c.cadence === 'monthly' && !includeMonthly) continue;
+    if (kpiData[c.key]) total += c.amount;
+  }
+  return total;
 }

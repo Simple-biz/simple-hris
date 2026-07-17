@@ -15,6 +15,7 @@ import {
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import {
+  TICKET_BOARD_OWNER,
   TICKET_STATUSES,
   isAssignableDeveloper,
   type TicketMember,
@@ -188,10 +189,15 @@ function DevAvatar({ member }: { member: TicketMember }) {
 function TicketDevelopersSection({ onNavigate }: { onNavigate?: (tab: string) => void }) {
   const [members, setMembers] = React.useState<TicketMember[] | null>(null);
   const [tickets, setTickets] = React.useState<TicketRow[] | null>(null);
+  const [viewer, setViewer] = React.useState('');
   const [loadError, setLoadError] = React.useState<string | null>(null);
   const [refreshing, setRefreshing] = React.useState(false);
   const [savingId, setSavingId] = React.useState<string | null>(null);
   const [unassignedOnly, setUnassignedOnly] = React.useState(false);
+
+  // Assignment is owner-only (POST/PATCH /api/tickets enforce it). Non-owner
+  // admins can view the board here but the pickers stay read-only.
+  const isOwner = viewer === TICKET_BOARD_OWNER;
 
   const load = React.useCallback(async () => {
     setRefreshing(true);
@@ -206,9 +212,10 @@ function TicketDevelopersSection({ onNavigate }: { onNavigate?: (tab: string) =>
         throw new Error(j?.error ?? `Request failed (${bad.status})`);
       }
       const mJson = (await mRes.json()) as { members?: TicketMember[] };
-      const tJson = (await tRes.json()) as { tickets?: TicketRow[] };
+      const tJson = (await tRes.json()) as { tickets?: TicketRow[]; viewer?: string };
       setMembers(mJson.members ?? []);
       setTickets(tJson.tickets ?? []);
+      setViewer((tJson.viewer ?? '').trim().toLowerCase());
       setLoadError(null);
     } catch (e) {
       setLoadError(e instanceof Error ? e.message : 'Could not load the ticket board');
@@ -431,6 +438,18 @@ function TicketDevelopersSection({ onNavigate }: { onNavigate?: (tab: string) =>
               </label>
             </div>
 
+            {!isOwner && (
+              <div className="mt-3 flex items-start gap-2.5 rounded-xl border border-amber-500/25 bg-amber-500/[0.07] px-4 py-3 text-xs leading-relaxed text-amber-700 dark:text-amber-300">
+                <Lock className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
+                <p>
+                  Assignment is owned by{' '}
+                  <code className="font-mono">{TICKET_BOARD_OWNER}</code> — the pickers below are
+                  read-only for everyone else. You can see who&apos;s on each ticket, but only the
+                  board owner can assign or reassign.
+                </p>
+              </div>
+            )}
+
             {visibleTickets.length === 0 ? (
               <p className="mt-3 rounded-lg border border-dashed border-zinc-300 px-3 py-4 text-center text-xs text-zinc-500 dark:border-zinc-700 dark:text-zinc-400">
                 {unassignedOnly
@@ -479,7 +498,8 @@ function TicketDevelopersSection({ onNavigate }: { onNavigate?: (tab: string) =>
                       <select
                         aria-label={`Developer for ticket #${t.ticket_no}`}
                         value={t.assigned_to ?? ''}
-                        disabled={savingId === t.id}
+                        disabled={savingId === t.id || !isOwner}
+                        title={isOwner ? undefined : 'Only the board owner can assign or reassign a ticket'}
                         onChange={(e) => void assign(t, e.target.value || null)}
                         className="h-8 w-full shrink-0 rounded-lg border border-zinc-200 bg-white px-2 text-xs text-zinc-700 outline-none focus-visible:ring-2 focus-visible:ring-teal-500/40 disabled:cursor-wait disabled:opacity-60 sm:w-44 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-200"
                       >

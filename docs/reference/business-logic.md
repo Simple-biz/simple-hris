@@ -126,6 +126,36 @@ The PAB pill in the Additions table and the badge in the PAB Calendar modal rend
 
 Computed in the `pabStatusByEmail` memo in `PayrollWizard.tsx`. Walks each employee's `employeeWeekdayHours` breakdown, compares each entry's ISO date to midnight-today, and decides from past failures + period-ended flag. The display doesn't affect bonus calculation — `perfectAttendanceEligible` still requires every weekday in the range to pass before `perfect_attendance` is auto-toggled on.
 
+Display rule (2026-07-17): while a period is still running, the Additions pill
+renders the neutral "⏳ In Progress" state — never a green +₱5,000. Green
+requires a real end-of-period verdict; a finished month keeps its green until
+the next cycle starts.
+
+### PAB payout week (which payroll week the ₱5,000 attaches to)
+
+The ₱5,000 attaches to exactly **one** Sun–Sat payroll week: the week that
+**contains** the PAB period end date. The shared gate is
+`isFinalPabWeek(weekStart, weekEnd, pabPeriodEnd)` in
+`src/lib/payroll/dispatch-bonuses.ts`, used by all five consumers:
+`PayrollWizard.tsx`, `src/lib/payroll/current-pay.ts`,
+`EmployeeDashboard.tsx`, `src/lib/payroll/member-monthly-pay.ts`, and the
+inline mirror in `src/lib/payroll/hsl-week-snapshot.ts`.
+
+History (2026-07-17, session `fc74c4d4`): the original condition was a lower
+bound only (`weekEnd >= periodEnd`), which re-attached PAB to **every** week
+after the payout week. Two related fixes rode along:
+
+- **Replay**: an empty locked PAB snapshot (`{}`) used to suppress live
+  computation, so replaying the payout week showed ₱0/"In Progress" for
+  everyone. Missing/empty snapshots now count as absent, with a per-employee
+  live fallback.
+- **Sunday files**: `fileMonth` resolved a file's PAB month by walking back to
+  a Monday, but Hubstaff weekly files start on **Sunday** — so e.g. the
+  Jul 5–11 file evaluated *June's* finished PAB and showed a stray +₱5,000.
+  `fileMonth`, `pabMonthDataCoverage`, and `pabMonthFromWeekStart`'s Sunday
+  branch now agree; dispatch-staging exclusions and the paystub
+  `pab_evaluation.month_label` were corrected with it.
+
 ### PAB period configuration (PayrollWizard → Additions)
 
 The Additions tab owns the PAB period UI (System Settings only keeps the department-scope picker). The setter is a compact button that opens a modal containing:
