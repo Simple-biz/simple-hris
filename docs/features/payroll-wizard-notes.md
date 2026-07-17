@@ -66,8 +66,15 @@ The Jul 17 columns require running
 `references/sql/alter/add_adjustment_and_week_start_to_payroll_wizard_notes.sql`
 in the Supabase SQL Editor (idempotent). Until it runs, board edits fail.
 
-## Planned / in progress
+## Worker cell autocomplete
 
-The Worker cell is slated to become an autocomplete fed by the Global Master
-List **plus recently offboarded employees** (so last pays for people who just
-left the roster can still be managed). In progress as of Jul 17, 2026.
+The Worker cell is a typeahead fed by the **current Hubstaff timesheet upload** —
+exactly the people (name + email) the wizard's Initial Calculation ("CSV") step
+lists, served by `GET /api/payroll-wizard/notes/workers`
+(`listPayrollWorkerOptions` in `payroll-wizard-notes.ts`, via
+`fetchHubstaffRowsOrdered`). Each option is keyed on the **Hubstaff email**, the
+same key the wizard's Additions "Adj." overrides use, so a picked worker links
+(`worker_email`) and bridges cleanly to/from the wizard. Someone getting a Last
+Pay is simply in that week's CSV, so the picker no longer needs a separate
+offboarded lookup. Changed Jul 17, 2026 (was: Global Master List + 90-day
+offboarded).

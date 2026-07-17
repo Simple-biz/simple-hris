@@ -167,10 +167,11 @@ export default function PayrollWizardNotesFab({
     if (open) void load();
   }, [open, load]);
 
-  // Worker-cell suggestions: the active Global Master List + recently
-  // offboarded employees (who need Last Pay handling but are off the active
-  // list). Fetched once per session on first open; free text keeps working
-  // if the fetch fails or while it's in flight.
+  // Worker-cell suggestions: the people in the current Hubstaff timesheet CSV
+  // — the same list the Payroll Wizard's Initial Calculation step shows, keyed
+  // on the Hubstaff email so a picked worker links to the wizard's Adj. column.
+  // Fetched once per session on first open; free text keeps working if the
+  // fetch fails or while it's in flight.
   const [workers, setWorkers] = useState<PayrollWorkerOption[]>([]);
   useEffect(() => {
     if (!open || !canEdit || workers.length > 0) return;

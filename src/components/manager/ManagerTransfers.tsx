@@ -156,7 +156,11 @@ export default function ManagerTransfers({ myDepartments, canInitiate }: Props) 
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action, note: action === 'decline' ? declineNote.trim() : null }),
       });
-      const json = (await res.json()) as { error?: string; applied?: boolean };
+      const json = (await res.json()) as {
+        error?: string;
+        released?: boolean;
+        applied?: boolean;
+      };
       // 409 = this request was already decided (by the apply cron, a co-manager
       // of the source department, or another tab). The card on screen is stale —
       // reconcile the list instead of leaving it clickable and erroring again.
@@ -167,14 +171,27 @@ export default function ManagerTransfers({ myDepartments, canInitiate }: Props) 
         load();
         return;
       }
+      // A release that went through counts as DECIDED even if the immediate
+      // department move failed (a common master-list matching miss). The row is
+      // no longer pending, so it must leave the Release-requests queue — reconcile
+      // the list and warn, rather than throwing on `json.error` (which used to
+      // skip the refresh and leave the now-stale card lingering in the tab).
+      if (action === 'release' && json.released) {
+        if (json.applied === false) {
+          toast.warning(
+            json.error ||
+              `Released ${row.employee_name ?? row.employee_email}, but the department move needs a manual apply.`,
+          );
+        } else {
+          toast.success(`${row.employee_name ?? row.employee_email} moved to ${row.to_department}`);
+        }
+        setDeclineFor(null);
+        setDeclineNote('');
+        load();
+        return;
+      }
       if (!res.ok || json.error) throw new Error(json.error || `Request failed (${res.status})`);
-      toast.success(
-        action === 'release'
-          ? json.applied
-            ? `${row.employee_name ?? row.employee_email} moved to ${row.to_department}`
-            : `Released — takes effect on ${row.proposed_effective_date ?? 'the effective date'}`
-          : 'Transfer declined',
-      );
+      toast.success(action === 'release' ? 'Transfer released' : 'Transfer declined');
       setDeclineFor(null);
       setDeclineNote('');
       load();

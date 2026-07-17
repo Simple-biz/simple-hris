@@ -24,7 +24,9 @@ import {
   XCircle,
   FileText,
   FileCheck2,
+  FileSpreadsheet,
   Download,
+  Receipt,
 } from 'lucide-react';
 import { motion, AnimatePresence, LayoutGroup } from 'motion/react';
 import { toast } from 'sonner';
@@ -43,6 +45,12 @@ import type { EmployeeRow } from '@/lib/supabase/employees';
 import type { EmployeeHourlyRateRow } from '@/lib/supabase/employee-hourly-rates';
 import type { EmployeeIdRow } from '@/lib/supabase/employee-ids';
 import type { ResignationRequestRow } from '@/lib/supabase/resignation-requests';
+import {
+  downloadPayStubsPdf,
+  downloadPayStubsXlsx,
+  type PayStubWeek,
+} from '@/lib/payroll/paystub-export';
+import { PayStubModal } from '@/components/paystub/PayStubModal';
 import { PROCESSOR_OPTIONS, type ProcessorId } from '@/lib/employee-payment-processors';
 import { getTitlesForDepartment, hasAnySkillSetContent } from '@/lib/skill-set-titles';
 import {
@@ -104,7 +112,7 @@ function matchesEmployeeEmail(emp: EmployeeRow, n: string): boolean {
 
 /* ───────── Visual primitives ───────── */
 
-type TabId = 'overview' | 'compensation' | 'payment' | 'skillsets' | 'reports' | 'requestDocuments' | 'resign';
+type TabId = 'overview' | 'compensation' | 'payStubs' | 'payment' | 'skillsets' | 'reports' | 'requestDocuments' | 'resign';
 
 interface SkillSetFields {
   role_title: string;
@@ -463,6 +471,7 @@ function TabBar({
   const tabs: { id: TabId; label: string; sub: string }[] = [
     { id: 'overview', label: 'Overview', sub: hasAddress ? 'Identity, employment, address' : 'Identity & employment' },
     { id: 'compensation', label: 'Compensation', sub: 'Rates & currency' },
+    { id: 'payStubs', label: 'Pay Stubs', sub: 'Weekly statements & exports' },
     { id: 'payment', label: 'Payment', sub: 'Disbursement details' },
     { id: 'skillsets', label: 'Skill Sets', sub: 'Visible to teammates' },
     { id: 'reports', label: 'Reports', sub: 'Commendations' },
@@ -531,7 +540,7 @@ function TabBar({
 function ProfileSkeleton() {
   return (
     <div className="flex h-full min-h-0 flex-col overflow-y-auto bg-white dark:bg-[#0a0a0a]">
-      <div className="mx-auto w-full max-w-[1200px] px-5 pb-16 pt-8 sm:px-8 sm:pt-12 lg:px-10">
+      <div className="mx-auto w-full max-w-[1400px] px-5 pb-16 pt-8 sm:px-8 sm:pt-12 lg:px-10">
         {/* Header — avatar + name + dept/ID + Active badge (mirrors the real header row). */}
         <div className="flex items-center gap-4 sm:gap-6">
           <div className="h-16 w-16 shrink-0 animate-pulse rounded-full bg-zinc-100 ring-1 ring-zinc-200 dark:bg-zinc-900 dark:ring-zinc-800 sm:h-20 sm:w-20" />
@@ -723,6 +732,45 @@ export default function EmployeeProfile({
       .finally(() => { if (!cancelled) setCommendationsLoading(false); });
     return () => { cancelled = true; };
   }, [employeeEmail]);
+
+  // ── Pay Stubs (Profile → Pay Stubs) ──
+  // Every PAID week's full statement (`GET /api/employee/paystub?all=1`, session-
+  // scoped). Loaded lazily the first time the tab is opened; backs the week list,
+  // the per-week modal, and the all-weeks PDF/XLSX export.
+  const [payStubs, setPayStubs] = useState<PayStubWeek[]>([]);
+  const [payStubsLoading, setPayStubsLoading] = useState(false);
+  const [payStubsLoaded, setPayStubsLoaded] = useState(false);
+  const [payStubsError, setPayStubsError] = useState<string | null>(null);
+  const [payStubModalFile, setPayStubModalFile] = useState<string | null>(null);
+  const [exportingPdf, setExportingPdf] = useState(false);
+  const [exportingXlsx, setExportingXlsx] = useState(false);
+
+  useEffect(() => {
+    if (activeTab !== 'payStubs' || payStubsLoaded || payStubsLoading) return;
+    let cancelled = false;
+    setPayStubsLoading(true);
+    setPayStubsError(null);
+    void fetch('/api/employee/paystub?all=1', { cache: 'no-store' })
+      .then(async (r) => {
+        const json = (await r.json()) as { stubs?: PayStubWeek[]; error?: string };
+        if (cancelled) return;
+        if (!r.ok) {
+          setPayStubsError(json.error || 'Could not load your pay stubs.');
+          return;
+        }
+        setPayStubs(json.stubs ?? []);
+      })
+      .catch(() => {
+        if (!cancelled) setPayStubsError('Could not load your pay stubs.');
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setPayStubsLoading(false);
+          setPayStubsLoaded(true);
+        }
+      });
+    return () => { cancelled = true; };
+  }, [activeTab, payStubsLoaded, payStubsLoading]);
 
   // Skill Sets - editable by the employee, read-only on the My Team page.
   const [skillSet, setSkillSet] = useState<SkillSetFields>(EMPTY_SKILL_SET);
@@ -1052,6 +1100,42 @@ export default function EmployeeProfile({
     }
   };
 
+  const payStubExportName = displayName && displayName !== '—' ? displayName : employeeEmail;
+  const payStubTotalPhp = payStubs.reduce((s, w) => s + w.view.totalPayPhp, 0);
+  const payStubTotalUsd = payStubs.reduce((s, w) => s + w.view.totalPayUsd, 0);
+
+  const handleExportPayStubsPdf = async () => {
+    if (!payStubs.length) return;
+    setExportingPdf(true);
+    try {
+      await downloadPayStubsPdf(payStubs, {
+        employeeName: payStubExportName,
+        department: employmentDepartment,
+      });
+      toast.success('Pay stubs PDF downloaded');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not export PDF');
+    } finally {
+      setExportingPdf(false);
+    }
+  };
+
+  const handleExportPayStubsXlsx = () => {
+    if (!payStubs.length) return;
+    setExportingXlsx(true);
+    try {
+      downloadPayStubsXlsx(payStubs, {
+        employeeName: payStubExportName,
+        department: employmentDepartment,
+      });
+      toast.success('Pay stubs spreadsheet downloaded');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not export spreadsheet');
+    } finally {
+      setExportingXlsx(false);
+    }
+  };
+
   if (loading) return <ProfileSkeleton />;
 
   const workEmail =
@@ -1081,7 +1165,7 @@ export default function EmployeeProfile({
 
   return (
     <div className="flex h-full min-h-0 flex-1 flex-col overflow-y-auto bg-white dark:bg-[#0a0a0a]">
-      <div className="mx-auto w-full max-w-[1200px] px-5 pb-16 pt-8 sm:px-8 sm:pt-12 sm:pb-20 lg:px-10 lg:pt-14">
+      <div className="mx-auto w-full max-w-[1400px] px-5 pb-16 pt-8 sm:px-8 sm:pt-12 sm:pb-20 lg:px-10 lg:pt-14">
         {/* ─────────── Hero ─────────── */}
         <motion.section
           initial={{ opacity: 0, y: 8 }}
@@ -1396,6 +1480,144 @@ export default function EmployeeProfile({
                     Bonuses (Perfect Attendance, Technology) are not shown here — they're applied
                     during payroll processing and surface on your dashboard.
                   </p>
+                </>
+              )}
+
+              {activeTab === 'payStubs' && (
+                <>
+                  <Section
+                    title="Pay Stubs"
+                    description="Every week you've been paid. Open a week for the full statement, or export them all."
+                    action={
+                      <div className="flex flex-wrap items-center justify-end gap-1.5">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          disabled={payStubsLoading || exportingPdf || payStubs.length === 0}
+                          onClick={handleExportPayStubsPdf}
+                          className="h-8 gap-1.5 rounded-lg text-[12px]"
+                          title="Download all weeks as a PDF"
+                        >
+                          {exportingPdf ? (
+                            <Loader2 className="h-3 w-3 animate-spin" />
+                          ) : (
+                            <FileText className="h-3 w-3" />
+                          )}
+                          PDF
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          disabled={payStubsLoading || exportingXlsx || payStubs.length === 0}
+                          onClick={handleExportPayStubsXlsx}
+                          className="h-8 gap-1.5 rounded-lg text-[12px]"
+                          title="Download all weeks as an Excel spreadsheet"
+                        >
+                          {exportingXlsx ? (
+                            <Loader2 className="h-3 w-3 animate-spin" />
+                          ) : (
+                            <FileSpreadsheet className="h-3 w-3" />
+                          )}
+                          XLSX
+                        </Button>
+                      </div>
+                    }
+                  >
+                    {payStubsLoading ? (
+                      <div className="flex items-center justify-center py-14">
+                        <Loader2 className="h-4 w-4 animate-spin text-zinc-400" />
+                      </div>
+                    ) : payStubsError ? (
+                      <div className="my-4 flex items-start gap-2.5 rounded-xl border border-amber-200/80 bg-amber-50/80 px-4 py-3 text-[13px] dark:border-amber-900/40 dark:bg-amber-950/30">
+                        <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
+                        <p className="leading-relaxed text-amber-900 dark:text-amber-200">{payStubsError}</p>
+                      </div>
+                    ) : payStubs.length === 0 ? (
+                      <div className="flex flex-col items-center justify-center gap-3 py-16 text-center">
+                        <span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-zinc-100 text-zinc-400 dark:bg-zinc-900 dark:text-zinc-600">
+                          <Receipt className="h-5 w-5" aria-hidden />
+                        </span>
+                        <p className="text-sm font-medium text-zinc-500 dark:text-zinc-400">No pay stubs yet</p>
+                        <p className="max-w-xs text-xs text-zinc-400 dark:text-zinc-600">
+                          Your weekly pay statements appear here once your pay for a week has been sent.
+                        </p>
+                      </div>
+                    ) : (
+                      <>
+                        {/* At-a-glance band */}
+                        <div className="grid gap-6 border-b border-zinc-100 py-5 dark:border-zinc-800/40 sm:grid-cols-3">
+                          <CompactStat
+                            label="Paid weeks"
+                            value={String(payStubs.length)}
+                          />
+                          <CompactStat
+                            label="Total net pay"
+                            value={formatPHP(payStubTotalPhp)}
+                            hint={`≈ $${payStubTotalUsd.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD`}
+                          />
+                          <CompactStat
+                            label="Latest week"
+                            value={payStubs[0]?.view.weekHuman || '—'}
+                            hint={payStubs[0]?.paidAt ? `Paid ${formatStartDate(payStubs[0].paidAt)}` : undefined}
+                          />
+                        </div>
+
+                        {/* Weekly statements */}
+                        <ul className="divide-y divide-zinc-100 dark:divide-zinc-800/40">
+                          {payStubs.map((w) => (
+                            <li
+                              key={w.sourceFile}
+                              className="flex items-center justify-between gap-3 py-3.5"
+                            >
+                              <div className="flex min-w-0 items-center gap-3">
+                                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-emerald-50 text-emerald-600 ring-1 ring-inset ring-emerald-200/60 dark:bg-emerald-500/10 dark:text-emerald-400 dark:ring-emerald-500/20">
+                                  <Receipt className="h-4 w-4" aria-hidden />
+                                </span>
+                                <div className="min-w-0">
+                                  <p className="truncate text-[13.5px] font-medium text-zinc-900 dark:text-zinc-100">
+                                    Period ending {w.view.weekHuman || '—'}
+                                  </p>
+                                  <p className="mt-0.5 text-[11.5px] text-zinc-500 dark:text-zinc-400">
+                                    {w.paidAt ? `Paid ${formatStartDate(w.paidAt)}` : 'Paid'}
+                                  </p>
+                                </div>
+                              </div>
+                              <div className="flex shrink-0 items-center gap-3">
+                                <div className="text-right">
+                                  <p className="text-[13.5px] font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">
+                                    {formatPHP(w.view.totalPayPhp)}
+                                  </p>
+                                  <p className="text-[11px] tabular-nums text-zinc-400 dark:text-zinc-500">
+                                    ${w.view.totalPayUsd.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD
+                                  </p>
+                                </div>
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => setPayStubModalFile(w.sourceFile)}
+                                  className="h-8 gap-1.5 rounded-lg text-[12px]"
+                                >
+                                  <ArrowUpRight className="h-3 w-3" />
+                                  View
+                                </Button>
+                              </div>
+                            </li>
+                          ))}
+                        </ul>
+                      </>
+                    )}
+                  </Section>
+
+                  {payStubs.length > 0 && (
+                    <p className="px-1 text-[12px] leading-relaxed text-zinc-500 dark:text-zinc-400">
+                      The PDF and XLSX exports cover all {payStubs.length} paid{' '}
+                      {payStubs.length === 1 ? 'week' : 'weeks'} with the full earnings breakdown —
+                      the same figures on your emailed statements.
+                    </p>
+                  )}
                 </>
               )}
 
@@ -1980,6 +2202,13 @@ export default function EmployeeProfile({
           </AnimatePresence>
         </div>
       </div>
+
+      {/* Pay statement modal — opens one paid week (session-scoped fetch inside). */}
+      <PayStubModal
+        open={payStubModalFile !== null}
+        sourceFile={payStubModalFile}
+        onClose={() => setPayStubModalFile(null)}
+      />
 
       {/* Resignation confirmation modal */}
       {resignConfirmOpen && (

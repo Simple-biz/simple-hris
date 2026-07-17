@@ -3,6 +3,7 @@ import {
   createSupabaseServiceRoleClient,
 } from "./server";
 import { listActiveMasterListPeople } from "./global-master-list-db";
+import { fetchHubstaffRowsOrdered, rowsToPayrollRows } from "./hubstaff-hours-db";
 import { manilaMonthDayStamp, manilaWeekStart } from "@/lib/payroll/manila-week";
 import { formatAdjustmentText } from "@/lib/payroll/adjustment-bridge";
 
@@ -342,90 +343,67 @@ export async function ensurePayrollWizardNoteSeeds(
   return { seeded: true, error: null };
 }
 
-// ── Worker suggestions (Global Master List + recently offboarded) ───────────
+// ── Worker suggestions (current Hubstaff timesheet CSV) ─────────────────────
 
 /** One pickable person for the board's Worker cell. */
 export type PayrollWorkerOption = {
-  /** "First Last" display name (master-list surname-first form unwound). */
+  /** Display name — the Hubstaff "Member" name exactly as the Payroll Wizard's
+   *  Initial Calculation (CSV) list shows it, falling back to the email. */
   name: string;
   department: string | null;
+  /** The Hubstaff email. This is the SAME key the wizard's Additions "Adj."
+   *  overrides are keyed on, so picking a worker here links the row for the
+   *  adjustment bridge (see {@link bridgeWizardAdjustment} + the wizard's pull). */
   work_email: string | null;
-  /** Set ONLY for recently offboarded people (ISO timestamp) — they're off the
-   *  active master list but still need Last Pay handling on the board. */
+  /** Kept for the picker's badge; always null now that suggestions come straight
+   *  from the timesheet (a Last-Pay person is simply in that week's CSV). */
   off_boarded_at: string | null;
 };
 
-/** How far back "recently offboarded" reaches. Last pays settle within a few
- *  payroll cycles; 90 days is a generous ceiling without dredging the full
- *  3000-row offboard history into every picker load. */
-const OFFBOARDED_LOOKBACK_DAYS = 90;
-
 /**
- * Everyone the Worker cell should suggest: the active Global Master List
- * (A→Z), plus people offboarded in the last {@link OFFBOARDED_LOOKBACK_DAYS}
- * days (newest first) — offboarded folks drop off `active_employees`, but
- * their Last Pays are exactly what the board tracks. A person on both lists
- * (re-hired) counts as active. The offboarded read is best-effort: if it
- * fails, the active list alone still serves the picker.
+ * Everyone the Worker cell should suggest: the people in the CURRENT Hubstaff
+ * timesheet upload — i.e. exactly who the Payroll Wizard's Initial Calculation
+ * ("CSV") list shows, keyed on the same Hubstaff email the wizard's Adj.
+ * overrides use. Sourcing the picker from the live timesheet (rather than the
+ * whole master list) keeps the two surfaces in lockstep and makes every picked
+ * worker bridge cleanly to the wizard's Additions column.
  */
 export async function listPayrollWorkerOptions(): Promise<{
   workers: PayrollWorkerOption[];
   error: string | null;
 }> {
-  const { people, error: activeErr } = await listActiveMasterListPeople();
-  if (activeErr) return { workers: [], error: activeErr };
-
-  const byKey = new Map<string, PayrollWorkerOption>();
-  for (const p of people) {
-    const display = firstLastFromMasterName(p.name);
-    if (!display) continue;
-    const key = display.toLowerCase();
-    const existing = byKey.get(key);
-    if (existing) {
-      // Same human on the list under several departments — one suggestion.
-      if (p.department && existing.department && !existing.department.includes(p.department)) {
-        existing.department += ` / ${p.department}`;
-      } else if (!existing.department) {
-        existing.department = p.department;
-      }
-      if (!existing.work_email) existing.work_email = p.work_email;
-    } else {
-      byKey.set(key, {
-        name: display,
-        department: p.department,
-        work_email: p.work_email,
-        off_boarded_at: null,
-      });
-    }
+  let rows: Awaited<ReturnType<typeof fetchHubstaffRowsOrdered>>["rows"];
+  try {
+    ({ rows } = await fetchHubstaffRowsOrdered());
+  } catch (e) {
+    return {
+      workers: [],
+      error: e instanceof Error ? e.message : "Failed to read the current Hubstaff upload",
+    };
   }
 
-  const sb = client();
-  const since = new Date(Date.now() - OFFBOARDED_LOOKBACK_DAYS * 86_400_000).toISOString();
-  const { data: off } = await sb
-    .from("offboarded_sheet")
-    .select("name, department, work_email, off_boarded_at")
-    .gte("off_boarded_at", since)
-    .order("off_boarded_at", { ascending: false })
-    .range(0, 499);
-  for (const r of (off ?? []) as {
-    name: string | null;
-    department: string | null;
-    work_email: string | null;
-    off_boarded_at: string | null;
-  }[]) {
-    const display = firstLastFromMasterName((r.name ?? "").trim());
-    if (!display) continue;
-    const key = display.toLowerCase();
-    if (byKey.has(key)) continue; // re-hired — already suggested as active
+  // One suggestion per person in the timesheet. Mirror the wizard's own display:
+  // it shows the Hubstaff Member name, falling back to the email (PayrollWizard's
+  // `name: p.name ?? p.email`). A row with neither can't be picked or linked.
+  const byKey = new Map<string, PayrollWorkerOption>();
+  for (const r of rowsToPayrollRows(rows)) {
+    const work_email = clean(r.email)?.toLowerCase() ?? null;
+    const name = clean(r.name) ?? work_email;
+    if (!name) continue;
+    const key = work_email ?? name.toLowerCase();
+    if (byKey.has(key)) continue;
     byKey.set(key, {
-      name: display,
+      name,
       department: clean(r.department),
-      work_email: clean(r.work_email)?.toLowerCase() ?? null,
-      off_boarded_at: r.off_boarded_at,
+      work_email,
+      off_boarded_at: null,
     });
   }
 
-  return { workers: [...byKey.values()], error: null };
+  const workers = [...byKey.values()].sort((a, b) =>
+    a.name.localeCompare(b.name, undefined, { sensitivity: "base" }),
+  );
+  return { workers, error: null };
 }
 
 /**

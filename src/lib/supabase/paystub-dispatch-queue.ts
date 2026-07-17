@@ -178,6 +178,47 @@ export async function listPaystubEntriesForEmployee(
   return { rows, error: null };
 }
 
+/**
+ * Every renderable staged paystub for one employee, WITH its payload + pay_period
+ * — one query, no N+1. Backs the "Pay Stubs" profile tab and its all-weeks
+ * PDF/XLSX export. The caller intersects these with PAID payment_dispatches so an
+ * employee only ever sees statements for weeks they were actually paid.
+ */
+export async function listPaystubPayloadsForEmployee(
+  email: string,
+): Promise<{
+  rows: Array<{
+    cycle_source_file: string;
+    pay_period: Record<string, unknown> | null;
+    payload: Record<string, unknown> | null;
+  }>;
+  error: string | null;
+}> {
+  const supabase = createSupabaseServiceRoleClient() ?? createSupabaseServerClient();
+  if (!supabase) return { rows: [], error: "Supabase client unavailable" };
+
+  const { data, error } = await supabase
+    .from("paystub_dispatch_queue")
+    .select("cycle_source_file, pay_period, payload")
+    .eq("recipient_email", norm(email))
+    .not("payload", "is", null);
+
+  if (error) return { rows: [], error: error.message };
+  const rows = (data ?? []).map((r) => {
+    const row = r as {
+      cycle_source_file: string;
+      pay_period: Record<string, unknown> | null;
+      payload: Record<string, unknown> | null;
+    };
+    return {
+      cycle_source_file: row.cycle_source_file,
+      pay_period: row.pay_period ?? null,
+      payload: row.payload ?? null,
+    };
+  });
+  return { rows, error: null };
+}
+
 /** Lightweight list for a cycle — drives the queue's Excluded-bucket routing. */
 export async function listPaystubDispatchQueue(
   sourceFile: string,
