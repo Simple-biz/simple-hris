@@ -168,7 +168,7 @@ export default function ManagerTransfers({ myDepartments, canInitiate }: Props) 
         toast.info('This request was already handled — refreshing the list.');
         setDeclineFor(null);
         setDeclineNote('');
-        load();
+        load({ silent: true });
         return;
       }
       // A release that went through counts as DECIDED even if the immediate
@@ -187,14 +187,14 @@ export default function ManagerTransfers({ myDepartments, canInitiate }: Props) 
         }
         setDeclineFor(null);
         setDeclineNote('');
-        load();
+        load({ silent: true });
         return;
       }
       if (!res.ok || json.error) throw new Error(json.error || `Request failed (${res.status})`);
       toast.success(action === 'release' ? 'Transfer released' : 'Transfer declined');
       setDeclineFor(null);
       setDeclineNote('');
-      load();
+      load({ silent: true });
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Action failed');
     } finally {
@@ -214,12 +214,12 @@ export default function ManagerTransfers({ myDepartments, canInitiate }: Props) 
       // 409 = already decided elsewhere (released/declined/applied). Reconcile.
       if (res.status === 409) {
         toast.info('This request was already handled — refreshing the list.');
-        load();
+        load({ silent: true });
         return;
       }
       if (!res.ok || json.error) throw new Error(json.error || `Request failed (${res.status})`);
       toast.success('Request withdrawn');
-      load();
+      load({ silent: true });
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Action failed');
     } finally {
@@ -238,7 +238,7 @@ export default function ManagerTransfers({ myDepartments, canInitiate }: Props) 
       const json = (await res.json()) as { error?: string; sheet_synced?: boolean };
       if (res.status === 409) {
         toast.info('This request was already handled — refreshing the list.');
-        load();
+        load({ silent: true });
         return;
       }
       if (!res.ok || json.error) throw new Error(json.error || `Request failed (${res.status})`);
@@ -247,7 +247,7 @@ export default function ManagerTransfers({ myDepartments, canInitiate }: Props) 
           ? `${row.employee_name ?? row.employee_email} moved to ${row.to_department} (Sheet not synced — retry in Accounting)`
           : `${row.employee_name ?? row.employee_email} moved to ${row.to_department}`,
       );
-      load();
+      load({ silent: true });
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Action failed');
     } finally {
@@ -263,7 +263,7 @@ export default function ManagerTransfers({ myDepartments, canInitiate }: Props) 
       if (!res.ok || json.error) throw new Error(json.error || `Request failed (${res.status})`);
       toast.success('Request deleted');
       setConfirmDeleteId(null);
-      load();
+      load({ silent: true });
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Delete failed');
     } finally {

@@ -51,18 +51,21 @@ export interface PayStubExportOptions {
   logoUrl?: string;
 }
 
-/** Derived per-week figures shared by both exporters. */
+/** Derived per-week figures shared by both exporters. Bonuses (tech / PAB /
+ *  performance) are itemized as their own columns, so only the netted MESA line
+ *  needs deriving here. */
 function derive(w: PayStubWeek) {
   const v = w.view;
-  const bonuses = v.techBonus + v.attendanceBonus + v.performanceBonus;
   const mesaNet = v.mesaDisbursement - v.mesaDeduction;
-  return { bonuses, mesaNet };
+  return { mesaNet };
 }
 
 interface Totals {
   regular: number;
   ot: number;
-  bonuses: number;
+  techBonus: number;
+  attendanceBonus: number;
+  performanceBonus: number;
   adjustment: number;
   mesaNet: number;
   netPhp: number;
@@ -72,17 +75,29 @@ interface Totals {
 function sumTotals(weeks: PayStubWeek[]): Totals {
   return weeks.reduce<Totals>(
     (t, w) => {
-      const { bonuses, mesaNet } = derive(w);
+      const { mesaNet } = derive(w);
       t.regular += w.view.mfPay;
       t.ot += w.view.otPay;
-      t.bonuses += bonuses;
+      t.techBonus += w.view.techBonus;
+      t.attendanceBonus += w.view.attendanceBonus;
+      t.performanceBonus += w.view.performanceBonus;
       t.adjustment += w.view.adjustment;
       t.mesaNet += mesaNet;
       t.netPhp += w.view.totalPayPhp;
       t.netUsd += w.view.totalPayUsd;
       return t;
     },
-    { regular: 0, ot: 0, bonuses: 0, adjustment: 0, mesaNet: 0, netPhp: 0, netUsd: 0 },
+    {
+      regular: 0,
+      ot: 0,
+      techBonus: 0,
+      attendanceBonus: 0,
+      performanceBonus: 0,
+      adjustment: 0,
+      mesaNet: 0,
+      netPhp: 0,
+      netUsd: 0,
+    },
   );
 }
 
@@ -159,9 +174,9 @@ const XLSX_COLS: XlsxCol[] = [
   { header: 'OT Hours', width: 10, value: (w) => round2(w.view.mfOtHours) },
   { header: 'Regular Pay', width: 14, value: (w) => round2(w.view.mfPay), total: (t) => round2(t.regular) },
   { header: 'Overtime', width: 12, value: (w) => round2(w.view.otPay), total: (t) => round2(t.ot) },
-  { header: 'Tech Allowance', width: 14, value: (w) => round2(w.view.techBonus) },
-  { header: 'Attendance', width: 12, value: (w) => round2(w.view.attendanceBonus) },
-  { header: 'Performance Bonus', width: 16, value: (w) => round2(w.view.performanceBonus) },
+  { header: 'Tech Allowance', width: 14, value: (w) => round2(w.view.techBonus), total: (t) => round2(t.techBonus) },
+  { header: 'Attendance', width: 12, value: (w) => round2(w.view.attendanceBonus), total: (t) => round2(t.attendanceBonus) },
+  { header: 'Performance Bonus', width: 16, value: (w) => round2(w.view.performanceBonus), total: (t) => round2(t.performanceBonus) },
   { header: 'Adjustment', width: 12, value: (w) => round2(w.view.adjustment), total: (t) => round2(t.adjustment) },
   { header: 'MESA Reimbursement', width: 18, value: (w) => round2(w.view.mesaDisbursement) },
   { header: 'MESA Deduction', width: 15, value: (w) => round2(w.view.mesaDeduction) },
@@ -291,18 +306,20 @@ type Col = { header: string; weight: number; align: 'left' | 'right' };
 
 /** Columns for the PDF summary (weights scaled to exactly fill CONTENT_W). */
 const PDF_COLS: Col[] = [
-  { header: 'Period Ending', weight: 140, align: 'left' },
-  { header: 'Type', weight: 52, align: 'left' },
-  { header: 'Reg Hrs', weight: 48, align: 'right' },
-  { header: 'OT Hrs', weight: 44, align: 'right' },
+  { header: 'Period Ending', weight: 112, align: 'left' },
+  { header: 'Type', weight: 50, align: 'left' },
+  { header: 'Reg Hrs', weight: 46, align: 'right' },
+  { header: 'OT Hrs', weight: 42, align: 'right' },
   { header: 'Regular', weight: 74, align: 'right' },
   { header: 'Overtime', weight: 66, align: 'right' },
-  { header: 'Bonuses', weight: 66, align: 'right' },
-  { header: 'Adjustment', weight: 70, align: 'right' },
-  { header: 'MESA', weight: 62, align: 'right' },
+  { header: 'Tech', weight: 50, align: 'right' },
+  { header: 'PAB', weight: 50, align: 'right' },
+  { header: 'Perf', weight: 50, align: 'right' },
+  { header: 'Adjustment', weight: 62, align: 'right' },
+  { header: 'MESA', weight: 60, align: 'right' },
   { header: 'Net (PHP)', weight: 82, align: 'right' },
   { header: 'Net (USD)', weight: 56, align: 'right' },
-  { header: 'Paid', weight: 88, align: 'left' },
+  { header: 'Paid', weight: 78, align: 'left' },
 ];
 
 /** Build the branded all-weeks pay-stubs PDF. Returns the raw bytes. */
@@ -411,7 +428,7 @@ export async function generatePayStubsPdf(
   const rowH = LH + PAD_Y * 2;
   let alt = false;
   for (const w of weeks) {
-    const { bonuses, mesaNet } = derive(w);
+    const { mesaNet } = derive(w);
     const cells = [
       w.view.weekHuman || '-',
       w.estimated ? 'Estimate' : 'Official',
@@ -419,7 +436,9 @@ export async function generatePayStubsPdf(
       w.view.mfOtHours.toFixed(2),
       n2(w.view.mfPay),
       n2(w.view.otPay),
-      bonuses > 0 ? `+${n2(bonuses)}` : '-',
+      w.view.techBonus > 0 ? n2(w.view.techBonus) : '-',
+      w.view.attendanceBonus > 0 ? n2(w.view.attendanceBonus) : '-',
+      w.view.performanceBonus > 0 ? n2(w.view.performanceBonus) : '-',
       n2Signed(w.view.adjustment),
       n2Signed(mesaNet),
       n2(w.view.totalPayPhp),
@@ -455,7 +474,9 @@ export async function generatePayStubsPdf(
       `Total (${weeks.length})`, '', '', '',
       n2(totals.regular),
       n2(totals.ot),
-      totals.bonuses > 0 ? `+${n2(totals.bonuses)}` : '-',
+      totals.techBonus > 0 ? n2(totals.techBonus) : '-',
+      totals.attendanceBonus > 0 ? n2(totals.attendanceBonus) : '-',
+      totals.performanceBonus > 0 ? n2(totals.performanceBonus) : '-',
       n2Signed(totals.adjustment),
       n2Signed(totals.mesaNet),
       n2(totals.netPhp),
