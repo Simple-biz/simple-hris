@@ -30,6 +30,7 @@ import { cn } from '@/lib/utils';
 import { getHrTabCache, hasHrTabCache, setHrTabCache, HR_TAB_CACHE_KEYS } from '@/lib/hr/tab-cache';
 import type { OffboardingQueueRow } from '@/lib/supabase/offboarding-queue';
 import HrOffboardQueueProcessor from './HrOffboardQueueProcessor';
+import OffboardingWeeklyPulse from './OffboardingWeeklyPulse';
 import DeptFilter from './DeptFilter';
 
 type HistoryRow = {
@@ -391,6 +392,11 @@ export default function HrOffboarding() {
           </p>
         </div>
       </header>
+
+      {/* Weekly overview — two KPI cards (offboarded + attrition rate) with their
+          own week selector. Fed by the same offboard-history rows the Offboarded
+          tab uses, so no extra fetch for the counts. */}
+      <OffboardingWeeklyPulse rows={history} loading={historyLoading && history.length === 0} />
 
       {/* Main card with tabs */}
       <Card className="border-emerald-100/80 bg-gradient-to-br from-white via-emerald-50/30 to-white shadow-md ring-1 ring-emerald-500/8 dark:border-emerald-950/55 dark:from-zinc-950 dark:via-emerald-950/12 dark:to-zinc-950 dark:ring-emerald-400/10">
