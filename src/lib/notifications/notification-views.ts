@@ -53,12 +53,38 @@ export const NOTIFICATION_TYPE_TO_VIEWS: Record<string, AppView[]> = {
   // The recipient was assigned a ticket to fix. Same home as replies — the
   // assignee may hold NO board role, so the message itself carries the ask.
   'ticket.assigned': ['employee'],
+  // A QC officer locked a week of KPI scores; the reviewing dept managers act on
+  // it inside the KPI Calculator, which lives on the Manager dashboard.
+  'qc.scores_submitted': ['manager'],
+  // A manager returned KPI scores for revision; the QC officers who own that
+  // dept-week fix them from the QC dashboard.
+  'qc.scores_returned': ['qc'],
+  // An employee submitted a document (pay stubs / COE / award) for signing;
+  // Accounting acts on it in the Documents tab. The outcome goes back to the
+  // employee — signed copies download from Profile → Request Documents.
+  'documents.requested': ['accounting'],
+  'documents.signed': ['employee'],
+  'documents.rejected': ['employee'],
 };
 
 /** Dashboards a notification of `type` belongs to. Unknown types -> none. */
 export function viewsForNotificationType(type: string | null | undefined): AppView[] {
   if (!type) return [];
   return NOTIFICATION_TYPE_TO_VIEWS[type] ?? [];
+}
+
+/**
+ * Notification types that must be HIDDEN when the panel is scoped to `view` —
+ * i.e. every *mapped* type whose dashboard list does not include `view`. Types
+ * with no mapping at all are deliberately absent from this list: an unknown /
+ * unmapped type is treated as global and shown on every dashboard rather than
+ * silently vanishing. Feeds the `?view=` exclusion in
+ * `GET /api/employee-notifications`.
+ */
+export function hiddenTypesForView(view: AppView): string[] {
+  return Object.entries(NOTIFICATION_TYPE_TO_VIEWS)
+    .filter(([, views]) => !views.includes(view))
+    .map(([type]) => type);
 }
 
 /**
@@ -86,6 +112,10 @@ export const NOTIFICATION_TYPE_FEATURE_GATE: Record<
   // request" alert; the manager-facing outcome notifications stay ungated so
   // the requesting manager always learns what happened to their request.
   'offboarding.requested': { view: 'hr', feature: 'offboarding' },
+  // Only accounting users granted the Documents tab (the Accounting Head)
+  // should be pinged about new signing requests; the employee-facing outcome
+  // notifications stay ungated.
+  'documents.requested': { view: 'accounting', feature: 'documents' },
 };
 
 /**

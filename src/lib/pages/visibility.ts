@@ -113,6 +113,7 @@ export const DASHBOARD_PAGES: DashboardPages[] = [
       { key: 'disputes', label: 'Issues' },
       { key: 'transfers', label: 'Transfers' },
       { key: 'mesa', label: 'MESA' },
+      { key: 'documents', label: 'Documents' },
       { key: 'announcements', label: 'Announcements' },
       { key: 'notifications', label: 'Notifications' },
       { key: 's-wall', label: 'S-Wall' },

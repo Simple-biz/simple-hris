@@ -216,6 +216,14 @@ interface PayrollFinalEntry {
    *  (0 when none). Surfaced as its own payout line so it never silently inflates
    *  the headline take-home. */
   mesaDisbursement?: number | null;
+  /** Exact dispatched bonus breakdown (added 2026-07-18). The Employee Pay Stubs
+   *  tab reads these to itemize a recovered week's statement exactly; the dashboard
+   *  doesn't need them. Older snapshots omit them. */
+  perfectAttendanceBonus?: number | null;
+  techBonus?: number | null;
+  otherBonuses?: number | null;
+  adjustment?: number | null;
+  orphanagePay?: number | null;
 }
 
 interface EmployeeDashboardProps {

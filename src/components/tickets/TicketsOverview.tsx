@@ -47,12 +47,12 @@ interface TicketsOverviewProps {
 
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 
-/** Smoked-glass surface for the KPI cards: a dark, tinted, translucent panel
- *  with only a hint of backdrop blur — crisp and smoky, not the milky haze a
- *  heavy blur gives. The soft red glow behind the KPI row still shows through
- *  the tint (over flat black there'd be nothing to see through). */
-const GLASS_CARD =
-  'border border-white/10 bg-card/65 shadow-xl shadow-black/40 backdrop-blur-[3px]';
+/** Shiny-glass surface for the KPI cards — a reflective pane you can feel, not a
+ *  smoked tint. The full recipe (specular glint, top sheen, lit rim, brightened
+ *  backdrop blur) lives in `.kpi-glass` in index.css alongside the console's
+ *  other rich treatments; rounding/padding stay on the element's own utilities.
+ *  Only the KPI row wears it, so the glass reads as a moment, not a page. */
+const GLASS_CARD = 'kpi-glass';
 
 function ageDays(iso: string): string {
   const days = Math.floor((Date.now() - Date.parse(iso)) / 86_400_000);
@@ -161,14 +161,16 @@ export default function TicketsOverview({
       <div className="relative grid grid-cols-2 gap-3 xl:grid-cols-4">
         {/* Ambient red glow behind the frosted KPI cards — absolutely
             positioned so it fills the grid box without taking a cell; the
-            cards' backdrop-blur refracts it. */}
+            cards' backdrop-blur smears it into the warm bloom you see through
+            the glass. Opacities are tuned to bloom through a 12px frost without
+            washing the black console. */}
         <div
           aria-hidden
           className="pointer-events-none absolute inset-0 overflow-hidden rounded-2xl"
         >
-          <div className="absolute -top-12 -left-10 size-56 rounded-full bg-red-500/20 blur-3xl" />
-          <div className="absolute top-1/4 -right-8 size-44 rounded-full bg-rose-500/15 blur-3xl" />
-          <div className="absolute -bottom-10 left-1/3 size-48 rounded-full bg-red-600/15 blur-3xl" />
+          <div className="absolute -top-12 -left-10 size-56 rounded-full bg-red-500/30 blur-3xl" />
+          <div className="absolute top-1/4 -right-8 size-44 rounded-full bg-rose-500/20 blur-3xl" />
+          <div className="absolute -bottom-10 left-1/3 size-48 rounded-full bg-red-600/22 blur-3xl" />
         </div>
         <section className={cn('relative col-span-2 overflow-hidden rounded-xl p-4 sm:p-5 xl:col-span-4', GLASS_CARD)}>
           {/* Warm-red gradient strip — the design's top accent, recolored from

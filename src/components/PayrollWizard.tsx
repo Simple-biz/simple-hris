@@ -5109,6 +5109,15 @@ export default function PayrollWizard({
       initial: number | null;
       mesaDeduction: number;
       mesaDisbursement: number;
+      // Full itemized bonus breakdown as DISPATCHED, so the Employee Pay Stubs tab
+      // can reproduce a past week's statement EXACTLY (not re-derive PAB/Tech from
+      // hours, which can diverge from the manual toggles / post-hoc data the wizard
+      // actually gated on). See src/lib/payroll/paystub-recovery.ts.
+      perfectAttendanceBonus: number;
+      techBonus: number;
+      otherBonuses: number;
+      adjustment: number;
+      orphanagePay: number;
     }> = {};
     for (const r of dispatchData.rows) {
       const entry = {
@@ -5124,6 +5133,12 @@ export default function PayrollWizard({
         // (instead of the disbursement silently inflating the headline take-home).
         mesaDeduction: r.pay_php.mesa_deduction ?? 0,
         mesaDisbursement: r.pay_php.mesa_disbursement ?? 0,
+        // Exact dispatched bonus lines (the paystub recovery reads these directly).
+        perfectAttendanceBonus: r.pay_php.perfect_attendance_bonus ?? 0,
+        techBonus: r.pay_php.tech_bonus ?? 0,
+        otherBonuses: r.pay_php.other_bonuses ?? 0,
+        adjustment: r.pay_php.adjustment ?? 0,
+        orphanagePay: r.pay_php.orphanage_pay ?? 0,
       };
       const we = r.email?.trim().toLowerCase();
       const pe = r.personal_email?.trim().toLowerCase();
@@ -5133,12 +5148,14 @@ export default function PayrollWizard({
     try {
       await savePabSetting(
         `payroll.wizard.final_pay.${calcSourceFile}`,
-        JSON.stringify({ source_file: calcSourceFile, finals }),
+        // fx_rate is stored once per week so the Employee Pay Stubs tab can show the
+        // USD equivalent without re-running computeCurrentPay (the slow path).
+        JSON.stringify({ source_file: calcSourceFile, fx_rate: usdToPhpRate, finals }),
       );
     } catch (e) {
       console.warn('[publishFinalPaySnapshot]', e);
     }
-  }, [calcSourceFile, dispatchData, savePabSetting, isReplay]);
+  }, [calcSourceFile, dispatchData, savePabSetting, isReplay, usdToPhpRate]);
 
   /**
    * Lock in the parsed Orphanage paste: write each resolved amount into the per-employee

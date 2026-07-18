@@ -2,13 +2,17 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { getSupabaseBrowserClient } from '@/lib/supabase/browser';
+import type { AppView } from '@/lib/rbac/views';
 
 /**
- * Counts unread `employee_notifications` rows for the given email.
+ * Counts unread `employee_notifications` rows for the given email. When `view`
+ * is supplied, counts only the notifications that belong to that dashboard (the
+ * server filters by view) so the sidebar badge matches what the panel shows —
+ * a multi-dashboard user's badge reflects the current dashboard, not the total.
  * Refetches on Realtime postgres_changes for the recipient and every 60s
  * as a fallback. Returns 0 when no email is supplied.
  */
-export function useEmployeeNotificationsUnread(email?: string | null): number {
+export function useEmployeeNotificationsUnread(email?: string | null, view?: AppView): number {
   const [count, setCount] = useState(0);
   const normEmail = email ? email.trim().toLowerCase() : null;
 
@@ -18,8 +22,10 @@ export function useEmployeeNotificationsUnread(email?: string | null): number {
       return;
     }
     try {
+      const params = new URLSearchParams({ email: normEmail });
+      if (view) params.set('view', view);
       const res = await fetch(
-        `/api/employee-notifications?email=${encodeURIComponent(normEmail)}`,
+        `/api/employee-notifications?${params.toString()}`,
         { cache: 'no-store' },
       );
       const json = (await res.json()) as { notifications?: { read_at: string | null }[] };
@@ -27,7 +33,7 @@ export function useEmployeeNotificationsUnread(email?: string | null): number {
     } catch {
       /* keep prior count */
     }
-  }, [normEmail]);
+  }, [normEmail, view]);
 
   useEffect(() => { void refetch(); }, [refetch]);
 

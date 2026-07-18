@@ -40,6 +40,7 @@ import DispatchReports from './DispatchReports';
 import OrphanageQueue from './OrphanageQueue';
 import UrgentPaymentsQueue from './UrgentPaymentsQueue';
 import MarkPaidDialog, { type MarkPaidPayload } from './MarkPaidDialog';
+import { PayStubModal } from '@/components/paystub/PayStubModal';
 import {
   Dialog,
   DialogContent,
@@ -216,6 +217,9 @@ export default function PayrollDispatch() {
   // action (one payment + paystub per unpaid held cycle). null = normal pay.
   const [settleArrears, setSettleArrears] = useState<ArrearsInfo | null>(null);
   const [urgentCount, setUrgentCount] = useState(0);
+  // Which employee's pay statement is open in the read-only viewer modal (accounting
+  // can open any payee's stub without downloading). null = closed.
+  const [viewPaystub, setViewPaystub] = useState<{ sourceFile: string; email: string } | null>(null);
   const [confirmingLockToggle, setConfirmingLockToggle] = useState(false);
   const [togglingLock, setTogglingLock] = useState(false);
   // Lenny can only dispatch when she's "started processing" (i.e. lock=true)
@@ -337,6 +341,20 @@ export default function PayrollDispatch() {
     setGalleryIdx(null);
     setSettleArrears(null);
   }, []);
+  // Open an employee's staged pay statement in the modal (read-only). Both the
+  // row's work email and the operative week's source_file are in scope here.
+  const handleViewPaystub = useCallback(
+    (row: QueueRow) => {
+      if (!period.sourceFile) {
+        toast.error('No pay week selected', {
+          description: 'Pick a locked pay week first, then open a statement.',
+        });
+        return;
+      }
+      setViewPaystub({ sourceFile: period.sourceFile, email: row.email });
+    },
+    [period.sourceFile],
+  );
   // Excluded-tab "Pay now": single-row dialog that settles the person's full
   // cross-cycle balance on confirm.
   const handleOpenExcludedMarkPaid = useCallback((row: QueueRow, arrears?: ArrearsInfo) => {
@@ -508,7 +526,7 @@ export default function PayrollDispatch() {
     // Show the skeleton while the network is still in flight OR while we
     // haven't mirrored the first server snapshot into local state yet.
     if (activeTab === 'reports') return <DispatchReports />;
-    if (activeTab === 'notifications') return <NotificationsPanel accent="zinc" />;
+    if (activeTab === 'notifications') return <NotificationsPanel viewerEmail={session?.user?.email} accent="zinc" view="accounting" />;
     if (activeTab === 'orphanage') return <OrphanageQueue />;
     if (activeTab === 'urgent') return <UrgentPaymentsQueue onCountChange={setUrgentCount} />;
     if (error) return <ErrorState message={error} />;
@@ -535,6 +553,7 @@ export default function PayrollDispatch() {
           processor={null}
           rows={usdPending}
           onMarkPaid={handleOpenMarkPaid}
+          onViewPaystub={handleViewPaystub}
           periodStart={period.start}
           periodEnd={period.end}
           onRefresh={refresh}
@@ -552,6 +571,7 @@ export default function PayrollDispatch() {
           processor={null}
           rows={copPending}
           onMarkPaid={handleOpenMarkPaid}
+          onViewPaystub={handleViewPaystub}
           periodStart={period.start}
           periodEnd={period.end}
           onRefresh={refresh}
@@ -568,6 +588,7 @@ export default function PayrollDispatch() {
         processor={activeTab === 'all' ? null : activeTab}
         rows={visibleRows}
         onMarkPaid={handleOpenMarkPaid}
+        onViewPaystub={handleViewPaystub}
         periodStart={period.start}
         periodEnd={period.end}
         onRefresh={refresh}
@@ -921,6 +942,12 @@ export default function PayrollDispatch() {
         }
         onPrev={handleGalleryPrev}
         onNext={handleGalleryNext}
+      />
+      <PayStubModal
+        open={viewPaystub != null}
+        sourceFile={viewPaystub?.sourceFile ?? null}
+        email={viewPaystub?.email ?? null}
+        onClose={() => setViewPaystub(null)}
       />
       <LockToggleConfirmDialog
         open={confirmingLockToggle}

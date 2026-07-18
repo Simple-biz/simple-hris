@@ -437,7 +437,7 @@ export default function QCApp() {
 
               {activeTab === 'notifications' && (
                 <div className="mx-auto w-full max-w-3xl px-4 py-6">
-                  <NotificationsPanel viewerEmail={viewerEmail} accent="orange" />
+                  <NotificationsPanel viewerEmail={viewerEmail} accent="orange" view="qc" />
                 </div>
               )}
                 </>

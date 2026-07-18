@@ -148,8 +148,12 @@ export default function NotificationsPanel({
   const refetch = useCallback(async () => {
     if (!normEmail) return;
     try {
+      // Scope the fetch to this dashboard so a multi-dashboard user only sees
+      // the notifications that belong here (the server filters by view).
+      const params = new URLSearchParams({ email: normEmail });
+      if (view) params.set('view', view);
       const res = await fetch(
-        `/api/employee-notifications?email=${encodeURIComponent(normEmail)}`,
+        `/api/employee-notifications?${params.toString()}`,
         { cache: 'no-store' },
       );
       const json = (await res.json()) as { notifications?: EmployeeNotification[] };
@@ -159,7 +163,7 @@ export default function NotificationsPanel({
     } finally {
       setItemsLoading(false);
     }
-  }, [normEmail]);
+  }, [normEmail, view]);
 
   useEffect(() => {
     if (backfillOnboarding) {
@@ -195,16 +199,19 @@ export default function NotificationsPanel({
     return () => { void supabase.removeChannel(channel); };
   }, [normEmail, refetch]);
 
-  // Mark unread as read once the panel has displayed them.
+  // Mark unread as read once the panel has displayed them. Scope this to the
+  // notifications actually shown here (by id) rather than every unread row for
+  // the email — otherwise opening one dashboard would clear the unread badges
+  // of the user's other dashboards, whose notifications aren't shown here.
   useEffect(() => {
     if (!normEmail) return;
-    const hasUnread = items.some(n => !n.read_at);
-    if (!hasUnread) return;
+    const unreadIds = items.filter(n => !n.read_at).map(n => n.id);
+    if (unreadIds.length === 0) return;
     const t = window.setTimeout(() => {
       void fetch('/api/employee-notifications', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: normEmail }),
+        body: JSON.stringify({ ids: unreadIds }),
       });
     }, 2000);
     return () => window.clearTimeout(t);

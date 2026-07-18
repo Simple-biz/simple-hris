@@ -2,7 +2,7 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
-import { ChevronDown, Copy, Download, Eye, RefreshCw, Search, SearchX, Send, Sparkles, X } from 'lucide-react';
+import { ChevronDown, Copy, Download, Eye, Receipt, RefreshCw, Search, SearchX, Send, Sparkles, X } from 'lucide-react';
 import QueuePagination from './QueuePagination';
 import { cn } from '@/lib/utils';
 import { Input } from '@/components/ui/input';
@@ -45,6 +45,8 @@ interface ProcessorQueueProps {
    * can slide left/right between payments.
    */
   onMarkPaid: (row: QueueRow, ctx?: QueueRowContext) => void;
+  /** Open this row's employee pay statement in a modal (accounting view). */
+  onViewPaystub?: (row: QueueRow) => void;
   /** Period info from the parent — used for CSV filename. */
   periodStart?: string | null;
   periodEnd?: string | null;
@@ -173,7 +175,7 @@ function initials(name: string) {
   return (parts[0]?.[0] || '?').toUpperCase();
 }
 
-function ProcessorQueue({ processor, rows, onMarkPaid, periodStart, periodEnd, onRefresh, allLabel, nativeCurrency, paidRecords }: ProcessorQueueProps) {
+function ProcessorQueue({ processor, rows, onMarkPaid, onViewPaystub, periodStart, periodEnd, onRefresh, allLabel, nativeCurrency, paidRecords }: ProcessorQueueProps) {
   const [query, setQuery] = useState('');
   const debouncedQuery = useDebouncedValue(query, 250);
   const [expanded, setExpanded] = useState<string | null>(null);
@@ -427,6 +429,7 @@ function ProcessorQueue({ processor, rows, onMarkPaid, periodStart, periodEnd, o
                     rowGrid={rowGrid}
                     onToggleExpand={handleToggleExpand}
                     onMarkPaid={handleOpenRow}
+                    onViewPaystub={onViewPaystub}
                   />
                 ))}
               </AnimatePresence>
@@ -461,6 +464,7 @@ interface QueueRowItemProps {
   rowGrid: string;
   onToggleExpand: (id: string) => void;
   onMarkPaid: (row: QueueRow) => void;
+  onViewPaystub?: (row: QueueRow) => void;
 }
 
 const QueueRowItem = React.memo(function QueueRowItem({
@@ -470,6 +474,7 @@ const QueueRowItem = React.memo(function QueueRowItem({
   rowGrid,
   onToggleExpand,
   onMarkPaid,
+  onViewPaystub,
 }: QueueRowItemProps) {
   const detailFields =
     PROCESSORS.find((p) => p.id === row.processor)?.detailFields ?? ['email'];
@@ -572,6 +577,17 @@ const QueueRowItem = React.memo(function QueueRowItem({
             )}
           </div>
           <div className="flex items-center gap-1.5">
+            {onViewPaystub && (
+              <button
+                type="button"
+                onClick={() => onViewPaystub(row)}
+                title="View pay statement"
+                aria-label="View pay statement"
+                className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-zinc-200 bg-white text-zinc-500 shadow-sm transition-colors hover:border-orange-300 hover:bg-orange-50 hover:text-orange-700 active:scale-95 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-orange-300"
+              >
+                <Receipt className="h-3.5 w-3.5" />
+              </button>
+            )}
             <button
               type="button"
               onClick={() => onMarkPaid(row)}
@@ -683,6 +699,17 @@ const QueueRowItem = React.memo(function QueueRowItem({
         </div>
 
         <div className="flex items-center justify-self-end gap-1.5">
+          {onViewPaystub && (
+            <button
+              type="button"
+              onClick={() => onViewPaystub(row)}
+              title="View pay statement"
+              aria-label="View pay statement"
+              className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-zinc-200 bg-white text-zinc-500 shadow-sm transition-colors hover:border-orange-300 hover:bg-orange-50 hover:text-orange-700 active:scale-95 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-orange-300"
+            >
+              <Receipt className="h-3.5 w-3.5" />
+            </button>
+          )}
           <button
             type="button"
             onClick={() => onMarkPaid(row)}

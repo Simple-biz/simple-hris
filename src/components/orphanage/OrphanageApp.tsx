@@ -1147,7 +1147,7 @@ export default function OrphanageApp() {
               transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
               className="flex min-h-0 flex-1 flex-col"
             >
-              <NotificationsPanel viewerEmail={viewerEmail} accent="pink" />
+              <NotificationsPanel viewerEmail={viewerEmail} accent="pink" view="orphanage" />
             </motion.div>
           )}
           {activeTab === 's-wall' && (

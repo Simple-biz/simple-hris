@@ -541,7 +541,7 @@ export default function ManagerApp() {
                 />
               )}
               {activeTab === 'notifications' && (
-                <NotificationsPanel viewerEmail={viewerEmail} accent="blue" />
+                <NotificationsPanel viewerEmail={viewerEmail} accent="blue" view="manager" />
               )}
               </ReadOnlyTab>
               )}
@@ -2149,9 +2149,9 @@ function TeamPanelInner({ members, teamGate, viewerEmail, focusEmail, onFocusCon
   const { medals, draggedMedal, dragOverEmail, setDragOverEmail, openAwardForDrop } = useMedalCtx();
 
   // Inner tab toggle: Roster (existing) | Newly Hired (HR pending hires routed
-  // here by department_managers) | AI Team (embedded ai-team.simple.biz site).
+  // here by department_managers).
   // Lives inside the My Team panel so it doesn't claim a top-level sidebar slot.
-  const [innerTab, setInnerTab] = useState<'roster' | 'newly-hired' | 'ai-team'>('roster');
+  const [innerTab, setInnerTab] = useState<'roster' | 'newly-hired'>('roster');
   const unassigned = teamGate.kind === 'department' && teamGate.departments.length === 0;
   const scoped = teamGate.kind === 'department' && teamGate.departments.length > 0;
   // Live presence — drives the green "online" dots on roster rows and the
@@ -2635,20 +2635,6 @@ function TeamPanelInner({ members, teamGate, viewerEmail, focusEmail, onFocusCon
             >
               New Hire Check List
             </button>
-            <button
-              type="button"
-              role="tab"
-              aria-selected={innerTab === 'ai-team'}
-              onClick={() => setInnerTab('ai-team')}
-              className={cn(
-                'rounded-[5px] px-3 py-1.5 text-xs font-semibold transition',
-                innerTab === 'ai-team'
-                  ? 'bg-white text-blue-700 shadow-sm dark:bg-zinc-950 dark:text-blue-300'
-                  : 'text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200',
-              )}
-            >
-              AI Team
-            </button>
           </div>
           {innerTab === 'roster' && !unassigned && members.length > 0 && (
             <div role="tablist" aria-label="Roster layout" className="flex items-center gap-0.5 rounded-lg border border-blue-100/80 bg-blue-50/50 p-0.5 dark:border-blue-950/50 dark:bg-blue-950/20">
@@ -2704,41 +2690,6 @@ function TeamPanelInner({ members, teamGate, viewerEmail, focusEmail, onFocusCon
 
       {innerTab === 'newly-hired' && (
         <NewlyHiredPanel viewerEmail={viewerEmail} teamGate={teamGate} />
-      )}
-
-      {innerTab === 'ai-team' && (
-        <Card className="overflow-hidden border-blue-100/70 dark:border-blue-950/50">
-          <CardContent className="p-0">
-            <div className="flex items-center justify-between gap-2 border-b border-blue-100/70 bg-blue-50/40 px-3 py-2 dark:border-blue-950/50 dark:bg-blue-950/20">
-              <p className="text-xs text-zinc-600 dark:text-zinc-400">
-                Embedded view of{' '}
-                <a
-                  href="https://ai-team.simple.biz/"
-                  target="_blank"
-                  rel="noreferrer noopener"
-                  className="font-medium text-blue-700 underline-offset-2 hover:underline dark:text-blue-300"
-                >
-                  ai-team.simple.biz
-                </a>
-              </p>
-              <a
-                href="https://ai-team.simple.biz/"
-                target="_blank"
-                rel="noreferrer noopener"
-                className="rounded-md border border-blue-200 bg-white px-2 py-1 text-[11px] font-medium text-blue-700 transition-colors hover:bg-blue-50 dark:border-blue-800 dark:bg-zinc-950 dark:text-blue-300 dark:hover:bg-blue-950/40"
-              >
-                Open in new tab
-              </a>
-            </div>
-            <iframe
-              src="https://ai-team.simple.biz/"
-              title="AI Team"
-              className="block h-[78vh] w-full border-0 bg-white dark:bg-zinc-950"
-              referrerPolicy="no-referrer-when-downgrade"
-              loading="lazy"
-            />
-          </CardContent>
-        </Card>
       )}
 
       {innerTab === 'roster' && !unassigned && (

@@ -37,6 +37,7 @@ export const VIEW_TAB_IDS: Record<FeatureViewKey, readonly string[]> = {
     'disputes',
     'transfers',
     'mesa',
+    'documents',
     'announcements',
     'notifications',
     's-wall',

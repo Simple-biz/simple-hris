@@ -207,7 +207,7 @@ function AdminPageInner() {
           />
         );
       case 'notifications':
-        return <NotificationsPanel viewerEmail={adminEmail} accent="zinc" />;
+        return <NotificationsPanel viewerEmail={adminEmail} accent="zinc" view="admin" />;
       case 'settings':
         return (
           <Placeholder title="System settings" hint="Global app settings live in the main HRIS Settings tab for now." />

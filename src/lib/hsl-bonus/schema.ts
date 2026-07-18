@@ -118,7 +118,7 @@ export const HSL_DEPTS: Record<HslDeptKey, DeptConfig> = {
   ssd_medical_records: {
     key: 'ssd_medical_records',
     name: 'SSD Medical Records',
-    cadence: 'weekly',
+    cadence: 'monthly',
     color: '#10b981',
     headerBg: 'bg-emerald-950/40',
     badgeCls: 'bg-emerald-900/60 text-emerald-300',

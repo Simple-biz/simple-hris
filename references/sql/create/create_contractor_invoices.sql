@@ -30,6 +30,10 @@ CREATE TABLE IF NOT EXISTS contractor_invoices (
   tax_total           NUMERIC(12,2) NOT NULL DEFAULT 0,
   total               NUMERIC(12,2) NOT NULL DEFAULT 0,
 
+  -- Payment rail chosen for this invoice, e.g.
+  -- {"region":"us","processor":"ach","fields":{"accountNumber":"...","routingNumber":"..."}}
+  payment_method      JSONB,
+
   -- Workflow status: 'pending' (sent to accounting) | 'approved' | 'rejected'
   status              TEXT NOT NULL DEFAULT 'pending',
 
@@ -43,6 +47,7 @@ ALTER TABLE contractor_invoices ADD COLUMN IF NOT EXISTS from_name           TEX
 ALTER TABLE contractor_invoices ADD COLUMN IF NOT EXISTS from_address        TEXT;
 ALTER TABLE contractor_invoices ADD COLUMN IF NOT EXISTS from_city_state_zip TEXT;
 ALTER TABLE contractor_invoices ADD COLUMN IF NOT EXISTS from_country        TEXT DEFAULT 'Philippines';
+ALTER TABLE contractor_invoices ADD COLUMN IF NOT EXISTS payment_method      JSONB;
 -- Drop old column name if it exists (was "from_company" before rename):
 ALTER TABLE contractor_invoices RENAME COLUMN from_company TO from_entity_name;
 

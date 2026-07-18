@@ -29,6 +29,13 @@ CREATE TABLE IF NOT EXISTS contractor_profiles (
   alt_account_number    TEXT,
   alt_routing_number    TEXT,
 
+  -- US ACH rail (contractor-invoice "US" region)
+  ach_account_holder    TEXT,
+  ach_bank_name         TEXT,
+  ach_account_number    TEXT,
+  ach_routing_number    TEXT,
+  ach_account_type      TEXT,
+
   -- Invoice "From" details (prefilled in new invoices)
   from_entity_name      TEXT,
   from_name             TEXT,
@@ -46,6 +53,13 @@ ALTER TABLE contractor_profiles ADD COLUMN IF NOT EXISTS from_name           TEX
 ALTER TABLE contractor_profiles ADD COLUMN IF NOT EXISTS from_address        TEXT;
 ALTER TABLE contractor_profiles ADD COLUMN IF NOT EXISTS from_city_state_zip TEXT;
 ALTER TABLE contractor_profiles ADD COLUMN IF NOT EXISTS from_country        TEXT DEFAULT 'Philippines';
+
+-- US ACH rail columns:
+ALTER TABLE contractor_profiles ADD COLUMN IF NOT EXISTS ach_account_holder  TEXT;
+ALTER TABLE contractor_profiles ADD COLUMN IF NOT EXISTS ach_bank_name       TEXT;
+ALTER TABLE contractor_profiles ADD COLUMN IF NOT EXISTS ach_account_number  TEXT;
+ALTER TABLE contractor_profiles ADD COLUMN IF NOT EXISTS ach_routing_number  TEXT;
+ALTER TABLE contractor_profiles ADD COLUMN IF NOT EXISTS ach_account_type    TEXT;
 
 -- Keep updated_at current automatically
 CREATE OR REPLACE FUNCTION contractor_profiles_set_updated_at()

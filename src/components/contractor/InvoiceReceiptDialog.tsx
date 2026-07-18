@@ -15,6 +15,12 @@
 import { FileText } from 'lucide-react';
 import { formatMoney, normalizeCurrency } from '@/lib/contractor-currency';
 import {
+  invoiceProcessor,
+  paymentMethodLines,
+  regionLabel,
+  type InvoicePaymentMethod,
+} from '@/lib/contractor/invoice-payment';
+import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -60,6 +66,7 @@ export interface SavedInvoice {
   subtotal: number;
   tax_total: number;
   total: number;
+  payment_method?: InvoicePaymentMethod | null;
   created_at: string;
 }
 
@@ -123,6 +130,8 @@ export function InvoiceViewDialog({
   const fromName = invoice.from_entity_name || invoice.from_name || EM_DASH;
   const fromLines = [invoice.from_address, invoice.from_city_state_zip, invoice.from_country].filter(Boolean);
   const toLines = [invoice.to_address, invoice.to_city_state_zip, invoice.to_country].filter(Boolean);
+  const payLines = paymentMethodLines(invoice.payment_method);
+  const payProc = invoice.payment_method ? invoiceProcessor(invoice.payment_method.processor) : undefined;
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
@@ -267,6 +276,31 @@ export function InvoiceViewDialog({
                   <div className="px-8 pb-1 pt-2">
                     <div className="rounded-[10px] border border-[#e2e8f0] bg-[#f8fafc] px-3.5 py-2 text-[11px] leading-4 text-[#556377]">
                       <strong className="text-[#334155]">Notes:</strong> {invoice.notes}
+                    </div>
+                  </div>
+                )}
+
+                {/* Payment Details — how to pay this invoice */}
+                {payLines.length > 0 && (
+                  <div className="px-8 pb-1 pt-1">
+                    <SectionBar>Payment Details</SectionBar>
+                    <div className="border-b border-[#e2e8f0] py-2">
+                      <div className="mb-1.5 flex items-center gap-2">
+                        <span className="text-[13px] font-bold leading-[16px] text-[#102034]">
+                          {payProc?.label ?? 'Payment'}
+                        </span>
+                        {invoice.payment_method && (
+                          <span className="rounded bg-[#eef2f6] px-1.5 py-[1px] text-[9px] font-bold uppercase leading-4 tracking-[0.08em] text-[#556377]">
+                            {regionLabel(invoice.payment_method.region)}
+                          </span>
+                        )}
+                      </div>
+                      {payLines.map((l) => (
+                        <div key={l.label} className="flex items-baseline justify-between gap-4 py-[1px]">
+                          <span className="text-[11px] leading-[15px] text-[#94a3b8]">{l.label}</span>
+                          <span className="text-[11px] font-semibold leading-[15px] text-[#26384d] tabular-nums">{l.value}</span>
+                        </div>
+                      ))}
                     </div>
                   </div>
                 )}

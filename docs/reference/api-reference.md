@@ -1689,13 +1689,13 @@ Most common cause: the column-add migration (`references/add_employee_id_to_glob
 
 ### `GET /api/employee-notifications`
 
-Returns the 50 most recent notifications for `?email=`. Admin-or-self.
+Returns notifications for `?email=` (newest first), Admin-or-self. No fixed row cap — a dashboard shows all of its own notifications, not just the 50 most recent across every dashboard (PostgREST's `db.max-rows` ceiling still applies as a backstop). Optional `&view=<AppView>` scopes the result to the notifications that belong to that dashboard: every *mapped* type owned by a different dashboard is excluded, while unmapped types stay visible everywhere so nothing silently disappears (see `hiddenTypesForView` in `src/lib/notifications/notification-views.ts`). Feature-gated types the viewer isn't allowed to see are always excluded regardless of `view`. Omitting `view` returns every type — that's what the per-dashboard count/badge hooks use to bucket unread by view.
 
 **Response**: `{ notifications: Array<{ id, type, tone, title, message, details, read_at, created_at }> }`.
 
 ### `PATCH /api/employee-notifications`
 
-Marks rows read. Body: `{ id?, ids?, email? }` — if `ids` given, marks those; otherwise marks every unread row for `email`. The `NotificationsPanel` calls this with `{ email }` 2 seconds after the panel renders so badges clear automatically.
+Marks rows read. Body: `{ id?, ids?, email? }` — if `ids` given, marks those; otherwise marks every unread row for `email`. The `NotificationsPanel` calls this with the `ids` of the notifications it currently shows, 2 seconds after they render, so opening one dashboard clears only that dashboard's unread badge (not the user's other dashboards).
 
 ### `DELETE /api/employee-notifications?id=…`
 
@@ -2429,6 +2429,35 @@ Vendor directory + SIMPLE-branded invoices, separate from Payment Dispatch. Read
 | `POST /api/orphanage-vendor-invoices` | Create a pending invoice (`invoice_number` + `vendor_name` + ≥1 meaningful line item required). Returns `201`; duplicate `invoice_number` → `409`. Audit `orphanage.vendor_invoice.created`. |
 | `PATCH /api/orphanage-vendor-invoices/[id]` | `body.action === 'mark_paid'` stamps the payment record + PAID watermark (`409` if not found/already paid); otherwise edits a still-pending invoice. Audit `…paid` / `…updated`. [[id]/route.ts](app/api/orphanage-vendor-invoices/[id]/route.ts) |
 | `DELETE /api/orphanage-vendor-invoices/[id]` | Delete an invoice. Audit `orphanage.vendor_invoice.deleted`. |
+
+### Documents (employee signing requests) *(added 2026-07-18)*
+
+Employee submits a PDF (their Pay Stubs export, a COE, an award) from Profile → Request
+Documents; it queues in **Accounting → Documents**. Approving stamps the approver's saved
+signature into the PDF — an appended certification page carrying the **requested date**, the
+**signed date** and the request id (so the document can be verified as real) — and the signed
+copy is returned to the employee. Objects live in the private `document-requests` bucket
+(originals are never mutated; signed copies are stored alongside). Requires the
+`2026-07-18_documents_tab.sql` migration.
+
+Employee side (always scoped to the caller's session email, like `/api/employee/paystub`):
+
+| Method / path | Purpose |
+|---|---|
+| `GET /api/employee/documents` | The caller's own requests, newest-first. [route.ts](app/api/employee/documents/route.ts) |
+| `POST /api/employee/documents` | Multipart `{ file, document_type: paystub\|coe\|award\|other, period_label?, note? }`. PDF-only (magic-byte checked), 10 MB server cap (~4 MB practical on Vercel). Fans a feature-gated `documents.requested` notification to accounting/admin role holders. Audit `documents.request_submitted`. |
+| `GET /api/employee/documents/[id]?which=original\|signed` | `{ url }` 1-hour signed download URL for the caller's own row (`404` for anyone else's — ids aren't probeable). [[id]/route.ts](app/api/employee/documents/[id]/route.ts) |
+| `DELETE /api/employee/documents/[id]` | Cancel the caller's own **pending** request (removes the uploaded objects). Audit `documents.request_cancelled`. |
+
+Accounting side (gate: accounting `documents` feature — `view` for reads, `edit` for decisions; admin bypasses):
+
+| Method / path | Purpose |
+|---|---|
+| `GET /api/accounting/documents?status=pending\|signed\|rejected` | The full queue. [route.ts](app/api/accounting/documents/route.ts) |
+| `GET /api/accounting/documents/[id]?which=original\|signed` | `{ url }` preview/download URL. [[id]/route.ts](app/api/accounting/documents/[id]/route.ts) |
+| `PATCH /api/accounting/documents/[id]` | `{ action: 'sign' }` stamps the CALLER's own enabled signature + dates into the PDF, stores `signed.pdf`, notifies the employee (`documents.signed`); `{ action: 'reject', note }` (note required) notifies with the reason (`documents.rejected`). `409` if already decided, `412` if the caller has no active signature. Audit `documents.request_signed` / `…rejected`. |
+| `GET /api/accounting/documents/signature` | The CALLER's own saved signature row (never anyone else's). [signature/route.ts](app/api/accounting/documents/signature/route.ts) |
+| `PUT /api/accounting/documents/signature` | Upsert own signature: `{ image_data_url? (PNG/JPEG data URL), owner_name?, title?, enabled? }`. `enabled: false` is the revoke switch — approvals are blocked until re-enabled. Enabling requires a drawing. Audit `documents.signature_*`. |
 
 ### `POST /api/hr/offboard-sheet-backfill`
 

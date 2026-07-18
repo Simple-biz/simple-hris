@@ -8,9 +8,17 @@ import {
   listPaystubPayloadsForEmployee,
 } from "@/lib/supabase/paystub-dispatch-queue";
 import { mapPayloadToPayStub, formatWeekHuman, type PayStubView } from "@/lib/payroll/paystub-view";
-import { computeCurrentPay, type CurrentPayEntry } from "@/lib/payroll/current-pay";
+import {
+  computeCurrentPay,
+  type CurrentPayEntry,
+  type CurrentPayResult,
+} from "@/lib/payroll/current-pay";
+import { loadWeekDiscretionary, loadFinalPayForWeeks } from "@/lib/payroll/paystub-recovery";
+import { resolveEmployeeProcessor, resolvePayDateIso } from "@/lib/payroll/pay-schedule";
 import { getEmployeeMasterRecord } from "@/lib/supabase/employees";
+import { getAppSetting } from "@/lib/supabase/app-settings";
 import { listHubstaffUploads, getUploadedSourceFiles } from "@/lib/supabase/hubstaff-hours-db";
+import { parseDateRangeFromFilename } from "@/lib/hubstaff/calendar-column-dedupe";
 import { normEmail } from "@/lib/email/norm-email";
 
 export const dynamic = "force-dynamic";
@@ -21,27 +29,43 @@ export const runtime = "nodejs";
  *
  * Pre-launch, the `payment_dispatches` "paid" mark isn't reliably set, so gating
  * pay stubs on a PAID dispatch would hide most (or all) of an employee's weeks.
- * While this is `true`, the Pay Stubs profile tab + its per-week modal surface
- * EVERY staged statement for the caller (paid or not). Flip back to `false` at
- * HRIS launch to restore the strict paid-only rule.
+ * While this is `true`, the Pay Stubs tab surfaces EVERY week — locked/staged
+ * weeks render byte-exact from their staged payload, and every OTHER Hubstaff-
+ * upload week is recovered from the wizard's persisted per-week snapshot (see
+ * `paystub-recovery.ts`). Per the owner's decision these recovered weeks are
+ * treated as final ("locked, paid out via Payment Dispatch") — no "estimate".
  *
- * Scope: the Pay Stubs tab paths only (`?all=1` + `?source_file=`). The Overview
- * quick-button (`{ weeks }` mode) stays deliberately paid-only.
+ * Flip to `false` at HRIS launch to restore the strict paid-only rule: only weeks
+ * with a real staged payload (and a paid dispatch) show, and no recovery runs.
  */
 const SHOW_UNPAID_STAGED_PAYSTUBS = true;
 
-/** One employee-facing stub: a rendered statement + its provenance flags. */
+/** One employee-facing stub: a rendered statement + its provenance dates. */
 interface EmployeePayStub {
   sourceFile: string;
+  /** Real paid date from a paid dispatch, else null. */
   paidAt: string | null;
-  /** True when reconstructed from hours (not locked through the wizard) — its
-   *  discretionary bonuses/adjustments/MESA reimbursements are unknown (0). */
-  estimated: boolean;
+  /** Display pay date: real paid date, else the scheduled Tue/Thu for this week. */
+  payDate: string | null;
   view: PayStubView;
 }
 
-/** Run `fn` over `items` with at most `limit` in flight — keeps the pay
- *  reconstruction from firing one heavy `computeCurrentPay` per week all at once. */
+/** Lightweight per-week row for the paginated list + stat band. No itemized
+ *  breakdown — just the total + dates — so it renders WITHOUT `computeCurrentPay`
+ *  for any week that has a staged payload or a wizard snapshot. */
+interface PayStubSummary {
+  sourceFile: string;
+  weekStart: string | null;
+  weekEnd: string | null;
+  weekHuman: string;
+  totalPayPhp: number;
+  totalPayUsd: number;
+  paidAt: string | null;
+  payDate: string | null;
+}
+
+/** Run `fn` over `items` with at most `limit` in flight — keeps the pay recovery
+ *  from firing one heavy `computeCurrentPay` per week all at once. */
 async function mapWithConcurrency<T, R>(
   items: T[],
   limit: number,
@@ -78,75 +102,274 @@ async function listAllSourceFiles(): Promise<string[]> {
   }
 }
 
+const round2 = (n: number) => Math.round((Number.isFinite(n) ? n : 0) * 100) / 100;
+
+/** Format a local Date as YYYY-MM-DD (no TZ drift). */
+function fmtIso(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
+    d.getDate(),
+  ).padStart(2, "0")}`;
+}
+
+/** Current USD→PHP rate (fallback for older snapshots that didn't store fx). */
+async function currentFxRate(): Promise<number> {
+  try {
+    const raw = await getAppSetting("usd_to_php_rate");
+    const n = raw ? Number(raw) : NaN;
+    return Number.isFinite(n) && n > 0 ? n : 58;
+  } catch {
+    return 58;
+  }
+}
+
+/** Assemble a PayStubView from the resolved scalar figures (shared by the fast +
+ *  slow recovery paths). Orphanage is already folded into `totalPayPhp` and, like
+ *  the staged-payload view, is not itemized as its own line. */
+function buildView(p: {
+  name: string;
+  department: string;
+  weekStart: string | null;
+  weekEnd: string | null;
+  regularHours: number;
+  otHours: number;
+  mfPay: number;
+  otPay: number;
+  pab: number;
+  tech: number;
+  performanceBonus: number;
+  adjustment: number;
+  adjustmentNote: string | null;
+  mesaDeduction: number;
+  mesaDisbursement: number;
+  totalPayPhp: number;
+  fxRate: number;
+}): PayStubView {
+  return {
+    name: p.name || "—",
+    department: p.department || "—",
+    weekStart: p.weekStart,
+    weekEnd: p.weekEnd,
+    weekHuman: formatWeekHuman(p.weekStart, p.weekEnd),
+    salaryDate: null,
+    mfHours: round2(p.regularHours),
+    mfOtHours: round2(p.otHours),
+    // Effective rate paid this week (pay ÷ hours) — matches the "h × rate" line.
+    mfRate: p.regularHours > 0 ? round2(p.mfPay / p.regularHours) : 0,
+    otRate: p.otHours > 0 ? round2(p.otPay / p.otHours) : 0,
+    mfPay: p.mfPay,
+    otPay: p.otPay,
+    techBonus: p.tech,
+    attendanceBonus: p.pab,
+    performanceBonus: p.performanceBonus,
+    adjustment: p.adjustment,
+    adjustmentNote: p.adjustment !== 0 ? p.adjustmentNote : null,
+    mesaDisbursement: p.mesaDisbursement,
+    mesaDeduction: p.mesaDeduction,
+    totalPayPhp: p.totalPayPhp,
+    fxRate: p.fxRate,
+    totalPayUsd: p.fxRate > 0 ? round2(p.totalPayPhp / p.fxRate) : 0,
+  };
+}
+
 /**
- * Reconstruct one week's stub for `emails` from raw hours, for a week that was
- * never locked through the Payroll Wizard. Uses `computeCurrentPay` (the same
- * deterministic engine payroll runs on) so regular/OT pay, PAB + Tech bonuses,
- * the MESA deduction, FX and net all match a real run. Discretionary items
- * (performance/other bonuses, manual adjustments, MESA reimbursements) are NOT
- * recoverable for an unlocked week and stay 0 — hence `estimated: true`. Returns
- * null when the employee had no hours that week (they simply aren't in it).
+ * Build one week's full stub for a week that was never locked into the dispatch
+ * queue, recovering the EXACT figures the wizard computed — not an estimate.
+ *
+ * FAST PATH: when the wizard snapshot carries the itemized bonus split (weeks from
+ * 2026-07-18 on), the stub is reproduced verbatim from the snapshot with NO
+ * `computeCurrentPay` call. SLOW PATH: older snapshots (bonus split absent) and
+ * weeks with no snapshot fall back to the deterministic engine for the PAB/Tech
+ * split + base pay, distributing the exact `final` so lines always reconcile.
+ *
+ * Returns null when the caller isn't in this week (no hours AND no snapshot).
  */
 async function reconstructStubForWeek(params: {
   sourceFile: string;
   emails: string[];
   name: string;
   department: string;
+  paidAt: string | null;
+  processor: string | null;
+  fallbackFxRate: number;
 }): Promise<EmployeePayStub | null> {
-  let result;
+  const disc = await loadWeekDiscretionary(params.sourceFile, params.emails);
+  const fp = disc.finalPay;
+  const itemized =
+    !!fp &&
+    typeof fp.perfectAttendanceBonus === "number" &&
+    typeof fp.techBonus === "number" &&
+    typeof fp.otherBonuses === "number";
+
+  // Cheap dates from the filename (used directly on the fast path).
+  let weekStart: string | null = null;
+  let weekEnd: string | null = null;
+  const range = parseDateRangeFromFilename(params.sourceFile);
+  if (range) {
+    weekStart = fmtIso(range.start);
+    weekEnd = fmtIso(range.end);
+  }
+
+  const payDate = () => resolvePayDateIso(params.paidAt, weekEnd, params.processor);
+
+  // ── FAST PATH: itemized snapshot → no computeCurrentPay ──────────────────────
+  if (itemized && fp) {
+    const fxRate = disc.fxRate && disc.fxRate > 0 ? disc.fxRate : params.fallbackFxRate;
+    const mfPay = round2(fp.regularPay ?? 0);
+    const otPay = round2(fp.otPay ?? 0);
+    const view = buildView({
+      name: params.name,
+      department: params.department,
+      weekStart,
+      weekEnd,
+      regularHours: fp.regularHours,
+      otHours: fp.otHours,
+      mfPay,
+      otPay,
+      pab: round2(fp.perfectAttendanceBonus as number),
+      tech: round2(fp.techBonus as number),
+      performanceBonus: round2(fp.otherBonuses as number),
+      adjustment: round2(typeof fp.adjustment === "number" ? fp.adjustment : 0),
+      adjustmentNote: disc.adjustmentNote,
+      mesaDeduction: round2(typeof fp.mesaDeduction === "number" ? fp.mesaDeduction : 0),
+      mesaDisbursement: round2(typeof fp.mesaDisbursement === "number" ? fp.mesaDisbursement : 0),
+      totalPayPhp: round2(fp.final),
+      fxRate,
+    });
+    return { sourceFile: params.sourceFile, paidAt: params.paidAt, payDate: payDate(), view };
+  }
+
+  // ── SLOW PATH: engine needed for the split (old snapshot) or the whole week ──
+  let result: CurrentPayResult | null = null;
   try {
     result = await computeCurrentPay({ sourceFile: params.sourceFile });
   } catch {
-    return null;
+    result = null;
   }
   let entry: CurrentPayEntry | undefined;
-  for (const e of params.emails) {
-    entry = result.byEmail[e];
-    if (entry) break;
+  if (result) {
+    for (const e of params.emails) {
+      entry = result.byEmail[e];
+      if (entry) break;
+    }
   }
-  if (!entry || entry.totalHours <= 0) return null;
 
-  const weekStart = result.period.start;
-  const weekEnd = result.period.end;
-  const fxRate = result.fxRate > 0 ? result.fxRate : 58;
-  const mfPay = entry.regularPayPHP ?? 0;
-  const otPay = entry.otPayPHP ?? 0;
-  const totalPayPhp = entry.totalPayPHP ?? 0;
-  const round2 = (n: number) => Math.round(n * 100) / 100;
+  // Not in this week unless the caller logged hours OR the wizard published a figure.
+  if ((!entry || entry.totalHours <= 0) && !fp) return null;
 
-  const view: PayStubView = {
-    name: params.name || "—",
-    department: params.department || "—",
+  const fxRate =
+    result && result.fxRate > 0
+      ? result.fxRate
+      : disc.fxRate && disc.fxRate > 0
+        ? disc.fxRate
+        : params.fallbackFxRate;
+  if (result?.period.start) weekStart = result.period.start;
+  if (result?.period.end) weekEnd = result.period.end;
+
+  // Does this employee have a PH rate this week? The wizard drops the Adjustment
+  // and Orphanage overlays for no-rate employees, so mirror that gate.
+  const hasRate = entry ? entry.hasRate : fp ? fp.final !== 0 : false;
+
+  let regularHours: number;
+  let otHours: number;
+  let mfPay: number;
+  let otPay: number;
+  let initial: number;
+  let pab: number;
+  let tech: number;
+  let performanceBonus: number;
+  let adjustment: number;
+  let orphanage: number;
+  let mesaDeduction: number;
+  let mesaDisbursement: number;
+  let totalPayPhp: number;
+
+  if (fp) {
+    // Old snapshot: exact total + base pay + MESA, but the bonus split isn't stored.
+    regularHours = fp.regularHours;
+    otHours = fp.otHours;
+    mfPay = round2(fp.regularPay ?? entry?.regularPayPHP ?? 0);
+    otPay = round2(fp.otPay ?? entry?.otPayPHP ?? 0);
+    initial = round2(fp.initial ?? mfPay + otPay);
+    mesaDeduction = round2(
+      typeof fp.mesaDeduction === "number" ? fp.mesaDeduction : entry?.mesaDeductionPHP ?? 0,
+    );
+    mesaDisbursement = round2(typeof fp.mesaDisbursement === "number" ? fp.mesaDisbursement : 0);
+    totalPayPhp = round2(fp.final);
+
+    // Distribute the exact bonus pool so adjustment + pab + tech + performance ==
+    // pool; the itemized lines then sum EXACTLY to fp.final − orphanage and can
+    // never overstate the total.
+    adjustment = hasRate ? disc.adjustment : 0;
+    orphanage = hasRate ? disc.orphanage : 0;
+    let pool = round2(fp.final - initial + mesaDeduction - mesaDisbursement - orphanage);
+    // Negative pool = recovered deductions too low for this older snapshot (e.g. a
+    // ₱100 MESA contribution the member has since opted out of). Fold it back into
+    // the deduction so the stub reconciles instead of the earnings exceeding it.
+    if (pool < 0) {
+      mesaDeduction = round2(mesaDeduction - pool);
+      pool = 0;
+    }
+    if (adjustment > pool) adjustment = pool;
+    let remaining = round2(pool - adjustment);
+    pab = Math.min(round2(entry?.pabBonusPHP ?? 0), remaining);
+    remaining = round2(remaining - pab);
+    tech = Math.min(round2(entry?.techBonusPHP ?? 0), remaining);
+    remaining = round2(remaining - tech);
+    performanceBonus = remaining < 0 ? 0 : remaining;
+  } else {
+    // No snapshot at all: best-effort from hours; overlays gated on a PH rate.
+    regularHours = entry?.regularHours ?? 0;
+    otHours = entry?.otHours ?? 0;
+    mfPay = round2(entry?.regularPayPHP ?? 0);
+    otPay = round2(entry?.otPayPHP ?? 0);
+    initial = round2(entry?.initialPayPHP ?? mfPay + otPay);
+    pab = round2(entry?.pabBonusPHP ?? 0);
+    tech = round2(entry?.techBonusPHP ?? 0);
+    mesaDeduction = round2(entry?.mesaDeductionPHP ?? 0);
+    mesaDisbursement = 0;
+    adjustment = hasRate ? disc.adjustment : 0;
+    orphanage = hasRate ? disc.orphanage : 0;
+    performanceBonus = 0;
+    totalPayPhp = round2(
+      initial + pab + tech + adjustment + orphanage - mesaDeduction + mesaDisbursement,
+    );
+  }
+
+  const view = buildView({
+    name: params.name,
+    department: params.department,
     weekStart,
     weekEnd,
-    weekHuman: formatWeekHuman(weekStart, weekEnd),
-    salaryDate: null,
-    mfHours: entry.regularHours,
-    mfOtHours: entry.otHours,
-    // Effective rate paid this week (pay ÷ hours) — matches the "h × rate" line.
-    mfRate: entry.regularHours > 0 ? round2(mfPay / entry.regularHours) : 0,
-    otRate: entry.otHours > 0 ? round2(otPay / entry.otHours) : 0,
+    regularHours,
+    otHours,
     mfPay,
     otPay,
-    techBonus: entry.techBonusPHP,
-    attendanceBonus: entry.pabBonusPHP,
-    performanceBonus: 0,
-    adjustment: 0,
-    adjustmentNote: null,
-    mesaDisbursement: 0,
-    mesaDeduction: entry.mesaDeductionPHP,
+    pab,
+    tech,
+    performanceBonus,
+    adjustment,
+    adjustmentNote: disc.adjustmentNote,
+    mesaDeduction,
+    mesaDisbursement,
     totalPayPhp,
     fxRate,
-    totalPayUsd: entry.totalPayUSD ?? round2(totalPayPhp / fxRate),
-  };
-  return { sourceFile: params.sourceFile, paidAt: null, estimated: true, view };
+  });
+  return { sourceFile: params.sourceFile, paidAt: params.paidAt, payDate: payDate(), view };
 }
 
-/** The caller's own emails (session + master work/personal), normalized + unique.
- *  `computeCurrentPay` keys entries by lowercased work_email. */
+/** The caller's own emails (session + master work/personal + gsuite alternates),
+ *  normalized + unique. The wizard's snapshot + additions blob (and Hubstaff rows)
+ *  can be keyed on ANY of a person's addresses, so include them all. */
 function callerEmails(
   sessionEmail: string,
-  master: { work_email?: string | null; personal_email?: string | null } | null,
+  master:
+    | {
+        work_email?: string | null;
+        personal_email?: string | null;
+        alternate_work_email?: string | null;
+        alternate_work_email_2?: string | null;
+      }
+    | null,
 ): string[] {
   const out = new Set<string>();
   const add = (e: string | null | undefined) => {
@@ -156,21 +379,39 @@ function callerEmails(
   add(sessionEmail);
   add(master?.work_email);
   add(master?.personal_email);
+  add(master?.alternate_work_email);
+  add(master?.alternate_work_email_2);
   return [...out];
+}
+
+/** Latest paid sent_date per cycle (a cycle can have >1 dispatch row). */
+function paidAtByFileFrom(
+  dispatches: Array<{ status?: string | null; cycle_source_file?: string | null; sent_date?: string | null }>,
+): Map<string, string | null> {
+  const m = new Map<string, string | null>();
+  for (const r of dispatches) {
+    if (r.status === "paid" && r.cycle_source_file) {
+      const prev = m.get(r.cycle_source_file);
+      const next = r.sent_date ?? null;
+      if (!m.has(r.cycle_source_file) || (next && (!prev || next > prev))) {
+        m.set(r.cycle_source_file, next);
+      }
+    }
+  }
+  return m;
 }
 
 /**
  * Employee self-serve pay-stub reader. Always scoped to the CALLER's own pay via
- * the NextAuth session email — never a query param — so one employee can't read
- * another's statement.
+ * the NextAuth session email — never a query param.
  *
- * Three modes:
- *   • ?source_file=<file>  → the full paystub for that week (drives the modal).
- *   • ?all=1               → { stubs: [{ sourceFile, paidAt, view }] } every
- *                            staged week's full statement (drives the Pay Stubs
- *                            profile tab's list + all-weeks PDF/XLSX export).
- *   • (no params)          → { weeks: [...] } every PAID week the caller can open
- *                            (drives the Overview button's enabled state).
+ * Modes:
+ *   • ?source_file=<file> → the full paystub for one week (drives the modal).
+ *   • ?summary=1          → { stubs: [lightweight] } every week's total + dates,
+ *                           WITHOUT the heavy engine (drives the paginated list).
+ *   • ?all=1              → { stubs: [full view] } every week's full statement
+ *                           (drives the PDF/XLSX export; heavier, on-demand).
+ *   • (no params)         → { weeks } every PAID week the caller can open.
  */
 export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions);
@@ -189,106 +430,199 @@ export async function GET(req: NextRequest) {
     const paid = dispatches.find(
       (r) => r.status === "paid" && r.cycle_source_file === sourceFile,
     );
+    const paidAt = paid?.sent_date ?? null;
+    const { employee: master } = await getEmployeeMasterRecord(email);
+    const emails = callerEmails(email, master);
+    const processor = await resolveEmployeeProcessor(emails);
 
-    // 1) Prefer a locked/staged payload — byte-identical to the emailed stub and
-    //    it carries the discretionary items an estimate can't. Pre-launch we
-    //    render any staged week; post-launch, paid weeks only.
+    // 1) Prefer a locked/staged payload — byte-identical to the emailed stub.
     const { row: staged } = await getPaystubDispatchEntry(sourceFile, email);
     if (staged?.payload && (SHOW_UNPAID_STAGED_PAYSTUBS || paid)) {
       const paystub = mapPayloadToPayStub(staged.payload, staged.pay_period);
       return NextResponse.json({
         paystub,
         available: true,
-        paidAt: paid?.sent_date ?? null,
+        paidAt,
+        payDate: resolvePayDateIso(paidAt, paystub.weekEnd, processor),
         status: paid ? "paid" : "issued",
-        estimated: false,
       });
     }
 
-    // 2) Pre-launch: reconstruct an unlocked week from hours so "View" works on
-    //    every listed week. (Post-launch this stays paid-only → unavailable.)
+    // 2) Pre-launch: recover an unlocked week from the wizard snapshot + hours.
     if (SHOW_UNPAID_STAGED_PAYSTUBS) {
-      const { employee: master } = await getEmployeeMasterRecord(email);
       const recon = await reconstructStubForWeek({
         sourceFile,
-        emails: callerEmails(email, master),
+        emails,
         name: master?.name ?? "",
         department: master?.department ?? "",
+        paidAt,
+        processor,
+        fallbackFxRate: await currentFxRate(),
       });
       if (recon) {
         return NextResponse.json({
           paystub: recon.view,
           available: true,
-          paidAt: null,
-          status: "estimate",
-          estimated: true,
+          paidAt,
+          payDate: recon.payDate,
+          status: paid ? "paid" : "issued",
         });
       }
     }
 
-    return NextResponse.json({ paystub: null, available: false, paidAt: null });
+    return NextResponse.json({ paystub: null, available: false, paidAt: null, payDate: null });
   }
 
-  // ── All-weeks mode: a stub for every week ─────────────────────────────────
-  // Drives the Pay Stubs profile tab (list + PDF/XLSX export). Locked/staged
-  // weeks render exact ("official"); pre-launch, every OTHER Hubstaff upload the
-  // caller worked is reconstructed from hours and flagged `estimated`. Post-HRIS
-  // launch (SHOW_UNPAID_STAGED_PAYSTUBS=false) it narrows to the paid ∩ staged
-  // set — no reconstruction. `paidAt` is the paid dispatch date, else null.
-  if (req.nextUrl.searchParams.get("all")) {
-    const [{ rows: dispatches }, { rows: payloads }] = await Promise.all([
-      listPaymentDispatches({ recipientEmail: email }),
-      listPaystubPayloadsForEmployee(email),
-    ]);
+  const wantSummary = !!req.nextUrl.searchParams.get("summary");
+  const wantAll = !!req.nextUrl.searchParams.get("all");
 
-    // Latest paid sent_date per cycle (a cycle can have >1 dispatch row).
-    const paidAtByFile = new Map<string, string | null>();
-    for (const r of dispatches) {
-      if (r.status === "paid" && r.cycle_source_file) {
-        const prev = paidAtByFile.get(r.cycle_source_file);
-        const next = r.sent_date ?? null;
-        if (!paidAtByFile.has(r.cycle_source_file) || (next && (!prev || next > prev))) {
-          paidAtByFile.set(r.cycle_source_file, next);
-        }
-      }
-    }
+  // ── Summary mode: lightweight per-week rows for the paginated list ─────────
+  // Totals come from the staged payload or the wizard `final_pay` snapshot with
+  // NO per-week `computeCurrentPay` — the slow engine runs ONLY for weeks that
+  // have neither (oldest, pre-snapshot weeks). This is the fast path the tab uses.
+  if (wantSummary) {
+    const [{ rows: dispatches }, { rows: payloads }, { employee: master }, allFiles, fxFallback] =
+      await Promise.all([
+        listPaymentDispatches({ recipientEmail: email }),
+        listPaystubPayloadsForEmployee(email),
+        getEmployeeMasterRecord(email),
+        listAllSourceFiles(),
+        currentFxRate(),
+      ]);
+    const emails = callerEmails(email, master);
+    const processor = await resolveEmployeeProcessor(emails);
+    const paidAtByFile = paidAtByFileFrom(dispatches);
 
-    // Locked/staged weeks — the source of truth. Pre-launch: all; post: paid only.
     const staged = payloads.filter(
       (p) => p.payload && (SHOW_UNPAID_STAGED_PAYSTUBS || paidAtByFile.has(p.cycle_source_file)),
     );
     const stagedFiles = new Set(staged.map((p) => p.cycle_source_file));
-    const officialStubs: EmployeePayStub[] = staged.map((p) => ({
-      sourceFile: p.cycle_source_file,
-      paidAt: paidAtByFile.get(p.cycle_source_file) ?? null,
-      estimated: false,
-      view: mapPayloadToPayStub(p.payload, p.pay_period),
-    }));
+    const rows: PayStubSummary[] = staged.map((p) => {
+      const v = mapPayloadToPayStub(p.payload, p.pay_period);
+      const pAt = paidAtByFile.get(p.cycle_source_file) ?? null;
+      return {
+        sourceFile: p.cycle_source_file,
+        weekStart: v.weekStart,
+        weekEnd: v.weekEnd,
+        weekHuman: v.weekHuman,
+        totalPayPhp: v.totalPayPhp,
+        totalPayUsd: v.totalPayUsd,
+        paidAt: pAt,
+        payDate: resolvePayDateIso(pAt, v.weekEnd, processor),
+      };
+    });
 
-    // Pre-launch: backfill every OTHER uploaded week from hours (estimates).
-    let estimatedStubs: EmployeePayStub[] = [];
     if (SHOW_UNPAID_STAGED_PAYSTUBS) {
-      const [{ employee: master }, allFiles] = await Promise.all([
-        getEmployeeMasterRecord(email),
-        listAllSourceFiles(),
-      ]);
-      const emails = callerEmails(email, master);
-      const toReconstruct = allFiles.filter((f) => !stagedFiles.has(f));
-      const reconstructed = await mapWithConcurrency(toReconstruct, 6, (file) =>
+      const others = allFiles.filter((f) => !stagedFiles.has(f));
+      const snapshots = await loadFinalPayForWeeks(others, emails);
+      const needEngine: string[] = [];
+      for (const f of others) {
+        const snap = snapshots.get(f) ?? { finalPay: null, fxRate: null };
+        const fp = snap.finalPay;
+        if (!fp) {
+          needEngine.push(f);
+          continue;
+        }
+        const range = parseDateRangeFromFilename(f);
+        const weekStart = range ? fmtIso(range.start) : null;
+        const weekEnd = range ? fmtIso(range.end) : null;
+        const fx = snap.fxRate && snap.fxRate > 0 ? snap.fxRate : fxFallback;
+        const totalPayPhp = round2(fp.final);
+        const pAt = paidAtByFile.get(f) ?? null;
+        rows.push({
+          sourceFile: f,
+          weekStart,
+          weekEnd,
+          weekHuman: formatWeekHuman(weekStart, weekEnd),
+          totalPayPhp,
+          totalPayUsd: fx > 0 ? round2(totalPayPhp / fx) : 0,
+          paidAt: pAt,
+          payDate: resolvePayDateIso(pAt, weekEnd, processor),
+        });
+      }
+      // Only weeks with neither a staged payload nor a snapshot need the engine.
+      const heavy = await mapWithConcurrency(needEngine, 6, (f) =>
+        reconstructStubForWeek({
+          sourceFile: f,
+          emails,
+          name: master?.name ?? "",
+          department: master?.department ?? "",
+          paidAt: paidAtByFile.get(f) ?? null,
+          processor,
+          fallbackFxRate: fxFallback,
+        }),
+      );
+      for (const s of heavy) {
+        if (!s) continue;
+        rows.push({
+          sourceFile: s.sourceFile,
+          weekStart: s.view.weekStart,
+          weekEnd: s.view.weekEnd,
+          weekHuman: s.view.weekHuman,
+          totalPayPhp: s.view.totalPayPhp,
+          totalPayUsd: s.view.totalPayUsd,
+          paidAt: s.paidAt,
+          payDate: s.payDate,
+        });
+      }
+    }
+
+    rows.sort((a, b) => (b.weekEnd ?? "").localeCompare(a.weekEnd ?? ""));
+    return NextResponse.json({ stubs: rows });
+  }
+
+  // ── All-weeks mode: full statements for every week (drives the export) ─────
+  if (wantAll) {
+    const [{ rows: dispatches }, { rows: payloads }] = await Promise.all([
+      listPaymentDispatches({ recipientEmail: email }),
+      listPaystubPayloadsForEmployee(email),
+    ]);
+    const paidAtByFile = paidAtByFileFrom(dispatches);
+
+    const staged = payloads.filter(
+      (p) => p.payload && (SHOW_UNPAID_STAGED_PAYSTUBS || paidAtByFile.has(p.cycle_source_file)),
+    );
+    const stagedFiles = new Set(staged.map((p) => p.cycle_source_file));
+
+    const [{ employee: master }, fxFallback] = await Promise.all([
+      getEmployeeMasterRecord(email),
+      currentFxRate(),
+    ]);
+    const emails = callerEmails(email, master);
+    const processor = await resolveEmployeeProcessor(emails);
+
+    const officialStubs: EmployeePayStub[] = staged.map((p) => {
+      const view = mapPayloadToPayStub(p.payload, p.pay_period);
+      const pAt = paidAtByFile.get(p.cycle_source_file) ?? null;
+      return {
+        sourceFile: p.cycle_source_file,
+        paidAt: pAt,
+        payDate: resolvePayDateIso(pAt, view.weekEnd, processor),
+        view,
+      };
+    });
+
+    let recoveredStubs: EmployeePayStub[] = [];
+    if (SHOW_UNPAID_STAGED_PAYSTUBS) {
+      const allFiles = await listAllSourceFiles();
+      const toRecover = allFiles.filter((f) => !stagedFiles.has(f));
+      const recovered = await mapWithConcurrency(toRecover, 6, (file) =>
         reconstructStubForWeek({
           sourceFile: file,
           emails,
           name: master?.name ?? "",
           department: master?.department ?? "",
+          paidAt: paidAtByFile.get(file) ?? null,
+          processor,
+          fallbackFxRate: fxFallback,
         }),
       );
-      estimatedStubs = reconstructed.filter((s): s is EmployeePayStub => s !== null);
+      recoveredStubs = recovered.filter((s): s is EmployeePayStub => s !== null);
     }
 
-    const stubs = [...officialStubs, ...estimatedStubs].sort((a, b) =>
+    const stubs = [...officialStubs, ...recoveredStubs].sort((a, b) =>
       (b.view.weekEnd ?? "").localeCompare(a.view.weekEnd ?? ""),
     );
-
     return NextResponse.json({ stubs });
   }
 

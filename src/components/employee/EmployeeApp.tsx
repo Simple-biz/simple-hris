@@ -106,7 +106,7 @@ export default function EmployeeApp() {
   // Live payroll-processing lock — drives the global banner, sidebar lock
   // indicator, and one-time toast notifications when the state flips.
   const { state: lockState, loading: lockLoading } = useDispatchLock();
-  const unreadNotifications = useEmployeeNotificationsUnread(employeeEmail);
+  const unreadNotifications = useEmployeeNotificationsUnread(employeeEmail, 'employee');
   // New MESA contribution alert — badges the MESA tab when a deposit lands
   // (a CSV deposit loaded since the member last opened MESA); clears on open.
   const { newCount: mesaNewDeposits, markSeen: markMesaSeen } = useMesaNewDeposits(employeeEmail);

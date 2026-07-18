@@ -20,6 +20,7 @@ export const FEATURE_CATALOG: Record<FeatureViewKey, readonly { key: string; lab
     { key: "disputes",         label: "Issues" },
     { key: "transfers",        label: "Transfers" },
     { key: "mesa",             label: "MESA" },
+    { key: "documents",        label: "Documents" },
     { key: "announcements",    label: "Announcements" },
     { key: "notifications",    label: "Notifications" },
     { key: "s_wall",           label: "S-Wall" },

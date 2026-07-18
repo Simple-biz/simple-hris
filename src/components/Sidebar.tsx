@@ -18,6 +18,7 @@ import {
   Send,
   Settings,
   ChevronRight,
+  FileSignature,
   LogOut,
   Moon,
   Sun,
@@ -67,6 +68,7 @@ const navItems = [
   { id: 'disputes', label: 'Issues', icon: AlertCircle },
   { id: 'transfers', label: 'Transfers', icon: ArrowRightLeft },
   { id: 'mesa', label: 'MESA', icon: HeartHandshake },
+  { id: 'documents', label: 'Documents', icon: FileSignature },
   { id: 'announcements', label: 'Announcements', icon: Megaphone },
   { id: 'notifications', label: 'Notifications', icon: Bell },
   { id: 'settings', label: 'System Settings', icon: Settings },
@@ -113,7 +115,7 @@ export default function Sidebar({ activeTab, setActiveTab, mobileOpen, allowedTa
   const { profilePhotoUrl, googlePhotoUrl } = useViewerProfilePhoto(email);
   const { state: lockState } = useDispatchLock();
   const { collapsed, toggle } = useSidebarCollapsed();
-  const unreadNotifications = useEmployeeNotificationsUnread(email);
+  const unreadNotifications = useEmployeeNotificationsUnread(email, 'accounting');
   const allowedTabSet = React.useMemo(() => new Set<string>(allowedTabs), [allowedTabs]);
   const visibleNavItems = React.useMemo(
     () => navItems.filter((item) => allowedTabSet.has(item.id)),

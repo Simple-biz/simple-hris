@@ -41,6 +41,21 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
     const supabase = getServiceClient();
+
+    // Optional payment rail attached to the invoice. Validated inline (no shared
+    // import) so this server route stays free of the client payment module.
+    const pm = body.paymentMethod;
+    const paymentMethod =
+      pm && typeof pm === 'object' &&
+      ['hurupay', 'higlobe', 'wires', 'ach'].includes(pm.processor) &&
+      ['global', 'us'].includes(pm.region)
+        ? {
+            region: pm.region,
+            processor: pm.processor,
+            fields: pm.fields && typeof pm.fields === 'object' ? pm.fields : {},
+          }
+        : null;
+
     const { data, error } = await supabase
       .from('contractor_invoices')
       .insert({
@@ -64,6 +79,7 @@ export async function POST(req: NextRequest) {
         subtotal:          body.subtotal ?? 0,
         tax_total:         body.taxTotal ?? 0,
         total:             body.total ?? 0,
+        payment_method:    paymentMethod,
         status:            'pending',
       })
       .select()

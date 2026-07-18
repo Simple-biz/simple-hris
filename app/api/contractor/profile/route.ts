@@ -73,6 +73,12 @@ export async function POST(req: NextRequest) {
           alt_account_holder_name: body.alt_account_holder_name  ?? null,
           alt_account_number:      body.alt_account_number       ?? null,
           alt_routing_number:      body.alt_routing_number       ?? null,
+          // US ACH rail
+          ach_account_holder:      body.ach_account_holder       ?? null,
+          ach_bank_name:           body.ach_bank_name            ?? null,
+          ach_account_number:      body.ach_account_number       ?? null,
+          ach_routing_number:      body.ach_routing_number       ?? null,
+          ach_account_type:        body.ach_account_type         ?? null,
         },
         { onConflict: 'contractor_email' },
       );

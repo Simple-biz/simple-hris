@@ -12,7 +12,9 @@ import {
 import {
   NOTIFICATION_TYPE_FEATURE_GATE,
   canViewNotificationType,
+  hiddenTypesForView,
 } from "@/lib/notifications/notification-views";
+import type { AppView } from "@/lib/rbac/views";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -50,7 +52,7 @@ async function viewerMayDeleteNotifications(email: string, roles: string[]): Pro
  * unresolved sessions) hide nothing. Global types — like the payroll-processing
  * lock — carry no gate and are never excluded.
  *
- * Excluding at query time, rather than after the 50-row limit, keeps an
+ * Excluding at query time, rather than after fetching, keeps an
  * authorized-but-ungated viewer's other notifications from being crowded out by
  * a backlog of notifications they aren't allowed to read.
  */
@@ -77,27 +79,44 @@ export async function GET(req: Request) {
   if (!email) {
     return NextResponse.json({ error: "email query param required" }, { status: 400 });
   }
+  // Optional dashboard scope. When present, the panel only wants the
+  // notifications that belong to that dashboard (see notification-views.ts), so
+  // a user with several dashboards sees each one's notifications in isolation —
+  // e.g. the accounting view shows only accounting notifications. Absent (the
+  // count/badge hooks) means "every type", so per-view bucketing still works.
+  const view = url.searchParams.get('view')?.trim() as AppView | '' | null;
 
   const supabase = createSupabaseServiceRoleClient() ?? createSupabaseServerClient();
   if (!supabase) {
     return NextResponse.json({ notifications: [] });
   }
 
-  const hiddenTypes = await hiddenGatedTypesForViewer();
+  // Types to exclude = feature-gated ones this viewer can't see, plus (when a
+  // view is scoped) every mapped type that belongs to a *different* dashboard.
+  // Unmapped types stay visible everywhere so nothing silently disappears.
+  const excludedTypes = new Set(await hiddenGatedTypesForViewer());
+  if (view) {
+    for (const t of hiddenTypesForView(view)) excludedTypes.add(t);
+  }
 
   let query = supabase
     .from('employee_notifications')
     .select('id, type, tone, title, message, details, read_at, created_at')
     .eq('recipient_email', email);
-  if (hiddenTypes.length > 0) {
+  if (excludedTypes.size > 0) {
     // PostgREST `not.in` exclusion — quote each value so any future type string
     // with reserved characters stays literal.
-    query = query.not('type', 'in', `(${hiddenTypes.map((t) => `"${t}"`).join(',')})`);
+    query = query.not(
+      'type',
+      'in',
+      `(${[...excludedTypes].map((t) => `"${t}"`).join(',')})`,
+    );
   }
 
-  const { data, error } = await query
-    .order('created_at', { ascending: false })
-    .limit(50);
+  // No artificial row cap: a dashboard shows all of its own notifications rather
+  // than the 50 most recent across every dashboard (PostgREST still applies its
+  // configured server-side max-rows ceiling as a backstop).
+  const { data, error } = await query.order('created_at', { ascending: false });
 
   if (error) {
     return NextResponse.json({ notifications: [], error: error.message });

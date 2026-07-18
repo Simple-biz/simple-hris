@@ -18,6 +18,12 @@ import {
   type ProcessorId,
 } from '@/lib/employee-payment-processors';
 import {
+  PAYMENT_REGIONS,
+  invoiceProcessorsForRegion,
+  paymentFieldSpecs,
+  type PaymentRegion,
+} from '@/lib/contractor/invoice-payment';
+import {
   emptyPayout,
   PayoutDetailsFields,
   type PayoutFields,
@@ -51,6 +57,12 @@ interface ContractorProfileRow {
   alt_account_holder_name?: string | null;
   alt_account_number?: string | null;
   alt_routing_number?: string | null;
+  // US ACH rail
+  ach_account_holder?: string | null;
+  ach_bank_name?: string | null;
+  ach_account_number?: string | null;
+  ach_routing_number?: string | null;
+  ach_account_type?: string | null;
 }
 
 type SectionId = 'identity' | 'invoice-form' | 'payment-gateway';
@@ -131,8 +143,12 @@ export default function ContractorProfile({
   const [currency, setCurrency] = useState<ContractorCurrency>('PHP');
   const [logoDataUrl, setLogoDataUrl] = useState<string | null>(null);
   const logoInputRef = useRef<HTMLInputElement>(null);
-  const [preferredProcessor, setPreferredProcessor] = useState<ProcessorId | ''>('');
+  // 'ach' is a contractor-invoice US rail, not a shared employee ProcessorId, so
+  // the selection is widened to carry it here in the profile.
+  const [preferredProcessor, setPreferredProcessor] = useState<ProcessorId | 'ach' | ''>('');
   const [payout, setPayout] = useState<PayoutFields>(emptyPayout);
+  const [paymentRegion, setPaymentRegion] = useState<PaymentRegion>('global');
+  const [achFields, setAchFields] = useState<Record<string, string>>({ accountType: 'Checking' });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
@@ -152,9 +168,24 @@ export default function ContractorProfile({
         setFromCityStateZip(row.from_city_state_zip?.trim() || '');
         setFromCountry(row.from_country?.trim() || 'Philippines');
         setCurrency(normalizeCurrency(row.currency));
-        if (row.preferred_processor && isProcessorId(row.preferred_processor)) {
-          setPreferredProcessor(row.preferred_processor);
+        const pp = row.preferred_processor?.trim();
+        if (pp === 'ach') {
+          setPreferredProcessor('ach');
+          setPaymentRegion('us');
+        } else if (pp && isProcessorId(pp)) {
+          setPreferredProcessor(pp);
+          setPaymentRegion('global');
+        } else {
+          // No rail saved yet — default the toggle to match the invoice currency.
+          setPaymentRegion(normalizeCurrency(row.currency) === 'USD' ? 'us' : 'global');
         }
+        setAchFields({
+          accountHolder: row.ach_account_holder ?? '',
+          bankName: row.ach_bank_name ?? '',
+          accountNumber: row.ach_account_number ?? '',
+          routingNumber: row.ach_routing_number ?? '',
+          accountType: row.ach_account_type ?? 'Checking',
+        });
         setPayout({
           preferredBankSlot: row.preferred_bank_slot === 'alternative' ? 'alternative' : 'primary',
           hurupayEmail: row.hurupay_email ?? '',
@@ -195,6 +226,18 @@ export default function ContractorProfile({
     e.target.value = '';
   };
 
+  // Switching region drops a selection that doesn't belong to the new region
+  // (kept field values persist, so re-selecting restores them).
+  const selectRegion = (r: PaymentRegion) => {
+    setPaymentRegion(r);
+    setPreferredProcessor((prev) =>
+      r === 'us' ? (prev === 'ach' ? prev : '') : prev === 'ach' ? '' : prev,
+    );
+  };
+
+  const setAchField = (key: string, value: string) =>
+    setAchFields((p) => ({ ...p, [key]: value }));
+
   const handleSave = async () => {
     setSaving(true);
     try {
@@ -229,6 +272,11 @@ export default function ContractorProfile({
           alt_account_holder_name: payout.altAccountHolderName || null,
           alt_account_number:      payout.altAccountNumber || null,
           alt_routing_number:      payout.altSwiftCode || null,
+          ach_account_holder:      achFields.accountHolder?.trim() || null,
+          ach_bank_name:           achFields.bankName?.trim() || null,
+          ach_account_number:      achFields.accountNumber?.trim() || null,
+          ach_routing_number:      achFields.routingNumber?.trim() || null,
+          ach_account_type:        achFields.accountType?.trim() || null,
         }),
       });
       const json = (await res.json()) as { error?: string | null; success?: boolean };
@@ -450,59 +498,152 @@ export default function ContractorProfile({
                     icon={CreditCard}
                   >
                     <div className="space-y-5">
-                      {/* Processor picker */}
+                      {/* Region toggle: Global ↔ US */}
                       <div>
-                        <p className="mb-3 text-xs font-medium text-zinc-500 dark:text-zinc-400">Select processor</p>
-                        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-                          {SELECTABLE_PROCESSOR_OPTIONS
-                            // Keep a retired processor visible only if it's the current selection.
-                            .concat(PROCESSOR_OPTIONS.filter((p) => p.id === preferredProcessor && !SELECTABLE_PROCESSOR_OPTIONS.includes(p)))
-                            .map((opt) => {
-                            const active = preferredProcessor === opt.id;
-                            return (
-                              <button
-                                key={opt.id}
-                                type="button"
-                                onClick={() => setPreferredProcessor(active ? '' : opt.id)}
-                                className={cn(
-                                  'flex items-center gap-2.5 rounded-xl border px-3.5 py-3 text-left text-xs font-medium transition-all',
-                                  active
-                                    ? 'border-blue-500/60 bg-blue-50 text-blue-800 shadow-sm dark:border-blue-500/40 dark:bg-blue-950/40 dark:text-blue-200'
-                                    : 'border-zinc-200 bg-zinc-50 text-zinc-700 hover:border-zinc-300 hover:bg-white dark:border-zinc-700 dark:bg-zinc-800/50 dark:text-zinc-300 dark:hover:bg-zinc-800',
-                                )}
-                              >
-                                {'logoSrc' in opt && opt.logoSrc ? (
-                                  <img src={opt.logoSrc as string} alt={opt.label} className="h-4 w-4 rounded object-contain" />
-                                ) : (
-                                  <opt.Icon className="h-4 w-4 shrink-0 opacity-70" />
-                                )}
-                                <span className="min-w-0 truncate">{opt.label}</span>
-                                {active && <Check className="ml-auto h-3.5 w-3.5 shrink-0 text-blue-500" />}
-                              </button>
-                            );
-                          })}
+                        <p className="mb-2 text-xs font-medium text-zinc-500 dark:text-zinc-400">Region</p>
+                        <div className="flex w-fit items-center gap-1 rounded-lg border border-zinc-200 bg-zinc-50 p-1 dark:border-zinc-700 dark:bg-zinc-800/50">
+                          {PAYMENT_REGIONS.map((r) => (
+                            <button
+                              key={r.id}
+                              type="button"
+                              onClick={() => selectRegion(r.id)}
+                              className={cn(
+                                'rounded-md px-4 py-1.5 text-sm font-semibold transition-colors',
+                                paymentRegion === r.id
+                                  ? 'bg-blue-600 text-white shadow-sm'
+                                  : 'text-zinc-600 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800',
+                              )}
+                            >
+                              {r.label}
+                            </button>
+                          ))}
                         </div>
                       </div>
 
-                      {preferredProcessor && (
-                        <p className="rounded-lg bg-blue-50 px-3.5 py-2.5 text-xs text-blue-700 dark:bg-blue-950/30 dark:text-blue-300">
-                          {processorDescription(preferredProcessor)}
-                        </p>
-                      )}
+                      {paymentRegion === 'global' ? (
+                        <>
+                          {/* Global processor picker */}
+                          <div>
+                            <p className="mb-3 text-xs font-medium text-zinc-500 dark:text-zinc-400">Select processor</p>
+                            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                              {SELECTABLE_PROCESSOR_OPTIONS
+                                // Keep a retired processor visible only if it's the current selection.
+                                .concat(PROCESSOR_OPTIONS.filter((p) => p.id === preferredProcessor && !SELECTABLE_PROCESSOR_OPTIONS.includes(p)))
+                                .map((opt) => {
+                                const active = preferredProcessor === opt.id;
+                                return (
+                                  <button
+                                    key={opt.id}
+                                    type="button"
+                                    onClick={() => setPreferredProcessor(active ? '' : opt.id)}
+                                    className={cn(
+                                      'flex items-center gap-2.5 rounded-xl border px-3.5 py-3 text-left text-xs font-medium transition-all',
+                                      active
+                                        ? 'border-blue-500/60 bg-blue-50 text-blue-800 shadow-sm dark:border-blue-500/40 dark:bg-blue-950/40 dark:text-blue-200'
+                                        : 'border-zinc-200 bg-zinc-50 text-zinc-700 hover:border-zinc-300 hover:bg-white dark:border-zinc-700 dark:bg-zinc-800/50 dark:text-zinc-300 dark:hover:bg-zinc-800',
+                                    )}
+                                  >
+                                    {'logoSrc' in opt && opt.logoSrc ? (
+                                      <img src={opt.logoSrc as string} alt={opt.label} className="h-4 w-4 rounded object-contain" />
+                                    ) : (
+                                      <opt.Icon className="h-4 w-4 shrink-0 opacity-70" />
+                                    )}
+                                    <span className="min-w-0 truncate">{opt.label}</span>
+                                    {active && <Check className="ml-auto h-3.5 w-3.5 shrink-0 text-blue-500" />}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </div>
 
-                      {preferredProcessor && (
-                        <PayoutDetailsFields
-                          processor={preferredProcessor}
-                          payout={payout}
-                          setPayout={setPayout}
-                        />
-                      )}
+                          {preferredProcessor && isProcessorId(preferredProcessor) && (
+                            <p className="rounded-lg bg-blue-50 px-3.5 py-2.5 text-xs text-blue-700 dark:bg-blue-950/30 dark:text-blue-300">
+                              {processorDescription(preferredProcessor)}
+                            </p>
+                          )}
 
-                      {!preferredProcessor && (
-                        <div className="flex flex-col items-center gap-2 rounded-xl border border-dashed border-zinc-200 py-10 text-center dark:border-zinc-700">
-                          <CreditCard className="h-8 w-8 text-zinc-300 dark:text-zinc-600" />
-                          <p className="text-sm text-zinc-400 dark:text-zinc-500">Select a processor above to enter your details.</p>
-                        </div>
+                          {preferredProcessor && isProcessorId(preferredProcessor) && (
+                            <PayoutDetailsFields
+                              processor={preferredProcessor}
+                              payout={payout}
+                              setPayout={setPayout}
+                            />
+                          )}
+
+                          {!(preferredProcessor && isProcessorId(preferredProcessor)) && (
+                            <div className="flex flex-col items-center gap-2 rounded-xl border border-dashed border-zinc-200 py-10 text-center dark:border-zinc-700">
+                              <CreditCard className="h-8 w-8 text-zinc-300 dark:text-zinc-600" />
+                              <p className="text-sm text-zinc-400 dark:text-zinc-500">Select a processor above to enter your details.</p>
+                            </div>
+                          )}
+                        </>
+                      ) : (
+                        <>
+                          {/* US rail picker (ACH) */}
+                          <div>
+                            <p className="mb-3 text-xs font-medium text-zinc-500 dark:text-zinc-400">Select processor</p>
+                            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                              {invoiceProcessorsForRegion('us').map((opt) => {
+                                const active = preferredProcessor === opt.id;
+                                return (
+                                  <button
+                                    key={opt.id}
+                                    type="button"
+                                    onClick={() => setPreferredProcessor(active ? '' : opt.id)}
+                                    className={cn(
+                                      'flex items-center gap-2.5 rounded-xl border px-3.5 py-3 text-left text-xs font-medium transition-all',
+                                      active
+                                        ? 'border-blue-500/60 bg-blue-50 text-blue-800 shadow-sm dark:border-blue-500/40 dark:bg-blue-950/40 dark:text-blue-200'
+                                        : 'border-zinc-200 bg-zinc-50 text-zinc-700 hover:border-zinc-300 hover:bg-white dark:border-zinc-700 dark:bg-zinc-800/50 dark:text-zinc-300 dark:hover:bg-zinc-800',
+                                    )}
+                                  >
+                                    <opt.Icon className="h-4 w-4 shrink-0 opacity-70" />
+                                    <span className="min-w-0 truncate">{opt.label}</span>
+                                    {active && <Check className="ml-auto h-3.5 w-3.5 shrink-0 text-blue-500" />}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </div>
+
+                          {preferredProcessor === 'ach' ? (
+                            <>
+                              <p className="rounded-lg bg-blue-50 px-3.5 py-2.5 text-xs text-blue-700 dark:bg-blue-950/30 dark:text-blue-300">
+                                Enter your US bank details so payouts can be sent via ACH.
+                              </p>
+                              <div className="grid grid-cols-1 gap-4 rounded-lg border border-zinc-100 bg-zinc-50/60 p-4 sm:grid-cols-2 dark:border-zinc-800 dark:bg-zinc-900/40">
+                                {paymentFieldSpecs('ach').map((spec) => (
+                                  <FieldGroup key={spec.key} label={spec.label}>
+                                    {spec.kind === 'select' ? (
+                                      <select
+                                        value={achFields[spec.key] ?? spec.options?.[0] ?? ''}
+                                        onChange={(e) => setAchField(spec.key, e.target.value)}
+                                        className="h-9 w-full rounded-md border border-zinc-200 bg-white px-2 text-sm text-zinc-900 outline-none focus:border-blue-400 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
+                                      >
+                                        {spec.options?.map((o) => (
+                                          <option key={o} value={o}>{o}</option>
+                                        ))}
+                                      </select>
+                                    ) : (
+                                      <Input
+                                        value={achFields[spec.key] ?? ''}
+                                        onChange={(e) => setAchField(spec.key, e.target.value)}
+                                        placeholder={spec.placeholder}
+                                        type={spec.kind === 'email' ? 'email' : 'text'}
+                                        className={cn('dark:border-zinc-700 dark:bg-zinc-900', spec.mono && 'font-mono')}
+                                      />
+                                    )}
+                                  </FieldGroup>
+                                ))}
+                              </div>
+                            </>
+                          ) : (
+                            <div className="flex flex-col items-center gap-2 rounded-xl border border-dashed border-zinc-200 py-10 text-center dark:border-zinc-700">
+                              <CreditCard className="h-8 w-8 text-zinc-300 dark:text-zinc-600" />
+                              <p className="text-sm text-zinc-400 dark:text-zinc-500">Select ACH above to enter your US bank details.</p>
+                            </div>
+                          )}
+                        </>
                       )}
                     </div>
                   </SectionShell>

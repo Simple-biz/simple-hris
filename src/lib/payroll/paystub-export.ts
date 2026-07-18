@@ -30,19 +30,17 @@ import type { PayStubView } from './paystub-view';
 export interface PayStubWeek {
   sourceFile: string;
   paidAt: string | null;
-  /** True when reconstructed from hours (an unlocked week) rather than a locked
-   *  payroll run — its discretionary bonuses/adjustments/MESA reimbursements are
-   *  not recoverable and show as 0. Rendered with an "Estimate" marker. */
-  estimated?: boolean;
+  /** Display pay date: real disbursement date, else the scheduled Tue (HuruPay) /
+   *  Thu (wires) for this week. Preferred over `paidAt` for the Paid column. */
+  payDate?: string | null;
   view: PayStubView;
 }
 
-const ESTIMATE_NOTE =
-  'Estimate rows are reconstructed from Hubstaff hours and standard rates/bonuses; they exclude discretionary bonuses, manual adjustments, and MESA reimbursements, so actual pay may differ.';
-
-/** Whether any week in the set is a reconstructed estimate. */
-function hasEstimates(weeks: PayStubWeek[]): boolean {
-  return weeks.some((w) => w.estimated);
+/** The date to show in the "Paid" column: the resolved pay date (real or
+ *  scheduled), falling back to the raw paid date. */
+function paidColumn(w: PayStubWeek): string {
+  const d = w.payDate ?? w.paidAt;
+  return d ? formatDate(d) : 'Paid';
 }
 
 export interface PayStubExportOptions {
@@ -167,7 +165,6 @@ interface XlsxCol {
 
 const XLSX_COLS: XlsxCol[] = [
   { header: 'Period Ending', width: 22, value: (w) => w.view.weekHuman || '-' },
-  { header: 'Type', width: 10, value: (w) => (w.estimated ? 'Estimate' : 'Official') },
   { header: 'Week Start', width: 13, value: (w) => w.view.weekStart ?? '' },
   { header: 'Week End', width: 13, value: (w) => w.view.weekEnd ?? '' },
   { header: 'Regular Hours', width: 13, value: (w) => round2(w.view.mfHours) },
@@ -182,7 +179,7 @@ const XLSX_COLS: XlsxCol[] = [
   { header: 'MESA Deduction', width: 15, value: (w) => round2(w.view.mesaDeduction) },
   { header: 'Net Pay (PHP)', width: 15, value: (w) => round2(w.view.totalPayPhp), total: (t) => round2(t.netPhp) },
   { header: 'Net Pay (USD)', width: 14, value: (w) => round2(w.view.totalPayUsd), total: (t) => round2(t.netUsd) },
-  { header: 'Paid Date', width: 15, value: (w) => formatDate(w.paidAt) },
+  { header: 'Paid', width: 15, value: (w) => paidColumn(w) },
 ];
 
 function round2(n: number): number {
@@ -203,7 +200,6 @@ export function buildPayStubsWorkbook(
     [`Employee: ${opts.employeeName}${opts.department ? ` · ${opts.department}` : ''}`],
     [`Exported ${formatTimestamp(generatedAt)} · ${weeks.length} ${weeks.length === 1 ? 'week' : 'weeks'}`],
     ['Pulled from Simple-HRIS System'],
-    ...(hasEstimates(weeks) ? [[`Note: ${ESTIMATE_NOTE}`]] : []),
     [],
   ];
 
@@ -279,35 +275,11 @@ async function loadLogoBytes(url: string): Promise<ArrayBuffer | null> {
   }
 }
 
-/** Wrap text to a width, hard-breaking tokens that are themselves too long. */
-function wrapText(raw: string, font: PDFFont, size: number, maxWidth: number): string[] {
-  const text = sanitize(raw).trim();
-  if (!text) return [''];
-  const fits = (s: string) => font.widthOfTextAtSize(s, size) <= maxWidth;
-  const lines: string[] = [];
-  let line = '';
-  for (let word of text.split(/\s+/)) {
-    while (!fits(word)) {
-      let i = word.length;
-      while (i > 1 && !fits(word.slice(0, i))) i--;
-      if (line) { lines.push(line); line = ''; }
-      lines.push(word.slice(0, i));
-      word = word.slice(i);
-      if (i <= 1 && word.length) break;
-    }
-    const candidate = line ? `${line} ${word}` : word;
-    if (line && !fits(candidate)) { lines.push(line); line = word; } else line = candidate;
-  }
-  if (line) lines.push(line);
-  return lines.length ? lines : [''];
-}
-
 type Col = { header: string; weight: number; align: 'left' | 'right' };
 
 /** Columns for the PDF summary (weights scaled to exactly fill CONTENT_W). */
 const PDF_COLS: Col[] = [
   { header: 'Period Ending', weight: 112, align: 'left' },
-  { header: 'Type', weight: 50, align: 'left' },
   { header: 'Reg Hrs', weight: 46, align: 'right' },
   { header: 'OT Hrs', weight: 42, align: 'right' },
   { header: 'Regular', weight: 74, align: 'right' },
@@ -431,7 +403,6 @@ export async function generatePayStubsPdf(
     const { mesaNet } = derive(w);
     const cells = [
       w.view.weekHuman || '-',
-      w.estimated ? 'Estimate' : 'Official',
       w.view.mfHours.toFixed(2),
       w.view.mfOtHours.toFixed(2),
       n2(w.view.mfPay),
@@ -443,7 +414,7 @@ export async function generatePayStubsPdf(
       n2Signed(mesaNet),
       n2(w.view.totalPayPhp),
       n2(w.view.totalPayUsd),
-      w.paidAt ? formatDate(w.paidAt) : '-',
+      paidColumn(w),
     ];
     if (state.y - rowH < BOTTOM) {
       newPage();
@@ -471,7 +442,7 @@ export async function generatePayStubsPdf(
     if (state.y - rowH < BOTTOM) { newPage(); drawHeader(); }
     state.page.drawRectangle({ x: MARGIN, y: state.y - rowH, width: CONTENT_W, height: rowH, color: TOTAL_BG });
     const footer = [
-      `Total (${weeks.length})`, '', '', '',
+      `Total (${weeks.length})`, '', '',
       n2(totals.regular),
       n2(totals.ot),
       totals.techBonus > 0 ? n2(totals.techBonus) : '-',
@@ -495,16 +466,6 @@ export async function generatePayStubsPdf(
     ensure(20);
     state.page.drawText('No weeks on record yet.', { x: MARGIN, y: state.y - 10, size: 10, font, color: MUTED });
     state.y -= 22;
-  }
-
-  // ── Estimate footnote ───────────────────────────────────────────────────────
-  if (hasEstimates(weeks)) {
-    state.y -= 4;
-    for (const line of wrapText(`Note: ${ESTIMATE_NOTE}`, font, 8, CONTENT_W)) {
-      ensure(11);
-      state.page.drawText(line, { x: MARGIN, y: state.y - 8, size: 8, font, color: MUTED });
-      state.y -= 10;
-    }
   }
 
   // ── Footers on every page ───────────────────────────────────────────────────

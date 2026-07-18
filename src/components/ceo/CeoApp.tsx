@@ -190,7 +190,7 @@ export default function CeoApp() {
                 <CeoAnnouncements viewerEmail={viewerEmail} />
               )}
               {activeTab === 'notifications' && (
-                <NotificationsPanel viewerEmail={viewerEmail} accent="yellow" />
+                <NotificationsPanel viewerEmail={viewerEmail} accent="yellow" view="ceo" />
               )}
               {activeTab === 's-wall' && (
                 <CeoSwallTab viewerEmail={viewerEmail} />

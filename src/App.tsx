@@ -39,6 +39,7 @@ import PayrollLivePublisher from '@/components/payroll-live/PayrollLivePublisher
 import BonusCatalog from '@/components/accounting/BonusCatalog';
 import PeopleTab from '@/components/people/PeopleTab';
 import AccountingTransfers from '@/components/accounting/AccountingTransfers';
+import AccountingDocuments from '@/components/accounting/AccountingDocuments';
 import PayrollWizardNotesFab from '@/components/accounting/PayrollWizardNotesFab';
 
 function isPlausibleEmail(s: string): boolean {
@@ -249,8 +250,15 @@ export default function App({ initialData }: { initialData?: InitialAccountingDa
         return <AccountingTransfers />;
       case 'mesa':
         return <AccountingMesa />;
+      case 'documents':
+        return (
+          <AccountingDocuments
+            sessionEmail={sessionEmail}
+            canEdit={canEditAccountingTab('documents', roles, featurePerms)}
+          />
+        );
       case 'notifications':
-        return <NotificationsPanel viewerEmail={sessionEmail} accent="orange" canDelete={canDeleteNotifications} />;
+        return <NotificationsPanel viewerEmail={sessionEmail} accent="orange" view="accounting" canDelete={canDeleteNotifications} />;
       case 'settings':
         return <SystemSettings sessionEmail={sessionEmail} />;
       case 'announcements':

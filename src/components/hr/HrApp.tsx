@@ -114,7 +114,7 @@ export default function HrApp() {
   // so it self-heals dropped events and respects feature visibility server-side
   // (the GET already hides types this viewer can't see — no client gate needed).
   useNotificationChime(viewerEmail);
-  const unreadNotifications = useEmployeeNotificationsUnread(viewerEmail);
+  const unreadNotifications = useEmployeeNotificationsUnread(viewerEmail, 'hr');
   // Global Pages overlay (admin-controlled visible / construction / hidden).
   const { ready: pagesReady, visibilityOf, rawVisibilityOf, isAdmin } = usePagesVisibility();
   const allowedHrTabs = allowedTabs('hr');

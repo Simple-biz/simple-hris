@@ -23,10 +23,10 @@ import {
   Clock,
   XCircle,
   FileText,
-  FileCheck2,
   FileSpreadsheet,
-  Download,
   Receipt,
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react';
 import { motion, AnimatePresence, LayoutGroup } from 'motion/react';
 import { toast } from 'sonner';
@@ -51,6 +51,25 @@ import {
   type PayStubWeek,
 } from '@/lib/payroll/paystub-export';
 import { PayStubModal } from '@/components/paystub/PayStubModal';
+
+/** Lightweight per-week row for the paginated Pay Stubs list (GET
+ *  /api/employee/paystub?summary=1) — total + dates only, no itemized breakdown,
+ *  so the list loads fast. The full statement loads lazily per week (modal) and
+ *  the full set only on export. */
+interface PayStubSummaryRow {
+  sourceFile: string;
+  weekStart: string | null;
+  weekEnd: string | null;
+  weekHuman: string;
+  totalPayPhp: number;
+  totalPayUsd: number;
+  paidAt: string | null;
+  payDate: string | null;
+}
+
+/** How many weeks per page in the Pay Stubs list. */
+const PAY_STUBS_PAGE_SIZE = 10;
+import RequestDocumentsTab from '@/components/employee/RequestDocumentsTab';
 import { PROCESSOR_OPTIONS, type ProcessorId } from '@/lib/employee-payment-processors';
 import { getTitlesForDepartment, hasAnySkillSetContent } from '@/lib/skill-set-titles';
 import {
@@ -622,10 +641,6 @@ export default function EmployeeProfile({
 
   const [activeTab, setActiveTab] = useState<TabId>('overview');
 
-  /** Static-only for now — the selected document type in the Request Documents tab. */
-  const [requestDocType, setRequestDocType] = useState('');
-  const [requestDocNote, setRequestDocNote] = useState('');
-
   useEffect(() => {
     setActiveTab(focusTab);
   }, [focusTab]);
@@ -737,26 +752,32 @@ export default function EmployeeProfile({
   // Every PAID week's full statement (`GET /api/employee/paystub?all=1`, session-
   // scoped). Loaded lazily the first time the tab is opened; backs the week list,
   // the per-week modal, and the all-weeks PDF/XLSX export.
-  const [payStubs, setPayStubs] = useState<PayStubWeek[]>([]);
+  const [payStubs, setPayStubs] = useState<PayStubSummaryRow[]>([]);
   const [payStubsLoading, setPayStubsLoading] = useState(false);
   const [payStubsError, setPayStubsError] = useState<string | null>(null);
   const [payStubModalFile, setPayStubModalFile] = useState<string | null>(null);
+  const [payStubPage, setPayStubPage] = useState(0);
   const [exportingPdf, setExportingPdf] = useState(false);
   const [exportingXlsx, setExportingXlsx] = useState(false);
-  // Fetch the all-weeks statement set exactly once — the first time the tab is
+  // Fetch the lightweight summary list exactly once — the first time the tab is
   // opened. A ref (not state) gates it, so flipping `loading` can't re-trigger
   // the effect and cancel its own in-flight request. EmployeeProfile stays
   // mounted across tab switches, so no cleanup/cancellation is needed.
   const payStubsRequestedRef = useRef(false);
+  // Cache of the FULL statements (with itemized breakdown) — fetched lazily on
+  // the first export click, then reused for subsequent exports.
+  const payStubsFullRef = useRef<PayStubWeek[] | null>(null);
 
   useEffect(() => {
     if (activeTab !== 'payStubs' || payStubsRequestedRef.current) return;
     payStubsRequestedRef.current = true;
     setPayStubsLoading(true);
     setPayStubsError(null);
-    void fetch('/api/employee/paystub?all=1', { cache: 'no-store' })
+    // Summary mode: totals + dates only (no heavy per-week engine) so the list
+    // paints fast. Full statements load on demand (per-week modal / export).
+    void fetch('/api/employee/paystub?summary=1', { cache: 'no-store' })
       .then(async (r) => {
-        const json = (await r.json()) as { stubs?: PayStubWeek[]; error?: string };
+        const json = (await r.json()) as { stubs?: PayStubSummaryRow[]; error?: string };
         if (!r.ok) {
           setPayStubsError(json.error || 'Could not load your pay stubs.');
           return;
@@ -766,6 +787,17 @@ export default function EmployeeProfile({
       .catch(() => setPayStubsError('Could not load your pay stubs.'))
       .finally(() => setPayStubsLoading(false));
   }, [activeTab]);
+
+  /** Fetch (once) + cache the full statements for the all-weeks PDF/XLSX export. */
+  const ensurePayStubsFull = async (): Promise<PayStubWeek[]> => {
+    if (payStubsFullRef.current) return payStubsFullRef.current;
+    const r = await fetch('/api/employee/paystub?all=1', { cache: 'no-store' });
+    const json = (await r.json()) as { stubs?: PayStubWeek[]; error?: string };
+    if (!r.ok) throw new Error(json.error || 'Could not load your pay stubs.');
+    const stubs = json.stubs ?? [];
+    payStubsFullRef.current = stubs;
+    return stubs;
+  };
 
   // Skill Sets - editable by the employee, read-only on the My Team page.
   const [skillSet, setSkillSet] = useState<SkillSetFields>(EMPTY_SKILL_SET);
@@ -1096,14 +1128,21 @@ export default function EmployeeProfile({
   };
 
   const payStubExportName = displayName && displayName !== '—' ? displayName : employeeEmail;
-  const payStubTotalPhp = payStubs.reduce((s, w) => s + w.view.totalPayPhp, 0);
-  const payStubTotalUsd = payStubs.reduce((s, w) => s + w.view.totalPayUsd, 0);
+  const payStubTotalPhp = payStubs.reduce((s, w) => s + w.totalPayPhp, 0);
+  const payStubTotalUsd = payStubs.reduce((s, w) => s + w.totalPayUsd, 0);
+  const payStubPageCount = Math.max(1, Math.ceil(payStubs.length / PAY_STUBS_PAGE_SIZE));
+  const payStubPageSafe = Math.min(payStubPage, payStubPageCount - 1);
+  const payStubPageRows = payStubs.slice(
+    payStubPageSafe * PAY_STUBS_PAGE_SIZE,
+    payStubPageSafe * PAY_STUBS_PAGE_SIZE + PAY_STUBS_PAGE_SIZE,
+  );
 
   const handleExportPayStubsPdf = async () => {
     if (!payStubs.length) return;
     setExportingPdf(true);
     try {
-      await downloadPayStubsPdf(payStubs, {
+      const full = await ensurePayStubsFull();
+      await downloadPayStubsPdf(full, {
         employeeName: payStubExportName,
         department: employmentDepartment,
       });
@@ -1115,11 +1154,12 @@ export default function EmployeeProfile({
     }
   };
 
-  const handleExportPayStubsXlsx = () => {
+  const handleExportPayStubsXlsx = async () => {
     if (!payStubs.length) return;
     setExportingXlsx(true);
     try {
-      downloadPayStubsXlsx(payStubs, {
+      const full = await ensurePayStubsFull();
+      downloadPayStubsXlsx(full, {
         employeeName: payStubExportName,
         department: employmentDepartment,
       });
@@ -1544,7 +1584,7 @@ export default function EmployeeProfile({
                         {/* At-a-glance band */}
                         <div className="grid gap-6 border-b border-zinc-100 py-5 dark:border-zinc-800/40 sm:grid-cols-3">
                           <CompactStat
-                            label="Paid weeks"
+                            label="Weeks on record"
                             value={String(payStubs.length)}
                           />
                           <CompactStat
@@ -1554,14 +1594,14 @@ export default function EmployeeProfile({
                           />
                           <CompactStat
                             label="Latest week"
-                            value={payStubs[0]?.view.weekHuman || '—'}
-                            hint={payStubs[0]?.paidAt ? `Paid ${formatStartDate(payStubs[0].paidAt)}` : undefined}
+                            value={payStubs[0]?.weekHuman || '—'}
+                            hint={payStubs[0]?.payDate ? `Paid ${formatStartDate(payStubs[0].payDate)}` : undefined}
                           />
                         </div>
 
-                        {/* Weekly statements */}
+                        {/* Weekly statements (paginated) */}
                         <ul className="divide-y divide-zinc-100 dark:divide-zinc-800/40">
-                          {payStubs.map((w) => (
+                          {payStubPageRows.map((w) => (
                             <li
                               key={w.sourceFile}
                               className="flex items-center justify-between gap-3 py-3.5"
@@ -1571,34 +1611,21 @@ export default function EmployeeProfile({
                                   <Receipt className="h-4 w-4" aria-hidden />
                                 </span>
                                 <div className="min-w-0">
-                                  <div className="flex items-center gap-1.5">
-                                    <p className="truncate text-[13.5px] font-medium text-zinc-900 dark:text-zinc-100">
-                                      Period ending {w.view.weekHuman || '—'}
-                                    </p>
-                                    {w.estimated && (
-                                      <span className="shrink-0 rounded-full bg-amber-50 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-amber-700 ring-1 ring-inset ring-amber-200 dark:bg-amber-500/10 dark:text-amber-400 dark:ring-amber-500/20">
-                                        Estimate
-                                      </span>
-                                    )}
-                                  </div>
+                                  <p className="truncate text-[13.5px] font-medium text-zinc-900 dark:text-zinc-100">
+                                    Period ending {w.weekHuman || '—'}
+                                  </p>
                                   <p className="mt-0.5 text-[11.5px] text-zinc-500 dark:text-zinc-400">
-                                    {w.paidAt
-                                      ? `Paid ${formatStartDate(w.paidAt)}`
-                                      : w.estimated
-                                        ? 'Reconstructed from hours'
-                                        : w.view.salaryDate
-                                          ? `Pay date ${formatStartDate(w.view.salaryDate)}`
-                                          : 'Statement ready'}
+                                    {w.payDate ? `Paid ${formatStartDate(w.payDate)}` : 'Statement ready'}
                                   </p>
                                 </div>
                               </div>
                               <div className="flex shrink-0 items-center gap-3">
                                 <div className="text-right">
                                   <p className="text-[13.5px] font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">
-                                    {w.estimated ? '~' : ''}{formatPHP(w.view.totalPayPhp)}
+                                    {formatPHP(w.totalPayPhp)}
                                   </p>
                                   <p className="text-[11px] tabular-nums text-zinc-400 dark:text-zinc-500">
-                                    {w.estimated ? '~' : ''}${w.view.totalPayUsd.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD
+                                    ${w.totalPayUsd.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD
                                   </p>
                                 </div>
                                 <Button
@@ -1615,6 +1642,49 @@ export default function EmployeeProfile({
                             </li>
                           ))}
                         </ul>
+
+                        {/* Pagination — 10 per page */}
+                        {payStubPageCount > 1 && (
+                          <div className="flex items-center justify-between gap-3 border-t border-zinc-100 pt-3.5 dark:border-zinc-800/40">
+                            <span className="text-[11.5px] text-zinc-500 dark:text-zinc-400">
+                              Showing{' '}
+                              <span className="font-medium text-zinc-700 dark:text-zinc-300">
+                                {payStubPageSafe * PAY_STUBS_PAGE_SIZE + 1}–
+                                {Math.min((payStubPageSafe + 1) * PAY_STUBS_PAGE_SIZE, payStubs.length)}
+                              </span>{' '}
+                              of {payStubs.length}
+                            </span>
+                            <div className="flex items-center gap-1.5">
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                disabled={payStubPageSafe <= 0}
+                                onClick={() => setPayStubPage((p) => Math.max(0, p - 1))}
+                                className="h-8 gap-1 rounded-lg text-[12px]"
+                              >
+                                <ChevronLeft className="h-3.5 w-3.5" />
+                                Prev
+                              </Button>
+                              <span className="px-1 text-[11.5px] tabular-nums text-zinc-500 dark:text-zinc-400">
+                                {payStubPageSafe + 1} / {payStubPageCount}
+                              </span>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                disabled={payStubPageSafe >= payStubPageCount - 1}
+                                onClick={() =>
+                                  setPayStubPage((p) => Math.min(payStubPageCount - 1, p + 1))
+                                }
+                                className="h-8 gap-1 rounded-lg text-[12px]"
+                              >
+                                Next
+                                <ChevronRight className="h-3.5 w-3.5" />
+                              </Button>
+                            </div>
+                          </div>
+                        )}
                       </>
                     )}
                   </Section>
@@ -1623,9 +1693,7 @@ export default function EmployeeProfile({
                     <p className="px-1 text-[12px] leading-relaxed text-zinc-500 dark:text-zinc-400">
                       The PDF and XLSX exports cover all {payStubs.length}{' '}
                       {payStubs.length === 1 ? 'week' : 'weeks'} with the full earnings breakdown.
-                      {payStubs.some((w) => w.estimated)
-                        ? ' Weeks marked Estimate are reconstructed from your logged hours and standard rates/bonuses — they exclude discretionary bonuses, manual adjustments, and MESA reimbursements, so your actual pay may differ.'
-                        : ' These match the figures on your emailed statements.'}
+                      {' '}These reflect the pay dispatched for each week.
                     </p>
                   )}
                 </>
@@ -1945,96 +2013,11 @@ export default function EmployeeProfile({
               )}
 
               {activeTab === 'requestDocuments' && (
-                <>
-                  <Section
-                    title="Request a document"
-                    description="Ask HR for official employment paperwork. Requests are reviewed and issued by the HR team."
-                  >
-                    <div className="space-y-5 py-4">
-                      <div className="flex items-start gap-2.5 rounded-xl border border-zinc-200/80 bg-zinc-50/70 px-4 py-3 text-[12.5px] dark:border-zinc-800/60 dark:bg-zinc-900/40">
-                        <FileText className="mt-0.5 h-4 w-4 shrink-0 text-zinc-500 dark:text-zinc-400" />
-                        <p className="leading-relaxed text-zinc-600 dark:text-zinc-300">
-                          Choose the document you need below. Most requests are processed within a
-                          few business days and delivered to your work email.
-                        </p>
-                      </div>
-
-                      <label className="block">
-                        <div className="mb-1.5 flex items-center gap-1.5 text-[12px] font-medium text-zinc-700 dark:text-zinc-200">
-                          <FileCheck2 className="h-3.5 w-3.5 text-zinc-400" />
-                          Document type
-                        </div>
-                        <SmoothSelect
-                          aria-label="Document type"
-                          value={requestDocType}
-                          onChange={(v) => setRequestDocType(v)}
-                          triggerClassName="w-full"
-                          options={[
-                            { value: '', label: 'Select a document…' },
-                            { value: 'coe', label: 'Certificate of Employment (COE)' },
-                            { value: 'paystubs_6mo', label: '6 Months of Pay Stubs' },
-                            { value: 'certificate', label: 'Certificate' },
-                          ]}
-                        />
-                      </label>
-
-                      <label className="block">
-                        <div className="mb-1.5 text-[12px] font-medium text-zinc-700 dark:text-zinc-200">
-                          Additional details{' '}
-                          <span className="font-normal text-zinc-400 dark:text-zinc-500">(optional)</span>
-                        </div>
-                        <textarea
-                          value={requestDocNote}
-                          onChange={(e) => setRequestDocNote(e.target.value)}
-                          rows={4}
-                          maxLength={2000}
-                          placeholder="e.g. the purpose of the document, where it should be addressed, or any specific dates to cover."
-                          className="w-full resize-y rounded-lg border border-zinc-200 bg-white px-3 py-2 text-[13.5px] leading-relaxed text-zinc-900 placeholder:text-zinc-400 transition-colors focus:border-orange-300 focus:outline-none focus:ring-1 focus:ring-orange-200 dark:border-zinc-800 dark:bg-zinc-950/60 dark:text-zinc-100 dark:focus:border-orange-500/40 dark:focus:ring-orange-500/20"
-                        />
-                      </label>
-
-                      <div className="flex flex-col items-start gap-2 sm:flex-row sm:items-center sm:justify-between">
-                        <p className="text-[11.5px] text-zinc-400 dark:text-zinc-600">
-                          This is a preview — submitting isn&rsquo;t wired up yet.
-                        </p>
-                        <Button
-                          type="button"
-                          disabled
-                          className="h-11 w-full gap-2 rounded-xl bg-orange-500 text-sm font-semibold text-white shadow-sm shadow-orange-500/20 transition-colors hover:bg-orange-600 disabled:opacity-50 dark:bg-orange-500 dark:hover:bg-orange-400 sm:w-auto"
-                        >
-                          <Send className="h-4 w-4" />
-                          Submit request
-                        </Button>
-                      </div>
-                    </div>
-                  </Section>
-
-                  <div className="mt-4">
-                    <Section
-                      title="What you can request"
-                      description="A quick reference for the documents available."
-                    >
-                      <div className="grid gap-3 py-4 sm:grid-cols-3">
-                        {[
-                          { icon: FileCheck2, title: 'Certificate of Employment', body: 'Confirms your role, tenure and employment status.' },
-                          { icon: Download, title: '6 Months of Pay Stubs', body: 'Your last six months of disbursement records.' },
-                          { icon: FileText, title: 'Certificate', body: 'Other official certificates issued by HR.' },
-                        ].map((d) => (
-                          <div
-                            key={d.title}
-                            className="flex flex-col gap-2 rounded-xl border border-zinc-200/80 bg-white px-4 py-3.5 dark:border-zinc-800/80 dark:bg-zinc-950/40"
-                          >
-                            <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-orange-50 ring-1 ring-orange-200/60 dark:bg-orange-900/20 dark:ring-orange-700/30">
-                              <d.icon className="h-4 w-4 text-orange-600 dark:text-orange-400" />
-                            </span>
-                            <p className="text-[13px] font-semibold tracking-[-0.01em] text-zinc-900 dark:text-zinc-100">{d.title}</p>
-                            <p className="text-[12px] leading-relaxed text-zinc-500 dark:text-zinc-400">{d.body}</p>
-                          </div>
-                        ))}
-                      </div>
-                    </Section>
-                  </div>
-                </>
+                <RequestDocumentsTab
+                  employeeEmail={norm}
+                  employeeName={displayName && displayName !== '—' ? displayName : null}
+                  department={employmentDepartment || null}
+                />
               )}
 
               {activeTab === 'resign' && (
