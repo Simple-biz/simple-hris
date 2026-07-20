@@ -44,6 +44,14 @@ if (!file) {
 }
 const BATCH = 500;
 
+// MESA email-drift aliases (old ledger email → current roster email). Single
+// source shared with the app (src/lib/mesa/email-aliases.ts). We re-key rows on
+// load so the DB mirror stays attached to each member's CURRENT roster email
+// even though the sheet keeps the old address — see that module for the why.
+const MESA_EMAIL_ALIASES = JSON.parse(
+  readFileSync(new URL("../src/data/mesa-email-aliases.json", import.meta.url), "utf8"),
+);
+
 // ── RFC4180 parse (quoted fields may contain commas, quotes, newlines) ──────
 function parseCsv(text) {
   const records = [];
@@ -131,6 +139,12 @@ const rows = [];
 for (const rec of records.slice(1)) {
   const obj = {};
   for (const [col, idx, fn] of MAP) obj[col] = fn(rec[idx]);
+  // Re-key drifted emails to the member's current roster address so their
+  // contributions attach to the right person instead of a phantom.
+  if (obj.email) {
+    const canonical = MESA_EMAIL_ALIASES[obj.email.trim().toLowerCase()];
+    if (canonical) obj.email = canonical;
+  }
   // Skip filler rows: nothing to key on and nothing recorded.
   if (!obj.email && !obj.deposit_date && !obj.disbursement_date && !obj.name) continue;
   obj.id = rows.length + 1; // row order in the export IS the id (as in the original backfill)

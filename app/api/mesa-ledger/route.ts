@@ -14,6 +14,7 @@ import {
   type MesaLedgerEvent,
 } from '@/lib/mesa/ledger';
 import { getOpenMesaAccount, listOpenMesaAccounts } from '@/lib/supabase/mesa-accounts';
+import { mesaEmailAliasesFor } from '@/lib/mesa/email-aliases';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -27,13 +28,16 @@ const PAGE = 1000; // Supabase caps a single select at 1000 rows — page past i
  */
 async function fetchAllEvents(
   supabase: NonNullable<ReturnType<typeof createSupabaseServiceRoleClient>>,
-  email?: string,
+  emails?: string[],
 ): Promise<{ rows: MesaLedgerEvent[]; error: string | null }> {
   const rows: MesaLedgerEvent[] = [];
+  // Case-insensitive match on ANY of the member's emails (current + pre-drift
+  // aliases), so contributions recorded under an old address still come back.
+  const orFilter =
+    emails && emails.length ? emails.map((e) => `email.ilike.${e}`).join(',') : null;
   for (let from = 0; ; from += PAGE) {
     let q = supabase.from(TABLE).select(MESA_LEDGER_SELECT).range(from, from + PAGE - 1);
-    // Case-insensitive exact match on the member's email.
-    if (email) q = q.ilike('email', email);
+    if (orFilter) q = q.or(orFilter);
     const { data, error } = await q;
     if (error) return { rows, error: error.message };
     const batch = (data ?? []) as MesaLedgerEvent[];
@@ -61,7 +65,7 @@ export async function GET(request: Request) {
     // Self/elevated single-member view — scope to the authorized effective email.
     if (email && authz.ok) {
       const [{ rows, error }, account] = await Promise.all([
-        fetchAllEvents(supabase, authz.effectiveEmail),
+        fetchAllEvents(supabase, mesaEmailAliasesFor(authz.effectiveEmail)),
         getOpenMesaAccount(authz.effectiveEmail),
       ]);
       if (error) return NextResponse.json({ error }, { status: 500 });

@@ -8,6 +8,7 @@
 // Members are keyed by lowercased email. See references/sql/create/backfill_mesa_ledger.sql.
 
 import { normEmail } from '@/lib/email/norm-email';
+import { resolveMesaEmail } from '@/lib/mesa/email-aliases';
 
 /** One raw ledger event, as selected from mesa_ledger. */
 export interface MesaLedgerEvent {
@@ -218,18 +219,33 @@ export function summarizeMembers(
   events: MesaLedgerEvent[],
   openAccounts?: Map<string, MesaOpenAccountRef> | null,
 ): MesaMemberSummary[] {
+  // Group by the member's CURRENT roster email, following the drift alias map so
+  // savings recorded under an old address (e.g. jennb@) roll up under the person
+  // the roster knows (jeanneb@) instead of detaching into a phantom member.
   const byEmail = new Map<string, MesaLedgerEvent[]>();
   for (const e of events) {
-    const key = normEmail(e.email);
+    const key = resolveMesaEmail(e.email);
     if (!key) continue; // external aggregate/summary rows carry no member email
     const bucket = byEmail.get(key);
     if (bucket) bucket.push(e);
     else byEmail.set(key, [e]);
   }
+  // Open accounts are keyed by the account's stored email, which may also be a
+  // pre-drift address — resolve those keys too so scoping lines up with the
+  // regrouped events.
+  const resolvedAccounts = openAccounts
+    ? new Map(
+        [...openAccounts].map(([k, v]) => [resolveMesaEmail(k) ?? k, v] as [string, MesaOpenAccountRef]),
+      )
+    : null;
   const out: MesaMemberSummary[] = [];
   for (const [key, bucket] of byEmail) {
-    const account = openAccounts?.get(key);
-    out.push(account ? summarizeMemberAccount(bucket, account) : summarizeMember(bucket));
+    const account = resolvedAccounts?.get(key);
+    const summary = account ? summarizeMemberAccount(bucket, account) : summarizeMember(bucket);
+    // Stamp the canonical (alias-resolved) email so it matches the roster join,
+    // rather than the raw first-event email which may be a pre-drift address.
+    summary.email = key;
+    out.push(summary);
   }
   out.sort((a, b) => (a.name ?? '').localeCompare(b.name ?? ''));
   return out;

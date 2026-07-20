@@ -1280,8 +1280,19 @@ async function fetchMesaRoster(): Promise<MesaRosterRow[]> {
       const we = e.work_email?.toLowerCase().trim() || null;
       const pe = e.personal_email?.toLowerCase().trim() || null;
       if (!we && !pe) return null; // nothing to key an enrollment toggle on
-      const rate = (we && rateByEmail.get(we)) || (pe && rateByEmail.get(pe)) || null;
-      const ledger = (we && ledgerByEmail.get(we)) || (pe && ledgerByEmail.get(pe)) || null;
+      // Match rates + ledger on ALL of the person's emails, including alternate
+      // work emails. MESA contributions are sometimes recorded under an old
+      // address the roster now carries as an alternate (e.g. jennb@ for
+      // jeanneb@); without this their savings detach and they look unenrolled.
+      const aw1 = e.alternate_work_email?.toLowerCase().trim() || null;
+      const aw2 = e.alternate_work_email_2?.toLowerCase().trim() || null;
+      const emails = [we, pe, aw1, aw2].filter((x): x is string => !!x);
+      let rate: EmployeeHourlyRateRow | null = null;
+      let ledger: MesaMemberSummary | null = null;
+      for (const em of emails) {
+        if (!rate) rate = rateByEmail.get(em) ?? null;
+        if (!ledger) ledger = ledgerByEmail.get(em) ?? null;
+      }
       return {
         key: we || pe!,
         name: e.name ?? we ?? pe!,
@@ -1330,36 +1341,45 @@ const BALANCES_PAGE_SIZE = 20;
 
 // ── Non Members ────────────────────────────────────────────────────────────
 //
-// Everyone NOT currently enrolled in MESA (employee_hourly_rates.mesa_member =
-// false). That covers two standings, told apart by whether a MESA start date
-// (mesa_member_since) was ever stamped:
-//   • Never joined — no start date.
-//   • Opted out    — a former member. Two ways this shows up:
-//       (a) the flag was cleared: toggle-mesa-member sets mesa_member = false but
-//           LEAVES mesa_member_since in place, so a lingering start date with the
-//           flag off is the signal; or
-//       (b) the flag DRIFTED: the ledger's last entry is an Opt-out/Termination
-//           (or 'Inactive' status) yet mesa_member was never flipped to false
-//           (ledger.lastEventOptedOut). Membership was ended in the tracker but
-//           the flag stayed on — that member must still count as OUT here (and
-//           off the Active tab), not enrolled.
-// Both surface here (opted-out members used to fall through to neither tab); a
-// per-row Status badge tells them apart. Each has a temporary manual Opt In — a
-// stopgap so Accounting can enroll (or re-enroll) anyone right now, before
-// employees self-serve via the Employee Dashboard's MESA Request tab
-// (EmployeeMesa.tsx), which goes through the mesa_requests review queue. Opting a
-// former member back in mints a fresh account (see toggle-mesa-member). Remove
-// this direct-toggle path once self-serve is the primary way members join.
+// Everyone NOT currently in MESA. Membership is judged by CONTRIBUTIONS first,
+// not the mesa_member flag: if a person is actively saving (has ledger deposits)
+// and has NOT opted out, they're an active member — full stop — even if the flag
+// drifted false. So a contributor lands here ONLY when their last ledger entry
+// is an opt-out. That leaves two standings on this tab, told apart by a per-row
+// Status badge:
+//   • Never joined — no deposits, not flagged, no MESA start date.
+//   • Opted out    — they left the program. Either the ledger's last entry is an
+//       Opt-out/Termination ('Inactive' status counts too — ledger.lastEventOptedOut),
+//       or the flag was cleared with a lingering mesa_member_since. A member whose
+//       flag drifted (last entry is an opt-out but flag never flipped) still shows
+//       here, off the Active tab.
+// Opted-out members used to fall through to neither tab; now they're here. Each
+// row has a temporary manual Opt In — a stopgap so Accounting can enroll (or
+// re-enroll) anyone right now, before employees self-serve via the Employee
+// Dashboard's MESA Request tab (EmployeeMesa.tsx), which goes through the
+// mesa_requests review queue. Opting a former member back in mints a fresh
+// account (see toggle-mesa-member). Remove this direct-toggle path once
+// self-serve is the primary way members join.
 
-/** Currently enrolled: flagged mesa_member AND the ledger shows no trailing
- *  opt-out. The ledger guard catches flag drift — a former member whose last
- *  ledger entry is an Opt-out but whose flag was never cleared is NOT active. */
-const isActiveMember = (r: MesaRosterRow): boolean => r.mesaMember && !r.ledger?.lastEventOptedOut;
-/** Was a member, then opted out — flag cleared (start date lingers) OR the
- *  ledger's last entry is an opt-out while the flag stayed on. */
+/** Has real MESA savings attached (≥1 weekly deposit in the ledger). */
+const hasContributions = (r: MesaRosterRow): boolean => (r.ledger?.depositCount ?? 0) > 0;
+/** Their most recent ledger entry is an opt-out/termination — they left. */
+const ledgerOptedOut = (r: MesaRosterRow): boolean => r.ledger?.lastEventOptedOut === true;
+/**
+ * Currently in MESA. Contributions PROVE membership on their own: a member who
+ * is actively saving (has deposits) and has NOT opted out is active even if the
+ * mesa_member flag drifted false. A freshly-flagged member with no deposits yet
+ * also counts. The only thing that removes an active saver is a trailing opt-out
+ * in the ledger.
+ */
+const isActiveMember = (r: MesaRosterRow): boolean =>
+  !ledgerOptedOut(r) && (r.mesaMember || hasContributions(r));
+/** Left the program — a trailing opt-out in the ledger, or the flag was cleared
+ *  with a lingering start date. Only meaningful for non-active (Non Members)
+ *  rows; a contributor can only be here if they opted out. */
 const isOptedOut = (r: MesaRosterRow): boolean =>
-  (!r.mesaMember && !!r.mesaMemberSince) || !!r.ledger?.lastEventOptedOut;
-/** Not currently enrolled — never joined OR opted out (the complement of active). */
+  ledgerOptedOut(r) || (!r.mesaMember && !!r.mesaMemberSince);
+/** Not currently enrolled — the complement of active. */
 const isNonMember = (r: MesaRosterRow): boolean => !isActiveMember(r);
 
 function MesaNonMembers() {
@@ -1429,8 +1449,8 @@ function MesaNonMembers() {
   // Non-members = everyone not currently enrolled — matches the filtered table
   // above, so the stat card can't disagree with the list.
   const nonMemberCount = useMemo(() => rows.filter(isNonMember).length, [rows]);
-  // Of those, how many are opted-out ex-members (vs. never joined).
-  const optedOutCount = useMemo(() => rows.filter(isOptedOut).length, [rows]);
+  // Of those non-members, how many are opted-out ex-members (vs. never joined).
+  const optedOutCount = useMemo(() => rows.filter((r) => isNonMember(r) && isOptedOut(r)).length, [rows]);
 
   const exportSpec = useMemo<MesaExportSpec>(() => {
     const scopeParts = [
