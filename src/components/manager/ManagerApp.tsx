@@ -18,6 +18,7 @@ import {
   ClipboardCheck,
   Clock,
   DoorOpen,
+  Download,
   Eye,
   EyeOff,
   Inbox,
@@ -2148,6 +2149,38 @@ interface TeamSkillSet {
 const TEAM_PAGE_SIZE = 8;
 const TEAM_LIST_PAGE_SIZE = 20;
 
+/** Escape one CSV cell (RFC 4180): quote when it holds a comma, quote or newline. */
+function csvCell(v: string | null | undefined): string {
+  const s = v ?? '';
+  return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
+/** Trigger a browser download of `blob` as `filename`. */
+function downloadBlob(blob: Blob, filename: string): void {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+/** Columns for the roster CSV export — mirrors the list view plus the identifying
+ *  emails and start date that the compact table hides. */
+const ROSTER_EXPORT_HEADERS = [
+  'Name',
+  'Employee ID',
+  'Department',
+  'Title',
+  'Work Email',
+  'Personal Email',
+  'CallTools Username',
+  'Start Date',
+  'Status',
+] as const;
+
 /**
  * Inline-editable CallTools dialer username, shown in the roster list for Lead
  * Gen members. Reads the current value (from the onboarding submission or the
@@ -2626,6 +2659,64 @@ function TeamPanelInner({ members, teamGate, viewerEmail, focusEmail, onFocusCon
     [filteredMembers],
   );
 
+  // Plain-text status for the CSV, mirroring the badge shown on each roster row:
+  // a pending resignation wins over an in-flight offboarding, else the queue
+  // status, else "Active".
+  const exportStatusLabel = (m: EmployeeRow): string => {
+    if (memberResignation(m)) return 'Resigning';
+    switch (memberOffboardStatus(m)) {
+      case 'pending':
+        return 'Queued';
+      case 'returned':
+        return 'Returned';
+      case 'processing':
+        return 'Processing';
+      case 'completed':
+        return 'Offboarded';
+      case 'dismissed':
+        return 'Dismissed';
+      default:
+        return 'Active';
+    }
+  };
+
+  // Export the CURRENTLY shown roster (respects the search + department filter,
+  // both Cards and List views) as a CSV. A UTF-8 BOM keeps Excel from mangling
+  // non-ASCII names.
+  const exportRosterCsv = () => {
+    if (filteredMembers.length === 0) return;
+    const lines = [ROSTER_EXPORT_HEADERS.map(csvCell).join(',')];
+    for (const m of filteredMembers) {
+      const title = skillSetFor(m)?.role_title?.trim() || m.hsl_role?.trim() || '';
+      const callTools = isLeadGenDepartment(m.department) ? callToolsValue(m) : '';
+      lines.push(
+        [
+          m.name,
+          m.employee_id,
+          m.department,
+          title,
+          m.work_email,
+          m.personal_email,
+          callTools,
+          m.start_date,
+          exportStatusLabel(m),
+        ]
+          .map(csvCell)
+          .join(','),
+      );
+    }
+    const csv = '﻿' + lines.join('\r\n');
+    const scope =
+      deptFilter !== 'all'
+        ? deptFilter.replace(/[^a-z0-9]+/gi, '-').replace(/^-+|-+$/g, '').toLowerCase()
+        : 'all';
+    const stamp = new Date().toISOString().slice(0, 10);
+    downloadBlob(
+      new Blob([csv], { type: 'text/csv;charset=utf-8' }),
+      `team-roster-${scope}-${stamp}.csv`,
+    );
+  };
+
   // The list view renders far more per row than a card, and an unpaginated
   // roster of hundreds of rows is what made it laggy — so both views paginate,
   // list at 20/page (denser) and cards at 8.
@@ -2910,9 +3001,20 @@ function TeamPanelInner({ members, teamGate, viewerEmail, focusEmail, onFocusCon
               Clear
             </button>
           )}
-          <span className="ml-auto font-mono text-[11px] tabular-nums text-zinc-500 dark:text-zinc-400">
-            Showing {filteredMembers.length} of {members.length}
-          </span>
+          <div className="ml-auto flex items-center gap-3">
+            <span className="font-mono text-[11px] tabular-nums text-zinc-500 dark:text-zinc-400">
+              Showing {filteredMembers.length} of {members.length}
+            </span>
+            <button
+              type="button"
+              onClick={exportRosterCsv}
+              disabled={filteredMembers.length === 0}
+              title="Download the roster currently shown (respects search + department) as a CSV"
+              className="inline-flex items-center gap-1.5 rounded-md border border-blue-200 bg-white px-2.5 py-1.5 text-xs font-medium text-blue-700 shadow-sm transition-colors hover:border-blue-300 hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-blue-900/50 dark:bg-zinc-950 dark:text-blue-300 dark:hover:border-blue-800 dark:hover:bg-blue-950/30"
+            >
+              <Download className="h-3.5 w-3.5" /> Export CSV
+            </button>
+          </div>
         </div>
       )}
 

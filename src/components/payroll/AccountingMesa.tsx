@@ -2126,14 +2126,20 @@ function MesaMemberDetail({
   const [noteBody, setNoteBody] = useState('');
   const [postingNote, setPostingNote] = useState(false);
 
+  // Fetch the member's history ONCE per opened member. Keyed on the email
+  // string only — NOT the `member` object: the parent rebuilds a fresh summary
+  // object (rosterRowToSummary) on every render, so depending on the object
+  // would re-run this on each parent re-render and the modal would visibly
+  // reload (skeletons flashing, endpoints re-hit). The initial `member` already
+  // seeds `summary` via useState, so a failed fetch simply keeps it.
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
     const email = encodeURIComponent(member.email);
     Promise.all([
       fetch(`/api/mesa-ledger?email=${email}`, { cache: 'no-store' })
-        .then((r) => (r.ok ? r.json() : { summary: member, events: [] }))
-        .catch(() => ({ summary: member, events: [] })) as Promise<{
+        .then((r) => (r.ok ? r.json() : { summary: null, events: [] }))
+        .catch(() => ({ summary: null, events: [] })) as Promise<{
         summary?: MesaMemberSummary | null;
         events?: MesaLedgerEvent[];
       }>,
@@ -2153,7 +2159,8 @@ function MesaMemberDetail({
       })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [member.email, member]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [member.email]);
 
   // Build a unified, newest-first timeline of deposits and disbursements,
   // carrying along each event's frozen legacy notes (if any).

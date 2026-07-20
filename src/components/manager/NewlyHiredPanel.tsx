@@ -151,6 +151,7 @@ const EXPORT_DETAIL_HEADERS = [
   'Name',
   'Personal Email',
   'Work Email',
+  'CallTools Username',
   'Department',
   'Role',
   'Start Date',
@@ -173,10 +174,17 @@ function exportDetailValues(r: PendingHireRow): string[] {
   const markedBy = isNoShow ? r.no_show_by : r.orientation_attended_by;
   const note = isNoShow ? r.no_show_note : r.orientation_note;
   const eventDate = isNoShow ? r.no_show_at : r.orientation_attended_at;
+  // CallTools usernames only exist for Lead Gen hires; for everyone else the
+  // cell is blank (rather than a misleading "not minted yet"), matching the
+  // card which only surfaces the row for Lead Gen departments.
+  const callTools = isLeadGenDepartment(r.department)
+    ? (r.calltools_username ?? 'not minted yet')
+    : '';
   return [
     r.name ?? '',
     r.personal_email ?? '',
     r.work_email ?? '',
+    callTools,
     r.department ?? '',
     r.job_description ?? '',
     r.start_date ? fmtLongDate(r.start_date) : '',
