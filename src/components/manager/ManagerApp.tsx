@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { resolveFirstName } from '@/lib/name/first-name';
 import { toast } from 'sonner';
 import AppFooter from '@/components/AppFooter';
@@ -10,6 +10,7 @@ import {
   AlertTriangle,
   Briefcase,
   Camera,
+  Check,
   CheckCircle2,
   ChevronDown,
   ChevronLeft,
@@ -24,6 +25,7 @@ import {
   List,
   Loader2,
   Mail,
+  Pencil,
   Undo2,
   UserMinus,
   X,
@@ -51,6 +53,7 @@ import ManagerBonusHistory from '@/components/manager/ManagerBonusHistory';
 import { HSL_DEPT_KEYS, canAccessHslDept } from '@/lib/hsl-bonus/schema';
 import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
 import { DEPT_INPUT_CONFIG } from '@/lib/payroll/department-bonus';
+import { isLeadGenDepartment } from '@/lib/hr/calltools-username';
 import ManagerMemberDialog from '@/components/manager/ManagerMemberDialog';
 import ManagerTransfers from '@/components/manager/ManagerTransfers';
 import ManagerOffboardQueueDialog, {
@@ -2145,6 +2148,147 @@ interface TeamSkillSet {
 const TEAM_PAGE_SIZE = 8;
 const TEAM_LIST_PAGE_SIZE = 20;
 
+/**
+ * Inline-editable CallTools dialer username, shown in the roster list for Lead
+ * Gen members. Reads the current value (from the onboarding submission or the
+ * manual store, resolved server-side); on edit it PATCHes the per-employee store
+ * (`/api/manager/calltools-username`) so existing staff can be backfilled right
+ * from the roster. Empty saves clear the manual entry.
+ */
+function CallToolsUsernameCell({
+  member,
+  value,
+  onSaved,
+}: {
+  member: EmployeeRow;
+  value: string | null;
+  onSaved: (username: string | null) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(value ?? '');
+  const [saving, setSaving] = useState(false);
+  const savingRef = useRef(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const keyEmail = member.work_email ?? member.personal_email ?? null;
+
+  useEffect(() => {
+    if (!editing) return;
+    setDraft(value ?? '');
+    const t = window.setTimeout(() => inputRef.current?.select(), 0);
+    return () => window.clearTimeout(t);
+    // Only re-seed the draft when we ENTER edit mode.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editing]);
+
+  const save = async () => {
+    if (savingRef.current) return;
+    const next = draft.trim();
+    if (next === (value ?? '')) {
+      setEditing(false);
+      return;
+    }
+    if (!keyEmail) {
+      toast.error('This person has no email on file to attach a username to.');
+      setEditing(false);
+      return;
+    }
+    savingRef.current = true;
+    setSaving(true);
+    try {
+      const res = await fetch('/api/manager/calltools-username', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: keyEmail, username: next, name: member.name ?? undefined }),
+      });
+      const j = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok) throw new Error(j?.error || 'Save failed');
+      onSaved(next || null);
+      setEditing(false);
+      toast.success(next ? 'CallTools username saved' : 'CallTools username cleared');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Save failed');
+    } finally {
+      savingRef.current = false;
+      setSaving(false);
+    }
+  };
+
+  if (!editing) {
+    return (
+      <button
+        type="button"
+        onClick={() => setEditing(true)}
+        className="group/ct inline-flex items-center gap-1.5 text-left"
+        title={value ? `${value} — click to edit` : 'Add CallTools username'}
+      >
+        {value ? (
+          <span className="font-mono text-xs text-zinc-700 dark:text-zinc-200">{value}</span>
+        ) : (
+          <span className="inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] font-medium text-amber-700 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300">
+            Needs backfill
+          </span>
+        )}
+        <Pencil
+          className="h-3 w-3 shrink-0 text-zinc-300 opacity-0 transition group-hover/ct:opacity-100 dark:text-zinc-600"
+          aria-hidden
+        />
+      </button>
+    );
+  }
+
+  return (
+    <span className="inline-flex items-center gap-1">
+      <input
+        ref={inputRef}
+        value={draft}
+        disabled={saving}
+        onChange={(e) => setDraft(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            void save();
+          } else if (e.key === 'Escape') {
+            e.preventDefault();
+            setEditing(false);
+          }
+        }}
+        onBlur={() => {
+          if (!savingRef.current) void save();
+        }}
+        placeholder="e.g. Mikey J. T."
+        aria-label={`CallTools username for ${member.name ?? keyEmail ?? 'member'}`}
+        className="w-36 rounded-md border border-blue-300 bg-white px-1.5 py-0.5 font-mono text-xs text-zinc-800 shadow-sm outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-400 dark:border-blue-700 dark:bg-zinc-950 dark:text-zinc-100"
+      />
+      {saving ? (
+        <Loader2 className="h-3.5 w-3.5 animate-spin text-blue-500" aria-hidden />
+      ) : (
+        <>
+          <button
+            type="button"
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => void save()}
+            className="text-emerald-600 hover:text-emerald-700"
+            title="Save"
+            aria-label="Save CallTools username"
+          >
+            <Check className="h-3.5 w-3.5" />
+          </button>
+          <button
+            type="button"
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => setEditing(false)}
+            className="text-zinc-400 hover:text-zinc-600"
+            title="Cancel"
+            aria-label="Cancel"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </>
+      )}
+    </span>
+  );
+}
+
 function TeamPanelInner({ members, teamGate, viewerEmail, focusEmail, onFocusConsumed }: TeamPanelProps) {
   const { medals, draggedMedal, dragOverEmail, setDragOverEmail, openAwardForDrop } = useMedalCtx();
 
@@ -2189,6 +2333,9 @@ function TeamPanelInner({ members, teamGate, viewerEmail, focusEmail, onFocusCon
   // is keyed by a stable per-person key so it SURVIVES search/filter/paging —
   // ticked people stay ticked even when filtered out of view.
   const [viewMode, setViewMode] = useState<'cards' | 'list'>('cards');
+  // Inline CallTools-username edits, keyed by memberKey, so a just-saved value
+  // shows immediately without refetching the whole roster. `null` = cleared.
+  const [callToolsOverrides, setCallToolsOverrides] = useState<Record<string, string | null>>({});
   const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
   const [offboardOpen, setOffboardOpen] = useState(false);
   // The manager's own outbox → per-email offboarding status for the badges,
@@ -2198,6 +2345,13 @@ function TeamPanelInner({ members, teamGate, viewerEmail, focusEmail, onFocusCon
 
   const memberKey = (m: EmployeeRow): string =>
     (m.work_email ?? m.personal_email ?? m.name ?? '').trim().toLowerCase();
+
+  // Effective CallTools username = inline-edit override (if any) else the value
+  // decorated onto the row by /api/manager/department-members.
+  const callToolsValue = (m: EmployeeRow): string | null => {
+    const k = memberKey(m);
+    return k in callToolsOverrides ? callToolsOverrides[k] : m.calltools_username ?? null;
+  };
 
   // Most-relevant status wins if a person appears under more than one email.
   const STATUS_RANK: Record<OffboardingQueueStatus, number> = useMemo(
@@ -2462,6 +2616,15 @@ function TeamPanelInner({ members, teamGate, viewerEmail, focusEmail, onFocusCon
       return searchable.includes(normalizedQuery);
     });
   }, [members, deptFilter, searchQuery]);
+
+  // The list view gains a "CallTools Username" column whenever the visible
+  // roster includes a Lead Gen member — the dialer username is Lead-Gen-only, so
+  // teams without one never see an all-blank column. Recent hires carry a stored
+  // username; older Lead Gen hires read as "needs backfill" for HR to fill in.
+  const showCallToolsCol = useMemo(
+    () => filteredMembers.some((m) => isLeadGenDepartment(m.department)),
+    [filteredMembers],
+  );
 
   // The list view renders far more per row than a card, and an unpaginated
   // roster of hundreds of rows is what made it laggy — so both views paginate,
@@ -2877,9 +3040,8 @@ function TeamPanelInner({ members, teamGate, viewerEmail, focusEmail, onFocusCon
                     <motion.div
                       key="view-list"
                       initial={{ opacity: 0, y: 6 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      exit={{ opacity: 0, y: -6 }}
-                      transition={{ duration: 0.16, ease: 'easeOut' }}
+                      animate={{ opacity: 1, y: 0, transition: { duration: 0.28, ease: [0.22, 1, 0.36, 1] } }}
+                      exit={{ opacity: 0, y: -6, transition: { duration: 0.12, ease: [0.4, 0, 1, 1] } }}
                       className="overflow-x-auto"
                     >
                       <div>
@@ -2898,6 +3060,9 @@ function TeamPanelInner({ members, teamGate, viewerEmail, focusEmail, onFocusCon
                               <th className="px-3 py-2.5 font-semibold">Name</th>
                               <th className="px-3 py-2.5 font-semibold">Department</th>
                               <th className="hidden px-3 py-2.5 font-semibold sm:table-cell">Title</th>
+                              {showCallToolsCol && (
+                                <th className="px-3 py-2.5 font-semibold">CallTools Username</th>
+                              )}
                               <th className="px-3 py-2.5 text-right font-semibold">Status</th>
                             </tr>
                           </thead>
@@ -2971,6 +3136,24 @@ function TeamPanelInner({ members, teamGate, viewerEmail, focusEmail, onFocusCon
                                   <td data-label="Title" className="hidden px-3 py-2.5 text-xs text-zinc-600 dark:text-zinc-300 sm:table-cell">
                                     <span className="line-clamp-1" title={roleLine ?? undefined}>{roleLine ?? '—'}</span>
                                   </td>
+                                  {showCallToolsCol && (
+                                    <td data-label="CallTools Username" className="px-3 py-2.5">
+                                      {isLeadGenDepartment(m.department) ? (
+                                        <CallToolsUsernameCell
+                                          member={m}
+                                          value={callToolsValue(m)}
+                                          onSaved={(username) =>
+                                            setCallToolsOverrides((prev) => ({
+                                              ...prev,
+                                              [memberKey(m)]: username,
+                                            }))
+                                          }
+                                        />
+                                      ) : (
+                                        <span className="text-[11px] text-zinc-300 dark:text-zinc-600">—</span>
+                                      )}
+                                    </td>
+                                  )}
                                   <td data-label="Status" className="px-3 py-2.5 text-right">
                                     {resig ? (
                                       <span className="inline-flex items-center gap-1 rounded-full bg-rose-100 px-2 py-0.5 text-[10px] font-semibold text-rose-700 dark:bg-rose-900/30 dark:text-rose-300">
@@ -2992,7 +3175,7 @@ function TeamPanelInner({ members, teamGate, viewerEmail, focusEmail, onFocusCon
                                 {resig && (
                                   <tr className="bg-rose-50/40 dark:bg-rose-950/10">
                                     <td />
-                                    <td colSpan={4} className="px-3 pb-3 pt-0">
+                                    <td colSpan={showCallToolsCol ? 5 : 4} className="px-3 pb-3 pt-0">
                                       <div className="rounded-lg border border-rose-200/80 bg-white/70 p-3 dark:border-rose-900/40 dark:bg-zinc-950/40">
                                         <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] font-semibold uppercase tracking-wide text-rose-700 dark:text-rose-300">
                                           <DoorOpen className="h-3.5 w-3.5" />
@@ -3087,9 +3270,8 @@ function TeamPanelInner({ members, teamGate, viewerEmail, focusEmail, onFocusCon
                   <motion.div
                     key="view-cards"
                     initial={{ opacity: 0, y: 6 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, y: -6 }}
-                    transition={{ duration: 0.16, ease: 'easeOut' }}
+                    animate={{ opacity: 1, y: 0, transition: { duration: 0.28, ease: [0.22, 1, 0.36, 1] } }}
+                    exit={{ opacity: 0, y: -6, transition: { duration: 0.12, ease: [0.4, 0, 1, 1] } }}
                   >
                   <motion.div
                     key={filterKey}

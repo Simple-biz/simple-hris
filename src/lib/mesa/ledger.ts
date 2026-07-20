@@ -59,6 +59,14 @@ export interface MesaMemberSummary {
   lastDeposit: string | null;
   lastDisbursement: string | null;
   /**
+   * True when the member's most recent DATED ledger event is a program EXIT — an
+   * 'Opt-out'/'Termination' disbursement or an 'Inactive' status snapshot — with
+   * no later deposit re-joining them. In plain terms: "their last entry was an
+   * opt-out." Lets callers treat a member as opted-out even when the
+   * employee_hourly_rates.mesa_member flag has drifted out of sync (stayed true).
+   */
+  lastEventOptedOut: boolean;
+  /**
    * The member's CURRENT (open) mesa_accounts number ("YY-MM-#####"), when the
    * accounts registry is populated. When set, every figure above is scoped to
    * that account (events on/after accountOpenedOn) — an opt-out closes the
@@ -90,6 +98,9 @@ export function summarizeMember(events: MesaLedgerEvent[]): MesaMemberSummary {
   let firstDeposit: string | null = null;
   let lastDeposit: string | null = null;
   let lastDisbursement: string | null = null;
+  // Latest DATED program-exit event (Opt-out/Termination disbursement, or an
+  // 'Inactive' status snapshot) — used to detect a trailing opt-out below.
+  let lastTermination: string | null = null;
   // Latest non-null status wins, ordered by the event's own date.
   let statusDate = '';
   let status: string | null = null;
@@ -112,6 +123,13 @@ export function summarizeMember(events: MesaLedgerEvent[]): MesaMemberSummary {
       disbursementCount += 1;
       if (!lastDisbursement || e.disbursement_date > lastDisbursement) lastDisbursement = e.disbursement_date;
     }
+    // Program exit: an 'Inactive' status snapshot, or an Opt-out/Termination
+    // disbursement (matches the accounts-seed convention). Track the latest
+    // DATED one; a bare 'n/a'/undated exit can't be ordered so it's skipped.
+    if (e.status === 'Inactive' || /opt.?out|termination/i.test(e.disbursement_type ?? '')) {
+      const termDate = e.disbursement_date ?? e.deposit_date ?? '';
+      if (termDate && (!lastTermination || termDate > lastTermination)) lastTermination = termDate;
+    }
     if (e.status) {
       const d = eventDate(e);
       if (status === null || d >= statusDate) {
@@ -122,6 +140,12 @@ export function summarizeMember(events: MesaLedgerEvent[]): MesaMemberSummary {
     if (!name && e.name) name = e.name;
     if (!department && e.department) department = e.department;
   }
+
+  // "Their last entry was an opt-out": a dated exit event on/after the last
+  // deposit (or with no deposits at all). A deposit dated after it means they
+  // re-joined and are active again, so it does NOT count as opted out.
+  const lastEventOptedOut =
+    lastTermination !== null && (lastDeposit === null || lastTermination >= lastDeposit);
 
   return {
     email: normEmail(first.email) ?? '',
@@ -139,6 +163,7 @@ export function summarizeMember(events: MesaLedgerEvent[]): MesaMemberSummary {
     firstDeposit,
     lastDeposit,
     lastDisbursement,
+    lastEventOptedOut,
   };
 }
 
@@ -178,6 +203,7 @@ export function summarizeMemberAccount(
         firstDeposit: null,
         lastDeposit: null,
         lastDisbursement: null,
+        lastEventOptedOut: false,
       };
   return { ...base, accountNumber: account.account_number, accountOpenedOn: account.opened_on };
 }

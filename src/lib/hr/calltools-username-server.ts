@@ -48,6 +48,119 @@ export async function loadTakenCallToolsUsernames(): Promise<Set<string>> {
   return taken;
 }
 
+/**
+ * Map of employee email → stored CallTools username, for surfacing the dialer
+ * username on roster views (Manager → My Team list). Built from every onboarding
+ * submission that already has a minted `calltools_username` — Lead Gen is the
+ * only department that ever stores one — keyed by ALL of the submission's known
+ * emails (the minted @simple.biz work email, the personal email the hire typed,
+ * and the invite personal email) so a roster row matches on whichever address it
+ * carries.
+ *
+ * DISPLAY-ONLY: unlike {@link ensureCallToolsFieldsForSubmission} this never
+ * mints or persists, so a Lead Gen hire whose paperwork predates the feature is
+ * simply absent from the map (the caller shows them as "needs backfill" for HR
+ * to fill in). Pre-migration DB (no column) → empty map, never throws for that.
+ */
+export async function loadCallToolsUsernamesByEmail(): Promise<Map<string, string>> {
+  const byEmail = new Map<string, string>();
+  const sb = createSupabaseServiceRoleClient() ?? createSupabaseServerClient();
+  if (!sb) return byEmail;
+
+  const { data, error } = await sb
+    .from("hr_onboarding_submissions")
+    .select("calltools_username, work_email, email, invite_personal_email")
+    .not("calltools_username", "is", null)
+    .range(0, 99999);
+  if (error) {
+    // Pre-migration DB (column not there yet): degrade to an empty map so the
+    // roster still renders — every Lead Gen row just reads as "needs backfill"
+    // until add_calltools_username_to_onboarding.sql runs.
+    if (/calltools_username/i.test(error.message)) return byEmail;
+    throw new Error(`hr_onboarding_submissions: ${error.message}`);
+  }
+  for (const r of (data ?? []) as Array<{
+    calltools_username: string | null;
+    work_email: string | null;
+    email: string | null;
+    invite_personal_email: string | null;
+  }>) {
+    const username = (r.calltools_username ?? "").trim();
+    if (!username) continue;
+    for (const e of [r.work_email, r.email, r.invite_personal_email]) {
+      const key = (e ?? "").trim().toLowerCase();
+      // First writer wins per email — a person re-onboarded under the same
+      // address carries the same username, so collisions are harmless.
+      if (key && !byEmail.has(key)) byEmail.set(key, username);
+    }
+  }
+
+  // Overlay the per-employee manual store (employee_calltools_usernames): the
+  // editable/backfilled record that covers existing staff — including the ~94
+  // active Lead Gen employees with no onboarding submission to mint from. A
+  // manual entry WINS over the submission-derived value (it is the human's
+  // deliberate correction / the real dialer username). Pre-migration (table
+  // absent) or any read failure just skips the overlay — the roster still
+  // renders from submissions.
+  try {
+    const { data: manual, error: manualErr } = await sb
+      .from("employee_calltools_usernames")
+      .select("email, calltools_username")
+      .range(0, 99999);
+    if (!manualErr) {
+      for (const r of (manual ?? []) as Array<{
+        email: string | null;
+        calltools_username: string | null;
+      }>) {
+        const key = (r.email ?? "").trim().toLowerCase();
+        const u = (r.calltools_username ?? "").trim();
+        if (key && u) byEmail.set(key, u);
+      }
+    }
+  } catch {
+    /* non-fatal: manual overlay is best-effort */
+  }
+  return byEmail;
+}
+
+/**
+ * Stored CallTools usernames for a set of pending hires, keyed by
+ * `hr_pending_employees.id` — latest linked submission wins (a re-invited hire,
+ * e.g. a no-show who came back, has one submission per pending row, so per-id
+ * mapping stays correct). DISPLAY-ONLY: never mints. Used by the Manager ->
+ * Newly Hired list so each Lead Gen card can show the dialer username the
+ * orientation automation minted. Best-effort: pre-migration DB or a read
+ * failure returns an empty map.
+ */
+export async function loadCallToolsUsernamesByPendingIds(
+  pendingIds: number[],
+): Promise<Map<number, string>> {
+  const byId = new Map<number, string>();
+  if (pendingIds.length === 0) return byId;
+  const sb = createSupabaseServiceRoleClient() ?? createSupabaseServerClient();
+  if (!sb) return byId;
+  try {
+    const { data, error } = await sb
+      .from("hr_onboarding_submissions")
+      .select("pending_employee_id, submitted_at, calltools_username")
+      .in("pending_employee_id", pendingIds)
+      .not("calltools_username", "is", null)
+      .order("submitted_at", { ascending: true });
+    if (error) return byId; // pre-migration column or lookup failure
+    for (const r of (data ?? []) as Array<{
+      pending_employee_id: number | null;
+      calltools_username: string | null;
+    }>) {
+      const u = (r.calltools_username ?? "").trim();
+      // Ascending order + overwrite == latest submission wins.
+      if (r.pending_employee_id != null && u) byId.set(r.pending_employee_id, u);
+    }
+  } catch {
+    /* best-effort */
+  }
+  return byId;
+}
+
 export type CallToolsFields = {
   calltools_nickname: string | null;
   calltools_username: string | null;

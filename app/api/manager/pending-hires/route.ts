@@ -9,6 +9,8 @@ import {
   listManagerPendingHires,
   type HrPendingEmployeeRow,
 } from '@/lib/supabase/hr-pending-employees';
+import { loadCallToolsUsernamesByPendingIds } from '@/lib/hr/calltools-username-server';
+import { isLeadGenDepartment } from '@/lib/hr/calltools-username';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -47,6 +49,19 @@ export async function GET() {
       ? (rows ?? [])
       : (rows ?? []).map((r) => ({ ...r, regular_rate: null, ot_rate: null }));
 
+  // Attach the CallTools dialer username minted on each LEAD GEN hire's linked
+  // onboarding submission (display-only; the orientation automation mints it).
+  // Best-effort — a failure just leaves the field null on every row.
+  const attachCallTools = async (
+    rows: HrPendingEmployeeRow[],
+  ): Promise<Array<HrPendingEmployeeRow & { calltools_username: string | null }>> => {
+    const leadGenIds = rows.filter((r) => isLeadGenDepartment(r.department)).map((r) => r.id);
+    const byId = await loadCallToolsUsernamesByPendingIds(leadGenIds).catch(
+      () => new Map<number, string>(),
+    );
+    return rows.map((r) => ({ ...r, calltools_username: byId.get(r.id) ?? null }));
+  };
+
   // Elevated viewers (HR / admin) bypass the department gate so they can audit
   // the same list. Keep the response shape identical to the scoped path.
   if (hasElevatedRole(roles)) {
@@ -58,7 +73,7 @@ export async function GET() {
         isRecentManualOnboard(r),
     );
     return NextResponse.json(
-      { rows: stripRates(actionable), scope: 'elevated', departments: [], error },
+      { rows: await attachCallTools(stripRates(actionable)), scope: 'elevated', departments: [], error },
       { status: error ? 500 : 200 },
     );
   }
@@ -74,7 +89,7 @@ export async function GET() {
 
   const { rows, error } = await listManagerPendingHires(departments);
   return NextResponse.json(
-    { rows: stripRates(rows), scope: 'department', departments, error },
+    { rows: await attachCallTools(stripRates(rows)), scope: 'department', departments, error },
     { status: error ? 500 : 200 },
   );
 }

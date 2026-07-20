@@ -1,0 +1,736 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>CallTools batch tester — last N oriented hires</title>
+<!--
+  BATCH tester for the `call_tools_creation` n8n webhook.
+
+  Sibling of calltools-creation-tester.html (single hire). Where that fires ONE
+  payload from a form, this one fires MANY: paste the last N people who were
+  marked "attended orientation" (e.g. the last 79 Lead Gen hires) and it POSTs
+  the EXACT payload HRIS sends — one per person — so your n8n flow can verify /
+  backfill each CallTools account.
+
+  It builds the same payload as
+  POST /api/manager/pending-hires/[id]/orientation, typed by
+  CallToolsCreationPayload in src/lib/hr/orientation-webhook.ts. Per-row payload
+  construction mirrors the single tester exactly (attendedAtIso for
+  orientation_attended_at, pay_rate == regular_rate, same field order). Keep in
+  sync with those two if the payload changes.
+
+  Input: paste a JSON array of objects OR CSV/TSV with a header row. Only
+  `calltools_username` is required per row; everything else has a batch default
+  or falls back to null, matching how the real webhook nulls unknown fields.
+
+  Open the file directly in a browser. If the browser blocks reading the
+  response (n8n often omits CORS headers), the POSTs may STILL have reached
+  n8n — check your n8n executions, or use "Copy all as curl" for a CORS-free
+  send from a terminal.
+
+  NOTE ON N8N TEST URLs: an n8n "Listen for test event" URL (…/webhook-test/…)
+  captures only ONE event then stops. To send a real batch use the PRODUCTION
+  webhook URL (…/webhook/…) with the workflow ACTIVE.
+-->
+<style>
+  :root {
+    --bg: #0b1220; --panel: #121b2e; --panel2: #0e1626; --line: #24314c;
+    --text: #e7ecf5; --muted: #93a1bd; --accent: #6ea8fe; --accent2: #34d399;
+    --warn: #f59e0b; --danger: #f87171; --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 14px/1.5 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+    padding: 24px;
+  }
+  .wrap { max-width: 1100px; margin: 0 auto; }
+  h1 { font-size: 20px; margin: 0 0 2px; }
+  .sub { color: var(--muted); margin: 0 0 20px; font-size: 13px; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; align-items: start; }
+  @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 18px; margin-bottom: 20px; }
+  .card h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 0 0 14px; }
+  .card.tight { margin-bottom: 0; }
+  label { display: block; font-size: 12px; color: var(--muted); margin: 0 0 4px; }
+  .field { margin-bottom: 12px; }
+  .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .row3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
+  input[type=text], input[type=number], input[type=email], input[type=date], select, textarea {
+    width: 100%; background: var(--panel2); border: 1px solid var(--line); color: var(--text);
+    border-radius: 8px; padding: 8px 10px; font: inherit;
+  }
+  input:focus, select:focus, textarea:focus { outline: none; border-color: var(--accent); }
+  textarea { resize: vertical; font-family: var(--mono); font-size: 12.5px; }
+  textarea#people { min-height: 150px; }
+  .check { display: flex; align-items: center; gap: 8px; }
+  .check input { width: auto; }
+  .btns { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 6px; }
+  button {
+    border: 1px solid var(--line); background: #1b273f; color: var(--text);
+    border-radius: 8px; padding: 9px 14px; font: inherit; cursor: pointer;
+  }
+  button.primary { background: var(--accent); color: #06122b; border-color: var(--accent); font-weight: 600; }
+  button.danger { background: #2a1620; color: var(--danger); border-color: var(--danger); }
+  button:hover:not(:disabled) { filter: brightness(1.08); }
+  button:disabled { opacity: .5; cursor: default; }
+  pre {
+    background: var(--panel2); border: 1px solid var(--line); border-radius: 8px;
+    padding: 14px; overflow: auto; font-family: var(--mono); font-size: 12.5px; margin: 0; max-height: 420px;
+  }
+  code { font-family: var(--mono); background: var(--panel2); border: 1px solid var(--line); border-radius: 4px; padding: 1px 5px; font-size: 12px; }
+  .k { color: var(--accent); } .s { color: var(--accent2); } .n { color: #f0abfc; } .b { color: var(--warn); }
+  .status { margin-top: 12px; padding: 10px 12px; border-radius: 8px; font-size: 13px; display: none; white-space: pre-wrap; }
+  .status.ok { display: block; background: rgba(52,211,153,.12); border: 1px solid var(--accent2); }
+  .status.err { display: block; background: rgba(248,113,113,.12); border: 1px solid var(--danger); }
+  .status.info { display: block; background: rgba(110,168,254,.12); border: 1px solid var(--accent); }
+  .hint { color: var(--muted); font-size: 11.5px; margin-top: 4px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 4px 0 14px; }
+  .chip { background: var(--panel2); border: 1px solid var(--line); border-radius: 999px; padding: 3px 12px; font-size: 12px; }
+  .chip b { font-weight: 700; }
+  .chip.ok { border-color: var(--accent2); } .chip.ok b { color: var(--accent2); }
+  .chip.err { border-color: var(--danger); } .chip.err b { color: var(--danger); }
+  .chip.warn { border-color: var(--warn); } .chip.warn b { color: var(--warn); }
+  .tablewrap { overflow: auto; max-height: 460px; border: 1px solid var(--line); border-radius: 8px; }
+  table { border-collapse: collapse; width: 100%; font-size: 12.5px; }
+  th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  th { position: sticky; top: 0; background: var(--panel2); color: var(--muted); font-weight: 600; z-index: 1; }
+  td.mono, th.mono { font-family: var(--mono); }
+  tr.bad td { background: rgba(248,113,113,.07); }
+  .st { font-weight: 600; }
+  .st.pending { color: var(--muted); } .st.sending { color: var(--accent); }
+  .st.ok { color: var(--accent2); } .st.err { color: var(--danger); } .st.skip { color: var(--warn); }
+  .progress { height: 8px; background: var(--panel2); border: 1px solid var(--line); border-radius: 999px; overflow: hidden; margin: 12px 0 6px; }
+  .progress > div { height: 100%; width: 0; background: var(--accent); transition: width .15s ease; }
+  details { margin-top: 10px; } summary { cursor: pointer; color: var(--accent); font-size: 12.5px; }
+  details pre { margin-top: 8px; }
+  .muted { color: var(--muted); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>CallTools batch tester — oriented hires</h1>
+  <p class="sub">Fires the exact <code>call_tools_creation</code> payload HRIS sends on mark-attended, once per pasted person. Built for verifying / backfilling a batch (e.g. the last 79 Lead&nbsp;Gen hires just marked as oriented).</p>
+
+  <div class="field">
+    <label for="url">Webhook URL</label>
+    <input id="url" type="text" value="https://simpledotbiz.app.n8n.cloud/webhook/calltools-creation" />
+    <p class="hint">Point at the <b>production</b> URL (<code>…/webhook/…</code>, workflow active) for a real batch — an n8n <b>test</b> URL (<code>…/webhook-test/…</code>) captures only the FIRST event. You can also point it at a dedicated verify webhook.</p>
+  </div>
+
+  <div class="grid">
+    <div class="card tight">
+      <h2>Batch defaults</h2>
+      <p class="hint" style="margin-top:-8px;margin-bottom:12px">Applied to any row that doesn't set the field itself. A row's own value always wins.</p>
+      <div class="row2">
+        <div class="field">
+          <label for="d_department">department</label>
+          <input id="d_department" type="text" value="Lead Gen" />
+        </div>
+        <div class="field">
+          <label for="d_lead_gen">lead_gen</label>
+          <select id="d_lead_gen"><option value="true" selected>true</option><option value="false">false</option></select>
+        </div>
+      </div>
+      <div class="row2">
+        <div class="field">
+          <label for="d_attended_on">attended_on (Manila date)</label>
+          <input id="d_attended_on" type="date" value="2026-07-20" />
+        </div>
+        <div class="field">
+          <label for="d_marked_by">marked_by</label>
+          <input id="d_marked_by" type="text" value="manager@simple.biz" />
+        </div>
+      </div>
+      <div class="row2">
+        <div class="field">
+          <label for="d_regular_rate">regular_rate</label>
+          <input id="d_regular_rate" type="number" step="0.01" placeholder="(null)" />
+        </div>
+        <div class="field">
+          <label for="d_ot_rate">ot_rate</label>
+          <input id="d_ot_rate" type="number" step="0.01" placeholder="(null)" />
+        </div>
+      </div>
+      <p class="hint" style="margin-top:-6px">pay_rate mirrors regular_rate (0 when unset), matching HRIS. Leave rates blank if your flow doesn't need them for verification.</p>
+      <div class="field">
+        <label for="d_note">note</label>
+        <input id="d_note" type="text" value="batch send from oriented-batch tester" />
+      </div>
+      <div class="field check">
+        <input id="d_already_marked" type="checkbox" checked />
+        <label for="d_already_marked" style="margin:0"><b>already_marked</b> — leave ON for a re-send of already-oriented people (n8n must UPDATE / verify, NOT create a 2nd account)</label>
+      </div>
+    </div>
+
+    <div class="card tight">
+      <h2>Send options</h2>
+      <div class="row2">
+        <div class="field">
+          <label for="o_concurrency">concurrency (parallel requests)</label>
+          <input id="o_concurrency" type="number" min="1" max="10" value="3" />
+        </div>
+        <div class="field">
+          <label for="o_delay">delay between requests (ms)</label>
+          <input id="o_delay" type="number" min="0" step="50" value="150" />
+        </div>
+      </div>
+      <div class="field check">
+        <input id="o_stop" type="checkbox" />
+        <label for="o_stop" style="margin:0">stop the whole batch on the first failure</label>
+      </div>
+      <div class="field check">
+        <input id="o_onlyvalid" type="checkbox" checked />
+        <label for="o_onlyvalid" style="margin:0">skip rows missing <code>calltools_username</code> (recommended)</label>
+      </div>
+      <details>
+        <summary>Where do I get the list of oriented people?</summary>
+        <p class="hint" style="margin-top:8px">Run this in the Supabase SQL editor, then copy the single JSON cell it returns and paste it below. It grabs the most-recent oriented hires and joins their onboarding submission for the minted CallTools fields.</p>
+        <pre id="sql"></pre>
+        <p class="hint">Change <code>limit 79</code> to whatever count you need. If your SQL editor won't return JSON, select the columns as a normal table, export CSV, and paste that instead — the parser reads CSV/TSV too.</p>
+      </details>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>People — paste JSON array or CSV/TSV (header row required for CSV)</h2>
+    <textarea id="people" placeholder='[{"calltools_username":"Mikey J. T.","name":"James Thomas","work_email":"jamest@simple.biz","department":"Lead Gen"}, ...]
+— or —
+calltools_username,name,work_email,department
+Mikey J. T.,James Thomas,jamest@simple.biz,Lead Gen'></textarea>
+    <div class="btns">
+      <button class="primary" id="parse">Parse list</button>
+      <button id="loadsample">Load 79 sample rows</button>
+      <button id="clear">Clear</button>
+    </div>
+    <p class="hint">Recognized keys / headers (case-insensitive, aliases ok): <code>calltools_username</code>* (or <code>username</code>), <code>calltools_nickname</code>/<code>nickname</code>, <code>name</code> (or <code>first_name</code>+<code>last_name</code>), <code>work_email</code>/<code>email</code>, <code>personal_email</code>, <code>department</code>, <code>lead_gen</code>, <code>pending_employee_id</code>/<code>id</code>, <code>regular_rate</code>, <code>ot_rate</code>, <code>attended_on</code>, <code>marked_by</code>, <code>note</code>, <code>already_marked</code>. * = required.</p>
+    <div class="status" id="parseStatus"></div>
+  </div>
+
+  <div class="card" id="reviewCard" style="display:none">
+    <h2>Parsed rows</h2>
+    <div class="chips" id="chips"></div>
+    <div class="tablewrap">
+      <table id="tbl">
+        <thead><tr>
+          <th>#</th><th>Name</th><th class="mono">calltools_username</th><th class="mono">work_email</th><th>dept</th><th>Status</th><th>Detail</th>
+        </tr></thead>
+        <tbody id="tbody"></tbody>
+      </table>
+    </div>
+    <div class="progress"><div id="bar"></div></div>
+    <div class="btns">
+      <button class="primary" id="send">Send all</button>
+      <button class="danger" id="stopBtn" disabled>Stop</button>
+      <button id="preview">Preview payloads</button>
+      <button id="copyjson">Copy batch JSON</button>
+      <button id="copycurl">Copy all as curl</button>
+      <button id="results" disabled>Download results CSV</button>
+    </div>
+    <div class="status" id="sendStatus"></div>
+    <details id="previewWrap" style="display:none">
+      <summary>Payload preview (first 5 of the batch)</summary>
+      <pre id="previewPre"></pre>
+    </details>
+  </div>
+</div>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+
+  const strOrNull = (v) => { const t = (v ?? '').toString().trim(); return t === '' ? null : t; };
+  const numOrNull = (v) => { const t = (v ?? '').toString().trim(); if (t === '') return null; const n = Number(t); return Number.isFinite(n) ? n : null; };
+  function parseBool(v, dflt) {
+    if (v === true || v === false) return v;
+    const t = (v ?? '').toString().trim().toLowerCase();
+    if (['true','1','yes','y','t'].includes(t)) return true;
+    if (['false','0','no','n','f'].includes(t)) return false;
+    return dflt;
+  }
+  function escapeHtml(s) {
+    return (s ?? '').toString().replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
+
+  // orientation_attended_at = start of attended_on in Manila (UTC+8), as UTC ISO
+  // — exactly how the route derives the stored timestamptz from the picked date.
+  function attendedAtIso(dateStr) {
+    if (!dateStr) return null;
+    const d = new Date(dateStr + 'T00:00:00+08:00');
+    return isNaN(d.getTime()) ? null : d.toISOString();
+  }
+
+  // --- Ready-to-run SQL for the "where do I get the list" helper --------------
+  $('sql').textContent = [
+    'select json_agg(t) from (',
+    '  select',
+    '    p.id                     as pending_employee_id,',
+    '    p.name, p.first_name, p.last_name,',
+    '    p.work_email, p.personal_email, p.department,',
+    '    p.regular_rate, p.ot_rate,',
+    '    s.calltools_nickname, s.calltools_username,',
+    "    to_char((p.orientation_attended_at at time zone 'Asia/Manila')::date,",
+    "            'YYYY-MM-DD') as attended_on",
+    '  from hr_pending_employees p',
+    '  left join lateral (',
+    '    select calltools_nickname, calltools_username',
+    '    from hr_onboarding_submissions',
+    '    where pending_employee_id = p.id',
+    '    order by submitted_at desc',
+    '    limit 1',
+    '  ) s on true',
+    '  where p.orientation_attended_at is not null',
+    '  order by p.orientation_attended_at desc',
+    '  limit 79',
+    ') t;',
+  ].join('\n');
+
+  // --- Field alias resolution -------------------------------------------------
+  const ALIASES = {
+    pending_employee_id: ['pending_employee_id','pending_id','id'],
+    name: ['name','full_name','fullname','legal_name'],
+    first_name: ['first_name','first','firstname'],
+    last_name: ['last_name','last','lastname','surname'],
+    work_email: ['work_email','workemail','work','email'],
+    personal_email: ['personal_email','personal','gmail','personalemail'],
+    department: ['department','dept'],
+    lead_gen: ['lead_gen','leadgen'],
+    calltools_nickname: ['calltools_nickname','nickname','ct_nickname','calltoolsnickname'],
+    calltools_username: ['calltools_username','username','ct_username','calltoolsusername','calltools_user'],
+    regular_rate: ['regular_rate','regular','rate','regularrate'],
+    ot_rate: ['ot_rate','ot','overtime','otrate'],
+    pay_rate: ['pay_rate','pay','payrate'],
+    attended_on: ['attended_on','attended','start_date','startdate','attendedon'],
+    marked_by: ['marked_by','markedby','manager','marked'],
+    note: ['note','notes','remark','remarks'],
+    already_marked: ['already_marked','alreadymarked'],
+  };
+  const norm = (k) => (k ?? '').toString().trim().toLowerCase().replace(/[\s\-.]+/g, '_');
+  const CANON_BY_ALIAS = (() => {
+    const m = {};
+    for (const [canon, aliases] of Object.entries(ALIASES)) {
+      for (const a of aliases) m[norm(a)] = canon;
+    }
+    return m;
+  })();
+  const isBlank = (v) => v === undefined || v === null || (typeof v === 'string' && v.trim() === '');
+  // Map an arbitrary object's keys onto the canonical field names. A key whose
+  // own name IS a canonical field wins over a generic alias (so a `work_email`
+  // column beats a bare `email` one), and a blank value never blocks a later
+  // non-blank value for the same field.
+  function canonicalize(obj) {
+    const out = {};
+    const entries = Object.entries(obj);
+    const assign = (canon, v) => {
+      if (!canon) return;
+      if (out[canon] === undefined || (isBlank(out[canon]) && !isBlank(v))) out[canon] = v;
+    };
+    for (const [k, v] of entries) { const nk = norm(k); if (ALIASES[nk]) assign(nk, v); } // exact names first
+    for (const [k, v] of entries) { assign(CANON_BY_ALIAS[norm(k)], v); }                 // then aliases fill gaps
+    return out;
+  }
+
+  // --- CSV / TSV parser (quote-aware, RFC-4180-ish) ---------------------------
+  function parseDelimited(text, delim) {
+    const rows = [];
+    let field = '', row = [], inQ = false, seen = false;
+    // `seen` = at least one char consumed for the current field. A quote only
+    // opens a quoted field at field START (RFC-4180); a quote mid-field is a
+    // literal char — so one stray quote can't swallow the rest of the file.
+    for (let i = 0; i < text.length; i++) {
+      const c = text[i];
+      if (inQ) {
+        if (c === '"') {
+          if (text[i + 1] === '"') { field += '"'; i++; }
+          else inQ = false;
+        } else field += c;
+      } else if (c === '"' && !seen) {
+        inQ = true; seen = true;
+      } else if (c === delim) {
+        row.push(field); field = ''; seen = false;
+      } else if (c === '\n') {
+        row.push(field); rows.push(row); row = []; field = ''; seen = false;
+      } else if (c === '\r') {
+        /* swallow — handles \r\n and lone \r */
+      } else {
+        field += c; seen = true;
+      }
+    }
+    if (field !== '' || row.length) { row.push(field); rows.push(row); }
+    // Drop fully-empty trailing rows.
+    return rows.filter((r) => !(r.length === 1 && r[0].trim() === ''));
+  }
+
+  // Parse the textarea into an array of canonicalized row objects.
+  function parseInput(text) {
+    const trimmed = text.trim();
+    if (!trimmed) throw new Error('Nothing to parse — paste a JSON array or CSV first.');
+
+    if (trimmed[0] === '[' || trimmed[0] === '{') {
+      let data;
+      try { data = JSON.parse(trimmed); }
+      catch (e) { throw new Error('Looks like JSON but did not parse: ' + e.message); }
+      const arr = Array.isArray(data) ? data : [data];
+      if (!arr.length) throw new Error('JSON parsed to an empty array.');
+      return arr.map((o) => canonicalize(o && typeof o === 'object' ? o : {}));
+    }
+
+    // Delimited: tab if the first line has one, else comma.
+    const firstLine = trimmed.split('\n')[0];
+    const delim = firstLine.includes('\t') ? '\t' : ',';
+    const rows = parseDelimited(trimmed, delim);
+    if (rows.length < 2) throw new Error('CSV/TSV needs a header row plus at least one data row.');
+    const headers = rows[0].map(norm);
+    return rows.slice(1).map((cells) => {
+      const raw = {};
+      headers.forEach((h, i) => { if (h) raw[h] = cells[i] ?? ''; });
+      return canonicalize(raw);
+    });
+  }
+
+  // --- Payload construction (mirrors the single tester + orientation route) ----
+  function batchDefaults() {
+    return {
+      department: strOrNull($('d_department').value),
+      lead_gen: $('d_lead_gen').value === 'true',
+      attended_on: strOrNull($('d_attended_on').value),
+      marked_by: strOrNull($('d_marked_by').value) ?? '',
+      regular_rate: $('d_regular_rate').value,
+      ot_rate: $('d_ot_rate').value,
+      note: strOrNull($('d_note').value),
+      already_marked: $('d_already_marked').checked,
+    };
+  }
+
+  // Mirror the route's splitFullName fallback: when a row carries only `name`,
+  // derive first/last from it (peel a trailing Jr/Sr/III-style extension when
+  // there are 3+ tokens; first token / last token otherwise).
+  const NAME_EXT = new Set(['jr', 'jr.', 'sr', 'sr.', 'ii', 'iii', 'iv', 'v']);
+  function splitName(full) {
+    const t = (full ?? '').toString().trim().replace(/\s+/g, ' ');
+    if (!t) return { first: null, last: null };
+    let parts = t.split(' ');
+    if (parts.length >= 3 && NAME_EXT.has(parts[parts.length - 1].toLowerCase())) parts = parts.slice(0, -1);
+    if (parts.length === 1) return { first: parts[0], last: null };
+    return { first: parts[0], last: parts[parts.length - 1] };
+  }
+
+  function buildPayload(row, dflt) {
+    let first = strOrNull(row.first_name);
+    let last = strOrNull(row.last_name);
+    let name = strOrNull(row.name);
+    // name present but a part missing -> split it in (matches the real webhook).
+    if (name && (!first || !last)) {
+      const s = splitName(name);
+      if (!first) first = s.first;
+      if (!last) last = s.last;
+    }
+    if (!name) { const j = [first, last].filter(Boolean).join(' '); name = j || null; }
+    // Row rate wins; else batch default; else null. The ?? sits OUTSIDE numOrNull
+    // so a blank CSV cell ('') falls through to the default, like string fields.
+    const regular = numOrNull(row.regular_rate) ?? numOrNull(dflt.regular_rate);
+    const attendedOn = strOrNull(row.attended_on) ?? dflt.attended_on;
+    return {
+      event: 'hire.orientation_attended',
+      pending_employee_id: numOrNull(row.pending_employee_id) ?? 0,
+      name,
+      first_name: first,
+      last_name: last,
+      work_email: strOrNull(row.work_email),
+      personal_email: strOrNull(row.personal_email),
+      department: strOrNull(row.department) ?? dflt.department,
+      lead_gen: row.lead_gen != null && row.lead_gen !== '' ? parseBool(row.lead_gen, dflt.lead_gen) : dflt.lead_gen,
+      calltools_nickname: strOrNull(row.calltools_nickname),
+      calltools_username: strOrNull(row.calltools_username),
+      pay_rate: regular ?? 0,
+      regular_rate: regular,
+      ot_rate: numOrNull(row.ot_rate) ?? numOrNull(dflt.ot_rate),
+      attended_on: attendedOn,
+      orientation_attended_at: attendedAtIso(attendedOn),
+      marked_by: (strOrNull(row.marked_by) ?? dflt.marked_by) || '',
+      note: strOrNull(row.note) ?? dflt.note,
+      already_marked: row.already_marked != null && row.already_marked !== '' ? parseBool(row.already_marked, dflt.already_marked) : dflt.already_marked,
+    };
+  }
+
+  // --- State ------------------------------------------------------------------
+  let parsed = [];            // canonicalized rows
+  let results = [];           // { status, ok, detail } aligned to parsed
+  let running = false;
+  let stopRequested = false;
+
+  function setStatus(el, kind, msg) { el.className = 'status ' + kind; el.textContent = msg; }
+
+  function renderChips() {
+    const total = parsed.length;
+    const valid = parsed.filter((r) => strOrNull(r.calltools_username)).length;
+    const ok = results.filter((r) => r && r.state === 'ok').length;
+    const err = results.filter((r) => r && r.state === 'err').length;
+    const skip = results.filter((r) => r && r.state === 'skip').length;
+    const chips = [
+      `<span class="chip"><b>${total}</b> rows</span>`,
+      `<span class="chip ${valid === total ? '' : 'warn'}"><b>${valid}</b> with username</span>`,
+    ];
+    if (total - valid > 0) chips.push(`<span class="chip warn"><b>${total - valid}</b> missing username</span>`);
+    if (ok) chips.push(`<span class="chip ok"><b>${ok}</b> ok</span>`);
+    if (err) chips.push(`<span class="chip err"><b>${err}</b> failed</span>`);
+    if (skip) chips.push(`<span class="chip warn"><b>${skip}</b> skipped</span>`);
+    $('chips').innerHTML = chips.join('');
+  }
+
+  function renderTable() {
+    const dflt = batchDefaults();
+    const rowsHtml = parsed.map((r, i) => {
+      const p = buildPayload(r, dflt);
+      const bad = !p.calltools_username;
+      const res = results[i];
+      const state = res ? res.state : 'pending';
+      const stateLabel = { pending: 'pending', sending: 'sending…', ok: '✓ ok', err: '✗ failed', skip: 'skipped' }[state];
+      const detail = res ? escapeHtml(res.detail || '') : '';
+      return `<tr class="${bad ? 'bad' : ''}">
+        <td>${i + 1}</td>
+        <td>${escapeHtml(p.name || '—')}</td>
+        <td class="mono">${escapeHtml(p.calltools_username || '⚠ missing')}</td>
+        <td class="mono">${escapeHtml(p.work_email || '—')}</td>
+        <td>${escapeHtml(p.department || '—')}</td>
+        <td class="st ${state}" id="st-${i}">${stateLabel}</td>
+        <td class="muted" id="dt-${i}">${detail}</td>
+      </tr>`;
+    }).join('');
+    $('tbody').innerHTML = rowsHtml;
+    renderChips();
+  }
+
+  function updateRow(i, state, detail) {
+    results[i] = { state, detail };
+    const st = $('st-' + i), dt = $('dt-' + i);
+    if (st) { st.className = 'st ' + state; st.textContent = { sending: 'sending…', ok: '✓ ok', err: '✗ failed', skip: 'skipped' }[state] || state; }
+    if (dt) dt.textContent = detail || '';
+    renderChips();
+  }
+
+  // Reset a row to 'pending' at the start of a (re-)run so a prior run's ✓/✗
+  // can't linger on rows this run never reaches.
+  function resetRow(i) {
+    results[i] = null;
+    const st = $('st-' + i), dt = $('dt-' + i);
+    if (st) { st.className = 'st pending'; st.textContent = 'pending'; }
+    if (dt) dt.textContent = '';
+    renderChips();
+  }
+
+  function doParse() {
+    try {
+      parsed = parseInput($('people').value);
+      results = new Array(parsed.length).fill(null);
+      $('reviewCard').style.display = '';
+      renderTable();
+      const valid = parsed.filter((r) => strOrNull(r.calltools_username)).length;
+      setStatus($('parseStatus'), valid === parsed.length ? 'ok' : 'info',
+        `Parsed ${parsed.length} row(s), ${valid} with a calltools_username.` +
+        (valid < parsed.length ? ' Rows missing a username are highlighted; they will be skipped unless you untick the option.' : ''));
+      $('results').disabled = true;
+    } catch (e) {
+      $('reviewCard').style.display = 'none';
+      setStatus($('parseStatus'), 'err', e.message || String(e));
+    }
+  }
+
+  // --- Sending ----------------------------------------------------------------
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+  async function sendOne(url, i, dflt) {
+    const payload = buildPayload(parsed[i], dflt);
+    updateRow(i, 'sending', '');
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      let body = '';
+      try { body = (await res.text()).slice(0, 300); } catch (_) {}
+      if (res.ok) { updateRow(i, 'ok', `${res.status} ${res.statusText}${body ? ' · ' + body : ''}`); return true; }
+      updateRow(i, 'err', `${res.status} ${res.statusText}${body ? ' · ' + body : ''}`);
+      return false;
+    } catch (e) {
+      // The browser returns an opaque error for BOTH a true CORS block and a
+      // real network failure (DNS, offline, refused) — indistinguishable — so
+      // do NOT claim the POST was delivered. Mark distinctly for the summary.
+      updateRow(i, 'err', 'no readable response (CORS or network error — verify in n8n): ' + (e && e.message ? e.message : e));
+      return false;
+    }
+  }
+
+  async function sendAll() {
+    if (running) return;
+    const url = $('url').value.trim();
+    if (!/^https?:\/\//i.test(url)) { setStatus($('sendStatus'), 'err', 'Enter a valid http(s):// URL first.'); return; }
+    $('bar').style.width = '0%';   // reflect THIS run, not the previous one
+
+    const dflt = batchDefaults();
+    const onlyValid = $('o_onlyvalid').checked;
+    const stopOnErr = $('o_stop').checked;
+    const delay = Math.max(0, numOrNull($('o_delay').value) ?? 0);
+    const concurrency = Math.min(10, Math.max(1, numOrNull($('o_concurrency').value) ?? 1));
+
+    // Build the work queue (indexes), skipping username-less rows up front and
+    // resetting every sendable row's display so a prior run can't leave stale ✓.
+    const queue = [];
+    parsed.forEach((r, i) => {
+      if (onlyValid && !strOrNull(r.calltools_username)) { updateRow(i, 'skip', 'no calltools_username'); }
+      else { resetRow(i); queue.push(i); }
+    });
+    if (!queue.length) { setStatus($('sendStatus'), 'err', 'No sendable rows (all missing calltools_username).'); return; }
+
+    running = true; stopRequested = false;
+    $('send').disabled = true; $('stopBtn').disabled = false; $('results').disabled = true;
+    setStatus($('sendStatus'), 'info', `Sending ${queue.length} request(s) at concurrency ${concurrency}…`);
+
+    let done = 0, ok = 0, corsSuspected = false;
+    const total = queue.length;
+    let qi = 0;
+
+    async function worker() {
+      while (qi < queue.length && !stopRequested) {
+        const idx = queue[qi++];
+        if (!parsed[idx]) continue;   // list mutated out from under us — skip
+        const success = await sendOne(url, idx, dflt);
+        done++; if (success) ok++;
+        if (results[idx] && /no readable response/i.test(results[idx].detail || '')) corsSuspected = true;
+        $('bar').style.width = Math.round((done / total) * 100) + '%';
+        if (!success && stopOnErr) { stopRequested = true; break; }
+        if (delay) await sleep(delay);
+      }
+    }
+
+    // try/finally so a worker throw can never leave the UI locked (Send stuck
+    // disabled with running stuck true, recoverable only by reload).
+    try {
+      await Promise.all(Array.from({ length: Math.min(concurrency, queue.length) }, worker));
+    } finally {
+      running = false;
+      $('send').disabled = false; $('stopBtn').disabled = true; $('results').disabled = false;
+    }
+
+    const failed = done - ok;
+    const stoppedMsg = stopRequested && done < total ? ` (stopped early — ${total - done} not sent)` : '';
+    let msg = `Done: ${ok} ok, ${failed} failed of ${total}${stoppedMsg}.`;
+    if (corsSuspected) msg += '\nSome rows got no readable response — the browser can\'t tell a CORS block from a real network failure, so do NOT assume those reached n8n. Confirm in your n8n executions, or use "Copy all as curl".';
+    setStatus($('sendStatus'), failed ? (ok ? 'info' : 'err') : 'ok', msg);
+  }
+
+  // --- Preview / copy / export ------------------------------------------------
+  function buildAll() {
+    const dflt = batchDefaults();
+    return parsed.map((r) => buildPayload(r, dflt));
+  }
+  function highlight(json) {
+    const esc = escapeHtml(json);
+    return esc.replace(/("(?:\\.|[^"\\])*"(\s*:)?)|\b(true|false|null)\b|(-?\d+(?:\.\d+)?)/g,
+      (m, strGrp, colon, lit, num) => {
+        if (strGrp !== undefined) return '<span class="' + (colon ? 'k' : 's') + '">' + m + '</span>';
+        if (lit !== undefined) return '<span class="b">' + m + '</span>';
+        if (num !== undefined) return '<span class="n">' + m + '</span>';
+        return m;
+      });
+  }
+  function previewPayloads() {
+    const all = buildAll();
+    const shown = all.slice(0, 5);
+    $('previewPre').innerHTML = highlight(JSON.stringify(shown, null, 2)) +
+      (all.length > 5 ? `\n\n<span class="muted">… ${all.length - 5} more</span>` : '');
+    $('previewWrap').style.display = '';
+    $('previewWrap').open = true;
+  }
+  // POSIX single-quote wrap (close, escaped quote, reopen). Applied to BOTH the
+  // URL and the payload so neither can break out of the quoting.
+  const shq = (s) => `'` + String(s).replace(/'/g, `'\\''`) + `'`;
+  async function copyJson() {
+    try {
+      await navigator.clipboard.writeText(JSON.stringify(buildAll(), null, 2));
+      setStatus($('sendStatus'), 'ok', `Copied a JSON array of ${parsed.length} payload(s).`);
+    } catch (e) {
+      setStatus($('sendStatus'), 'err', 'Clipboard blocked (' + (e && e.message ? e.message : e) + '). Use "Preview payloads" to copy manually.');
+    }
+  }
+  async function copyCurl() {
+    const url = $('url').value.trim();
+    const lines = buildAll().map((p) =>
+      `curl -X POST ${shq(url)} -H 'Content-Type: application/json' -d ${shq(JSON.stringify(p))}`);
+    try {
+      await navigator.clipboard.writeText(lines.join('\n'));
+      setStatus($('sendStatus'), 'ok', `Copied ${lines.length} curl command(s) for a POSIX shell (bash/WSL — NOT PowerShell or cmd). Paste into a terminal (works around CORS).`);
+    } catch (e) {
+      setStatus($('sendStatus'), 'err', 'Clipboard blocked (' + (e && e.message ? e.message : e) + ').');
+    }
+  }
+  function downloadResults() {
+    const dflt = batchDefaults();
+    const esc = (v) => { const s = (v ?? '').toString(); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
+    const head = ['#', 'name', 'calltools_username', 'work_email', 'department', 'state', 'detail'];
+    const lines = [head.join(',')];
+    parsed.forEach((r, i) => {
+      const p = buildPayload(r, dflt);
+      const res = results[i] || { state: 'not_sent', detail: '' };
+      lines.push([i + 1, p.name, p.calltools_username, p.work_email, p.department, res.state, res.detail].map(esc).join(','));
+    });
+    const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'calltools-batch-results.csv';
+    a.click();
+    URL.revokeObjectURL(a.href);
+  }
+
+  // --- Sample data (79 rows) --------------------------------------------------
+  function loadSample() {
+    const firsts = ['James','Maria','Joan','Mikey','Andy','Grace','Paolo','Liza','Ramon','Cathy','Ben','Ella','Nico','Rhea','Karl','Ivy','Dan','Mika','Tom','Zoe'];
+    const lasts = ['Thomas','Cruz','Reyes','Santos','Garcia','Torres','Flores','Ramos','Aquino','Dela Cruz','Lim','Tan','Ong','Yap','Diaz','Castro','Villa','Mendoza','Rosales','Uy'];
+    const rows = [];
+    for (let i = 0; i < 79; i++) {
+      const f = firsts[i % firsts.length];
+      const l = lasts[(i * 3) % lasts.length];
+      const slug = (f + '.' + l.replace(/\s+/g, '') + (i + 1)).toLowerCase();
+      const nick = f;
+      const uname = `${nick} ${f[0]}. ${l.replace(/\s+/g, '').slice(0, 1 + (i % 3)).toUpperCase()}.`;
+      rows.push({
+        pending_employee_id: 990000 + i + 1,
+        name: `${f} ${l}`,
+        first_name: f,
+        last_name: l,
+        work_email: `${slug}@simple.biz`,
+        personal_email: `${slug}.dummy@gmail.com`,
+        department: 'Lead Gen',
+        calltools_nickname: nick,
+        calltools_username: uname,
+      });
+    }
+    $('people').value = JSON.stringify(rows, null, 2);
+    doParse();
+  }
+
+  // --- Wiring -----------------------------------------------------------------
+  // Guard the list-mutating controls while a send is running so workers can't
+  // have `parsed`/`results` swapped out from under them mid-flight.
+  $('parse').addEventListener('click', () => { if (!running) doParse(); });
+  $('loadsample').addEventListener('click', () => { if (!running) loadSample(); });
+  $('clear').addEventListener('click', () => {
+    if (running) return;
+    $('people').value = ''; parsed = []; results = [];
+    $('reviewCard').style.display = 'none'; $('parseStatus').className = 'status';
+  });
+  $('send').addEventListener('click', sendAll);
+  $('stopBtn').addEventListener('click', () => { stopRequested = true; setStatus($('sendStatus'), 'info', 'Stopping after in-flight requests…'); });
+  $('preview').addEventListener('click', previewPayloads);
+  $('copyjson').addEventListener('click', copyJson);
+  $('copycurl').addEventListener('click', copyCurl);
+  $('results').addEventListener('click', downloadResults);
+
+  // Re-render the table when a batch default changes — but NOT during a send, or
+  // the displayed payload would diverge from the frozen snapshot workers send.
+  ['d_department','d_lead_gen','d_attended_on','d_marked_by','d_regular_rate','d_ot_rate','d_note','d_already_marked']
+    .forEach((id) => { const el = $(id); const rerender = () => { if (!running && parsed.length) renderTable(); }; el.addEventListener('input', rerender); el.addEventListener('change', rerender); });
+</script>
+</body>
+</html>

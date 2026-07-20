@@ -178,6 +178,83 @@ The pure rule lives in
 
 ---
 
+## Roster surfacing + backfill (Manager → My Team → list view)
+
+The Manager **My Team → Roster** list view carries an **inline-editable
+CallTools Username** column. It is Lead-Gen-scoped both ways:
+
+- the column only renders when the currently-visible (filtered) roster contains
+  at least one Lead Gen member — non-Lead-Gen teams never see an all-blank
+  column (`showCallToolsCol` in `ManagerApp.tsx`, gated by `isLeadGenDepartment`);
+- per Lead Gen row: the current username (mono) with a hover pencil to edit, or a
+  clickable amber **"Needs backfill"** chip when none is on file; every
+  non-Lead-Gen row shows a plain `—`.
+
+### Two sources, manual wins
+
+`loadCallToolsUsernamesByEmail`
+([calltools-username-server.ts](../../src/lib/hr/calltools-username-server.ts))
+returns an email→username map merged from **two** sources, and
+`/api/manager/department-members` attaches it onto each
+`EmployeeRow.calltools_username` in the same decorate pass as HSL/rate data
+(matching on work/personal/alternate emails):
+
+1. **Onboarding submissions** — every `hr_onboarding_submissions.calltools_username`
+   (the auto-minted value; Lead Gen is the only department that stores one),
+   keyed by the minted `work_email`, the typed personal `email`, and
+   `invite_personal_email`.
+2. **`employee_calltools_usernames`** (the per-employee manual store) — overlaid
+   ON TOP, so a deliberate backfill/correction **wins** over a stale minted one.
+
+Best-effort throughout: a missing column/table or a read failure just skips that
+source rather than breaking the roster.
+
+### Who has a minted username vs. who needs backfill (2026-07-20 audit)
+
+Two distinct populations — don't confuse them:
+
+- **The July 2026 new-hire batch (≈79 Lead Gen hires)** onboarded through the
+  nickname feature: their submissions carry minted usernames (verified 79/79 —
+  orientation stamped, username minted + unique, `call_tools_creation` webhook
+  HTTP 200 in the audit log). They sit on the **New Hire Check List**
+  (`hr_pending_employees`), not yet promoted, so they are NOT on
+  `active_employees` yet — once promoted, the roster column picks them up
+  automatically via the email join. Their usernames show on the Newly Hired
+  panel (below).
+- **Pre-feature Lead Gen staff (~217 active)**: none had a stored username, and
+  ~94 have **no onboarding submission at all** — so there was nowhere to record
+  one. The manual store is that place, keyed by the employee's work email
+  (personal fallback), independent of whether they ever had a submission.
+
+### New Hire Check List surfacing (Manager → My Team → New Hire Check List)
+
+`GET /api/manager/pending-hires` attaches **`calltools_username`** to each row —
+`loadCallToolsUsernamesByPendingIds` maps `hr_onboarding_submissions
+.pending_employee_id` → latest submission's username (Lead Gen rows only;
+display-only, never mints). On the actionable card (awaiting/attended),
+`NewlyHiredPanel` shows a violet **copyable dialer-username badge** under the
+emails line, or a "not minted yet" chip when the paperwork hasn't minted one.
+The Bypass and no-show card variants deliberately omit the line (a bypassed
+worker was provisioned outside the system; a no-show has no dialer account).
+
+### Editing / backfilling
+
+- **Inline:** click the cell → type → Enter/blur saves. `PATCH
+  /api/manager/calltools-username`
+  ([route](../../app/api/manager/calltools-username/route.ts)) upserts the store,
+  scoped exactly like the roster read (manager/admin; a non-elevated manager may
+  only edit someone on a department they manage). An empty save clears the
+  manual entry (reverts to the submission value, if any). The just-saved value
+  shows immediately via a local override map — no roster refetch.
+- **Bulk:** `node scripts/import-calltools-usernames.mjs <file.csv>` (dry-run;
+  add `--apply` to write) matches each CSV row to an employee by **email
+  first**, then a normalized-name fallback (exact, then a unique-subset match for
+  messy nickname-laden roster names), and upserts into the store. Auto-detects
+  the username/email/name columns; overridable with `--username-col=` etc.
+  **Include work emails in the export for reliable matching.**
+
+---
+
 ## Pending migration
 
 > `references/sql/alter/add_calltools_username_to_onboarding.sql` — idempotent:
@@ -200,7 +277,12 @@ The pure rule lives in
 | Path | Role |
 |---|---|
 | [`src/lib/hr/calltools-username.ts`](../../src/lib/hr/calltools-username.ts) | Pure minting rule: candidates, suggestion, `isLeadGenDepartment` |
-| [`src/lib/hr/calltools-username-server.ts`](../../src/lib/hr/calltools-username-server.ts) | `loadTakenCallToolsUsernames` (all-status over-reserve) |
+| [`src/lib/hr/calltools-username-server.ts`](../../src/lib/hr/calltools-username-server.ts) | `loadTakenCallToolsUsernames` (all-status over-reserve); `loadCallToolsUsernamesByEmail` (email→username map: submissions + `employee_calltools_usernames`, manual wins) |
+| [`app/api/manager/department-members/route.ts`](../../app/api/manager/department-members/route.ts) | Joins the resolved username onto each roster `EmployeeRow.calltools_username` by email (Lead Gen only) |
+| [`app/api/manager/calltools-username/route.ts`](../../app/api/manager/calltools-username/route.ts) | `PATCH` — inline backfill: upsert/clear the per-employee store, scoped like the roster read |
+| [`src/components/manager/ManagerApp.tsx`](../../src/components/manager/ManagerApp.tsx) | My Team → Roster **list** view: Lead-Gen-gated, **inline-editable** "CallTools Username" column (`CallToolsUsernameCell`) |
+| [`scripts/import-calltools-usernames.mjs`](../../scripts/import-calltools-usernames.mjs) | Bulk backfill importer — CSV → `employee_calltools_usernames`, email/name matching, dry-run by default |
+| [`references/sql/migrate/2026-07-20_employee_calltools_usernames.sql`](../../references/sql/migrate/2026-07-20_employee_calltools_usernames.sql) | **PENDING** — creates the per-employee `employee_calltools_usernames` store |
 | [`app/api/onboarding/[token]/calltools-username/route.ts`](../../app/api/onboarding/[token]/calltools-username/route.ts) | PREVIEW-ONLY live derivation (elevated session; other tokens 404) |
 | [`app/onboarding/[token]/page.tsx`](../../app/onboarding/[token]/page.tsx) | Editable Lead Gen nickname; preview-only username field + Lead Gen switches |
 | [`app/api/onboarding/[token]/route.ts`](../../app/api/onboarding/[token]/route.ts) | Mints `calltools_username` server-side at submit; returns only the nickname in `priorData` |
@@ -208,6 +290,7 @@ The pure rule lives in
 | [`src/components/hr/HrOnboardingForm.tsx`](../../src/components/hr/HrOnboardingForm.tsx) | Detail-modal "CallTools nickname / username" rows |
 | [`src/lib/hr/orientation-webhook.ts`](../../src/lib/hr/orientation-webhook.ts) | `call_tools_creation` slug + payload type (incl. rates) + best-effort fire |
 | [`app/api/manager/pending-hires/[id]/orientation/route.ts`](../../app/api/manager/pending-hires/[id]/orientation/route.ts) | Fires the webhook on mark-attended with the CallTools fields + `already_marked` |
-| [`src/components/manager/NewlyHiredPanel.tsx`](../../src/components/manager/NewlyHiredPanel.tsx) | Toasts when the mark saved but the n8n webhook failed (single + bulk) |
+| [`src/components/manager/NewlyHiredPanel.tsx`](../../src/components/manager/NewlyHiredPanel.tsx) | Copyable CallTools-username badge per Lead Gen card; toasts when the mark saved but the n8n webhook failed (single + bulk) |
+| [`app/api/manager/pending-hires/route.ts`](../../app/api/manager/pending-hires/route.ts) | Attaches `calltools_username` per pending hire (`loadCallToolsUsernamesByPendingIds`) |
 | [`src/components/admin/AdminWebhooks.tsx`](../../src/components/admin/AdminWebhooks.tsx) | `call_tools_creation` slug registry entry |
 | [`references/sql/alter/add_calltools_username_to_onboarding.sql`](../../references/sql/alter/add_calltools_username_to_onboarding.sql) | **PENDING** migration |

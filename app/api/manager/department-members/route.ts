@@ -11,6 +11,7 @@ import {
   getEmployeeHourlyRatesRows,
   indexHourlyRatesByEmail,
 } from '@/lib/supabase/employee-hourly-rates';
+import { loadCallToolsUsernamesByEmail } from '@/lib/hr/calltools-username-server';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -98,6 +99,12 @@ export async function GET() {
     const { byEmail: hslByEmail } = await fetchActiveHslDetailsByEmail();
     const { rows: rateRows } = await getEmployeeHourlyRatesRows();
     const ratesByEmail = indexHourlyRatesByEmail(rateRows);
+    // Stored CallTools dialer usernames (Lead Gen only), keyed by every email a
+    // roster row might carry. Best-effort: a failure here must never break the
+    // roster, so fall back to an empty map (column just shows "needs backfill").
+    const callToolsByEmail = await loadCallToolsUsernamesByEmail().catch(
+      () => new Map<string, string>(),
+    );
     const decorateWithHsl = (row: EmployeeRow): EmployeeRow => {
       const w = normEmail(row.work_email ?? null);
       const p = normEmail(row.personal_email ?? null);
@@ -117,8 +124,15 @@ export async function GET() {
         (a1 && ratesByEmail.get(a1)) ||
         (a2 && ratesByEmail.get(a2)) ||
         null;
+      const callToolsUsername =
+        (w && callToolsByEmail.get(w)) ||
+        (p && callToolsByEmail.get(p)) ||
+        (a1 && callToolsByEmail.get(a1)) ||
+        (a2 && callToolsByEmail.get(a2)) ||
+        null;
       return {
         ...row,
+        calltools_username: callToolsUsername,
         hsl_role: hit?.role ?? null,
         hsl_hourly_rate: rateVisible ? (hit?.hourlyRate ?? null) : null,
         hsl_ot_rate: rateVisible ? (hit?.otRate ?? null) : null,

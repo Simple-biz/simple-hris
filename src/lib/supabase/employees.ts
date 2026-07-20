@@ -71,6 +71,13 @@ export type EmployeeRow = {
   ot_rate?: number | null;
   /** MESA Program member flag — ₱100 deducted from every paycheck when true. */
   mesa_member?: boolean | null;
+  /** Lead Gen only: the stored CallTools dialer username minted at onboarding
+   *  (`<Nickname> <first initial>. <surname slice>.`). Populated by roster routes
+   *  that opt in to the onboarding-submission join (e.g.
+   *  `/api/manager/department-members`) by matching this employee's emails; null
+   *  for non-Lead-Gen hires and for Lead Gen hires whose paperwork predates the
+   *  feature (HR backfills those). Other consumers leave it `undefined`. */
+  calltools_username?: string | null;
 };
 
 type RawRow = Record<string, unknown>;

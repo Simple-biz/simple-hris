@@ -3256,7 +3256,7 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
                             return (
                               <div
                                 key={di}
-                                className={`group relative flex h-10 flex-col overflow-hidden rounded-lg border transition-all duration-300 ease-out hover:z-10 hover:shadow-md motion-safe:hover:scale-[1.06] lg:h-full lg:min-h-[2.5rem] ${cellBorder} ${cellClickable ? `cursor-pointer ${isHoliday ? 'hover:ring-2 hover:ring-sky-400/50' : 'hover:ring-2 hover:ring-orange-300/50'}` : ''}`}
+                                className={`group relative flex h-10 flex-col overflow-hidden rounded-lg border transition-transform duration-200 ease-[cubic-bezier(0.34,1.4,0.64,1)] hover:z-10 hover:shadow-md motion-safe:hover:scale-[1.05] lg:h-full lg:min-h-[2.5rem] ${cellBorder} ${cellClickable ? `cursor-pointer ${isHoliday ? 'hover:ring-2 hover:ring-sky-400/50' : 'hover:ring-2 hover:ring-orange-300/50'}` : ''}`}
                                 title={`${day.dayLabel} ${day.dateStr}${holidayName ? ` · ${holidayName} (holiday — click for details)` : ''}: ${secondsToDisplay(day.seconds)}${dispute ? ` (${dispute.status})` : day.passes ? ' ✓' : isToday ? ' — in progress' : isFutureOrToday ? ' — not yet' : stillProcessing ? ' — processing' : day.hasData ? ' ✗ needs 7h — click to file an issue' : ' — no data'}${rateTooltipSuffix}`}
                                 style={{
                                   // `backwards` (not `both`): hold the hidden start-state during the
@@ -3277,7 +3277,7 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
                                     below the content (which is `relative`), so nothing is washed out. */}
                                 <span
                                   aria-hidden
-                                  className="pointer-events-none absolute inset-0 rounded-[inherit] bg-gradient-to-b from-white/50 to-transparent opacity-80 transition-opacity duration-300 group-hover:opacity-100 dark:from-white/[0.10] dark:opacity-70"
+                                  className="pointer-events-none absolute inset-0 rounded-[inherit] bg-gradient-to-b from-white/50 to-transparent opacity-80 transition-opacity duration-200 group-hover:opacity-100 dark:from-white/[0.10] dark:opacity-70"
                                 />
                                 <span className="pointer-events-none absolute left-1 top-0.5 max-w-[calc(100%-1.25rem)] truncate text-[5px] font-medium leading-none tabular-nums text-zinc-400 dark:text-zinc-500">
                                   {day.dateStr}

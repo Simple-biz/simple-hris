@@ -690,7 +690,7 @@ export default function AccountingMesa() {
               {view === 'requests'
                 ? 'Opt-out, disbursement, and return requests submitted by members. Opt-in requests are handled by HR.'
                 : view === 'non-members'
-                ? 'Employees who have never joined MESA — not opted in and with no MESA start date. Temporary manual Opt In until members self-serve from the Employee Dashboard.'
+                ? 'Employees not enrolled in MESA — those who never joined, plus opted-out ex-members (last status: Opted out). Temporary manual Opt In until members self-serve from the Employee Dashboard.'
                 : 'Employees currently enrolled in MESA, with their contribution, match, and balance to date.'}
             </p>
           </div>
@@ -1321,6 +1321,7 @@ function rosterRowToSummary(row: MesaRosterRow): MesaMemberSummary {
     firstDeposit: null,
     lastDeposit: null,
     lastDisbursement: null,
+    lastEventOptedOut: false,
     accountNumber: row.accountNumber,
   };
 }
@@ -1329,15 +1330,37 @@ const BALANCES_PAGE_SIZE = 20;
 
 // ── Non Members ────────────────────────────────────────────────────────────
 //
-// Employees who have never joined MESA — not opted in (mesa_member = false)
-// AND with no MESA start date (mesa_member_since is null). Opted-out
-// ex-members keep their start date (see toggle-mesa-member), so they're
-// excluded here — they're former members, tracked via the ledger/requests.
-// Each non-member has a temporary manual Opt In — a stopgap so Accounting can
-// enroll anyone right now, before employees self-serve via the Employee
-// Dashboard's MESA Request tab (EmployeeMesa.tsx), which goes through the
-// mesa_requests review queue. Remove this direct-toggle path once that's the
-// primary way members join.
+// Everyone NOT currently enrolled in MESA (employee_hourly_rates.mesa_member =
+// false). That covers two standings, told apart by whether a MESA start date
+// (mesa_member_since) was ever stamped:
+//   • Never joined — no start date.
+//   • Opted out    — a former member. Two ways this shows up:
+//       (a) the flag was cleared: toggle-mesa-member sets mesa_member = false but
+//           LEAVES mesa_member_since in place, so a lingering start date with the
+//           flag off is the signal; or
+//       (b) the flag DRIFTED: the ledger's last entry is an Opt-out/Termination
+//           (or 'Inactive' status) yet mesa_member was never flipped to false
+//           (ledger.lastEventOptedOut). Membership was ended in the tracker but
+//           the flag stayed on — that member must still count as OUT here (and
+//           off the Active tab), not enrolled.
+// Both surface here (opted-out members used to fall through to neither tab); a
+// per-row Status badge tells them apart. Each has a temporary manual Opt In — a
+// stopgap so Accounting can enroll (or re-enroll) anyone right now, before
+// employees self-serve via the Employee Dashboard's MESA Request tab
+// (EmployeeMesa.tsx), which goes through the mesa_requests review queue. Opting a
+// former member back in mints a fresh account (see toggle-mesa-member). Remove
+// this direct-toggle path once self-serve is the primary way members join.
+
+/** Currently enrolled: flagged mesa_member AND the ledger shows no trailing
+ *  opt-out. The ledger guard catches flag drift — a former member whose last
+ *  ledger entry is an Opt-out but whose flag was never cleared is NOT active. */
+const isActiveMember = (r: MesaRosterRow): boolean => r.mesaMember && !r.ledger?.lastEventOptedOut;
+/** Was a member, then opted out — flag cleared (start date lingers) OR the
+ *  ledger's last entry is an opt-out while the flag stayed on. */
+const isOptedOut = (r: MesaRosterRow): boolean =>
+  (!r.mesaMember && !!r.mesaMemberSince) || !!r.ledger?.lastEventOptedOut;
+/** Not currently enrolled — never joined OR opted out (the complement of active). */
+const isNonMember = (r: MesaRosterRow): boolean => !isActiveMember(r);
 
 function MesaNonMembers() {
   const [rows, setRows] = useState<MesaRosterRow[]>(
@@ -1371,16 +1394,15 @@ function MesaNonMembers() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Non Members = never joined MESA: not opted in (mesa_member = false) AND no
-  // MESA start date (mesa_member_since is null). Excludes opted-out ex-members,
-  // who retain their start date — they're former members, not never-members.
-  // Enrolled members live on the "MESA Active Members" tab.
+  // Non Members = everyone NOT currently enrolled (mesa_member = false): both
+  // never-joined employees and opted-out ex-members (who retain their start
+  // date). Enrolled members live on the "MESA Active Members" tab.
   const departments = useMemo(
     () =>
       Array.from(
         new Set(
           rows
-            .filter((r) => !r.mesaMember && !r.mesaMemberSince)
+            .filter(isNonMember)
             .map((r) => r.department)
             .filter((d): d is string => !!d),
         ),
@@ -1389,7 +1411,7 @@ function MesaNonMembers() {
   );
 
   const filtered = useMemo(() => {
-    let base = rows.filter((r) => !r.mesaMember && !r.mesaMemberSince);
+    let base = rows.filter(isNonMember);
     if (filterDepartment) base = base.filter((r) => r.department === filterDepartment);
     const q = query.trim().toLowerCase();
     if (!q) return base;
@@ -1403,13 +1425,12 @@ function MesaNonMembers() {
 
   useEffect(() => { setPage(0); }, [query, filterDepartment]);
 
-  const enrolledCount = useMemo(() => rows.filter((r) => r.mesaMember).length, [rows]);
-  // Strict non-members: never joined (not opted in AND no start date) — matches
-  // the filtered table above, so the stat card can't disagree with the list.
-  const nonMemberCount = useMemo(
-    () => rows.filter((r) => !r.mesaMember && !r.mesaMemberSince).length,
-    [rows],
-  );
+  const enrolledCount = useMemo(() => rows.filter(isActiveMember).length, [rows]);
+  // Non-members = everyone not currently enrolled — matches the filtered table
+  // above, so the stat card can't disagree with the list.
+  const nonMemberCount = useMemo(() => rows.filter(isNonMember).length, [rows]);
+  // Of those, how many are opted-out ex-members (vs. never joined).
+  const optedOutCount = useMemo(() => rows.filter(isOptedOut).length, [rows]);
 
   const exportSpec = useMemo<MesaExportSpec>(() => {
     const scopeParts = [
@@ -1424,17 +1445,26 @@ function MesaNonMembers() {
       scopeLabel: scopeParts.length ? scopeParts.join(' · ') : 'All departments',
       countNoun: ['employee', 'employees'],
       stats: [
-        { label: 'Non members', value: nonMemberCount.toLocaleString() },
+        // Non-member figures track the EXPORTED (filtered) rows so the document
+        // is internally consistent; enrolled is a whole-roster cross-reference.
+        { label: 'Non members', value: filtered.length.toLocaleString() },
+        { label: 'Opted out', value: filtered.filter(isOptedOut).length.toLocaleString() },
         { label: 'Enrolled (MESA Active)', value: enrolledCount.toLocaleString() },
       ],
       columns: [
-        { header: 'Name', pdfWeight: 150, xlsxWidth: 28 },
-        { header: 'Department', pdfWeight: 110, xlsxWidth: 22 },
-        { header: 'Email', pdfWeight: 210, xlsxWidth: 34 },
+        { header: 'Name', pdfWeight: 140, xlsxWidth: 26 },
+        { header: 'Status', pdfWeight: 80, xlsxWidth: 14 },
+        { header: 'Department', pdfWeight: 100, xlsxWidth: 20 },
+        { header: 'Email', pdfWeight: 190, xlsxWidth: 32 },
       ],
-      rows: filtered.map((r) => [r.name, r.department ?? '-', r.workEmail ?? r.personalEmail ?? '-']),
+      rows: filtered.map((r) => [
+        r.name,
+        isOptedOut(r) ? 'Opted out' : 'Never joined',
+        r.department ?? '-',
+        r.workEmail ?? r.personalEmail ?? '-',
+      ]),
       notes: [
-        'Non members = employees who have never joined MESA (not opted in and no MESA start date). Opted-out ex-members are not listed here — their closed accounts remain on record in the MESA ledger.',
+        'Non members = employees not currently enrolled in MESA: never joined (no MESA start date) or opted out (was a member, since removed). Opting a former member back in opens a fresh account; their prior closed account stays on record in the MESA ledger.',
       ],
     };
   }, [filtered, nonMemberCount, enrolledCount, filterDepartment, query]);
@@ -1469,8 +1499,9 @@ function MesaNonMembers() {
   return (
     <div className="space-y-5">
       {/* Summary */}
-      <div className="grid gap-3 sm:grid-cols-2">
+      <div className="grid gap-3 sm:grid-cols-3">
         <StatCard label="Non members" value={nonMemberCount} tone="zinc" />
+        <StatCard label="Opted out" value={optedOutCount} tone="amber" />
         <StatCard label="Enrolled (MESA Active)" value={enrolledCount} tone="teal" />
       </div>
 
@@ -1525,7 +1556,7 @@ function MesaNonMembers() {
           ) : filtered.length === 0 ? (
             <div className="flex flex-col items-center justify-center gap-2 px-5 py-12 text-center text-sm text-zinc-500 dark:text-zinc-400">
               <Inbox className="h-6 w-6 text-zinc-400" />
-              {nonMemberCount === 0 ? 'No non-members — everyone on the roster has joined MESA at some point.' : 'No results match your search.'}
+              {nonMemberCount === 0 ? 'No non-members — everyone on the roster is currently enrolled in MESA.' : 'No results match your search.'}
             </div>
           ) : (
             <div className="overflow-x-auto">
@@ -1536,6 +1567,7 @@ function MesaNonMembers() {
                       <SelectCheckbox checked={sel.allSelected} indeterminate={sel.someSelected} onChange={sel.toggleAll} ariaLabel="Select all employees" />
                     </th>
                     <th className="px-4 py-2.5">Name</th>
+                    <th className="px-4 py-2.5">Status</th>
                     <th className="px-4 py-2.5">Department</th>
                     <th className="px-4 py-2.5">Email</th>
                     <th className="px-4 py-2.5 text-right">Actions</th>
@@ -1549,6 +1581,23 @@ function MesaNonMembers() {
                       </td>
                       <td className="px-4 py-3 font-medium text-zinc-900 dark:text-zinc-100" data-label="Name">
                         {r.name}
+                      </td>
+                      <td className="px-4 py-3" data-label="Status">
+                        {isOptedOut(r) ? (
+                          <Badge
+                            variant="outline"
+                            className="border-amber-200 bg-amber-50 text-[10.5px] font-semibold uppercase tracking-wide text-amber-700 dark:border-amber-500/40 dark:bg-amber-500/15 dark:text-amber-200"
+                          >
+                            Opted out
+                          </Badge>
+                        ) : (
+                          <Badge
+                            variant="outline"
+                            className="border-zinc-200 bg-zinc-50 text-[10.5px] font-semibold uppercase tracking-wide text-zinc-600 dark:border-zinc-600 dark:bg-zinc-800/50 dark:text-zinc-300"
+                          >
+                            Never joined
+                          </Badge>
+                        )}
                       </td>
                       <td className="px-4 py-3 text-zinc-600 dark:text-zinc-400" data-label="Department">
                         {r.department ? (
@@ -1570,7 +1619,7 @@ function MesaNonMembers() {
                             <Eye className="h-3 w-3" />
                             View
                           </Button>
-                          {/* This tab only lists not-yet-enrolled employees, so the row action is always Opt In. */}
+                          {/* Everyone here is not currently enrolled (never joined or opted out), so the row action is always Opt In — for a former member it re-enrols them on a fresh account. */}
                           <Button
                             type="button"
                             size="sm"
@@ -1666,11 +1715,14 @@ function MesaNonMembers() {
 
 // ── MESA Active Members ──────────────────────────────────────────────────────
 //
-// Employees currently enrolled (employee_hourly_rates.mesa_member = true),
-// roster-grounded so a brand-new enrollee shows up at ₱0 even before their
-// first ledger row lands. Financial rollup comes from mesa_ledger when
-// present. Read-only here — enrollment changes happen on the Non Members tab
-// (temporary) or via the mesa_requests review queue.
+// Employees currently enrolled: employee_hourly_rates.mesa_member = true AND no
+// trailing opt-out in the ledger (isActiveMember). The ledger guard keeps a
+// former member off this tab when their flag drifted out of sync (last ledger
+// entry is an Opt-out but the flag was never cleared) — they belong on Non
+// Members instead. Roster-grounded so a brand-new enrollee shows up at ₱0 even
+// before their first ledger row lands. Financial rollup comes from mesa_ledger
+// when present. Read-only here — enrollment changes happen on the Non Members
+// tab (temporary) or via the mesa_requests review queue.
 
 function MesaActiveMembers() {
   const [rows, setRows] = useState<MesaRosterRow[]>(
@@ -1688,7 +1740,7 @@ function MesaActiveMembers() {
   const load = async (showSpinner = true) => {
     if (showSpinner) setLoading(true); else setRefreshing(true);
     try {
-      const data = (await fetchMesaRoster()).filter((r) => r.mesaMember);
+      const data = (await fetchMesaRoster()).filter(isActiveMember);
       setTabCache(TAB_CACHE_KEYS.mesaActiveMembers, data);
       setRows(data);
     } catch (e) {

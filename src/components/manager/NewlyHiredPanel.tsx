@@ -1,13 +1,14 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { AlertTriangle, CheckCircle2, ClipboardCheck, Download, FileSpreadsheet, Layers, Loader2, RotateCcw, Search, UserPlus, X, XCircle } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, ClipboardCheck, Copy, Download, FileSpreadsheet, Layers, Loader2, Phone, RotateCcw, Search, UserPlus, X, XCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { DatePicker } from '@/components/ui/date-picker';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { formatWeekLabel, sundayIso } from '@/lib/hr/hiring-week';
+import { isLeadGenDepartment } from '@/lib/hr/calltools-username';
 import type { HrPendingStatus } from '@/lib/supabase/hr-pending-employees';
 
 /**
@@ -32,6 +33,9 @@ type PendingHireRow = {
   no_show_at: string | null;
   no_show_by: string | null;
   no_show_note: string | null;
+  /** Lead Gen only: the CallTools dialer username minted on the hire's linked
+   *  onboarding submission (null for other departments / not yet minted). */
+  calltools_username: string | null;
 };
 
 /**
@@ -770,6 +774,35 @@ export default function NewlyHiredPanel({ viewerEmail, teamGate }: NewlyHiredPan
               {r.personal_email}
               {r.work_email ? ` · ${r.work_email}` : ' · work email pending'}
             </div>
+            {isLeadGenDepartment(r.department) && (
+              <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
+                <Phone className="h-3 w-3 text-violet-500 dark:text-violet-400" aria-hidden />
+                <span className="font-medium text-zinc-500 dark:text-zinc-400">CallTools</span>
+                {r.calltools_username ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void navigator.clipboard
+                        .writeText(r.calltools_username ?? '')
+                        .then(() => toast.success('CallTools username copied'))
+                        .catch(() => toast.error('Copy failed'));
+                    }}
+                    className="group/ctu inline-flex items-center gap-1 rounded-md border border-violet-200 bg-violet-50 px-1.5 py-0.5 font-mono text-[11px] text-violet-800 transition hover:border-violet-300 hover:bg-violet-100 dark:border-violet-500/30 dark:bg-violet-500/10 dark:text-violet-200 dark:hover:bg-violet-500/20"
+                    title="Copy the dialer username"
+                  >
+                    {r.calltools_username}
+                    <Copy className="h-2.5 w-2.5 opacity-40 transition group-hover/ctu:opacity-100" aria-hidden />
+                  </button>
+                ) : (
+                  <span
+                    className="inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] font-medium text-amber-700 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300"
+                    title="Minted when the hire submits paperwork (or at mark-attended for older paperwork)"
+                  >
+                    not minted yet
+                  </span>
+                )}
+              </div>
+            )}
             <div className="text-[11px] text-zinc-500 dark:text-zinc-400">
               Added {fmtLongDate(r.created_at)}
               {r.start_date ? ` · start ${fmtLongDate(r.start_date)}` : ''}
