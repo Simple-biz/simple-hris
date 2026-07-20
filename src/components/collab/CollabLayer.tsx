@@ -187,13 +187,15 @@ interface PresencePayload {
 // --- cursor trails (per-person flair) ----------------------------------------
 // A few accounting users get a cosmetic trail behind their live cursor. Purely
 // visual and scoped by email, so nobody else's pointer changes.
-//   - Aliviah: pink fairy dust  -> "particle" mode (sparkles that fall + tumble)
-//   - Carla:   purple laser     -> "segment" mode (glowing beam along the path)
-//   - Kaner:   blue + electric  -> "segment" mode (jagged lightning along path)
-type TrailKind = 'fairy' | 'laser' | 'electric';
+//   - Aliviah: pink fairy dust   -> "particle" mode (sparkles that fall + tumble)
+//   - Breaj:   yellow pixie dust  -> "particle" mode (same sparkles, gold palette)
+//   - Carla:   purple laser       -> "segment" mode (glowing beam along the path)
+//   - Kaner:   blue + electric    -> "segment" mode (jagged lightning along path)
+type TrailKind = 'fairy' | 'pixie' | 'laser' | 'electric';
 
 const TRAIL_BY_EMAIL: Record<string, TrailKind> = {
   'aliviah@simple.biz': 'fairy',
+  'breaj@simple.biz': 'pixie',
   'carla@simple.biz': 'laser',
   'kaner@simple.biz': 'electric',
 };
@@ -204,6 +206,7 @@ const CURSOR_OVERRIDE: Record<string, { color: string; glow: string }> = {
 };
 
 const FAIRY_DUST_COLORS = ['#ff9ed8', '#ffc2ec', '#ff6fbf', '#ffd9f2', '#f4a8ff', '#ffb0e0'];
+const PIXIE_DUST_COLORS = ['#fde68a', '#fcd34d', '#fbbf24', '#fef9c3', '#facc15', '#fef08a'];
 const LASER_COLORS = ['#e9d5ff', '#d8b4fe', '#c084fc', '#a855f7', '#9333ea'];
 const ELECTRIC_COLORS = ['#e0f2fe', '#bae6fd', '#7dd3fc', '#38bdf8', '#60a5fa'];
 
@@ -290,8 +293,10 @@ function RemoteCursor({
     const px = sx.get();
     const py = sy.get();
 
-    if (trail === 'fairy') {
-      // Fairy dust: sparkles that fall, tumble, and shrink away.
+    if (trail === 'fairy' || trail === 'pixie') {
+      // Fairy / pixie dust: sparkles that fall, tumble, and shrink away. Same
+      // particle behavior; only the palette differs (pink vs gold).
+      const palette = trail === 'pixie' ? PIXIE_DUST_COLORS : FAIRY_DUST_COLORS;
       const count = 1 + Math.floor(Math.random() * 2);
       const batch: TrailMote[] = [];
       for (let i = 0; i < count; i++) {
@@ -299,7 +304,7 @@ function RemoteCursor({
           id: ++moteIdRef.current,
           x: px + (Math.random() - 0.5) * 1.2,
           y: py + (Math.random() - 0.5) * 1.2,
-          color: FAIRY_DUST_COLORS[Math.floor(Math.random() * FAIRY_DUST_COLORS.length)],
+          color: palette[Math.floor(Math.random() * palette.length)],
           size: 0.55 + Math.random() * 0.7,
           dx: (Math.random() - 0.5) * 16,
           dy: 8 + Math.random() * 16,
@@ -348,8 +353,8 @@ function RemoteCursor({
       {trail && (
         <div ref={layerRef} className="pointer-events-none absolute inset-0 overflow-hidden">
           {motes.map((m) => {
-            // Fairy dust -> a falling, tumbling sparkle particle.
-            if (trail === 'fairy') {
+            // Fairy / pixie dust -> a falling, tumbling sparkle particle.
+            if (trail === 'fairy' || trail === 'pixie') {
               return (
                 <motion.div
                   key={m.id}

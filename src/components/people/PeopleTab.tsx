@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import {
-  Search, Send, Eye, EyeOff, Clock, AlertTriangle, Users, Banknote, Loader2, Sparkles, RefreshCw, CalendarDays, ChevronRight, Landmark, Bell, Check, Pencil, X,
+  Search, Send, Eye, EyeOff, Clock, AlertTriangle, Users, Banknote, Loader2, Sparkles, RefreshCw, CalendarDays, ChevronRight, ChevronDown, Landmark, Bell, Check, Pencil, X, Download, FileText, FileSpreadsheet, Table2,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
@@ -20,6 +20,12 @@ import PeopleBankChanges from './PeopleBankChanges';
 import { BankChangeDetailDialog, timeAgo, type BankChangeEntry } from './bank-change-detail';
 import { getTabCache, setTabCache, TAB_CACHE_KEYS } from '@/lib/accounting/tab-cache';
 import { parseNameParts, composeMasterListName, type NameParts } from '@/lib/name/name-parts';
+import {
+  buildRosterExport,
+  downloadRosterCsv,
+  downloadRosterXlsx,
+  downloadRosterPdf,
+} from '@/lib/people/people-roster-export';
 import { cn } from '@/lib/utils';
 
 type Currency = 'PHP' | 'USD' | 'COP';
@@ -662,6 +668,16 @@ export default function PeopleTab({
     return periods.find((p) => p.file === period)?.label ?? (period ? labelForSourceFile(period) : 'Current week');
   }, [range, rangeMeta, periods, period]);
 
+  // One-line description of the active in-view filter — carried into exports so a
+  // downloaded roster says exactly what slice it captured.
+  const filterLabel = useMemo(() => {
+    const parts: string[] = [deptFilter === 'all' ? 'All departments' : deptFilter];
+    if (otOnly) parts.push('OT only');
+    const q = query.trim();
+    if (q) parts.push(`matching "${q}"`);
+    return parts.join(' · ');
+  }, [deptFilter, otOnly, query]);
+
   // Earliest / latest dates present in the uploaded weeks — bounds the calendar
   // picker so the CEO can't range past the available data.
   const dataBounds = useMemo(() => {
@@ -710,6 +726,18 @@ export default function PeopleTab({
               <span className="flex items-center gap-1 rounded-full bg-red-50 px-2.5 py-1 text-[11px] font-medium text-red-600 dark:bg-red-950/30 dark:text-red-300">
                 <AlertTriangle className="h-3 w-3" /> {otWatch} {rangeMode ? 'with overtime' : 'on track for OT'}
               </span>
+            )}
+            {mode === 'roster' && (
+              <ExportMenu
+                rows={filtered}
+                periodTotal={rows.length}
+                periodLabel={periodLabel}
+                filterLabel={filterLabel}
+                rangeMode={rangeMode}
+                otPayoutUsd={summary?.otPayoutUsd ?? null}
+                otPayoutPhp={summary?.otPayoutPhp ?? 0}
+                accent={accent}
+              />
             )}
             <Button
               type="button"
@@ -1080,6 +1108,151 @@ export default function PeopleTab({
           onSelect={(r) => { setShowNoBanking(false); setSelected(r); }}
         />
       )}
+    </div>
+  );
+}
+
+/* ── Export menu (PDF · XLSX · CSV — themed like the CEO dashboard) ────────── */
+
+type ExportFormat = 'pdf' | 'xlsx' | 'csv';
+
+/** Download the roster currently in view (respecting search / department / OT
+ *  filter and the selected week or range) as a branded PDF, an Excel workbook,
+ *  or a flat CSV. Fully client-side — the rows are already loaded. */
+function ExportMenu({
+  rows,
+  periodTotal,
+  periodLabel,
+  filterLabel,
+  rangeMode,
+  otPayoutUsd,
+  otPayoutPhp,
+  accent,
+}: {
+  rows: RosterRow[];
+  periodTotal: number;
+  periodLabel: string;
+  filterLabel: string;
+  rangeMode: boolean;
+  otPayoutUsd: number | null;
+  otPayoutPhp: number;
+  accent: Accent;
+}) {
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState<ExportFormat | null>(null);
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const reduce = useReducedMotion();
+
+  // Close on outside click / Escape.
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false);
+    };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+
+  const runExport = useCallback(
+    async (format: ExportFormat) => {
+      if (rows.length === 0) {
+        toast.error('Nothing to export in this view.');
+        return;
+      }
+      setBusy(format);
+      setOpen(false);
+      try {
+        const model = buildRosterExport({
+          rows,
+          periodTotal,
+          periodLabel,
+          filterLabel,
+          hoursHeader: rangeMode ? 'Hours in range' : 'Hours this week',
+          rangeMode,
+          periodOtPayoutUsd: otPayoutUsd,
+          periodOtPayoutPhp: otPayoutPhp,
+        });
+        if (format === 'csv') {
+          downloadRosterCsv(model);
+        } else if (format === 'xlsx') {
+          downloadRosterXlsx(model);
+        } else {
+          await downloadRosterPdf(model);
+        }
+        toast.success(`Exported ${rows.length.toLocaleString()} ${rows.length === 1 ? 'person' : 'people'} as ${format.toUpperCase()}.`);
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : `Failed to export ${format.toUpperCase()}`);
+      } finally {
+        setBusy(null);
+      }
+    },
+    [rows, periodTotal, periodLabel, filterLabel, rangeMode, otPayoutUsd, otPayoutPhp],
+  );
+
+  const items: { format: ExportFormat; label: string; hint: string; Icon: typeof FileText }[] = [
+    { format: 'pdf', label: 'PDF', hint: 'Branded document', Icon: FileText },
+    { format: 'xlsx', label: 'Excel', hint: 'XLSX workbook', Icon: FileSpreadsheet },
+    { format: 'csv', label: 'CSV', hint: 'Plain data', Icon: Table2 },
+  ];
+
+  return (
+    <div ref={wrapRef} className="relative">
+      <Button
+        type="button"
+        size="sm"
+        variant="outline"
+        onClick={() => setOpen((o) => !o)}
+        disabled={busy !== null}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        title="Export the roster in view (CSV · Excel · PDF)"
+        className={cn('h-8 gap-1.5 px-2.5 text-[12px]', accent.ring)}
+      >
+        {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
+        <span className="hidden sm:inline">{busy ? `Exporting ${busy.toUpperCase()}…` : 'Export'}</span>
+        <ChevronDown className={cn('h-3.5 w-3.5 transition-transform', open && 'rotate-180')} aria-hidden />
+      </Button>
+
+      <AnimatePresence>
+        {open && (
+          <motion.div
+            role="menu"
+            initial={reduce ? { opacity: 0 } : { opacity: 0, y: -6, scale: 0.98 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={reduce ? { opacity: 0 } : { opacity: 0, y: -6, scale: 0.98 }}
+            transition={{ duration: 0.15, ease: [0.22, 1, 0.36, 1] }}
+            className="absolute right-0 z-30 mt-2 w-56 overflow-hidden rounded-xl border border-zinc-200 bg-white p-1 shadow-xl shadow-zinc-900/10 dark:border-zinc-700 dark:bg-zinc-900"
+          >
+            <p className="px-2.5 pb-1 pt-1.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-400 dark:text-zinc-500">
+              Export {rows.length.toLocaleString()} {rows.length === 1 ? 'person' : 'people'}
+            </p>
+            {items.map(({ format, label, hint, Icon }) => (
+              <button
+                key={format}
+                type="button"
+                role="menuitem"
+                onClick={() => void runExport(format)}
+                className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left transition-colors hover:bg-amber-50 dark:hover:bg-amber-950/30"
+              >
+                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-orange-500 to-rose-500 text-white shadow-sm">
+                  <Icon className="h-4 w-4" aria-hidden />
+                </span>
+                <span className="min-w-0">
+                  <span className="block text-sm font-medium text-zinc-900 dark:text-zinc-100">{label}</span>
+                  <span className="block text-[11px] text-zinc-500 dark:text-zinc-400">{hint}</span>
+                </span>
+              </button>
+            ))}
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
@@ -2519,7 +2692,12 @@ function PersonDetailDialog({
     const partsChanged = (Object.keys(nameParts) as (keyof NameParts)[]).some(
       (k) => nameParts[k].trim() !== initialParts[k].trim(),
     );
-    if (partsChanged) {
+    // Self-heal a name whose STORED value carries doubled quotes (`""Aeriele""`)
+    // - a CSV/Sheet round-trip artifact. Recomposing from the (already-scrubbed)
+    // parts rewrites it to the clean canonical form on ANY save, so the user does
+    // not have to re-type the name just to clear the corruption.
+    const nameCorrupt = /""/.test(row.name ?? '');
+    if (partsChanged || nameCorrupt) {
       const composedName = composeMasterListName(nameParts).trim();
       if (!composedName) {
         toast.error('Name can’t be empty — a first or last name is required.');

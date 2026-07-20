@@ -3,7 +3,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { resolveFirstName } from '@/lib/name/first-name';
 import {
-  Clock,
   AlertCircle,
   CalendarDays,
   ChevronDown,
@@ -76,13 +75,11 @@ import {
 } from '@/lib/pab-period-settings';
 import {
   disputeGrantsPabForgiveness,
-  disputeIsAwaitingResolution,
   isOrphanageStyleReason,
 } from '@/lib/supabase/pab-day-disputes';
 import { parseUsHolidaysList, getEnabledHolidayMap } from '@/lib/us-holidays';
 import HiddenValue from './HiddenValue';
 import GiftShippingCard, { type GiftShippingState } from './GiftShippingCard';
-import DisputeDialog from './DisputeDialog';
 import { Bell, Eye, EyeOff, Gift, Hourglass } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -641,11 +638,6 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
   // Holiday map: ISO "YYYY-MM-DD" -> holiday name (only enabled holidays when master toggle is on)
   const [usHolidayDates, setUsHolidayDates] = useState<Map<string, string>>(new Map());
   const [holidayModal, setHolidayModal] = useState<{ name: string; date: string } | null>(null);
-  const [disputeDialog, setDisputeDialog] = useState<{
-    date: string;
-    seconds: number;
-    existingDispute: import('@/lib/supabase/pab-day-disputes').PabDayDisputeRow | null;
-  } | null>(null);
   /** Mobile: PAB rules, bonus status, and pay numbers live in this sheet (charts stay on the main view). */
   const [mobileHelpOpen, setMobileHelpOpen] = useState(false);
   /** Master-list profile fields used to prefill the gift-shipping form. */
@@ -3200,8 +3192,10 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
                             const stillProcessing = isPreviousWeek && noMeaningfulData && !dispute;
 
                             const isHoliday = !!holidayName;
-                            const canDispute = day.hasData && !day.passes && !dispute && !isFutureOrToday && !isCurrentWeek && !isHoliday;
-                            const cellClickable = canDispute || !!dispute || isHoliday;
+                            // PAB dispute filing/viewing was removed from the employee view
+                            // (2026-07-20); forgiveness still applies server-side (see
+                            // `forgiven` below). Only holidays remain clickable (details modal).
+                            const cellClickable = isHoliday;
 
                             const forgiven =
                               !!dispute &&
@@ -3214,9 +3208,6 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
                             if (isHoliday) {
                               cellBorder =
                                 'border-sky-400 bg-sky-50 ring-1 ring-sky-400/40 dark:border-sky-600/70 dark:bg-sky-950/40';
-                            } else if (dispute != null && disputeIsAwaitingResolution(dispute)) {
-                              cellBorder =
-                                'border-amber-400 bg-amber-50 ring-1 ring-amber-400/35 dark:border-amber-600/60 dark:bg-amber-950/35';
                             } else if (effectivelyPasses) {
                               // A day that hit ≥7h is locked green the moment it's
                               // logged — including elapsed days in the current week.
@@ -3257,20 +3248,14 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
                               <div
                                 key={di}
                                 className={`group relative flex h-10 flex-col overflow-hidden rounded-lg border transition-transform duration-200 ease-[cubic-bezier(0.34,1.4,0.64,1)] hover:z-10 hover:shadow-md motion-safe:hover:scale-[1.05] lg:h-full lg:min-h-[2.5rem] ${cellBorder} ${cellClickable ? `cursor-pointer ${isHoliday ? 'hover:ring-2 hover:ring-sky-400/50' : 'hover:ring-2 hover:ring-orange-300/50'}` : ''}`}
-                                title={`${day.dayLabel} ${day.dateStr}${holidayName ? ` · ${holidayName} (holiday — click for details)` : ''}: ${secondsToDisplay(day.seconds)}${dispute ? ` (${dispute.status})` : day.passes ? ' ✓' : isToday ? ' — in progress' : isFutureOrToday ? ' — not yet' : stillProcessing ? ' — processing' : day.hasData ? ' ✗ needs 7h — click to file an issue' : ' — no data'}${rateTooltipSuffix}`}
+                                title={`${day.dayLabel} ${day.dateStr}${holidayName ? ` · ${holidayName} (holiday — click for details)` : ''}: ${secondsToDisplay(day.seconds)}${day.passes ? ' ✓' : isToday ? ' — in progress' : isFutureOrToday ? ' — not yet' : stillProcessing ? ' — processing' : day.hasData ? ' ✗ needs 7h' : ' — no data'}${rateTooltipSuffix}`}
                                 style={{
                                   // `backwards` (not `both`): hold the hidden start-state during the
                                   // stagger delay, but release the transform once the entrance ends so
                                   // the hover scale (below) isn't overridden by a filled animation.
                                   animation: `pab-cell-in 0.3s ease-out ${wi * 80 + di * 40}ms backwards`,
                                 }}
-                                onClick={cellClickable ? () => {
-                                  if (isHoliday && holidayName) {
-                                    setHolidayModal({ name: holidayName, date: dayIso });
-                                  } else {
-                                    setDisputeDialog({ date: dayIso, seconds: day.seconds, existingDispute: dispute ?? null });
-                                  }
-                                } : undefined}
+                                onClick={isHoliday && holidayName ? () => setHolidayModal({ name: holidayName, date: dayIso }) : undefined}
                               >
                                 {/* Glass sheen — a top-down light reflection that reads as shiny
                                     glass; brightens on hover. Sits above the tinted background but
@@ -3348,13 +3333,11 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
                                   ) : (
                                     <span
                                       className={`text-center text-sm font-bold tabular-nums leading-none tracking-tight lg:text-base ${
-                                        dispute != null && disputeIsAwaitingResolution(dispute)
-                                          ? 'text-amber-700 dark:text-amber-400'
-                                          : effectivelyPasses
-                                            ? 'text-emerald-700 dark:text-emerald-400'
-                                            : isToday || isFutureOrToday || stillInProgress || !day.hasData
-                                              ? 'text-zinc-400 dark:text-zinc-500'
-                                              : 'text-red-600 dark:text-red-400'
+                                        effectivelyPasses
+                                          ? 'text-emerald-700 dark:text-emerald-400'
+                                          : isToday || isFutureOrToday || stillInProgress || !day.hasData
+                                            ? 'text-zinc-400 dark:text-zinc-500'
+                                            : 'text-red-600 dark:text-red-400'
                                       }`}
                                     >
                                       {day.hasData ? `${hours.toFixed(1)}h` : '—'}
@@ -3364,8 +3347,6 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
                                 <div className="pointer-events-none absolute bottom-0.5 right-0.5">
                                   {isHoliday ? (
                                     <CheckCircle2 className="h-2.5 w-2.5 text-sky-500 dark:text-sky-400" />
-                                  ) : dispute != null && disputeIsAwaitingResolution(dispute) ? (
-                                    <Clock className="h-2.5 w-2.5 text-amber-500" />
                                   ) : effectivelyPasses ? (
                                     <CheckCircle2 className="h-2.5 w-2.5 text-emerald-500" />
                                   ) : isToday || isFutureOrToday || stillInProgress || !day.hasData ? null : day.hasData ? (
@@ -3564,22 +3545,6 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
           </div>
         </DialogContent>
       </Dialog>
-
-      {disputeDialog && (
-        <DisputeDialog
-          open
-          onOpenChange={(open) => { if (!open) setDisputeDialog(null); }}
-          employeeEmail={email}
-          employeeName={profileForShipping.name ?? undefined}
-          disputeDate={disputeDialog.date}
-          hoursWorked={disputeDialog.seconds}
-          existingDispute={disputeDialog.existingDispute}
-          onSubmitted={() => {
-            setDisputeDialog(null);
-            fetchMyDisputes();
-          }}
-        />
-      )}
 
       {holidayModal && (
         <Dialog open onOpenChange={(open) => { if (!open) setHolidayModal(null); }}>

@@ -44,8 +44,6 @@ import {
 } from '@/lib/pab-period-settings';
 import {
   disputeGrantsPabForgiveness,
-  disputeIsAwaitingResolution,
-  isOrphanageStyleReason,
   type PabDayDisputeRow,
 } from '@/lib/supabase/pab-day-disputes';
 import {
@@ -55,7 +53,6 @@ import {
   getEnabledHolidayMap,
 } from '@/lib/us-holidays';
 import HiddenValue from './HiddenValue';
-import DisputeDialog from './DisputeDialog';
 import TimeAdjustmentDialog from './TimeAdjustmentDialog';
 import type { TimeAdjustmentRow } from '@/lib/supabase/time-adjustments';
 
@@ -549,7 +546,6 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
   const [mergedRow, setMergedRow] = useState<Record<string, unknown> | null>(null);
   const [mergedColumns, setMergedColumns] = useState<string[]>([]);
   const [disputes, setDisputes] = useState<PabDayDisputeRow[]>([]);
-  const [disputeDialog, setDisputeDialog] = useState<{ date: string; seconds: number; existingDispute: PabDayDisputeRow | null } | null>(null);
   const [timeAdjustments, setTimeAdjustments] = useState<TimeAdjustmentRow[]>([]);
   const [timeAdjustDialog, setTimeAdjustDialog] = useState<{ date: string; seconds: number; existing: TimeAdjustmentRow | null } | null>(null);
   const [orphanageVisits, setOrphanageVisits] = useState<PabDayDisputeRow[]>([]);
@@ -1548,18 +1544,14 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
                           const prevWeekSun = new Date(prevWeekMon.getFullYear(), prevWeekMon.getMonth(), prevWeekMon.getDate() + 6);
                           return cellMid.getTime() >= prevWeekMon.getTime() && cellMid.getTime() <= prevWeekSun.getTime();
                         })();
-                        const canDispute =
-                          inMonth &&
-                          !weekend &&
-                          day.hasData &&
-                          !day.passes &&
-                          !dispute &&
-                          !isFutureOrToday;
+                        // PAB dispute filing/viewing was removed from the employee view
+                        // (2026-07-20): sub-7h days no longer open a dispute. Accounting
+                        // still applies forgiveness server-side (see `forgiven` below).
                         // Time adjustment: any in-month, non-future day (works even with no
                         // Hubstaff data yet). Today is allowed; future days are not.
                         const adjustment = inMonth ? adjustmentsByDate.get(dayIso) : undefined;
                         const canRequestAdjust = inMonth && cellMid.getTime() <= todayMid.getTime();
-                        const cellClickable = canRequestAdjust || canDispute || !!dispute || !!adjustment;
+                        const cellClickable = canRequestAdjust || !!adjustment;
                         const handleCellClick = () => {
                           if (adjustment) {
                             setTimeAdjustDialog({ date: dayIso, seconds: day.seconds, existing: adjustment });
@@ -1567,10 +1559,6 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
                           }
                           if (canRequestAdjust) {
                             setTimeAdjustDialog({ date: dayIso, seconds: day.seconds, existing: null });
-                            return;
-                          }
-                          if (canDispute || dispute) {
-                            setDisputeDialog({ date: dayIso, seconds: day.seconds, existingDispute: dispute ?? null });
                           }
                         };
 
@@ -1596,9 +1584,6 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
                             cellBorder =
                               'border border-dashed border-zinc-200/90 bg-zinc-50/30 dark:border-zinc-800 dark:bg-zinc-900/15';
                           }
-                        } else if (dispute != null && disputeIsAwaitingResolution(dispute)) {
-                          cellBorder =
-                            'border-amber-300 bg-amber-50 dark:border-amber-700/70 dark:bg-amber-950/40';
                         } else if (isHoliday) {
                           cellBorder =
                             'border-blue-300 bg-blue-50 dark:border-blue-700/70 dark:bg-blue-950/40';
@@ -1606,10 +1591,7 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
                           cellBorder =
                             'border-emerald-300 bg-emerald-50 dark:border-emerald-700/70 dark:bg-emerald-950/40';
                         } else if (weekend) {
-                          if (dispute != null && disputeIsAwaitingResolution(dispute)) {
-                            cellBorder =
-                              'border-amber-300 bg-amber-50 dark:border-amber-700/70 dark:bg-amber-950/40';
-                          } else if (hours > 0) {
+                          if (hours > 0) {
                             cellBorder =
                               'border-zinc-300 bg-gradient-to-b from-zinc-50 to-orange-50/50 dark:border-zinc-600 dark:from-zinc-900/50 dark:to-orange-950/20';
                           } else {
@@ -1644,8 +1626,6 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
                             hours > 0
                               ? 'text-zinc-600 dark:text-zinc-300'
                               : 'text-zinc-300 dark:text-zinc-600';
-                        } else if (dispute != null && disputeIsAwaitingResolution(dispute)) {
-                          hourText = 'text-amber-700 dark:text-amber-400';
                         } else if (isHoliday) {
                           hourText = 'text-blue-600 dark:text-blue-400';
                         } else if (effectivelyPasses && !weekend) {
@@ -1666,16 +1646,15 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
 
                         const titleScope = inMonth ? '' : ' · other month (still your Hubstaff)';
                         const titleBody = `${day.dayLabel} ${day.dateStr}: ${secondsToDisplay(day.seconds)}${isHoliday ? ` — ${holidayName}` : ''}${titleScope}`;
-                        const titleDispute = dispute
-                          ? ` (${dispute.status})`
-                          : inMonth && day.passes
+                        const titleDispute =
+                          inMonth && day.passes
                             ? ' · OK'
                             : inMonth && isToday
                               ? ' — in progress'
                             : inMonth && isFutureOrToday
                               ? ' — not yet'
                               : inMonth && day.hasData
-                                ? ' · needs 7h weekdays — tap to file an issue'
+                                ? ' · needs 7h weekdays'
                                 : inMonth
                                   ? ' — no data'
                                   : '';
@@ -1726,18 +1705,6 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
                                     <p className="mt-0.5 whitespace-nowrap text-[9.5px] font-medium text-orange-600 dark:text-orange-400">
                                       {adjustment ? 'Click to view your request' : 'Click to request time adjustment'}
                                     </p>
-                                  )}
-                                  {(canDispute || dispute) && (
-                                    <button
-                                      type="button"
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        setDisputeDialog({ date: dayIso, seconds: day.seconds, existingDispute: dispute ?? null });
-                                      }}
-                                      className="mt-1 w-full whitespace-nowrap rounded border border-zinc-200 px-1.5 py-0.5 text-[9.5px] font-medium text-zinc-600 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
-                                    >
-                                      {dispute ? 'View PAB issue' : 'File PAB issue'}
-                                    </button>
                                   )}
                                 </div>
                               </div>
@@ -1847,9 +1814,6 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
                     <span className="inline-block h-1.5 w-1.5 shrink-0 rounded-sm border border-dashed border-zinc-400 bg-zinc-100 dark:border-zinc-500 dark:bg-zinc-800 sm:h-2 sm:w-2" /> Adj. month
                   </span>
                   <span className="flex items-center gap-1">
-                    <span className="inline-block h-1.5 w-1.5 rounded-full bg-amber-400 sm:h-2 sm:w-2" /> Pending
-                  </span>
-                  <span className="flex items-center gap-1">
                     <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-500 ring-1 ring-emerald-400 sm:h-2 sm:w-2" /> Forgiven
                   </span>
                   <span className="ml-auto font-mono text-[10px] font-semibold tabular-nums text-zinc-700 dark:text-zinc-300">
@@ -1859,7 +1823,7 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
                     {isPAEligible ? (
                       <span className="text-emerald-600 dark:text-emerald-400">All weekdays ≥ 7h</span>
                     ) : hasAnyInMonthData ? (
-                      <span className="text-zinc-500 dark:text-zinc-400">Some weekdays below 7h or pending</span>
+                      <span className="text-zinc-500 dark:text-zinc-400">Some weekdays below 7h</span>
                     ) : null}
                   </span>
                 </div>
@@ -2185,21 +2149,6 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
         </div>
 
       </div>
-
-      {disputeDialog && (
-        <DisputeDialog
-          open
-          onOpenChange={(open) => { if (!open) setDisputeDialog(null); }}
-          employeeEmail={email}
-          disputeDate={disputeDialog.date}
-          hoursWorked={disputeDialog.seconds}
-          existingDispute={disputeDialog.existingDispute}
-          onSubmitted={() => {
-            setDisputeDialog(null);
-            void fetchDisputes();
-          }}
-        />
-      )}
 
       {timeAdjustDialog && (
         <TimeAdjustmentDialog

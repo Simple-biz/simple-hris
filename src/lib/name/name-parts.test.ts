@@ -1,5 +1,5 @@
 /**
- * Round-trip + edge coverage for the People → Profile name-parts editor.
+ * Round-trip + edge coverage for the People -> Profile name-parts editor.
  *
  * Run:  npx tsx --test src/lib/name/name-parts.test.ts
  */
@@ -54,6 +54,51 @@ test('composeMasterListName is the inverse of parseNameParts for canonical names
   ]) {
     assert.equal(composeMasterListName(parseNameParts(name)), name, `round-trip: ${name}`);
   }
+});
+
+test('parseNameParts cleans DOUBLED quotes from a bad CSV/Sheet round-trip', () => {
+  // The exact corrupted shape seen in the People editor: `"Aeriele"` had been
+  // CSV-escaped to `""Aeriele""`. Parse must recover the clean parts, NOT leak
+  // the doubled quotes into the middle name / nickname.
+  assert.deepEqual(parseNameParts('Lacerna, Aeriele Joan Marg ""Aeriele""'), {
+    first: 'Aeriele', middle: 'Joan Marg', last: 'Lacerna', extension: '', nickname: 'Aeriele',
+  });
+  // Same corruption, with a generational suffix on the surname.
+  assert.deepEqual(parseNameParts('Cruz Jr, Juan Dela ""Dela""'), {
+    first: 'Juan', middle: 'Dela', last: 'Cruz', extension: 'Jr', nickname: 'Dela',
+  });
+});
+
+test('the parse -> compose round-trip cleans corruption and is then idempotent', () => {
+  const corrupt = 'Lacerna, Aeriele Joan Marg ""Aeriele""';
+  const cleaned = composeMasterListName(parseNameParts(corrupt));
+  // First pass repairs it to the canonical single-quoted form...
+  assert.equal(cleaned, 'Lacerna, Aeriele Joan Marg "Aeriele"');
+  // ...and every further pass is a fixed point - quotes never accumulate again.
+  assert.equal(composeMasterListName(parseNameParts(cleaned)), cleaned);
+  assert.equal(
+    composeMasterListName(parseNameParts(composeMasterListName(parseNameParts(cleaned)))),
+    cleaned,
+  );
+});
+
+test('composeMasterListName never emits doubled quotes even from mangled parts', () => {
+  // Stray quotes on the parts themselves (e.g. a half-repaired record) must be
+  // scrubbed, yielding exactly one clean quoted go-by.
+  assert.equal(
+    composeMasterListName({ first: 'Aeriele', middle: 'Joan Marg', last: 'Lacerna', extension: '', nickname: 'Aeriele""' }),
+    'Lacerna, Aeriele Joan Marg "Aeriele"',
+  );
+  assert.equal(
+    composeMasterListName({ first: 'Jan"', middle: '', last: 'Reroma', extension: '', nickname: '"Kane"' }),
+    'Reroma, Jan "Kane"',
+  );
+});
+
+test('apostrophes and hyphens survive scrubbing (only quotes are removed)', () => {
+  assert.deepEqual(parseNameParts("O'Brien, Sean Anne-Marie"), {
+    first: 'Sean', middle: 'Anne-Marie', last: "O'Brien", extension: '', nickname: 'Anne-Marie',
+  });
 });
 
 test('composeMasterListName honors an explicit nickname and omits empty parts', () => {
