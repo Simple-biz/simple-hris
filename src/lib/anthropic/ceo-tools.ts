@@ -1299,7 +1299,7 @@ async function getPayrollWizardNotes(includeDoneRaw: unknown): Promise<ToolResul
     done_count: real.length - openCount,
     showing: includeDone ? 'open + done items' : 'open items only',
     field_notes:
-      'The Payroll Wizard\'s carry-over notes board — free-form items payroll clerks stage for a following week (missed bonuses, rate changes, deductions). payroll_clerk = who wrote it; week_of = Monday of the payroll week it was written; worker = who it is about (free text); adjustment = the pay change called for (free text, e.g. "+₱500", "-$25"); done = already applied in a later run. These are working notes, not final records — verify money figures against the pay tools before quoting them.',
+      'The Payroll Wizard\'s carry-over notes board — free-form items payroll clerks stage for a following week (missed bonuses, rate changes, deductions). payroll_clerk = who wrote it; week_of = Sunday of the pay period the note belongs to (the just-completed Sunday–Saturday week being paid; payroll runs a week in arrears); worker = who it is about (free text); adjustment = the pay change called for (free text, e.g. "+₱500", "-$25"); done = already applied in a later run. These are working notes, not final records — verify money figures against the pay tools before quoting them.',
     notes: shown,
   };
 }

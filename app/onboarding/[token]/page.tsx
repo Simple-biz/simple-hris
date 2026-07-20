@@ -625,15 +625,12 @@ export default function OnboardingFormPage() {
         return;
       }
     }
-    // Leaving the IP step: seed the Welcome name from the name on the IP
-    // document so the hire doesn't have to type it twice.
-    if (step === 0) {
-      setForm((f) => {
-        if (f.first_name.trim() || !f.ip_agreement_name.trim()) return f;
-        const seeded = splitName(f.ip_agreement_name);
-        return { ...f, first_name: seeded.first, last_name: seeded.last, extension: seeded.extension };
-      });
-    }
+    // The Intellectual Property step is deliberately ISOLATED: the name signed
+    // on the IP document must NOT seed the Welcome step's first/last/extension.
+    // Doing so cascaded a mis-split of the full legal name into Welcome, and
+    // from there into the Gmail Surname, Nickname and CallTools username — the
+    // hire fills those in explicitly on the Welcome step instead. Any name
+    // prefill on the Welcome step comes only from the HR-entered invite name.
     setDirection(1);
     setStep((s) => Math.min(STEP_TITLES.length - 1, s + 1));
     if (typeof window !== 'undefined') window.scrollTo({ top: 0, behavior: 'smooth' });

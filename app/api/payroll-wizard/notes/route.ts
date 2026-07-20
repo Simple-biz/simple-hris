@@ -49,12 +49,14 @@ export async function GET() {
   return NextResponse.json({ rows });
 }
 
-/** POST — add ONE note. Body: { values? }. Blank rows are fine ("Add Row"). */
+/** POST — add ONE note. Body: { values?, weekStart? }. Blank rows are fine
+ *  ("Add Row"). `weekStart` targets a pay period (the current one or an
+ *  upcoming one, for staging ahead); omitted / past → the live period. */
 export async function POST(req: Request) {
   const authz = await requireFeatureEdit("accounting", "payroll_wizard");
   if (!authz.ok) return deniedResponse(authz);
 
-  let body: { values?: unknown };
+  let body: { values?: unknown; weekStart?: unknown };
   try {
     body = (await req.json()) as typeof body;
   } catch {
@@ -72,6 +74,7 @@ export async function POST(req: Request) {
 
   const { row, error } = await insertPayrollWizardNote(values, {
     createdBy: authz.sessionEmail,
+    weekStart: typeof body.weekStart === "string" ? body.weekStart : null,
   });
   if (error || !row) return NextResponse.json({ error: error ?? "Insert failed" }, { status: 400 });
 

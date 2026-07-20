@@ -14,6 +14,7 @@ import {
   CalendarClock,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { resolveFirstName } from '@/lib/name/first-name';
 import {
   formatGrouped,
   formatMoney,
@@ -50,6 +51,16 @@ interface InvoiceRow {
 
 const PANEL =
   'rounded-2xl border border-zinc-200 bg-white shadow-sm dark:border-zinc-800 dark:bg-zinc-900';
+
+// iOS-style glass shell shared by the KPI tiles and their loading skeletons:
+// translucent fill + backdrop blur over the colour field behind the grid, a
+// hairline light border, and an inset top highlight for the specular edge.
+const GLASS_TILE = cn(
+  'relative overflow-hidden rounded-[1.25rem] border border-white/60 bg-white/55 backdrop-blur-xl backdrop-saturate-150',
+  'shadow-[0_10px_30px_-14px_rgba(30,64,175,0.25),inset_0_1px_0_0_rgba(255,255,255,0.85)]',
+  'dark:border-white/10 dark:bg-white/[0.06]',
+  'dark:shadow-[0_10px_30px_-14px_rgba(0,0,0,0.6),inset_0_1px_0_0_rgba(255,255,255,0.09)]',
+);
 
 // ─── Invoice status ─────────────────────────────────────────────────────────
 
@@ -109,7 +120,7 @@ function LoadingSkeleton() {
     <div className="flex flex-col gap-6">
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {[0, 1, 2, 3, 4, 5].map((i) => (
-          <div key={i} className={cn(PANEL, 'p-4')}>
+          <div key={i} className={cn(GLASS_TILE, 'p-4')}>
             <SkeletonBlock className="h-9 w-9 rounded-xl" />
             <SkeletonBlock className="mt-3 h-3 w-24" />
             <SkeletonBlock className="mt-2 h-6 w-28" />
@@ -144,14 +155,33 @@ function LoadingSkeleton() {
 
 type AccentKey = 'blue' | 'indigo' | 'violet' | 'amber' | 'emerald' | 'sky';
 
-// Icon-chip colours per accent, tuned for 4.5:1+ contrast in both themes.
-const ACCENT_CHIP: Record<AccentKey, string> = {
-  blue: 'bg-blue-50 text-blue-600 dark:bg-blue-950/50 dark:text-blue-400',
-  indigo: 'bg-indigo-50 text-indigo-600 dark:bg-indigo-950/50 dark:text-indigo-400',
-  violet: 'bg-violet-50 text-violet-600 dark:bg-violet-950/50 dark:text-violet-400',
-  amber: 'bg-amber-50 text-amber-600 dark:bg-amber-950/40 dark:text-amber-400',
-  emerald: 'bg-emerald-50 text-emerald-600 dark:bg-emerald-950/40 dark:text-emerald-400',
-  sky: 'bg-sky-50 text-sky-600 dark:bg-sky-950/40 dark:text-sky-400',
+// Per-accent styling for the glass tiles: a translucent icon chip (glyph
+// colours hold 3:1+ in both themes) and the colour wash tinting each card.
+const ACCENT: Record<AccentKey, { chip: string; tint: string }> = {
+  blue: {
+    chip: 'bg-blue-500/15 text-blue-700 dark:bg-blue-400/20 dark:text-blue-300',
+    tint: 'from-blue-400/20 dark:from-blue-400/[0.13]',
+  },
+  indigo: {
+    chip: 'bg-indigo-500/15 text-indigo-700 dark:bg-indigo-400/20 dark:text-indigo-300',
+    tint: 'from-indigo-400/20 dark:from-indigo-400/[0.13]',
+  },
+  violet: {
+    chip: 'bg-violet-500/15 text-violet-700 dark:bg-violet-400/20 dark:text-violet-300',
+    tint: 'from-violet-400/20 dark:from-violet-400/[0.13]',
+  },
+  amber: {
+    chip: 'bg-amber-500/20 text-amber-700 dark:bg-amber-400/20 dark:text-amber-300',
+    tint: 'from-amber-400/25 dark:from-amber-400/[0.13]',
+  },
+  emerald: {
+    chip: 'bg-emerald-500/15 text-emerald-700 dark:bg-emerald-400/20 dark:text-emerald-300',
+    tint: 'from-emerald-400/20 dark:from-emerald-400/[0.13]',
+  },
+  sky: {
+    chip: 'bg-sky-500/15 text-sky-700 dark:bg-sky-400/20 dark:text-sky-300',
+    tint: 'from-sky-400/20 dark:from-sky-400/[0.13]',
+  },
 };
 
 function KpiCard({
@@ -169,37 +199,61 @@ function KpiCard({
   accent: AccentKey;
   onClick?: () => void;
 }) {
+  const a = ACCENT[accent];
   return (
     <button
       type="button"
       onClick={onClick}
       className={cn(
-        'group flex flex-col rounded-2xl border border-zinc-200 bg-white p-4 text-left shadow-sm transition-colors',
-        'hover:border-zinc-300 hover:bg-zinc-50/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/60',
-        'dark:border-zinc-800 dark:bg-zinc-900 dark:hover:border-zinc-700 dark:hover:bg-zinc-800/40',
+        GLASS_TILE,
+        'group flex flex-col p-4 text-left',
+        'transition-[transform,border-color,background-color] duration-200 ease-out',
+        'hover:-translate-y-0.5 hover:border-white/80 hover:bg-white/65 active:translate-y-0 active:scale-[0.98]',
+        'dark:hover:border-white/20 dark:hover:bg-white/[0.08]',
+        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/60',
+        'motion-reduce:transition-none motion-reduce:hover:translate-y-0 motion-reduce:active:scale-100',
         onClick ? 'cursor-pointer' : 'cursor-default',
       )}
     >
-      <div className="flex items-center justify-between">
+      {/* Accent wash tinting the glass; brightens slightly on hover. */}
+      <span
+        aria-hidden
+        className={cn(
+          'pointer-events-none absolute inset-0 bg-gradient-to-br via-transparent to-transparent opacity-80 transition-opacity duration-200 group-hover:opacity-100',
+          a.tint,
+        )}
+      />
+      {/* Specular top-edge gradient — the iOS sheen. */}
+      <span
+        aria-hidden
+        className="pointer-events-none absolute inset-x-0 top-0 h-1/2 bg-gradient-to-b from-white/60 to-transparent dark:from-white/[0.07]"
+      />
+      {/* Shine sweep across the glass on hover. */}
+      <span
+        aria-hidden
+        className="pointer-events-none absolute inset-y-0 left-0 w-1/2 -translate-x-full skew-x-[-18deg] bg-gradient-to-r from-transparent via-white/45 to-transparent transition-transform duration-700 ease-out group-hover:translate-x-[220%] motion-reduce:hidden dark:via-white/10"
+      />
+
+      <div className="relative flex items-center justify-between">
         <span
           className={cn(
-            'flex h-9 w-9 items-center justify-center rounded-xl',
-            ACCENT_CHIP[accent],
+            'flex h-9 w-9 items-center justify-center rounded-xl shadow-[inset_0_1px_0_0_rgba(255,255,255,0.4)] backdrop-blur-sm',
+            a.chip,
           )}
         >
           <Icon className="h-[18px] w-[18px]" />
         </span>
         {onClick && (
-          <ArrowRight className="h-4 w-4 text-zinc-300 transition-colors group-hover:text-zinc-500 dark:text-zinc-600 dark:group-hover:text-zinc-400" />
+          <ArrowRight className="h-4 w-4 text-zinc-400 transition-colors group-hover:text-zinc-600 dark:text-zinc-500 dark:group-hover:text-zinc-300" />
         )}
       </div>
-      <p className="mt-3 text-[10.5px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+      <p className="relative mt-3 text-[10.5px] font-semibold uppercase tracking-wide text-zinc-600 dark:text-zinc-400">
         {label}
       </p>
-      <p className="mt-0.5 break-words text-2xl font-semibold tracking-tight tabular-nums text-zinc-900 dark:text-white">
+      <p className="relative mt-0.5 break-words text-2xl font-semibold tracking-tight tabular-nums text-zinc-900 dark:text-white">
         {value}
       </p>
-      <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">{sub}</p>
+      <p className="relative mt-1 text-xs text-zinc-600 dark:text-zinc-400">{sub}</p>
     </button>
   );
 }
@@ -272,10 +326,9 @@ export default function ContractorOverview({
   const primaryCurrency: ContractorCurrency = normalizeCurrency(invoices[0]?.currency);
 
   // ── Identity + greeting ──
-  const firstName =
-    (contractorName?.trim().split(/\s+/)[0]) ||
-    contractorEmail.split('@')[0].replace(/[._-]/g, ' ').split(' ')[0];
-  const displayName = firstName.charAt(0).toUpperCase() + firstName.slice(1);
+  // Same first-name resolution as every other dashboard greeting (handles the
+  // master-list `Surname, Given... "GoBy"` form). See resolveFirstName.
+  const displayName = resolveFirstName({ name: contractorName, email: contractorEmail });
 
   const hour = new Date().getHours();
   const timeGreeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
@@ -330,60 +383,69 @@ export default function ContractorOverview({
           ) : (
             <motion.div {...fade} className="flex flex-col gap-6">
 
-              {/* ── KPI cards ── */}
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                <KpiCard
-                  label="Total billed"
-                  value={formatGrouped(sumByCurrency(invoices), primaryCurrency)}
-                  sub={`${plural(invoiceCount, 'invoice')} submitted`}
-                  Icon={Wallet}
-                  accent="blue"
-                  onClick={() => onNavigate('invoices')}
-                />
-                <KpiCard
-                  label="Invoices"
-                  value={String(invoiceCount)}
-                  sub={`${pending.length} pending · ${approved.length} approved`}
-                  Icon={Receipt}
-                  accent="indigo"
-                  onClick={() => onNavigate('invoices')}
-                />
-                <KpiCard
-                  label="Services delivered"
-                  value={String(totalServices)}
-                  sub={
-                    distinctServices === 0
-                      ? 'No line items yet'
-                      : `${plural(distinctServices, 'distinct service')}`
-                  }
-                  Icon={Briefcase}
-                  accent="violet"
-                  onClick={() => onNavigate('invoices')}
-                />
-                <KpiCard
-                  label="Awaiting review"
-                  value={formatGrouped(sumByCurrency(pending), primaryCurrency)}
-                  sub={pending.length === 0 ? 'Nothing pending' : `${plural(pending.length, 'invoice')} with Accounting`}
-                  Icon={Clock}
-                  accent="amber"
-                  onClick={() => onNavigate('invoices')}
-                />
-                <KpiCard
-                  label="Approved"
-                  value={formatGrouped(sumByCurrency(approved), primaryCurrency)}
-                  sub={approved.length === 0 ? 'None yet' : `${plural(approved.length, 'invoice')} cleared`}
-                  Icon={CheckCircle2}
-                  accent="emerald"
-                  onClick={() => onNavigate('invoices')}
-                />
-                <KpiCard
-                  label="Latest invoice"
-                  value={latest ? formatMoney(latest.total ?? 0, normalizeCurrency(latest.currency)) : '—'}
-                  sub={latest ? `${latest.invoice_number || 'Invoice'} · ${relativeDay(latest.created_at)}` : 'None yet'}
-                  Icon={CalendarClock}
-                  accent="sky"
-                  onClick={() => onNavigate('invoices')}
-                />
+              {/* ── KPI cards — glass tiles over a soft colour field ── */}
+              <div className="relative">
+                {/* Colour field the glass diffuses; decorative only. */}
+                <div aria-hidden className="pointer-events-none absolute inset-0 overflow-hidden rounded-[1.5rem]">
+                  <div className="absolute -left-16 -top-20 h-56 w-72 rounded-full bg-blue-300/50 blur-3xl dark:bg-blue-500/20" />
+                  <div className="absolute -top-24 right-[-8%] h-64 w-80 rounded-full bg-violet-300/40 blur-3xl dark:bg-violet-500/[0.15]" />
+                  <div className="absolute -bottom-24 left-1/3 h-64 w-96 rounded-full bg-emerald-200/45 blur-3xl dark:bg-emerald-500/10" />
+                  <div className="absolute -bottom-20 right-1/4 h-56 w-72 rounded-full bg-amber-200/45 blur-3xl dark:bg-amber-500/10" />
+                </div>
+                <div className="relative grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                  <KpiCard
+                    label="Total billed"
+                    value={formatGrouped(sumByCurrency(invoices), primaryCurrency)}
+                    sub={`${plural(invoiceCount, 'invoice')} submitted`}
+                    Icon={Wallet}
+                    accent="blue"
+                    onClick={() => onNavigate('invoices')}
+                  />
+                  <KpiCard
+                    label="Invoices"
+                    value={String(invoiceCount)}
+                    sub={`${pending.length} pending · ${approved.length} approved`}
+                    Icon={Receipt}
+                    accent="indigo"
+                    onClick={() => onNavigate('invoices')}
+                  />
+                  <KpiCard
+                    label="Services delivered"
+                    value={String(totalServices)}
+                    sub={
+                      distinctServices === 0
+                        ? 'No line items yet'
+                        : `${plural(distinctServices, 'distinct service')}`
+                    }
+                    Icon={Briefcase}
+                    accent="violet"
+                    onClick={() => onNavigate('invoices')}
+                  />
+                  <KpiCard
+                    label="Awaiting review"
+                    value={formatGrouped(sumByCurrency(pending), primaryCurrency)}
+                    sub={pending.length === 0 ? 'Nothing pending' : `${plural(pending.length, 'invoice')} with Accounting`}
+                    Icon={Clock}
+                    accent="amber"
+                    onClick={() => onNavigate('invoices')}
+                  />
+                  <KpiCard
+                    label="Approved"
+                    value={formatGrouped(sumByCurrency(approved), primaryCurrency)}
+                    sub={approved.length === 0 ? 'None yet' : `${plural(approved.length, 'invoice')} cleared`}
+                    Icon={CheckCircle2}
+                    accent="emerald"
+                    onClick={() => onNavigate('invoices')}
+                  />
+                  <KpiCard
+                    label="Latest invoice"
+                    value={latest ? formatMoney(latest.total ?? 0, normalizeCurrency(latest.currency)) : '—'}
+                    sub={latest ? `${latest.invoice_number || 'Invoice'} · ${relativeDay(latest.created_at)}` : 'None yet'}
+                    Icon={CalendarClock}
+                    accent="sky"
+                    onClick={() => onNavigate('invoices')}
+                  />
+                </div>
               </div>
 
               {/* ── Rejected notice ── */}

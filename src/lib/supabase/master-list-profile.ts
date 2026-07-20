@@ -1,5 +1,22 @@
 import { createSupabaseServiceRoleClient } from './server';
 import { masterListDisplayName } from '@/lib/name/display-name';
+import { toTitleCaseName } from '@/lib/text/sanitize-name';
+
+/**
+ * Canonical master-list "Name". A value already in surname-first form — it
+ * carries a comma, e.g. `Reroma, Jan Kane "Kane"` composed by the People
+ * profile parts editor — is kept verbatim (only Unicode-folded / re-cased), so
+ * an explicit go-by nickname survives instead of being re-derived. A plain
+ * legal "First Middle Last [Suffix]" (no comma) is converted to the
+ * surname-first quoted form. `masterListDisplayName` expects a LEGAL name and
+ * would mangle an already-surname-first string (it takes the trailing quoted
+ * go-by as the surname), so the comma short-circuit is load-bearing.
+ */
+function canonicalMasterName(raw: string): string {
+  const s = toTitleCaseName(raw);
+  if (!s || s.includes('@') || s.includes(',')) return s;
+  return masterListDisplayName(s);
+}
 
 /**
  * Single-row identity editor for `global_master_list`, powering the
@@ -192,7 +209,7 @@ export async function updateMasterListProfile(
     if (v !== undefined) payload[col] = v == null ? null : String(v).trim() || null;
   };
   if (patch.name !== undefined) {
-    payload['Name'] = patch.name == null || !patch.name.trim() ? null : masterListDisplayName(patch.name);
+    payload['Name'] = patch.name == null || !patch.name.trim() ? null : canonicalMasterName(patch.name);
   }
   set('Department', patch.department);
   set('Work Email', patch.work_email);

@@ -4,7 +4,7 @@ import {
 } from "./server";
 import { listActiveMasterListPeople } from "./global-master-list-db";
 import { fetchHubstaffRowsOrdered, rowsToPayrollRows } from "./hubstaff-hours-db";
-import { manilaMonthDayStamp, manilaWeekStart } from "@/lib/payroll/manila-week";
+import { manilaMonthDayStamp, payrollNotesWeekStart, sundayOf } from "@/lib/payroll/manila-week";
 import { formatAdjustmentText } from "@/lib/payroll/adjustment-bridge";
 
 /**
@@ -45,7 +45,9 @@ export type PayrollWizardNoteRow = {
   worker_email: string | null;
   adjustment: string | null;
   notes: string | null;
-  /** Monday (ISO date) of the payroll week the note was WRITTEN — stamped
+  /** Sunday (ISO date) of the pay period the note belongs to — the
+   *  just-completed Sunday–Saturday week being paid when it was written
+   *  (payroll runs a week in arrears; see payrollNotesWeekStart). Stamped
    *  server-side, never client-editable. Null = a blank seeded line that
    *  hasn't been filled in yet. Drives the board's week selector. */
   week_start: string | null;
@@ -104,18 +106,47 @@ export async function listPayrollWizardNotes(): Promise<{
   return { rows: (data ?? []) as PayrollWizardNoteRow[], error: null };
 }
 
+/**
+ * The pay period a new row lands in. Defaults to the live period; a caller may
+ * request a DIFFERENT one — the current week or any UPCOMING week — so clerks
+ * can stage next week's notes ahead of time. Past periods are read-only (that
+ * page is history), so a past request is refused with an error. Any requested
+ * date is snapped to its Sunday, keeping the anchor consistent no matter what
+ * day the client sent.
+ */
+function resolveRequestedWeek(
+  requested: string | null | undefined,
+): { value: string; error: string | null } {
+  const current = payrollNotesWeekStart();
+  const raw = clean(requested);
+  // No/garbage request → the live period (the common Add-Row case).
+  if (!raw || !/^\d{4}-\d{2}-\d{2}$/.test(raw)) return { value: current, error: null };
+  const sunday = sundayOf(raw);
+  if (sunday < current) {
+    return {
+      value: current,
+      error: "Past pay periods are read-only — add rows on the current or an upcoming week.",
+    };
+  }
+  return { value: sunday, error: null };
+}
+
 /** Insert ONE note. Blank rows are allowed — "Add Row" creates an empty line
- *  the clerk fills in place, exactly like the spreadsheet did. Every added row
- *  is stamped with the current payroll week (the seeded blanks are not — they
- *  get their stamp when first filled in, see updatePayrollWizardNote). */
+ *  the clerk fills in place, exactly like the spreadsheet did. Stamped with the
+ *  live pay period by default, or the caller's requested current/upcoming week
+ *  (see resolveRequestedWeek) when a clerk is staging ahead. Seeded blanks are
+ *  not stamped here — they get their stamp when first filled in, see
+ *  updatePayrollWizardNote. */
 export async function insertPayrollWizardNote(
   values: PayrollWizardNoteValues,
-  opts: { createdBy?: string | null } = {},
+  opts: { createdBy?: string | null; weekStart?: string | null } = {},
 ): Promise<{ row: PayrollWizardNoteRow | null; error: string | null }> {
+  const week = resolveRequestedWeek(opts.weekStart);
+  if (week.error) return { row: null, error: week.error };
   const sb = client();
   const payload = {
     ...toPayload(values),
-    week_start: manilaWeekStart(),
+    week_start: week.value,
     created_by: clean(opts.createdBy)?.toLowerCase() ?? null,
   };
   const { data, error } = await sb.from(TABLE).insert(payload).select("*").single();
@@ -149,7 +180,7 @@ export async function updatePayrollWizardNote(
   if (row.week_start === null && !isBlankNoteRow(row)) {
     const { data: stamped } = await sb
       .from(TABLE)
-      .update({ week_start: manilaWeekStart() })
+      .update({ week_start: payrollNotesWeekStart() })
       .eq("id", rowId)
       .is("week_start", null)
       .select("*")
@@ -471,7 +502,7 @@ export async function bridgeWizardAdjustment(params: {
   if (!email) return { row: null, created: false, error: "A worker email is required." };
 
   const sb = client();
-  const week = manilaWeekStart();
+  const week = payrollNotesWeekStart();
   const { data: existing, error: findErr } = await sb
     .from(TABLE)
     .select("*")

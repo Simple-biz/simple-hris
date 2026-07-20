@@ -180,7 +180,7 @@ export default function ContractorApp() {
         return (
           <ContractorOverview
             contractorEmail={contractorEmail}
-            contractorName={displayName}
+            contractorName={contractorName}
             onNavigate={navigate}
           />
         );
@@ -192,7 +192,7 @@ export default function ContractorApp() {
         return (
           <ContractorOverview
             contractorEmail={contractorEmail}
-            contractorName={displayName}
+            contractorName={contractorName}
             onNavigate={navigate}
           />
         );

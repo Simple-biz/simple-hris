@@ -9887,12 +9887,12 @@ export default function PayrollWizard({
                                     : isManualRevoke
                                       ? 'Manually revoked this session — click to restore.'
                                       : !techBonusWeekInfo.isTechBonusWeek
-                                        ? 'Not the Tech Bonus week — click to grant manually.'
+                                        ? 'Not the Tech Bonus week — released automatically on the Tech Bonus week.'
                                         : !hasRates
-                                          ? 'No PH rate — click to grant manually.'
+                                          ? 'No PH rate on file.'
                                           : !sd
-                                            ? 'No start date — click to grant manually.'
-                                            : 'Less than 30 days of service — click to grant manually.';
+                                            ? 'No start date on file.'
+                                            : 'Less than 30 days of service.';
                                   return (
                                     <TableCell className="px-1 py-1.5 text-center">
                                       {techOn && isTechDeptEligible(emp.email) ? (
@@ -9918,18 +9918,24 @@ export default function PayrollWizard({
                                             <X className="w-2 h-2" />
                                           </button>
                                         </span>
-                                      ) : (
+                                      ) : isManualRevoke ? (
                                         <button
                                           type="button"
                                           title={titleText}
                                           onClick={() => {
                                             setTechBonusManualRevokes(prev => { const next = new Set(prev); next.delete(emp.email); return next; });
-                                            setTechBonusManualGrants(prev => { const next = new Set(prev); next.add(emp.email); return next; });
                                           }}
                                           className="inline-flex items-center gap-1 rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] font-semibold leading-none text-zinc-400 ring-1 ring-zinc-300/40 transition-colors hover:bg-amber-100 hover:text-amber-700 hover:ring-amber-400/50 dark:bg-zinc-800/60 dark:text-zinc-500 dark:ring-zinc-700/40 dark:hover:bg-amber-900/30 dark:hover:text-amber-300"
                                         >
-                                          Grant
+                                          Restore
                                         </button>
+                                      ) : (
+                                        <span
+                                          title={titleText}
+                                          className="inline-flex items-center justify-center text-[10px] font-semibold leading-none text-zinc-300 dark:text-zinc-700"
+                                        >
+                                          —
+                                        </span>
                                       )}
                                     </TableCell>
                                   );
@@ -10996,14 +11002,12 @@ export default function PayrollWizard({
                                       +{formatPHP(techAmountPhp)}
                                     </span>
                                   ) : (
-                                    <button
-                                      type="button"
-                                      title="Not the Tech Bonus week or tenure/rate requirements not met — click to grant manually."
-                                      onClick={() => setTechBonusManualGrants(prev => { const next = new Set(prev); next.add(r.email); return next; })}
-                                      className="inline-flex items-center gap-1 rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] font-semibold leading-none text-zinc-400 ring-1 ring-zinc-300/40 transition-colors hover:bg-amber-100 hover:text-amber-700 hover:ring-amber-400/50 dark:bg-zinc-800/60 dark:text-zinc-500 dark:ring-zinc-700/40 dark:hover:bg-amber-900/30 dark:hover:text-amber-300"
+                                    <span
+                                      title="Not the Tech Bonus week or tenure/rate requirements not met — released automatically on the Tech Bonus week."
+                                      className="inline-flex items-center justify-center text-[10px] font-semibold leading-none text-zinc-300 dark:text-zinc-700"
                                     >
-                                      Grant
-                                    </button>
+                                      —
+                                    </span>
                                   )}
                                 </td>
                                 )}

@@ -19,6 +19,7 @@ import { DatePicker, DateRangePicker, type DateRange } from '@/components/ui/dat
 import PeopleBankChanges from './PeopleBankChanges';
 import { BankChangeDetailDialog, timeAgo, type BankChangeEntry } from './bank-change-detail';
 import { getTabCache, setTabCache, TAB_CACHE_KEYS } from '@/lib/accounting/tab-cache';
+import { parseNameParts, composeMasterListName, type NameParts } from '@/lib/name/name-parts';
 import { cn } from '@/lib/utils';
 
 type Currency = 'PHP' | 'USD' | 'COP';
@@ -2400,6 +2401,33 @@ function HoursCell({ hours }: { hours: Hours }) {
 
 type PersonTab = 'profile' | 'banking' | 'payroll' | 'pab';
 
+/** "Don't show again soon" for the sensitive-edit warning is a TEMPORARY snooze,
+ *  not a permanent opt-out — the warning re-arms after this window so it can't be
+ *  silenced forever. Stored as an expiry timestamp in localStorage. */
+const EDIT_WARN_SNOOZE_KEY = 'people:edit-profile-warning-snooze-until';
+const EDIT_WARN_SNOOZE_MS = 8 * 60 * 60 * 1000; // 8 hours ≈ one work session
+
+/** True while the sensitive-edit warning is snoozed (window not yet expired). */
+function isEditWarningSnoozed(): boolean {
+  if (typeof window === 'undefined') return false;
+  try {
+    const until = Number(window.localStorage.getItem(EDIT_WARN_SNOOZE_KEY) ?? '0');
+    return Number.isFinite(until) && until > Date.now();
+  } catch {
+    return false;
+  }
+}
+
+/** Start (or refresh) the snooze window. */
+function snoozeEditWarning(): void {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(EDIT_WARN_SNOOZE_KEY, String(Date.now() + EDIT_WARN_SNOOZE_MS));
+  } catch {
+    /* private mode / storage disabled — the warning simply shows every time */
+  }
+}
+
 function PersonDetailDialog({
   row,
   accent,
@@ -2449,17 +2477,56 @@ function PersonDetailDialog({
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState<ProfileForm>(() => initialForm(row));
   const upd = (k: keyof ProfileForm, v: string) => setForm((f) => ({ ...f, [k]: v }));
-  const beginEdit = () => { setForm(initialForm(row)); setEditing(true); };
-  const cancelEdit = () => { setForm(initialForm(row)); setEditing(false); };
+  // The full name, split into editable parts (First / Middle / Last / Extension
+  // / Nickname). Composed back into the master-list "Name" on save — see
+  // saveProfile — so an explicit nickname persists to Supabase, not the blob.
+  const [nameParts, setNameParts] = useState<NameParts>(() => parseNameParts(row.name));
+  const updPart = (k: keyof NameParts, v: string) => setNameParts((p) => ({ ...p, [k]: v }));
+  const beginEdit = () => { setForm(initialForm(row)); setNameParts(parseNameParts(row.name)); setEditing(true); };
+  const cancelEdit = () => { setForm(initialForm(row)); setNameParts(parseNameParts(row.name)); setEditing(false); };
+  // Read-only breakdown shown when not editing (derived from the stored name).
+  const viewParts = useMemo(() => parseNameParts(row.name), [row.name]);
+
+  // Sensitive-info gate: clicking Edit opens a warning first, unless it's been
+  // snoozed ("Don't show again soon"). The snooze is time-boxed, not permanent.
+  const [showEditWarning, setShowEditWarning] = useState(false);
+  const [snoozeWarning, setSnoozeWarning] = useState(false);
+  const requestEdit = () => {
+    if (isEditWarningSnoozed()) { beginEdit(); return; }
+    setSnoozeWarning(false);
+    setShowEditWarning(true);
+  };
+  const confirmEditWarning = () => {
+    if (snoozeWarning) snoozeEditWarning();
+    setShowEditWarning(false);
+    beginEdit();
+  };
 
   const saveProfile = async () => {
     const initial = initialForm(row);
     const patch: Record<string, string> = {};
     (Object.keys(initial) as (keyof ProfileForm)[]).forEach((k) => {
+      if (k === 'name') return; // the name is edited via its parts (below), not this field
       const before = k === 'start_date' ? initial[k] : initial[k].trim();
       const after = k === 'start_date' ? form[k] : form[k].trim();
       if (before !== after) patch[k] = after;
     });
+    // Recompose the name from its parts and include it only when a part actually
+    // changed — so editing e.g. only the phone never rewrites the name. The
+    // composed surname-first string is stored verbatim server-side (comma form),
+    // so an explicit nickname is preserved rather than re-derived.
+    const initialParts = parseNameParts(row.name);
+    const partsChanged = (Object.keys(nameParts) as (keyof NameParts)[]).some(
+      (k) => nameParts[k].trim() !== initialParts[k].trim(),
+    );
+    if (partsChanged) {
+      const composedName = composeMasterListName(nameParts).trim();
+      if (!composedName) {
+        toast.error('Name can’t be empty — a first or last name is required.');
+        return;
+      }
+      patch.name = composedName;
+    }
     // Any structured-address change re-derives the combined "Location" line
     // (the single address field the Google Sheet carries).
     const ADDR = ['street', 'city', 'province', 'postal_code', 'full_address'];
@@ -2693,7 +2760,7 @@ function PersonDetailDialog({
               <h3 className="text-xs font-semibold uppercase tracking-wide text-zinc-500">Identity &amp; contact</h3>
               {canEdit && !editing && (
                 row.id ? (
-                  <Button type="button" size="sm" variant="outline" className="h-7 gap-1.5 px-2 text-[12px]" onClick={beginEdit}>
+                  <Button type="button" size="sm" variant="outline" className="h-7 gap-1.5 px-2 text-[12px]" onClick={requestEdit}>
                     <Pencil className="h-3.5 w-3.5" /> Edit
                   </Button>
                 ) : (
@@ -2704,7 +2771,23 @@ function PersonDetailDialog({
             {editing ? (
               <div className="rounded-lg border border-zinc-200 bg-zinc-50/60 p-3 dark:border-zinc-800 dark:bg-zinc-900/40">
                 <div className="grid grid-cols-1 gap-x-6 gap-y-3 sm:grid-cols-2">
-                  <EditField label="Full name" value={form.name} onChange={(v) => upd('name', v)} accent={accent} wide hint="Saved in the master-list format (surname first)." />
+                  {/* Full name, split into parts. Composed back to the master-list
+                      "Name" (surname first, with the nickname quoted) on save. */}
+                  <div className="rounded-md border border-zinc-200/70 bg-white/60 p-2.5 sm:col-span-2 dark:border-zinc-800 dark:bg-zinc-950/30">
+                    <div className="grid grid-cols-2 gap-x-4 gap-y-2 sm:grid-cols-3">
+                      <EditField label="First name" value={nameParts.first} onChange={(v) => updPart('first', v)} accent={accent} />
+                      <EditField label="Middle name" value={nameParts.middle} onChange={(v) => updPart('middle', v)} accent={accent} />
+                      <EditField label="Last name" value={nameParts.last} onChange={(v) => updPart('last', v)} accent={accent} />
+                      <EditField label="Extension" value={nameParts.extension} onChange={(v) => updPart('extension', v)} accent={accent} hint="Jr, Sr, III…" />
+                      <EditField label="Nickname" value={nameParts.nickname} onChange={(v) => updPart('nickname', v)} accent={accent} hint="Go-by name" />
+                    </div>
+                    <p className="mt-2 text-[10.5px] text-zinc-400">
+                      Saved to the master list as{' '}
+                      <span className="font-medium text-zinc-600 dark:text-zinc-300">
+                        {composeMasterListName(nameParts) || '—'}
+                      </span>
+                    </p>
+                  </div>
                   <EditField label="Department" value={form.department} onChange={(v) => upd('department', v)} accent={accent} />
                   <EditField label="Work email" value={form.work_email} onChange={(v) => upd('work_email', v)} accent={accent} type="email" hint="Identity key — must stay unique per department." />
                   <EditField label="Personal email" value={form.personal_email} onChange={(v) => upd('personal_email', v)} accent={accent} type="email" />
@@ -2733,6 +2816,13 @@ function PersonDetailDialog({
             ) : (
               <div className="rounded-lg border border-zinc-200 bg-zinc-50/60 p-3 text-[13px] dark:border-zinc-800 dark:bg-zinc-900/40">
                 <dl className="grid grid-cols-1 gap-x-6 gap-y-1.5 sm:grid-cols-2">
+                  {/* Full name, broken into its parts (derived from the stored
+                      master-list name). Optional parts show only when present. */}
+                  <Field label="First name" value={viewParts.first || null} />
+                  <Field label="Last name" value={viewParts.last || null} />
+                  {viewParts.middle && <Field label="Middle name" value={viewParts.middle} />}
+                  {viewParts.extension && <Field label="Extension" value={viewParts.extension} />}
+                  {viewParts.nickname && <Field label="Nickname" value={viewParts.nickname} />}
                   <Field label="Employee ID" value={row.employee_id} mono />
                   <Field label="Department" value={row.department} />
                   <Field label="Work email" value={row.work_email} />
@@ -3112,6 +3202,39 @@ function PersonDetailDialog({
     {bankHistDetail && (
       <BankChangeDetailDialog row={bankHistDetail} onClose={() => setBankHistDetail(null)} />
     )}
+    <Dialog open={showEditWarning} onOpenChange={(o) => { if (!o) setShowEditWarning(false); }}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-amber-100 text-amber-600 dark:bg-amber-950/50 dark:text-amber-400">
+              <AlertTriangle className="h-4 w-4" />
+            </span>
+            Edit sensitive information
+          </DialogTitle>
+          <DialogDescription>
+            You&apos;re about to edit <span className="font-medium text-zinc-700 dark:text-zinc-200">{row.name ?? 'this person'}</span>&apos;s
+            information. This is sensitive personal data — changes write to the Global Master List and the Google Sheet, and are visible to Admin and HR. Please make sure the details are correct before saving.
+          </DialogDescription>
+        </DialogHeader>
+        <label className="mt-1 flex cursor-pointer items-center gap-2 text-[13px] text-zinc-600 select-none dark:text-zinc-300">
+          <input
+            type="checkbox"
+            checked={snoozeWarning}
+            onChange={(e) => setSnoozeWarning(e.target.checked)}
+            className={cn('h-4 w-4 rounded border-zinc-300 dark:border-zinc-600', accent.check)}
+          />
+          Don&apos;t show this again soon
+        </label>
+        <div className="mt-3 flex items-center justify-end gap-2">
+          <Button type="button" size="sm" variant="outline" className="h-8 px-3 text-[12px]" onClick={() => setShowEditWarning(false)}>
+            Cancel
+          </Button>
+          <Button type="button" size="sm" className={cn('h-8 gap-1.5 px-3 text-[12px] font-medium', accent.btn)} onClick={confirmEditWarning}>
+            <Pencil className="h-3.5 w-3.5" /> Continue to edit
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
     </>
   );
 }

@@ -43,7 +43,7 @@ import {
   formatRate,
   type PayStructure,
 } from "@/lib/payment-catalog/pay-structure";
-import { manilaWeekStart, weekRangeLabel } from "@/lib/payroll/manila-week";
+import { addWeeks, payrollNotesWeekStart, weekRangeLabel } from "@/lib/payroll/manila-week";
 import {
   APPLY_NOTE_ADJUSTMENTS_EVENT,
   NOTE_ADJUSTMENT_REMOVED_EVENT,
@@ -100,11 +100,17 @@ export default function PayrollWizardNotesFab({
 }) {
   const [open, setOpen] = useState(false);
   const [modalTab, setModalTab] = useState<ModalTab>("checklist");
-  // Period selector: which payroll week (Manila Monday) the board is showing.
-  // Defaults to — and follows — the live week; past weeks are read-back pages.
-  const currentWeek = manilaWeekStart();
+  // Period selector: which pay period (Sunday–Saturday) the board is showing.
+  // Defaults to — and follows — the live period, i.e. the just-completed week
+  // being paid now (payroll runs a week in arrears); past weeks are read-back
+  // pages. See payrollNotesWeekStart() for why this trails the calendar week.
+  const currentWeek = payrollNotesWeekStart();
   const [weekStart, setWeekStart] = useState<string>(currentWeek);
   const isLiveWeek = weekStart === currentWeek;
+  // Past periods are history (read-only); the live period and any upcoming one
+  // accept new rows so clerks can stage next week's notes ahead of time.
+  const isPastWeek = weekStart < currentWeek;
+  const isFutureWeek = weekStart > currentWeek;
   // The signed-in user's real name ("First Last", from Google sign-in) for the
   // Payroll Clerk stamp — never the raw email prefix unless there's no name.
   const { data: authSession } = useSession();
@@ -331,7 +337,12 @@ export default function PayrollWizardNotesFab({
       const res = await fetch(API, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ values: { note_date: todayStamp(), payroll_clerk: clerkName } }),
+        // Stamp the row to the period in view — the live week normally, or the
+        // upcoming week when a clerk is staging ahead (server refuses past).
+        body: JSON.stringify({
+          values: { note_date: todayStamp(), payroll_clerk: clerkName },
+          weekStart,
+        }),
       });
       const json = (await res.json()) as { row?: PayrollWizardNoteRow; error?: string };
       if (!res.ok || !json.row) throw new Error(json.error || `Add failed (${res.status})`);
@@ -378,22 +389,27 @@ export default function PayrollWizardNotesFab({
         (r.notes ?? "").trim() !== ""),
   ).length;
 
-  // The weeks the selector offers: the live week plus every week with notes on
-  // file (kept stable if the selected week's rows vanish under a live refresh).
+  // The weeks the selector offers: the live week, next week (always listed so
+  // staging ahead is discoverable), the current selection, plus every week with
+  // notes on file (kept stable if the selected week's rows vanish on refresh).
+  // The arrows can still step to any week beyond these.
   const weekOptions = useMemo(() => {
-    const set = new Set<string>([currentWeek, weekStart]);
+    const set = new Set<string>([currentWeek, addWeeks(currentWeek, 1), weekStart]);
     for (const r of rows) if (r.week_start) set.add(r.week_start);
     return [...set].sort((a, b) => b.localeCompare(a));
   }, [rows, currentWeek, weekStart]);
 
   // The selected week's slice of the board. The live week is the working
   // checklist: this week's rows, the blank seeds (week_start null), and every
-  // still-open carry-over from a past week. A past week is that week's page —
-  // exactly what was written then, done or not (ticking a carry-over files it
-  // back under the week it was written).
+  // still-open carry-over from a PAST week (future-staged rows stay on their
+  // own upcoming page — they aren't due yet, so they don't clutter "now"). A
+  // past/future week is that week's page — exactly what was written for it,
+  // done or not (ticking a carry-over files it back under its own week).
   const weekRows = rows.filter((r) =>
     isLiveWeek
-      ? r.week_start === null || r.week_start === currentWeek || !r.done
+      ? r.week_start === null ||
+        r.week_start === currentWeek ||
+        (!r.done && r.week_start !== null && r.week_start < currentWeek)
       : r.week_start === weekStart,
   );
 
@@ -552,11 +568,13 @@ export default function PayrollWizardNotesFab({
                 ) : visibleRows.length === 0 ? (
                   <tr>
                     <td colSpan={canEdit ? 7 : 6} className="px-3 py-8 text-center text-zinc-400">
-                      {!isLiveWeek
+                      {isPastWeek
                         ? `No notes were logged the week of ${weekRangeLabel(weekStart)}.`
-                        : showOthers
-                          ? "Nothing on the board yet."
-                          : "You have no notes yet — flip on “Show everyone's notes” to see the rest of the board."}
+                        : isFutureWeek
+                          ? `Nothing staged yet for the week of ${weekRangeLabel(weekStart)} — add a row to get ahead.`
+                          : showOthers
+                            ? "Nothing on the board yet."
+                            : "You have no notes yet — flip on “Show everyone's notes” to see the rest of the board."}
                     </td>
                   </tr>
                 ) : (
@@ -571,7 +589,10 @@ export default function PayrollWizardNotesFab({
                             <span className="text-[11px] font-bold tracking-wider text-orange-700 uppercase dark:text-orange-300">
                               {group.clerk}
                             </span>
-                            {canEdit && isOwnGroup(group) && (
+                            {/* Apply pushes into the CURRENT wizard run, so it
+                                only appears on the live period — never a
+                                past page or a staged upcoming one. */}
+                            {canEdit && isLiveWeek && isOwnGroup(group) && (
                               <button
                                 type="button"
                                 onClick={() => applyGroupAdjustments(group.rows)}
@@ -666,14 +687,14 @@ export default function PayrollWizardNotesFab({
 
           {canEdit && (
             <div className="flex items-center justify-between">
-              {isLiveWeek ? (
+              {!isPastWeek ? (
                 <Button type="button" variant="outline" size="sm" onClick={() => void addRow()} disabled={adding}>
                   {adding ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
-                  Add Row
+                  {isFutureWeek ? "Add Row (upcoming week)" : "Add Row"}
                 </Button>
               ) : (
                 <span className="text-xs text-zinc-400">
-                  Viewing a past week — new rows are added on the live week.
+                  Viewing a past week — new rows are added on the current or an upcoming week.
                 </span>
               )}
               <span className="text-xs text-zinc-400">
@@ -799,10 +820,12 @@ function RatesGlance() {
 }
 
 /**
- * Period selector for the notes board — prev/next arrows step through payroll
- * weeks (Manila Mondays), the dropdown lists the live week plus every past
- * week that has notes. Plain-button disclosure (same pattern as the QC
- * Overview's period selector) so Tab + Enter/Space work natively.
+ * Period selector for the notes board — prev/next arrows step one Sunday–Saturday
+ * pay period at a time in either direction (back through history, forward to
+ * stage upcoming weeks); the dropdown lists the live week, next week, and every
+ * other week that has notes, tagged Live / Upcoming / Past. Plain-button
+ * disclosure (same pattern as the QC Overview's period selector) so Tab +
+ * Enter/Space work natively.
  */
 function WeekSelector({
   value,
@@ -833,10 +856,13 @@ function WeekSelector({
     };
   }, [open]);
 
-  const idx = options.indexOf(value);
   const isLive = value === currentWeek;
-  const hasOlder = idx >= 0 && idx < options.length - 1;
-  const hasNewer = idx > 0;
+  const isFuture = value > currentWeek;
+  // Step by exactly one pay-week in either direction — the arrows roam freely
+  // (back through history, forward to stage upcoming weeks), not just across
+  // weeks that already have notes.
+  const prevWeek = addWeeks(value, -1);
+  const nextWeek = addWeeks(value, 1);
 
   const arrowCls =
     "rounded-md border border-orange-200/80 bg-white p-1 text-zinc-500 transition-colors hover:bg-orange-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-blue-900/60 dark:bg-blue-950/30 dark:text-zinc-400 dark:hover:bg-blue-950/50";
@@ -846,8 +872,7 @@ function WeekSelector({
       <button
         type="button"
         aria-label="Older week"
-        disabled={!hasOlder}
-        onClick={() => hasOlder && onChange(options[idx + 1]!)}
+        onClick={() => onChange(prevWeek)}
         className={arrowCls}
       >
         <ChevronLeft className="h-3.5 w-3.5" />
@@ -868,10 +893,12 @@ function WeekSelector({
           className={`rounded-full px-1.5 py-0.5 font-mono text-[8px] font-semibold tracking-wide uppercase ${
             isLive
               ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300"
-              : "bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400"
+              : isFuture
+                ? "bg-amber-100 text-amber-700 dark:bg-amber-950/50 dark:text-amber-300"
+                : "bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400"
           }`}
         >
-          {isLive ? "Live" : "Past"}
+          {isLive ? "Live" : isFuture ? "Upcoming" : "Past"}
         </span>
         <ChevronDown
           className={`h-3.5 w-3.5 text-zinc-400 transition-transform ${open ? "rotate-180" : ""}`}
@@ -881,8 +908,7 @@ function WeekSelector({
       <button
         type="button"
         aria-label="Newer week"
-        disabled={!hasNewer}
-        onClick={() => hasNewer && onChange(options[idx - 1]!)}
+        onClick={() => onChange(nextWeek)}
         className={arrowCls}
       >
         <ChevronRight className="h-3.5 w-3.5" />
@@ -918,6 +944,7 @@ function WeekSelector({
               {options.map((w) => {
                 const selected = w === value;
                 const live = w === currentWeek;
+                const upcoming = w > currentWeek;
                 return (
                   <li key={w}>
                     <button
@@ -936,6 +963,11 @@ function WeekSelector({
                       {live && (
                         <span className="rounded-full bg-emerald-100 px-1.5 py-0.5 font-mono text-[8px] font-semibold tracking-wide text-emerald-700 uppercase dark:bg-emerald-950/50 dark:text-emerald-300">
                           Live
+                        </span>
+                      )}
+                      {upcoming && (
+                        <span className="rounded-full bg-amber-100 px-1.5 py-0.5 font-mono text-[8px] font-semibold tracking-wide text-amber-700 uppercase dark:bg-amber-950/50 dark:text-amber-300">
+                          Upcoming
                         </span>
                       )}
                     </button>

@@ -19,6 +19,7 @@ and weekly period selector (Jul 17, `f1f930d2`).
 | CEO assistant read tool | `src/lib/anthropic/ceo-tools.ts` (reports `week_of` + `adjustment`) |
 | Table DDL | `references/sql/create/create_payroll_wizard_notes.sql` |
 | Column migration (Jul 17) | `references/sql/alter/add_adjustment_and_week_start_to_payroll_wizard_notes.sql` |
+| Period re-anchor migration (Jul 20) | `references/sql/alter/reanchor_payroll_wizard_notes_week_start_to_pay_period_sunday.sql` |
 
 ## Columns
 
@@ -33,23 +34,43 @@ and weekly period selector (Jul 17, `f1f930d2`).
 
 ## Weekly periods (`week_start`)
 
-- A payroll week is **Monday-anchored in Asia/Manila** — same convention as
-  the Hubstaff pay weeks, but computed from the calendar
-  (`manilaWeekStart()` / `mondayOf()` in `manila-week.ts`), so "this week"
-  exists before any CSV is uploaded for it.
-- Every note carries a `week_start` DATE — the Manila Monday of the week it
-  was **written**. It is stamped by the API on Add Row and when a blank seeded
-  line is first filled in; it is **never editable from the client**.
+- The board is keyed on the **pay period being paid**, not the calendar week
+  the clerk is sitting in. Payroll runs **a week in arrears**: while it's the
+  week of the 19th–25th, accounting is processing the 12th–18th. So a period is
+  the just-completed **Sunday–Saturday** week, read in Asia/Manila — one
+  calendar week before "now" — labelled e.g. "Jul 12 – Jul 18".
+  (`payrollNotesWeekStart()` in `manila-week.ts`; computed from the calendar,
+  so the period exists before any CSV is uploaded for it. `manilaWeekStart()` /
+  `mondayOf()` stay Monday-anchored for the HR master-list snapshots.)
+- Every note carries a `week_start` DATE — the **Sunday** of the pay period it
+  belongs to. It is stamped by the API on Add Row and when a blank seeded line
+  is first filled in; it is **never editable from the client**.
 - The board's **period selector** (top-left: prev/next arrows + dropdown, same
-  pattern as the QC Overview picker) drives which week is shown:
-  - **Live (current) week** — this week's notes, plus blank seed lines, plus
-    still-**open** carry-overs from past weeks (so nothing pending ever
-    disappears).
-  - **Past weeks** — that week exactly as written; **Add Row is disabled**.
-  - Ticking Done on a carry-over files it under its **original** week.
-- Backfill: pre-existing rows with content (or already Done) were filed under
-  the Manila week of their `created_at`; untouched blank seeds stay NULL until
-  someone writes on them.
+  pattern as the QC Overview picker) drives which week is shown. The arrows step
+  **one pay period at a time in either direction** — freely, not just across
+  weeks that already have notes — so any past or upcoming week is reachable;
+  each period is tagged **Live / Upcoming / Past**:
+  - **Live (current) period** — the paid week's notes, plus blank seed lines,
+    plus still-**open** carry-overs from past periods (so nothing pending ever
+    disappears). Future-staged rows stay on their own upcoming page — they
+    aren't due yet, so they don't clutter "now".
+  - **Upcoming periods** — stage next week's notes ahead of time: **Add Row is
+    enabled** and stamps the row to that week (the server accepts the current
+    week or any future one, snapped to its Sunday, and refuses past weeks).
+    "Apply Changes" is hidden here — it pushes into the *current* wizard run.
+  - **Past periods** — that week exactly as written; **Add Row is disabled**.
+  - Ticking Done on a carry-over files it under its **original** period.
+- Backfill: the original Jul 17 migration filed pre-existing rows under the
+  Manila **Monday** of their `created_at`. The Jul 20 re-anchor migration
+  (`reanchor_payroll_wizard_notes_week_start_to_pay_period_sunday.sql`) shifts
+  every such Monday back 8 days to the corresponding pay-period Sunday; it only
+  touches Mondays, so it is idempotent and safe in any deploy order. Untouched
+  blank seeds stay NULL until someone writes on them.
+
+> Possible refinement (not built): derive the period straight from the Payroll
+> Wizard's loaded Hubstaff CSV instead of the calendar heuristic, so the board
+> tracks the exact period being processed even if payroll ever runs more than a
+> week behind. The calendar rule above matches today's one-week-arrears cadence.
 
 ## Access + realtime
 
