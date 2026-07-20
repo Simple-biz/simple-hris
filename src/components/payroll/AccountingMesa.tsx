@@ -672,7 +672,7 @@ export default function AccountingMesa() {
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-y-auto bg-gradient-to-br from-white via-teal-50/30 to-emerald-50/20 p-4 sm:p-6 dark:bg-none dark:bg-[#0d1117]">
-      <div className="mx-auto w-full max-w-6xl space-y-5">
+      <div className="w-full space-y-5">
 
         {/* Header */}
         <div className="flex items-start gap-3">

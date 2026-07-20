@@ -1092,29 +1092,45 @@
    background clip to its radius. Console-only surface (always black + red), so
    there is no light-theme variant to tune. */
 .kpi-glass {
-  border: 1px solid rgb(255 255 255 / 0.16);
-  background-color: rgb(255 255 255 / 0.02);
+  /* Clear glass, iOS-style: a see-through pane with a bright lit edge, not a
+     frosted/foggy sheet. Only a whisper of blur so what's behind stays sharp
+     through it; the material reads from the edge highlight and reflection, not
+     from fog. */
+  border: 1px solid rgb(255 255 255 / 0.12);
+  /* Barely-there tint so the pane has presence over black without clouding. */
+  background-color: rgb(255 255 255 / 0.03);
   background-image:
-    /* diagonal specular streak — the glint that makes it read as glass */
-    linear-gradient(
-      115deg,
-      transparent 30%,
-      rgb(255 255 255 / 0.06) 42%,
-      rgb(255 255 255 / 0.22) 50%,
-      rgb(255 255 255 / 0.05) 58%,
-      transparent 70%
-    ),
-    /* glossy top sheen fading down the pane */
+    /* soft top-edge highlight — the glass catches light at the top and falls
+       off smoothly */
     linear-gradient(
       180deg,
-      rgb(255 255 255 / 0.16) 0%,
-      rgb(255 255 255 / 0.04) 34%,
-      transparent 60%
+      rgb(255 255 255 / 0.08) 0%,
+      rgb(255 255 255 / 0.02) 20%,
+      transparent 44%
     );
-  -webkit-backdrop-filter: blur(10px) saturate(1.6) brightness(1.06);
-          backdrop-filter: blur(10px) saturate(1.6) brightness(1.06);
+  /* Just a touch of blur/saturation — enough to feel like glass, clear enough
+     to see straight through it. */
+  -webkit-backdrop-filter: blur(3px) saturate(1.15);
+          backdrop-filter: blur(3px) saturate(1.15);
   box-shadow:
     0 18px 44px -18px rgb(0 0 0 / 0.72),
     inset 0 1px 0 0 rgb(255 255 255 / 0.40),
-    inset 0 -10px 26px -14px rgb(255 255 255 / 0.08);
+    inset 0 0 0 0.5px rgb(255 255 255 / 0.08),
+    inset 0 -14px 30px -18px rgb(255 255 255 / 0.05);
+  transition:
+    background-color 0.25s ease,
+    border-color 0.25s ease,
+    box-shadow 0.25s ease;
+}
+
+/* Subtle hover: the glass catches a touch more light — a hair brighter tint and
+   a slightly stronger lit edge. No lift or scale, just the pane waking up. */
+.kpi-glass:hover {
+  background-color: rgb(255 255 255 / 0.05);
+  border-color: rgb(255 255 255 / 0.18);
+  box-shadow:
+    0 20px 48px -18px rgb(0 0 0 / 0.75),
+    inset 0 1px 0 0 rgb(255 255 255 / 0.52),
+    inset 0 0 0 0.5px rgb(255 255 255 / 0.12),
+    inset 0 -14px 30px -18px rgb(255 255 255 / 0.07);
 }

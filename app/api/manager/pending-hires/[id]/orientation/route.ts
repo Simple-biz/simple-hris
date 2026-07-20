@@ -14,6 +14,7 @@ import { insertAuditLog } from '@/lib/supabase/audit-log';
 import { requireFeatureEdit } from '@/lib/auth/authorize-feature';
 import { deniedResponse } from '@/lib/auth/authorize-email';
 import { isLeadGenDepartment } from '@/lib/hr/offboard-webhooks';
+import { splitFullName } from '@/lib/hr/work-email';
 import { ensureCallToolsFieldsForPendingHire } from '@/lib/hr/calltools-username-server';
 import {
   fireCallToolsCreationWebhook,
@@ -149,10 +150,18 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     const toNum = (v: string | null | undefined): number | null =>
       v != null && v !== '' && Number.isFinite(Number(v)) ? Number(v) : null;
     const regularRate = toNum(row.regular_rate);
+    // Real first/last for n8n. Prefer the structured columns (the hire's typed
+    // parts, carried through from onboarding); fall back to splitting `name` for
+    // rows that predate the split migration so the fields are never empty.
+    const nameFallback = splitFullName(row.name);
+    const firstName = (row.first_name ?? '').trim() || nameFallback.first || null;
+    const lastName = (row.last_name ?? '').trim() || nameFallback.last || null;
     webhook = await fireCallToolsCreationWebhook({
       event: 'hire.orientation_attended',
       pending_employee_id: id,
       name: row.name ?? null,
+      first_name: firstName,
+      last_name: lastName,
       work_email: row.work_email ?? null,
       personal_email: row.personal_email ?? null,
       department: row.department ?? null,

@@ -14,6 +14,7 @@ import {
   createSupabaseServerClient,
   createSupabaseServiceRoleClient,
 } from '@/lib/supabase/server';
+import { normEmail } from '@/lib/email/norm-email';
 
 export type ProbeStatus = 'healthy' | 'warning' | 'critical' | 'unknown';
 
@@ -303,6 +304,53 @@ export async function probeMasterList(): Promise<ProbeResult> {
     };
   } catch (e) {
     return { status: 'unknown', summary: 'Master list probe error.', details: [trimError(e)], suggestedChecks: [] };
+  }
+}
+
+/**
+ * HRIS adoption metric — how many roster members from the Global Master List
+ * (active_employees view) have actually used the HRIS, plus the total roster
+ * size, for the "Employees Onboarded" KPI card (rendered as onboarded / total).
+ *
+ * "Using the HRIS" = has a user_presence row. Presence is upserted per email on
+ * every signed-in heartbeat (app/api/presence/heartbeat), so its email set is the
+ * population of people who have opened the app while authenticated. There is no
+ * DB FK between presence and the roster, so we match in-app by normalized email:
+ * a member is counted as onboarded if EITHER their Work OR Personal email appears
+ * in user_presence. Returns null on any failure so the card degrades to "—".
+ */
+export async function computeHrisAdoption(): Promise<{ onboarded: number; total: number } | null> {
+  const supabase = createSupabaseServiceRoleClient() ?? createSupabaseServerClient();
+  if (!supabase) return null;
+  try {
+    const [rosterRes, presenceRes] = await Promise.all([
+      supabase
+        .from('active_employees')
+        .select('"Work Email", "Personal Email"')
+        .range(0, 99999),
+      supabase.from('user_presence').select('email'),
+    ]);
+    if (rosterRes.error || presenceRes.error) return null;
+
+    const seen = new Set<string>();
+    for (const r of (presenceRes.data ?? []) as Array<{ email: string | null }>) {
+      const e = normEmail(r.email);
+      if (e) seen.add(e);
+    }
+
+    const rows = (rosterRes.data ?? []) as Array<{
+      'Work Email'?: string | null;
+      'Personal Email'?: string | null;
+    }>;
+    let onboarded = 0;
+    for (const r of rows) {
+      const w = normEmail(r['Work Email']);
+      const p = normEmail(r['Personal Email']);
+      if ((w && seen.has(w)) || (p && seen.has(p))) onboarded += 1;
+    }
+    return { onboarded, total: rows.length };
+  } catch {
+    return null;
   }
 }
 

@@ -11,7 +11,7 @@ import {
 } from "@/lib/supabase/hr-pending-employees";
 import { loadTakenWorkEmails } from "@/lib/hr/work-email-server";
 import { ensureCallToolsFieldsForSubmission } from "@/lib/hr/calltools-username-server";
-import { WORK_EMAIL_DOMAIN, splitFullName, gmailSurnameFromWorkEmail } from "@/lib/hr/work-email";
+import { WORK_EMAIL_DOMAIN, derivationNameParts, gmailSurnameFromWorkEmail } from "@/lib/hr/work-email";
 import { insertAuditLog } from "@/lib/supabase/audit-log";
 import { createWorkspaceAccount, verifyWorkspaceAccount } from "@/lib/hr/workspace-account";
 import { listPayStructures } from "@/lib/supabase/pay-structures-db";
@@ -187,6 +187,9 @@ export async function POST(
       row.pending_employee_id,
       {
         name,
+        first_name: row.first_name,
+        last_name: row.last_name,
+        name_extension: row.name_extension,
         work_email: workEmail,
         department,
         regular_rate: regularRateStr ?? undefined,
@@ -205,6 +208,9 @@ export async function POST(
     // First time: create a fresh pending hire from the submission.
     const { row: created, error: createErr } = await createHrPendingEmployee({
       name,
+      first_name: row.first_name,
+      last_name: row.last_name,
+      name_extension: row.name_extension,
       personal_email: personalEmail,
       work_email: workEmail,
       department,
@@ -236,7 +242,14 @@ export async function POST(
   // the same UPDATE. That's what lets the Submitted tab tell a CONFIRMED
   // designated work email (200) apart from a minted-but-failed one. A retry
   // that finally succeeds re-runs this and flips the row to confirmed.
-  const { first, last } = splitFullName(name);
+  // First/last from the submission's structured columns when present (reduced to
+  // the same tokens splitFullName yields, so the derived surname is unchanged),
+  // falling back to splitting `name` for legacy rows.
+  const { first, last } = derivationNameParts({
+    first_name: row.first_name,
+    last_name: row.last_name,
+    full_name: name,
+  });
   // Surname sent to the workspace webhook IN PLACE OF the legal last name, on
   // purpose: the Workspace account must never expose the hire's full surname (so
   // they can't be looked up / stalked elsewhere). We derive it from the chosen

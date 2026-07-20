@@ -18,6 +18,7 @@ import {
   listResolvedTransfersForDepartments,
   hasPendingTransferForEmployee,
 } from '@/lib/supabase/department-transfer-requests';
+import { loadActiveDeptsByEmail, partitionStaleTransfers } from '@/lib/transfers/stale-transfers';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -97,7 +98,18 @@ export async function GET(request: Request) {
       const departments = depts.map((d) => d.department).filter(Boolean);
       const { rows, error } = await listIncomingTransfersForDepartments(departments);
       if (error) return NextResponse.json({ rows: [], error }, { status: 500 });
-      return NextResponse.json({ rows, error: null });
+      // Hide release requests for people who've already been transferred OUT of
+      // the source department by another path (a co-manager releasing them, the
+      // master-list Sheet sync, a direct roster edit, a re-hire). The source
+      // manager shouldn't be asked to release someone who's no longer on their
+      // team — releasing it is a no-op that just errors. The daily transfer cron
+      // then cancels these stale rows for good. Fail-open: if the roster read
+      // hiccups we return the unfiltered queue rather than hiding legit requests.
+      if (rows.length === 0) return NextResponse.json({ rows, error: null });
+      const { index, error: idxErr } = await loadActiveDeptsByEmail();
+      if (idxErr) return NextResponse.json({ rows, error: null });
+      const { live } = partitionStaleTransfers(rows, index);
+      return NextResponse.json({ rows: live, error: null });
     }
     if (scope === 'done') {
       // Resolved release requests on the manager's team — released/declined/

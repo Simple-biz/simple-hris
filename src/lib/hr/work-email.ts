@@ -56,6 +56,51 @@ export function splitFullName(full: string | null | undefined): {
 }
 
 /**
+ * Compose the legacy combined name from the structured parts — the SAME string
+ * the onboarding form used to build inline (`[first, last, ext].join(" ")`). The
+ * split parts are the source of truth now; this keeps `full_name` / `name` (the
+ * master-list Sheet column, payroll name-matching, the display trigger) in sync.
+ */
+export function composeFullName(
+  first: string | null | undefined,
+  last: string | null | undefined,
+  extension?: string | null | undefined,
+): string {
+  return [first, last, extension]
+    .map((s) => (s ?? "").trim())
+    .filter(Boolean)
+    .join(" ");
+}
+
+/**
+ * First/last NAME TOKENS for work-email / gmail-surname / CallTools derivation,
+ * sourced from the structured `first_name` / `last_name` columns when present
+ * (no blob re-parsing, no suffix guessing) and falling back to
+ * {@link splitFullName} for legacy rows that predate the split.
+ *
+ * It reduces multi-token parts to the SAME (first token, last token)
+ * splitFullName yields, on purpose: the documented "<first><last-initial>"
+ * address rule and the dialer surname slice must not shift for a compound
+ * surname ("Dela Cruz" -> last token "Cruz"), and a live work email must never
+ * change under a hire when their row gains the columns. For the RAW captured
+ * parts (e.g. the CallTools-creation webhook), read the columns directly.
+ */
+export function derivationNameParts(parts: {
+  first_name?: string | null;
+  last_name?: string | null;
+  full_name?: string | null;
+}): { first: string; last: string } {
+  const firstCol = (parts.first_name ?? "").trim();
+  const lastCol = (parts.last_name ?? "").trim();
+  if (firstCol || lastCol) {
+    const firstTok = firstCol.split(/\s+/).filter(Boolean)[0] ?? "";
+    const lastToks = lastCol.split(/\s+/).filter(Boolean);
+    return { first: firstTok, last: lastToks[lastToks.length - 1] ?? "" };
+  }
+  return splitFullName(parts.full_name);
+}
+
+/**
  * Lowercase, strip the combining diacritical marks left behind by NFD
  * normalization (so an accented name folds to plain ASCII), and drop anything
  * that is not a latin letter or digit - the local part is always [a-z0-9]+.

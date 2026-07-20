@@ -3100,7 +3100,7 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
                           {Array.from({ length: 5 }, (_, di) => (
                             <div
                               key={di}
-                              className="h-10 animate-pulse rounded-md border border-zinc-200 bg-zinc-100/60 dark:border-zinc-800 dark:bg-zinc-900/30"
+                              className="h-10 animate-pulse rounded-lg border border-zinc-200 bg-zinc-100/60 dark:border-zinc-800 dark:bg-zinc-900/30"
                               style={{ animationDelay: `${(wi * 5 + di) * 40}ms` }}
                             />
                           ))}
@@ -3154,7 +3154,7 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
                               return (
                                 <div
                                   key={di}
-                                  className="flex h-10 items-center justify-center rounded-md border border-dashed border-zinc-200 bg-zinc-50/50 lg:h-full lg:min-h-[2.5rem] dark:border-zinc-800 dark:bg-zinc-900/20"
+                                  className="flex h-10 items-center justify-center rounded-lg border border-dashed border-zinc-200 bg-zinc-50/50 lg:h-full lg:min-h-[2.5rem] dark:border-zinc-800 dark:bg-zinc-900/20"
                                 >
                                   <span className="text-xs text-zinc-300 tabular-nums dark:text-zinc-700">—</span>
                                 </div>
@@ -3256,9 +3256,14 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
                             return (
                               <div
                                 key={di}
-                                className={`relative flex h-10 flex-col overflow-hidden rounded-md border transition-all duration-300 lg:h-full lg:min-h-[2.5rem] ${cellBorder} ${cellClickable ? `cursor-pointer ${isHoliday ? 'hover:ring-2 hover:ring-sky-400/50' : 'hover:ring-2 hover:ring-orange-300/50'}` : ''}`}
+                                className={`group relative flex h-10 flex-col overflow-hidden rounded-lg border transition-all duration-300 ease-out hover:z-10 hover:shadow-md motion-safe:hover:scale-[1.06] lg:h-full lg:min-h-[2.5rem] ${cellBorder} ${cellClickable ? `cursor-pointer ${isHoliday ? 'hover:ring-2 hover:ring-sky-400/50' : 'hover:ring-2 hover:ring-orange-300/50'}` : ''}`}
                                 title={`${day.dayLabel} ${day.dateStr}${holidayName ? ` · ${holidayName} (holiday — click for details)` : ''}: ${secondsToDisplay(day.seconds)}${dispute ? ` (${dispute.status})` : day.passes ? ' ✓' : isToday ? ' — in progress' : isFutureOrToday ? ' — not yet' : stillProcessing ? ' — processing' : day.hasData ? ' ✗ needs 7h — click to file an issue' : ' — no data'}${rateTooltipSuffix}`}
-                                style={{ animation: `pab-cell-in 0.3s ease-out ${wi * 80 + di * 40}ms both` }}
+                                style={{
+                                  // `backwards` (not `both`): hold the hidden start-state during the
+                                  // stagger delay, but release the transform once the entrance ends so
+                                  // the hover scale (below) isn't overridden by a filled animation.
+                                  animation: `pab-cell-in 0.3s ease-out ${wi * 80 + di * 40}ms backwards`,
+                                }}
                                 onClick={cellClickable ? () => {
                                   if (isHoliday && holidayName) {
                                     setHolidayModal({ name: holidayName, date: dayIso });
@@ -3267,6 +3272,13 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
                                   }
                                 } : undefined}
                               >
+                                {/* Glass sheen — a top-down light reflection that reads as shiny
+                                    glass; brightens on hover. Sits above the tinted background but
+                                    below the content (which is `relative`), so nothing is washed out. */}
+                                <span
+                                  aria-hidden
+                                  className="pointer-events-none absolute inset-0 rounded-[inherit] bg-gradient-to-b from-white/50 to-transparent opacity-80 transition-opacity duration-300 group-hover:opacity-100 dark:from-white/[0.10] dark:opacity-70"
+                                />
                                 <span className="pointer-events-none absolute left-1 top-0.5 max-w-[calc(100%-1.25rem)] truncate text-[5px] font-medium leading-none tabular-nums text-zinc-400 dark:text-zinc-500">
                                   {day.dateStr}
                                 </span>
@@ -3283,14 +3295,14 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
                                     <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-orange-500" />
                                   </span>
                                 )}
-                                <div className="flex flex-1 flex-col items-center justify-center px-0.5 pb-0.5 pt-2.5">
+                                <div className="relative flex flex-1 flex-col items-center justify-center px-0.5 pb-0.5 pt-2.5">
                                   {isToday && day.seconds > 0 ? (
                                     // Live tracked time landed (timer running or paused) —
                                     // show the contribution so far. Emerald once the day
                                     // has cleared 7h, orange while it's still short.
                                     <div className="flex flex-col items-center gap-0.5">
                                       <span
-                                        className={`text-center text-[11px] font-bold tabular-nums leading-none tracking-tight ${
+                                        className={`text-center text-[13px] font-bold tabular-nums leading-none tracking-tight lg:text-sm ${
                                           effectivelyPasses
                                             ? 'text-emerald-700 dark:text-emerald-400'
                                             : 'text-orange-700 dark:text-orange-400'
@@ -3330,12 +3342,12 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
                                       </span>
                                     </div>
                                   ) : isHoliday ? (
-                                    <span className="text-center text-[10px] font-semibold leading-none tracking-tight text-sky-600 dark:text-sky-400">
+                                    <span className="text-center text-[13px] font-semibold leading-none tracking-tight text-sky-600 dark:text-sky-400 lg:text-sm">
                                       {day.hasData && hours > 0 ? `${hours.toFixed(1)}h` : 'Off'}
                                     </span>
                                   ) : (
                                     <span
-                                      className={`text-center text-[12px] font-bold tabular-nums leading-none tracking-tight ${
+                                      className={`text-center text-sm font-bold tabular-nums leading-none tracking-tight lg:text-base ${
                                         dispute != null && disputeIsAwaitingResolution(dispute)
                                           ? 'text-amber-700 dark:text-amber-400'
                                           : effectivelyPasses

@@ -570,7 +570,7 @@ export default function ManagerTransfers({ myDepartments, canInitiate }: Props) 
                                   </span>
                                 );
                               })()}
-                              {r.status === 'rejected' && r.approver_note ? (
+                              {(r.status === 'rejected' || r.status === 'cancelled') && r.approver_note ? (
                                 <span className="text-rose-500">· &ldquo;{r.approver_note}&rdquo;</span>
                               ) : null}
                               {r.status === 'pending' &&
@@ -669,7 +669,7 @@ export default function ManagerTransfers({ myDepartments, canInitiate }: Props) 
                                     </span>
                                   );
                                 })()}
-                                {r.status === 'rejected' && r.approver_note ? (
+                                {(r.status === 'rejected' || r.status === 'cancelled') && r.approver_note ? (
                                   <span className="text-rose-500">· &ldquo;{r.approver_note}&rdquo;</span>
                                 ) : null}
                               </div>

@@ -2773,28 +2773,32 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
         // employee's hours. The currently-selected file only affects WHICH PAB
         // month we anchor the eligibility window to (computed below).
         //
-        // Fetch every file concurrently (was a sequential `for...of await` that
-        // stacked N weekly-upload round-trips back-to-back — the dominant cause
-        // of the ~1min Overview load). `Promise.all` preserves array order, so
-        // merging over `fileResults` keeps the original "later upload wins for
-        // shared columns" semantics.
-        const fileResults = await Promise.all(
-          sourceFiles.map(async (file) => {
-            try {
-              const res = await fetch(
-                `/api/hubstaff-hours?source_file=${encodeURIComponent(file)}`,
-                { cache: 'no-store' },
-              );
-              const json = (await res.json()) as {
-                columns?: string[] | null;
-                rows?: Record<string, unknown>[] | null;
-              };
-              return { file, columns: json.columns ?? null, rows: json.rows ?? null };
-            } catch {
-              return { file, columns: null as string[] | null, rows: null as Record<string, unknown>[] | null };
-            }
-          }),
-        );
+        // One batched request: the server groups every archived week by
+        // source_file in a single table scan (was an N-parallel fetch, one per
+        // weekly upload — the dominant cause of the ~1min Overview load). Re-order
+        // the response to `sourceFiles` order so the merge below keeps its "later
+        // upload wins for shared columns" semantics; a missing/failed file
+        // degrades to null exactly like a failed per-file fetch did.
+        let fileResults: {
+          file: string;
+          columns: string[] | null;
+          rows: Record<string, unknown>[] | null;
+        }[];
+        try {
+          const res = await fetch('/api/hubstaff-hours?all_files=1', { cache: 'no-store' });
+          const json = (await res.json()) as {
+            files?:
+              | { source_file: string; columns: string[] | null; rows: Record<string, unknown>[] | null }[]
+              | null;
+          };
+          const byFile = new Map((json.files ?? []).map((f) => [f.source_file, f] as const));
+          fileResults = sourceFiles.map((file) => {
+            const hit = byFile.get(file);
+            return { file, columns: hit?.columns ?? null, rows: hit?.rows ?? null };
+          });
+        } catch {
+          fileResults = sourceFiles.map((file) => ({ file, columns: null, rows: null }));
+        }
         if (cancelled) return;
 
         for (const { file, columns, rows } of fileResults) {

@@ -810,6 +810,50 @@ function MesaRequestForm({
     return toDateInputValue(fpuCompletedOn) || priorIso || toDateInputValue(enrolledSince);
   }, [pastRequests, enrolledSince, fpuCompletedOn]);
 
+  // Rows shown in "Past requests". The opt-in "request" is now represented by
+  // the member's enrollment record — NOT the raw mesa_requests opt_in rows: a
+  // member can submit opt-in more than once (re-joining, or correcting details),
+  // which would otherwise list several identical "Opt-in" rows. So we hide raw
+  // opt_in rows and, when enrolled, synthesize ONE "Opt-in" line dated at the
+  // enrollment date on file (mesa_member_since) — prefilled from data. A member
+  // who hasn't been enrolled yet has their pending opt-in(s) collapsed to a
+  // single line so an in-flight join stays visible without duplicates. (Existing
+  // redundant opt_in rows are also removed by the one-time cleanup in
+  // references/sql/migrate/2026-07-20_delete_mesa_optin_requests.sql.)
+  const displayRequests = React.useMemo<(MesaRequestRow & { derived?: boolean })[]>(() => {
+    const nonOptIn = pastRequests.filter((r) => r.request_type !== 'opt_in');
+    const optIns = pastRequests.filter((r) => r.request_type === 'opt_in');
+
+    let derivedOptIn: (MesaRequestRow & { derived: true }) | null = null;
+    if (isMember && enrolledSince) {
+      derivedOptIn = {
+        id: 'derived-opt-in',
+        request_type: 'opt_in',
+        status: 'approved',
+        fpu_date: fpuCompletedOn ?? null,
+        disbursement_reason: null,
+        amount_needed: null,
+        created_at: enrolledSince,
+        review_notes: null,
+        derived: true,
+      };
+    } else if (optIns.length > 0) {
+      const earliest = optIns.reduce((a, b) => (a.created_at <= b.created_at ? a : b));
+      derivedOptIn = {
+        ...earliest,
+        id: 'derived-opt-in',
+        status: optIns.some((r) => r.status === 'pending') ? 'pending' : earliest.status,
+        derived: true,
+      };
+    }
+
+    const rows: (MesaRequestRow & { derived?: boolean })[] = derivedOptIn
+      ? [derivedOptIn, ...nonOptIn]
+      : nonOptIn;
+    // Newest-first, matching the API's default ordering.
+    return rows.sort((a, b) => (b.created_at ?? '').localeCompare(a.created_at ?? ''));
+  }, [pastRequests, isMember, enrolledSince, fpuCompletedOn]);
+
   // Switching request tabs. For an already-enrolled member landing on Opt-in we
   // reflect their standing enrollment: agreements checked + FPU date pre-filled.
   const selectRequestType = (value: RequestType) => {
@@ -1182,7 +1226,7 @@ function MesaRequestForm({
       </Card>
 
       {/* Past requests */}
-      {(loadingHistory || pastRequests.length > 0) && (
+      {(loadingHistory || displayRequests.length > 0) && (
         <Section icon={ClipboardList} eyebrow="My submissions" title="Past requests">
           {loadingHistory ? (
             <div className="space-y-2">
@@ -1203,7 +1247,7 @@ function MesaRequestForm({
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800/80">
-                  {pastRequests.map((r) => (
+                  {displayRequests.map((r) => (
                     <tr key={r.id} className="hover:bg-teal-50/30 dark:hover:bg-teal-950/10">
                       <td className="px-3 py-2 capitalize text-zinc-700 dark:text-zinc-300" data-label="Type">
                         {r.request_type.replace('_', ' ')}
@@ -1218,7 +1262,9 @@ function MesaRequestForm({
                         <RequestStatusBadge status={r.status} />
                       </td>
                       <td className="px-3 py-2 text-right text-zinc-500 dark:text-zinc-500" data-label="Submitted">
-                        {new Date(r.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                        {r.derived
+                          ? (parseStartDate(r.created_at)?.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) ?? '—')
+                          : new Date(r.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
                       </td>
                     </tr>
                   ))}

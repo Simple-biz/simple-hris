@@ -4,6 +4,7 @@ import {
   deleteHubstaffRowsBySourceFile,
   fetchHubstaffRowsOrdered,
   fetchHubstaffRowsBySourceFile,
+  fetchHubstaffRowsGroupedBySourceFile,
   getCurrentHubstaffUploadId,
   getUploadedSourceFiles,
   listHubstaffUploads,
@@ -14,6 +15,8 @@ import {
   sortHubstaffColumnsForDisplay,
 } from "@/lib/supabase/hubstaff-hours-db";
 import { insertAuditLog } from "@/lib/supabase/audit-log";
+import { notifyPayrollAvailable } from "@/lib/notifications/payroll-available";
+import { recordMesaWeeklyContributions } from "@/lib/mesa/record-weekly-contributions";
 import {
   fetchDailyActivities,
   fetchDailyActivitiesCached,
@@ -202,6 +205,22 @@ export async function GET(req: NextRequest) {
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       return NextResponse.json({ files: [], uploads: [], error: cleanErrorMessage(msg) });
+    }
+  }
+
+  // Cross-file batch for ALL employees: one scan of hubstaff_hours grouped by
+  // source_file, returning the same per-file { source_file, columns, rows } shape
+  // the Accounting Overview used to assemble from an N-parallel `?source_file=…`
+  // fan-out. One browser round-trip instead of one-per-week (the dominant cause
+  // of the ~1 min Overview load). Same data exposure as the per-file path — no
+  // extra auth surface; the edge proxy already gates the route.
+  if (searchParams.get("all_files") === "1") {
+    try {
+      const { files } = await fetchHubstaffRowsGroupedBySourceFile();
+      return NextResponse.json({ files, error: null });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      return NextResponse.json({ files: [], error: cleanErrorMessage(msg) });
     }
   }
 
@@ -505,7 +524,28 @@ export async function POST(req: NextRequest) {
       ip_address:  clientIp(req),
     });
 
-    return NextResponse.json({ success: true, rowCount, uploadId });
+    // Tell every employee in this week's batch that their salary is ready to
+    // view. Best-effort: a notification failure never fails the upload (the
+    // hours already landed). See notifyPayrollAvailable for the alias-resolution
+    // + per-week de-dupe rationale.
+    let notified: Awaited<ReturnType<typeof notifyPayrollAvailable>> | null = null;
+    try {
+      notified = await notifyPayrollAvailable({ sourceFile: fileName ?? null, uploadId });
+    } catch (notifyErr) {
+      console.warn("[POST /api/hubstaff-hours] payroll.available notify failed:", notifyErr);
+    }
+
+    // Grow each opted-in member's MESA balance by this week's ₱100 + ₱300 match.
+    // Best-effort: a ledger failure never fails the upload (the hours already
+    // landed). Idempotent per (member, week), so a re-upload won't double-credit.
+    let mesaRecorded: Awaited<ReturnType<typeof recordMesaWeeklyContributions>> | null = null;
+    try {
+      mesaRecorded = await recordMesaWeeklyContributions({ uploadId, sourceFile: fileName ?? null });
+    } catch (mesaErr) {
+      console.warn("[POST /api/hubstaff-hours] MESA weekly contribution record failed:", mesaErr);
+    }
+
+    return NextResponse.json({ success: true, rowCount, uploadId, notified, mesaRecorded });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     console.error("[POST /api/hubstaff-hours]", msg);
@@ -623,5 +663,23 @@ async function handleApiSync(req: NextRequest) {
     ip_address:  clientIp(req),
   });
 
-  return NextResponse.json({ success: true, rowCount, uploadId, fileName, csvText });
+  // Same "salary ready to view" alert as the manual CSV path — an API sync is a
+  // new payroll week too. Best-effort; never fails the sync.
+  let notified: Awaited<ReturnType<typeof notifyPayrollAvailable>> | null = null;
+  try {
+    notified = await notifyPayrollAvailable({ sourceFile: fileName, uploadId });
+  } catch (notifyErr) {
+    console.warn("[hubstaff api_sync] payroll.available notify failed:", notifyErr);
+  }
+
+  // Same weekly MESA deposit as the manual CSV path — an API sync is a new
+  // payroll week too. weekEnd is known exactly here (validated Sun→Sat above).
+  let mesaRecorded: Awaited<ReturnType<typeof recordMesaWeeklyContributions>> | null = null;
+  try {
+    mesaRecorded = await recordMesaWeeklyContributions({ uploadId, sourceFile: fileName, weekEnd });
+  } catch (mesaErr) {
+    console.warn("[hubstaff api_sync] MESA weekly contribution record failed:", mesaErr);
+  }
+
+  return NextResponse.json({ success: true, rowCount, uploadId, fileName, csvText, notified, mesaRecorded });
 }

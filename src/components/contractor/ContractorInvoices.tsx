@@ -12,15 +12,17 @@ import {
   Phone,
   Mail,
   X,
-  Check,
+  CreditCard,
   FileText,
   RotateCcw,
+  Undo2,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { formatMoney, normalizeCurrency, type ContractorCurrency } from '@/lib/contractor-currency';
 import {
-  PAYMENT_REGIONS,
-  invoiceProcessorsForRegion,
+  invoiceProcessor,
+  invoiceRegionForProcessor,
+  isInvoiceProcessorId,
   paymentFieldSpecs,
   prefillFieldsFromProfile,
   type PaymentRegion,
@@ -28,6 +30,14 @@ import {
 } from '@/lib/contractor/invoice-payment';
 import { Button } from '@/components/ui/button';
 import { DatePicker } from '@/components/ui/date-picker';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import {
   Table,
@@ -224,8 +234,6 @@ function NewInvoiceForm({
   // from the entity name + date.
   const [invoiceNoEdited, setInvoiceNoEdited] = useState(false);
   const logoInputRef = useRef<HTMLInputElement>(null);
-  // Saved profile row, kept for best-effort prefill of the payment rail fields.
-  const profileRowRef = useRef<Record<string, string | null> | null>(null);
 
   // Prefill "From" fields from profile and auto-generate invoice number
   useEffect(() => {
@@ -236,18 +244,22 @@ function NewInvoiceForm({
     ])
       .then(([profileJson, invoicesJson]: [{ profile?: (Record<string, string | null> & { logo_data_url?: string | null; currency?: string | null }) | null }, { invoices?: unknown[] }]) => {
         const p = profileJson.profile;
-        profileRowRef.current = p ?? null;
         const count = (invoicesJson.invoices ?? []).length;
         // {entity-slug}-{M-D-YY}-{seq}, e.g. "knld-5-26-26-1". Entity name
         // drives the slug; falls back to the contractor's name, then email.
         const entityName = p?.from_entity_name?.trim() || p?.from_name?.trim() || contractorEmail.split('@')[0];
+        // Payment method is OWNED by the profile — the invoice only previews it.
+        // Read the saved preferred processor + its details straight off the row.
+        const pp = (p?.['preferred_processor'] ?? '').toString().trim();
+        const proc = isInvoiceProcessorId(pp) ? pp : '';
         setInvoiceSeq(count + 1);
         setInvoiceNoEdited(false);
         setForm((prev) => ({
           ...prev,
           invoiceNumber: buildInvoiceNumber(entityName, prev.invoiceDate || today(), count + 1),
-          // Default the payment toggle to match the invoice currency.
-          paymentRegion: normalizeCurrency(p?.currency) === 'USD' ? 'us' : 'global',
+          paymentProcessor: proc,
+          paymentRegion: proc ? invoiceRegionForProcessor(proc) : (normalizeCurrency(p?.currency) === 'USD' ? 'us' : 'global'),
+          paymentFields: proc ? prefillFieldsFromProfile(proc, p ?? null) : {},
           ...(p ? {
             fromEntityName:   p.from_entity_name?.trim()   || prev.fromEntityName,
             fromName:         p.from_name?.trim()           || prev.fromName,
@@ -264,24 +276,6 @@ function NewInvoiceForm({
 
   const set = useCallback(<K extends keyof InvoiceForm>(key: K, value: InvoiceForm[K]) => {
     setForm((prev) => ({ ...prev, [key]: value }));
-  }, []);
-
-  // Switching region drops any selection that doesn't belong to the new region.
-  const setPaymentRegion = useCallback((region: PaymentRegion) => {
-    setForm((prev) => ({ ...prev, paymentRegion: region, paymentProcessor: '', paymentFields: {} }));
-  }, []);
-
-  // Selecting a rail prefills its fields from the saved profile (best-effort).
-  const selectProcessor = useCallback((id: InvoiceProcessorId | '') => {
-    setForm((prev) => ({
-      ...prev,
-      paymentProcessor: id,
-      paymentFields: id ? prefillFieldsFromProfile(id, profileRowRef.current) : {},
-    }));
-  }, []);
-
-  const setPaymentField = useCallback((key: string, value: string) => {
-    setForm((prev) => ({ ...prev, paymentFields: { ...prev.paymentFields, [key]: value } }));
   }, []);
 
   const effectiveEntityName = useCallback(
@@ -346,6 +340,15 @@ function NewInvoiceForm({
   };
 
   const { subtotal, taxTotal, total } = calcTotals(form.lineItems);
+
+  // Read-only payment preview — the method itself is owned by Profile → Payment Gateway.
+  const paymentProc = form.paymentProcessor && isInvoiceProcessorId(form.paymentProcessor) ? form.paymentProcessor : null;
+  const paymentOpt = paymentProc ? invoiceProcessor(paymentProc) : null;
+  const paymentLines = paymentProc
+    ? paymentFieldSpecs(paymentProc)
+        .map((s) => ({ label: s.label, value: (form.paymentFields[s.key] ?? '').trim() }))
+        .filter((l) => l.value)
+    : [];
 
   const handleSave = async () => {
     if (!form.invoiceNumber.trim()) {
@@ -680,92 +683,47 @@ function NewInvoiceForm({
         />
       </div>
 
-      {/* Payment Details — the rail Accounting should use to pay this invoice */}
+      {/* Payment Details — owned by Profile → Payment Gateway; read-only preview here */}
       <div>
         <div className="mb-1 text-xs font-bold uppercase tracking-wider text-zinc-700 dark:text-zinc-300">
           Payment Details
         </div>
         <p className="mb-3 text-[11px] text-zinc-400 dark:text-zinc-500">
-          Choose how you&apos;d like to be paid. This appears on the invoice sent to Accounting.
+          Set in your <span className="font-medium text-zinc-500 dark:text-zinc-400">Profile → Payment Gateway</span>. Shown here for reference and included on the invoice sent to Accounting.
         </p>
 
-        {/* Region toggle: Global ↔ US */}
-        <div className="mb-3 flex w-fit items-center gap-1 rounded-lg border border-zinc-200 bg-zinc-50 p-1 dark:border-zinc-700 dark:bg-zinc-800/50">
-          {PAYMENT_REGIONS.map((r) => (
-            <button
-              key={r.id}
-              type="button"
-              onClick={() => setPaymentRegion(r.id)}
-              className={cn(
-                'rounded-md px-4 py-1.5 text-sm font-semibold transition-colors',
-                form.paymentRegion === r.id
-                  ? 'bg-blue-600 text-white shadow-sm'
-                  : 'text-zinc-600 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800',
+        {paymentProc ? (
+          <div className="rounded-xl border border-zinc-200 bg-zinc-50/60 p-4 dark:border-zinc-700 dark:bg-zinc-800/40">
+            <div className="mb-3 flex items-center gap-2.5">
+              {paymentOpt?.logoSrc ? (
+                <img src={paymentOpt.logoSrc} alt={paymentOpt.label} className="h-5 w-5 rounded object-contain" />
+              ) : (
+                paymentOpt && <paymentOpt.Icon className="h-5 w-5 shrink-0 opacity-70" />
               )}
-            >
-              {r.label}
-            </button>
-          ))}
-        </div>
-
-        {/* Processor picker for the selected region */}
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-          {invoiceProcessorsForRegion(form.paymentRegion).map((opt) => {
-            const active = form.paymentProcessor === opt.id;
-            return (
-              <button
-                key={opt.id}
-                type="button"
-                onClick={() => selectProcessor(active ? '' : opt.id)}
-                className={cn(
-                  'flex items-center gap-2.5 rounded-xl border px-3.5 py-3 text-left text-xs font-medium transition-all',
-                  active
-                    ? 'border-blue-500/60 bg-blue-50 text-blue-800 shadow-sm dark:border-blue-500/40 dark:bg-blue-950/40 dark:text-blue-200'
-                    : 'border-zinc-200 bg-zinc-50 text-zinc-700 hover:border-zinc-300 hover:bg-white dark:border-zinc-700 dark:bg-zinc-800/50 dark:text-zinc-300 dark:hover:bg-zinc-800',
-                )}
-              >
-                {opt.logoSrc ? (
-                  <img src={opt.logoSrc} alt={opt.label} className="h-4 w-4 rounded object-contain" />
-                ) : (
-                  <opt.Icon className="h-4 w-4 shrink-0 opacity-70" />
-                )}
-                <span className="min-w-0 truncate">{opt.label}</span>
-                {active && <Check className="ml-auto h-3.5 w-3.5 shrink-0 text-blue-500" />}
-              </button>
-            );
-          })}
-        </div>
-
-        {/* Fields for the selected rail */}
-        {form.paymentProcessor && (
-          <div className="mt-3 grid grid-cols-1 gap-3 rounded-xl border border-zinc-200 bg-zinc-50/60 p-4 sm:grid-cols-2 dark:border-zinc-700 dark:bg-zinc-800/40">
-            {paymentFieldSpecs(form.paymentProcessor).map((spec) => (
-              <div key={spec.key} className="min-w-0">
-                <FieldLabel>
-                  {spec.label}
-                  {spec.required && <span className="text-rose-400"> *</span>}
-                </FieldLabel>
-                {spec.kind === 'select' ? (
-                  <select
-                    value={form.paymentFields[spec.key] ?? spec.options?.[0] ?? ''}
-                    onChange={(e) => setPaymentField(spec.key, e.target.value)}
-                    className="h-8 w-full rounded-md border border-zinc-200 bg-zinc-50/50 px-2 text-sm text-zinc-900 outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-400/20 dark:border-zinc-700 dark:bg-zinc-800/50 dark:text-zinc-100"
-                  >
-                    {spec.options?.map((o) => (
-                      <option key={o} value={o}>{o}</option>
-                    ))}
-                  </select>
-                ) : (
-                  <FormInput
-                    value={form.paymentFields[spec.key] ?? ''}
-                    onChange={(v) => setPaymentField(spec.key, v)}
-                    placeholder={spec.placeholder}
-                    type={spec.kind === 'email' ? 'email' : 'text'}
-                    className={cn(spec.mono && 'font-mono')}
-                  />
-                )}
-              </div>
-            ))}
+              <span className="text-sm font-semibold text-zinc-800 dark:text-zinc-100">{paymentOpt?.label}</span>
+            </div>
+            {paymentLines.length > 0 ? (
+              <dl className="grid grid-cols-1 gap-x-6 gap-y-2.5 sm:grid-cols-2">
+                {paymentLines.map((l) => (
+                  <div key={l.label} className="min-w-0">
+                    <dt className="text-[11px] font-semibold uppercase tracking-wide text-zinc-400 dark:text-zinc-500">{l.label}</dt>
+                    <dd className="truncate text-sm text-zinc-800 dark:text-zinc-200">{l.value}</dd>
+                  </div>
+                ))}
+              </dl>
+            ) : (
+              <p className="text-xs text-zinc-400 dark:text-zinc-500">
+                No details saved yet — add them in Profile → Payment Gateway.
+              </p>
+            )}
+          </div>
+        ) : (
+          <div className="flex flex-col items-center gap-2 rounded-xl border border-dashed border-zinc-200 py-8 text-center dark:border-zinc-700">
+            <CreditCard className="h-7 w-7 text-zinc-300 dark:text-zinc-600" />
+            <p className="text-sm text-zinc-500 dark:text-zinc-400">No payment method set.</p>
+            <p className="text-xs text-zinc-400 dark:text-zinc-500">
+              Choose one in Profile → Payment Gateway; it will appear here automatically.
+            </p>
           </div>
         )}
       </div>
@@ -803,10 +761,44 @@ function NewInvoiceForm({
 
 // ─── Invoice History ───────────────────────────────────────────────────────────
 
+type InvStatus = 'pending' | 'approved' | 'rejected';
+
+// Anything that isn't an explicit Accounting decision counts as still-pending.
+function normStatus(status: string | null | undefined): InvStatus {
+  return status === 'approved' || status === 'rejected' ? status : 'pending';
+}
+
+const STATUS_PILL: Record<InvStatus, { label: string; className: string }> = {
+  pending: {
+    label: 'Pending',
+    className: 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-300',
+  },
+  approved: {
+    label: 'Approved',
+    className: 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/50 dark:bg-emerald-950/30 dark:text-emerald-300',
+  },
+  rejected: {
+    label: 'Rejected',
+    className: 'border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-900/50 dark:bg-rose-950/30 dark:text-rose-300',
+  },
+};
+
+function StatusPill({ status }: { status: string | null | undefined }) {
+  const { label, className } = STATUS_PILL[normStatus(status)];
+  return (
+    <span className={cn('inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium', className)}>
+      {label}
+    </span>
+  );
+}
+
 function InvoiceHistory({ contractorEmail, refreshKey }: { contractorEmail: string; refreshKey: number }) {
   const [invoices, setInvoices] = useState<SavedInvoice[]>([]);
   const [loading, setLoading] = useState(true);
   const [viewInvoice, setViewInvoice] = useState<SavedInvoice | null>(null);
+  // Invoice pending confirmation of a retract, plus the in-flight flag.
+  const [retractTarget, setRetractTarget] = useState<SavedInvoice | null>(null);
+  const [retracting, setRetracting] = useState(false);
 
   const fetchInvoices = useCallback(() => {
     if (!contractorEmail) return;
@@ -817,6 +809,28 @@ function InvoiceHistory({ contractorEmail, refreshKey }: { contractorEmail: stri
       .catch(() => setInvoices([]))
       .finally(() => setLoading(false));
   }, [contractorEmail]);
+
+  const handleRetract = useCallback(async () => {
+    if (!retractTarget) return;
+    setRetracting(true);
+    try {
+      const res = await fetch(
+        `/api/contractor/invoices?id=${encodeURIComponent(retractTarget.id)}&email=${encodeURIComponent(contractorEmail)}`,
+        { method: 'DELETE' },
+      );
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || json.error) throw new Error(json.error ?? 'Failed to retract invoice');
+      toast.success('Invoice retracted', {
+        description: `${retractTarget.invoice_number} was withdrawn from Accounting.`,
+      });
+      setRetractTarget(null);
+      fetchInvoices();
+    } catch (err) {
+      toast.error('Could not retract invoice', { description: err instanceof Error ? err.message : String(err) });
+    } finally {
+      setRetracting(false);
+    }
+  }, [retractTarget, contractorEmail, fetchInvoices]);
 
   useEffect(() => {
     fetchInvoices();
@@ -861,7 +875,8 @@ function InvoiceHistory({ contractorEmail, refreshKey }: { contractorEmail: stri
               <TableHead className="text-xs font-semibold text-zinc-600 dark:text-zinc-400">Due Date</TableHead>
               <TableHead className="text-xs font-semibold text-zinc-600 dark:text-zinc-400">Client</TableHead>
               <TableHead className="text-right text-xs font-semibold text-zinc-600 dark:text-zinc-400">Total</TableHead>
-              <TableHead className="text-xs font-semibold text-zinc-600 dark:text-zinc-400">Actions</TableHead>
+              <TableHead className="text-xs font-semibold text-zinc-600 dark:text-zinc-400">Status</TableHead>
+              <TableHead className="text-right text-xs font-semibold text-zinc-600 dark:text-zinc-400">Actions</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -875,15 +890,32 @@ function InvoiceHistory({ contractorEmail, refreshKey }: { contractorEmail: stri
                   {formatMoney(inv.total, normalizeCurrency(inv.currency))}
                 </TableCell>
                 <TableCell>
-                  <Button
-                    variant="ghost"
-                    size="icon-sm"
-                    onClick={() => setViewInvoice(inv)}
-                    className="h-7 w-7 text-zinc-500 hover:bg-blue-50 hover:text-blue-600 dark:hover:bg-blue-950/30 dark:hover:text-blue-400"
-                    aria-label="View invoice"
-                  >
-                    <Eye className="h-3.5 w-3.5" />
-                  </Button>
+                  <StatusPill status={inv.status} />
+                </TableCell>
+                <TableCell>
+                  <div className="flex items-center justify-end gap-1">
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      onClick={() => setViewInvoice(inv)}
+                      className="h-7 w-7 text-zinc-500 hover:bg-blue-50 hover:text-blue-600 dark:hover:bg-blue-950/30 dark:hover:text-blue-400"
+                      aria-label="View invoice"
+                    >
+                      <Eye className="h-3.5 w-3.5" />
+                    </Button>
+                    {normStatus(inv.status) === 'pending' && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setRetractTarget(inv)}
+                        className="h-7 gap-1.5 px-2 text-xs text-zinc-500 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950/30 dark:hover:text-red-400"
+                        aria-label="Retract invoice"
+                      >
+                        <Undo2 className="h-3.5 w-3.5" />
+                        Retract
+                      </Button>
+                    )}
+                  </div>
                 </TableCell>
               </TableRow>
             ))}
@@ -896,6 +928,44 @@ function InvoiceHistory({ contractorEmail, refreshKey }: { contractorEmail: stri
         open={!!viewInvoice}
         onClose={() => setViewInvoice(null)}
       />
+
+      {/* Retract confirmation — only reachable for still-pending invoices. */}
+      <Dialog open={!!retractTarget} onOpenChange={(o) => { if (!o && !retracting) setRetractTarget(null); }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Retract this invoice?</DialogTitle>
+            <DialogDescription>
+              {retractTarget && (
+                <>
+                  Invoice{' '}
+                  <span className="font-semibold text-zinc-700 dark:text-zinc-200">{retractTarget.invoice_number}</span>{' '}
+                  will be withdrawn from Accounting and permanently removed. This can&apos;t be undone — you&apos;ll need to
+                  create a new invoice to bill again.
+                </>
+              )}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setRetractTarget(null)}
+              disabled={retracting}
+            >
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              onClick={() => void handleRetract()}
+              disabled={retracting}
+              className="gap-1.5 bg-red-600 text-white hover:bg-red-700 dark:bg-red-600 dark:hover:bg-red-500"
+            >
+              {retracting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Undo2 className="h-3.5 w-3.5" />}
+              {retracting ? 'Retracting…' : 'Retract invoice'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }

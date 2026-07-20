@@ -48,6 +48,11 @@ import { calltoolsUsernameCandidates, isLeadGenDepartment } from '@/lib/hr/callt
 
 type PriorData = {
   full_name: string | null;
+  /** Structured parts (source of truth); null on pre-split-migration rows, in
+   *  which case the form falls back to splitName(full_name). */
+  first_name: string | null;
+  last_name: string | null;
+  name_extension: string | null;
   gmail_surname: string | null;
   /** Lead Gen only. The minted calltools_username is deliberately NOT returned
    *  to the paperwork — it's internal to HR and re-minted on re-submit. */
@@ -311,16 +316,21 @@ export default function OnboardingFormPage() {
         const prior = json.row?.priorData;
         if (prior) {
           // Pre-fill from previous submission so the hire doesn't start from scratch.
+          // Prefer the structured parts (source of truth); fall back to splitting
+          // full_name for rows that predate the split migration.
           const priorName = splitName(prior.full_name);
+          const priorFirst = prior.first_name ?? priorName.first;
+          const priorLast = prior.last_name ?? priorName.last;
+          const priorExtension = prior.name_extension ?? priorName.extension;
           // A Lead Gen hire's nickname is their own typed dialer name — restore
           // it from the stored value, never from the first name.
           const leadGen = isLeadGenDepartment(json.row?.invite_department);
           setForm({
-            first_name: priorName.first,
-            nickname: leadGen ? prior.calltools_nickname ?? '' : priorName.first,
+            first_name: priorFirst,
+            nickname: leadGen ? prior.calltools_nickname ?? '' : priorFirst,
             calltools_username: '', // preview-only display value; never prefilled
-            last_name: priorName.last,
-            extension: priorName.extension,
+            last_name: priorLast,
+            extension: priorExtension,
             gmail_surname: prior.gmail_surname ?? '',
             phone: prior.phone ?? '',
             email: prior.email ?? '',
@@ -692,14 +702,15 @@ export default function OnboardingFormPage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          // Extension (Jr./Sr./III) is folded into the legal full name here so HR
-          // + contracts read it whole. It is NOT sent to the workspace-account
-          // automation: that webhook derives first_name from the first token and
-          // last_name from the work-email-based gmail_surname, so the suffix never
-          // reaches it.
-          full_name: [form.first_name.trim(), form.last_name.trim(), form.extension.trim()]
-            .filter(Boolean)
-            .join(' '),
+          // Send the structured name parts as the source of truth — no longer
+          // merged into one string here. The server composes the combined
+          // full_name from them (for the master-list Sheet, payroll matching and
+          // the display trigger) and stores the parts so nothing re-parses. The
+          // Extension (Jr./Sr./III) still rides along and is folded into the
+          // composed full_name; it never reaches the workspace-account webhook.
+          first_name: form.first_name.trim(),
+          last_name: form.last_name.trim(),
+          name_extension: form.extension.trim() || null,
           gmail_surname: form.gmail_surname.trim() || null,
           // Lead Gen only — just the self-chosen dialer nickname. The CallTools
           // username is hidden from the hire and minted SERVER-SIDE at submit

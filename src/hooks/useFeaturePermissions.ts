@@ -56,7 +56,18 @@ export function useFeaturePermissions(email: string | null | undefined) {
       sessionRoles && sessionEmail && sessionEmail === e.toLowerCase() ? sessionRoles : null;
     const cached = readRbacCache(e);
 
-    setState((s) => ({ ...s, loading: true }));
+    // Optimistic paint: seed from the JWT roles (session owner) + last-known-good
+    // cache so this dashboard's tabs render on the FIRST frame of a re-visit
+    // instead of waiting on the roles + perms round-trips. `ready` flips true only
+    // when we actually have a seed; the live fetch below overwrites it on resolve.
+    const seedRoles = selfRoles ?? cached?.roles ?? null;
+    const seedPerms = cached?.perms ?? null;
+    setState((s) => ({
+      roles: seedRoles ?? s.roles,
+      perms: seedPerms ?? s.perms,
+      ready: seedRoles || seedPerms ? true : s.ready,
+      loading: true,
+    }));
     Promise.all([
       fetch(`/api/employee-roles?email=${encodeURIComponent(e)}`, { cache: 'no-store' })
         .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`roles ${r.status}`))))

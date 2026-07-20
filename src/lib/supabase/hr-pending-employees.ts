@@ -107,6 +107,14 @@ export type HrPendingEmployeeRow = {
   created_by: string | null;
   updated_at: string;
   name: string;
+  /** Structured name parts carried over from the onboarding submission (source
+   *  of truth). `name` above is composed from them and stays authoritative for
+   *  the master-list Sheet, payroll matching, and the display trigger. Null for
+   *  manually-added ("Add person") hires and rows predating the split migration
+   *  — consumers fall back to splitting `name` then. */
+  first_name: string | null;
+  last_name: string | null;
+  name_extension: string | null;
   personal_email: string;
   work_email: string | null;
   department: string;
@@ -171,6 +179,12 @@ export function redactPendingRowRates(
 
 export type CreateHrPendingInput = {
   name: string;
+  /** Structured name parts (source of truth) carried from the onboarding
+   *  submission. Optional — "Add person" hires have only the single `name`
+   *  field, so these stay null and consumers fall back to splitting `name`. */
+  first_name?: string | null;
+  last_name?: string | null;
+  name_extension?: string | null;
   personal_email: string;
   work_email?: string | null;
   department: string;
@@ -290,6 +304,11 @@ export async function createHrPendingEmployee(
 
   const payload: Record<string, unknown> = {
     name: input.name.trim(),
+    // Structured parts carried from the submission (already sanitized upstream);
+    // `name` above stays the composed authoritative value.
+    first_name: input.first_name?.trim() || null,
+    last_name: input.last_name?.trim() || null,
+    name_extension: input.name_extension?.trim() || null,
     personal_email: input.personal_email.trim().toLowerCase(),
     work_email: input.work_email?.trim().toLowerCase() || null,
     department: input.department.trim(),
@@ -309,25 +328,29 @@ export async function createHrPendingEmployee(
     status,
   };
 
-  const { data, error } = await sb
-    .from(TABLE)
-    .insert(payload)
-    .select("*")
-    .single();
-  if (error) {
-    // Graceful fallback if the project_names column migration
-    // (references/add_project_names_to_hr_pending.sql) hasn't been run yet —
-    // retry without it so staging still works (projects just won't persist).
-    if (/project_names/i.test(error.message)) {
-      const { project_names: _omit, ...rest } = payload;
-      void _omit;
-      const retry = await sb.from(TABLE).insert(rest).select("*").single();
-      if (retry.error) return { row: null, error: retry.error.message };
-      return { row: retry.data as HrPendingEmployeeRow, error: null };
+  // Degrade gracefully on a database missing an optional column family (a
+  // migration not yet run): strip those columns and retry so staging still
+  // works. Covers project_names (add_project_names_to_hr_pending.sql) and the
+  // split-name columns (2026-07-20_split_onboarding_name_columns.sql) — the row
+  // still lands with its composed `name`, only the not-yet-migrated extras drop.
+  const OPTIONAL_COLUMN_FAMILIES: Array<{ test: RegExp; keys: string[] }> = [
+    { test: /project_names/i, keys: ["project_names"] },
+    {
+      test: /first_name|last_name|name_extension/i,
+      keys: ["first_name", "last_name", "name_extension"],
+    },
+  ];
+  for (let attempt = 0; ; attempt++) {
+    const { data, error } = await sb.from(TABLE).insert(payload).select("*").single();
+    if (!error) return { row: data as HrPendingEmployeeRow, error: null };
+    const family = OPTIONAL_COLUMN_FAMILIES.find(
+      (f) => f.test.test(error.message) && f.keys.some((k) => k in payload),
+    );
+    if (!family || attempt >= OPTIONAL_COLUMN_FAMILIES.length) {
+      return { row: null, error: error.message };
     }
-    return { row: null, error: error.message };
+    for (const k of family.keys) delete payload[k];
   }
-  return { row: data as HrPendingEmployeeRow, error: null };
 }
 
 export async function updateHrPendingEmployee(
@@ -340,6 +363,10 @@ export async function updateHrPendingEmployee(
     if (v !== undefined) payload[k] = v;
   };
   set("name", input.name?.trim());
+  if (input.first_name !== undefined) payload["first_name"] = input.first_name?.trim() || null;
+  if (input.last_name !== undefined) payload["last_name"] = input.last_name?.trim() || null;
+  if (input.name_extension !== undefined)
+    payload["name_extension"] = input.name_extension?.trim() || null;
   set("personal_email", input.personal_email?.trim().toLowerCase());
   // work_email needs explicit null support so HR can clear it if mistyped.
   if (input.work_email !== undefined) {
@@ -377,7 +404,23 @@ export async function updateHrPendingEmployee(
     .eq("id", id)
     .select("*")
     .single();
-  if (error) return { row: null, error: error.message };
+  if (error) {
+    // Pre-migration DB without the split-name columns
+    // (2026-07-20_split_onboarding_name_columns.sql): retry without them so the
+    // update still lands (name/rates/etc. stay in sync; only the parts drop).
+    if (
+      /first_name|last_name|name_extension/i.test(error.message) &&
+      ("first_name" in payload || "last_name" in payload || "name_extension" in payload)
+    ) {
+      delete payload.first_name;
+      delete payload.last_name;
+      delete payload.name_extension;
+      const retry = await sb.from(TABLE).update(payload).eq("id", id).select("*").single();
+      if (retry.error) return { row: null, error: retry.error.message };
+      return { row: retry.data as HrPendingEmployeeRow, error: null };
+    }
+    return { row: null, error: error.message };
+  }
   return { row: data as HrPendingEmployeeRow, error: null };
 }
 

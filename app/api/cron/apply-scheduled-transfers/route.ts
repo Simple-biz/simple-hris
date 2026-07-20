@@ -2,7 +2,11 @@ import { NextRequest, NextResponse } from 'next/server';
 import { cronSessionElevated } from '@/lib/auth/cron-auth';
 import { insertAuditLog } from '@/lib/supabase/audit-log';
 import { listScheduledDueTransfers } from '@/lib/supabase/department-transfer-requests';
-import { applyApprovedTransfer, manilaTodayIso } from '@/lib/transfers/apply-transfer';
+import {
+  applyApprovedTransfer,
+  manilaTodayIso,
+  sweepStalePendingReleaseRequests,
+} from '@/lib/transfers/apply-transfer';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -61,7 +65,31 @@ async function run(req: NextRequest): Promise<NextResponse> {
     details: { date: today, due: rows.length, applied, failed, failures: failures.slice(0, 20) },
   });
 
-  return NextResponse.json({ success: true, date: today, due: rows.length, applied, failed, failures });
+  // Clear out release requests whose employee has already been transferred out of
+  // the source department by another path — they can never be released and would
+  // otherwise sit in the source manager's queue forever (and block a fresh
+  // transfer for the moved employee).
+  const sweep = await sweepStalePendingReleaseRequests();
+  if (sweep.cancelled.length > 0) {
+    void insertAuditLog({
+      user_name: SYSTEM_USER.name,
+      user_role: SYSTEM_USER.role,
+      action: 'department_transfer.stale_release_cancelled',
+      resource: 'department_transfer_requests',
+      details: { date: today, cancelled: sweep.cancelled.length, requests: sweep.cancelled.slice(0, 20) },
+    });
+  }
+
+  return NextResponse.json({
+    success: true,
+    date: today,
+    due: rows.length,
+    applied,
+    failed,
+    failures,
+    stale_cancelled: sweep.cancelled.length,
+    stale_sweep_error: sweep.error,
+  });
 }
 
 // Vercel Cron uses GET; admin manual trigger can POST. Both run the same code.

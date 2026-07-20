@@ -9,7 +9,9 @@ import {
   Clock,
   CheckCircle2,
   AlertCircle,
-  FileText,
+  Wallet,
+  Briefcase,
+  CalendarClock,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import {
@@ -27,6 +29,12 @@ interface ContractorOverviewProps {
   onNavigate: (tab: string) => void;
 }
 
+interface InvoiceLineItem {
+  description?: string | null;
+  qty?: number | null;
+  rate?: number | null;
+}
+
 interface InvoiceRow {
   id: string;
   invoice_number: string;
@@ -37,6 +45,7 @@ interface InvoiceRow {
   currency: string | null;
   status: string | null;
   created_at: string;
+  line_items?: InvoiceLineItem[] | null;
 }
 
 const PANEL =
@@ -98,11 +107,12 @@ function SkeletonBlock({ className }: { className?: string }) {
 function LoadingSkeleton() {
   return (
     <div className="flex flex-col gap-6">
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-        {[0, 1, 2].map((i) => (
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        {[0, 1, 2, 3, 4, 5].map((i) => (
           <div key={i} className={cn(PANEL, 'p-4')}>
-            <SkeletonBlock className="h-3 w-24" />
-            <SkeletonBlock className="mt-3 h-6 w-28" />
+            <SkeletonBlock className="h-9 w-9 rounded-xl" />
+            <SkeletonBlock className="mt-3 h-3 w-24" />
+            <SkeletonBlock className="mt-2 h-6 w-28" />
             <SkeletonBlock className="mt-2 h-3 w-16" />
           </div>
         ))}
@@ -132,31 +142,80 @@ function LoadingSkeleton() {
 
 // ─── KPI card ───────────────────────────────────────────────────────────────
 
+type AccentKey = 'blue' | 'indigo' | 'violet' | 'amber' | 'emerald' | 'sky';
+
+// Icon-chip colours per accent, tuned for 4.5:1+ contrast in both themes.
+const ACCENT_CHIP: Record<AccentKey, string> = {
+  blue: 'bg-blue-50 text-blue-600 dark:bg-blue-950/50 dark:text-blue-400',
+  indigo: 'bg-indigo-50 text-indigo-600 dark:bg-indigo-950/50 dark:text-indigo-400',
+  violet: 'bg-violet-50 text-violet-600 dark:bg-violet-950/50 dark:text-violet-400',
+  amber: 'bg-amber-50 text-amber-600 dark:bg-amber-950/40 dark:text-amber-400',
+  emerald: 'bg-emerald-50 text-emerald-600 dark:bg-emerald-950/40 dark:text-emerald-400',
+  sky: 'bg-sky-50 text-sky-600 dark:bg-sky-950/40 dark:text-sky-400',
+};
+
 function KpiCard({
   label,
   value,
   sub,
   Icon,
   accent,
+  onClick,
 }: {
   label: string;
   value: string;
   sub: string;
   Icon: React.ElementType;
-  accent: string;
+  accent: AccentKey;
+  onClick?: () => void;
 }) {
   return (
-    <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
-      <div className="flex items-center gap-1.5 text-[10.5px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
-        <Icon className={cn('h-3.5 w-3.5 shrink-0', accent)} />
-        <span className="truncate">{label}</span>
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        'group flex flex-col rounded-2xl border border-zinc-200 bg-white p-4 text-left shadow-sm transition-colors',
+        'hover:border-zinc-300 hover:bg-zinc-50/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/60',
+        'dark:border-zinc-800 dark:bg-zinc-900 dark:hover:border-zinc-700 dark:hover:bg-zinc-800/40',
+        onClick ? 'cursor-pointer' : 'cursor-default',
+      )}
+    >
+      <div className="flex items-center justify-between">
+        <span
+          className={cn(
+            'flex h-9 w-9 items-center justify-center rounded-xl',
+            ACCENT_CHIP[accent],
+          )}
+        >
+          <Icon className="h-[18px] w-[18px]" />
+        </span>
+        {onClick && (
+          <ArrowRight className="h-4 w-4 text-zinc-300 transition-colors group-hover:text-zinc-500 dark:text-zinc-600 dark:group-hover:text-zinc-400" />
+        )}
       </div>
-      <p className="mt-1.5 break-words text-2xl font-semibold tracking-tight tabular-nums text-zinc-900 dark:text-white">
+      <p className="mt-3 text-[10.5px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+        {label}
+      </p>
+      <p className="mt-0.5 break-words text-2xl font-semibold tracking-tight tabular-nums text-zinc-900 dark:text-white">
         {value}
       </p>
       <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">{sub}</p>
-    </div>
+    </button>
   );
+}
+
+// Compact relative-day label for the "Latest invoice" tile.
+function relativeDay(iso: string | null | undefined): string {
+  if (!iso) return '—';
+  const then = new Date(iso).getTime();
+  if (!Number.isFinite(then)) return '—';
+  const days = Math.floor((Date.now() - then) / 86_400_000);
+  if (days <= 0) return 'Today';
+  if (days === 1) return 'Yesterday';
+  if (days < 7) return `${days} days ago`;
+  if (days < 30) return `${Math.floor(days / 7)}w ago`;
+  if (days < 365) return `${Math.floor(days / 30)}mo ago`;
+  return `${Math.floor(days / 365)}y ago`;
 }
 
 function plural(n: number, word: string) {
@@ -195,6 +254,20 @@ export default function ContractorOverview({
   const approved = invoices.filter((i) => normStatus(i.status) === 'approved');
   const rejected = invoices.filter((i) => normStatus(i.status) === 'rejected');
 
+  // Services = line items billed across every invoice; distinct = unique descriptions.
+  const allLineItems = invoices.flatMap((i) =>
+    Array.isArray(i.line_items) ? i.line_items : [],
+  );
+  const totalServices = allLineItems.length;
+  const distinctServices = new Set(
+    allLineItems
+      .map((it) => (it.description ?? '').trim().toLowerCase())
+      .filter(Boolean),
+  ).size;
+
+  // Invoices arrive ordered by created_at desc, so [0] is the latest.
+  const latest = invoices[0];
+
   // Fall back to the contractor's most recent invoicing currency for zero buckets.
   const primaryCurrency: ContractorCurrency = normalizeCurrency(invoices[0]?.currency);
 
@@ -226,7 +299,7 @@ export default function ContractorOverview({
   return (
     <div className="flex h-full min-h-0 flex-col bg-[#f8faff] dark:bg-[#0d1117]">
       <div className="min-h-0 flex-1 overflow-y-auto">
-        <div className="mx-auto flex w-full max-w-3xl flex-col gap-6 px-4 py-6 sm:px-6 lg:py-8">
+        <div className="mx-auto flex w-full max-w-5xl flex-col gap-6 px-4 py-6 sm:px-6 lg:py-8">
 
           {/* ── Greeting ── */}
           <header className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
@@ -240,7 +313,7 @@ export default function ContractorOverview({
                 <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">{subline}</p>
               )}
             </div>
-            {!loading && invoiceCount > 0 && (
+            {!loading && (
               <Button
                 onClick={() => onNavigate('invoices')}
                 className="shrink-0 gap-2 bg-blue-600 text-white hover:bg-blue-700 dark:bg-blue-600 dark:hover:bg-blue-500"
@@ -254,54 +327,62 @@ export default function ContractorOverview({
           {/* ── Body ── */}
           {loading ? (
             <LoadingSkeleton />
-          ) : invoiceCount === 0 ? (
-            <motion.div
-              {...fade}
-              className={cn(PANEL, 'flex flex-col items-center gap-4 px-6 py-14 text-center')}
-            >
-              <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-blue-50 dark:bg-blue-950/40">
-                <Receipt className="h-7 w-7 text-blue-500 dark:text-blue-400" />
-              </div>
-              <div>
-                <h2 className="text-base font-semibold text-zinc-900 dark:text-white">No invoices yet</h2>
-                <p className="mx-auto mt-1 max-w-sm text-sm text-zinc-500 dark:text-zinc-400">
-                  Create an invoice and send it to Accounting. Once you do, you can track whether
-                  it&apos;s pending, approved, or needs another look right here.
-                </p>
-              </div>
-              <Button
-                onClick={() => onNavigate('invoices')}
-                className="gap-2 bg-blue-600 text-white hover:bg-blue-700 dark:bg-blue-600 dark:hover:bg-blue-500"
-              >
-                <Plus className="h-4 w-4" />
-                Create your first invoice
-              </Button>
-            </motion.div>
           ) : (
             <motion.div {...fade} className="flex flex-col gap-6">
 
               {/* ── KPI cards ── */}
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                <KpiCard
+                  label="Total billed"
+                  value={formatGrouped(sumByCurrency(invoices), primaryCurrency)}
+                  sub={`${plural(invoiceCount, 'invoice')} submitted`}
+                  Icon={Wallet}
+                  accent="blue"
+                  onClick={() => onNavigate('invoices')}
+                />
+                <KpiCard
+                  label="Invoices"
+                  value={String(invoiceCount)}
+                  sub={`${pending.length} pending · ${approved.length} approved`}
+                  Icon={Receipt}
+                  accent="indigo"
+                  onClick={() => onNavigate('invoices')}
+                />
+                <KpiCard
+                  label="Services delivered"
+                  value={String(totalServices)}
+                  sub={
+                    distinctServices === 0
+                      ? 'No line items yet'
+                      : `${plural(distinctServices, 'distinct service')}`
+                  }
+                  Icon={Briefcase}
+                  accent="violet"
+                  onClick={() => onNavigate('invoices')}
+                />
                 <KpiCard
                   label="Awaiting review"
                   value={formatGrouped(sumByCurrency(pending), primaryCurrency)}
                   sub={pending.length === 0 ? 'Nothing pending' : `${plural(pending.length, 'invoice')} with Accounting`}
                   Icon={Clock}
-                  accent="text-amber-500 dark:text-amber-400"
+                  accent="amber"
+                  onClick={() => onNavigate('invoices')}
                 />
                 <KpiCard
                   label="Approved"
                   value={formatGrouped(sumByCurrency(approved), primaryCurrency)}
                   sub={approved.length === 0 ? 'None yet' : `${plural(approved.length, 'invoice')} cleared`}
                   Icon={CheckCircle2}
-                  accent="text-emerald-500 dark:text-emerald-400"
+                  accent="emerald"
+                  onClick={() => onNavigate('invoices')}
                 />
                 <KpiCard
-                  label="Total billed"
-                  value={formatGrouped(sumByCurrency(invoices), primaryCurrency)}
-                  sub={`${plural(invoiceCount, 'invoice')} submitted`}
-                  Icon={FileText}
-                  accent="text-blue-500 dark:text-blue-400"
+                  label="Latest invoice"
+                  value={latest ? formatMoney(latest.total ?? 0, normalizeCurrency(latest.currency)) : '—'}
+                  sub={latest ? `${latest.invoice_number || 'Invoice'} · ${relativeDay(latest.created_at)}` : 'None yet'}
+                  Icon={CalendarClock}
+                  accent="sky"
+                  onClick={() => onNavigate('invoices')}
                 />
               </div>
 
@@ -329,22 +410,43 @@ export default function ContractorOverview({
                 </div>
               )}
 
-              {/* ── Recent invoices ── */}
-              <div className={PANEL}>
-                <div className="flex items-center justify-between border-b border-zinc-100 px-4 py-3 dark:border-zinc-800">
-                  <h2 className="text-sm font-semibold text-zinc-900 dark:text-white">Recent invoices</h2>
+              {/* ── Recent invoices / empty prompt ── */}
+              {invoiceCount === 0 ? (
+                <div className={cn(PANEL, 'flex flex-col items-center gap-4 px-6 py-14 text-center')}>
+                  <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-blue-50 dark:bg-blue-950/40">
+                    <Receipt className="h-7 w-7 text-blue-500 dark:text-blue-400" />
+                  </div>
+                  <div>
+                    <h2 className="text-base font-semibold text-zinc-900 dark:text-white">No invoices yet</h2>
+                    <p className="mx-auto mt-1 max-w-sm text-sm text-zinc-500 dark:text-zinc-400">
+                      Create an invoice and send it to Accounting. Once you do, these cards fill in and
+                      you can track whether it&apos;s pending, approved, or needs another look right here.
+                    </p>
+                  </div>
                   <Button
-                    variant="ghost"
-                    size="sm"
                     onClick={() => onNavigate('invoices')}
-                    className="h-7 gap-1 px-2 text-xs text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white"
+                    className="gap-2 bg-blue-600 text-white hover:bg-blue-700 dark:bg-blue-600 dark:hover:bg-blue-500"
                   >
-                    View all
-                    <ArrowRight className="h-3 w-3" />
+                    <Plus className="h-4 w-4" />
+                    Create your first invoice
                   </Button>
                 </div>
-                <div className="divide-y divide-zinc-100 dark:divide-zinc-800">
-                  {invoices.slice(0, 5).map((inv) => (
+              ) : (
+                <div className={PANEL}>
+                  <div className="flex items-center justify-between border-b border-zinc-100 px-4 py-3 dark:border-zinc-800">
+                    <h2 className="text-sm font-semibold text-zinc-900 dark:text-white">Recent invoices</h2>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => onNavigate('invoices')}
+                      className="h-7 gap-1 px-2 text-xs text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white"
+                    >
+                      View all
+                      <ArrowRight className="h-3 w-3" />
+                    </Button>
+                  </div>
+                  <div className="divide-y divide-zinc-100 dark:divide-zinc-800">
+                    {invoices.slice(0, 5).map((inv) => (
                     <button
                       key={inv.id}
                       type="button"
@@ -367,8 +469,9 @@ export default function ContractorOverview({
                       </div>
                     </button>
                   ))}
+                  </div>
                 </div>
-              </div>
+              )}
 
             </motion.div>
           )}

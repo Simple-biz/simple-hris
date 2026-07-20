@@ -524,11 +524,16 @@ export default function NotificationsPanel({
               // red-and-black theme: black surface, solid red accents —
               // deliberately flat, no gradients.
               const isTicket = n.type === 'ticket.replied' || n.type === 'ticket.assigned';
-              // Payment Dispatch marked this person paid → card carries an
-              // "Open Pay Stub" button that opens the emailed statement in a modal.
+              // Cards that carry an "Open Pay Stub" button opening the statement
+              // in a modal: Payment Dispatch marked this person paid
+              // (payroll.paid), or Accounting uploaded a new week whose pay is now
+              // ready to view (payroll.available). Both key the modal on
+              // details.source_file.
               const isPaidStub = n.type === 'payroll.paid';
+              const isAvailableStub = n.type === 'payroll.available';
+              const isStubCard = isPaidStub || isAvailableStub;
               const paidStubFile =
-                isPaidStub && typeof n.details?.source_file === 'string'
+                isStubCard && typeof n.details?.source_file === 'string'
                   ? n.details.source_file
                   : null;
 
@@ -568,7 +573,7 @@ export default function NotificationsPanel({
                   : positive
                     ? 'text-emerald-600 dark:text-emerald-400'
                     : 'text-zinc-500 dark:text-zinc-400';
-              const Icon = isPaidStub ? BadgeDollarSign : isTicket ? MessagesSquare : isPayrollStart ? Lock : isPayrollStop ? Unlock : positive ? PartyPopper : BadgeDollarSign;
+              const Icon = isAvailableStub ? Receipt : isPaidStub ? BadgeDollarSign : isTicket ? MessagesSquare : isPayrollStart ? Lock : isPayrollStop ? Unlock : positive ? PartyPopper : BadgeDollarSign;
               // Resolve whenever the host declared its view; keep the action
               // only if we can actually act on it (self-routed href, or a
               // host-provided tab navigator).

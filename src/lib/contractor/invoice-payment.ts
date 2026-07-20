@@ -42,6 +42,20 @@ export function invoiceProcessorsForRegion(region: PaymentRegion): InvoiceProces
   return INVOICE_PROCESSOR_OPTIONS.filter((p) => p.region === region);
 }
 
+/**
+ * Rails offered for a given invoice currency. USD invoices can be paid via any
+ * global rail OR US ACH, so the full list is shown (3 processors + ACH); every
+ * other currency shows only the global rails (ACH is a US-dollar bank transfer).
+ */
+export function invoiceProcessorsForCurrency(isUsd: boolean): InvoiceProcessorOption[] {
+  return isUsd ? INVOICE_PROCESSOR_OPTIONS : invoiceProcessorsForRegion('global');
+}
+
+/** The region a rail belongs to — used to keep the stored payment_method region in sync. */
+export function invoiceRegionForProcessor(id: InvoiceProcessorId): PaymentRegion {
+  return invoiceProcessor(id)?.region ?? 'global';
+}
+
 export function invoiceProcessor(id: InvoiceProcessorId): InvoiceProcessorOption | undefined {
   return INVOICE_PROCESSOR_OPTIONS.find((p) => p.id === id);
 }

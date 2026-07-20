@@ -931,6 +931,67 @@ export async function fetchHubstaffRowsBySourceFile(sourceFile: string): Promise
   return { columns, rows };
 }
 
+/**
+ * Fetches EVERY archived hubstaff_hours row in one table scan, grouped by
+ * `source_file`. Server-side replacement for the Accounting Overview's old
+ * N-parallel `?source_file=…` fan-out over the full uploads list — the single
+ * dominant cause of the ~1 min Overview load. The caller gets the same per-file
+ * `{ source_file, columns, rows }` shape it used to assemble from N browser
+ * round-trips, but pays a single request.
+ *
+ * Columns are computed per file from that file's own rows and sorted for display,
+ * matching `fetchHubstaffRowsBySourceFile`. The DB schema is uniform across
+ * uploads, so an empty-row file falls back to the spec column order.
+ */
+export async function fetchHubstaffRowsGroupedBySourceFile(): Promise<{
+  files: { source_file: string; columns: string[]; rows: Record<string, unknown>[] }[];
+}> {
+  const supabase = requireServiceRole();
+  const table = getTableName();
+
+  const specCols = await getTableColumnsFromSpec(table);
+  if (!specCols.includes("source_file")) {
+    return { files: [] };
+  }
+
+  const PAGE = 1000;
+  const allRows: Record<string, unknown>[] = [];
+  let from = 0;
+  while (true) {
+    const { data, error } = await supabase
+      .from(table)
+      .select("*")
+      .not("source_file", "is", null)
+      .range(from, from + PAGE - 1);
+    if (error) throw new Error(error.message);
+    const page = (data ?? []) as Record<string, unknown>[];
+    allRows.push(...page);
+    if (page.length < PAGE) break;
+    from += PAGE;
+  }
+
+  // Group non-empty rows by source_file, preserving encounter order.
+  const byFile = new Map<string, Record<string, unknown>[]>();
+  for (const row of allRows) {
+    if (rowIsEmpty(row)) continue;
+    const sf = typeof row["source_file"] === "string" ? (row["source_file"] as string).trim() : "";
+    if (!sf) continue;
+    const list = byFile.get(sf);
+    if (list) list.push(row);
+    else byFile.set(sf, [row]);
+  }
+
+  const specColumnsSorted = sortHubstaffColumnsForDisplay(specCols);
+  const files = [...byFile.entries()].map(([source_file, rows]) => ({
+    source_file,
+    columns:
+      rows.length > 0 ? sortHubstaffColumnsForDisplay(Object.keys(rows[0])) : specColumnsSorted,
+    rows,
+  }));
+
+  return { files };
+}
+
 export function rowsToPayrollRows(rows: Record<string, unknown>[]): PayrollHubstaffRow[] {
   return rows.map((r) => mapHubstaffHoursRow(r));
 }

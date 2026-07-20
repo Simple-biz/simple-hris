@@ -11398,6 +11398,14 @@ export default function PayrollWizard({
                         </td>
                         <td className="px-3 py-3">
                           <div className="flex items-center justify-end gap-2">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="h-7 gap-1 border-zinc-300 text-zinc-600 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800/50"
+                              onClick={() => setPreviewSelectedInvoiceId(inv.id)}
+                            >
+                              <Eye className="h-3.5 w-3.5" /> View
+                            </Button>
                             {inv.status === 'pending' && (
                               <Button
                                 size="sm"

@@ -1,0 +1,319 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>CallTools-creation webhook tester</title>
+<!--
+  Dummy tester for the `call_tools_creation` n8n webhook.
+
+  It builds the EXACT payload HRIS sends from
+  POST /api/manager/pending-hires/[id]/orientation  (mark a Lead Gen hire
+  "attended orientation"), typed by CallToolsCreationPayload in
+  src/lib/hr/orientation-webhook.ts. Keep this file in sync with those two if
+  the payload changes.
+
+  As of 2026-07-20 the payload carries the hire's split name — `first_name` +
+  `last_name` — alongside the existing `name`. `calltools_username` stays the
+  minted nickname-based value (e.g. "Mikey J. T."); it is NOT derived here.
+
+  Open the file directly in a browser. If the browser blocks reading the
+  response (n8n often omits CORS headers), the POST may STILL have reached n8n —
+  use the "Copy as curl" button for a CORS-free send from a terminal.
+-->
+<style>
+  :root {
+    --bg: #0b1220; --panel: #121b2e; --panel2: #0e1626; --line: #24314c;
+    --text: #e7ecf5; --muted: #93a1bd; --accent: #6ea8fe; --accent2: #34d399;
+    --warn: #f59e0b; --danger: #f87171; --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 14px/1.5 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+    padding: 24px;
+  }
+  .wrap { max-width: 1040px; margin: 0 auto; }
+  h1 { font-size: 20px; margin: 0 0 2px; }
+  .sub { color: var(--muted); margin: 0 0 20px; font-size: 13px; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; align-items: start; }
+  @media (max-width: 860px) { .grid { grid-template-columns: 1fr; } }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 18px; }
+  .card h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 0 0 14px; }
+  label { display: block; font-size: 12px; color: var(--muted); margin: 0 0 4px; }
+  .field { margin-bottom: 12px; }
+  .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  input[type=text], input[type=number], input[type=email], input[type=date], select, textarea {
+    width: 100%; background: var(--panel2); border: 1px solid var(--line); color: var(--text);
+    border-radius: 8px; padding: 8px 10px; font: inherit;
+  }
+  input:focus, select:focus, textarea:focus { outline: none; border-color: var(--accent); }
+  textarea { resize: vertical; min-height: 46px; }
+  .check { display: flex; align-items: center; gap: 8px; }
+  .check input { width: auto; }
+  .btns { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 6px; }
+  button {
+    border: 1px solid var(--line); background: #1b273f; color: var(--text);
+    border-radius: 8px; padding: 9px 14px; font: inherit; cursor: pointer;
+  }
+  button.primary { background: var(--accent); color: #06122b; border-color: var(--accent); font-weight: 600; }
+  button:hover { filter: brightness(1.08); }
+  button:disabled { opacity: .5; cursor: default; }
+  pre {
+    background: var(--panel2); border: 1px solid var(--line); border-radius: 8px;
+    padding: 14px; overflow: auto; font-family: var(--mono); font-size: 12.5px; margin: 0; max-height: 460px;
+  }
+  .k { color: var(--accent); }
+  .s { color: var(--accent2); }
+  .n { color: #f0abfc; }
+  .b { color: var(--warn); }
+  .new-badge { color: #06122b; background: var(--accent2); border-radius: 999px; font-size: 10px; padding: 1px 6px; font-weight: 700; vertical-align: middle; }
+  .status { margin-top: 12px; padding: 10px 12px; border-radius: 8px; font-size: 13px; display: none; white-space: pre-wrap; }
+  .status.ok { display: block; background: rgba(52,211,153,.12); border: 1px solid var(--accent2); }
+  .status.err { display: block; background: rgba(248,113,113,.12); border: 1px solid var(--danger); }
+  .status.info { display: block; background: rgba(110,168,254,.12); border: 1px solid var(--accent); }
+  .hint { color: var(--muted); font-size: 11.5px; margin-top: 4px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>CallTools-creation webhook tester</h1>
+  <p class="sub">Fires the exact <code>call_tools_creation</code> payload HRIS sends when a manager marks a Lead&nbsp;Gen hire as having attended orientation.</p>
+
+  <div class="field">
+    <label for="url">Webhook URL</label>
+    <input id="url" type="text" value="https://simpledotbiz.app.n8n.cloud/webhook/calltools-creation" />
+    <p class="hint">Default is the code fallback. Point it at your n8n test URL (…/webhook-test/…) to test without going live.</p>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Hire details</h2>
+      <div class="row2">
+        <div class="field">
+          <label for="first_name">first_name <span class="new-badge">new</span></label>
+          <input id="first_name" type="text" value="James" />
+        </div>
+        <div class="field">
+          <label for="last_name">last_name <span class="new-badge">new</span></label>
+          <input id="last_name" type="text" value="Thomas" />
+        </div>
+      </div>
+      <div class="field">
+        <label for="name">name (composed — full legal name)</label>
+        <input id="name" type="text" value="James Thomas" />
+        <p class="hint">HRIS composes this from the parts. Leave the auto-sync box ticked to keep it = "first last".</p>
+        <div class="check"><input id="autoname" type="checkbox" checked /><label for="autoname" style="margin:0">Auto-sync name from first + last</label></div>
+      </div>
+      <div class="row2">
+        <div class="field">
+          <label for="work_email">work_email</label>
+          <input id="work_email" type="text" value="jamest@simple.biz" />
+        </div>
+        <div class="field">
+          <label for="personal_email">personal_email</label>
+          <input id="personal_email" type="text" value="james.thomas.dummy@gmail.com" />
+        </div>
+      </div>
+      <div class="row2">
+        <div class="field">
+          <label for="department">department</label>
+          <input id="department" type="text" value="Lead Gen" />
+        </div>
+        <div class="field">
+          <label for="lead_gen">lead_gen</label>
+          <select id="lead_gen"><option value="true" selected>true</option><option value="false">false</option></select>
+        </div>
+      </div>
+      <div class="row2">
+        <div class="field">
+          <label for="calltools_nickname">calltools_nickname</label>
+          <input id="calltools_nickname" type="text" value="Mikey" />
+        </div>
+        <div class="field">
+          <label for="calltools_username">calltools_username (minted)</label>
+          <input id="calltools_username" type="text" value="Mikey J. T." />
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Rates &amp; mark metadata</h2>
+      <div class="row2">
+        <div class="field">
+          <label for="regular_rate">regular_rate</label>
+          <input id="regular_rate" type="number" step="0.01" value="175" />
+        </div>
+        <div class="field">
+          <label for="ot_rate">ot_rate</label>
+          <input id="ot_rate" type="number" step="0.01" value="262.5" />
+        </div>
+      </div>
+      <p class="hint" style="margin-top:-6px">pay_rate mirrors regular_rate (0 when unset), matching HRIS.</p>
+      <div class="row2">
+        <div class="field">
+          <label for="pending_employee_id">pending_employee_id</label>
+          <input id="pending_employee_id" type="number" value="999001" />
+        </div>
+        <div class="field">
+          <label for="attended_on">attended_on (Manila date)</label>
+          <input id="attended_on" type="date" value="2026-07-20" />
+        </div>
+      </div>
+      <div class="field">
+        <label for="marked_by">marked_by</label>
+        <input id="marked_by" type="text" value="manager@simple.biz" />
+      </div>
+      <div class="field">
+        <label for="note">note</label>
+        <textarea id="note">sent from the dummy webhook tester</textarea>
+      </div>
+      <div class="field check">
+        <input id="already_marked" type="checkbox" />
+        <label for="already_marked" style="margin:0">already_marked (re-mark / date edit — n8n must NOT create a 2nd account)</label>
+      </div>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:20px">
+    <h2>Payload preview</h2>
+    <pre id="preview"></pre>
+    <div class="btns">
+      <button class="primary" id="send">Send webhook</button>
+      <button id="copyjson">Copy JSON</button>
+      <button id="copycurl">Copy as curl</button>
+    </div>
+    <div class="status" id="status"></div>
+  </div>
+</div>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  const inputs = ['url','first_name','last_name','name','autoname','work_email','personal_email',
+    'department','lead_gen','calltools_nickname','calltools_username','regular_rate','ot_rate',
+    'pending_employee_id','attended_on','marked_by','note','already_marked'];
+
+  const strOrNull = (v) => { const t = (v ?? '').trim(); return t === '' ? null : t; };
+  const numOrNull = (v) => { const t = (v ?? '').trim(); if (t === '') return null; const n = Number(t); return Number.isFinite(n) ? n : null; };
+
+  // orientation_attended_at = start of attended_on in Manila (UTC+8), as UTC ISO
+  // — exactly how the route derives the stored timestamptz from the picked date.
+  function attendedAtIso(dateStr) {
+    if (!dateStr) return null;
+    const d = new Date(dateStr + 'T00:00:00+08:00');
+    return isNaN(d.getTime()) ? null : d.toISOString();
+  }
+
+  // Build the payload in the SAME field order as fireCallToolsCreationWebhook.
+  function buildPayload() {
+    const first = strOrNull($('first_name').value);
+    const last = strOrNull($('last_name').value);
+    if ($('autoname').checked) {
+      $('name').value = [first, last].filter(Boolean).join(' ');
+    }
+    const regular = numOrNull($('regular_rate').value);
+    return {
+      event: 'hire.orientation_attended',
+      pending_employee_id: numOrNull($('pending_employee_id').value) ?? 0,
+      name: strOrNull($('name').value),
+      first_name: first,
+      last_name: last,
+      work_email: strOrNull($('work_email').value),
+      personal_email: strOrNull($('personal_email').value),
+      department: strOrNull($('department').value),
+      lead_gen: $('lead_gen').value === 'true',
+      calltools_nickname: strOrNull($('calltools_nickname').value),
+      calltools_username: strOrNull($('calltools_username').value),
+      pay_rate: regular ?? 0,
+      regular_rate: regular,
+      ot_rate: numOrNull($('ot_rate').value),
+      attended_on: strOrNull($('attended_on').value),
+      orientation_attended_at: attendedAtIso($('attended_on').value.trim()),
+      marked_by: strOrNull($('marked_by').value) ?? '',
+      note: strOrNull($('note').value),
+      already_marked: $('already_marked').checked,
+    };
+  }
+
+  // Classic JSON syntax highlighter: keys (blue), strings (green), numbers
+  // (pink), true/false/null (amber). A string immediately followed by ":" is a key.
+  function highlight(json) {
+    const esc = json.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    return esc.replace(
+      /("(?:\\.|[^"\\])*"(\s*:)?)|\b(true|false|null)\b|(-?\d+(?:\.\d+)?)/g,
+      (m, strGrp, colon, lit, num) => {
+        if (strGrp !== undefined) return '<span class="' + (colon ? 'k' : 's') + '">' + m + '</span>';
+        if (lit !== undefined) return '<span class="b">' + m + '</span>';
+        if (num !== undefined) return '<span class="n">' + m + '</span>';
+        return m;
+      });
+  }
+
+  function refresh() {
+    const json = JSON.stringify(buildPayload(), null, 2);
+    try {
+      $('preview').innerHTML = highlight(json);
+    } catch (_) {
+      $('preview').textContent = json; // never let cosmetics break the tester
+    }
+  }
+
+  function setStatus(kind, msg) {
+    const el = $('status');
+    el.className = 'status ' + kind;
+    el.textContent = msg;
+  }
+
+  async function send() {
+    const url = $('url').value.trim();
+    if (!/^https?:\/\//i.test(url)) { setStatus('err', 'Enter a valid http(s):// URL first.'); return; }
+    const payload = buildPayload();
+    $('send').disabled = true;
+    setStatus('info', 'Sending…');
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      let bodyText = '';
+      try { bodyText = await res.text(); } catch (_) {}
+      if (res.ok) setStatus('ok', `✓ ${res.status} ${res.statusText}\n${bodyText.slice(0, 2000)}`);
+      else setStatus('err', `✗ ${res.status} ${res.statusText}\n${bodyText.slice(0, 2000)}`);
+    } catch (e) {
+      setStatus('info',
+        'Browser could not read a response (likely CORS — n8n often omits CORS headers).\n' +
+        'The POST may STILL have reached n8n. Check your n8n executions, or use "Copy as curl" to send from a terminal.\n\n' +
+        (e && e.message ? e.message : e));
+    } finally {
+      $('send').disabled = false;
+    }
+  }
+
+  async function copyJson() {
+    await navigator.clipboard.writeText(JSON.stringify(buildPayload(), null, 2));
+    setStatus('ok', 'Payload JSON copied to clipboard.');
+  }
+
+  async function copyCurl() {
+    const url = $('url').value.trim();
+    const json = JSON.stringify(buildPayload());
+    // Single-quote the JSON for POSIX shells; escape any embedded single quotes.
+    const safe = json.replace(/'/g, `'\\''`);
+    const curl = `curl -X POST '${url}' -H 'Content-Type: application/json' -d '${safe}'`;
+    await navigator.clipboard.writeText(curl);
+    setStatus('ok', 'curl command copied — paste it into a terminal (works around CORS).');
+  }
+
+  inputs.forEach((id) => {
+    const el = $(id);
+    el.addEventListener('input', refresh);
+    el.addEventListener('change', refresh);
+  });
+  $('send').addEventListener('click', send);
+  $('copyjson').addEventListener('click', copyJson);
+  $('copycurl').addEventListener('click', copyCurl);
+  refresh();
+</script>
+</body>
+</html>

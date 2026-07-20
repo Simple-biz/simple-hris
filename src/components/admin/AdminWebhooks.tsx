@@ -91,7 +91,7 @@ const KNOWN_SLUGS: Array<{ slug: string; label: string; description: string }> =
     slug: 'call_tools_creation',
     label: 'Call Tools Creation (n8n)',
     description:
-      'Fired when a manager marks a LEAD GEN hire as having attended orientation (Manager → Newly Hired; bulk fires one event per hire; other departments fire nothing). Payload carries the hire\'s identity, calltools_nickname + calltools_username from their paperwork (e.g. "Mikey J. T.", minted at mark time for pre-feature paperwork), and pay_rate / regular_rate / ot_rate so n8n can provision the CallTools agent. Re-marks (date edits) re-fire with already_marked: true — the flow must not create a second account.',
+      'Fired when a manager marks a LEAD GEN hire as having attended orientation (Manager → Newly Hired; bulk fires one event per hire; other departments fire nothing). Payload carries the hire\'s identity — including the split first_name + last_name alongside the combined name — calltools_nickname + calltools_username from their paperwork (e.g. "Mikey J. T.", minted at mark time for pre-feature paperwork), and pay_rate / regular_rate / ot_rate so n8n can provision the CallTools agent. Re-marks (date edits) re-fire with already_marked: true — the flow must not create a second account.',
   },
   {
     slug: 'ticket_created',

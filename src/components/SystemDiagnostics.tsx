@@ -146,10 +146,16 @@ export type DiagnosticAlert = {
   timestamp: string;
 };
 
+export type DiagnosticsMetrics = {
+  /** How many Global Master List members have used the HRIS, over the total roster. */
+  hrisAdoption: { onboarded: number; total: number } | null;
+};
+
 export type DiagnosticsHealthResponse = {
   overallStatus: DiagnosticStatus;
   nodes: DiagnosticNode[];
   alerts: DiagnosticAlert[];
+  metrics?: DiagnosticsMetrics;
 };
 
 /* ────────────────── Status palette ────────────────── */
@@ -1735,6 +1741,10 @@ export default function SystemDiagnostics() {
     return c;
   }, [data.nodes]);
 
+  // HRIS adoption is only present on a live probe response; null on the mock
+  // baseline / probe failure, in which case the card degrades to "—".
+  const hrisAdoption = data.metrics?.hrisAdoption ?? null;
+
   // Auto re-probe on an interval so the map is a genuine live feed: it flips to
   // red on its own the moment Supabase starts failing, no manual Refresh needed.
   // (Previously this was a no-op timestamp bump — it never re-hit the probe, so a
@@ -1816,11 +1826,20 @@ export default function SystemDiagnostics() {
       )}
 
       {/* ── Summary cards ── */}
-      <div className="grid shrink-0 grid-cols-2 gap-2 sm:grid-cols-4 sm:gap-3">
+      <div className="grid shrink-0 grid-cols-2 gap-2 sm:grid-cols-3 sm:gap-3 lg:grid-cols-5">
         <SummaryCard status="healthy" label="Healthy" value={counts.healthy} icon={<CheckCircle2 className="h-3.5 w-3.5" />} />
         <SummaryCard status="warning" label="Warnings" value={counts.warning} icon={<AlertTriangle className="h-3.5 w-3.5" />} />
         <SummaryCard status="critical" label="Critical" value={counts.critical} icon={<XCircle className="h-3.5 w-3.5" />} />
         <SummaryCard status="unknown" label="Unknown" value={counts.unknown} icon={<CircleDashed className="h-3.5 w-3.5" />} />
+        {/* HRIS adoption: roster members who have used the HRIS, over total roster. */}
+        <SummaryCard
+          tone="info"
+          status="healthy"
+          label="Employees Onboarded"
+          value={hrisAdoption ? hrisAdoption.onboarded : '—'}
+          over={hrisAdoption?.total ?? null}
+          icon={<Users className="h-3.5 w-3.5" />}
+        />
       </div>
 
       {/* ── Main: diagram + side panel ── */}
@@ -2270,12 +2289,18 @@ function SummaryCard({
   status,
   label,
   value,
+  over,
   icon,
+  tone = 'status',
 }: {
   status: DiagnosticStatus;
   label: string;
-  value: number;
+  value: number | string;
+  /** When set, renders a muted "/ over" suffix after the value (e.g. 312 / 390). */
+  over?: number | null;
   icon: React.ReactNode;
+  /** 'status' tints by DiagnosticStatus; 'info' is a neutral indigo KPI card. */
+  tone?: 'status' | 'info';
 }) {
   const palette = STATUS_CLASSES[status];
   return (
@@ -2285,22 +2310,32 @@ function SummaryCard({
         'border-zinc-200 dark:border-zinc-800',
       )}
     >
-      <div className="flex flex-col gap-0.5">
+      <div className="flex min-w-0 flex-col gap-0.5">
         <span className="text-[10px] font-medium uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-400">
           {label}
         </span>
         <span className="font-mono text-xl font-bold tabular-nums leading-none text-zinc-900 dark:text-zinc-100">
           {value}
+          {over != null && (
+            <span className="ml-0.5 text-sm font-semibold text-zinc-400 dark:text-zinc-500">
+              {' / '}
+              {over}
+            </span>
+          )}
         </span>
       </div>
       <span
         className={cn(
-          'flex h-8 w-8 items-center justify-center rounded-lg ring-1',
-          palette.iconColor,
-          status === 'healthy' && 'bg-emerald-50 ring-emerald-100 dark:bg-emerald-500/10 dark:ring-emerald-500/20',
-          status === 'warning' && 'bg-amber-50 ring-amber-100 dark:bg-amber-500/10 dark:ring-amber-500/20',
-          status === 'critical' && 'bg-rose-50 ring-rose-100 dark:bg-rose-500/10 dark:ring-rose-500/20',
-          status === 'unknown' && 'bg-zinc-50 ring-zinc-100 dark:bg-zinc-900 dark:ring-zinc-800',
+          'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ring-1',
+          tone === 'info'
+            ? 'text-indigo-600 bg-indigo-50 ring-indigo-100 dark:text-indigo-400 dark:bg-indigo-500/10 dark:ring-indigo-500/20'
+            : cn(
+                palette.iconColor,
+                status === 'healthy' && 'bg-emerald-50 ring-emerald-100 dark:bg-emerald-500/10 dark:ring-emerald-500/20',
+                status === 'warning' && 'bg-amber-50 ring-amber-100 dark:bg-amber-500/10 dark:ring-amber-500/20',
+                status === 'critical' && 'bg-rose-50 ring-rose-100 dark:bg-rose-500/10 dark:ring-rose-500/20',
+                status === 'unknown' && 'bg-zinc-50 ring-zinc-100 dark:bg-zinc-900 dark:ring-zinc-800',
+              ),
         )}
       >
         {icon}

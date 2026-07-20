@@ -46,6 +46,10 @@ export const NOTIFICATION_TYPE_TO_VIEWS: Record<string, AppView[]> = {
   // notification panel with an "Open Pay Stub" button (the same statement we
   // email). Employee-only, ungated.
   'payroll.paid': ['employee'],
+  // Accounting uploaded a new Hubstaff week (Payroll Wizard CSV upload / API
+  // sync): the employee's salary for that week is ready to view. Same
+  // "Open Pay Stub" button as payroll.paid. Employee-only, ungated.
+  'payroll.available': ['employee'],
   // Someone replied on the recipient's HRIS-updates ticket. Lives in the
   // Employee dashboard's notification panel (everyone who can file a ticket
   // has one), which is also where it's marked read.

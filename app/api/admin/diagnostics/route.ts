@@ -20,6 +20,7 @@ import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth/auth-options';
 import { requireElevatedSession, deniedResponse } from '@/lib/auth/authorize-email';
 import {
+  computeHrisAdoption,
   probeAppSettings,
   probeAuditLog,
   probeAuth,
@@ -87,12 +88,18 @@ type DiagnosticAlert = {
   timestamp: string;
 };
 
+type DiagnosticsMetrics = {
+  /** HRIS adoption: roster members who have used the HRIS, over total roster. */
+  hrisAdoption: { onboarded: number; total: number } | null;
+};
+
 type DiagnosticsHealthResponse = {
   overallStatus: ProbeStatus;
   source: 'live' | 'mock';
   generatedAt: string;
   nodes: DiagnosticNode[];
   alerts: DiagnosticAlert[];
+  metrics: DiagnosticsMetrics;
 };
 
 async function requireAdmin() {
@@ -129,6 +136,14 @@ export async function GET() {
     details: [],
     suggestedChecks: [],
   };
+  // HRIS-adoption metric feeds the "Employees Onboarded" KPI card, not a node.
+  // Guard with its own timeout (same budget as a probe) so a slow read can't
+  // stall the route; a null result degrades the card to "—".
+  const hrisAdoptionPromise: Promise<{ onboarded: number; total: number } | null> = Promise.race([
+    computeHrisAdoption(),
+    new Promise<null>((resolve) => setTimeout(() => resolve(null), 4000)),
+  ]);
+
   const [
     supabaseProbe,
     pgPoolProbe,
@@ -273,12 +288,15 @@ export async function GET() {
         ? 'healthy'
         : 'unknown';
 
+  const hrisAdoption = await hrisAdoptionPromise;
+
   const body: DiagnosticsHealthResponse = {
     overallStatus,
     source: 'live',
     generatedAt: iso,
     nodes,
     alerts,
+    metrics: { hrisAdoption },
   };
 
   return NextResponse.json(body, {

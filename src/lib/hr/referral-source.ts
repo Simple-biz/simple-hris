@@ -15,7 +15,7 @@ export const REFERRAL_SOURCE = "Referral";
 export const BASE_SOURCE_OPTIONS = [
   REFERRAL_SOURCE,
   "Facebook",
-  "Online Jobs",
+  "OnlineJobs.ph",
   "LinkedIn",
   "Indeed",
   "JobStreet",

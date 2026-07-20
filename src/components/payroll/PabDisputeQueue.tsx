@@ -8,7 +8,9 @@ import {
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
+  ClipboardList,
   Clock,
+  Eye,
   Gavel,
   Loader2,
   Pencil,
@@ -16,9 +18,10 @@ import {
   Search,
   Trash2,
   Undo2,
+  X,
   XCircle,
 } from 'lucide-react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import type { LucideIcon } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -74,6 +77,56 @@ const STATUS_BADGE: Record<string, { label: string; className: string }> = {
   denied: { label: 'Denied', className: 'border-rose-400 bg-rose-50 text-rose-700 dark:border-rose-600 dark:bg-rose-950/40 dark:text-rose-400' },
   accounting_denied: { label: 'Accounting denied', className: 'border-rose-400 bg-rose-50 text-rose-700 dark:border-rose-600 dark:bg-rose-950/40 dark:text-rose-400' },
 };
+
+/** MESA-style KPI card — gradient tint, uppercase label, big mono value, and a
+ *  faint corner icon. Tones stay on the accounting indigo/violet theme (plus the
+ *  usual amber/emerald/rose status semantics) — no green/teal accent. */
+function StatCard({
+  label,
+  value,
+  tone,
+  icon: Icon,
+}: {
+  label: string;
+  value: number;
+  tone: 'indigo' | 'amber' | 'emerald' | 'rose';
+  icon: LucideIcon;
+}) {
+  const styles = {
+    indigo:
+      'border-indigo-200 bg-gradient-to-br from-indigo-50 to-white text-indigo-900 dark:border-indigo-700/40 dark:from-indigo-950/40 dark:to-zinc-950 dark:text-indigo-100',
+    amber:
+      'border-amber-200 bg-gradient-to-br from-amber-50 to-white text-amber-900 dark:border-amber-700/40 dark:from-amber-950/40 dark:to-zinc-950 dark:text-amber-100',
+    emerald:
+      'border-emerald-200 bg-gradient-to-br from-emerald-50 to-white text-emerald-900 dark:border-emerald-700/40 dark:from-emerald-950/40 dark:to-zinc-950 dark:text-emerald-100',
+    rose:
+      'border-rose-200 bg-gradient-to-br from-rose-50 to-white text-rose-900 dark:border-rose-700/40 dark:from-rose-950/40 dark:to-zinc-950 dark:text-rose-100',
+  }[tone];
+  return (
+    <div
+      className={cn(
+        'group relative overflow-hidden rounded-xl border p-4 shadow-sm',
+        'transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md motion-reduce:transform-none motion-reduce:transition-none',
+        styles,
+      )}
+    >
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-[11px] font-medium uppercase tracking-wide opacity-70">{label}</p>
+        <Icon className="h-4 w-4 opacity-40 transition-all duration-200 group-hover:scale-110 group-hover:opacity-70" aria-hidden />
+      </div>
+      <p className="mt-1 font-mono text-2xl font-bold tabular-nums">{value}</p>
+    </div>
+  );
+}
+
+function InfoRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <p className="text-[11px] font-semibold uppercase tracking-wide text-zinc-400 dark:text-zinc-500">{label}</p>
+      <p className="mt-0.5 break-words text-sm text-zinc-800 dark:text-zinc-200">{value}</p>
+    </div>
+  );
+}
 
 export default function PabDisputeQueue() {
   const [currentUser, setCurrentUser] = useState<string | null>(null);
@@ -144,6 +197,9 @@ export default function PabDisputeQueue() {
   const [deleting, setDeleting] = useState(false);
 
   const [approvingId, setApprovingId] = useState<string | null>(null);
+
+  // Read-only detail modal (the "View" action) — opens over the table.
+  const [viewTarget, setViewTarget] = useState<PabDayDisputeRow | null>(null);
 
   const openEdit = useCallback((row: PabDayDisputeRow) => {
     setEditDialog(row);
@@ -473,35 +529,12 @@ export default function PabDisputeQueue() {
         )}
       </div>
 
-      {/* Summary cards */}
-      <div className="flex shrink-0 gap-3">
-        <Card className="flex-1 border-amber-200 bg-amber-50/50 dark:border-amber-900/50 dark:bg-amber-950/20">
-          <CardContent className="flex items-center gap-2 p-3">
-            <Clock className="h-4 w-4 text-amber-500" />
-            <div>
-              <p className="text-lg font-bold text-amber-700 dark:text-amber-400">{pendingCount}</p>
-              <p className="text-[10px] text-amber-600/70 dark:text-amber-500/70">Pending</p>
-            </div>
-          </CardContent>
-        </Card>
-        <Card className="flex-1 border-emerald-200 bg-emerald-50/50 dark:border-emerald-900/50 dark:bg-emerald-950/20">
-          <CardContent className="flex items-center gap-2 p-3">
-            <CheckCircle2 className="h-4 w-4 text-emerald-500" />
-            <div>
-              <p className="text-lg font-bold text-emerald-700 dark:text-emerald-400">{approvedCount}</p>
-              <p className="text-[10px] text-emerald-600/70 dark:text-emerald-500/70">Approved</p>
-            </div>
-          </CardContent>
-        </Card>
-        <Card className="flex-1 border-rose-200 bg-rose-50/50 dark:border-rose-900/50 dark:bg-rose-950/20">
-          <CardContent className="flex items-center gap-2 p-3">
-            <XCircle className="h-4 w-4 text-rose-500" />
-            <div>
-              <p className="text-lg font-bold text-rose-700 dark:text-rose-400">{deniedCount}</p>
-              <p className="text-[10px] text-rose-600/70 dark:text-rose-500/70">Denied</p>
-            </div>
-          </CardContent>
-        </Card>
+      {/* KPI cards */}
+      <div className="grid shrink-0 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <StatCard label="Total" value={disputes.length} tone="indigo" icon={ClipboardList} />
+        <StatCard label="Pending" value={pendingCount} tone="amber" icon={Clock} />
+        <StatCard label="Approved" value={approvedCount} tone="emerald" icon={CheckCircle2} />
+        <StatCard label="Denied" value={deniedCount} tone="rose" icon={XCircle} />
       </div>
 
       {/* Filters */}
@@ -564,23 +597,23 @@ export default function PabDisputeQueue() {
               </Button>
             </div>
           </div>
-          <div className="min-h-0 flex-1 overflow-auto rounded-md border border-zinc-200 dark:border-zinc-800">
+          <div className="min-h-0 flex-1 overflow-auto rounded-xl border border-indigo-100 shadow-sm dark:border-indigo-900/40">
             <Table>
-              <TableHeader className="sticky top-0 z-10 bg-gradient-to-r from-orange-50/95 to-blue-50/60 backdrop-blur-sm dark:from-blue-950/90 dark:to-blue-950/70">
-                <TableRow className="border-zinc-200 hover:bg-transparent dark:border-zinc-800">
-                  <TableHead className="text-zinc-600 dark:text-zinc-400">Employee</TableHead>
-                  <TableHead className="text-zinc-600 dark:text-zinc-400">Date</TableHead>
-                  <TableHead className="text-zinc-600 dark:text-zinc-400">Reason</TableHead>
-                  <TableHead className="text-zinc-600 dark:text-zinc-400">Explanation</TableHead>
-                  <TableHead className="text-zinc-600 dark:text-zinc-400">Status</TableHead>
-                  <TableHead className="text-zinc-600 dark:text-zinc-400">Set hours</TableHead>
-                  <TableHead className="text-zinc-600 dark:text-zinc-400">Decision</TableHead>
-                  <TableHead className="min-w-[220px] text-right text-zinc-600 dark:text-zinc-400">Action</TableHead>
+              <TableHeader className="sticky top-0 z-10 bg-indigo-50/85 backdrop-blur-sm dark:bg-indigo-950/40">
+                <TableRow className="border-indigo-100 hover:bg-transparent dark:border-indigo-900/40">
+                  <TableHead className="text-[11px] font-semibold uppercase tracking-wide text-indigo-700 dark:text-indigo-300">Employee</TableHead>
+                  <TableHead className="text-[11px] font-semibold uppercase tracking-wide text-indigo-700 dark:text-indigo-300">Date</TableHead>
+                  <TableHead className="text-[11px] font-semibold uppercase tracking-wide text-indigo-700 dark:text-indigo-300">Reason</TableHead>
+                  <TableHead className="text-[11px] font-semibold uppercase tracking-wide text-indigo-700 dark:text-indigo-300">Explanation</TableHead>
+                  <TableHead className="text-[11px] font-semibold uppercase tracking-wide text-indigo-700 dark:text-indigo-300">Status</TableHead>
+                  <TableHead className="text-[11px] font-semibold uppercase tracking-wide text-indigo-700 dark:text-indigo-300">Set hours</TableHead>
+                  <TableHead className="text-[11px] font-semibold uppercase tracking-wide text-indigo-700 dark:text-indigo-300">Decision</TableHead>
+                  <TableHead className="min-w-[260px] text-right text-[11px] font-semibold uppercase tracking-wide text-indigo-700 dark:text-indigo-300">Action</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {pageRows.map(d => (
-                  <TableRow key={d.id} className="border-zinc-200 hover:bg-zinc-50 dark:border-zinc-800 dark:hover:bg-zinc-900/40">
+                  <TableRow key={d.id} className="border-indigo-100/70 transition-colors hover:bg-indigo-50/50 dark:border-indigo-900/30 dark:hover:bg-indigo-950/20">
                     <TableCell className="font-mono text-xs text-zinc-700 dark:text-zinc-300">{d.work_email}</TableCell>
                     <TableCell className="whitespace-nowrap text-sm text-zinc-700 dark:text-zinc-300">{d.dispute_date}</TableCell>
                     <TableCell>
@@ -637,8 +670,18 @@ export default function PabDisputeQueue() {
                         </div>
                       ) : '—'}
                     </TableCell>
-                    <TableCell className="min-w-[220px] text-right align-top">
+                    <TableCell className="min-w-[260px] text-right align-top">
                       <div className="flex flex-wrap justify-end gap-1">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-7 border-indigo-200 px-2 text-[11px] text-indigo-700 hover:bg-indigo-50 dark:border-indigo-800 dark:text-indigo-300 dark:hover:bg-indigo-950/40"
+                          title="View details"
+                          onClick={() => setViewTarget(d)}
+                        >
+                          <Eye className="mr-1 h-3 w-3" />
+                          View
+                        </Button>
                         {d.status === 'pending' || d.status === 'orphanage_manager_approved' ? (
                           <>
                             <Button
@@ -730,6 +773,98 @@ export default function PabDisputeQueue() {
                 ))}
               </TableBody>
             </Table>
+          </div>
+        </div>
+      )}
+
+      {/* View details modal — smooth backdrop fade + card zoom/slide-in */}
+      {viewTarget && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-[2px] animate-in fade-in duration-200 ease-out motion-reduce:animate-none"
+          onClick={() => setViewTarget(null)}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label="Issue details"
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-md overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-2xl animate-in fade-in zoom-in-95 slide-in-from-bottom-2 duration-200 ease-out dark:border-zinc-800 dark:bg-zinc-950 motion-reduce:animate-none"
+          >
+            {/* Header */}
+            <div className="flex items-start justify-between gap-3 border-b border-zinc-200 px-5 py-4 dark:border-zinc-800">
+              <div className="flex min-w-0 items-start gap-3">
+                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-indigo-500 to-violet-600 text-white shadow-sm shadow-indigo-500/20 dark:from-indigo-600 dark:to-violet-700">
+                  <Gavel className="h-4 w-4" aria-hidden />
+                </div>
+                <div className="min-w-0">
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-indigo-600 dark:text-indigo-400">
+                    {reasonLabel(viewTarget.reason)}
+                  </p>
+                  <h3 className="mt-0.5 truncate font-mono text-sm font-bold text-zinc-900 dark:text-white">
+                    {viewTarget.work_email}
+                  </h3>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setViewTarget(null)}
+                aria-label="Close"
+                className="shrink-0 rounded-md p-1.5 text-zinc-400 transition-colors hover:bg-zinc-100 hover:text-zinc-600 dark:hover:bg-zinc-800 dark:hover:text-zinc-300"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            {/* Body */}
+            <div className="space-y-3.5 px-5 py-4">
+              <div className="grid grid-cols-2 gap-3">
+                <InfoRow label="Date" value={viewTarget.dispute_date} />
+                <div>
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-zinc-400 dark:text-zinc-500">Status</p>
+                  <div className="mt-1">
+                    <Badge variant="outline" className={cn('text-[10px]', STATUS_BADGE[viewTarget.status]?.className)}>
+                      {STATUS_BADGE[viewTarget.status]?.label ?? viewTarget.status}
+                    </Badge>
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-zinc-400 dark:text-zinc-500">Set hours</p>
+                <p className="mt-0.5 text-sm text-zinc-800 dark:text-zinc-200">
+                  {isOrphanageStyleReason(viewTarget.reason)
+                    ? 'Uses logged Hubstaff time'
+                    : formatHours(viewTarget.override_hours) ?? '—'}
+                </p>
+              </div>
+
+              {viewTarget.explanation && (
+                <div>
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-zinc-400 dark:text-zinc-500">Explanation</p>
+                  <p className="mt-1 whitespace-pre-line break-words text-sm leading-relaxed text-zinc-700 dark:text-zinc-300">
+                    {viewTarget.explanation}
+                  </p>
+                </div>
+              )}
+
+              {viewTarget.decided_by && <InfoRow label="Decided by" value={viewTarget.decided_by} />}
+
+              {viewTarget.decision_note && (
+                <div>
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-zinc-400 dark:text-zinc-500">Decision note</p>
+                  <p className="mt-1 break-words text-sm italic leading-relaxed text-zinc-700 dark:text-zinc-300">
+                    {viewTarget.decision_note}
+                  </p>
+                </div>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div className="flex justify-end border-t border-zinc-200 px-5 py-3 dark:border-zinc-800">
+              <Button variant="outline" size="sm" onClick={() => setViewTarget(null)}>
+                Close
+              </Button>
+            </div>
           </div>
         </div>
       )}

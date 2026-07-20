@@ -40,7 +40,7 @@ import {
   XCircle,
 } from 'lucide-react';
 import { Select as SelectPrimitive } from '@base-ui/react/select';
-import { splitFullName } from '@/lib/hr/work-email';
+import { derivationNameParts } from '@/lib/hr/work-email';
 import { toTitleCaseNameOrNull } from '@/lib/text/sanitize-name';
 import { getSupabaseBrowserClient } from '@/lib/supabase/browser';
 import { getHrTabCache, hasHrTabCache, setHrTabCache, HR_TAB_CACHE_KEYS } from '@/lib/hr/tab-cache';
@@ -158,6 +158,12 @@ type SubmissionRow = {
   invite_country: string | null;
   invite_note: string | null;
   full_name: string | null;
+  // Structured name parts (source of truth). OPTIONAL like calltools_* below —
+  // the list query omits them for pre-migration safety; only the detail modal's
+  // full-row fetch hydrates them. Null on pre-split-migration / manual hires.
+  first_name?: string | null;
+  last_name?: string | null;
+  name_extension?: string | null;
   // DERIVED surname-first display name (`Surname, Given... "GoBy"`) from the DB
   // trigger; null until a hire submits. Display only — see migration #87.
   display_name: string | null;
@@ -3394,7 +3400,18 @@ function SetOnboardingWorkEmailDialog({
   const [projectsLoading, setProjectsLoading] = useState(false);
 
   const fullName = row?.full_name?.trim() || row?.invite_name?.trim() || '';
-  const { first, last } = useMemo(() => splitFullName(fullName), [fullName]);
+  // Prefer the hire's structured parts (reduced to the same tokens splitFullName
+  // yields, so the suggested address is unchanged); fall back to splitting the
+  // combined name for legacy rows.
+  const { first, last } = useMemo(
+    () =>
+      derivationNameParts({
+        first_name: row?.first_name,
+        last_name: row?.last_name,
+        full_name: fullName,
+      }),
+    [row?.first_name, row?.last_name, fullName],
+  );
 
   // Ask the server for the next free address derived from the hire's name.
   const reSuggest = useCallback(async () => {
@@ -5964,6 +5981,17 @@ function SubmissionDetailDialog({
                     <div className="space-y-5">
                       <DetailSection title="Personal info">
                         <DetailRow label="Full name" value={row.full_name} />
+                        {/* Structured parts the hire typed (source of truth) —
+                            shown when the row has them (post-split-migration). */}
+                        {(row.first_name || row.last_name) && (
+                          <>
+                            <DetailRow label="First name" value={row.first_name} />
+                            <DetailRow label="Last name" value={row.last_name} />
+                            {row.name_extension && (
+                              <DetailRow label="Extension" value={row.name_extension} />
+                            )}
+                          </>
+                        )}
                         {/* Lead Gen only — the hire's self-chosen dialer nickname and
                             the auto-minted CallTools username ("Mikey J. T."). */}
                         {(row.calltools_nickname || row.calltools_username) && (

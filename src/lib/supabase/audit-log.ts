@@ -15,6 +15,7 @@ export type AuditAction =
   | 'wizard.fx_rate_changed'
   // Contractor decisions
   | 'contractor.decided'
+  | 'contractor.retracted'
   // Orphanage / tenure / gift decisions
   | 'orphanage.budget_decided'
   | 'orphanage.dispatched'

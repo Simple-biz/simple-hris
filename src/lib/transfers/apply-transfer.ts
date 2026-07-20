@@ -1,10 +1,13 @@
 import {
   applyDepartmentTransfer,
   markTransferApplied,
+  listPendingTransfers,
+  cancelStaleTransfer,
   type DepartmentTransferRequestRow,
 } from '@/lib/supabase/department-transfer-requests';
 import { updateMasterSheetDepartment } from '@/lib/google-sheets/update-master-sheet-department';
 import { createSupabaseServiceRoleClient } from '@/lib/supabase/server';
+import { loadActiveDeptsByEmail, partitionStaleTransfers } from '@/lib/transfers/stale-transfers';
 
 /** Today's business date (YYYY-MM-DD) in Manila — the timezone the roster runs
  *  on. Used to decide whether a released transfer's effective date is due. */
@@ -112,4 +115,58 @@ export async function applyApprovedTransfer(
   }
 
   return { applied: true, sheetSynced, sheetError, error: null };
+}
+
+export interface StaleSweepResult {
+  /** How many pending release requests were examined. */
+  scanned: number;
+  /** The rows actually cancelled (employee confirmed transferred out). */
+  cancelled: Array<{
+    id: string;
+    employee_email: string;
+    from_department: string;
+    to_department: string;
+  }>;
+  error: string | null;
+}
+
+/**
+ * Cancels pending release requests whose employee has already been transferred
+ * OUT of the source department by some OTHER path — a co-manager releasing them,
+ * the master-list Sheet sync, a direct roster edit, an off-board/re-hire. Such a
+ * request can never be released meaningfully (the apply step finds no matching
+ * source-department row), so it must not keep sitting in the source manager's
+ * Release-requests queue — and while it lingers as `pending` it also blocks a
+ * fresh transfer for the now-moved employee (see `hasPendingTransferForEmployee`).
+ *
+ * Cancelling writes an explanatory `approver_note` so the requester sees WHY the
+ * request went away (surfaced on their "My requests"/"Done" rows). Conservative:
+ * only cancels when the employee is positively located elsewhere on the active
+ * roster (see {@link partitionStaleTransfers}). Best-effort per row — one failure
+ * doesn't abort the sweep.
+ */
+export async function sweepStalePendingReleaseRequests(): Promise<StaleSweepResult> {
+  const { rows: pending, error } = await listPendingTransfers();
+  if (error) return { scanned: 0, cancelled: [], error };
+  if (pending.length === 0) return { scanned: 0, cancelled: [], error: null };
+
+  const { index, error: idxErr } = await loadActiveDeptsByEmail();
+  if (idxErr) return { scanned: pending.length, cancelled: [], error: idxErr };
+
+  const { stale } = partitionStaleTransfers(pending, index);
+  const cancelled: StaleSweepResult['cancelled'] = [];
+  for (const row of stale) {
+    const who = row.employee_name ?? row.employee_email;
+    const note = `Auto-cancelled: ${who} is no longer in ${row.from_department} (already transferred out).`;
+    const { changed } = await cancelStaleTransfer({ id: row.id, note });
+    if (changed) {
+      cancelled.push({
+        id: row.id,
+        employee_email: row.employee_email,
+        from_department: row.from_department,
+        to_department: row.to_department,
+      });
+    }
+  }
+  return { scanned: pending.length, cancelled, error: null };
 }

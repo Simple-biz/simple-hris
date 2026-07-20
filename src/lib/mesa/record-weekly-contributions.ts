@@ -1,0 +1,203 @@
+import { createSupabaseServiceRoleClient } from "@/lib/supabase/server";
+import { normEmail } from "@/lib/email/norm-email";
+import { mapHubstaffHoursRow } from "@/lib/supabase/hubstaff-hours";
+import {
+  getEmployeeHourlyRatesRows,
+  indexHourlyRatesByEmail,
+} from "@/lib/supabase/employee-hourly-rates";
+
+// Weekly MESA contribution — ₱100 from the employee, matched 3× (₱300) by
+// Simple.biz for a ₱400 total deposit. Mirrors the Payroll Wizard's ₱100 MESA
+// deduction and the "matched three times over" copy in the employee About tab.
+const WORKER_CONTRIB = 100;
+const COMPANY_MATCH = 300;
+const WEEKLY_TOTAL = WORKER_CONTRIB + COMPANY_MATCH;
+
+const LEDGER_TABLE = "mesa_ledger";
+
+/** Pull the Sun→Sat pay week's END date out of a weekly-summary filename, if
+ *  present (same "…_YYYY-MM-DD_to_YYYY-MM-DD" range the wizard locks into every
+ *  weekly file, and that parseWeekRange in payroll-available.ts reads). */
+function parseWeekEnd(filename: string | null | undefined): string | null {
+  if (!filename) return null;
+  const m = /(\d{4}-\d{2}-\d{2})_to_(\d{4}-\d{2}-\d{2})/.exec(filename);
+  return m ? m[2] : null;
+}
+
+/** ISO date `days` before `iso` (UTC math — dates only, no TZ drift). */
+function isoMinusDays(iso: string, days: number): string {
+  return new Date(Date.parse(`${iso}T00:00:00Z`) - days * 86_400_000)
+    .toISOString()
+    .slice(0, 10);
+}
+
+/**
+ * Records one weekly MESA deposit (₱100 + ₱300 match) into `mesa_ledger` for
+ * every opted-in member paid in a freshly uploaded Hubstaff week — so member
+ * balances actually GROW each pay period instead of staying frozen at the
+ * original backfill. Called (best-effort) right after
+ * `replaceHubstaffHoursFromCsvText` archives + promotes an upload in
+ * POST /api/hubstaff-hours — both the manual CSV upload and the "Sync from
+ * Hubstaff" API path (which passes weekEnd directly).
+ *
+ * Who gets credited mirrors the Wizard's deduction EXACTLY: a payroll row is
+ * charged ₱100 when its rate row has `mesa_member = true` AND
+ * `mesa_member_since <= week end` (a null enrollment date = legacy member, always
+ * contributing). We resolve each Hubstaff "Email" to a rate row the same way the
+ * Wizard does — `indexHourlyRatesByEmail` on Work/Personal email, no alias
+ * expansion — so a deposit lands for precisely the people who were deducted.
+ *
+ * Idempotent per (member, week): a re-upload or correction of the same week
+ * never double-deposits anyone already credited for that week end, but a member
+ * who first appears in a re-upload still gets their deposit. The deposit carries
+ * no `status` on purpose — a contribution is not a membership event, so it must
+ * not mask the member's real latest Active/Inactive snapshot.
+ */
+export async function recordMesaWeeklyContributions(opts: {
+  uploadId: string;
+  sourceFile?: string | null;
+  /** Pay week end (YYYY-MM-DD). Provided by the API-sync path; otherwise parsed
+   *  from the source filename's locked date range. */
+  weekEnd?: string | null;
+}): Promise<{ inserted: number; skipped: number; members: number; weekEnd: string | null }> {
+  const zero = { inserted: 0, skipped: 0, members: 0, weekEnd: null as string | null };
+
+  const weekEnd = (opts.weekEnd?.trim() || parseWeekEnd(opts.sourceFile)) ?? null;
+  // Without a week-end date we can't date the deposit — skip rather than write
+  // an undated/mis-dated financial row.
+  if (!weekEnd || !/^\d{4}-\d{2}-\d{2}$/.test(weekEnd)) return zero;
+
+  const supabase = createSupabaseServiceRoleClient();
+  if (!supabase) return { ...zero, weekEnd };
+
+  const hoursTable =
+    process.env.NEXT_PUBLIC_SUPABASE_HUBSTAFF_HOURS_TABLE?.trim() || "hubstaff_hours";
+
+  // ── 1. Everyone in THIS week's batch (email → display name + department) ────
+  const batch = new Map<string, { name: string | null; department: string | null }>();
+  {
+    const PAGE = 1000;
+    let from = 0;
+    while (true) {
+      const { data, error } = await supabase
+        .from(hoursTable)
+        .select("*")
+        .eq("upload_id", opts.uploadId)
+        .range(from, from + PAGE - 1);
+      if (error) throw new Error(error.message);
+      const page = (data ?? []) as Record<string, unknown>[];
+      for (const raw of page) {
+        const mapped = mapHubstaffHoursRow(raw);
+        const e = normEmail(mapped.email);
+        if (e && !batch.has(e)) batch.set(e, { name: mapped.name, department: mapped.department });
+      }
+      if (page.length < PAGE) break;
+      from += PAGE;
+      if (from > 20_000) break; // one weekly upload won't have >20k rows
+    }
+  }
+  if (batch.size === 0) return { ...zero, weekEnd };
+
+  // ── 2. Opted-in members in the batch (same match as the Wizard's deduction) ─
+  const { rows: rateRows } = await getEmployeeHourlyRatesRows();
+  const ratesByEmail = indexHourlyRatesByEmail(rateRows);
+
+  type Member = { email: string; name: string | null; department: string | null };
+  const members = new Map<string, Member>(); // keyed by normalized ledger identity (Work Email)
+  for (const [email, meta] of batch) {
+    const rate = ratesByEmail.get(email);
+    if (!rate || rate.mesa_member !== true) continue;
+    // Enrolled AFTER this week → not yet contributing (lexical YYYY-MM-DD compare).
+    if (rate.mesa_member_since && rate.mesa_member_since > weekEnd) continue;
+    // Ground the deposit on the member's Work Email so it groups with their
+    // existing ledger history (summarizeMembers keys on lowercased email).
+    const ledgerEmail = rate.work_email ?? rate.personal_email ?? email;
+    const identity = normEmail(ledgerEmail) ?? email;
+    if (!members.has(identity)) {
+      members.set(identity, {
+        email: ledgerEmail,
+        name: meta.name ?? null,
+        department: rate.department ?? meta.department ?? null,
+      });
+    }
+  }
+  if (members.size === 0) return { ...zero, weekEnd };
+
+  // ── 3. Skip members already credited for this WEEK (idempotent) ─────────────
+  // Dedup on the whole Sun→Sat window, NOT the exact weekEnd date: the original
+  // tracker backfill dates its weekly deposits mid-week (e.g. a Thursday), so a
+  // week can already be covered by a deposit whose date ≠ weekEnd. Matching by
+  // exact date would miss that and write a duplicate for the same week. Re-uploads
+  // are covered too — a prior run's own weekEnd-dated deposit is inside the window.
+  // Paginated: PostgREST silently caps an unbounded select at 1000 rows.
+  const weekStart = isoMinusDays(weekEnd, 6);
+  const alreadyThisWeek = new Set<string>();
+  {
+    const PAGE = 1000;
+    let from = 0;
+    while (true) {
+      const { data, error } = await supabase
+        .from(LEDGER_TABLE)
+        .select("email")
+        .gte("deposit_date", weekStart)
+        .lte("deposit_date", weekEnd)
+        .range(from, from + PAGE - 1);
+      if (error) throw new Error(error.message);
+      const page = (data ?? []) as Array<{ email: string | null }>;
+      for (const r of page) {
+        const e = normEmail(r.email);
+        if (e) alreadyThisWeek.add(e);
+      }
+      if (page.length < PAGE) break;
+      from += PAGE;
+      if (from > 20_000) break;
+    }
+  }
+
+  // ── 4. Next free id — mesa_ledger.id is a plain integer PK with no default ──
+  let nextId: number;
+  {
+    const { data, error } = await supabase
+      .from(LEDGER_TABLE)
+      .select("id")
+      .order("id", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (error) throw new Error(error.message);
+    nextId = ((data?.id as number | undefined) ?? 0) + 1;
+  }
+
+  // ── 5. Build the deposit rows ───────────────────────────────────────────────
+  const toInsert: Record<string, unknown>[] = [];
+  let skipped = 0;
+  for (const [identity, m] of members) {
+    if (alreadyThisWeek.has(identity)) {
+      skipped += 1;
+      continue;
+    }
+    toInsert.push({
+      id: nextId++,
+      email: m.email,
+      name: m.name,
+      department: m.department,
+      status: null,
+      deposit_date: weekEnd,
+      worker_contribution_php: WORKER_CONTRIB,
+      simple_match_php: COMPANY_MATCH,
+      total_daily_deposit_php: WEEKLY_TOTAL,
+    });
+  }
+  if (toInsert.length === 0) return { inserted: 0, skipped, members: members.size, weekEnd };
+
+  // ── 6. Insert ────────────────────────────────────────────────────────────
+  const BATCH = 200;
+  let inserted = 0;
+  for (let i = 0; i < toInsert.length; i += BATCH) {
+    const chunk = toInsert.slice(i, i + BATCH);
+    const { error } = await supabase.from(LEDGER_TABLE).insert(chunk);
+    if (error) throw new Error(error.message);
+    inserted += chunk.length;
+  }
+
+  return { inserted, skipped, members: members.size, weekEnd };
+}

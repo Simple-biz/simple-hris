@@ -8,6 +8,7 @@ import {
   toTitleCaseName,
   toTitleCaseNameOrNull,
 } from "../text/sanitize-name";
+import { composeFullName } from "../hr/work-email";
 
 const TABLE = "hr_onboarding_submissions";
 export const HR_ONBOARDING_BUCKET = "hr-onboarding-files";
@@ -34,6 +35,16 @@ export type HrOnboardingSubmissionRow = {
   invite_note: string | null;
 
   full_name: string | null;
+  /** Structured name — the SOURCE OF TRUTH the hire typed in the three boxes.
+   *  `full_name` above is composed FROM these (kept for the master-list Sheet,
+   *  payroll name-matching, and the display trigger); downstream reads the parts
+   *  directly rather than re-parsing the blob. Null on rows that predate the
+   *  split migration (2026-07-20_split_onboarding_name_columns.sql). */
+  first_name: string | null;
+  /** Whole surname as typed ("Dela Cruz") — NOT reduced to the last token. */
+  last_name: string | null;
+  /** Generational suffix (Jr./Sr./II/III/IV) the hire entered separately. */
+  name_extension: string | null;
   /** DERIVED surname-first display name — `Surname[ Suffix], Given... "GoBy"`
    *  (e.g. "Jan Kane Reroma" → `Reroma, Jan Kane "Kane"`). Computed from
    *  `full_name` by the `name_last_first_quoted()` DB trigger; null for rows
@@ -144,6 +155,12 @@ export type WorkspaceAccountOutcome = {
 
 /** Fields the public form route accepts on submit. Token comes from the URL. */
 export type SubmitOnboardingInput = {
+  /** Structured name parts — the form sends these; `full_name` is composed from
+   *  them server-side (see composeFullName). `full_name` may still be sent as a
+   *  fallback for any legacy caller, but the parts win when present. */
+  first_name?: string | null;
+  last_name?: string | null;
+  name_extension?: string | null;
   full_name: string;
   /** Optional surname for the @simple.biz Google account (falls back to the
    *  legal last name when blank). */
@@ -415,13 +432,29 @@ export async function submitHrOnboarding(
       ? addressParts.join(", ")
       : input.location?.trim() || null;
 
+  // The structured parts are the SOURCE OF TRUTH the hire typed; compose the
+  // legacy combined `full_name` from them so the master-list Sheet, payroll
+  // name-matching, and the surname-first display trigger stay in sync without
+  // anything re-parsing. Fall back to a full_name a legacy caller might send.
+  const firstName = toTitleCaseNameOrNull(input.first_name);
+  const lastName = toTitleCaseNameOrNull(input.last_name);
+  const nameExtension = toTitleCaseNameOrNull(input.name_extension);
+  const composedFullName =
+    composeFullName(input.first_name, input.last_name, input.name_extension) ||
+    input.full_name;
+
   const update: Record<string, unknown> = {
     status: "submitted" as HrOnboardingStatus,
     submitted_at: new Date().toISOString(),
     // Fold styled/invisible Unicode in human names (math-italic, full-width,
     // zero-width chars, etc.) AND title-case a SHOUTED / all-lowercase name so
     // the hire is matchable everywhere downstream and reads naturally.
-    full_name: toTitleCaseName(input.full_name),
+    full_name: toTitleCaseName(composedFullName),
+    // Structured parts, stored verbatim (only Unicode-folded + title-cased) so
+    // downstream reads them directly instead of splitting full_name.
+    first_name: firstName,
+    last_name: lastName,
+    name_extension: nameExtension,
     // gmail_surname is the @simple.biz Google account surname — kept verbatim
     // (only Unicode-folded). It is NOT title-cased: it can legitimately be a
     // short all-caps initial form and feeds account provisioning, not display.
@@ -481,40 +514,48 @@ export async function submitHrOnboarding(
     contract_date: input.contract_date,
   };
 
-  const { data, error } = await sb
-    .from(TABLE)
-    .update(update)
-    .eq("token", token)
-    .select("*")
-    .single();
-  // Pre-migration safety net: on a database where the calltools_* columns don't
-  // exist yet (add_calltools_username_to_onboarding.sql not run), a Lead Gen
-  // submit would otherwise hard-fail and block the hire. Retry once without
-  // those fields — the submission lands, only the dialer username is dropped.
-  if (
-    error &&
-    /calltools_/i.test(error.message) &&
-    ("calltools_nickname" in update || "calltools_username" in update)
-  ) {
-    console.error(
-      "hr_onboarding_submissions is missing the calltools_* columns (run " +
-        "references/sql/alter/add_calltools_username_to_onboarding.sql); " +
-        "saving the submission without them:",
-      error.message,
-    );
-    delete update.calltools_nickname;
-    delete update.calltools_username;
-    const retry = await sb
+  // Pre-migration safety net: on a database missing an optional column family
+  // (a migration not yet run), the submit would otherwise hard-fail and block
+  // the hire. Strip the offending columns and retry rather than lose the whole
+  // submission. Covers the calltools_* columns
+  // (add_calltools_username_to_onboarding.sql) and the split-name columns
+  // (2026-07-20_split_onboarding_name_columns.sql) — full_name still lands, so
+  // the hire is never blocked; only the not-yet-migrated extras are dropped.
+  const OPTIONAL_COLUMN_FAMILIES: Array<{ test: RegExp; keys: string[]; note: string }> = [
+    {
+      test: /calltools_/i,
+      keys: ["calltools_nickname", "calltools_username"],
+      note: "references/sql/alter/add_calltools_username_to_onboarding.sql",
+    },
+    {
+      test: /first_name|last_name|name_extension/i,
+      keys: ["first_name", "last_name", "name_extension"],
+      note: "references/sql/migrate/2026-07-20_split_onboarding_name_columns.sql",
+    },
+  ];
+  for (let attempt = 0; ; attempt++) {
+    const { data, error } = await sb
       .from(TABLE)
       .update(update)
       .eq("token", token)
       .select("*")
       .single();
-    if (retry.error) return { row: null, error: retry.error.message };
-    return { row: retry.data as HrOnboardingSubmissionRow, error: null };
+    if (!error) return { row: data as HrOnboardingSubmissionRow, error: null };
+    // Strip a column family the error names AND that we're actually writing,
+    // then retry. Bounded by the number of families so it can't loop forever.
+    const family = OPTIONAL_COLUMN_FAMILIES.find(
+      (f) => f.test.test(error.message) && f.keys.some((k) => k in update),
+    );
+    if (!family || attempt >= OPTIONAL_COLUMN_FAMILIES.length) {
+      return { row: null, error: error.message };
+    }
+    console.error(
+      `hr_onboarding_submissions is missing columns (${family.keys.join(", ")}); run ` +
+        `${family.note}. Saving the submission without them:`,
+      error.message,
+    );
+    for (const k of family.keys) delete update[k];
   }
-  if (error) return { row: null, error: error.message };
-  return { row: data as HrOnboardingSubmissionRow, error: null };
 }
 
 /**

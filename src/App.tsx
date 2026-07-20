@@ -100,6 +100,18 @@ export default function App({ initialData }: { initialData?: InitialAccountingDa
     // but the read-only Overview vanishes from the rail.
     const selfRoles = authRoles && authEmail && authEmail === e.toLowerCase() ? authRoles : null;
     const cached = readRbacCache(e);
+    // Optimistic paint: seed from the JWT roles (session owner) + last-known-good
+    // cache so the sidebar tabs render on the FIRST frame of a re-visit instead of
+    // waiting on the roles + perms round-trips. The live fetch below overwrites
+    // this the moment it resolves — until then an admin sees all tabs and a
+    // returning non-admin sees their cached set rather than an empty rail.
+    const seedRoles = selfRoles ?? cached?.roles ?? null;
+    const seedPerms = cached?.perms ?? null;
+    if (seedRoles || seedPerms) {
+      setRoles(seedRoles ?? []);
+      setFeaturePerms(seedPerms ?? {});
+      setPermsLoaded(true);
+    }
     // Roles + per-feature permissions are fetched in parallel; the tab-gating
     // logic needs both to decide what to show.
     Promise.all([

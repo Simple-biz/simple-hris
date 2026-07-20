@@ -60,6 +60,22 @@ export default function ViewSwitcher({ email, currentView, collapsed = false }: 
 
   if (views.length <= 1) return null;
 
+  const urlFor = (view: AppView) => {
+    const base = VIEW_ROUTES[view];
+    return email ? `${base}?email=${encodeURIComponent(email)}` : base;
+  };
+
+  // Warm the target route's JS + loading boundary on hover/focus so the click
+  // itself only pays for the streamed data, not the whole bundle + RSC shell.
+  const prefetchView = (view: AppView) => {
+    if (view === currentView) return;
+    try {
+      router.prefetch(urlFor(view));
+    } catch {
+      /* prefetch is best-effort */
+    }
+  };
+
   const switchTo = (view: AppView) => {
     if (view === currentView || transitioning) return;
     setTransitioning(view);
@@ -68,11 +84,12 @@ export default function ViewSwitcher({ email, currentView, collapsed = false }: 
     } catch {
       /* ignore */
     }
-    const base = VIEW_ROUTES[view];
-    const url = email ? `${base}?email=${encodeURIComponent(email)}` : base;
-    window.setTimeout(() => {
-      withViewTransition(() => router.push(url));
-    }, 520);
+    // Navigate on the next frame so the switch overlay paints first, then hand
+    // off to the router immediately. (Previously a fixed 520ms setTimeout ran
+    // here purely so the shimmer could finish — dead time on every switch.)
+    requestAnimationFrame(() => {
+      withViewTransition(() => router.push(urlFor(view)));
+    });
   };
 
   return (
@@ -93,6 +110,8 @@ export default function ViewSwitcher({ email, currentView, collapsed = false }: 
                 key={v}
                 type="button"
                 onClick={() => switchTo(v)}
+                onPointerEnter={() => prefetchView(v)}
+                onFocus={() => prefetchView(v)}
                 disabled={!!transitioning}
                 title={collapsed ? VIEW_LABELS[v] : undefined}
                 className={cn(
@@ -201,7 +220,7 @@ function ViewSwitchOverlay({ target }: { target: AppView }) {
             Switching to
           </div>
           <div className="text-lg font-bold text-zinc-900 dark:text-white">
-            {VIEW_LABELS[target]} view
+            {VIEW_LABELS[target]} Dashboard
           </div>
         </div>
       </div>

@@ -349,6 +349,52 @@ export async function cancelTransferRequestIfOwned(params: {
   return { error: error?.message ?? null };
 }
 
+/** Every still-pending release request (any source department) — the stale-sweep
+ *  input for the transfer cron. */
+export async function listPendingTransfers(
+  limit = 500,
+): Promise<{ rows: DepartmentTransferRequestRow[]; error: string | null }> {
+  const supabase = createSupabaseServiceRoleClient();
+  if (!supabase) return { rows: [], error: 'Supabase not configured' };
+  const { data, error } = await supabase
+    .from(TABLE)
+    .select('*')
+    .eq('status', 'pending')
+    .order('created_at', { ascending: false })
+    .limit(limit);
+  return { rows: (data ?? []) as DepartmentTransferRequestRow[], error: error?.message ?? null };
+}
+
+/**
+ * System cancel of a pending request whose employee has already been transferred
+ * OUT of the source department by another path. Unlike
+ * {@link cancelTransferRequestIfOwned} there's no requester check — the trigger
+ * is that the person is no longer on the source team, not who raised the request.
+ * Status-guarded (`.eq('status','pending')`) so concurrent sweeps/loads act at
+ * most once; `changed` is true only for the caller that actually flipped the row.
+ */
+export async function cancelStaleTransfer(params: {
+  id: string;
+  note: string;
+}): Promise<{ changed: boolean; error: string | null }> {
+  const supabase = createSupabaseServiceRoleClient();
+  if (!supabase) return { changed: false, error: 'Supabase not configured' };
+  const now = new Date().toISOString();
+  const { data, error } = await supabase
+    .from(TABLE)
+    .update({
+      status: 'cancelled',
+      approver_note: params.note,
+      decided_at: now,
+      updated_at: now,
+    })
+    .eq('id', params.id)
+    .eq('status', 'pending')
+    .select('id');
+  if (error) return { changed: false, error: error.message };
+  return { changed: (data?.length ?? 0) > 0, error: null };
+}
+
 /**
  * Applies an approved transfer to the master list: sets Department = to_department
  * on the employee's global_master_list row(s), matched by personal/work email AND

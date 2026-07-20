@@ -34,6 +34,12 @@ export type CallToolsCreationPayload = {
   event: "hire.orientation_attended";
   pending_employee_id: number;
   name: string | null;
+  /** The hire's real first / last name, carried straight from the pending row's
+   *  structured columns so n8n consumes them directly instead of parsing `name`.
+   *  Falls back to splitting `name` for rows that predate the split migration.
+   *  `last_name` is the WHOLE surname as captured ("Dela Cruz"), not a token. */
+  first_name: string | null;
+  last_name: string | null;
   work_email: string | null;
   personal_email: string | null;
   department: string | null;

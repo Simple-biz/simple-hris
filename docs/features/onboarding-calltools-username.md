@@ -94,6 +94,8 @@ nothing), **`POST /api/manager/pending-hires/[id]/orientation`** fires the
   "event": "hire.orientation_attended",
   "pending_employee_id": 123,
   "name": "James Thomas",
+  "first_name": "James",               // split parts (source of truth), carried
+  "last_name": "Thomas",               // straight from the pending row's columns
   "work_email": "jamest@simple.biz",
   "personal_email": "james@gmail.com",
   "department": "Lead Gen",

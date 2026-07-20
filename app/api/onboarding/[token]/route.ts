@@ -13,7 +13,7 @@ import {
   suggestCallToolsUsername,
 } from "@/lib/hr/calltools-username";
 import { loadTakenCallToolsUsernames } from "@/lib/hr/calltools-username-server";
-import { splitFullName } from "@/lib/hr/work-email";
+import { composeFullName, derivationNameParts } from "@/lib/hr/work-email";
 import { insertAuditLog } from "@/lib/supabase/audit-log";
 
 export const dynamic = "force-dynamic";
@@ -107,6 +107,12 @@ export async function GET(
   const priorData = row.status === "submitted"
     ? {
         full_name: row.full_name,
+        // Structured parts so the form re-fills its three boxes directly rather
+        // than re-splitting full_name (null on pre-split-migration rows — the
+        // form falls back to splitName(full_name) then).
+        first_name: row.first_name ?? null,
+        last_name: row.last_name ?? null,
+        name_extension: row.name_extension ?? null,
         gmail_surname: row.gmail_surname,
         // calltools_username is intentionally omitted: it's an internal HR
         // value the hire never sees (re-minted server-side on re-submit).
@@ -170,6 +176,15 @@ export async function POST(
   } catch {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
+
+  // The form sends the structured name parts (it no longer merges them). Compose
+  // the combined `full_name` from them here so the validation + staging + audit
+  // below (and storage) still key off it — the parts remain the source of truth
+  // and are persisted separately. Falls back to any full_name a legacy client
+  // sent so an older form build keeps working.
+  body.full_name =
+    composeFullName(body.first_name, body.last_name, body.name_extension) ||
+    (body.full_name ?? "");
 
   // Required fields across the steps.
   const missing: string[] = [];
@@ -255,9 +270,10 @@ export async function POST(
   if (isLeadGenDepartment(lookup.row?.invite_department)) {
     const nickname = (body.calltools_nickname ?? "").trim();
     if (nickname) {
-      // full_name is validated present above; splitFullName peels a trailing
-      // Jr./Sr./III so the slice keys off the real surname.
-      const { first, last } = splitFullName(body.full_name);
+      // Derive the first initial + surname slice from the structured parts the
+      // hire typed (reduced to the same first/last tokens the work-email rule
+      // uses), so the dialer username keys off a clean surname without guessing.
+      const { first, last } = derivationNameParts(body);
       let taken: Set<string>;
       try {
         taken = await loadTakenCallToolsUsernames();
@@ -325,6 +341,10 @@ export async function POST(
       try {
         const { row: staged, error: stageErr } = await createHrPendingEmployee({
           name: stagedName,
+          // Carry the structured parts through so nothing re-parses downstream.
+          first_name: row.first_name,
+          last_name: row.last_name,
+          name_extension: row.name_extension,
           personal_email: row.invite_personal_email ?? row.email ?? body.email!,
           department,
           phone: row.phone,
