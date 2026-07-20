@@ -453,15 +453,21 @@ export default function NewlyHiredPanel({ viewerEmail, teamGate }: NewlyHiredPan
   }
   const activeBatchKeys = sortBatchKeys([...activeByBatch.keys()]);
 
-  // Selection + bulk actions operate on the VISIBLE active hires only, so
-  // "Select all" honours the current search/batch filter. Selection is keyed by
-  // id, so it survives a refetch (ticked hires filtered out of view stay ticked).
-  // Manually onboarded (Bypass) cards are informational — no checkbox, never
-  // selectable — so the select-all math runs over the selectable subset.
+  // Selection is keyed by id and SURVIVES the search/batch filter: ticked hires
+  // filtered out of view stay ticked, keep counting toward the toolbar tally,
+  // and bulk actions run over every selected hire (visible or not). "Select all"
+  // targets the visible rows only, but merges into / subtracts from the existing
+  // selection instead of replacing it, so narrowing the search never drops
+  // anyone. Manually onboarded (Bypass) cards are informational — no checkbox,
+  // never selectable — so all the selection math runs over the selectable subset.
+  const selectableAllActive = activeRows.filter((r) => !isManualOnboard(r));
+  const selectedActiveRows = selectableAllActive.filter((r) => selected.has(r.id));
+  const selectedActiveCount = selectedActiveRows.length;
   const selectableActive = visibleActive.filter((r) => !isManualOnboard(r));
-  const selectedActiveCount = selectableActive.filter((r) => selected.has(r.id)).length;
-  const allActiveSelected = selectableActive.length > 0 && selectedActiveCount === selectableActive.length;
-  const someActiveSelected = selectedActiveCount > 0 && !allActiveSelected;
+  const visibleSelectedCount = selectableActive.filter((r) => selected.has(r.id)).length;
+  const hiddenSelectedCount = selectedActiveCount - visibleSelectedCount;
+  const allActiveSelected = selectableActive.length > 0 && visibleSelectedCount === selectableActive.length;
+  const someActiveSelected = visibleSelectedCount > 0 && !allActiveSelected;
 
   function toggleOne(id: number) {
     setSelected((prev) => {
@@ -473,8 +479,11 @@ export default function NewlyHiredPanel({ viewerEmail, teamGate }: NewlyHiredPan
   }
   function toggleAllActive() {
     setSelected((prev) => {
-      const everything = selectableActive.every((r) => prev.has(r.id));
-      return everything ? new Set() : new Set(selectableActive.map((r) => r.id));
+      const next = new Set(prev);
+      const everything = selectableActive.length > 0 && selectableActive.every((r) => prev.has(r.id));
+      if (everything) for (const r of selectableActive) next.delete(r.id);
+      else for (const r of selectableActive) next.add(r.id);
+      return next;
     });
   }
 
@@ -485,9 +494,7 @@ export default function NewlyHiredPanel({ viewerEmail, teamGate }: NewlyHiredPan
   // manager dismisses the modal (see closeBulkProgress) — refreshing mid-run would
   // flip `loading` true and unmount the modal along with its live counter.
   async function bulkApply() {
-    const targets = selectableActive
-      .filter((r) => selected.has(r.id))
-      .map((r) => ({ id: r.id, name: r.name }));
+    const targets = selectedActiveRows.map((r) => ({ id: r.id, name: r.name }));
     if (targets.length === 0) return;
     setBulkBusy(true);
     setBulkProgress({ kind: 'orientation', total: targets.length, done: 0, ok: 0, fail: 0, current: null, failures: [], finished: false });
@@ -541,9 +548,7 @@ export default function NewlyHiredPanel({ viewerEmail, teamGate }: NewlyHiredPan
   // by the confirmBulkNoShow dialog, which lists everyone affected. Runs
   // sequentially so the tally is real and each failure is captured per hire.
   async function bulkNoShow() {
-    const targets = selectableActive
-      .filter((r) => selected.has(r.id))
-      .map((r) => ({ id: r.id, name: r.name }));
+    const targets = selectedActiveRows.map((r) => ({ id: r.id, name: r.name }));
     if (targets.length === 0) return;
     const note = bulkNoShowNote.trim();
     setConfirmBulkNoShow(false);
@@ -1009,10 +1014,11 @@ export default function NewlyHiredPanel({ viewerEmail, teamGate }: NewlyHiredPan
         </Card>
       )}
 
-      {visibleActive.length > 0 && (
+      {(visibleActive.length > 0 || selectedActiveCount > 0) && (
         <div className="flex flex-col gap-3">
           {/* Multi-select toolbar: mark/update orientation OR bulk "Did not attend"
-              for every ticked hire. Operates on the visible (filtered) hires. */}
+              for every ticked hire — including ones the search/batch filter has
+              hidden, so searching never drops the selection. */}
           <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-blue-200/70 bg-blue-50/60 px-3 py-2 dark:border-blue-900/50 dark:bg-blue-950/20">
             <label className="flex cursor-pointer items-center gap-2 text-xs font-medium text-zinc-700 dark:text-zinc-200">
               <input
@@ -1026,7 +1032,9 @@ export default function NewlyHiredPanel({ viewerEmail, teamGate }: NewlyHiredPan
                 onChange={toggleAllActive}
                 disabled={bulkBusy}
               />
-              {selectedActiveCount > 0 ? `${selectedActiveCount} selected` : `Select all (${visibleActive.length})`}
+              {selectedActiveCount > 0
+                ? `${selectedActiveCount} selected${hiddenSelectedCount > 0 ? ` (${hiddenSelectedCount} hidden by filters)` : ''}`
+                : `Select all (${visibleActive.length})`}
             </label>
             {selectedActiveCount > 0 && (
               <div className="flex flex-wrap items-center gap-2">
@@ -1174,7 +1182,7 @@ export default function NewlyHiredPanel({ viewerEmail, teamGate }: NewlyHiredPan
       {/* Bulk "Did not attend" confirm — lists everyone selected before firing
           the offboarding teardown for each. Destructive + irreversible. */}
       {confirmBulkNoShow && (() => {
-        const targets = visibleActive.filter((r) => selected.has(r.id));
+        const targets = selectedActiveRows;
         const withAccount = targets.filter((r) => !!r.work_email).length;
         return (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
