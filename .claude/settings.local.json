@@ -452,7 +452,18 @@
       "Bash(echo \"EXIT_CODE=$?\")",
       "Bash(python3 -c ' *)",
       "Bash(node -e \"const p=require\\('./package.json'\\); console.log\\('name',p.name,'version',p.version\\); console.log\\('main',p.main,'module',p.module\\); console.log\\('deps',JSON.stringify\\(p.dependencies||{},null,1\\)\\);\")",
-      "PowerShell(cd 'c:\\\\Users\\\\Kane\\\\Desktop\\\\simple-hris'; npx tsc --noEmit; \"EXIT=$LASTEXITCODE\")"
+      "PowerShell(cd 'c:\\\\Users\\\\Kane\\\\Desktop\\\\simple-hris'; npx tsc --noEmit; \"EXIT=$LASTEXITCODE\")",
+      "Bash(grep -n \"replayer-wrapper\\\\|createElement\\(\\\\\"iframe\\\\\"\\\\|this.iframe\\\\|replayer-mouse\\\\|handleResize\\\\|\\\\.style.width\\\\|setAttribute\\(\\\\\"width\\\\\"\\\\|rr-block\\\\|\\\\\\\\.wrapper\" \"c:/Users/Kane/Desktop/simple-hris/node_modules/rrweb/dist/rrweb.js\")",
+      "PowerShell(cd 'c:\\\\Users\\\\Kane\\\\Desktop\\\\simple-hris'; $p = Get-Content .\\\\package.json -Raw | ConvertFrom-Json; \"next-themes: \" + $p.dependencies.'next-themes'; \"next: \" + $p.dependencies.'next'; \"react: \" + $p.dependencies.'react'; $installed = Get-Content .\\\\node_modules\\\\next-themes\\\\package.json -Raw | ConvertFrom-Json; \"installed next-themes: \" + $installed.version)",
+      "Bash(grep -oE 'ThemeScript.{0,40}=.{0,120}' node_modules/next-themes/dist/index.mjs)",
+      "Bash(grep -oE 'defaultTheme.{0,300}ThemeScript' node_modules/next-themes/dist/index.mjs)",
+      "Bash(grep -oE 't\\\\.createElement\\\\\\(k,\\\\{[^}]*\\\\}\\\\\\)|createElement\\\\\\([A-Za-z]+,\\\\{[^}]{0,80}scriptProps|k=[A-Za-z0-9_]+\\\\\\(\\\\\\(\\\\{' node_modules/next-themes/dist/index.mjs)",
+      "Bash(grep -oE '.{0,60}\\\\.createElement\\\\\\(\"script\".{0,10}' node_modules/next-themes/dist/index.mjs)",
+      "Bash(node \"C:/Users/Kane/AppData/Local/Temp/claude/c--Users-Kane-Desktop-simple-hris/142414ba-d599-4700-9ee5-2461579c9ead/scratchpad/probe-fx.mjs\" .env.local)",
+      "Bash(node \"C:/Users/Kane/Desktop/simple-hris/scripts/_probe-fx.mjs\" .env.local)",
+      "Bash(grep -oE '.{0,10}forcedTheme.{0,60}createElement\\\\\\(\"script\"|createElement\\\\\\(\"script\".{0,5}|[a-zA-Z]+\\\\?[^:]{0,30}createElement\\\\\\(\"script\"|,[a-zA-Z]+&&.{0,10}createElement\\\\\\(\"script\"' node_modules/next-themes/dist/index.mjs)",
+      "PowerShell(cd 'c:\\\\Users\\\\Kane\\\\Desktop\\\\simple-hris'; npx patch-package next-themes; \"EXIT=$LASTEXITCODE\")",
+      "PowerShell(cd 'c:\\\\Users\\\\Kane\\\\Desktop\\\\simple-hris'; npx patch-package; \"EXIT=$LASTEXITCODE\")"
     ],
     "additionalDirectories": [
       "c:\\Users\\Itachi\\.claude\\projects\\c--Users-Itachi-Desktop-simple-hris\\memory",

@@ -5111,8 +5111,12 @@ export default function PayrollWizard({
       const mesaSince = rateRowForMesa?.mesa_member_since ?? null;
       const enrolledForThisWeek =
         !!rateRowForMesa?.mesa_member && (!mesaSince || !week?.end || mesaSince <= week.end);
-      // Always deduct the ₱100 contribution when enrolled (for this week) OR when a disbursement is being paid out.
-      const mesaDeduction = (hasRates && (enrolledForThisWeek || mesaDisbursement > 0)) ? 100 : 0;
+      // The ₱100 contribution is charged ONLY to enrolled members (for this week).
+      // A pending disbursement does NOT imply membership: an opted-out ex-member can
+      // still be paid out an approved disbursement, and they must not be re-charged
+      // the weekly contribution. So the deduction gates on membership alone —
+      // never on `mesaDisbursement > 0`.
+      const mesaDeduction = (hasRates && enrolledForThisWeek) ? 100 : 0;
 
       // Accounting Orphanage pay — a positive amount added on top of final pay,
       // shown as its own paystub line (not folded into bonuses).
@@ -9910,9 +9914,11 @@ export default function PayrollWizard({
                             const empRateRow = ratesByEmail.get(normEmail(emp.email) ?? '');
                             // Accounting-approved disbursement (not yet paid via Urgent Payments) — paid out in this run.
                             const empMesaDisbursement = mesaDisbursements.get(normEmail(emp.email) ?? '') ?? 0;
-                            // Always deduct the ₱100 contribution when enrolled OR when a disbursement is being
-                            // paid out this run (a disbursement implies an active MESA member).
-                            const empMesaDeduction = (emp.initialPay != null && (empRateRow?.mesa_member || empMesaDisbursement > 0)) ? 100 : 0;
+                            // The ₱100 contribution is charged ONLY to enrolled members — a
+                            // pending disbursement does not imply membership (an opted-out
+                            // ex-member can still be paid out a balance), so it never forces the
+                            // deduction. Mirrors the final-pay compute.
+                            const empMesaDeduction = (emp.initialPay != null && empRateRow?.mesa_member) ? 100 : 0;
                             // Orphanage pay — manual positive amount added on top of final pay.
                             const hasOrphanage = orphanageAmounts[emp.email] !== undefined;
                             const orphanagePay = orphanageAmounts[emp.email] ?? 0;
@@ -11029,13 +11035,15 @@ export default function PayrollWizard({
                             // Orphanage pay — manual positive amount added on top of total pay.
                             const hasOrphanage = orphanageAmounts[r.email] !== undefined;
                             const orphanagePay = orphanageAmounts[r.email] ?? 0;
-                            // MESA — ₱100/paycheck deduction for enrolled members, plus any
-                            // accounting-approved disbursement paid out this run. Mirrors the
-                            // Additions tab + the final-pay compute so Total Pay matches the paystub.
+                            // MESA — ₱100/paycheck deduction for enrolled members ONLY, plus any
+                            // accounting-approved disbursement paid out this run. A disbursement
+                            // never forces the deduction (an opted-out ex-member can still be paid
+                            // out a balance). Mirrors the Additions tab + the final-pay compute so
+                            // Total Pay matches the paystub.
                             const hslMesaEmail = normEmail(r.email) ?? '';
                             const hslRateRow = ratesByEmail.get(hslMesaEmail);
                             const empMesaDisbursement = mesaDisbursements.get(hslMesaEmail) ?? 0;
-                            const empMesaDeduction = (r.initialPay != null && (hslRateRow?.mesa_member || empMesaDisbursement > 0)) ? 100 : 0;
+                            const empMesaDeduction = (r.initialPay != null && hslRateRow?.mesa_member) ? 100 : 0;
                             const totalPay = (r.initialPay ?? 0) + effectiveBonus + pabAmt + techAmt + orphanagePay - empMesaDeduction + empMesaDisbursement;
 
                             return (
@@ -11267,7 +11275,9 @@ export default function PayrollWizard({
                               if (wp) totalWkndPremium += wp.regPremiumPHP + wp.otPremiumPHP;
                               const memail = normEmail(r.email) ?? '';
                               const disb = mesaDisbursements.get(memail) ?? 0;
-                              const ded = (r.initialPay != null && (ratesByEmail.get(memail)?.mesa_member || disb > 0)) ? 100 : 0;
+                              // Deduction gates on membership alone — a disbursement (which an
+                              // opted-out ex-member can still receive) never forces the ₱100 charge.
+                              const ded = (r.initialPay != null && ratesByEmail.get(memail)?.mesa_member) ? 100 : 0;
                               totalMesaDisbursement += disb;
                               totalMesaDeduction += ded;
                             }

@@ -210,6 +210,17 @@ export function useCobrowse({ selfEmail, observedEmail, channel = DEFAULT_CHANNE
       mouseTail: false,
       // We render a passive mirror; block any accidental interaction.
       UNSAFE_replayCanvas: false,
+      // CSS enter-animations don't re-fire inside the replay iframe, so any
+      // element whose visibility comes from a Tailwind `animate-in` keyframe
+      // (our Base UI dialogs: `data-open:animate-in fade-in-0 zoom-in …`, see
+      // components/ui/dialog.tsx) stays stuck at the animation's opacity:0 /
+      // scaled starting frame — the modal node IS in the mirror DOM but paints
+      // invisible. Injecting these rules INTO the replay iframe only (never the
+      // real page) forces such elements to their visible end-state so a driver's
+      // modals/overlays actually show up in the observer's mirror.
+      insertStyleRules: [
+        '[data-slot="dialog-content"],[data-slot="dialog-overlay"],[data-slot="dialog-popup"],.animate-in,[data-starting-style],[data-open]{animation:none!important;transition:none!important;opacity:1!important;transform:none!important;}',
+      ],
     });
     replayer.startLive(full.timestamp);
     replayerRef.current = replayer;
