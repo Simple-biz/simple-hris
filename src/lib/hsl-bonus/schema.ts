@@ -170,7 +170,8 @@ export const HSL_DEPTS: Record<HslDeptKey, DeptConfig> = {
     headerBg: 'bg-sky-950/40',
     badgeCls: 'bg-sky-900/60 text-sky-300',
     rules: [
-      { type: 'per_unit', key: 'medicare_signups', label: 'Medicare Sign Ups', rate: 250 },
+      { type: 'per_unit', key: 'transferred_calls',      label: 'Successfully Transferred Calls',    rate: 50 },
+      { type: 'per_unit', key: 'signups_from_transfers', label: 'Sign ups from Transferred Calls',   rate: 250 },
     ],
   },
 

@@ -2366,10 +2366,15 @@ interface ExternalCandidate {
   personal_email: string | null;
 }
 
-/** The email an external candidate is keyed under — personal first, matching how
- *  the roster keys members elsewhere. */
+/** The email an external candidate is keyed under — WORK email ONLY. All of HSL
+ *  keys people by work email: the roster (hsl_team_members, from the Hogan sheet)
+ *  and the hardcoded Managers cohort are all @simple.biz work emails, and Hubstaff
+ *  matches on work email. We deliberately DO NOT fall back to personal email even
+ *  when one is on file — a personal-keyed entry is exactly the bug this fixes. A
+ *  candidate with no work email therefore has no usable email and can't be added
+ *  (the picker disables them). */
 function candidateEmail(c: ExternalCandidate): string {
-  return normEmail(c.personal_email) || normEmail(c.work_email) || '';
+  return normEmail(c.work_email) || '';
 }
 
 /** "Add external member": search the Global Master List (the same endpoint the
@@ -2524,7 +2529,7 @@ function HslAddMemberModal({
                         setSelected(c);
                         setError(null);
                       }}
-                      title={noEmail ? 'No email on file — cannot be added' : undefined}
+                      title={noEmail ? 'No work email on file — cannot be added' : undefined}
                       className={cn(
                         'flex w-full items-center gap-2.5 border-b border-zinc-100 px-3 py-2 text-left transition-colors last:border-0 dark:border-zinc-800/60',
                         noEmail
@@ -2539,7 +2544,7 @@ function HslAddMemberModal({
                           {c.name}
                         </span>
                         <span className="block truncate font-mono text-[10px] text-zinc-400">
-                          {email || 'no email on file'}
+                          {email || 'no work email on file'}
                         </span>
                       </span>
                       {c.department && (
