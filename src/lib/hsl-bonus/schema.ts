@@ -39,6 +39,16 @@ export interface FlatRule {
   managerOnly?: boolean;
 }
 
+/** A raw peso amount the manager types in directly. The typed number IS the
+ *  amount added to the bonus — no rate, no multiplication. */
+export interface ManualRule {
+  type: 'manual';
+  key: string;
+  label: string;
+  currency?: 'PHP' | 'USD';
+  managerOnly?: boolean;
+}
+
 export interface TeamSplitThreshold {
   minPct: number;   // inclusive lower bound (%)
   maxPct: number | null;
@@ -53,7 +63,7 @@ export interface TeamSplitRule {
   subTeams: SubTeamName[];
 }
 
-export type BonusRule = PerUnitRule | TieredRule | FlatRule | TeamSplitRule;
+export type BonusRule = PerUnitRule | TieredRule | FlatRule | ManualRule | TeamSplitRule;
 
 // ── Department config ────────────────────────────────────────────────────────
 
@@ -146,7 +156,7 @@ export const HSL_DEPTS: Record<HslDeptKey, DeptConfig> = {
     badgeCls: 'bg-cyan-900/60 text-cyan-300',
     rules: [
       { type: 'per_unit', key: 'portal_login', label: 'Patient Portal Log Ins', rate: 250 },
-      { type: 'flat',     key: 'rfc_form',     label: 'RFC',                     amount: 250 },
+      { type: 'manual',   key: 'rfc_form',     label: 'RFC' },
     ],
   },
 
@@ -315,6 +325,9 @@ export function calcBonus(
     } else if (rule.type === 'flat') {
       if (rule.managerOnly && !isManager) continue;
       if (kpiData[rule.key]) total += rule.amount;
+    } else if (rule.type === 'manual') {
+      if (rule.managerOnly && !isManager) continue;
+      total += Number(kpiData[rule.key] ?? 0);
     }
     // team_split is calculated at the sub-team level, not per-employee here
   }

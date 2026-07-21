@@ -325,6 +325,42 @@ function StepperInput({
   );
 }
 
+/** A raw peso-amount field for `manual` rules: the manager types the exact
+ *  amount to add (no rate, no multiplication). Accepts decimals; blank = 0. */
+function PesoAmountInput({
+  value,
+  onChange,
+  disabled,
+  ariaLabel,
+}: {
+  value: number;
+  onChange: (n: number) => void;
+  disabled?: boolean;
+  ariaLabel?: string;
+}) {
+  return (
+    <div className="inline-flex items-center rounded-md border border-zinc-300 bg-white focus-within:border-blue-400 focus-within:ring-1 focus-within:ring-blue-200 dark:border-zinc-700 dark:bg-zinc-900 dark:focus-within:border-zinc-500 dark:focus-within:ring-zinc-700">
+      <span className="pl-1.5 font-mono text-xs text-zinc-400 dark:text-zinc-500" aria-hidden>₱</span>
+      <input
+        type="number"
+        inputMode="decimal"
+        min={0}
+        step="0.01"
+        aria-label={ariaLabel}
+        className="h-7 w-20 bg-transparent px-1 text-right font-mono text-xs font-medium tabular-nums text-zinc-900 outline-none disabled:opacity-40 dark:text-zinc-100 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+        value={value === 0 ? '' : String(value)}
+        placeholder="0"
+        disabled={disabled}
+        onFocus={(e) => e.currentTarget.select()}
+        onChange={(e) => {
+          const n = parseFloat(e.target.value);
+          onChange(Math.max(0, Number.isFinite(n) ? n : 0));
+        }}
+      />
+    </div>
+  );
+}
+
 // ── Props ─────────────────────────────────────────────────────────────────────
 
 interface HslBonusCalculatorProps {
@@ -1563,6 +1599,7 @@ export function KpiTable({ dept, entries, subtotal, isLocked, onKpiChange, onTog
                 <span className="block font-normal text-zinc-400 dark:text-zinc-600">
                   {r.type === 'per_unit' ? formatPeso(r.rate, r.currency) :
                    r.type === 'flat' ? `${formatPeso(r.amount, r.currency)} flat` :
+                   r.type === 'manual' ? 'manual ₱' :
                    'tiered'}
                 </span>
               </th>
@@ -1629,6 +1666,17 @@ export function KpiTable({ dept, entries, subtotal, isLocked, onKpiChange, onTog
                         checked={Boolean(e.kpi_data[r.key])}
                         disabled={isLocked}
                         onChange={(ev) => onKpiChange(e.employee_email, r.key, ev.target.checked)}
+                      />
+                    )
+                  ) : r.type === 'manual' ? (
+                    r.managerOnly && !e.is_manager ? (
+                      <span className="text-zinc-300 dark:text-zinc-700">n/a</span>
+                    ) : (
+                      <PesoAmountInput
+                        value={Number(e.kpi_data[r.key] ?? 0)}
+                        disabled={isLocked}
+                        ariaLabel={`${r.label} amount for ${e.employee_name}`}
+                        onChange={(n) => onKpiChange(e.employee_email, r.key, n)}
                       />
                     )
                   ) : (

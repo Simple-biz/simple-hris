@@ -764,7 +764,15 @@ export default function PeopleTab({
   // People in the roster with NO bank / payout method on file at all — powers the
   // "Missing bank info" KPI card + its drill-down modal. Roster-wide (not scoped
   // to the selected pay week), since payout details don't vary by period.
-  const noBankingRows = useMemo(() => rows.filter((r) => !r.hasBanking), [rows]);
+  // US employees (department "USEE") are an accepted exception — they're paid
+  // through a separate channel, so we don't flag them as missing bank info.
+  const noBankingRows = useMemo(
+    () =>
+      rows.filter(
+        (r) => !r.hasBanking && (r.department ?? '').trim().toUpperCase() !== 'USEE',
+      ),
+    [rows],
+  );
 
   return (
     // data-readonly-allow: People is a read surface (browse, search, reveal-banking

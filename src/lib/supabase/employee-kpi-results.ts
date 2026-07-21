@@ -77,10 +77,14 @@ function humanizeKey(key: string): string {
     .trim();
 }
 
-/** Build label + per-unit hint lookups for an HSL department's rules. */
-function hslRuleMeta(deptKey: string): Record<string, { label: string; detail: string | null }> {
+/** Build label + per-unit hint lookups for an HSL department's rules. The
+ *  `manual` flag marks rules whose stored kpi_data value IS the peso amount
+ *  (not a count), so the breakdown renders it as money rather than "× n". */
+function hslRuleMeta(
+  deptKey: string,
+): Record<string, { label: string; detail: string | null; manual?: boolean }> {
   const cfg = HSL_DEPTS[deptKey as HslDeptKey];
-  const out: Record<string, { label: string; detail: string | null }> = {};
+  const out: Record<string, { label: string; detail: string | null; manual?: boolean }> = {};
   if (!cfg) return out;
   for (const rule of cfg.rules) {
     if (rule.type === 'per_unit') {
@@ -90,6 +94,8 @@ function hslRuleMeta(deptKey: string): Record<string, { label: string; detail: s
       out[rule.key] = { label: rule.label, detail: 'tiered rate' };
     } else if (rule.type === 'flat') {
       out[rule.key] = { label: rule.label, detail: null };
+    } else if (rule.type === 'manual') {
+      out[rule.key] = { label: rule.label, detail: 'manual amount', manual: true };
     } else if (rule.type === 'team_split') {
       out[rule.key] = { label: rule.label, detail: 'team accuracy' };
     }
@@ -262,12 +268,12 @@ export async function getEmployeeKpiResults(
       const value = num(raw);
       if (value === 0) continue; // hide untouched metrics
       const m = meta[k];
-      p.items.push({
-        label: m?.label ?? humanizeKey(k),
-        amount: null,
-        value,
-        detail: m?.detail ?? null,
-      });
+      // Manual rules store the peso amount directly — surface it as money, not a count.
+      p.items.push(
+        m?.manual
+          ? { label: m.label, amount: value, value: null, detail: null }
+          : { label: m?.label ?? humanizeKey(k), amount: null, value, detail: m?.detail ?? null },
+      );
     }
   }
 
