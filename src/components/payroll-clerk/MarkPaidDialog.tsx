@@ -9,7 +9,7 @@ import {
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { DatePicker } from '@/components/ui/date-picker';
-import { AlertTriangle, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, CircleDashed, Gauge, Loader2 } from 'lucide-react';
+import { AlertTriangle, Check, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, CircleDashed, Copy, Gauge, Loader2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { formatPHP, formatUSD, formatCOP, type ProcessorId, type QueueRow } from './mock-queue';
 
@@ -315,6 +315,26 @@ export default function MarkPaidDialog({
   const [status,                 setStatus]                 = useState<DispatchStatus>('paid');
   const [note,                   setNote]                   = useState('');
   const [submitting,             setSubmitting]             = useState(false);
+  const [copied,                 setCopied]                 = useState(false);
+
+  // The primary (top) amount shown in the hero — COP or USD depending on the
+  // payout currency. Copies the raw numeric value (no symbol/commas) so it
+  // pastes cleanly into processors / spreadsheets.
+  const heroAmount = row?.payCurrency === 'COP' ? row?.amountCOP : row?.amountUSD;
+
+  const copyAmount = useCallback(() => {
+    if (heroAmount == null) return;
+    const text = String(heroAmount);
+    const done = () => {
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1400);
+    };
+    if (navigator.clipboard?.writeText) {
+      navigator.clipboard.writeText(text).then(done).catch(() => {});
+    } else {
+      done();
+    }
+  }, [heroAmount]);
 
   useEffect(() => {
     if (!row || !defaults) return;
@@ -478,8 +498,21 @@ export default function MarkPaidDialog({
                 </motion.span>
               </AnimatePresence>
 
-              <div className="mt-2.5 font-mono text-[2.65rem] font-black leading-none tracking-tight text-white drop-shadow-sm">
-                {row?.payCurrency === 'COP' ? formatCOP(row?.amountCOP ?? null) : formatUSD(row?.amountUSD ?? null)}
+              <div className="mt-2.5 flex items-center gap-2.5">
+                <span className="font-mono text-[2.65rem] font-black leading-none tracking-tight text-white drop-shadow-sm">
+                  {row?.payCurrency === 'COP' ? formatCOP(row?.amountCOP ?? null) : formatUSD(row?.amountUSD ?? null)}
+                </span>
+                <button
+                  type="button"
+                  onClick={copyAmount}
+                  onMouseDown={(e) => e.preventDefault()}
+                  disabled={heroAmount == null}
+                  aria-label={copied ? 'Amount copied' : 'Copy amount'}
+                  title={copied ? 'Copied' : 'Copy amount'}
+                  className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-white/15 text-white outline-none backdrop-blur-sm transition-[background,opacity] hover:bg-white/25 focus:outline-none focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-30"
+                >
+                  {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+                </button>
               </div>
               <div className="mt-1.5 font-mono text-[13px] font-semibold tracking-wide text-white/65">
                 {formatPHP(row?.amountPHP ?? null)}
