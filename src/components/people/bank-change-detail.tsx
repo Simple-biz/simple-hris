@@ -186,7 +186,13 @@ export function BankChangeDetailDialog({
             icon={<Link2 className="h-3.5 w-3.5" />}
             tint="bg-amber-50 text-amber-600 dark:bg-amber-950/40 dark:text-amber-300"
             label="Source"
-            value={row.via === 'external_link' ? 'External self-service link' : row.via || 'External link'}
+            value={
+              row.via === 'external_link'
+                ? 'External self-service link'
+                : row.via === 'people_tab'
+                  ? 'People tab (in-app edit)'
+                  : row.via || 'External link'
+            }
           />
           {row.ip_address && (
             <MetaRow

@@ -232,6 +232,68 @@ function initialForm(row: RosterRow): ProfileForm {
   };
 }
 
+/** Editable bank & payout fields, all held as strings for form binding. Mirrors
+ *  the allowlist of PATCH /api/people/[email]/banking — which writes the
+ *  canonical employee_ids row every dashboard reads. */
+interface BankForm {
+  preferred_processor: string;
+  preferred_bank_slot: string;
+  bank_name: string;
+  account_holder_name: string;
+  account_number: string;
+  routing_number: string;
+  swift_code: string;
+  full_address: string;
+  alt_bank_name: string;
+  alt_account_holder_name: string;
+  alt_account_number: string;
+  alt_routing_number: string;
+  hurupay_email: string;
+  wepay_email: string;
+  higlobe_email: string;
+  higlobe_account_name: string;
+  wise_email: string;
+  wise_tag: string;
+  phone_number: string;
+}
+
+/** Build the editable form from an UNMASKED banking record (or empty for a
+ *  first-time setup). Must only ever be fed revealed values — a masked record
+ *  would put dot-runs into the inputs and save them as literal account numbers. */
+function bankingToForm(b: Banking | null): BankForm {
+  return {
+    preferred_processor: (b?.preferred_processor ?? '').trim().toLowerCase(),
+    preferred_bank_slot: ((b?.preferred_bank_slot ?? '').trim().toLowerCase() || 'primary'),
+    bank_name: b?.bank_name ?? '',
+    account_holder_name: b?.account_holder_name ?? '',
+    account_number: b?.account_number ?? '',
+    routing_number: b?.routing_number ?? '',
+    swift_code: b?.swift_code ?? '',
+    full_address: b?.full_address ?? '',
+    alt_bank_name: b?.alt_bank_name ?? '',
+    alt_account_holder_name: b?.alt_account_holder_name ?? '',
+    alt_account_number: b?.alt_account_number ?? '',
+    alt_routing_number: b?.alt_routing_number ?? '',
+    hurupay_email: b?.hurupay_email ?? '',
+    wepay_email: b?.wepay_email ?? '',
+    higlobe_email: b?.higlobe_email ?? '',
+    higlobe_account_name: b?.higlobe_account_name ?? '',
+    wise_email: b?.wise_email ?? '',
+    wise_tag: b?.wise_tag ?? '',
+    phone_number: b?.phone_number ?? '',
+  };
+}
+
+const PROCESSOR_OPTIONS = [
+  { value: '', label: 'Not set' },
+  { value: 'hurupay', label: 'Hurupay' },
+  { value: 'wepay', label: 'WePay' },
+  { value: 'higlobe', label: 'HiGlobe' },
+  { value: 'wise', label: 'Wise' },
+  { value: 'jeeves', label: 'Jeeves' },
+  { value: 'wires', label: 'Bank transfer (wires)' },
+];
+
 /** A labeled text/date input for the profile editor grid. */
 function EditField({
   label,
@@ -1418,12 +1480,17 @@ function MissingBankInfoDialog({
       toast.error('No work email on file to notify.');
       return;
     }
+    // Pass names purely to personalise the email greeting ("Hi Ana," vs
+    // "Hi there,"); the server still derives who gets notified from `emails`.
+    const recipients = targets
+      .map((t) => ({ email: (t.work_email ?? '').trim().toLowerCase(), name: t.name ?? '' }))
+      .filter((r) => r.email);
     setBusy((prev) => new Set([...prev, ...emails]));
     try {
       const res = await fetch('/api/people/request-bank-info', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ emails }),
+        body: JSON.stringify({ emails, recipients }),
       });
       const json = (await res.json()) as { ok?: boolean; notified?: number; error?: string };
       if (!res.ok || !json.ok) throw new Error(json.error || `Request failed (${res.status})`);
@@ -2660,19 +2727,37 @@ function PersonDetailDialog({
   // Read-only breakdown shown when not editing (derived from the stored name).
   const viewParts = useMemo(() => parseNameParts(row.name), [row.name]);
 
+  // Banking editor — writes the canonical employee_ids payout row (the source
+  // of truth every dashboard reads). The form is only ever seeded from the
+  // UNMASKED record (beginBankEdit reveals first), so a save can never persist
+  // masked dot-runs as real values.
+  const [bankEditing, setBankEditing] = useState(false);
+  const [bankSaving, setBankSaving] = useState(false);
+  const [bankForm, setBankForm] = useState<BankForm>(() => bankingToForm(null));
+  const bankInitialRef = useRef<BankForm>(bankingToForm(null));
+  const updBank = (k: keyof BankForm, v: string) => setBankForm((f) => ({ ...f, [k]: v }));
+
   // Sensitive-info gate: clicking Edit opens a warning first, unless it's been
   // snoozed ("Don't show again soon"). The snooze is time-boxed, not permanent.
+  // Shared by the profile AND banking editors — editTarget picks which one the
+  // confirm actually opens.
   const [showEditWarning, setShowEditWarning] = useState(false);
   const [snoozeWarning, setSnoozeWarning] = useState(false);
-  const requestEdit = () => {
-    if (isEditWarningSnoozed()) { beginEdit(); return; }
+  const [editTarget, setEditTarget] = useState<'profile' | 'banking'>('profile');
+  const startEdit = (target: 'profile' | 'banking') => {
+    if (target === 'banking') { void beginBankEdit(); return; }
+    beginEdit();
+  };
+  const requestEdit = (target: 'profile' | 'banking') => {
+    setEditTarget(target);
+    if (isEditWarningSnoozed()) { startEdit(target); return; }
     setSnoozeWarning(false);
     setShowEditWarning(true);
   };
   const confirmEditWarning = () => {
     if (snoozeWarning) snoozeEditWarning();
     setShowEditWarning(false);
-    beginEdit();
+    startEdit(editTarget);
   };
 
   const saveProfile = async () => {
@@ -2822,17 +2907,24 @@ function PersonDetailDialog({
   // wires AND jeeves both carry full bank/wire details (jeeves also shows phone).
   const showBank = proc === 'wires' || proc === 'jeeves' || (!proc && !!prefBank.name);
 
-  const reveal = async () => {
+  // The editor's field visibility follows the same processor rules as the
+  // read view, but driven by the FORM's processor so switching the payment
+  // method immediately swaps the relevant fields in.
+  const editProc = bankForm.preferred_processor;
+  const editShowsBank = editProc === 'wires' || editProc === 'jeeves' || editProc === '';
+  const editAlt = bankForm.preferred_bank_slot === 'alternative';
+
+  const reveal = async (): Promise<Banking | null> => {
     setRevealing(true);
     try {
       const res = await fetch(`/api/people/${encodeURIComponent(email)}/reveal-banking`, { method: 'POST' });
       const j = (await res.json()) as { banking?: Banking | null; error?: string };
       if (!res.ok) throw new Error(j.error || 'Reveal failed');
       if (j.banking) setBanking(j.banking);
-      return true;
+      return j.banking ?? null;
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Could not reveal banking');
-      return false;
+      return null;
     } finally {
       setRevealing(false);
     }
@@ -2843,10 +2935,58 @@ function PersonDetailDialog({
   const toggleBanking = async () => {
     if (showBanking) { setShowBanking(false); return; }
     if (banking?.masked) {
-      const ok = await reveal();
-      if (!ok) return; // keep hidden if the reveal failed
+      const b = await reveal();
+      if (!b) return; // keep hidden if the reveal failed
     }
     setShowBanking(true);
+  };
+
+  // Open the banking editor. Masked records are revealed first (audit-logged)
+  // so the form always starts from the real values — never dot-runs.
+  const beginBankEdit = async () => {
+    let b = banking;
+    if (b?.masked) {
+      b = await reveal();
+      if (!b) return;
+    }
+    setShowBanking(true);
+    const f = bankingToForm(b);
+    bankInitialRef.current = f;
+    setBankForm(f);
+    setBankEditing(true);
+  };
+  const cancelBankEdit = () => { setBankForm(bankInitialRef.current); setBankEditing(false); };
+
+  const saveBanking = async () => {
+    // Send only the fields that actually changed; '' clears a field (→ null).
+    const patch: Record<string, string | null> = {};
+    (Object.keys(bankForm) as (keyof BankForm)[]).forEach((k) => {
+      const before = bankInitialRef.current[k].trim();
+      const after = bankForm[k].trim();
+      if (before !== after) patch[k] = after === '' ? null : after;
+    });
+    if (Object.keys(patch).length === 0) { setBankEditing(false); return; }
+
+    setBankSaving(true);
+    try {
+      const res = await fetch(`/api/people/${encodeURIComponent(email)}/banking`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ patch }),
+      });
+      const j = (await res.json()) as { ok?: boolean; banking?: Banking | null; bankHistory?: BankChangeEntry[]; error?: string };
+      if (!res.ok || !j.ok) throw new Error(j.error || `Save failed (${res.status})`);
+      // The endpoint returns the fresh UNMASKED record + updated change history,
+      // so the modal reflects the save immediately without a refetch.
+      if (j.banking) setBanking(j.banking);
+      if (j.bankHistory) { setBankHistory(j.bankHistory); setBankHistPage(1); }
+      setBankEditing(false);
+      toast.success('Payout details updated — this is now what payroll pays to.');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not save the payout details.');
+    } finally {
+      setBankSaving(false);
+    }
   };
 
   return (
@@ -2938,7 +3078,7 @@ function PersonDetailDialog({
               <h3 className="text-xs font-semibold uppercase tracking-wide text-zinc-500">Identity &amp; contact</h3>
               {canEdit && !editing && (
                 row.id ? (
-                  <Button type="button" size="sm" variant="outline" className="h-7 gap-1.5 px-2 text-[12px]" onClick={requestEdit}>
+                  <Button type="button" size="sm" variant="outline" className="h-7 gap-1.5 px-2 text-[12px]" onClick={() => requestEdit('profile')}>
                     <Pencil className="h-3.5 w-3.5" /> Edit
                   </Button>
                 ) : (
@@ -3034,17 +3174,24 @@ function PersonDetailDialog({
           <div className="mt-5">
             <div className="mb-2 flex items-center justify-between">
               <h3 className="text-xs font-semibold uppercase tracking-wide text-zinc-500">Banking & payout</h3>
-              {!loading && (
-                <Button type="button" size="sm" variant="outline" className="h-7 gap-1.5 px-2 text-[12px]" onClick={toggleBanking} disabled={revealing}>
-                  {revealing ? (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  ) : showBanking ? (
-                    <EyeOff className="h-3.5 w-3.5" />
-                  ) : (
-                    <Eye className="h-3.5 w-3.5" />
+              {!loading && !bankEditing && (
+                <div className="flex items-center gap-1.5">
+                  {canEdit && (
+                    <Button type="button" size="sm" variant="outline" className="h-7 gap-1.5 px-2 text-[12px]" onClick={() => requestEdit('banking')} disabled={revealing}>
+                      <Pencil className="h-3.5 w-3.5" /> Edit
+                    </Button>
                   )}
-                  {showBanking ? 'Hide' : 'Reveal'}
-                </Button>
+                  <Button type="button" size="sm" variant="outline" className="h-7 gap-1.5 px-2 text-[12px]" onClick={toggleBanking} disabled={revealing}>
+                    {revealing ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : showBanking ? (
+                      <EyeOff className="h-3.5 w-3.5" />
+                    ) : (
+                      <Eye className="h-3.5 w-3.5" />
+                    )}
+                    {showBanking ? 'Hide' : 'Reveal'}
+                  </Button>
+                </div>
               )}
             </div>
             {!loading && banking?.bank_last_self_updated_at && (
@@ -3090,6 +3237,86 @@ function PersonDetailDialog({
                   transition={{ duration: reduceMotion ? 0 : 0.3, ease: [0.22, 1, 0.36, 1] }}
                   className="overflow-hidden"
                 >
+                {bankEditing ? (
+                <div className="rounded-lg border border-zinc-200 bg-zinc-50/60 p-3 dark:border-zinc-800 dark:bg-zinc-900/40">
+                  <div className="grid grid-cols-1 gap-x-6 gap-y-3 sm:grid-cols-2">
+                    <div>
+                      <label className="text-[10.5px] uppercase tracking-wide text-zinc-400">Payment method</label>
+                      <SmoothSelect
+                        value={bankForm.preferred_processor}
+                        onChange={(v) => updBank('preferred_processor', v)}
+                        aria-label="Payment method"
+                        className="mt-1 w-full"
+                        options={PROCESSOR_OPTIONS}
+                      />
+                    </div>
+                    {editShowsBank && (
+                      <div>
+                        <label className="text-[10.5px] uppercase tracking-wide text-zinc-400">Preferred bank slot</label>
+                        <SmoothSelect
+                          value={bankForm.preferred_bank_slot}
+                          onChange={(v) => updBank('preferred_bank_slot', v)}
+                          aria-label="Preferred bank slot"
+                          className="mt-1 w-full"
+                          options={[
+                            { value: 'primary', label: 'Primary bank' },
+                            { value: 'alternative', label: 'Alternative bank' },
+                          ]}
+                        />
+                      </div>
+                    )}
+                    {editShowsBank && (editAlt ? (
+                      <>
+                        <EditField label="Bank (alternative)" value={bankForm.alt_bank_name} onChange={(v) => updBank('alt_bank_name', v)} accent={accent} />
+                        <EditField label="Account holder" value={bankForm.alt_account_holder_name} onChange={(v) => updBank('alt_account_holder_name', v)} accent={accent} />
+                        <EditField label="Account no." value={bankForm.alt_account_number} onChange={(v) => updBank('alt_account_number', v)} accent={accent} />
+                        <EditField label="Routing" value={bankForm.alt_routing_number} onChange={(v) => updBank('alt_routing_number', v)} accent={accent} />
+                      </>
+                    ) : (
+                      <>
+                        <EditField label="Bank" value={bankForm.bank_name} onChange={(v) => updBank('bank_name', v)} accent={accent} />
+                        <EditField label="Account holder" value={bankForm.account_holder_name} onChange={(v) => updBank('account_holder_name', v)} accent={accent} />
+                        <EditField label="Account no." value={bankForm.account_number} onChange={(v) => updBank('account_number', v)} accent={accent} />
+                        <EditField label="Routing" value={bankForm.routing_number} onChange={(v) => updBank('routing_number', v)} accent={accent} />
+                        <EditField label="SWIFT" value={bankForm.swift_code} onChange={(v) => updBank('swift_code', v)} accent={accent} />
+                        <EditField label="Address" value={bankForm.full_address} onChange={(v) => updBank('full_address', v)} accent={accent} wide hint="Account holder's address for wires." />
+                      </>
+                    ))}
+                    {editProc === 'jeeves' && (
+                      <EditField label="Phone number" value={bankForm.phone_number} onChange={(v) => updBank('phone_number', v)} accent={accent} />
+                    )}
+                    {editProc === 'hurupay' && (
+                      <EditField label="Hurupay email" value={bankForm.hurupay_email} onChange={(v) => updBank('hurupay_email', v)} accent={accent} type="email" />
+                    )}
+                    {editProc === 'wepay' && (
+                      <EditField label="WePay email" value={bankForm.wepay_email} onChange={(v) => updBank('wepay_email', v)} accent={accent} type="email" />
+                    )}
+                    {editProc === 'higlobe' && (
+                      <>
+                        <EditField label="HiGlobe email" value={bankForm.higlobe_email} onChange={(v) => updBank('higlobe_email', v)} accent={accent} type="email" />
+                        <EditField label="HiGlobe account" value={bankForm.higlobe_account_name} onChange={(v) => updBank('higlobe_account_name', v)} accent={accent} />
+                      </>
+                    )}
+                    {editProc === 'wise' && (
+                      <>
+                        <EditField label="Wise email" value={bankForm.wise_email} onChange={(v) => updBank('wise_email', v)} accent={accent} type="email" />
+                        <EditField label="Wise tag" value={bankForm.wise_tag} onChange={(v) => updBank('wise_tag', v)} accent={accent} />
+                      </>
+                    )}
+                  </div>
+                  <p className="mt-3 text-[11px] text-zinc-400">
+                    Saving updates the payout record payroll pays to — the change applies across all dashboards immediately and is recorded in the bank change history below.
+                  </p>
+                  <div className="mt-3 flex items-center justify-end gap-2">
+                    <Button type="button" size="sm" variant="outline" className="h-8 gap-1.5 px-3 text-[12px]" onClick={cancelBankEdit} disabled={bankSaving}>
+                      <X className="h-3.5 w-3.5" /> Cancel
+                    </Button>
+                    <Button type="button" size="sm" className={cn('h-8 gap-1.5 px-3 text-[12px] font-medium', accent.btn)} onClick={saveBanking} disabled={bankSaving}>
+                      {bankSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />} Save changes
+                    </Button>
+                  </div>
+                </div>
+                ) : (
                 <div className="rounded-lg border border-zinc-200 bg-zinc-50/60 p-3 text-[13px] dark:border-zinc-800 dark:bg-zinc-900/40">
                 {!banking ? (
                   <p className="mb-2 text-[11px] text-zinc-400">No payout details on file yet — these fields will populate once the employee completes their payout setup.</p>
@@ -3127,6 +3354,7 @@ function PersonDetailDialog({
                   {proc === 'jeeves' && <Field label="Phone" value={banking?.phone_number ?? null} mono />}
                 </dl>
                 </div>
+                )}
                 </motion.div>
               )}
               </AnimatePresence>
@@ -3390,8 +3618,17 @@ function PersonDetailDialog({
             Edit sensitive information
           </DialogTitle>
           <DialogDescription>
-            You&apos;re about to edit <span className="font-medium text-zinc-700 dark:text-zinc-200">{row.name ?? 'this person'}</span>&apos;s
-            information. This is sensitive personal data — changes write to the Global Master List and the Google Sheet, and are visible to Admin and HR. Please make sure the details are correct before saving.
+            {editTarget === 'banking' ? (
+              <>
+                You&apos;re about to edit <span className="font-medium text-zinc-700 dark:text-zinc-200">{row.name ?? 'this person'}</span>&apos;s
+                bank &amp; payout details. This is the record payroll pays their salary to — changes apply across all dashboards immediately and are audit-logged. Please make sure the details are correct before saving.
+              </>
+            ) : (
+              <>
+                You&apos;re about to edit <span className="font-medium text-zinc-700 dark:text-zinc-200">{row.name ?? 'this person'}</span>&apos;s
+                information. This is sensitive personal data — changes write to the Global Master List and the Google Sheet, and are visible to Admin and HR. Please make sure the details are correct before saving.
+              </>
+            )}
           </DialogDescription>
         </DialogHeader>
         <label className="mt-1 flex cursor-pointer items-center gap-2 text-[13px] text-zinc-600 select-none dark:text-zinc-300">

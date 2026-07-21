@@ -715,6 +715,23 @@ export async function replaceGlobalMasterListFromCsvText(
         // department, etc.) still syncs correctly. HR must fix the duplicate
         // work email in the sheet to get the assignment to move.
         delete op.payload["Work Email"];
+        // If this op was also RE-ACTIVATING an off-boarded row (clearOffboarded
+        // set off_boarded_at→null above), the re-activation itself — not the
+        // Work Email — is what violates global_master_list_work_email_dept_uniq:
+        // clearing off_boarded_at pulls a second row into the partial index for a
+        // (work email, department) an active row already owns, so the row's
+        // *existing, unchanged* work email collides. Stripping Work Email alone
+        // leaves the re-activation in the payload and the UPDATE still fails.
+        // Cancel the re-activation so the duplicate stays off-boarded; the sheet
+        // (or HR) must resolve which stint is the live one.
+        if (op.payload["off_boarded_at"] === null) {
+          delete op.payload["off_boarded_at"];
+          delete op.payload["off_boarded_reason"];
+          delete op.payload["off_boarded_by"];
+          delete op.payload["off_boarded_note"];
+          delete op.payload["scheduled_deletion_at"];
+          delete op.payload["deletion_processed_at"];
+        }
         skippedWorkDeptCollisions += 1;
         continue;
       }

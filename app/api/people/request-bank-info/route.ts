@@ -5,6 +5,7 @@ import { getSessionActor } from '@/lib/auth/session-actor';
 import { insertAuditLog } from '@/lib/supabase/audit-log';
 import { createSupabaseServiceRoleClient } from '@/lib/supabase/server';
 import { normEmail } from '@/lib/email/norm-email';
+import { sendBankInfoNotifyEmails } from '@/lib/people/bank-info-notify';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -14,6 +15,10 @@ interface Body {
   recipient_email?: string;
   /** Or a batch — used by the "Notify everyone" action in the modal. */
   emails?: string[];
+  /** Optional { email, name } list, purely to personalise the email greeting
+   *  ("Hi Ana," vs "Hi there,"). Never used to decide WHO gets notified — the
+   *  recipient set is always derived from `emails` / `recipient_email` below. */
+  recipients?: { email?: string | null; name?: string | null }[];
 }
 
 /**
@@ -41,7 +46,9 @@ export async function POST(req: NextRequest) {
   // only well-formed addresses (normEmail just trims/lowercases — it doesn't
   // validate). This drops junk before it becomes rows in a table with no FK.
   const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-  const MAX_RECIPIENTS = 500;
+  // Aligned with Gmail's ~2,000/day send limit; the notify webhook sends these in
+  // throttled batches (see references/n8n/bank-info-missing-notify.workflow.json).
+  const MAX_RECIPIENTS = 2000;
   const raw = [
     ...(Array.isArray(body.emails) ? body.emails : []),
     ...(body.recipient_email ? [body.recipient_email] : []),
@@ -54,7 +61,7 @@ export async function POST(req: NextRequest) {
   }
   if (emails.length > MAX_RECIPIENTS) {
     return NextResponse.json(
-      { ok: false, error: `Too many recipients (max ${MAX_RECIPIENTS}).` },
+      { ok: false, error: `Too many recipients (${emails.length}; max ${MAX_RECIPIENTS} per run). Notify in smaller groups.` },
       { status: 400 },
     );
   }
@@ -130,5 +137,27 @@ export async function POST(req: NextRequest) {
     details: { recipients: emails, count: emails.length },
   });
 
-  return NextResponse.json({ ok: true, error: null, notified: emails.length });
+  // Best-effort red-alarm email on top of the in-app nudge above (which is the
+  // guaranteed part). Personalise the greeting from any { email, name } the
+  // caller passed; unknown names fall back to a generic greeting in n8n. A
+  // webhook failure/timeout must never fail the request, so errors are swallowed
+  // and we just report how many the email webhook accepted. No-ops (emailed: 0)
+  // until the `bank_info_notify` webhook is configured in Admin -> Webhooks.
+  const nameByEmail = new Map<string, string>();
+  for (const r of Array.isArray(body.recipients) ? body.recipients : []) {
+    const e = normEmail(r?.email ?? '');
+    const n = (r?.name ?? '').trim();
+    if (e && n && !nameByEmail.has(e)) nameByEmail.set(e, n);
+  }
+  let emailed = 0;
+  try {
+    const sendResult = await sendBankInfoNotifyEmails(
+      emails.map((e) => ({ email: e, name: nameByEmail.get(e) ?? null })),
+    );
+    emailed = sendResult.sent;
+  } catch {
+    /* best-effort — the in-app notification already succeeded */
+  }
+
+  return NextResponse.json({ ok: true, error: null, notified: emails.length, emailed });
 }

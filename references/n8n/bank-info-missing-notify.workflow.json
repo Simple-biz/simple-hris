@@ -1,0 +1,206 @@
+{
+  "name": "Missing Bank Info → Notify Employee",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "bank-info-missing-notify",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "b1000000-0000-4000-8000-000000000001",
+      "name": "Notify: Missing Bank Info",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        240,
+        300
+      ],
+      "webhookId": "bank-info-missing-notify"
+    },
+    {
+      "parameters": {
+        "jsCode": "// n8n Code node — \"Build Recipients\"\n// Normalises the People-tab \"Missing Bank Info · Notify\" payload into ONE item\n// per recipient, each carrying a ready-to-send red-alarm HTML email.\n//\n// Accepted payload shapes (n8n may nest the POST body under `.body`):\n//   { \"to\": \"a@x.com\", \"name\": \"Ana\" }\n//   { \"recipient_email\": \"a@x.com\", \"recipient_name\": \"Ana\" }\n//   { \"emails\": [\"a@x.com\", \"b@x.com\"] }                       // request-bank-info route\n//   { \"recipients\": [ { \"email\": \"a@x.com\", \"name\": \"Ana\" } ] } // request-bank-info route\n//\n// The subject, body and destination URL are FIXED and code-owned here — callers\n// can only choose WHO is emailed, never what the email says or where it links.\n// (This deliberately removes the earlier html/link/subject overrides so the\n// endpoint can't be turned into an arbitrary-content mailer.)\n\n// --- OPTIONAL shared-secret gate (recommended for this bank-detail email) ---\n// Leave '' to accept any caller (matches the other Simple HRIS webhooks). To lock\n// it down: put a long random string here AND set the same value in the HRIS env\n// var N8N_BANK_INFO_NOTIFY_SECRET, so the server sends it as the 'x-webhook-secret'\n// header. When set, any request without a matching secret is rejected.\nconst REQUIRED_SECRET = '';\n\nconst UPDATE_LINK = 'https://bank-payout-update.vercel.app/update-bank-info';\nconst LOGO = 'https://simple-hris.vercel.app/simple-logo.png';\nconst SUPPORT_EMAIL = 'payroll@simple.biz';\nconst EMAIL_RE = /^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/;\n// Ceiling aligned with Gmail's ~2,000/day send limit. The workflow sends these\n// in throttled batches (SplitInBatches + Wait), so large lists don't burst.\nconst MAX = 2000;\n\nconst root = (items[0] && items[0].json) || {};\nconst body = (root && typeof root.body === 'object' && root.body) ? root.body : root;\nconst headers = (root && typeof root.headers === 'object' && root.headers) ? root.headers : {};\n\nconst providedSecret = headers['x-webhook-secret'] || headers['X-Webhook-Secret'] || body.secret || '';\nif (REQUIRED_SECRET && providedSecret !== REQUIRED_SECRET) {\n  throw new Error('Unauthorized: missing or invalid webhook secret.');\n}\n\nfunction esc(v) {\n  if (v == null) return '';\n  return String(v)\n    .replace(/&/g, '&amp;')\n    .replace(/</g, '&lt;')\n    .replace(/>/g, '&gt;')\n    .replace(/\"/g, '&quot;');\n}\nfunction firstName(name) {\n  const n = (name == null ? '' : String(name)).trim();\n  if (!n) return '';\n  return n.split(/\\s+/)[0];\n}\n\n// --- collect recipients from any supported shape ---\nconst collected = [];\nif (Array.isArray(body.recipients)) {\n  for (const r of body.recipients) {\n    if (!r) continue;\n    collected.push({\n      email: r.email || r.work_email || r.to || r.recipient_email,\n      name: r.name || r.recipient_name || '',\n    });\n  }\n}\nif (Array.isArray(body.emails)) {\n  for (const e of body.emails) collected.push({ email: e, name: '' });\n}\nif (body.recipient_email) collected.push({ email: body.recipient_email, name: body.recipient_name || body.name || '' });\nif (body.to) collected.push({ email: body.to, name: body.name || body.recipient_name || '' });\n\n// normalise + validate + dedupe (keep the first non-empty name seen per address)\nconst seen = new Map();\nfor (const c of collected) {\n  const email = (c.email == null ? '' : String(c.email)).trim().toLowerCase();\n  if (!email || !EMAIL_RE.test(email)) continue;\n  const name = (c.name == null ? '' : String(c.name)).trim();\n  if (!seen.has(email)) seen.set(email, name);\n  else if (!seen.get(email) && name) seen.set(email, name);\n}\nif (seen.size === 0) {\n  throw new Error('No valid recipient email(s) in payload. Send { to } / { recipient_email } / { emails: [] } / { recipients: [] }.');\n}\nif (seen.size > MAX) {\n  throw new Error('Too many recipients (' + seen.size + '; max ' + MAX + ' — Gmail daily limit). Split into smaller runs.');\n}\n\n// Bulletproof CTA button — VML roundrect for Outlook (Word engine ignores padding\n// on inline <a>), a padded inline-block <a> for every other client.\nfunction ctaButton() {\n  return '' +\n    '<table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" style=\"margin:4px 0 6px\"><tr><td>' +\n      '<!--[if mso]><v:roundrect xmlns:v=\"urn:schemas-microsoft-com:vml\" xmlns:w=\"urn:schemas-microsoft-com:office:word\" href=\"' + UPDATE_LINK + '\" style=\"height:48px;v-text-anchor:middle;width:260px;\" arcsize=\"21%\" strokecolor=\"#dc2626\" fillcolor=\"#dc2626\"><w:anchorlock/><center style=\"color:#ffffff;font-family:Arial,sans-serif;font-size:15px;font-weight:bold;\">Update my bank details</center></v:roundrect><![endif]-->' +\n      '<!--[if !mso]><!-- --><a href=\"' + UPDATE_LINK + '\" style=\"display:inline-block;background:#dc2626;color:#ffffff;font-size:15px;font-weight:bold;text-decoration:none;padding:14px 28px;border-radius:10px\">Update my bank details &rarr;</a><!--<![endif]-->' +\n    '</td></tr></table>';\n}\n\nfunction renderHtml(name) {\n  const fn = esc(firstName(name));\n  const greeting = fn ? ('Hi ' + fn + ',') : 'Hi there,';\n  return '' +\n    '<!DOCTYPE html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>Action required: add your payout details</title></head>' +\n    '<body style=\"margin:0;background:#f4f4f5;padding:24px 12px;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#18181b\">' +\n      // hidden preheader — controls the inbox preview snippet\n      '<div style=\"display:none;max-height:0;overflow:hidden;opacity:0;color:transparent;font-size:1px;line-height:1px\">Payroll needs your bank / payout details so we can pay you on time &mdash; it takes about 2 minutes.</div>' +\n      '<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:#f4f4f5\"><tr><td align=\"center\">' +\n        '<table role=\"presentation\" width=\"520\" cellpadding=\"0\" cellspacing=\"0\" style=\"width:100%;max-width:520px;background:#ffffff;border:1px solid #e4e4e7;border-radius:14px;overflow:hidden;box-shadow:0 6px 24px rgba(220,38,38,0.10)\">' +\n          '<tr><td style=\"padding:18px 26px 12px\"><img src=\"' + LOGO + '\" alt=\"Simple\" width=\"88\" height=\"30\" style=\"display:block;border:0;height:30px;width:88px\"></td></tr>' +\n          '<tr><td bgcolor=\"#0a0a0b\" style=\"background:#0a0a0b;padding:22px 26px;border-bottom:4px solid #dc2626\">' +\n            '<span style=\"display:inline-block;background:#dc2626;color:#ffffff;font-size:11px;font-weight:bold;letter-spacing:1.5px;text-transform:uppercase;padding:5px 12px;border-radius:999px\">&#9888;&#65039; Action required</span>' +\n            '<div style=\"margin-top:14px;font-size:22px;line-height:1.3;color:#ffffff;font-weight:bold\">Payroll can&rsquo;t pay you yet</div>' +\n            '<div style=\"margin-top:6px;font-size:13px;color:#d4d4d8\">We don&rsquo;t have your bank / payout details on file.</div>' +\n          '</td></tr>' +\n          '<tr><td style=\"padding:22px 26px 4px\">' +\n            '<p style=\"margin:0 0 14px;font-size:15px;color:#18181b\">' + greeting + '</p>' +\n            '<p style=\"margin:0 0 18px;font-size:14px;line-height:1.6;color:#3f3f46\">So your salary reaches you on time, please add your bank / payout details. It only takes about 2 minutes, and your details are verified with a secure one-time code.</p>' +\n            ctaButton() +\n            '<p style=\"margin:10px 0 18px;font-size:12px;color:#71717a;word-break:break-all\">Button not working? Copy and paste this link:<br><a href=\"' + UPDATE_LINK + '\" style=\"color:#dc2626\">' + esc(UPDATE_LINK) + '</a></p>' +\n            // calm anti-phishing trust note (deliberately NOT red — reassurance, not alarm)\n            '<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:#f9fafb;border:1px solid #e4e4e7;border-radius:10px;margin:0 0 18px\"><tr><td style=\"padding:13px 15px;font-size:12px;line-height:1.6;color:#52525b\">&#128274; Simple will never ask for your password or a payment. Not sure this message is real? Email <a href=\"mailto:' + SUPPORT_EMAIL + '\" style=\"color:#52525b;font-weight:bold\">' + SUPPORT_EMAIL + '</a> before entering anything.</td></tr></table>' +\n            '<p style=\"margin:0 0 4px;font-size:12px;line-height:1.6;color:#71717a\">Already submitted your details? No action is needed &mdash; you can safely ignore this message.</p>' +\n          '</td></tr>' +\n          '<tr><td style=\"padding:16px 26px 20px;border-top:1px solid #f4f4f5\"><table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\"><tr><td style=\"font-size:12px;color:#52525b;font-weight:bold\">Simple &middot; Confidential</td><td align=\"right\" style=\"font-size:11px;color:#71717a\">Automated alert from Simple HRIS</td></tr></table></td></tr>' +\n        '</table>' +\n        '<div style=\"max-width:520px;margin:12px auto 0;font-size:11px;color:#71717a;text-align:center;line-height:1.5\">You are receiving this because payroll needs your payout details in order to pay you.</div>' +\n      '</td></tr></table>' +\n    '</body></html>';\n}\n\nconst SUBJECT = 'Action required: add your payout details so we can pay you';\n\nconst out = [];\nfor (const [email, name] of seen) {\n  out.push({\n    json: {\n      to: email,\n      name: name || '',\n      subject: SUBJECT,\n      html: renderHtml(name),\n    },\n  });\n}\nreturn out;\n"
+      },
+      "id": "b1000000-0000-4000-8000-000000000002",
+      "name": "Build Recipients",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        460,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { status: 'ok', notified: $items('Build Recipients').length } }}",
+        "options": {}
+      },
+      "id": "b1000000-0000-4000-8000-000000000003",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        680,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "batchSize": 10,
+        "options": {}
+      },
+      "id": "b1000000-0000-4000-8000-000000000004",
+      "name": "Loop Over Recipients",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        900,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "send",
+        "sendTo": "={{ $json.to }}",
+        "subject": "={{ $json.subject }}",
+        "emailType": "html",
+        "message": "={{ $json.html }}",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "id": "b1000000-0000-4000-8000-000000000005",
+      "name": "Send Bank Alert (Gmail)",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        1140,
+        400
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "amount": 1,
+        "unit": "seconds"
+      },
+      "id": "b1000000-0000-4000-8000-000000000006",
+      "name": "Throttle",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1,
+      "position": [
+        1360,
+        400
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "b1000000-0000-4000-8000-000000000007",
+      "name": "All Sent",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        1140,
+        220
+      ]
+    }
+  ],
+  "connections": {
+    "Notify: Missing Bank Info": {
+      "main": [
+        [
+          {
+            "node": "Build Recipients",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Recipients": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Respond to Webhook": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Recipients",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Recipients": {
+      "main": [
+        [
+          {
+            "node": "All Sent",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Bank Alert (Gmail)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Bank Alert (Gmail)": {
+      "main": [
+        [
+          {
+            "node": "Throttle",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Throttle": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Recipients",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "pinData": {},
+  "tags": [
+    {
+      "name": "hris"
+    },
+    {
+      "name": "bank-info"
+    },
+    {
+      "name": "payroll"
+    }
+  ],
+  "meta": {
+    "description": "Triggered by the HRIS People tab 'Missing Bank Info → Notify' button. Accepts a single recipient or a batch (to / recipient_email / emails[] / recipients[], up to 2000), acks immediately, then emails each person a red-alarm alert (CTA → https://bank-payout-update.vercel.app/update-bank-info) in throttled batches (SplitInBatches batchSize 10 + 1s Throttle, ~10/s; one bad address doesn't stop the rest). Subject/body/URL are fixed in the Build Recipients node (callers choose only WHO is emailed). Attach a Gmail OAuth2 credential to the send node before activating; optionally set REQUIRED_SECRET in Build Recipients + N8N_BANK_INFO_NOTIFY_SECRET in the HRIS to lock the webhook."
+  }
+}
