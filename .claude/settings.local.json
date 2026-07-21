@@ -463,7 +463,10 @@
       "Bash(node \"C:/Users/Kane/Desktop/simple-hris/scripts/_probe-fx.mjs\" .env.local)",
       "Bash(grep -oE '.{0,10}forcedTheme.{0,60}createElement\\\\\\(\"script\"|createElement\\\\\\(\"script\".{0,5}|[a-zA-Z]+\\\\?[^:]{0,30}createElement\\\\\\(\"script\"|,[a-zA-Z]+&&.{0,10}createElement\\\\\\(\"script\"' node_modules/next-themes/dist/index.mjs)",
       "PowerShell(cd 'c:\\\\Users\\\\Kane\\\\Desktop\\\\simple-hris'; npx patch-package next-themes; \"EXIT=$LASTEXITCODE\")",
-      "PowerShell(cd 'c:\\\\Users\\\\Kane\\\\Desktop\\\\simple-hris'; npx patch-package; \"EXIT=$LASTEXITCODE\")"
+      "PowerShell(cd 'c:\\\\Users\\\\Kane\\\\Desktop\\\\simple-hris'; npx patch-package; \"EXIT=$LASTEXITCODE\")",
+      "Bash(node \"C:\\\\Users\\\\Kane\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-Kane-Desktop-simple-hris\\\\bbc2de72-f162-4527-bf98-a354c9e29d57\\\\scratchpad\\\\check-attestation.mjs\")",
+      "Bash(cp \"C:\\\\Users\\\\Kane\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-Kane-Desktop-simple-hris\\\\bbc2de72-f162-4527-bf98-a354c9e29d57\\\\scratchpad\\\\check-attestation.mjs\" ./_check-attestation.mjs)",
+      "Bash(node ./_check-attestation.mjs)"
     ],
     "additionalDirectories": [
       "c:\\Users\\Itachi\\.claude\\projects\\c--Users-Itachi-Desktop-simple-hris\\memory",

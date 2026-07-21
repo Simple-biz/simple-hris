@@ -381,7 +381,7 @@ export default function QCApp() {
               transition={{ duration: 0.32, ease: [0.22, 1, 0.36, 1] }}
               className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto"
             >
-              {payrollProcessing.locked && activeTab !== 'notifications' ? (
+              {payrollProcessing.locked && activeTab !== 'notifications' && !roles.includes('admin') ? (
                 <PayrollProcessingLock
                   surface="The QC dashboard"
                   lockedAt={payrollProcessing.lockedAt}

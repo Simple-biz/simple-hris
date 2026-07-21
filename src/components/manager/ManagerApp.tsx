@@ -438,7 +438,9 @@ export default function ManagerApp() {
               {activeTab === 'hsl-bonus' && (() => {
                 // Hard stop: once Accounting hits "Start processing" in the
                 // Payroll Wizard, KPI Calculators are unusable until it stops.
-                if (payrollProcessing.locked) {
+                // Admins bypass — they're trusted to correct numbers mid-cycle
+                // (matches the server-side guard in processing-guard.ts).
+                if (payrollProcessing.locked && !isAdmin) {
                   return (
                     <PayrollProcessingLock
                       surface="The KPI Calculator"
