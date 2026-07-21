@@ -208,6 +208,15 @@ export interface QueueRow {
   otHours: number | null;
   /** Raw bank_preferred string from the rates row (e.g. "x1161") for surfaces that need it. */
   bankPreferredRaw: string | null;
+  /**
+   * Payroll department this person belongs to, carried from the rates row so the
+   * dispatch queue + Mark Paid dialog can show accounting which team each payee
+   * is in. `departmentKey` is the normalized key (null when the raw value can't
+   * be mapped to a known department); `departmentName` is the human label to
+   * display — the canonical name when resolved, else the raw string, else null.
+   */
+  departmentKey: string | null;
+  departmentName: string | null;
   details: {
     email?: string;
     hurupay_email?: string;
@@ -347,6 +356,11 @@ export function buildQueueFromRates(
     // From here on, processor is non-null because reasons would have caught
     // it. Narrow the type so TypeScript stops complaining.
     const activeProcessor: ProcessorId = processor!;
+    // Resolve the payroll department for this payee. Fall back to the raw
+    // rates-row value so accounting still sees *something* when the department
+    // isn't in the canonical list (rather than a blank).
+    const dept = resolveDept(r.department);
+    const departmentName = dept.name ?? (r.department?.trim() || null);
     const bankSlot = preferredBankSlot(idsRow);
     const preferredBankName = bankSlot === 'alternative'
       ? pickFirst(idsRow?.alt_bank_name, idsRow?.bank_name)
@@ -381,6 +395,8 @@ export function buildQueueFromRates(
       totalHours: pay?.totalHours ?? null,
       otHours: pay?.otHours ?? null,
       bankPreferredRaw: r.bank_preferred,
+      departmentKey: dept.key,
+      departmentName,
       details: {
         email,
         // Employee-provided values (employee_ids) win over rates-side ones.

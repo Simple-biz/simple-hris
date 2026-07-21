@@ -97,6 +97,7 @@ export const HSL_DEPT_KEYS = [
   'collections',
   'healthcare_team_lead',
   'collections_tl',
+  'attestation',
   'hsl_managers',
 ] as const;
 
@@ -284,6 +285,28 @@ export const HSL_DEPTS: Record<HslDeptKey, DeptConfig> = {
     badgeCls: 'bg-amber-900/50 text-amber-200',
     rules: [
       { type: 'flat', key: 'monthly_flat', label: 'Monthly Flat Bonus', amount: 2500 },
+    ],
+  },
+
+  attestation: {
+    key: 'attestation',
+    name: 'Attestation',
+    cadence: 'weekly',
+    color: '#84cc16',
+    headerBg: 'bg-lime-950/40',
+    badgeCls: 'bg-lime-900/60 text-lime-300',
+    rules: [
+      {
+        type: 'tiered',
+        key: 'attested_cases',
+        label: 'Attested Cases',
+        tiers: [
+          { min: 0,  max: 29, rate: 0 },
+          { min: 30, max: 39, rate: 50 },
+          { min: 40, max: 49, rate: 75 },
+          { min: 50, max: null, rate: 100 },
+        ],
+      },
     ],
   },
 

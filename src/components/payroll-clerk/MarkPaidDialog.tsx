@@ -500,6 +500,11 @@ export default function MarkPaidDialog({
               <p className="mt-0.5 text-[9.5px] font-medium uppercase tracking-widest text-white/50">
                 {row?.processor ?? ''}
               </p>
+              {row?.departmentName && (
+                <span className="mt-1.5 inline-flex items-center rounded-full bg-white/20 px-2 py-0.5 text-[9.5px] font-semibold text-white backdrop-blur-sm">
+                  {row.departmentName}
+                </span>
+              )}
             </div>
             </motion.div>
           </AnimatePresence>

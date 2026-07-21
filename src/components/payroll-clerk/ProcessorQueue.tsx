@@ -129,6 +129,20 @@ function BonusChip({ row }: { row: QueueRow }) {
   );
 }
 
+/** Small muted pill showing the payee's payroll department. Renders nothing
+ *  when the row has no known department (e.g. MESA urgent payments). */
+function DeptChip({ name }: { name: string | null }) {
+  if (!name) return null;
+  return (
+    <span
+      className="inline-flex max-w-full items-center truncate rounded-full bg-zinc-100 px-1.5 py-0.5 text-[9.5px] font-medium uppercase tracking-wide text-zinc-500 dark:bg-zinc-800/70 dark:text-zinc-400"
+      title={`Department: ${name}`}
+    >
+      {name}
+    </span>
+  );
+}
+
 function BankCell({
   processor,
   bankPreferredRaw,
@@ -220,7 +234,8 @@ function ProcessorQueue({ processor, rows, onMarkPaid, onViewPaystub, periodStar
         r.name.toLowerCase().includes(q) ||
         r.email.toLowerCase().includes(q) ||
         r.id.toLowerCase().includes(q) ||
-        (r.bankPreferredRaw ?? '').toLowerCase().includes(q),
+        (r.bankPreferredRaw ?? '').toLowerCase().includes(q) ||
+        (r.departmentName ?? '').toLowerCase().includes(q),
     );
   }, [rows, debouncedQuery]);
 
@@ -529,6 +544,11 @@ const QueueRowItem = React.memo(function QueueRowItem({
                 </motion.span>
               </div>
               <div className="truncate font-mono text-[11px] text-zinc-500">{row.email}</div>
+              {row.departmentName && (
+                <div className="mt-1">
+                  <DeptChip name={row.departmentName} />
+                </div>
+              )}
             </div>
             <div className="shrink-0 text-right">
               <div
@@ -642,6 +662,11 @@ const QueueRowItem = React.memo(function QueueRowItem({
           <div className="truncate font-mono text-[11px] text-zinc-500 dark:text-zinc-500">
             {row.email}
           </div>
+          {row.departmentName && (
+            <div className="mt-1">
+              <DeptChip name={row.departmentName} />
+            </div>
+          )}
         </button>
 
         {isAllView && (

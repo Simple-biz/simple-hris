@@ -73,6 +73,9 @@ function toQueueRow(r: UrgentPaymentRow, processor: ProcessorId): QueueRow {
     totalHours: null,
     otHours: null,
     bankPreferredRaw: PROCESSOR_LABEL[processor] ?? null,
+    // MESA urgent payments aren't tied to a payroll department.
+    departmentKey: null,
+    departmentName: null,
     details: r.details ?? { email: r.work_email },
   };
 }

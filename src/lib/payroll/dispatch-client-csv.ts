@@ -22,6 +22,7 @@ type CsvRow = Record<string, string>;
 const PENDING_COLUMNS: { key: string; header: string }[] = [
   { key: 'name',            header: 'Name' },
   { key: 'email',           header: 'Email' },
+  { key: 'department',      header: 'Department' },
   { key: 'processor',       header: 'Processor' },
   { key: 'amount_usd',      header: 'Amount (USD)' },
   { key: 'amount_php',      header: 'Amount (PHP)' },
@@ -91,6 +92,7 @@ export function buildPendingRows(rows: QueueRow[]): CsvRow[] {
   return rows.map((r) => ({
     name: r.name,
     email: r.email,
+    department: r.departmentName ?? '',
     processor: r.processor,
     amount_usd: fmtMoney(r.amountUSD),
     amount_php: fmtMoney(r.amountPHP),

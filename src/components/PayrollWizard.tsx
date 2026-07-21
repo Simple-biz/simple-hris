@@ -1342,7 +1342,9 @@ export default function PayrollWizard({
   // Adjustment path, exactly as before. Feeds the Additions "KPI Bonus" toggle
   // and the step-4 review totals so what accounting sees is what dispatches.
   const [hslKpiAmounts, setHslKpiAmounts] = useState<Record<string, number>>({});
-  const [hslKpiEligible, setHslKpiEligible] = useState<Set<string>>(new Set());
+  // Eligibility (who has a scored amount this week) is derived per wizard row in
+  // `resolvedHslKpi` — which resolves Hubstaff email → master → work/personal email
+  // so it survives the 2026-07-21 work-email re-key — not tracked as its own state.
   const [hslKpiPeriod, setHslKpiPeriod] = useState<{
     period_start: string;
     period_end: string;
@@ -1468,7 +1470,6 @@ export default function PayrollWizard({
           if (!cancelled) {
             setHslKpiPeriod(null);
             setHslKpiAmounts({});
-            setHslKpiEligible(new Set());
           }
           return;
         }
@@ -1504,7 +1505,6 @@ export default function PayrollWizard({
           if (!cancelled) {
             setHslKpiPeriod(null);
             setHslKpiAmounts({});
-            setHslKpiEligible(new Set());
           }
           return;
         }
@@ -1536,13 +1536,8 @@ export default function PayrollWizard({
         );
         if (cancelled) return;
 
-        // Eligibility = anyone with a positive scored amount this week.
-        const eligible = new Set<string>();
-        for (const [em, amt] of Object.entries(amounts)) if (amt > 0) eligible.add(em);
-
         const picks = Array.from(chosen.values());
         setHslKpiAmounts(amounts);
-        setHslKpiEligible(eligible);
         setHslKpiPeriod({
           period_start: hubstaffWeekStart,
           period_end: picks.find((p) => p.period_end)?.period_end ?? '',
@@ -1553,7 +1548,6 @@ export default function PayrollWizard({
         if (!cancelled) {
           setHslKpiPeriod(null);
           setHslKpiAmounts({});
-          setHslKpiEligible(new Set());
         }
       } finally {
         if (!cancelled) setHslKpiLoading(false);
@@ -3579,6 +3573,11 @@ export default function PayrollWizard({
     employeeMetrics,
     deptMetrics,
   ]);
+  // The wizard's raw calc-result email casing, kept in a ref so the Payroll Notes
+  // bridge can resolve a lowercased board email back to the exact key the Adj.
+  // inputs + dispatch payload read (see pullNotesAdjustments). A ref (not a dep)
+  // keeps the bridge callback stable so its step-entry effect doesn't re-fire.
+  const calcResultsRef = useRef<CalcRow[]>([]);
 
   // ── Payroll Notes ↔ Additions "Adj." bridge ────────────────────────────────
   // The board's Adjustment column and the Additions override hold the same
@@ -3631,6 +3630,17 @@ export default function PayrollWizard({
       const res = await fetch('/api/payroll-wizard/notes', { cache: 'no-store' });
       const json = (await res.json()) as { rows?: PayrollWizardNoteRow[] };
       if (!res.ok) return;
+      // `bonusOverrides` is keyed by the wizard's raw calc-result email casing
+      // (that's the key the Adj. inputs and the dispatch payload read). Board
+      // emails are lowercased for matching, so resolve each back to the actual
+      // calc-result casing before keying — otherwise a Hubstaff email with any
+      // uppercase letter lands the override under a lowercased key the paystub
+      // payload never looks up, and the adjustment silently reads as ₱0.
+      const rawByNorm = new Map<string, string>();
+      for (const cr of calcResultsRef.current) {
+        const norm = normEmail(cr.email);
+        if (norm && !rawByNorm.has(norm)) rawByNorm.set(norm, cr.email);
+      }
       // Newest-written row wins when a worker has several open amounts.
       // `rowId` is the winning row for that email — the row that actually gets
       // applied, so it's the one we file as Done afterwards (force only).
@@ -3639,7 +3649,9 @@ export default function PayrollWizard({
       for (const r of rows) {
         if (r.done) continue;
         if (only && !only.has(r.id)) continue;
-        const email = (r.worker_email ?? '').trim().toLowerCase();
+        const normalized = (r.worker_email ?? '').trim().toLowerCase();
+        // Key by the wizard's own casing when the worker resolves to a calc row.
+        const email = normalized ? (rawByNorm.get(normalized) ?? normalized) : '';
         const parsed = parseAdjustmentAmount(r.adjustment);
         if (!email || !parsed) continue;
         const amount = adjustmentToPhp(parsed, fxRates);
@@ -3735,11 +3747,22 @@ export default function PayrollWizard({
     const onRemoved = (e: Event) => {
       if (isReplayRef.current) return;
       const detail = (e as CustomEvent<{ workerEmail?: string; adjustment?: string }>).detail;
-      const email = (detail?.workerEmail ?? '').trim().toLowerCase();
+      const normalized = (detail?.workerEmail ?? '').trim().toLowerCase();
       const parsed = parseAdjustmentAmount(detail?.adjustment);
-      if (!email || !parsed) return;
+      if (!normalized || !parsed) return;
       const php = adjustmentToPhp(parsed, fxRates);
       const ctx = auditCtxRef.current;
+      // Overrides are keyed by the wizard's raw calc-result casing; the board sends
+      // a lowercased email. Resolve to the actual key before comparing/clearing so
+      // an uppercase-email worker's override is still found (and its board note
+      // cleared) when their board row is removed.
+      const rawFromCalc = calcResultsRef.current.find((cr) => normEmail(cr.email) === normalized)?.email;
+      const email =
+        rawFromCalc && ctx.bonusOverrides[rawFromCalc] !== undefined
+          ? rawFromCalc
+          : ctx.bonusOverrides[normalized] !== undefined
+            ? normalized
+            : (rawFromCalc ?? normalized);
       const current = ctx.bonusOverrides[email];
       if (php === null || current === undefined || Math.abs(current - php) > 0.01) return;
       setBonusOverrides(prev => {
@@ -4300,6 +4323,43 @@ export default function PayrollWizard({
     fxRates,
   ]);
 
+  // Keep the bridge's calc-result ref current (used to resolve board emails to the
+  // wizard's raw email casing). Ref, not state, so the stable bridge callback can
+  // read the latest rows without re-firing its step-entry effect.
+  useEffect(() => {
+    calcResultsRef.current = calcResults;
+  }, [calcResults]);
+
+  // One-time re-key of any override/note saved under a lowercased email to the
+  // wizard's raw calc-result casing. Overrides bridged in from the Payroll Notes
+  // board before the casing fix were keyed lowercased, so the Adj. column, the
+  // running totals, AND the dispatch payload (all of which read by raw email) saw
+  // ₱0. Migrating the map here makes every reader agree; runs whenever calc rows
+  // resolve and is a no-op once keys already match (so it can't loop).
+  useEffect(() => {
+    if (isReplay || calcResults.length === 0) return;
+    const rawByNorm = new Map<string, string>();
+    for (const cr of calcResults) {
+      const norm = normEmail(cr.email);
+      if (norm && !rawByNorm.has(norm)) rawByNorm.set(norm, cr.email);
+    }
+    const rekey = <T,>(m: Record<string, T>): Record<string, T> | null => {
+      let changed = false;
+      const next: Record<string, T> = {};
+      for (const [k, v] of Object.entries(m)) {
+        const raw = rawByNorm.get(k.toLowerCase());
+        // Only move a lowercased key onto its raw twin when the raw key isn't
+        // already present (a live raw-keyed edit always wins over stale data).
+        const target = raw && raw !== k && !(raw in m) ? raw : k;
+        if (target !== k) changed = true;
+        next[target] = v;
+      }
+      return changed ? next : null;
+    };
+    setBonusOverrides((prev) => rekey(prev) ?? prev);
+    setBonusOverrideNotes((prev) => rekey(prev) ?? prev);
+  }, [calcResults, isReplay]);
+
   /**
    * Applies per-department and global OT suspension from System Settings.
    * If a department's OT is turned off (or global OT is suspended), otHours/otPay
@@ -4639,6 +4699,45 @@ export default function PayrollWizard({
     return out;
   }, [managerBonusByDeptRaw, effectiveCalcResults, masterIndex]);
 
+  /**
+   * Weekly HSL KPI amounts resolved to each wizard row's identity. `hslKpiAmounts`
+   * is keyed by `hsl_bonus_entries.employee_email` — which the 2026-07-21 re-key set
+   * to each person's WORK email — while the wizard keys rows by their Hubstaff email.
+   * A person whose Hubstaff login ≠ master Work Email would otherwise silently score
+   * ₱0, so we bridge via `masterIndex` (work email → personal email → name tokens),
+   * mirroring {@link resolvedManagerBonus}. Direct match still wins when it hits.
+   * Returns `{ amounts, eligible }` both keyed by the wizard row email.
+   */
+  const resolvedHslKpi = useMemo(() => {
+    const amounts: Record<string, number> = {};
+    const eligible = new Set<string>();
+    if (Object.keys(hslKpiAmounts).length === 0) return { amounts, eligible };
+    const lookup = (key: string | null | undefined): number | undefined => {
+      const k = (key ?? '').toLowerCase();
+      return k ? hslKpiAmounts[k] : undefined;
+    };
+    for (const row of effectiveCalcResults) {
+      const e = normEmail(row.email);
+      let amt = lookup(e);
+      if (amt === undefined) {
+        let master = e ? masterIndex.byWorkEmail.get(e) : undefined;
+        if (!master && e) master = masterIndex.byPersonalEmail.get(e);
+        if (!master && row.name) {
+          const toks = normalizeNameTokens(row.name);
+          if (toks) master = masterIndex.byNameTokens.get(toks);
+        }
+        if (master) {
+          amt = lookup(master.work_email) ?? lookup(master.personal_email);
+        }
+      }
+      if (amt !== undefined) {
+        amounts[row.email] = amt;
+        if (amt > 0) eligible.add(row.email);
+      }
+    }
+    return { amounts, eligible };
+  }, [hslKpiAmounts, effectiveCalcResults, masterIndex]);
+
   // PAB + Tech amounts + per-department allowlist come from the Payment Catalog
   // System Bonuses tab (prefetched into initialData). Falls back to the legacy
   // constants + "applies to everyone" when no rows exist (pre-migration).
@@ -4737,12 +4836,14 @@ export default function PayrollWizard({
     // column; do NOT also key HSL KPI amounts into Adjustment by hand (double-pay).
     for (const [email, deptKey] of Object.entries(employeeDepts)) {
       if (deptKey !== 'hogan_smith_law') continue;
-      const amt = hslKpiAmounts[email.toLowerCase()] ?? 0;
+      // Resolved via masterIndex so a person whose Hubstaff login ≠ master Work
+      // Email (the key `hsl_bonus_entries.employee_email` now uses) still matches.
+      const amt = resolvedHslKpi.amounts[email] ?? 0;
       if (amt) result[email] = (result[email] ?? 0) + amt;
     }
 
     return result;
-  }, [effectiveCalcResults, employeeDepts, employeeBonuses, employeeMetrics, deptMetrics, hslKpiAmounts, resolvedManagerBonus, sysBonusCfg, pabAmountPhp, techAmountPhp]);
+  }, [effectiveCalcResults, employeeDepts, employeeBonuses, employeeMetrics, deptMetrics, resolvedHslKpi, resolvedManagerBonus, sysBonusCfg, pabAmountPhp, techAmountPhp]);
 
   /**
    * Effective bonus per employee: the auto-computed subtotal (PAB + Tech + KPI +
@@ -4982,7 +5083,18 @@ export default function PayrollWizard({
       // `adjustment` field (kept OUT of other_bonuses) so the paystub can itemize it
       // separately from earned KPI/dept "Performance" bonuses. bonuses_total still
       // sums pab + tech + other + adjustment, so `final` is unchanged.
-      const accountingAdj = hasRates ? (bonusOverrides[r.email] ?? 0) : 0;
+      // Read by the raw calc-result email first, then fall back to the normalized
+      // key: overrides bridged in from the Payroll Notes board before this fix were
+      // saved under a lowercased key, so the fallback recovers them without a re-entry.
+      const rawEmailKey = r.email;
+      const normEmailKey = normEmail(r.email);
+      const overrideKey =
+        bonusOverrides[rawEmailKey] !== undefined
+          ? rawEmailKey
+          : normEmailKey && bonusOverrides[normEmailKey] !== undefined
+            ? normEmailKey
+            : rawEmailKey;
+      const accountingAdj = hasRates ? (bonusOverrides[overrideKey] ?? 0) : 0;
       const otherBonuses = autoOtherBonuses;
       const bonusTotal = pabBonus + techBonus + otherBonuses + accountingAdj;
 
@@ -5031,7 +5143,7 @@ export default function PayrollWizard({
           orphanage_pay: orphanagePay,
           final: finalPay,
         },
-        adjustment_note: accountingAdj !== 0 ? (bonusOverrideNotes[r.email]?.trim() || null) : null,
+        adjustment_note: accountingAdj !== 0 ? (bonusOverrideNotes[overrideKey]?.trim() || null) : null,
       };
 
       if (isExcluded) {
@@ -9349,7 +9461,7 @@ export default function PayrollWizard({
                         // amount for the week. Apply All restricts to that subset.
                         const eligibleEmails = bonus.id === KPI_BONUS_ID
                           ? deptEmployees
-                              .filter(e => hslKpiEligible.has(e.email.toLowerCase()))
+                              .filter(e => resolvedHslKpi.eligible.has(e.email))
                               .map(e => e.email)
                           : deptEmployees.map(e => e.email);
                         const allChecked =
@@ -9953,9 +10065,11 @@ export default function PayrollWizard({
                                 {/* Toggle-based dept bonus switches */}
                                 {!FORMULA_DEPT_KEYS.has(activeDeptTab) && activeDept.bonuses.map(bonus => {
                                   if (bonus.id === KPI_BONUS_ID) {
-                                    const lc = emp.email.toLowerCase();
-                                    const eligible = hslKpiEligible.has(lc);
-                                    const amount = hslKpiAmounts[lc] ?? 0;
+                                    // Resolved via masterIndex (see resolvedHslKpi) so a Hubstaff
+                                    // login ≠ master Work Email still shows the scored amount
+                                    // rather than a false "—".
+                                    const eligible = resolvedHslKpi.eligible.has(emp.email);
+                                    const amount = resolvedHslKpi.amounts[emp.email] ?? 0;
                                     if (!eligible) {
                                       return (
                                         <TableCell
