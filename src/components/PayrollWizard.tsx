@@ -6178,7 +6178,17 @@ export default function PayrollWizard({
     let succeeded = false;
     try {
       const res = await fetch('/api/cron/sync-rates-from-sheet', { method: 'POST' });
-      const json = (await res.json()) as { success?: boolean; rowCount?: number; uniqueEmployees?: number; inserted?: number; updated?: number; skippedNoWorkEmail?: number; skippedNoRate?: number; error?: string };
+      const json = (await res.json()) as { success?: boolean; disabled?: boolean; rowCount?: number; uniqueEmployees?: number; inserted?: number; updated?: number; skippedNoWorkEmail?: number; skippedNoRate?: number; error?: string };
+      // Rates Sheet sync is intentionally disabled — rates are managed in the
+      // Payment Catalog, so the endpoint returns HTTP 200 + { disabled: true }.
+      // Surface that as a neutral info toast rather than a red failure. Mirrors
+      // AdminCsvImports.handleRatesSheetSync.
+      if (json.disabled) {
+        toast.info('Rates sync disabled', {
+          description: json.error ?? 'Rates are managed in the Payment Catalog, not the Google Sheet.',
+        });
+        return;
+      }
       if (!res.ok || !json.success) throw new Error(json.error ?? 'Rates sync failed');
       succeeded = true;
       setRatesSyncPct({ pct: 100 });

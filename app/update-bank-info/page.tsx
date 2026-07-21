@@ -1,9 +1,9 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { motion } from 'motion/react';
 import { toast } from 'sonner';
-import { Loader2, Mail, ShieldCheck, ArrowLeft, CheckCircle2, Landmark } from 'lucide-react';
+import { Loader2, Mail, ShieldCheck, ArrowLeft, CheckCircle2, Landmark, Lock } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
@@ -24,6 +24,7 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 export default function UpdateBankInfoPage() {
   const [step, setStep] = useState<Step>('email');
   const [busy, setBusy] = useState(false);
+  const [payrollLocked, setPayrollLocked] = useState(false);
 
   const [email, setEmail] = useState('');
   const [code, setCode] = useState('');
@@ -36,8 +37,41 @@ export default function UpdateBankInfoPage() {
   const [preferredProcessor, setPreferredProcessor] = useState<ProcessorId | ''>('');
   const [payout, setPayout] = useState<PayoutFields>(() => ({ ...emptyPayout }));
 
+  // ── Payroll-lock probe ────────────────────────────────────────────────────
+  // While Accounting is dispatching payroll the /save endpoint hard-blocks with
+  // 423, so we grey out the email + "Send code" controls up front rather than
+  // let someone run the whole OTP flow only to be rejected at the end. Poll (and
+  // refetch on tab focus) so the form reopens on its own the moment processing
+  // stops. Advisory only: on a read error we fail OPEN and let the server
+  // enforce the real block.
+  useEffect(() => {
+    let alive = true;
+    const check = async () => {
+      try {
+        const res = await fetch('/api/bank-update/lock-status', { cache: 'no-store' });
+        if (!res.ok) return;
+        const json = (await res.json()) as { locked?: boolean };
+        if (alive) setPayrollLocked(Boolean(json.locked));
+      } catch {
+        /* advisory — keep prior state */
+      }
+    };
+    void check();
+    const id = window.setInterval(check, 20_000);
+    const onFocus = () => void check();
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onFocus);
+    return () => {
+      alive = false;
+      window.clearInterval(id);
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onFocus);
+    };
+  }, []);
+
   // ── Step 1: request a code ────────────────────────────────────────────────
   const requestCode = async () => {
+    if (payrollLocked) return;
     const e = email.trim().toLowerCase();
     if (!EMAIL_RE.test(e)) {
       toast.error('Enter a valid email address.');
@@ -103,6 +137,7 @@ export default function UpdateBankInfoPage() {
 
   // ── Step 3: save the new details ──────────────────────────────────────────
   const save = async () => {
+    if (payrollLocked) return;
     if (!preferredProcessor) {
       toast.error('Choose a payment method.');
       return;
@@ -142,6 +177,9 @@ export default function UpdateBankInfoPage() {
         body: JSON.stringify(payload),
       });
       const json = (await res.json()) as { success?: boolean; error?: string };
+      // 423 = payroll dispatch lock flipped on mid-session. Reflect it in the UI
+      // (greys the controls, shows the notice) so it matches the server's block.
+      if (res.status === 423) setPayrollLocked(true);
       if (!res.ok || json.error) throw new Error(json.error ?? 'Could not save your details.');
       setStep('done');
     } catch (err) {
@@ -171,6 +209,7 @@ export default function UpdateBankInfoPage() {
           </div>
           {step === 'email' && (
             <div className="space-y-5">
+              {payrollLocked && <LockNotice />}
               <Stepline icon={<Mail className="h-4 w-4" />} title="Step 1 of 2 — Verify it's you">
                 Enter your <strong>work email</strong>. We'll send a 6-digit code to that inbox.
               </Stepline>
@@ -183,11 +222,16 @@ export default function UpdateBankInfoPage() {
                   placeholder="you@simple.biz"
                   value={email}
                   onChange={(ev) => setEmail(ev.target.value)}
-                  onKeyDown={(ev) => ev.key === 'Enter' && !busy && requestCode()}
-                  disabled={busy}
+                  onKeyDown={(ev) => ev.key === 'Enter' && !busy && !payrollLocked && requestCode()}
+                  disabled={busy || payrollLocked}
                 />
               </div>
-              <Button type="button" className="w-full" onClick={requestCode} disabled={busy}>
+              <Button
+                type="button"
+                className="w-full"
+                onClick={requestCode}
+                disabled={busy || payrollLocked}
+              >
                 {busy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
                 Send code
               </Button>
@@ -241,6 +285,7 @@ export default function UpdateBankInfoPage() {
 
           {step === 'edit' && (
             <div className="space-y-5">
+              {payrollLocked && <LockNotice />}
               <Stepline icon={<Landmark className="h-4 w-4" />} title="Review &amp; update your payout details">
                 Signed in as <strong>{name ? `${name} · ` : ''}{workEmail}</strong>. Update anything that's
                 changed, then save.
@@ -265,7 +310,12 @@ export default function UpdateBankInfoPage() {
                 </p>
               )}
 
-              <Button type="button" className="w-full" onClick={save} disabled={busy || !preferredProcessor}>
+              <Button
+                type="button"
+                className="w-full"
+                onClick={save}
+                disabled={busy || payrollLocked || !preferredProcessor}
+              >
                 {busy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
                 Save changes
               </Button>
@@ -302,6 +352,31 @@ export default function UpdateBankInfoPage() {
         </p>
       </motion.div>
     </main>
+  );
+}
+
+/**
+ * Shown when the Payroll Wizard's dispatch lock is on. Explains why the controls
+ * are greyed out and that the page reopens on its own — no manual refresh needed.
+ */
+function LockNotice() {
+  return (
+    <div
+      className="flex items-start gap-2.5 rounded-xl border border-rose-200 bg-rose-50/80 px-4 py-3 dark:border-rose-900/50 dark:bg-rose-950/30"
+      role="status"
+      aria-live="polite"
+    >
+      <Lock className="mt-0.5 h-4 w-4 shrink-0 text-rose-600 dark:text-rose-300" aria-hidden />
+      <div className="text-[13px] leading-relaxed">
+        <p className="font-semibold text-rose-900 dark:text-rose-100">
+          Payroll is being processed right now
+        </p>
+        <p className="mt-0.5 text-rose-700/90 dark:text-rose-300/80">
+          Bank detail updates are temporarily paused so payouts can&rsquo;t change mid-cycle. This
+          page reopens automatically once processing finishes — please check back shortly.
+        </p>
+      </div>
+    </div>
   );
 }
 
