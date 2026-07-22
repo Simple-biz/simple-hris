@@ -317,6 +317,7 @@ export default function MarkPaidDialog({
   const [note,                   setNote]                   = useState('');
   const [submitting,             setSubmitting]             = useState(false);
   const [copied,                 setCopied]                 = useState(false);
+  const [copiedAcct,             setCopiedAcct]             = useState(false);
 
   // The primary (top) amount shown in the hero — COP or USD depending on the
   // payout currency.
@@ -340,6 +341,22 @@ export default function MarkPaidDialog({
     }
   }, [heroAmount, row]);
 
+  // Copy the recipient's account / wallet ID verbatim — unlike the amount, this
+  // pastes as-is (email, account number, or tag) straight into the processor.
+  const copyAccount = useCallback(() => {
+    const text = recipientAccountNumber.trim();
+    if (!text) return;
+    const done = () => {
+      setCopiedAcct(true);
+      window.setTimeout(() => setCopiedAcct(false), 1400);
+    };
+    if (navigator.clipboard?.writeText) {
+      navigator.clipboard.writeText(text).then(done).catch(() => {});
+    } else {
+      done();
+    }
+  }, [recipientAccountNumber]);
+
   useEffect(() => {
     if (!row || !defaults) return;
     setTransactionId('');
@@ -353,6 +370,7 @@ export default function MarkPaidDialog({
     setStatus('paid');
     setNote('');
     setSubmitting(false);
+    setCopiedAcct(false);
   }, [row?.id, defaults, row]);
 
   const open    = row != null;
@@ -691,14 +709,28 @@ export default function MarkPaidDialog({
             }
             cfg={cfg}
           >
-            <FieldInput
-              id="rcpt-acct"
-              cfg={cfg}
-              placeholder={isWires ? '0098-2231-7710' : 'recipient@example.com'}
-              value={recipientAccountNumber}
-              onChange={(e) => setRecipientAccountNumber(e.target.value)}
-              className="font-mono text-xs"
-            />
+            <div className="relative">
+              <FieldInput
+                id="rcpt-acct"
+                cfg={cfg}
+                placeholder={isWires ? '0098-2231-7710' : 'recipient@example.com'}
+                value={recipientAccountNumber}
+                onChange={(e) => setRecipientAccountNumber(e.target.value)}
+                className="pr-10 font-mono text-xs"
+              />
+              <button
+                type="button"
+                onClick={copyAccount}
+                onMouseDown={(e) => e.preventDefault()}
+                disabled={recipientAccountNumber.trim().length === 0}
+                aria-label={copiedAcct ? 'Account ID copied' : 'Copy account / wallet ID'}
+                title={copiedAcct ? 'Copied' : 'Copy'}
+                className="absolute right-1.5 top-1/2 inline-flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-md text-zinc-400 outline-none transition-colors hover:bg-zinc-100 hover:text-zinc-600 focus:outline-none focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-30 dark:hover:bg-zinc-800 dark:hover:text-zinc-300"
+                style={copiedAcct ? { color: cfg.accent } : undefined}
+              >
+                {copiedAcct ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+              </button>
+            </div>
           </Field>
 
           {isWires && (

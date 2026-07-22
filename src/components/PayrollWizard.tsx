@@ -138,6 +138,10 @@ import {
   adjustmentToPhp,
   parseAdjustmentAmount,
 } from '@/lib/payroll/adjustment-bridge';
+import {
+  parseSignedAmountInput,
+  normalizeSignedAmountDisplay,
+} from '@/lib/payroll/signed-amount-input';
 import type { PayrollWizardNoteRow } from '@/lib/supabase/payroll-wizard-notes';
 import AuditTrailPanel from '@/components/payroll-clerk/AuditTrailPanel';
 import TimeAdjustmentReviewPanel from '@/components/payroll/TimeAdjustmentReviewPanel';
@@ -888,6 +892,95 @@ function isoDateFromColumnGroup(group: string[]): string | null {
   return null;
 }
 
+/**
+ * A controlled text input for a SIGNED money amount — the Adjustment ("Adj.")
+ * fields, where accounting types a positive addition or a negative deduction.
+ *
+ * Deliberately NOT `<input type="number">`: a number input blanks its
+ * `e.target.value` for anything it can't yet parse, so a lone "-" (the first
+ * keystroke of every negative amount) read back as "" and the old handler
+ * coerced it to 0 — negatives could never be entered. This keeps the raw text
+ * in local state so an in-progress "-" / "-." stays on screen, and commits a
+ * parsed number to the model only when the text is a real number (see
+ * parseSignedAmountInput). An external value change (board pull, clear, or a
+ * fresh row) re-syncs the display, but a keystroke that parses back to the same
+ * committed value never fights the user's typing.
+ */
+const SignedAmountInput = React.memo(function SignedAmountInput({
+  value,
+  onCommit,
+  emptyValue = 0,
+  disabled,
+  title,
+  className,
+}: {
+  /** The committed amount from the model. */
+  value: number | null;
+  /** Called with the parsed amount on every real change. */
+  onCommit: (value: number) => void;
+  /** What an EMPTY field commits to, and the model value that renders as empty.
+   *  The Adj. fields use 0: clearing the field keeps the override open at ₱0
+   *  (the X button removes it) rather than snapping back to "0" as you type. */
+  emptyValue?: number;
+  disabled?: boolean;
+  title?: string;
+  className?: string;
+}) {
+  // An external model value equal to emptyValue shows as an empty field.
+  const displayFor = (v: number | null) =>
+    v === null || v === emptyValue ? '' : normalizeSignedAmountDisplay(v);
+
+  const [text, setText] = useState(() => displayFor(value));
+  // Track the value WE last committed, so an external change (board pull, a
+  // clear elsewhere) re-syncs the field, but our own echo doesn't wipe an
+  // in-progress "-"/"-." the user is still typing. An empty field's committed
+  // value IS emptyValue (not null), so the parent's echo of emptyValue matches
+  // and never re-stamps a stray "0" mid-typing.
+  const committedRef = useRef<number>(value ?? emptyValue);
+  useEffect(() => {
+    const incoming = value ?? emptyValue;
+    if (incoming !== committedRef.current) {
+      committedRef.current = incoming;
+      setText(displayFor(value));
+    }
+    // displayFor is a stable pure closure over emptyValue; value + emptyValue cover it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [value, emptyValue]);
+
+  return (
+    <input
+      type="text"
+      inputMode="decimal"
+      // Guide mobile keyboards + allow only signed-decimal characters; parsing
+      // still does the authoritative validation.
+      pattern="^[+-]?[0-9.,]*$"
+      value={text}
+      disabled={disabled}
+      title={title}
+      className={className}
+      onChange={(e) => {
+        const raw = e.target.value;
+        const { value: parsed, incomplete } = parseSignedAmountInput(raw);
+        // Reject characters that can't belong to a signed decimal at all
+        // (letters, a second sign, etc.) — keep the last good text on screen.
+        if (!incomplete && parsed === null && raw.trim() !== '' && !/^[+-]?[0-9.,]*$/.test(raw.trim())) {
+          return;
+        }
+        setText(raw);
+        if (incomplete) return; // mid-edit ("-", "-.") — leave the model alone
+        // Empty (parsed === null) commits emptyValue, keeping the field open.
+        const next = parsed ?? emptyValue;
+        committedRef.current = next;
+        onCommit(next);
+      }}
+      onBlur={() => {
+        // On blur, normalize the display to the committed value so a stray
+        // trailing dot or leading "+" doesn't linger ("-5." → "-5", "" → "").
+        setText(displayFor(committedRef.current));
+      }}
+    />
+  );
+});
 
 const steps = [
   {
@@ -10279,17 +10372,12 @@ export default function PayrollWizard({
                                   ) : hasOverride ? (
                                     <div className="flex flex-col items-end gap-1">
                                       <div className="flex items-center justify-end gap-1">
-                                        <input
-                                          type="number"
-                                          inputMode="decimal"
-                                          step="0.01"
-                                          value={bonusOverrides[emp.email] ?? ''}
-                                          onChange={(e) => {
-                                            const raw = e.target.value;
-                                            const next = raw === '' ? 0 : Number(raw);
-                                            if (!Number.isFinite(next)) return;
-                                            updateBonusOverride(emp.email, next);
-                                          }}
+                                        <SignedAmountInput
+                                          value={bonusOverrides[emp.email] ?? null}
+                                          emptyValue={0}
+                                          // Empty keeps the override OPEN at 0 (the X button clears
+                                          // it) — only a real number or a negative commits a delta.
+                                          onCommit={(v) => updateBonusOverride(emp.email, v)}
                                           disabled={isReplay}
                                           title={`Signed adjustment added on top of auto-computed bonuses (${formatPHP(autoBonus)}). Use a negative value to deduct.`}
                                           className="h-6 w-[88px] rounded border border-amber-400/70 bg-white px-1.5 text-right font-mono text-[11px] font-bold tabular-nums text-amber-700 focus:outline-none focus:ring-1 focus:ring-amber-400 disabled:cursor-not-allowed disabled:opacity-60 dark:border-amber-700/60 dark:bg-zinc-900 dark:text-amber-300"
@@ -11269,17 +11357,12 @@ export default function PayrollWizard({
                                 <td className="px-3 py-3 text-right">
                                   {override !== null ? (
                                     <div className="flex items-center justify-end gap-1">
-                                      <input
-                                        type="number"
-                                        inputMode="decimal"
-                                        step="0.01"
+                                      <SignedAmountInput
                                         value={override}
-                                        onChange={e => {
-                                          const raw = e.target.value;
-                                          const next = raw === '' ? 0 : Number(raw);
-                                          if (!Number.isFinite(next)) return;
-                                          updateBonusOverride(r.email, next);
-                                        }}
+                                        emptyValue={0}
+                                        // Empty keeps the override OPEN at 0 (the X button clears
+                                        // it) — only a real number or a negative commits a delta.
+                                        onCommit={(v) => updateBonusOverride(r.email, v)}
                                         title={`Signed adjustment added on top of the KPI bonus (${formatPHP(kpiBonus)}). Use a negative value to deduct.`}
                                         className="h-6 w-[88px] rounded border border-amber-400/70 bg-white px-1.5 text-right font-mono text-[11px] font-bold tabular-nums text-amber-700 focus:outline-none focus:ring-1 focus:ring-amber-400 dark:border-amber-700/60 dark:bg-zinc-900 dark:text-amber-300"
                                       />
