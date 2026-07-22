@@ -41,6 +41,36 @@ export function isProcessorId(v: string): v is ProcessorId {
   return PROCESSOR_OPTIONS.some((p) => p.id === v);
 }
 
+/**
+ * "Bank Preferred" dropdown (Employee Profile → Payment). A compact reskin of
+ * the processor picker: each option maps to a `preferred_processor` id, so the
+ * dropdown and the radio picker edit the same field and mirror each other.
+ *
+ * `x1153` is a specific wire account, not a distinct processor, so it maps to
+ * `wires`. Because `wires` has no dedicated non-x1153 option here, a saved
+ * `wires` value displays as "x1153" in this dropdown (while the radio picker
+ * still shows "Wires" — same underlying value, two labels). See the design doc.
+ */
+export const BANK_PREFERRED_OPTIONS: { label: string; id: ProcessorId }[] = [
+  { label: 'HiGlobe', id: 'higlobe' },
+  { label: 'Hurupay', id: 'hurupay' },
+  { label: 'Jeeves', id: 'jeeves' },
+  { label: 'Wise', id: 'wise' },
+  { label: 'x1153', id: 'wires' },
+];
+
+/** The dropdown label to show for a saved `preferred_processor` value. Returns
+ *  '' when nothing is selected or the value isn't one of the offered options. */
+export function bankPreferredLabelForProcessor(p: ProcessorId | ''): string {
+  if (!p) return '';
+  return BANK_PREFERRED_OPTIONS.find((o) => o.id === p)?.label ?? '';
+}
+
+/** The `preferred_processor` id for a chosen dropdown label. */
+export function processorForBankPreferredLabel(label: string): ProcessorId | undefined {
+  return BANK_PREFERRED_OPTIONS.find((o) => o.label === label)?.id;
+}
+
 export function processorDescription(p: ProcessorId): string {
   switch (p) {
     case 'hurupay':
