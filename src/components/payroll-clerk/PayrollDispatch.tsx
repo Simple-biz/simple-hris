@@ -176,25 +176,8 @@ const itemPop = {
   visible: { opacity: 1, y: 0, transition: { type: 'spring' as const, stiffness: 280, damping: 24 } },
 };
 
-/** Eased spring-like tween shared by the "focus mode" layout shifts so the
- *  sidebar retract, KPI shrink, and table growth all read as one motion. */
+/** Eased spring-like tween shared by the dispatch layout's motion. */
 const FOCUS_TRANSITION = { duration: 0.5, ease: [0.22, 1, 0.36, 1] as const };
-
-/** True at the `lg` breakpoint and up — the only place the two-column grid
- *  (and therefore the sidebar-retract focus animation) exists. Below lg the
- *  layout is a plain flex column, so focus mode is a no-op there. */
-function useIsLgUp() {
-  const [isLgUp, setIsLgUp] = useState(false);
-  useEffect(() => {
-    if (typeof window === 'undefined' || !window.matchMedia) return;
-    const mq = window.matchMedia('(min-width: 1024px)');
-    const sync = () => setIsLgUp(mq.matches);
-    sync();
-    mq.addEventListener('change', sync);
-    return () => mq.removeEventListener('change', sync);
-  }, []);
-  return isLgUp;
-}
 
 export default function PayrollDispatch() {
   const { data: session } = useSession();
@@ -212,12 +195,8 @@ export default function PayrollDispatch() {
     useDispatchQueue(selectedSourceFile);
   const viewingPastWeek = selectedSourceFile != null;
   const { state: lockState, setLocked } = useDispatchLock();
-  const isLgUp = useIsLgUp();
-  // "Focus mode" — once processing has started (lock on) at lg+, retract the
-  // processor sidebar and condense the KPI strip so the queue table gets the
-  // full width/height. The clerk is heads-down logging payments now, so the
-  // filter rail and big hero stats are just chrome in the way.
-  const focusMode = lockState.locked && isLgUp;
+  // Focus mode (retract rail + shrink KPIs on processing-start) was removed —
+  // the processor buckets + stats stay full-size at all times, processing or not.
   // Realtime "values locked" flag for this cycle — when the wizard locks/unlocks,
   // re-pull the queue so it appears/clears live (the queue's own `wizardReady`
   // mirrors this flag). The lock is owned by the wizard; here we only react.
@@ -758,21 +737,10 @@ export default function PayrollDispatch() {
           // retract the sidebar / shrink the KPI row smoothly.
           'lg:min-h-0 lg:flex-1 lg:grid lg:grid-rows-[auto_minmax(0,1fr)] lg:gap-4',
         )}
-        // Only animate the grid tracks at lg+, where the grid exists. Below lg
-        // the flex-column classes govern layout and these are ignored anyway.
-        // `initial={false}` + seeding the resting track on mount avoids a
-        // first-paint flash of an unsized grid.
+        // Static two-column grid at lg+ (processor rail 260px, content fills the
+        // rest). No focus-mode retract — the rail is always visible.
         initial={false}
-        animate={
-          isLgUp
-            ? {
-                // Processor rail stays pinned on the left even during processing
-                // (focus mode no longer retracts it) — the clerk asked to keep
-                // the Pay Processors always visible.
-                gridTemplateColumns: '260px minmax(0,1fr)',
-              }
-            : { gridTemplateColumns: '260px minmax(0,1fr)' }
-        }
+        animate={{ gridTemplateColumns: '260px minmax(0,1fr)' }}
         transition={FOCUS_TRANSITION}
       >
         {/* RIGHT TOP — Hero stats. Order 1 on mobile so stats sit above
@@ -789,7 +757,6 @@ export default function PayrollDispatch() {
             value={totalPending}
             sub={totalPending === 1 ? 'person to pay' : 'people to pay'}
             Icon={Send}
-            compact={focusMode}
           />
           <HeroStat
             tone="emerald"
@@ -797,7 +764,6 @@ export default function PayrollDispatch() {
             value={totalSent}
             sub={totalSent === 1 ? 'payment logged' : 'payments logged'}
             Icon={CheckCircle2}
-            compact={focusMode}
           />
           <HeroStat
             tone="violet"
@@ -812,7 +778,6 @@ export default function PayrollDispatch() {
             }
             Icon={Coins}
             currency
-            compact={focusMode}
           />
         </motion.div>
 
