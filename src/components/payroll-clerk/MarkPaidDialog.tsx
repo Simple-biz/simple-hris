@@ -11,6 +11,7 @@ import { Button } from '@/components/ui/button';
 import { DatePicker } from '@/components/ui/date-picker';
 import { AlertTriangle, Check, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, CircleDashed, Copy, Gauge, Loader2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { playPaymentConfirmed } from '@/lib/sound/ping-chime';
 import { formatPHP, formatUSD, formatCOP, type ProcessorId, type QueueRow } from './mock-queue';
 
 export type DispatchStatus = 'paid' | 'not_paid' | 'threshold' | 'problem';
@@ -407,6 +408,9 @@ export default function MarkPaidDialog({
         status,
         note: note.trim(),
       });
+      // Confirmed sent — reward the clerk with a crisp confirmation tick.
+      // Only for a successful "paid" dispatch, not problem/not-paid/threshold logs.
+      if (status === 'paid') playPaymentConfirmed();
     } finally {
       setSubmitting(false);
     }

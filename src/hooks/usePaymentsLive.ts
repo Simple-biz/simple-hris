@@ -13,6 +13,14 @@ export interface PaidFeedEntry {
   paidAt: string;
 }
 
+/** One department in the current cycle with its paid progress. */
+export interface DeptProgress {
+  key: string;
+  name: string;
+  total: number;
+  paid: number;
+}
+
 export interface PaymentsLiveState {
   sourceFile: string | null;
   label: string;
@@ -21,6 +29,8 @@ export interface PaymentsLiveState {
   remaining: number;
   /** Most-recently-paid recipients this cycle, newest first. */
   recent: PaidFeedEntry[];
+  /** Departments being paid this cycle, with per-dept paid progress. */
+  departments: DeptProgress[];
   loading: boolean;
   error: string | null;
 }
@@ -32,6 +42,7 @@ const EMPTY: PaymentsLiveState = {
   paid: 0,
   remaining: 0,
   recent: [],
+  departments: [],
   loading: true,
   error: null,
 };
@@ -104,12 +115,14 @@ export function usePaymentsLive(): PaymentsLiveState {
       const res = await fetch('/api/ceo/payments-live', { cache: 'no-store' });
       const json = (await res.json()) as Omit<PaymentsLiveState, 'loading'> & { error?: string };
       // While a recent Accounting broadcast is authoritative, keep its exact
-      // counts and only let the poll refresh the "recently paid" feed — don't
-      // overwrite total/paid/remaining with the (possibly divergent) baseline.
+      // counts and only let the poll refresh the poll-driven parts (the
+      // "recently paid" feed + the department breakdown) — don't overwrite
+      // total/paid/remaining with the (possibly divergent) baseline.
       if (Date.now() - lastBroadcastAtRef.current < BROADCAST_FRESH_MS) {
         setState((prev) => ({
           ...prev,
           recent: Array.isArray(json.recent) ? json.recent : prev.recent,
+          departments: Array.isArray(json.departments) ? json.departments : prev.departments,
           loading: false,
         }));
         return;
@@ -121,6 +134,7 @@ export function usePaymentsLive(): PaymentsLiveState {
         paid: json.paid ?? 0,
         remaining: json.remaining ?? 0,
         recent: Array.isArray(json.recent) ? json.recent : [],
+        departments: Array.isArray(json.departments) ? json.departments : [],
         loading: false,
         error: json.error ?? null,
       });

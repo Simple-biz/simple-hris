@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
-import { Eye, Radio, Wand2, Send, Users, Lock, Wallet } from 'lucide-react';
+import { Eye, Radio, Wand2, Send, Users, Lock, Wallet, Building2 } from 'lucide-react';
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
 } from '@/components/ui/dialog';
@@ -289,6 +289,87 @@ function StatusAvatar({ entry }: { entry: RosterEntry }) {
   );
 }
 
+// ── Departments-this-cycle column ──────────────────────────────────────────────
+// Its OWN column (between the people roster and the "being paid now" feed), NOT
+// stacked inside the payments rail — a roll-up of every department being paid
+// this cycle, each with a paid progress bar (paid / total) that fills as workers
+// are marked paid. The header count is the "number of departments being paid
+// this cycle." Fully-paid departments read emerald; in-progress read amber.
+function DepartmentsColumn({ departments }: { departments: PaymentsLiveState['departments'] }) {
+  const fullyPaid = departments.filter((d) => d.total > 0 && d.paid >= d.total).length;
+  return (
+    <aside className="flex min-h-0 shrink-0 flex-col border-t border-zinc-200 max-md:max-h-[38vh] md:w-[260px] md:border-l md:border-t-0 dark:border-zinc-800">
+      <div className="shrink-0 border-b border-zinc-200 px-4 py-3 dark:border-zinc-800">
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+            <Building2 className="h-3.5 w-3.5 text-violet-500" /> Departments this cycle
+          </div>
+          <span
+            className="inline-flex min-w-[1.4rem] items-center justify-center rounded-full bg-violet-100 px-1.5 py-0.5 text-[12px] font-bold tabular-nums text-violet-700 dark:bg-violet-500/15 dark:text-violet-300"
+            title={
+              departments.length === 0
+                ? 'No departments staged yet'
+                : fullyPaid === departments.length
+                  ? 'All departments paid'
+                  : `${fullyPaid} of ${departments.length} departments fully paid`
+            }
+          >
+            {departments.length}
+          </span>
+        </div>
+      </div>
+
+      <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
+        {departments.length === 0 ? (
+          <div className="flex h-full flex-col items-center justify-center gap-2 py-8 text-center">
+            <Building2 className="h-6 w-6 text-zinc-300 dark:text-zinc-700" />
+            <p className="text-[12px] text-zinc-400 dark:text-zinc-500">
+              No departments staged for this cycle yet.
+            </p>
+          </div>
+        ) : (
+          <ul className="space-y-2.5">
+            {departments.map((d) => {
+              const done = d.total > 0 && d.paid >= d.total;
+              const pct = d.total > 0 ? Math.min(100, Math.round((d.paid / d.total) * 100)) : 0;
+              return (
+                <li key={d.key}>
+                  <div className="flex items-baseline justify-between gap-2">
+                    <span
+                      className="min-w-0 truncate text-[12.5px] font-medium text-zinc-700 dark:text-zinc-200"
+                      title={d.name}
+                    >
+                      {d.name}
+                    </span>
+                    <span
+                      className={
+                        'shrink-0 text-[11.5px] font-semibold tabular-nums ' +
+                        (done
+                          ? 'text-emerald-600 dark:text-emerald-400'
+                          : 'text-zinc-500 dark:text-zinc-400')
+                      }
+                    >
+                      {d.paid}/{d.total}
+                    </span>
+                  </div>
+                  <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-800">
+                    <motion.div
+                      className={'h-full rounded-full ' + (done ? 'bg-emerald-500' : 'bg-amber-500')}
+                      initial={false}
+                      animate={{ width: `${pct}%` }}
+                      transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
+                    />
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </div>
+    </aside>
+  );
+}
+
 // ── Live "being paid now" feed rail ────────────────────────────────────────────
 // A side column listing who's getting paid from Payment Dispatch right now, with
 // the running paid/left counter on top. Two columns per row: name + amount (USD
@@ -522,7 +603,7 @@ export default function CeoPayrollLive({ viewerEmail, open, onOpenChange, locked
   return (
     <>
       <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent className="gap-0 overflow-hidden p-0 sm:max-w-4xl">
+        <DialogContent className="gap-0 overflow-hidden p-0 sm:max-w-4xl lg:max-w-6xl">
           <div className="flex max-h-[85vh] flex-col">
             <DialogHeader className="shrink-0 border-b border-zinc-200 px-5 py-4 dark:border-zinc-800">
               <DialogTitle className="flex items-center gap-2 text-lg">
@@ -678,6 +759,10 @@ export default function CeoPayrollLive({ viewerEmail, open, onOpenChange, locked
                 </>
               )}
             </div>
+
+              {/* Departments being paid this cycle — its OWN column, separate
+                  from both the people roster and the payments feed. */}
+              <DepartmentsColumn departments={payments.departments} />
 
               {/* Live "being paid now" feed — who Payment Dispatch is paying
                   right now, USD-led amounts, ticking in via Realtime. */}

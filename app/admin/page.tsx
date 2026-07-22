@@ -23,20 +23,19 @@ import { normEmail } from '@/lib/email/norm-email';
 import { SESSION_EMAIL_KEY } from '@/lib/rbac/views';
 import { cn } from '@/lib/utils';
 import AppFooter from '@/components/AppFooter';
+import DashboardSwitchLoader from '@/components/common/DashboardSwitchLoader';
 
 function isPlausibleEmail(s: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s.trim());
 }
 
+// Admin's page is a client component, so Next resolves the route instantly and
+// its `loading.tsx` only flashes for a frame. Reuse the SAME switch loader (box
+// modal + background skeleton) as the server dashboards for both the Suspense
+// fallback and the pre-mount gate, so a switch INTO Admin animates identically
+// to Accounting instead of dropping to a bare spinner.
 function AdminShellFallback() {
-  return (
-    <div className="flex h-screen items-center justify-center bg-white dark:bg-[#0d1117]">
-      <div
-        className="h-8 w-8 animate-spin rounded-full border-2 border-orange-500 border-t-transparent"
-        aria-hidden
-      />
-    </div>
-  );
+  return <DashboardSwitchLoader view="admin" />;
 }
 
 interface WebhookEntry {

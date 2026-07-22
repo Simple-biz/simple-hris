@@ -98,6 +98,7 @@ export const HSL_DEPT_KEYS = [
   'healthcare_team_lead',
   'collections_tl',
   'attestation',
+  'case_managers',
   'hsl_managers',
 ] as const;
 
@@ -307,6 +308,24 @@ export const HSL_DEPTS: Record<HslDeptKey, DeptConfig> = {
           { min: 50, max: null, rate: 100 },
         ],
       },
+    ],
+  },
+
+  case_managers: {
+    key: 'case_managers',
+    name: 'Case Managers',
+    cadence: 'weekly',
+    color: '#eab308',
+    headerBg: 'bg-yellow-950/40',
+    badgeCls: 'bg-yellow-900/60 text-yellow-300',
+    // =(Reviews*250)+(RFC*250)+(PPL*100)+(DME*250)+(Task*250)+(Referral Leads*250)
+    rules: [
+      { type: 'per_unit', key: 'reviews',        label: 'Reviews',        rate: 250 },
+      { type: 'per_unit', key: 'rfc',            label: 'RFC',            rate: 250 },
+      { type: 'per_unit', key: 'ppl',            label: 'PPL',            rate: 100 },
+      { type: 'per_unit', key: 'dme',            label: 'DME',            rate: 250 },
+      { type: 'per_unit', key: 'task',           label: 'Task',           rate: 250 },
+      { type: 'per_unit', key: 'referral_leads', label: 'Referral Leads', rate: 250 },
     ],
   },
 

@@ -260,7 +260,20 @@ export async function POST(req: NextRequest) {
             cycle_id: row.cycle_id ?? null,
           },
         });
-        if (result.ok) {
+        // HTTP 200 alone is NOT delivery: the n8n workflow folds Gmail failures
+        // into its summary response (error branch → Log Failed Sends → loop
+        // continues → Respond 200 with { succeeded, failed, failed_emails }).
+        // For this single-recipient send, a failed > 0 summary means the email
+        // did NOT go out (e.g. Gmail 429 rate-limiting) — record it as a failed
+        // send so the row keeps last_error and can be re-sent. Summaries from
+        // older workflow versions without these fields fall back to HTTP ok.
+        const summary =
+          result.parsed && typeof result.parsed === "object"
+            ? (result.parsed as { succeeded?: unknown; failed?: unknown; failed_emails?: unknown })
+            : null;
+        const summaryFailed = typeof summary?.failed === "number" ? summary.failed : 0;
+        const delivered = result.ok && summaryFailed === 0;
+        if (delivered) {
           paystub.sent = true;
           await markPaystubSent({
             sourceFile: row.cycle_source_file,
@@ -269,7 +282,20 @@ export async function POST(req: NextRequest) {
             sendCount: (staged.send_count ?? 0) + 1,
           });
         } else {
-          paystub.error = result.detail ?? "Paystub send failed";
+          let failDetail = result.detail ?? "Paystub send failed";
+          if (result.ok) {
+            // Pull the Gmail error message out of the summary's failed_emails.
+            failDetail = "Email send failed inside the paystub workflow";
+            try {
+              const raw = summary?.failed_emails;
+              const arr = typeof raw === "string" ? JSON.parse(raw) : raw;
+              const first = Array.isArray(arr) ? (arr[0] as { error?: unknown } | undefined) : undefined;
+              if (first?.error) failDetail = String(first.error);
+            } catch {
+              /* keep the generic detail */
+            }
+          }
+          paystub.error = failDetail;
           await markPaystubSendError({
             sourceFile: row.cycle_source_file,
             recipientEmail: row.recipient_email,
@@ -279,14 +305,14 @@ export async function POST(req: NextRequest) {
         void insertAuditLog({
           user_name: createdBy ?? "unknown",
           user_role: createdByRole,
-          action: result.ok ? "paystub.sent" : "paystub.send_failed",
+          action: delivered ? "paystub.sent" : "paystub.send_failed",
           resource: "paystub_dispatch_queue",
           resource_id: row.id,
           details: {
             recipient_email: row.recipient_email,
             source_file: row.cycle_source_file,
             http_status: result.status,
-            error: result.ok ? undefined : paystub.error,
+            error: delivered ? undefined : paystub.error,
             // Reconciliation trail: what the stub said vs what the payment row
             // recorded, and whether the queue row was refreshed from the
             // wizard snapshot before sending.

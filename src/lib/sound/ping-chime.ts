@@ -105,6 +105,48 @@ export function playPingChime(): void {
   });
 }
 
+/**
+ * Payment-confirmed cue: a crisp, satisfying two-note "tick" played when a
+ * dispatch is marked paid and confirmed sent. A short high tick lands first
+ * for the tactile "click", then a warm rising note resolves upward so it reads
+ * as a positive confirmation rather than a plain UI beep.
+ */
+export function playPaymentConfirmed(): void {
+  withCtx((c) => {
+    const now = c.currentTime;
+
+    // 1) Crisp tick — a very short, bright triangle blip for the "click".
+    const tick = c.createOscillator();
+    const tickEnv = c.createGain();
+    tick.type = 'triangle';
+    tick.frequency.setValueAtTime(2100, now);
+    tickEnv.gain.setValueAtTime(0, now);
+    tickEnv.gain.linearRampToValueAtTime(0.09, now + 0.004);
+    tickEnv.gain.exponentialRampToValueAtTime(0.0001, now + 0.07);
+    tick.connect(tickEnv).connect(c.destination);
+    tick.start(now);
+    tick.stop(now + 0.09);
+
+    // 2) Confident rising resolve — C6 → G6, sine for a clean, warm tone.
+    const notes: Array<[number, number, number]> = [
+      [1046.5, 0.05, 0.14], // C6
+      [1568.0, 0.14, 0.12], // G6
+    ];
+    for (const [freq, delay, gain] of notes) {
+      const osc = c.createOscillator();
+      const env = c.createGain();
+      osc.type = 'sine';
+      osc.frequency.value = freq;
+      env.gain.setValueAtTime(0, now + delay);
+      env.gain.linearRampToValueAtTime(gain, now + delay + 0.01);
+      env.gain.exponentialRampToValueAtTime(0.0001, now + delay + 0.34);
+      osc.connect(env).connect(c.destination);
+      osc.start(now + delay);
+      osc.stop(now + delay + 0.38);
+    }
+  });
+}
+
 /** Sender cue: one soft, short blip — quiet so it never nags. */
 export function playPingSent(): void {
   withCtx((c) => {

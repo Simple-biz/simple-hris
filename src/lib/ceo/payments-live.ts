@@ -6,6 +6,10 @@ import {
 } from '@/lib/supabase/server';
 import { listHubstaffUploads, getCurrentHubstaffUploadId } from '@/lib/supabase/hubstaff-hours-db';
 import { formatDisbursementReportName } from '@/lib/payroll/disbursement-reports';
+import { DEPARTMENTS } from '@/lib/payroll/department-bonus';
+
+/** department_key → display name (from the canonical DEPARTMENTS list). */
+const DEPT_NAME_BY_KEY = new Map(DEPARTMENTS.map((d) => [d.key, d.name]));
 
 /**
  * Live "payments to send" progress for the CURRENT pay cycle — the number that
@@ -34,6 +38,19 @@ export interface PaidFeedEntry {
   paidAt: string;
 }
 
+/** One department in the current cycle, with its paid progress. Powers the
+ *  "Departments this cycle" list in the CEO live-processing modal. */
+export interface DeptProgress {
+  /** department_key from the staged queue (stable id). */
+  key: string;
+  /** Display name (canonical DEPARTMENTS name, else the raw key). */
+  name: string;
+  /** People from this department staged for payment this cycle. */
+  total: number;
+  /** How many of those have been dispatched (status='paid') so far. */
+  paid: number;
+}
+
 export interface PaymentsLive {
   /** Current cycle's Hubstaff source CSV (the cycle being paid). */
   sourceFile: string | null;
@@ -48,6 +65,9 @@ export interface PaymentsLive {
   /** Most-recently-paid recipients this cycle (newest first) — powers the live
    *  "who's getting paid at the moment" feed in the CEO watch modal. */
   recent: PaidFeedEntry[];
+  /** Departments in this cycle with per-dept paid progress (most people first).
+   *  `departments.length` is the "count of departments being paid this cycle". */
+  departments: DeptProgress[];
   /** Diagnostics — how each number was derived. Safe to expose (rate-gated). */
   debug?: {
     uploadsCount: number;
@@ -158,6 +178,58 @@ async function collectPaidEmails(
   }
 }
 
+/**
+ * Per-department paid progress for the current cycle. Reads the dispatchable
+ * staged queue (`excluded=false` — the same universe that feeds `total`) so the
+ * department set exactly mirrors who Accounting is paying this cycle, then folds
+ * in `paidEmails` (already computed from the dispatch log) to count how many in
+ * each department have actually been paid.
+ *
+ * Rows with no `department_key` are bucketed under an "unassigned" group so the
+ * per-dept `total`s still sum to the cycle total (no one is silently dropped).
+ * Sorted by headcount desc, then name — biggest departments lead the list.
+ */
+async function buildDeptProgress(
+  supabase: Supabase,
+  sourceFile: string,
+  paidEmails: Set<string>,
+): Promise<DeptProgress[]> {
+  const acc = new Map<string, { name: string; total: number; paid: number }>();
+  const PAGE = 1000;
+  let from = 0;
+  for (;;) {
+    const { data, error } = await supabase
+      .from('paystub_dispatch_queue')
+      .select('recipient_email, department_key')
+      .eq('cycle_source_file', sourceFile)
+      .eq('excluded', false)
+      .range(from, from + PAGE - 1);
+    if (error) break;
+    const page = (data ?? []) as {
+      recipient_email: string | null;
+      department_key: string | null;
+    }[];
+    for (const r of page) {
+      const key = (r.department_key ?? '').trim() || '__unassigned';
+      const name =
+        key === '__unassigned'
+          ? 'Unassigned'
+          : DEPT_NAME_BY_KEY.get(key) ?? key;
+      const bucket = acc.get(key) ?? { name, total: 0, paid: 0 };
+      bucket.total += 1;
+      const email = (r.recipient_email ?? '').trim().toLowerCase();
+      if (email && paidEmails.has(email)) bucket.paid += 1;
+      acc.set(key, bucket);
+    }
+    if (page.length < PAGE) break;
+    from += PAGE;
+  }
+
+  return Array.from(acc.entries())
+    .map(([key, v]) => ({ key, name: v.name, total: v.total, paid: v.paid }))
+    .sort((a, b) => b.total - a.total || a.name.localeCompare(b.name));
+}
+
 export async function buildPaymentsLive(): Promise<PaymentsLive> {
   const empty: PaymentsLive = {
     sourceFile: null,
@@ -166,6 +238,7 @@ export async function buildPaymentsLive(): Promise<PaymentsLive> {
     paid: 0,
     remaining: 0,
     recent: [],
+    departments: [],
     error: null,
   };
 
@@ -250,6 +323,10 @@ export async function buildPaymentsLive(): Promise<PaymentsLive> {
     .sort((a, b) => (a.paidAt < b.paidAt ? 1 : a.paidAt > b.paidAt ? -1 : 0))
     .slice(0, 60);
 
+  // Department breakdown for the cycle (with per-dept paid progress). Runs after
+  // paidEmails is known so each dept's `paid` reflects the real dispatch log.
+  const departments = await buildDeptProgress(supabase, sourceFile, paidEmails);
+
   // "paid" is the count of ACTUAL dispatch actions in `payment_dispatches`.
   // We deliberately do NOT trust `disbursement_records.status='paid'` here: that
   // column gets BULK-set (the "mark all paid" action / cycle backfills) without
@@ -280,6 +357,7 @@ export async function buildPaymentsLive(): Promise<PaymentsLive> {
     paid,
     remaining: Math.max(0, total - paid),
     recent,
+    departments,
     debug: {
       uploadsCount: uploads.length,
       isCurrentFound: !!isCurrentUpload,

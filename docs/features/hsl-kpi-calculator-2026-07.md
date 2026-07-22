@@ -18,8 +18,10 @@ and employee KPI results all read.
 | `simple_texting` *(new)* | Simple Texting | weekly | Transferred Calls × ₱50 · Sign Ups × ₱250 |
 | `medical_records` *(new)* | Medical Records | weekly | Patient Portal Log Ins × ₱250 · RFC × ₱250 |
 | `hsl_managers` *(new)* | Managers Weekly | weekly | bespoke per-manager checklist (see below) |
+| `attestation` *(new 2026-07-21)* | Attestation | weekly | Attested Cases tiered (30→₱50 · 40→₱75 · 50+→₱100 per case) |
+| `case_managers` *(new 2026-07-22)* | Case Managers | weekly | Reviews ×₱250 · RFC ×₱250 · PPL ×₱100 · DME ×₱250 · Task ×₱250 · Referral Leads ×₱250 |
 | `post_hearing_prep` *(renamed)* | Pre-Hearing / Post-Hearing Prep | weekly | unchanged (Portal Login ₱100 · 5-Star ₱250, ₱3,500/wk cap) |
-| `case_manager` *(removed)* | — | — | was 6 per-unit KPI rules, ~50 members |
+| `case_manager` *(removed 2026-07-17; superseded by `case_managers`)* | — | — | was 6 per-unit KPI rules, ~50 members |
 | `case_mgr_no_kpi` *(removed)* | — | — | was an empty roster-only placeholder |
 | `chelzy_asst` *(removed)* | — | — | was a flat $10/mo |
 | `vicky_asst_tl` *(removed)* | — | — | was a flat ₱2,500/mo (already 0 members) |

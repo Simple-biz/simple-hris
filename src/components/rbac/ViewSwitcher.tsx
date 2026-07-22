@@ -1,13 +1,14 @@
 'use client';
 
 import { useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
 import { useSession } from 'next-auth/react';
-import { LayoutDashboard, ShieldCheck, Briefcase, ArrowLeftRight, Sparkles, UserCog, HeartHandshake, Crown, Users, HardHat, ClipboardCheck, SquareKanban } from 'lucide-react';
+import { LayoutDashboard, ShieldCheck, Briefcase, ArrowLeftRight, UserCog, HeartHandshake, Crown, Users, HardHat, ClipboardCheck, SquareKanban } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { withViewTransition } from '@/lib/theme/with-view-transition';
 import { useNotificationCountsByView } from '@/hooks/useNotificationCountsByView';
 import SidebarCollapsedDot from '@/components/common/SidebarCollapsedDot';
+import DashboardSwitchLoader from '@/components/common/DashboardSwitchLoader';
 import {
   ACTIVE_VIEW_KEY,
   VIEW_LABELS,
@@ -84,11 +85,17 @@ export default function ViewSwitcher({ email, currentView, collapsed = false }: 
     } catch {
       /* ignore */
     }
-    // Navigate on the next frame so the switch overlay paints first, then hand
-    // off to the router immediately. (Previously a fixed 520ms setTimeout ran
-    // here purely so the shimmer could finish — dead time on every switch.)
+    // Paint the full-screen switch modal (identical to the target route's
+    // loading.tsx) THIS frame, then navigate on the next one. We deliberately
+    // do NOT wrap the push in a View Transition here: the transition froze a
+    // screenshot of the outgoing page and cross-faded it OVER the incoming
+    // route, which masked the DashboardSwitchLoader for the first ~400ms so the
+    // modal never appeared to cover the whole switch. Without it, our own
+    // overlay is the single continuous surface from click → route load → new
+    // dashboard, and it hands off seamlessly to the route's loading.tsx (same
+    // component) with no snapshot fade in between.
     requestAnimationFrame(() => {
-      withViewTransition(() => router.push(urlFor(view)));
+      router.push(urlFor(view));
     });
   };
 
@@ -155,75 +162,29 @@ export default function ViewSwitcher({ email, currentView, collapsed = false }: 
         </div>
       </div>
 
-      {transitioning && <ViewSwitchOverlay target={transitioning} />}
+      {/* Full-screen switch modal — the SAME component each dashboard renders
+          from its loading.tsx. Painting it here, on the outgoing page, the
+          instant a switch begins means the box modal + background skeleton is
+          already up before the router navigates; when the incoming route's
+          loading.tsx mounts the identical component, the handoff is invisible
+          and the modal appears to cover the entire switch. Portaled to <body>
+          so a transformed sidebar ancestor can't trap the fixed overlay in a
+          local containing block (which would clip it to the rail). */}
+      {transitioning &&
+        typeof document !== 'undefined' &&
+        createPortal(
+          <div className="fixed inset-0 z-[100]">
+            <DashboardSwitchLoader view={transitioning} />
+          </div>,
+          document.body,
+        )}
 
       <style jsx global>{`
         @keyframes viewswitch-shimmer {
           0%   { transform: translateX(-100%); }
           100% { transform: translateX(100%); }
         }
-        @keyframes viewswitch-overlay-in {
-          0%   { opacity: 0; backdrop-filter: blur(0); }
-          100% { opacity: 1; backdrop-filter: blur(8px); }
-        }
-        @keyframes viewswitch-card-in {
-          0%   { opacity: 0; transform: translateY(12px) scale(0.96); }
-          60%  { opacity: 1; transform: translateY(0) scale(1.02); }
-          100% { opacity: 1; transform: translateY(0) scale(1); }
-        }
-        @keyframes viewswitch-ring {
-          0%   { transform: scale(0.6); opacity: 0.9; }
-          100% { transform: scale(2.4); opacity: 0; }
-        }
-        ::view-transition-old(root) {
-          animation: 320ms cubic-bezier(0.4, 0, 1, 1) both viewswitch-fade-out;
-        }
-        ::view-transition-new(root) {
-          animation: 420ms cubic-bezier(0, 0, 0.2, 1) both viewswitch-fade-in;
-        }
-        @keyframes viewswitch-fade-out {
-          to { opacity: 0; transform: scale(0.985); filter: blur(4px); }
-        }
-        @keyframes viewswitch-fade-in {
-          from { opacity: 0; transform: scale(1.015); filter: blur(4px); }
-        }
       `}</style>
     </>
-  );
-}
-
-function ViewSwitchOverlay({ target }: { target: AppView }) {
-  const Icon = VIEW_ICONS[target];
-  return (
-    <div
-      className="pointer-events-none fixed inset-0 z-[100] flex items-center justify-center bg-white/30 dark:bg-black/40"
-      style={{ animation: 'viewswitch-overlay-in 200ms ease-out forwards' }}
-    >
-      <div
-        className="relative flex flex-col items-center gap-3 rounded-2xl border border-orange-200/60 bg-white/90 px-8 py-6 shadow-2xl shadow-orange-500/20 backdrop-blur-xl dark:border-blue-900/60 dark:bg-[#0d1117]/90 dark:shadow-blue-900/40"
-        style={{ animation: 'viewswitch-card-in 380ms cubic-bezier(0.16, 1, 0.3, 1) forwards' }}
-      >
-        <div className="relative flex h-14 w-14 items-center justify-center rounded-full bg-gradient-to-br from-orange-500 to-orange-600 text-white shadow-lg shadow-orange-500/40">
-          <Icon className="h-7 w-7" />
-          <span
-            className="absolute inset-0 rounded-full border-2 border-orange-400"
-            style={{ animation: 'viewswitch-ring 700ms ease-out forwards' }}
-          />
-          <span
-            className="absolute inset-0 rounded-full border-2 border-orange-300"
-            style={{ animation: 'viewswitch-ring 700ms ease-out 120ms forwards' }}
-          />
-        </div>
-        <div className="flex flex-col items-center gap-0.5 text-center">
-          <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-orange-500 dark:text-orange-400">
-            <Sparkles className="h-3 w-3" />
-            Switching to
-          </div>
-          <div className="text-lg font-bold text-zinc-900 dark:text-white">
-            {VIEW_LABELS[target]} Dashboard
-          </div>
-        </div>
-      </div>
-    </div>
   );
 }

@@ -495,7 +495,15 @@
       "Bash(grep -o 'color:#0f766e;white-space:nowrap;[^\"]\\\\{0,220\\\\}' \"C:/Users/Kane/Desktop/simple-hris/references/n8n/Paystub Automation.json\")",
       "Bash(grep -o 'Orphanage.\\\\{0,600\\\\}' \"C:\\\\Users\\\\Kane\\\\Desktop\\\\simple-hris\\\\references\\\\n8n\\\\Paystub Automation.json\")",
       "PowerShell(git -C c:\\\\Users\\\\Kane\\\\Desktop\\\\simple-hris log --oneline -5)",
-      "PowerShell(git -C c:\\\\Users\\\\Kane\\\\Desktop\\\\simple-hris show --stat 0d8f16b)"
+      "PowerShell(git -C c:\\\\Users\\\\Kane\\\\Desktop\\\\simple-hris show --stat 0d8f16b)",
+      "PowerShell(node -e \"const w=JSON.parse\\(require\\('fs'\\).readFileSync\\('references/n8n/Paystub Automation.json','utf8'\\)\\); const pv=w.nodes.find\\(n=>n.name==='pay_vars'\\); const gm=w.nodes.find\\(n=>n.name==='Send PayStub'\\); const sr=w.nodes.find\\(n=>n.name==='Build Summary Report'\\); console.log\\('JSON valid'\\); console.log\\('sendTo:', gm.parameters.sendTo\\); console.log\\('pay_vars fields:', pv.parameters.assignments.assignments.map\\(a=>a.name\\).join\\(', '\\)\\); console.log\\('summary failed expr:', sr.parameters.assignments.assignments.find\\(a=>a.name==='failed'\\).value\\)\")",
+      "PowerShell(node \"C:\\\\Users\\\\Kane\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-Kane-Desktop-simple-hris\\\\a9fe695c-4b2d-41eb-a522-db433963f931\\\\scratchpad\\\\count-sends-today.mjs\")",
+      "PowerShell(node -e \"const w=JSON.parse\\(require\\('fs'\\).readFileSync\\('references/n8n/Paystub Automation.json','utf8'\\)\\); const gm=w.nodes.find\\(n=>n.name==='Send PayStub'\\); console.log\\('JSON valid | name:', w.name, '| retry:', gm.retryOnFail, gm.maxTries, gm.waitBetweenTries, '| onError:', gm.onError\\)\")",
+      "Bash(awk -F',' 'NR>1 {print $5}' \"references/data/_stg_hogan_import.csv\")",
+      "Bash(sed 's/\"//g')",
+      "Bash(git --no-pager diff src/lib/hsl-bonus/schema.ts)",
+      "Bash(python -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\(json.dumps\\(d.get\\('scripts',{}\\), indent=2\\)\\)\")",
+      "Bash(node --import tsx --test src/lib/mesa/ledger.test.ts)"
     ],
     "additionalDirectories": [
       "c:\\Users\\Itachi\\.claude\\projects\\c--Users-Itachi-Desktop-simple-hris\\memory",

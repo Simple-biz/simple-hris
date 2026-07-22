@@ -20,7 +20,7 @@ export async function GET() {
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     return NextResponse.json(
-      { sourceFile: null, label: 'Current pay week', total: 0, paid: 0, remaining: 0, recent: [], error: msg },
+      { sourceFile: null, label: 'Current pay week', total: 0, paid: 0, remaining: 0, recent: [], departments: [], error: msg },
       { status: 500 },
     );
   }

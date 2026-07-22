@@ -1946,6 +1946,16 @@ export default function PayrollWizard({
    * Urgent Payments queue that pays them out.
    */
   const [mesaDisbursements, setMesaDisbursements] = useState<Map<string, number>>(new Map());
+  /**
+   * Emails (normalized) whose MESA ledger's LAST event is an opt-out / termination —
+   * i.e. everyone the Accounting → MESA "Non Members" tab treats as opted-out even
+   * when their `employee_hourly_rates.mesa_member` flag drifted true. The wizard must
+   * NOT charge the ₱100 weekly contribution to these people (the reported bug: a
+   * flag-drifted ex-member showing under Non Members was still being deducted). This
+   * is the same `lastEventOptedOut` signal AccountingMesa uses, so the two views can
+   * never disagree. See src/lib/mesa/ledger.ts and AccountingMesa's isActiveMember.
+   */
+  const [mesaOptedOutEmails, setMesaOptedOutEmails] = useState<Set<string>>(new Set());
   /** Pending + approved time-adjustment requests (for the Additions review panel). */
   const [timeAdjustmentRows, setTimeAdjustmentRows] = useState<TimeAdjustmentRow[]>([]);
   const [timeAdjustmentSignedUrls, setTimeAdjustmentSignedUrls] = useState<Record<string, string>>({});
@@ -3018,6 +3028,53 @@ export default function PayrollWizard({
   useEffect(() => {
     fetchMesaDisbursements();
   }, [currentStep, fetchMesaDisbursements]);
+
+  // MESA opted-out set — the same `lastEventOptedOut` signal Accounting's "Non Members"
+  // tab uses (GET /api/mesa-ledger → members[].lastEventOptedOut). A person whose ledger
+  // last event is an opt-out is a Non Member there regardless of the mesa_member flag; the
+  // wizard suppresses their ₱100 contribution below so the deduction can't contradict that
+  // list. Best-effort: a ledger failure leaves the set empty (falls back to flag-only), so
+  // a transient error never re-introduces a deduction beyond what the flag alone gives.
+  const fetchMesaOptedOut = useCallback(() => {
+    fetch('/api/mesa-ledger', { cache: 'no-store' })
+      .then(r => (r.ok ? r.json() : { members: [] }))
+      .then((json: { members?: Array<{ email?: string | null; lastEventOptedOut?: boolean }> }) => {
+        const set = new Set<string>();
+        for (const m of json.members ?? []) {
+          if (m.lastEventOptedOut !== true) continue;
+          const em = normEmail(m.email ?? '') ?? (m.email ?? '').trim().toLowerCase();
+          if (em) set.add(em);
+        }
+        setMesaOptedOutEmails(set);
+      })
+      .catch(() => setMesaOptedOutEmails(new Set()));
+  }, []);
+
+  // Keep the opted-out set fresh across navigation for the same reason as
+  // fetchMesaDisbursements: the debounced final-pay snapshot publishes from any step, so
+  // this must be loaded unconditionally to keep every published snapshot consistent.
+  useEffect(() => {
+    fetchMesaOptedOut();
+  }, [currentStep, fetchMesaOptedOut]);
+
+  /**
+   * True when this person's MESA ledger last event is an opt-out — so the ₱100
+   * contribution must NOT be charged even if `mesa_member` is still true (flag drift).
+   * Checks every email we can key on (the row's own email + the matched rate row's work
+   * and personal emails) against the ledger-derived opted-out set, mirroring how
+   * AccountingMesa matches a member across their addresses. When the set is empty
+   * (ledger unavailable) this is always false → falls back to flag-only behavior.
+   */
+  const isMesaOptedOut = useCallback(
+    (rowEmail: string | null | undefined, rateRow: EmployeeHourlyRateRow | undefined | null): boolean => {
+      if (mesaOptedOutEmails.size === 0) return false;
+      const candidates = [rowEmail, rateRow?.work_email, rateRow?.personal_email]
+        .map((e) => normEmail(e ?? '') ?? (e ?? '').trim().toLowerCase())
+        .filter(Boolean);
+      return candidates.some((e) => mesaOptedOutEmails.has(e));
+    },
+    [mesaOptedOutEmails],
+  );
 
   /**
    * Override lookup the PAB memos consume: approved PAB disputes overlaid by approved
@@ -5125,8 +5182,12 @@ export default function PayrollWizard({
       // treated as always contributing, preserving prior behavior. `week.end` and
       // `mesa_member_since` are both YYYY-MM-DD, so the compare is lexical.
       const mesaSince = rateRowForMesa?.mesa_member_since ?? null;
+      // Ledger opt-out overrides a stale true flag: someone whose MESA ledger last
+      // event is an opt-out is a Non Member (per Accounting's tab) even if
+      // mesa_member drifted true, and must not be charged. See isMesaOptedOut.
+      const optedOut = isMesaOptedOut(r.email, rateRowForMesa);
       const enrolledForThisWeek =
-        !!rateRowForMesa?.mesa_member && (!mesaSince || !week?.end || mesaSince <= week.end);
+        !!rateRowForMesa?.mesa_member && !optedOut && (!mesaSince || !week?.end || mesaSince <= week.end);
       // The ₱100 contribution is charged ONLY to enrolled members (for this week).
       // A pending disbursement does NOT imply membership: an opted-out ex-member can
       // still be paid out an approved disbursement, and they must not be re-charged
@@ -5196,6 +5257,7 @@ export default function PayrollWizard({
     bonusOverrideNotes,
     orphanageAmounts,
     mesaDisbursements,
+    isMesaOptedOut,
     excludedEmails,
     pabMonthRange,
     calcSourceFile,
@@ -9906,7 +9968,7 @@ export default function PayrollWizard({
                             )}
                             <TableHead
                               className="min-w-[60px] px-1 py-2 text-right text-[9px] font-medium leading-tight text-rose-600 dark:text-rose-400"
-                              title="MESA deduction — applied automatically to employees enrolled in MESA (mesa_member=true on their rates row)"
+                              title="MESA deduction — applied automatically to enrolled members (mesa_member=true), except anyone whose MESA ledger last event is an opt-out (Non Members are never charged)"
                             >
                               MESA<br />
                               <span className="font-mono font-normal text-zinc-400">-{formatPHP(100)}</span>
@@ -9946,8 +10008,10 @@ export default function PayrollWizard({
                             // The ₱100 contribution is charged ONLY to enrolled members — a
                             // pending disbursement does not imply membership (an opted-out
                             // ex-member can still be paid out a balance), so it never forces the
-                            // deduction. Mirrors the final-pay compute.
-                            const empMesaDeduction = (emp.initialPay != null && empRateRow?.mesa_member) ? 100 : 0;
+                            // deduction. A ledger opt-out also suppresses it even if the flag
+                            // drifted true. Mirrors the final-pay compute.
+                            const empMesaDeduction =
+                              (emp.initialPay != null && empRateRow?.mesa_member && !isMesaOptedOut(emp.email, empRateRow)) ? 100 : 0;
                             // Orphanage pay — manual positive amount added on top of final pay.
                             const hasOrphanage = orphanageAmounts[emp.email] !== undefined;
                             const orphanagePay = orphanageAmounts[emp.email] ?? 0;
@@ -10364,11 +10428,11 @@ export default function PayrollWizard({
                         // and the exported XLSX got it right).
                         const deptMesaTotal = deptEmployees.reduce((sum, e) => {
                           const rr = ratesByEmail.get(normEmail(e.email) ?? '');
-                          return sum + (e.initialPay != null && rr?.mesa_member ? 100 : 0);
+                          return sum + (e.initialPay != null && rr?.mesa_member && !isMesaOptedOut(e.email, rr) ? 100 : 0);
                         }, 0);
                         const deptMesaCount = deptEmployees.reduce((n, e) => {
                           const rr = ratesByEmail.get(normEmail(e.email) ?? '');
-                          return n + (e.initialPay != null && rr?.mesa_member ? 1 : 0);
+                          return n + (e.initialPay != null && rr?.mesa_member && !isMesaOptedOut(e.email, rr) ? 1 : 0);
                         }, 0);
                         const deptBonusTotal = deptEmployees.reduce(
                           (sum, e) => sum + getEffectiveBonus(e.email),
@@ -11072,7 +11136,8 @@ export default function PayrollWizard({
                             const hslMesaEmail = normEmail(r.email) ?? '';
                             const hslRateRow = ratesByEmail.get(hslMesaEmail);
                             const empMesaDisbursement = mesaDisbursements.get(hslMesaEmail) ?? 0;
-                            const empMesaDeduction = (r.initialPay != null && hslRateRow?.mesa_member) ? 100 : 0;
+                            const empMesaDeduction =
+                              (r.initialPay != null && hslRateRow?.mesa_member && !isMesaOptedOut(r.email, hslRateRow)) ? 100 : 0;
                             const totalPay = (r.initialPay ?? 0) + effectiveBonus + pabAmt + techAmt + orphanagePay - empMesaDeduction + empMesaDisbursement;
 
                             return (
@@ -11303,10 +11368,13 @@ export default function PayrollWizard({
                               const wp = weekendPremiumByEmail.get(em);
                               if (wp) totalWkndPremium += wp.regPremiumPHP + wp.otPremiumPHP;
                               const memail = normEmail(r.email) ?? '';
+                              const memailRateRow = ratesByEmail.get(memail);
                               const disb = mesaDisbursements.get(memail) ?? 0;
                               // Deduction gates on membership alone — a disbursement (which an
                               // opted-out ex-member can still receive) never forces the ₱100 charge.
-                              const ded = (r.initialPay != null && ratesByEmail.get(memail)?.mesa_member) ? 100 : 0;
+                              // A ledger opt-out also suppresses it even if the flag drifted true.
+                              const ded =
+                                (r.initialPay != null && memailRateRow?.mesa_member && !isMesaOptedOut(r.email, memailRateRow)) ? 100 : 0;
                               totalMesaDisbursement += disb;
                               totalMesaDeduction += ded;
                             }
@@ -11636,7 +11704,7 @@ export default function PayrollWizard({
         const finalPayRows = effectiveCalcResults
           .map(r => {
           const rr = ratesByEmail.get(normEmail(r.email) ?? '');
-          const mesaDed = ((r.initialPay != null) && rr?.mesa_member) ? 100 : 0;
+          const mesaDed = ((r.initialPay != null) && rr?.mesa_member && !isMesaOptedOut(r.email, rr)) ? 100 : 0;
           const orphanagePay = orphanageAmounts[r.email] ?? 0;
           return {
             ...r,

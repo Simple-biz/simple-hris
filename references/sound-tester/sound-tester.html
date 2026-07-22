@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>HRIS Sound Reference — Notification & Payment Cues</title>
+<style>
+  :root {
+    --bg: #0b0b0f;
+    --panel: #16161d;
+    --panel-2: #1d1d26;
+    --border: #2a2a35;
+    --text: #e7e7ee;
+    --muted: #8b8b9a;
+    --accent: #10b981;
+    --accent-2: #34d399;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    background: radial-gradient(1200px 800px at 20% -10%, #16161f 0%, var(--bg) 60%);
+    color: var(--text);
+    min-height: 100vh;
+    padding: 48px 20px 80px;
+  }
+  .wrap { max-width: 760px; margin: 0 auto; }
+  header { margin-bottom: 8px; }
+  h1 { font-size: 1.6rem; font-weight: 800; letter-spacing: -0.02em; margin: 0 0 6px; }
+  .sub { color: var(--muted); font-size: 0.92rem; line-height: 1.5; margin: 0 0 4px; }
+  .hint {
+    margin: 20px 0 28px;
+    font-size: 0.82rem;
+    color: var(--muted);
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 12px 14px;
+  }
+  .grid { display: grid; gap: 14px; }
+  .card {
+    background: linear-gradient(180deg, var(--panel-2), var(--panel));
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 18px 18px 16px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+  }
+  .card .meta { flex: 1; min-width: 0; }
+  .card h2 { font-size: 1.02rem; margin: 0 0 4px; font-weight: 700; }
+  .card .where { font-size: 0.72rem; color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .card p { margin: 6px 0 0; font-size: 0.84rem; color: var(--muted); line-height: 1.45; }
+  button.play {
+    flex-shrink: 0;
+    appearance: none;
+    border: none;
+    cursor: pointer;
+    color: #05271c;
+    background: linear-gradient(135deg, var(--accent-2), var(--accent));
+    font-weight: 700;
+    font-size: 0.9rem;
+    padding: 11px 20px;
+    border-radius: 10px;
+    box-shadow: 0 4px 16px rgba(16, 185, 129, 0.22);
+    transition: transform 0.12s ease, box-shadow 0.2s ease, filter 0.2s ease;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+  }
+  button.play:hover { filter: brightness(1.06); }
+  button.play:active { transform: scale(0.95); }
+  button.play .tri { font-size: 0.75rem; }
+  .playall {
+    margin: 24px 0 4px;
+    display: flex;
+    justify-content: flex-end;
+  }
+  .playall button {
+    appearance: none;
+    cursor: pointer;
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-weight: 600;
+    font-size: 0.82rem;
+    padding: 9px 16px;
+    border-radius: 9px;
+    transition: border-color 0.2s ease, background 0.2s ease;
+  }
+  .playall button:hover { border-color: #3b3b48; background: rgba(255,255,255,0.02); }
+  footer { margin-top: 40px; font-size: 0.74rem; color: var(--muted); line-height: 1.6; }
+  footer code { background: var(--panel); padding: 1px 6px; border-radius: 5px; font-size: 0.72rem; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>🔊 HRIS Sound Reference</h1>
+    <p class="sub">Every notification &amp; UI cue in the app, synthesized live with the Web Audio API — no audio files are shipped. Click a button to hear each one.</p>
+  </header>
+
+  <div class="hint">
+    Tip: browsers keep audio muted until you interact with the page, so the first click also “unlocks” sound. If nothing plays, click any Play button once more.
+  </div>
+
+  <div class="grid" id="grid"></div>
+
+  <div class="playall">
+    <button id="playAll">▶ Play all in sequence</button>
+  </div>
+
+  <footer>
+    Source of truth:
+    <code>src/lib/sound/ping-chime.ts</code> (payment + pings) and
+    <code>src/hooks/useNotificationChime.ts</code> (notification bell).
+    The functions below are copied verbatim so this page always matches the app.
+  </footer>
+</div>
+
+<script>
+/* ------------------------------------------------------------------ *
+ *  Shared AudioContext + gesture unlock
+ *  (mirrors the pattern used across the app's sound modules)
+ * ------------------------------------------------------------------ */
+let ctx = null;
+function getCtx() {
+  if (!ctx) {
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    if (Ctx) ctx = new Ctx();
+  }
+  return ctx;
+}
+function withCtx(emit) {
+  const c = getCtx();
+  if (!c) return;
+  if (c.state === 'running') { emit(c); return; }
+  c.resume().then(() => { if (c.state === 'running') emit(c); }).catch(() => {});
+}
+
+/* ------------------------------------------------------------------ *
+ *  1) Notification bell — from useNotificationChime.ts (playBell)
+ *  Two-tone bell: a bright strike plus a softer overtone, each decaying.
+ * ------------------------------------------------------------------ */
+function playBell() {
+  withCtx((c) => {
+    const now = c.currentTime;
+    const tones = [
+      [880, 0, 0.18],
+      [1320, 0.08, 0.12],
+    ];
+    for (const [freq, delay, gain] of tones) {
+      const osc = c.createOscillator();
+      const env = c.createGain();
+      osc.type = 'sine';
+      osc.frequency.value = freq;
+      env.gain.setValueAtTime(0, now + delay);
+      env.gain.linearRampToValueAtTime(gain, now + delay + 0.01);
+      env.gain.exponentialRampToValueAtTime(0.0001, now + delay + 0.6);
+      osc.connect(env).connect(c.destination);
+      osc.start(now + delay);
+      osc.stop(now + delay + 0.65);
+    }
+  });
+}
+
+/* ------------------------------------------------------------------ *
+ *  2) Ping chime — from ping-chime.ts (playPingChime)
+ *  Recipient cue: a bright rising 3-note sparkle that decays quickly.
+ * ------------------------------------------------------------------ */
+function playPingChime() {
+  withCtx((c) => {
+    const now = c.currentTime;
+    const notes = [
+      [784, 0, 0.16, 'sine'],      // G5
+      [1175, 0.09, 0.13, 'sine'],  // D6
+      [1568, 0.18, 0.09, 'triangle'], // G6 sparkle tail
+    ];
+    for (const [freq, delay, gain, type] of notes) {
+      const osc = c.createOscillator();
+      const env = c.createGain();
+      osc.type = type;
+      osc.frequency.value = freq;
+      env.gain.setValueAtTime(0, now + delay);
+      env.gain.linearRampToValueAtTime(gain, now + delay + 0.012);
+      env.gain.exponentialRampToValueAtTime(0.0001, now + delay + 0.42);
+      osc.connect(env).connect(c.destination);
+      osc.start(now + delay);
+      osc.stop(now + delay + 0.46);
+    }
+  });
+}
+
+/* ------------------------------------------------------------------ *
+ *  3) Ping sent — from ping-chime.ts (playPingSent)
+ *  Sender cue: one soft, short blip — quiet so it never nags.
+ * ------------------------------------------------------------------ */
+function playPingSent() {
+  withCtx((c) => {
+    const now = c.currentTime;
+    const osc = c.createOscillator();
+    const env = c.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(660, now);
+    osc.frequency.exponentialRampToValueAtTime(990, now + 0.12);
+    env.gain.setValueAtTime(0, now);
+    env.gain.linearRampToValueAtTime(0.06, now + 0.01);
+    env.gain.exponentialRampToValueAtTime(0.0001, now + 0.18);
+    osc.connect(env).connect(c.destination);
+    osc.start(now);
+    osc.stop(now + 0.2);
+  });
+}
+
+/* ------------------------------------------------------------------ *
+ *  4) Payment confirmed — from ping-chime.ts (playPaymentConfirmed)
+ *  Played when a dispatch is marked paid & confirmed sent.
+ *  A crisp tick lands first, then a warm rising note resolves upward.
+ * ------------------------------------------------------------------ */
+function playPaymentConfirmed() {
+  withCtx((c) => {
+    const now = c.currentTime;
+
+    // 1) Crisp tick — a very short, bright triangle blip for the "click".
+    const tick = c.createOscillator();
+    const tickEnv = c.createGain();
+    tick.type = 'triangle';
+    tick.frequency.setValueAtTime(2100, now);
+    tickEnv.gain.setValueAtTime(0, now);
+    tickEnv.gain.linearRampToValueAtTime(0.09, now + 0.004);
+    tickEnv.gain.exponentialRampToValueAtTime(0.0001, now + 0.07);
+    tick.connect(tickEnv).connect(c.destination);
+    tick.start(now);
+    tick.stop(now + 0.09);
+
+    // 2) Confident rising resolve — C6 → G6, sine for a clean, warm tone.
+    const notes = [
+      [1046.5, 0.05, 0.14], // C6
+      [1568.0, 0.14, 0.12], // G6
+    ];
+    for (const [freq, delay, gain] of notes) {
+      const osc = c.createOscillator();
+      const env = c.createGain();
+      osc.type = 'sine';
+      osc.frequency.value = freq;
+      env.gain.setValueAtTime(0, now + delay);
+      env.gain.linearRampToValueAtTime(gain, now + delay + 0.01);
+      env.gain.exponentialRampToValueAtTime(0.0001, now + delay + 0.34);
+      osc.connect(env).connect(c.destination);
+      osc.start(now + delay);
+      osc.stop(now + delay + 0.38);
+    }
+  });
+}
+
+/* ------------------------------------------------------------------ *
+ *  Render the cards
+ * ------------------------------------------------------------------ */
+const CUES = [
+  {
+    name: 'Payment Confirmed',
+    fn: playPaymentConfirmed,
+    where: "ping-chime.ts · playPaymentConfirmed()",
+    desc: 'Accounting → Payment Dispatch: plays when a payment is marked paid and “Confirm sent” succeeds. Crisp tick + warm rising resolve.',
+  },
+  {
+    name: 'Notification Bell',
+    fn: playBell,
+    where: "useNotificationChime.ts · playBell()",
+    desc: 'Rings on privileged dashboards (e.g. HR) whenever a new unread notification arrives. Bright strike + softer overtone.',
+  },
+  {
+    name: 'Ping Chime (received)',
+    fn: playPingChime,
+    where: "ping-chime.ts · playPingChime()",
+    desc: 'Accounting collaboration layer: heard by the recipient when someone pings them. Rising 3-note sparkle.',
+  },
+  {
+    name: 'Ping Sent',
+    fn: playPingSent,
+    where: "ping-chime.ts · playPingSent()",
+    desc: 'Accounting collaboration layer: soft “it went out” blip on the sender’s side. Deliberately quiet.',
+  },
+];
+
+const grid = document.getElementById('grid');
+for (const cue of CUES) {
+  const card = document.createElement('div');
+  card.className = 'card';
+  card.innerHTML = `
+    <div class="meta">
+      <h2>${cue.name}</h2>
+      <div class="where">${cue.where}</div>
+      <p>${cue.desc}</p>
+    </div>
+    <button class="play"><span class="tri">▶</span> Play</button>
+  `;
+  card.querySelector('button').addEventListener('click', cue.fn);
+  grid.appendChild(card);
+}
+
+document.getElementById('playAll').addEventListener('click', () => {
+  CUES.forEach((cue, i) => setTimeout(cue.fn, i * 900));
+});
+</script>
+</body>
+</html>
