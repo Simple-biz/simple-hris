@@ -70,7 +70,13 @@ interface PayStubSummaryRow {
 /** How many weeks per page in the Pay Stubs list. */
 const PAY_STUBS_PAGE_SIZE = 10;
 import RequestDocumentsTab from '@/components/employee/RequestDocumentsTab';
-import { PROCESSOR_OPTIONS, type ProcessorId } from '@/lib/employee-payment-processors';
+import {
+  PROCESSOR_OPTIONS,
+  type ProcessorId,
+  BANK_PREFERRED_OPTIONS,
+  bankPreferredLabelForProcessor,
+  processorForBankPreferredLabel,
+} from '@/lib/employee-payment-processors';
 import { getTitlesForDepartment, hasAnySkillSetContent } from '@/lib/skill-set-titles';
 import {
   PreferredPaymentMethodRadios,
@@ -1817,6 +1823,38 @@ export default function EmployeeProfile({
                       ) : null}
                     </div>
                   </Section>
+
+                  <div className="rounded-xl border border-zinc-200 bg-white px-4 py-3.5 dark:border-zinc-800 dark:bg-zinc-900/60">
+                    <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+                      <div className="min-w-0">
+                        <p className="text-[13px] font-medium text-zinc-900 dark:text-white">
+                          Bank Preferred
+                        </p>
+                        <p className="mt-0.5 text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400">
+                          The channel payroll uses to route your salary.
+                        </p>
+                      </div>
+                      <SmoothSelect
+                        aria-label="Bank Preferred"
+                        value={bankPreferredLabelForProcessor(preferredProcessor)}
+                        onChange={(label) => {
+                          const id = processorForBankPreferredLabel(label);
+                          if (id) setPreferredProcessor(id);
+                        }}
+                        disabled={payoutReadOnly}
+                        triggerClassName="w-full sm:w-48"
+                        options={[
+                          ...(bankPreferredLabelForProcessor(preferredProcessor)
+                            ? []
+                            : [{ value: '', label: 'Select…' }]),
+                          ...BANK_PREFERRED_OPTIONS.map((o) => ({
+                            value: o.label,
+                            label: o.label,
+                          })),
+                        ]}
+                      />
+                    </div>
+                  </div>
 
                   {preferredProcessor && (
                     <div className="flex items-center gap-2 px-1 text-[12px] text-zinc-500 dark:text-zinc-400">
