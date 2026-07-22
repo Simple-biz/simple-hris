@@ -12,7 +12,8 @@ import { DatePicker } from '@/components/ui/date-picker';
 import { AlertTriangle, Check, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, CircleDashed, Copy, Gauge, Loader2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { playPaymentConfirmed } from '@/lib/sound/ping-chime';
-import { formatPHP, formatUSD, formatCOP, type ProcessorId, type QueueRow } from './mock-queue';
+import { formatPHP, formatUSD, formatCOP, type QueueRow } from './mock-queue';
+import { resolveMarkPaidDefaults } from '@/lib/payroll/mark-paid-defaults';
 
 export type DispatchStatus = 'paid' | 'not_paid' | 'threshold' | 'problem';
 
@@ -158,20 +159,6 @@ function todayISO(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
-function deriveDefaults(row: QueueRow) {
-  const p = row.processor as ProcessorId;
-  const d = row.details ?? {};
-  switch (p) {
-    case 'hurupay': return { preferredBank: 'Hurupay',  accountNumber: d.hurupay_email ?? '',                accountHolder: row.name,                              swiftCode: '' };
-    case 'wepay':   return { preferredBank: 'Wepay',    accountNumber: d.wepay_email ?? '',                  accountHolder: row.name,                              swiftCode: '' };
-    case 'higlobe': return { preferredBank: 'HiGlobe',  accountNumber: d.higlobe_email ?? '',                accountHolder: d.higlobe_account_name ?? row.name,    swiftCode: '' };
-    case 'wise':    return { preferredBank: 'Wise',     accountNumber: d.wise_email ?? d.wise_tag ?? '',     accountHolder: d.account_holder_name ?? row.name,     swiftCode: '' };
-    case 'jeeves':  return { preferredBank: d.bank_name ?? 'Jeeves', accountNumber: d.account_number ?? d.phone_number ?? '', accountHolder: d.account_holder_name ?? row.name, swiftCode: d.swift_code ?? '' };
-    case 'wires':   return { preferredBank: d.bank_name ?? row.bankPreferredRaw ?? '', accountNumber: d.account_number ?? '', accountHolder: d.account_holder_name ?? row.name, swiftCode: d.swift_code ?? '' };
-    default:        return { preferredBank: '', accountNumber: '', accountHolder: row.name, swiftCode: '' };
-  }
-}
-
 /* ---- reactive field components --------------------------------------- */
 
 interface FieldInputProps extends Omit<React.ComponentPropsWithoutRef<'input'>, 'style'> {
@@ -303,7 +290,7 @@ export default function MarkPaidDialog({
   onPrev,
   onNext,
 }: MarkPaidDialogProps) {
-  const defaults = useMemo(() => (row ? deriveDefaults(row) : null), [row]);
+  const defaults = useMemo(() => (row ? resolveMarkPaidDefaults(row) : null), [row]);
 
   const [transactionId,          setTransactionId]          = useState('');
   const [bankUsed,               setBankUsed]               = useState('');
@@ -375,7 +362,11 @@ export default function MarkPaidDialog({
 
   const open    = row != null;
   const valid   = transactionId.trim().length > 0 && bankUsed.trim().length > 0 && sentDate.length > 0;
-  const isWires = row?.processor === 'wires';
+  // Whether the recipient is paid INTO a bank account — a genuine wire, OR a
+  // wallet-routed employee (e.g. Wise) whose dashboard payout is their own bank.
+  // Drives the SWIFT field, the account placeholder, and the wallet hint so the
+  // receiving-end display follows the Employee Dashboard, not just the processor.
+  const isBankWire = defaults?.showSwiftField ?? false;
   const cfg     = CFG[status];
 
   const hasGallery = position != null && position.total > 1;
@@ -700,7 +691,7 @@ export default function MarkPaidDialog({
             label={
               <>
                 Account / wallet ID
-                {row && row.processor !== 'wires' && (
+                {row && !isBankWire && (
                   <span className="font-normal normal-case tracking-normal opacity-50">
                     {' '}(email for digital wallets)
                   </span>
@@ -713,7 +704,7 @@ export default function MarkPaidDialog({
               <FieldInput
                 id="rcpt-acct"
                 cfg={cfg}
-                placeholder={isWires ? '0098-2231-7710' : 'recipient@example.com'}
+                placeholder={isBankWire ? '0098-2231-7710' : 'recipient@example.com'}
                 value={recipientAccountNumber}
                 onChange={(e) => setRecipientAccountNumber(e.target.value)}
                 className="pr-10 font-mono text-xs"
@@ -733,7 +724,7 @@ export default function MarkPaidDialog({
             </div>
           </Field>
 
-          {isWires && (
+          {isBankWire && (
             <Field id="rcpt-swift" label="SWIFT code" cfg={cfg}>
               <FieldInput
                 id="rcpt-swift"
