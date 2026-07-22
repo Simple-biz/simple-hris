@@ -6,6 +6,7 @@ import { createBankPreferredRequest } from "@/lib/supabase/bank-preferred-reques
 import { insertAuditLog } from "@/lib/supabase/audit-log";
 import { pulseBankChanges } from "@/lib/supabase/app-settings";
 import { maskFieldValue } from "@/lib/bank-update/mask-field";
+import { isBankPreferredTransitionAllowed } from "@/lib/employee-payment-processors";
 import { NextResponse } from "next/server";
 import { randomUUID } from "crypto";
 import { authorizeEmailAccess, deniedResponse } from "@/lib/auth/authorize-email";
@@ -142,7 +143,7 @@ async function interceptBankPreferred(opts: {
   workEmail: string | null;
   displayName: string | null;
   currentValue: string | null;
-}): Promise<{ requested: boolean }> {
+}): Promise<{ requested: boolean; forbidden?: boolean }> {
   const { supabase, update, workEmail, displayName, currentValue } = opts;
   if (!("bank_preferred" in update)) return { requested: false };
 
@@ -163,6 +164,13 @@ async function interceptBankPreferred(opts: {
   // it, and a null target has no processor to route to. Treat null target as a
   // no-op request to avoid filing an empty approval. (Set requires a value.)
   if (!target) return { requested: false };
+
+  // WIRES lock: a WIRES employee (anything not hurupay/higlobe, incl. null) can
+  // never be switched to hurupay/higlobe. Reject BEFORE filing a request so an
+  // impossible change never enters the approval queue.
+  if (!isBankPreferredTransitionAllowed(current, target)) {
+    return { requested: false, forbidden: true };
+  }
 
   const { error } = await createBankPreferredRequest({
     workEmail,
