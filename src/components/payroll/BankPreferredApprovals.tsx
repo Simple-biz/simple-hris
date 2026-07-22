@@ -7,6 +7,7 @@ import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import {
   bankPreferredLabelForProcessor,
+  isBankPreferredTransitionAllowed,
   type ProcessorId,
 } from '@/lib/employee-payment-processors';
 import type { BankPreferredRequestRow } from '@/lib/supabase/bank-preferred-requests';
@@ -134,6 +135,7 @@ export function BankPreferredApprovals() {
         <ul className="space-y-2">
           {rows.map((row) => {
             const acting = actingId === row.id;
+            const wiresLocked = !isBankPreferredTransitionAllowed(row.from_value, row.to_value);
             return (
               <li
                 key={row.id}
@@ -156,6 +158,11 @@ export function BankPreferredApprovals() {
                     <Clock className="h-3 w-3" />
                     Requested {timeAgo(row.created_at)}
                   </div>
+                  {wiresLocked && (
+                    <div className="mt-1 text-[11px] font-medium text-rose-600 dark:text-rose-400">
+                      WIRES employee — Hurupay/HiGlobe not possible. Deny this request.
+                    </div>
+                  )}
                 </div>
                 <div className="flex shrink-0 items-center gap-2">
                   <Button
@@ -172,8 +179,13 @@ export function BankPreferredApprovals() {
                   <Button
                     type="button"
                     size="sm"
-                    className="h-8 gap-1.5 rounded-lg bg-emerald-600 text-[12px] text-white hover:bg-emerald-700 dark:bg-emerald-500 dark:hover:bg-emerald-400"
-                    disabled={acting}
+                    className="h-8 gap-1.5 rounded-lg bg-emerald-600 text-[12px] text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-emerald-500 dark:hover:bg-emerald-400"
+                    disabled={acting || wiresLocked}
+                    title={
+                      wiresLocked
+                        ? 'This employee is set to WIRES and cannot be paid via Hurupay/HiGlobe. Deny this request.'
+                        : undefined
+                    }
                     onClick={() => void decide(row, 'approved')}
                   >
                     {acting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
