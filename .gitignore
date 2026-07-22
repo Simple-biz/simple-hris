@@ -23,3 +23,5 @@ coverage/
 **/credentials*.json
 # Safe escape hatch — anything dropped in references/secrets/ is ignored.
 references/secrets/
+# Local data-fix backups (full employee_ids rows incl. bank numbers) — never commit.
+references/backups/
