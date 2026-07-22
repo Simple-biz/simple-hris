@@ -14,6 +14,7 @@ import PayrollWizard from './components/PayrollWizard';
 import { Toaster } from '@/components/ui/sonner';
 import SystemSettings from './components/SystemSettings';
 import PabDisputeQueue from './components/payroll/PabDisputeQueue';
+import { BankPreferredApprovals } from './components/payroll/BankPreferredApprovals';
 import PayrollDispatch from './components/payroll-clerk/PayrollDispatch';
 import { normEmail } from '@/lib/email/norm-email';
 import { SESSION_EMAIL_KEY } from '@/lib/rbac/views';
@@ -257,7 +258,12 @@ export default function App({ initialData }: { initialData?: InitialAccountingDa
       case 'payment-dispatch':
         return <PayrollDispatch />;
       case 'disputes':
-        return <PabDisputeQueue />;
+        return (
+          <div className="space-y-4">
+            <BankPreferredApprovals />
+            <PabDisputeQueue />
+          </div>
+        );
       case 'transfers':
         return <AccountingTransfers />;
       case 'mesa':

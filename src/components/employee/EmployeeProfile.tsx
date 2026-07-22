@@ -645,6 +645,10 @@ export default function EmployeeProfile({
   // SEPARATE from preferredProcessor (Disbursement); changing one never changes
   // the other. Stored in employee_ids.bank_preferred (x1153 → 'wires').
   const [bankPreferred, setBankPreferred] = useState<ProcessorId | ''>('');
+  // A pending Bank Preferred change awaiting accounting approval (the requested
+  // processor id), or null. The live `bankPreferred` above still shows the
+  // currently-approved value until accounting approves this.
+  const [pendingBankPreferred, setPendingBankPreferred] = useState<ProcessorId | ''>('');
   const [payout, setPayout] = useState<PayoutFields>(() => ({ ...emptyPayout }));
   const [payoutSaving, setPayoutSaving] = useState(false);
   const [payoutSavedAt, setPayoutSavedAt] = useState<string | null>(null);
@@ -992,6 +996,23 @@ export default function EmployeeProfile({
         }
         const myId = (idsJson.rows ?? [])[0];
         setBankInfo(myId ?? null);
+
+        // A pending Bank Preferred change (awaiting accounting approval) shows as
+        // a badge on the field; the live value stays whatever's on employee_ids.
+        try {
+          const bpRes = await fetch(`/api/bank-preferred-requests?${emailParam}`, { cache: 'no-store' });
+          const bpJson = (await bpRes.json()) as { rows?: { to_value?: string; status?: string }[] };
+          if (!cancelled) {
+            const latest = (bpJson.rows ?? [])[0];
+            setPendingBankPreferred(
+              latest?.status === 'pending' && isProcessorId(latest.to_value ?? '')
+                ? (latest.to_value as ProcessorId)
+                : '',
+            );
+          }
+        } catch {
+          /* non-fatal — just no badge */
+        }
       } catch (e) {
         if (!cancelled) setError(e instanceof Error ? e.message : 'Failed to load profile');
       } finally {
@@ -1122,7 +1143,11 @@ export default function EmployeeProfile({
           alt_routing_number: payout.altSwiftCode,
         }),
       });
-      const json = (await res.json()) as { error?: string | null; success?: boolean };
+      const json = (await res.json()) as {
+        error?: string | null;
+        success?: boolean;
+        bankPreferredRequested?: boolean;
+      };
       if (!res.ok || json.error) throw new Error(json.error ?? 'Save failed');
 
       const idsRes = await fetch(
@@ -1135,7 +1160,18 @@ export default function EmployeeProfile({
       onPayoutCompletionChange?.(isPayoutComplete((myId as unknown as Record<string, unknown>) ?? null));
       setPayoutSavedAt(new Date().toLocaleTimeString());
       setPayoutEditing(false);
-      toast.success('Payment details saved');
+
+      // A Bank Preferred change is held for accounting approval — reflect the
+      // pending state immediately (the live dropdown reverts to the approved
+      // value via the bankInfo reload above).
+      if (json.bankPreferredRequested) {
+        setPendingBankPreferred(bankPreferred);
+        toast.success('Payment details saved', {
+          description: 'Your Bank Preferred change was sent to Accounting for approval.',
+        });
+      } else {
+        toast.success('Payment details saved');
+      }
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Could not save payment details');
     } finally {
@@ -1837,12 +1873,21 @@ export default function EmployeeProfile({
                   <div className="rounded-xl border border-zinc-200 bg-white px-4 py-3.5 dark:border-zinc-800 dark:bg-zinc-900/60">
                     <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
                       <div className="min-w-0">
-                        <p className="text-[13px] font-medium text-zinc-900 dark:text-white">
-                          Bank Preferred
-                        </p>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <p className="text-[13px] font-medium text-zinc-900 dark:text-white">
+                            Bank Preferred
+                          </p>
+                          {pendingBankPreferred && (
+                            <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[10.5px] font-semibold text-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
+                              <Clock className="h-3 w-3" />
+                              Pending approval: {bankPreferredLabelForProcessor(pendingBankPreferred)}
+                            </span>
+                          )}
+                        </div>
                         <p className="mt-0.5 text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400">
-                          The bank Payment Dispatch routes your salary through.
-                          Independent of your disbursement channel above.
+                          {pendingBankPreferred
+                            ? 'Your change is awaiting Accounting approval. Until then, your current setting below stays active.'
+                            : 'The bank Payment Dispatch routes your salary through. Changes need Accounting approval before they take effect. Independent of your disbursement channel above.'}
                         </p>
                       </div>
                       <SmoothSelect

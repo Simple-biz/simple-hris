@@ -130,12 +130,18 @@ via an ALTER mirroring `employee_notifications_add_bank_info_requested.sql`.
   they read `employee_ids.bank_preferred` directly, so gating the write is
   sufficient — no dispatch-side change.
 
-## Deploy
+## Deploy — REQUIRED before the feature works
 
-Run in Supabase SQL editor (or applied directly via service role, as with the
-column migration):
+These two migrations MUST be run in the Supabase SQL editor. Unlike the earlier
+column change, they can NOT be auto-applied (no DATABASE_URL / raw-SQL RPC is
+available to this environment — only the Supabase REST keys, which can't run DDL):
 1. `references/sql/create/bank_preferred_change_requests.sql`
 2. `references/sql/alter/2026-07-22_employee_notifications_add_bank_preferred_type.sql`
+
+Fail-closed until run: the save intercept throws (500) rather than write
+bank_preferred without a request, so a Bank Preferred change will FAIL to save
+until migration #1 exists. Other bank fields still save. The accounting queue and
+employee badge degrade to empty (not an error) pre-migration.
 
 Ensure approvers have the "Issues" (disputes) feature granted (admin bypasses).
 

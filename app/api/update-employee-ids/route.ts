@@ -2,6 +2,7 @@ import { createSupabaseServiceRoleClient } from "@/lib/supabase/server";
 import { getPayrollDispatchLock } from "@/lib/supabase/payroll-dispatch-lock";
 import { invalidateRateProfilesCache } from "@/lib/supabase/employee-rate-profiles";
 import { insertBankUpdateHistory } from "@/lib/supabase/bank-update-history";
+import { createBankPreferredRequest } from "@/lib/supabase/bank-preferred-requests";
 import { insertAuditLog } from "@/lib/supabase/audit-log";
 import { pulseBankChanges } from "@/lib/supabase/app-settings";
 import { maskFieldValue } from "@/lib/bank-update/mask-field";
@@ -84,6 +85,99 @@ async function notifyReviewers(
   } catch {
     // Notification failure must never fail the save.
   }
+}
+
+/**
+ * Notify Accounting/CEO/Admin that an employee submitted a Bank Preferred change
+ * that needs approval in the Issues tab. Best-effort; never fails the save.
+ */
+async function notifyReviewersOfBankPreferredRequest(
+  supabase: NonNullable<ReturnType<typeof createSupabaseServiceRoleClient>>,
+  workEmail: string,
+  displayName: string | null,
+  fromValue: string | null,
+  toValue: string,
+): Promise<void> {
+  try {
+    const { data: roleRows } = await supabase
+      .from("employee_roles")
+      .select("work_email")
+      .in("role", ["admin", "accounting", "ceo"])
+      .is("revoked_at", null);
+    const recipients = Array.from(
+      new Set(
+        (roleRows ?? [])
+          .map((r: { work_email?: string | null }) => (r.work_email ?? "").trim().toLowerCase())
+          .filter(Boolean),
+      ),
+    );
+    if (recipients.length === 0) return;
+    await supabase.from("employee_notifications").insert(
+      recipients.map((to) => ({
+        recipient_email: to,
+        type: "people.banking.self_updated",
+        tone: "neutral",
+        title: "Bank Preferred change needs approval",
+        message: `${displayName || workEmail} requested a Bank Preferred change (${fromValue ?? "none"} → ${toValue}). Approve or deny it in the Issues tab.`,
+        details: { work_email: workEmail, via: "employee_dashboard", kind: "bank_preferred_request", from: fromValue, to: toValue },
+      })),
+    );
+  } catch {
+    // Notification failure must never fail the save.
+  }
+}
+
+/**
+ * Intercept a Bank Preferred change: instead of writing employee_ids.bank_preferred
+ * directly, hold the new value as a pending request for Accounting to approve.
+ *
+ * Mutates `update` in place — removing `bank_preferred` so it is NOT written to
+ * employee_ids by the caller. Returns whether a pending request was filed (so
+ * the response can tell the UI to show "sent for approval"). A no-op change
+ * (requested value equals the current live value) is dropped silently.
+ */
+async function interceptBankPreferred(opts: {
+  supabase: NonNullable<ReturnType<typeof createSupabaseServiceRoleClient>>;
+  update: Record<string, string | null>;
+  workEmail: string | null;
+  displayName: string | null;
+  currentValue: string | null;
+}): Promise<{ requested: boolean }> {
+  const { supabase, update, workEmail, displayName, currentValue } = opts;
+  if (!("bank_preferred" in update)) return { requested: false };
+
+  const requested = update.bank_preferred; // already trimmed/validated, or null
+  // Always take it out of the immediate employee_ids write — it only lands there
+  // on approval.
+  delete update.bank_preferred;
+
+  // No work email → can't key a request (bootstrap by personal_email only). Drop.
+  if (!workEmail) return { requested: false };
+
+  const current = (currentValue ?? "").trim() || null;
+  const target = (requested ?? "").trim() || null;
+
+  // No actual change (incl. clearing an already-empty value) → nothing to gate.
+  if (current === target) return { requested: false };
+  // Clearing the value doesn't need approval — but there's no UI path to clear
+  // it, and a null target has no processor to route to. Treat null target as a
+  // no-op request to avoid filing an empty approval. (Set requires a value.)
+  if (!target) return { requested: false };
+
+  const { error } = await createBankPreferredRequest({
+    workEmail,
+    employeeName: displayName,
+    fromValue: current,
+    toValue: target,
+  });
+  if (error) {
+    // Un-migrated env or DB hiccup — do NOT silently write the value (that would
+    // bypass the gate). Surface via a thrown error the caller converts to 500.
+    throw new Error(`Could not file Bank Preferred change for approval: ${error}`);
+  }
+
+  await notifyReviewersOfBankPreferredRequest(supabase, workEmail, displayName, current, target);
+  return { requested: true };
 }
 
 /**
@@ -324,25 +418,57 @@ export async function POST(req: Request) {
     const eqColumn = work_email ? "work_email" : "personal_email";
     const identifier = (work_email ?? personal_email) as string;
 
-    // Which of the fields being written are payout/bank fields (the same set the
-    // payroll lock guards). Only these feed the People-tab "Bank changes" flow —
-    // a pure name/personal_email edit shouldn't notify Accounting.
-    const bankChangedFields = Object.keys(update).filter((k) =>
+    // Snapshot the CURRENT value of the bank fields being written (incl.
+    // bank_preferred, which is in BLOCKED_WHILE_PAYROLL_LOCKED), BEFORE the update
+    // overwrites them, so the People-tab feed can show a masked before→after and
+    // the Bank Preferred gate can compare old vs requested. Best-effort.
+    const preInterceptBankFields = Object.keys(update).filter((k) =>
       BLOCKED_WHILE_PAYROLL_LOCKED.has(k),
     );
-
-    // Snapshot the CURRENT value of just the bank fields being written, BEFORE the
-    // update overwrites them, so the People-tab feed can show a masked before→after.
-    // Also grab the name for the notification/history display. Best-effort.
     let beforeRow: Record<string, unknown> = {};
-    if (bankChangedFields.length > 0) {
+    if (preInterceptBankFields.length > 0) {
       const { data } = await supabase
         .from("employee_ids")
-        .select([...bankChangedFields, "name"].join(", "))
+        .select([...preInterceptBankFields, "name"].join(", "))
         .eq(eqColumn, identifier)
         .limit(1);
       beforeRow = (Array.isArray(data) && data[0] ? data[0] : {}) as Record<string, unknown>;
     }
+
+    const displayNameForChange =
+      bootstrap_display_name ||
+      (typeof beforeRow.name === "string" ? beforeRow.name : "") ||
+      null;
+
+    // Bank Preferred changes go through Accounting approval: hold the requested
+    // value as a pending request and REMOVE it from `update` so it is not written
+    // to employee_ids until approved. Everything else saves immediately.
+    const bankPreferred = await interceptBankPreferred({
+      supabase,
+      update,
+      workEmail: work_email ? String(work_email).trim() : null,
+      displayName: displayNameForChange,
+      currentValue:
+        typeof beforeRow.bank_preferred === "string" ? beforeRow.bank_preferred : null,
+    });
+
+    // If Bank Preferred was the ONLY thing submitted, there's nothing left to
+    // write to employee_ids — the request is filed; report it and return.
+    if (Object.keys(update).length === 0) {
+      return NextResponse.json({
+        success: true,
+        created: false,
+        bankPreferredRequested: bankPreferred.requested,
+      });
+    }
+
+    // Which of the fields actually being written are payout/bank fields (the same
+    // set the payroll lock guards). Only these feed the People-tab "Bank changes"
+    // flow — a pure name/personal_email edit shouldn't notify Accounting. Computed
+    // AFTER the intercept so bank_preferred (now held for approval) is excluded.
+    const bankChangedFields = Object.keys(update).filter((k) =>
+      BLOCKED_WHILE_PAYROLL_LOCKED.has(k),
+    );
 
     const { data: updatedRows, error: updateError } = await supabase
       .from("employee_ids")
@@ -360,16 +486,17 @@ export async function POST(req: Request) {
         supabase,
         req,
         workEmail: work_email ? String(work_email).trim() : null,
-        displayName:
-          bootstrap_display_name ||
-          (typeof beforeRow.name === "string" ? beforeRow.name : "") ||
-          null,
+        displayName: displayNameForChange,
         bankChangedFields,
         beforeRow,
         update,
         created: false,
       });
-      return NextResponse.json({ success: true, created: false });
+      return NextResponse.json({
+        success: true,
+        created: false,
+        bankPreferredRequested: bankPreferred.requested,
+      });
     }
 
     // No row matched — bootstrap a new employee_ids row (e.g. employee profile / first payout save).
@@ -412,7 +539,11 @@ export async function POST(req: Request) {
         update,
         created: true,
       });
-      return NextResponse.json({ success: true, created: true });
+      return NextResponse.json({
+        success: true,
+        created: true,
+        bankPreferredRequested: bankPreferred.requested,
+      });
     }
 
     // Possible race: another request inserted the same work_email — retry update.
@@ -437,7 +568,11 @@ export async function POST(req: Request) {
         update,
         created: false,
       });
-      return NextResponse.json({ success: true, created: false });
+      return NextResponse.json({
+        success: true,
+        created: false,
+        bankPreferredRequested: bankPreferred.requested,
+      });
     }
 
     return NextResponse.json({ error: explainEmployeeIdsError(insertError.message) }, { status: 500 });
