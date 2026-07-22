@@ -77,6 +77,7 @@ import {
   BANK_PREFERRED_OPTIONS,
   bankPreferredLabelForProcessor,
   processorForBankPreferredLabel,
+  isWiresPreferred,
 } from '@/lib/employee-payment-processors';
 import { getTitlesForDepartment, hasAnySkillSetContent } from '@/lib/skill-set-titles';
 import {
@@ -1887,7 +1888,9 @@ export default function EmployeeProfile({
                         <p className="mt-0.5 text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400">
                           {pendingBankPreferred
                             ? 'Your change is awaiting Accounting approval. Until then, your current setting below stays active.'
-                            : 'The bank Payment Dispatch routes your salary through. Changes need Accounting approval before they take effect. Independent of your disbursement channel above.'}
+                            : isWiresPreferred(bankPreferred)
+                              ? 'You are set to WIRES — salary is sent by bank wire, so Hurupay/HiGlobe are not available. Changes need Accounting approval.'
+                              : 'The bank Payment Dispatch routes your salary through. Changes need Accounting approval before they take effect. Independent of your disbursement channel above.'}
                         </p>
                       </div>
                       <SmoothSelect
@@ -1902,10 +1905,16 @@ export default function EmployeeProfile({
                           ...(bankPreferredLabelForProcessor(bankPreferred)
                             ? []
                             : [{ value: '', label: 'Select…' }]),
-                          ...BANK_PREFERRED_OPTIONS.map((o) => ({
-                            value: o.label,
-                            label: o.label,
-                          })),
+                          ...BANK_PREFERRED_OPTIONS
+                            // WIRES lock: a WIRES employee can only stay WIRES,
+                            // so never offer hurupay/higlobe to them.
+                            .filter((o) =>
+                              isWiresPreferred(bankPreferred) ? isWiresPreferred(o.id) : true,
+                            )
+                            .map((o) => ({
+                              value: o.label,
+                              label: o.label,
+                            })),
                         ]}
                       />
                     </div>
