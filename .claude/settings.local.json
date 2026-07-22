@@ -525,7 +525,12 @@
       "Bash(git hash-object *)",
       "Bash(grep -n 'replace\\(/\\\\^\\(\\\\[+-\\\\]?\\)' src/lib/payroll/signed-amount-input.ts)",
       "Bash(grep -n 'cents\\\\|₱$P\\\\|₱$\\\\]')",
-      "Bash(git ls-remote *)"
+      "Bash(git ls-remote *)",
+      "Bash(git commit -m '@ *)",
+      "Bash(git commit --amend -m 'chore: update local Claude settings allowlist and build cache *)",
+      "Bash(node --import tsx --test src/lib/payroll/mark-paid-defaults.test.ts)",
+      "Bash(grep -iE \"\\\\.\\(svg|png|jpg|webp\\)$\")",
+      "Bash(gh --version)"
     ],
     "additionalDirectories": [
       "c:\\Users\\Itachi\\.claude\\projects\\c--Users-Itachi-Desktop-simple-hris\\memory",
