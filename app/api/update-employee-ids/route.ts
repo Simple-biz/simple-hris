@@ -460,6 +460,16 @@ export async function POST(req: Request) {
         typeof beforeRow.bank_preferred === "string" ? beforeRow.bank_preferred : null,
     });
 
+    if (bankPreferred.forbidden) {
+      return NextResponse.json(
+        {
+          error:
+            "This employee is set to WIRES and can only be paid via wires — Hurupay/HiGlobe is not possible.",
+        },
+        { status: 400 },
+      );
+    }
+
     // If Bank Preferred was the ONLY thing submitted, there's nothing left to
     // write to employee_ids — the request is filed; report it and return.
     if (Object.keys(update).length === 0) {
