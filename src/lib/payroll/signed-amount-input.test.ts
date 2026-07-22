@@ -55,10 +55,33 @@ test('thousands separators are tolerated (mirrors the board Adjustment parser)',
   assert.deepEqual(parseSignedAmountInput('-1,234.50'), { value: -1234.5, incomplete: false });
 });
 
-test('a leading currency marker is stripped defensively', () => {
+test('a leading currency SYMBOL (₱ or $) is stripped defensively', () => {
   assert.deepEqual(parseSignedAmountInput('₱-500'), { value: -500, incomplete: false });
   assert.deepEqual(parseSignedAmountInput('-₱500'), { value: -500, incomplete: false });
   assert.deepEqual(parseSignedAmountInput('$250'), { value: 250, incomplete: false });
+});
+
+test('the plain letter P/p is NOT a currency marker — typos are rejected, not committed', () => {
+  // The field is a bare PHP number; a leading letter must never silently
+  // become an amount ("P5" is a typo, not ₱5). Rejected as invalid, not
+  // treated as a mid-edit fragment either.
+  for (const bad of ['P5', 'p5', 'P0', 'P.5', 'P 5', 'P-5', '-P5', '+P5']) {
+    assert.deepEqual(parseSignedAmountInput(bad), { value: null, incomplete: false }, `"${bad}"`);
+  }
+  for (const frag of ['P', 'p', '-P', '+P']) {
+    const r = parseSignedAmountInput(frag);
+    assert.equal(r.incomplete, false, `"${frag}" is invalid, not mid-edit`);
+    assert.equal(r.value, null, `"${frag}"`);
+  }
+});
+
+test('rounding is sign-symmetric at a half-cent boundary (+x and -x mirror)', () => {
+  // A signed addition and the equal-magnitude deduction must round the same
+  // magnitude — never land a centavo apart.
+  assert.equal(parseSignedAmountInput('2.005').value, 2.01);
+  assert.equal(parseSignedAmountInput('-2.005').value, -2.01);
+  assert.equal(parseSignedAmountInput('0.125').value, 0.13);
+  assert.equal(parseSignedAmountInput('-0.125').value, -0.13);
 });
 
 test('garbage is rejected as an invalid (not incomplete) entry', () => {
