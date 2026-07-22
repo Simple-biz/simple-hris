@@ -136,7 +136,10 @@ export default function ProcessorCard({
           FallbackIcon={Icon}
           logoSrc={logoSrc}
           fallback={iconOnlyFallback ? 'icon' : 'monogram'}
-          className={cn('h-11 w-11 shrink-0', glowBorder && 'shadow-[0_2px_10px_-2px_rgba(245,158,11,0.7)]')}
+          // Every card uses the same wide plate on the right — real wordmark
+          // logos read at size, and the icon/monogram fallbacks match so the
+          // whole rail stays uniform.
+          className={cn('h-11 w-[80px] shrink-0', glowBorder && 'shadow-[0_2px_10px_-2px_rgba(245,158,11,0.7)]')}
           iconClassName={glowBorder ? 'urgent-zap' : undefined}
         />
       </div>

@@ -10,14 +10,15 @@ interface ProcessorLogoProps {
   gradient: string;
   FallbackIcon: React.ComponentType<{ className?: string }>;
   /**
-   * Real brand logo (e.g. "/wise.png"). When present, the tile becomes a white
-   * box holding the logo (object-contain, blend-out the logo's white bg) — the
-   * same treatment used in the employee payout picker / contractor invoices. If
-   * the image fails to load, we fall back to the gradient monogram/icon tile so
-   * a broken asset never leaves an empty white square.
+   * Real brand logo (e.g. "/wise.png"). When present, the logo renders on a
+   * WIDE white plate (see `logoClassName`) instead of the square icon tile —
+   * these are horizontal wordmarks (Wise ~2.4:1, Hurupay/Higlobe ~3:1), so a
+   * square + object-contain would shrink them to an unreadable sliver. If the
+   * image fails to load, we fall back to the gradient monogram/icon tile so a
+   * broken asset never leaves an empty box.
    */
   logoSrc?: string;
-  /** Wrapper sizing/shape classes (e.g. "h-9 w-9 rounded-xl"). */
+  /** Wrapper sizing/shape classes for the tile/plate (e.g. "h-11 w-[80px]"). */
   className?: string;
   /** Monogram-on-gradient OR icon-on-gradient. */
   fallback?: 'monogram' | 'icon';
@@ -46,14 +47,19 @@ export default function ProcessorLogo({
     return (
       <div
         className={cn(
-          'flex items-center justify-center overflow-hidden rounded-xl bg-white shadow-sm',
+          // Wide white plate with breathing room so the wordmark reads at size.
+          // No mix-blend: these logos are dark-on-transparent and sit fine on
+          // white; multiply washed the thin strokes out to near-white ("empty
+          // box" bug). White plate stays white in dark mode on purpose — brand
+          // wordmarks are drawn for a light background.
+          'flex items-center justify-center overflow-hidden rounded-xl bg-white px-1.5 shadow-sm',
           className,
         )}
       >
         <img
           src={logoSrc}
           alt=""
-          className="h-full w-full object-contain mix-blend-multiply dark:mix-blend-normal"
+          className="max-h-full max-w-full object-contain"
           onError={() => setLogoFailed(true)}
         />
       </div>
