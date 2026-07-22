@@ -8,7 +8,10 @@ import { requireFeatureEditAnyView } from '@/lib/auth/authorize-feature';
 import { getBankPreferredRequestById } from '@/lib/supabase/bank-preferred-requests';
 import { invalidateRateProfilesCache } from '@/lib/supabase/employee-rate-profiles';
 import { pulseBankChanges } from '@/lib/supabase/app-settings';
-import { bankPreferredLabelForProcessor } from '@/lib/employee-payment-processors';
+import {
+  bankPreferredLabelForProcessor,
+  isBankPreferredTransitionAllowed,
+} from '@/lib/employee-payment-processors';
 import type { ProcessorId } from '@/lib/employee-payment-processors';
 import { randomUUID } from 'crypto';
 
@@ -64,6 +67,28 @@ export async function PATCH(
     // leaves an "approved" request whose value never landed.
     if (status === 'approved') {
       const workEmail = row.work_email.trim().toLowerCase();
+
+      // WIRES lock re-check: verify against the CURRENT stored value, not the
+      // request's from_value (it may have changed since the request was filed).
+      // A WIRES employee can never be approved onto hurupay/higlobe.
+      const { data: liveRows } = await supabase
+        .from('employee_ids')
+        .select('bank_preferred')
+        .ilike('work_email', workEmail)
+        .limit(1);
+      const liveCurrent =
+        Array.isArray(liveRows) && liveRows[0] && typeof liveRows[0].bank_preferred === 'string'
+          ? (liveRows[0].bank_preferred as string)
+          : null;
+      if (!isBankPreferredTransitionAllowed(liveCurrent, row.to_value)) {
+        return NextResponse.json(
+          {
+            error:
+              'This employee is set to WIRES and can only be paid via wires — approving Hurupay/HiGlobe is not possible. Deny this request instead.',
+          },
+          { status: 400 },
+        );
+      }
 
       const { data: updatedRows, error: updErr } = await supabase
         .from('employee_ids')
