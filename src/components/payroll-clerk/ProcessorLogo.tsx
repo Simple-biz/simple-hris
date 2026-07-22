@@ -41,6 +41,14 @@ export default function ProcessorLogo({
 }: ProcessorLogoProps) {
   // Track a load error so a missing/broken logo drops back to the gradient tile.
   const [logoFailed, setLogoFailed] = React.useState(false);
+  // Until the wordmark PNG has actually decoded, the white plate is an empty
+  // box — cover it with a soft pulse skeleton, then fade the logo in. Cached
+  // images can be complete before React hydrates (onLoad never fires), so a
+  // ref callback checks `complete` and skips the skeleton entirely.
+  const [logoLoaded, setLogoLoaded] = React.useState(false);
+  const logoRef = React.useCallback((el: HTMLImageElement | null) => {
+    if (el?.complete && el.naturalWidth > 0) setLogoLoaded(true);
+  }, []);
   const showLogo = Boolean(logoSrc) && !logoFailed;
 
   if (showLogo) {
@@ -52,14 +60,28 @@ export default function ProcessorLogo({
           // white; multiply washed the thin strokes out to near-white ("empty
           // box" bug). White plate stays white in dark mode on purpose — brand
           // wordmarks are drawn for a light background.
-          'flex items-center justify-center overflow-hidden rounded-xl bg-white px-1.5 shadow-sm',
+          'relative flex items-center justify-center overflow-hidden rounded-xl bg-white px-1.5 shadow-sm',
           className,
         )}
       >
+        {/* Loading skeleton — a quiet wordmark-shaped pulse on the plate. The
+            plate is white even in dark mode, so the block stays light-zinc
+            (no dark: variant). Static for reduced-motion users. */}
+        {!logoLoaded && (
+          <span
+            aria-hidden
+            className="absolute inset-x-2 inset-y-3 animate-pulse rounded-md bg-zinc-200/80 motion-reduce:animate-none"
+          />
+        )}
         <img
+          ref={logoRef}
           src={logoSrc}
           alt=""
-          className="max-h-full max-w-full object-contain"
+          className={cn(
+            'max-h-full max-w-full object-contain transition-opacity duration-200 ease-out motion-reduce:transition-none',
+            logoLoaded ? 'opacity-100' : 'opacity-0',
+          )}
+          onLoad={() => setLogoLoaded(true)}
           onError={() => setLogoFailed(true)}
         />
       </div>
