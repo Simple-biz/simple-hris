@@ -519,7 +519,13 @@
       "Bash(node /tmp/harness5.mjs)",
       "Bash(grep -nA6 \"const valuesDiffer\\\\|function valuesDiffer\" src/components/PayrollWizard.tsx)",
       "Bash(node --test src/lib/payroll/signed-amount-input.test.ts)",
-      "Bash(awk -F: '$1>10853 && $1<11588 {print}')"
+      "Bash(awk -F: '$1>10853 && $1<11588 {print}')",
+      "Bash(git check-ignore *)",
+      "Bash(git update-index *)",
+      "Bash(git hash-object *)",
+      "Bash(grep -n 'replace\\(/\\\\^\\(\\\\[+-\\\\]?\\)' src/lib/payroll/signed-amount-input.ts)",
+      "Bash(grep -n 'cents\\\\|₱$P\\\\|₱$\\\\]')",
+      "Bash(git ls-remote *)"
     ],
     "additionalDirectories": [
       "c:\\Users\\Itachi\\.claude\\projects\\c--Users-Itachi-Desktop-simple-hris\\memory",
