@@ -554,7 +554,9 @@
       "Bash(node scripts/clear-preferred-processor-for-pd-csv.mjs)",
       "Bash(node scripts/clear-preferred-processor-for-pd-csv.mjs --apply)",
       "Bash(node scripts/override-bank-preferred.mjs)",
-      "Bash(node scripts/override-bank-preferred.mjs --apply)"
+      "Bash(node scripts/override-bank-preferred.mjs --apply)",
+      "Bash(node scripts/populate-preferred-processor-from-bank-preferred.mjs)",
+      "Bash(node scripts/populate-preferred-processor-from-bank-preferred.mjs --apply)"
     ],
     "additionalDirectories": [
       "c:\\Users\\Itachi\\.claude\\projects\\c--Users-Itachi-Desktop-simple-hris\\memory",
