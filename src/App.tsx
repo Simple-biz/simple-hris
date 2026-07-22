@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState } from 'react';
+import { useDispatchLock } from '@/hooks/useDispatchLock';
+import { useSidebarCollapsed } from '@/hooks/useSidebarCollapsed';
 import { useSearchParams } from 'next/navigation';
 import { useSession } from 'next-auth/react';
 import AppFooter from '@/components/AppFooter';
@@ -61,6 +63,27 @@ export default function App({ initialData }: { initialData?: InitialAccountingDa
   const [mounted, setMounted] = useState(false);
   const searchParams = useSearchParams();
   const emailFromQuery = searchParams?.get('email') ?? null;
+
+  // Auto-retract the dashboard sidebar while payroll is processing so the
+  // clerk gets the full width to log payments. This is a TEMPORARY override:
+  // we remember the user's own collapsed preference when processing starts and
+  // restore it when processing stops — we never clobber their saved setting.
+  const { state: dispatchLock } = useDispatchLock();
+  const { collapsed: sidebarCollapsed, setCollapsed: setSidebarCollapsed } = useSidebarCollapsed();
+  const preProcessingCollapsedRef = useRef<boolean | null>(null);
+  useEffect(() => {
+    if (dispatchLock.locked) {
+      // Entering processing: snapshot the current preference once, then collapse.
+      if (preProcessingCollapsedRef.current === null) {
+        preProcessingCollapsedRef.current = sidebarCollapsed;
+        if (!sidebarCollapsed) setSidebarCollapsed(true);
+      }
+    } else if (preProcessingCollapsedRef.current !== null) {
+      // Leaving processing: restore whatever the user had before we forced it.
+      if (!preProcessingCollapsedRef.current) setSidebarCollapsed(false);
+      preProcessingCollapsedRef.current = null;
+    }
+  }, [dispatchLock.locked, sidebarCollapsed, setSidebarCollapsed]);
 
   // JWT session roles — an offline fallback so tab gating survives a Supabase
   // outage (roles are in the cookie without a DB hit). Only trusted for the
