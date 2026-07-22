@@ -9,6 +9,14 @@ interface ProcessorLogoProps {
   /** Tailwind gradient classes for the tile (e.g. "from-violet-500 to-fuchsia-500"). */
   gradient: string;
   FallbackIcon: React.ComponentType<{ className?: string }>;
+  /**
+   * Real brand logo (e.g. "/wise.png"). When present, the tile becomes a white
+   * box holding the logo (object-contain, blend-out the logo's white bg) — the
+   * same treatment used in the employee payout picker / contractor invoices. If
+   * the image fails to load, we fall back to the gradient monogram/icon tile so
+   * a broken asset never leaves an empty white square.
+   */
+  logoSrc?: string;
   /** Wrapper sizing/shape classes (e.g. "h-9 w-9 rounded-xl"). */
   className?: string;
   /** Monogram-on-gradient OR icon-on-gradient. */
@@ -18,16 +26,40 @@ interface ProcessorLogoProps {
 }
 
 /**
- * Gradient tile with monogram or icon — consistent visuals for all processor cards.
+ * Brand logo (when available) or a gradient monogram/icon tile — consistent
+ * visuals for all processor cards.
  */
 export default function ProcessorLogo({
   monogram,
   gradient,
   FallbackIcon,
+  logoSrc,
   className,
   fallback = 'monogram',
   iconClassName,
 }: ProcessorLogoProps) {
+  // Track a load error so a missing/broken logo drops back to the gradient tile.
+  const [logoFailed, setLogoFailed] = React.useState(false);
+  const showLogo = Boolean(logoSrc) && !logoFailed;
+
+  if (showLogo) {
+    return (
+      <div
+        className={cn(
+          'flex items-center justify-center overflow-hidden rounded-xl bg-white shadow-sm',
+          className,
+        )}
+      >
+        <img
+          src={logoSrc}
+          alt=""
+          className="h-full w-full object-contain mix-blend-multiply dark:mix-blend-normal"
+          onError={() => setLogoFailed(true)}
+        />
+      </div>
+    );
+  }
+
   return (
     <div
       className={cn(

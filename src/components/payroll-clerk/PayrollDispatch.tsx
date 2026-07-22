@@ -69,6 +69,8 @@ interface ProcessorVisual {
   /** Active card glow gradient (background tint). */
   glow: string;
   blurb: string;
+  /** Real brand logo (in /public) — shown on a white tile in place of the icon. */
+  logoSrc?: string;
 }
 
 const PROCESSOR_VISUALS: Record<ProcessorId, ProcessorVisual> = {
@@ -77,6 +79,7 @@ const PROCESSOR_VISUALS: Record<ProcessorId, ProcessorVisual> = {
     accent: 'from-orange-500 to-amber-500',
     glow: 'from-orange-100/80 via-amber-50/60 to-white dark:from-orange-950/40 dark:via-amber-950/30 dark:to-zinc-900',
     blurb: 'Email only',
+    logoSrc: '/hurupay.png',
   },
   wepay: {
     Icon: Wallet,
@@ -89,12 +92,14 @@ const PROCESSOR_VISUALS: Record<ProcessorId, ProcessorVisual> = {
     accent: 'from-emerald-500 to-teal-500',
     glow: 'from-emerald-100/80 via-teal-50/60 to-white dark:from-emerald-950/40 dark:via-teal-950/30 dark:to-zinc-900',
     blurb: 'Email + account',
+    logoSrc: '/higlobe.png',
   },
   wise: {
     Icon: Wallet2,
     accent: 'from-green-500 to-lime-500',
     glow: 'from-green-100/80 via-lime-50/60 to-white dark:from-green-950/40 dark:via-lime-950/30 dark:to-zinc-900',
     blurb: 'Email or tag',
+    logoSrc: '/wise.png',
   },
   jeeves: {
     Icon: Wifi,
@@ -851,6 +856,7 @@ export default function PayrollDispatch() {
                     subtitle={v.blurb}
                     count={counts[p.id] ?? 0}
                     Icon={v.Icon}
+                    logoSrc={v.logoSrc}
                     accent={v.accent}
                     glow={v.glow}
                     active={activeTab === p.id}

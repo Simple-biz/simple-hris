@@ -13,6 +13,11 @@ export interface ProcessorCardProps {
   /** Subtle blurb under the label. */
   subtitle?: string;
   Icon: React.ComponentType<{ className?: string }>;
+  /**
+   * Real brand logo (e.g. "/wise.png"). When set, the tile shows the logo on a
+   * white box; otherwise it falls back to the gradient monogram/icon tile.
+   */
+  logoSrc?: string;
   /** Tailwind classes to colour the icon and accent (e.g. "from-orange-500 to-rose-500"). */
   accent: string;
   /** Lighter accent for the active glow. */
@@ -38,6 +43,7 @@ export default function ProcessorCard({
   count,
   subtitle,
   Icon,
+  logoSrc,
   accent,
   glow,
   active,
@@ -91,6 +97,7 @@ export default function ProcessorCard({
           monogram={monogram}
           gradient={accent}
           FallbackIcon={Icon}
+          logoSrc={logoSrc}
           fallback={iconOnlyFallback ? 'icon' : 'monogram'}
           className={cn('h-8 w-8', glowBorder && 'shadow-[0_2px_10px_-2px_rgba(245,158,11,0.7)]')}
           iconClassName={glowBorder ? 'urgent-zap' : undefined}
