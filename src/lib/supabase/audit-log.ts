@@ -39,6 +39,7 @@ export type AuditAction =
   | 'bank_update.otp_verified'
   | 'bank_update.otp_verify_failed'
   | 'bank_update.saved'
+  | 'bank_override.saved'
   // HR Dashboard — pending hires / onboarding pipeline
   | 'hr.pending.created'
   | 'hr.pending.bulk_promoted'

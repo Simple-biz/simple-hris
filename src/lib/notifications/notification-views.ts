@@ -40,6 +40,7 @@ export const NOTIFICATION_TYPE_TO_VIEWS: Record<string, AppView[]> = {
   'special_transfer.recorded': ['employee'],
   'bank_info.requested': ['employee'],
   'people.banking.self_updated': ['accounting', 'admin', 'ceo'],
+  'people.banking.overridden': ['employee'],
   'payroll.processing_started': ['admin', 'hr', 'accounting'],
   'payroll.processing_stopped': ['admin', 'hr', 'accounting'],
   // Payment Dispatch marked this employee's salary paid. Lands in their own
