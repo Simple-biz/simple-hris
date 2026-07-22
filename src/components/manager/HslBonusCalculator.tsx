@@ -1,10 +1,10 @@
 'use client';
 
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { AnimatePresence, motion } from 'motion/react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import {
   AlertTriangle, Check, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight,
-  Download, Eye, Filter, Loader2, Lock, Minus, Plus, RefreshCw, RotateCcw,
+  Download, Eye, Filter, Layers, Loader2, Lock, Minus, Plus, RefreshCw, RotateCcw,
   Save, Search, Trash2, UserPlus, Users, X,
 } from 'lucide-react';
 
@@ -919,29 +919,24 @@ export default function HslBonusCalculator({
           </div>
         </div>
 
-        {/* Department filter rail — focus one branch or scan them all */}
+        {/* Department picker — focus one branch or scan them all */}
         {multiDept && (
-          <div className="-mx-1 flex items-center gap-1.5 overflow-x-auto px-1 pb-0.5">
-            <DeptPill
-              active={activeFilter === 'all'}
-              label="All"
-              count={visibleDepts.length}
-              onClick={() => setActiveFilter('all')}
-            />
-            {visibleDepts.map((k) => (
-              <DeptPill
-                key={k}
-                active={activeFilter === k}
-                label={HSL_DEPTS[k].name}
-                color={HSL_DEPTS[k].color}
-                count={deptState[k]!.entries.length}
-                onClick={() => {
-                  setActiveFilter(k);
-                  setManualOpen((m) => ({ ...m, [k]: true }));
-                }}
-              />
-            ))}
-          </div>
+          <DeptDropdown
+            activeFilter={activeFilter}
+            depts={visibleDepts.map((k) => ({
+              key: k,
+              name: HSL_DEPTS[k].name,
+              color: HSL_DEPTS[k].color,
+              count: deptState[k]!.entries.length,
+              total: deptState[k]!.entries.reduce((s, e) => s + e.calculated_bonus, 0),
+            }))}
+            allCount={totalPeople}
+            allTotal={grandTotal}
+            onSelect={(next) => {
+              setActiveFilter(next);
+              if (next !== 'all') setManualOpen((m) => ({ ...m, [next]: true }));
+            }}
+          />
         )}
       </div>
 
@@ -1087,32 +1082,240 @@ export default function HslBonusCalculator({
   );
 }
 
-// ── Department filter pill ──────────────────────────────────────────────────
+// ── Department picker dropdown ──────────────────────────────────────────────
+// Replaces the horizontal pill rail: one themed trigger that expands into an
+// animated menu of branches (plus "All"). Single-select — picking a branch
+// focuses it and closes the menu. Anchored with position:absolute; the menu
+// opens downward into the (unclipped) content region below the sticky top bar,
+// the same way WeekPicker does under this scroll structure.
 
-function DeptPill({
-  active, label, color, count, onClick,
-}: {
-  active: boolean;
-  label: string;
-  color?: string;
+interface DeptOption {
+  key: HslDeptKey;
+  name: string;
+  color: string;
   count: number;
+  total: number;
+}
+
+function DeptDropdown({
+  activeFilter,
+  depts,
+  allCount,
+  allTotal,
+  onSelect,
+}: {
+  activeFilter: HslDeptKey | 'all';
+  depts: DeptOption[];
+  allCount: number;
+  allTotal: number;
+  onSelect: (next: HslDeptKey | 'all') => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement | null>(null);
+  const reduceMotion = useReducedMotion();
+
+  // Close on outside click / Escape while open.
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false);
+    };
+    document.addEventListener('mousedown', onDoc);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDoc);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+
+  const active = activeFilter === 'all'
+    ? null
+    : depts.find((d) => d.key === activeFilter) ?? null;
+  const currentCount = active ? active.count : allCount;
+  const currentTotal = active ? active.total : allTotal;
+
+  function choose(next: HslDeptKey | 'all') {
+    onSelect(next);
+    setOpen(false);
+  }
+
+  return (
+    <div ref={ref} className="relative">
+      {/* Trigger */}
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        className={cn(
+          'group flex w-full items-center gap-2.5 rounded-lg border bg-white px-3 py-2 text-left shadow-sm outline-none transition-colors',
+          'hover:bg-zinc-50 focus-visible:ring-2 focus-visible:ring-blue-500/40 sm:w-auto sm:min-w-[16rem]',
+          'dark:bg-zinc-900/60 dark:hover:bg-zinc-800/70',
+          open
+            ? 'border-blue-400/70 dark:border-blue-500/50'
+            : 'border-zinc-200 dark:border-zinc-800',
+        )}
+      >
+        {/* Leading glyph — colored dot for a branch, layers icon for "All" */}
+        {active ? (
+          <span
+            className="h-2.5 w-2.5 shrink-0 rounded-full ring-2 ring-inset ring-black/5 dark:ring-white/10"
+            style={{ backgroundColor: active.color }}
+            aria-hidden
+          />
+        ) : (
+          <Layers className="h-4 w-4 shrink-0 text-zinc-400 dark:text-zinc-500" aria-hidden />
+        )}
+
+        <span className="flex min-w-0 flex-col leading-tight">
+          <span className="font-mono text-[9px] font-semibold uppercase tracking-[0.16em] text-zinc-400 dark:text-zinc-500">
+            Department
+          </span>
+          <span className="truncate text-[13px] font-semibold tracking-tight text-zinc-800 dark:text-zinc-100">
+            {active ? active.name : 'All Departments'}
+          </span>
+        </span>
+
+        {/* Count chip + running total */}
+        <span className="ml-auto flex shrink-0 items-center gap-2 pl-1">
+          <span className="rounded-full bg-zinc-100 px-1.5 py-0.5 font-mono text-[10px] font-semibold tabular-nums text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
+            {currentCount}
+          </span>
+          <span className="hidden font-mono text-[11px] font-semibold tabular-nums text-emerald-600 dark:text-emerald-400 sm:inline">
+            {formatPeso(currentTotal)}
+          </span>
+          <ChevronDown
+            className={cn(
+              'h-4 w-4 text-zinc-400 transition-transform duration-200 group-hover:text-zinc-600 dark:group-hover:text-zinc-300',
+              open && 'rotate-180',
+            )}
+            aria-hidden
+          />
+        </span>
+      </button>
+
+      {/* Menu */}
+      <AnimatePresence>
+        {open && (
+          <motion.div
+            role="menu"
+            aria-label="Select department"
+            initial={reduceMotion ? { opacity: 0 } : { opacity: 0, y: -6, scale: 0.98 }}
+            animate={reduceMotion ? { opacity: 1 } : { opacity: 1, y: 0, scale: 1 }}
+            exit={reduceMotion ? { opacity: 0 } : { opacity: 0, y: -6, scale: 0.98 }}
+            transition={{ duration: reduceMotion ? 0.12 : 0.16, ease: COLLAPSE_EASE }}
+            style={{ transformOrigin: 'top left' }}
+            className="absolute left-0 top-full z-30 mt-1.5 w-[min(20rem,calc(100vw-2.5rem))] origin-top-left overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-xl dark:border-zinc-800 dark:bg-zinc-950"
+          >
+            <div className="border-b border-zinc-100 px-3 py-2 dark:border-zinc-800">
+              <span className="font-mono text-[9px] font-semibold uppercase tracking-[0.16em] text-zinc-500">
+                HSL branches
+              </span>
+            </div>
+
+            <ul className="max-h-[min(22rem,60vh)] overflow-y-auto py-1">
+              <DeptDropdownRow
+                idx={0}
+                icon={<Layers className="h-4 w-4 shrink-0 text-zinc-400 dark:text-zinc-500" aria-hidden />}
+                label="All Departments"
+                count={allCount}
+                total={allTotal}
+                selected={activeFilter === 'all'}
+                reduceMotion={!!reduceMotion}
+                onClick={() => choose('all')}
+              />
+              <li className="mx-3 my-1 border-t border-zinc-100 dark:border-zinc-800/80" aria-hidden />
+              {depts.map((d, i) => (
+                <DeptDropdownRow
+                  key={d.key}
+                  idx={i + 1}
+                  icon={
+                    <span
+                      className="h-2.5 w-2.5 shrink-0 rounded-full ring-2 ring-inset ring-black/5 dark:ring-white/10"
+                      style={{ backgroundColor: d.color }}
+                      aria-hidden
+                    />
+                  }
+                  label={d.name}
+                  count={d.count}
+                  total={d.total}
+                  selected={activeFilter === d.key}
+                  reduceMotion={!!reduceMotion}
+                  onClick={() => choose(d.key)}
+                />
+              ))}
+            </ul>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+function DeptDropdownRow({
+  idx, icon, label, count, total, selected, reduceMotion, onClick,
+}: {
+  idx: number;
+  icon: React.ReactNode;
+  label: string;
+  count: number;
+  total: number;
+  selected: boolean;
+  reduceMotion: boolean;
   onClick: () => void;
 }) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={cn(
-        'flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium transition-colors',
-        active
-          ? 'border-transparent bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900'
-          : 'border-zinc-200 bg-white text-zinc-600 hover:bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900/50 dark:text-zinc-300 dark:hover:bg-zinc-800/60',
-      )}
+    <motion.li
+      initial={reduceMotion ? { opacity: 0 } : { opacity: 0, x: -4 }}
+      animate={reduceMotion ? { opacity: 1 } : { opacity: 1, x: 0 }}
+      transition={{
+        duration: reduceMotion ? 0.12 : 0.18,
+        delay: reduceMotion ? 0 : Math.min(idx * 0.022, 0.16),
+        ease: COLLAPSE_EASE,
+      }}
     >
-      {color && <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: color }} aria-hidden />}
-      <span className="max-w-[10rem] truncate">{label}</span>
-      <span className={cn('font-mono text-[10px] tabular-nums', active ? 'opacity-70' : 'text-zinc-400')}>{count}</span>
-    </button>
+      <button
+        type="button"
+        role="menuitemradio"
+        aria-checked={selected}
+        onClick={onClick}
+        className={cn(
+          'flex w-full items-center gap-2.5 px-3 py-2 text-left outline-none transition-colors',
+          'focus-visible:bg-zinc-100 dark:focus-visible:bg-zinc-800/70',
+          selected
+            ? 'bg-blue-50/70 dark:bg-blue-950/30'
+            : 'hover:bg-zinc-50 dark:hover:bg-zinc-900/70',
+        )}
+      >
+        {icon}
+        <span
+          className={cn(
+            'min-w-0 flex-1 truncate text-[13px] tracking-tight',
+            selected
+              ? 'font-semibold text-blue-700 dark:text-blue-300'
+              : 'font-medium text-zinc-700 dark:text-zinc-200',
+          )}
+        >
+          {label}
+        </span>
+        <span className="w-[5.5rem] shrink-0 text-right font-mono text-[11px] font-semibold tabular-nums text-emerald-600 dark:text-emerald-400">
+          {formatPeso(total)}
+        </span>
+        <span className="w-7 shrink-0 text-right font-mono text-[10px] tabular-nums text-zinc-400 dark:text-zinc-500">
+          {count}
+        </span>
+        <Check
+          className={cn(
+            'h-3.5 w-3.5 shrink-0 text-blue-600 transition-opacity dark:text-blue-400',
+            selected ? 'opacity-100' : 'opacity-0',
+          )}
+          aria-hidden
+        />
+      </button>
+    </motion.li>
   );
 }
 

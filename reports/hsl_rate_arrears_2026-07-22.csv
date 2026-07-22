@@ -1,0 +1,647 @@
+email,name,cycle_start,source_week,regular_hours,ot_hours,paid_rate,correct_rate,paid_amount,correct_amount,delta_php
+roses@simple.biz,"Rosemarie Sardan",2026-03-15,2026-03-15_to_2026-03-21,40,0.5,175,265,7131,10799,3667.5
+roses@simple.biz,"Rosemarie Sardan",2026-03-22,2026-03-22_to_2026-03-28,39.5,0,175,265,6913,10468,3555
+roses@simple.biz,"Rosemarie Sardan",2026-03-29,2026-03-29_to_2026-04-04,37.92,0,175,265,6636,10049,3412.8
+roses@simple.biz,"Rosemarie Sardan",2026-04-05,2026-04-05_to_2026-04-11,40,0.75,175,265,7197,10898,3701.25
+roses@simple.biz,"Rosemarie Sardan",2026-04-12,2026-04-12_to_2026-04-18,40,1.01,175,265,7265,11001,3736.35
+roses@simple.biz,"Rosemarie Sardan",2026-04-19,2026-04-19_to_2026-04-25 ,40,0.05,175,265,7013,10620,3606.75
+roses@simple.biz,"Rosemarie Sardan",2026-04-26,2026-04-26_to_2026-05-02,40,1.61,175,265,7423,11240,3817.35
+roses@simple.biz,"Rosemarie Sardan",2026-05-03,2026-05-03_to_2026-05-09,40,1.24,175,265,7326,11093,3767.4
+roses@simple.biz,"Rosemarie Sardan",2026-05-10,2026-05-10_to_2026-05-17,38.39,0,175,265,6718,10173,3455.1
+roses@simple.biz,"Rosemarie Sardan",2026-05-17,2026-05-17_to_2026-05-24,40,1.37,175,265,7360,11145,3784.95
+roses@simple.biz,"Rosemarie Sardan",2026-03-01,2026-03-01_to_2026-03-07,39.26,0,175,265,6871,10404,3533.4
+roses@simple.biz,"Rosemarie Sardan",2026-03-08,2026-03-08_to_2026-03-14,40,0.81,175,265,7213,10922,3709.35
+djg@simple.biz,"Deffy John Granada",2026-03-15,2026-03-15_to_2026-03-21,40,1.25,175,225,7328,9422,2093.75
+djg@simple.biz,"Deffy John Granada",2026-03-22,2026-03-22_to_2026-03-28,40,1.25,175,225,7328,9422,2093.75
+djg@simple.biz,"Deffy John Granada",2026-03-29,2026-03-29_to_2026-04-04,40,1.88,175,225,7494,9635,2141
+djg@simple.biz,"Deffy John Granada",2026-04-05,2026-04-05_to_2026-04-11,40,1.37,175,225,7360,9462,2102.75
+djg@simple.biz,"Deffy John Granada",2026-04-12,2026-04-12_to_2026-04-18,40,1.15,175,225,7302,9388,2086.25
+djg@simple.biz,"Deffy John Granada",2026-04-19,2026-04-19_to_2026-04-25 ,40,1.12,175,225,7294,9378,2084
+djg@simple.biz,"Deffy John Granada",2026-05-24,2026-05-24_to_2026-05-31,32.94,0,175,225,5764,7411,1647.44
+djg@simple.biz,"Deffy John Granada",2026-04-26,2026-04-26_to_2026-05-02,40,1.2,175,225,7315,9405,2090
+djg@simple.biz,"Deffy John Granada",2026-05-03,2026-05-03_to_2026-05-09,40,0.85,175,225,7223,9287,2063.75
+djg@simple.biz,"Deffy John Granada",2026-03-01,2026-03-01_to_2026-03-07,38.99,0,175,225,6823,8773,1949.5
+djg@simple.biz,"Deffy John Granada",2026-03-08,2026-03-08_to_2026-03-14,40,0.75,175,225,7197,9253,2056.25
+djg@simple.biz,"Deffy John Granada",2026-05-10,2026-05-10_to_2026-05-17,40,0.23,175,225,7060,9078,2017.25
+djg@simple.biz,"Deffy John Granada",2026-05-17,2026-05-17_to_2026-05-24,40,1.35,175,225,7354,9456,2101.25
+djg@simple.biz,"Deffy John Granada",2026-06-14,2026-06-14_to_2026-06-21,38.12,0,175,225,6670,8577,1906.63
+djg@simple.biz,"Deffy John Granada",2026-05-31,2026-05-31_to_2026-06-07,40,1.3,175,225,7341,9439,2097.35
+djg@simple.biz,"Deffy John Granada",2026-06-07,2026-06-07_to_2026-06-14,40,0.76,175,225,7200,9257,2056.27
+charlesl@simple.biz,"Charles Leano",2026-03-15,2026-03-15_to_2026-03-21,39.75,0,175,225,6956,8944,1987.5
+charlesl@simple.biz,"Charles Leano",2026-03-22,2026-03-22_to_2026-03-28,39.23,0,175,225,6865,8827,1961.5
+charlesl@simple.biz,"Charles Leano",2026-03-29,2026-03-29_to_2026-04-04,39.42,0,175,225,6899,8870,1971
+charlesl@simple.biz,"Charles Leano",2026-04-05,2026-04-05_to_2026-04-11,34.78,0,175,225,6087,7826,1739
+charlesl@simple.biz,"Charles Leano",2026-04-12,2026-04-12_to_2026-04-18,40,3.68,175,225,7966,10242,2276
+charlesl@simple.biz,"Charles Leano",2026-04-19,2026-04-19_to_2026-04-25 ,40,2.11,175,225,7554,9712,2158.25
+charlesl@simple.biz,"Charles Leano",2026-05-24,2026-05-24_to_2026-05-31,31.86,0,175,225,5576,7169,1592.76
+charlesl@simple.biz,"Charles Leano",2026-04-26,2026-04-26_to_2026-05-02,40,2.8,175,225,7735,9945,2210
+charlesl@simple.biz,"Charles Leano",2026-03-01,2026-03-01_to_2026-03-07,36.75,0,175,225,6431,8269,1837.5
+charlesl@simple.biz,"Charles Leano",2026-03-08,2026-03-08_to_2026-03-14,40,0.08,175,225,7021,9027,2006
+charlesl@simple.biz,"Charles Leano",2026-05-03,2026-05-03_to_2026-05-09,40,0.03,175,225,7008,9010,2002.25
+charlesl@simple.biz,"Charles Leano",2026-05-10,2026-05-10_to_2026-05-17,36.04,0,175,225,6307,8109,1802
+charlesl@simple.biz,"Charles Leano",2026-05-17,2026-05-17_to_2026-05-24,39.81,0,175,225,6967,8957,1990.5
+charlesl@simple.biz,"Charles Leano",2026-06-14,2026-06-14_to_2026-06-21,38.56,0,175,225,6748,8676,1927.9
+charlesl@simple.biz,"Charles Leano",2026-05-31,2026-05-31_to_2026-06-07,40,0.23,175,225,7059,9078,2018.27
+charlesl@simple.biz,"Charles Leano",2026-06-07,2026-06-07_to_2026-06-14,40,0.38,175,225,7099,9128,2029.23
+jeant@simple.biz,"Honey Jean Tupas",2026-03-15,2026-03-15_to_2026-03-21,29.1,0,175,265,5093,7712,2619
+jeant@simple.biz,"Honey Jean Tupas",2026-03-22,2026-03-22_to_2026-03-28,34.98,0,175,265,6122,9270,3148.2
+jeant@simple.biz,"Honey Jean Tupas",2026-03-29,2026-03-29_to_2026-04-04,35.51,0,175,265,6214,9410,3195.9
+jeant@simple.biz,"Honey Jean Tupas",2026-04-05,2026-04-05_to_2026-04-11,19.03,0,175,265,3330,5043,1712.7
+jeant@simple.biz,"Honey Jean Tupas",2026-04-12,2026-04-12_to_2026-04-18,38.43,0,175,265,6725,10184,3458.7
+jeant@simple.biz,"Honey Jean Tupas",2026-04-19,2026-04-19_to_2026-04-25 ,38.4,0,175,265,6720,10176,3456
+jeant@simple.biz,"Honey Jean Tupas",2026-04-26,2026-04-26_to_2026-05-02,35.49,0,175,265,6211,9405,3194.1
+jeant@simple.biz,"Honey Jean Tupas",2026-05-03,2026-05-03_to_2026-05-09,30.61,0,175,265,5357,8112,2754.9
+jeant@simple.biz,"Honey Jean Tupas",2026-05-10,2026-05-10_to_2026-05-17,11.47,0,175,265,2007,3040,1032.3
+jeant@simple.biz,"Honey Jean Tupas",2026-03-01,2026-03-01_to_2026-03-07,30.1,0,175,265,5268,7977,2709
+jeant@simple.biz,"Honey Jean Tupas",2026-03-08,2026-03-08_to_2026-03-14,31.67,0,175,265,5542,8393,2850.3
+simonr@simple.biz,"Simeon Capillo Jr",2026-03-15,2026-03-15_to_2026-03-21,40,8.25,175,225,9166,11784,2618.75
+simonr@simple.biz,"Simeon Capillo Jr",2026-03-22,2026-03-22_to_2026-03-28,40,7.72,175,225,9027,11606,2579
+simonr@simple.biz,"Simeon Capillo Jr",2026-03-29,2026-03-29_to_2026-04-04,40,8.81,175,225,9313,11973,2660.75
+simonr@simple.biz,"Simeon Capillo Jr",2026-04-05,2026-04-05_to_2026-04-11,40,4.1,175,225,8076,10384,2307.5
+simonr@simple.biz,"Simeon Capillo Jr",2026-04-12,2026-04-12_to_2026-04-18,40,7.37,175,225,8935,11487,2552.75
+simonr@simple.biz,"Simeon Capillo Jr",2026-04-19,2026-04-19_to_2026-04-25 ,40,7.55,175,225,8982,11548,2566.25
+simonr@simple.biz,"Simeon Capillo Jr",2026-04-26,2026-04-26_to_2026-05-02,40,7.7,175,225,9021,11599,2577.5
+simonr@simple.biz,"Simeon Capillo Jr",2026-05-03,2026-05-03_to_2026-05-09,40,7.81,175,225,9050,11636,2585.75
+simonr@simple.biz,"Simeon Capillo Jr",2026-05-10,2026-05-10_to_2026-05-17,40,6.07,175,225,8593,11049,2455.25
+simonr@simple.biz,"Simeon Capillo Jr",2026-05-17,2026-05-17_to_2026-05-24,17.85,0,175,225,3124,4016,892.5
+simonr@simple.biz,"Simeon Capillo Jr",2026-03-01,2026-03-01_to_2026-03-07,40,8.01,175,225,9103,11703,2600.75
+simonr@simple.biz,"Simeon Capillo Jr",2026-03-08,2026-03-08_to_2026-03-14,40,8.39,175,225,9202,11832,2629.25
+jayg@simple.biz,"Guillermo Jesus Seno",2026-03-15,2026-03-15_to_2026-03-21,37.68,0,175,225,6594,8478,1884
+jayg@simple.biz,"Guillermo Jesus Seno",2026-03-22,2026-03-22_to_2026-03-28,36.51,0,175,225,6389,8215,1825.5
+jayg@simple.biz,"Guillermo Jesus Seno",2026-03-29,2026-03-29_to_2026-04-04,38.65,0,175,225,6764,8696,1932.5
+jayg@simple.biz,"Guillermo Jesus Seno",2026-04-05,2026-04-05_to_2026-04-11,38.89,0,175,225,6806,8750,1944.5
+jayg@simple.biz,"Guillermo Jesus Seno",2026-04-12,2026-04-12_to_2026-04-18,39.34,0,175,225,6885,8852,1967
+jayg@simple.biz,"Guillermo Jesus Seno",2026-04-19,2026-04-19_to_2026-04-25 ,39.7,0,175,225,6948,8933,1985
+jayg@simple.biz,"Guillermo Jesus Seno",2026-05-24,2026-05-24_to_2026-05-31,24.94,0,175,225,4364,5612,1247.87
+jayg@simple.biz,"Guillermo Jesus Seno",2026-04-26,2026-04-26_to_2026-05-02,37.7,0,175,225,6598,8483,1885
+jayg@simple.biz,"Guillermo Jesus Seno",2026-05-03,2026-05-03_to_2026-05-09,35.04,0,175,225,6132,7884,1752
+jayg@simple.biz,"Guillermo Jesus Seno",2026-05-10,2026-05-10_to_2026-05-17,34.52,0,175,225,6041,7767,1726
+jayg@simple.biz,"Guillermo Jesus Seno",2026-03-01,2026-03-01_to_2026-03-07,38.19,0,175,225,6683,8593,1909.5
+jayg@simple.biz,"Guillermo Jesus Seno",2026-05-17,2026-05-17_to_2026-05-24,25.92,0,175,225,4536,5832,1296
+jayg@simple.biz,"Guillermo Jesus Seno",2026-06-14,2026-06-14_to_2026-06-21,38.96,0,175,225,6817,8766,1948.53
+jayg@simple.biz,"Guillermo Jesus Seno",2026-05-31,2026-05-31_to_2026-06-07,37.24,0,175,225,6516,8379,1862.63
+jayg@simple.biz,"Guillermo Jesus Seno",2026-06-07,2026-06-07_to_2026-06-14,38.58,0,175,225,6752,8681,1928.42
+jayg@simple.biz,"Guillermo Jesus Seno",2026-03-08,2026-03-08_to_2026-03-14,37.95,0,175,225,6641,8539,1897.5
+ivanm@simple.biz,"Ivan Mark Mendez",2026-03-15,2026-03-15_to_2026-03-21,39.4,0,175,225,6895,8865,1970
+ivanm@simple.biz,"Ivan Mark Mendez",2026-03-22,2026-03-22_to_2026-03-28,40,0.7,175,225,7184,9236,2052.5
+ivanm@simple.biz,"Ivan Mark Mendez",2026-03-29,2026-03-29_to_2026-04-04,40,1.08,175,225,7284,9365,2081
+ivanm@simple.biz,"Ivan Mark Mendez",2026-04-05,2026-04-05_to_2026-04-11,39.77,0,175,225,6960,8948,1988.5
+ivanm@simple.biz,"Ivan Mark Mendez",2026-04-12,2026-04-12_to_2026-04-18,40,0.83,175,225,7218,9280,2062.25
+ivanm@simple.biz,"Ivan Mark Mendez",2026-04-19,2026-04-19_to_2026-04-25 ,40,7.78,175,225,9042,11626,2583.5
+ivanm@simple.biz,"Ivan Mark Mendez",2026-04-26,2026-04-26_to_2026-05-02,40,7.32,175,225,8922,11471,2549
+ivanm@simple.biz,"Ivan Mark Mendez",2026-05-03,2026-05-03_to_2026-05-09,40,7.9,175,225,9074,11666,2592.5
+ivanm@simple.biz,"Ivan Mark Mendez",2026-03-01,2026-03-01_to_2026-03-07,40,6.32,175,225,8659,11133,2474
+ivanm@simple.biz,"Ivan Mark Mendez",2026-03-08,2026-03-08_to_2026-03-14,40,5.98,175,225,8570,11018,2448.5
+ivanm@simple.biz,"Ivan Mark Mendez",2026-05-10,2026-05-10_to_2026-05-17,40,0.45,175,225,7118,9152,2033.75
+ivanm@simple.biz,"Ivan Mark Mendez",2026-05-17,2026-05-17_to_2026-05-24,39.23,0,175,225,6865,8827,1961.5
+julzc@simple.biz,"Julian Karl Casona",2026-03-15,2026-03-15_to_2026-03-21,40,1.72,175,225,7452,9581,2129
+julzc@simple.biz,"Julian Karl Casona",2026-03-22,2026-03-22_to_2026-03-28,40,0.97,175,225,7255,9327,2072.75
+julzc@simple.biz,"Julian Karl Casona",2026-03-29,2026-03-29_to_2026-04-04,40,1.9,175,225,7499,9641,2142.5
+julzc@simple.biz,"Julian Karl Casona",2026-04-05,2026-04-05_to_2026-04-11,40,0.88,175,225,7231,9297,2066
+julzc@simple.biz,"Julian Karl Casona",2026-04-12,2026-04-12_to_2026-04-18,40,1.51,175,225,7396,9510,2113.25
+julzc@simple.biz,"Julian Karl Casona",2026-04-19,2026-04-19_to_2026-04-25 ,40,5.73,175,225,8504,10934,2429.75
+julzc@simple.biz,"Julian Karl Casona",2026-04-26,2026-04-26_to_2026-05-02,40,5.59,175,225,8467,10887,2419.25
+julzc@simple.biz,"Julian Karl Casona",2026-05-03,2026-05-03_to_2026-05-09,40,5.09,175,225,8336,10718,2381.75
+julzc@simple.biz,"Julian Karl Casona",2026-05-10,2026-05-10_to_2026-05-17,40,5.76,175,225,8512,10944,2432
+julzc@simple.biz,"Julian Karl Casona",2026-03-01,2026-03-01_to_2026-03-07,40,1.23,175,225,7323,9415,2092.25
+julzc@simple.biz,"Julian Karl Casona",2026-05-17,2026-05-17_to_2026-05-24,40,5.63,175,225,8478,10900,2422.25
+julzc@simple.biz,"Julian Karl Casona",2026-03-08,2026-03-08_to_2026-03-14,40,1.2,175,225,7315,9405,2090
+pearlm@simple.biz,"Pearly Mejia",2026-03-15,2026-03-15_to_2026-03-21,40,17.31,175,225,11544,14842,3298.25
+pearlm@simple.biz,"Pearly Mejia",2026-03-22,2026-03-22_to_2026-03-28,40,1.14,175,225,7299,9385,2085.5
+pearlm@simple.biz,"Pearly Mejia",2026-03-29,2026-03-29_to_2026-04-04,40,1.31,175,225,7344,9442,2098.25
+pearlm@simple.biz,"Pearly Mejia",2026-04-05,2026-04-05_to_2026-04-11,40,1.01,175,225,7265,9341,2075.75
+pearlm@simple.biz,"Pearly Mejia",2026-04-12,2026-04-12_to_2026-04-18,40,0.95,175,225,7249,9321,2071.25
+pearlm@simple.biz,"Pearly Mejia",2026-04-19,2026-04-19_to_2026-04-25 ,40,0.91,175,225,7239,9307,2068.25
+pearlm@simple.biz,"Pearly Mejia",2026-04-26,2026-04-26_to_2026-05-02,40,2.93,175,225,7769,9989,2219.75
+pearlm@simple.biz,"Pearly Mejia",2026-05-03,2026-05-03_to_2026-05-09,40,3.39,175,225,7890,10144,2254.25
+pearlm@simple.biz,"Pearly Mejia",2026-05-10,2026-05-10_to_2026-05-17,40,0.53,175,225,7139,9179,2039.75
+pearlm@simple.biz,"Pearly Mejia",2026-05-17,2026-05-17_to_2026-05-24,40,1.93,175,225,7507,9651,2144.75
+pearlm@simple.biz,"Pearly Mejia",2026-03-01,2026-03-01_to_2026-03-07,40,1.23,175,225,7323,9415,2092.25
+pearlm@simple.biz,"Pearly Mejia",2026-03-08,2026-03-08_to_2026-03-14,40,2.75,175,225,7722,9928,2206.25
+angelob@simple.biz,"Angelo Barros",2026-03-15,2026-03-15_to_2026-03-21,40,7.29,175,225,8914,11460,2546.75
+angelob@simple.biz,"Angelo Barros",2026-03-29,2026-03-29_to_2026-04-04,40,7.03,175,225,8845,11373,2527.25
+angelob@simple.biz,"Angelo Barros",2026-04-05,2026-04-05_to_2026-04-11,40,0.37,175,225,7097,9125,2027.75
+angelob@simple.biz,"Angelo Barros",2026-04-12,2026-04-12_to_2026-04-18,39.81,0,175,225,6967,8957,1990.5
+angelob@simple.biz,"Angelo Barros",2026-04-19,2026-04-19_to_2026-04-25 ,40,8.34,175,225,9189,11815,2625.5
+angelob@simple.biz,"Angelo Barros",2026-04-26,2026-04-26_to_2026-05-02,40,4.27,175,225,8121,10441,2320.25
+angelob@simple.biz,"Angelo Barros",2026-03-01,2026-03-01_to_2026-03-07,39.95,0,175,225,6991,8989,1997.5
+angelob@simple.biz,"Angelo Barros",2026-03-08,2026-03-08_to_2026-03-14,39.67,0,175,225,6942,8926,1983.5
+angelob@simple.biz,"Angelo Barros",2026-05-03,2026-05-03_to_2026-05-09,31.92,0,175,225,5586,7182,1596
+angelob@simple.biz,"Angelo Barros",2026-05-10,2026-05-10_to_2026-05-17,40,8.73,175,225,9292,11946,2654.75
+angelob@simple.biz,"Angelo Barros",2026-05-17,2026-05-17_to_2026-05-24,40,2.05,175,225,7538,9692,2153.75
+angelob@simple.biz,"Angelo Barros",2026-03-22,2026-03-22_to_2026-03-28,40,3.04,175,225,7798,10026,2228
+renards@simple.biz,"Renard Seledio",2026-03-15,2026-03-15_to_2026-03-21,40,0.05,175,225,7013,9017,2003.75
+renards@simple.biz,"Renard Seledio",2026-03-22,2026-03-22_to_2026-03-28,40,1.35,175,225,7354,9456,2101.25
+renards@simple.biz,"Renard Seledio",2026-03-29,2026-03-29_to_2026-04-04,40,3.34,175,225,7877,10127,2250.5
+renards@simple.biz,"Renard Seledio",2026-04-05,2026-04-05_to_2026-04-11,40,1.35,175,225,7354,9456,2101.25
+renards@simple.biz,"Renard Seledio",2026-04-12,2026-04-12_to_2026-04-18,40,0.45,175,225,7118,9152,2033.75
+renards@simple.biz,"Renard Seledio",2026-04-19,2026-04-19_to_2026-04-25 ,40,1.7,175,225,7446,9574,2127.5
+renards@simple.biz,"Renard Seledio",2026-04-26,2026-04-26_to_2026-05-02,34.03,0,175,225,5955,7657,1701.5
+renards@simple.biz,"Renard Seledio",2026-05-03,2026-05-03_to_2026-05-09,40,3.87,175,225,8016,10306,2290.25
+renards@simple.biz,"Renard Seledio",2026-05-10,2026-05-10_to_2026-05-17,40,10.81,175,225,9838,12648,2810.75
+renards@simple.biz,"Renard Seledio",2026-05-17,2026-05-17_to_2026-05-24,40,13.69,175,225,10594,13620,3026.75
+renards@simple.biz,"Renard Seledio",2026-03-01,2026-03-01_to_2026-03-07,23.68,0,175,225,4144,5328,1184
+renards@simple.biz,"Renard Seledio",2026-03-08,2026-03-08_to_2026-03-14,40,0.19,175,225,7050,9064,2014.25
+franzs@simple.biz,"Franz Vincent Sancio",2026-03-15,2026-03-15_to_2026-03-21,39.7,0,175,225,6948,8933,1985
+franzs@simple.biz,"Franz Vincent Sancio",2026-03-22,2026-03-22_to_2026-03-28,39.67,0,175,225,6942,8926,1983.5
+franzs@simple.biz,"Franz Vincent Sancio",2026-03-29,2026-03-29_to_2026-04-04,38.57,0,175,225,6750,8678,1928.5
+franzs@simple.biz,"Franz Vincent Sancio",2026-04-05,2026-04-05_to_2026-04-11,33.03,0,175,225,5780,7432,1651.5
+franzs@simple.biz,"Franz Vincent Sancio",2026-04-12,2026-04-12_to_2026-04-18,33.19,0,175,225,5808,7468,1659.5
+franzs@simple.biz,"Franz Vincent Sancio",2026-04-19,2026-04-19_to_2026-04-25 ,37.07,0,175,225,6487,8341,1853.5
+franzs@simple.biz,"Franz Vincent Sancio",2026-04-26,2026-04-26_to_2026-05-02,40,0.83,175,225,7218,9280,2062.25
+franzs@simple.biz,"Franz Vincent Sancio",2026-05-03,2026-05-03_to_2026-05-09,40,0.77,175,225,7202,9260,2057.75
+franzs@simple.biz,"Franz Vincent Sancio",2026-03-01,2026-03-01_to_2026-03-07,39.38,0,175,225,6892,8861,1969
+franzs@simple.biz,"Franz Vincent Sancio",2026-05-10,2026-05-10_to_2026-05-17,40,9.24,175,225,9426,12119,2693
+franzs@simple.biz,"Franz Vincent Sancio",2026-05-17,2026-05-17_to_2026-05-24,40,10.67,175,225,9801,12601,2800.25
+franzs@simple.biz,"Franz Vincent Sancio",2026-03-08,2026-03-08_to_2026-03-14,39.87,0,175,225,6977,8971,1993.5
+danp@simple.biz,"Dan Albert Pena",2026-03-15,2026-03-15_to_2026-03-21,40,0.61,175,225,7160,9206,2045.75
+danp@simple.biz,"Dan Albert Pena",2026-03-22,2026-03-22_to_2026-03-28,38.58,0,175,225,6752,8681,1929
+danp@simple.biz,"Dan Albert Pena",2026-03-29,2026-03-29_to_2026-04-04,40,0.39,175,225,7102,9132,2029.25
+danp@simple.biz,"Dan Albert Pena",2026-04-05,2026-04-05_to_2026-04-11,40,0.5,175,225,7131,9169,2037.5
+danp@simple.biz,"Dan Albert Pena",2026-04-12,2026-04-12_to_2026-04-18,40,0.18,175,225,7047,9061,2013.5
+danp@simple.biz,"Dan Albert Pena",2026-04-19,2026-04-19_to_2026-04-25 ,39.68,0,175,225,6944,8928,1984
+danp@simple.biz,"Dan Albert Pena",2026-04-26,2026-04-26_to_2026-05-02,40,0.96,175,225,7252,9324,2072
+danp@simple.biz,"Dan Albert Pena",2026-05-03,2026-05-03_to_2026-05-09,40,0.67,175,225,7176,9226,2050.25
+danp@simple.biz,"Dan Albert Pena",2026-03-01,2026-03-01_to_2026-03-07,40,0.08,175,225,7021,9027,2006
+danp@simple.biz,"Dan Albert Pena",2026-05-10,2026-05-10_to_2026-05-17,40,0.51,175,225,7134,9172,2038.25
+danp@simple.biz,"Dan Albert Pena",2026-05-17,2026-05-17_to_2026-05-24,40,0.59,175,225,7155,9199,2044.25
+danp@simple.biz,"Dan Albert Pena",2026-03-08,2026-03-08_to_2026-03-14,40,0.79,175,225,7207,9267,2059.25
+francem@simple.biz,"Francis Magallon",2026-03-15,2026-03-15_to_2026-03-21,38.59,0,175,225,6753,8683,1929.5
+francem@simple.biz,"Francis Magallon",2026-03-22,2026-03-22_to_2026-03-28,37.41,0,175,225,6547,8417,1870.5
+francem@simple.biz,"Francis Magallon",2026-03-29,2026-03-29_to_2026-04-04,37.69,0,175,225,6596,8480,1884.5
+francem@simple.biz,"Francis Magallon",2026-04-05,2026-04-05_to_2026-04-11,40,0.1,175,225,7026,9034,2007.5
+francem@simple.biz,"Francis Magallon",2026-04-12,2026-04-12_to_2026-04-18,32.14,0,175,225,5625,7232,1607
+francem@simple.biz,"Francis Magallon",2026-04-19,2026-04-19_to_2026-04-25 ,40,0.64,175,225,7168,9216,2048
+francem@simple.biz,"Francis Magallon",2026-04-26,2026-04-26_to_2026-05-02,40,0.51,175,225,7134,9172,2038.25
+francem@simple.biz,"Francis Magallon",2026-05-03,2026-05-03_to_2026-05-09,40,9.45,175,225,9481,12189,2708.75
+francem@simple.biz,"Francis Magallon",2026-03-01,2026-03-01_to_2026-03-07,40,0.01,175,225,7003,9003,2000.75
+francem@simple.biz,"Francis Magallon",2026-05-10,2026-05-10_to_2026-05-17,40,0.81,175,225,7213,9273,2060.75
+francem@simple.biz,"Francis Magallon",2026-05-17,2026-05-17_to_2026-05-24,40,0.9,175,225,7236,9304,2067.5
+francem@simple.biz,"Francis Magallon",2026-03-08,2026-03-08_to_2026-03-14,38.63,0,175,225,6760,8692,1931.5
+kits@simple.biz,"Lloyd Kit de los Santos",2026-03-22,2026-03-22_to_2026-03-28,40,0.25,175,225,7066,9084,2018.75
+kits@simple.biz,"Lloyd Kit de los Santos",2026-03-29,2026-03-29_to_2026-04-04,40,0.82,175,225,7215,9277,2061.5
+kits@simple.biz,"Lloyd Kit de los Santos",2026-04-05,2026-04-05_to_2026-04-11,37.88,0,175,225,6629,8523,1894
+kits@simple.biz,"Lloyd Kit de los Santos",2026-04-12,2026-04-12_to_2026-04-18,38.08,0,175,225,6664,8568,1904
+kits@simple.biz,"Lloyd Kit de los Santos",2026-04-19,2026-04-19_to_2026-04-25 ,33.29,0,175,225,5826,7490,1664.5
+kits@simple.biz,"Lloyd Kit de los Santos",2026-04-26,2026-04-26_to_2026-05-02,40,0.22,175,225,7058,9074,2016.5
+kits@simple.biz,"Lloyd Kit de los Santos",2026-05-03,2026-05-03_to_2026-05-09,40,0.11,175,225,7029,9037,2008.25
+kits@simple.biz,"Lloyd Kit de los Santos",2026-05-10,2026-05-10_to_2026-05-17,39.91,0,175,225,6984,8980,1995.5
+kits@simple.biz,"Lloyd Kit de los Santos",2026-05-17,2026-05-17_to_2026-05-24,39.19,0,175,225,6858,8818,1959.5
+kits@simple.biz,"Lloyd Kit de los Santos",2026-03-15,2026-03-15_to_2026-03-21,40,0.63,175,225,7165,9213,2047.25
+kits@simple.biz,"Lloyd Kit de los Santos",2026-03-01,2026-03-01_to_2026-03-07,38.31,0,175,225,6704,8620,1915.5
+kits@simple.biz,"Lloyd Kit de los Santos",2026-03-08,2026-03-08_to_2026-03-14,40,0.81,175,225,7213,9273,2060.75
+justiner@simple.biz,"Justine Karl Rama",2026-03-15,2026-03-15_to_2026-03-21,34.94,0,175,225,6115,7861,1747
+justiner@simple.biz,"Justine Karl Rama",2026-03-22,2026-03-22_to_2026-03-28,36.19,0,175,225,6333,8143,1809.5
+justiner@simple.biz,"Justine Karl Rama",2026-03-29,2026-03-29_to_2026-04-04,40,1.53,175,225,7402,9516,2114.75
+justiner@simple.biz,"Justine Karl Rama",2026-04-05,2026-04-05_to_2026-04-11,40,0.51,175,225,7134,9172,2038.25
+justiner@simple.biz,"Justine Karl Rama",2026-04-12,2026-04-12_to_2026-04-18,40,4.59,175,225,8205,10549,2344.25
+justiner@simple.biz,"Justine Karl Rama",2026-04-19,2026-04-19_to_2026-04-25 ,40,8.89,175,225,9334,12000,2666.75
+justiner@simple.biz,"Justine Karl Rama",2026-04-26,2026-04-26_to_2026-05-02,40,8.49,175,225,9229,11865,2636.75
+justiner@simple.biz,"Justine Karl Rama",2026-05-03,2026-05-03_to_2026-05-09,40,8.32,175,225,9184,11808,2624
+justiner@simple.biz,"Justine Karl Rama",2026-05-10,2026-05-10_to_2026-05-17,40,8.46,175,225,9221,11855,2634.5
+justiner@simple.biz,"Justine Karl Rama",2026-05-17,2026-05-17_to_2026-05-24,40,8.31,175,225,9181,11805,2623.25
+nield@simple.biz,"Niel Damian",2026-03-22,2026-03-22_to_2026-03-28,40,0.14,175,225,7037,9047,2010.5
+nield@simple.biz,"Niel Damian",2026-03-29,2026-03-29_to_2026-04-04,40,0.75,175,225,7197,9253,2056.25
+nield@simple.biz,"Niel Damian",2026-04-05,2026-04-05_to_2026-04-11,39.13,0,175,225,6848,8804,1956.5
+nield@simple.biz,"Niel Damian",2026-04-12,2026-04-12_to_2026-04-18,39.53,0,175,225,6918,8894,1976.5
+nield@simple.biz,"Niel Damian",2026-04-19,2026-04-19_to_2026-04-25 ,15.62,0,175,225,2734,3515,781
+nield@simple.biz,"Niel Damian",2026-04-26,2026-04-26_to_2026-05-02,40,0.04,175,225,7011,9014,2003
+nield@simple.biz,"Niel Damian",2026-05-03,2026-05-03_to_2026-05-09,40,0.63,175,225,7165,9213,2047.25
+nield@simple.biz,"Niel Damian",2026-05-10,2026-05-10_to_2026-05-17,38.68,0,175,225,6769,8703,1934
+nield@simple.biz,"Niel Damian",2026-05-17,2026-05-17_to_2026-05-24,40,0.04,175,225,7011,9014,2003
+nield@simple.biz,"Niel Damian",2026-03-15,2026-03-15_to_2026-03-21,40,0.13,175,225,7034,9044,2009.75
+nield@simple.biz,"Niel Damian",2026-03-01,2026-03-01_to_2026-03-07,40,0.18,175,225,7047,9061,2013.5
+nield@simple.biz,"Niel Damian",2026-03-08,2026-03-08_to_2026-03-14,40,0.12,175,225,7032,9041,2009
+jenh@simple.biz,"Jeneva Hortezuela",2026-03-15,2026-03-15_to_2026-03-21,37.5,0,175,225,6563,8438,1875
+jenh@simple.biz,"Jeneva Hortezuela",2026-03-22,2026-03-22_to_2026-03-28,36.36,0,175,225,6363,8181,1818
+jenh@simple.biz,"Jeneva Hortezuela",2026-03-29,2026-03-29_to_2026-04-04,38.52,0,175,225,6741,8667,1926
+jenh@simple.biz,"Jeneva Hortezuela",2026-04-05,2026-04-05_to_2026-04-11,39.59,0,175,225,6928,8908,1979.5
+jenh@simple.biz,"Jeneva Hortezuela",2026-04-12,2026-04-12_to_2026-04-18,37.42,0,175,225,6549,8420,1871
+jenh@simple.biz,"Jeneva Hortezuela",2026-04-19,2026-04-19_to_2026-04-25 ,39.36,0,175,225,6888,8856,1968
+jenh@simple.biz,"Jeneva Hortezuela",2026-04-26,2026-04-26_to_2026-05-02,38.88,0,175,225,6804,8748,1944
+jenh@simple.biz,"Jeneva Hortezuela",2026-05-03,2026-05-03_to_2026-05-09,37.29,0,175,225,6526,8390,1864.5
+jenh@simple.biz,"Jeneva Hortezuela",2026-05-10,2026-05-10_to_2026-05-17,37.03,0,175,225,6480,8332,1851.5
+jenh@simple.biz,"Jeneva Hortezuela",2026-03-01,2026-03-01_to_2026-03-07,37.31,0,175,225,6529,8395,1865.5
+jenh@simple.biz,"Jeneva Hortezuela",2026-05-17,2026-05-17_to_2026-05-24,39.59,0,175,225,6928,8908,1979.5
+jenh@simple.biz,"Jeneva Hortezuela",2026-03-08,2026-03-08_to_2026-03-14,36.42,0,175,225,6374,8195,1821
+markmo@simple.biz,"Mark Molarte",2026-03-22,2026-03-22_to_2026-03-28,38.38,0,175,225,6717,8636,1919
+markmo@simple.biz,"Mark Molarte",2026-03-29,2026-03-29_to_2026-04-04,37.67,0,175,225,6592,8476,1883.5
+markmo@simple.biz,"Mark Molarte",2026-04-05,2026-04-05_to_2026-04-11,40,0.39,175,225,7102,9132,2029.25
+markmo@simple.biz,"Mark Molarte",2026-04-12,2026-04-12_to_2026-04-18,20.71,0,175,225,3624,4660,1035.5
+markmo@simple.biz,"Mark Molarte",2026-04-19,2026-04-19_to_2026-04-25 ,36.24,0,175,225,6342,8154,1812
+markmo@simple.biz,"Mark Molarte",2026-04-26,2026-04-26_to_2026-05-02,36.76,0,175,225,6433,8271,1838
+markmo@simple.biz,"Mark Molarte",2026-05-03,2026-05-03_to_2026-05-09,38.13,0,175,225,6673,8579,1906.5
+markmo@simple.biz,"Mark Molarte",2026-05-10,2026-05-10_to_2026-05-17,40,6.03,175,225,8583,11035,2452.25
+markmo@simple.biz,"Mark Molarte",2026-05-17,2026-05-17_to_2026-05-24,40,5.55,175,225,8457,10873,2416.25
+markmo@simple.biz,"Mark Molarte",2026-03-15,2026-03-15_to_2026-03-21,35.43,0,175,225,6200,7972,1771.5
+markmo@simple.biz,"Mark Molarte",2026-03-01,2026-03-01_to_2026-03-07,37.8,0,175,225,6615,8505,1890
+markmo@simple.biz,"Mark Molarte",2026-03-08,2026-03-08_to_2026-03-14,30.54,0,175,225,5345,6872,1527
+alexr@simple.biz,"Rufio Alexander De Rama",2026-03-15,2026-03-15_to_2026-03-21,40,2.77,175,225,7727,9935,2207.75
+alexr@simple.biz,"Rufio Alexander De Rama",2026-03-22,2026-03-22_to_2026-03-28,40,3.18,175,225,7835,10073,2238.5
+alexr@simple.biz,"Rufio Alexander De Rama",2026-03-29,2026-03-29_to_2026-04-04,31.06,0,175,225,5436,6989,1553
+alexr@simple.biz,"Rufio Alexander De Rama",2026-04-05,2026-04-05_to_2026-04-11,35.41,0,175,225,6197,7967,1770.5
+alexr@simple.biz,"Rufio Alexander De Rama",2026-04-12,2026-04-12_to_2026-04-18,35.5,0,175,225,6213,7988,1775
+alexr@simple.biz,"Rufio Alexander De Rama",2026-04-19,2026-04-19_to_2026-04-25 ,35.76,0,175,225,6258,8046,1788
+alexr@simple.biz,"Rufio Alexander De Rama",2026-04-26,2026-04-26_to_2026-05-02,35.45,0,175,225,6204,7976,1772.5
+alexr@simple.biz,"Rufio Alexander De Rama",2026-03-01,2026-03-01_to_2026-03-07,39.57,0,175,225,6925,8903,1978.5
+alexr@simple.biz,"Rufio Alexander De Rama",2026-03-08,2026-03-08_to_2026-03-14,40,0.16,175,225,7042,9054,2012
+alexr@simple.biz,"Rufio Alexander De Rama",2026-05-03,2026-05-03_to_2026-05-09,31.96,0,175,225,5593,7191,1598
+alexr@simple.biz,"Rufio Alexander De Rama",2026-05-10,2026-05-10_to_2026-05-17,30.94,0,175,225,5415,6962,1547
+alexr@simple.biz,"Rufio Alexander De Rama",2026-05-17,2026-05-17_to_2026-05-24,38.37,0,175,225,6715,8633,1918.5
+alexe@simple.biz,"Alexander Evangelista",2026-03-15,2026-03-15_to_2026-03-21,35.52,0,210,265,7459,9413,1953.6
+alexe@simple.biz,"Alexander Evangelista",2026-03-22,2026-03-22_to_2026-03-28,39.43,0,210,265,8280,10449,2168.65
+alexe@simple.biz,"Alexander Evangelista",2026-03-29,2026-03-29_to_2026-04-04,40,1.18,210,265,8772,11069,2297.35
+alexe@simple.biz,"Alexander Evangelista",2026-04-05,2026-04-05_to_2026-04-11,40,1.26,210,265,8797,11101,2303.95
+alexe@simple.biz,"Alexander Evangelista",2026-04-12,2026-04-12_to_2026-04-18,40,0.71,210,265,8624,10882,2258.58
+alexe@simple.biz,"Alexander Evangelista",2026-04-19,2026-04-19_to_2026-04-25 ,40,0.59,210,265,8586,10835,2248.67
+alexe@simple.biz,"Alexander Evangelista",2026-04-26,2026-04-26_to_2026-05-02,40,2.13,210,265,9071,11447,2375.72
+alexe@simple.biz,"Alexander Evangelista",2026-03-01,2026-03-01_to_2026-03-07,40,0.24,210,265,8476,10695,2219.8
+alexe@simple.biz,"Alexander Evangelista",2026-05-03,2026-05-03_to_2026-05-09,40,0.95,210,265,8699,10978,2278.38
+alexe@simple.biz,"Alexander Evangelista",2026-05-10,2026-05-10_to_2026-05-17,10.12,0,210,265,2125,2682,556.6
+alexe@simple.biz,"Alexander Evangelista",2026-03-08,2026-03-08_to_2026-03-14,22.8,0,210,265,4788,6042,1254
+beao@simple.biz,"Bea Patricia Olarte",2026-03-15,2026-03-15_to_2026-03-21,40,1.73,175,225,7454,9584,2129.75
+beao@simple.biz,"Bea Patricia Olarte",2026-03-22,2026-03-22_to_2026-03-28,40,2.07,175,225,7543,9699,2155.25
+beao@simple.biz,"Bea Patricia Olarte",2026-03-29,2026-03-29_to_2026-04-04,40,0.52,175,225,7137,9176,2039
+beao@simple.biz,"Bea Patricia Olarte",2026-04-05,2026-04-05_to_2026-04-11,40,1.29,175,225,7339,9435,2096.75
+beao@simple.biz,"Bea Patricia Olarte",2026-04-12,2026-04-12_to_2026-04-18,40,1.25,175,225,7328,9422,2093.75
+beao@simple.biz,"Bea Patricia Olarte",2026-04-19,2026-04-19_to_2026-04-25 ,40,1.31,175,225,7344,9442,2098.25
+beao@simple.biz,"Bea Patricia Olarte",2026-04-26,2026-04-26_to_2026-05-02,40,0.77,175,225,7202,9260,2057.75
+beao@simple.biz,"Bea Patricia Olarte",2026-03-01,2026-03-01_to_2026-03-07,40,1.49,175,225,7391,9503,2111.75
+beao@simple.biz,"Bea Patricia Olarte",2026-03-08,2026-03-08_to_2026-03-14,40,6.52,175,225,8712,11201,2489
+beao@simple.biz,"Bea Patricia Olarte",2026-05-03,2026-05-03_to_2026-05-09,13.67,0,175,225,2392,3076,683.5
+beao@simple.biz,"Bea Patricia Olarte",2026-05-17,2026-05-17_to_2026-05-24,35.55,0,175,225,6221,7999,1777.5
+geraldc@simple.biz,"Gerald Cantoria",2026-03-15,2026-03-15_to_2026-03-21,36.02,0,175,225,6304,8105,1801
+geraldc@simple.biz,"Gerald Cantoria",2026-03-22,2026-03-22_to_2026-03-28,35.19,0,175,225,6158,7918,1759.5
+geraldc@simple.biz,"Gerald Cantoria",2026-03-29,2026-03-29_to_2026-04-04,35.39,0,175,225,6193,7963,1769.5
+geraldc@simple.biz,"Gerald Cantoria",2026-04-05,2026-04-05_to_2026-04-11,35.03,0,175,225,6130,7882,1751.5
+geraldc@simple.biz,"Gerald Cantoria",2026-04-12,2026-04-12_to_2026-04-18,33.83,0,175,225,5920,7612,1691.5
+geraldc@simple.biz,"Gerald Cantoria",2026-04-19,2026-04-19_to_2026-04-25 ,35.55,0,175,225,6221,7999,1777.5
+geraldc@simple.biz,"Gerald Cantoria",2026-04-26,2026-04-26_to_2026-05-02,37.77,0,175,225,6610,8498,1888.5
+geraldc@simple.biz,"Gerald Cantoria",2026-05-03,2026-05-03_to_2026-05-09,38.49,0,175,225,6736,8660,1924.5
+geraldc@simple.biz,"Gerald Cantoria",2026-03-01,2026-03-01_to_2026-03-07,35.44,0,175,225,6202,7974,1772
+geraldc@simple.biz,"Gerald Cantoria",2026-05-10,2026-05-10_to_2026-05-17,35.47,0,175,225,6207,7981,1773.5
+geraldc@simple.biz,"Gerald Cantoria",2026-05-17,2026-05-17_to_2026-05-24,38.58,0,175,225,6752,8681,1929
+geraldc@simple.biz,"Gerald Cantoria",2026-03-08,2026-03-08_to_2026-03-14,35.43,0,175,225,6200,7972,1771.5
+joshr@simple.biz,"Joshua Andrei Ruedas",2026-03-15,2026-03-15_to_2026-03-21,35.93,0,175,225,6288,8084,1796.5
+joshr@simple.biz,"Joshua Andrei Ruedas",2026-03-22,2026-03-22_to_2026-03-28,40,1.28,175,225,7336,9432,2096
+joshr@simple.biz,"Joshua Andrei Ruedas",2026-03-29,2026-03-29_to_2026-04-04,40,3.59,175,225,7942,10212,2269.25
+joshr@simple.biz,"Joshua Andrei Ruedas",2026-04-05,2026-04-05_to_2026-04-11,36.53,0,175,225,6393,8219,1826.5
+joshr@simple.biz,"Joshua Andrei Ruedas",2026-04-12,2026-04-12_to_2026-04-18,33.41,0,175,225,5847,7517,1670.5
+joshr@simple.biz,"Joshua Andrei Ruedas",2026-04-19,2026-04-19_to_2026-04-25 ,20.03,0,175,225,3505,4507,1001.5
+joshr@simple.biz,"Joshua Andrei Ruedas",2026-04-26,2026-04-26_to_2026-05-02,28.02,0,175,225,4904,6305,1401
+joshr@simple.biz,"Joshua Andrei Ruedas",2026-05-03,2026-05-03_to_2026-05-09,35.11,0,175,225,6144,7900,1755.5
+joshr@simple.biz,"Joshua Andrei Ruedas",2026-05-10,2026-05-10_to_2026-05-17,35.12,0,175,225,6146,7902,1756
+joshr@simple.biz,"Joshua Andrei Ruedas",2026-03-01,2026-03-01_to_2026-03-07,36.41,0,175,225,6372,8192,1820.5
+joshr@simple.biz,"Joshua Andrei Ruedas",2026-05-17,2026-05-17_to_2026-05-24,35.13,0,175,225,6148,7904,1756.5
+joshr@simple.biz,"Joshua Andrei Ruedas",2026-03-08,2026-03-08_to_2026-03-14,35.84,0,175,225,6272,8064,1792
+stacys@simple.biz,"Stacy Saputalo",2026-03-15,2026-03-15_to_2026-03-21,36.69,0,175,225,6421,8255,1834.5
+stacys@simple.biz,"Stacy Saputalo",2026-03-22,2026-03-22_to_2026-03-28,35.58,0,175,225,6227,8006,1779
+stacys@simple.biz,"Stacy Saputalo",2026-03-29,2026-03-29_to_2026-04-04,34.93,0,175,225,6113,7859,1746.5
+stacys@simple.biz,"Stacy Saputalo",2026-04-05,2026-04-05_to_2026-04-11,20.92,0,175,225,3661,4707,1046
+stacys@simple.biz,"Stacy Saputalo",2026-04-12,2026-04-12_to_2026-04-18,34.51,0,175,225,6039,7765,1725.5
+stacys@simple.biz,"Stacy Saputalo",2026-04-19,2026-04-19_to_2026-04-25 ,35.49,0,175,225,6211,7985,1774.5
+stacys@simple.biz,"Stacy Saputalo",2026-04-26,2026-04-26_to_2026-05-02,27.98,0,175,225,4897,6296,1399
+stacys@simple.biz,"Stacy Saputalo",2026-05-03,2026-05-03_to_2026-05-09,36.23,0,175,225,6340,8152,1811.5
+stacys@simple.biz,"Stacy Saputalo",2026-05-10,2026-05-10_to_2026-05-17,28.09,0,175,225,4916,6320,1404.5
+stacys@simple.biz,"Stacy Saputalo",2026-05-17,2026-05-17_to_2026-05-24,34.87,0,175,225,6102,7846,1743.5
+stacys@simple.biz,"Stacy Saputalo",2026-03-01,2026-03-01_to_2026-03-07,36.41,0,175,225,6372,8192,1820.5
+stacys@simple.biz,"Stacy Saputalo",2026-03-08,2026-03-08_to_2026-03-14,28.62,0,175,225,5009,6440,1431
+karlm@simple.biz,"Karl Anton Mahusay",2026-03-15,2026-03-15_to_2026-03-21,0,0,175,225,0,0,0
+karlm@simple.biz,"Karl Anton Mahusay",2026-03-22,2026-03-22_to_2026-03-28,33.36,0,175,225,5838,7506,1668
+karlm@simple.biz,"Karl Anton Mahusay",2026-03-29,2026-03-29_to_2026-04-04,36.89,0,175,225,6456,8300,1844.5
+karlm@simple.biz,"Karl Anton Mahusay",2026-04-05,2026-04-05_to_2026-04-11,39.01,0,175,225,6827,8777,1950.5
+karlm@simple.biz,"Karl Anton Mahusay",2026-04-12,2026-04-12_to_2026-04-18,32.83,0,175,225,5745,7387,1641.5
+karlm@simple.biz,"Karl Anton Mahusay",2026-04-19,2026-04-19_to_2026-04-25 ,40,2.67,175,225,7701,9901,2200.25
+karlm@simple.biz,"Karl Anton Mahusay",2026-04-26,2026-04-26_to_2026-05-02,40,1.48,175,225,7389,9500,2111
+karlm@simple.biz,"Karl Anton Mahusay",2026-05-03,2026-05-03_to_2026-05-09,40,12.01,175,225,10153,13053,2900.75
+karlm@simple.biz,"Karl Anton Mahusay",2026-05-10,2026-05-10_to_2026-05-17,40,1.12,175,225,7294,9378,2084
+karlm@simple.biz,"Karl Anton Mahusay",2026-05-17,2026-05-17_to_2026-05-24,40,4.66,175,225,8223,10573,2349.5
+gile@simple.biz,"Gil Marc Espinosa",2026-03-22,2026-03-22_to_2026-03-28,36.31,0,175,225,6354,8170,1815.5
+gile@simple.biz,"Gil Marc Espinosa",2026-03-29,2026-03-29_to_2026-04-04,37.83,0,175,225,6620,8512,1891.5
+gile@simple.biz,"Gil Marc Espinosa",2026-04-05,2026-04-05_to_2026-04-11,36.64,0,175,225,6412,8244,1832
+gile@simple.biz,"Gil Marc Espinosa",2026-04-12,2026-04-12_to_2026-04-18,35.62,0,175,225,6234,8014,1781
+gile@simple.biz,"Gil Marc Espinosa",2026-03-15,2026-03-15_to_2026-03-21,0.02,0,175,225,4,5,1
+gile@simple.biz,"Gil Marc Espinosa",2026-04-19,2026-04-19_to_2026-04-25 ,40,1.67,175,225,7438,9564,2125.25
+gile@simple.biz,"Gil Marc Espinosa",2026-04-26,2026-04-26_to_2026-05-02,31.51,0,175,225,5514,7090,1575.5
+gile@simple.biz,"Gil Marc Espinosa",2026-05-03,2026-05-03_to_2026-05-09,38.6,0,175,225,6755,8685,1930
+gile@simple.biz,"Gil Marc Espinosa",2026-05-10,2026-05-10_to_2026-05-17,40,7.21,175,225,8893,11433,2540.75
+gile@simple.biz,"Gil Marc Espinosa",2026-05-17,2026-05-17_to_2026-05-24,40,7.34,175,225,8927,11477,2550.5
+inac@simple.biz,"Reina Cabales",2026-03-15,2026-03-15_to_2026-03-21,35.06,0,175,225,6136,7889,1753
+inac@simple.biz,"Reina Cabales",2026-03-22,2026-03-22_to_2026-03-28,35.09,0,175,225,6141,7895,1754.5
+inac@simple.biz,"Reina Cabales",2026-03-29,2026-03-29_to_2026-04-04,35.75,0,175,225,6256,8044,1787.5
+inac@simple.biz,"Reina Cabales",2026-04-05,2026-04-05_to_2026-04-11,21.05,0,175,225,3684,4736,1052.5
+inac@simple.biz,"Reina Cabales",2026-04-12,2026-04-12_to_2026-04-18,35.09,0,175,225,6141,7895,1754.5
+inac@simple.biz,"Reina Cabales",2026-04-19,2026-04-19_to_2026-04-25 ,25.42,0,175,225,4449,5720,1271
+inac@simple.biz,"Reina Cabales",2026-04-26,2026-04-26_to_2026-05-02,29.12,0,175,225,5096,6552,1456
+inac@simple.biz,"Reina Cabales",2026-05-03,2026-05-03_to_2026-05-09,32.44,0,175,225,5677,7299,1622
+inac@simple.biz,"Reina Cabales",2026-03-01,2026-03-01_to_2026-03-07,37.05,0,175,225,6484,8336,1852.5
+inac@simple.biz,"Reina Cabales",2026-05-10,2026-05-10_to_2026-05-17,12.36,0,175,225,2163,2781,618
+inac@simple.biz,"Reina Cabales",2026-05-17,2026-05-17_to_2026-05-24,24.05,0,175,225,4209,5411,1202.5
+inac@simple.biz,"Reina Cabales",2026-03-08,2026-03-08_to_2026-03-14,35.18,0,175,225,6157,7916,1759
+rachelr@simple.biz,"Rachel Ramos",2026-04-19,2026-04-19_to_2026-04-25 ,36.58,0,175,265,6402,9694,3292.2
+rachelr@simple.biz,"Rachel Ramos",2026-04-26,2026-04-26_to_2026-05-02,40,0.14,175,265,7037,10656,3618.9
+rachelr@simple.biz,"Rachel Ramos",2026-05-03,2026-05-03_to_2026-05-09,40,0.03,175,265,7008,10612,3604.04
+rachelr@simple.biz,"Rachel Ramos",2026-05-10,2026-05-10_to_2026-05-17,39.04,0,175,265,6832,10346,3513.6
+rachelr@simple.biz,"Rachel Ramos",2026-05-17,2026-05-17_to_2026-05-24,39.08,0,175,265,6839,10356,3517.2
+khasseyg@simple.biz,"Kharessa Gahi",2026-03-15,2026-03-15_to_2026-03-21,33.61,0,175,225,5882,7562,1680.5
+khasseyg@simple.biz,"Kharessa Gahi",2026-03-22,2026-03-22_to_2026-03-28,35.12,0,175,225,6146,7902,1756
+khasseyg@simple.biz,"Kharessa Gahi",2026-03-29,2026-03-29_to_2026-04-04,28.7,0,175,225,5023,6458,1435
+khasseyg@simple.biz,"Kharessa Gahi",2026-04-05,2026-04-05_to_2026-04-11,37.34,0,175,225,6535,8402,1867
+khasseyg@simple.biz,"Kharessa Gahi",2026-04-12,2026-04-12_to_2026-04-18,30.26,0,175,225,5296,6809,1513
+khasseyg@simple.biz,"Kharessa Gahi",2026-04-19,2026-04-19_to_2026-04-25 ,38.05,0,175,225,6659,8561,1902.5
+khasseyg@simple.biz,"Kharessa Gahi",2026-04-26,2026-04-26_to_2026-05-02,40,1.36,175,225,7357,9459,2102
+khasseyg@simple.biz,"Kharessa Gahi",2026-05-03,2026-05-03_to_2026-05-09,26.86,0,175,225,4701,6044,1343
+khasseyg@simple.biz,"Kharessa Gahi",2026-05-10,2026-05-10_to_2026-05-17,31.38,0,175,225,5492,7061,1569
+khasseyg@simple.biz,"Kharessa Gahi",2026-05-17,2026-05-17_to_2026-05-24,40,2.07,175,225,7543,9699,2155.25
+abip@simple.biz,"Abegail Pausanos",2026-06-14,2026-06-14_to_2026-06-21,30.1,0,175,235,5268,7074,1805.56
+abip@simple.biz,"Abegail Pausanos",2026-05-24,2026-05-24_to_2026-05-31,28.1,0,175,235,4918,6604,1685.95
+abip@simple.biz,"Abegail Pausanos",2026-04-26,2026-04-26_to_2026-05-02,34.4,0,175,235,6020,8084,2064
+abip@simple.biz,"Abegail Pausanos",2026-05-03,2026-05-03_to_2026-05-09,36,0,175,235,6300,8460,2160
+abip@simple.biz,"Abegail Pausanos",2026-05-10,2026-05-10_to_2026-05-17,39.27,0,175,235,6872,9228,2356.2
+abip@simple.biz,"Abegail Pausanos",2026-05-17,2026-05-17_to_2026-05-24,34.53,0,175,235,6043,8115,2071.8
+abip@simple.biz,"Abegail Pausanos",2026-05-31,2026-05-31_to_2026-06-07,35.49,0,175,235,6211,8340,2129.4
+abip@simple.biz,"Abegail Pausanos",2026-06-07,2026-06-07_to_2026-06-14,34.18,0,175,235,5982,8032,2050.7
+rond@simple.biz,"Maronn Dois Dabasol",2026-03-29,2026-03-29_to_2026-04-04,36.77,0,175,225,6435,8273,1838.5
+rond@simple.biz,"Maronn Dois Dabasol",2026-04-05,2026-04-05_to_2026-04-11,37.49,0,175,225,6561,8435,1874.5
+rond@simple.biz,"Maronn Dois Dabasol",2026-04-12,2026-04-12_to_2026-04-18,37.51,0,175,225,6564,8440,1875.5
+rond@simple.biz,"Maronn Dois Dabasol",2026-04-19,2026-04-19_to_2026-04-25 ,37.52,0,175,225,6566,8442,1876
+rond@simple.biz,"Maronn Dois Dabasol",2026-04-26,2026-04-26_to_2026-05-02,40,0.15,175,225,7039,9051,2011.25
+rond@simple.biz,"Maronn Dois Dabasol",2026-05-03,2026-05-03_to_2026-05-09,40,0.56,175,225,7147,9189,2042
+rond@simple.biz,"Maronn Dois Dabasol",2026-05-10,2026-05-10_to_2026-05-17,39.46,0,175,225,6906,8879,1973
+rond@simple.biz,"Maronn Dois Dabasol",2026-05-17,2026-05-17_to_2026-05-24,39.84,0,175,225,6972,8964,1992
+valp@simple.biz,"Valentino Fernan Padilla",2026-04-05,2026-04-05_to_2026-04-11,34.4,0,175,225,6020,7740,1720
+valp@simple.biz,"Valentino Fernan Padilla",2026-04-12,2026-04-12_to_2026-04-18,36.7,0,175,225,6423,8258,1835
+valp@simple.biz,"Valentino Fernan Padilla",2026-04-19,2026-04-19_to_2026-04-25 ,38.01,0,175,225,6652,8552,1900.5
+valp@simple.biz,"Valentino Fernan Padilla",2026-04-26,2026-04-26_to_2026-05-02,31.15,0,175,225,5451,7009,1557.5
+valp@simple.biz,"Valentino Fernan Padilla",2026-05-03,2026-05-03_to_2026-05-09,38.1,0,175,225,6668,8573,1905
+valp@simple.biz,"Valentino Fernan Padilla",2026-05-10,2026-05-10_to_2026-05-17,40,7.62,175,225,9000,11572,2571.5
+valp@simple.biz,"Valentino Fernan Padilla",2026-05-17,2026-05-17_to_2026-05-24,40,11.71,175,225,10074,12952,2878.25
+duanec@simple.biz,"Duane De La Cruz",2026-04-05,2026-04-05_to_2026-04-11,26.04,0,175,225,4557,5859,1302
+duanec@simple.biz,"Duane De La Cruz",2026-04-12,2026-04-12_to_2026-04-18,35.09,0,175,225,6141,7895,1754.5
+duanec@simple.biz,"Duane De La Cruz",2026-04-19,2026-04-19_to_2026-04-25 ,39.54,0,175,225,6920,8897,1977
+duanec@simple.biz,"Duane De La Cruz",2026-04-26,2026-04-26_to_2026-05-02,31.41,0,175,225,5497,7067,1570.5
+duanec@simple.biz,"Duane De La Cruz",2026-05-03,2026-05-03_to_2026-05-09,39.15,0,175,225,6851,8809,1957.5
+duanec@simple.biz,"Duane De La Cruz",2026-05-10,2026-05-10_to_2026-05-17,40,6.96,175,225,8827,11349,2522
+duanec@simple.biz,"Duane De La Cruz",2026-05-17,2026-05-17_to_2026-05-24,40,6.1,175,225,8601,11059,2457.5
+drews@simple.biz,"Hendrew Soriano",2026-04-05,2026-04-05_to_2026-04-11,31.84,0,175,225,5572,7164,1592
+drews@simple.biz,"Hendrew Soriano",2026-04-12,2026-04-12_to_2026-04-18,33.68,0,175,225,5894,7578,1684
+drews@simple.biz,"Hendrew Soriano",2026-04-19,2026-04-19_to_2026-04-25 ,39.92,0,175,225,6986,8982,1996
+drews@simple.biz,"Hendrew Soriano",2026-04-26,2026-04-26_to_2026-05-02,32.02,0,175,225,5604,7205,1601
+drews@simple.biz,"Hendrew Soriano",2026-05-03,2026-05-03_to_2026-05-09,40,8.73,175,225,9292,11946,2654.75
+drews@simple.biz,"Hendrew Soriano",2026-05-10,2026-05-10_to_2026-05-17,39.08,0,175,225,6839,8793,1954
+drews@simple.biz,"Hendrew Soriano",2026-05-17,2026-05-17_to_2026-05-24,39.25,0,175,225,6869,8831,1962.5
+mikez@simple.biz,"Michael Zalavarria",2026-04-12,2026-04-12_to_2026-04-18,36.11,0,175,225,6319,8125,1805.5
+mikez@simple.biz,"Michael Zalavarria",2026-04-19,2026-04-19_to_2026-04-25 ,36.8,0,175,225,6440,8280,1840
+mikez@simple.biz,"Michael Zalavarria",2026-04-26,2026-04-26_to_2026-05-02,38.75,0,175,225,6781,8719,1937.5
+mikez@simple.biz,"Michael Zalavarria",2026-05-03,2026-05-03_to_2026-05-09,33.29,0,175,225,5826,7490,1664.5
+mikez@simple.biz,"Michael Zalavarria",2026-05-10,2026-05-10_to_2026-05-17,40,10.47,175,225,9748,12534,2785.25
+mikez@simple.biz,"Michael Zalavarria",2026-05-17,2026-05-17_to_2026-05-24,40,16.47,175,225,11323,14559,3235.25
+nikaa@simple.biz,"Nika A.",2026-04-12,2026-04-12_to_2026-04-18,40,0.52,175,225,7137,9176,2039
+nikaa@simple.biz,"Nika A.",2026-04-19,2026-04-19_to_2026-04-25 ,32.05,0,175,225,5609,7211,1602.5
+nikaa@simple.biz,"Nika A.",2026-04-26,2026-04-26_to_2026-05-02,40,0.03,175,225,7008,9010,2002.25
+nikaa@simple.biz,"Nika A.",2026-05-03,2026-05-03_to_2026-05-09,40,7.69,175,225,9019,11595,2576.75
+nikaa@simple.biz,"Nika A.",2026-05-10,2026-05-10_to_2026-05-17,40,0.97,175,225,7255,9327,2072.75
+nikaa@simple.biz,"Nika A.",2026-05-17,2026-05-17_to_2026-05-24,40,5.19,175,225,8362,10752,2389.25
+gracea@simple.biz,"Loivem Grace Alacre",2026-04-05,2026-04-05_to_2026-04-11,0,0,175,225,0,0,0
+gracea@simple.biz,"Loivem Grace Alacre",2026-04-12,2026-04-12_to_2026-04-18,33.62,0,175,225,5884,7564,1681
+gracea@simple.biz,"Loivem Grace Alacre",2026-04-19,2026-04-19_to_2026-04-25 ,28.04,0,175,225,4907,6309,1402
+gracea@simple.biz,"Loivem Grace Alacre",2026-04-26,2026-04-26_to_2026-05-02,36.65,0,175,225,6414,8246,1832.5
+gracea@simple.biz,"Loivem Grace Alacre",2026-05-03,2026-05-03_to_2026-05-09,40,0.62,175,225,7163,9209,2046.5
+gracea@simple.biz,"Loivem Grace Alacre",2026-05-10,2026-05-10_to_2026-05-17,39.88,0,175,225,6979,8973,1994
+gracea@simple.biz,"Loivem Grace Alacre",2026-05-17,2026-05-17_to_2026-05-24,40,2.51,175,225,7659,9847,2188.25
+wilburta@simple.biz,"Wilburt Jonas Alamo",2026-04-05,2026-04-05_to_2026-04-11,30.31,0,175,225,5304,6820,1515.5
+wilburta@simple.biz,"Wilburt Jonas Alamo",2026-04-12,2026-04-12_to_2026-04-18,32.72,0,175,225,5726,7362,1636
+wilburta@simple.biz,"Wilburt Jonas Alamo",2026-04-19,2026-04-19_to_2026-04-25 ,37.2,0,175,225,6510,8370,1860
+wilburta@simple.biz,"Wilburt Jonas Alamo",2026-04-26,2026-04-26_to_2026-05-02,29,0,175,225,5075,6525,1450
+wilburta@simple.biz,"Wilburt Jonas Alamo",2026-05-03,2026-05-03_to_2026-05-09,20.51,0,175,225,3589,4615,1025.5
+wilburta@simple.biz,"Wilburt Jonas Alamo",2026-05-10,2026-05-10_to_2026-05-17,33.37,0,175,225,5840,7508,1668.5
+wilburta@simple.biz,"Wilburt Jonas Alamo",2026-05-17,2026-05-17_to_2026-05-24,33.95,0,175,225,5941,7639,1697.5
+kerlu@simple.biz,"Kerl Uypico",2026-04-12,2026-04-12_to_2026-04-18,33.99,0,175,225,5948,7648,1699.5
+kerlu@simple.biz,"Kerl Uypico",2026-04-19,2026-04-19_to_2026-04-25 ,35.13,0,175,225,6148,7904,1756.5
+kerlu@simple.biz,"Kerl Uypico",2026-04-26,2026-04-26_to_2026-05-02,40,0.76,175,225,7200,9257,2057
+kerlu@simple.biz,"Kerl Uypico",2026-05-03,2026-05-03_to_2026-05-09,40,0.65,175,225,7171,9219,2048.75
+kerlu@simple.biz,"Kerl Uypico",2026-05-10,2026-05-10_to_2026-05-17,40,0.74,175,225,7194,9250,2055.5
+kerlu@simple.biz,"Kerl Uypico",2026-05-17,2026-05-17_to_2026-05-24,24.61,0,175,225,4307,5537,1230.5
+richardr@simple.biz,"Richard Ian Rinon",2026-04-12,2026-04-12_to_2026-04-18,34.55,0,175,225,6046,7774,1727.5
+richardr@simple.biz,"Richard Ian Rinon",2026-04-19,2026-04-19_to_2026-04-25 ,36.09,0,175,225,6316,8120,1804.5
+richardr@simple.biz,"Richard Ian Rinon",2026-04-26,2026-04-26_to_2026-05-02,37.52,0,175,225,6566,8442,1876
+richardr@simple.biz,"Richard Ian Rinon",2026-05-03,2026-05-03_to_2026-05-09,36.59,0,175,225,6403,8233,1829.5
+richardr@simple.biz,"Richard Ian Rinon",2026-05-10,2026-05-10_to_2026-05-17,37.76,0,175,225,6608,8496,1888
+richardr@simple.biz,"Richard Ian Rinon",2026-05-17,2026-05-17_to_2026-05-24,25.69,0,175,225,4496,5780,1284.5
+jetb@simple.biz,"Jet Paul Bugarin",2026-03-29,2026-03-29_to_2026-04-04,35.77,0,175,225,6260,8048,1788.5
+jetb@simple.biz,"Jet Paul Bugarin",2026-04-05,2026-04-05_to_2026-04-11,38.1,0,175,225,6668,8573,1905
+jetb@simple.biz,"Jet Paul Bugarin",2026-04-12,2026-04-12_to_2026-04-18,37.89,0,175,225,6631,8525,1894.5
+jetb@simple.biz,"Jet Paul Bugarin",2026-04-19,2026-04-19_to_2026-04-25 ,32,0,175,225,5600,7200,1600
+jetb@simple.biz,"Jet Paul Bugarin",2026-04-26,2026-04-26_to_2026-05-02,32.07,0,175,225,5612,7216,1603.5
+jetb@simple.biz,"Jet Paul Bugarin",2026-05-03,2026-05-03_to_2026-05-09,7.14,0,175,225,1250,1607,357
+janicer@simple.biz,"Janice Revillas",2026-04-19,2026-04-19_to_2026-04-25 ,35.82,0,175,225,6269,8060,1791
+janicer@simple.biz,"Janice Revillas",2026-04-26,2026-04-26_to_2026-05-02,37,0,175,225,6475,8325,1850
+janicer@simple.biz,"Janice Revillas",2026-05-03,2026-05-03_to_2026-05-09,36.46,0,175,225,6381,8204,1823
+janicer@simple.biz,"Janice Revillas",2026-05-10,2026-05-10_to_2026-05-17,35.89,0,175,225,6281,8075,1794.5
+janicer@simple.biz,"Janice Revillas",2026-05-17,2026-05-17_to_2026-05-24,35.82,0,175,225,6269,8060,1791
+diana@simple.biz,"Dian Marie Alcalde",2026-03-29,2026-03-29_to_2026-04-04,33.6,0,175,225,5880,7560,1680
+diana@simple.biz,"Dian Marie Alcalde",2026-04-05,2026-04-05_to_2026-04-11,34.34,0,175,225,6010,7727,1717
+diana@simple.biz,"Dian Marie Alcalde",2026-04-12,2026-04-12_to_2026-04-18,31.36,0,175,225,5488,7056,1568
+diana@simple.biz,"Dian Marie Alcalde",2026-04-19,2026-04-19_to_2026-04-25 ,30.4,0,175,225,5320,6840,1520
+diana@simple.biz,"Dian Marie Alcalde",2026-04-26,2026-04-26_to_2026-05-02,19.22,0,175,225,3364,4325,961
+diana@simple.biz,"Dian Marie Alcalde",2026-05-03,2026-05-03_to_2026-05-09,29.73,0,175,225,5203,6689,1486.5
+judithb@simple.biz,"Judith Bahan",2026-04-19,2026-04-19_to_2026-04-25 ,34.49,0,175,225,6036,7760,1724.5
+judithb@simple.biz,"Judith Bahan",2026-04-26,2026-04-26_to_2026-05-02,36.09,0,175,225,6316,8120,1804.5
+judithb@simple.biz,"Judith Bahan",2026-05-03,2026-05-03_to_2026-05-09,35.93,0,175,225,6288,8084,1796.5
+judithb@simple.biz,"Judith Bahan",2026-05-10,2026-05-10_to_2026-05-17,36.06,0,175,225,6311,8114,1803
+judithb@simple.biz,"Judith Bahan",2026-05-17,2026-05-17_to_2026-05-24,35.72,0,175,225,6251,8037,1786
+kimerl@simple.biz,"Kimer Lauron",2026-04-12,2026-04-12_to_2026-04-18,32.51,0,175,225,5689,7315,1625.5
+kimerl@simple.biz,"Kimer Lauron",2026-04-19,2026-04-19_to_2026-04-25 ,27.19,0,175,225,4758,6118,1359.5
+kimerl@simple.biz,"Kimer Lauron",2026-04-26,2026-04-26_to_2026-05-02,26.45,0,175,225,4629,5951,1322.5
+kimerl@simple.biz,"Kimer Lauron",2026-05-03,2026-05-03_to_2026-05-09,25.83,0,175,225,4520,5812,1291.5
+kimerl@simple.biz,"Kimer Lauron",2026-05-10,2026-05-10_to_2026-05-17,40,6.48,175,225,8701,11187,2486
+kimerl@simple.biz,"Kimer Lauron",2026-05-17,2026-05-17_to_2026-05-24,16.46,0,175,225,2881,3704,823
+kimg@simple.biz,"Kim Harold Galo",2026-04-05,2026-04-05_to_2026-04-11,27.29,0,175,225,4776,6140,1364.5
+kimg@simple.biz,"Kim Harold Galo",2026-04-12,2026-04-12_to_2026-04-18,21.14,0,175,225,3700,4757,1057
+kimg@simple.biz,"Kim Harold Galo",2026-04-19,2026-04-19_to_2026-04-25 ,31.98,0,175,225,5597,7196,1599
+kimg@simple.biz,"Kim Harold Galo",2026-04-26,2026-04-26_to_2026-05-02,20.72,0,175,225,3626,4662,1036
+kimg@simple.biz,"Kim Harold Galo",2026-05-03,2026-05-03_to_2026-05-09,34.33,0,175,225,6008,7724,1716.5
+kimg@simple.biz,"Kim Harold Galo",2026-05-10,2026-05-10_to_2026-05-17,28.33,0,175,225,4958,6374,1416.5
+kimg@simple.biz,"Kim Harold Galo",2026-05-17,2026-05-17_to_2026-05-24,14.36,0,175,225,2513,3231,718
+mitchb@simple.biz,"Michelle Briones",2026-04-12,2026-04-12_to_2026-04-18,34.37,0,175,225,6015,7733,1718.5
+mitchb@simple.biz,"Michelle Briones",2026-04-19,2026-04-19_to_2026-04-25 ,35.28,0,175,225,6174,7938,1764
+mitchb@simple.biz,"Michelle Briones",2026-04-26,2026-04-26_to_2026-05-02,21.32,0,175,225,3731,4797,1066
+mitchb@simple.biz,"Michelle Briones",2026-05-10,2026-05-10_to_2026-05-17,40,3.13,175,225,7822,10056,2234.75
+mitchb@simple.biz,"Michelle Briones",2026-05-17,2026-05-17_to_2026-05-24,40,0.84,175,225,7221,9284,2063
+marshalla@simple.biz,"Marcial Domingo Antonio",2026-04-19,2026-04-19_to_2026-04-25 ,27.02,0,175,235,4729,6350,1621.2
+marshalla@simple.biz,"Marcial Domingo Antonio",2026-04-26,2026-04-26_to_2026-05-02,35.82,0,175,235,6269,8418,2149.2
+marshalla@simple.biz,"Marcial Domingo Antonio",2026-05-03,2026-05-03_to_2026-05-09,35.85,0,175,235,6274,8425,2151
+marshalla@simple.biz,"Marcial Domingo Antonio",2026-05-10,2026-05-10_to_2026-05-17,39.41,0,175,235,6897,9261,2364.6
+marshalla@simple.biz,"Marcial Domingo Antonio",2026-05-17,2026-05-17_to_2026-05-24,8.07,0,175,235,1412,1896,484.2
+loiso@simple.biz,"Rela Lois Ortega",2026-04-05,2026-04-05_to_2026-04-11,36.56,0,175,225,6398,8226,1828
+loiso@simple.biz,"Rela Lois Ortega",2026-04-12,2026-04-12_to_2026-04-18,33.82,0,175,225,5919,7610,1691
+loiso@simple.biz,"Rela Lois Ortega",2026-04-19,2026-04-19_to_2026-04-25 ,37.96,0,175,225,6643,8541,1898
+loiso@simple.biz,"Rela Lois Ortega",2026-04-26,2026-04-26_to_2026-05-02,31.21,0,175,225,5462,7022,1560.5
+loiso@simple.biz,"Rela Lois Ortega",2026-05-03,2026-05-03_to_2026-05-09,32.85,0,175,225,5749,7391,1642.5
+rayo@simple.biz,"Raynald Ocsio",2026-06-14,2026-06-14_to_2026-06-21,37.49,0,175,225,6561,8435,1874.35
+rayo@simple.biz,"Raynald Ocsio",2026-05-24,2026-05-24_to_2026-05-31,32.55,0,175,225,5696,7324,1627.89
+rayo@simple.biz,"Raynald Ocsio",2026-05-31,2026-05-31_to_2026-06-07,39.49,0,175,225,6911,8885,1974.11
+rayo@simple.biz,"Raynald Ocsio",2026-06-07,2026-06-07_to_2026-06-14,40,4.87,175,225,8279,10644,2364.74
+jdd@simple.biz,"Jensen Dagatan",2026-03-22,2026-03-22_to_2026-03-28,39.74,0,210,225,8345,8942,596.1
+jdd@simple.biz,"Jensen Dagatan",2026-03-29,2026-03-29_to_2026-04-04,39.65,0,210,225,8327,8921,594.75
+jdd@simple.biz,"Jensen Dagatan",2026-04-05,2026-04-05_to_2026-04-11,38.85,0,210,225,8159,8741,582.75
+jdd@simple.biz,"Jensen Dagatan",2026-04-12,2026-04-12_to_2026-04-18,38.7,0,210,225,8127,8708,580.5
+jdd@simple.biz,"Jensen Dagatan",2026-04-19,2026-04-19_to_2026-04-25 ,38.82,0,210,225,8152,8735,582.3
+jdd@simple.biz,"Jensen Dagatan",2026-04-26,2026-04-26_to_2026-05-02,38.25,0,210,225,8033,8606,573.75
+jdd@simple.biz,"Jensen Dagatan",2026-05-03,2026-05-03_to_2026-05-09,39.26,0,210,225,8245,8834,588.9
+jdd@simple.biz,"Jensen Dagatan",2026-05-10,2026-05-10_to_2026-05-17,39.69,0,210,225,8335,8930,595.35
+jdd@simple.biz,"Jensen Dagatan",2026-03-15,2026-03-15_to_2026-03-21,40,20.43,210,225,14835,15895,1059.67
+jdd@simple.biz,"Jensen Dagatan",2026-03-01,2026-03-01_to_2026-03-07,39.74,0,210,225,8345,8942,596.1
+jdd@simple.biz,"Jensen Dagatan",2026-03-08,2026-03-08_to_2026-03-14,40,5.62,210,225,10170,10897,726.45
+jdd@simple.biz,"Jensen Dagatan",2026-05-17,2026-05-17_to_2026-05-24,40,2.31,210,225,9128,9780,651.98
+janinad@simple.biz,"Janiña Dayaganon",2026-03-29,2026-03-29_to_2026-04-04,0,0,175,225,0,0,0
+janinad@simple.biz,"Janiña Dayaganon",2026-04-05,2026-04-05_to_2026-04-11,26.52,0,175,225,4641,5967,1326
+janinad@simple.biz,"Janiña Dayaganon",2026-04-12,2026-04-12_to_2026-04-18,29.43,0,175,225,5150,6622,1471.5
+janinad@simple.biz,"Janiña Dayaganon",2026-04-19,2026-04-19_to_2026-04-25 ,36.21,0,175,225,6337,8147,1810.5
+janinad@simple.biz,"Janiña Dayaganon",2026-04-26,2026-04-26_to_2026-05-02,34.32,0,175,225,6006,7722,1716
+janinad@simple.biz,"Janiña Dayaganon",2026-05-03,2026-05-03_to_2026-05-09,22.24,0,175,225,3892,5004,1112
+vincentt@simple.biz,"Christan Vincent Tomaquin",2026-04-26,2026-04-26_to_2026-05-02,35.08,0,175,225,6139,7893,1754
+vincentt@simple.biz,"Christan Vincent Tomaquin",2026-05-03,2026-05-03_to_2026-05-09,36.57,0,175,225,6400,8228,1828.5
+vincentt@simple.biz,"Christan Vincent Tomaquin",2026-05-10,2026-05-10_to_2026-05-17,36.78,0,175,225,6437,8276,1839
+vincentt@simple.biz,"Christan Vincent Tomaquin",2026-05-17,2026-05-17_to_2026-05-24,37.9,0,175,225,6633,8528,1895
+johnq@simple.biz,"John Rhiel Querijero",2026-03-15,2026-03-15_to_2026-03-21,38.55,0,210,225,8096,8674,578.25
+johnq@simple.biz,"John Rhiel Querijero",2026-03-22,2026-03-22_to_2026-03-28,38.62,0,210,225,8110,8690,579.3
+johnq@simple.biz,"John Rhiel Querijero",2026-03-29,2026-03-29_to_2026-04-04,38.95,0,210,225,8180,8764,584.25
+johnq@simple.biz,"John Rhiel Querijero",2026-04-05,2026-04-05_to_2026-04-11,38.87,0,210,225,8163,8746,583.05
+johnq@simple.biz,"John Rhiel Querijero",2026-04-12,2026-04-12_to_2026-04-18,38.92,0,210,225,8173,8757,583.8
+johnq@simple.biz,"John Rhiel Querijero",2026-04-19,2026-04-19_to_2026-04-25 ,38.49,0,210,225,8083,8660,577.35
+johnq@simple.biz,"John Rhiel Querijero",2026-04-26,2026-04-26_to_2026-05-02,40,1.01,210,225,8718,9341,622.73
+johnq@simple.biz,"John Rhiel Querijero",2026-05-03,2026-05-03_to_2026-05-09,40,0.78,210,225,8646,9263,617.55
+johnq@simple.biz,"John Rhiel Querijero",2026-05-10,2026-05-10_to_2026-05-17,38.18,0,210,225,8018,8591,572.7
+johnq@simple.biz,"John Rhiel Querijero",2026-03-01,2026-03-01_to_2026-03-07,39.81,0,210,225,8360,8957,597.15
+johnq@simple.biz,"John Rhiel Querijero",2026-03-08,2026-03-08_to_2026-03-14,39.78,0,210,225,8354,8951,596.7
+johnq@simple.biz,"John Rhiel Querijero",2026-05-17,2026-05-17_to_2026-05-24,40,2.02,210,225,9036,9682,645.45
+jamesc@simple.biz,"James Edward Chan",2026-04-05,2026-04-05_to_2026-04-11,34.11,0,175,225,5969,7675,1705.5
+jamesc@simple.biz,"James Edward Chan",2026-04-12,2026-04-12_to_2026-04-18,35.11,0,175,225,6144,7900,1755.5
+jamesc@simple.biz,"James Edward Chan",2026-04-19,2026-04-19_to_2026-04-25 ,36.56,0,175,225,6398,8226,1828
+jamesc@simple.biz,"James Edward Chan",2026-04-26,2026-04-26_to_2026-05-02,28.44,0,175,225,4977,6399,1422
+michelled@simple.biz,"Michelle Divinagracia",2026-04-05,2026-04-05_to_2026-04-11,35.61,0,175,225,6232,8012,1780.5
+michelled@simple.biz,"Michelle Divinagracia",2026-04-12,2026-04-12_to_2026-04-18,36.52,0,175,225,6391,8217,1826
+michelled@simple.biz,"Michelle Divinagracia",2026-04-19,2026-04-19_to_2026-04-25 ,37.05,0,175,225,6484,8336,1852.5
+michelled@simple.biz,"Michelle Divinagracia",2026-04-26,2026-04-26_to_2026-05-02,22.45,0,175,225,3929,5051,1122.5
+kurtd@simple.biz,"Kurt Steven Duque",2026-04-05,2026-04-05_to_2026-04-11,30.69,0,175,225,5371,6905,1534.5
+kurtd@simple.biz,"Kurt Steven Duque",2026-04-12,2026-04-12_to_2026-04-18,33.37,0,175,225,5840,7508,1668.5
+kurtd@simple.biz,"Kurt Steven Duque",2026-04-19,2026-04-19_to_2026-04-25 ,38.44,0,175,225,6727,8649,1922
+kurtd@simple.biz,"Kurt Steven Duque",2026-04-26,2026-04-26_to_2026-05-02,22.88,0,175,225,4004,5148,1144
+kurtd@simple.biz,"Kurt Steven Duque",2026-05-03,2026-05-03_to_2026-05-09,5.68,0,175,225,994,1278,284
+sephj@simple.biz,"Joseph Negrite",2026-04-26,2026-04-26_to_2026-05-02,34.49,0,175,225,6036,7760,1724.5
+sephj@simple.biz,"Joseph Negrite",2026-05-03,2026-05-03_to_2026-05-09,28.94,0,175,225,5065,6512,1447
+sephj@simple.biz,"Joseph Negrite",2026-05-10,2026-05-10_to_2026-05-17,28.09,0,175,225,4916,6320,1404.5
+sephj@simple.biz,"Joseph Negrite",2026-05-17,2026-05-17_to_2026-05-24,29.82,0,175,225,5219,6710,1491
+shainan@simple.biz,"SHAINA BLANCHE NAROSA",2026-05-03,2026-05-03_to_2026-05-09,34.46,0,175,225,6031,7754,1723
+shainan@simple.biz,"SHAINA BLANCHE NAROSA",2026-05-10,2026-05-10_to_2026-05-17,35.58,0,175,225,6227,8006,1779
+shainan@simple.biz,"SHAINA BLANCHE NAROSA",2026-05-17,2026-05-17_to_2026-05-24,29.86,0,175,225,5226,6719,1493
+jamesv@simple.biz,"James Violanta",2026-06-14,2026-06-14_to_2026-06-21,28.8,0,175,225,5039,6480,1440.78
+jamesv@simple.biz,"James Violanta",2026-05-31,2026-05-31_to_2026-06-07,34.35,0,175,225,6011,7729,1717.45
+jamesv@simple.biz,"James Violanta",2026-06-07,2026-06-07_to_2026-06-14,36,0,175,225,6300,8100,1799.61
+laurent@simple.biz,"Lauren Allistair Taupo",2026-05-03,2026-05-03_to_2026-05-09,34.24,0,175,225,5992,7704,1712
+laurent@simple.biz,"Lauren Allistair Taupo",2026-05-10,2026-05-10_to_2026-05-17,28.79,0,175,225,5038,6478,1439.5
+laurent@simple.biz,"Lauren Allistair Taupo",2026-05-17,2026-05-17_to_2026-05-24,32.6,0,175,225,5705,7335,1630
+jayq@simple.biz,"Jaymar Querioso",2026-04-19,2026-04-19_to_2026-04-25 ,0,0,175,225,0,0,0
+jayq@simple.biz,"Jaymar Querioso",2026-05-03,2026-05-03_to_2026-05-09,35.67,0,175,225,6242,8026,1783.5
+jayq@simple.biz,"Jaymar Querioso",2026-05-10,2026-05-10_to_2026-05-17,30.7,0,175,225,5373,6908,1535
+jayq@simple.biz,"Jaymar Querioso",2026-05-17,2026-05-17_to_2026-05-24,26.61,0,175,225,4657,5987,1330.5
+alonzos@simple.biz,"Alonzo Singzon",2026-05-03,2026-05-03_to_2026-05-09,28.27,0,175,225,4947,6361,1413.5
+alonzos@simple.biz,"Alonzo Singzon",2026-05-10,2026-05-10_to_2026-05-17,34.98,0,175,225,6122,7870,1749
+alonzos@simple.biz,"Alonzo Singzon",2026-05-17,2026-05-17_to_2026-05-24,25.83,0,175,225,4520,5812,1291.5
+kimb@simple.biz,"Novy Kim Bangas",2026-06-14,2026-06-14_to_2026-06-21,20.55,0,175,225,3596,4624,1027.99
+kimb@simple.biz,"Novy Kim Bangas",2026-05-31,2026-05-31_to_2026-06-07,34.33,0,175,225,6008,7724,1715.92
+kimb@simple.biz,"Novy Kim Bangas",2026-06-07,2026-06-07_to_2026-06-14,32.21,0,175,225,5637,7247,1610.4
+jakem@simple.biz,"Jake Kim Malabago",2026-04-12,2026-04-12_to_2026-04-18,34.46,0,175,225,6031,7754,1723
+jakem@simple.biz,"Jake Kim Malabago",2026-04-19,2026-04-19_to_2026-04-25 ,34.93,0,175,225,6113,7859,1746.5
+jakem@simple.biz,"Jake Kim Malabago",2026-04-26,2026-04-26_to_2026-05-02,12.15,0,175,225,2126,2734,607.5
+loriem@simple.biz,"Lorie Ann San Mateo",2026-03-01,2026-03-01_to_2026-03-07,36.51,0,175,225,6389,8215,1825.5
+loriem@simple.biz,"Lorie Ann San Mateo",2026-03-08,2026-03-08_to_2026-03-14,36.68,0,175,225,6419,8253,1834
+ivanmm@simple.biz,"Ivan Martinez",2026-05-10,2026-05-10_to_2026-05-17,34.66,0,175,225,6066,7798,1733
+ivanmm@simple.biz,"Ivan Martinez",2026-05-17,2026-05-17_to_2026-05-24,38.19,0,175,225,6683,8593,1909.5
+mariag@simple.biz,"Maria Angelica Guirindola",2026-05-10,2026-05-10_to_2026-05-17,35.37,0,175,225,6190,7958,1768.5
+mariag@simple.biz,"Maria Angelica Guirindola",2026-05-17,2026-05-17_to_2026-05-24,36.43,0,175,225,6375,8197,1821.5
+glendac@simple.biz,"Glenda Cabarrubias",2026-04-12,2026-04-12_to_2026-04-18,5.33,0,175,265,933,1412,479.7
+edenm@simple.biz,"Eden Grace Magdayao",2026-05-17,2026-05-17_to_2026-05-24,0,0,0,225,0,0,0
+joyq@simple.biz,"Rina Joy Quesada - Reyes",2026-04-12,2026-04-12_to_2026-04-18,0,0,265,225,0,0,0
+joyq@simple.biz,"Rina Joy Quesada - Reyes",2026-04-19,2026-04-19_to_2026-04-25 ,30,0,265,225,7950,6750,-1200
+joyq@simple.biz,"Rina Joy Quesada - Reyes",2026-04-26,2026-04-26_to_2026-05-02,35.08,0,265,225,9296,7893,-1403.2
+joyq@simple.biz,"Rina Joy Quesada - Reyes",2026-05-03,2026-05-03_to_2026-05-09,40,1.35,265,225,11137,9456,-1681
+joyq@simple.biz,"Rina Joy Quesada - Reyes",2026-05-10,2026-05-10_to_2026-05-17,23.42,0,265,225,6206,5270,-936.8
+indic@simple.biz,"Indira Cali",2026-04-12,2026-04-12_to_2026-04-18,33.53,0,260,225,8718,7544,-1173.55
+indic@simple.biz,"Indira Cali",2026-04-19,2026-04-19_to_2026-04-25 ,35.03,0,260,225,9108,7882,-1226.05
+indic@simple.biz,"Indira Cali",2026-04-26,2026-04-26_to_2026-05-02,30.09,0,260,225,7823,6770,-1053.15
+indic@simple.biz,"Indira Cali",2026-05-03,2026-05-03_to_2026-05-09,30.39,0,260,225,7901,6838,-1063.65
+indic@simple.biz,"Indira Cali",2026-05-10,2026-05-10_to_2026-05-17,40,4.87,260,225,12299,10644,-1655.67
+indic@simple.biz,"Indira Cali",2026-05-17,2026-05-17_to_2026-05-24,40,10.11,260,225,14343,12412,-1930.77
+natel@simple.biz,"Jonathan Lunar",2026-03-15,2026-03-15_to_2026-03-21,40,0.89,245,225,10127,9300,-826.7
+natel@simple.biz,"Jonathan Lunar",2026-03-22,2026-03-22_to_2026-03-28,40,0.87,245,225,10120,9294,-826.1
+natel@simple.biz,"Jonathan Lunar",2026-03-29,2026-03-29_to_2026-04-04,40,1.17,245,225,10230,9395,-835.1
+natel@simple.biz,"Jonathan Lunar",2026-04-05,2026-04-05_to_2026-04-11,40,1.9,245,225,10498,9641,-857
+natel@simple.biz,"Jonathan Lunar",2026-04-12,2026-04-12_to_2026-04-18,40,0.6,245,225,10021,9203,-818
+natel@simple.biz,"Jonathan Lunar",2026-04-19,2026-04-19_to_2026-04-25 ,40,0.9,245,225,10131,9304,-827
+natel@simple.biz,"Jonathan Lunar",2026-04-26,2026-04-26_to_2026-05-02,32.64,0,245,225,7997,7344,-652.8
+natel@simple.biz,"Jonathan Lunar",2026-05-03,2026-05-03_to_2026-05-09,40,1.06,245,225,10190,9358,-831.8
+natel@simple.biz,"Jonathan Lunar",2026-05-10,2026-05-10_to_2026-05-17,40,9.55,245,225,13310,12223,-1086.5
+natel@simple.biz,"Jonathan Lunar",2026-05-17,2026-05-17_to_2026-05-24,40,14.81,245,225,15243,13998,-1244.31
+natel@simple.biz,"Jonathan Lunar",2026-03-01,2026-03-01_to_2026-03-07,40,0.86,245,225,10116,9290,-825.8
+natel@simple.biz,"Jonathan Lunar",2026-03-08,2026-03-08_to_2026-03-14,40,0.87,245,225,10120,9294,-826.1
+jerryl@simple.biz,"Jerelee Langcuyan",2026-03-15,2026-03-15_to_2026-03-21,39.67,0,265,225,10513,8926,-1586.8
+jerryl@simple.biz,"Jerelee Langcuyan",2026-03-22,2026-03-22_to_2026-03-28,39.97,0,265,225,10592,8993,-1598.8
+jerryl@simple.biz,"Jerelee Langcuyan",2026-03-29,2026-03-29_to_2026-04-04,17.99,0,265,225,4767,4048,-719.6
+jerryl@simple.biz,"Jerelee Langcuyan",2026-04-05,2026-04-05_to_2026-04-11,31.99,0,265,225,8477,7198,-1279.6
+jerryl@simple.biz,"Jerelee Langcuyan",2026-04-12,2026-04-12_to_2026-04-18,40,0.06,265,225,10624,9020,-1603.6
+jerryl@simple.biz,"Jerelee Langcuyan",2026-04-26,2026-04-26_to_2026-05-02,40,2.04,265,225,11411,9689,-1722.4
+jerryl@simple.biz,"Jerelee Langcuyan",2026-05-03,2026-05-03_to_2026-05-09,40,2.45,265,225,11574,9827,-1747
+jerryl@simple.biz,"Jerelee Langcuyan",2026-05-10,2026-05-10_to_2026-05-17,35.42,0,265,225,9386,7970,-1416.8
+jerryl@simple.biz,"Jerelee Langcuyan",2026-03-01,2026-03-01_to_2026-03-07,40,0.43,265,225,10771,9145,-1625.81
+jerryl@simple.biz,"Jerelee Langcuyan",2026-03-08,2026-03-08_to_2026-03-14,40,0.99,265,225,10994,9334,-1659.41
+jerryl@simple.biz,"Jerelee Langcuyan",2026-05-17,2026-05-17_to_2026-05-24,40,3.47,265,225,11979,10171,-1808.2
+beckyp@simple.biz,"Rebecca Pascual",2026-03-15,2026-03-15_to_2026-03-21,37.83,0,265,225,10025,8512,-1513.2
+beckyp@simple.biz,"Rebecca Pascual",2026-03-22,2026-03-22_to_2026-03-28,37.51,0,265,225,9940,8440,-1500.4
+beckyp@simple.biz,"Rebecca Pascual",2026-03-29,2026-03-29_to_2026-04-04,37.7,0,265,225,9991,8483,-1508
+beckyp@simple.biz,"Rebecca Pascual",2026-04-05,2026-04-05_to_2026-04-11,37.35,0,265,225,9898,8404,-1494
+beckyp@simple.biz,"Rebecca Pascual",2026-04-12,2026-04-12_to_2026-04-18,37.37,0,265,225,9903,8408,-1494.8
+beckyp@simple.biz,"Rebecca Pascual",2026-04-19,2026-04-19_to_2026-04-25 ,37.06,0,265,225,9821,8339,-1482.4
+beckyp@simple.biz,"Rebecca Pascual",2026-04-26,2026-04-26_to_2026-05-02,38.89,0,265,225,10306,8750,-1555.6
+beckyp@simple.biz,"Rebecca Pascual",2026-03-01,2026-03-01_to_2026-03-07,37.47,0,265,225,9930,8431,-1498.8
+beckyp@simple.biz,"Rebecca Pascual",2026-05-03,2026-05-03_to_2026-05-09,37.23,0,265,225,9866,8377,-1489.2
+beckyp@simple.biz,"Rebecca Pascual",2026-05-10,2026-05-10_to_2026-05-17,28.86,0,265,225,7648,6494,-1154.4
+beckyp@simple.biz,"Rebecca Pascual",2026-05-17,2026-05-17_to_2026-05-24,38.24,0,265,225,10134,8604,-1529.6
+beckyp@simple.biz,"Rebecca Pascual",2026-03-08,2026-03-08_to_2026-03-14,37.74,0,265,225,10001,8492,-1509.6
+christiannr@simple.biz,"Christian Roa",2026-03-15,2026-03-15_to_2026-03-21,39.87,0,265,225,10566,8971,-1594.8
+christiannr@simple.biz,"Christian Roa",2026-03-22,2026-03-22_to_2026-03-28,37.94,0,265,225,10054,8537,-1517.6
+christiannr@simple.biz,"Christian Roa",2026-03-29,2026-03-29_to_2026-04-04,37.02,0,265,225,9810,8330,-1480.8
+christiannr@simple.biz,"Christian Roa",2026-04-05,2026-04-05_to_2026-04-11,38.75,0,265,225,10269,8719,-1550
+christiannr@simple.biz,"Christian Roa",2026-04-12,2026-04-12_to_2026-04-18,37.2,0,265,225,9858,8370,-1488
+christiannr@simple.biz,"Christian Roa",2026-04-19,2026-04-19_to_2026-04-25 ,35.64,0,265,225,9445,8019,-1425.6
+christiannr@simple.biz,"Christian Roa",2026-04-26,2026-04-26_to_2026-05-02,38.23,0,265,225,10131,8602,-1529.2
+christiannr@simple.biz,"Christian Roa",2026-05-03,2026-05-03_to_2026-05-09,38.41,0,265,225,10179,8642,-1536.4
+christiannr@simple.biz,"Christian Roa",2026-03-01,2026-03-01_to_2026-03-07,37.11,0,265,225,9834,8350,-1484.4
+christiannr@simple.biz,"Christian Roa",2026-03-08,2026-03-08_to_2026-03-14,37.35,0,265,225,9898,8404,-1494
+christiannr@simple.biz,"Christian Roa",2026-05-10,2026-05-10_to_2026-05-17,35.39,0,265,225,9378,7963,-1415.6
+christiannr@simple.biz,"Christian Roa",2026-05-17,2026-05-17_to_2026-05-24,39.23,0,265,225,10396,8827,-1569.2
+erict@simple.biz,"Eric Teano",2026-03-22,2026-03-22_to_2026-03-28,39.33,0,265,225,10422,8849,-1573.2
+erict@simple.biz,"Eric Teano",2026-03-29,2026-03-29_to_2026-04-04,39.46,0,265,225,10457,8879,-1578.4
+erict@simple.biz,"Eric Teano",2026-04-05,2026-04-05_to_2026-04-11,40,2.78,265,225,11705,9938,-1766.8
+erict@simple.biz,"Eric Teano",2026-04-12,2026-04-12_to_2026-04-18,38.74,0,265,225,10266,8717,-1549.6
+erict@simple.biz,"Eric Teano",2026-04-19,2026-04-19_to_2026-04-25 ,38.68,0,265,225,10250,8703,-1547.2
+erict@simple.biz,"Eric Teano",2026-04-26,2026-04-26_to_2026-05-02,31.86,0,265,225,8443,7169,-1274.4
+erict@simple.biz,"Eric Teano",2026-05-03,2026-05-03_to_2026-05-09,31.82,0,265,225,8432,7160,-1272.8
+erict@simple.biz,"Eric Teano",2026-03-15,2026-03-15_to_2026-03-21,39.21,0,265,225,10391,8822,-1568.4
+erict@simple.biz,"Eric Teano",2026-03-01,2026-03-01_to_2026-03-07,39.61,0,265,225,10497,8912,-1584.4
+erict@simple.biz,"Eric Teano",2026-03-08,2026-03-08_to_2026-03-14,39.11,0,265,225,10364,8800,-1564.4
+erict@simple.biz,"Eric Teano",2026-05-10,2026-05-10_to_2026-05-17,39.7,0,265,225,10521,8933,-1588
+erict@simple.biz,"Eric Teano",2026-05-17,2026-05-17_to_2026-05-24,40,1.61,265,225,11240,9543,-1696.6
+clydem@simple.biz,"Clyde Mangawang",2026-03-15,2026-03-15_to_2026-03-21,38.07,0,265,225,10089,8566,-1522.8
+clydem@simple.biz,"Clyde Mangawang",2026-03-22,2026-03-22_to_2026-03-28,38.59,0,265,225,10226,8683,-1543.6
+clydem@simple.biz,"Clyde Mangawang",2026-03-29,2026-03-29_to_2026-04-04,38.76,0,265,225,10271,8721,-1550.4
+clydem@simple.biz,"Clyde Mangawang",2026-04-05,2026-04-05_to_2026-04-11,39.39,0,265,225,10438,8863,-1575.6
+clydem@simple.biz,"Clyde Mangawang",2026-04-12,2026-04-12_to_2026-04-18,39.11,0,265,225,10364,8800,-1564.4
+clydem@simple.biz,"Clyde Mangawang",2026-04-19,2026-04-19_to_2026-04-25 ,39.67,0,265,225,10513,8926,-1586.8
+clydem@simple.biz,"Clyde Mangawang",2026-04-26,2026-04-26_to_2026-05-02,40,0.24,265,225,10695,9081,-1614.4
+clydem@simple.biz,"Clyde Mangawang",2026-05-03,2026-05-03_to_2026-05-09,40,1.3,265,225,11117,9439,-1678
+clydem@simple.biz,"Clyde Mangawang",2026-03-01,2026-03-01_to_2026-03-07,39.95,0,265,225,10587,8989,-1598
+clydem@simple.biz,"Clyde Mangawang",2026-03-08,2026-03-08_to_2026-03-14,40,4.12,265,225,12238,10391,-1847.2
+clydem@simple.biz,"Clyde Mangawang",2026-05-10,2026-05-10_to_2026-05-17,30.62,0,265,225,8114,6890,-1224.8
+clydem@simple.biz,"Clyde Mangawang",2026-05-17,2026-05-17_to_2026-05-24,40,2.13,265,225,11447,9719,-1727.81

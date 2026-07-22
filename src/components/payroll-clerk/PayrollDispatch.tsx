@@ -766,7 +766,10 @@ export default function PayrollDispatch() {
         animate={
           isLgUp
             ? {
-                gridTemplateColumns: focusMode ? '0px minmax(0,1fr)' : '260px minmax(0,1fr)',
+                // Processor rail stays pinned on the left even during processing
+                // (focus mode no longer retracts it) — the clerk asked to keep
+                // the Pay Processors always visible.
+                gridTemplateColumns: '260px minmax(0,1fr)',
               }
             : { gridTemplateColumns: '260px minmax(0,1fr)' }
         }
@@ -814,16 +817,14 @@ export default function PayrollDispatch() {
         </motion.div>
 
         {/* LEFT — Bank cards (filter rail). Order 2 on mobile (between stats
-            and table); spans full height of left column on lg. In focus mode
-            the grid column above collapses to 0 — fade + nudge the rail out so
-            it wipes away cleanly instead of getting crushed, and clip anything
-            that overflows the shrinking track (lg only). */}
+            and table); spans full height of left column on lg. The rail stays
+            pinned + interactive at all times (including during processing) —
+            focus mode no longer retracts it, per the clerk's request to keep
+            the Pay Processors always visible. */}
         <motion.div
-          animate={isLgUp ? { opacity: focusMode ? 0 : 1, x: focusMode ? -12 : 0 } : { opacity: 1, x: 0 }}
+          animate={{ opacity: 1, x: 0 }}
           transition={FOCUS_TRANSITION}
-          style={{ pointerEvents: focusMode ? 'none' : undefined }}
           className="order-2 flex min-h-0 flex-col gap-2 lg:order-none lg:col-start-1 lg:row-span-2 lg:row-start-1 lg:overflow-hidden"
-          aria-hidden={focusMode}
         >
           <div className="flex shrink-0 items-center justify-between px-1">
             <h2 className="text-[11px] font-semibold uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-400">
