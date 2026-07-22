@@ -4,6 +4,7 @@ import {
   loadDisbursementRecordsForCycle,
 } from "@/lib/payroll/disbursement-reports";
 import { getEmployeeHourlyRatesRows } from "@/lib/supabase/employee-hourly-rates";
+import { getEmployeeIds } from "@/lib/supabase/employee-ids";
 import {
   buildDispatchExportRows,
   buildDispatchExportRowsFromDispatches,
@@ -40,18 +41,21 @@ export async function GET(
   // Pull canonical per-recipient records + rates (for personal_email / processor
   // fallback). Rates are best-effort — if the lookup fails the export still
   // succeeds, just with personal_email blank.
-  const [records, { rows: rates, error: ratesErr }] = await Promise.all([
-    loadDisbursementRecordsForCycle(report.sourceFile),
-    getEmployeeHourlyRatesRows(),
-  ]);
+  const [records, { rows: rates, error: ratesErr }, { rows: ids, error: idsErr }] =
+    await Promise.all([
+      loadDisbursementRecordsForCycle(report.sourceFile),
+      getEmployeeHourlyRatesRows(),
+      getEmployeeIds(),
+    ]);
   const ratesRows = ratesErr ? [] : rates;
+  const idsRows = idsErr ? [] : ids;
 
   // Urgent (MESA) weekly reports have no disbursement_records — each row is a
   // payment_dispatch. Fall back to a dispatches-only export in that case.
   const exportRows =
     records.length === 0 && report.dispatches.length > 0
       ? buildDispatchExportRowsFromDispatches(report.dispatches, ratesRows)
-      : buildDispatchExportRows(records, report.dispatches, ratesRows);
+      : buildDispatchExportRows(records, report.dispatches, ratesRows, idsRows);
   const csv = dispatchRowsToCsv(exportRows);
   const filename = dispatchExportFilename(
     report.cycleId,

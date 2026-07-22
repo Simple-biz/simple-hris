@@ -22,6 +22,15 @@ export type EmployeeIdRow = {
    * EmployeeSettings.tsx.
    */
   preferred_processor: string | null;
+  /**
+   * Employee-chosen "Bank Preferred" processor for Payment Dispatch routing.
+   * SEPARATE from preferred_processor (the Disbursement channel): changing one
+   * never changes the other. Dispatch prefers this over preferred_processor and
+   * the legacy employee_hourly_rates.bank_preferred. Same value space as
+   * preferred_processor (x1153 → 'wires'). NULL when the employee hasn't picked.
+   * Set via the Bank Preferred dropdown on Profile → Payment.
+   */
+  bank_preferred: string | null;
   // ── Per-processor payout fields, employee-provided. Dispatch queue
   //    prefers these over the rates-side equivalents when present.
   hurupay_email: string | null;
@@ -80,7 +89,7 @@ export async function getEmployeeIdRowByEmail(
   }
 
   const cols =
-    "employee_id, name, work_email, personal_email, preferred_bank_slot, bank_name, account_holder_name, account_number, routing_number, alt_bank_name, alt_account_holder_name, alt_account_number, alt_routing_number, preferred_processor, hurupay_email, wepay_email, higlobe_email, higlobe_account_name, wise_email, wise_tag, phone_number, swift_code, full_address";
+    "employee_id, name, work_email, personal_email, preferred_bank_slot, bank_name, account_holder_name, account_number, routing_number, alt_bank_name, alt_account_holder_name, alt_account_number, alt_routing_number, preferred_processor, bank_preferred, hurupay_email, wepay_email, higlobe_email, higlobe_account_name, wise_email, wise_tag, phone_number, swift_code, full_address";
 
   const tryColumn = async (col: string) =>
     supabase.from("employee_ids").select(cols).ilike(col, target).limit(1).maybeSingle();
@@ -113,7 +122,7 @@ export async function getEmployeeIds(): Promise<{
   // until a short page, mirroring fetchActiveEmployees.
   const PAGE = 1000;
   const cols =
-    "employee_id, name, work_email, personal_email, preferred_bank_slot, bank_name, account_holder_name, account_number, routing_number, alt_bank_name, alt_account_holder_name, alt_account_number, alt_routing_number, preferred_processor, hurupay_email, wepay_email, higlobe_email, higlobe_account_name, wise_email, wise_tag, phone_number, swift_code, full_address";
+    "employee_id, name, work_email, personal_email, preferred_bank_slot, bank_name, account_holder_name, account_number, routing_number, alt_bank_name, alt_account_holder_name, alt_account_number, alt_routing_number, preferred_processor, bank_preferred, hurupay_email, wepay_email, higlobe_email, higlobe_account_name, wise_email, wise_tag, phone_number, swift_code, full_address";
   const collected: EmployeeIdRow[] = [];
   let from = 0;
   while (true) {

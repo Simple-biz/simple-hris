@@ -42,14 +42,14 @@ export function isProcessorId(v: string): v is ProcessorId {
 }
 
 /**
- * "Bank Preferred" dropdown (Employee Profile → Payment). A compact reskin of
- * the processor picker: each option maps to a `preferred_processor` id, so the
- * dropdown and the radio picker edit the same field and mirror each other.
+ * "Bank Preferred" dropdown (Employee Profile → Payment). This is a SEPARATE
+ * field from the Disbursement picker (`preferred_processor`): it stores the
+ * processor Payment Dispatch should route the salary through, in its own
+ * `employee_ids.bank_preferred` column. Each option maps to a processor id.
  *
  * `x1153` is a specific wire account, not a distinct processor, so it maps to
  * `wires`. Because `wires` has no dedicated non-x1153 option here, a saved
- * `wires` value displays as "x1153" in this dropdown (while the radio picker
- * still shows "Wires" — same underlying value, two labels). See the design doc.
+ * `wires` value displays as "x1153" in this dropdown. See the design doc.
  */
 export const BANK_PREFERRED_OPTIONS: { label: string; id: ProcessorId }[] = [
   { label: 'HiGlobe', id: 'higlobe' },

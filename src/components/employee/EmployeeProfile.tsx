@@ -73,6 +73,7 @@ import RequestDocumentsTab from '@/components/employee/RequestDocumentsTab';
 import {
   PROCESSOR_OPTIONS,
   type ProcessorId,
+  isProcessorId,
   BANK_PREFERRED_OPTIONS,
   bankPreferredLabelForProcessor,
   processorForBankPreferredLabel,
@@ -640,6 +641,10 @@ export default function EmployeeProfile({
   const [usdToPhpRate, setUsdToPhpRate] = useState(OFFICIAL_USD_TO_PHP_RATE);
 
   const [preferredProcessor, setPreferredProcessor] = useState<ProcessorId | ''>('');
+  // "Bank Preferred" — the processor Payment Dispatch routes salary through.
+  // SEPARATE from preferredProcessor (Disbursement); changing one never changes
+  // the other. Stored in employee_ids.bank_preferred (x1153 → 'wires').
+  const [bankPreferred, setBankPreferred] = useState<ProcessorId | ''>('');
   const [payout, setPayout] = useState<PayoutFields>(() => ({ ...emptyPayout }));
   const [payoutSaving, setPayoutSaving] = useState(false);
   const [payoutSavedAt, setPayoutSavedAt] = useState<string | null>(null);
@@ -886,12 +891,14 @@ export default function EmployeeProfile({
   useEffect(() => {
     if (!bankInfo) {
       setPreferredProcessor('');
+      setBankPreferred('');
       setPayout({ ...emptyPayout });
       setPayoutEditing(true);
       return;
     }
     const d = payoutDraftFromIdsRow(bankInfo as unknown as Record<string, unknown>);
     setPreferredProcessor(d.preferredProcessor);
+    setBankPreferred(isProcessorId(bankInfo.bank_preferred ?? '') ? (bankInfo.bank_preferred as ProcessorId) : '');
     setPayout(d.payout);
     setPayoutEditing(false);
   }, [bankInfo]);
@@ -899,12 +906,14 @@ export default function EmployeeProfile({
   const resetPayoutDraft = React.useCallback(() => {
     if (!bankInfo) {
       setPreferredProcessor('');
+      setBankPreferred('');
       setPayout({ ...emptyPayout });
       setPayoutEditing(true);
       return;
     }
     const d = payoutDraftFromIdsRow(bankInfo as unknown as Record<string, unknown>);
     setPreferredProcessor(d.preferredProcessor);
+    setBankPreferred(isProcessorId(bankInfo.bank_preferred ?? '') ? (bankInfo.bank_preferred as ProcessorId) : '');
     setPayout(d.payout);
     setPayoutEditing(false);
   }, [bankInfo]);
@@ -1093,6 +1102,7 @@ export default function EmployeeProfile({
           work_email: norm,
           bootstrap_display_name: bootstrapName || undefined,
           preferred_processor: preferredProcessor || null,
+          bank_preferred: bankPreferred || null,
           preferred_bank_slot: payout.preferredBankSlot || null,
           hurupay_email: payout.hurupayEmail,
           wepay_email: payout.wepayEmail,
@@ -1831,20 +1841,20 @@ export default function EmployeeProfile({
                           Bank Preferred
                         </p>
                         <p className="mt-0.5 text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400">
-                          The channel payroll uses to route your salary.
+                          The bank Payment Dispatch routes your salary through.
+                          Independent of your disbursement channel above.
                         </p>
                       </div>
                       <SmoothSelect
                         aria-label="Bank Preferred"
-                        value={bankPreferredLabelForProcessor(preferredProcessor)}
+                        value={bankPreferredLabelForProcessor(bankPreferred)}
                         onChange={(label) => {
-                          const id = processorForBankPreferredLabel(label);
-                          if (id) setPreferredProcessor(id);
+                          setBankPreferred(processorForBankPreferredLabel(label) ?? '');
                         }}
                         disabled={payoutReadOnly}
                         triggerClassName="w-full sm:w-48"
                         options={[
-                          ...(bankPreferredLabelForProcessor(preferredProcessor)
+                          ...(bankPreferredLabelForProcessor(bankPreferred)
                             ? []
                             : [{ value: '', label: 'Select…' }]),
                           ...BANK_PREFERRED_OPTIONS.map((o) => ({

@@ -290,8 +290,9 @@ export function processorIdFromBankPreferred(raw: string | null | undefined): Pr
  * Joins per-employee pay (computed server-side from the latest Hubstaff
  * upload) onto each row by lowercased work email.
  *
- * `idsByEmail` is the lowercased-email → EmployeeIdRow map. When the row
- * has a valid `preferred_processor`, it wins over the legacy `bank_preferred`
+ * `idsByEmail` is the lowercased-email → EmployeeIdRow map. Processor is
+ * resolved by precedence: the employee's `bank_preferred` pick wins, then their
+ * `preferred_processor` (Disbursement channel), then the legacy `bank_preferred`
  * on the rates row (so an employee picking "Higlobe" in Settings routes to
  * Lenny's Higlobe tab even if their rate row still has a stale "x1161"
  * wire suffix). The per-processor payout fields the employee filled in
@@ -337,10 +338,14 @@ export function buildQueueFromRates(
       (r.work_email ? idsByEmail.get(r.work_email.trim().toLowerCase()) : undefined) ??
       (r.personal_email ? idsByEmail.get(r.personal_email.trim().toLowerCase()) : undefined);
 
-    // Prefer the employee's explicit choice; fall back to the rates-side
-    // legacy field for anyone who hasn't picked yet.
+    // Processor precedence: the employee's "Bank Preferred" pick wins, then
+    // their Disbursement channel, then the rates-side legacy field for anyone
+    // who hasn't picked either. All three share the ProcessorId value space.
+    const choseBankPreferred = (idsRow?.bank_preferred ?? '').trim().toLowerCase();
     const choseProcessor = (idsRow?.preferred_processor ?? '').trim().toLowerCase();
-    const chosen = isKnownProcessor(choseProcessor) ? choseProcessor : null;
+    const chosen =
+      (isKnownProcessor(choseBankPreferred) ? choseBankPreferred : null) ??
+      (isKnownProcessor(choseProcessor) ? choseProcessor : null);
     const processor = chosen ?? processorIdFromBankPreferred(r.bank_preferred);
     const name =
       idsRow?.name?.trim() ||

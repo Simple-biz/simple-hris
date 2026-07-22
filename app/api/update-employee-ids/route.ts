@@ -12,6 +12,7 @@ import { authorizeEmailAccess, deniedResponse } from "@/lib/auth/authorize-email
 /** Fields blocked while Accounting has payroll dispatch locked (employees may still update personal_email). */
 const BLOCKED_WHILE_PAYROLL_LOCKED = new Set([
   "preferred_processor",
+  "bank_preferred",
   "bank_name",
   "account_holder_name",
   "account_number",
@@ -252,6 +253,7 @@ export async function POST(req: Request) {
       "alt_account_number",
       "alt_routing_number",
       "preferred_processor",
+      "bank_preferred",
       "hurupay_email",
       "wepay_email",
       "higlobe_email",
@@ -280,6 +282,12 @@ export async function POST(req: Request) {
         if (key === "preferred_processor" && trimmed != null && !ALLOWED_PROCESSORS.has(trimmed)) {
           return NextResponse.json(
             { error: `Invalid preferred_processor: ${trimmed}` },
+            { status: 400 },
+          );
+        }
+        if (key === "bank_preferred" && trimmed != null && !ALLOWED_PROCESSORS.has(trimmed)) {
+          return NextResponse.json(
+            { error: `Invalid bank_preferred: ${trimmed}` },
             { status: 400 },
           );
         }

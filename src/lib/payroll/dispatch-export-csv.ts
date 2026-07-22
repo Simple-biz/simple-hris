@@ -17,7 +17,9 @@ import type {
   PaymentDispatchStatus,
 } from '@/lib/supabase/payment-dispatches';
 import type { EmployeeHourlyRateRow } from '@/lib/supabase/employee-hourly-rates';
+import type { EmployeeIdRow } from '@/lib/supabase/employee-ids';
 import type { DisbursementRecordRow } from '@/lib/payroll/disbursement-reports';
+import { isProcessorId } from '@/lib/employee-payment-processors';
 import { processorIdFromBankPreferred } from '@/components/payroll-clerk/mock-queue';
 
 type DispatchExportRow = Record<string, string>;
@@ -74,6 +76,7 @@ export function buildDispatchExportRows(
   records: DisbursementRecordRow[],
   dispatches: PaymentDispatchRow[],
   rates: EmployeeHourlyRateRow[],
+  ids: EmployeeIdRow[] = [],
 ): DispatchExportRow[] {
   // email → personal_email
   const personalByEmail = new Map<string, string>();
@@ -93,6 +96,23 @@ export function buildDispatchExportRows(
       if (personal && !bankPreferredByEmail.has(personal)) {
         bankPreferredByEmail.set(personal, bp);
       }
+    }
+  }
+
+  // email → employee-chosen processor id (Bank Preferred wins over the
+  // Disbursement channel). Mirrors the queue's precedence so records with no
+  // dispatch row still export the processor the employee actually picked.
+  const chosenProcessorByEmail = new Map<string, string>();
+  for (const r of ids) {
+    const work = normEmail(r.work_email);
+    const personal = normEmail(r.personal_email);
+    const bp = (r.bank_preferred ?? '').trim().toLowerCase();
+    const pp = (r.preferred_processor ?? '').trim().toLowerCase();
+    const chosen = (isProcessorId(bp) ? bp : '') || (isProcessorId(pp) ? pp : '');
+    if (!chosen) continue;
+    if (work) chosenProcessorByEmail.set(work, chosen);
+    if (personal && !chosenProcessorByEmail.has(personal)) {
+      chosenProcessorByEmail.set(personal, chosen);
     }
   }
 
@@ -126,9 +146,12 @@ export function buildDispatchExportRows(
         ? num(r.paid_amount_usd)
         : num(r.amount_usd);
 
-    // Processor: dispatch wins, else infer from rates' bank_preferred.
+    // Processor precedence: a recorded dispatch wins; else the employee's own
+    // choice (Bank Preferred > Disbursement, from employee_ids); else infer
+    // from the rates' legacy bank_preferred cell.
     const processor =
       dispatch?.processor ??
+      chosenProcessorByEmail.get(key) ??
       processorIdFromBankPreferred(bankPreferredByEmail.get(key) ?? null) ??
       '';
 

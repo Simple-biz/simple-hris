@@ -110,14 +110,23 @@ export async function resolveEmployeeProcessor(emails: string[]): Promise<string
   if (!supabase) return null;
 
   // 1) Explicit pick on employee_ids (case-insensitive match on work email).
+  //    "Bank Preferred" wins over the Disbursement channel; both live here.
   try {
     const or = lc.map((e) => `work_email.ilike.${e}`).join(",");
     const { data } = await supabase
       .from("employee_ids")
-      .select("preferred_processor")
+      .select("bank_preferred, preferred_processor")
       .or(or)
       .limit(5);
-    for (const r of (data ?? []) as Array<{ preferred_processor?: string | null }>) {
+    const rows = (data ?? []) as Array<{
+      bank_preferred?: string | null;
+      preferred_processor?: string | null;
+    }>;
+    for (const r of rows) {
+      const p = (r.bank_preferred ?? "").trim().toLowerCase();
+      if (p) return p;
+    }
+    for (const r of rows) {
       const p = (r.preferred_processor ?? "").trim().toLowerCase();
       if (p) return p;
     }
