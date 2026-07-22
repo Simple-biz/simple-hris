@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getAppSetting, getAppSettings, upsertAppSetting } from '@/lib/supabase/app-settings';
+import { getAppSettingStrict, getAppSettings, upsertAppSetting } from '@/lib/supabase/app-settings';
 import { requireElevatedSession, requireAdminSession, deniedResponse } from '@/lib/auth/authorize-email';
 
 export const dynamic = 'force-dynamic';
@@ -72,7 +72,10 @@ export async function GET(request: Request) {
     if (!authz.ok) return deniedResponse(authz);
   }
   try {
-    const value = await getAppSetting(key);
+    // Strict read: a failed Supabase read THROWS (→ 500) instead of masquerading
+    // as a missing key — callers like the wizard's additions hydration must be
+    // able to tell "absent" from "unreadable".
+    const value = await getAppSettingStrict(key);
     return NextResponse.json({ value, error: null });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);

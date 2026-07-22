@@ -192,11 +192,13 @@ export function mergeSnapshotIntoStaged(
         : null;
 
   // Field-by-field change detection (NOT JSON.stringify — jsonb round-trips
-  // reorder keys, which would flag every merge as a change).
+  // reorder keys, which would flag every merge as a change). fx_rate is part of
+  // the statement too (the USD line), so an fx-only snapshot update must merge.
   const changed =
     (Object.keys(nextPay) as Array<keyof typeof nextPay>).some((k) => !sameAmount(oldPay[k], nextPay[k])) ||
     (Object.keys(nextHours) as Array<keyof typeof nextHours>).some((k) => !sameAmount(oldHours[k], nextHours[k])) ||
     (Object.keys(nextRates) as Array<keyof typeof nextRates>).some((k) => !sameAmount(oldRates[k], nextRates[k])) ||
+    (snapFx > 0 && !sameAmount(oldPeriod.fx_rate, snapFx)) ||
     (nextNote ?? null) !== ((typeof p.adjustment_note === "string" ? p.adjustment_note : null) ?? null);
   if (!changed) return base;
 

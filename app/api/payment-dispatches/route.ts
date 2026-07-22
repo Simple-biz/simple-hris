@@ -165,8 +165,10 @@ export async function POST(req: NextRequest) {
         let stubPeriod = fresh.payPeriod;
         let view = mapPayloadToPayStub(stubPayload, stubPeriod);
         let doRefresh = fresh.refreshed;
+        // Runs whether or not the merge changed anything: even a no-op merge can
+        // sit beside a payment priced from a failed/stale queue load, and that
+        // discrepancy must be flagged too.
         if (
-          fresh.refreshed &&
           paidAmount != null &&
           Number.isFinite(paidAmount) &&
           Math.abs(view.totalPayPhp - paidAmount) >= 0.01

@@ -493,7 +493,9 @@
       "Bash(grep -o 'Orphanage[^O]\\\\{0,400\\\\}' \"C:/Users/Kane/Desktop/simple-hris/references/n8n/Paystub Automation.json\")",
       "Bash(grep -o 'Orphanage</td>[^O]\\\\{0,500\\\\}' \"C:\\\\Users\\\\Kane\\\\Desktop\\\\simple-hris\\\\references\\\\n8n\\\\Paystub Automation.json\")",
       "Bash(grep -o 'color:#0f766e;white-space:nowrap;[^\"]\\\\{0,220\\\\}' \"C:/Users/Kane/Desktop/simple-hris/references/n8n/Paystub Automation.json\")",
-      "Bash(grep -o 'Orphanage.\\\\{0,600\\\\}' \"C:\\\\Users\\\\Kane\\\\Desktop\\\\simple-hris\\\\references\\\\n8n\\\\Paystub Automation.json\")"
+      "Bash(grep -o 'Orphanage.\\\\{0,600\\\\}' \"C:\\\\Users\\\\Kane\\\\Desktop\\\\simple-hris\\\\references\\\\n8n\\\\Paystub Automation.json\")",
+      "PowerShell(git -C c:\\\\Users\\\\Kane\\\\Desktop\\\\simple-hris log --oneline -5)",
+      "PowerShell(git -C c:\\\\Users\\\\Kane\\\\Desktop\\\\simple-hris show --stat 0d8f16b)"
     ],
     "additionalDirectories": [
       "c:\\Users\\Itachi\\.claude\\projects\\c--Users-Itachi-Desktop-simple-hris\\memory",

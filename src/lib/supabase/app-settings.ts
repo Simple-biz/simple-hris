@@ -35,6 +35,25 @@ export async function getAppSetting(key: string): Promise<string | null> {
   return (data as { value: string }).value;
 }
 
+/**
+ * Like {@link getAppSetting} but THROWS on a failed read instead of returning
+ * null — so callers that must distinguish "key genuinely absent" from "the read
+ * failed" can. The Payroll Wizard's additions hydration gate depends on this:
+ * treating a transient read failure as "no saved additions" would zero the
+ * wizard state and let the final-pay snapshot publish corrupted figures.
+ */
+export async function getAppSettingStrict(key: string): Promise<string | null> {
+  const supabase = createSupabaseServiceRoleClient();
+  if (!supabase) throw new Error('Supabase client unavailable');
+  const { data, error } = await supabase
+    .from('app_settings')
+    .select('value')
+    .eq('key', key)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  return data ? (data as { value: string }).value : null;
+}
+
 /** Like {@link getAppSetting} but also returns the row's `updated_at`, for callers
  *  that need to compare a setting's freshness against another timestamp (e.g. a
  *  wizard snapshot vs. a staged paystub's `locked_at`). */

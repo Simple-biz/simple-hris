@@ -1724,6 +1724,11 @@ export default function PayrollWizard({
     try {
       const res = await fetch(`/api/app-settings?key=payroll.wizard.additions.${sourceFile}`);
       const json = await res.json();
+      // A failed read must NOT be mistaken for "no saved additions" — that would
+      // wipe the state to empty AND open the publish gate on zeroed figures.
+      if (!res.ok || json?.error) {
+        throw new Error(json?.error || `HTTP ${res.status}`);
+      }
       // Every Additions input is scoped to the Hubstaff file (= pay period). Reset each
       // period-specific field to this file's saved value, or to empty if it has none, so
       // adjustments/notes/bonuses never bleed from a previously-viewed pay period.
