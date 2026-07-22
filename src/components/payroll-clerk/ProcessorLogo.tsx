@@ -69,9 +69,9 @@ export default function ProcessorLogo({
       )}
     >
       {fallback === 'monogram' ? (
-        <span className="text-[13px] font-bold tracking-tight">{monogram}</span>
+        <span className="text-base font-bold tracking-tight">{monogram}</span>
       ) : (
-        <FallbackIcon className={cn('h-4 w-4', iconClassName)} />
+        <FallbackIcon className={cn('h-5 w-5', iconClassName)} />
       )}
     </div>
   );

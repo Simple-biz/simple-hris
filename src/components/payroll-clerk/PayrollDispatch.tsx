@@ -742,10 +742,10 @@ export default function PayrollDispatch() {
           // retract the sidebar / shrink the KPI row smoothly.
           'lg:min-h-0 lg:flex-1 lg:grid lg:grid-rows-[auto_minmax(0,1fr)] lg:gap-4',
         )}
-        // Static two-column grid at lg+ (processor rail 260px, content fills the
+        // Static two-column grid at lg+ (processor rail 340px, content fills the
         // rest). No focus-mode retract — the rail is always visible.
         initial={false}
-        animate={{ gridTemplateColumns: '260px minmax(0,1fr)' }}
+        animate={{ gridTemplateColumns: '340px minmax(0,1fr)' }}
         transition={FOCUS_TRANSITION}
       >
         {/* RIGHT TOP — Hero stats. Order 1 on mobile so stats sit above
@@ -820,7 +820,7 @@ export default function PayrollDispatch() {
               'lg:my-0 lg:py-0 lg:-mx-4 lg:px-4 lg:flex-col lg:overflow-x-visible lg:overflow-y-auto lg:pb-0',
             )}
           >
-            <motion.div variants={itemPop} className="w-[136px] shrink-0 lg:w-auto">
+            <motion.div variants={itemPop} className="w-[176px] shrink-0 lg:w-auto">
               <ProcessorCard
                 label="All pending"
                 subtitle={ALL_VISUAL.blurb}
@@ -833,7 +833,7 @@ export default function PayrollDispatch() {
                 iconOnlyFallback
               />
             </motion.div>
-            <motion.div variants={itemPop} className="w-[136px] shrink-0 lg:w-auto">
+            <motion.div variants={itemPop} className="w-[176px] shrink-0 lg:w-auto">
               <ProcessorCard
                 label="Urgent"
                 subtitle={URGENT_VISUAL.blurb}
@@ -850,7 +850,7 @@ export default function PayrollDispatch() {
             {DISPATCH_PROCESSORS.map((p) => {
               const v = PROCESSOR_VISUALS[p.id];
               return (
-                <motion.div key={p.id} variants={itemPop} className="w-[136px] shrink-0 lg:w-auto">
+                <motion.div key={p.id} variants={itemPop} className="w-[176px] shrink-0 lg:w-auto">
                   <ProcessorCard
                     label={p.label}
                     subtitle={v.blurb}
@@ -865,7 +865,7 @@ export default function PayrollDispatch() {
                 </motion.div>
               );
             })}
-            <motion.div variants={itemPop} className="w-[136px] shrink-0 lg:w-auto">
+            <motion.div variants={itemPop} className="w-[176px] shrink-0 lg:w-auto">
               <ProcessorCard
                 label="USD"
                 subtitle={USD_VISUAL.blurb}
@@ -879,7 +879,7 @@ export default function PayrollDispatch() {
               />
             </motion.div>
             {copPending.length > 0 && (
-              <motion.div variants={itemPop} className="w-[136px] shrink-0 lg:w-auto">
+              <motion.div variants={itemPop} className="w-[176px] shrink-0 lg:w-auto">
                 <ProcessorCard
                   label="COP"
                   subtitle={COP_VISUAL.blurb}
@@ -893,7 +893,7 @@ export default function PayrollDispatch() {
                 />
               </motion.div>
             )}
-            <motion.div variants={itemPop} className="w-[136px] shrink-0 lg:w-auto">
+            <motion.div variants={itemPop} className="w-[176px] shrink-0 lg:w-auto">
               <ProcessorCard
                 label="Done"
                 subtitle={DONE_VISUAL.blurb}
@@ -906,7 +906,7 @@ export default function PayrollDispatch() {
                 iconOnlyFallback
               />
             </motion.div>
-            <motion.div variants={itemPop} className="w-[136px] shrink-0 lg:w-auto">
+            <motion.div variants={itemPop} className="w-[176px] shrink-0 lg:w-auto">
               <ProcessorCard
                 label="Reports"
                 subtitle={REPORTS_VISUAL.blurb}
@@ -918,7 +918,7 @@ export default function PayrollDispatch() {
                 iconOnlyFallback
               />
             </motion.div>
-            <motion.div variants={itemPop} className="w-[136px] shrink-0 lg:w-auto">
+            <motion.div variants={itemPop} className="w-[176px] shrink-0 lg:w-auto">
               <ProcessorCard
                 label="Orphanage"
                 subtitle={ORPHANAGE_VISUAL.blurb}
@@ -930,7 +930,7 @@ export default function PayrollDispatch() {
                 iconOnlyFallback
               />
             </motion.div>
-            <motion.div variants={itemPop} className="w-[136px] shrink-0 lg:w-auto">
+            <motion.div variants={itemPop} className="w-[176px] shrink-0 lg:w-auto">
               <ProcessorCard
                 label="Excluded"
                 subtitle={EXCLUDED_VISUAL.blurb}

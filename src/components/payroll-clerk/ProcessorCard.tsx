@@ -60,7 +60,7 @@ export default function ProcessorCard({
       whileTap={{ scale: 0.97 }}
       transition={{ type: 'spring', stiffness: 400, damping: 28 }}
       className={cn(
-        'group relative flex h-full min-h-[80px] w-full flex-col items-start gap-1.5 overflow-hidden rounded-xl border p-2.5 text-left',
+        'group relative flex h-full min-h-[72px] w-full items-center overflow-hidden rounded-xl border p-3 text-left',
         'transition-colors duration-200',
         active
           ? 'border-transparent bg-white shadow-[0_6px_18px_-8px_rgba(0,0,0,0.18)] dark:bg-zinc-900'
@@ -92,51 +92,53 @@ export default function ProcessorCard({
         />
       )}
 
-      <div className="relative z-10 flex w-full items-center justify-between gap-1.5">
+      {/* Horizontal layout: text + count on the LEFT, logo tile on the RIGHT. */}
+      <div className="relative z-10 flex w-full items-center gap-2.5">
+        <div className="min-w-0 flex-1 leading-tight">
+          <div className="flex items-center gap-1.5">
+            <div
+              className={cn(
+                'truncate text-sm font-semibold tracking-tight',
+                active ? 'text-zinc-900 dark:text-white' : 'text-zinc-800 dark:text-zinc-200',
+              )}
+            >
+              {label}
+            </div>
+            {count !== undefined && (
+              <div
+                className={cn(
+                  'shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-semibold tabular-nums',
+                  glowBorder
+                    ? 'bg-amber-100 text-amber-700 ring-1 ring-amber-300/70 dark:bg-amber-500/15 dark:text-amber-300 dark:ring-amber-500/40'
+                    : active
+                      ? 'bg-white/80 text-zinc-900 backdrop-blur-sm dark:bg-zinc-800/80 dark:text-zinc-100'
+                      : 'bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400',
+                )}
+              >
+                <AnimatedNumber value={count} />
+              </div>
+            )}
+          </div>
+          {subtitle && (
+            <div
+              className={cn(
+                'mt-0.5 truncate text-[11px]',
+                active ? 'text-zinc-600 dark:text-zinc-400' : 'text-zinc-400 dark:text-zinc-500',
+              )}
+            >
+              {subtitle}
+            </div>
+          )}
+        </div>
         <ProcessorLogo
           monogram={monogram}
           gradient={accent}
           FallbackIcon={Icon}
           logoSrc={logoSrc}
           fallback={iconOnlyFallback ? 'icon' : 'monogram'}
-          className={cn('h-8 w-8', glowBorder && 'shadow-[0_2px_10px_-2px_rgba(245,158,11,0.7)]')}
+          className={cn('h-11 w-11 shrink-0', glowBorder && 'shadow-[0_2px_10px_-2px_rgba(245,158,11,0.7)]')}
           iconClassName={glowBorder ? 'urgent-zap' : undefined}
         />
-        {count !== undefined && (
-          <div
-            className={cn(
-              'rounded-full px-1.5 py-0.5 text-[10px] font-semibold tabular-nums',
-              glowBorder
-                ? 'bg-amber-100 text-amber-700 ring-1 ring-amber-300/70 dark:bg-amber-500/15 dark:text-amber-300 dark:ring-amber-500/40'
-                : active
-                  ? 'bg-white/80 text-zinc-900 backdrop-blur-sm dark:bg-zinc-800/80 dark:text-zinc-100'
-                  : 'bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400',
-            )}
-          >
-            <AnimatedNumber value={count} />
-          </div>
-        )}
-      </div>
-
-      <div className="relative z-10 min-w-0 leading-tight">
-        <div
-          className={cn(
-            'truncate text-[13px] font-semibold tracking-tight',
-            active ? 'text-zinc-900 dark:text-white' : 'text-zinc-800 dark:text-zinc-200',
-          )}
-        >
-          {label}
-        </div>
-        {subtitle && (
-          <div
-            className={cn(
-              'mt-0.5 truncate text-[10px]',
-              active ? 'text-zinc-600 dark:text-zinc-400' : 'text-zinc-400 dark:text-zinc-500',
-            )}
-          >
-            {subtitle}
-          </div>
-        )}
       </div>
 
       {/* Urgent: continuous energy sheen sweeping across the surface. Lives inside
