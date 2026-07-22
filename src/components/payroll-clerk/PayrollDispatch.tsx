@@ -978,6 +978,7 @@ export default function PayrollDispatch() {
         row={markPaidRow}
         onClose={handleCloseMarkPaid}
         onConfirm={handleConfirmPaid}
+        onBankDetailsOverridden={refresh}
         position={
           galleryIdx != null
             ? { index: galleryIdx, total: gallerySiblings.length }
