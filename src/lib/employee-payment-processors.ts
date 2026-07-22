@@ -42,6 +42,32 @@ export function isProcessorId(v: string): v is ProcessorId {
 }
 
 /**
+ * "WIRES" is the residual send-from rail: anything that is NOT explicitly
+ * `hurupay` or `higlobe` is treated as WIRES. That deliberately includes
+ * `wires`, `x1153`, retired processors, legacy free-text, and null/unset — a
+ * WIRES recipient is paid by bank wire and physically cannot receive via the
+ * Hurupay/HiGlobe wallets.
+ */
+export function isWiresPreferred(value: string | null | undefined): boolean {
+  const v = (value ?? '').trim().toLowerCase();
+  return v !== 'hurupay' && v !== 'higlobe';
+}
+
+/**
+ * The only forbidden Bank Preferred transition: a WIRES employee cannot be
+ * switched to `hurupay` or `higlobe` (impossible to pay a wire recipient via a
+ * wallet). Everything else is allowed — hurupay↔higlobe, and moving TO wires.
+ * `current` is the employee's stored Bank Preferred; `next` is the requested one.
+ */
+export function isBankPreferredTransitionAllowed(
+  current: string | null | undefined,
+  next: string | null | undefined,
+): boolean {
+  if (isWiresPreferred(current) && !isWiresPreferred(next)) return false;
+  return true;
+}
+
+/**
  * "Bank Preferred" dropdown (Employee Profile → Payment). This is a SEPARATE
  * field from the Disbursement picker (`preferred_processor`): it stores the
  * processor Payment Dispatch should route the salary through, in its own
