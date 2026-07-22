@@ -503,7 +503,13 @@
       "Bash(sed 's/\"//g')",
       "Bash(git --no-pager diff src/lib/hsl-bonus/schema.ts)",
       "Bash(python -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\(json.dumps\\(d.get\\('scripts',{}\\), indent=2\\)\\)\")",
-      "Bash(node --import tsx --test src/lib/mesa/ledger.test.ts)"
+      "Bash(node --import tsx --test src/lib/mesa/ledger.test.ts)",
+      "Bash(cd \"C:\\\\Users\\\\Kane\\\\Desktop\\\\simple-hris\" && echo \"=== NEW MIGRATION LIST \\(5605a1f\\) ===\" && git show 5605a1f:references/sql/alter/2026-07-22_employee_notifications_add_bank_preferred_type.sql | grep -oE \"'[a-z_]+\\\\.[a-z_]+'\" | sort -u > /tmp/new_list.txt && cat /tmp/new_list.txt && echo \"\" && echo \"=== PRIOR AUTHORITATIVE \\(payroll.available migration on main\\) ===\" && grep -oE \"'[a-z_]+\\\\.[a-z_]+'\" references/sql/alter/add_payroll_available_notification_type.sql | sort -u > /tmp/prior_list.txt && cat /tmp/prior_list.txt)",
+      "Bash(gh pr create --base main --head fix/pd-processor-rail-visible-during-processing --title 'fix\\(payment-dispatch\\): keep processor rail visible during processing' --body ' *)",
+      "Bash(grep -iE \"\\\\.sql$|create\")",
+      "Bash(awk -F',' 'NR>2{print $5}')",
+      "Bash(git show *)",
+      "Bash(python3 -)"
     ],
     "additionalDirectories": [
       "c:\\Users\\Itachi\\.claude\\projects\\c--Users-Itachi-Desktop-simple-hris\\memory",
