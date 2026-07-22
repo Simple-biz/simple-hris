@@ -3,10 +3,14 @@ import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/lib/auth/auth-options";
 import { listPaymentDispatches } from "@/lib/supabase/payment-dispatches";
 import {
-  getPaystubDispatchEntry,
   listPaystubEntriesForEmployee,
   listPaystubPayloadsForEmployee,
 } from "@/lib/supabase/paystub-dispatch-queue";
+import {
+  getFreshPaystubEntry,
+  mergeSnapshotIntoStaged,
+  finalPaySnapshotKey,
+} from "@/lib/payroll/paystub-fresh";
 import { mapPayloadToPayStub, formatWeekHuman, type PayStubView } from "@/lib/payroll/paystub-view";
 import {
   computeCurrentPay,
@@ -16,7 +20,7 @@ import {
 import { loadWeekDiscretionary, loadFinalPayForWeeks } from "@/lib/payroll/paystub-recovery";
 import { resolveEmployeeProcessor, resolvePayDateIso } from "@/lib/payroll/pay-schedule";
 import { getEmployeeMasterRecord } from "@/lib/supabase/employees";
-import { getAppSetting } from "@/lib/supabase/app-settings";
+import { getAppSetting, getAppSettingsWithMeta } from "@/lib/supabase/app-settings";
 import { listHubstaffUploads, getUploadedSourceFiles } from "@/lib/supabase/hubstaff-hours-db";
 import { parseDateRangeFromFilename } from "@/lib/hubstaff/calendar-column-dedupe";
 import { normEmail } from "@/lib/email/norm-email";
@@ -123,8 +127,9 @@ async function currentFxRate(): Promise<number> {
 }
 
 /** Assemble a PayStubView from the resolved scalar figures (shared by the fast +
- *  slow recovery paths). Orphanage is already folded into `totalPayPhp` and, like
- *  the staged-payload view, is not itemized as its own line. */
+ *  slow recovery paths). Orphanage is already folded into `totalPayPhp` and is
+ *  ALSO carried as its own `orphanagePay` line (shown only when > 0), matching the
+ *  staged-payload view + the emailed statement. */
 function buildView(p: {
   name: string;
   department: string;
@@ -139,6 +144,7 @@ function buildView(p: {
   performanceBonus: number;
   adjustment: number;
   adjustmentNote: string | null;
+  orphanagePay: number;
   mesaDeduction: number;
   mesaDisbursement: number;
   totalPayPhp: number;
@@ -163,6 +169,7 @@ function buildView(p: {
     performanceBonus: p.performanceBonus,
     adjustment: p.adjustment,
     adjustmentNote: p.adjustment !== 0 ? p.adjustmentNote : null,
+    orphanagePay: p.orphanagePay,
     mesaDisbursement: p.mesaDisbursement,
     mesaDeduction: p.mesaDeduction,
     totalPayPhp: p.totalPayPhp,
@@ -230,6 +237,7 @@ async function reconstructStubForWeek(params: {
       performanceBonus: round2(fp.otherBonuses as number),
       adjustment: round2(typeof fp.adjustment === "number" ? fp.adjustment : 0),
       adjustmentNote: disc.adjustmentNote,
+      orphanagePay: round2(typeof fp.orphanagePay === "number" ? fp.orphanagePay : 0),
       mesaDeduction: round2(typeof fp.mesaDeduction === "number" ? fp.mesaDeduction : 0),
       mesaDisbursement: round2(typeof fp.mesaDisbursement === "number" ? fp.mesaDisbursement : 0),
       totalPayPhp: round2(fp.final),
@@ -349,6 +357,7 @@ async function reconstructStubForWeek(params: {
     performanceBonus,
     adjustment,
     adjustmentNote: disc.adjustmentNote,
+    orphanagePay: orphanage,
     mesaDeduction,
     mesaDisbursement,
     totalPayPhp,
@@ -436,9 +445,16 @@ export async function GET(req: NextRequest) {
     const processor = await resolveEmployeeProcessor(emails);
 
     // 1) Prefer a locked/staged payload — byte-identical to the emailed stub.
-    const { row: staged } = await getPaystubDispatchEntry(sourceFile, email);
+    //    Paid → the frozen as-paid record (the mark-paid path persisted exactly
+    //    what was emailed onto the queue row). Unpaid (pre-launch preview) → the
+    //    staged payload with any NEWER wizard-snapshot figures merged over it, so
+    //    the preview matches the wizard + Payment Dispatch (see paystub-fresh.ts).
+    const fresh = await getFreshPaystubEntry(sourceFile, email);
+    const staged = fresh.staged;
     if (staged?.payload && (SHOW_UNPAID_STAGED_PAYSTUBS || paid)) {
-      const paystub = mapPayloadToPayStub(staged.payload, staged.pay_period);
+      const paystub = paid
+        ? mapPayloadToPayStub(staged.payload, staged.pay_period)
+        : mapPayloadToPayStub(fresh.payload, fresh.payPeriod);
       return NextResponse.json({
         paystub,
         available: true,
@@ -476,6 +492,28 @@ export async function GET(req: NextRequest) {
   const wantSummary = !!req.nextUrl.searchParams.get("summary");
   const wantAll = !!req.nextUrl.searchParams.get("all");
 
+  /** View for one staged week in the list/export modes — same freshness rule as
+   *  the single-week modal: paid → the frozen as-paid payload; unpaid → the
+   *  staged payload with any newer wizard-snapshot figures merged over it, so
+   *  the row total, the modal, and the PDF/XLSX export all agree. */
+  const freshStagedView = (
+    p: {
+      cycle_source_file: string;
+      recipient_email: string;
+      payload: Record<string, unknown> | null;
+      pay_period: Record<string, unknown> | null;
+      locked_at: string | null;
+      excluded: boolean;
+    },
+    isPaid: boolean,
+    snaps: Record<string, { value: string; updatedAt: string | null }>,
+  ): PayStubView => {
+    if (isPaid) return mapPayloadToPayStub(p.payload, p.pay_period);
+    const snap = snaps[finalPaySnapshotKey(p.cycle_source_file)];
+    const merged = mergeSnapshotIntoStaged(p, snap?.value ?? null, snap?.updatedAt ?? null);
+    return mapPayloadToPayStub(merged.payload, merged.payPeriod);
+  };
+
   // ── Summary mode: lightweight per-week rows for the paginated list ─────────
   // Totals come from the staged payload or the wizard `final_pay` snapshot with
   // NO per-week `computeCurrentPay` — the slow engine runs ONLY for weeks that
@@ -497,9 +535,16 @@ export async function GET(req: NextRequest) {
       (p) => p.payload && (SHOW_UNPAID_STAGED_PAYSTUBS || paidAtByFile.has(p.cycle_source_file)),
     );
     const stagedFiles = new Set(staged.map((p) => p.cycle_source_file));
+    // Snapshot metadata for the UNPAID staged weeks (one round-trip) so their
+    // rows render the same merged figures the single-week modal shows.
+    const unpaidSnaps = await getAppSettingsWithMeta(
+      staged
+        .filter((p) => !paidAtByFile.has(p.cycle_source_file))
+        .map((p) => finalPaySnapshotKey(p.cycle_source_file)),
+    );
     const rows: PayStubSummary[] = staged.map((p) => {
-      const v = mapPayloadToPayStub(p.payload, p.pay_period);
       const pAt = paidAtByFile.get(p.cycle_source_file) ?? null;
+      const v = freshStagedView(p, pAt != null, unpaidSnaps);
       return {
         sourceFile: p.cycle_source_file,
         weekStart: v.weekStart,
@@ -591,9 +636,16 @@ export async function GET(req: NextRequest) {
     const emails = callerEmails(email, master);
     const processor = await resolveEmployeeProcessor(emails);
 
+    // Same freshness rule as the summary list — unpaid rows merge in any newer
+    // wizard-snapshot figures so the export matches the modal and the list.
+    const unpaidSnaps = await getAppSettingsWithMeta(
+      staged
+        .filter((p) => !paidAtByFile.has(p.cycle_source_file))
+        .map((p) => finalPaySnapshotKey(p.cycle_source_file)),
+    );
     const officialStubs: EmployeePayStub[] = staged.map((p) => {
-      const view = mapPayloadToPayStub(p.payload, p.pay_period);
       const pAt = paidAtByFile.get(p.cycle_source_file) ?? null;
+      const view = freshStagedView(p, pAt != null, unpaidSnaps);
       return {
         sourceFile: p.cycle_source_file,
         paidAt: pAt,

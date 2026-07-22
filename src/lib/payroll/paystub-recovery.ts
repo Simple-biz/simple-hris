@@ -54,6 +54,12 @@ export interface WizardFinalPayEntry {
   otherBonuses?: number | null;
   adjustment?: number | null;
   orphanagePay?: number | null;
+  /** Hourly rates + Adj. note (added 2026-07-21) so the mark-paid path can rebuild
+   *  the FULL paystub payload from this snapshot (see paystub-fresh.ts). Older
+   *  snapshots omit them → undefined, and the stale staged values are kept. */
+  regularRate?: number | null;
+  otRate?: number | null;
+  adjustmentNote?: string | null;
 }
 
 /** The discretionary overlay recovered for one employee + week. */

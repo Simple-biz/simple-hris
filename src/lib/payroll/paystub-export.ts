@@ -65,6 +65,7 @@ interface Totals {
   attendanceBonus: number;
   performanceBonus: number;
   adjustment: number;
+  orphanagePay: number;
   mesaNet: number;
   netPhp: number;
   netUsd: number;
@@ -80,6 +81,7 @@ function sumTotals(weeks: PayStubWeek[]): Totals {
       t.attendanceBonus += w.view.attendanceBonus;
       t.performanceBonus += w.view.performanceBonus;
       t.adjustment += w.view.adjustment;
+      t.orphanagePay += w.view.orphanagePay;
       t.mesaNet += mesaNet;
       t.netPhp += w.view.totalPayPhp;
       t.netUsd += w.view.totalPayUsd;
@@ -92,6 +94,7 @@ function sumTotals(weeks: PayStubWeek[]): Totals {
       attendanceBonus: 0,
       performanceBonus: 0,
       adjustment: 0,
+      orphanagePay: 0,
       mesaNet: 0,
       netPhp: 0,
       netUsd: 0,
@@ -175,6 +178,7 @@ const XLSX_COLS: XlsxCol[] = [
   { header: 'Attendance', width: 12, value: (w) => round2(w.view.attendanceBonus), total: (t) => round2(t.attendanceBonus) },
   { header: 'Performance Bonus', width: 16, value: (w) => round2(w.view.performanceBonus), total: (t) => round2(t.performanceBonus) },
   { header: 'Adjustment', width: 12, value: (w) => round2(w.view.adjustment), total: (t) => round2(t.adjustment) },
+  { header: 'Orphanage', width: 12, value: (w) => round2(w.view.orphanagePay), total: (t) => round2(t.orphanagePay) },
   { header: 'MESA Reimbursement', width: 18, value: (w) => round2(w.view.mesaDisbursement) },
   { header: 'MESA Deduction', width: 15, value: (w) => round2(w.view.mesaDeduction) },
   { header: 'Net Pay (PHP)', width: 15, value: (w) => round2(w.view.totalPayPhp), total: (t) => round2(t.netPhp) },
@@ -288,6 +292,7 @@ const PDF_COLS: Col[] = [
   { header: 'PAB', weight: 50, align: 'right' },
   { header: 'Perf', weight: 50, align: 'right' },
   { header: 'Adjustment', weight: 62, align: 'right' },
+  { header: 'Orphanage', weight: 58, align: 'right' },
   { header: 'MESA', weight: 60, align: 'right' },
   { header: 'Net (PHP)', weight: 82, align: 'right' },
   { header: 'Net (USD)', weight: 56, align: 'right' },
@@ -411,6 +416,7 @@ export async function generatePayStubsPdf(
       w.view.attendanceBonus > 0 ? n2(w.view.attendanceBonus) : '-',
       w.view.performanceBonus > 0 ? n2(w.view.performanceBonus) : '-',
       n2Signed(w.view.adjustment),
+      w.view.orphanagePay > 0 ? n2(w.view.orphanagePay) : '-',
       n2Signed(mesaNet),
       n2(w.view.totalPayPhp),
       n2(w.view.totalPayUsd),
@@ -449,6 +455,7 @@ export async function generatePayStubsPdf(
       totals.attendanceBonus > 0 ? n2(totals.attendanceBonus) : '-',
       totals.performanceBonus > 0 ? n2(totals.performanceBonus) : '-',
       n2Signed(totals.adjustment),
+      totals.orphanagePay > 0 ? n2(totals.orphanagePay) : '-',
       n2Signed(totals.mesaNet),
       n2(totals.netPhp),
       n2(totals.netUsd),

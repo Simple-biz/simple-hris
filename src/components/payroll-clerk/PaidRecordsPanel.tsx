@@ -2,9 +2,12 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  AlertTriangle,
   CheckCircle2,
+  CircleDashed,
   Clock,
   Download,
+  Gauge,
   Loader2,
   Search,
   Undo2,
@@ -15,7 +18,7 @@ import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { formatPHP, formatUSD, formatCOP, PROCESSORS } from './mock-queue';
 import QueuePagination from './QueuePagination';
-import type { PaymentDispatchRow } from '@/lib/supabase/payment-dispatches';
+import type { PaymentDispatchRow, PaymentDispatchStatus } from '@/lib/supabase/payment-dispatches';
 import {
   buildSentRows,
   dispatchClientFilename,
@@ -23,9 +26,57 @@ import {
   sentRowsToCsv,
 } from '@/lib/payroll/dispatch-client-csv';
 
+/**
+ * Per-status presentation for the records panel. `paid` is the original green
+ * "already sent" view; the other three are the non-paid dispatch outcomes that
+ * are logged but where money never actually moved (the person stays payable in
+ * the pending queue). Colors mirror the status pills in the Mark Paid dialog.
+ */
+const STATUS_UI: Record<
+  PaymentDispatchStatus,
+  {
+    noun: string;               // singular label used in the count pill ("payment", "problem"…)
+    verbed: string;             // past-tense state word ("paid", "logged as problem"…)
+    pill: string;               // count-pill classes
+    Icon: React.ComponentType<{ className?: string }>;
+    /** Whether these rows can be "sent back" (undone) — retry markers can, paid can. */
+  }
+> = {
+  paid: {
+    noun: 'payment',
+    verbed: 'paid',
+    pill: 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-300',
+    Icon: CheckCircle2,
+  },
+  not_paid: {
+    noun: 'dispatch',
+    verbed: 'logged not paid',
+    pill: 'border-zinc-200 bg-zinc-50 text-zinc-700 dark:border-zinc-700 dark:bg-zinc-800/60 dark:text-zinc-300',
+    Icon: CircleDashed,
+  },
+  threshold: {
+    noun: 'dispatch',
+    verbed: 'below threshold',
+    pill: 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300',
+    Icon: Gauge,
+  },
+  problem: {
+    noun: 'dispatch',
+    verbed: 'flagged problem',
+    pill: 'border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-300',
+    Icon: AlertTriangle,
+  },
+};
+
 interface PaidRecordsPanelProps {
-  /** Dispatch rows for the scope (any status — only status='paid' is shown). */
+  /** Dispatch rows for the scope (any status — filtered to `statusFilter`). */
   records: PaymentDispatchRow[];
+  /**
+   * Which dispatch status this panel shows. Defaults to 'paid' (the Done /
+   * per-processor Paid view). The non-paid outcomes reuse this same panel so
+   * the clerk can review — and send back for retry — what didn't go through.
+   */
+  statusFilter?: PaymentDispatchStatus;
   periodStart?: string | null;
   periodEnd?: string | null;
   /** Silent re-pull after a send-back, to reconcile the pending queue. */
@@ -67,6 +118,7 @@ const PAGE_SIZE = 25;
  */
 export default function PaidRecordsPanel({
   records,
+  statusFilter = 'paid',
   periodStart,
   periodEnd,
   onRefresh,
@@ -76,9 +128,15 @@ export default function PaidRecordsPanel({
   emptyTitle = 'No payments marked paid yet',
   emptyHint = 'Mark a queue row paid to see it here.',
 }: PaidRecordsPanelProps) {
-  // Only status='paid' rows are "paid". Threshold/Problem/Not-paid stay in the
-  // pending queue for retry, so they never show here.
-  const paid = useMemo(() => records.filter((r) => r.status === 'paid'), [records]);
+  const ui = STATUS_UI[statusFilter];
+  const isPaidView = statusFilter === 'paid';
+  // Rows for this view = dispatches logged with the selected status. For 'paid'
+  // that's money actually sent; the other three are retry markers (money never
+  // moved — the person is still payable in the pending queue).
+  const paid = useMemo(
+    () => records.filter((r) => r.status === statusFilter),
+    [records, statusFilter],
+  );
 
   const [query, setQuery] = useState('');
   // Rows ticked for the bulk "Undo selected" action. Persists across search.
@@ -212,10 +270,13 @@ export default function PaidRecordsPanel({
   const sendBackOne = useCallback(
     async (row: PaymentDispatchRow) => {
       setBusyIds((prev) => new Set(prev).add(row.id));
+      const who = row.recipient_name ?? row.recipient_email;
       try {
         await undoIds(
           [row.id],
-          `${row.recipient_name ?? row.recipient_email} sent back to the pay processor`,
+          isPaidView
+            ? `${who} sent back to the pay processor`
+            : `${who}'s ${ui.verbed} record cleared`,
         );
       } catch {
         /* toast already shown */
@@ -227,7 +288,7 @@ export default function PaidRecordsPanel({
         });
       }
     },
-    [undoIds],
+    [undoIds, isPaidView, ui.verbed],
   );
 
   const undoSelected = useCallback(async () => {
@@ -237,7 +298,9 @@ export default function PaidRecordsPanel({
     try {
       await undoIds(
         ids,
-        `${ids.length} ${ids.length === 1 ? 'payment' : 'payments'} sent back to the pay processor`,
+        isPaidView
+          ? `${ids.length} ${ids.length === 1 ? 'payment' : 'payments'} sent back to the pay processor`
+          : `${ids.length} ${ids.length === 1 ? 'record' : 'records'} cleared`,
       );
       setSelectedIds(new Set());
     } catch {
@@ -245,7 +308,7 @@ export default function PaidRecordsPanel({
     } finally {
       setBulkBusy(false);
     }
-  }, [selectedIds, bulkBusy, undoIds]);
+  }, [selectedIds, bulkBusy, undoIds, isPaidView]);
 
   const exportCsv = () => {
     if (filtered.length === 0) return;
@@ -265,9 +328,9 @@ export default function PaidRecordsPanel({
       {/* Controls bar */}
       <div className="shrink-0 border-b border-[#ececec] bg-white px-4 py-3 sm:px-6 dark:border-zinc-800 dark:bg-zinc-950">
         <div className="flex flex-wrap items-center gap-2">
-          <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-0.5 text-[11px] font-semibold text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-300">
-            <CheckCircle2 className="h-3 w-3" />
-            {filtered.length} {filtered.length === 1 ? 'payment' : 'payments'} paid
+          <span className={cn('inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-[11px] font-semibold', ui.pill)}>
+            <ui.Icon className="h-3 w-3" />
+            {filtered.length} {filtered.length === 1 ? ui.noun : `${ui.noun}s`} {ui.verbed}
           </span>
 
           {/* Bulk undo — appears once at least one row is ticked. */}
@@ -277,7 +340,11 @@ export default function PaidRecordsPanel({
                 type="button"
                 onClick={undoSelected}
                 disabled={bulkBusy}
-                title="Undo every selected payment and send them back to the pay processor as pending"
+                title={
+                  isPaidView
+                    ? 'Undo every selected payment and send them back to the pay processor as pending'
+                    : 'Clear the selected records — they stay payable in the pending queue'
+                }
                 className="inline-flex h-7 items-center gap-1.5 rounded-md border border-amber-300 bg-amber-50 px-2.5 text-[11px] font-semibold text-amber-800 shadow-sm transition-colors hover:border-amber-400 hover:bg-amber-100 disabled:opacity-50 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-300 dark:hover:bg-amber-500/20"
               >
                 {bulkBusy ? (
@@ -342,7 +409,7 @@ export default function PaidRecordsPanel({
           <div className="flex h-full items-center justify-center text-center">
             <div>
               <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-full bg-zinc-100 text-zinc-400 dark:bg-zinc-900 dark:text-zinc-600">
-                <CheckCircle2 className="h-5 w-5" />
+                <ui.Icon className="h-5 w-5" />
               </div>
               <h2 className="text-sm font-medium text-zinc-900 dark:text-zinc-100">
                 {paid.length === 0 ? emptyTitle : 'No matches'}
@@ -445,7 +512,11 @@ export default function PaidRecordsPanel({
                           type="button"
                           onClick={() => sendBackOne(rec)}
                           disabled={busy || bulkBusy}
-                          title="Undo this payment and send it back to the pay processor"
+                          title={
+                            isPaidView
+                              ? 'Undo this payment and send it back to the pay processor'
+                              : 'Clear this record — the person stays payable in the pending queue'
+                          }
                           className="inline-flex h-7 items-center gap-1.5 rounded-md border border-amber-200 bg-white px-2.5 text-[11px] font-medium text-amber-700 transition-colors hover:border-amber-300 hover:bg-amber-50 disabled:opacity-50 dark:border-amber-500/30 dark:bg-zinc-950 dark:text-amber-300 dark:hover:bg-amber-500/10"
                         >
                           {busy ? (
@@ -453,7 +524,7 @@ export default function PaidRecordsPanel({
                           ) : (
                             <Undo2 className="h-3 w-3" />
                           )}
-                          Undo
+                          {isPaidView ? 'Undo' : 'Clear'}
                         </button>
                       </td>
                     </tr>

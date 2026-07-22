@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireFeatureAccess } from "@/lib/auth/authorize-feature";
 import { deniedResponse } from "@/lib/auth/authorize-email";
-import { getPaystubDispatchEntry } from "@/lib/supabase/paystub-dispatch-queue";
+import { getFreshPaystubEntry } from "@/lib/payroll/paystub-fresh";
 import { listPaymentDispatches } from "@/lib/supabase/payment-dispatches";
 import { mapPayloadToPayStub } from "@/lib/payroll/paystub-view";
 import { resolveEmployeeProcessor, resolvePayDateIso } from "@/lib/payroll/pay-schedule";
@@ -18,11 +18,15 @@ export const runtime = "nodejs";
  * the employee route (`/api/employee/paystub`, session-scoped to the caller), this
  * takes an explicit `email` and is RBAC-gated to the dispatch-queue audience.
  *
- * It is a STAGED-PAYLOAD read only (the exact per-employee `DispatchEmployee` the
- * wizard locked in): one indexed row read + `mapPayloadToPayStub`. No
- * `computeCurrentPay` — so opening a stub per row across the ~1000-row queue stays
- * cheap (no N+1 pay recomputation). A week that was never staged for this employee
- * returns `available: false`.
+ * Freshness: for a NOT-yet-paid row it renders the staged payload with any newer
+ * wizard-snapshot figures merged over it (`getFreshPaystubEntry`) — the same
+ * source Payment Dispatch prices the row from, so the stub always matches the
+ * amount the queue shows and the wizard's live values. For a PAID row it renders
+ * the staged payload untouched: the mark-paid path persisted the exact as-paid
+ * figures onto that row, and a historical statement must never drift after the
+ * fact. Still no `computeCurrentPay` — one indexed row read + one app_settings
+ * read, so opening stubs across the ~1000-row queue stays cheap. A week that was
+ * never staged for this employee returns `available: false`.
  *
  * Response shape matches the modal's expectation (same as the employee route):
  *   { paystub: PayStubView | null, available: boolean, paidAt: string | null, status }
@@ -41,10 +45,14 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  const { row: staged, error } = await getPaystubDispatchEntry(sourceFile, email);
-  if (error) {
-    return NextResponse.json({ paystub: null, available: false, paidAt: null, error }, { status: 500 });
+  const fresh = await getFreshPaystubEntry(sourceFile, email);
+  if (fresh.error) {
+    return NextResponse.json(
+      { paystub: null, available: false, paidAt: null, error: fresh.error },
+      { status: 500 },
+    );
   }
+  const staged = fresh.staged;
   if (!staged?.payload) {
     return NextResponse.json({ paystub: null, available: false, paidAt: null });
   }
@@ -61,7 +69,10 @@ export async function GET(req: NextRequest) {
     /* best-effort — the statement still renders without a paid date */
   }
 
-  const paystub = mapPayloadToPayStub(staged.payload, staged.pay_period);
+  // Paid → the frozen as-paid record; unpaid → the freshest wizard figures.
+  const paystub = paidAt
+    ? mapPayloadToPayStub(staged.payload, staged.pay_period)
+    : mapPayloadToPayStub(fresh.payload, fresh.payPeriod);
   // Display pay date: real disbursement date, else the scheduled Tue (HuruPay) /
   // Thu (wires) for this week + this employee's payout method.
   const processor = await resolveEmployeeProcessor([email]);

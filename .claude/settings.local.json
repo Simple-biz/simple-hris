@@ -466,12 +466,40 @@
       "PowerShell(cd 'c:\\\\Users\\\\Kane\\\\Desktop\\\\simple-hris'; npx patch-package; \"EXIT=$LASTEXITCODE\")",
       "Bash(node \"C:\\\\Users\\\\Kane\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-Kane-Desktop-simple-hris\\\\bbc2de72-f162-4527-bf98-a354c9e29d57\\\\scratchpad\\\\check-attestation.mjs\")",
       "Bash(cp \"C:\\\\Users\\\\Kane\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-Kane-Desktop-simple-hris\\\\bbc2de72-f162-4527-bf98-a354c9e29d57\\\\scratchpad\\\\check-attestation.mjs\" ./_check-attestation.mjs)",
-      "Bash(node ./_check-attestation.mjs)"
+      "Bash(node ./_check-attestation.mjs)",
+      "Bash(grep -o 'Adjustment</td>[^\\\\n]\\\\{0,320\\\\}' \"references/n8n/Paystub Automation.json\")",
+      "Bash(node -e \"const fs=require\\('fs'\\);const s=fs.readFileSync\\('references/n8n/Paystub Automation.json','utf8'\\);const i=s.indexOf\\('>Adjustment<'\\);console.log\\(JSON.stringify\\(s.slice\\(i-40, i+430\\)\\)\\);\")",
+      "Bash(node -e \"const fs=require\\('fs'\\);const s=fs.readFileSync\\('references/n8n/Paystub Automation.json','utf8'\\);for\\(const k of ['Adjustment','Orphanage','Performance Bonus','Tech Allowance','total_pay_usd','mesa_deduction']\\){console.log\\(k, s.includes\\(k\\)\\);}\")",
+      "Bash(node -e \"const fs=require\\('fs'\\);const s=fs.readFileSync\\('references/n8n/Paystub Automation.json','utf8'\\);const i=s.indexOf\\('Orphanage'\\);console.log\\(JSON.stringify\\(s.slice\\(i-30, i+340\\)\\)\\);\")",
+      "Bash(node \"C:/Users/Kane/AppData/Local/Temp/claude/c--Users-Kane-Desktop-simple-hris/142414ba-d599-4700-9ee5-2461579c9ead/scratchpad/peek.js\")",
+      "PowerShell(node \"C:\\\\Users\\\\Kane\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-Kane-Desktop-simple-hris\\\\a9fe695c-4b2d-41eb-a522-db433963f931\\\\scratchpad\\\\inspect-paystub-divergence.mjs\")",
+      "PowerShell(node \"C:\\\\Users\\\\Kane\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-Kane-Desktop-simple-hris\\\\a9fe695c-4b2d-41eb-a522-db433963f931\\\\scratchpad\\\\inspect-orphanage-timeline.mjs\")",
+      "PowerShell(node \"C:\\\\Users\\\\Kane\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-Kane-Desktop-simple-hris\\\\a9fe695c-4b2d-41eb-a522-db433963f931\\\\scratchpad\\\\inspect-orphanage-timeline2.mjs\")",
+      "PowerShell(node \"C:\\\\Users\\\\Kane\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-Kane-Desktop-simple-hris\\\\a9fe695c-4b2d-41eb-a522-db433963f931\\\\scratchpad\\\\diff-cycle-staged-vs-snapshot.mjs\")",
+      "PowerShell(node \"C:\\\\Users\\\\Kane\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-Kane-Desktop-simple-hris\\\\a9fe695c-4b2d-41eb-a522-db433963f931\\\\scratchpad\\\\diff-cycle-light.mjs\")",
+      "PowerShell(node \"C:\\\\Users\\\\Kane\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-Kane-Desktop-simple-hris\\\\a9fe695c-4b2d-41eb-a522-db433963f931\\\\scratchpad\\\\inspect-jovin.mjs\")",
+      "PowerShell(node \"C:\\\\Users\\\\Kane\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-Kane-Desktop-simple-hris\\\\a9fe695c-4b2d-41eb-a522-db433963f931\\\\scratchpad\\\\inspect-jovin2.mjs\")",
+      "Bash(printf '%s\\\\n' '- [Paystub staged snapshot goes stale vs live pay]\\(paystub-staged-snapshot-stale.md\\) — stub viewer/email render lock-time staged payload while payment is live-computed; 2026-07-21: Cathyrine \\(orphanage race\\) + Jovin \\(rate change\\) emailed understated stubs, money correct; re-lock + re-send pending' >> \"/c/Users/Kane/.claude/projects/c--Users-Kane-Desktop-simple-hris/memory/MEMORY.md\")",
+      "PowerShell(git -C c:\\\\Users\\\\Kane\\\\Desktop\\\\simple-hris diff -- src/components/PayrollWizard.tsx src/lib/payroll/paystub-view.ts app/api/employee/paystub/route.ts src/components/paystub/PayStubStatement.tsx src/lib/payroll/paystub-export.ts)",
+      "PowerShell(git -C c:\\\\Users\\\\Kane\\\\Desktop\\\\simple-hris status --short \"references/n8n/Paystub Automation.json\" docs/features/paystub.html)",
+      "PowerShell(node -e \"JSON.parse\\(require\\('fs'\\).readFileSync\\('references/n8n/Paystub Automation.json','utf8'\\)\\); console.log\\('n8n JSON valid'\\)\")",
+      "Bash(git -C /c/Users/Kane/Desktop/simple-hris diff -- app/api/payment-dispatches/route.ts app/api/accounting/paystub/route.ts app/api/employee/paystub/route.ts)",
+      "PowerShell(node \"C:\\\\Users\\\\Kane\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-Kane-Desktop-simple-hris\\\\a9fe695c-4b2d-41eb-a522-db433963f931\\\\scratchpad\\\\simulate-fresh-merge.mjs\")",
+      "Bash(git -C /c/Users/Kane/Desktop/simple-hris diff -- src/components/PayrollWizard.tsx src/lib/payroll/paystub-view.ts src/lib/payroll/paystub-recovery.ts src/lib/supabase/app-settings.ts src/lib/supabase/paystub-dispatch-queue.ts \"references/n8n/Paystub Automation.json\" src/components/paystub/PayStubStatement.tsx src/lib/payroll/paystub-export.ts)",
+      "Bash(git -C /c/Users/Kane/Desktop/simple-hris diff -- src/lib/supabase/rates-upload-db.ts docs/features/paystub.html)",
+      "Bash(git -C /c/Users/Kane/Desktop/simple-hris diff -- app/api/employee/paystub/route.ts)",
+      "Bash(git -C \"C:/Users/Kane/Desktop/simple-hris\" diff -- src/components/paystub/PayStubStatement.tsx)",
+      "Bash(grep -o 'Orphanage[^\\\\\\\\]*orphanage_pay[^}]*}' \"C:\\\\Users\\\\Kane\\\\.claude\\\\projects\\\\c--Users-Kane-Desktop-simple-hris\\\\a9fe695c-4b2d-41eb-a522-db433963f931\\\\tool-results\\\\b03rdqj10.txt\")",
+      "Bash(grep -o 'Orphanage[^O]\\\\{0,400\\\\}' \"C:/Users/Kane/Desktop/simple-hris/references/n8n/Paystub Automation.json\")",
+      "Bash(grep -o 'Orphanage</td>[^O]\\\\{0,500\\\\}' \"C:\\\\Users\\\\Kane\\\\Desktop\\\\simple-hris\\\\references\\\\n8n\\\\Paystub Automation.json\")",
+      "Bash(grep -o 'color:#0f766e;white-space:nowrap;[^\"]\\\\{0,220\\\\}' \"C:/Users/Kane/Desktop/simple-hris/references/n8n/Paystub Automation.json\")",
+      "Bash(grep -o 'Orphanage.\\\\{0,600\\\\}' \"C:\\\\Users\\\\Kane\\\\Desktop\\\\simple-hris\\\\references\\\\n8n\\\\Paystub Automation.json\")"
     ],
     "additionalDirectories": [
       "c:\\Users\\Itachi\\.claude\\projects\\c--Users-Itachi-Desktop-simple-hris\\memory",
       "\\tmp",
-      "c:\\Users\\Itachi\\Desktop\\simple-hris"
+      "c:\\Users\\Itachi\\Desktop\\simple-hris",
+      "C:\\Users\\Kane\\.claude\\projects\\c--Users-Kane-Desktop-simple-hris\\memory"
     ]
   }
 }

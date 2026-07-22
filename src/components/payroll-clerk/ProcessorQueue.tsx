@@ -11,8 +11,16 @@ import { toast } from 'sonner';
 import { useDebouncedValue } from '@/hooks/useDebouncedValue';
 import { PROCESSORS, formatPHP, formatUSD, formatCOP, type ProcessorId, type QueueRow } from './mock-queue';
 import type { PayCurrency } from '@/lib/payment-catalog/pay-structure';
-import type { PaymentDispatchRow } from '@/lib/supabase/payment-dispatches';
+import type { PaymentDispatchRow, PaymentDispatchStatus } from '@/lib/supabase/payment-dispatches';
 import PaidRecordsPanel from './PaidRecordsPanel';
+
+/**
+ * The sub-views the queue table can show. 'pending' is the live payable queue;
+ * the rest are dispatch-log views, one per recorded outcome. The strings for the
+ * log views deliberately match {@link PaymentDispatchStatus} so a view maps
+ * straight onto a status filter.
+ */
+type QueueView = 'pending' | PaymentDispatchStatus;
 
 /** Primary (native) amount string for a row: COP people show COP, everyone else
  *  shows USD (the PHP-equivalent is always the secondary line). */
@@ -194,11 +202,20 @@ function ProcessorQueue({ processor, rows, onMarkPaid, onViewPaystub, periodStar
   const debouncedQuery = useDebouncedValue(query, 250);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
-  // Pending vs Paid sub-view. Only meaningful when `paidRecords` is provided
-  // (the per-processor tabs); the toggle is hidden otherwise.
-  const [view, setView] = useState<'pending' | 'paid'>('pending');
+  // Which sub-view is active. 'pending' is the live queue; the other four are
+  // dispatch-log views keyed by the recorded outcome. Only meaningful when
+  // `paidRecords` is provided; the tab strip is hidden otherwise.
+  const [view, setView] = useState<QueueView>('pending');
   const hasPaidView = paidRecords != null;
-  const paidCount = paidRecords?.filter((r) => r.status === 'paid').length ?? 0;
+  // One count per dispatch outcome, from the records handed to this scope.
+  const statusCounts = useMemo(() => {
+    const c: Record<PaymentDispatchStatus, number> = { paid: 0, not_paid: 0, threshold: 0, problem: 0 };
+    for (const r of paidRecords ?? []) c[r.status] += 1;
+    return c;
+  }, [paidRecords]);
+  // The queue-log views (everything except the live pending queue). The active
+  // one is rendered by PaidRecordsPanel with the matching status filter.
+  const logStatus = view === 'pending' ? null : view;
 
   const handleRefresh = useCallback(async () => {
     if (!onRefresh || refreshing) return;
@@ -284,17 +301,23 @@ function ProcessorQueue({ processor, rows, onMarkPaid, onViewPaystub, periodStar
             <p className="mt-0.5 text-[11px] text-zinc-500 dark:text-zinc-400">
               {view === 'paid'
                 ? `Payments already sent via ${meta?.label ?? 'this processor'} this cycle. Undo sends them back to pending.`
-                : processor
-                  ? `${meta?.blurb ?? ''} · send via ${meta?.label}, then mark paid`
-                  : allLabel?.subtitle ?? 'Everything Lenny still has to dispatch this cycle.'}
+                : view === 'not_paid'
+                  ? 'Dispatches logged as not paid this cycle — these people are still payable in the pending queue.'
+                  : view === 'threshold'
+                    ? 'Dispatches held below the payout threshold — still payable once cleared.'
+                    : view === 'problem'
+                      ? 'Dispatches flagged with a problem — still payable once the issue is resolved.'
+                      : processor
+                        ? `${meta?.blurb ?? ''} · send via ${meta?.label}, then mark paid`
+                        : allLabel?.subtitle ?? 'Everything Lenny still has to dispatch this cycle.'}
             </p>
             {hasPaidView && (
               <div className="mt-2">
-                <PendingPaidToggle
+                <QueueViewTabs
                   view={view}
                   onChange={setView}
                   pendingCount={rows.length}
-                  paidCount={paidCount}
+                  statusCounts={statusCounts}
                 />
               </div>
             )}
@@ -382,18 +405,27 @@ function ProcessorQueue({ processor, rows, onMarkPaid, onViewPaystub, periodStar
         )}
       </div>
 
-      {view === 'paid' ? (
+      {logStatus ? (
         <div className="min-h-0 flex-1">
           <PaidRecordsPanel
             records={paidRecords ?? []}
+            statusFilter={logStatus}
             periodStart={periodStart}
             periodEnd={periodEnd}
             onRefresh={onRefresh ?? (() => {})}
             showProcessorColumn={false}
             csvPrefix="paid"
             csvProcessor={processor ?? undefined}
-            emptyTitle={`No ${meta?.label ?? 'payments'} paid yet`}
-            emptyHint="Mark a row paid in the Pending tab to see it here."
+            emptyTitle={
+              logStatus === 'paid'
+                ? `No ${meta?.label ?? 'payments'} paid yet`
+                : `Nothing logged here yet`
+            }
+            emptyHint={
+              logStatus === 'paid'
+                ? 'Mark a row paid in the Pending tab to see it here.'
+                : 'Log a dispatch with this outcome from the Mark Paid dialog to see it here.'
+            }
           />
         </div>
       ) : (
@@ -820,59 +852,86 @@ const QueueRowItem = React.memo(function QueueRowItem({
  * Compact segmented control switching a processor tab between its Pending queue
  * and its Paid sub-view. Each segment carries a live count badge.
  */
-function PendingPaidToggle({
+/** Per-view color coding for the queue tab strip. Active text + count-pill
+ *  colors mirror the status pills in the Mark Paid dialog so a clerk reads the
+ *  same color for "problem" everywhere. */
+const VIEW_TAB_STYLES: Record<
+  QueueView,
+  { label: string; activeText: string; activePill: string }
+> = {
+  pending: {
+    label: 'Pending',
+    activeText: 'bg-white text-orange-700 shadow-sm dark:bg-zinc-800 dark:text-orange-300',
+    activePill: 'bg-orange-100 text-orange-700 dark:bg-orange-500/20 dark:text-orange-300',
+  },
+  paid: {
+    label: 'Paid',
+    activeText: 'bg-white text-emerald-700 shadow-sm dark:bg-zinc-800 dark:text-emerald-300',
+    activePill: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300',
+  },
+  not_paid: {
+    label: 'Not paid',
+    activeText: 'bg-white text-zinc-700 shadow-sm dark:bg-zinc-800 dark:text-zinc-200',
+    activePill: 'bg-zinc-200 text-zinc-700 dark:bg-zinc-600/40 dark:text-zinc-200',
+  },
+  threshold: {
+    label: 'Threshold',
+    activeText: 'bg-white text-amber-700 shadow-sm dark:bg-zinc-800 dark:text-amber-300',
+    activePill: 'bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-300',
+  },
+  problem: {
+    label: 'Problem',
+    activeText: 'bg-white text-rose-700 shadow-sm dark:bg-zinc-800 dark:text-rose-300',
+    activePill: 'bg-rose-100 text-rose-700 dark:bg-rose-500/20 dark:text-rose-300',
+  },
+};
+
+const VIEW_TAB_ORDER: QueueView[] = ['pending', 'paid', 'not_paid', 'threshold', 'problem'];
+
+function QueueViewTabs({
   view,
   onChange,
   pendingCount,
-  paidCount,
+  statusCounts,
 }: {
-  view: 'pending' | 'paid';
-  onChange: (next: 'pending' | 'paid') => void;
+  view: QueueView;
+  onChange: (next: QueueView) => void;
   pendingCount: number;
-  paidCount: number;
+  statusCounts: Record<PaymentDispatchStatus, number>;
 }) {
-  const segments: { id: 'pending' | 'paid'; label: string; count: number }[] = [
-    { id: 'pending', label: 'Pending', count: pendingCount },
-    { id: 'paid', label: 'Paid', count: paidCount },
-  ];
+  const countFor = (id: QueueView): number => (id === 'pending' ? pendingCount : statusCounts[id]);
   return (
     <div
       role="tablist"
-      aria-label="Pending or paid"
-      className="inline-flex items-center gap-0.5 rounded-lg border border-orange-100 bg-orange-50/40 p-0.5 dark:border-zinc-800 dark:bg-zinc-900/60"
+      aria-label="Dispatch queue view"
+      className="inline-flex flex-wrap items-center gap-0.5 rounded-lg border border-orange-100 bg-orange-50/40 p-0.5 dark:border-zinc-800 dark:bg-zinc-900/60"
     >
-      {segments.map((seg) => {
-        const active = view === seg.id;
-        const activeStyles =
-          seg.id === 'paid'
-            ? 'bg-white text-emerald-700 shadow-sm dark:bg-zinc-800 dark:text-emerald-300'
-            : 'bg-white text-orange-700 shadow-sm dark:bg-zinc-800 dark:text-orange-300';
+      {VIEW_TAB_ORDER.map((id) => {
+        const active = view === id;
+        const s = VIEW_TAB_STYLES[id];
+        const count = countFor(id);
         return (
           <button
-            key={seg.id}
+            key={id}
             type="button"
             role="tab"
             aria-selected={active}
-            onClick={() => onChange(seg.id)}
+            onClick={() => onChange(id)}
             className={cn(
               'inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[11px] font-semibold transition-colors',
               active
-                ? activeStyles
+                ? s.activeText
                 : 'text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200',
             )}
           >
-            {seg.label}
+            {s.label}
             <span
               className={cn(
                 'rounded-full px-1.5 py-0.5 text-[10px] font-bold tabular-nums',
-                active
-                  ? seg.id === 'paid'
-                    ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300'
-                    : 'bg-orange-100 text-orange-700 dark:bg-orange-500/20 dark:text-orange-300'
-                  : 'bg-zinc-200/70 text-zinc-500 dark:bg-zinc-700/60 dark:text-zinc-400',
+                active ? s.activePill : 'bg-zinc-200/70 text-zinc-500 dark:bg-zinc-700/60 dark:text-zinc-400',
               )}
             >
-              {seg.count}
+              {count}
             </span>
           </button>
         );

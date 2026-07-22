@@ -12,6 +12,28 @@ function resolveDept(raw: string | null | undefined): { key: string | null; name
   return { key, name };
 }
 
+/**
+ * Department for a queue payee, preferring the pay-layer resolution (which draws
+ * from the Global Master List first, then the rates row — so it's populated for
+ * EVERY payee, not just HSL) and falling back to the rates-row "Department"
+ * string when pay carries nothing. The name is the canonical label when known,
+ * else the raw source string so an unmapped-but-present department still shows.
+ */
+function resolvePayeeDept(
+  pay: CurrentPayEntry | undefined,
+  ratesDeptRaw: string | null | undefined,
+): { key: string | null; name: string | null } {
+  const payKey = pay?.departmentKey ?? null;
+  const payName = pay?.departmentName ?? null;
+  if (payKey || payName) {
+    return { key: payKey, name: payName };
+  }
+  // Nothing from pay — fall back to the rates-row department (canonicalize, but
+  // keep the raw string when it maps to no known department).
+  const dept = resolveDept(ratesDeptRaw);
+  return { key: dept.key, name: dept.name ?? (ratesDeptRaw?.trim() || null) };
+}
+
 export type ProcessorId = 'hurupay' | 'wepay' | 'higlobe' | 'wise' | 'jeeves' | 'wires';
 
 export interface ProcessorMeta {
@@ -337,7 +359,7 @@ export function buildQueueFromRates(
     if (pay?.totalPayUSD == null && pay?.initialPayUSD == null) reasons.push('no_pay');
     if (pay?.totalHours == null) reasons.push('no_hours');
     if (reasons.length > 0) {
-      const dept = resolveDept(r.department);
+      const dept = resolvePayeeDept(pay, r.department);
       excluded.push({
         id: email.toLowerCase(),
         name,
@@ -356,11 +378,12 @@ export function buildQueueFromRates(
     // From here on, processor is non-null because reasons would have caught
     // it. Narrow the type so TypeScript stops complaining.
     const activeProcessor: ProcessorId = processor!;
-    // Resolve the payroll department for this payee. Fall back to the raw
-    // rates-row value so accounting still sees *something* when the department
-    // isn't in the canonical list (rather than a blank).
-    const dept = resolveDept(r.department);
-    const departmentName = dept.name ?? (r.department?.trim() || null);
+    // Resolve the payroll department for this payee. The pay layer already
+    // picked the best source (master list → rates row) and covers everyone —
+    // not just HSL — so prefer it; fall back to the rates-row value only when
+    // pay carries nothing.
+    const dept = resolvePayeeDept(pay, r.department);
+    const departmentName = dept.name;
     const bankSlot = preferredBankSlot(idsRow);
     const preferredBankName = bankSlot === 'alternative'
       ? pickFirst(idsRow?.alt_bank_name, idsRow?.bank_name)

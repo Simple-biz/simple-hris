@@ -129,6 +129,35 @@ export async function upsertPaystubDispatchQueue(params: {
   return { staged: rows.length, error: null };
 }
 
+/**
+ * Overwrite one staged row's figures with a fresher payload (the wizard-snapshot
+ * merge from `paystub-fresh.ts`), so the queue row records exactly what was
+ * emailed/paid. Send-tracking and lock columns are untouched — this refreshes the
+ * WHAT, not the WHO/WHEN of the stage.
+ */
+export async function refreshPaystubQueuePayload(params: {
+  sourceFile: string;
+  recipientEmail: string;
+  payload: Record<string, unknown>;
+  payPeriod: Record<string, unknown> | null;
+  amountPhp: number | null;
+  amountUsd: number | null;
+}): Promise<{ error: string | null }> {
+  const supabase = createSupabaseServiceRoleClient() ?? createSupabaseServerClient();
+  if (!supabase) return { error: "Supabase client unavailable" };
+  const { error } = await supabase
+    .from("paystub_dispatch_queue")
+    .update({
+      payload: params.payload,
+      pay_period: params.payPeriod,
+      amount_php: params.amountPhp,
+      amount_usd: params.amountUsd,
+    })
+    .eq("cycle_source_file", params.sourceFile)
+    .eq("recipient_email", norm(params.recipientEmail));
+  return { error: error ? error.message : null };
+}
+
 /** Single staged row (with payload) by cycle + work email. */
 export async function getPaystubDispatchEntry(
   sourceFile: string,
@@ -189,8 +218,11 @@ export async function listPaystubPayloadsForEmployee(
 ): Promise<{
   rows: Array<{
     cycle_source_file: string;
+    recipient_email: string;
     pay_period: Record<string, unknown> | null;
     payload: Record<string, unknown> | null;
+    locked_at: string | null;
+    excluded: boolean;
   }>;
   error: string | null;
 }> {
@@ -199,7 +231,7 @@ export async function listPaystubPayloadsForEmployee(
 
   const { data, error } = await supabase
     .from("paystub_dispatch_queue")
-    .select("cycle_source_file, pay_period, payload")
+    .select("cycle_source_file, recipient_email, pay_period, payload, locked_at, excluded")
     .eq("recipient_email", norm(email))
     .not("payload", "is", null);
 
@@ -207,13 +239,19 @@ export async function listPaystubPayloadsForEmployee(
   const rows = (data ?? []).map((r) => {
     const row = r as {
       cycle_source_file: string;
+      recipient_email: string;
       pay_period: Record<string, unknown> | null;
       payload: Record<string, unknown> | null;
+      locked_at: string | null;
+      excluded: boolean | null;
     };
     return {
       cycle_source_file: row.cycle_source_file,
+      recipient_email: row.recipient_email,
       pay_period: row.pay_period ?? null,
       payload: row.payload ?? null,
+      locked_at: row.locked_at ?? null,
+      excluded: row.excluded ?? false,
     };
   });
   return { rows, error: null };

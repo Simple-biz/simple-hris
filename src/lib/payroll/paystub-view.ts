@@ -28,6 +28,8 @@ export interface PayStubView {
   performanceBonus: number;
   adjustment: number;
   adjustmentNote: string | null;
+  /** Accounting orphanage pay — a positive amount added on top of pay, its own line. */
+  orphanagePay: number;
   mesaDisbursement: number;
   mesaDeduction: number;
   totalPayPhp: number;
@@ -116,6 +118,7 @@ export function mapPayloadToPayStub(payload: Json, payPeriod?: Json): PayStubVie
     performanceBonus: num(pay.other_bonuses),
     adjustment: num(pay.adjustment),
     adjustmentNote: p.adjustment_note ? str(p.adjustment_note) : null,
+    orphanagePay: num(pay.orphanage_pay),
     mesaDisbursement: num(pay.mesa_disbursement),
     mesaDeduction: num(pay.mesa_deduction),
     totalPayPhp,

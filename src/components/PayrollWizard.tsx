@@ -1288,6 +1288,10 @@ export default function PayrollWizard({
   const [additionsSearch, setAdditionsSearch] = useState('');
   const [additionsSaving, setAdditionsSaving] = useState(false);
   const [additionsSavedAt, setAdditionsSavedAt] = useState<Date | null>(null);
+  /** Which source file's Additions blob has finished loading into state. The
+   *  final-pay snapshot publisher is gated on this matching {@link calcSourceFile}
+   *  so a publish can never fire with half-hydrated (zeroed) additions. */
+  const [additionsHydratedFor, setAdditionsHydratedFor] = useState<string | null>(null);
   const [lockedPabSnapshot, setLockedPabSnapshot] = useState<Record<string, 'eligible' | 'ineligible' | 'in_progress'> | null>(null);
   const [validationSearch, setValidationSearch] = useState('');
   /** Active department in the Validation step's per-department final-pay view. */
@@ -1713,6 +1717,10 @@ export default function PayrollWizard({
   }, []);
 
   const loadAdditionsProgress = React.useCallback(async (sourceFile: string) => {
+    // Gate the snapshot publisher while this file's additions are in flight —
+    // a publish mid-load would write zeroed adjustments/orphanage over the
+    // snapshot that Payment Dispatch prices from and the paystub merge trusts.
+    setAdditionsHydratedFor(null);
     try {
       const res = await fetch(`/api/app-settings?key=payroll.wizard.additions.${sourceFile}`);
       const json = await res.json();
@@ -1743,6 +1751,9 @@ export default function PayrollWizard({
       } else {
         setAdditionsSavedAt(null);
       }
+      // Only a SUCCESSFUL load un-gates the snapshot publisher for this file —
+      // on failure the additions state may still hold another week's values.
+      setAdditionsHydratedFor(sourceFile);
     } catch (e) {
       console.error('Failed to load additions progress', e);
     }
@@ -5211,6 +5222,10 @@ export default function PayrollWizard({
     // Replaying a past period is view-only — never re-write its historical snapshot
     // (the live debounce effect would otherwise clobber it with recomputed figures).
     if (isReplay) return;
+    // Never publish before this file's Additions blob has hydrated into state —
+    // dispatchData would still carry zeroed adjustments/orphanage/bonus toggles,
+    // and Payment Dispatch prices (and the paystub merge trusts) this snapshot.
+    if (additionsHydratedFor !== calcSourceFile) return;
     // email -> the wizard's authoritative figures. Includes the Regular/OT split +
     // hours (not just `final`) so the Employee Dashboard's Regular + Overtime stats
     // reconcile exactly with the Estimated Take-Home. Keyed by BOTH work and personal
@@ -5234,6 +5249,12 @@ export default function PayrollWizard({
       otherBonuses: number;
       adjustment: number;
       orphanagePay: number;
+      // Hourly rates + Adj. note so the server can rebuild the FULL paystub payload
+      // from this snapshot at pay time (getFreshPaystubEntry) — the staged queue
+      // payload may hold pre-relock rates/notes.
+      regularRate: number | null;
+      otRate: number | null;
+      adjustmentNote: string | null;
     }> = {};
     for (const r of dispatchData.rows) {
       const entry = {
@@ -5255,6 +5276,9 @@ export default function PayrollWizard({
         otherBonuses: r.pay_php.other_bonuses ?? 0,
         adjustment: r.pay_php.adjustment ?? 0,
         orphanagePay: r.pay_php.orphanage_pay ?? 0,
+        regularRate: r.rates_php.regular,
+        otRate: r.rates_php.ot,
+        adjustmentNote: r.adjustment_note,
       };
       const we = r.email?.trim().toLowerCase();
       const pe = r.personal_email?.trim().toLowerCase();
@@ -5271,7 +5295,7 @@ export default function PayrollWizard({
     } catch (e) {
       console.warn('[publishFinalPaySnapshot]', e);
     }
-  }, [calcSourceFile, dispatchData, savePabSetting, isReplay, usdToPhpRate]);
+  }, [calcSourceFile, dispatchData, savePabSetting, isReplay, usdToPhpRate, additionsHydratedFor]);
 
   /**
    * Lock in the parsed Orphanage paste: write each resolved amount into the per-employee
@@ -13253,9 +13277,15 @@ export default function PayrollWizard({
                                   <td className="whitespace-nowrap border-b border-[#edf2f7] py-1.5 text-right text-[13px] font-bold leading-[15px] text-[#102034]">{fmt(pp.other_bonuses)}</td>
                                 </tr>
                                 <tr>
-                                  <td className="py-1.5 text-[13px] leading-[15px] text-[#26384d]">Adjustment</td>
-                                  <td className="px-2 py-1.5 text-[12px] leading-[15px] text-[#556377]">{selected.adjustment_note || 'Manual adjustment'}</td>
-                                  <td className="whitespace-nowrap py-1.5 text-right text-[13px] font-bold leading-[15px] text-[#102034]">{fmt(pp.adjustment)}</td>
+                                  <td className="border-b border-[#edf2f7] py-1.5 text-[13px] leading-[15px] text-[#26384d]">Adjustment</td>
+                                  <td className="border-b border-[#edf2f7] px-2 py-1.5 text-[12px] leading-[15px] text-[#556377]">{selected.adjustment_note || 'Manual adjustment'}</td>
+                                  <td className="whitespace-nowrap border-b border-[#edf2f7] py-1.5 text-right text-[13px] font-bold leading-[15px] text-[#102034]">{fmt(pp.adjustment)}</td>
+                                </tr>
+                                {/* Orphanage — accounting extra added on top of pay; always shown (₱0.00 when unused). */}
+                                <tr>
+                                  <td className="py-1.5 text-[13px] leading-[15px] text-[#26384d]">Orphanage</td>
+                                  <td className="px-2 py-1.5 text-[12px] leading-[15px] text-[#556377]">Contribution</td>
+                                  <td className="whitespace-nowrap py-1.5 text-right text-[13px] font-bold leading-[15px] text-[#0f766e]">+{fmt(pp.orphanage_pay)}</td>
                                 </tr>
                               </tbody>
                             </table>

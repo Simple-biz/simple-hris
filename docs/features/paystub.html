@@ -126,9 +126,14 @@ body,table,td,div,p,a{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Ro
 <td class="line-amount" align="right">&#8369;{{ $('pay_vars').item.json.performance_bonus.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2}) }}</td>
 </tr>
 <tr>
-<td class="line-label" style="border-bottom:0;">Adjustment</td>
-<td class="detail-col" style="border-bottom:0;">{{ $('pay_vars').item.json.adjustment_note || 'Manual adjustment' }}</td>
-<td class="line-amount" align="right" style="border-bottom:0;">&#8369;{{ $('pay_vars').item.json.adjustment.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2}) }}</td>
+<td class="line-label">Adjustment</td>
+<td class="detail-col">{{ $('pay_vars').item.json.adjustment_note || 'Manual adjustment' }}</td>
+<td class="line-amount" align="right">&#8369;{{ $('pay_vars').item.json.adjustment.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2}) }}</td>
+</tr>
+<tr>
+<td class="line-label" style="border-bottom:0;">Orphanage</td>
+<td class="detail-col" style="border-bottom:0;">Contribution</td>
+<td class="line-amount" align="right" style="color:#0f766e;border-bottom:0;">+&#8369;{{ $('pay_vars').item.json.orphanage_pay.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2}) }}</td>
 </tr>
 </table>
 </td>

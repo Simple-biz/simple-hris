@@ -461,7 +461,12 @@ export default function PayrollDispatch() {
         const json = (await res.json()) as {
           row?: unknown;
           error?: string;
-          paystub?: { staged: boolean; sent: boolean; error: string | null };
+          paystub?: {
+            staged: boolean;
+            sent: boolean;
+            error: string | null;
+            amount_mismatch?: { paid: number; stub: number };
+          };
         };
         if (!res.ok || json.error) throw new Error(json.error ?? `HTTP ${res.status}`);
         paidCycles += 1;
@@ -471,6 +476,16 @@ export default function PayrollDispatch() {
           failedSend += 1;
           lastSendError = ps.error;
         } else if (ps && !ps.staged) notStaged += 1;
+        // The server reconciles the emailed stub against the recorded payment;
+        // when neither the fresh nor the staged figures matched the money, warn
+        // immediately — the row is flagged in the audit log for follow-up.
+        if (ps?.amount_mismatch) {
+          const fmtPhp = (n: number) =>
+            `₱${n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+          toast.warning(`${row.name}: paystub total differs from the amount paid`, {
+            description: `Paid ${fmtPhp(ps.amount_mismatch.paid)} but the statement says ${fmtPhp(ps.amount_mismatch.stub)}. Re-check this week in the Payroll Wizard.`,
+          });
+        }
       } catch (e) {
         failedCycles += 1;
         lastDispatchError = e instanceof Error ? e.message : String(e);
@@ -592,7 +607,10 @@ export default function PayrollDispatch() {
         periodStart={period.start}
         periodEnd={period.end}
         onRefresh={refresh}
-        paidRecords={activeTab === 'all' ? undefined : paidByProcessor[activeTab]}
+        // "All pending" gets the full dispatch log so its in-table tabs (Paid /
+        // Not paid / Threshold / Problem) span every processor; each processor
+        // tab stays scoped to its own dispatches.
+        paidRecords={activeTab === 'all' ? paid : paidByProcessor[activeTab]}
       />
     );
   };

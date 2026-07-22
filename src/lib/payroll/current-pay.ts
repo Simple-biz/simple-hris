@@ -63,6 +63,7 @@ import { listPayStructures } from "@/lib/supabase/pay-structures-db";
 import { listSystemBonuses } from "@/lib/supabase/system-bonuses-db";
 import { resolveSystemBonuses, isDeptEligible } from "@/lib/payment-catalog/system-bonus";
 import { normalizeDeptToKey } from "@/lib/payroll/normalize-dept-key";
+import { DEPARTMENTS } from "@/lib/payroll/department-bonus";
 import type { PayCurrency } from "@/lib/payment-catalog/pay-structure";
 import {
   buildCatalogRateIndex,
@@ -124,6 +125,16 @@ export interface CurrentPayEntry {
    * (totalPayPHP is the FX-equivalent in both cases).
    */
   payCurrency: PayCurrency;
+  /**
+   * Payroll department for this payee, resolved from the best available source
+   * (Global Master List first, then the rates-row "Department"). `departmentKey`
+   * is the normalized canonical key (null when the raw value maps to no known
+   * department); `departmentName` is the human label — the canonical name when
+   * the key resolved, else the raw source string so nothing is lost. Payment
+   * Dispatch reads these so EVERY payee shows their department, not just HSL.
+   */
+  departmentKey: string | null;
+  departmentName: string | null;
 }
 
 export interface CurrentPayResult {
@@ -860,7 +871,16 @@ export async function computeCurrentPay(
     const empHasThirtyDays =
       weekMonday && startDate ? hasThirtyDaysFromStart(weekMonday, startDate) : false;
 
-    const empDeptKey = normalizeDeptToKey(masterDeptByEmail.get(em) ?? deptByEmail.get(em) ?? null);
+    // Raw department string from the best source (master list wins, then the
+    // rates row). Used both for bonus-eligibility keying below and surfaced on
+    // the entry so Payment Dispatch can show a department for EVERY payee.
+    const empDeptRaw = masterDeptByEmail.get(em) ?? deptByEmail.get(em) ?? null;
+    const empDeptKey = normalizeDeptToKey(empDeptRaw);
+    // Canonical label when the key resolved; otherwise keep the raw source
+    // string (trimmed) so an unmapped-but-present department still shows.
+    const empDeptName =
+      (empDeptKey ? DEPARTMENTS.find((d) => d.key === empDeptKey)?.name : null) ??
+      (empDeptRaw && empDeptRaw.trim() ? empDeptRaw.trim() : null);
     const bonus = computeEmployeeBonus({
       hasRates,
       isFinalPabWeek: weekIsFinalPab,
@@ -916,6 +936,8 @@ export async function computeCurrentPay(
       totalPayCOP,
       hasRate: reg != null,
       payCurrency,
+      departmentKey: empDeptKey,
+      departmentName: empDeptName,
     };
   }
 

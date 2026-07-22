@@ -318,13 +318,16 @@ export default function MarkPaidDialog({
   const [copied,                 setCopied]                 = useState(false);
 
   // The primary (top) amount shown in the hero — COP or USD depending on the
-  // payout currency. Copies the raw numeric value (no symbol/commas) so it
-  // pastes cleanly into processors / spreadsheets.
+  // payout currency.
   const heroAmount = row?.payCurrency === 'COP' ? row?.amountCOP : row?.amountUSD;
 
   const copyAmount = useCallback(() => {
-    if (heroAmount == null) return;
-    const text = String(heroAmount);
+    if (heroAmount == null || !row) return;
+    // Copy exactly what's shown in the hero, minus the currency symbol and the
+    // grouping commas — so "$1,234.50" pastes as "1234.50" (cents preserved)
+    // straight into processors / spreadsheets.
+    const shown = row.payCurrency === 'COP' ? formatCOP(heroAmount) : formatUSD(heroAmount);
+    const text = shown.replace(/[^\d.]/g, '');
     const done = () => {
       setCopied(true);
       window.setTimeout(() => setCopied(false), 1400);
@@ -334,7 +337,7 @@ export default function MarkPaidDialog({
     } else {
       done();
     }
-  }, [heroAmount]);
+  }, [heroAmount, row]);
 
   useEffect(() => {
     if (!row || !defaults) return;

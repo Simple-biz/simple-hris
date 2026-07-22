@@ -362,15 +362,6 @@ export async function replaceEmployeeHourlyRatesFromCsv(
     "bank_preferred",
     "BankPreferred",
   );
-  const mesaParticipantIdx = findHeaderIndex(
-    headers,
-    "MESA Participant",
-    "Mesa Participant",
-    "mesa_participant",
-    "MESA Member",
-    "Mesa Member",
-  );
-
   const missing: string[] = [];
   if (workEmailIdx < 0) missing.push("Work Email");
   if (personalEmailIdx < 0) missing.push("Personal Email");
@@ -392,9 +383,6 @@ export async function replaceEmployeeHourlyRatesFromCsv(
      *  cell is blank — payload below skips the field entirely so a blank cell
      *  never clobbers an existing DB value. */
     bankPreferred: string | null;
-    /** True when the sheet cell is "Yes" (case-insensitive). Null when blank —
-     *  blank is treated as no-change so a missing cell never un-enrolls someone. */
-    mesaMember: boolean | null;
   };
 
   let skippedNoWorkEmail = 0;
@@ -422,12 +410,6 @@ export async function replaceEmployeeHourlyRatesFromCsv(
       bankPreferred = raw === "" ? null : raw;
     }
 
-    let mesaMember: boolean | null = null;
-    if (mesaParticipantIdx >= 0) {
-      const raw = String(row[mesaParticipantIdx] ?? "").trim().toLowerCase();
-      if (raw !== "") mesaMember = raw === "yes";
-    }
-
     candidates.push({
       workEmail,
       personalEmail: normalizeEmail(row[personalEmailIdx]),
@@ -435,7 +417,6 @@ export async function replaceEmployeeHourlyRatesFromCsv(
       otRate: parseRate(row[otRateIdx]),
       weekTs: weekIdx >= 0 ? parseWeekStartTs(row[weekIdx]) : 0,
       bankPreferred,
-      mesaMember,
     });
   }
 
@@ -464,16 +445,11 @@ export async function replaceEmployeeHourlyRatesFromCsv(
   const byEmail = new Map<string, Candidate>();
   for (const c of nonHslCandidates) {
     const prev = byEmail.get(c.workEmail);
+    // Keep the latest week's row per email. MESA membership is not sourced from
+    // the sheet (see the mesa_member note in the payload builder), so there is no
+    // per-field carry-forward to do here.
     if (!prev || c.weekTs > prev.weekTs) {
-      // Carry forward mesa=true from any older row — a blank cell in the latest
-      // week must not silently un-enroll someone who had "Yes" in a prior week.
-      const mesaMember = (prev?.mesaMember === true && c.mesaMember !== true)
-        ? true
-        : c.mesaMember;
-      byEmail.set(c.workEmail, { ...c, mesaMember });
-    } else if (c.mesaMember === true && prev.mesaMember !== true) {
-      // Older row but has "Yes" — propagate it onto the already-kept latest row.
-      byEmail.set(c.workEmail, { ...prev, mesaMember: true });
+      byEmail.set(c.workEmail, c);
     }
   }
 
@@ -529,7 +505,13 @@ export async function replaceEmployeeHourlyRatesFromCsv(
     if (c.bankPreferred != null) {
       payload["Bank Preferred"] = c.bankPreferred;
     }
-    (payload as Record<string, unknown>)["mesa_member"] = c.mesaMember ?? false;
+    // MESA membership is deliberately NOT written from the rates sheet. Opt in/out
+    // is owned by the HRIS (/api/toggle-mesa-member, which also opens/closes the
+    // MESA account, and the preload-mesa-membership backfill). A sheet re-upload
+    // must never clobber that: writing the sheet's "Yes/No" here would silently
+    // re-enroll someone who opted out (even one with a prior MESA balance) and
+    // resume their ₱100 weekly deduction — the exact opt-out we must honor. So the
+    // sheet is read-only for mesa_member; the DB value is left untouched.
 
     const existing =
       existingByWorkEmail.get(c.workEmail) ??

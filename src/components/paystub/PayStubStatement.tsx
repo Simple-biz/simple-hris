@@ -193,6 +193,15 @@ export function PayStubStatement({
                 label="Adjustment"
                 detail={view.adjustmentNote || 'Manual adjustment'}
                 amount={php(view.adjustment)}
+              />
+              {/* Orphanage — an accounting extra added on top of pay. Always shown
+                  (like the other bonus rows) so the breakdown reconciles; ₱0.00 when
+                  unused. Signed + teal to match the emailed statement + wizard preview. */}
+              <EarningRow
+                label="Orphanage"
+                detail="Contribution"
+                amount={`+${php(view.orphanagePay)}`}
+                amountClass="!text-[#0f766e]"
                 last
               />
             </tbody>

@@ -6,10 +6,11 @@ import {
   type InsertPaymentDispatchInput,
 } from "@/lib/supabase/payment-dispatches";
 import {
-  getPaystubDispatchEntry,
+  refreshPaystubQueuePayload,
   markPaystubSent,
   markPaystubSendError,
 } from "@/lib/supabase/paystub-dispatch-queue";
+import { getFreshPaystubEntry } from "@/lib/payroll/paystub-fresh";
 import { forwardPaystubDispatch } from "@/lib/payroll/paystub-dispatch";
 import { mapPayloadToPayStub } from "@/lib/payroll/paystub-view";
 import { createSupabaseServiceRoleClient } from "@/lib/supabase/server";
@@ -126,19 +127,77 @@ export async function POST(req: NextRequest) {
   // payment record (the money already moved) — it's stamped on the queue row so
   // it can be re-sent from the Excluded tab. MESA disbursements + orphanage
   // budgets go through their own routes, so they never reach this send path.
-  const paystub: { staged: boolean; sent: boolean; error: string | null } = {
+  const paystub: {
+    staged: boolean;
+    sent: boolean;
+    error: string | null;
+    /** Set when the emailed stub's total does not match the recorded payment
+     *  amount (and the staged payload didn't match either) — surfaced to the
+     *  dispatch UI as a warning and stamped into the audit log. */
+    amount_mismatch?: { paid: number; stub: number };
+  } = {
     staged: false,
     sent: false,
     error: null,
   };
   if (row.status === "paid" && row.cycle_source_file) {
     try {
-      const { row: staged } = await getPaystubDispatchEntry(
-        row.cycle_source_file,
-        row.recipient_email,
-      );
-      if (staged?.payload) {
+      // Freshest truth for this (cycle, employee): the staged payload with any
+      // NEWER wizard-snapshot figures merged over it. The wizard keeps
+      // recomputing after the lock (an additions edit in another session, a rate
+      // change) and Payment Dispatch prices from that snapshot — so the stub we
+      // email must come from the same source, or it can contradict the money
+      // this very row just recorded (2026-07-21: two understated stubs).
+      const fresh = await getFreshPaystubEntry(row.cycle_source_file, row.recipient_email);
+      const staged = fresh.staged;
+      if (staged && fresh.payload) {
         paystub.staged = true;
+
+        // ── Reconcile the stub against the MONEY this request just recorded ──
+        // The paid amount was priced when the dispatcher's queue loaded; the
+        // merged payload reflects the wizard snapshot at pay time. When they
+        // disagree (a wizard edit raced this payment), the statement must
+        // describe the money that actually moved: fall back to the staged
+        // payload if THAT is what was paid, and flag the row when neither
+        // figure matches so accounting can investigate before any re-send.
+        const paidAmount = row.amount_php != null ? Number(row.amount_php) : null;
+        let stubPayload = fresh.payload;
+        let stubPeriod = fresh.payPeriod;
+        let view = mapPayloadToPayStub(stubPayload, stubPeriod);
+        let doRefresh = fresh.refreshed;
+        if (
+          fresh.refreshed &&
+          paidAmount != null &&
+          Number.isFinite(paidAmount) &&
+          Math.abs(view.totalPayPhp - paidAmount) >= 0.01
+        ) {
+          const stagedView = mapPayloadToPayStub(staged.payload, staged.pay_period);
+          if (Math.abs(stagedView.totalPayPhp - paidAmount) < 0.01) {
+            stubPayload = staged.payload!;
+            stubPeriod = staged.pay_period;
+            view = stagedView;
+            doRefresh = false;
+          } else {
+            // Neither the merged nor the staged total matches the payment —
+            // send the freshest figures but surface the discrepancy.
+            paystub.amount_mismatch = { paid: paidAmount, stub: view.totalPayPhp };
+          }
+        }
+
+        // Persist the chosen figures onto the queue row FIRST, so the accounting
+        // stub viewer, the employee Pay Stubs tab, and any later re-send all read
+        // exactly what this payment used. Best-effort: a failed write never
+        // blocks the email (the payload in hand is still the fresh one).
+        if (doRefresh) {
+          await refreshPaystubQueuePayload({
+            sourceFile: row.cycle_source_file,
+            recipientEmail: row.recipient_email,
+            payload: stubPayload,
+            payPeriod: stubPeriod,
+            amountPhp: view.totalPayPhp,
+            amountUsd: view.totalPayUsd,
+          });
+        }
 
         // Notify the employee their pay landed. The card's "Open Pay Stub"
         // button opens the exact statement we email, so we only fire this when a
@@ -158,7 +217,6 @@ export async function POST(req: NextRequest) {
               .limit(1);
             if (existing && existing.length > 0) return;
 
-            const view = mapPayloadToPayStub(staged.payload, staged.pay_period);
             const amountLabel =
               row.amount_php != null
                 ? `₱${Number(row.amount_php).toLocaleString("en-US", {
@@ -191,8 +249,8 @@ export async function POST(req: NextRequest) {
         })();
 
         const result = await forwardPaystubDispatch({
-          pay_period: staged.pay_period,
-          employees: [staged.payload],
+          pay_period: stubPeriod,
+          employees: [stubPayload],
           cycle: {
             source_file: row.cycle_source_file,
             period_start: row.cycle_period_start ?? null,
@@ -227,6 +285,13 @@ export async function POST(req: NextRequest) {
             source_file: row.cycle_source_file,
             http_status: result.status,
             error: result.ok ? undefined : paystub.error,
+            // Reconciliation trail: what the stub said vs what the payment row
+            // recorded, and whether the queue row was refreshed from the
+            // wizard snapshot before sending.
+            stub_total_php: view.totalPayPhp,
+            amount_php_paid: paidAmount ?? undefined,
+            refreshed_from_snapshot: doRefresh || undefined,
+            amount_mismatch: paystub.amount_mismatch ? true : undefined,
           },
         });
       } else if (staged) {

@@ -35,6 +35,44 @@ export async function getAppSetting(key: string): Promise<string | null> {
   return (data as { value: string }).value;
 }
 
+/** Like {@link getAppSetting} but also returns the row's `updated_at`, for callers
+ *  that need to compare a setting's freshness against another timestamp (e.g. a
+ *  wizard snapshot vs. a staged paystub's `locked_at`). */
+export async function getAppSettingWithMeta(
+  key: string,
+): Promise<{ value: string; updatedAt: string | null } | null> {
+  const supabase = createSupabaseServiceRoleClient();
+  if (!supabase) return null;
+  const { data, error } = await supabase
+    .from('app_settings')
+    .select('value, updated_at')
+    .eq('key', key)
+    .maybeSingle();
+  if (error || !data) return null;
+  const row = data as { value: string; updated_at: string | null };
+  return { value: row.value, updatedAt: row.updated_at ?? null };
+}
+
+/** Bulk twin of {@link getAppSettingWithMeta} — one round-trip for many keys.
+ *  Keys absent from the table are simply missing from the returned map. */
+export async function getAppSettingsWithMeta(
+  keys: string[],
+): Promise<Record<string, { value: string; updatedAt: string | null }>> {
+  const out: Record<string, { value: string; updatedAt: string | null }> = {};
+  if (keys.length === 0) return out;
+  const supabase = createSupabaseServiceRoleClient();
+  if (!supabase) return out;
+  const { data, error } = await supabase
+    .from('app_settings')
+    .select('key, value, updated_at')
+    .in('key', keys);
+  if (error || !data) return out;
+  for (const row of data as { key: string; value: string; updated_at: string | null }[]) {
+    out[row.key] = { value: row.value, updatedAt: row.updated_at ?? null };
+  }
+  return out;
+}
+
 export async function upsertAppSetting(key: string, value: string): Promise<{ error: string | null }> {
   const supabase = createSupabaseServiceRoleClient();
   if (!supabase) return { error: 'Supabase client unavailable' };
