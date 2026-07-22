@@ -23,6 +23,16 @@ test('isWiresPreferred: wires/x1153/legacy/null/empty all count as wires', () =>
   assert.equal(isWiresPreferred(''), true);
 });
 
+// The DB's legacy free-text values may be cased/padded — the defensive
+// trim+lowercase is load-bearing for the guard's `current` side.
+test('isWiresPreferred: case- and whitespace-insensitive on legacy free-text', () => {
+  assert.equal(isWiresPreferred(' Hurupay '), false);
+  assert.equal(isWiresPreferred('HIGLOBE'), false);
+  assert.equal(isWiresPreferred(' Wires '), true);
+  assert.equal(isBankPreferredTransitionAllowed(' HURUPAY ', 'higlobe'), true);
+  assert.equal(isBankPreferredTransitionAllowed(' Wires ', 'hurupay'), false);
+});
+
 // The ONLY forbidden transition: a WIRES employee → hurupay/higlobe.
 test('transition: wires -> hurupay/higlobe is forbidden', () => {
   assert.equal(isBankPreferredTransitionAllowed('wires', 'hurupay'), false);

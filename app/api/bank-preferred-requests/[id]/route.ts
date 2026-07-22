@@ -71,11 +71,19 @@ export async function PATCH(
       // WIRES lock re-check: verify against the CURRENT stored value, not the
       // request's from_value (it may have changed since the request was filed).
       // A WIRES employee can never be approved onto hurupay/higlobe.
-      const { data: liveRows } = await supabase
+      const { data: liveRows, error: liveReadErr } = await supabase
         .from('employee_ids')
         .select('bank_preferred')
         .ilike('work_email', workEmail)
         .limit(1);
+      // A failed read falls through to liveCurrent=null → treated as WIRES →
+      // approve blocked. That's the safe (fail-closed) direction, but log it so
+      // a transient DB blip isn't misdiagnosed as "this employee is WIRES".
+      if (liveReadErr) {
+        console.error(
+          `bank-preferred approve: live bank_preferred read failed for ${workEmail}: ${liveReadErr.message}`,
+        );
+      }
       const liveCurrent =
         Array.isArray(liveRows) && liveRows[0] && typeof liveRows[0].bank_preferred === 'string'
           ? (liveRows[0].bank_preferred as string)
