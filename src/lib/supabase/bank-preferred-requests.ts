@@ -69,24 +69,38 @@ export async function createBankPreferredRequest(input: {
 
   const workEmail = normEmail(input.workEmail) ?? input.workEmail.trim().toLowerCase();
 
-  // Supersede any prior pending request for this employee so the partial unique
-  // index doesn't reject the new insert and accounting only sees the latest ask.
-  await supabase
-    .from(TABLE)
-    .update({ status: 'superseded' })
-    .eq('work_email', workEmail)
-    .eq('status', 'pending');
+  // Supersede any prior pending request for this employee (so accounting only
+  // sees the latest ask) then insert the new pending row. These are two separate
+  // statements, so two near-simultaneous submits for the same employee can race:
+  // both supersede (each seeing no committed pending), both insert, and the
+  // second insert trips the one-pending partial unique index. Retry once on that
+  // conflict — the retry's supersede clears the row the winner just inserted.
+  const supersedeThenInsert = async () => {
+    await supabase
+      .from(TABLE)
+      .update({ status: 'superseded' })
+      .eq('work_email', workEmail)
+      .eq('status', 'pending');
 
-  const { data, error } = await supabase
-    .from(TABLE)
-    .insert({
-      work_email: workEmail,
-      employee_name: input.employeeName,
-      from_value: input.fromValue,
-      to_value: input.toValue,
-    })
-    .select('id')
-    .single();
+    return supabase
+      .from(TABLE)
+      .insert({
+        work_email: workEmail,
+        employee_name: input.employeeName,
+        from_value: input.fromValue,
+        to_value: input.toValue,
+      })
+      .select('id')
+      .single();
+  };
+
+  const isUniqueViolation = (err: { code?: string; message?: string } | null) =>
+    !!err && (err.code === '23505' || /duplicate key|unique constraint/i.test(err.message ?? ''));
+
+  let { data, error } = await supersedeThenInsert();
+  if (isUniqueViolation(error)) {
+    ({ data, error } = await supersedeThenInsert());
+  }
 
   if (error) return { id: null, error: error.message };
   return { id: (data?.id as string) ?? null, error: null };
