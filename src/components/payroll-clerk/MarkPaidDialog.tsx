@@ -9,7 +9,8 @@ import {
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { DatePicker } from '@/components/ui/date-picker';
-import { AlertTriangle, Check, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, CircleDashed, Copy, Gauge, Loader2 } from 'lucide-react';
+import { AlertTriangle, Check, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, CircleDashed, Copy, Gauge, Loader2, Pencil, X } from 'lucide-react';
+import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { playPaymentConfirmed } from '@/lib/sound/ping-chime';
 import { formatPHP, formatUSD, formatCOP, type QueueRow } from './mock-queue';
@@ -136,6 +137,12 @@ interface MarkPaidDialogProps {
   position?: { index: number; total: number };
   onPrev?: () => void;
   onNext?: () => void;
+  /**
+   * Fires after a successful profile override (Save to profile) so the parent
+   * can silently refetch the queue — the corrected details become the row's
+   * new defaults. Optional: render sites without a queue skip it.
+   */
+  onBankDetailsOverridden?: () => void;
 }
 
 /* ---- gallery slide animation ----------------------------------------- */
@@ -289,6 +296,7 @@ export default function MarkPaidDialog({
   position,
   onPrev,
   onNext,
+  onBankDetailsOverridden,
 }: MarkPaidDialogProps) {
   const defaults = useMemo(() => (row ? resolveMarkPaidDefaults(row) : null), [row]);
 
@@ -305,6 +313,16 @@ export default function MarkPaidDialog({
   const [submitting,             setSubmitting]             = useState(false);
   const [copied,                 setCopied]                 = useState(false);
   const [copiedAcct,             setCopiedAcct]             = useState(false);
+
+  // ── Profile override (pencil on the Recipient divider) ─────────────────
+  // Arms an explicit "Save to profile" that writes the recipient fields back
+  // to employee_ids, overriding the employee dashboard. Typing WITHOUT the
+  // pencil keeps the log-only behavior. Snapshot restores on Cancel.
+  const [overrideMode, setOverrideMode]         = useState(false);
+  const [overrideSaving, setOverrideSaving]     = useState(false);
+  const [overrideSnapshot, setOverrideSnapshot] = useState<{
+    bank: string; holder: string; acct: string; swift: string;
+  } | null>(null);
 
   // The primary (top) amount shown in the hero — COP or USD depending on the
   // payout currency.
@@ -344,6 +362,60 @@ export default function MarkPaidDialog({
     }
   }, [recipientAccountNumber]);
 
+  const enterOverride = useCallback(() => {
+    setOverrideSnapshot({
+      bank: recipientPreferredBank,
+      holder: recipientAccountHolder,
+      acct: recipientAccountNumber,
+      swift: recipientSwiftCode,
+    });
+    setOverrideMode(true);
+  }, [recipientPreferredBank, recipientAccountHolder, recipientAccountNumber, recipientSwiftCode]);
+
+  const cancelOverride = useCallback(() => {
+    if (overrideSnapshot) {
+      setRecipientPreferredBank(overrideSnapshot.bank);
+      setRecipientAccountHolder(overrideSnapshot.holder);
+      setRecipientAccountNumber(overrideSnapshot.acct);
+      setRecipientSwiftCode(overrideSnapshot.swift);
+    }
+    setOverrideSnapshot(null);
+    setOverrideMode(false);
+  }, [overrideSnapshot]);
+
+  const saveOverride = useCallback(async () => {
+    if (!row || recipientAccountNumber.trim() === '' || overrideSaving) return;
+    setOverrideSaving(true);
+    try {
+      const res = await fetch('/api/payment-dispatch/bank-override', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          work_email: row.email,
+          target: (defaults?.showSwiftField ?? false) ? 'bank' : 'wallet',
+          processor: row.processor,
+          display_name: row.name,
+          values: {
+            preferredBank: recipientPreferredBank,
+            accountNumber: recipientAccountNumber,
+            accountHolder: recipientAccountHolder,
+            swiftCode: recipientSwiftCode,
+          },
+        }),
+      });
+      const json = (await res.json()) as { success?: boolean; error?: string };
+      if (!res.ok || json.error) throw new Error(json.error ?? 'Failed to save to profile');
+      toast.success(`Saved to ${row.name}'s profile — their dashboard now shows these details.`);
+      setOverrideSnapshot(null);
+      setOverrideMode(false);
+      onBankDetailsOverridden?.();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to save to profile');
+    } finally {
+      setOverrideSaving(false);
+    }
+  }, [row, defaults, recipientPreferredBank, recipientAccountNumber, recipientAccountHolder, recipientSwiftCode, overrideSaving, onBankDetailsOverridden]);
+
   useEffect(() => {
     if (!row || !defaults) return;
     setTransactionId('');
@@ -358,6 +430,9 @@ export default function MarkPaidDialog({
     setNote('');
     setSubmitting(false);
     setCopiedAcct(false);
+    setOverrideMode(false);
+    setOverrideSnapshot(null);
+    setOverrideSaving(false);
   }, [row?.id, defaults, row]);
 
   const open    = row != null;
@@ -367,6 +442,17 @@ export default function MarkPaidDialog({
   // Drives the SWIFT field, the account placeholder, and the wallet hint so the
   // receiving-end display follows the Employee Dashboard, not just the processor.
   const isBankWire = defaults?.showSwiftField ?? false;
+
+  // Which recipient fields the profile override can actually persist. Wallet
+  // processors only store what their columns carry: hurupay/wepay just the
+  // wallet email; higlobe/wise also the holder. Bank wires store all four.
+  const overrideEditable = {
+    bank: isBankWire,
+    holder: isBankWire || row?.processor === 'higlobe' || row?.processor === 'wise',
+    acct: true,
+    swift: isBankWire,
+  };
+
   const cfg     = CFG[status];
 
   const hasGallery = position != null && position.total > 1;
@@ -656,12 +742,29 @@ export default function MarkPaidDialog({
             </Field>
           </div>
 
-          {/* Recipient divider */}
+          {/* Recipient divider — pencil arms the profile override */}
           <div className="flex items-center gap-2.5">
             <div className="h-px flex-1 bg-zinc-100 dark:bg-zinc-800" />
             <span className="text-[9.5px] font-bold uppercase tracking-[0.16em] text-zinc-400">
               Recipient
             </span>
+            {overrideMode ? (
+              <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[9.5px] font-semibold text-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
+                <Pencil className="h-2.5 w-2.5" />
+                Editing employee profile
+              </span>
+            ) : (
+              <button
+                type="button"
+                onClick={enterOverride}
+                onMouseDown={(e) => e.preventDefault()}
+                aria-label="Override employee profile bank details"
+                title="Override the employee's saved bank details"
+                className="inline-flex h-6 w-6 items-center justify-center rounded-md text-zinc-400 outline-none transition-colors hover:bg-zinc-100 hover:text-zinc-600 focus:outline-none focus-visible:outline-none dark:hover:bg-zinc-800 dark:hover:text-zinc-300"
+              >
+                <Pencil className="h-3 w-3" />
+              </button>
+            )}
             <div className="h-px flex-1 bg-zinc-100 dark:bg-zinc-800" />
           </div>
 
@@ -673,6 +776,8 @@ export default function MarkPaidDialog({
                 placeholder="BPI, UnionBank, Wise..."
                 value={recipientPreferredBank}
                 onChange={(e) => setRecipientPreferredBank(e.target.value)}
+                disabled={overrideMode && !overrideEditable.bank}
+                className={cn(overrideMode && !overrideEditable.bank && 'opacity-60')}
               />
             </Field>
             <Field id="rcpt-holder" label="Account holder" cfg={cfg}>
@@ -682,6 +787,8 @@ export default function MarkPaidDialog({
                 placeholder="Name on account"
                 value={recipientAccountHolder}
                 onChange={(e) => setRecipientAccountHolder(e.target.value)}
+                disabled={overrideMode && !overrideEditable.holder}
+                className={cn(overrideMode && !overrideEditable.holder && 'opacity-60')}
               />
             </Field>
           </div>
@@ -735,6 +842,38 @@ export default function MarkPaidDialog({
                 className="font-mono text-xs uppercase"
               />
             </Field>
+          )}
+
+          {overrideMode && (
+            <div className="flex items-center justify-between gap-2 rounded-lg border border-amber-200 bg-amber-50/60 px-3 py-2.5 dark:border-amber-900/40 dark:bg-amber-950/20">
+              <p className="text-[11px] leading-snug text-amber-800 dark:text-amber-300">
+                Saves these details to {row?.name ?? 'the employee'}&apos;s profile —
+                overriding their dashboard.
+              </p>
+              <div className="flex shrink-0 items-center gap-1.5">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-7 gap-1 rounded-md text-[11.5px]"
+                  disabled={overrideSaving}
+                  onClick={cancelOverride}
+                >
+                  <X className="h-3 w-3" />
+                  Cancel
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  className="h-7 gap-1 rounded-md bg-amber-600 text-[11.5px] text-white hover:bg-amber-700 dark:bg-amber-500 dark:text-amber-950 dark:hover:bg-amber-400"
+                  disabled={overrideSaving || recipientAccountNumber.trim() === ''}
+                  onClick={() => void saveOverride()}
+                >
+                  {overrideSaving ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
+                  Save to profile
+                </Button>
+              </div>
+            </div>
           )}
 
           <Field
