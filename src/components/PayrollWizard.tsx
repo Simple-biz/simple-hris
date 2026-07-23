@@ -3833,14 +3833,26 @@ export default function PayrollWizard({
       // applied, so it's the one we file as Done afterwards (force only).
       const byEmail = new Map<string, { amount: number; note: string; rowId: string }>();
       const rows = [...(json.rows ?? [])].sort((a, b) => a.updated_at.localeCompare(b.updated_at));
+      // Linked workers with a parseable amount but NO row in this week's calc
+      // results — nothing downstream (Adj. column, Validation, pay stubs,
+      // Payment Dispatch) would ever read an override keyed to them.
+      const skippedWorkers: string[] = [];
       for (const r of rows) {
         if (r.done) continue;
         if (only && !only.has(r.id)) continue;
         const normalized = (r.worker_email ?? '').trim().toLowerCase();
-        // Key by the wizard's own casing when the worker resolves to a calc row.
-        const email = normalized ? (rawByNorm.get(normalized) ?? normalized) : '';
         const parsed = parseAdjustmentAmount(r.adjustment);
-        if (!email || !parsed) continue;
+        if (!normalized || !parsed) continue;
+        // Key by the wizard's own casing — ONLY when the worker resolves to a
+        // calc row. A worker with no hours in the loaded Hubstaff CSV has no
+        // paystub for the amount to land on; applying it anyway would file the
+        // note as Done while changing nobody's pay. Skip it and (on an explicit
+        // apply) say so, leaving the board row open.
+        const email = rawByNorm.get(normalized);
+        if (!email) {
+          skippedWorkers.push(r.worker?.trim() || normalized);
+          continue;
+        }
         const amount = adjustmentToPhp(parsed, fxRates);
         if (amount === null) continue;
         const baseNote = r.notes?.trim() || `From Payroll Notes (${r.payroll_clerk ?? 'board'})`;
@@ -3853,6 +3865,18 @@ export default function PayrollWizard({
               : `${baseNote} · from ${(r.adjustment ?? '').trim()} ${parsed.currency}`,
           rowId: r.id,
         });
+      }
+      // An explicit apply must never SILENTLY drop a row — the clerk thinks
+      // they just pushed it. Name who was skipped and why, and leave the row
+      // open on the board (it is not in `byEmail`, so it's never marked Done).
+      if (force && skippedWorkers.length > 0) {
+        const names = [...new Set(skippedWorkers)];
+        toast.warning(
+          `${names.length} adjustment${names.length === 1 ? '' : 's'} left open — not in this week's timesheet`,
+          {
+            description: `${names.join(', ')} ${names.length === 1 ? 'has' : 'have'} no hours in the loaded Hubstaff CSV, so there is no paystub to adjust this week. The board row stays open.`,
+          },
+        );
       }
       const existing = auditCtxRef.current.bonusOverrides;
       const adds = force
@@ -3902,14 +3926,6 @@ export default function PayrollWizard({
     }
   }, [fxRates]);
 
-  // Pull when the clerk lands on a step that shows the Adjustment column
-  // (HSL = 4, Additions = 5) with a live pay period loaded.
-  useEffect(() => {
-    if ((currentStep === 4 || currentStep === 5) && !isReplay && calcSourceFile) {
-      void pullNotesAdjustments();
-    }
-  }, [currentStep, isReplay, calcSourceFile, pullNotesAdjustments]);
-
   // The Notes board's per-clerk "Apply Changes" buttons (detail.rowIds = that
   // clerk's rows). preventDefault() is the handshake telling the board the
   // wizard took it — left unhandled (replay / no pay period loaded), the
@@ -3917,13 +3933,24 @@ export default function PayrollWizard({
   useEffect(() => {
     const onApply = (e: Event) => {
       if (isReplayRef.current || !calcSourceFile) return;
+      // preventDefault = "the wizard heard you" (the board would otherwise show
+      // its own generic explainer). A LOCKED cycle still refuses the apply —
+      // Payment Dispatch may be paying from these values — but with the real
+      // reason and the fix (Unlock in Validation) spelled out.
       e.preventDefault();
+      if (dispatchValuesLock.state.locked) {
+        toast.error('This cycle is locked for Payment Dispatch', {
+          description:
+            'Unlock it in the Validation step first, apply the board adjustments, then lock again to send the updated values.',
+        });
+        return;
+      }
       const detail = (e as CustomEvent<{ rowIds?: string[] }>).detail;
       void pullNotesAdjustments({ force: true, onlyRowIds: detail?.rowIds });
     };
     window.addEventListener(APPLY_NOTE_ADJUSTMENTS_EVENT, onApply);
     return () => window.removeEventListener(APPLY_NOTE_ADJUSTMENTS_EVENT, onApply);
-  }, [calcSourceFile, pullNotesAdjustments]);
+  }, [calcSourceFile, pullNotesAdjustments, dispatchValuesLock.state.locked]);
 
   // A linked note left the board (row deleted / Adjustment cell cleared): the
   // adjustment it applied goes with it. Guarded by a value match — the Adj.
@@ -4517,12 +4544,15 @@ export default function PayrollWizard({
     calcResultsRef.current = calcResults;
   }, [calcResults]);
 
-  // One-time re-key of any override/note saved under a lowercased email to the
-  // wizard's raw calc-result casing. Overrides bridged in from the Payroll Notes
-  // board before the casing fix were keyed lowercased, so the Adj. column, the
-  // running totals, AND the dispatch payload (all of which read by raw email) saw
-  // ₱0. Migrating the map here makes every reader agree; runs whenever calc rows
-  // resolve and is a no-op once keys already match (so it can't loop).
+  // Re-key any override/note saved under a lowercased email to the wizard's raw
+  // calc-result casing. Overrides bridged in from the Payroll Notes board before
+  // the casing fix were keyed lowercased, so the Adj. column, the running
+  // totals, AND the dispatch payload (all of which read by raw email) saw ₱0.
+  // Migrating the map here makes every reader agree; it is a no-op once keys
+  // already match (so it can't loop). Runs when calc rows resolve AND again
+  // after each additions-blob hydration — hydration REPLACES the maps, so a
+  // legacy blob loaded after calc settled would otherwise re-introduce
+  // lowercased keys with nothing left to migrate them.
   useEffect(() => {
     if (isReplay || calcResults.length === 0) return;
     const rawByNorm = new Map<string, string>();
@@ -4545,7 +4575,28 @@ export default function PayrollWizard({
     };
     setBonusOverrides((prev) => rekey(prev) ?? prev);
     setBonusOverrideNotes((prev) => rekey(prev) ?? prev);
-  }, [calcResults, isReplay]);
+  }, [calcResults, isReplay, additionsHydratedFor]);
+
+  // Pull board adjustments when the clerk lands on a step that shows the
+  // Adjustment column (HSL = 4, Additions = 5) — or one that shows the FINAL
+  // numbers built from it (Validation = 7, Dispatch = 8). The stepper allows
+  // jumping straight to Validation, so without the 7/8 pull a clerk who skips
+  // the Additions step would review pay stubs (and stage Payment Dispatch)
+  // without the board's amounts. Merge-only: an override already typed or
+  // saved always wins. Gated on calc rows existing (and re-fired when they
+  // resolve) so a session restored directly onto Validation doesn't pull
+  // before there's anything to key the amounts to. Never pulls once the
+  // cycle's values are LOCKED — Payment Dispatch may be paying from them, and
+  // nothing may drift in silently mid-payout (explicit "Apply Changes" asks
+  // for an unlock instead — see its event handler above).
+  const hasCalcRows = calcResults.length > 0;
+  useEffect(() => {
+    if (isReplay || !calcSourceFile || !hasCalcRows) return;
+    if (dispatchValuesLock.loading || dispatchValuesLock.state.locked) return;
+    if (currentStep === 4 || currentStep === 5 || currentStep === 7 || currentStep === 8) {
+      void pullNotesAdjustments();
+    }
+  }, [currentStep, isReplay, calcSourceFile, hasCalcRows, pullNotesAdjustments, dispatchValuesLock.loading, dispatchValuesLock.state.locked]);
 
   /**
    * Applies per-department and global OT suspension from System Settings.
@@ -5039,7 +5090,17 @@ export default function PayrollWizard({
    * always remain in the final figure.
    */
   const getEffectiveBonus = useCallback(
-    (email: string): number => (bonusTotals[email] ?? 0) + (bonusOverrides[email] ?? 0),
+    (email: string): number => {
+      // Same raw-then-normalized lookup as the dispatch payload (dispatchData),
+      // so the Validation table and running totals can never disagree with the
+      // staged paystub over an override still keyed under a lowercased email.
+      const norm = normEmail(email);
+      const override =
+        bonusOverrides[email] ??
+        (norm !== null && norm !== email ? bonusOverrides[norm] : undefined) ??
+        0;
+      return (bonusTotals[email] ?? 0) + override;
+    },
     [bonusOverrides, bonusTotals],
   );
 

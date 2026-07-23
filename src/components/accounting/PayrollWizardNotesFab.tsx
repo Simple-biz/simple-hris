@@ -105,6 +105,42 @@ function todayStamp(): string {
   return `${d.getMonth() + 1}/${d.getDate()}`;
 }
 
+/** Every per-row column a save/refresh response may change. Used when folding a
+ *  server copy of a row into local state (see mergeRowPreservingDrafts). */
+const ROW_MERGE_KEYS = [
+  "note_date",
+  "payroll_clerk",
+  "done",
+  "worker",
+  "worker_email",
+  "adjustment",
+  "notes",
+] as const;
+
+/**
+ * Server copy ⊕ local drafts. Any cell edited locally since `baseline` (the
+ * last server snapshot this client saved or loaded) keeps its LOCAL value;
+ * every other cell takes the server copy.
+ *
+ * This is what lets a PATCH response or a live refresh land while the user is
+ * mid-keystroke in ANOTHER cell of the same row without deleting their typing:
+ * cells save on blur, so blurring cell A fires a PATCH that resolves ~a second
+ * later — by which time the user is already typing in cell B. A whole-row swap
+ * (the old behavior) wiped cell B's draft on every save.
+ */
+function mergeRowPreservingDrafts(
+  local: PayrollWizardNoteRow,
+  baseline: PayrollWizardNoteRow | undefined,
+  fresh: PayrollWizardNoteRow,
+): PayrollWizardNoteRow {
+  if (!baseline) return fresh;
+  const merged = { ...fresh };
+  for (const k of ROW_MERGE_KEYS) {
+    if (local[k] !== baseline[k]) Object.assign(merged, { [k]: local[k] });
+  }
+  return merged;
+}
+
 /** localStorage key base for the per-user "show everyone's notes" preference. */
 const SHOW_OTHERS_KEY = "payroll-wizard-notes:show-others";
 
@@ -235,8 +271,20 @@ export default function PayrollWizardNotesFab({
   };
 
   const applyRows = useCallback((next: PayrollWizardNoteRow[]) => {
-    setRows(next);
+    // Snapshot the OLD baselines before replacing them — the setRows updater
+    // runs later (during render), by which time savedRef already holds the
+    // fresh copies and every local draft would look "unchanged".
+    const baseline = savedRef.current;
     savedRef.current = new Map(next.map((r) => [r.id, r]));
+    setRows((prev) => {
+      const localById = new Map(prev.map((r) => [r.id, r]));
+      // Keep locally-edited cells (in-flight saves, mid-typing drafts) even
+      // when a refresh lands — the server copy wins only where we're clean.
+      return next.map((fresh) => {
+        const local = localById.get(fresh.id);
+        return local ? mergeRowPreservingDrafts(local, baseline.get(fresh.id), fresh) : fresh;
+      });
+    });
   }, []);
 
   const load = useCallback(async () => {
@@ -307,12 +355,32 @@ export default function PayrollWizardNotesFab({
         const json = (await res.json()) as { row?: PayrollWizardNoteRow; error?: string };
         if (!res.ok || !json.row) throw new Error(json.error || `Save failed (${res.status})`);
         const fresh = json.row;
+        const baseline = savedRef.current.get(id);
         savedRef.current.set(id, fresh);
-        setRows((prev) => prev.map((r) => (r.id === id ? fresh : r)));
+        // Merge, never swap: by the time this PATCH resolves the user is often
+        // already typing in the row's NEXT cell (cells save on blur) — a
+        // whole-row replace deleted that draft mid-keystroke.
+        setRows((prev) =>
+          prev.map((r) => (r.id === id ? mergeRowPreservingDrafts(r, baseline, fresh) : r)),
+        );
       } catch (e) {
         toast.error(e instanceof Error ? e.message : "Could not save the note");
+        // Roll back ONLY the cells this PATCH tried to change — a draft the
+        // user is typing in another cell of the row must survive the failure.
         const last = savedRef.current.get(id);
-        if (last) setRows((prev) => prev.map((r) => (r.id === id ? last : r)));
+        if (last) {
+          const failed = Object.keys(values) as (keyof PayrollWizardNoteRow)[];
+          setRows((prev) =>
+            prev.map((r) => {
+              if (r.id !== id) return r;
+              const rolled = { ...r };
+              for (const k of failed) {
+                if (k in last) Object.assign(rolled, { [k]: last[k] });
+              }
+              return rolled;
+            }),
+          );
+        }
       }
     },
     [],
