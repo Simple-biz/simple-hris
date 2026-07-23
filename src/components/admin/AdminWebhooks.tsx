@@ -14,6 +14,8 @@ import {
   CheckCircle2,
   AlertCircle,
   Copy as CopyIcon,
+  Search,
+  X,
 } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -175,6 +177,7 @@ export default function AdminWebhooks() {
   const [dirty, setDirty] = useState(false);
   const [testing, setTesting] = useState<string | null>(null);
   const [togglingId, setTogglingId] = useState<string | null>(null);
+  const [query, setQuery] = useState('');
 
   useEffect(() => {
     let cancelled = false;
@@ -242,6 +245,16 @@ export default function AdminWebhooks() {
   };
 
   const activeCount = entries.filter((e) => entryStatus(e) === 'active').length;
+
+  const filteredEntries = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return entries;
+    return entries.filter((e) =>
+      [e.label, e.slug, e.url, e.description]
+        .filter(Boolean)
+        .some((field) => field!.toLowerCase().includes(q)),
+    );
+  }, [entries, query]);
 
   const validationErrors = useMemo(() => {
     const errs: Record<string, string> = {};
@@ -368,6 +381,30 @@ export default function AdminWebhooks() {
         </div>
       </header>
 
+      <div className="border-b border-zinc-200 px-6 py-3 dark:border-zinc-800">
+        <div className="relative max-w-md">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" />
+          <Input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search webhooks by name, slug, URL…"
+            className="pl-9 pr-9"
+            aria-label="Search webhooks"
+          />
+          {query && (
+            <button
+              type="button"
+              onClick={() => setQuery('')}
+              title="Clear search"
+              aria-label="Clear search"
+              className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-zinc-400 transition hover:bg-zinc-100 hover:text-zinc-700 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          )}
+        </div>
+      </div>
+
       <div className="flex-1 overflow-y-auto p-6">
         <div className="grid gap-3">
           {entries.length === 0 && (
@@ -375,7 +412,12 @@ export default function AdminWebhooks() {
               No webhooks configured yet. Click <strong>Add webhook</strong> to create one.
             </div>
           )}
-          {entries.map((entry) => {
+          {entries.length > 0 && filteredEntries.length === 0 && (
+            <div className="rounded-lg border border-dashed border-zinc-300 p-8 text-center text-sm text-zinc-500 dark:border-zinc-700 dark:text-zinc-400">
+              No webhooks match <strong className="text-zinc-700 dark:text-zinc-300">“{query}”</strong>.
+            </div>
+          )}
+          {filteredEntries.map((entry) => {
             const err = validationErrors[entry.id];
             const status = entryStatus(entry);
             const meta = STATUS_META[status];

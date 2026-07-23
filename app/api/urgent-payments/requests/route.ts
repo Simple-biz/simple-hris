@@ -11,28 +11,25 @@ import {
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
-interface UrgentPaymentRow {
+export interface UrgentOneOffRow {
   id: string;
   work_email: string;
   full_name: string;
-  department: string;
-  disbursement_reason: string | null;
-  explanation: string | null;
-  amount_needed: number | null;
-  created_at: string;
-  reviewed_by: string | null;
-  reviewed_at: string | null;
-  /** The recipient's saved preferred processor (defaults to 'wise' for MESA). */
+  department: string | null;
+  amount_php: number | null;
+  note: string | null;
+  requested_by: string | null;
+  requested_at: string;
+  /** Recipient's saved preferred processor (defaults to 'wise'). */
   processor: ProcessorId;
-  /** Per-processor payout detail so Mark Paid pre-fills for whichever processor the clerk picks. */
+  /** Per-processor payout detail so Mark Paid pre-fills for the chosen processor. */
   details: QueueRow['details'];
 }
 
-// GET /api/urgent-payments
-// Returns approved, not-yet-dispatched MESA disbursement requests, each carrying
-// the recipient's preferred payment processor + payout details so the Urgent
-// queue can default + pre-fill the Mark Paid dialog per recipient.
-// Accounting / payroll-clerk only.
+// GET /api/urgent-payments/requests
+// Pending one-off payments filed from the People tab "Pay" action, enriched with
+// the recipient's preferred processor + payout detail (same pre-fill as the MESA
+// urgent feed). Accounting / payroll-clerk only.
 export async function GET() {
   try {
     const authz = await requireElevatedSession();
@@ -42,12 +39,10 @@ export async function GET() {
     if (!supabase) return NextResponse.json({ error: 'DB unavailable' }, { status: 500 });
 
     const { data, error } = await supabase
-      .from('mesa_requests')
-      .select('id, work_email, full_name, department, disbursement_reason, explanation, amount_needed, created_at, reviewed_by, reviewed_at')
-      .eq('request_type', 'disbursement')
-      .eq('status', 'approved')
-      .is('dispatched_at', null)
-      .order('reviewed_at', { ascending: true });
+      .from('urgent_payment_requests')
+      .select('id, work_email, full_name, department, amount_php, note, requested_by, requested_at')
+      .eq('status', 'pending')
+      .order('requested_at', { ascending: true });
 
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
@@ -55,19 +50,16 @@ export async function GET() {
       id: string;
       work_email: string;
       full_name: string;
-      department: string;
-      disbursement_reason: string | null;
-      explanation: string | null;
-      amount_needed: number | null;
-      created_at: string;
-      reviewed_by: string | null;
-      reviewed_at: string | null;
+      department: string | null;
+      amount_php: number | null;
+      note: string | null;
+      requested_by: string | null;
+      requested_at: string;
     }>;
 
-    // Batch-fetch employee_ids for processor preference + payout pre-fill.
     const idsByEmail = await fetchPayoutIdsByEmail(supabase, rows.map((r) => r.work_email));
 
-    const result: UrgentPaymentRow[] = rows.map((r) => {
+    const result: UrgentOneOffRow[] = rows.map((r) => {
       const ids = idsByEmail[r.work_email.trim().toLowerCase()];
       return {
         ...r,

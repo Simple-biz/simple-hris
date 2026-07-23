@@ -348,6 +348,7 @@ export async function buildCeoOverviewKpis(): Promise<CeoOverviewKpis> {
     listDisbursementReports().catch((e) => ({
       reports: [] as DisbursementReportSummary[],
       error: e instanceof Error ? e.message : String(e),
+      unseeded: [],
       unseededCount: 0,
     })),
     // Authoritative live-cycle pay engine — the same source Accounting's "System

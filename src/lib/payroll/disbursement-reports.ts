@@ -118,6 +118,31 @@ export interface DisbursementReportSummary {
   paidRecipients: DisbursementReportRecipient[];
 }
 
+/**
+ * A Hubstaff upload that has hours data but no `disbursement_records` rows yet.
+ * Surfaced so the Reports UI can list exactly which uploads are missing records
+ * and let the clerk seed them individually (rather than a blind bulk action).
+ */
+export interface UnseededUpload {
+  /** hubstaff_uploads.id */
+  id: string;
+  sourceFile: string;
+  periodStart: string | null;
+  periodEnd: string | null;
+  uploadedAt: string;
+  uploadedBy: string | null;
+  rowCount: number | null;
+  /** Human-friendly cycle name, same formatter the report cards use. */
+  reportName: string;
+  /**
+   * Whether {@link seedMissingDisbursementRecords} would actually process this
+   * upload. Backfills, "(2)" re-uploads, the time-activity export, and non-weekly
+   * ranges are counted-but-skipped — surfaced here (seedable=false) so the count
+   * can't silently disagree with what "Seed all" does.
+   */
+  seedable: boolean;
+}
+
 export interface DisbursementReportDetail extends DisbursementReportSummary {
   dispatches: PaymentDispatchRow[];
   /**
@@ -596,6 +621,9 @@ async function buildUrgentWeeklyReports(): Promise<DisbursementReportSummary[]> 
 export async function listDisbursementReports(): Promise<{
   reports: DisbursementReportSummary[];
   error: string | null;
+  /** Uploads with hours but no disbursement_records yet (see UnseededUpload). */
+  unseeded: UnseededUpload[];
+  /** Convenience alias for unseeded.length (kept for existing callers). */
   unseededCount: number;
 }> {
   let records: DisbursementRecordRow[];
@@ -604,6 +632,7 @@ export async function listDisbursementReports(): Promise<{
   } catch (e) {
     return {
       reports: [],
+      unseeded: [],
       unseededCount: 0,
       error: e instanceof Error ? e.message : "Failed to load disbursement_records",
     };
@@ -723,11 +752,36 @@ export async function listDisbursementReports(): Promise<{
     });
   }
 
-  // Count uploads that have no disbursement_records rows yet (need seeding).
+  // Uploads that have no disbursement_records rows yet (need seeding). We surface
+  // the full list — not just a count — so the UI can show which uploads are
+  // missing and seed them individually. `seedable` mirrors the same predicate the
+  // seed function uses, so non-seedable uploads (backfills, "(2)" re-uploads, the
+  // time-activity export) show tagged rather than silently inflating the count.
   const seededSources = new Set(reports.map((r) => r.sourceFile));
-  const unseededCount = uploads.filter(
-    (u) => u.source_file && !seededSources.has(u.source_file),
-  ).length;
+  const unseeded: UnseededUpload[] = uploads
+    .filter((u) => u.source_file && !seededSources.has(u.source_file))
+    .map((u) => {
+      const sourceFile = u.source_file as string;
+      const fromName = periodFromFilename(sourceFile);
+      const fallbackName = sourceFile.replace(/\.csv$/i, "");
+      return {
+        id: u.id,
+        sourceFile,
+        periodStart: fromName.start,
+        periodEnd: fromName.end,
+        uploadedAt: u.uploaded_at,
+        uploadedBy: u.uploaded_by,
+        rowCount: u.row_count,
+        reportName: formatDisbursementReportName(fromName.start, fromName.end, fallbackName),
+        seedable: isSeedableWeeklyUpload(sourceFile),
+      };
+    })
+    // Seedable first, then newest period first — so the actionable ones lead.
+    .sort((a, b) => {
+      if (a.seedable !== b.seedable) return a.seedable ? -1 : 1;
+      return (b.periodStart ?? "").localeCompare(a.periodStart ?? "");
+    });
+  const unseededCount = unseeded.length;
 
   // Append synthesized weekly urgent (MESA) reports — these live in
   // payment_dispatches (cycle_id='urgent'), not disbursement_records, and are
@@ -741,7 +795,7 @@ export async function listDisbursementReports(): Promise<{
   // Newest period first.
   reports.sort((a, b) => (b.periodStart ?? "").localeCompare(a.periodStart ?? ""));
 
-  return { reports, error: null, unseededCount };
+  return { reports, error: null, unseeded, unseededCount };
 }
 
 /**
@@ -827,12 +881,24 @@ function isSeedableWeeklyUpload(sourceFile: string): boolean {
  *
  * Returns the total number of rows inserted/updated.
  */
-export async function seedMissingDisbursementRecords(): Promise<{
+export async function seedMissingDisbursementRecords(opts: {
+  /**
+   * When provided, only these source_files are seeded (still gated by the same
+   * already-seeded and isSeedableWeeklyUpload checks — a caller can't force a
+   * non-weekly or already-seeded file through). Omit to seed all unseeded
+   * seedable uploads, preserving the original "Seed all" behaviour.
+   */
+  sourceFiles?: string[];
+} = {}): Promise<{
   seeded: number;
   error: string | null;
 }> {
   const supabase = createSupabaseServiceRoleClient() ?? createSupabaseServerClient();
   if (!supabase) return { seeded: 0, error: "No Supabase client" };
+
+  const targetFiles = opts.sourceFiles && opts.sourceFiles.length > 0
+    ? new Set(opts.sourceFiles)
+    : null;
 
   // Which source_files are already in disbursement_records? Page through —
   // PostgREST caps a single select at 1000 rows, and an incomplete set here would
@@ -858,7 +924,11 @@ export async function seedMissingDisbursementRecords(): Promise<{
   // time-activity export, and "(2)" re-uploads are skipped.
   const uploads = await safeListHubstaffUploads();
   const unseeded = uploads.filter(
-    (u) => u.source_file && !seededFiles.has(u.source_file) && isSeedableWeeklyUpload(u.source_file),
+    (u) =>
+      u.source_file &&
+      !seededFiles.has(u.source_file) &&
+      isSeedableWeeklyUpload(u.source_file) &&
+      (!targetFiles || targetFiles.has(u.source_file)),
   );
   if (unseeded.length === 0) return { seeded: 0, error: null };
 

@@ -1,5 +1,6 @@
 import {
   isProcessorId,
+  processorIdFromBankPreferredText,
   type ProcessorId,
 } from '@/lib/employee-payment-processors';
 
@@ -89,30 +90,84 @@ export function payoutDraftFromIdsRow(row: Record<string, unknown>): {
 }
 
 /**
- * Whether an `employee_ids` row carries enough payout detail to disburse pay.
- * A preferred processor must be set, plus the identifying field(s) that
- * processor actually needs (see PROCESSOR_OPTIONS blurbs). This is the single
- * source of truth for "payable" used by the employee portal's "complete your
- * profile" nudge AND the People tab's "Missing bank info" list.
+ * Legacy rates-sheet values Payment Dispatch falls back to when the
+ * `employee_ids` row doesn't carry them (see mock-queue's buildQueueFromRates:
+ * the legacy `bank_preferred` cell resolves the processor for anyone who never
+ * picked one, and the rates-side hurupay/higlobe emails backfill the details).
+ * Optional — callers without the rates row in hand just omit it.
  */
-export function isPayoutComplete(row: Record<string, unknown> | null | undefined): boolean {
-  if (!row) return false;
-  const { preferredProcessor, payout } = payoutDraftFromIdsRow(row);
-  if (!preferredProcessor) return false;
-  switch (preferredProcessor) {
+export interface PayoutLegacyExtras {
+  bankPreferredRaw?: string | null;
+  hurupayEmail?: string | null;
+  higlobeEmail?: string | null;
+  higlobeAccountName?: string | null;
+}
+
+/**
+ * The processor Payment Dispatch would actually route this person on — the
+ * SAME precedence as mock-queue's buildQueueFromRates: the employee's "Bank
+ * Preferred" pick wins, then their Disbursement channel
+ * (`preferred_processor`), then the legacy rates-sheet `bank_preferred` cell.
+ * Null when none of the three resolves (PD would exclude them as `no_bank`).
+ */
+export function resolveEffectivePayoutProcessor(
+  row: Record<string, unknown> | null | undefined,
+  extras?: PayoutLegacyExtras,
+): ProcessorId | null {
+  const bankPreferred = row ? processorIdFromBankPreferredText(pick(row, 'bank_preferred')) : null;
+  if (bankPreferred) return bankPreferred;
+  const disbursement = row ? pick(row, 'preferred_processor').toLowerCase() : '';
+  if (isProcessorId(disbursement)) return disbursement;
+  return processorIdFromBankPreferredText(extras?.bankPreferredRaw);
+}
+
+/**
+ * Whether this person carries enough payout detail to disburse pay — judged
+ * the way Payment Dispatch actually pays, so this list never disagrees with
+ * what accounting sees on the dispatch queue:
+ *
+ *   - Processor = PD's precedence (`bank_preferred` → `preferred_processor` →
+ *     legacy rates cell), NOT `preferred_processor` alone. A stale Disbursement
+ *     pick can't hide a person whose Bank Preferred routes them fine.
+ *   - Wire bank details count from EITHER slot (PD's pickFirst falls back
+ *     primary↔alternative when showing the payee's account).
+ *   - hurupay/higlobe emails also count from the legacy rates row when the
+ *     caller passes it (PD backfills details from there).
+ *   - `wise` (like jeeves/wires, a non-wallet rail) is also payable on full
+ *     wire details — accounting wires them when no Wise handle is on file.
+ *   - hurupay/higlobe stay strict: a wallet deposit needs its email, wire
+ *     details can't substitute (that's the wires-flip cleanup, not payable).
+ *
+ * This is the single source of truth for "payable" used by the employee
+ * portal's "complete your profile" nudge, the People tab's "Missing bank info"
+ * list, and the Payroll Readiness "No Bank Info" check.
+ */
+export function isPayoutComplete(
+  row: Record<string, unknown> | null | undefined,
+  extras?: PayoutLegacyExtras,
+): boolean {
+  const processor = resolveEffectivePayoutProcessor(row, extras);
+  if (!processor) return false;
+  const payout = row ? payoutDraftFromIdsRow(row).payout : emptyPayout;
+  // Wire details are payable from either bank slot — the preferred slot only
+  // decides which account PD DISPLAYS first, not whether the person can be paid.
+  const hasWireDetails =
+    !!(payout.bankName || payout.altBankName) && !!(payout.accountNumber || payout.altAccountNumber);
+  switch (processor) {
     case 'hurupay':
-      return !!payout.hurupayEmail;
+      return !!(payout.hurupayEmail || (extras?.hurupayEmail ?? '').trim());
     case 'wepay':
       return !!payout.wepayEmail;
     case 'higlobe':
-      return !!(payout.higlobeEmail && payout.higlobeAccountName);
+      return (
+        !!(payout.higlobeEmail || (extras?.higlobeEmail ?? '').trim()) &&
+        !!(payout.higlobeAccountName || (extras?.higlobeAccountName ?? '').trim())
+      );
     case 'wise':
-      return !!(payout.wiseEmail || payout.wiseTag);
+      return !!(payout.wiseEmail || payout.wiseTag) || hasWireDetails;
     case 'jeeves':
     case 'wires':
-      return payout.preferredBankSlot === 'alternative'
-        ? !!(payout.altBankName && payout.altAccountNumber)
-        : !!(payout.bankName && payout.accountNumber);
+      return hasWireDetails;
     default:
       return false;
   }

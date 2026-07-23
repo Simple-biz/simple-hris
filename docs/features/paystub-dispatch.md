@@ -198,10 +198,51 @@ Dispatch" posts `{ source_file, pay_period, entries[] }` here.
 ### Per-employee send — inside `POST /api/payment-dispatches`
 
 When Lenny marks a salary dispatch **Paid** (`status='paid'` with a `cycle_source_file`), the
-route looks up the staged row by `(cycle_source_file, recipient_email)` and — if a `payload`
-exists — calls `forwardPaystubDispatch` for just that person. Best-effort: the result is
+route looks up the staged row by `(cycle_source_file, recipient_email)`, runs it through
+`getFreshPaystubEntry` (see next section) so the emailed figures reflect the latest wizard
+snapshot, **reconciles the resulting total against the money actually paid**, persists the
+chosen payload back onto the queue row, and — if a `payload` exists — calls
+`forwardPaystubDispatch` for just that person. Best-effort: the result is
 stamped on the queue row (`markPaystubSent` / `markPaystubSendError`) and returned as
 `{ paystub: { staged, sent, error } }`; a send failure never fails the payment record.
+
+### Paystub freshness — snapshot-over-staged merge
+
+**The problem.** The staged `payload` is captured at lock time, but payments can be
+priced **live** afterward (a rate change, an orphanage-pay edit, a late adjustment).
+A 2026-07 incident emailed one employee ₱16,989.59 while paying ₱23,379.59, and
+understated another's stub after a `175→225` rate change landed post-lock — the
+**money was correct, the stubs were stale**.
+
+**The fix** (`src/lib/payroll/paystub-fresh.ts`). The single source of truth is the
+wizard's `payroll.wizard.final_pay.<file>` snapshot (which now carries
+`regularRate` / `otRate` / `adjustmentNote`). `mergeSnapshotIntoStaged` (pure) +
+`getFreshPaystubEntry` merge the snapshot figures **over** the staged
+`paystub_dispatch_queue.payload`, but only when:
+
+- the snapshot's `updated_at` is **newer than** the row's `locked_at`,
+- the row is **itemized** (post-2026-07-18 payload shape),
+- the match is by **work-email key only** — personal emails are shared/recycled, a
+  cross-person risk, and
+- the row is **not `excluded`** (settled-pay staged amounts win).
+
+**At mark-paid**, the route **always** reconciles the stub total against
+`row.amount_php` — even when the merge no-oped, to catch a queue priced off a
+failed snapshot fetch: it emails the merged payload if it matches the money, the
+staged one if THAT matches, else the merged payload plus a `paystub.amount_mismatch`
+signal (toast + audit fields `stub_total_php` / `amount_php_paid` /
+`amount_mismatch`). The chosen payload is persisted onto the queue row
+(`refreshPaystubQueuePayload`) **before** n8n is called, and paid rows are then
+**frozen as-paid** everywhere.
+
+**Viewers** render **merged for unpaid, staged for paid** (Accounting + Employee
+routes; the employee `?summary=1` / `?all=1` batch-merges). The wizard's
+`publishFinalPaySnapshot` is **gated fail-closed** on `additionsHydratedFor ===
+calcSourceFile` so a mid-load session can't publish zeroed additions.
+
+**Known residual:** a stale wizard session re-publishing the snapshot can still
+poison **unpaid**-row previews (clobber-on-write, no cross-session sync); the
+mark-paid money reconciliation catches it before anything is emailed or frozen.
 
 ### Legacy batch — `app/api/dispatch-paystubs/route.ts` (no callers)
 
@@ -370,6 +411,7 @@ an amber "Unlocked — Payment Dispatch stays empty…" note otherwise.
 - Business rules: `Documentation/BUSINESS_LOGIC.md`.
 - Routes: `app/api/paystub-dispatch-queue/route.ts` (+ `arrears/`), `app/api/payment-dispatches/route.ts` (per-employee send on Mark Paid), `app/api/dispatch-paystubs/route.ts` (legacy batch, no callers).
 - Shared send helper: `src/lib/payroll/paystub-dispatch.ts` (`forwardPaystubDispatch`).
+- Paystub freshness: `src/lib/payroll/paystub-fresh.ts` (`mergeSnapshotIntoStaged`, `getFreshPaystubEntry`, `refreshPaystubQueuePayload`).
 - Queue data access: `src/lib/supabase/paystub-dispatch-queue.ts` (`upsertPaystubDispatchQueue`, `getPaystubDispatchEntry`, `listExcludedArrears`, `markPaystubSent` / `markPaystubSendError`).
 - Realtime lock hook: `src/hooks/useWizardDispatchLock.ts`.
 - Clerk-side queue: `src/components/payroll-clerk/useDispatchQueue.ts` + `ExcludedQueue.tsx`.

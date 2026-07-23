@@ -33,6 +33,7 @@ import {
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
+import { playStagePrepped, stopStagePrepped } from '@/lib/sound/ping-chime';
 import ProcessorQueue from './ProcessorQueue';
 import ExcludedQueue from './ExcludedQueue';
 import DoneQueue from './DoneQueue';
@@ -103,9 +104,10 @@ const PROCESSOR_VISUALS: Record<ProcessorId, ProcessorVisual> = {
   },
   jeeves: {
     Icon: Wifi,
-    accent: 'from-pink-500 to-rose-500',
-    glow: 'from-pink-100/80 via-rose-50/60 to-white dark:from-pink-950/40 dark:via-rose-950/30 dark:to-zinc-900',
+    accent: 'from-amber-500 to-yellow-600',
+    glow: 'from-amber-100/80 via-yellow-50/60 to-white dark:from-amber-950/40 dark:via-yellow-950/30 dark:to-zinc-900',
     blurb: 'Phone + wire',
+    logoSrc: '/jeeves.png',
   },
   wires: {
     Icon: Banknote,
@@ -181,8 +183,25 @@ const itemPop = {
   visible: { opacity: 1, y: 0, transition: { type: 'spring' as const, stiffness: 280, damping: 24 } },
 };
 
-/** Eased spring-like tween shared by the dispatch layout's motion. */
-const FOCUS_TRANSITION = { duration: 0.5, ease: [0.22, 1, 0.36, 1] as const };
+/** Eased spring-like tween shared by the "focus mode" layout shifts so the
+ *  sidebar retract, KPI shrink, and table growth all read as one motion. */
+const FOCUS_TRANSITION = { duration: 0.7, ease: [0.22, 1, 0.36, 1] as const };
+
+/** True at the `lg` breakpoint and up — the only place the two-column grid
+ *  (and therefore the sidebar-retract focus animation) exists. Below lg the
+ *  layout is a plain flex column, so focus mode is a no-op there. */
+function useIsLgUp() {
+  const [isLgUp, setIsLgUp] = useState(false);
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.matchMedia) return;
+    const mq = window.matchMedia('(min-width: 1024px)');
+    const sync = () => setIsLgUp(mq.matches);
+    sync();
+    mq.addEventListener('change', sync);
+    return () => mq.removeEventListener('change', sync);
+  }, []);
+  return isLgUp;
+}
 
 export default function PayrollDispatch() {
   const { data: session } = useSession();
@@ -200,8 +219,12 @@ export default function PayrollDispatch() {
     useDispatchQueue(selectedSourceFile);
   const viewingPastWeek = selectedSourceFile != null;
   const { state: lockState, setLocked } = useDispatchLock();
-  // Focus mode (retract rail + shrink KPIs on processing-start) was removed —
-  // the processor buckets + stats stay full-size at all times, processing or not.
+  const isLgUp = useIsLgUp();
+  // "Focus mode" — once processing has started (lock on) at lg+, retract the
+  // processor sidebar and condense the KPI strip so the queue table gets the
+  // full width/height. The clerk is heads-down logging payments now, so the
+  // filter rail and big hero stats are just chrome in the way.
+  const focusMode = lockState.locked && isLgUp;
   // Realtime "values locked" flag for this cycle — when the wizard locks/unlocks,
   // re-pull the queue so it appears/clears live (the queue's own `wizardReady`
   // mirrors this flag). The lock is owned by the wizard; here we only react.
@@ -226,12 +249,22 @@ export default function PayrollDispatch() {
   // When paying from the Excluded tab, the cross-cycle arrears to settle in one
   // action (one payment + paystub per unpaid held cycle). null = normal pay.
   const [settleArrears, setSettleArrears] = useState<ArrearsInfo | null>(null);
-  const [urgentCount, setUrgentCount] = useState(0);
+  // `null` = not yet known (initial load). We fetch the urgent count up-front
+  // (see effect below) so the Urgent card can hide itself when the queue is
+  // empty, even before the tab is ever opened. `UrgentPaymentsQueue` keeps this
+  // fresh via `onCountChange` once it mounts.
+  const [urgentCount, setUrgentCount] = useState<number | null>(null);
   // Which employee's pay statement is open in the read-only viewer modal (accounting
   // can open any payee's stub without downloading). null = closed.
   const [viewPaystub, setViewPaystub] = useState<{ sourceFile: string; email: string } | null>(null);
   const [confirmingLockToggle, setConfirmingLockToggle] = useState(false);
   const [togglingLock, setTogglingLock] = useState(false);
+  // When the Start/Prepare modal closes, fade out the "stage prepped" sound so
+  // the long clip doesn't keep playing behind the dashboard. Runs on the
+  // open→closed transition (covers success + any dismissal path).
+  useEffect(() => {
+    if (!confirmingLockToggle) stopStagePrepped();
+  }, [confirmingLockToggle]);
   // Lenny can only dispatch when she's "started processing" (i.e. lock=true)
   // and a Hubstaff cycle is loaded. The "ready" mental model from the meeting
   // maps cleanly onto: cycle exists AND processing started.
@@ -249,6 +282,58 @@ export default function PayrollDispatch() {
     setPending(fetched);
     setHydrated(true);
   }, [fetched, loading]);
+
+  // Fetch the urgent count once up-front so the Urgent card can hide itself when
+  // there's nothing pending — the card renders regardless of the active tab, but
+  // `UrgentPaymentsQueue` (the authoritative source via onCountChange) only
+  // mounts once its tab is open. Mirror its count: pending MESA disbursements +
+  // approved orphanage budget requests. Best-effort — on any failure we leave
+  // the count unknown (card stays visible) rather than hiding a real queue.
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const [mesaRes, orphRes] = await Promise.all([
+          fetch('/api/urgent-payments', { cache: 'no-store' }),
+          fetch('/api/orphanage-dispatches?pending=1', { cache: 'no-store' }),
+        ]);
+        if (!mesaRes.ok) throw new Error(`HTTP ${mesaRes.status}`);
+        const mesaJson = (await mesaRes.json()) as { rows?: unknown[]; error?: string };
+        if (mesaJson.error) throw new Error(mesaJson.error);
+        const mesaCount = mesaJson.rows?.length ?? 0;
+
+        let budgetCount = 0;
+        try {
+          const orphJson = (await orphRes.json()) as {
+            items?: { sourceType?: string }[];
+            error?: string;
+          };
+          if (orphRes.ok && !orphJson.error) {
+            budgetCount = (orphJson.items ?? []).filter((i) => i.sourceType === 'budget_request').length;
+          }
+        } catch {
+          /* ignore — budget section silently omitted, matches UrgentPaymentsQueue */
+        }
+        if (!cancelled) setUrgentCount(mesaCount + budgetCount);
+      } catch {
+        /* leave count unknown so the card stays visible */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Whether to show the Urgent card at all. Shown while the count is still
+  // unknown (initial load) to avoid a flash, and whenever there's ≥1 pending.
+  const showUrgentCard = urgentCount == null || urgentCount > 0;
+
+  // If the count drops to zero while the Urgent tab is open (e.g. the clerk just
+  // paid the last one), bounce back to "All pending" so we don't strand them on
+  // a now-hidden tab.
+  useEffect(() => {
+    if (activeTab === 'urgent' && urgentCount === 0) setActiveTab('all');
+  }, [activeTab, urgentCount]);
 
   // Non-PHP people (US Managers in USD, Colombian staff in COP, etc.) are carved
   // OUT of the PHP processor tabs and paid separately in their own currency tab
@@ -629,8 +714,14 @@ export default function PayrollDispatch() {
     if (togglingLock) return;
     setTogglingLock(true);
     const goingLocked = !lockState.locked;
+    // Fire the "stage prepped" alert the instant Start is confirmed — synced
+    // with the optimistic retract + the Preparing Dispatch scene. Start only.
+    if (goingLocked) playStagePrepped();
+    // Minimum on-screen time for the "Preparing Dispatch…" scene so it plays
+    // gracefully instead of flashing by when the optimistic POST returns fast.
+    const minShow = new Promise((r) => setTimeout(r, 1600));
     try {
-      await setLocked(goingLocked);
+      await Promise.all([setLocked(goingLocked), minShow]);
       toast.success(
         goingLocked
           ? 'Processing started — employee issues are paused'
@@ -641,6 +732,8 @@ export default function PayrollDispatch() {
       // the parent state changes — feels like one motion, not two.
       setConfirmingLockToggle(false);
     } catch (e) {
+      // On failure, still let the scene settle a beat before showing the error.
+      await minShow.catch(() => {});
       toast.error(e instanceof Error ? e.message : 'Could not update lock');
     } finally {
       setTogglingLock(false);
@@ -742,8 +835,9 @@ export default function PayrollDispatch() {
           // retract the sidebar / shrink the KPI row smoothly.
           'lg:min-h-0 lg:flex-1 lg:grid lg:grid-rows-[auto_minmax(0,1fr)] lg:gap-4',
         )}
-        // Static two-column grid at lg+ (processor rail 340px, content fills the
-        // rest). No focus-mode retract — the rail is always visible.
+        // Two-column grid at lg+ (processor rail 340px, content fills the rest).
+        // The rail/buckets stay visible during processing — focus mode shrinks
+        // the KPI stats + retracts the app sidebar, but NOT the buckets.
         initial={false}
         animate={{ gridTemplateColumns: '340px minmax(0,1fr)' }}
         transition={FOCUS_TRANSITION}
@@ -762,6 +856,7 @@ export default function PayrollDispatch() {
             value={totalPending}
             sub={totalPending === 1 ? 'person to pay' : 'people to pay'}
             Icon={Send}
+            compact={focusMode}
           />
           <HeroStat
             tone="emerald"
@@ -769,6 +864,7 @@ export default function PayrollDispatch() {
             value={totalSent}
             sub={totalSent === 1 ? 'payment logged' : 'payments logged'}
             Icon={CheckCircle2}
+            compact={focusMode}
           />
           <HeroStat
             tone="violet"
@@ -783,14 +879,14 @@ export default function PayrollDispatch() {
             }
             Icon={Coins}
             currency
+            compact={focusMode}
           />
         </motion.div>
 
         {/* LEFT — Bank cards (filter rail). Order 2 on mobile (between stats
-            and table); spans full height of left column on lg. The rail stays
-            pinned + interactive at all times (including during processing) —
-            focus mode no longer retracts it, per the clerk's request to keep
-            the Pay Processors always visible. */}
+            and table); spans full height of left column on lg. The rail/buckets
+            stay fully visible + interactive at all times, including during
+            processing — focus mode does NOT retract them. */}
         <motion.div
           animate={{ opacity: 1, x: 0 }}
           transition={FOCUS_TRANSITION}
@@ -833,20 +929,22 @@ export default function PayrollDispatch() {
                 iconOnlyFallback
               />
             </motion.div>
-            <motion.div variants={itemPop} className="w-[176px] shrink-0 lg:w-auto">
-              <ProcessorCard
-                label="Urgent"
-                subtitle={URGENT_VISUAL.blurb}
-                count={urgentCount}
-                Icon={URGENT_VISUAL.Icon}
-                accent={URGENT_VISUAL.accent}
-                glow={URGENT_VISUAL.glow}
-                active={activeTab === 'urgent'}
-                onClick={() => setActiveTab('urgent')}
-                iconOnlyFallback
-                glowBorder
-              />
-            </motion.div>
+            {showUrgentCard && (
+              <motion.div variants={itemPop} className="w-[176px] shrink-0 lg:w-auto">
+                <ProcessorCard
+                  label="Urgent"
+                  subtitle={URGENT_VISUAL.blurb}
+                  count={urgentCount ?? 0}
+                  Icon={URGENT_VISUAL.Icon}
+                  accent={URGENT_VISUAL.accent}
+                  glow={URGENT_VISUAL.glow}
+                  active={activeTab === 'urgent'}
+                  onClick={() => setActiveTab('urgent')}
+                  iconOnlyFallback
+                  glowBorder
+                />
+              </motion.div>
+            )}
             {DISPATCH_PROCESSORS.map((p) => {
               const v = PROCESSOR_VISUALS[p.id];
               return (
@@ -997,6 +1095,7 @@ export default function PayrollDispatch() {
         open={confirmingLockToggle}
         locked={lockState.locked}
         submitting={togglingLock}
+        firstName={firstName}
         onClose={() => setConfirmingLockToggle(false)}
         onConfirm={handleLockToggle}
       />
@@ -1333,16 +1432,179 @@ function NoCycleState() {
   );
 }
 
+/** Animated "· · ·" ellipsis for the preparing scene — three dots that breathe
+ *  in sequence. Smoother + warmer than a spinner. */
+function BreathingDots({ color }: { color: string }) {
+  return (
+    <span className="inline-flex items-center gap-1" aria-hidden>
+      {[0, 1, 2].map((i) => (
+        <motion.span
+          key={i}
+          className="block h-1.5 w-1.5 rounded-full"
+          style={{ background: color }}
+          initial={{ opacity: 0.3, scale: 0.7 }}
+          animate={{ opacity: [0.3, 1, 0.3], scale: [0.7, 1, 0.7] }}
+          transition={{ duration: 1.2, repeat: Infinity, ease: 'easeInOut', delay: i * 0.18 }}
+        />
+      ))}
+    </span>
+  );
+}
+
+/** Full-modal scene shown after confirm, replacing the inline button spinner.
+ *  Two distinct personalities:
+ *   - START ("Preparing Dispatch")  — energetic: warm orange orb, floating Send
+ *     icon that sways, endless shimmer sweep (spinning up).
+ *   - STOP  ("Closing Payroll Cycle") — settling: rose orb, a lock that clicks
+ *     shut, a bar that FILLS to 100% then a check (winding down / completing).
+ */
+function PreparingScene({ firstName, stopping }: { firstName: string; stopping: boolean }) {
+  const accent = stopping ? '#f43f5e' : '#f59e0b';
+  const accent2 = stopping ? '#e11d48' : '#f97316';
+
+  // Sub-line steps cycle so the closing sequence reads as real work happening.
+  const steps = stopping
+    ? ['Finalizing this cycle', 'Reopening employee issues', 'Clearing the live banner']
+    : ['Locking the cycle', 'Pausing employee issues', 'Warming up the queue'];
+  const [stepIdx, setStepIdx] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setStepIdx((i) => (i + 1) % steps.length), 700);
+    return () => clearInterval(id);
+  }, [steps.length]);
+
+  return (
+    <motion.div
+      key={stopping ? 'closing' : 'preparing'}
+      initial={{ opacity: 0, scale: 0.96 }}
+      animate={{ opacity: 1, scale: 1 }}
+      exit={{ opacity: 0, scale: 0.98 }}
+      transition={{ duration: 0.45, ease: [0.22, 1, 0.36, 1] }}
+      className="flex flex-col items-center justify-center gap-6 px-4 py-8 text-center"
+    >
+      {/* Orb: soft breathing gradient halo + rotating conic sheen + icon */}
+      <div className="relative flex h-28 w-28 items-center justify-center">
+        <motion.div
+          className="absolute inset-0 rounded-full blur-xl"
+          style={{ background: `radial-gradient(circle at 50% 45%, ${accent}cc, ${accent2}55 55%, transparent 72%)` }}
+          animate={{ scale: [1, 1.12, 1], opacity: [0.7, 1, 0.7] }}
+          transition={{ duration: 2.6, repeat: Infinity, ease: 'easeInOut' }}
+        />
+        <motion.div
+          className="absolute inset-2 rounded-full"
+          style={{ background: `conic-gradient(from 0deg, transparent, ${accent}88, transparent 55%)` }}
+          animate={{ rotate: stopping ? -360 : 360 }}
+          transition={{ duration: stopping ? 4.2 : 3.4, repeat: Infinity, ease: 'linear' }}
+        />
+        {/* Start: an expanding ping ring (spinning up). Stop: a converging ring
+            that contracts inward (sealing shut). */}
+        <motion.span
+          className="absolute inset-0 rounded-full"
+          style={{ boxShadow: `0 0 0 1.5px ${accent}66` }}
+          animate={stopping ? { scale: [1.35, 1], opacity: [0, 0.6] } : { scale: [1, 1.35], opacity: [0.6, 0] }}
+          transition={{ duration: 2, repeat: Infinity, ease: stopping ? 'easeIn' : 'easeOut' }}
+        />
+        <motion.div
+          className="relative flex h-16 w-16 items-center justify-center rounded-2xl text-white shadow-lg"
+          style={{ background: `linear-gradient(135deg, ${accent}, ${accent2})`, boxShadow: `0 10px 30px -6px ${accent}80` }}
+          // Start floats/breathes; Stop settles with a subtle downward "seat".
+          animate={stopping ? { y: [0, 2, 0], scale: [1, 0.96, 1] } : { y: [0, -5, 0] }}
+          transition={{ duration: stopping ? 2.6 : 2.4, repeat: Infinity, ease: 'easeInOut' }}
+        >
+          <motion.span
+            // Start: gentle sway. Stop: a periodic "lock click" shut.
+            animate={stopping ? { rotate: [0, -10, 0], scale: [1, 1.1, 1] } : { rotate: [0, 8, -8, 0] }}
+            transition={{ duration: stopping ? 1.8 : 2.2, repeat: Infinity, ease: 'easeInOut' }}
+          >
+            {stopping ? <Lock className="h-8 w-8" /> : <Send className="h-8 w-8" />}
+          </motion.span>
+        </motion.div>
+      </div>
+
+      <div className="space-y-1.5">
+        <motion.h2
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.12, duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
+          className="text-lg font-semibold tracking-tight text-zinc-900 dark:text-white"
+        >
+          {stopping ? 'Closing Payroll Cycle, ' : 'Preparing Dispatch for you, '}
+          <span
+            className="bg-clip-text text-transparent"
+            style={{ backgroundImage: `linear-gradient(90deg, ${accent2}, ${accent})` }}
+          >
+            {firstName}
+          </span>
+        </motion.h2>
+        {/* Cycling step line — crossfades between the closing/prep steps. */}
+        <div className="flex h-4 items-center justify-center gap-2 text-xs text-zinc-500 dark:text-zinc-400">
+          <AnimatePresence mode="wait">
+            <motion.span
+              key={stepIdx}
+              initial={{ opacity: 0, y: 4 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -4 }}
+              transition={{ duration: 0.25 }}
+            >
+              {steps[stepIdx]}
+            </motion.span>
+          </AnimatePresence>
+          <BreathingDots color={accent} />
+        </div>
+      </div>
+
+      {/* Progress bar.
+          START: endless shimmer sweep (spinning up, indeterminate).
+          STOP:  a bar that FILLS left→right to 100% then flashes a check —
+                 the cycle is completing/closing, not idling. */}
+      {stopping ? (
+        <div className="flex w-52 flex-col items-center gap-2">
+          <div className="relative h-1.5 w-full overflow-hidden rounded-full bg-zinc-200/70 dark:bg-white/10">
+            <motion.div
+              className="absolute inset-y-0 left-0 rounded-full"
+              style={{ background: `linear-gradient(90deg, ${accent2}, ${accent})` }}
+              initial={{ width: '0%' }}
+              animate={{ width: '100%' }}
+              transition={{ duration: 1.4, ease: [0.22, 1, 0.36, 1] }}
+            />
+          </div>
+          <motion.div
+            className="flex items-center gap-1 text-[11px] font-medium"
+            style={{ color: accent }}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ delay: 1.4, duration: 0.3 }}
+          >
+            <CheckCircle2 className="h-3.5 w-3.5" />
+            Cycle closed
+          </motion.div>
+        </div>
+      ) : (
+        <div className="relative h-1 w-48 overflow-hidden rounded-full bg-zinc-200/70 dark:bg-white/10">
+          <motion.div
+            className="absolute inset-y-0 w-1/2 rounded-full"
+            style={{ background: `linear-gradient(90deg, transparent, ${accent}, ${accent2}, transparent)` }}
+            initial={{ x: '-120%' }}
+            animate={{ x: '240%' }}
+            transition={{ duration: 1.5, repeat: Infinity, ease: 'easeInOut' }}
+          />
+        </div>
+      )}
+    </motion.div>
+  );
+}
+
 function LockToggleConfirmDialog({
   open,
   locked,
   submitting,
+  firstName,
   onClose,
   onConfirm,
 }: {
   open: boolean;
   locked: boolean;
   submitting: boolean;
+  firstName: string;
   onClose: () => void;
   onConfirm: () => void;
 }) {
@@ -1355,60 +1617,71 @@ function LockToggleConfirmDialog({
         if (!o && !submitting) onClose();
       }}
     >
-      <DialogContent className="sm:max-w-[440px]">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2 text-lg">
-            {isStarting ? (
-              <Play className="h-5 w-5 text-emerald-500" />
-            ) : (
-              <StopCircle className="h-5 w-5 text-rose-500" />
-            )}
-            {isStarting ? 'Start payroll processing?' : 'Stop payroll processing?'}
-          </DialogTitle>
-          <DialogDescription className="text-xs leading-relaxed">
-            {isStarting ? (
-              <>
-                Starts the dispatch run for this cycle. Employees&apos; <span className="font-medium">File an Issue</span>{' '}
-                button will be disabled live across all dashboards while processing is active.
-              </>
-            ) : (
-              <>
-                Ends processing for this cycle. Employees can file issues again and the live banner will
-                clear from their dashboards.
-              </>
-            )}
-          </DialogDescription>
-        </DialogHeader>
-        <DialogFooter className="gap-2">
-          <Button variant="outline" onClick={onClose} disabled={submitting}>
-            Cancel
-          </Button>
-          <Button
-            onClick={onConfirm}
-            disabled={submitting}
-            className={cn(
-              'gap-2 text-white transition-colors',
-              isStarting
-                ? 'bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-600/80'
-                : 'bg-rose-600 hover:bg-rose-700 disabled:bg-rose-600/80',
-            )}
-          >
-            {submitting ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : isStarting ? (
-              <Play className="h-4 w-4" />
-            ) : (
-              <StopCircle className="h-4 w-4" />
-            )}
-            {submitting
-              ? isStarting
-                ? 'Starting…'
-                : 'Stopping…'
-              : isStarting
-                ? 'Start processing'
-                : 'Stop processing'}
-          </Button>
-        </DialogFooter>
+      <DialogContent
+        showCloseButton={!submitting}
+        // Slower, gentler open than the app-wide default (320ms) so the modal
+        // eases in instead of snapping — a longer, softer zoom + rise. Scoped to
+        // this dialog only via className overrides on the data-open enter state.
+        className={cn(
+          'overflow-hidden sm:max-w-[460px]',
+          'data-open:duration-[520ms] data-open:ease-[cubic-bezier(0.16,1,0.3,1)]',
+          'data-open:zoom-in-[0.92] data-open:slide-in-from-bottom-3',
+        )}
+      >
+        <AnimatePresence mode="wait" initial={false}>
+          {submitting ? (
+            <PreparingScene key="prep" firstName={firstName} stopping={!isStarting} />
+          ) : (
+            <motion.div
+              key="confirm"
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -6 }}
+              transition={{ duration: 0.5, ease: [0.16, 1, 0.3, 1] }}
+            >
+              <DialogHeader>
+                <DialogTitle className="flex items-center gap-2 text-lg">
+                  {isStarting ? (
+                    <Play className="h-5 w-5 text-emerald-500" />
+                  ) : (
+                    <StopCircle className="h-5 w-5 text-rose-500" />
+                  )}
+                  {isStarting ? 'Start payroll processing?' : 'Stop payroll processing?'}
+                </DialogTitle>
+                <DialogDescription className="text-xs leading-relaxed">
+                  {isStarting ? (
+                    <>
+                      Starts the dispatch run for this cycle. Employees&apos; <span className="font-medium">File an Issue</span>{' '}
+                      button will be disabled live across all dashboards while processing is active.
+                    </>
+                  ) : (
+                    <>
+                      Ends processing for this cycle. Employees can file issues again and the live banner will
+                      clear from their dashboards.
+                    </>
+                  )}
+                </DialogDescription>
+              </DialogHeader>
+              <DialogFooter className="mt-4 gap-2">
+                <Button variant="outline" onClick={onClose}>
+                  Cancel
+                </Button>
+                <Button
+                  onClick={onConfirm}
+                  className={cn(
+                    'gap-2 text-white transition-colors',
+                    isStarting
+                      ? 'bg-emerald-600 hover:bg-emerald-700'
+                      : 'bg-rose-600 hover:bg-rose-700',
+                  )}
+                >
+                  {isStarting ? <Play className="h-4 w-4" /> : <StopCircle className="h-4 w-4" />}
+                  {isStarting ? 'Start processing' : 'Stop processing'}
+                </Button>
+              </DialogFooter>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </DialogContent>
     </Dialog>
   );

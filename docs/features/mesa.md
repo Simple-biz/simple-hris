@@ -104,10 +104,39 @@ All three dashboards read the same ledger via `GET /api/mesa-ledger` and render 
 
 The Wizard (`src/components/PayrollWizard.tsx`) drives MESA money into pay via the Additions **"MESA"** column, using two inputs:
 
-1. **Weekly deduction (−₱100).** Applied automatically to members whose rates row has `mesa_member = true`, but only for weeks on/after `mesa_member_since` (both dates are `YYYY-MM-DD`, compared lexically against the week end). This flag is set by `POST /api/toggle-mesa-member` (from HR opt-in approval) and preloaded from the ledger by `scripts/preload-mesa-membership.mjs`.
-2. **Disbursement (+PHP).** Approved, not-yet-dispatched `disbursement` requests (`GET /api/mesa-requests?request_type=disbursement&status=approved`) are folded in per employee. A disbursement also implies an active member, so it forces the −₱100 that week.
+1. **Weekly deduction (−₱100).** Applied automatically to members whose rates row has `mesa_member = true`, but only for weeks on/after `mesa_member_since` (both dates are `YYYY-MM-DD`, compared lexically against the week end) **and who are not currently opted out** (see below). This flag is set by `POST /api/toggle-mesa-member` (from HR opt-in approval) and preloaded from the ledger by `scripts/preload-mesa-membership.mjs`.
+2. **Disbursement (+PHP).** Approved, not-yet-dispatched `disbursement` requests (`GET /api/mesa-requests?request_type=disbursement&status=approved`) are folded in per employee. A disbursement **only adds** to pay — it no longer forces the −₱100 (an opted-out ex-member being paid an approved disbursement must not be charged; the disbursement-implies-deduction override was removed).
 
 Net effect on Final pay: `finalPay = initialPay + bonuses − mesaDeduction + mesaDisbursement + orphanagePay`. The `mesa_deduction` / `mesa_disbursement` breakdown is carried on the paystub payload so the Employee dashboard can itemize the weekly ₱100.
+
+### Never deduct from a non-member (opt-out suppression)
+
+The bare `mesa_member` flag is not sufficient: it can drift `true` for someone who
+has since opted out. The Accounting **Non Members** tab already uses a stronger
+rule — someone whose MESA **ledger last event is an opt-out** is a non-member
+regardless of the flag (`lastEventOptedOut` in `src/lib/mesa/ledger.ts`). The
+Wizard now mirrors that tab exactly so a flag-drifted ex-member is never charged.
+
+- The Wizard fetches `GET /api/mesa-ledger` → `members[].lastEventOptedOut` into
+  `mesaOptedOutEmails`, and a shared `isMesaOptedOut(rowEmail, rateRow)` predicate
+  suppresses the ₱100 at **all 7 deduction sites** (main compute; Additions
+  per-row + department summary; HSL per-row + footer; Step-7 final rows).
+- **Rule:** deduct only when `mesa_member === true && !isMesaOptedOut`.
+- **Fail-safe:** if the ledger is unavailable, `mesaOptedOutEmails` is empty and it
+  falls back to flag-only behavior — it never *re-introduces* a deduction.
+- **Re-join is safe:** opting back in opens a fresh `mesa_accounts` row; the ledger
+  API scopes each member to their **open** account window (`summarizeMemberAccount`),
+  so a re-joined member's `lastEventOptedOut` resets to `false` and the deduction
+  resumes. Locked by `src/lib/mesa/ledger.test.ts`.
+- Everything downstream (paystub-fresh, Payment Dispatch, Mark Paid) inherits the
+  Wizard's `mesa_deduction`, so this one change fixes the whole chain.
+
+**Related — the rates sheet no longer touches `mesa_member`.** A rates-sheet
+re-upload used to write `mesa_member` (a silent re-enrollment path that could flip
+an HRIS opt-out back to `true`). That write was removed
+(`src/lib/supabase/rates-upload-db.ts`); opt in/out is **HRIS-only** now
+(`toggle-mesa-member` + `preload-mesa-membership.mjs`), and the sheet is read-only
+for MESA.
 
 ---
 

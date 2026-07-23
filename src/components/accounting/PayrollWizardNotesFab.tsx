@@ -3,20 +3,31 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useSession } from "next-auth/react";
-import { AnimatePresence, motion } from "motion/react";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import {
+  AlertTriangle,
+  Banknote,
   CalendarDays,
   CheckCheck,
+  CheckCircle2,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  ClipboardList,
+  Clock,
   ListChecks,
   Loader2,
+  Lock,
   Plus,
+  Search,
+  ShieldCheck,
+  Sparkles,
   StickyNote,
   Trash2,
   User,
+  UserPlus,
   Wallet,
+  X,
   Zap,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -44,9 +55,20 @@ import {
   type PayStructure,
 } from "@/lib/payment-catalog/pay-structure";
 import { addWeeks, payrollNotesWeekStart, weekRangeLabel } from "@/lib/payroll/manila-week";
+import { periodLabelFromFilename } from "@/lib/hubstaff/period-label";
+import type {
+  PayrollReadiness,
+  ReadinessKpiDept,
+  KpiDeptStatus,
+  ExceptionKind,
+  ReadinessScore,
+} from "@/lib/payroll/payroll-readiness";
 import {
   APPLY_NOTE_ADJUSTMENTS_EVENT,
   NOTE_ADJUSTMENT_REMOVED_EVENT,
+  WIZARD_CYCLE_EVENT,
+  REQUEST_WIZARD_CYCLE_EVENT,
+  type WizardCycleDetail,
 } from "@/lib/payroll/adjustment-bridge";
 
 /**
@@ -86,10 +108,24 @@ function todayStamp(): string {
 /** localStorage key base for the per-user "show everyone's notes" preference. */
 const SHOW_OTHERS_KEY = "payroll-wizard-notes:show-others";
 
-type ModalTab = "checklist" | "rates";
+/** The three modal panes. `checklist` is the original carry-over adjustments
+ *  board (label reads "Adjustments and Notes"); `readiness` is the payroll-ready
+ *  dashboard; `rates` is the Payment-Catalog glance. Kept left→right in this
+ *  order so the directional slide reads naturally. */
+type ModalTab = "checklist" | "readiness" | "rates";
+const TAB_ORDER: ModalTab[] = ["checklist", "readiness", "rates"];
 
 /** Shared easing — matches the app's tab transition (App.tsx / BonusCatalog). */
 const EASE = [0.22, 1, 0.36, 1] as const;
+
+/** Directional pane slide for the modal's tab swap — the incoming pane enters
+ *  from the side you moved toward and the outgoing one leaves the opposite way
+ *  (§11.1). `custom` carries the direction (+1 forward / −1 back). */
+const PANE_VARIANTS = {
+  enter: (dir: number) => ({ opacity: 0, x: dir >= 0 ? 24 : -24 }),
+  center: { opacity: 1, x: 0 },
+  exit: (dir: number) => ({ opacity: 0, x: dir >= 0 ? -24 : 24 }),
+};
 
 export default function PayrollWizardNotesFab({
   sessionEmail,
@@ -100,6 +136,59 @@ export default function PayrollWizardNotesFab({
 }) {
   const [open, setOpen] = useState(false);
   const [modalTab, setModalTab] = useState<ModalTab>("checklist");
+  const reduceMotion = useReducedMotion();
+  // Which way the pane slide travels: +1 when moving toward a later tab,
+  // −1 toward an earlier one, so a 3-tab switch reads like turning pages.
+  const [tabDir, setTabDir] = useState(0);
+  const changeTab = useCallback(
+    (next: ModalTab) => {
+      setModalTab((cur) => {
+        if (cur === next) return cur;
+        setTabDir(TAB_ORDER.indexOf(next) >= TAB_ORDER.indexOf(cur) ? 1 : -1);
+        return next;
+      });
+    },
+    [],
+  );
+  // The Hubstaff upload the Payroll Wizard is CURRENTLY on (possibly a replayed
+  // past week), learned from its WIZARD_CYCLE broadcast. The Readiness tab keys
+  // its snapshot on this so it always describes the same week the wizard shows.
+  // `undefined` = not heard from the wizard yet (fall back to the live upload
+  // server-side); a string / null = the wizard's actual selection.
+  // `heard` flips true once the wizard answers, so a null answer (wizard's file
+  // not settled yet) is distinguishable from "never replied". The value itself
+  // is the wizard's `calcSourceFile` verbatim (string = a chosen week incl.
+  // replays, null = no upload yet).
+  const [wizardSourceFile, setWizardSourceFile] = useState<string | null>(null);
+  const [heardWizard, setHeardWizard] = useState(false);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const onCycle = (e: Event) => {
+      const detail = (e as CustomEvent<WizardCycleDetail>).detail;
+      setWizardSourceFile(detail?.sourceFile ?? null);
+      setHeardWizard(true);
+    };
+    window.addEventListener(WIZARD_CYCLE_EVENT, onCycle);
+    return () => window.removeEventListener(WIZARD_CYCLE_EVENT, onCycle);
+  }, []);
+  // Ask the (sibling) wizard which week it's on. The two mount independently and
+  // the wizard's file may not be settled at first ask, so we retry a handful of
+  // times (short backoff) until it answers, and again every time the modal opens
+  // — so the Readiness snapshot always keys on the wizard's live CSV selection.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    let tries = 0;
+    const ping = () => window.dispatchEvent(new CustomEvent(REQUEST_WIZARD_CYCLE_EVENT));
+    ping();
+    const timer = window.setInterval(() => {
+      tries += 1;
+      ping();
+      // Stop once the wizard has answered or after ~3.2s of trying (it may not
+      // be mounted at all — e.g. the board opened from a non-wizard surface).
+      if (heardWizard || tries >= 8) window.clearInterval(timer);
+    }, 400);
+    return () => window.clearInterval(timer);
+  }, [open, heardWizard]);
   // Period selector: which pay period (Sunday–Saturday) the board is showing.
   // Defaults to — and follows — the live period, i.e. the just-completed week
   // being paid now (payroll runs a week in arrears); past weeks are read-back
@@ -441,7 +530,7 @@ export default function PayrollWizardNotesFab({
       <button
         type="button"
         onClick={() => setOpen(true)}
-        aria-label={`Open payroll notes checklist${openCount > 0 ? ` (${openCount} open)` : ""}`}
+        aria-label={`Open payroll notes and readiness${openCount > 0 ? ` (${openCount} open)` : ""}`}
         className="notes-fab-pulse fixed right-5 bottom-5 z-40 flex h-13 w-13 items-center justify-center rounded-full bg-gradient-to-br from-orange-500 to-amber-500 text-white shadow-lg shadow-orange-500/30 transition-[filter] hover:brightness-110 focus-visible:ring-3 focus-visible:ring-orange-400/60 focus-visible:outline-none dark:from-orange-600 dark:to-amber-600"
       >
         <StickyNote className="h-6 w-6" />
@@ -467,6 +556,13 @@ export default function PayrollWizardNotesFab({
                   your rows to the wizard and marks them <span className="font-medium">Done</span>;
                   editing a Worker or Adjustment reopens the row. Cells save automatically.
                 </>
+              ) : modalTab === "readiness" ? (
+                <>
+                  Everything that has to be settled before this week&apos;s payroll can run — which
+                  departments have submitted their KPIs, who still has no pay rate or bank details,
+                  and who&apos;s a known exception. Green all the way down means you&apos;re{" "}
+                  <span className="font-medium">Payroll Ready</span>.
+                </>
               ) : (
                 <>
                   The rates set in the Payment Catalog, at a glance. Hover a department card to
@@ -479,7 +575,8 @@ export default function PayrollWizardNotesFab({
           <div className="flex items-center gap-1 border-b border-orange-100 dark:border-blue-950/60">
             {(
               [
-                { id: "checklist", label: "Checklist", icon: ListChecks },
+                { id: "checklist", label: "Adjustments and Notes", icon: ListChecks },
+                { id: "readiness", label: "Readiness", icon: ShieldCheck },
                 { id: "rates", label: "Rates", icon: Wallet },
               ] as const
             ).map((t) => (
@@ -488,37 +585,68 @@ export default function PayrollWizardNotesFab({
                 type="button"
                 role="tab"
                 aria-selected={modalTab === t.id}
-                onClick={() => setModalTab(t.id)}
-                className={`-mb-px flex items-center gap-1.5 rounded-t-md border-b-2 px-3 py-1.5 text-sm font-medium transition-colors ${
+                onClick={() => changeTab(t.id)}
+                className={`relative -mb-px flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium transition-colors ${
                   modalTab === t.id
-                    ? "border-orange-500 text-orange-700 dark:border-orange-400 dark:text-orange-300"
-                    : "border-transparent text-zinc-500 hover:bg-orange-50/60 hover:text-zinc-800 dark:text-zinc-400 dark:hover:bg-blue-950/30 dark:hover:text-zinc-200"
+                    ? "text-orange-700 dark:text-orange-300"
+                    : "text-zinc-500 hover:bg-orange-50/60 hover:text-zinc-800 dark:text-zinc-400 dark:hover:bg-blue-950/30 dark:hover:text-zinc-200"
                 }`}
               >
                 <t.icon className="h-4 w-4" />
                 {t.label}
+                {modalTab === t.id && (
+                  <motion.span
+                    layoutId="pw-notes-tab-underline"
+                    className="absolute inset-x-0 -bottom-px h-0.5 rounded-full bg-orange-500 dark:bg-orange-400"
+                    transition={{ duration: reduceMotion ? 0 : 0.3, ease: EASE }}
+                  />
+                )}
               </button>
             ))}
           </div>
 
-          <AnimatePresence mode="wait" initial={false}>
+          {/* Directional cross-fade between the three panes: the slide follows
+              which tab you moved toward (tabDir), and every pane keeps the same
+              h-[70vh] body height so the dialog never jumps mid-swap. Gated on
+              reduced motion. */}
+          <div className="overflow-x-clip">
+          <AnimatePresence mode="wait" initial={false} custom={tabDir}>
           {modalTab === "rates" ? (
             <motion.div
               key="rates"
-              initial={{ opacity: 0, x: 14 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: -14 }}
-              transition={{ duration: 0.22, ease: EASE }}
+              custom={tabDir}
+              variants={PANE_VARIANTS}
+              initial="enter"
+              animate="center"
+              exit="exit"
+              transition={{ duration: reduceMotion ? 0 : 0.24, ease: EASE }}
             >
               <RatesGlance />
+            </motion.div>
+          ) : modalTab === "readiness" ? (
+            <motion.div
+              key="readiness"
+              custom={tabDir}
+              variants={PANE_VARIANTS}
+              initial="enter"
+              animate="center"
+              exit="exit"
+              transition={{ duration: reduceMotion ? 0 : 0.24, ease: EASE }}
+            >
+              <PayrollReadinessGlance
+                wizardSourceFile={wizardSourceFile}
+                heardWizard={heardWizard}
+              />
             </motion.div>
           ) : (
             <motion.div
               key="checklist"
-              initial={{ opacity: 0, x: -14 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: 14 }}
-              transition={{ duration: 0.22, ease: EASE }}
+              custom={tabDir}
+              variants={PANE_VARIANTS}
+              initial="enter"
+              animate="center"
+              exit="exit"
+              transition={{ duration: reduceMotion ? 0 : 0.24, ease: EASE }}
               className="grid gap-4"
             >
           {error && (
@@ -705,6 +833,7 @@ export default function PayrollWizardNotesFab({
             </motion.div>
           )}
           </AnimatePresence>
+          </div>
         </DialogContent>
       </Dialog>
     </>
@@ -815,6 +944,1581 @@ function RatesGlance() {
           </div>
         ))}
       </div>
+    </div>
+  );
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * Readiness tab — "are we Payroll Ready?"
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/** Tiny-caps status pill (§8.2) tones by KPI dept status. */
+const KPI_STATUS_PILL: Record<KpiDeptStatus, { label: string; cls: string; Icon: typeof CheckCircle2 }> = {
+  locked: {
+    label: "Locked",
+    cls: "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-300",
+    Icon: Lock,
+  },
+  ready: {
+    label: "Ready",
+    cls: "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-300",
+    Icon: CheckCircle2,
+  },
+  draft: {
+    label: "Pending",
+    cls: "border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300",
+    Icon: Clock,
+  },
+  na: {
+    label: "Not due",
+    cls: "border-zinc-200 bg-zinc-50 text-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400",
+    Icon: Clock,
+  },
+};
+
+/** A KPI dept is "settled" for the week when its manager marked it ready/locked
+ *  (or it isn't due this week). Draft = still left to do. */
+function isKpiSettled(s: KpiDeptStatus): boolean {
+  return s === "ready" || s === "locked" || s === "na";
+}
+
+const EXCEPTION_META: Record<ExceptionKind, { label: string; cls: string; Icon: typeof UserPlus }> = {
+  onboarding: {
+    label: "Onboarding",
+    cls: "border-sky-200 bg-sky-50 text-sky-700 dark:border-sky-500/30 dark:bg-sky-500/10 dark:text-sky-300",
+    Icon: UserPlus,
+  },
+  awaiting_orientation: {
+    label: "Awaiting orientation",
+    cls: "border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300",
+    Icon: Clock,
+  },
+  no_show: {
+    label: "No-show",
+    cls: "border-zinc-200 bg-zinc-50 text-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400",
+    Icon: AlertTriangle,
+  },
+  started_this_week: {
+    label: "Started this week",
+    cls: "border-sky-200 bg-sky-50 text-sky-700 dark:border-sky-500/30 dark:bg-sky-500/10 dark:text-sky-300",
+    Icon: UserPlus,
+  },
+};
+
+/** The Readiness pane's four inner tabs — one per detail list. Left→right order
+ *  matches the stat-tile row, so the directional slide reads naturally. */
+type ReadinessTab = "kpi" | "rate" | "bank" | "exc";
+const READINESS_TAB_ORDER: ReadinessTab[] = ["kpi", "rate", "bank", "exc"];
+
+/** A single readiness stat tile (§6.3) — a read-only summary count. `tone` picks
+ *  the palette. (Switching between the four detail lists is the job of the
+ *  explicit tab strip below the tiles, not the tiles themselves.) */
+function ReadinessStat({
+  label,
+  value,
+  sub,
+  tone,
+  Icon,
+}: {
+  label: string;
+  value: number | string;
+  sub: string;
+  tone: "emerald" | "amber" | "sky" | "orange";
+  Icon: typeof CheckCircle2;
+}) {
+  const palette: Record<string, { ring: string; icon: string; text: string }> = {
+    emerald: {
+      ring: "from-emerald-200/40 to-teal-200/40",
+      icon: "from-emerald-500 to-teal-500",
+      text: "text-emerald-700 dark:text-emerald-300",
+    },
+    amber: {
+      ring: "from-amber-200/40 to-orange-200/40",
+      icon: "from-amber-500 to-orange-500",
+      text: "text-amber-700 dark:text-amber-300",
+    },
+    sky: {
+      ring: "from-sky-200/40 to-blue-200/40",
+      icon: "from-sky-500 to-blue-500",
+      text: "text-sky-700 dark:text-sky-300",
+    },
+    orange: {
+      ring: "from-orange-200/40 to-rose-200/40",
+      icon: "from-orange-500 to-rose-500",
+      text: "text-orange-700 dark:text-orange-300",
+    },
+  };
+  const p = palette[tone]!;
+  return (
+    <div className="relative overflow-hidden rounded-xl border border-white/60 bg-white/70 p-2.5 backdrop-blur-md sm:p-3 dark:border-zinc-800 dark:bg-zinc-900/60">
+      <div className={`absolute inset-0 bg-gradient-to-br opacity-60 ${p.ring}`} aria-hidden />
+      <div className="relative flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <div className={`text-[9px] font-semibold uppercase tracking-[0.14em] ${p.text}`}>{label}</div>
+          <div className="mt-0.5 text-base font-bold tracking-tight tabular-nums sm:text-lg">{value}</div>
+          <div className="mt-0.5 truncate text-[10px] text-zinc-500 dark:text-zinc-400">{sub}</div>
+        </div>
+        <div className={`hidden h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br ${p.icon} text-white sm:flex`}>
+          <Icon className="h-4 w-4" />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Explicit tab strip for the Readiness pane — one labeled tab per detail list,
+ *  each with icon, name, and a live count badge, plus a sliding `layoutId`
+ *  underline under the active tab (matching the modal's top-level tabs). This is
+ *  the control the user reaches for to switch between KPI Submissions, No Pay
+ *  Rate, Bank Info, and Exceptions. Horizontally scrollable on narrow widths so
+ *  all four stay reachable. */
+function ReadinessTabStrip({
+  active,
+  onPick,
+  counts,
+  reduceMotion,
+}: {
+  active: ReadinessTab;
+  onPick: (t: ReadinessTab) => void;
+  counts: Record<ReadinessTab, number>;
+  reduceMotion: boolean;
+}) {
+  // `blocker` = a no-rate worker can't be paid at all (rose). `neutral` =
+  // informational, never blocks Payroll Ready (sky) — exceptions are expected
+  // non-payments, so their count must NOT read as a warning to clear (mirrors
+  // the sky stat tile + the hero excluding exceptions from the verdict).
+  const TABS: { id: ReadinessTab; label: string; Icon: typeof CheckCircle2; blocker?: boolean; neutral?: boolean }[] = [
+    { id: "kpi", label: "KPI Submissions", Icon: ClipboardList },
+    { id: "rate", label: "No Pay Rate", Icon: Wallet, blocker: true },
+    { id: "bank", label: "Bank Info", Icon: Banknote },
+    { id: "exc", label: "Exceptions", Icon: UserPlus, neutral: true },
+  ];
+  return (
+    <div
+      role="tablist"
+      aria-label="Readiness details"
+      className="flex items-center gap-1 overflow-x-auto border-b border-orange-100 pb-px dark:border-blue-950/60"
+    >
+      {TABS.map((t) => {
+        const isActive = active === t.id;
+        const count = counts[t.id];
+        // Count badge tone: clear (0) reads emerald; a no-rate count is a hard
+        // blocker (rose); an informational count (exceptions) reads neutral sky;
+        // anything else is a warning to clear (amber).
+        const badgeCls =
+          count === 0
+            ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300"
+            : t.blocker
+              ? "bg-rose-100 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300"
+              : t.neutral
+                ? "bg-sky-100 text-sky-700 dark:bg-sky-500/15 dark:text-sky-300"
+                : "bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300";
+        return (
+          <button
+            key={t.id}
+            type="button"
+            role="tab"
+            aria-selected={isActive}
+            onClick={() => onPick(t.id)}
+            className={`relative -mb-px flex shrink-0 items-center gap-1.5 rounded-t-lg px-3 py-2 text-xs font-semibold whitespace-nowrap transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-400/60 ${
+              isActive
+                ? "text-orange-700 dark:text-orange-300"
+                : "text-zinc-500 hover:bg-orange-50/60 hover:text-zinc-800 dark:text-zinc-400 dark:hover:bg-blue-950/30 dark:hover:text-zinc-200"
+            }`}
+          >
+            <t.Icon className="h-3.5 w-3.5" />
+            {t.label}
+            <span className={`inline-flex min-w-4 items-center justify-center rounded-full px-1 text-[10px] font-bold tabular-nums ${badgeCls}`}>
+              {count}
+            </span>
+            {isActive && (
+              <motion.span
+                layoutId="readiness-tab-underline"
+                className="absolute inset-x-1 -bottom-px h-0.5 rounded-full bg-orange-500 dark:bg-orange-400"
+                transition={{ duration: reduceMotion ? 0 : 0.3, ease: EASE }}
+              />
+            )}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+/** The framed body for one tab's detail list. Header-less by design: the tab
+ *  strip above already owns the label + count + status colour (so a per-section
+ *  header would duplicate all three within a few pixels). This is just the
+ *  rounded, padded container the list sits in. */
+function PaneBody({ children }: { children: React.ReactNode }) {
+  return (
+    <section className="rounded-xl border border-orange-100 bg-white/60 p-2.5 dark:border-blue-950/60 dark:bg-blue-950/10">
+      {children}
+    </section>
+  );
+}
+
+/** Empty "all clear" line for a settled section (§12.1, compact). */
+function AllClear({ text }: { text: string }) {
+  return (
+    <div className="flex items-center justify-center gap-2 px-3 py-4 text-xs text-emerald-600 dark:text-emerald-400">
+      <CheckCircle2 className="h-4 w-4" />
+      {text}
+    </div>
+  );
+}
+
+/** Case-insensitive "every field contains the query" test. Empty query passes. */
+function matchesQuery(query: string, ...fields: (string | null | undefined)[]): boolean {
+  const q = query.trim().toLowerCase();
+  if (!q) return true;
+  const hay = fields.filter(Boolean).join(" ").toLowerCase();
+  return hay.includes(q);
+}
+
+/** Compact per-section search input (§9.2, scaled to the readiness lists). Shows
+ *  a live result count and a clear affordance while a query is active. */
+function ReadinessSearch({
+  value,
+  onChange,
+  placeholder,
+  shown,
+  total,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  placeholder: string;
+  shown: number;
+  total: number;
+}) {
+  const active = value.trim() !== "";
+  return (
+    <div className="relative mb-2">
+      <Search aria-hidden className="pointer-events-none absolute top-1/2 left-2.5 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400" />
+      <Input
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        aria-label={placeholder}
+        className="h-7 rounded-md pr-16 pl-8 text-xs focus-visible:ring-orange-200 dark:focus-visible:ring-blue-900"
+      />
+      <div className="absolute top-1/2 right-1.5 flex -translate-y-1/2 items-center gap-1">
+        {active && (
+          <>
+            <span className="text-[10px] tabular-nums text-zinc-400">
+              {shown}/{total}
+            </span>
+            <button
+              type="button"
+              onClick={() => onChange("")}
+              aria-label="Clear search"
+              className="rounded p-0.5 text-zinc-400 transition-colors hover:bg-orange-100/70 hover:text-zinc-700 dark:hover:bg-blue-950/50 dark:hover:text-zinc-200"
+            >
+              <X className="h-3 w-3" />
+            </button>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** "No matches" line for a filtered-empty list. */
+function NoMatches({ query }: { query: string }) {
+  return (
+    <div className="px-3 py-4 text-center text-xs text-zinc-400">
+      No matches for <span className="font-mono text-zinc-500 dark:text-zinc-300">“{query.trim()}”</span>
+    </div>
+  );
+}
+
+/** Rows per page for the paginated people lists (No Pay Rate / Bank Info /
+ *  Exceptions). Ten keeps a page short enough to scan without scrolling. */
+const READINESS_PAGE_SIZE = 10;
+
+/**
+ * Client-side pagination over an already-filtered list. Returns the current
+ * page's slice plus the controls state. Resets to page 1 whenever `resetKey`
+ * changes (a new search query) so you never land on a now-empty page; and clamps
+ * the page down if the list shrinks under it (a live refresh removing rows, or
+ * the filter narrowing the count) so the view never sticks past the last page.
+ */
+function usePagedList<T>(items: T[], resetKey: string) {
+  const [page, setPage] = useState(0); // zero-based
+  const pageCount = Math.max(1, Math.ceil(items.length / READINESS_PAGE_SIZE));
+
+  // New query → back to the first page.
+  useEffect(() => {
+    setPage(0);
+  }, [resetKey]);
+
+  // List shrank under the current page → clamp to the last valid page.
+  useEffect(() => {
+    setPage((p) => Math.min(p, pageCount - 1));
+  }, [pageCount]);
+
+  const safePage = Math.min(page, pageCount - 1);
+  const start = safePage * READINESS_PAGE_SIZE;
+  const pageItems = useMemo(
+    () => items.slice(start, start + READINESS_PAGE_SIZE),
+    [items, start],
+  );
+  return {
+    pageItems,
+    page: safePage,
+    pageCount,
+    setPage,
+    total: items.length,
+    // 1-based window bounds for the "Showing X–Y of N" caption.
+    from: items.length === 0 ? 0 : start + 1,
+    to: Math.min(start + READINESS_PAGE_SIZE, items.length),
+  };
+}
+
+/**
+ * Pager for a Readiness people list — a "Showing X–Y of N" caption on the left
+ * and Prev / page-indicator / Next on the right. Renders nothing when the whole
+ * list fits on one page (≤ one page of rows), so short lists stay clean.
+ */
+function ReadinessPager({
+  page,
+  pageCount,
+  from,
+  to,
+  total,
+  onPage,
+}: {
+  page: number; // zero-based
+  pageCount: number;
+  from: number;
+  to: number;
+  total: number;
+  onPage: (p: number) => void;
+}) {
+  if (pageCount <= 1) return null;
+  const btn =
+    "inline-flex items-center gap-1 rounded-md border border-orange-200/80 bg-white px-2 py-1 text-[11px] font-medium text-zinc-600 transition-colors hover:bg-orange-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-blue-900/60 dark:bg-blue-950/30 dark:text-zinc-300 dark:hover:bg-blue-950/50";
+  return (
+    <div className="mt-2 flex items-center justify-between gap-2 border-t border-orange-100/70 px-1 pt-2 dark:border-blue-950/50">
+      <span className="text-[11px] tabular-nums text-zinc-500 dark:text-zinc-400">
+        Showing <span className="font-semibold text-zinc-700 dark:text-zinc-200">{from}–{to}</span> of{" "}
+        <span className="font-semibold text-zinc-700 dark:text-zinc-200">{total}</span>
+      </span>
+      <div className="flex items-center gap-1.5">
+        <button type="button" onClick={() => onPage(page - 1)} disabled={page === 0} className={btn} aria-label="Previous page">
+          <ChevronLeft className="h-3.5 w-3.5" />
+          Prev
+        </button>
+        <span className="px-1 text-[11px] font-semibold tabular-nums text-zinc-500 dark:text-zinc-400">
+          {page + 1} / {pageCount}
+        </span>
+        <button
+          type="button"
+          onClick={() => onPage(page + 1)}
+          disabled={page >= pageCount - 1}
+          className={btn}
+          aria-label="Next page"
+        >
+          Next
+          <ChevronRight className="h-3.5 w-3.5" />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/** One KPI department row: name + a completeness bar (how much is LEFT) + a
+ *  status pill. The bar fills emerald when settled, amber while still open. */
+function KpiDeptRow({ dept, reduceMotion }: { dept: ReadinessKpiDept; reduceMotion: boolean }) {
+  const settled = isKpiSettled(dept.status);
+  const pct =
+    dept.employeeCount > 0
+      ? Math.round((dept.scoredCount / dept.employeeCount) * 100)
+      : settled
+        ? 100
+        : 0;
+  const pill = KPI_STATUS_PILL[dept.status];
+  const barCls = settled
+    ? "bg-gradient-to-r from-emerald-400 to-teal-500"
+    : "bg-gradient-to-r from-amber-400 to-orange-500";
+  return (
+    <div className="flex items-center gap-3 rounded-lg px-2 py-1.5 transition-colors hover:bg-orange-50/50 dark:hover:bg-blue-950/30">
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2">
+          <span className="truncate text-[13px] font-medium text-zinc-800 dark:text-zinc-100">{dept.name}</span>
+          {dept.source === "hsl" && (
+            <span className="shrink-0 rounded bg-blue-100/70 px-1 py-px text-[8.5px] font-semibold uppercase tracking-wide text-blue-700 dark:bg-blue-900/50 dark:text-blue-200">
+              HSL
+            </span>
+          )}
+        </div>
+        {/* Completeness bar — scored vs expected. */}
+        <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-zinc-100 dark:bg-zinc-800">
+          <motion.div
+            className={`h-full rounded-full ${barCls}`}
+            initial={{ width: 0 }}
+            animate={{ width: `${pct}%` }}
+            transition={{ duration: reduceMotion ? 0 : 0.5, ease: EASE }}
+          />
+        </div>
+      </div>
+      <div className="flex shrink-0 flex-col items-end gap-0.5">
+        <span className={`inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.1em] ${pill.cls}`}>
+          <pill.Icon className="h-2.5 w-2.5" />
+          {pill.label}
+        </span>
+        {dept.employeeCount > 0 && (
+          <span className="text-[9.5px] tabular-nums text-zinc-400 dark:text-zinc-500">
+            {dept.scoredCount}/{dept.employeeCount} scored
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** A compact person row for the missing-rate / missing-bank / exceptions lists. */
+function PersonLine({
+  name,
+  email,
+  department,
+  right,
+}: {
+  name: string;
+  email: string | null;
+  department: string | null;
+  right?: React.ReactNode;
+}) {
+  return (
+    <div className="flex items-center gap-2 rounded-lg px-2 py-1.5 transition-colors hover:bg-orange-50/50 dark:hover:bg-blue-950/30">
+      <div className="min-w-0 flex-1">
+        <div className="truncate text-[13px] font-medium text-zinc-800 dark:text-zinc-100">{name}</div>
+        <div className="truncate text-[10px] text-zinc-400 dark:text-zinc-500">
+          {[department, email].filter(Boolean).join(" · ") || "—"}
+        </div>
+      </div>
+      {right}
+    </div>
+  );
+}
+
+/**
+ * "Readiness" tab — the payroll-ready dashboard. A hero banner that flips green
+ * when everything's settled, a 4-up stat-tile row, then four sections: KPI
+ * submission (per dept, with a "how much is left" bar), no-rate workers, no-bank
+ * employees, and onboarding exceptions. Read-only; fetched from
+ * GET /api/payroll-wizard/readiness and kept live via useLiveRefresh. Same
+ * h-[70vh] scroller as the other panes so the modal height never jumps.
+ */
+function PayrollReadinessGlance({
+  wizardSourceFile,
+  heardWizard,
+}: {
+  /** The Hubstaff upload the wizard is on (null = no upload / not settled).
+   *  Readiness keys its week on this so it matches the wizard's CSV selector. */
+  wizardSourceFile: string | null;
+  /** True once the wizard has actually answered which week it's on. We hold the
+   *  first fetch until this is true (or a short grace period elapses) so the
+   *  snapshot never briefly shows the fallback week before the wizard's. */
+  heardWizard: boolean;
+}) {
+  const reduceMotion = useReducedMotion() ?? false;
+  const [data, setData] = useState<PayrollReadiness | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  // One shared search box per section, filtering that list live.
+  const [kpiQuery, setKpiQuery] = useState("");
+  const [rateQuery, setRateQuery] = useState("");
+  const [bankQuery, setBankQuery] = useState("");
+  const [excQuery, setExcQuery] = useState("");
+  // Which of the four detail lists is showing. The stat tiles double as the tab
+  // strip; only the selected list renders below them, swapped with a directional
+  // slide. `readinessDir` carries the slide direction (+1 later tab / −1 earlier)
+  // so switching left↔right reads like turning pages, matching the outer tabs.
+  const [readinessTab, setReadinessTab] = useState<ReadinessTab>("kpi");
+  const [readinessDir, setReadinessDir] = useState(0);
+  const pickReadinessTab = useCallback((next: ReadinessTab) => {
+    setReadinessTab((cur) => {
+      if (cur === next) return cur;
+      setReadinessDir(
+        READINESS_TAB_ORDER.indexOf(next) >= READINESS_TAB_ORDER.indexOf(cur) ? 1 : -1,
+      );
+      return next;
+    });
+  }, []);
+  // Grace flag: if the wizard never answers (e.g. board opened from a surface
+  // where the wizard isn't mounted), fetch anyway after a short wait so the tab
+  // isn't stuck loading forever. Reset per mount.
+  const [grace, setGrace] = useState(false);
+  useEffect(() => {
+    const t = window.setTimeout(() => setGrace(true), 1500);
+    return () => window.clearTimeout(t);
+  }, []);
+  const ready = heardWizard || grace;
+
+  // The Hubstaff uploads (newest first) that the in-tab week selector offers —
+  // the SAME list the Payroll Wizard's period dropdown shows. Fetched once; the
+  // selector degrades gracefully (hidden) if this fails or is empty.
+  const [uploads, setUploads] = useState<string[]>([]);
+  useEffect(() => {
+    let alive = true;
+    fetch("/api/hubstaff-hours?source_files=1", { cache: "no-store" })
+      .then(async (res) => (await res.json()) as { files?: string[] })
+      .then((j) => {
+        if (alive) setUploads((j.files ?? []).filter((f) => typeof f === "string" && f.trim() !== ""));
+      })
+      .catch(() => {
+        /* the selector is an enhancement — falls back to the wizard's week */
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  // The user's OWN pick from the in-tab selector, once they've chosen a week
+  // here. Independent of the wizard: `null` means "follow the wizard" (the
+  // default), a string means the accountant is driving Readiness themselves and
+  // their choice sticks even if the wizard's CSV selector later moves.
+  const [pickedSourceFile, setPickedSourceFile] = useState<string | null>(null);
+  const [hasPicked, setHasPicked] = useState(false);
+  // The effective week: the accountant's own pick when they've made one, else
+  // the wizard's live selection (which the server maps to the current upload
+  // when it, too, is null).
+  const effectiveSourceFile = hasPicked ? pickedSourceFile : wizardSourceFile;
+  // The newest upload is "current" — used to badge the selector and to power a
+  // one-click "back to current" reset.
+  const currentSourceFile = uploads[0] ?? null;
+
+  // Monotonic request token: load() can run concurrently (a week switch, the
+  // 30s poll, a realtime fire, a focus refresh), and fetches for different weeks
+  // can resolve out of order. Each call stamps a fresh id; only the LATEST call
+  // is allowed to write state, so a slow fetch for a week we've since left can
+  // never clobber the week now in view.
+  const loadSeqRef = useRef(0);
+  const load = useCallback(async () => {
+    const seq = ++loadSeqRef.current;
+    try {
+      const qs = effectiveSourceFile ? `?source_file=${encodeURIComponent(effectiveSourceFile)}` : "";
+      const res = await fetch(`/api/payroll-wizard/readiness${qs}`, { cache: "no-store" });
+      const json = (await res.json()) as { readiness?: PayrollReadiness; error?: string };
+      if (seq !== loadSeqRef.current) return; // superseded — a newer load is in charge
+      if (!res.ok || !json.readiness) throw new Error(json.error || `Load failed (${res.status})`);
+      setData(json.readiness);
+      setError(null);
+    } catch (e) {
+      if (seq !== loadSeqRef.current) return; // superseded — don't surface a stale error
+      setError(e instanceof Error ? e.message : "Could not load readiness");
+    } finally {
+      if (seq === loadSeqRef.current) setLoading(false);
+    }
+  }, [effectiveSourceFile]);
+
+  // Hold the fetch until we know the wizard's week (or the grace period lapses),
+  // then refetch whenever the effective week changes — the wizard switching its
+  // CSV (while we're following it) or the accountant picking a week here.
+  useEffect(() => {
+    if (!ready) return;
+    void load();
+  }, [ready, load]);
+
+  /** Pick a week from the in-tab selector. Selecting the current upload clears
+   *  the override so Readiness resumes following the wizard; any other week
+   *  latches so the wizard can no longer steer this tab. */
+  const pickWeek = useCallback(
+    (file: string | null) => {
+      // Reset (null / the current upload) → follow the wizard; else latch.
+      const resetting = file === null || file === currentSourceFile;
+      const nextEffective = resetting ? wizardSourceFile : file;
+      // Only flip to the spinner when the effective week actually changes — a
+      // no-op pick (e.g. "Current" while already current) leaves `load`'s
+      // identity untouched, so its useEffect wouldn't re-run to clear it.
+      if (nextEffective !== effectiveSourceFile) setLoading(true);
+      if (resetting) {
+        setPickedSourceFile(null);
+        setHasPicked(false);
+      } else {
+        setPickedSourceFile(file);
+        setHasPicked(true);
+      }
+    },
+    [currentSourceFile, wizardSourceFile, effectiveSourceFile],
+  );
+
+  // Live: reflect a manager marking their KPI ready, a rate/bank fix, or a new
+  // hire promotion without a manual reload. Debounced + 30s poll fallback.
+  useLiveRefresh({
+    tables: [
+      "hsl_bonus_period_status",
+      "hsl_bonus_entries",
+      "bonus_catalog_applied",
+      "employee_hourly_rates",
+      "payment_catalog_pay_structures",
+      "employee_ids",
+      "hr_pending_employees",
+    ],
+    channel: "payroll-readiness",
+    onRefresh: () => void load(),
+  });
+
+  // Filter the three people lists live (name / email / dept / status). Computed
+  // BEFORE the loading/error early-returns and made null-safe, so the paging
+  // hooks below can run unconditionally (Rules of Hooks) — a null `data` just
+  // yields empty lists. KPI isn't paginated (bounded dept list), so it's still
+  // filtered inline in the render below.
+  const ratesShown = (data?.missingRates ?? []).filter((r) =>
+    matchesQuery(rateQuery, r.name, r.email, r.department),
+  );
+  const bankShown = (data?.missingBank ?? []).filter((r) =>
+    matchesQuery(bankQuery, r.name, r.email, r.department, r.processor),
+  );
+  const excShown = (data?.exceptions ?? []).filter((r) =>
+    matchesQuery(excQuery, r.name, r.email, r.department, r.detail, EXCEPTION_META[r.kind].label),
+  );
+  // Paginate each people list (10/page). Keyed on the search query so a new
+  // search snaps back to page 1; the hook also clamps the page if a live refresh
+  // shrinks the list under it.
+  const ratesPage = usePagedList(ratesShown, rateQuery);
+  const bankPage = usePagedList(bankShown, bankQuery);
+  const excPage = usePagedList(excShown, excQuery);
+
+  // The selector header stays mounted across every body state (loading / error /
+  // content) so switching weeks never yanks the control out from under the
+  // cursor. The upload list drives it; if uploads couldn't load it hides itself.
+  const selectorHeader = (
+    <ReadinessWeekSelector
+      uploads={uploads}
+      value={effectiveSourceFile ?? currentSourceFile}
+      currentSourceFile={currentSourceFile}
+      following={!hasPicked}
+      onChange={pickWeek}
+    />
+  );
+
+  // Loading takes precedence over a lingering error: when a fresh load is in
+  // flight (e.g. Retry, or a week switch after a failure), show the skeleton
+  // rather than the stale error card until this load settles. The skeleton
+  // mirrors the real layout (hero + 4 stat tiles + the four sections) so the
+  // shape is stable; over it sits the "Gathering data…" card (a foreground box
+  // that walks through the four checks) so the wait reads as active progress,
+  // not a stalled spinner.
+  if (loading || !data) {
+    return (
+      <div className="flex h-[70vh] flex-col">
+        {selectorHeader}
+        <div className="relative flex-1 overflow-hidden">
+          <div className="h-full overflow-y-auto pr-1" aria-hidden>
+            <ReadinessSkeleton reduceMotion={reduceMotion} />
+          </div>
+          <ReadinessLoadingCard reduceMotion={reduceMotion} />
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="flex h-[70vh] flex-col">
+        {selectorHeader}
+        <div className="flex flex-1 flex-col items-center justify-center gap-3 px-6 text-center">
+          <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-red-500 to-rose-600 text-white shadow-lg shadow-rose-500/30">
+            <AlertTriangle className="h-6 w-6" />
+          </div>
+          <h2 className="text-base font-semibold">Couldn&apos;t load readiness</h2>
+          <p className="max-w-md text-xs text-zinc-500 dark:text-zinc-400">{error}</p>
+          <Button variant="outline" size="sm" onClick={() => { setLoading(true); void load(); }}>
+            Retry
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  const kpiPending = data.kpi.filter((d) => !isKpiSettled(d.status));
+  const kpiDue = data.kpi.filter((d) => d.status !== "na");
+  const kpiSubmitted = kpiDue.length - kpiPending.length;
+
+  const blockers = data.missingRates.length; // hard blocker: can't pay at all
+  const warnings = kpiPending.length + data.missingBank.length; // needs attention
+  const isReady = blockers === 0 && kpiPending.length === 0 && data.missingBank.length === 0;
+
+  // KPI search — filter the dept list live (name / key / status). The three
+  // people lists (rate/bank/exc) are filtered + paginated above, before the
+  // guards, so their paging hooks can run unconditionally. Counts on the section
+  // pills stay the FULL count so the readiness verdict never changes because a
+  // search hid rows.
+  const kpiShown = data.kpi.filter((d) =>
+    matchesQuery(kpiQuery, d.name, d.key, KPI_STATUS_PILL[d.status].label),
+  );
+
+  return (
+    <div className="flex h-[70vh] flex-col">
+      {selectorHeader}
+      {/* Frozen header: the hero ("blockers to clear"), the stat tiles, and the
+          tab strip stay pinned so the accountant always sees the verdict + the
+          tab controls. Only the detail body below scrolls. */}
+      <div className="shrink-0 space-y-3">
+      {/* Hero: green when ready, amber while there's work, rose when a hard
+          blocker (no-rate worker) exists. */}
+      <ReadinessHero
+        isReady={isReady}
+        blockers={blockers}
+        warnings={warnings}
+        weekLabel={data.weekLabel}
+        isMonthly={data.isMonthlyPayWeek}
+        score={data.score}
+        reduceMotion={reduceMotion}
+      />
+
+      {/* Stat tiles — a read-only at-a-glance summary of the four dimensions.
+          (Switching between the detail lists is the tab strip's job, below.) */}
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+        <ReadinessStat
+          label="KPIs submitted"
+          value={`${kpiSubmitted}/${kpiDue.length}`}
+          sub={kpiPending.length === 0 ? "all departments in" : `${kpiPending.length} still pending`}
+          tone={kpiPending.length === 0 ? "emerald" : "amber"}
+          Icon={ClipboardList}
+        />
+        <ReadinessStat
+          label="No pay rate"
+          value={data.missingRates.length}
+          sub={data.missingRates.length === 0 ? "everyone has a rate" : "can't be paid yet"}
+          tone={data.missingRates.length === 0 ? "emerald" : "orange"}
+          Icon={Wallet}
+        />
+        <ReadinessStat
+          label="No bank info"
+          value={data.missingBank.length}
+          sub={data.missingBank.length === 0 ? "all payable" : "missing payout details"}
+          tone={data.missingBank.length === 0 ? "emerald" : "amber"}
+          Icon={Banknote}
+        />
+        <ReadinessStat
+          label="Exceptions"
+          value={data.exceptions.length}
+          sub={data.exceptions.length === 0 ? "none this week" : "not paid this week"}
+          tone={data.exceptions.length === 0 ? "emerald" : "sky"}
+          Icon={UserPlus}
+        />
+      </div>
+
+      {/* Tab strip — the explicit control for switching between the four detail
+          lists (KPI Submissions / No Pay Rate / Bank Info / Exceptions). */}
+      <ReadinessTabStrip
+        active={readinessTab}
+        onPick={pickReadinessTab}
+        counts={{
+          kpi: kpiPending.length,
+          rate: data.missingRates.length,
+          bank: data.missingBank.length,
+          exc: data.exceptions.length,
+        }}
+        reduceMotion={reduceMotion}
+      />
+      </div>
+
+      {/* Scroll region: ONLY the active detail list + footer note scroll; the
+          hero/tiles/tab strip above stay frozen. */}
+      <div className="mt-3 min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
+      {/* Active detail list. Only the selected tab's section renders; swapping
+          tabs slides the old pane out and the new one in, in the direction you
+          moved (readinessDir), reduced-motion gated. min-h keeps the modal from
+          jumping between a short and a tall list. */}
+      <div className="overflow-x-clip" role="tabpanel">
+        <AnimatePresence mode="wait" initial={false} custom={readinessDir}>
+          <motion.div
+            key={readinessTab}
+            custom={readinessDir}
+            variants={PANE_VARIANTS}
+            initial="enter"
+            animate="center"
+            exit="exit"
+            transition={{ duration: reduceMotion ? 0 : 0.22, ease: EASE }}
+            className="min-h-[16rem]"
+          >
+            {readinessTab === "kpi" ? (
+              <PaneBody>
+                <ReadinessSearch
+                  value={kpiQuery}
+                  onChange={setKpiQuery}
+                  placeholder="Search departments…"
+                  shown={kpiShown.length}
+                  total={data.kpi.length}
+                />
+                {kpiShown.length === 0 ? (
+                  <NoMatches query={kpiQuery} />
+                ) : (
+                  // Two-column grid of dept cards (single column on the narrowest
+                  // widths). No inner scroller — the pane's shared outer scroller
+                  // owns the overflow, so a long dept list doesn't create a nested
+                  // scroll-trap (matches the three paginated lists).
+                  <div className="grid grid-cols-1 gap-x-3 gap-y-0.5 sm:grid-cols-2">
+                    {kpiShown.map((d) => (
+                      <KpiDeptRow key={`${d.source}:${d.key}`} dept={d} reduceMotion={reduceMotion} />
+                    ))}
+                  </div>
+                )}
+              </PaneBody>
+            ) : readinessTab === "rate" ? (
+              <PaneBody>
+                {data.missingRates.length === 0 ? (
+                  <AllClear text="Every current-week worker has a rate." />
+                ) : (
+                  <>
+                    <ReadinessSearch
+                      value={rateQuery}
+                      onChange={setRateQuery}
+                      placeholder="Search people…"
+                      shown={ratesShown.length}
+                      total={data.missingRates.length}
+                    />
+                    {ratesShown.length === 0 ? (
+                      <NoMatches query={rateQuery} />
+                    ) : (
+                      <>
+                        <div className="space-y-0.5">
+                          {ratesPage.pageItems.map((r) => (
+                            <PersonLine
+                              key={r.email ?? r.name}
+                              name={r.name}
+                              email={r.email}
+                              department={r.department}
+                              right={
+                                <span className="shrink-0 rounded-full border border-rose-200 bg-rose-50 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-rose-700 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-300">
+                                  No rate
+                                </span>
+                              }
+                            />
+                          ))}
+                        </div>
+                        <ReadinessPager
+                          page={ratesPage.page}
+                          pageCount={ratesPage.pageCount}
+                          from={ratesPage.from}
+                          to={ratesPage.to}
+                          total={ratesPage.total}
+                          onPage={ratesPage.setPage}
+                        />
+                      </>
+                    )}
+                  </>
+                )}
+              </PaneBody>
+            ) : readinessTab === "bank" ? (
+              <PaneBody>
+                {data.missingBank.length === 0 ? (
+                  <AllClear text="Everyone has payout details on file." />
+                ) : (
+                  <>
+                    <ReadinessSearch
+                      value={bankQuery}
+                      onChange={setBankQuery}
+                      placeholder="Search people…"
+                      shown={bankShown.length}
+                      total={data.missingBank.length}
+                    />
+                    {bankShown.length === 0 ? (
+                      <NoMatches query={bankQuery} />
+                    ) : (
+                      <>
+                        <div className="space-y-0.5">
+                          {bankPage.pageItems.map((r) => (
+                            <PersonLine
+                              key={r.email ?? r.name}
+                              name={r.name}
+                              email={r.email}
+                              department={r.department}
+                              right={
+                                <span className="shrink-0 rounded-full border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-amber-700 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300">
+                                  {r.processor ? `${r.processor} · incomplete` : "No processor"}
+                                </span>
+                              }
+                            />
+                          ))}
+                        </div>
+                        <ReadinessPager
+                          page={bankPage.page}
+                          pageCount={bankPage.pageCount}
+                          from={bankPage.from}
+                          to={bankPage.to}
+                          total={bankPage.total}
+                          onPage={bankPage.setPage}
+                        />
+                      </>
+                    )}
+                  </>
+                )}
+              </PaneBody>
+            ) : (
+              <PaneBody>
+                {data.exceptions.length === 0 ? (
+                  <AllClear text="No onboarding exceptions this week." />
+                ) : (
+                  <>
+                    <ReadinessSearch
+                      value={excQuery}
+                      onChange={setExcQuery}
+                      placeholder="Search people…"
+                      shown={excShown.length}
+                      total={data.exceptions.length}
+                    />
+                    {excShown.length === 0 ? (
+                      <NoMatches query={excQuery} />
+                    ) : (
+                      <>
+                        <div className="space-y-0.5">
+                          {excPage.pageItems.map((r, i) => {
+                            const meta = EXCEPTION_META[r.kind];
+                            return (
+                              <PersonLine
+                                key={`${r.email ?? r.name}:${i}`}
+                                name={r.name}
+                                email={r.email}
+                                department={r.detail ?? r.department}
+                                right={
+                                  <span className={`inline-flex shrink-0 items-center gap-1 rounded-full border px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide ${meta.cls}`}>
+                                    <meta.Icon className="h-2.5 w-2.5" />
+                                    {meta.label}
+                                  </span>
+                                }
+                              />
+                            );
+                          })}
+                        </div>
+                        <ReadinessPager
+                          page={excPage.page}
+                          pageCount={excPage.pageCount}
+                          from={excPage.from}
+                          to={excPage.to}
+                          total={excPage.total}
+                          onPage={excPage.setPage}
+                        />
+                      </>
+                    )}
+                  </>
+                )}
+              </PaneBody>
+            )}
+          </motion.div>
+        </AnimatePresence>
+      </div>
+
+      <p className="px-1 pb-1 text-center text-[10px] text-zinc-400 dark:text-zinc-500">
+        {hasPicked ? "Showing the week you picked above" : "Following the wizard’s selected period"} ·
+        payroll week {data.weekLabel}
+        {data.isMonthlyPayWeek ? " · month-end (monthly bonuses due)" : ""} · updates live as
+        managers submit and details are fixed.
+      </p>
+      </div>
+    </div>
+  );
+}
+
+/** The four things the Readiness snapshot gathers, in the order the loading card
+ *  walks through them. */
+const READINESS_LOADING_STEPS: { label: string; Icon: typeof CheckCircle2 }[] = [
+  { label: "KPI submissions", Icon: ClipboardList },
+  { label: "No pay rates", Icon: Wallet },
+  { label: "No bank infos", Icon: Banknote },
+  { label: "Exceptions", Icon: UserPlus },
+];
+
+/**
+ * "Gathering data…" card shown OVER the skeleton while the Readiness snapshot
+ * loads — a foreground box that names the four checks (KPI submissions / No pay
+ * rates / No bank infos / Exceptions) and lights them up one after another so
+ * the wait reads as active progress instead of a stalled spinner.
+ *
+ * The real fetch is a single request with no per-item signal, so the steps are
+ * driven by a self-advancing cursor on a short timer: a step ahead of the cursor
+ * is pending (muted), the step AT the cursor is "in progress" (spinner +
+ * highlight), and steps behind it are "gathered" (emerald check). The cursor
+ * fills 0→total once and then HOLDS at all-gathered (it does NOT loop back —
+ * un-checking a finished list would read as going backwards / stalled); the
+ * header spinner keeps it feeling live while the request finishes, and the card
+ * unmounts the instant real data lands. Gated on reduced motion — then all four
+ * just read as gathered, no cycling.
+ */
+function ReadinessLoadingCard({ reduceMotion }: { reduceMotion: boolean }) {
+  const total = READINESS_LOADING_STEPS.length;
+  // The step currently "in progress"; everything before it reads as gathered.
+  // Advances 0→total once (total = "all gathered") then stops there — no loop.
+  const [cursor, setCursor] = useState(0);
+  useEffect(() => {
+    if (reduceMotion) return; // static: show everything gathered, no cycling
+    const t = window.setInterval(() => {
+      setCursor((c) => {
+        if (c >= total) {
+          window.clearInterval(t);
+          return c; // reached "all gathered" — hold, don't reset
+        }
+        return c + 1;
+      });
+    }, 700);
+    return () => window.clearInterval(t);
+  }, [reduceMotion, total]);
+
+  return (
+    <div className="absolute inset-0 z-10 flex items-center justify-center p-4">
+      <motion.div
+        initial={reduceMotion ? false : { opacity: 0, y: 8, scale: 0.98 }}
+        animate={{ opacity: 1, y: 0, scale: 1 }}
+        transition={{ duration: reduceMotion ? 0 : 0.3, ease: EASE }}
+        role="status"
+        aria-live="polite"
+        aria-label="Gathering payroll readiness data"
+        className="w-full max-w-sm overflow-hidden rounded-2xl border border-orange-200/80 bg-white/95 shadow-2xl shadow-orange-500/10 backdrop-blur-md dark:border-blue-900/70 dark:bg-[#0d1117]/95 dark:shadow-black/40"
+      >
+        {/* Header */}
+        <div className="flex items-center gap-3 border-b border-orange-100 bg-gradient-to-br from-orange-50 to-amber-50 px-4 py-3 dark:border-blue-950/60 dark:from-blue-950/40 dark:to-blue-950/10">
+          <div className="relative flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-orange-500 to-amber-500 text-white shadow-md">
+            <ShieldCheck className="h-5 w-5" />
+            {!reduceMotion && (
+              <motion.span
+                aria-hidden
+                className="absolute inset-0 rounded-xl ring-2 ring-orange-400/50"
+                initial={{ opacity: 0.6, scale: 1 }}
+                animate={{ opacity: 0, scale: 1.4 }}
+                transition={{ duration: 1.6, repeat: Infinity, ease: "easeOut" }}
+              />
+            )}
+          </div>
+          <div className="min-w-0">
+            <h3 className="flex items-center gap-1.5 text-sm font-bold tracking-tight text-zinc-900 dark:text-zinc-50">
+              Gathering data
+              {!reduceMotion && <Loader2 className="h-3.5 w-3.5 animate-spin text-orange-500" />}
+            </h3>
+            <p className="truncate text-[11px] text-zinc-500 dark:text-zinc-400">
+              Checking this week&apos;s payroll readiness…
+            </p>
+          </div>
+        </div>
+
+        {/* The four checks, lighting up in sequence. */}
+        <ul className="space-y-1 p-3">
+          {READINESS_LOADING_STEPS.map((step, i) => {
+            // Reduced motion → everything reads as gathered. Otherwise: behind
+            // the cursor = gathered, at the cursor = in progress, ahead = pending.
+            const gathered = reduceMotion || i < cursor;
+            const active = !reduceMotion && i === cursor;
+            return (
+              <li
+                key={step.label}
+                className={`flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 transition-colors duration-300 ${
+                  active
+                    ? "bg-orange-50 dark:bg-blue-950/40"
+                    : gathered
+                      ? "bg-emerald-50/60 dark:bg-emerald-950/15"
+                      : ""
+                }`}
+              >
+                {/* Status glyph: emerald check when gathered, spinner while in
+                    progress, muted dot while still pending. */}
+                <span className="flex h-5 w-5 shrink-0 items-center justify-center">
+                  {gathered ? (
+                    <motion.span
+                      key="done"
+                      initial={reduceMotion ? false : { scale: 0.5, opacity: 0 }}
+                      animate={{ scale: 1, opacity: 1 }}
+                      transition={{ duration: 0.2, ease: EASE }}
+                    >
+                      <CheckCircle2 className="h-4.5 w-4.5 text-emerald-500 dark:text-emerald-400" />
+                    </motion.span>
+                  ) : active ? (
+                    <Loader2 className="h-4 w-4 animate-spin text-orange-500 dark:text-orange-400" />
+                  ) : (
+                    <span className="h-1.5 w-1.5 rounded-full bg-zinc-300 dark:bg-zinc-600" />
+                  )}
+                </span>
+                <step.Icon
+                  className={`h-4 w-4 shrink-0 transition-colors duration-300 ${
+                    gathered
+                      ? "text-emerald-500 dark:text-emerald-400"
+                      : active
+                        ? "text-orange-500 dark:text-orange-400"
+                        : "text-zinc-400 dark:text-zinc-500"
+                  }`}
+                />
+                <span
+                  className={`text-[13px] font-medium transition-colors duration-300 ${
+                    gathered || active
+                      ? "text-zinc-800 dark:text-zinc-100"
+                      : "text-zinc-400 dark:text-zinc-500"
+                  }`}
+                >
+                  {step.label}
+                </span>
+                <span className="ml-auto text-[10px] font-semibold tracking-wide text-zinc-400 tabular-nums dark:text-zinc-500">
+                  {gathered ? "Gathered" : active ? "Gathering…" : "Queued"}
+                </span>
+              </li>
+            );
+          })}
+        </ul>
+      </motion.div>
+    </div>
+  );
+}
+
+/**
+ * Loading placeholder for the Readiness pane — mirrors the real layout (hero
+ * banner + 4 stat tiles + the KPI section and the three people-list sections)
+ * with pulsing bars, and NAMES each of the four sections so the accountant sees
+ * exactly what's being checked (KPIs, No pay rate, Bank info, Exceptions) rather
+ * than a bare spinner. Keeping the shape identical means no layout jump when the
+ * real data lands.
+ */
+function ReadinessSkeleton({ reduceMotion = false }: { reduceMotion?: boolean }) {
+  // Pulse is gated on reduced motion so the backdrop honors it too (the card on
+  // top already does) — under reduced motion the bars are static grey blocks.
+  const bar = `rounded bg-zinc-200/80 dark:bg-zinc-800/80${reduceMotion ? "" : " animate-pulse"}`;
+  // The tab strip's four labels; the first is drawn as the active tab (bottom
+  // bar) to match the pane defaulting to KPI submission.
+  const TILES = ["KPIs submitted", "No pay rate", "No bank info", "Exceptions"];
+
+  return (
+    <div aria-hidden className="space-y-3">
+      {/* Hero — icon, headline/sub, and the score dial placeholder on the right. */}
+      <div className="flex items-center gap-3 rounded-xl border border-zinc-200/70 bg-white/60 px-4 py-3 dark:border-zinc-800 dark:bg-zinc-900/40">
+        <div className={`${bar} h-11 w-11 shrink-0 rounded-2xl`} />
+        <div className="min-w-0 flex-1 space-y-2">
+          <div className={`${bar} h-4 w-40`} />
+          <div className={`${bar} h-3 w-56`} />
+        </div>
+        <div className={`${bar} hidden h-[70px] w-[70px] shrink-0 rounded-full sm:block`} />
+      </div>
+
+      {/* Stat tiles — read-only summary row. */}
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+        {TILES.map((label) => (
+          <div
+            key={label}
+            className="relative overflow-hidden rounded-xl border border-white/60 bg-white/70 p-2.5 sm:p-3 dark:border-zinc-800 dark:bg-zinc-900/60"
+          >
+            <div className="text-[9px] font-semibold uppercase tracking-[0.14em] text-zinc-400 dark:text-zinc-500">
+              {label}
+            </div>
+            <div className={`${bar} mt-1 h-5 w-12`} />
+            <div className={`${bar} mt-1.5 h-2 w-3/4`} />
+          </div>
+        ))}
+      </div>
+
+      {/* Tab strip — four labeled tabs, the first drawn as active (underline). */}
+      <div className="flex items-center gap-1 border-b border-orange-100 pb-px dark:border-blue-950/60">
+        {["KPI Submissions", "No Pay Rate", "Bank Info", "Exceptions"].map((label, i) => (
+          <div
+            key={label}
+            className={`relative -mb-px flex items-center gap-1.5 px-3 py-2 text-xs font-semibold whitespace-nowrap ${
+              i === 0 ? "text-orange-700 dark:text-orange-300" : "text-zinc-400 dark:text-zinc-500"
+            }`}
+          >
+            {label}
+            <span className={`${bar} h-3.5 w-4 rounded-full`} />
+            {i === 0 && (
+              <span className="absolute inset-x-1 -bottom-px h-0.5 rounded-full bg-orange-500 dark:bg-orange-400" />
+            )}
+          </div>
+        ))}
+      </div>
+
+      {/* Active pane — one section shell (the default KPI list). */}
+      <section className="min-h-[16rem] rounded-xl border border-orange-100 bg-white/60 dark:border-blue-950/60 dark:bg-blue-950/10">
+        <div className="flex items-center justify-between gap-2 border-b border-orange-100/70 px-3 py-2 dark:border-blue-950/50">
+          <span className="flex items-center gap-1.5 text-xs font-semibold text-zinc-700 dark:text-zinc-200">
+            <ClipboardList className="h-3.5 w-3.5 text-orange-400/70" />
+            KPI submission
+          </span>
+          <span className={`${bar} h-4 w-8 rounded-full`} />
+        </div>
+        <div className="space-y-2 p-2.5">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <div key={i} className="flex items-center gap-3 px-2 py-1.5">
+              <div className="min-w-0 flex-1 space-y-1.5">
+                <div className={`${bar} h-3 w-1/3`} />
+                <div className={`${bar} h-1.5 w-full rounded-full`} />
+              </div>
+              <div className={`${bar} h-4 w-14 rounded-full`} />
+            </div>
+          ))}
+        </div>
+      </section>
+      {/* No footer message here — the ReadinessLoadingCard overlaid on top of
+          this skeleton carries the "Gathering data…" copy, so a second
+          "Checking…" line would just compete with it. */}
+    </div>
+  );
+}
+
+/** The readiness hero banner — a single at-a-glance verdict that flips to green
+ *  when the cycle is clear. Blockers (no-rate workers) read rose; warnings
+ *  (pending KPI / missing bank) read amber. */
+function ReadinessHero({
+  isReady,
+  blockers,
+  warnings,
+  weekLabel,
+  isMonthly,
+  score,
+  reduceMotion,
+}: {
+  isReady: boolean;
+  blockers: number;
+  warnings: number;
+  weekLabel: string;
+  isMonthly: boolean;
+  score: ReadinessScore;
+  reduceMotion: boolean;
+}) {
+  // Tone follows the score grade (blocked → rose, ready → emerald, else amber),
+  // so the banner colour and the gauge always agree.
+  const tone = score.grade === "ready" ? "emerald" : score.grade === "blocked" ? "rose" : "amber";
+  const toneCls: Record<string, string> = {
+    emerald:
+      "border-emerald-200 from-emerald-50 to-teal-50 dark:border-emerald-500/30 dark:from-emerald-950/40 dark:to-teal-950/20",
+    amber:
+      "border-amber-200 from-amber-50 to-orange-50 dark:border-amber-500/30 dark:from-amber-950/40 dark:to-orange-950/20",
+    rose: "border-rose-200 from-rose-50 to-red-50 dark:border-rose-500/30 dark:from-rose-950/40 dark:to-red-950/20",
+  };
+  const iconCls: Record<string, string> = {
+    emerald: "from-emerald-500 to-teal-500",
+    amber: "from-amber-500 to-orange-500",
+    rose: "from-rose-500 to-red-600",
+  };
+  const Icon = isReady ? CheckCircle2 : AlertTriangle;
+  const headline = isReady
+    ? "Payroll Ready"
+    : blockers > 0
+      ? "Not ready — blockers to clear"
+      : "Almost there — a few items left";
+  const sub = isReady
+    ? "Every department is in and everyone can be paid."
+    : [
+        blockers > 0 ? `${blockers} worker${blockers === 1 ? "" : "s"} with no rate` : null,
+        warnings > 0 ? `${warnings} item${warnings === 1 ? "" : "s"} to review` : null,
+      ]
+        .filter(Boolean)
+        .join(" · ") || "Reviewing…";
+
+  return (
+    <motion.div
+      initial={reduceMotion ? false : { opacity: 0, y: -6 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: reduceMotion ? 0 : 0.28, ease: EASE }}
+      className={`flex items-center gap-3 rounded-xl border bg-gradient-to-br px-4 py-3 ${toneCls[tone]}`}
+    >
+      <div className={`relative flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br text-white shadow-md ${iconCls[tone]}`}>
+        <Icon className="h-6 w-6" />
+        {isReady && !reduceMotion && (
+          <motion.span
+            aria-hidden
+            className="absolute inset-0 rounded-2xl ring-2 ring-emerald-400/50"
+            initial={{ opacity: 0.6, scale: 1 }}
+            animate={{ opacity: 0, scale: 1.5 }}
+            transition={{ duration: 1.6, repeat: Infinity, ease: "easeOut" }}
+          />
+        )}
+      </div>
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2">
+          <h3 className="truncate text-base font-bold tracking-tight text-zinc-900 dark:text-zinc-50">{headline}</h3>
+          <span className="hidden shrink-0 rounded-full border border-zinc-200 bg-white/70 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-[0.14em] text-zinc-500 sm:inline dark:border-zinc-700 dark:bg-zinc-900/60 dark:text-zinc-400">
+            <CalendarDays className="mr-1 inline h-2.5 w-2.5" />
+            {weekLabel}
+            {isMonthly ? " · month-end" : ""}
+          </span>
+        </div>
+        <p className="mt-0.5 truncate text-xs text-zinc-600 dark:text-zinc-300">{sub}</p>
+        {/* Component breakdown — the points each dimension is contributing, so
+            it's obvious what's costing the score. Hidden on the narrowest width
+            where the gauge alone tells the story. */}
+        <div className="mt-1.5 hidden flex-wrap items-center gap-x-3 gap-y-1 sm:flex">
+          {score.components.map((c) => {
+            const full = c.open === 0;
+            return (
+              <span
+                key={c.key}
+                className="inline-flex items-center gap-1 text-[10px] text-zinc-500 dark:text-zinc-400"
+                title={`${c.label}: ${c.points}/${c.maxPoints} pts${c.open > 0 ? ` · ${c.open} open` : " · clear"}`}
+              >
+                <span
+                  className={`inline-block h-1.5 w-1.5 rounded-full ${
+                    full ? "bg-emerald-500" : c.key === "rate" ? "bg-rose-500" : "bg-amber-500"
+                  }`}
+                />
+                <span className="font-medium text-zinc-600 dark:text-zinc-300">{c.label}</span>
+                <span className="tabular-nums">
+                  {c.points}
+                  <span className="text-zinc-400 dark:text-zinc-500">/{c.maxPoints}</span>
+                </span>
+              </span>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* The Readiness Score dial — the headline number for the week. */}
+      <ScoreGauge score={score} tone={tone} reduceMotion={reduceMotion} />
+    </motion.div>
+  );
+}
+
+/**
+ * The Readiness Score dial — an SVG ring that fills to the 0–100 score, with the
+ * number and a one-word grade in the centre. Tone matches the hero banner
+ * (emerald when ready, rose when a blocker exists, amber otherwise). The ring
+ * animates from empty on mount (gated on reduced motion).
+ */
+function ScoreGauge({
+  score,
+  tone,
+  reduceMotion,
+}: {
+  score: ReadinessScore;
+  tone: "emerald" | "amber" | "rose";
+  reduceMotion: boolean;
+}) {
+  const R = 26;
+  const C = 2 * Math.PI * R;
+  const pct = Math.max(0, Math.min(100, score.value));
+  const dash = (pct / 100) * C;
+  const strokeCls: Record<string, string> = {
+    emerald: "text-emerald-500 dark:text-emerald-400",
+    amber: "text-amber-500 dark:text-amber-400",
+    rose: "text-rose-500 dark:text-rose-400",
+  };
+  const gradeLabel: Record<ReadinessScore["grade"], string> = {
+    ready: "Ready",
+    almost: "Almost",
+    at_risk: "At risk",
+    blocked: "Blocked",
+  };
+  return (
+    <div
+      className="relative hidden h-[70px] w-[70px] shrink-0 sm:block"
+      role="img"
+      aria-label={`Readiness score ${pct} out of 100 — ${gradeLabel[score.grade]}`}
+      title={`Readiness score: ${pct}/100 (${gradeLabel[score.grade]})`}
+    >
+      <svg viewBox="0 0 64 64" className="h-full w-full -rotate-90">
+        <circle
+          cx="32"
+          cy="32"
+          r={R}
+          fill="none"
+          strokeWidth="6"
+          className="text-zinc-200/70 dark:text-zinc-700/60"
+          stroke="currentColor"
+        />
+        <motion.circle
+          cx="32"
+          cy="32"
+          r={R}
+          fill="none"
+          strokeWidth="6"
+          strokeLinecap="round"
+          className={strokeCls[tone]}
+          stroke="currentColor"
+          strokeDasharray={C}
+          initial={{ strokeDashoffset: reduceMotion ? C - dash : C }}
+          animate={{ strokeDashoffset: C - dash }}
+          transition={{ duration: reduceMotion ? 0 : 0.9, ease: EASE }}
+        />
+      </svg>
+      <div className="absolute inset-0 flex flex-col items-center justify-center">
+        <span className="text-lg font-extrabold leading-none tracking-tight tabular-nums text-zinc-900 dark:text-zinc-50">
+          {pct}
+        </span>
+        <span className="mt-0.5 text-[8px] font-semibold uppercase tracking-[0.12em] text-zinc-500 dark:text-zinc-400">
+          {gradeLabel[score.grade]}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The Readiness tab's OWN pay-period selector, driven by the Hubstaff uploads
+ * (the exact list the Payroll Wizard's period dropdown shows). Picking a week
+ * here latches Readiness to it — independent of the wizard — while defaulting to
+ * whatever week the wizard is on. Prev/next arrows step through the uploads
+ * newest→oldest; the dropdown lists every upload, badging the current one; a
+ * "Current" chip resets the pick so Readiness resumes following the wizard.
+ *
+ * Uploads are ordered newest-first (index 0 = current). `value` is the filename
+ * currently in view; `following` is true while no local pick is latched (the tab
+ * is mirroring the wizard). Renders nothing when there are no uploads yet.
+ */
+function ReadinessWeekSelector({
+  uploads,
+  value,
+  currentSourceFile,
+  following,
+  onChange,
+}: {
+  uploads: string[]; // Hubstaff source_files, newest-first (index 0 = current)
+  value: string | null; // the filename in view (may be null before uploads load)
+  currentSourceFile: string | null; // the newest upload — the live payroll week
+  following: boolean; // true = no local pick latched (mirroring the wizard)
+  onChange: (sourceFile: string | null) => void; // null resets to "follow wizard"
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("mousedown", onDoc);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDoc);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  // No uploads yet (fresh environment or the list failed to load) — there's
+  // nothing to pick between, so the server's live-week fallback stands alone.
+  if (uploads.length === 0) return null;
+
+  const rawIdx = value ? uploads.indexOf(value) : -1;
+  // A value that isn't in the uploads list (e.g. the wizard is on a just-renamed
+  // or replayed file the once-fetched list hasn't caught up to) is treated as
+  // the CURRENT week — index 0. That's what it effectively is (the wizard's live
+  // selection), so the arrows anchor there instead of a phantom "before index 0"
+  // position that would disable Newer and make Older skip the current upload.
+  const idx = rawIdx >= 0 ? rawIdx : 0;
+  const isCurrent = idx === 0;
+  const arrowCls =
+    "rounded-md border border-orange-200/80 bg-white p-1 text-zinc-500 transition-colors hover:bg-orange-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-blue-900/60 dark:bg-blue-950/30 dark:text-zinc-400 dark:hover:bg-blue-950/50";
+  // Newer = a lower index (0 = current); older = a higher index. Disabled at the
+  // ends of the list.
+  const canOlder = idx < uploads.length - 1;
+  const canNewer = idx > 0;
+  const stepOlder = () => onChange(uploads[idx + 1] ?? uploads[uploads.length - 1] ?? null);
+  const stepNewer = () => onChange(uploads[idx - 1] ?? uploads[0] ?? null);
+
+  return (
+    <div className="mb-3 flex flex-wrap items-center justify-between gap-2 px-0.5">
+      <div ref={ref} className="relative inline-flex items-center gap-1">
+        <button type="button" aria-label="Older period" onClick={stepOlder} disabled={!canOlder} className={arrowCls}>
+          <ChevronLeft className="h-3.5 w-3.5" />
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setOpen((o) => !o)}
+          aria-expanded={open}
+          aria-haspopup="true"
+          className="inline-flex items-center gap-2 rounded-lg border border-orange-200/80 bg-white px-2.5 py-1 text-left transition-colors hover:bg-orange-50 dark:border-blue-900/60 dark:bg-blue-950/30 dark:hover:bg-blue-950/50"
+        >
+          <CalendarDays className="h-3.5 w-3.5 text-orange-500 dark:text-orange-400" />
+          <span className="text-xs font-semibold tracking-tight text-zinc-800 dark:text-zinc-100">
+            {periodLabelFromFilename(value)}
+          </span>
+          <span
+            className={`rounded-full px-1.5 py-0.5 font-mono text-[8px] font-semibold tracking-wide uppercase ${
+              isCurrent
+                ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300"
+                : "bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400"
+            }`}
+          >
+            {isCurrent ? "Current" : "Past"}
+          </span>
+          <ChevronDown className={`h-3.5 w-3.5 text-zinc-400 transition-transform ${open ? "rotate-180" : ""}`} />
+        </button>
+
+        <button type="button" aria-label="Newer period" onClick={stepNewer} disabled={!canNewer} className={arrowCls}>
+          <ChevronRight className="h-3.5 w-3.5" />
+        </button>
+
+        <AnimatePresence>
+          {open && (
+            <motion.div
+              initial={{ opacity: 0, y: -6, scale: 0.98 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: -6, scale: 0.98 }}
+              transition={{ duration: 0.16, ease: EASE }}
+              className="absolute top-full left-0 z-30 mt-1.5 w-64 overflow-hidden rounded-xl border border-orange-200/80 bg-white shadow-xl dark:border-blue-900/60 dark:bg-[#0d1117]"
+            >
+              <div className="flex items-center justify-between border-b border-orange-100 px-3 py-2 dark:border-blue-950/60">
+                <span className="font-mono text-[9px] font-semibold tracking-[0.16em] text-zinc-500 uppercase">
+                  Hubstaff uploads
+                </span>
+                {!isCurrent && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onChange(null);
+                      setOpen(false);
+                    }}
+                    title="Reset to the current payroll week — Readiness follows the Payroll Wizard again"
+                    className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-1.5 py-0.5 font-mono text-[9px] font-semibold tracking-wide text-emerald-700 uppercase transition-colors hover:bg-emerald-100 dark:bg-emerald-950/40 dark:text-emerald-300 dark:hover:bg-emerald-950/70"
+                  >
+                    <Zap className="h-2.5 w-2.5" /> Current
+                  </button>
+                )}
+              </div>
+              <ul className="max-h-64 overflow-y-auto py-1">
+                {uploads.map((f, i) => {
+                  const selected = f === value;
+                  const current = i === 0;
+                  return (
+                    <li key={f}>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          onChange(f);
+                          setOpen(false);
+                        }}
+                        className={`flex w-full items-center justify-between gap-2 px-3 py-1.5 text-left text-xs transition-colors ${
+                          selected
+                            ? "bg-orange-50 font-semibold text-orange-700 dark:bg-blue-950/50 dark:text-orange-300"
+                            : "text-zinc-700 hover:bg-orange-50/60 dark:text-zinc-200 dark:hover:bg-blue-950/40"
+                        }`}
+                      >
+                        <span className="truncate">{periodLabelFromFilename(f)}</span>
+                        {current && (
+                          <span className="shrink-0 rounded-full bg-emerald-100 px-1.5 py-0.5 font-mono text-[8px] font-semibold tracking-wide text-emerald-700 uppercase dark:bg-emerald-950/50 dark:text-emerald-300">
+                            Current
+                          </span>
+                        )}
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
+
+      {/* Mode chip: makes it obvious whether the tab is mirroring the wizard or
+          showing a hand-picked week. */}
+      <span
+        className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[9px] font-semibold uppercase tracking-[0.12em] ${
+          following
+            ? "border-sky-200 bg-sky-50 text-sky-700 dark:border-sky-500/30 dark:bg-sky-500/10 dark:text-sky-300"
+            : "border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300"
+        }`}
+        title={
+          following
+            ? "This tab is following the Payroll Wizard’s selected period."
+            : "You picked this week here — the wizard no longer changes it. Use “Current” to follow the wizard again."
+        }
+      >
+        {following ? (
+          <>
+            <Sparkles className="h-2.5 w-2.5" /> Following wizard
+          </>
+        ) : (
+          <>
+            <CalendarDays className="h-2.5 w-2.5" /> Picked week
+          </>
+        )}
+      </span>
     </div>
   );
 }

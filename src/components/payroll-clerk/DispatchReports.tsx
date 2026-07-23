@@ -5,7 +5,6 @@ import { motion } from 'motion/react';
 import {
   AlertTriangle,
   ArrowLeft,
-  Banknote,
   CalendarDays,
   CheckCircle2,
   ChevronLeft,
@@ -16,9 +15,6 @@ import {
   Download,
   FileSpreadsheet,
   Gauge,
-  Gift,
-  Hammer,
-  Heart,
   Loader2,
   Search,
   Send,
@@ -27,7 +23,6 @@ import {
   X,
   Zap,
 } from 'lucide-react';
-import type { OrphanageDispatchRow } from '@/lib/supabase/orphanage-dispatches';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { formatPHP, formatUSD, PROCESSORS, DISPATCH_PROCESSORS, type ProcessorId } from './mock-queue';
@@ -69,6 +64,18 @@ export interface ReportSummary {
   byProcessor: Record<string, { count: number; usd: number; php: number }>;
   /** Every recipient with status='paid' for this cycle, sorted by name. */
   paidRecipients: ReportRecipient[];
+}
+
+export interface UnseededUpload {
+  id: string;
+  sourceFile: string;
+  periodStart: string | null;
+  periodEnd: string | null;
+  uploadedAt: string;
+  uploadedBy: string | null;
+  rowCount: number | null;
+  reportName: string;
+  seedable: boolean;
 }
 
 export interface ReportDetail extends ReportSummary {
@@ -166,11 +173,11 @@ export default function DispatchReports() {
   const [selectedError, setSelectedError] = useState<string | null>(null);
   const [page, setPage] = useState(0);
   const [search, setSearch] = useState('');
-  const [orphanageRows, setOrphanageRows] = useState<OrphanageDispatchRow[]>([]);
-  const [orphanageLoading, setOrphanageLoading] = useState(true);
-  const [unseededCount, setUnseededCount] = useState(0);
+  const [unseeded, setUnseeded] = useState<UnseededUpload[]>([]);
   const [seeding, setSeeding] = useState(false);
   const [seedError, setSeedError] = useState<string | null>(null);
+  /** source_files currently being seeded (individually or via Seed all). */
+  const [seedingFiles, setSeedingFiles] = useState<Set<string>>(new Set());
 
   const loadReports = React.useCallback(async (signal?: AbortSignal) => {
     setLoading(true);
@@ -180,14 +187,18 @@ export default function DispatchReports() {
         cache: 'no-store',
         signal,
       });
-      const json = (await res.json()) as { reports?: ReportSummary[]; error?: string; unseededCount?: number };
+      const json = (await res.json()) as {
+        reports?: ReportSummary[];
+        error?: string;
+        unseeded?: UnseededUpload[];
+      };
       if (signal?.aborted) return;
       if (json.error) {
         setError(json.error);
         setSummaries([]);
       } else {
         setSummaries(json.reports ?? []);
-        setUnseededCount(json.unseededCount ?? 0);
+        setUnseeded(json.unseeded ?? []);
         setPage(0);
       }
     } catch (e) {
@@ -205,11 +216,18 @@ export default function DispatchReports() {
     return () => controller.abort();
   }, [loadReports]);
 
-  const handleSeedMissing = async () => {
+  // Seed either a targeted subset (per-upload button) or all seedable uploads
+  // (Seed all button). `files === null` means "seed all".
+  const runSeed = async (files: string[] | null) => {
     setSeeding(true);
     setSeedError(null);
+    setSeedingFiles(files ? new Set(files) : new Set(unseeded.filter((u) => u.seedable).map((u) => u.sourceFile)));
     try {
-      const res = await fetch('/api/payment-dispatches/reports/seed-missing', { method: 'POST' });
+      const res = await fetch('/api/payment-dispatches/reports/seed-missing', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: files ? JSON.stringify({ sourceFiles: files }) : undefined,
+      });
       const json = (await res.json()) as { seeded?: number; error?: string };
       if (json.error) {
         setSeedError(json.error);
@@ -220,24 +238,11 @@ export default function DispatchReports() {
       setSeedError(e instanceof Error ? e.message : 'Seed failed');
     } finally {
       setSeeding(false);
+      setSeedingFiles(new Set());
     }
   };
 
-  // Fetch paid orphanage dispatches for the reports panel
-  useEffect(() => {
-    (async () => {
-      setOrphanageLoading(true);
-      try {
-        const res = await fetch('/api/orphanage-dispatches?paid=1', { cache: 'no-store' });
-        const json = (await res.json()) as { rows?: OrphanageDispatchRow[]; error?: string };
-        if (!json.error) setOrphanageRows(json.rows ?? []);
-      } catch {
-        // non-fatal — orphanage section silently omitted
-      } finally {
-        setOrphanageLoading(false);
-      }
-    })();
-  }, []);
+  const seedableCount = useMemo(() => unseeded.filter((u) => u.seedable).length, [unseeded]);
 
   const filteredSummaries = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -299,7 +304,7 @@ export default function DispatchReports() {
               Disbursement reports
             </h1>
             <p className="mt-1 text-xs text-[#71717a] dark:text-zinc-500">
-              Weekly payroll cycles, urgent (MESA) payouts, and orphanage payments.
+              Weekly payroll cycles and urgent (MESA) payouts.
             </p>
           </div>
           <div className="hidden items-center gap-1.5 rounded-full border border-orange-200/80 bg-white/70 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-orange-700 backdrop-blur-md dark:border-orange-900/40 dark:bg-orange-950/30 dark:text-orange-300 sm:inline-flex">
@@ -335,51 +340,107 @@ export default function DispatchReports() {
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto bg-[#fafaf8] px-3 py-3 sm:px-6 sm:py-6 dark:bg-[#0d1117]">
-        {/* Unseeded uploads banner */}
-        {unseededCount > 0 && !seeding && (
-          <div className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-amber-200 bg-amber-50/70 px-4 py-3 dark:border-amber-500/20 dark:bg-amber-500/5">
-            <div className="flex items-start gap-2">
-              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
-              <div>
-                <p className="text-[12px] font-semibold text-amber-800 dark:text-amber-300">
-                  {unseededCount} upload{unseededCount === 1 ? '' : 's'} without payroll records
-                </p>
-                <p className="mt-0.5 text-[11px] text-amber-700 dark:text-amber-400">
-                  These Hubstaff uploads have hours data but no disbursement records yet. Seed to generate them from hours &amp; rates.
-                </p>
-                {seedError && (
-                  <p className="mt-1 text-[11px] text-rose-600 dark:text-rose-400">{seedError}</p>
-                )}
+        {/* Unseeded uploads — one row per Hubstaff upload missing records, so the
+            clerk can see exactly which uploads are affected and seed them
+            individually (or all at once). Non-seedable uploads are shown tagged. */}
+        {unseeded.length > 0 && (
+          <div className="mb-4 overflow-hidden rounded-2xl border border-amber-200 bg-amber-50/70 dark:border-amber-500/20 dark:bg-amber-500/5">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-amber-200/70 px-4 py-3 dark:border-amber-500/20">
+              <div className="flex items-start gap-2">
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
+                <div>
+                  <p className="text-[12px] font-semibold text-amber-800 dark:text-amber-300">
+                    {unseeded.length} upload{unseeded.length === 1 ? '' : 's'} without payroll records
+                  </p>
+                  <p className="mt-0.5 text-[11px] text-amber-700 dark:text-amber-400">
+                    These Hubstaff uploads have hours data but no disbursement records yet. Seed one, or seed them all, to generate records from hours &amp; rates.
+                  </p>
+                  {seedError && (
+                    <p className="mt-1 text-[11px] text-rose-600 dark:text-rose-400">{seedError}</p>
+                  )}
+                </div>
               </div>
-            </div>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={handleSeedMissing}
-              disabled={seeding}
-              className="h-8 gap-1.5 border-amber-300 bg-white px-3 text-[11px] font-medium text-amber-800 hover:bg-amber-100 dark:border-amber-500/40 dark:bg-transparent dark:text-amber-300 dark:hover:bg-amber-500/10"
-            >
-              {seeding ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              ) : (
-                <Sparkles className="h-3.5 w-3.5" />
+              {seedableCount > 0 && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => runSeed(null)}
+                  disabled={seeding}
+                  className="h-8 gap-1.5 border-amber-300 bg-white px-3 text-[11px] font-medium text-amber-800 hover:bg-amber-100 dark:border-amber-500/40 dark:bg-transparent dark:text-amber-300 dark:hover:bg-amber-500/10"
+                >
+                  {seeding && seedingFiles.size !== 1 ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Sparkles className="h-3.5 w-3.5" />
+                  )}
+                  Seed all ({seedableCount})
+                </Button>
               )}
-              Seed missing records
-            </Button>
+            </div>
+            <ul className="divide-y divide-amber-200/60 dark:divide-amber-500/10">
+              {unseeded.map((u) => {
+                const isSeedingThis = seeding && seedingFiles.has(u.sourceFile);
+                return (
+                  <li
+                    key={u.id}
+                    className={cn(
+                      'flex flex-wrap items-center justify-between gap-2 px-4 py-2.5',
+                      !u.seedable && 'opacity-60',
+                    )}
+                  >
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <p className="truncate text-[12px] font-medium text-amber-900 dark:text-amber-200">
+                          {u.reportName}
+                        </p>
+                        {!u.seedable && (
+                          <span className="shrink-0 rounded-full border border-zinc-300 bg-white/70 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-zinc-500 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-400">
+                            Not seedable
+                          </span>
+                        )}
+                      </div>
+                      <p className="mt-0.5 truncate text-[10.5px] text-amber-700/80 dark:text-amber-400/70">
+                        {u.sourceFile}
+                        {u.rowCount != null && ` · ${u.rowCount} row${u.rowCount === 1 ? '' : 's'}`}
+                        {` · uploaded ${formatTimestamp(u.uploadedAt)}`}
+                      </p>
+                    </div>
+                    {u.seedable ? (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => runSeed([u.sourceFile])}
+                        disabled={seeding}
+                        className="h-7 shrink-0 gap-1.5 border-amber-300 bg-white px-2.5 text-[11px] font-medium text-amber-800 hover:bg-amber-100 dark:border-amber-500/40 dark:bg-transparent dark:text-amber-300 dark:hover:bg-amber-500/10"
+                      >
+                        {isSeedingThis ? (
+                          <Loader2 className="h-3 w-3 animate-spin" />
+                        ) : (
+                          <Sparkles className="h-3 w-3" />
+                        )}
+                        Seed
+                      </Button>
+                    ) : (
+                      <span
+                        className="shrink-0 text-[10px] text-zinc-400 dark:text-zinc-500"
+                        title="Backfills, re-uploads, the time-activity export, and non-weekly ranges are skipped by seeding."
+                      >
+                        skipped by seeding
+                      </span>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+            {seeding && (
+              <div className="flex items-center gap-2 border-t border-amber-200/70 px-4 py-2.5 dark:border-amber-500/20">
+                <Loader2 className="h-3.5 w-3.5 animate-spin text-amber-600 dark:text-amber-400" />
+                <p className="text-[11px] text-amber-800 dark:text-amber-300">
+                  Seeding disbursement records from Hubstaff hours&hellip; this may take a moment.
+                </p>
+              </div>
+            )}
           </div>
-        )}
-        {seeding && (
-          <div className="mb-4 flex items-center gap-2 rounded-2xl border border-amber-200 bg-amber-50/70 px-4 py-3 dark:border-amber-500/20 dark:bg-amber-500/5">
-            <Loader2 className="h-4 w-4 animate-spin text-amber-600 dark:text-amber-400" />
-            <p className="text-[12px] text-amber-800 dark:text-amber-300">
-              Seeding disbursement records from Hubstaff hours&hellip; this may take a moment.
-            </p>
-          </div>
-        )}
-
-        {/* Orphanage payments panel */}
-        {(orphanageRows.length > 0 || orphanageLoading) && (
-          <OrphanageReportsPanel rows={orphanageRows} loading={orphanageLoading} />
         )}
 
         {/* Payroll + weekly urgent (MESA) reports */}
@@ -396,7 +457,7 @@ export default function DispatchReports() {
             <p className="max-w-md text-xs text-zinc-500 dark:text-zinc-400">{error}</p>
           </div>
         ) : filteredSummaries.length === 0 ? (
-          <div className={cn('flex items-center justify-center text-center', orphanageRows.length > 0 ? 'mt-6' : 'h-full')}>
+          <div className="flex h-full items-center justify-center text-center">
             <div>
               <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-full bg-zinc-100 text-zinc-400 dark:bg-zinc-900 dark:text-zinc-600">
                 {search ? <Search className="h-5 w-5" /> : <FileSpreadsheet className="h-5 w-5" />}
@@ -1329,164 +1390,6 @@ function DetailStat({
         </div>
       </div>
     </div>
-  );
-}
-
-// ─── Orphanage Reports Panel ─────────────────────────────────────────────────
-
-function formatOrphanagePHP(v: number | null | undefined) {
-  if (v == null) return '—';
-  return `₱${v.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-}
-
-function formatDateShort(iso: string | null | undefined) {
-  if (!iso) return '—';
-  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso);
-  if (!m) return iso;
-  return new Date(Date.UTC(+m[1], +m[2] - 1, +m[3])).toLocaleDateString('en-US', {
-    month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC',
-  });
-}
-
-function OrphanageReportsPanel({
-  rows,
-  loading,
-}: {
-  rows: OrphanageDispatchRow[];
-  loading: boolean;
-}) {
-  const [search, setSearch] = useState('');
-
-  const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    if (!q) return rows;
-    return rows.filter(
-      (r) =>
-        r.label.toLowerCase().includes(q) ||
-        r.submitter_email.toLowerCase().includes(q) ||
-        (r.bank_name ?? '').toLowerCase().includes(q) ||
-        (r.transaction_id ?? '').toLowerCase().includes(q),
-    );
-  }, [rows, search]);
-
-  const totalPHP = useMemo(() => rows.reduce((s, r) => s + (r.amount_php ?? 0), 0), [rows]);
-
-  return (
-    <section className="mb-6 rounded-2xl border border-teal-200/70 bg-gradient-to-br from-teal-50/60 to-white p-3 sm:p-4 dark:border-teal-500/20 dark:from-teal-500/5 dark:to-zinc-950">
-      {/* Header */}
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <h2 className="inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-teal-800 dark:text-teal-300">
-          <Heart className="h-3.5 w-3.5" fill="currentColor" />
-          Orphanage Payments
-        </h2>
-        <div className="flex items-center gap-2">
-          {loading && <Loader2 className="h-3.5 w-3.5 animate-spin text-teal-500" />}
-          <span className="font-mono text-[10px] tabular-nums text-teal-800/80 dark:text-teal-300/80">
-            {rows.length} record{rows.length === 1 ? '' : 's'} · {formatOrphanagePHP(totalPHP)}
-          </span>
-        </div>
-      </div>
-
-      {/* Search */}
-      <div className="relative mt-2.5">
-        <span className="pointer-events-none absolute inset-y-0 left-2.5 flex items-center">
-          <Search className="h-3.5 w-3.5 text-teal-600/60 dark:text-teal-400/50" />
-        </span>
-        <input
-          type="text"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search by label, email, bank, or txn ID…"
-          className="w-full rounded-lg border border-teal-200/80 bg-white/90 py-1.5 pl-7 pr-7 text-[12px] placeholder:text-zinc-400 focus:outline-none focus:ring-1 focus:ring-teal-400/60 dark:border-teal-500/20 dark:bg-zinc-950/60 dark:placeholder:text-zinc-600"
-        />
-        {search && (
-          <button
-            type="button"
-            onClick={() => setSearch('')}
-            className="absolute inset-y-0 right-2 flex items-center text-zinc-400 hover:text-zinc-600 dark:text-zinc-600 dark:hover:text-zinc-400"
-          >
-            <X className="h-3.5 w-3.5" />
-          </button>
-        )}
-      </div>
-
-      {/* Table */}
-      {filtered.length === 0 ? (
-        <p className="mt-3 text-center text-[11px] text-zinc-500 dark:text-zinc-500">
-          {search ? `No results for "${search}"` : 'No paid orphanage dispatches yet.'}
-        </p>
-      ) : (
-        <div className="mt-3 overflow-x-auto rounded-xl border border-teal-100/80 bg-white/80 dark:border-teal-900/30 dark:bg-zinc-950/60">
-          <table className="w-full min-w-[640px] text-xs">
-            <thead className="bg-teal-50/80 text-[10px] uppercase tracking-wide text-teal-800 dark:bg-teal-950/40 dark:text-teal-400">
-              <tr>
-                <th className="px-3 py-2 text-left font-medium">Type</th>
-                <th className="px-3 py-2 text-left font-medium">Description</th>
-                <th className="px-3 py-2 text-left font-medium">Destination bank</th>
-                <th className="px-3 py-2 text-right font-medium">Amount (PHP)</th>
-                <th className="px-3 py-2 text-left font-medium">Status</th>
-                <th className="px-3 py-2 text-left font-medium">Txn ID</th>
-                <th className="px-3 py-2 text-left font-medium">Sent</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-teal-100/60 dark:divide-teal-900/20">
-              {filtered.map((r) => (
-                <tr key={r.id} className="hover:bg-teal-50/40 dark:hover:bg-teal-950/20">
-                  <td className="px-3 py-2">
-                    <span className={cn(
-                      'inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide',
-                      r.dispatch_type === 'budget_request'
-                        ? 'bg-teal-100 text-teal-700 dark:bg-teal-900/30 dark:text-teal-300'
-                        : r.dispatch_type === 'worker_payment'
-                          ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300'
-                          : 'bg-pink-100 text-pink-700 dark:bg-pink-900/30 dark:text-pink-300',
-                    )}>
-                      {r.dispatch_type === 'budget_request'
-                        ? <><Banknote className="h-2.5 w-2.5" /> Budget</>
-                        : r.dispatch_type === 'worker_payment'
-                          ? <><Hammer className="h-2.5 w-2.5" /> Staff</>
-                          : <><Gift className="h-2.5 w-2.5" /> Gift</>}
-                    </span>
-                  </td>
-                  <td className="px-3 py-2">
-                    <div className="font-medium text-zinc-900 dark:text-zinc-100">{r.label}</div>
-                    <div className="font-mono text-[10px] text-zinc-500 dark:text-zinc-500">{r.submitter_email}</div>
-                  </td>
-                  <td className="px-3 py-2">
-                    <div className="font-medium text-zinc-900 dark:text-zinc-100">{r.bank_name || '—'}</div>
-                    {r.bank_account_number && (
-                      <div className="font-mono text-[10px] text-zinc-500 dark:text-zinc-500">
-                        {r.bank_account_name} · {r.bank_account_number}
-                      </div>
-                    )}
-                  </td>
-                  <td className="px-3 py-2 text-right font-mono font-semibold tabular-nums text-teal-800 dark:text-teal-300">
-                    {formatOrphanagePHP(r.amount_php)}
-                  </td>
-                  <td className="px-3 py-2">
-                    <span className={cn(
-                      'inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide',
-                      r.status === 'paid'
-                        ? 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-300'
-                        : 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300',
-                    )}>
-                      {r.status === 'paid' ? <CheckCircle2 className="h-2.5 w-2.5" /> : null}
-                      {r.status}
-                    </span>
-                  </td>
-                  <td className="px-3 py-2 font-mono text-[11px] text-zinc-700 dark:text-zinc-300">
-                    {r.transaction_id || '—'}
-                  </td>
-                  <td className="px-3 py-2 text-zinc-600 dark:text-zinc-400">
-                    {r.sent_date ? formatDateShort(r.sent_date) : '—'}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </section>
   );
 }
 

@@ -147,6 +147,59 @@ export function playPaymentConfirmed(): void {
   });
 }
 
+// "Stage prepped" cue = the CS:GO match-accept sound, played when the clerk
+// starts payroll processing. Shipped as an asset (public/sounds/match-accept.mp3)
+// rather than synthesized. Fired from the confirm click (a user gesture) so
+// autoplay policy allows it. A single reusable <audio> element is kept so
+// rapid re-triggers just rewind rather than stacking.
+const STAGE_PREPPED_SRC = '/sounds/match-accept.mp3';
+let stagePreppedEl: HTMLAudioElement | null = null;
+
+const STAGE_PREPPED_VOLUME = 0.7;
+let stagePreppedFade: ReturnType<typeof setInterval> | null = null;
+
+export function playStagePrepped(): void {
+  if (typeof window === 'undefined') return;
+  try {
+    if (stagePreppedFade) { clearInterval(stagePreppedFade); stagePreppedFade = null; }
+    if (!stagePreppedEl) {
+      stagePreppedEl = new Audio(STAGE_PREPPED_SRC);
+      stagePreppedEl.preload = 'auto';
+    }
+    stagePreppedEl.volume = STAGE_PREPPED_VOLUME;
+    stagePreppedEl.currentTime = 0;
+    // play() may reject if not yet unlocked; ignore — it'll work on the gesture.
+    void stagePreppedEl.play().catch(() => {});
+  } catch {
+    /* no audio support — degrade to silent */
+  }
+}
+
+/**
+ * Smoothly fade out + stop the stage-prepped cue — call when the "Preparing
+ * Dispatch" modal closes so the (long) clip doesn't keep playing behind the UI.
+ * Ramps the volume down over ~450ms, then pauses and rewinds. Safe to call when
+ * nothing is playing.
+ */
+export function stopStagePrepped(fadeMs = 450): void {
+  const el = stagePreppedEl;
+  if (!el) return;
+  if (stagePreppedFade) { clearInterval(stagePreppedFade); stagePreppedFade = null; }
+  const steps = 15;
+  const stepMs = Math.max(16, fadeMs / steps);
+  const startVol = el.volume;
+  let i = 0;
+  stagePreppedFade = setInterval(() => {
+    i += 1;
+    const next = startVol * (1 - i / steps);
+    el.volume = next > 0 ? next : 0;
+    if (i >= steps) {
+      if (stagePreppedFade) { clearInterval(stagePreppedFade); stagePreppedFade = null; }
+      try { el.pause(); el.currentTime = 0; el.volume = STAGE_PREPPED_VOLUME; } catch { /* ignore */ }
+    }
+  }, stepMs);
+}
+
 /** Sender cue: one soft, short blip — quiet so it never nags. */
 export function playPingSent(): void {
   withCtx((c) => {

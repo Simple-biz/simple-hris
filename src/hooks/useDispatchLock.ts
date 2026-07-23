@@ -6,6 +6,13 @@ import { getSupabaseBrowserClient } from '@/lib/supabase/browser';
 
 const EMPTY: PayrollDispatchLockState = { locked: false, lockedAt: null, lockedBy: null };
 
+// Same-document broadcast so an OPTIMISTIC toggle in one useDispatchLock
+// instance (e.g. the Payment Dispatch Start button) flips EVERY other instance
+// mounted in the same page instantly — before the server round-trip / Realtime
+// echo. Without this, App.tsx's sidebar instance would lag the clerk's click by
+// up to the 30s poll. Server reconciliation still happens via refetch/Realtime.
+const OPTIMISTIC_EVENT = 'hris:dispatch-lock:optimistic';
+
 /** Polling fallback in case Realtime is silently broken (missing publication,
  *  RLS blocking SELECT for anon, etc.). Every 30s we re-fetch the state so the
  *  banner can never get stuck on the wrong side of a toggle for long. */
@@ -95,6 +102,18 @@ export function useDispatchLock(): UseDispatchLockResult {
     };
   }, [refetch, instanceId]);
 
+  // Listen for optimistic toggles from sibling instances in this document so
+  // the whole page (sidebar + focus mode + banners) flips the instant the
+  // button is pressed, not after the server echo.
+  useEffect(() => {
+    const onOptimistic = (e: Event) => {
+      const locked = (e as CustomEvent<{ locked: boolean }>).detail?.locked;
+      if (typeof locked === 'boolean') setState((prev) => ({ ...prev, locked }));
+    };
+    window.addEventListener(OPTIMISTIC_EVENT, onOptimistic as EventListener);
+    return () => window.removeEventListener(OPTIMISTIC_EVENT, onOptimistic as EventListener);
+  }, []);
+
   // Belt-and-braces poll so the banner is never stuck if Realtime is down.
   useEffect(() => {
     const id = window.setInterval(() => {
@@ -122,6 +141,13 @@ export function useDispatchLock(): UseDispatchLockResult {
       // Optimistic update so the toggling client reacts instantly. Realtime
       // (and the response body) will reconcile with authoritative state.
       setState((prev) => ({ ...prev, locked }));
+      // Broadcast to sibling instances (sidebar shell, banners) so the whole
+      // page flips on the click, not after the round-trip.
+      try {
+        window.dispatchEvent(new CustomEvent(OPTIMISTIC_EVENT, { detail: { locked } }));
+      } catch {
+        /* ignore */
+      }
       try {
         const res = await fetch('/api/payroll-dispatch-lock', {
           method: 'POST',
@@ -134,7 +160,14 @@ export function useDispatchLock(): UseDispatchLockResult {
         const json = (await res.json()) as PayrollDispatchLockState;
         setState(json);
       } catch (e) {
+        // Server rejected the toggle — revert this instance AND tell siblings
+        // to snap back (they only heard the optimistic flip, not the failure).
         await refetch();
+        try {
+          window.dispatchEvent(new CustomEvent(OPTIMISTIC_EVENT, { detail: { locked: !locked } }));
+        } catch {
+          /* ignore */
+        }
         throw e;
       }
     },

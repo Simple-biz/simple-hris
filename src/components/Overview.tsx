@@ -96,6 +96,8 @@ import {
   parseUsHolidaysList,
   getEnabledHolidayMap,
 } from '@/lib/us-holidays';
+import { useLiveRefresh } from '@/hooks/useLiveRefresh';
+import { useDispatchLock } from '@/hooks/useDispatchLock';
 
 const PAGE_SIZE = 10;
 
@@ -334,6 +336,15 @@ interface OverviewProps {
 interface SimpleViewProps {
   totalPayout: number | null;
   payoutLoading: boolean;
+  /** Whether the payout Realtime websocket is actually up ('live') vs. polling
+   *  ('degraded'). Drives the honest green/amber live dot on the hero. */
+  payoutRealtime: 'live' | 'degraded';
+  /** True while payroll processing / payment dispatch is underway — the Total
+   *  Payout is not final and can still move (bonuses, adjustments, dispatch). */
+  payrollProcessing: boolean;
+  /** Who started the current processing run (from the dispatch lock), for the
+   *  processing pill's tooltip. */
+  payrollProcessingBy: string | null;
   payrollWorkerCount: number | null;
   masterTotal: number;
   /** Bonuses keyed in (KPI Calculator → catalog + HSL entries) for the active
@@ -445,6 +456,9 @@ function formatPhp(n: number | null | undefined, min = 0): string {
 function SimpleView({
   totalPayout,
   payoutLoading,
+  payoutRealtime,
+  payrollProcessing,
+  payrollProcessingBy,
   payrollWorkerCount,
   masterTotal,
   bonusesKeyedIn,
@@ -763,36 +777,43 @@ function SimpleView({
                   </>
                 )}
               </p>
-              <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-orange-700/80 xl:mb-3 dark:text-orange-400/80">
-                Total payout · this accounting pay run
-              </p>
+              <div className="mb-2 flex flex-wrap items-center gap-x-3 gap-y-1.5 xl:mb-3">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-orange-700/80 dark:text-orange-400/80">
+                  Total payout · this accounting pay run
+                </p>
+                {/* Live indicator — a green dot when the Realtime feed is up, an
+                    amber dot when we've fallen back to polling. Honest either way:
+                    the number stays fresh, this just says how immediately. */}
+                <PayoutLiveDot realtime={payoutRealtime} />
+                {/* Processing pill — shown while payroll/dispatch is underway, so
+                    the figure reads as provisional (it can still move). */}
+                {payrollProcessing && (
+                  <span
+                    className="inline-flex items-center gap-1.5 rounded-full border border-amber-300/80 bg-amber-50/90 px-2 py-0.5 text-[10.5px] font-semibold uppercase tracking-[0.12em] text-amber-800 dark:border-amber-800/50 dark:bg-amber-950/40 dark:text-amber-300"
+                    title={
+                      payrollProcessingBy
+                        ? `Payroll processing in progress (started by ${payrollProcessingBy}). The total can still change.`
+                        : 'Payroll processing in progress. The total can still change.'
+                    }
+                  >
+                    <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
+                    Processing · total may change
+                  </span>
+                )}
+              </div>
               <div className="flex items-baseline">
                 <span className="mr-1.5 text-4xl font-medium text-zinc-400 lg:text-5xl xl:text-6xl 2xl:text-7xl dark:text-zinc-500">
                   ₱
                 </span>
-                {payoutLoading || pabMetrics.loading || loading ? (
-                  <span className="relative inline-flex h-[1em] w-[220px] animate-pulse items-center justify-center rounded-md bg-zinc-200/80 align-bottom text-4xl lg:w-[280px] lg:text-5xl xl:w-[360px] xl:text-6xl 2xl:w-[420px] 2xl:text-7xl dark:bg-zinc-800">
-                    <span className="flex items-center gap-[5px]">
-                      {[0, 1, 2, 3].map(i => (
-                        <span
-                          key={i}
-                          className="inline-block h-1.5 w-1.5 rounded-full bg-zinc-400/80 dark:bg-zinc-500"
-                          style={{ animation: 'payout-dot-bounce 1.2s ease-in-out infinite', animationDelay: `${i * 0.15}s` }}
-                        />
-                      ))}
-                    </span>
-                  </span>
-                ) : (
-                  <span className="font-mono text-4xl font-bold tracking-tight text-zinc-900 lg:text-5xl xl:text-6xl 2xl:text-7xl dark:text-white">
-                    {displayTotalPayout != null
-                      ? displayTotalPayout.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-                      : '—'}
-                  </span>
-                )}
+                {/* The reels are the loading state: they free-spin (blurred)
+                    while the payout resolves, then settle onto the real figure. */}
+                <span className="font-mono text-4xl font-bold tracking-tight text-zinc-900 lg:text-5xl xl:text-6xl 2xl:text-7xl dark:text-white">
+                  <RollingPayout
+                    value={displayTotalPayout}
+                    loading={payoutLoading || pabMetrics.loading || loading}
+                  />
+                </span>
               </div>
-              {(payoutLoading || pabMetrics.loading || loading) && (
-                <p className="mt-1 text-[11px] italic text-zinc-400 dark:text-zinc-500">Fetching Total Payout</p>
-              )}
               {/* Accent rule — orange→rose hairline under the hero number */}
               <div className="mt-2.5 h-[2px] w-16 rounded-full bg-gradient-to-r from-orange-500 to-rose-500 dark:from-orange-400 dark:to-rose-400" />
               <p className="mt-3 flex flex-wrap items-center gap-3 text-[13px] text-zinc-600 [@media(max-height:900px)]:mt-2 dark:text-zinc-400">
@@ -815,7 +836,13 @@ function SimpleView({
                   </>
                 )}
                 <span className="text-zinc-300 dark:text-zinc-700">·</span>
-                <span>{pabFinalizedForPayout ? 'Initial pay + PAB · other bonuses applied at payroll' : 'Initial pay · bonuses applied at payroll'}</span>
+                <span>
+                  {payrollProcessing
+                    ? 'Provisional — payroll is being processed now'
+                    : pabFinalizedForPayout
+                      ? 'Initial pay + PAB · other bonuses applied at payroll'
+                      : 'Initial pay · bonuses applied at payroll'}
+                </span>
               </p>
             </motion.div>
 
@@ -1867,6 +1894,274 @@ function AnimatedCounter({ value, duration = 600 }: { value: number; duration?: 
   return <>{n.toLocaleString('en-US')}</>;
 }
 
+/**
+ * PayoutLiveDot — a small "live" chip next to the Total Payout eyebrow.
+ *  - realtime 'live':     emerald dot with a ping halo + "Live" — the Realtime
+ *    websocket is up, so bonus/adjustment changes push in near-instantly.
+ *  - realtime 'degraded': steady amber dot + "Live · polling" — the websocket
+ *    isn't connected, but the 30s poll + focus refresh still keep it fresh.
+ * The distinction is honest: the value is live either way, this says how fast.
+ */
+function PayoutLiveDot({ realtime }: { realtime: 'live' | 'degraded' }) {
+  const live = realtime === 'live';
+  return (
+    <span
+      className={cn(
+        'inline-flex items-center gap-1.5 text-[10.5px] font-semibold uppercase tracking-[0.12em]',
+        live ? 'text-emerald-700 dark:text-emerald-400' : 'text-amber-700 dark:text-amber-400',
+      )}
+      title={
+        live
+          ? 'Live — updates push in as hours, bonuses, and adjustments change.'
+          : 'Live — refreshing on a timer (realtime feed unavailable right now).'
+      }
+      aria-label={live ? 'Live, realtime' : 'Live, polling'}
+    >
+      <span className="relative inline-flex h-2 w-2" aria-hidden>
+        {live && (
+          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+        )}
+        <span
+          className={cn(
+            'relative inline-flex h-2 w-2 rounded-full',
+            live ? 'bg-emerald-500' : 'bg-amber-500',
+          )}
+        />
+      </span>
+      {live ? 'Live' : 'Live · polling'}
+    </span>
+  );
+}
+
+// Reel geometry. A hidden ghost "0" inside each reel gives the inline-block its
+// normal text baseline, so the visible reel never floats off the line (the fix
+// for the "numbers floating" bug). The strip's cells share that exact font /
+// line box, so translateY(-N em) lands digit N dead on the baseline. Window and
+// cell are both a clean 1em with line-height 1 — no tall-cell / negative-margin
+// hacks, no doubled-digit clipping. Width leaves room for a bold mono glyph.
+const REEL_WIDTH_EM = 0.62; // per-digit horizontal room
+
+type ReelPhase = 'spinning' | 'settling' | 'rest';
+
+/**
+ * DigitReel — one vertical 0-9 strip driven by translateY.
+ *  - phase "spinning": the CSS `payout-reel-spin` loop runs it continuously with
+ *    a motion blur — this IS the loading indicator.
+ *  - phase "settling": a JS transition decelerates the strip onto `digit`, then
+ *    a one-shot warm flash marks the lock-in.
+ *  - phase "rest": parked on `digit`, static.
+ * Reduced motion snaps straight to the digit with no spin, blur, or flash.
+ */
+function DigitReel({
+  digit,
+  phase,
+  delayMs,
+  reduce,
+}: {
+  digit: number;
+  phase: ReelPhase;
+  delayMs: number;
+  reduce: boolean;
+}) {
+  const target = Math.min(9, Math.max(0, digit));
+
+  // Extra full turns folded into the settle travel so the deceleration reads as
+  // a wheel spinning down rather than a short hop.
+  const TURNS = 4;
+  // Resting offset depends on how many 0-9 bands the strip renders in this
+  // phase. Settling renders TURNS+1 bands (the target lives in the LAST band, so
+  // the reel spins through every turn before landing). Rest / reduced-motion
+  // render a single band, so the target is simply -target. Using the 49-index
+  // offset against a single-band strip scrolls past the end → a blank reel.
+  const restOffsetEm = phase === 'settling' ? -(TURNS * 10 + target) : -target;
+
+  const [flash, setFlash] = React.useState(false);
+  const [settleOffsetEm, setSettleOffsetEm] = React.useState(0);
+  const rafRef = React.useRef(0);
+  const timerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Drive the settle: on entering "settling", kick a transition from the top of
+  // the strip down to the target, and flash when it lands. Reduced motion or a
+  // direct "rest" mount parks immediately.
+  React.useEffect(() => {
+    if (reduce) {
+      setSettleOffsetEm(restOffsetEm);
+      setFlash(false);
+      return;
+    }
+    if (phase === 'rest') {
+      setSettleOffsetEm(restOffsetEm);
+      return;
+    }
+    if (phase !== 'settling') return;
+    setSettleOffsetEm(0);
+    rafRef.current = requestAnimationFrame(() => {
+      rafRef.current = requestAnimationFrame(() => setSettleOffsetEm(restOffsetEm));
+    });
+    const SETTLE_MS = 1000;
+    timerRef.current = setTimeout(() => setFlash(true), delayMs + SETTLE_MS);
+    return () => {
+      cancelAnimationFrame(rafRef.current);
+      if (timerRef.current) clearTimeout(timerRef.current);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase, digit, reduce, delayMs]);
+
+  // The strip only needs the extra pre-roll bands during a settle; at rest one
+  // 0-9 band is enough, and the spinning loop cycles a single band. When
+  // spinning, append a trailing "0" so the keyframe (0 → -10em) wraps seamlessly
+  // — the 11th cell shows the same glyph the loop restarts on.
+  const strips = phase === 'settling' ? TURNS + 1 : 1;
+  const cells = React.useMemo(() => {
+    const arr: number[] = [];
+    for (let t = 0; t < strips; t += 1) for (let d = 0; d <= 9; d += 1) arr.push(d);
+    if (phase === 'spinning') arr.push(0); // seamless wrap cell
+    return arr;
+  }, [strips, phase]);
+
+  const spinning = phase === 'spinning' && !reduce;
+  // Fade the reel edges only while it's in motion: the whole time it spins, and
+  // during the settle up until the moment it locks in (flash). Off at rest and
+  // under reduced motion, so the final digit shows in full.
+  const masked = !reduce && (spinning || (phase === 'settling' && !flash));
+
+  return (
+    <span
+      className={cn(
+        'relative inline-block overflow-hidden align-baseline',
+        masked && 'payout-reel-masked',
+      )}
+      style={{ width: `${REEL_WIDTH_EM}em`, height: '1em' }}
+      aria-hidden
+    >
+      {/* Ghost reserves the inline baseline + box so the reel sits on the line. */}
+      <span className="invisible" aria-hidden>
+        0
+      </span>
+      <span
+        className={cn(
+          'absolute left-0 top-0 flex flex-col',
+          spinning && 'payout-reel-spinning',
+          flash && 'payout-reel-settle',
+        )}
+        style={{
+          // Each reel spins at a slightly different rate so the wheels look
+          // independent rather than a single sliding block. Keyed off delayMs.
+          ['--reel-spin-dur' as string]: `${0.42 + (delayMs % 5) * 0.03}s`,
+          // While spinning the CSS keyframe owns transform; otherwise we drive it.
+          transform: spinning ? undefined : `translateY(${settleOffsetEm}em)`,
+          transition:
+            phase === 'settling' && !reduce
+              ? `transform 1000ms cubic-bezier(0.12, 0.8, 0.15, 1) ${delayMs}ms`
+              : 'none',
+          willChange: 'transform',
+        }}
+      >
+        {cells.map((d, i) => (
+          <span
+            key={i}
+            className="flex h-[1em] items-center justify-center leading-none"
+          >
+            {d}
+          </span>
+        ))}
+      </span>
+    </span>
+  );
+}
+
+/**
+ * RollingPayout — the Total Payout hero figure as a slot-machine odometer.
+ *
+ * While `loading`, a fixed set of reels spins continuously (blurred), so the
+ * reels themselves ARE the loading state — no separate skeleton. When the value
+ * arrives, the reels swap to the real digits and settle left-to-right (most-
+ * significant digit lands last) so the eye reads it counting into place. A
+ * later value change re-runs the settle. Snaps instantly under reduced motion,
+ * and a plain-text mirror carries the real number to assistive tech.
+ */
+function RollingPayout({
+  value,
+  loading,
+}: {
+  value: number | null;
+  loading: boolean;
+}) {
+  const reduce =
+    typeof window !== 'undefined' &&
+    typeof window.matchMedia === 'function' &&
+    window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  const formatted =
+    value != null
+      ? value.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+      : null;
+
+  // Phase machine. Loading (or no value yet) → free spin. Once the value is
+  // known and loading clears, run one settle, then rest. A new value re-settles.
+  const [phase, setPhase] = React.useState<ReelPhase>(loading || formatted == null ? 'spinning' : 'settling');
+  const prevFmtRef = React.useRef<string | null>(null);
+  const restTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  React.useEffect(() => {
+    if (loading || formatted == null) {
+      setPhase('spinning');
+      prevFmtRef.current = null;
+      return;
+    }
+    // Value is ready. If it changed (or we were spinning), settle onto it.
+    if (prevFmtRef.current !== formatted) {
+      prevFmtRef.current = formatted;
+      setPhase('settling');
+      if (restTimerRef.current) clearTimeout(restTimerRef.current);
+      // After the last reel lands, drop to a cheap static rest.
+      const lastDelay = (formatted.replace(/\D/g, '').length - 1) * 90;
+      restTimerRef.current = setTimeout(() => setPhase('rest'), lastDelay + 1400);
+    }
+    return () => {
+      if (restTimerRef.current) clearTimeout(restTimerRef.current);
+    };
+  }, [loading, formatted]);
+
+  // Loading placeholder: a plausible number of reels + separators so the layout
+  // (and the spin) matches the real figure's footprint. Not the real value.
+  const template = formatted ?? '0,000,000.00';
+
+  // Left-to-right settle: each successive DIGIT lands a beat after the previous.
+  const STEP_MS = 90;
+  let digitOrdinal = -1;
+
+  return (
+    <span className="relative inline-flex items-baseline font-mono font-bold tabular-nums">
+      {/* Screen-reader-only true value; the reels are aria-hidden. */}
+      <span className="sr-only">{formatted != null ? `₱${formatted}` : 'Loading total payout'}</span>
+      <span aria-hidden className="inline-flex items-baseline">
+        {template.split('').map((ch, i) => {
+          if (ch >= '0' && ch <= '9') {
+            digitOrdinal += 1;
+            return (
+              <DigitReel
+                // Remount on phase change so each phase starts from a clean
+                // state (no CSS-anim → JS-transform hand-off glitch).
+                key={`${phase}-${i}`}
+                digit={Number(ch)}
+                phase={phase}
+                reduce={reduce}
+                delayMs={digitOrdinal * STEP_MS}
+              />
+            );
+          }
+          return (
+            <span key={`sep-${i}`} className="inline-block px-[0.02em]">
+              {ch}
+            </span>
+          );
+        })}
+      </span>
+    </span>
+  );
+}
+
 function KpiTile({
   label,
   value,
@@ -2083,6 +2378,13 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
   const [page, setPage] = useState(1);
   const [totalPayout, setTotalPayout] = useState<number | null>(payoutSeed?.totalPayout ?? null);
   const [payoutLoading, setPayoutLoading] = useState(!payoutSeed);
+  /** Bumped by the live-refresh hook (Realtime / poll / focus) to re-run the
+   *  payout fetch effect in place, so the hero re-settles on new hours,
+   *  bonuses, or adjustments without a manual reload. */
+  const [payoutRefreshNonce, setPayoutRefreshNonce] = useState(0);
+  /** Whether the Realtime websocket for the payout feed is actually up ('live')
+   *  vs. falling back to polling ('degraded'). Drives the honest green dot. */
+  const [payoutRealtime, setPayoutRealtime] = useState<'live' | 'degraded'>('degraded');
   const [payrollEmailsNorm, setPayrollEmailsNorm] = useState<Set<string> | null>(
     payoutSeed?.payrollEmailsNorm ? new Set(payoutSeed.payrollEmailsNorm) : null,
   );
@@ -2736,7 +3038,40 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
       }
     })();
     return () => { cancelled = true; };
-  }, [selectedSourceFile, sourceFiles]);
+    // payoutRefreshNonce re-runs this exact fetch in place when live data changes
+    // (Realtime / poll / focus), so the hero re-settles without a manual reload.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedSourceFile, sourceFiles, payoutRefreshNonce]);
+
+  // Keep the Total Payout live. Watches the tables that feed the hero figure —
+  // hours (new/edited time), hourly rates, and the bonus/adjustment tables — and
+  // re-runs the payout fetch (via the nonce) on any change. Realtime pushes the
+  // update instantly where the table is in the publication + anon-readable; the
+  // 30s poll + tab-focus refresh keep it fresh otherwise. onStatusChange gives us
+  // an honest "is the websocket actually live" signal for the green dot.
+  useLiveRefresh({
+    channel: 'accounting-payout',
+    // Core figure = hours × rates. `app_settings` also carries the dispatch lock
+    // and any pulse writes. Realtime fires for whichever of these is in the
+    // publication + anon-readable; the 30s poll is the universal catch-all for
+    // the rest (bonuses, adjustments, PAB) so nothing gets stuck.
+    tables: [
+      'hubstaff_hours',
+      'employee_hourly_rates',
+      'time_adjustment_requests',
+      'pab_day_disputes',
+      'app_settings',
+    ],
+    enabled: !payoutLoading,
+    onRefresh: () => setPayoutRefreshNonce(n => n + 1),
+    onStatusChange: setPayoutRealtime,
+  });
+
+  // "Is payroll processing / payment dispatch underway right now." When true the
+  // Total Payout is not final (bonuses, adjustments, and dispatch can still move
+  // it), so the hero shows an amber "processing" pill + note. Realtime-backed.
+  const { state: dispatchLock } = useDispatchLock();
+  const payrollProcessing = dispatchLock.locked;
 
   // HSL master-list emails — stable across employee re-fetches when membership is unchanged,
   // so the PAB effect below doesn't re-run (and flash its loading indicator) on every 60s poll.
@@ -3695,6 +4030,9 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
             <SimpleView
               totalPayout={totalPayout}
               payoutLoading={payoutLoading}
+              payoutRealtime={payoutRealtime}
+              payrollProcessing={payrollProcessing}
+              payrollProcessingBy={dispatchLock.lockedBy}
               payrollWorkerCount={payrollWorkerCount}
               masterTotal={employees.length}
               bonusesKeyedIn={bonusesKeyedIn}

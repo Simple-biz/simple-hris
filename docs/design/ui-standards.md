@@ -660,6 +660,35 @@ Use these tones consistently:
 - violet = secondary / sent / dispatch
 - sky / blue = neutral info
 
+### 6.4 Logo plate (brand-mark tile)
+
+For rendering a third-party **brand logo** inside a card — the Payment Dispatch
+processor filter cards (Wise / Hurupay / HiGlobe) — use a **white plate**, never
+the gradient monogram tile. Canonical component: `ProcessorLogo.tsx`.
+
+```
+<div className="relative flex items-center justify-center overflow-hidden rounded-xl bg-white px-1.5 shadow-sm">
+  {/* pulse skeleton until the image paints — see §12.3 */}
+  {!loaded && <div className="absolute inset-x-2 inset-y-3 animate-pulse rounded-md bg-zinc-200/80 motion-reduce:animate-none" aria-hidden />}
+  <img src={logoSrc}
+    className="max-h-full max-w-full object-contain transition-opacity duration-200 ease-out motion-reduce:transition-none"
+    onLoad={…} onError={…} />
+</div>
+```
+
+Rules:
+
+- **White plate always** (`bg-white`), in both themes — these wordmarks are
+  dark-on-transparent; a dark tile would swallow them.
+- **`object-contain` + `max-h/w-full`**, never a fixed square. Most processor
+  wordmarks are ~3:1; a square + `object-cover`/small box shrinks them to an
+  unreadable sliver (the original "white box" bug). The plate is wide
+  (`h-11`-ish), not a 44px square.
+- **No `mix-blend`.** Dark-on-transparent logos sit correctly on white as-is;
+  `mix-blend-multiply` was what erased them.
+- **`onError` → fall back** to the gradient monogram/icon tile (the §6.3 pattern)
+  so a missing asset degrades instead of showing an empty plate.
+
 ---
 
 ## 7. Buttons (`components/ui/button.tsx`)
@@ -821,6 +850,18 @@ third-party date library; both are hand-rolled and dependency-free:
 Don't use native `<input type="date">` in new code — its popup ignores the
 app theme and renders inconsistently across browsers.
 
+### 9.4 Selects / dropdowns
+
+- **Default primitive:** `SmoothSelect` (theme-aware, teal accent by default).
+  Reach for it before a native `<select>`, whose popup ignores the app theme.
+- **Themed collapsible picker** (the "beautifully wrapped dropdown" pattern —
+  `HslBonusCalculator.tsx` branch picker): a sticky, `backdrop-blur-md` themed
+  header (`sticky top-0 z-10 … bg-white/90 dark:bg-zinc-950/90`) over a body that
+  expands/collapses with `motion/react` + `AnimatePresence` and a `ChevronDown`
+  that rotates on `open`. Gate its very existence on there being more than one
+  option to pick (`multiDept`) — a one-option "dropdown" is noise; render the
+  single item flat instead. Self-disable the motion under reduced motion.
+
 ---
 
 ## 10. Dialogs (`components/ui/dialog.tsx`)
@@ -836,7 +877,15 @@ specialty content:
 | Lock-toggle confirm          | `sm:max-w-[440px]`                                     |
 | Profile dialog (Rates)       | `w-[min(92vw,1100px)] max-w-[min(92vw,1100px)] max-h-[min(92vh,960px)] overflow-hidden rounded-2xl p-0` |
 | Bulk-create disputes         | `max-w-[1200px] w-[95vw]`                              |
+| Multi-column live modal (CEO Live Processing) | `lg:max-w-6xl` — three peer columns |
 | Confirm delete               | default `sm:max-w-sm`                                  |
+
+**Multi-column modal layout** (CEO Live Processing, `CeoPayrollLive.tsx`): when a
+modal shows parallel lists (roster · departments-this-cycle · payments feed),
+make each a **standalone peer column** — its own header + count pill,
+`border-l` divider, and independent scroll area — not content nested inline in a
+sibling. Widen to `lg:max-w-6xl` and let the columns **stack vertically** below
+`lg`. ("Separate it into another column, not inline with the people.")
 
 Layout inside a sectioned dialog (Profile / bulk-create):
 
@@ -999,13 +1048,19 @@ inside a small chip + a "Clear search" pill below. See `ProcessorQueue.NoMatches
 
 ### 12.3 Loading
 
-Two flavors:
+Three flavors:
 
 - **Skeleton** for table-style content (`QueueSkeleton`, `ReportListSkeleton`).
   Preserves layout — pulses the row outlines.
 - **Spinner** for non-tabular ("Loading payment history…", profile detail).
   `<Loader2 className="h-4 w-4 animate-spin text-orange-500" />` + a tiny-caps
   caption.
+- **Inline pulse** for a single async asset inside its own frame — e.g. a
+  loading brand logo (`ProcessorLogo.tsx`, §6.4):
+  `<div className="absolute inset-x-2 inset-y-3 animate-pulse rounded-md bg-zinc-200/80 motion-reduce:animate-none" />`.
+  Guard it: an image can be `complete` before React hydrates, so `onLoad` never
+  fires — a ref callback that checks `el.complete && el.naturalWidth > 0` and
+  skips the skeleton avoids a permanent shimmer on cached images.
 
 Reading-state captions follow this format:
 `<p className="font-mono text-[10px] uppercase tracking-[0.22em] text-zinc-400">Reading ledger</p>`.
@@ -1127,12 +1182,31 @@ Honor `useReducedMotion()` from `motion/react` for any animation longer than
 in `PaymentHistoryPanel` (deleted but the pattern is canonical). Don't ship
 mount animations that the user can't bypass.
 
+**Rolling / slot-machine counters** (e.g. the Accounting Overview "Total Payout
+Value" spin) are the same `CountUp` contract: ease to the real figure, then hold;
+under reduced motion, render the final number with no roll. If you mask digit
+strips with `overflow-hidden` + `translateY`, keep the mask window sized to one
+row and avoid `will-change: transform` leaking cells outside it (a
+headless-Chromium rasterization quirk seen while building it — harmless in real
+browsers, but don't rely on `will-change` to clip). Prefer `tabular-nums` so
+digits don't reflow as they change.
+
 ### 14.6 Theme-toggle / view-switch
 
 Both use the `withViewTransition` helper (`@/lib/theme/with-view-transition`)
 which calls the View Transitions API when available, gracefully degrading to
 no-animation otherwise. `ViewSwitcher` additionally injects an overlay card
 with a 700ms ring expand. Don't reinvent — call the helper.
+
+The overlay card is **themed to the destination dashboard**, so the transition
+reads as a continuous colored move from click to landed view. Both the click-time
+overlay (`ViewSwitcher.tsx`) and the route-level loader render the one shared
+`DashboardSwitchLoader.tsx`, which looks up a `TONES[view]` record (keyed by
+`AppView`) for the card border/shadow, pulsing emblem gradient, rings, text,
+dots, and progress bar; view-less routes fall back to orange. When adding a new
+surface, add its `TONES` entry (mirror the dashboard's §17 accent) — and keep
+every Tailwind value a **complete literal string** (no interpolated fragments),
+or the JIT compiler drops the class.
 
 ### 14.7 Background orbs (branded only)
 

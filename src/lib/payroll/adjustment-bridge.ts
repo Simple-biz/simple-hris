@@ -28,6 +28,27 @@ export const APPLY_NOTE_ADJUSTMENTS_EVENT = "payroll-wizard:apply-note-adjustmen
  *  hand-typed wizard value is never deleted by a stale board row. */
 export const NOTE_ADJUSTMENT_REMOVED_EVENT = "payroll-wizard:note-adjustment-removed";
 
+/**
+ * The wizard broadcasts which pay period it is CURRENTLY on — its
+ * `calcSourceFile` (the Hubstaff upload driving Initial Calculation, which may
+ * be a replayed past week, not the newest upload). The floating Readiness board
+ * follows this so its snapshot always describes the same week the accountant is
+ * looking at in the wizard.
+ *
+ * Fired whenever `calcSourceFile` changes AND in reply to a
+ * {@link REQUEST_WIZARD_CYCLE_EVENT} ping (so a board that mounts/opens after
+ * the wizard already settled its file still learns it). detail:
+ * `{ sourceFile: string | null }`.
+ */
+export const WIZARD_CYCLE_EVENT = "payroll-wizard:cycle";
+
+/** The board pings this when it opens; a mounted wizard answers by dispatching
+ *  {@link WIZARD_CYCLE_EVENT} with its current `calcSourceFile`. No detail. */
+export const REQUEST_WIZARD_CYCLE_EVENT = "payroll-wizard:request-cycle";
+
+/** Shape of a {@link WIZARD_CYCLE_EVENT} detail. */
+export type WizardCycleDetail = { sourceFile: string | null };
+
 /** "₱500" / "PHP 500" / "P500" → PHP · "$50" / "USD 50" → USD · "COP 50,000" / "$COP50000" → COP. */
 function currencyFromMarker(marker: string | undefined): PayCurrency | null {
   const m = (marker ?? "").toUpperCase();

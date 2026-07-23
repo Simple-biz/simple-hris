@@ -42,6 +42,27 @@ export function isProcessorId(v: string): v is ProcessorId {
 }
 
 /**
+ * Map a free-text "Bank Preferred" value (legacy rates-sheet cell, or a stored
+ * pick) to a ProcessorId. The shared, pure mirror of Payment Dispatch's
+ * `processorIdFromBankPreferred` (mock-queue.ts) and pay-schedule's private
+ * copy, so server code (payout completeness, readiness) resolves the SAME
+ * processor PD would route on. Account-suffix codes ("x1153", "x1161", …) are
+ * manually-keyed wires.
+ */
+export function processorIdFromBankPreferredText(raw: string | null | undefined): ProcessorId | null {
+  if (!raw) return null;
+  const v = String(raw).trim().toLowerCase().replace(/\s+/g, '');
+  if (!v) return null;
+  if (v === 'hurupay' || v === 'huru' || v === 'huropay') return 'hurupay';
+  if (v === 'wepay') return 'wepay';
+  if (v === 'higlobe' || v === 'higloble' || v === 'higlobel') return 'higlobe';
+  if (v === 'wise' || v === 'transferwise') return 'wise';
+  if (v === 'jeeves') return 'jeeves';
+  if (/^x?\d{3,5}$/.test(v) || v === 'wire' || v === 'wires' || v.startsWith('wire')) return 'wires';
+  return null;
+}
+
+/**
  * "WIRES" is the residual send-from rail: anything that is NOT explicitly
  * `hurupay` or `higlobe` is treated as WIRES. That deliberately includes
  * `wires`, `x1153`, retired processors, legacy free-text, and null/unset — a

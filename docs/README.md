@@ -30,9 +30,10 @@ docs/
 
 | Doc | Covers |
 |---|---|
-| [payment-dispatch.md](./features/payment-dispatch.md) | Payment Dispatch feature: queues, processors, disbursement records |
+| [payment-dispatch.md](./features/payment-dispatch.md) | Payment Dispatch feature: queues, processors, disbursement records; **§12** covers the 2026-07-22 routing-precedence, Mark Paid bank-override, logo, and focus-mode-removal changes |
+| [bank-preferred-routing.md](./features/bank-preferred-routing.md) | **Bank Preferred** = send-from rail (`employee_ids.bank_preferred`), separate from Disbursement/receiving acct; wins dispatch precedence; Accounting **approval gate** (`bank_preferred_change_requests` → Issues tab); **WIRES lock** (wires/null/legacy can never move to hurupay/higlobe); Mark Paid pencil bank-override. 2 notification migrations PENDING |
 | [urgent-payments.md](./features/urgent-payments.md) | Urgent Payments tab: MESA disbursements + orphanage budget requests; per-recipient processor; weekly Sun–Sat report buckets |
-| [paystub-dispatch.md](./features/paystub-dispatch.md) | Paystub generation + dispatch |
+| [paystub-dispatch.md](./features/paystub-dispatch.md) | Paystub generation + dispatch; **paystub freshness** (`paystub-fresh.ts` merges the wizard `final_pay` snapshot over the staged payload; mark-paid reconciles vs money + freezes as-paid) |
 | [payroll-wizard-final-pay.md](./features/payroll-wizard-final-pay.md) | Initial Calculation → Final pay: formula, Adj. (signed delta) + Orphanage columns, Sun→Sat pay weeks + cross-upload merge, MESA flag |
 | [bonus-calculator.md](./features/bonus-calculator.md) | Department + HSL bonus calculators |
 | [bonus-catalog.md](./features/bonus-catalog.md) | Payment Catalog: reusable custom bonuses (flat or Excel-formula engine) + Pay Structures, now **authoritative for hourly rates** via a compute-time overlay (`src/lib/payroll/resolve-rate.ts`, priority individual → sheet → dept base) |
@@ -97,6 +98,7 @@ docs/
 
 | Doc |
 |---|
+| [audit-2026-07-23-session-log.md](./audits/audit-2026-07-23-session-log.md) — log of the 20 most recent Claude sessions (Jul 21–23): Bank Preferred dropdown → approval gate → WIRES lock, Mark Paid bank-override, Payment Dispatch logos + focus-mode removal, MESA non-member deduction fix, HSL Case Managers; plus the Jul 22 Vercel Production-build stall + open deploy steps |
 | [audit-2026-07-17-session-log.md](./audits/audit-2026-07-17-session-log.md) — log of the 20 most recent Claude sessions (Jul 15–17): MESA overhaul, tickets hardening, PAB payout-week fixes, GML export + open deploy steps |
 | [audit-2026-07-10-session-log.md](./audits/audit-2026-07-10-session-log.md) — log of the 20 most recent Claude sessions (Jul 8–10) |
 | [audit-2026-07-07-session-log.md](./audits/audit-2026-07-07-session-log.md) — log of the 20 most recent Claude sessions (Jul 6–7) |

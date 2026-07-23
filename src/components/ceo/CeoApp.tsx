@@ -186,8 +186,10 @@ export default function CeoApp() {
               {activeTab === 'people' && (
                 // People is view-only for the CEO — profile editing (names,
                 // emails, dates, etc.) is an Accounting-only capability. The CEO
-                // can still browse, search, reveal banking, and export.
-                <PeopleTab view="ceo" viewerEmail={viewerEmail} canEdit={false} />
+                // can still browse, search, reveal banking, export, and send a
+                // one-off payment (canPay) — the Pay action is exempt from the
+                // profile-edit lock and gated server-side by rate visibility.
+                <PeopleTab view="ceo" viewerEmail={viewerEmail} canEdit={false} canPay />
               )}
               {activeTab === 'announcements' && (
                 <CeoAnnouncements viewerEmail={viewerEmail} />

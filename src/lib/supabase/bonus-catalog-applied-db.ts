@@ -136,13 +136,21 @@ export interface AppliedSummaryRow {
   applied_at: string | null; // ISO timestamp — most recent row touch
 }
 
-export async function summarizeApplied(depts: string[]): Promise<AppliedSummaryRow[]> {
+export async function summarizeApplied(
+  depts: string[],
+  /** When given, scope the query to a single pay week (period_start) instead of
+   *  pulling the whole applied-bonus history. Callers that only need one week
+   *  (e.g. Payroll Readiness) pass it so the DB doesn't return every period. */
+  periodStart?: string,
+): Promise<AppliedSummaryRow[]> {
   const supabase = createSupabaseServiceRoleClient();
   if (!supabase || depts.length === 0) return [];
-  const { data, error } = await supabase
+  let query = supabase
     .from(TABLE)
     .select('department, period_start, period_end, employee_email, amount, applied_by, created_at, updated_at')
     .in('department', depts);
+  if (periodStart) query = query.eq('period_start', periodStart);
+  const { data, error } = await query;
   if (error || !data) return [];
 
   // Aggregate in-process: group by (department, period_start).

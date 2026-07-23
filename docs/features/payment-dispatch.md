@@ -1004,7 +1004,9 @@ After running migrations 3 + 4:
 
 ## 12. 2026-07 updates
 
-Two additive changes; §3.3 and §3.5 above describe the pre-change behavior (a free-text "Bank used" field and a Wepay processor tab) and are superseded on these two points.
+Additive changes; §3.3 and §3.5 above describe the pre-change behavior and are
+superseded on the points below. §12.1–§12.2 are from earlier in the month;
+§12.3–§12.6 landed 2026-07-22.
 
 ### 12.1 "Bank used (sent from)" is now a dropdown
 
@@ -1025,3 +1027,75 @@ Wepay is no longer offered as a pending-queue tab, filter rail, or new-dispatch 
 - `DISPATCH_PROCESSORS` = `PROCESSORS` minus the retired ids. **Tabs, filter rails, and processor pickers render `DISPATCH_PROCESSORS`.**
 - `PROCESSORS` (and the `ProcessorId` type / `'wepay'` member) intentionally stay put, so **label + visual `.find()` lookups still keep using `PROCESSORS`** — historical dispatch records that were sent via Wepay still resolve their label and branding in Reports / Done / Sent-payments history. Wepay is simply hidden as a live destination, not deleted.
 - Mirrors `RETIRED_PROCESSOR_IDS` in [employee-payment-processors.ts](src/lib/employee-payment-processors.ts), where `'wepay'` is likewise retired on the employee-facing side.
+
+### 12.3 Routing precedence — Bank Preferred wins (`employee_ids`)
+
+§3.4/§3.7 above treat the legacy `employee_hourly_rates."Bank Preferred"` CSV
+free-text column as the sole routing input. It is now the **lowest**-precedence
+source. A person is routed to a processor tab by:
+
+```
+employee_ids.bank_preferred            (employee-owned "Bank Preferred" — highest)
+  ↓ else
+employee_ids.preferred_processor       (the Disbursement pick)
+  ↓ else
+employee_hourly_rates."Bank Preferred" (legacy CSV free-text — §4.1 migration #11)
+```
+
+Applied in the routing resolvers `mock-queue.ts`, `pay-schedule.ts`
+(`resolveEmployeeProcessor`), and `dispatch-export-csv.ts`
+(`buildDispatchExportRows`, where a *recorded* `dispatch.processor` still wins
+first). For the CSV column to be authoritative, `preferred_processor` must be
+NULL (it outranks the CSV). `x1153`/`x1161` continue to map to `wires`.
+
+This whole feature — the employee **Bank Preferred** dropdown, its **Accounting
+approval gate** (changes held in `bank_preferred_change_requests` until approved
+in the Issues tab), and the **WIRES lock** (a wires/null/legacy employee can
+never be switched to hurupay/higlobe) — has its own doc:
+[bank-preferred-routing.md](./bank-preferred-routing.md).
+
+### 12.4 Mark Paid — recipient-bank override + own-bank pre-fill
+
+Extends §3.5's "Recipient banking" group (previously *pre-filled/snapshotted,
+read-only*):
+
+- A **pencil** on the Recipient divider enters **override mode**; **Save to
+  profile** writes the corrected **receiving** details back to `employee_ids` via
+  `POST /api/payment-dispatch/bank-override` (accounting-gated; **no**
+  dispatch-lock check — the sanctioned mid-processing correction path). It
+  **never** touches routing (`bank_preferred`/`preferred_processor`). Column
+  mapping is slot-aware in `src/lib/payroll/bank-override-mapping.ts`; the change
+  shows in **People → Bank Changes** as `via: mark_paid_override` and notifies the
+  employee (`people.banking.overridden`). Full detail:
+  [bank-preferred-routing.md § 5](./bank-preferred-routing.md#5-mark-paid-bank-details-override).
+- A Wise-routed employee now pre-fills **their own** bank on the modal
+  (`src/lib/payroll/mark-paid-defaults.ts`), instead of showing a Wise/processor
+  placeholder.
+- **Migration PENDING:** `references/sql/alter/2026-07-22_employee_notifications_add_bank_override_type.sql`
+  (Supabase SQL editor) — until run, the override notification silently no-ops;
+  the override itself works regardless.
+
+### 12.5 Processor card logos — explicit `logoSrc`, white plate, load skeleton
+
+Supersedes §3.3.1. `ProcessorLogo.tsx` no longer HEAD-probes
+`/processors/{id}.svg`; it takes an explicit optional **`logoSrc`** and renders
+the brand mark on a **wide white plate** (`bg-white`, `object-contain`, **no**
+`mix-blend` — these wordmarks are dark-on-transparent and would vanish under
+`mix-blend-multiply` in a small square, the original "white box" bug). While the
+image loads, an inline **pulse skeleton** shows; a ref-callback checks
+`img.complete && naturalWidth > 0` so cached images skip the skeleton (no
+permanent shimmer). Missing/`onError` falls back to the gradient monogram/icon
+tile. Cards were also widened so the ~3:1 logos are legible. See
+[design/ui-standards.md § 6.4](../design/ui-standards.md).
+
+### 12.6 Processor buckets always visible during processing (focus-mode removed)
+
+§3.3's rail list is stale; the live rail is
+All · Urgent · Hurupay · HiGlobe · Wise · Jeeves · Wires · USD · Done · Reports ·
+Orphanage · Excluded. A short-lived **"focus mode"** used to retract the
+processor-bucket rail and compact the KPI hero stats when processing started; it
+was **removed entirely** (`PayrollDispatch.tsx`) after it caused a "buckets
+disappeared on the deployed site" scare (the real culprit was a stale browser
+bundle, not the code). Starting processing now changes nothing about the layout —
+buckets and stats stay full-size. The Start-Processing flow instead shows a
+themed "Preparing Dispatch…" confirm modal.

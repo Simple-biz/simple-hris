@@ -465,10 +465,14 @@ export default function PeopleTab({
   view,
   viewerEmail,
   canEdit,
+  canPay = false,
 }: {
   view: 'accounting' | 'ceo';
   viewerEmail: string | null;
   canEdit: boolean;
+  /** CEO + Accounting: show the "Pay" action (files a one-off Urgent payment).
+   *  Separate from canEdit — the CEO is otherwise read-only on People. */
+  canPay?: boolean;
 }) {
   void viewerEmail; // identity is derived server-side from the session
   const accent: Accent =
@@ -500,6 +504,8 @@ export default function PeopleTab({
   const [refreshing, setRefreshing] = useState(false);
   const [query, setQuery] = useState('');
   const [selected, setSelected] = useState<RosterRow | null>(null);
+  // The person a one-off payment is being filed for (Pay dialog open when set).
+  const [payTarget, setPayTarget] = useState<RosterRow | null>(null);
   const [showExcluded, setShowExcluded] = useState(false);
   const [showNoBanking, setShowNoBanking] = useState(false);
   const [deptFilter, setDeptFilter] = useState<string>('all');
@@ -1094,15 +1100,29 @@ export default function PeopleTab({
                       )}
                     </td>
                     <td className="px-3 py-2.5 text-right" data-label="">
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="outline"
-                        className="h-7 px-2 text-[12px]"
-                        onClick={(e) => { e.stopPropagation(); setSelected(r); }}
-                      >
-                        View
-                      </Button>
+                      <div className="flex items-center justify-end gap-1.5">
+                        {canPay && (
+                          <Button
+                            type="button"
+                            size="sm"
+                            className={cn('h-7 gap-1 px-2 text-[12px]', accent.btn)}
+                            disabled={!r.work_email}
+                            title={r.work_email ? 'Send a one-off payment' : 'No work email on file'}
+                            onClick={(e) => { e.stopPropagation(); setPayTarget(r); }}
+                          >
+                            <Banknote className="h-3.5 w-3.5" /> Pay
+                          </Button>
+                        )}
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          className="h-7 px-2 text-[12px]"
+                          onClick={(e) => { e.stopPropagation(); setSelected(r); }}
+                        >
+                          View
+                        </Button>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -1154,8 +1174,18 @@ export default function PeopleTab({
           row={selected}
           accent={accent}
           canEdit={canEdit}
+          canPay={canPay}
+          onPay={(r) => { setSelected(null); setPayTarget(r); }}
           onClose={() => setSelected(null)}
           onRowUpdated={handleRowUpdated}
+        />
+      )}
+
+      {payTarget && (
+        <PayDialog
+          row={payTarget}
+          accent={accent}
+          onClose={() => setPayTarget(null)}
         />
       )}
 
@@ -2676,16 +2706,160 @@ function snoozeEditWarning(): void {
   }
 }
 
+/**
+ * One-off payment dialog (People tab "Pay" action). The user enters a PHP amount
+ * (and optional note); on submit it files a PENDING urgent_payment_requests row
+ * via POST /api/people/pay, which surfaces in Payment Dispatch → Urgent →
+ * One-off Payments for a clerk to actually send. No money moves here.
+ */
+function PayDialog({
+  row,
+  accent,
+  onClose,
+}: {
+  row: RosterRow;
+  accent: Accent;
+  onClose: () => void;
+}) {
+  const email = (row.work_email ?? '').trim().toLowerCase();
+  const [amountStr, setAmountStr] = useState('');
+  const [note, setNote] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+
+  // Sane ceiling — well above any real one-off payment, and below the DB's
+  // numeric(12,2) limit so a huge value fails as a clear message, not a raw 500.
+  const MAX_AMOUNT = 1_000_000_000; // ₱1B
+  const amount = parseFloat(amountStr);
+  const valid = !!email && Number.isFinite(amount) && amount > 0 && amount <= MAX_AMOUNT;
+
+  const submit = async () => {
+    if (!email) { toast.error('No work email on file to pay.'); return; }
+    if (Number.isFinite(amount) && amount > MAX_AMOUNT) { toast.error('Amount is too large.'); return; }
+    if (!valid) { toast.error('Enter a valid amount greater than zero.'); return; }
+    setSubmitting(true);
+    try {
+      const res = await fetch('/api/people/pay', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          work_email: email,
+          full_name: row.name ?? '',
+          department: row.department ?? null,
+          amount_php: amount,
+          note: note.trim() || null,
+        }),
+      });
+      const json = (await res.json()) as { success?: boolean; error?: string };
+      if (!res.ok || !json.success) throw new Error(json.error || `Request failed (${res.status})`);
+      toast.success('Payment request sent to Urgent dispatch.');
+      onClose();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not send the payment request.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <Dialog open onOpenChange={(o) => { if (!o && !submitting) onClose(); }}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Banknote className="h-4 w-4 text-amber-500" /> Send a payment
+          </DialogTitle>
+          <DialogDescription>
+            Files an <span className="font-medium text-amber-600 dark:text-amber-400">Urgent</span> one-off
+            payment to {row.name ?? 'this person'}. It appears in Payment Dispatch → Urgent for a clerk to send.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-4 py-1">
+          {/* Recipient */}
+          <div className="flex items-center gap-3 rounded-lg border border-zinc-200 bg-zinc-50/60 px-3 py-2 dark:border-zinc-800 dark:bg-zinc-900/40">
+            <TeamAvatar name={row.name ?? ''} email={row.work_email} />
+            <div className="min-w-0">
+              <div className="truncate text-sm font-medium text-zinc-900 dark:text-zinc-100">{row.name ?? '—'}</div>
+              <div className="truncate text-[11px] text-zinc-500 dark:text-zinc-400">{email || 'no work email'}</div>
+            </div>
+          </div>
+
+          {/* Amount */}
+          <div>
+            <label htmlFor="pay-amount" className="mb-1 block text-xs font-semibold uppercase tracking-wide text-zinc-500">
+              Amount (PHP)
+            </label>
+            <div className="relative">
+              <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm font-medium text-zinc-500">₱</span>
+              <Input
+                id="pay-amount"
+                type="number"
+                inputMode="decimal"
+                min="0"
+                max={MAX_AMOUNT}
+                step="0.01"
+                autoFocus
+                value={amountStr}
+                onChange={(e) => setAmountStr(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter' && valid && !submitting) void submit(); }}
+                placeholder="0.00"
+                className="pl-7"
+              />
+            </div>
+            {amountStr !== '' && Number.isFinite(amount) && amount > 0 && (
+              <p className="mt-1 text-[11px] text-zinc-500">Paying {fmtMoney(amount, 'PHP')}</p>
+            )}
+          </div>
+
+          {/* Note (optional) */}
+          <div>
+            <label htmlFor="pay-note" className="mb-1 block text-xs font-semibold uppercase tracking-wide text-zinc-500">
+              Note <span className="font-normal normal-case text-zinc-400">(optional)</span>
+            </label>
+            <Input
+              id="pay-note"
+              type="text"
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              placeholder="Reason for this payment"
+              maxLength={250}
+            />
+          </div>
+        </div>
+
+        <div className="flex items-center justify-end gap-2 pt-1">
+          <Button type="button" variant="outline" size="sm" onClick={onClose} disabled={submitting}>
+            Cancel
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            className={cn('gap-1.5', accent.btn)}
+            disabled={!valid || submitting}
+            onClick={() => void submit()}
+          >
+            {submitting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
+            {submitting ? 'Sending…' : 'Send payment'}
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function PersonDetailDialog({
   row,
   accent,
   canEdit,
+  canPay = false,
+  onPay,
   onClose,
   onRowUpdated,
 }: {
   row: RosterRow;
   accent: Accent;
   canEdit: boolean;
+  canPay?: boolean;
+  onPay?: (row: RosterRow) => void;
   onClose: () => void;
   onRowUpdated: (master: MasterProfileFields) => void;
 }) {
@@ -3005,12 +3179,24 @@ function PersonDetailDialog({
         <DialogHeader className="shrink-0 border-b border-zinc-200 px-5 py-4 dark:border-zinc-800">
           <div className="flex items-center gap-3">
             <TeamAvatar name={row.name ?? ''} email={row.work_email} size="xl" />
-            <div className="min-w-0">
+            <div className="min-w-0 flex-1">
               <DialogTitle className="truncate text-lg">{row.name ?? '—'}</DialogTitle>
               <DialogDescription className="truncate">
                 {row.department ?? '—'} · {row.work_email ?? row.employee_id ?? ''}
               </DialogDescription>
             </div>
+            {canPay && onPay && (
+              <Button
+                type="button"
+                size="sm"
+                className={cn('mr-8 h-8 shrink-0 gap-1.5 px-3 text-[12px]', accent.btn)}
+                disabled={!row.work_email}
+                title={row.work_email ? 'Send a one-off payment' : 'No work email on file'}
+                onClick={() => onPay(row)}
+              >
+                <Banknote className="h-3.5 w-3.5" /> Pay
+              </Button>
+            )}
           </div>
         </DialogHeader>
 

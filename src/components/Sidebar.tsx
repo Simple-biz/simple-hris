@@ -134,7 +134,10 @@ export default function Sidebar({ activeTab, setActiveTab, mobileOpen, allowedTa
       className={cn(
         'flex h-dvh w-[85vw] max-w-[20rem] shrink-0 flex-col border-r border-orange-100 bg-gradient-to-b from-white to-orange-50/40 text-zinc-600 dark:border-blue-950/60 dark:from-[#0d1117] dark:to-[#0f1729] dark:text-zinc-400 md:w-64 md:max-w-none md:shadow-none',
         'fixed inset-y-0 left-0 z-50 transform-gpu will-change-transform md:static md:z-auto md:translate-x-0 md:opacity-100',
-        'transition-[transform,opacity,box-shadow,width] duration-[360ms] ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none',
+        // Width/transform collapse matches the inner content fade var
+        // (--sb-collapse-ms) so the whole rail retracts as one smooth motion
+        // instead of a fast width-snap with a slower fade trailing behind it.
+        'transition-[transform,opacity,box-shadow,width] duration-[var(--sb-collapse-ms)] ease-[var(--sb-collapse-ease)] motion-reduce:transition-none',
         mobileOpen
           ? 'translate-x-0 opacity-100 shadow-2xl shadow-black/25'
           : '-translate-x-full opacity-0 shadow-none md:translate-x-0 md:opacity-100',

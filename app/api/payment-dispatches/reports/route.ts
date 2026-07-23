@@ -6,10 +6,10 @@ export const runtime = "nodejs";
 
 export async function GET() {
   try {
-    const { reports, error, unseededCount } = await listDisbursementReports();
-    return NextResponse.json({ reports, error, unseededCount });
+    const { reports, error, unseeded, unseededCount } = await listDisbursementReports();
+    return NextResponse.json({ reports, error, unseeded, unseededCount });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
-    return NextResponse.json({ reports: [], error: msg, unseededCount: 0 }, { status: 500 });
+    return NextResponse.json({ reports: [], error: msg, unseeded: [], unseededCount: 0 }, { status: 500 });
   }
 }

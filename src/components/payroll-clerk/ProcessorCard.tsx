@@ -65,8 +65,8 @@ export default function ProcessorCard({
         active
           ? 'border-transparent bg-white shadow-[0_6px_18px_-8px_rgba(0,0,0,0.18)] dark:bg-zinc-900'
           : 'border-orange-100 bg-white/70 hover:border-orange-200 hover:bg-white dark:border-zinc-800 dark:bg-zinc-900/40 dark:hover:bg-zinc-900',
-        // Amber edge for the glowing (Urgent) card, regardless of active state.
-        glowBorder && '!border-amber-300 dark:!border-amber-500/60',
+        // Red glowing edge for the (Urgent) card, regardless of active state.
+        glowBorder && '!border-red-400 dark:!border-red-500/70',
       )}
       aria-pressed={active}
     >
@@ -109,7 +109,7 @@ export default function ProcessorCard({
                 className={cn(
                   'shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-semibold tabular-nums',
                   glowBorder
-                    ? 'bg-amber-100 text-amber-700 ring-1 ring-amber-300/70 dark:bg-amber-500/15 dark:text-amber-300 dark:ring-amber-500/40'
+                    ? 'bg-red-100 text-red-700 ring-1 ring-red-300/70 dark:bg-red-500/15 dark:text-red-300 dark:ring-red-500/40'
                     : active
                       ? 'bg-white/80 text-zinc-900 backdrop-blur-sm dark:bg-zinc-800/80 dark:text-zinc-100'
                       : 'bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400',
@@ -139,7 +139,7 @@ export default function ProcessorCard({
           // Every card uses the same wide plate on the right — real wordmark
           // logos read at size, and the icon/monogram fallbacks match so the
           // whole rail stays uniform.
-          className={cn('h-11 w-[80px] shrink-0', glowBorder && 'shadow-[0_2px_10px_-2px_rgba(245,158,11,0.7)]')}
+          className={cn('h-11 w-[80px] shrink-0', glowBorder && 'shadow-[0_2px_10px_-2px_rgba(239,68,68,0.7)]')}
           iconClassName={glowBorder ? 'urgent-zap' : undefined}
         />
       </div>
@@ -149,7 +149,7 @@ export default function ProcessorCard({
       {glowBorder && (
         <span
           aria-hidden
-          className="urgent-sheen pointer-events-none absolute inset-y-0 left-0 z-[5] w-1/3 bg-gradient-to-r from-transparent via-amber-200/70 to-transparent blur-[2px] dark:via-amber-300/25"
+          className="urgent-sheen pointer-events-none absolute inset-y-0 left-0 z-[5] w-1/3 bg-gradient-to-r from-transparent via-red-300/70 to-transparent blur-[2px] dark:via-red-400/25"
         />
       )}
 
@@ -172,10 +172,10 @@ export default function ProcessorCard({
   // which made it look frozen. CSS runs on the compositor, immune to re-renders.
   return (
     <span className="relative block h-full w-full">
-      {/* Soft amber halo breathing behind the card. */}
+      {/* Soft red halo breathing behind the card. */}
       <span
         aria-hidden
-        className="urgent-glow-pulse pointer-events-none absolute -inset-2 -z-10 rounded-2xl bg-amber-400/60 blur-lg dark:bg-amber-500/50 will-change-[opacity,transform]"
+        className="urgent-glow-pulse pointer-events-none absolute -inset-2 -z-10 rounded-2xl bg-red-500/60 blur-lg dark:bg-red-500/50 will-change-[opacity,transform]"
       />
       {button}
       {/* Rotating conic rim, overlaid on the card's edge (masked to a 1.5px band). */}

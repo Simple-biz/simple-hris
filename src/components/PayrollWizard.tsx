@@ -135,6 +135,8 @@ import type { AuditCycleContext } from '@/lib/supabase/audit-log';
 import {
   APPLY_NOTE_ADJUSTMENTS_EVENT,
   NOTE_ADJUSTMENT_REMOVED_EVENT,
+  WIZARD_CYCLE_EVENT,
+  REQUEST_WIZARD_CYCLE_EVENT,
   adjustmentToPhp,
   parseAdjustmentAmount,
 } from '@/lib/payroll/adjustment-bridge';
@@ -1457,6 +1459,25 @@ export default function PayrollWizard({
     if (!r) return null;
     const d = r.start;
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  }, [calcSourceFile]);
+
+  // Broadcast the wizard's current pay period (its `calcSourceFile`, which may
+  // be a replayed past week) so the floating Readiness board follows the SAME
+  // week the accountant is looking at here. Fires on every change, and answers
+  // the board's on-open ping (REQUEST_WIZARD_CYCLE_EVENT) so a board opened
+  // after the wizard settled still learns the file. See adjustment-bridge.ts.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    window.dispatchEvent(
+      new CustomEvent(WIZARD_CYCLE_EVENT, { detail: { sourceFile: calcSourceFile } }),
+    );
+    const onRequest = () => {
+      window.dispatchEvent(
+        new CustomEvent(WIZARD_CYCLE_EVENT, { detail: { sourceFile: calcSourceFile } }),
+      );
+    };
+    window.addEventListener(REQUEST_WIZARD_CYCLE_EVENT, onRequest);
+    return () => window.removeEventListener(REQUEST_WIZARD_CYCLE_EVENT, onRequest);
   }, [calcSourceFile]);
 
   /**
