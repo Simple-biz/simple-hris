@@ -666,7 +666,14 @@
       "Read(//c/Users/Kane/AppData/Local/Temp/claude/c--Users-Kane-Desktop-simple-hris/52df8389-f738-4525-8225-94c837de1026/scratchpad/**)",
       "Bash(npx --yes @tailwindcss/cli@4.1.14 -i ./__tw_probe.css -o __TRACKED_VAR__/tw-out.css --content ./__tw_probe.html)",
       "Bash(echo \"exit for w-4.5: $?\")",
-      "Bash(node scripts/diag-missing-bank.mjs)"
+      "Bash(node scripts/diag-missing-bank.mjs)",
+      "Bash(grep -m2 '\"@/\\\\*\"' tsconfig.json)",
+      "Bash(git commit -m 'feat\\(readiness\\): auto-Ready no-bonus depts + inline Set rate / Set bank fixers *)",
+      "Bash(git commit -m 'fix\\(readiness\\): Set bank treats Wise like wires \\(collect wire details\\) *)",
+      "PowerShell(git add src/lib/payroll/payroll-readiness.ts)",
+      "PowerShell(git commit -F \"C:\\\\Users\\\\Kane\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-Kane-Desktop-simple-hris\\\\c1e16c2c-a500-47d8-b0c0-488000c556f4\\\\scratchpad\\\\commit-msg.txt\")",
+      "Bash(git commit -m 'feat\\(readiness\\): click a KPI dept to open its calculator and fix it in place *)",
+      "Bash(git commit -m 'fix\\(readiness\\): HSL KPI modal shows only the clicked sub-department *)"
     ],
     "additionalDirectories": [
       "c:\\Users\\Itachi\\.claude\\projects\\c--Users-Itachi-Desktop-simple-hris\\memory",
