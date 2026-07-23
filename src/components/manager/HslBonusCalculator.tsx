@@ -367,9 +367,9 @@ interface HslBonusCalculatorProps {
   viewerEmail: string | null;
   managedDepts: string[];
   isElevated: boolean;
-  /** Start focused on this HSL sub-department (filter pill pre-selected). Used
-   *  by the Payroll Readiness "fix it from here" modal; the accountant can still
-   *  click any other sub-department pill from there. */
+  /** Start focused on this HSL sub-department (filter pre-selected, block
+   *  expanded). Used by the Payroll Readiness "fix it from here" modal, which
+   *  also scopes `managedDepts` to the same key so only that sub-dept renders. */
   initialFilter?: HslDeptKey;
 }
 

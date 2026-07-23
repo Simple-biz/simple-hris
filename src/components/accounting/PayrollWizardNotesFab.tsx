@@ -52,7 +52,7 @@ import type {
 } from "@/lib/supabase/payroll-wizard-notes";
 import { DEPARTMENTS } from "@/lib/payroll/department-bonus";
 import { normalizeDeptToKey } from "@/lib/payroll/normalize-dept-key";
-import { HSL_DEPTS, HSL_DEPT_KEYS, type HslDeptKey } from "@/lib/hsl-bonus/schema";
+import { HSL_DEPTS, HSL_DEPT_KEYS, hslAccessKey, type HslDeptKey } from "@/lib/hsl-bonus/schema";
 import type { EmployeeRow } from "@/lib/supabase/employees";
 import {
   defaultOtRate,
@@ -2064,8 +2064,8 @@ function SetBankDialog({
  * the manager uses, mounted elevated so accounting can score, save, and Mark
  * Ready without leaving the wizard. General depts get DeptBonusCalculator with
  * the clicked dept's panel auto-opened; HSL sub-depts get HslBonusCalculator
- * pre-filtered to the clicked sub-dept (the other sub-department pills stay one
- * click away inside).
+ * scoped to ONLY the clicked sub-dept (a single `hsl:<key>` grant — no
+ * "All Departments" view).
  */
 function KpiCalculatorDialog({
   dept,
@@ -2113,10 +2113,14 @@ function KpiCalculatorDialog({
         </DialogHeader>
         <div className="h-[72vh] overflow-y-auto overscroll-contain rounded-lg border border-orange-100 bg-white dark:border-blue-950/60 dark:bg-[#0d1117]">
           {isHsl ? (
+            // Scoped like a single-dept HSL manager (an `hsl:<key>` grant, NOT
+            // elevated): the calculator then shows ONLY the clicked sub-dept —
+            // its name in the header, no "All Departments", no dept pill rail.
+            // Server-side writes still authorize on the (elevated) session.
             <HslBonusCalculator
               viewerEmail={viewerEmail}
-              managedDepts={[]}
-              isElevated
+              managedDepts={[hslAccessKey(dept.key as HslDeptKey)]}
+              isElevated={false}
               initialFilter={dept.key as HslDeptKey}
             />
           ) : memberErr ? (
