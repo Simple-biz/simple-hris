@@ -1781,8 +1781,11 @@ function SetBankDialog({
   const [error, setError] = useState<string | null>(null);
 
   const locked = lockedProcessor !== "";
+  // Wise is deliberately NOT a wallet here: like wires/jeeves it's payable on
+  // full wire details (isPayoutComplete), and accounting wires these people
+  // when no Wise handle is on file — so the editor collects bank details.
   const isWallet =
-    processor === "hurupay" || processor === "wepay" || processor === "higlobe" || processor === "wise";
+    processor === "hurupay" || processor === "wepay" || processor === "higlobe";
   const needsWalletName = processor === "higlobe";
   const processorLabel =
     PROCESSOR_OPTIONS.find((p) => p.id === processor)?.label ?? processor;
@@ -1808,16 +1811,15 @@ function SetBankDialog({
       }
       if (processor === "hurupay") update.hurupay_email = walletEmail.trim();
       if (processor === "wepay") update.wepay_email = walletEmail.trim();
-      if (processor === "wise") update.wise_email = walletEmail.trim();
       if (processor === "higlobe") {
         update.higlobe_email = walletEmail.trim();
         update.higlobe_account_name = walletName.trim();
       }
     } else {
-      // wires / jeeves — manual wire details. Bank + account number are what
-      // isPayoutComplete requires; holder + SWIFT ride along when provided.
+      // wires / jeeves / wise — manual wire details. Bank + account number are
+      // what isPayoutComplete requires; holder + SWIFT ride along when provided.
       if (!bankName.trim() || !accountNumber.trim()) {
-        setError("Bank name and account number are required for wires.");
+        setError("Bank name and account number are required.");
         return;
       }
       update.bank_name = bankName.trim();
