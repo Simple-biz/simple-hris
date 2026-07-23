@@ -174,6 +174,10 @@ interface DeptBonusCalculatorProps {
    *  and reports its own WeekPicker changes back via `onWeekChange`. Leaving it
    *  undefined keeps the calculator's self-managed week (the manager view). */
   controlledWeek?: string;
+  /** Auto-open this department's calculator panel once data is ready (dept key,
+   *  e.g. 'callback'). Used by the Payroll Readiness "fix it from here" modal so
+   *  the accountant lands directly on the clicked department. One-shot. */
+  initialOpenDept?: string | null;
 }
 
 // -- Per-department colour identity (hex; inline-styled to dodge Tailwind purge) --
@@ -677,6 +681,7 @@ export default function DeptBonusCalculator({
   onToggleQcLock,
   onWeekChange,
   controlledWeek,
+  initialOpenDept = null,
 }: DeptBonusCalculatorProps) {
   // QC officer's first-pass calculator vs the manager's official one. QC writes
   // a separate staging table and never touches `bonus_catalog_applied` /
@@ -1289,6 +1294,16 @@ export default function DeptBonusCalculator({
   // an empty grid. (`.every` is vacuously true when nothing is visible, which
   // the parent already guards against.)
   const ready = catalogLoaded && visibleDeptKeys.every((k) => state[k]?.loaded);
+
+  // One-shot: land directly on the caller-requested department once data is in
+  // (the Payroll Readiness "fix it from here" modal). Consumed once so closing
+  // the panel doesn't snap it back open.
+  const initialOpenConsumed = useRef(false);
+  useEffect(() => {
+    if (!ready || initialOpenConsumed.current || !initialOpenDept) return;
+    initialOpenConsumed.current = true;
+    setOpenId(initialOpenDept);
+  }, [ready, initialOpenDept]);
 
   // Pin the KPI week to the Hubstaff batch accounting is dispatching — the
   // Initialized (is_current) upload, NOT merely the newest file. The public

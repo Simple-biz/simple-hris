@@ -59,7 +59,12 @@ export async function GET() {
     }
 
     const roles = (user?.roles ?? []) as string[];
-    const dashboardOk = roles.includes('manager') || roles.includes('admin');
+    // Managers/admins (the dashboard's own consumers) plus elevated roles:
+    // accounting reaches this roster through the Payroll Readiness "fix it from
+    // here" KPI-calculator modal, and already sees this data (and more) on the
+    // People tab. Rate figures below stay gated by hasRateVisibility regardless.
+    const dashboardOk =
+      roles.includes('manager') || roles.includes('admin') || hasElevatedRole(roles);
     if (!dashboardOk) {
       return NextResponse.json({ error: 'Manager or admin role required' }, { status: 403 });
     }

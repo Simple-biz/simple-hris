@@ -367,6 +367,10 @@ interface HslBonusCalculatorProps {
   viewerEmail: string | null;
   managedDepts: string[];
   isElevated: boolean;
+  /** Start focused on this HSL sub-department (filter pill pre-selected). Used
+   *  by the Payroll Readiness "fix it from here" modal; the accountant can still
+   *  click any other sub-department pill from there. */
+  initialFilter?: HslDeptKey;
 }
 
 // ── Main component ────────────────────────────────────────────────────────────
@@ -375,6 +379,7 @@ export default function HslBonusCalculator({
   viewerEmail,
   managedDepts,
   isElevated,
+  initialFilter,
 }: HslBonusCalculatorProps) {
   const today = new Date();
   const [weekStart, setWeekStart] = useState(() => isoWeekStart(today));
@@ -411,7 +416,7 @@ export default function HslBonusCalculator({
   // Department navigation: which dept's block is expanded, and the active filter
   // pill. With many HSL branches visible at once a flat stack is unreadable, so
   // "All" shows a collapsed overview and a single dept can be focused.
-  const [activeFilter, setActiveFilter] = useState<HslDeptKey | 'all'>('all');
+  const [activeFilter, setActiveFilter] = useState<HslDeptKey | 'all'>(initialFilter ?? 'all');
   const [manualOpen, setManualOpen] = useState<Record<string, boolean>>({});
   /** Which dept's "add external member" modal is open (null = closed). */
   const [addingMemberDept, setAddingMemberDept] = useState<HslDeptKey | null>(null);

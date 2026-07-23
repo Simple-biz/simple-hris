@@ -2,6 +2,7 @@
 
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import dynamic from "next/dynamic";
 import { useSession } from "next-auth/react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import {
@@ -51,7 +52,8 @@ import type {
 } from "@/lib/supabase/payroll-wizard-notes";
 import { DEPARTMENTS } from "@/lib/payroll/department-bonus";
 import { normalizeDeptToKey } from "@/lib/payroll/normalize-dept-key";
-import { HSL_DEPTS, HSL_DEPT_KEYS } from "@/lib/hsl-bonus/schema";
+import { HSL_DEPTS, HSL_DEPT_KEYS, type HslDeptKey } from "@/lib/hsl-bonus/schema";
+import type { EmployeeRow } from "@/lib/supabase/employees";
 import {
   defaultOtRate,
   formatRate,
@@ -102,6 +104,28 @@ import {
  */
 
 const API = "/api/payroll-wizard/notes";
+
+// The manager KPI calculators, mounted inside the Readiness "fix it from here"
+// modal. Lazy so the (large) calculator bundles only load when a dept is
+// actually clicked, never on the wizard page itself.
+const DeptBonusCalculator = dynamic(() => import("@/components/manager/DeptBonusCalculator"), {
+  ssr: false,
+  loading: () => <KpiCalculatorLoadingLine />,
+});
+const HslBonusCalculator = dynamic(() => import("@/components/manager/HslBonusCalculator"), {
+  ssr: false,
+  loading: () => <KpiCalculatorLoadingLine />,
+});
+
+/** Centered spinner line while a lazy calculator chunk / its roster loads. */
+function KpiCalculatorLoadingLine() {
+  return (
+    <div className="flex h-40 items-center justify-center gap-2 text-xs text-zinc-500 dark:text-zinc-400">
+      <Loader2 className="h-4 w-4 animate-spin" />
+      Loading the KPI Calculator…
+    </div>
+  );
+}
 
 const COLUMNS: { field: PayrollWizardNoteField; label: string; width: string }[] = [
   { field: "note_date", label: "Date", width: "w-24" },
@@ -718,6 +742,7 @@ export default function PayrollWizardNotesFab({
                 wizardSourceFile={wizardSourceFile}
                 heardWizard={heardWizard}
                 canEdit={canEdit}
+                viewerEmail={sessionEmail}
               />
             </motion.div>
           ) : (
@@ -1056,8 +1081,8 @@ const KPI_STATUS_PILL: Record<KpiDeptStatus, { label: string; cls: string; Icon:
     cls: "border-zinc-200 bg-zinc-50 text-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400",
     Icon: Clock,
   },
-  // No bonus configured anywhere (no built-in formula, no Payment Catalog
-  // assignment) — nothing for the manager to submit, so it reads Ready.
+  // No Payment Catalog bonus the manager could apply this week — the
+  // catalog-driven calculator has nothing to submit, so it reads Ready.
   no_bonus: {
     label: "Ready",
     cls: "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-300",
@@ -1417,8 +1442,17 @@ function ReadinessPager({
 }
 
 /** One KPI department row: name + a completeness bar (how much is LEFT) + a
- *  status pill. The bar fills emerald when settled, amber while still open. */
-function KpiDeptRow({ dept, reduceMotion }: { dept: ReadinessKpiDept; reduceMotion: boolean }) {
+ *  status pill. The bar fills emerald when settled, amber while still open.
+ *  With `onOpen` the row is a button that pops that dept's KPI Calculator. */
+function KpiDeptRow({
+  dept,
+  reduceMotion,
+  onOpen,
+}: {
+  dept: ReadinessKpiDept;
+  reduceMotion: boolean;
+  onOpen?: () => void;
+}) {
   const settled = isKpiSettled(dept.status);
   const pct =
     dept.employeeCount > 0
@@ -1430,8 +1464,10 @@ function KpiDeptRow({ dept, reduceMotion }: { dept: ReadinessKpiDept; reduceMoti
   const barCls = settled
     ? "bg-gradient-to-r from-emerald-400 to-teal-500"
     : "bg-gradient-to-r from-amber-400 to-orange-500";
-  return (
-    <div className="flex items-center gap-3 rounded-lg px-2 py-1.5 transition-colors hover:bg-orange-50/50 dark:hover:bg-blue-950/30">
+  const rowCls =
+    "flex w-full items-center gap-3 rounded-lg px-2 py-1.5 transition-colors hover:bg-orange-50/50 dark:hover:bg-blue-950/30";
+  const inner = (
+    <>
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
           <span className="truncate text-[13px] font-medium text-zinc-800 dark:text-zinc-100">{dept.name}</span>
@@ -1466,8 +1502,21 @@ function KpiDeptRow({ dept, reduceMotion }: { dept: ReadinessKpiDept; reduceMoti
           )
         )}
       </div>
-    </div>
+    </>
   );
+  if (onOpen) {
+    return (
+      <button
+        type="button"
+        onClick={onOpen}
+        title={`Open the ${dept.name} KPI Calculator`}
+        className={`${rowCls} cursor-pointer text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-400/60`}
+      >
+        {inner}
+      </button>
+    );
+  }
+  return <div className={rowCls}>{inner}</div>;
 }
 
 /** A compact person row for the missing-rate / missing-bank / exceptions lists. */
@@ -2011,6 +2060,88 @@ function SetBankDialog({
 }
 
 /**
+ * KPI Calculator modal for a clicked Readiness department — the SAME calculator
+ * the manager uses, mounted elevated so accounting can score, save, and Mark
+ * Ready without leaving the wizard. General depts get DeptBonusCalculator with
+ * the clicked dept's panel auto-opened; HSL sub-depts get HslBonusCalculator
+ * pre-filtered to the clicked sub-dept (the other sub-department pills stay one
+ * click away inside).
+ */
+function KpiCalculatorDialog({
+  dept,
+  viewerEmail,
+  onClose,
+}: {
+  dept: ReadinessKpiDept;
+  viewerEmail: string | null;
+  onClose: () => void;
+}) {
+  const isHsl = dept.source === "hsl";
+  // General depts need the roster the manager dashboard feeds its calculator —
+  // fetched per open; the elevated scope returns the full master roster.
+  const [members, setMembers] = useState<EmployeeRow[] | null>(null);
+  const [memberErr, setMemberErr] = useState<string | null>(null);
+  useEffect(() => {
+    if (isHsl) return;
+    let alive = true;
+    fetch("/api/manager/department-members", { cache: "no-store" })
+      .then(async (res) => {
+        const json = (await res.json()) as { rows?: EmployeeRow[]; error?: string | null };
+        if (!res.ok) throw new Error(json.error || `Load failed (${res.status})`);
+        if (alive) setMembers(json.rows ?? []);
+      })
+      .catch((e) => {
+        if (alive) setMemberErr(e instanceof Error ? e.message : "Could not load the roster");
+      });
+    return () => {
+      alive = false;
+    };
+  }, [isHsl]);
+
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-w-[min(96vw,84rem)] sm:max-w-[min(96vw,84rem)]">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <ClipboardList className="h-4 w-4 text-orange-500" />
+            KPI Calculator — {dept.name}
+          </DialogTitle>
+          <DialogDescription>
+            The same calculator the manager uses. Score, save, and Mark Ready from here;
+            Readiness refreshes when you close this.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="h-[72vh] overflow-y-auto overscroll-contain rounded-lg border border-orange-100 bg-white dark:border-blue-950/60 dark:bg-[#0d1117]">
+          {isHsl ? (
+            <HslBonusCalculator
+              viewerEmail={viewerEmail}
+              managedDepts={[]}
+              isElevated
+              initialFilter={dept.key as HslDeptKey}
+            />
+          ) : memberErr ? (
+            <div className="flex h-40 flex-col items-center justify-center gap-2 px-6 text-center text-xs text-zinc-500 dark:text-zinc-400">
+              <AlertTriangle className="h-5 w-5 text-rose-500" />
+              {memberErr}
+            </div>
+          ) : members === null ? (
+            <KpiCalculatorLoadingLine />
+          ) : (
+            <DeptBonusCalculator
+              viewerEmail={viewerEmail}
+              teamMembers={members}
+              managedDepts={[]}
+              isElevated
+              initialOpenDept={dept.key}
+            />
+          )}
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/**
  * "Readiness" tab — the payroll-ready dashboard. A hero banner that flips green
  * when everything's settled, a 4-up stat-tile row, then four sections: KPI
  * submission (per dept, with a "how much is left" bar), no-rate workers, no-bank
@@ -2022,6 +2153,7 @@ function PayrollReadinessGlance({
   wizardSourceFile,
   heardWizard,
   canEdit,
+  viewerEmail,
 }: {
   /** The Hubstaff upload the wizard is on (null = no upload / not settled).
    *  Readiness keys its week on this so it matches the wizard's CSV selector. */
@@ -2030,9 +2162,12 @@ function PayrollReadinessGlance({
    *  first fetch until this is true (or a short grace period elapses) so the
    *  snapshot never briefly shows the fallback week before the wizard's. */
   heardWizard: boolean;
-  /** Payroll-wizard edit grant — gates the inline "Set rate" / "Set bank"
-   *  actions (the write APIs enforce their own grants server-side too). */
+  /** Payroll-wizard edit grant — gates the inline "Set rate" / "Set bank" /
+   *  KPI-calculator actions (the write APIs enforce their own grants too). */
   canEdit: boolean;
+  /** Session email, forwarded to the embedded KPI calculators (saves/locks are
+   *  attributed to whoever fixes it from here). */
+  viewerEmail: string | null;
 }) {
   const reduceMotion = useReducedMotion() ?? false;
   const [data, setData] = useState<PayrollReadiness | null>(null);
@@ -2054,6 +2189,8 @@ function PayrollReadinessGlance({
   // payout details to employee_ids.
   const [ratePerson, setRatePerson] = useState<ReadinessMissingRate | null>(null);
   const [bankPerson, setBankPerson] = useState<ReadinessMissingBank | null>(null);
+  // Dept whose KPI Calculator modal is open (null = closed).
+  const [kpiDept, setKpiDept] = useState<ReadinessKpiDept | null>(null);
   const pickReadinessTab = useCallback((next: ReadinessTab) => {
     setReadinessTab((cur) => {
       if (cur === next) return cur;
@@ -2371,7 +2508,12 @@ function PayrollReadinessGlance({
                   // scroll-trap (matches the three paginated lists).
                   <div className="grid grid-cols-1 gap-x-3 gap-y-0.5 sm:grid-cols-2">
                     {kpiShown.map((d) => (
-                      <KpiDeptRow key={`${d.source}:${d.key}`} dept={d} reduceMotion={reduceMotion} />
+                      <KpiDeptRow
+                        key={`${d.source}:${d.key}`}
+                        dept={d}
+                        reduceMotion={reduceMotion}
+                        onOpen={canEdit ? () => setKpiDept(d) : undefined}
+                      />
                     ))}
                   </div>
                 )}
@@ -2570,6 +2712,17 @@ function PayrollReadinessGlance({
           person={bankPerson}
           onClose={() => setBankPerson(null)}
           onSaved={() => void load()}
+        />
+      )}
+      {kpiDept && (
+        <KpiCalculatorDialog
+          dept={kpiDept}
+          viewerEmail={viewerEmail}
+          onClose={() => {
+            setKpiDept(null);
+            // Whatever was saved / marked ready inside → reflect it right away.
+            void load();
+          }}
         />
       )}
     </div>
