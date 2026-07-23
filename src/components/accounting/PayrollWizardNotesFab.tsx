@@ -18,6 +18,7 @@ import {
   ListChecks,
   Loader2,
   Lock,
+  Pencil,
   Plus,
   Search,
   ShieldCheck,
@@ -49,16 +50,28 @@ import type {
   PayrollWorkerOption,
 } from "@/lib/supabase/payroll-wizard-notes";
 import { DEPARTMENTS } from "@/lib/payroll/department-bonus";
+import { normalizeDeptToKey } from "@/lib/payroll/normalize-dept-key";
+import { HSL_DEPTS, HSL_DEPT_KEYS } from "@/lib/hsl-bonus/schema";
 import {
   defaultOtRate,
   formatRate,
+  newPayId,
+  PAY_CURRENCIES,
+  type PayCurrency,
   type PayStructure,
 } from "@/lib/payment-catalog/pay-structure";
+import {
+  PROCESSOR_OPTIONS,
+  SELECTABLE_PROCESSOR_OPTIONS,
+  type ProcessorId,
+} from "@/lib/employee-payment-processors";
 import { addWeeks, payrollNotesWeekStart, weekRangeLabel } from "@/lib/payroll/manila-week";
 import { periodLabelFromFilename } from "@/lib/hubstaff/period-label";
 import type {
   PayrollReadiness,
   ReadinessKpiDept,
+  ReadinessMissingRate,
+  ReadinessMissingBank,
   KpiDeptStatus,
   ExceptionKind,
   ReadinessScore,
@@ -704,6 +717,7 @@ export default function PayrollWizardNotesFab({
               <PayrollReadinessGlance
                 wizardSourceFile={wizardSourceFile}
                 heardWizard={heardWizard}
+                canEdit={canEdit}
               />
             </motion.div>
           ) : (
@@ -1042,12 +1056,20 @@ const KPI_STATUS_PILL: Record<KpiDeptStatus, { label: string; cls: string; Icon:
     cls: "border-zinc-200 bg-zinc-50 text-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400",
     Icon: Clock,
   },
+  // No bonus configured anywhere (no built-in formula, no Payment Catalog
+  // assignment) — nothing for the manager to submit, so it reads Ready.
+  no_bonus: {
+    label: "Ready",
+    cls: "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-300",
+    Icon: CheckCircle2,
+  },
 };
 
-/** A KPI dept is "settled" for the week when its manager marked it ready/locked
- *  (or it isn't due this week). Draft = still left to do. */
+/** A KPI dept is "settled" for the week when its manager marked it ready/locked,
+ *  it isn't due this week, or it has no bonus configured at all. Draft = still
+ *  left to do. */
 function isKpiSettled(s: KpiDeptStatus): boolean {
-  return s === "ready" || s === "locked" || s === "na";
+  return s === "ready" || s === "locked" || s === "na" || s === "no_bonus";
 }
 
 const EXCEPTION_META: Record<ExceptionKind, { label: string; cls: string; Icon: typeof UserPlus }> = {
@@ -1434,10 +1456,14 @@ function KpiDeptRow({ dept, reduceMotion }: { dept: ReadinessKpiDept; reduceMoti
           <pill.Icon className="h-2.5 w-2.5" />
           {pill.label}
         </span>
-        {dept.employeeCount > 0 && (
-          <span className="text-[9.5px] tabular-nums text-zinc-400 dark:text-zinc-500">
-            {dept.scoredCount}/{dept.employeeCount} scored
-          </span>
+        {dept.status === "no_bonus" ? (
+          <span className="text-[9.5px] text-zinc-400 dark:text-zinc-500">no bonus set</span>
+        ) : (
+          dept.employeeCount > 0 && (
+            <span className="text-[9.5px] tabular-nums text-zinc-400 dark:text-zinc-500">
+              {dept.scoredCount}/{dept.employeeCount} scored
+            </span>
+          )
         )}
       </div>
     </div>
@@ -1470,6 +1496,519 @@ function PersonLine({
 }
 
 /**
+ * Maps a readiness row's raw department label to a canonical Payment Catalog
+ * department key. Any HSL sub-department label ("HSL:intake_specialist",
+ * "HSL - Intake", an hsl_bonus dept key or display name) files under the ONE
+ * Hogan Smith Law department — HSL people get a single catalog dept, never one
+ * per sub-team.
+ */
+function catalogDeptKeyFromLabel(raw: string | null): string {
+  const s = (raw ?? "").trim();
+  if (!s) return "";
+  const direct = normalizeDeptToKey(s);
+  if (direct) return direct;
+  const lower = s.toLowerCase();
+  if (lower.startsWith("hsl") || lower.includes("hogan")) return "hogan_smith_law";
+  const bare = lower.replace(/^hsl[\s:_-]+/, "");
+  if (
+    HSL_DEPT_KEYS.some(
+      (k) => k === lower || k === bare || HSL_DEPTS[k].name.toLowerCase() === lower,
+    )
+  ) {
+    return "hogan_smith_law";
+  }
+  return "";
+}
+
+/** Small inline "fix it" action on a readiness person row. */
+function RowFixButton({
+  label,
+  onClick,
+  disabled,
+  title,
+}: {
+  label: string;
+  onClick: () => void;
+  disabled?: boolean;
+  title?: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      title={title}
+      className="inline-flex shrink-0 items-center gap-1 rounded-md border border-orange-200/80 bg-white px-2 py-1 text-[10px] font-semibold whitespace-nowrap text-orange-700 transition-colors hover:bg-orange-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-blue-900/60 dark:bg-blue-950/30 dark:text-orange-300 dark:hover:bg-blue-950/50"
+    >
+      <Pencil className="h-3 w-3" />
+      {label}
+    </button>
+  );
+}
+
+/** Shared field label + input classes for the two readiness editors. */
+const EDITOR_LABEL_CLS =
+  "text-[10px] font-semibold uppercase tracking-[0.12em] text-zinc-500 dark:text-zinc-400";
+const EDITOR_SELECT_CLS =
+  "h-8 w-full rounded-md border border-orange-200/80 bg-white px-2 text-xs text-zinc-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-200 disabled:cursor-not-allowed disabled:opacity-60 dark:border-blue-900/60 dark:bg-blue-950/30 dark:text-zinc-100 dark:focus-visible:ring-blue-900";
+
+/**
+ * "Set rate" editor for a No Pay Rate row — files an EMPLOYEE-scoped Payment
+ * Catalog pay structure (the top of the rate chain: individual catalog → sheet
+ * → dept base), so the person resolves a rate the moment it saves. Department
+ * defaults from the row's label; HSL sub-departments all file under Hogan
+ * Smith Law. Saves via POST /api/payment-catalog/pay-structures, which also
+ * syncs rate history / the rates sheet and notifies the employee.
+ */
+function SetRateDialog({
+  person,
+  onClose,
+  onSaved,
+}: {
+  person: ReadinessMissingRate;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const mappedKey = catalogDeptKeyFromLabel(person.department);
+  const [deptKey, setDeptKey] = useState(mappedKey);
+  const [regular, setRegular] = useState("");
+  const [ot, setOt] = useState("");
+  const [currency, setCurrency] = useState<PayCurrency>("PHP");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const regNum = Number(regular);
+  const regOk = regular.trim() !== "" && Number.isFinite(regNum) && regNum > 0;
+  const autoOt = regOk ? defaultOtRate(regNum) : null;
+  // Surfaces the HSL grouping so an "HSL:intake_specialist" label saving under
+  // Hogan Smith Law never reads as a bug.
+  const isHslSub =
+    mappedKey === "hogan_smith_law" &&
+    (person.department ?? "").trim().toLowerCase() !== "hogan smith law";
+
+  const save = async () => {
+    if (!person.email) {
+      setError("This worker has no email on the roster — set their rate from the Payment Catalog instead.");
+      return;
+    }
+    if (!deptKey) {
+      setError("Pick the department this rate files under.");
+      return;
+    }
+    if (!regOk) {
+      setError("Enter a regular hourly rate above zero.");
+      return;
+    }
+    const otNum = ot.trim() === "" ? autoOt : Number(ot);
+    if (otNum == null || !Number.isFinite(otNum) || otNum < 0) {
+      setError("OT rate must be a non-negative number.");
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      const structure: PayStructure = {
+        id: newPayId(),
+        scope: "employee",
+        departmentKey: deptKey,
+        employeeEmail: person.email.trim().toLowerCase(),
+        employeeName: person.name,
+        regularRate: regNum,
+        otRate: otNum,
+        currency,
+      };
+      const res = await fetch("/api/payment-catalog/pay-structures", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ structure }),
+      });
+      const json = (await res.json().catch(() => ({}))) as { error?: string | null };
+      if (!res.ok || json.error) throw new Error(json.error || `Save failed (${res.status})`);
+      toast.success(`Rate set for ${person.name}`, {
+        description: `${formatRate(regNum, currency)} · ${
+          DEPARTMENTS.find((d) => d.key === deptKey)?.name ?? deptKey
+        }`,
+      });
+      onSaved();
+      onClose();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not save the rate");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Wallet className="h-4 w-4 text-orange-500" />
+            Set pay rate
+          </DialogTitle>
+          <DialogDescription>
+            {person.name}
+            {person.email ? ` · ${person.email}` : ""} — saves an individual rate to the
+            Payment Catalog, effective immediately.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="grid gap-3">
+          <div className="grid gap-1">
+            <label className={EDITOR_LABEL_CLS} htmlFor="readiness-rate-dept">
+              Department
+            </label>
+            <select
+              id="readiness-rate-dept"
+              value={deptKey}
+              onChange={(e) => setDeptKey(e.target.value)}
+              className={EDITOR_SELECT_CLS}
+            >
+              <option value="">Pick a department…</option>
+              {DEPARTMENTS.map((d) => (
+                <option key={d.key} value={d.key}>
+                  {d.name}
+                </option>
+              ))}
+            </select>
+            {isHslSub && (
+              <p className="text-[10px] text-zinc-400 dark:text-zinc-500">
+                {person.department} is an HSL sub-department — the rate files under Hogan
+                Smith Law.
+              </p>
+            )}
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <div className="grid gap-1">
+              <label className={EDITOR_LABEL_CLS} htmlFor="readiness-rate-reg">
+                Regular rate /hr
+              </label>
+              <Input
+                id="readiness-rate-reg"
+                type="number"
+                min="0"
+                step="0.01"
+                inputMode="decimal"
+                value={regular}
+                onChange={(e) => setRegular(e.target.value)}
+                placeholder="0.00"
+                className="h-8 text-xs"
+              />
+            </div>
+            <div className="grid gap-1">
+              <label className={EDITOR_LABEL_CLS} htmlFor="readiness-rate-ot">
+                OT rate /hr
+              </label>
+              <Input
+                id="readiness-rate-ot"
+                type="number"
+                min="0"
+                step="0.01"
+                inputMode="decimal"
+                value={ot}
+                onChange={(e) => setOt(e.target.value)}
+                placeholder={autoOt != null ? `auto ${autoOt}` : "auto 1.5×"}
+                className="h-8 text-xs"
+              />
+            </div>
+          </div>
+          <div className="grid gap-1">
+            <label className={EDITOR_LABEL_CLS} htmlFor="readiness-rate-currency">
+              Currency
+            </label>
+            <select
+              id="readiness-rate-currency"
+              value={currency}
+              onChange={(e) => setCurrency(e.target.value as PayCurrency)}
+              className={EDITOR_SELECT_CLS}
+            >
+              {PAY_CURRENCIES.map((c) => (
+                <option key={c} value={c}>
+                  {c}
+                </option>
+              ))}
+            </select>
+          </div>
+          {error && (
+            <p className="text-xs text-rose-600 dark:text-rose-400" role="alert">
+              {error}
+            </p>
+          )}
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" size="sm" onClick={onClose} disabled={saving}>
+              Cancel
+            </Button>
+            <Button size="sm" onClick={() => void save()} disabled={saving}>
+              {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+              Save rate
+            </Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/**
+ * "Set bank" editor for a Bank Info row — writes payout details straight to the
+ * person's employee_ids row via POST /api/update-employee-ids (the same route
+ * the employee portal saves through, so history/audit/notifications all fire).
+ *
+ * When the row already resolves an effective processor (Bank Preferred /
+ * Disbursement / legacy cell), the processor is FIXED and we only collect its
+ * missing details — routing changes stay in their existing approval flows (and
+ * the WIRES lock stays intact). Only with NO processor at all does the picker
+ * open up, writing the Disbursement channel (`preferred_processor`), never
+ * `bank_preferred`.
+ */
+function SetBankDialog({
+  person,
+  onClose,
+  onSaved,
+}: {
+  person: ReadinessMissingBank;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const lockedProcessor = (person.processor ?? "") as ProcessorId | "";
+  const [processor, setProcessor] = useState<string>(lockedProcessor);
+  const [walletEmail, setWalletEmail] = useState("");
+  const [walletName, setWalletName] = useState("");
+  const [bankName, setBankName] = useState("");
+  const [accountHolder, setAccountHolder] = useState("");
+  const [accountNumber, setAccountNumber] = useState("");
+  const [swiftCode, setSwiftCode] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const locked = lockedProcessor !== "";
+  const isWallet =
+    processor === "hurupay" || processor === "wepay" || processor === "higlobe" || processor === "wise";
+  const needsWalletName = processor === "higlobe";
+  const processorLabel =
+    PROCESSOR_OPTIONS.find((p) => p.id === processor)?.label ?? processor;
+
+  const save = async () => {
+    if (!person.workEmail && !person.personalEmail) {
+      setError("No email on file to key this person's payout record.");
+      return;
+    }
+    if (!processor) {
+      setError("Pick the processor this person is paid through.");
+      return;
+    }
+    const update: Record<string, string> = {};
+    if (isWallet) {
+      if (!walletEmail.trim()) {
+        setError(`Enter the ${processorLabel} account email.`);
+        return;
+      }
+      if (needsWalletName && !walletName.trim()) {
+        setError("Enter the HiGlobe account name.");
+        return;
+      }
+      if (processor === "hurupay") update.hurupay_email = walletEmail.trim();
+      if (processor === "wepay") update.wepay_email = walletEmail.trim();
+      if (processor === "wise") update.wise_email = walletEmail.trim();
+      if (processor === "higlobe") {
+        update.higlobe_email = walletEmail.trim();
+        update.higlobe_account_name = walletName.trim();
+      }
+    } else {
+      // wires / jeeves — manual wire details. Bank + account number are what
+      // isPayoutComplete requires; holder + SWIFT ride along when provided.
+      if (!bankName.trim() || !accountNumber.trim()) {
+        setError("Bank name and account number are required for wires.");
+        return;
+      }
+      update.bank_name = bankName.trim();
+      update.account_number = accountNumber.trim();
+      if (accountHolder.trim()) update.account_holder_name = accountHolder.trim();
+      if (swiftCode.trim()) update.swift_code = swiftCode.trim();
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      const body: Record<string, string> = {
+        bootstrap_display_name: person.name,
+        ...update,
+      };
+      if (person.workEmail) body.work_email = person.workEmail;
+      else if (person.personalEmail) body.personal_email = person.personalEmail;
+      // Routing: only set the Disbursement channel when the person had no
+      // effective processor at all. Never writes bank_preferred.
+      if (!locked) body.preferred_processor = processor;
+      const res = await fetch("/api/update-employee-ids", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const json = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok || json.error) throw new Error(json.error || `Save failed (${res.status})`);
+      toast.success(`Bank details saved for ${person.name}`, {
+        description: `Paid via ${processorLabel}.`,
+      });
+      onSaved();
+      onClose();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not save bank details");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Banknote className="h-4 w-4 text-orange-500" />
+            Set bank details
+          </DialogTitle>
+          <DialogDescription>
+            {person.name}
+            {person.email ? ` · ${person.email}` : ""} — saves to their payout profile;
+            the employee is notified.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="grid gap-3">
+          <div className="grid gap-1">
+            <label className={EDITOR_LABEL_CLS} htmlFor="readiness-bank-processor">
+              Processor
+            </label>
+            <select
+              id="readiness-bank-processor"
+              value={processor}
+              onChange={(e) => setProcessor(e.target.value)}
+              disabled={locked}
+              className={EDITOR_SELECT_CLS}
+            >
+              {locked ? (
+                <option value={lockedProcessor}>{processorLabel}</option>
+              ) : (
+                <>
+                  <option value="">Pick a processor…</option>
+                  {SELECTABLE_PROCESSOR_OPTIONS.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.label}
+                    </option>
+                  ))}
+                </>
+              )}
+            </select>
+            {locked && (
+              <p className="text-[10px] text-zinc-400 dark:text-zinc-500">
+                Already routed via {processorLabel} — just complete the missing details
+                below. Routing changes go through the usual approval flow.
+              </p>
+            )}
+          </div>
+          {isWallet ? (
+            <>
+              <div className="grid gap-1">
+                <label className={EDITOR_LABEL_CLS} htmlFor="readiness-bank-wallet-email">
+                  {processorLabel} account email
+                </label>
+                <Input
+                  id="readiness-bank-wallet-email"
+                  type="email"
+                  value={walletEmail}
+                  onChange={(e) => setWalletEmail(e.target.value)}
+                  placeholder="name@example.com"
+                  className="h-8 text-xs"
+                />
+              </div>
+              {needsWalletName && (
+                <div className="grid gap-1">
+                  <label className={EDITOR_LABEL_CLS} htmlFor="readiness-bank-wallet-name">
+                    HiGlobe account name
+                  </label>
+                  <Input
+                    id="readiness-bank-wallet-name"
+                    value={walletName}
+                    onChange={(e) => setWalletName(e.target.value)}
+                    placeholder="Account holder name"
+                    className="h-8 text-xs"
+                  />
+                </div>
+              )}
+            </>
+          ) : processor ? (
+            <>
+              <div className="grid grid-cols-2 gap-2">
+                <div className="grid gap-1">
+                  <label className={EDITOR_LABEL_CLS} htmlFor="readiness-bank-name">
+                    Bank name
+                  </label>
+                  <Input
+                    id="readiness-bank-name"
+                    value={bankName}
+                    onChange={(e) => setBankName(e.target.value)}
+                    placeholder="e.g. BPI"
+                    className="h-8 text-xs"
+                  />
+                </div>
+                <div className="grid gap-1">
+                  <label className={EDITOR_LABEL_CLS} htmlFor="readiness-bank-holder">
+                    Account holder
+                  </label>
+                  <Input
+                    id="readiness-bank-holder"
+                    value={accountHolder}
+                    onChange={(e) => setAccountHolder(e.target.value)}
+                    placeholder="Full name"
+                    className="h-8 text-xs"
+                  />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div className="grid gap-1">
+                  <label className={EDITOR_LABEL_CLS} htmlFor="readiness-bank-account">
+                    Account number
+                  </label>
+                  <Input
+                    id="readiness-bank-account"
+                    value={accountNumber}
+                    onChange={(e) => setAccountNumber(e.target.value)}
+                    placeholder="Account number"
+                    className="h-8 text-xs"
+                  />
+                </div>
+                <div className="grid gap-1">
+                  <label className={EDITOR_LABEL_CLS} htmlFor="readiness-bank-swift">
+                    SWIFT / routing
+                  </label>
+                  <Input
+                    id="readiness-bank-swift"
+                    value={swiftCode}
+                    onChange={(e) => setSwiftCode(e.target.value)}
+                    placeholder="Optional"
+                    className="h-8 text-xs"
+                  />
+                </div>
+              </div>
+            </>
+          ) : null}
+          {error && (
+            <p className="text-xs text-rose-600 dark:text-rose-400" role="alert">
+              {error}
+            </p>
+          )}
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" size="sm" onClick={onClose} disabled={saving}>
+              Cancel
+            </Button>
+            <Button size="sm" onClick={() => void save()} disabled={saving}>
+              {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+              Save details
+            </Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/**
  * "Readiness" tab — the payroll-ready dashboard. A hero banner that flips green
  * when everything's settled, a 4-up stat-tile row, then four sections: KPI
  * submission (per dept, with a "how much is left" bar), no-rate workers, no-bank
@@ -1480,6 +2019,7 @@ function PersonLine({
 function PayrollReadinessGlance({
   wizardSourceFile,
   heardWizard,
+  canEdit,
 }: {
   /** The Hubstaff upload the wizard is on (null = no upload / not settled).
    *  Readiness keys its week on this so it matches the wizard's CSV selector. */
@@ -1488,6 +2028,9 @@ function PayrollReadinessGlance({
    *  first fetch until this is true (or a short grace period elapses) so the
    *  snapshot never briefly shows the fallback week before the wizard's. */
   heardWizard: boolean;
+  /** Payroll-wizard edit grant — gates the inline "Set rate" / "Set bank"
+   *  actions (the write APIs enforce their own grants server-side too). */
+  canEdit: boolean;
 }) {
   const reduceMotion = useReducedMotion() ?? false;
   const [data, setData] = useState<PayrollReadiness | null>(null);
@@ -1504,6 +2047,11 @@ function PayrollReadinessGlance({
   // so switching left↔right reads like turning pages, matching the outer tabs.
   const [readinessTab, setReadinessTab] = useState<ReadinessTab>("kpi");
   const [readinessDir, setReadinessDir] = useState(0);
+  // Person currently being fixed inline (null = no editor open). One at a time:
+  // the rate editor files a Payment Catalog structure, the bank editor writes
+  // payout details to employee_ids.
+  const [ratePerson, setRatePerson] = useState<ReadinessMissingRate | null>(null);
+  const [bankPerson, setBankPerson] = useState<ReadinessMissingBank | null>(null);
   const pickReadinessTab = useCallback((next: ReadinessTab) => {
     setReadinessTab((cur) => {
       if (cur === next) return cur;
@@ -1851,9 +2399,23 @@ function PayrollReadinessGlance({
                               email={r.email}
                               department={r.department}
                               right={
-                                <span className="shrink-0 rounded-full border border-rose-200 bg-rose-50 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-rose-700 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-300">
-                                  No rate
-                                </span>
+                                <div className="flex shrink-0 items-center gap-1.5">
+                                  <span className="shrink-0 rounded-full border border-rose-200 bg-rose-50 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-rose-700 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-300">
+                                    No rate
+                                  </span>
+                                  {canEdit && (
+                                    <RowFixButton
+                                      label="Set rate"
+                                      onClick={() => setRatePerson(r)}
+                                      disabled={!r.email}
+                                      title={
+                                        r.email
+                                          ? "Set this person's pay rate"
+                                          : "No email on the roster — set the rate from the Payment Catalog"
+                                      }
+                                    />
+                                  )}
+                                </div>
                               }
                             />
                           ))}
@@ -1896,9 +2458,23 @@ function PayrollReadinessGlance({
                               email={r.email}
                               department={r.department}
                               right={
-                                <span className="shrink-0 rounded-full border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-amber-700 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300">
-                                  {r.processor ? `${r.processor} · incomplete` : "No processor"}
-                                </span>
+                                <div className="flex shrink-0 items-center gap-1.5">
+                                  <span className="shrink-0 rounded-full border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-amber-700 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300">
+                                    {r.processor ? `${r.processor} · incomplete` : "No processor"}
+                                  </span>
+                                  {canEdit && (
+                                    <RowFixButton
+                                      label="Set bank"
+                                      onClick={() => setBankPerson(r)}
+                                      disabled={!r.workEmail && !r.personalEmail}
+                                      title={
+                                        r.workEmail || r.personalEmail
+                                          ? "Set this person's payout details"
+                                          : "No email on file to key their payout record"
+                                      }
+                                    />
+                                  )}
+                                </div>
                               }
                             />
                           ))}
@@ -1977,6 +2553,23 @@ function PayrollReadinessGlance({
         managers submit and details are fixed.
       </p>
       </div>
+
+      {/* Inline fixers — the realtime subscription refreshes the lists on save
+          too, but reload explicitly so the row clears the moment it's fixed. */}
+      {ratePerson && (
+        <SetRateDialog
+          person={ratePerson}
+          onClose={() => setRatePerson(null)}
+          onSaved={() => void load()}
+        />
+      )}
+      {bankPerson && (
+        <SetBankDialog
+          person={bankPerson}
+          onClose={() => setBankPerson(null)}
+          onSaved={() => void load()}
+        />
+      )}
     </div>
   );
 }

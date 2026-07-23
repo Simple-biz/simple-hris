@@ -61,8 +61,10 @@ import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
 import { isFinalPayrollWeekOfMonth } from '@/lib/payroll/bonus-cadence';
 import {
   DEPARTMENTS,
+  DEPT_INPUT_CONFIG,
   MANAGER_BONUS_DEPT_KEYS,
 } from '@/lib/payroll/department-bonus';
+import { listBonusCatalog } from '@/lib/supabase/bonus-catalog-db';
 import { HSL_DEPTS, HSL_DEPT_KEYS, type HslDeptKey } from '@/lib/hsl-bonus/schema';
 import { weekRangeLabel } from '@/lib/payroll/manila-week';
 import {
@@ -80,8 +82,10 @@ export { computeReadinessScore };
 
 /** How submitted a department's KPI is for the week. `n/a` = a monthly HSL dept
  *  that isn't due this (non-final) week — not expected, so it never counts against
- *  readiness. */
-export type KpiDeptStatus = 'ready' | 'locked' | 'draft' | 'na';
+ *  readiness. `no_bonus` = a general dept with NO bonus configured anywhere (no
+ *  built-in KPI formula and no Payment Catalog bonus assignment) — there is
+ *  nothing for its manager to submit, so it auto-reads Ready. */
+export type KpiDeptStatus = 'ready' | 'locked' | 'draft' | 'na' | 'no_bonus';
 
 export interface ReadinessKpiDept {
   key: string;
@@ -114,6 +118,10 @@ export interface ReadinessMissingBank {
   department: string | null;
   /** The processor picked but left incomplete, if any (helps triage). */
   processor: string | null;
+  /** Identity split for the in-tab "Set bank" editor: which email column the
+   *  employee_ids write should key on. `email` above stays the display value. */
+  workEmail: string | null;
+  personalEmail: string | null;
 }
 
 /** Why a person is expected NOT to be paid this week (an onboarding exception). */
@@ -298,18 +306,49 @@ async function buildKpiReadiness(weekStart: string, isMonthly: boolean): Promise
   ).catch(() => []);
   const appliedByDept = new Map(appliedRows.map((r) => [r.department, r]));
 
+  // Departments with at least one Payment Catalog bonus assignment (department-
+  // or employee-scoped). A general dept with NO assignment AND no built-in KPI
+  // formula has nothing for its manager to submit — it auto-reads Ready
+  // ('no_bonus') instead of sitting on "Pending" forever. Best-effort: if the
+  // catalog can't load we assume every dept has bonuses (never auto-Ready on a
+  // read failure).
+  let catalogDeptKeys: Set<string> | null = null;
+  try {
+    const { assignments } = await listBonusCatalog();
+    catalogDeptKeys = new Set(assignments.map((a) => a.departmentKey));
+  } catch {
+    catalogDeptKeys = null;
+  }
+
   const out: ReadinessKpiDept[] = [];
 
   // General manager-KPI departments.
   for (const key of MANAGER_BONUS_DEPT_KEYS) {
     const status = statusByDept.get(key);
     const applied = appliedByDept.get(key);
+    const cfg = DEPT_INPUT_CONFIG[key];
+    const hasBuiltInFormula =
+      (cfg?.employeeFields.length ?? 0) > 0 ||
+      (cfg?.deptFields.length ?? 0) > 0 ||
+      !!cfg?.useToggleBonuses;
+    const hasCatalogBonus = catalogDeptKeys === null || catalogDeptKeys.has(key);
+    let deptStatus = (status?.status ?? 'draft') as KpiDeptStatus;
+    // Only an untouched dept auto-flips: a manager's explicit ready/locked (or
+    // any applied bonus rows this week) always wins over the no-bonus shortcut.
+    if (
+      deptStatus === 'draft' &&
+      !hasBuiltInFormula &&
+      !hasCatalogBonus &&
+      (applied?.employee_count ?? 0) === 0
+    ) {
+      deptStatus = 'no_bonus';
+    }
     out.push({
       key,
       name: DEPT_NAME_BY_KEY[key] ?? key,
       source: 'general',
       cadence: 'weekly',
-      status: (status?.status ?? 'draft') as KpiDeptStatus,
+      status: deptStatus,
       scoredCount: applied?.employee_count ?? 0,
       employeeCount: applied?.employee_count ?? 0,
       totalBonus: Math.round(applied?.total_bonus ?? 0),
@@ -341,7 +380,7 @@ async function buildKpiReadiness(weekStart: string, isMonthly: boolean): Promise
 
   // Sort: not-ready first (draft before ready before locked before n/a), then
   // by name — so what still needs attention floats to the top.
-  const rank: Record<KpiDeptStatus, number> = { draft: 0, ready: 1, locked: 2, na: 3 };
+  const rank: Record<KpiDeptStatus, number> = { draft: 0, ready: 1, locked: 2, no_bonus: 3, na: 4 };
   out.sort((a, b) => rank[a.status] - rank[b.status] || a.name.localeCompare(b.name));
   return out;
 }
@@ -482,6 +521,8 @@ async function buildMissingBank(): Promise<{ rows: ReadinessMissingBank[]; eligi
       // The processor PD would route on (bank_preferred → disbursement →
       // legacy cell) — what the "wires · incomplete" pill should actually say.
       processor: resolveEffectivePayoutProcessor(idRow, extras),
+      workEmail: e.work_email ?? null,
+      personalEmail: e.personal_email ?? null,
     });
   }
   out.sort((a, b) => a.name.localeCompare(b.name));
@@ -574,9 +615,12 @@ export async function getPayrollReadiness(
 
   // KPI due/submitted for the score: monthly depts not due this week ('na') are
   // excluded from the denominator; everything else is due, and "submitted" means
-  // the manager marked it ready/locked.
+  // the manager marked it ready/locked — or there is no bonus configured for the
+  // dept at all ('no_bonus'), which is Ready by definition.
   const kpiDue = kpi.filter((d) => d.status !== 'na').length;
-  const kpiSubmitted = kpi.filter((d) => d.status === 'ready' || d.status === 'locked').length;
+  const kpiSubmitted = kpi.filter(
+    (d) => d.status === 'ready' || d.status === 'locked' || d.status === 'no_bonus',
+  ).length;
 
   const score = computeReadinessScore({
     workerCount: ratesRes.workerCount,
