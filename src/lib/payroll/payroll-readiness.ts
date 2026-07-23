@@ -59,11 +59,7 @@ import { summarizeApplied } from '@/lib/supabase/bonus-catalog-applied-db';
 import { listHrPendingEmployees } from '@/lib/supabase/hr-pending-employees';
 import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
 import { isFinalPayrollWeekOfMonth } from '@/lib/payroll/bonus-cadence';
-import {
-  DEPARTMENTS,
-  DEPT_INPUT_CONFIG,
-  MANAGER_BONUS_DEPT_KEYS,
-} from '@/lib/payroll/department-bonus';
+import { DEPARTMENTS, MANAGER_BONUS_DEPT_KEYS } from '@/lib/payroll/department-bonus';
 import { listBonusCatalog } from '@/lib/supabase/bonus-catalog-db';
 import { HSL_DEPTS, HSL_DEPT_KEYS, type HslDeptKey } from '@/lib/hsl-bonus/schema';
 import { weekRangeLabel } from '@/lib/payroll/manila-week';
@@ -82,9 +78,10 @@ export { computeReadinessScore };
 
 /** How submitted a department's KPI is for the week. `n/a` = a monthly HSL dept
  *  that isn't due this (non-final) week — not expected, so it never counts against
- *  readiness. `no_bonus` = a general dept with NO bonus configured anywhere (no
- *  built-in KPI formula and no Payment Catalog bonus assignment) — there is
- *  nothing for its manager to submit, so it auto-reads Ready. */
+ *  readiness. `no_bonus` = a general dept with NO Payment Catalog bonus the
+ *  manager could apply this week (the calculator is catalog-driven, so an empty
+ *  catalog renders "No bonuses assigned" — there is nothing to submit), so it
+ *  auto-reads Ready. */
 export type KpiDeptStatus = 'ready' | 'locked' | 'draft' | 'na' | 'no_bonus';
 
 export interface ReadinessKpiDept {
@@ -306,16 +303,27 @@ async function buildKpiReadiness(weekStart: string, isMonthly: boolean): Promise
   ).catch(() => []);
   const appliedByDept = new Map(appliedRows.map((r) => [r.department, r]));
 
-  // Departments with at least one Payment Catalog bonus assignment (department-
-  // or employee-scoped). A general dept with NO assignment AND no built-in KPI
-  // formula has nothing for its manager to submit — it auto-reads Ready
-  // ('no_bonus') instead of sitting on "Pending" forever. Best-effort: if the
-  // catalog can't load we assume every dept has bonuses (never auto-Ready on a
-  // read failure).
+  // Departments with at least one Payment Catalog bonus the manager could apply
+  // THIS week (department- or employee-scoped), resolved the same way the
+  // manager calculator (DeptBonusCalculator) does: dept key normalized,
+  // assignments whose bonus was deleted ignored, monthly-cadence bonuses only
+  // counted on the month's final payroll week. A general dept with no such
+  // bonus has nothing for its manager to submit — the catalog-driven calculator
+  // literally renders "No bonuses assigned to this department yet" — so it
+  // auto-reads Ready ('no_bonus') instead of sitting on "Pending" forever.
+  // Best-effort: if the catalog can't load we assume every dept has bonuses
+  // (never auto-Ready on a read failure).
   let catalogDeptKeys: Set<string> | null = null;
   try {
-    const { assignments } = await listBonusCatalog();
-    catalogDeptKeys = new Set(assignments.map((a) => a.departmentKey));
+    const { bonuses, assignments } = await listBonusCatalog();
+    const bonusById = new Map(bonuses.map((b) => [b.id, b]));
+    catalogDeptKeys = new Set<string>();
+    for (const a of assignments) {
+      const bonus = bonusById.get(a.bonusId);
+      if (!bonus) continue;
+      if (bonus.cadence === 'monthly' && !isMonthly) continue;
+      catalogDeptKeys.add(normalizeDeptToKey(a.departmentKey) ?? a.departmentKey);
+    }
   } catch {
     catalogDeptKeys = null;
   }
@@ -326,21 +334,11 @@ async function buildKpiReadiness(weekStart: string, isMonthly: boolean): Promise
   for (const key of MANAGER_BONUS_DEPT_KEYS) {
     const status = statusByDept.get(key);
     const applied = appliedByDept.get(key);
-    const cfg = DEPT_INPUT_CONFIG[key];
-    const hasBuiltInFormula =
-      (cfg?.employeeFields.length ?? 0) > 0 ||
-      (cfg?.deptFields.length ?? 0) > 0 ||
-      !!cfg?.useToggleBonuses;
     const hasCatalogBonus = catalogDeptKeys === null || catalogDeptKeys.has(key);
     let deptStatus = (status?.status ?? 'draft') as KpiDeptStatus;
     // Only an untouched dept auto-flips: a manager's explicit ready/locked (or
     // any applied bonus rows this week) always wins over the no-bonus shortcut.
-    if (
-      deptStatus === 'draft' &&
-      !hasBuiltInFormula &&
-      !hasCatalogBonus &&
-      (applied?.employee_count ?? 0) === 0
-    ) {
+    if (deptStatus === 'draft' && !hasCatalogBonus && (applied?.employee_count ?? 0) === 0) {
       deptStatus = 'no_bonus';
     }
     out.push({
