@@ -9,6 +9,7 @@ import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
 import { useDebouncedValue } from '@/hooks/useDebouncedValue';
+import { SmoothSelect } from '@/components/ui/smooth-select';
 import { PROCESSORS, formatPHP, formatUSD, formatCOP, type ProcessorId, type QueueRow } from './mock-queue';
 import type { PayCurrency } from '@/lib/payment-catalog/pay-structure';
 import type { PaymentDispatchRow, PaymentDispatchStatus } from '@/lib/supabase/payment-dispatches';
@@ -79,6 +80,10 @@ interface ProcessorQueueProps {
    */
   paidRecords?: PaymentDispatchRow[];
 }
+
+/** Sentinel filter value for rows with no known department (real names can't
+ *  collide with it — departments never start with "__"). */
+const NO_DEPT = '__none__';
 
 const FIELD_LABELS: Record<string, string> = {
   email: 'Work email',
@@ -200,6 +205,8 @@ function initials(name: string) {
 function ProcessorQueue({ processor, rows, onMarkPaid, onViewPaystub, periodStart, periodEnd, onRefresh, allLabel, nativeCurrency, paidRecords }: ProcessorQueueProps) {
   const [query, setQuery] = useState('');
   const debouncedQuery = useDebouncedValue(query, 250);
+  // '' = all departments; NO_DEPT = rows without a department; else exact name.
+  const [deptFilter, setDeptFilter] = useState('');
   const [expanded, setExpanded] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   // Which sub-view is active. 'pending' is the live queue; the other four are
@@ -237,16 +244,43 @@ function ProcessorQueue({ processor, rows, onMarkPaid, onViewPaystub, periodStar
 
   const meta = processor ? PROCESSORS.find((p) => p.id === processor) ?? null : null;
   const isAllView = processor === null;
-  // Six columns when "All pending" (Bank gets its own column); five otherwise.
-  // Order: avatar / identity / [bank] / pay (USD+PHP) / hours (total + OT) / action
+  // Seven columns when "All pending" (Bank gets its own column); six otherwise.
+  // Order: avatar / identity / department / [bank] / pay (USD+PHP) / hours (total + OT) / action
   const rowGrid = isAllView
-    ? 'grid-cols-[auto_minmax(0,1.3fr)_140px_140px_120px_auto]'
-    : 'grid-cols-[auto_minmax(0,1fr)_140px_120px_auto]';
+    ? 'grid-cols-[auto_minmax(0,1.2fr)_minmax(0,130px)_140px_140px_120px_auto]'
+    : 'grid-cols-[auto_minmax(0,1fr)_minmax(0,130px)_140px_120px_auto]';
+
+  // Distinct departments present in THIS queue, for the filter dropdown. A
+  // "No department" bucket appears only when some rows actually lack one.
+  const deptOptions = useMemo(() => {
+    const names = new Set<string>();
+    let hasNone = false;
+    for (const r of rows) {
+      if (r.departmentName) names.add(r.departmentName);
+      else hasNone = true;
+    }
+    const opts = [
+      { value: '', label: 'All departments' },
+      ...[...names].sort((a, b) => a.localeCompare(b)).map((n) => ({ value: n, label: n })),
+    ];
+    if (hasNone) opts.push({ value: NO_DEPT, label: 'No department' });
+    return opts;
+  }, [rows]);
+
+  // Drop a stale department filter when switching tabs re-scopes the queue.
+  useEffect(() => { setDeptFilter(''); }, [processor]);
 
   const filtered = useMemo(() => {
+    let list = rows;
+    if (deptFilter) {
+      list =
+        deptFilter === NO_DEPT
+          ? list.filter((r) => !r.departmentName)
+          : list.filter((r) => r.departmentName === deptFilter);
+    }
     const q = debouncedQuery.trim().toLowerCase();
-    if (!q) return rows;
-    return rows.filter(
+    if (!q) return list;
+    return list.filter(
       (r) =>
         r.name.toLowerCase().includes(q) ||
         r.email.toLowerCase().includes(q) ||
@@ -254,7 +288,7 @@ function ProcessorQueue({ processor, rows, onMarkPaid, onViewPaystub, periodStar
         (r.bankPreferredRaw ?? '').toLowerCase().includes(q) ||
         (r.departmentName ?? '').toLowerCase().includes(q),
     );
-  }, [rows, debouncedQuery]);
+  }, [rows, debouncedQuery, deptFilter]);
 
   // Keep the live filtered list in a ref so `handleOpenRow` stays referentially
   // stable — otherwise every keystroke would invalidate the memoized rows and
@@ -282,7 +316,7 @@ function ProcessorQueue({ processor, rows, onMarkPaid, onViewPaystub, periodStar
   const PAGE_SIZE = 25;
   const [page, setPage] = useState(1);
   const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
-  useEffect(() => { setPage(1); }, [debouncedQuery, processor]);
+  useEffect(() => { setPage(1); }, [debouncedQuery, processor, deptFilter]);
   useEffect(() => { if (page > pageCount) setPage(pageCount); }, [page, pageCount]);
   const pagedRows = useMemo(
     () => filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE),
@@ -394,13 +428,24 @@ function ProcessorQueue({ processor, rows, onMarkPaid, onViewPaystub, periodStar
         </div>
 
         {view === 'pending' && (
-          <div className="mt-3 flex items-center gap-2">
+          <div className="mt-3 flex flex-wrap items-center gap-2">
             <SearchBar
               value={query}
               onChange={setQuery}
               isSearching={isSearching}
               resultCount={filtered.length}
             />
+            {deptOptions.length > 1 && (
+              <SmoothSelect
+                aria-label="Filter by department"
+                value={deptFilter}
+                onChange={setDeptFilter}
+                triggerClassName="h-8 w-[13rem] text-[11px]"
+                searchable={deptOptions.length > 8}
+                searchPlaceholder="Search departments…"
+                options={deptOptions}
+              />
+            )}
           </div>
         )}
       </div>
@@ -441,6 +486,7 @@ function ProcessorQueue({ processor, rows, onMarkPaid, onViewPaystub, periodStar
           >
             <span className="w-9" aria-hidden />
             <span>Person</span>
+            <span>Department</span>
             {isAllView && <span>Bank Preferred</span>}
             <span className="text-right">Current pay</span>
             <span className="text-right">Hours</span>
@@ -450,8 +496,18 @@ function ProcessorQueue({ processor, rows, onMarkPaid, onViewPaystub, periodStar
 
         <AnimatePresence mode="popLayout">
           {filtered.length === 0 ? (
-            debouncedQuery.trim() ? (
-              <NoMatchesState key="no-match" query={debouncedQuery} onClear={() => setQuery('')} />
+            debouncedQuery.trim() || deptFilter ? (
+              <NoMatchesState
+                key="no-match"
+                query={
+                  debouncedQuery.trim() ||
+                  (deptFilter === NO_DEPT ? 'No department' : deptFilter)
+                }
+                onClear={() => {
+                  setQuery('');
+                  setDeptFilter('');
+                }}
+              />
             ) : (
               <EmptyQueueState key="empty" processorLabel={meta?.label ?? null} />
             )
@@ -694,12 +750,15 @@ const QueueRowItem = React.memo(function QueueRowItem({
           <div className="truncate font-mono text-[11px] text-zinc-500 dark:text-zinc-500">
             {row.email}
           </div>
-          {row.departmentName && (
-            <div className="mt-1">
-              <DeptChip name={row.departmentName} />
-            </div>
-          )}
         </button>
+
+        <div className="min-w-0">
+          {row.departmentName ? (
+            <DeptChip name={row.departmentName} />
+          ) : (
+            <span className="text-[11px] text-zinc-300 dark:text-zinc-600">—</span>
+          )}
+        </div>
 
         {isAllView && (
           <div className="min-w-0">
@@ -1060,7 +1119,7 @@ function NoMatchesState({ query, onClear }: { query: string; onClear: () => void
           className="mt-3 inline-flex items-center gap-1.5 rounded-full border border-orange-200 bg-white px-3 py-1 text-xs font-medium text-orange-700 transition-colors hover:bg-orange-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-orange-300 dark:hover:bg-zinc-800"
         >
           <X className="h-3 w-3" />
-          Clear search
+          Clear filters
         </button>
       </div>
     </motion.div>

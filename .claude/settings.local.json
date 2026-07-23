@@ -673,7 +673,13 @@
       "PowerShell(git add src/lib/payroll/payroll-readiness.ts)",
       "PowerShell(git commit -F \"C:\\\\Users\\\\Kane\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-Kane-Desktop-simple-hris\\\\c1e16c2c-a500-47d8-b0c0-488000c556f4\\\\scratchpad\\\\commit-msg.txt\")",
       "Bash(git commit -m 'feat\\(readiness\\): click a KPI dept to open its calculator and fix it in place *)",
-      "Bash(git commit -m 'fix\\(readiness\\): HSL KPI modal shows only the clicked sub-department *)"
+      "Bash(git commit -m 'fix\\(readiness\\): HSL KPI modal shows only the clicked sub-department *)",
+      "PowerShell(node \"C:\\\\Users\\\\Kane\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-Kane-Desktop-simple-hris\\\\415d5b0e-8003-46ff-a0a1-3a66f11fc973\\\\scratchpad\\\\inspect-nick-banking.mjs\" nick@simple.biz)",
+      "PowerShell(node \"C:\\\\Users\\\\Kane\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-Kane-Desktop-simple-hris\\\\415d5b0e-8003-46ff-a0a1-3a66f11fc973\\\\scratchpad\\\\inspect-audit.mjs\" nick@simple.biz)",
+      "PowerShell(node -e \"const j=require\\('./references/backups/2026-07-23_dedupe_employee_ids.json'\\); const hits=j.filter\\(g=>JSON.stringify\\(g\\).toLowerCase\\(\\).includes\\('nick@simple.biz'\\)\\); console.log\\(JSON.stringify\\(hits.map\\(g=>\\({name:g.name,survivorId:g.survivorId,deleteId:g.deleteId,carryFields:Object.keys\\(g.carryFields\\),survivor_pp:g.survivorRow.preferred_processor,deleted_pp:g.deletedRow.preferred_processor,survivor_we:g.survivorRow.work_email,deleted_we:g.deletedRow.work_email,deleted_bank:g.deletedRow.bank_name}\\),\\),null,2\\)\\)\")",
+      "PowerShell(node -e \"const j=require\\('./references/backups/2026-07-23_dedupe_employee_ids.json'\\); console.log\\('groups:',j.length\\); const hits=j.filter\\(g=>JSON.stringify\\(g\\).toLowerCase\\(\\).includes\\('fernandez'\\)||JSON.stringify\\(g\\).toLowerCase\\(\\).includes\\('nico'\\)\\); console.log\\(JSON.stringify\\(hits,null,2\\).slice\\(0,3000\\)\\)\")",
+      "PowerShell(node \"C:\\\\Users\\\\Kane\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-Kane-Desktop-simple-hris\\\\415d5b0e-8003-46ff-a0a1-3a66f11fc973\\\\scratchpad\\\\inspect-nick-banking.mjs\" fnicopaolo4@gmail.com)",
+      "PowerShell(node \"C:\\\\Users\\\\Kane\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-Kane-Desktop-simple-hris\\\\415d5b0e-8003-46ff-a0a1-3a66f11fc973\\\\scratchpad\\\\count-affected.mjs\")"
     ],
     "additionalDirectories": [
       "c:\\Users\\Itachi\\.claude\\projects\\c--Users-Itachi-Desktop-simple-hris\\memory",
