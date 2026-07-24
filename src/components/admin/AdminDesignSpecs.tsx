@@ -6,6 +6,7 @@ import {
   Check,
   Copy,
   ExternalLink,
+  LayoutDashboard,
   Lock,
   PencilRuler,
   RefreshCw,
@@ -34,13 +35,18 @@ import { PRIORITY_STYLES, STATUS_STYLES, initialsFor } from '@/components/ticket
  *
  * To point this tab at a new artifact, update ARTIFACT_URL below.
  *
- * Below the document card sits the Ticket Developers configurator: the admin
- * assigns developers to /tickets board items from here. The pool is strictly
- * the people granted "Ticket Board" = Edit in Roles & Permissions (plus
- * admins, who hold edit implicitly) — the API rejects anyone else — and every
- * assignment notifies the developer instantly (in-app + email webhook).
+ * Below the document card sits the Monday.com Project Sync section — a link to
+ * the commit-audit sync-plan artifact plus a "Sync board now" button that
+ * reconciles the live Monday boards against src/lib/monday/hris-plan.ts via
+ * POST /api/admin/monday-sync — and then the Ticket Developers configurator:
+ * the admin assigns developers to /tickets board items from here. The pool is
+ * strictly the people granted "Ticket Board" = Edit in Roles & Permissions
+ * (plus admins, who hold edit implicitly) — the API rejects anyone else — and
+ * every assignment notifies the developer instantly (in-app + email webhook).
  */
 const ARTIFACT_URL = 'https://claude.ai/code/artifact/7a44f6e6-4f7e-419f-8d35-e44e8eed0465';
+/** Monday sync plan — the 2026-07-24 commit-audit breakdown (epics, tasks, SP). */
+const SYNC_PLAN_ARTIFACT_URL = 'https://claude.ai/code/artifact/9f7b5700-3fc7-4efc-9134-0a11415aa7fa';
 
 interface AdminDesignSpecsProps {
   /** Jump to a sibling admin tab (e.g. `roles`, `webhooks`). Wired by
@@ -140,8 +146,220 @@ export default function AdminDesignSpecs({ onNavigate }: AdminDesignSpecsProps) 
         </p>
       </div>
 
+      <MondayBoardSyncSection />
+
       <TicketDevelopersSection onNavigate={onNavigate} />
     </div>
+  );
+}
+
+// ── Monday.com Project Sync ───────────────────────────────────────────────────
+
+interface MondaySyncReport {
+  dryRun: boolean;
+  epicsCreated: string[];
+  epicsUpdated: number;
+  tasksCreated: string[];
+  tasksUpdated: number;
+  projectTotalSp: number;
+  projectCompletedSp: number;
+  warnings: string[];
+}
+
+/**
+ * "Sync board now" reconciles the Monday.com Ai & Automation Operations boards
+ * against the plan committed at src/lib/monday/hris-plan.ts: missing epics /
+ * tasks are created, existing ones get structure patched (SP, sprint, quarter,
+ * relations), and the Simple HRIS Platform project rollup is refreshed. Status
+ * and Actual SP on the board are never overwritten, so the team's execution
+ * state survives every sync. A dry-run preview loads on mount so the admin can
+ * see the drift before pressing the button.
+ */
+function MondayBoardSyncSection() {
+  const [preview, setPreview] = React.useState<MondaySyncReport | null>(null);
+  const [previewError, setPreviewError] = React.useState<string | null>(null);
+  const [loadingPreview, setLoadingPreview] = React.useState(true);
+  const [syncing, setSyncing] = React.useState(false);
+  const [lastReport, setLastReport] = React.useState<MondaySyncReport | null>(null);
+  const [lastSyncedAt, setLastSyncedAt] = React.useState<Date | null>(null);
+  const [copied, setCopied] = React.useState(false);
+
+  const loadPreview = React.useCallback(async () => {
+    setLoadingPreview(true);
+    try {
+      const res = await fetch('/api/admin/monday-sync', { cache: 'no-store' });
+      const j = (await res.json().catch(() => null)) as
+        | { report?: MondaySyncReport; error?: string }
+        | null;
+      if (!res.ok || !j?.report) throw new Error(j?.error ?? `Preview failed (${res.status})`);
+      setPreview(j.report);
+      setPreviewError(null);
+    } catch (e) {
+      setPreviewError(e instanceof Error ? e.message : 'Could not reach Monday.com');
+    } finally {
+      setLoadingPreview(false);
+    }
+  }, []);
+
+  React.useEffect(() => {
+    void loadPreview();
+  }, [loadPreview]);
+
+  const runSync = async () => {
+    setSyncing(true);
+    try {
+      const res = await fetch('/api/admin/monday-sync', { method: 'POST' });
+      const j = (await res.json().catch(() => null)) as
+        | { report?: MondaySyncReport; error?: string }
+        | null;
+      if (!res.ok || !j?.report) {
+        toast.error(j?.error ?? 'Monday sync failed — the board was not fully updated');
+        return;
+      }
+      setLastReport(j.report);
+      setLastSyncedAt(new Date());
+      const created = j.report.epicsCreated.length + j.report.tasksCreated.length;
+      toast.success(
+        created > 0
+          ? `Board updated — ${j.report.epicsCreated.length} epic(s) + ${j.report.tasksCreated.length} task(s) created, ${j.report.epicsUpdated + j.report.tasksUpdated} items refreshed`
+          : `Board refreshed — already complete, ${j.report.epicsUpdated + j.report.tasksUpdated} items re-synced`,
+      );
+      void loadPreview();
+    } finally {
+      setSyncing(false);
+    }
+  };
+
+  const copyPlanUrl = async () => {
+    try {
+      await navigator.clipboard.writeText(SYNC_PLAN_ARTIFACT_URL);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1800);
+    } catch {
+      /* clipboard unavailable — the link still works */
+    }
+  };
+
+  const missing = preview ? preview.epicsCreated.length + preview.tasksCreated.length : 0;
+
+  return (
+    <section className="space-y-4">
+      <header className="space-y-1">
+        <h2 className="flex items-center gap-2.5 text-lg font-semibold tracking-tight text-zinc-900 dark:text-white">
+          <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-violet-500/15 ring-1 ring-violet-500/25">
+            <LayoutDashboard className="h-4.5 w-4.5 text-violet-600 dark:text-violet-400" aria-hidden />
+          </span>
+          Monday.com Project Sync
+        </h2>
+        <p className="max-w-xl text-sm leading-relaxed text-zinc-600 dark:text-zinc-400">
+          The Simple HRIS Platform project on Monday (epics, sprint tasks, story points) is
+          driven by a plan committed in this repo. Press the button and the board updates
+          itself — new plan items are created, structure is refreshed, and the project&apos;s
+          SP rollup is recomputed. Statuses your team sets on the board are never overwritten.
+        </p>
+      </header>
+
+      <div className="rounded-2xl border border-zinc-200/90 bg-white p-4 shadow-sm sm:p-5 dark:border-zinc-800/80 dark:bg-zinc-900/40">
+        {/* Drift status */}
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="min-w-0 flex-1">
+            {loadingPreview ? (
+              <p className="text-sm text-zinc-500 dark:text-zinc-400">Checking the board…</p>
+            ) : previewError ? (
+              <p className="text-sm text-red-600 dark:text-red-400">{previewError}</p>
+            ) : preview ? (
+              <div className="space-y-0.5">
+                <p className="text-sm font-medium text-zinc-900 dark:text-zinc-100">
+                  {missing === 0
+                    ? 'Board is complete — every plan item exists on Monday.'
+                    : `${preview.epicsCreated.length} epic(s) and ${preview.tasksCreated.length} task(s) in the plan are missing from the board.`}
+                </p>
+                <p className="text-xs text-zinc-500 tabular-nums dark:text-zinc-400">
+                  Rollup on sync: Total SP {preview.projectTotalSp.toLocaleString()} · Completed{' '}
+                  {preview.projectCompletedSp.toLocaleString()}
+                  {lastSyncedAt && ` · last synced ${lastSyncedAt.toLocaleTimeString()}`}
+                </p>
+              </div>
+            ) : null}
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
+            <button
+              type="button"
+              onClick={() => void loadPreview()}
+              disabled={loadingPreview || syncing}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-3 py-2 text-xs font-medium text-zinc-600 transition-colors hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800"
+            >
+              <RefreshCw className={cn('h-3.5 w-3.5', loadingPreview && 'animate-spin')} aria-hidden />
+              Re-check
+            </button>
+            <button
+              type="button"
+              onClick={() => void runSync()}
+              disabled={syncing || Boolean(previewError)}
+              title={previewError ? 'Fix the connection first — see the error on the left' : undefined}
+              className="inline-flex items-center gap-2 rounded-lg bg-violet-600 px-4 py-2 text-xs font-semibold text-white shadow-sm transition-colors hover:bg-violet-500 disabled:opacity-60 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-500 dark:bg-violet-500 dark:hover:bg-violet-400"
+            >
+              <RefreshCw className={cn('h-3.5 w-3.5', syncing && 'animate-spin')} aria-hidden />
+              {syncing ? 'Syncing board…' : 'Sync board now'}
+            </button>
+          </div>
+        </div>
+
+        {/* Last run result */}
+        {lastReport && (
+          <div className="mt-3 rounded-xl border border-emerald-500/25 bg-emerald-500/[0.07] px-4 py-3 text-xs leading-relaxed text-emerald-800 dark:text-emerald-300">
+            Synced: {lastReport.epicsCreated.length} epic(s) + {lastReport.tasksCreated.length}{' '}
+            task(s) created · {lastReport.epicsUpdated + lastReport.tasksUpdated} items refreshed ·
+            project rollup {lastReport.projectTotalSp.toLocaleString()} /{' '}
+            {lastReport.projectCompletedSp.toLocaleString()} SP
+            {lastReport.warnings.length > 0 && (
+              <span className="mt-1 block text-amber-700 dark:text-amber-400">
+                {lastReport.warnings.join(' · ')}
+              </span>
+            )}
+          </div>
+        )}
+
+        {/* Sync plan document */}
+        <div className="mt-4 flex flex-col gap-2 border-t border-zinc-100 pt-4 sm:flex-row sm:items-center dark:border-zinc-800/70">
+          <p className="flex-1 text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">
+            The full commit-audit breakdown behind the board — epics, sprint tasks, story-point
+            scoring, and the executed sync log — lives in the{' '}
+            <span className="font-medium text-zinc-700 dark:text-zinc-300">Monday Sync Plan</span>{' '}
+            document.
+          </p>
+          <div className="flex shrink-0 items-center gap-2">
+            <a
+              href={SYNC_PLAN_ARTIFACT_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-violet-500/30 bg-white px-3 py-2 text-xs font-medium text-violet-700 transition-colors hover:bg-violet-50 dark:bg-zinc-900 dark:text-violet-400 dark:hover:bg-zinc-800"
+            >
+              Open sync plan
+              <ExternalLink className="h-3 w-3" aria-hidden />
+            </a>
+            <button
+              type="button"
+              onClick={() => void copyPlanUrl()}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-3 py-2 text-xs font-medium text-zinc-600 transition-colors hover:bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800"
+              aria-label="Copy sync plan link"
+            >
+              {copied ? (
+                <>
+                  <Check className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" aria-hidden />
+                  Copied
+                </>
+              ) : (
+                <>
+                  <Copy className="h-3.5 w-3.5" aria-hidden />
+                  Copy link
+                </>
+              )}
+            </button>
+          </div>
+        </div>
+      </div>
+    </section>
   );
 }
 

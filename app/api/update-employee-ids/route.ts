@@ -4,6 +4,8 @@ import { invalidateRateProfilesCache } from "@/lib/supabase/employee-rate-profil
 import { insertBankUpdateHistory } from "@/lib/supabase/bank-update-history";
 import { createBankPreferredRequest } from "@/lib/supabase/bank-preferred-requests";
 import { insertAuditLog } from "@/lib/supabase/audit-log";
+import { getSessionActor } from "@/lib/auth/session-actor";
+import { normalizeSource, EMPLOYEE_DASHBOARD_SOURCE } from "@/lib/payroll/readiness-audit";
 import { pulseBankChanges } from "@/lib/supabase/app-settings";
 import { maskFieldValue } from "@/lib/bank-update/mask-field";
 import { isBankPreferredTransitionAllowed } from "@/lib/employee-payment-processors";
@@ -204,8 +206,16 @@ async function recordDashboardBankChange(opts: {
   beforeRow: Record<string, unknown>;
   update: Record<string, string | null>;
   created: boolean;
+  /** Where the change came from: "employee_dashboard" (self-service, default),
+   *  "people_tab", or "payroll_wizard_readiness". Drives the audit `via` +
+   *  the People-tab source label. */
+  source: string;
+  /** The signed-in actor who made the change (verified session). For a
+   *  self-service edit this is the employee; for a staff-made fix it's the
+   *  accountant — so the audit row is attributed to whoever actually acted. */
+  actor: { user_name: string; user_role: string };
 }): Promise<void> {
-  const { supabase, req, workEmail, displayName, bankChangedFields, beforeRow, update, created } = opts;
+  const { supabase, req, workEmail, displayName, bankChangedFields, beforeRow, update, created, source, actor } = opts;
   if (bankChangedFields.length === 0 || !workEmail) return;
 
   const ip = clientIp(req);
@@ -231,14 +241,21 @@ async function recordDashboardBankChange(opts: {
     .update({ bank_last_self_updated_at: new Date().toISOString() })
     .eq("work_email", workEmail);
 
+  // Attribute to whoever actually acted: the employee for a self-service edit,
+  // the accountant for a People-tab / Payroll-Wizard fix. `subject_*` records
+  // who the change is ABOUT so the trail keeps both. `via` = source so the
+  // People-tab source label and the audit detail agree.
+  const selfService = source === EMPLOYEE_DASHBOARD_SOURCE;
   await insertAuditLog({
-    user_name: displayName || workEmail,
-    user_role: "employee (dashboard)",
+    user_name: selfService ? displayName || workEmail : actor.user_name,
+    user_role: selfService ? "employee (dashboard)" : actor.user_role,
     action: "bank_update.saved",
     resource: "employee_ids",
     resource_id: workEmail,
     details: {
-      via: "employee_dashboard",
+      via: source,
+      subject_name: displayName || workEmail,
+      subject_email: workEmail,
       fields: bankChangedFields,
       processor: update.preferred_processor ?? null,
       created,
@@ -254,7 +271,7 @@ async function recordDashboardBankChange(opts: {
     changes,
     processor: (update.preferred_processor as string | null) ?? null,
     created_new: created,
-    via: "employee_dashboard",
+    via: source,
     ip_address: ip,
   }).catch(() => undefined);
 
@@ -316,11 +333,15 @@ export async function POST(req: Request) {
       work_email,
       personal_email,
       bootstrap_display_name: bootstrapDisplayNameRaw,
+      source: sourceRaw,
       ...fields
     } = body as Record<string, unknown>;
 
     const bootstrap_display_name =
       typeof bootstrapDisplayNameRaw === "string" ? bootstrapDisplayNameRaw.trim() : "";
+    // Where the edit originated. Defaults to self-service (the dashboard), which
+    // preserves the existing behavior for every caller that doesn't send one.
+    const source = normalizeSource(sourceRaw, EMPLOYEE_DASHBOARD_SOURCE);
 
     if (!work_email && !personal_email) {
       return NextResponse.json(
@@ -334,6 +355,10 @@ export async function POST(req: Request) {
     // unauthenticated salary-redirect hole.
     const authz = await authorizeEmailAccess((work_email ?? personal_email) as string);
     if (!authz.ok) return deniedResponse(authz);
+
+    // Verified actor (email + role) for attribution — the accountant on a
+    // staff-made fix, the employee on a self-service edit.
+    const actor = await getSessionActor();
 
     const supabase = createSupabaseServiceRoleClient();
     if (!supabase) {
@@ -509,6 +534,8 @@ export async function POST(req: Request) {
         beforeRow,
         update,
         created: false,
+        source,
+        actor,
       });
       return NextResponse.json({
         success: true,
@@ -556,6 +583,8 @@ export async function POST(req: Request) {
         beforeRow,
         update,
         created: true,
+        source,
+        actor,
       });
       return NextResponse.json({
         success: true,
@@ -585,6 +614,8 @@ export async function POST(req: Request) {
         beforeRow,
         update,
         created: false,
+        source,
+        actor,
       });
       return NextResponse.json({
         success: true,

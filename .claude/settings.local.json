@@ -679,7 +679,19 @@
       "PowerShell(node -e \"const j=require\\('./references/backups/2026-07-23_dedupe_employee_ids.json'\\); const hits=j.filter\\(g=>JSON.stringify\\(g\\).toLowerCase\\(\\).includes\\('nick@simple.biz'\\)\\); console.log\\(JSON.stringify\\(hits.map\\(g=>\\({name:g.name,survivorId:g.survivorId,deleteId:g.deleteId,carryFields:Object.keys\\(g.carryFields\\),survivor_pp:g.survivorRow.preferred_processor,deleted_pp:g.deletedRow.preferred_processor,survivor_we:g.survivorRow.work_email,deleted_we:g.deletedRow.work_email,deleted_bank:g.deletedRow.bank_name}\\),\\),null,2\\)\\)\")",
       "PowerShell(node -e \"const j=require\\('./references/backups/2026-07-23_dedupe_employee_ids.json'\\); console.log\\('groups:',j.length\\); const hits=j.filter\\(g=>JSON.stringify\\(g\\).toLowerCase\\(\\).includes\\('fernandez'\\)||JSON.stringify\\(g\\).toLowerCase\\(\\).includes\\('nico'\\)\\); console.log\\(JSON.stringify\\(hits,null,2\\).slice\\(0,3000\\)\\)\")",
       "PowerShell(node \"C:\\\\Users\\\\Kane\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-Kane-Desktop-simple-hris\\\\415d5b0e-8003-46ff-a0a1-3a66f11fc973\\\\scratchpad\\\\inspect-nick-banking.mjs\" fnicopaolo4@gmail.com)",
-      "PowerShell(node \"C:\\\\Users\\\\Kane\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-Kane-Desktop-simple-hris\\\\415d5b0e-8003-46ff-a0a1-3a66f11fc973\\\\scratchpad\\\\count-affected.mjs\")"
+      "PowerShell(node \"C:\\\\Users\\\\Kane\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-Kane-Desktop-simple-hris\\\\415d5b0e-8003-46ff-a0a1-3a66f11fc973\\\\scratchpad\\\\count-affected.mjs\")",
+      "WebFetch(domain:dev-resources.simple.biz)",
+      "Bash(curl -sL \"https://dev-resources.simple.biz/story-points\")",
+      "Bash(grep -oiE '\\(story|point|fibonacci|estimat|epic|sprint\\)[^<]{0,200}')",
+      "Bash(curl -sL \"https://dev-resources.simple.biz/story-points\" -o \"C:/Users/Kane/AppData/Local/Temp/claude/c--Users-Kane-Desktop-simple-hris/313e2ff7-d348-4634-ace6-20b891a88d76/scratchpad/story-points.html\")",
+      "Bash(./node_modules/.bin/tsc --noEmit -p tsconfig.json)",
+      "Read(//c/Users/Kane/AppData/Local/Temp/claude/c--Users-Kane-Desktop-simple-hris/a475ff0e-1605-4f39-9702-878df7646e39/scratchpad/**)",
+      "Bash(SP=/c/Users/Kane/AppData/Local/Temp/claude/c--Users-Kane-Desktop-simple-hris/a475ff0e-1605-4f39-9702-878df7646e39/scratchpad *)",
+      "Bash(node -e 'const d=JSON.parse\\(require\\(\"fs\"\\).readFileSync\\(process.argv[1],\"utf8\"\\)\\); console.log\\(Object.keys\\(d\\)\\); if\\(d.result\\){console.log\\(\"has .result, type:\",typeof d.result\\)}' C:/Users/Kane/AppData/Local/Temp/claude/c--Users-Kane-Desktop-simple-hris/a475ff0e-1605-4f39-9702-878df7646e39/tasks/wn3hle6xa.output)",
+      "Bash(REPO_ROOT=\"c:/Users/Kane/Desktop/simple-hris\" node push-to-monday.mjs epics_final.json --dry)",
+      "Bash(node push-monday.mjs)",
+      "Bash(node push-monday-2.mjs)",
+      "Bash(node link-epics.mjs)"
     ],
     "additionalDirectories": [
       "c:\\Users\\Itachi\\.claude\\projects\\c--Users-Itachi-Desktop-simple-hris\\memory",

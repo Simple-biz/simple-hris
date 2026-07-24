@@ -3,6 +3,9 @@ import { createSupabaseServiceRoleClient } from '@/lib/supabase/server';
 import { requireFeatureEdit } from '@/lib/auth/authorize-feature';
 import { deniedResponse } from '@/lib/auth/authorize-email';
 import { rejectWhilePayrollProcessing } from '@/lib/payroll/processing-guard';
+import { insertAuditLog } from '@/lib/supabase/audit-log';
+import { getSessionActor } from '@/lib/auth/session-actor';
+import { normalizeSource, sourceLabel, MANAGER_KPI_SOURCE } from '@/lib/payroll/readiness-audit';
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
@@ -33,6 +36,9 @@ export async function POST(req: NextRequest) {
     period_end: string;
     status: 'draft' | 'ready' | 'locked';
     locked_by?: string;
+    /** Where the submission came from: the manager's own KPI tab (default) or
+     *  the Payroll Wizard Readiness "fix it from here" calculator. */
+    source?: string;
   };
 
   if (!body.department || !body.period_start || !body.status) {
@@ -60,5 +66,36 @@ export async function POST(req: NextRequest) {
     .single();
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+
+  // Audit the submission transition (Mark Ready / Lock / reopen) — this route
+  // had no trail before. Tagged with its source so a Payroll-Wizard fix reads
+  // "via Payroll Wizard". Score-saves are intentionally NOT audited (high
+  // volume). Best-effort; never fails the status write. Identity is the
+  // verified session, not the client-supplied `locked_by`.
+  const source = normalizeSource(body.source, MANAGER_KPI_SOURCE);
+  const action =
+    body.status === 'ready'
+      ? 'payroll.kpi.marked_ready'
+      : body.status === 'locked'
+        ? 'payroll.kpi.locked'
+        : 'payroll.kpi.reopened';
+  const who = await getSessionActor();
+  void insertAuditLog({
+    user_name: who.user_name,
+    user_role: who.user_role,
+    action,
+    resource: 'hsl_bonus_period_status',
+    resource_id: body.department,
+    details: {
+      source,
+      source_label: sourceLabel(source),
+      department: body.department,
+      period_type: body.period_type,
+      period_start: body.period_start,
+      period_end: body.period_end,
+      status: body.status,
+    },
+  }).catch(() => undefined);
+
   return NextResponse.json({ row: data });
 }

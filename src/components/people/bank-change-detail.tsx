@@ -191,7 +191,11 @@ export function BankChangeDetailDialog({
                 ? 'External self-service link'
                 : row.via === 'people_tab'
                   ? 'People tab (in-app edit)'
-                  : row.via || 'External link'
+                  : row.via === 'payroll_wizard_readiness'
+                    ? 'Payroll Wizard (Readiness)'
+                    : row.via === 'employee_dashboard'
+                      ? 'Employee dashboard'
+                      : row.via || 'External link'
             }
           />
           {row.ip_address && (

@@ -1,10 +1,13 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { ReactNode } from 'react';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import {
   Search, Send, Eye, EyeOff, Clock, AlertTriangle, Users, Banknote, Loader2, Sparkles, RefreshCw, CalendarDays, ChevronRight, ChevronDown, Landmark, Bell, Check, Pencil, X, Download, FileText, FileSpreadsheet, Table2,
+  User, IdCard, Building2, Hash, Mail, AtSign, Phone, MapPin, Copy, Contact as ContactIcon, Hourglass,
 } from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -3326,36 +3329,64 @@ function PersonDetailDialog({
                 </div>
               </div>
             ) : (
-              <div className="rounded-lg border border-zinc-200 bg-zinc-50/60 p-3 text-[13px] dark:border-zinc-800 dark:bg-zinc-900/40">
-                <dl className="grid grid-cols-1 gap-x-6 gap-y-1.5 sm:grid-cols-2">
-                  {/* Full name, broken into its parts (derived from the stored
-                      master-list name). Optional parts show only when present. */}
-                  <Field label="First name" value={viewParts.first || null} />
-                  <Field label="Last name" value={viewParts.last || null} />
-                  {viewParts.middle && <Field label="Middle name" value={viewParts.middle} />}
-                  {viewParts.extension && <Field label="Extension" value={viewParts.extension} />}
-                  {viewParts.nickname && <Field label="Nickname" value={viewParts.nickname} />}
-                  <Field label="Employee ID" value={row.employee_id} mono />
-                  <Field label="Department" value={row.department} />
-                  <Field label="Work email" value={row.work_email} />
-                  <Field label="Personal email" value={row.personal_email} />
-                  {(row.alternate_work_emails ?? []).length > 0 && (
-                    <Field label="Alternate work emails" value={(row.alternate_work_emails ?? []).join(', ')} wide />
-                  )}
-                  <Field label="Start date" value={formatHireDate(row.start_date)} />
-                  <Field label="Tenure" value={tenureFrom(row.start_date)} />
-                  <Field label="Phone number" value={row.phone_number} />
-                  <Field
-                    label="Home address"
-                    value={
-                      row.full_address?.trim() ||
-                      [row.city, row.province].map((x) => (x ?? '').trim()).filter(Boolean).join(', ') ||
-                      row.location ||
-                      null
-                    }
-                    wide
-                  />
-                </dl>
+              <div className="space-y-2.5">
+                {/* Name banner — the composed display name reads at a glance,
+                    with the go-by nickname called out as an accent pill. */}
+                <div className={cn('flex items-center gap-2.5 rounded-lg border border-zinc-200/80 px-3 py-2 dark:border-zinc-800', accent.chipBg)}>
+                  <span className={cn('flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-sm font-semibold', accent.chipText, 'bg-white/70 dark:bg-zinc-950/40')}>
+                    {(viewParts.first?.[0] ?? row.name?.[0] ?? '?').toUpperCase()}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <p className="truncate text-[14px] font-semibold text-zinc-900 dark:text-zinc-50">
+                        {[viewParts.first, viewParts.middle, viewParts.last, viewParts.extension].filter(Boolean).join(' ') || row.name || '—'}
+                      </p>
+                      {viewParts.nickname && (
+                        <span className={cn('shrink-0 rounded-full bg-white/70 px-2 py-0.5 text-[10.5px] font-medium dark:bg-zinc-950/40', accent.chipText)}>
+                          “{viewParts.nickname}”
+                        </span>
+                      )}
+                    </div>
+                    <p className="truncate text-[11.5px] text-zinc-500 dark:text-zinc-400">
+                      {row.department || 'No department'}
+                      {row.employee_id && <span className="font-mono"> · {row.employee_id}</span>}
+                    </p>
+                  </div>
+                </div>
+
+                {/* Two grouped cards: who they are, and how to reach them. */}
+                <div className="grid grid-cols-1 items-start gap-2.5 sm:grid-cols-2">
+                  <InfoCard icon={User} title="Identity" accent={accent}>
+                    <InfoRow icon={User} label="First name" value={viewParts.first || null} />
+                    <InfoRow icon={User} label="Last name" value={viewParts.last || null} />
+                    {viewParts.middle && <InfoRow icon={User} label="Middle name" value={viewParts.middle} />}
+                    {viewParts.extension && <InfoRow icon={User} label="Extension" value={viewParts.extension} />}
+                    {viewParts.nickname && <InfoRow icon={User} label="Nickname" value={viewParts.nickname} />}
+                    <InfoRow icon={IdCard} label="Employee ID" value={row.employee_id} mono copyable />
+                    <InfoRow icon={Building2} label="Department" value={row.department} />
+                    <InfoRow icon={CalendarDays} label="Start date" value={formatHireDate(row.start_date)} />
+                    <InfoRow icon={Hourglass} label="Tenure" value={tenureFrom(row.start_date)} />
+                  </InfoCard>
+
+                  <InfoCard icon={ContactIcon} title="Contact" accent={accent}>
+                    <InfoRow icon={Mail} label="Work email" value={row.work_email} copyable />
+                    <InfoRow icon={AtSign} label="Personal email" value={row.personal_email} copyable />
+                    {(row.alternate_work_emails ?? []).length > 0 && (
+                      <InfoRow icon={Mail} label="Alternate work emails" value={(row.alternate_work_emails ?? []).join(', ')} />
+                    )}
+                    <InfoRow icon={Phone} label="Phone number" value={row.phone_number} copyable />
+                    <InfoRow
+                      icon={MapPin}
+                      label="Home address"
+                      value={
+                        row.full_address?.trim() ||
+                        [row.city, row.province].map((x) => (x ?? '').trim()).filter(Boolean).join(', ') ||
+                        row.location ||
+                        null
+                      }
+                    />
+                  </InfoCard>
+                </div>
               </div>
             )}
           </div>
@@ -3969,6 +4000,89 @@ function Field({ label, value, mono, cap, wide }: { label: string; value: string
       >
         {empty ? 'Not yet filled' : value}
       </dd>
+    </div>
+  );
+}
+
+/* ── Beautified read-only profile primitives ──────────────────────────────
+   InfoCard groups related fields under an icon-badged header; InfoRow renders
+   one label→value pair with a leading icon, a monospace/copyable option, and a
+   consistent empty-state. Used by the Identity & contact read view so the
+   fields read as a structured record rather than a flat label list. */
+function InfoCard({
+  icon: Icon,
+  title,
+  accent,
+  children,
+}: {
+  icon: LucideIcon;
+  title: string;
+  accent: Accent;
+  children: ReactNode;
+}) {
+  return (
+    <div className="overflow-hidden rounded-xl border border-zinc-200/80 bg-white shadow-sm dark:border-zinc-800 dark:bg-zinc-950">
+      <div className="flex items-center gap-2 border-b border-zinc-100 bg-zinc-50/70 px-3 py-2 dark:border-zinc-800/70 dark:bg-zinc-900/40">
+        <span className={cn('flex h-6 w-6 items-center justify-center rounded-md', accent.chipBg, accent.chipText)}>
+          <Icon className="h-3.5 w-3.5" />
+        </span>
+        <h4 className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">{title}</h4>
+      </div>
+      <dl className="divide-y divide-zinc-100 dark:divide-zinc-800/70">{children}</dl>
+    </div>
+  );
+}
+
+function InfoRow({
+  icon: Icon,
+  label,
+  value,
+  mono,
+  copyable,
+}: {
+  icon: LucideIcon;
+  label: string;
+  value: string | null;
+  mono?: boolean;
+  copyable?: boolean;
+}) {
+  const empty = !value;
+  const [copied, setCopied] = useState(false);
+  const canCopy = copyable && !empty;
+  const doCopy = () => {
+    if (!canCopy || typeof navigator === 'undefined' || !navigator.clipboard) return;
+    navigator.clipboard.writeText(value as string).then(() => {
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1200);
+    }).catch(() => {});
+  };
+  return (
+    <div className="group flex items-start gap-2.5 px-3 py-1.5">
+      <Icon className="mt-[2px] h-3.5 w-3.5 shrink-0 text-zinc-400 dark:text-zinc-500" />
+      <div className="min-w-0 flex-1">
+        <dt className="text-[10px] font-medium uppercase tracking-wide text-zinc-400 dark:text-zinc-500">{label}</dt>
+        <dd
+          className={cn(
+            'mt-0.5 break-words text-[12.5px] leading-snug',
+            empty
+              ? 'italic text-zinc-400 dark:text-zinc-600'
+              : cn('font-medium text-zinc-800 dark:text-zinc-100', mono && 'font-mono text-[12px]'),
+          )}
+        >
+          {empty ? 'Not filled' : value}
+        </dd>
+      </div>
+      {canCopy && (
+        <button
+          type="button"
+          onClick={doCopy}
+          className="mt-[2px] shrink-0 rounded p-0.5 text-zinc-300 opacity-0 transition-opacity hover:bg-zinc-100 hover:text-zinc-600 focus-visible:opacity-100 group-hover:opacity-100 dark:text-zinc-600 dark:hover:bg-zinc-800 dark:hover:text-zinc-300"
+          aria-label={`Copy ${label}`}
+          title={copied ? 'Copied' : `Copy ${label}`}
+        >
+          {copied ? <Check className="h-3 w-3 text-emerald-500" /> : <Copy className="h-3 w-3" />}
+        </button>
+      )}
     </div>
   );
 }

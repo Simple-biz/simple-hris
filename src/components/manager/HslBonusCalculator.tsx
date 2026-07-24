@@ -371,6 +371,10 @@ interface HslBonusCalculatorProps {
    *  expanded). Used by the Payroll Readiness "fix it from here" modal, which
    *  also scopes `managedDepts` to the same key so only that sub-dept renders. */
   initialFilter?: HslDeptKey;
+  /** Where a Mark-Ready/Lock submission originates, recorded in the audit log.
+   *  Omit for the manager's own KPI tab (defaults to "manager_kpi" server-side);
+   *  the Payroll Wizard Readiness modal passes its own source. */
+  submissionSource?: string;
 }
 
 // ── Main component ────────────────────────────────────────────────────────────
@@ -380,6 +384,7 @@ export default function HslBonusCalculator({
   managedDepts,
   isElevated,
   initialFilter,
+  submissionSource,
 }: HslBonusCalculatorProps) {
   const today = new Date();
   const [weekStart, setWeekStart] = useState(() => isoWeekStart(today));
@@ -725,6 +730,7 @@ export default function HslBonusCalculator({
           period_end: periodEnd(dept, start),
           status: next,
           locked_by: viewerEmail ?? undefined,
+          source: submissionSource,
         }),
       });
       const json = (await res.json()) as { error?: string };

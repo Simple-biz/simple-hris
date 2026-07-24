@@ -8,6 +8,14 @@ import { deniedResponse, requireRateVisibilitySession } from '@/lib/auth/authori
 import { requireFeatureEdit } from '@/lib/auth/authorize-feature';
 import { validatePayStructure, type PayStructure } from '@/lib/payment-catalog/pay-structure';
 import { insertRateHistoryRow } from '@/lib/payroll/rate-history';
+import { insertAuditLog } from '@/lib/supabase/audit-log';
+import { getSessionActor } from '@/lib/auth/session-actor';
+import {
+  normalizeSource,
+  sourceLabel,
+  PAYMENT_CATALOG_SOURCE,
+  READINESS_SOURCE,
+} from '@/lib/payroll/readiness-audit';
 import { updateEmployeeRates } from '@/lib/supabase/employee-hourly-rates';
 import { createSupabaseServiceRoleClient } from '@/lib/supabase/server';
 import { normEmail } from '@/lib/email/norm-email';
@@ -29,9 +37,24 @@ function fmtIsoDate(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
-async function syncRateHistory(s: PayStructure, actor: string, effectiveDateIso?: string): Promise<void> {
+async function syncRateHistory(
+  s: PayStructure,
+  actor: string,
+  source: string,
+  effectiveDateIso?: string,
+): Promise<void> {
   const email = normEmail(s.employeeEmail ?? '') ?? null;
   if (!email) return;
+
+  // The Rate History panel (BonusCatalog.tsx) shows any note EXCEPT the literal
+  // "Set via Payment Catalog", which it hides. So a Readiness fix writes a
+  // distinct note ("Set from Payroll Wizard by <actor>") that renders there as
+  // the visible "changed from Payroll Wizard by:" attribution; a normal catalog
+  // save keeps the hidden constant.
+  const rateNote =
+    source === READINESS_SOURCE
+      ? `Set from ${sourceLabel(source)} by ${actor}`
+      : 'Set via Payment Catalog';
 
   const today = todayMidnight();
   const todayIso = fmtIsoDate(today);
@@ -66,7 +89,7 @@ async function syncRateHistory(s: PayStructure, actor: string, effectiveDateIso?
       otRate: s.otRate ?? null,
       effectiveFrom: effective,
       createdBy: actor,
-      note: 'Set via Payment Catalog',
+      note: rateNote,
     });
 
     if (effective.getTime() <= today.getTime()) {
@@ -141,7 +164,7 @@ export async function POST(request: Request) {
   if (!authz.ok) return deniedResponse(authz);
   const actor = authz.sessionEmail;
 
-  let body: { structure?: PayStructure; effectiveDate?: string | null };
+  let body: { structure?: PayStructure; effectiveDate?: string | null; source?: string };
   try {
     body = await request.json();
   } catch {
@@ -155,13 +178,40 @@ export async function POST(request: Request) {
   const check = validatePayStructure(s);
   if (!check.ok) return NextResponse.json({ error: check.error }, { status: 400 });
 
+  // Where this rate change was made from (Readiness fixer vs the Payment Catalog
+  // itself). Drives the Rate History note + the audit-log attribution.
+  const source = normalizeSource(body.source, PAYMENT_CATALOG_SOURCE);
+
   const { row, error } = await upsertPayStructure(s, actor);
   if (error) return NextResponse.json({ error }, { status: 500 });
 
   if (s.scope === 'employee') {
-    void syncRateHistory(s, actor, body.effectiveDate ?? undefined).catch((err: unknown) => {
+    void syncRateHistory(s, actor, source, body.effectiveDate ?? undefined).catch((err: unknown) => {
       console.warn('[pay-structures] syncRateHistory failed:', err);
     });
+
+    // Audit trail (this route had none): an individual rate set, tagged with its
+    // source so a Payroll-Wizard fix reads "via Payroll Wizard". Best-effort —
+    // never fails the save. Identity comes from the verified session, not the body.
+    const who = await getSessionActor();
+    void insertAuditLog({
+      user_name: who.user_name,
+      user_role: who.user_role,
+      action: 'payroll.rate.set',
+      resource: 'payment_catalog_pay_structures',
+      resource_id: s.employeeEmail ?? s.id,
+      details: {
+        source,
+        source_label: sourceLabel(source),
+        employee_email: s.employeeEmail ?? null,
+        employee_name: s.employeeName ?? null,
+        department_key: s.departmentKey,
+        regular_rate: s.regularRate,
+        ot_rate: s.otRate ?? null,
+        currency: s.currency,
+        effective_date: body.effectiveDate ?? null,
+      },
+    }).catch(() => undefined);
   }
 
   return NextResponse.json({ row, error: null });

@@ -85,6 +85,7 @@ import {
   REQUEST_WIZARD_CYCLE_EVENT,
   type WizardCycleDetail,
 } from "@/lib/payroll/adjustment-bridge";
+import { READINESS_SOURCE } from "@/lib/payroll/readiness-audit";
 
 /**
  * The Payroll Wizard's floating "Notes" checklist — carry-over items for the
@@ -1669,7 +1670,9 @@ function SetRateDialog({
       const res = await fetch("/api/payment-catalog/pay-structures", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ structure }),
+        // Tag the origin so the rate reads "Set from Payroll Wizard by <actor>"
+        // in the Payment Catalog's Rate History + the Audit Log.
+        body: JSON.stringify({ structure, source: READINESS_SOURCE }),
       });
       const json = (await res.json().catch(() => ({}))) as { error?: string | null };
       if (!res.ok || json.error) throw new Error(json.error || `Save failed (${res.status})`);
@@ -1881,6 +1884,9 @@ function SetBankDialog({
     try {
       const body: Record<string, string> = {
         bootstrap_display_name: person.name,
+        // Attribute this to the accountant fixing it from the wizard, not the
+        // employee — the audit + People-tab source read "Payroll Wizard".
+        source: READINESS_SOURCE,
         ...update,
       };
       if (person.workEmail) body.work_email = person.workEmail;
@@ -2122,6 +2128,7 @@ function KpiCalculatorDialog({
               managedDepts={[hslAccessKey(dept.key as HslDeptKey)]}
               isElevated={false}
               initialFilter={dept.key as HslDeptKey}
+              submissionSource={READINESS_SOURCE}
             />
           ) : memberErr ? (
             <div className="flex h-40 flex-col items-center justify-center gap-2 px-6 text-center text-xs text-zinc-500 dark:text-zinc-400">
@@ -2137,6 +2144,7 @@ function KpiCalculatorDialog({
               managedDepts={[]}
               isElevated
               initialOpenDept={dept.key}
+              submissionSource={READINESS_SOURCE}
             />
           )}
         </div>

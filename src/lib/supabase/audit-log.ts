@@ -13,6 +13,12 @@ export type AuditAction =
   | 'wizard.bonus_edited'
   | 'wizard.addition_edited'
   | 'wizard.fx_rate_changed'
+  // Payroll readiness fixers (Set rate / KPI Mark-Ready) — carry a `source` in
+  // details so a wizard-driven fix is distinguishable from the normal surface.
+  | 'payroll.rate.set'
+  | 'payroll.kpi.marked_ready'
+  | 'payroll.kpi.locked'
+  | 'payroll.kpi.reopened'
   // Contractor decisions
   | 'contractor.decided'
   | 'contractor.retracted'

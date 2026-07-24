@@ -376,6 +376,29 @@ export function formatActionLabel(action: string, details: Record<string, unknow
     case 'payroll.dispatch.unlocked':
       return `Payroll dispatch ended — issues re-opened`;
 
+    // ── Payroll readiness fixers (rate set / KPI submission) ────────────
+    case 'payroll.rate.set': {
+      const emp = String(pick(details, 'employee_name', 'employee_email') ?? '?');
+      const reg = pick(details, 'regular_rate');
+      const cur = String(details?.currency ?? '');
+      const src = String(pick(details, 'source_label', 'source') ?? '');
+      return `Rate set: ${emp} → ${reg ?? '?'}${cur ? ` ${cur}` : ''}${src ? ` (via ${src})` : ''}`;
+    }
+    case 'payroll.kpi.marked_ready':
+    case 'payroll.kpi.locked':
+    case 'payroll.kpi.reopened': {
+      const verb =
+        action === 'payroll.kpi.marked_ready'
+          ? 'marked ready'
+          : action === 'payroll.kpi.locked'
+            ? 'locked'
+            : 'reopened';
+      const dept = String(details?.department ?? '?');
+      const period = String(details?.period_start ?? '?');
+      const src = String(pick(details, 'source_label', 'source') ?? '');
+      return `KPI ${verb}: ${dept} for ${period}${src ? ` (via ${src})` : ''}`;
+    }
+
     // ── Employee rates / auth ───────────────────────────────────────────
     case 'employee.rates.revoke': {
       const revoked = details?.revoked as Record<string, unknown> | null;
@@ -590,6 +613,10 @@ function actionDot(action: string): string {
   if (action === 'payment.dispatched') return 'bg-orange-500';
   if (action === 'payroll.dispatch.locked') return 'bg-rose-500';
   if (action === 'payroll.dispatch.unlocked') return 'bg-emerald-500';
+  if (action === 'payroll.rate.set') return 'bg-amber-500';
+  if (action === 'payroll.kpi.marked_ready') return 'bg-emerald-500';
+  if (action === 'payroll.kpi.locked') return 'bg-rose-500';
+  if (action === 'payroll.kpi.reopened') return 'bg-amber-500';
   if (action === 'csv.rates.upload') return 'bg-sky-600';
   // Sheet syncs — teal; their .error variants go red.
   if (action.endsWith('.sync')) return 'bg-teal-500';

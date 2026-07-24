@@ -178,6 +178,10 @@ interface DeptBonusCalculatorProps {
    *  e.g. 'callback'). Used by the Payroll Readiness "fix it from here" modal so
    *  the accountant lands directly on the clicked department. One-shot. */
   initialOpenDept?: string | null;
+  /** Where a Mark-Ready/Lock submission originates, recorded in the audit log.
+   *  Omit for the manager's own KPI tab (defaults to "manager_kpi" server-side);
+   *  the Payroll Wizard Readiness modal passes its own source. */
+  submissionSource?: string;
 }
 
 // -- Per-department colour identity (hex; inline-styled to dodge Tailwind purge) --
@@ -682,6 +686,7 @@ export default function DeptBonusCalculator({
   onWeekChange,
   controlledWeek,
   initialOpenDept = null,
+  submissionSource,
 }: DeptBonusCalculatorProps) {
   // QC officer's first-pass calculator vs the manager's official one. QC writes
   // a separate staging table and never touches `bonus_catalog_applied` /
@@ -1735,6 +1740,7 @@ export default function DeptBonusCalculator({
           period_end: weekEnd,
           status: next,
           locked_by: viewerEmail ?? undefined,
+          source: submissionSource,
         }),
       });
       const json = (await res.json()) as { error?: string };
