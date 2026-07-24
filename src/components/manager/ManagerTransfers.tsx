@@ -6,12 +6,14 @@ import {
   ArrowRight,
   ArrowRightLeft,
   Check,
+  CheckCircle2,
   ClipboardCheck,
   Inbox,
   Loader2,
   Plus,
   RefreshCw,
   Send,
+  SendHorizonal,
   Trash2,
   X,
 } from 'lucide-react';
@@ -75,6 +77,93 @@ function fullStamp(iso: string | null): string | undefined {
     hour: 'numeric',
     minute: '2-digit',
   });
+}
+
+/** Accent palettes for the KPI cards — icon chip + value tint, tuned for both themes. */
+const KPI_ACCENT = {
+  amber: {
+    ring: 'hover:border-amber-300/80 dark:hover:border-amber-500/40',
+    chip: 'bg-amber-100 text-amber-600 dark:bg-amber-500/15 dark:text-amber-300',
+    value: 'text-amber-600 dark:text-amber-300',
+    glow: 'from-amber-500/10',
+  },
+  blue: {
+    ring: 'hover:border-blue-300/80 dark:hover:border-blue-500/40',
+    chip: 'bg-blue-100 text-blue-600 dark:bg-blue-500/15 dark:text-blue-300',
+    value: 'text-blue-600 dark:text-blue-300',
+    glow: 'from-blue-500/10',
+  },
+  emerald: {
+    ring: 'hover:border-emerald-300/80 dark:hover:border-emerald-500/40',
+    chip: 'bg-emerald-100 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-300',
+    value: 'text-emerald-600 dark:text-emerald-300',
+    glow: 'from-emerald-500/10',
+  },
+} as const;
+
+/** One at-a-glance metric card. Clickable when `onClick` jumps to its sub-tab. */
+function KpiCard({
+  label,
+  value,
+  hint,
+  icon: Icon,
+  accent,
+  onClick,
+  active,
+}: {
+  label: string;
+  value: number;
+  hint: string;
+  icon: typeof Inbox;
+  accent: keyof typeof KPI_ACCENT;
+  onClick?: () => void;
+  active?: boolean;
+}) {
+  const a = KPI_ACCENT[accent];
+  return (
+    <motion.button
+      type="button"
+      onClick={onClick}
+      disabled={!onClick}
+      whileHover={onClick ? { y: -2 } : undefined}
+      whileTap={onClick ? { scale: 0.98 } : undefined}
+      transition={{ type: 'spring', stiffness: 400, damping: 30 }}
+      className={cn(
+        'group relative flex flex-col overflow-hidden rounded-2xl border bg-white p-4 text-left shadow-sm transition-colors dark:bg-zinc-950',
+        'border-zinc-200/80 dark:border-zinc-800/80',
+        onClick ? 'cursor-pointer' : 'cursor-default',
+        a.ring,
+        active && 'ring-1 ring-inset ring-blue-400/40 dark:ring-blue-500/30',
+      )}
+    >
+      {/* soft corner glow on hover */}
+      <span
+        aria-hidden
+        className={cn(
+          'pointer-events-none absolute -right-6 -top-6 h-20 w-20 rounded-full bg-gradient-to-br to-transparent opacity-0 blur-2xl transition-opacity duration-300 group-hover:opacity-100',
+          a.glow,
+        )}
+      />
+      <div className="flex items-center justify-between">
+        <span
+          className={cn('inline-flex h-8 w-8 items-center justify-center rounded-lg', a.chip)}
+        >
+          <Icon className="h-4 w-4" />
+        </span>
+        <span
+          className={cn('text-3xl font-bold tabular-nums leading-none tracking-tight', a.value)}
+        >
+          {value}
+        </span>
+      </div>
+      <div className="mt-3">
+        <div className="text-[13px] font-semibold text-zinc-800 dark:text-zinc-100">{label}</div>
+        <div className="mt-0.5 text-[11px] leading-tight text-zinc-500 dark:text-zinc-400">
+          {hint}
+        </div>
+      </div>
+    </motion.button>
+  );
 }
 
 /**
@@ -235,18 +324,31 @@ export default function ManagerTransfers({ myDepartments, canInitiate }: Props) 
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'apply' }),
       });
-      const json = (await res.json()) as { error?: string; sheet_synced?: boolean };
+      const json = (await res.json()) as {
+        error?: string;
+        sheet_synced?: boolean;
+        cancelled?: boolean;
+        already_in_target?: boolean;
+      };
       if (res.status === 409) {
         toast.info('This request was already handled — refreshing the list.');
         load({ silent: true });
         return;
       }
       if (!res.ok || json.error) throw new Error(json.error || `Request failed (${res.status})`);
-      toast.success(
-        json.sheet_synced === false
-          ? `${row.employee_name ?? row.employee_email} moved to ${row.to_department} (Sheet not synced — retry in Accounting)`
-          : `${row.employee_name ?? row.employee_email} moved to ${row.to_department}`,
-      );
+      const who = row.employee_name ?? row.employee_email;
+      if (json.cancelled) {
+        // Employee isn't on the active roster — the request was retired, not applied.
+        toast.warning(`${who} isn't on the active roster — request cleared (off-boarded or email changed).`);
+      } else if (json.already_in_target) {
+        toast.success(`${who} is already in ${row.to_department} — marked applied.`);
+      } else {
+        toast.success(
+          json.sheet_synced === false
+            ? `${who} moved to ${row.to_department} (Sheet not synced — retry in Accounting)`
+            : `${who} moved to ${row.to_department}`,
+        );
+      }
       load({ silent: true });
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Action failed');
@@ -276,6 +378,32 @@ export default function ManagerTransfers({ myDepartments, canInitiate }: Props) 
     () => [...outgoing].sort((a, b) => b.created_at.localeCompare(a.created_at)),
     [outgoing],
   );
+
+  // Three at-a-glance KPIs from the already-loaded lists (no extra fetch):
+  //   • Awaiting your release — incoming still pending; this manager's action queue.
+  //   • My requests in flight — outgoing not yet resolved (pending + released/scheduled).
+  //   • Applied this month     — team transfers that actually landed since the 1st.
+  const kpis = useMemo(() => {
+    const awaitingRelease = incoming.filter((r) => r.status === 'pending').length;
+    const myInFlight = outgoing.filter(
+      (r) => r.status === 'pending' || r.status === 'approved',
+    ).length;
+    const myScheduled = outgoing.filter((r) => r.status === 'approved').length;
+
+    const now = new Date();
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+    const isThisMonth = (iso: string | null) =>
+      !!iso && new Date(iso).getTime() >= monthStart;
+    // Applied transfers can surface in either list (my own outbox once applied,
+    // or a release I acted on that shows in Done) — dedupe by id before counting.
+    const appliedThisMonth = new Set(
+      [...outgoing, ...done]
+        .filter((r) => r.status === 'applied' && isThisMonth(r.applied_at ?? r.decided_at))
+        .map((r) => r.id),
+    ).size;
+
+    return { awaitingRelease, myInFlight, myScheduled, appliedThisMonth };
+  }, [incoming, outgoing, done]);
 
   // Two-click delete control (avoids accidental record deletion). Reused across
   // the release / my-requests / done lists.
@@ -409,6 +537,45 @@ export default function ManagerTransfers({ myDepartments, canInitiate }: Props) 
 
       <div className="min-h-0 flex-1 overflow-y-auto bg-[#fafaf8] px-3 py-4 sm:px-6 sm:py-6 dark:bg-[#0d1117]">
         <div className="mx-auto w-full max-w-3xl">
+          {/* At-a-glance KPI cards — always visible, click to jump to the matching view */}
+          <div className="mb-5 grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <KpiCard
+              label="Awaiting your release"
+              value={kpis.awaitingRelease}
+              hint={
+                kpis.awaitingRelease === 0
+                  ? 'No pending requests on your team'
+                  : 'Requests to release from your team'
+              }
+              icon={Inbox}
+              accent="amber"
+              onClick={() => setSub('release')}
+              active={sub === 'release'}
+            />
+            <KpiCard
+              label="My requests in flight"
+              value={kpis.myInFlight}
+              hint={
+                kpis.myScheduled > 0
+                  ? `${kpis.myScheduled} released & scheduled`
+                  : 'Pending & released transfers'
+              }
+              icon={SendHorizonal}
+              accent="blue"
+              onClick={() => setSub('mine')}
+              active={sub === 'mine'}
+            />
+            <KpiCard
+              label="Applied this month"
+              value={kpis.appliedThisMonth}
+              hint="Transfers completed since the 1st"
+              icon={CheckCircle2}
+              accent="emerald"
+              onClick={() => setSub('done')}
+              active={sub === 'done'}
+            />
+          </div>
+
           {loading ? (
             <div className="flex items-center justify-center gap-2 py-16 text-sm text-zinc-500">
               <Loader2 className="h-4 w-4 animate-spin" />
