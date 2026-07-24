@@ -696,14 +696,42 @@
       "Bash(node scripts/diagnose-stuck-transfers.mjs)",
       "Bash(node scripts/clear-stuck-transfers.mjs)",
       "Bash(node --test --import tsx src/lib/payroll/readiness-score.test.ts)",
-      "Bash(grep -vE \"payroll-readiness|npm notice|^\\\\s*$\")"
+      "Bash(grep -vE \"payroll-readiness|npm notice|^\\\\s*$\")",
+      "Bash(node \"c:\\\\Users\\\\Kane\\\\Desktop\\\\simple-hris\\\\.claude\\\\skills\\\\impeccable\\\\scripts\\\\context.mjs\")",
+      "Bash(echo \"TSC EXIT: $?\")",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:3000)",
+      "Bash(node __TRACKED_VAR__/shot.mjs __TRACKED_VAR__/transfers-preview.html __TRACKED_VAR__/light-desktop.png light 1440)",
+      "Bash(node __TRACKED_VAR__/shot.mjs __TRACKED_VAR__/transfers-preview.html __TRACKED_VAR__/dark-desktop.png dark 1440)",
+      "Bash(node __TRACKED_VAR__/shot.mjs __TRACKED_VAR__/transfers-preview.html __TRACKED_VAR__/light-mobile.png light 420)",
+      "Bash(node -e \"console.log\\(require.resolve\\('playwright'\\)\\)\")",
+      "Bash(node -e \"console.log\\(require.resolve\\('@playwright/test'\\)\\)\")",
+      "Read(//c/Users/Kane/AppData/Local/npm-cache/_npx/**)",
+      "Read(//c/Users/Kane/AppData/Roaming/npm/node_modules/**)",
+      "Bash(npm root *)",
+      "Bash(node C:/Users/Kane/AppData/Local/Temp/claude/c--Users-Kane-Desktop-simple-hris/67bbca7a-48fd-4f25-aebe-eeea3780a783/scratchpad/shot.mjs C:/Users/Kane/AppData/Local/Temp/claude/c--Users-Kane-Desktop-simple-hris/67bbca7a-48fd-4f25-aebe-eeea3780a783/scratchpad/transfers-preview.html C:/Users/Kane/AppData/Local/Temp/claude/c--Users-Kane-Desktop-simple-hris/67bbca7a-48fd-4f25-aebe-eeea3780a783/scratchpad/light-desktop.png light 1440)",
+      "Bash(node C:/Users/Kane/AppData/Local/Temp/claude/c--Users-Kane-Desktop-simple-hris/67bbca7a-48fd-4f25-aebe-eeea3780a783/scratchpad/shot.mjs C:/Users/Kane/AppData/Local/Temp/claude/c--Users-Kane-Desktop-simple-hris/67bbca7a-48fd-4f25-aebe-eeea3780a783/scratchpad/transfers-preview.html C:/Users/Kane/AppData/Local/Temp/claude/c--Users-Kane-Desktop-simple-hris/67bbca7a-48fd-4f25-aebe-eeea3780a783/scratchpad/dark-desktop.png dark 1440)",
+      "Bash(node C:/Users/Kane/AppData/Local/Temp/claude/c--Users-Kane-Desktop-simple-hris/67bbca7a-48fd-4f25-aebe-eeea3780a783/scratchpad/shot.mjs C:/Users/Kane/AppData/Local/Temp/claude/c--Users-Kane-Desktop-simple-hris/67bbca7a-48fd-4f25-aebe-eeea3780a783/scratchpad/transfers-preview.html C:/Users/Kane/AppData/Local/Temp/claude/c--Users-Kane-Desktop-simple-hris/67bbca7a-48fd-4f25-aebe-eeea3780a783/scratchpad/light-mobile.png light 420)",
+      "Bash(node C:/Users/Kane/AppData/Local/Temp/claude/c--Users-Kane-Desktop-simple-hris/67bbca7a-48fd-4f25-aebe-eeea3780a783/scratchpad/shot.mjs C:/Users/Kane/AppData/Local/Temp/claude/c--Users-Kane-Desktop-simple-hris/67bbca7a-48fd-4f25-aebe-eeea3780a783/scratchpad/transfers-preview.html C:/Users/Kane/AppData/Local/Temp/claude/c--Users-Kane-Desktop-simple-hris/67bbca7a-48fd-4f25-aebe-eeea3780a783/scratchpad/paged-light.png light 1440)",
+      "Bash(SP=\"C:/Users/Kane/AppData/Local/Temp/claude/c--Users-Kane-Desktop-simple-hris/67bbca7a-48fd-4f25-aebe-eeea3780a783/scratchpad\" && rm -f \"$SP/transfers-preview.html\" \"$SP/shot.mjs\" \"$SP\"/*.png 2>/dev/null; echo done)",
+      "Bash(node C:/Users/Kane/AppData/Local/Temp/claude/c--Users-Kane-Desktop-simple-hris/67bbca7a-48fd-4f25-aebe-eeea3780a783/scratchpad/shot.mjs C:/Users/Kane/AppData/Local/Temp/claude/c--Users-Kane-Desktop-simple-hris/67bbca7a-48fd-4f25-aebe-eeea3780a783/scratchpad/preview2.html C:/Users/Kane/AppData/Local/Temp/claude/c--Users-Kane-Desktop-simple-hris/67bbca7a-48fd-4f25-aebe-eeea3780a783/scratchpad/band-light.png light 1600)",
+      "Bash(node C:/Users/Kane/AppData/Local/Temp/claude/c--Users-Kane-Desktop-simple-hris/67bbca7a-48fd-4f25-aebe-eeea3780a783/scratchpad/shot.mjs C:/Users/Kane/AppData/Local/Temp/claude/c--Users-Kane-Desktop-simple-hris/67bbca7a-48fd-4f25-aebe-eeea3780a783/scratchpad/preview2.html C:/Users/Kane/AppData/Local/Temp/claude/c--Users-Kane-Desktop-simple-hris/67bbca7a-48fd-4f25-aebe-eeea3780a783/scratchpad/band-dark.png dark 1600)",
+      "Bash(node C:/Users/Kane/AppData/Local/Temp/claude/c--Users-Kane-Desktop-simple-hris/67bbca7a-48fd-4f25-aebe-eeea3780a783/scratchpad/shot.mjs C:/Users/Kane/AppData/Local/Temp/claude/c--Users-Kane-Desktop-simple-hris/67bbca7a-48fd-4f25-aebe-eeea3780a783/scratchpad/preview3.html C:/Users/Kane/AppData/Local/Temp/claude/c--Users-Kane-Desktop-simple-hris/67bbca7a-48fd-4f25-aebe-eeea3780a783/scratchpad/left-light.png light 1600)",
+      "Bash(node scripts/find-email-everywhere.mjs randalh@hogansmith.com)",
+      "Bash(node scripts/find-name-everywhere.mjs \"Randal Hayes\" \"randalh@hogansmith.com\")",
+      "Bash(node C:/Users/Kane/AppData/Local/Temp/claude/c--Users-Kane-Desktop-simple-hris/67bbca7a-48fd-4f25-aebe-eeea3780a783/scratchpad/shot.mjs C:/Users/Kane/AppData/Local/Temp/claude/c--Users-Kane-Desktop-simple-hris/67bbca7a-48fd-4f25-aebe-eeea3780a783/scratchpad/preview3.html C:/Users/Kane/AppData/Local/Temp/claude/c--Users-Kane-Desktop-simple-hris/67bbca7a-48fd-4f25-aebe-eeea3780a783/scratchpad/wide-light.png light 1600)",
+      "Bash(node C:/Users/Kane/AppData/Local/Temp/claude/c--Users-Kane-Desktop-simple-hris/67bbca7a-48fd-4f25-aebe-eeea3780a783/scratchpad/shot.mjs C:/Users/Kane/AppData/Local/Temp/claude/c--Users-Kane-Desktop-simple-hris/67bbca7a-48fd-4f25-aebe-eeea3780a783/scratchpad/preview3.html C:/Users/Kane/AppData/Local/Temp/claude/c--Users-Kane-Desktop-simple-hris/67bbca7a-48fd-4f25-aebe-eeea3780a783/scratchpad/wide-dark.png dark 1600)",
+      "Bash(node scripts/delete-randal-hayes.mjs)",
+      "Bash(node scripts/delete-randal-hayes.mjs --apply)",
+      "Bash(node C:/Users/Kane/AppData/Local/Temp/claude/c--Users-Kane-Desktop-simple-hris/67bbca7a-48fd-4f25-aebe-eeea3780a783/scratchpad/shot.mjs C:/Users/Kane/AppData/Local/Temp/claude/c--Users-Kane-Desktop-simple-hris/67bbca7a-48fd-4f25-aebe-eeea3780a783/scratchpad/preview3.html C:/Users/Kane/AppData/Local/Temp/claude/c--Users-Kane-Desktop-simple-hris/67bbca7a-48fd-4f25-aebe-eeea3780a783/scratchpad/final-light.png light 1600)",
+      "Bash(node C:/Users/Kane/AppData/Local/Temp/claude/c--Users-Kane-Desktop-simple-hris/67bbca7a-48fd-4f25-aebe-eeea3780a783/scratchpad/shot.mjs C:/Users/Kane/AppData/Local/Temp/claude/c--Users-Kane-Desktop-simple-hris/67bbca7a-48fd-4f25-aebe-eeea3780a783/scratchpad/preview3.html C:/Users/Kane/AppData/Local/Temp/claude/c--Users-Kane-Desktop-simple-hris/67bbca7a-48fd-4f25-aebe-eeea3780a783/scratchpad/final-dark.png dark 1440)"
     ],
     "additionalDirectories": [
       "c:\\Users\\Itachi\\.claude\\projects\\c--Users-Itachi-Desktop-simple-hris\\memory",
       "\\tmp",
       "c:\\Users\\Itachi\\Desktop\\simple-hris",
       "C:\\Users\\Kane\\.claude\\projects\\c--Users-Kane-Desktop-simple-hris\\memory",
-      "C:\\Users\\Kane\\AppData\\Local\\Temp\\claude\\c--Users-Kane-Desktop-simple-hris\\edeaff04-4f76-4129-832b-65ee3e76ea7b\\scratchpad"
+      "C:\\Users\\Kane\\AppData\\Local\\Temp\\claude\\c--Users-Kane-Desktop-simple-hris\\edeaff04-4f76-4129-832b-65ee3e76ea7b\\scratchpad",
+      "C:\\Users\\Kane\\AppData\\Local\\Temp\\claude\\c--Users-Kane-Desktop-simple-hris\\67bbca7a-48fd-4f25-aebe-eeea3780a783\\scratchpad"
     ]
   }
 }
