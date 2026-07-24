@@ -1,6 +1,7 @@
 import { getEmployeeHourlyRatesRows } from "./employee-hourly-rates";
 import { listPayStructures } from "./pay-structures-db";
 import { DEPARTMENTS } from "@/lib/payroll/department-bonus";
+import { getDepartmentRegistry } from "@/lib/departments/registry-db";
 import type { PayCurrency } from "@/lib/payment-catalog/pay-structure";
 
 export type DepartmentRateSummary = {
@@ -91,6 +92,17 @@ export async function getDepartmentRateSummaries(): Promise<{
   try {
     const { structures } = await listPayStructures();
     const deptName = new Map(DEPARTMENTS.map((d) => [d.key, d.name] as const));
+    // Custom (Department-tab) departments key their structures by a slug the
+    // built-in map doesn't know -- resolve those to the real roster label so
+    // the onboarding prefill finds them. Best-effort: a registry read failure
+    // must not cost the built-in overlay.
+    try {
+      for (const entry of await getDepartmentRegistry()) {
+        if (!deptName.has(entry.key)) deptName.set(entry.key, entry.name);
+      }
+    } catch {
+      /* built-in departments only */
+    }
     for (const s of structures) {
       if (s.scope !== "department") continue;
       const name = deptName.get(s.departmentKey) ?? s.departmentKey;

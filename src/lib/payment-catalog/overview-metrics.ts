@@ -146,7 +146,10 @@ export interface CatalogOverview {
 }
 
 const norm = (s: string | null | undefined) => (s ?? '').trim().toLowerCase();
-const deptName = (key: string) => DEPT_NAME.get(key) ?? key;
+// Unknown keys are custom (Department-tab) departments whose slug derives from
+// the display name -- humanize it back ("medical_billing" -> "Medical Billing").
+const deptName = (key: string) =>
+  DEPT_NAME.get(key) ?? key.replace(/_+/g, ' ').replace(/(^|\s)[a-z]/g, (c) => c.toUpperCase());
 
 function nameForEmail(
   email: string,

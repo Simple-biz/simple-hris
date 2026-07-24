@@ -50,6 +50,7 @@ import {
   Award,
   Star,
   LayoutDashboard,
+  FolderTree,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { DatePicker } from '@/components/ui/date-picker';
@@ -101,6 +102,8 @@ import {
   type FxRates,
 } from '@/lib/fx/currency-fx';
 import PaymentCatalogOverview from './PaymentCatalogOverview';
+import DepartmentsTab from './DepartmentsTab';
+import type { DepartmentRegistryEntry } from '@/lib/departments/registry';
 
 // Always render exactly 2 decimals so the exact amount is shown without ever
 // rounding cents away to a whole number (1500 -> "₱1,500.00", 1500.5 -> "₱1,500.50").
@@ -343,12 +346,15 @@ function ExportMenu({
   bonuses,
   assignments,
   roster,
+  extraDepartments,
   disabled,
 }: {
   payStructures: PayStructure[];
   bonuses: BonusDef[];
   assignments: BonusAssignment[];
   roster: RosterEntry[];
+  /** Custom (Department-tab) departments so their rates export with names. */
+  extraDepartments: { key: string; name: string }[];
   disabled?: boolean;
 }) {
   const [open, setOpen] = useState(false);
@@ -377,10 +383,13 @@ function ExportMenu({
       payStructures,
       bonuses,
       assignments,
-      departments: DEPARTMENTS.map((d) => ({ key: d.key, name: d.name })),
+      departments: [
+        ...DEPARTMENTS.map((d) => ({ key: d.key, name: d.name })),
+        ...extraDepartments,
+      ],
       resolveName: (email) => nameByEmail.get(email.toLowerCase()),
     });
-  }, [payStructures, bonuses, assignments, roster]);
+  }, [payStructures, bonuses, assignments, roster, extraDepartments]);
 
   const onCsv = () => {
     try {
@@ -495,19 +504,34 @@ function buildRoster(initialData?: InitialAccountingData | null): RosterEntry[] 
 // Top-level component
 // ---------------------------------------------------------------------------
 
-type CatalogTab = 'overview' | 'pay-structure' | 'library' | 'assignments' | 'system-bonuses';
+type CatalogTab = 'overview' | 'departments' | 'pay-structure' | 'library' | 'assignments' | 'system-bonuses';
 
 export default function BonusCatalog({ initialData }: { initialData?: InitialAccountingData | null }) {
   const [bonuses, setBonuses] = useState<BonusDef[]>([]);
   const [assignments, setAssignments] = useState<BonusAssignment[]>([]);
   const [payStructures, setPayStructures] = useState<PayStructure[]>([]);
   const [systemBonuses, setSystemBonuses] = useState<SystemBonus[]>(initialData?.systemBonuses ?? []);
+  // Custom departments created from the Department tab + every active
+  // department_managers assignment (dept string, lower-cased -> manager emails).
+  const [deptRegistry, setDeptRegistry] = useState<DepartmentRegistryEntry[]>([]);
+  const [deptManagers, setDeptManagers] = useState<Record<string, string[]>>({});
+  // Set when another tab asks Pay Structure to open focused on a department.
+  const [payFocusDept, setPayFocusDept] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [tab, setTab] = useState<CatalogTab>('overview');
   const instanceId = useId();
 
   const roster = useMemo(() => buildRoster(initialData), [initialData]);
+
+  // Custom departments as {key, name} for the Pay Structure rail + exports --
+  // a custom key that ever collides with a built-in is dropped defensively.
+  const customDepartments = useMemo(() => {
+    const builtin = new Set(DEPARTMENTS.map((d) => d.key));
+    return deptRegistry
+      .filter((entry) => !builtin.has(entry.key))
+      .map((entry) => ({ key: entry.key, name: entry.name }));
+  }, [deptRegistry]);
 
   // Live USD-anchored FX rates — used only to sort the Bonus Library's
   // "Amount (high-low)" by PHP-equivalent so a $100 bonus outranks a ₱500 one.
@@ -536,10 +560,11 @@ export default function BonusCatalog({ initialData }: { initialData?: InitialAcc
   const refetch = useCallback(async () => {
     setRefreshing(true);
     try {
-      const [catRes, payRes, sysRes] = await Promise.all([
+      const [catRes, payRes, sysRes, deptRes] = await Promise.all([
         fetch('/api/bonus-catalog', { cache: 'no-store' }),
         fetch('/api/payment-catalog/pay-structures', { cache: 'no-store' }),
         fetch('/api/payment-catalog/system-bonuses', { cache: 'no-store' }),
+        fetch('/api/payment-catalog/departments', { cache: 'no-store' }),
       ]);
       const cat = (await catRes.json()) as {
         bonuses?: BonusDef[];
@@ -548,10 +573,17 @@ export default function BonusCatalog({ initialData }: { initialData?: InitialAcc
       };
       const pay = (await payRes.json()) as { structures?: PayStructure[]; error?: string | null };
       const sys = (await sysRes.json()) as { bonuses?: SystemBonus[]; error?: string | null };
+      const dept = (await deptRes.json()) as {
+        registry?: DepartmentRegistryEntry[];
+        managers?: Record<string, string[]>;
+        error?: string | null;
+      };
       setBonuses(cat.bonuses ?? []);
       setAssignments(cat.assignments ?? []);
       setPayStructures(pay.structures ?? []);
       setSystemBonuses(sys.bonuses ?? []);
+      setDeptRegistry(dept.registry ?? []);
+      setDeptManagers(dept.managers ?? {});
     } catch {
       /* keep prior state */
     } finally {
@@ -575,6 +607,18 @@ export default function BonusCatalog({ initialData }: { initialData?: InitialAcc
       .on('postgres_changes', { event: '*', schema: 'public', table: 'bonus_catalog_assignments' }, () => void refetch())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'payment_catalog_pay_structures' }, () => void refetch())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'payment_catalog_system_bonuses' }, () => void refetch())
+      .on(
+        'postgres_changes',
+        // Department registry lives in app_settings -- filter to its one key so
+        // unrelated setting bumps (payments pulse etc.) don't refetch the catalog.
+        {
+          event: '*',
+          schema: 'public',
+          table: 'app_settings',
+          filter: 'key=eq.payment_catalog.departments.registry',
+        },
+        () => void refetch(),
+      )
       .subscribe();
     return () => {
       void supabase.removeChannel(channel);
@@ -744,6 +788,7 @@ export default function BonusCatalog({ initialData }: { initialData?: InitialAcc
 
   const tabs = [
     { id: 'overview', label: 'Overview', icon: LayoutDashboard, count: 0 },
+    { id: 'departments', label: 'Department', icon: FolderTree, count: deptRegistry.length },
     { id: 'pay-structure', label: 'Pay Structure', icon: Wallet, count: payStructures.length },
     { id: 'library', label: 'Bonus Library', icon: Sparkles, count: bonuses.length },
     { id: 'assignments', label: 'Assignments', icon: Building2, count: assignments.length },
@@ -779,6 +824,7 @@ export default function BonusCatalog({ initialData }: { initialData?: InitialAcc
               bonuses={bonuses}
               assignments={assignments}
               roster={roster}
+              extraDepartments={customDepartments}
               disabled={loading}
             />
           </div>
@@ -850,6 +896,27 @@ export default function BonusCatalog({ initialData }: { initialData?: InitialAcc
                 fx={fx}
               />
             </motion.div>
+          ) : tab === 'departments' ? (
+            <motion.div
+              key="departments"
+              initial={{ opacity: 0, x: -14 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: 14 }}
+              transition={{ duration: 0.24, ease: EASE }}
+              className="h-full"
+            >
+              <DepartmentsTab
+                roster={roster}
+                payStructures={payStructures}
+                registry={deptRegistry}
+                managersByDept={deptManagers}
+                onCreated={() => void refetch()}
+                onOpenPayStructure={(deptKey) => {
+                  setPayFocusDept(deptKey);
+                  setTab('pay-structure');
+                }}
+              />
+            </motion.div>
           ) : tab === 'pay-structure' ? (
             <motion.div
               key="pay-structure"
@@ -862,6 +929,8 @@ export default function BonusCatalog({ initialData }: { initialData?: InitialAcc
               <PayStructureTab
                 structures={payStructures}
                 roster={roster}
+                extraDepartments={customDepartments}
+                focusDept={payFocusDept}
                 onUpsert={upsertPay}
                 onDelete={deletePay}
               />
@@ -1316,17 +1385,39 @@ function PayRateEditor({
 function PayStructureTab({
   structures,
   roster,
+  extraDepartments,
+  focusDept,
   onUpsert,
   onDelete,
 }: {
   structures: PayStructure[];
   roster: RosterEntry[];
+  /** Custom departments created from the Department tab ({key, name}). */
+  extraDepartments: { key: string; name: string }[];
+  /** When set, the rail opens focused on this department key. */
+  focusDept?: string | null;
   onUpsert: (s: PayStructure, effectiveDate?: string) => void;
   onDelete: (id: string) => void;
 }) {
-  const [selectedDept, setSelectedDept] = useState<string>(DEPARTMENTS[0]?.key ?? '');
+  // Built-in payroll departments first, then the custom ones (already A-Z).
+  const allDepts = useMemo(
+    () => [
+      ...DEPARTMENTS.map((d) => ({ key: d.key, name: d.name })),
+      ...extraDepartments,
+    ],
+    [extraDepartments],
+  );
+
+  const [selectedDept, setSelectedDept] = useState<string>(
+    () => focusDept ?? DEPARTMENTS[0]?.key ?? '',
+  );
   const [deptSearch, setDeptSearch] = useState('');
   const [editingDept, setEditingDept] = useState(false);
+
+  // Follow cross-tab focus requests (e.g. a Department card's "Pay structure").
+  useEffect(() => {
+    if (focusDept) setSelectedDept(focusDept);
+  }, [focusDept]);
 
   const countsByDept = useMemo(() => {
     const m: Record<string, number> = {};
@@ -1336,10 +1427,10 @@ function PayStructureTab({
 
   const filteredDepts = useMemo(() => {
     const q = deptSearch.trim().toLowerCase();
-    return DEPARTMENTS.filter((d) => !q || d.name.toLowerCase().includes(q));
-  }, [deptSearch]);
+    return allDepts.filter((d) => !q || d.name.toLowerCase().includes(q));
+  }, [deptSearch, allDepts]);
 
-  const dept = DEPARTMENTS.find((d) => d.key === selectedDept) ?? DEPARTMENTS[0];
+  const dept = allDepts.find((d) => d.key === selectedDept) ?? allDepts[0];
 
   const deptStructure = structures.find(
     (s) => s.scope === 'department' && s.departmentKey === selectedDept,
@@ -1424,7 +1515,7 @@ function PayStructureTab({
             ariaLabel="Select department"
             value={selectedDept}
             onChange={setSelectedDept}
-            options={DEPARTMENTS.map((d) => ({ value: d.key, label: d.name }))}
+            options={allDepts.map((d) => ({ value: d.key, label: d.name }))}
           />
         </div>
 
@@ -1589,10 +1680,16 @@ function IndividualPayAdder({
   const [filterByDept, setFilterByDept] = useState(true);
   const [effectiveDate, setEffectiveDate] = useState<string>(nextMondayIso);
 
-  const deptMatched = useMemo(
-    () => roster.filter((r) => normalizeDeptToKey(r.department) === deptKey),
-    [roster, deptKey],
-  );
+  const deptMatched = useMemo(() => {
+    // Built-in departments match via the alias map; custom (Department-tab)
+    // departments have no alias entry, so fall back to the exact label match.
+    const nameKey = deptName.trim().toLowerCase();
+    return roster.filter(
+      (r) =>
+        normalizeDeptToKey(r.department) === deptKey ||
+        (nameKey !== '' && r.department.trim().toLowerCase() === nameKey),
+    );
+  }, [roster, deptKey, deptName]);
   const list = useMemo(() => {
     const base = filterByDept ? deptMatched : roster;
     return base.filter((r) => !existingEmails.has(r.email.toLowerCase()));
