@@ -2073,6 +2073,12 @@ function SetBankDialog({
  * scoped to ONLY the clicked sub-dept (a single `hsl:<key>` grant — no
  * "All Departments" view).
  */
+/** Stable empty `managedDepts` for the elevated general-dept calculator — an
+ *  inline `[]` would be a fresh identity every render, and the calculators
+ *  re-run their initial data load when that prop's identity changes (wiping
+ *  unsaved local edits, e.g. a just-added external member). */
+const NO_MANAGED_DEPTS: string[] = [];
+
 function KpiCalculatorDialog({
   dept,
   viewerEmail,
@@ -2083,6 +2089,14 @@ function KpiCalculatorDialog({
   onClose: () => void;
 }) {
   const isHsl = dept.source === "hsl";
+  // Memoized for the same reason as NO_MANAGED_DEPTS: the Readiness pane
+  // re-renders on every live refresh (30s poll / realtime / focus), and a new
+  // array identity here would make the embedded calculator reload from the DB
+  // over the top of unsaved work.
+  const hslManagedDepts = useMemo(
+    () => [hslAccessKey(dept.key as HslDeptKey)],
+    [dept.key],
+  );
   // General depts need the roster the manager dashboard feeds its calculator —
   // fetched per open; the elevated scope returns the full master roster.
   const [members, setMembers] = useState<EmployeeRow[] | null>(null);
@@ -2125,7 +2139,7 @@ function KpiCalculatorDialog({
             // Server-side writes still authorize on the (elevated) session.
             <HslBonusCalculator
               viewerEmail={viewerEmail}
-              managedDepts={[hslAccessKey(dept.key as HslDeptKey)]}
+              managedDepts={hslManagedDepts}
               isElevated={false}
               initialFilter={dept.key as HslDeptKey}
               submissionSource={READINESS_SOURCE}
@@ -2141,7 +2155,7 @@ function KpiCalculatorDialog({
             <DeptBonusCalculator
               viewerEmail={viewerEmail}
               teamMembers={members}
-              managedDepts={[]}
+              managedDepts={NO_MANAGED_DEPTS}
               isElevated
               initialOpenDept={dept.key}
               submissionSource={READINESS_SOURCE}

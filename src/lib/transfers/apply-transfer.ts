@@ -24,6 +24,19 @@ export type ApplyTransferResult = {
   applied: boolean;
   sheetSynced: boolean;
   sheetError: string | null;
+  /**
+   * True when the request was retired without a department move because the
+   * employee is no longer on the active roster (off-boarded / email drift). The
+   * row is flipped to `cancelled` with an explanatory note — it can never apply,
+   * so this is a resolution, NOT an error.
+   */
+  cancelled?: boolean;
+  /**
+   * True when nothing needed to be written because the employee was ALREADY in
+   * the target department (a prior sync / release got them there). The goal is
+   * met, so the request is marked `applied` — a success, not an error.
+   */
+  alreadyInTarget?: boolean;
   /** Fatal error — the master-list update itself failed; nothing was applied. */
   error: string | null;
 };
@@ -51,7 +64,8 @@ function employeeRecipient(row: DepartmentTransferRequestRow): string | null {
 export async function applyApprovedTransfer(
   row: DepartmentTransferRequestRow,
 ): Promise<ApplyTransferResult> {
-  // 1. Master list (authoritative in Supabase).
+  // 1. Master list (authoritative in Supabase). Resolves the move by TARGET dept,
+  //    not by insisting on a still-in-source row (see applyDepartmentTransfer).
   const master = await applyDepartmentTransfer({
     personalEmail: row.employee_personal_email,
     workEmail: row.employee_work_email,
@@ -62,21 +76,39 @@ export async function applyApprovedTransfer(
     return { applied: false, sheetSynced: false, sheetError: null, error: master.error };
   }
 
+  // 1a. Employee isn't on the active roster by any email — the transfer can never
+  //     apply (off-boarded / email drift). Retire the request instead of stranding
+  //     it in "approved" forever, mirroring the pending-row stale sweep.
+  if (master.resolution === 'notFound') {
+    const who = row.employee_name ?? row.employee_email;
+    const note = `Auto-cancelled: ${who} is not on the active roster, so the move to ${row.to_department} can't be applied (off-boarded or email changed).`;
+    await cancelStaleTransfer({ id: row.id, note, fromStatus: 'approved' });
+    return { applied: false, sheetSynced: false, sheetError: null, cancelled: true, error: null };
+  }
+
+  const alreadyInTarget = master.resolution === 'satisfied';
+
   // 2. Google Sheet write-back (best-effort — the whole point of v2, but a
-  //    transient API error must not strand the transfer).
+  //    transient API error must not strand the transfer). Skip it when the
+  //    employee is already in the target dept: there's no source-dept cell for the
+  //    Sheet updater to flip, and the Sheet already reflects the end state.
   let sheetSynced = false;
   let sheetError: string | null = null;
-  try {
-    const sheet = await updateMasterSheetDepartment({
-      personalEmail: row.employee_personal_email,
-      workEmail: row.employee_work_email,
-      fromDepartment: row.from_department,
-      toDepartment: row.to_department,
-    });
-    sheetSynced = sheet.updated > 0;
-    if (!sheetSynced) sheetError = sheet.reason ?? 'no matching sheet row updated';
-  } catch (e) {
-    sheetError = e instanceof Error ? e.message : String(e);
+  if (alreadyInTarget) {
+    sheetSynced = true; // nothing to change — the Sheet is already correct.
+  } else {
+    try {
+      const sheet = await updateMasterSheetDepartment({
+        personalEmail: row.employee_personal_email,
+        workEmail: row.employee_work_email,
+        fromDepartment: row.from_department,
+        toDepartment: row.to_department,
+      });
+      sheetSynced = sheet.updated > 0;
+      if (!sheetSynced) sheetError = sheet.reason ?? 'no matching sheet row updated';
+    } catch (e) {
+      sheetError = e instanceof Error ? e.message : String(e);
+    }
   }
 
   // 3. Record the outcome on the request.
@@ -98,9 +130,11 @@ export async function applyApprovedTransfer(
           type: 'transfer.applied',
           tone: 'positive',
           title: 'Transfer Applied',
-          message: `${who} has moved from ${row.from_department} to ${row.to_department}${
-            row.effective_date ? ` (effective ${row.effective_date})` : ''
-          }.`,
+          message: alreadyInTarget
+            ? `${who} is confirmed in ${row.to_department}.`
+            : `${who} has moved from ${row.from_department} to ${row.to_department}${
+                row.effective_date ? ` (effective ${row.effective_date})` : ''
+              }.`,
           details: {
             request_id: row.id,
             employee_email: row.employee_email,
@@ -114,7 +148,7 @@ export async function applyApprovedTransfer(
     }
   }
 
-  return { applied: true, sheetSynced, sheetError, error: null };
+  return { applied: true, sheetSynced, sheetError, alreadyInTarget, error: null };
 }
 
 export interface StaleSweepResult {

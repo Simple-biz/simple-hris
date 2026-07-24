@@ -624,6 +624,164 @@
 }
 /* onboarding light-mode contrast fix — see note above */
 
+/* ── Tech-neon profile modal ───────────────────────────────────────────────
+   A single-person easter-egg treatment (currently kaner@simple.biz): the modal
+   grows a running cyan→blue→magenta neon rim with an outer glow, and its tab
+   bar picks up a glowing active pill. Scoped entirely to `.neon-profile-modal`
+   so no other dialog is touched. Unlayered so the animated rim wins over the
+   DialogContent utility border. */
+@property --neon-profile-angle {
+  syntax: '<angle>';
+  initial-value: 0deg;
+  inherits: false;
+}
+@keyframes neon-profile-spin {
+  from { --neon-profile-angle: 0deg; }
+  to   { --neon-profile-angle: 360deg; }
+}
+.neon-profile-modal {
+  /* Do NOT set `position` here. The DialogContent Popup is `position: fixed`,
+     which is what its `top/left-1/2` + `translate: -50% -50%` centring is
+     measured against; overriding it with `relative` re-flows the modal to the
+     bottom-right (the bug this treatment caused). `fixed` is already a
+     positioning context, so the absolutely-positioned rim/sheen pseudo-elements
+     below anchor to it correctly without any override. */
+  /* the running rim is drawn by ::before, so drop the flat utility border */
+  border-color: transparent !important;
+  isolation: isolate;
+  /* Static outer glow. This box-shadow escapes the modal's own overflow:hidden
+     (a box's own shadow isn't clipped by its overflow), so it can live here —
+     but it must NOT go on the element's `animation` property either: the enter
+     animation resolves the final transform, and an `animation` shorthand here
+     would replace that. The living motion comes from the spinning ::before rim
+     and the avatar ring, which animate freely on their own pseudo-elements. */
+  box-shadow:
+    0 0 0 1px rgba(129, 140, 248, 0.38),
+    0 0 26px -2px rgba(129, 140, 248, 0.5),
+    0 0 70px -7px rgba(56, 189, 248, 0.45);
+}
+/* Running conic rim, masked to a 1.5px band around the modal. */
+.neon-profile-modal::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  padding: 1.5px;
+  background: conic-gradient(
+    from var(--neon-profile-angle),
+    #22d3ee,
+    #38bdf8,
+    #818cf8,
+    #c084fc,
+    #f0abfc,
+    #22d3ee
+  );
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+          mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+          mask-composite: exclude;
+  animation: neon-profile-spin 6s linear infinite;
+}
+/* Faint inner sheen so the surface itself reads a touch "charged". */
+.neon-profile-modal::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  pointer-events: none;
+  background:
+    radial-gradient(120% 60% at 0% 0%, rgba(56, 189, 248, 0.12), transparent 60%),
+    radial-gradient(120% 60% at 100% 100%, rgba(192, 132, 252, 0.12), transparent 60%);
+}
+.dark .neon-profile-modal::after {
+  background:
+    radial-gradient(120% 60% at 0% 0%, rgba(56, 189, 248, 0.18), transparent 60%),
+    radial-gradient(120% 60% at 100% 100%, rgba(192, 132, 252, 0.18), transparent 60%);
+}
+
+/* Neon tab bar: divider glows, active pill lights up its label. */
+.neon-profile-modal .neon-tab {
+  color: #64748b; /* slate-500 */
+  transition: color 220ms ease, text-shadow 220ms ease;
+}
+.dark .neon-profile-modal .neon-tab { color: #94a3b8; /* slate-400 */ }
+.neon-profile-modal .neon-tab:hover { color: #0891b2; /* cyan-600 */ }
+.dark .neon-profile-modal .neon-tab:hover { color: #67e8f9; /* cyan-300 */ }
+.neon-profile-modal .neon-tab[aria-selected='true'] {
+  color: #0e7490; /* cyan-700 */
+  text-shadow: 0 0 12px rgba(56, 189, 248, 0.55);
+}
+.dark .neon-profile-modal .neon-tab[aria-selected='true'] {
+  color: #a5f3fc; /* cyan-200 */
+  text-shadow: 0 0 14px rgba(56, 189, 248, 0.7);
+}
+
+/* Neon avatar ring: a spinning conic halo hugging the round profile photo /
+   initials fallback, with a soft breathing glow. The inner slot is padded so
+   the ring reads as a distinct band around the 88px avatar. */
+.neon-avatar-ring {
+  position: relative;
+  display: inline-flex;
+  padding: 3px;
+  border-radius: 9999px;
+  background: conic-gradient(
+    from var(--neon-profile-angle),
+    #22d3ee,
+    #38bdf8,
+    #818cf8,
+    #c084fc,
+    #f0abfc,
+    #22d3ee
+  );
+  animation: neon-profile-spin 6s linear infinite;
+  box-shadow:
+    0 0 14px -2px rgba(56, 189, 248, 0.6),
+    0 0 34px -6px rgba(192, 132, 252, 0.5);
+}
+/* A thin dark gap between the spinning ring and the photo so the halo pops. */
+.neon-avatar-ring::before {
+  content: '';
+  position: absolute;
+  inset: 2px;
+  border-radius: 9999px;
+  background: #ffffff;
+}
+.dark .neon-avatar-ring::before { background: #0d1117; }
+.neon-avatar-ring > * { position: relative; z-index: 1; }
+
+/* Tech "tattoos": a faint circuit-board fretwork etched across the modal
+   header (traces + solder pads), drawn as an inline SVG data-URI so it needs
+   no asset. Sits behind the header content, clipped to the header box. */
+.neon-tattoo::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  opacity: 0.45;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120' viewBox='0 0 120 120'%3E%3Cg fill='none' stroke='%2338bdf8' stroke-width='1' stroke-opacity='0.45'%3E%3Cpath d='M0 20h30l10 10h40M110 15h-25l-8 8H60'/%3E%3Cpath d='M0 60h18l12-12h35l10 10h35'/%3E%3Cpath d='M20 120v-28l10-10v-25M85 120v-20l-10-10'/%3E%3Cpath d='M120 85H95l-10 10v25'/%3E%3Cpath d='M55 0v18l10 10v22'/%3E%3C/g%3E%3Cg fill='%2322d3ee' fill-opacity='0.5'%3E%3Ccircle cx='80' cy='30' r='2.4'/%3E%3Ccircle cx='30' cy='48' r='2.4'/%3E%3Ccircle cx='75' cy='60' r='2.4'/%3E%3Ccircle cx='30' cy='92' r='2.4'/%3E%3Ccircle cx='95' cy='95' r='2.4'/%3E%3Ccircle cx='65' cy='28' r='2.4'/%3E%3C/g%3E%3Cg fill='none' stroke='%23c084fc' stroke-width='1' stroke-opacity='0.32'%3E%3Crect x='42' y='40' width='16' height='16' rx='2'/%3E%3C/g%3E%3C/svg%3E");
+  background-size: 116px 116px;
+  background-position: top right;
+  /* Confine the circuitry to the OPEN right half of the header so it decorates
+     the empty space beside the title — never behind the avatar or the name. */
+  -webkit-mask-image: linear-gradient(90deg, transparent 0%, transparent 52%, #000 82%, #000 100%);
+          mask-image: linear-gradient(90deg, transparent 0%, transparent 52%, #000 82%, #000 100%);
+}
+.dark .neon-tattoo::after { opacity: 0.55; }
+
+@media (prefers-reduced-motion: reduce) {
+  .neon-profile-modal::before {
+    animation: none;
+    --neon-profile-angle: 125deg;
+  }
+  .neon-avatar-ring {
+    animation: none;
+    --neon-profile-angle: 125deg;
+  }
+}
+
 @layer components {
   .tabular-nums {
     font-variant-numeric: tabular-nums;

@@ -387,6 +387,7 @@ async function buildKpiReadiness(weekStart: string, isMonthly: boolean): Promise
 
 async function buildMissingRates(
   sourceFile: string | null,
+  excludeIdentities: Set<string>,
 ): Promise<{ rows: ReadinessMissingRate[]; workerCount: number }> {
   // The workers considered are exactly the week-in-view's Hubstaff roster: the
   // named file when the wizard is on a specific (possibly replayed) week, else
@@ -438,6 +439,18 @@ async function buildMissingRates(
     // count (mirrors the missing-bank list's off-channel exclusion) so the stat
     // stays honest.
     if (isOffChannelDept(dept)) continue;
+
+    // Onboarding-exception people (still onboarding / no-show / started this week)
+    // are expected NOT to be paid, so a missing rate for them must never cost
+    // readiness points. Drop them from BOTH the list and the worker denominator.
+    // Matched on any alias this person owns (from the master roster) OR the
+    // Hubstaff row's own email/name, so it catches them regardless of key.
+    if (
+      excludeByIdentity(excludeIdentities, email, null, name) ||
+      aliases.some((a) => excludeIdentities.has(a))
+    ) {
+      continue;
+    }
     workerCount += 1;
 
     const rate = resolvePeopleRate(rateCtx, aliases, dept);
@@ -459,7 +472,42 @@ function isOffChannelDept(dept: string | null | undefined): boolean {
   return d === 'usee' || d === 'us employees' || d === 'us employee';
 }
 
-async function buildMissingBank(): Promise<{ rows: ReadinessMissingBank[]; eligibleCount: number }> {
+/** The identity keys a person can be matched on across the readiness lists: every
+ *  normalized email they own (so a rate/bank row keyed on the work OR the personal
+ *  alias both match) plus a `name:`-prefixed normalized-name fallback for rows
+ *  that carry no email. The name is prefixed so it can never collide with an
+ *  email key. */
+function identityKeys(
+  workEmail: string | null | undefined,
+  personalEmail: string | null | undefined,
+  name: string | null | undefined,
+): string[] {
+  const keys: string[] = [];
+  for (const e of [workEmail, personalEmail]) {
+    const em = normEmail(e ?? '');
+    if (em) keys.push(em);
+  }
+  const n = (name ?? '').trim().toLowerCase();
+  if (n) keys.push(`name:${n}`);
+  return keys;
+}
+
+/** True when any of a row's identity keys is in the exclusion set — used to drop
+ *  onboarding-exception people out of the rate/bank populations so they never
+ *  cost readiness points (they're expected non-payments this week). */
+function excludeByIdentity(
+  exclude: Set<string>,
+  workEmail: string | null | undefined,
+  personalEmail: string | null | undefined,
+  name: string | null | undefined,
+): boolean {
+  if (exclude.size === 0) return false;
+  return identityKeys(workEmail, personalEmail, name).some((k) => exclude.has(k));
+}
+
+async function buildMissingBank(
+  excludeIdentities: Set<string>,
+): Promise<{ rows: ReadinessMissingBank[]; eligibleCount: number }> {
   const [{ employees }, idsRes, ratesRes] = await Promise.all([
     getEmployeesForAuthorizedServerRoute(),
     getEmployeeIds(),
@@ -491,6 +539,11 @@ async function buildMissingBank(): Promise<{ rows: ReadinessMissingBank[]; eligi
   let eligibleCount = 0;
   for (const e of employees) {
     if (isOffChannelDept(e.department)) continue;
+    // Onboarding-exception people (e.g. a `started_this_week` hire already
+    // promoted onto the active roster) are expected NOT to be paid this week, so
+    // an incomplete employee_ids row for them must never cost readiness points.
+    // Drop them from BOTH the missing list and the eligible denominator.
+    if (excludeByIdentity(excludeIdentities, e.work_email, e.personal_email, e.name)) continue;
     const w = normEmail(e.work_email ?? '');
     const p = normEmail(e.personal_email ?? '');
     const n = (e.name ?? '').trim().toLowerCase();
@@ -529,12 +582,20 @@ async function buildMissingBank(): Promise<{ rows: ReadinessMissingBank[]; eligi
 
 // ── Onboarding exceptions ─────────────────────────────────────────────────────
 
-async function buildExceptions(weekStart: string): Promise<ReadinessException[]> {
+/** The exception list PLUS the identity keys of everyone on it, so the rate and
+ *  bank checks can subtract these expected non-payments out before scoring (an
+ *  onboarding exception must never cost points on any dimension — see
+ *  `excludeByIdentity`). `identities` holds every normalized email a hire owns
+ *  (work AND personal, so it matches whichever alias the rate/bank list keyed on)
+ *  and a normalized-name fallback for rows with no email. */
+async function buildExceptions(
+  weekStart: string,
+): Promise<{ rows: ReadinessException[]; identities: Set<string> }> {
   let rows: Awaited<ReturnType<typeof listHrPendingEmployees>>['rows'] = [];
   try {
     ({ rows } = await listHrPendingEmployees());
   } catch {
-    return [];
+    return { rows: [], identities: new Set() };
   }
 
   const weekEnd = (() => {
@@ -545,6 +606,16 @@ async function buildExceptions(weekStart: string): Promise<ReadinessException[]>
   })();
 
   const out: ReadinessException[] = [];
+  const identities = new Set<string>();
+  // Record every identity key an exception hire owns (both email aliases + a
+  // normalized-name fallback) so the rate/bank lists can exclude them regardless
+  // of which alias they were keyed on.
+  const remember = (r: (typeof rows)[number]) => {
+    for (const key of identityKeys(r.work_email, r.personal_email, r.name)) {
+      identities.add(key);
+    }
+  };
+
   for (const r of rows) {
     const name = r.display_name || r.name || r.work_email || r.personal_email || '—';
     const email = r.work_email || r.personal_email || null;
@@ -552,6 +623,7 @@ async function buildExceptions(weekStart: string): Promise<ReadinessException[]>
 
     if (r.status === 'no_show') {
       out.push({ name, email, department, kind: 'no_show', detail: 'Marked no-show — not paid' });
+      remember(r);
       continue;
     }
     if (r.status === 'pending_work_email' || r.status === 'ready' || r.status === 'failed_to_promote') {
@@ -563,6 +635,7 @@ async function buildExceptions(weekStart: string): Promise<ReadinessException[]>
         kind: awaiting ? 'awaiting_orientation' : 'onboarding',
         detail: awaiting ? 'Awaiting orientation confirmation' : 'Still onboarding — not on payroll yet',
       });
+      remember(r);
       continue;
     }
     if (r.status === 'promoted') {
@@ -581,11 +654,12 @@ async function buildExceptions(weekStart: string): Promise<ReadinessException[]>
           kind: 'started_this_week',
           detail: `Started ${startIso} — first pay period not closed`,
         });
+        remember(r);
       }
     }
   }
   out.sort((a, b) => a.name.localeCompare(b.name));
-  return out;
+  return { rows: out, identities };
 }
 
 // ── Public entry point ────────────────────────────────────────────────────────
@@ -604,11 +678,19 @@ export async function getPayrollReadiness(
   const { weekStart, sourceFile: resolvedFile } = await resolveCurrentWeek(sourceFile);
   const isMonthlyPayWeek = isFinalPayrollWeekOfMonth(weekStart);
 
-  const [kpi, ratesRes, bankRes, exceptions] = await Promise.all([
-    buildKpiReadiness(weekStart, isMonthlyPayWeek),
-    buildMissingRates(resolvedFile),
-    buildMissingBank(),
+  // Exceptions resolve first: their identity set feeds the rate/bank checks so an
+  // expected non-payment (onboarding / no-show / started-this-week) never costs
+  // points on ANY score dimension. KPI is per-department, so it needs no
+  // per-person exclusion and still runs alongside.
+  const [exceptionsRes, kpi] = await Promise.all([
     buildExceptions(weekStart),
+    buildKpiReadiness(weekStart, isMonthlyPayWeek),
+  ]);
+  const { rows: exceptions, identities: exceptionIdentities } = exceptionsRes;
+
+  const [ratesRes, bankRes] = await Promise.all([
+    buildMissingRates(resolvedFile, exceptionIdentities),
+    buildMissingBank(exceptionIdentities),
   ]);
 
   // KPI due/submitted for the score: monthly depts not due this week ('na') are

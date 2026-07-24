@@ -2896,6 +2896,11 @@ function PersonDetailDialog({
   // payroll/PAB fetches (which would flash skeletons and silently re-mask a reveal).
   const [email] = useState(() => row.work_email ?? '');
 
+  // Tech-neon easter egg: one person's profile gets a running neon rim + glowing
+  // tab bar (see `.neon-profile-modal` in index.css). Matched on the frozen work
+  // email so it survives an in-modal email edit.
+  const isNeon = email.trim().toLowerCase() === 'kaner@simple.biz';
+
   // Profile editor (Identity & contact). Only reachable when canEdit AND the row
   // carries its master-list id (the update target).
   const [editing, setEditing] = useState(false);
@@ -3177,11 +3182,19 @@ function PersonDetailDialog({
   return (
     <>
     <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
-      <DialogContent className="gap-0 overflow-hidden p-0 sm:max-w-2xl">
-        <div className="flex max-h-[88vh] flex-col">
-        <DialogHeader className="shrink-0 border-b border-zinc-200 px-5 py-4 dark:border-zinc-800">
-          <div className="flex items-center gap-3">
-            <TeamAvatar name={row.name ?? ''} email={row.work_email} size="xl" />
+      <DialogContent className={cn('!flex max-h-[88vh] flex-col gap-0 overflow-hidden p-0 sm:max-w-2xl', isNeon && 'neon-profile-modal')}>
+        <div className="flex min-h-0 flex-1 flex-col">
+        <DialogHeader className={cn('relative shrink-0 overflow-hidden border-b px-5 py-4', isNeon ? 'neon-tattoo border-cyan-400/25 dark:border-cyan-400/20' : 'border-zinc-200 dark:border-zinc-800')}>
+          <div className="relative z-10 flex items-center gap-3">
+            {isNeon ? (
+              // Neon: a spinning conic ring hugs the round avatar, with a soft
+              // outer glow. `neon-avatar-ring` lives in index.css.
+              <span className="neon-avatar-ring shrink-0" aria-hidden={false}>
+                <TeamAvatar name={row.name ?? ''} email={row.work_email} size="xl" />
+              </span>
+            ) : (
+              <TeamAvatar name={row.name ?? ''} email={row.work_email} size="xl" />
+            )}
             <div className="min-w-0 flex-1">
               <DialogTitle className="truncate text-lg">{row.name ?? '—'}</DialogTitle>
               <DialogDescription className="truncate">
@@ -3204,7 +3217,15 @@ function PersonDetailDialog({
         </DialogHeader>
 
         {/* Tabs */}
-        <div role="tablist" className="flex shrink-0 gap-1 overflow-x-auto border-b border-zinc-200 px-3 dark:border-zinc-800">
+        <div
+          role="tablist"
+          className={cn(
+            'flex shrink-0 gap-1 overflow-x-auto border-b px-3',
+            isNeon
+              ? 'border-cyan-400/25 dark:border-cyan-400/20'
+              : 'border-zinc-200 dark:border-zinc-800',
+          )}
+        >
           {([['profile', 'Profile'], ['banking', 'Banking'], ['payroll', 'Payroll'], ['pab', 'PAB Calendar']] as const).map(([id, label]) => (
             <button
               key={id}
@@ -3214,16 +3235,31 @@ function PersonDetailDialog({
               onClick={() => changeTab(id)}
               className={cn(
                 'relative shrink-0 whitespace-nowrap px-3 py-2.5 text-[13px] font-medium transition-colors',
-                tab === id
-                  ? 'text-zinc-900 dark:text-zinc-100'
-                  : 'text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-200',
+                isNeon
+                  ? 'neon-tab'
+                  : tab === id
+                    ? 'text-zinc-900 dark:text-zinc-100'
+                    : 'text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-200',
               )}
             >
-              {label}
+              {/* Neon: a glowing pill glides behind the active tab. */}
+              {isNeon && tab === id && (
+                <motion.span
+                  layoutId="person-tab-pill"
+                  className="absolute inset-x-1 inset-y-1.5 -z-10 rounded-md bg-cyan-400/10 ring-1 ring-cyan-400/30 shadow-[0_0_16px_-2px_rgba(56,189,248,0.55)] dark:bg-cyan-400/10 dark:ring-cyan-300/30"
+                  transition={reduceMotion ? { duration: 0 } : { type: 'spring', stiffness: 380, damping: 32 }}
+                />
+              )}
+              <span className="relative z-10">{label}</span>
               {tab === id && (
                 <motion.span
                   layoutId="person-tab-underline"
-                  className={cn('absolute inset-x-2 -bottom-px h-0.5 rounded-full', accent.bar)}
+                  className={cn(
+                    'absolute inset-x-2 -bottom-px h-0.5 rounded-full',
+                    isNeon
+                      ? 'bg-gradient-to-r from-cyan-400 via-sky-400 to-fuchsia-400 shadow-[0_0_10px_1px_rgba(56,189,248,0.7)]'
+                      : accent.bar,
+                  )}
                   transition={reduceMotion ? { duration: 0 } : { duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
                 />
               )}
@@ -3240,10 +3276,10 @@ function PersonDetailDialog({
           {tab !== 'pab' && (
           <motion.div
             key={tab}
-            initial={{ opacity: 0, y: reduceMotion ? 0 : 6 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: reduceMotion ? 0 : -4 }}
-            transition={{ duration: reduceMotion ? 0 : 0.22, ease: [0.22, 1, 0.36, 1] }}
+            initial={{ opacity: 0, y: reduceMotion ? 0 : (isNeon ? 10 : 6), filter: isNeon && !reduceMotion ? 'blur(6px)' : 'blur(0px)' }}
+            animate={{ opacity: 1, y: 0, filter: 'blur(0px)' }}
+            exit={{ opacity: 0, y: reduceMotion ? 0 : (isNeon ? -8 : -4), filter: isNeon && !reduceMotion ? 'blur(6px)' : 'blur(0px)' }}
+            transition={{ duration: reduceMotion ? 0 : (isNeon ? 0.28 : 0.22), ease: [0.22, 1, 0.36, 1] }}
           >
           {tab === 'profile' && (
           <>
@@ -3299,7 +3335,10 @@ function PersonDetailDialog({
                     <p className="mt-2 text-[10.5px] text-zinc-400">
                       Saved to the master list as{' '}
                       <span className="font-medium text-zinc-600 dark:text-zinc-300">
-                        {composeMasterListName(nameParts) || '—'}
+                        {/* Hide the empty `()` boundary marker in the preview - it
+                            only appears for a multi-word first name with no middle,
+                            and reads as a glitch. The stored value keeps it. */}
+                        {composeMasterListName(nameParts).replace(/\s*\(\)\s*/, ' ').replace(/\s+/g, ' ').trim() || '—'}
                       </span>
                     </p>
                   </div>

@@ -107,6 +107,7 @@ export const DASHBOARD_PAGES: DashboardPages[] = [
     pages: [
       { key: 'overview', label: 'Overview', home: true },
       { key: 'people', label: 'People' },
+      { key: 'hr', label: 'HR' },
       { key: 'payroll-wizard', label: 'Payroll Wizard' },
       { key: 'bonus-catalog', label: 'Payment Catalog' },
       { key: 'payment-dispatch', label: 'Payment Dispatch' },

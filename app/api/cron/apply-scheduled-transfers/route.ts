@@ -41,13 +41,16 @@ async function run(req: NextRequest): Promise<NextResponse> {
   if (error) return NextResponse.json({ success: false, error }, { status: 500 });
 
   let applied = 0;
+  let cancelled = 0; // employee off-roster — request retired, not a failure
   let failed = 0;
   const failures: Array<{ id: string; error: string }> = [];
   for (const row of rows) {
     try {
       const res = await applyApprovedTransfer(row);
       if (res.applied) applied += 1;
+      else if (res.cancelled) cancelled += 1;
       else {
+        // Only a genuine master-list write error lands here now.
         failed += 1;
         failures.push({ id: row.id, error: res.error ?? 'unknown' });
       }
@@ -62,7 +65,7 @@ async function run(req: NextRequest): Promise<NextResponse> {
     user_role: SYSTEM_USER.role,
     action: 'department_transfer.scheduled_apply',
     resource: 'department_transfer_requests',
-    details: { date: today, due: rows.length, applied, failed, failures: failures.slice(0, 20) },
+    details: { date: today, due: rows.length, applied, cancelled, failed, failures: failures.slice(0, 20) },
   });
 
   // Clear out release requests whose employee has already been transferred out of
@@ -85,6 +88,7 @@ async function run(req: NextRequest): Promise<NextResponse> {
     date: today,
     due: rows.length,
     applied,
+    cancelled,
     failed,
     failures,
     stale_cancelled: sweep.cancelled.length,

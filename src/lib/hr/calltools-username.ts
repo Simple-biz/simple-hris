@@ -20,6 +20,7 @@
  */
 
 import { normalizeNamePart, splitFullName } from "./work-email";
+import { stripMiddleMarker } from "@/lib/name/name-parts";
 
 /** Department labels that identify a Lead Gen hire (matches the bulk-invite
  *  check in HR > Onboarding and normalizeDeptToKey's lead_gen mapping). */
@@ -49,10 +50,14 @@ export function fallbackDialerIdentity(name: string | null | undefined): {
 } {
   const raw = (name ?? "").trim();
   const nickFromQuotes = raw.match(QUOTED_NICK)?.[1]?.trim() ?? "";
-  // Drop the quoted segment before splitting, so the nickname never pollutes
-  // the first/last derivation.
-  const bare = raw
-    .replace(/["“”][^"“”]*["“”]/g, " ")
+  // Drop the quoted go-by AND the parenthesized First/Middle boundary marker
+  // (see name-parts.ts) before splitting, so neither the nickname nor a stashed
+  // middle name pollutes the surname/first-name derivation. Without the marker
+  // strip, a surname-first name like `Reroma (Miguel), Jan Kane Teves "Kane"`
+  // would mint the surname as "Reroma (Miguel)".
+  const bare = stripMiddleMarker(
+    raw.replace(/["“”][^"“”]*["“”]/g, " "),
+  )
     .replace(/\s+/g, " ")
     .trim();
   let first = "";

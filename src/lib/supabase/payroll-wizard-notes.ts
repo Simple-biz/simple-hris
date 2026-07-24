@@ -6,6 +6,7 @@ import { listActiveMasterListPeople } from "./global-master-list-db";
 import { fetchHubstaffRowsOrdered, rowsToPayrollRows } from "./hubstaff-hours-db";
 import { manilaMonthDayStamp, payrollNotesWeekStart, sundayOf } from "@/lib/payroll/manila-week";
 import { formatAdjustmentText } from "@/lib/payroll/adjustment-bridge";
+import { stripMiddleMarker } from "@/lib/name/name-parts";
 
 /**
  * Data access for the Payroll Wizard's floating "Notes" checklist (see
@@ -210,11 +211,13 @@ function isBlankNoteRow(
 
 /**
  * "First Last" from a master-list Name, which may be stored surname-first as
- * `Surname[ Suffix], Given... "GoBy"` (see src/lib/name/display-name.ts).
- * The quoted go-by is dropped; a plain "First Last" passes through unchanged.
+ * `Surname[ Suffix][ (Middle)], Given... "GoBy"` (see src/lib/name/name-parts.ts).
+ * The quoted go-by AND the parenthesized First/Middle boundary marker are
+ * dropped (the marker would otherwise leak "(Miguel)" into the surname); a
+ * plain "First Last" passes through unchanged.
  */
 function firstLastFromMasterName(raw: string): string {
-  const s = raw.replace(/"[^"]*"/g, "").replace(/\s+/g, " ").trim();
+  const s = stripMiddleMarker(raw.replace(/"[^"]*"/g, "")).replace(/\s+/g, " ").trim();
   const comma = s.indexOf(",");
   if (comma < 0) return s;
   const surname = s.slice(0, comma).trim();

@@ -1210,25 +1210,37 @@ export default function DeptBonusCalculator({
         if (isQc && qcDeptEmails) {
           members = members.filter((m) => qcDeptEmails.has(m.email.toLowerCase()));
         }
-        setState((prev) => ({
-          // Pre-applied defaults — and QC-seeded values — are unsaved, so mark
-          // dirty: manager Save (then Submit) persists into bonus_catalog_applied;
-          // QC Save persists into the staging table.
-          ...prev,
-          [key]: { members, shared, status, dirty: preApplied || seededFromQc, saving: false, loaded: true },
-        }));
+        setState((prev) => {
+          // Never clobber in-flight local work: the live refresh checks `dirty`
+          // when it DISPATCHES, but this fetch can land after the user has since
+          // edited or added a member (parent re-renders also re-run the boot
+          // effect). Guard at write time so unsaved state survives any reload.
+          const cur = prev[key];
+          if (cur?.dirty || cur?.saving) return prev;
+          return {
+            // Pre-applied defaults — and QC-seeded values — are unsaved, so mark
+            // dirty: manager Save (then Submit) persists into bonus_catalog_applied;
+            // QC Save persists into the staging table.
+            ...prev,
+            [key]: { members, shared, status, dirty: preApplied || seededFromQc, saving: false, loaded: true },
+          };
+        });
       } catch {
-        setState((prev) => ({
-          ...prev,
-          [key]: {
-            members: roster.map((e) => ({ email: e.email, name: e.name, applied: {} })),
-            shared: {},
-            status: 'draft',
-            dirty: false,
-            saving: false,
-            loaded: true,
-          },
-        }));
+        setState((prev) => {
+          const cur = prev[key];
+          if (cur?.dirty || cur?.saving) return prev;
+          return {
+            ...prev,
+            [key]: {
+              members: roster.map((e) => ({ email: e.email, name: e.name, applied: {} })),
+              shared: {},
+              status: 'draft',
+              dirty: false,
+              saving: false,
+              loaded: true,
+            },
+          };
+        });
       }
     },
     [rosterByDept, individualByDept, commonByDept, commonExclusionsByDept, sharedCommonByDept, weekStart, canonEmail, isQc, qcRosterByDept, qcEmailsByDept, appliedEndpoint],

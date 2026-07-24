@@ -5,7 +5,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseNameParts, composeMasterListName, type NameParts } from './name-parts';
+import { parseNameParts, composeMasterListName, stripMiddleMarker, type NameParts } from './name-parts';
 
 test('parseNameParts splits the surname-first master form', () => {
   assert.deepEqual(parseNameParts('Reroma, Jan Kane "Kane"'), {
@@ -98,6 +98,74 @@ test('composeMasterListName never emits doubled quotes even from mangled parts',
 test('apostrophes and hyphens survive scrubbing (only quotes are removed)', () => {
   assert.deepEqual(parseNameParts("O'Brien, Sean Anne-Marie"), {
     first: 'Sean', middle: 'Anne-Marie', last: "O'Brien", extension: '', nickname: 'Anne-Marie',
+  });
+});
+
+test('a MULTI-WORD first name survives the round-trip (the boundary-marker bug)', () => {
+  // The reported bug: typing "Jan Kane Teves" into First (middle left empty)
+  // used to reload as First="Jan", Middle="Kane Teves". The empty `()` marker
+  // keeps the whole first name intact and the middle empty.
+  const parts: NameParts = { first: 'Jan Kane Teves', middle: '', last: 'Reroma', extension: '', nickname: 'Kane' };
+  const composed = composeMasterListName(parts);
+  assert.equal(composed, 'Reroma (), Jan Kane Teves "Kane"');
+  assert.deepEqual(parseNameParts(composed), parts);
+
+  // Multi-word first WITH a middle: middle rides in the parens, first stays whole.
+  const withMiddle: NameParts = { first: 'Jan Kane Teves', middle: 'Miguel', last: 'Reroma', extension: '', nickname: 'Kane' };
+  const c2 = composeMasterListName(withMiddle);
+  assert.equal(c2, 'Reroma (Miguel), Jan Kane Teves "Kane"');
+  assert.deepEqual(parseNameParts(c2), withMiddle);
+
+  // Compound surname stays OUTSIDE the parens; suffix + marker order is fine.
+  const compound: NameParts = { first: 'Juan Paulo', middle: 'Santos', last: 'Dela Cruz', extension: 'Jr', nickname: 'JP' };
+  const c3 = composeMasterListName(compound);
+  assert.equal(c3, 'Dela Cruz Jr (Santos), Juan Paulo "JP"');
+  assert.deepEqual(parseNameParts(c3), compound);
+});
+
+test('single-word first names NEVER get the marker (legacy form preserved byte-for-byte)', () => {
+  // The naive first-token/rest split is correct for a single-word first, so no
+  // marker is emitted and the stored string is identical to before this change.
+  assert.equal(
+    composeMasterListName({ first: 'Jan', middle: 'Kane', last: 'Reroma', extension: '', nickname: 'Kane' }),
+    'Reroma, Jan Kane "Kane"',
+  );
+  // Single first + MULTI-word middle also re-splits correctly with no marker.
+  const multiMiddle: NameParts = { first: 'Juan', middle: 'Dela Santa', last: 'Cruz', extension: '', nickname: 'Juan' };
+  const composed = composeMasterListName(multiMiddle);
+  assert.equal(composed, 'Cruz, Juan Dela Santa "Juan"');
+  assert.deepEqual(parseNameParts(composed), multiMiddle);
+});
+
+test('a multi-word first with an implied (unquoted) go-by round-trips', () => {
+  // No explicit nickname: derive over first + middle tokens, not the whole
+  // multi-word first as one token.
+  const parts: NameParts = { first: 'Jan Kane Teves', middle: '', last: 'Reroma', extension: '', nickname: 'Teves' };
+  const composed = composeMasterListName(parts);
+  assert.equal(composed, 'Reroma (), Jan Kane Teves "Teves"');
+  // Parse of the marker form WITHOUT a quoted go-by derives "Teves" (last given).
+  assert.deepEqual(parseNameParts('Reroma (), Jan Kane Teves'), {
+    first: 'Jan Kane Teves', middle: '', last: 'Reroma', extension: '', nickname: 'Teves',
+  });
+});
+
+test('stripMiddleMarker removes the parenthesized boundary marker from a surname', () => {
+  assert.equal(stripMiddleMarker('Reroma (Miguel)'), 'Reroma');
+  assert.equal(stripMiddleMarker('Reroma ()'), 'Reroma');
+  assert.equal(stripMiddleMarker('Dela Cruz Jr (Santos)'), 'Dela Cruz Jr');
+  assert.equal(stripMiddleMarker('Reroma'), 'Reroma'); // no marker → unchanged
+  assert.equal(stripMiddleMarker('Reroma (Miguel), Jan Kane Teves'), 'Reroma, Jan Kane Teves');
+});
+
+test('stray parens typed into a First/Middle field can never forge the marker', () => {
+  // A user typing literal parens must not be able to inject or break the marker;
+  // compose scrubs () out of the parts before assembling.
+  assert.equal(
+    composeMasterListName({ first: 'Foo (bar) Baz', middle: '', last: 'Reyes', extension: '', nickname: 'Foo' }),
+    'Reyes (), Foo bar Baz "Foo"',
+  );
+  assert.deepEqual(parseNameParts('Reyes (), Foo bar Baz "Foo"'), {
+    first: 'Foo bar Baz', middle: '', last: 'Reyes', extension: '', nickname: 'Foo',
   });
 });
 

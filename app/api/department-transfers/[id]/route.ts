@@ -110,13 +110,31 @@ export async function PATCH(
       void insertAuditLog({
         user_name: sessionEmail,
         user_role: isAdmin ? 'Admin' : 'Manager',
-        action: 'department_transfer.applied_manual',
+        action: res.cancelled
+          ? 'department_transfer.cancelled'
+          : 'department_transfer.applied_manual',
         resource: 'department_transfer_requests',
         resource_id: id,
-        details: { employee_email: row.employee_email, from_department: row.from_department, to_department: row.to_department, sheet_synced: res.sheetSynced },
+        details: {
+          employee_email: row.employee_email,
+          from_department: row.from_department,
+          to_department: row.to_department,
+          sheet_synced: res.sheetSynced,
+          // How the apply resolved: a clean/reconciled move, a no-op because the
+          // person was already in the target dept, or an auto-cancel because they
+          // aren't on the active roster.
+          resolution: res.cancelled ? 'cancelled' : res.alreadyInTarget ? 'already_in_target' : 'moved',
+        },
         ip_address: clientIp(request),
       });
-      return NextResponse.json({ success: true, applied: res.applied, sheet_synced: res.sheetSynced, error: null });
+      return NextResponse.json({
+        success: true,
+        applied: res.applied,
+        sheet_synced: res.sheetSynced,
+        cancelled: res.cancelled ?? false,
+        already_in_target: res.alreadyInTarget ?? false,
+        error: null,
+      });
     }
 
     // ── Source-manager decision (release / decline) ──
@@ -245,6 +263,8 @@ export async function PATCH(
       released: true,
       applied: res.applied,
       sheet_synced: res.sheetSynced,
+      cancelled: res.cancelled ?? false,
+      already_in_target: res.alreadyInTarget ?? false,
       effective_date: effectiveDate,
       error: null,
     });

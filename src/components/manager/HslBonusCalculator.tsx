@@ -585,11 +585,17 @@ export default function HslBonusCalculator({
       // Managers Weekly component sums) so the dept total + table read the right
       // values (DB persists 0 for legacy/unscored entries).
       setDeptState((prev) => {
-        let recomputed = recomputeSsdEntries(key, sortedEntries, prev[key]!.subTeams);
+        const cur = prev[key]!;
+        // Never clobber in-flight local work: refreshAll checks `dirty` when it
+        // DISPATCHES, but this fetch can land after the user has since edited or
+        // added a member (parent re-renders also re-run the boot effect). Guard
+        // at write time so unsaved entries survive any reload path.
+        if (cur.dirty || cur.saving) return prev;
+        let recomputed = recomputeSsdEntries(key, sortedEntries, cur.subTeams);
         recomputed = recomputeManagerEntries(key, recomputed);
         return {
           ...prev,
-          [key]: { ...prev[key]!, entries: recomputed, status, dirty: false, rosterEmails },
+          [key]: { ...cur, entries: recomputed, status, dirty: false, rosterEmails },
         };
       });
     } catch {

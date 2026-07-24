@@ -691,7 +691,12 @@
       "Bash(REPO_ROOT=\"c:/Users/Kane/Desktop/simple-hris\" node push-to-monday.mjs epics_final.json --dry)",
       "Bash(node push-monday.mjs)",
       "Bash(node push-monday-2.mjs)",
-      "Bash(node link-epics.mjs)"
+      "Bash(node link-epics.mjs)",
+      "PowerShell($out = npx tsc --noEmit 2>&1 | Out-String; if \\($LASTEXITCODE -eq 0\\) { \"TYPECHECK OK\" } else { \"TYPECHECK FAILED \\(exit $LASTEXITCODE\\)\"; $out })",
+      "Bash(node scripts/diagnose-stuck-transfers.mjs)",
+      "Bash(node scripts/clear-stuck-transfers.mjs)",
+      "Bash(node --test --import tsx src/lib/payroll/readiness-score.test.ts)",
+      "Bash(grep -vE \"payroll-readiness|npm notice|^\\\\s*$\")"
     ],
     "additionalDirectories": [
       "c:\\Users\\Itachi\\.claude\\projects\\c--Users-Itachi-Desktop-simple-hris\\memory",
