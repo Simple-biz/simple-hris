@@ -3,7 +3,7 @@
 // Payment Catalog -- "Department" tab.
 //
 // A directory of every department (the built-in payroll departments plus the
-// custom ones created here) and the "Create a Department" flow:
+// in-app ones created here) and the "Create a Department" flow:
 //
 //   name -> optional sub-departments (HSL-style) -> initial people (at least
 //   one Manager required) -> optional department pay rate -> create.
@@ -13,10 +13,13 @@
 // adding managers, adding members and setting pay rates") advances on REAL
 // progress, lightly paced so the checkmarks read as steps instead of a blink.
 //
-// New departments land on the Global Master List (members' rows carry the new
-// "Department" label), the manager(s) get department_managers oversight rows,
-// and the optional rate becomes a department-scoped Payment Catalog structure
-// the Pay Structure tab manages from then on.
+// SELF-CONTAINED: in-app departments do NOT depend on the Global Master List.
+// Their people live as member records on the registry entry itself; creation
+// writes nothing to the roster or the master Google Sheet. The roster prop is
+// used only as an autofill convenience in the people picker and for the
+// built-in departments' headcounts. Managers get department_managers oversight
+// rows, and the optional rate becomes a department-scoped Payment Catalog
+// structure the Pay Structure tab manages from then on.
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { motion, AnimatePresence, useReducedMotion } from 'motion/react';
@@ -47,7 +50,6 @@ import { DEPARTMENTS } from '@/lib/payroll/department-bonus';
 import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
 import {
   CREATE_DEPARTMENT_STAGES,
-  rawDeptMatchesEntry,
   slugifyDeptKey,
   validateCreateDepartmentInput,
   type CreateDepartmentEvent,
@@ -135,31 +137,21 @@ export default function DepartmentsTab({
     return m;
   }, [roster]);
 
-  /** Manager emails for a department, matching how assignments are stored:
-   *  raw master-list strings (aliases included) -- so compare via dept keys. */
+  /** Manager emails for the BUILT-IN departments, matching how assignments
+   *  are stored: raw roster strings (aliases included) -- compare via keys.
+   *  In-app departments read their managers off the registry entry instead. */
   const managersForKey = useMemo(() => {
     const out = new Map<string, Set<string>>();
-    const put = (key: string | null, emails: string[]) => {
-      if (!key) return;
-      const set = out.get(key) ?? new Set<string>();
-      for (const e of emails) set.add(e);
-      out.set(key, set);
-    };
     for (const [deptRaw, emails] of Object.entries(managersByDept)) {
       const builtin = normalizeDeptToKey(deptRaw);
-      if (builtin) {
-        put(builtin, emails);
-        continue;
-      }
-      for (const entry of registry) {
-        if (rawDeptMatchesEntry(deptRaw, entry)) put(entry.key, emails);
-      }
+      if (!builtin) continue;
+      const set = out.get(builtin) ?? new Set<string>();
+      for (const e of emails) set.add(e);
+      out.set(builtin, set);
     }
     return out;
-  }, [managersByDept, registry]);
+  }, [managersByDept]);
 
-  const memberCountForEntry = (entry: DepartmentRegistryEntry) =>
-    roster.filter((p) => rawDeptMatchesEntry(p.department, entry)).length;
   const memberCountForBuiltin = (key: string) =>
     roster.filter((p) => normalizeDeptToKey(p.department) === key).length;
 
@@ -168,13 +160,20 @@ export default function DepartmentsTab({
   const overrideCount = (key: string) =>
     payStructures.filter((s) => s.scope === 'employee' && s.departmentKey === key).length;
 
-  const managerLabel = (key: string): string | null => {
-    const emails = Array.from(managersForKey.get(key) ?? []);
-    if (emails.length === 0) return null;
-    const names = emails.slice(0, 2).map((e) => firstNameOf(nameByEmail.get(e) ?? e));
-    const extra = emails.length - names.length;
-    return extra > 0 ? `${names.join(', ')} +${extra}` : names.join(', ');
+  const joinNames = (names: string[]): string | null => {
+    if (names.length === 0) return null;
+    const shown = names.slice(0, 2);
+    const extra = names.length - shown.length;
+    return extra > 0 ? `${shown.join(', ')} +${extra}` : shown.join(', ');
   };
+
+  const managerLabelForBuiltin = (key: string): string | null =>
+    joinNames(
+      Array.from(managersForKey.get(key) ?? []).map((e) => firstNameOf(nameByEmail.get(e) ?? e)),
+    );
+
+  const managerLabelForEntry = (entry: DepartmentRegistryEntry): string | null =>
+    joinNames(entry.members.filter((m) => m.isManager).map((m) => firstNameOf(m.name)));
 
   const sortedRegistry = useMemo(
     () => [...registry].sort((a, b) => a.name.localeCompare(b.name)),
@@ -191,8 +190,8 @@ export default function DepartmentsTab({
             Departments
           </h2>
           <p className="mt-0.5 max-w-xl text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">
-            Spin up a department, seat its manager and first members on the Global Master List,
-            and set the starting rate in one pass.
+            Spin up a department with its manager, members, sub-departments and starting rate in
+            one pass -- tracked right here, independent of the Global Master List.
           </p>
         </div>
         <CreateDepartmentButton onClick={() => setWizardOpen(true)} />
@@ -214,9 +213,10 @@ export default function DepartmentsTab({
               No departments created here yet
             </p>
             <p className="mx-auto mt-1 max-w-md text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">
-              &ldquo;Create a Department&rdquo; adds the label to the Global Master List with its first
-              people (a manager is required), optional sub-departments like HSL&rsquo;s teams, and a
-              starting pay rate the Pay Structure tab manages afterwards.
+              &ldquo;Create a Department&rdquo; sets one up with its first people (a manager is
+              required), optional sub-departments like HSL&rsquo;s teams, and a starting pay rate the
+              Pay Structure tab manages afterwards. Everything is kept here -- nothing is written to
+              the Global Master List.
             </p>
           </div>
         ) : (
@@ -234,8 +234,10 @@ export default function DepartmentsTab({
                         {entry.name}
                       </h3>
                       <p className="mt-0.5 text-[11px] text-zinc-500 dark:text-zinc-400">
-                        {memberCountForEntry(entry)} on the roster
-                        {managerLabel(entry.key) ? ` · Manager: ${managerLabel(entry.key)}` : ' · No manager assigned'}
+                        {entry.members.length} {entry.members.length === 1 ? 'person' : 'people'}
+                        {managerLabelForEntry(entry)
+                          ? ` · Manager: ${managerLabelForEntry(entry)}`
+                          : ' · No manager assigned'}
                       </p>
                     </div>
                     <span className="shrink-0 rounded-full bg-orange-100 px-2 py-0.5 text-[10px] font-semibold text-orange-700 dark:bg-blue-950/60 dark:text-blue-300">
@@ -293,7 +295,7 @@ export default function DepartmentsTab({
         <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950">
           {DEPARTMENTS.map((d, i) => {
             const rate = deptRate(d.key);
-            const label = managerLabel(d.key);
+            const label = managerLabelForBuiltin(d.key);
             return (
               <div
                 key={d.key}
@@ -329,9 +331,10 @@ export default function DepartmentsTab({
           })}
         </div>
         <p className="mt-2 text-[11px] leading-relaxed text-zinc-400 dark:text-zinc-500">
-          Departments created here appear in every people dropdown and can hold rates right away.
-          Payroll Wizard tabs and KPI calculators are wired per-department in code, so a new
-          department joins those once engineering adds it.
+          In-app departments are self-contained: their people are tracked here (not on the Global
+          Master List) and their rates work in Pay Structure right away. Payroll Wizard tabs and
+          KPI calculators are wired per-department in code, so a new department joins those once
+          engineering adds it.
         </p>
       </section>
 
@@ -498,16 +501,15 @@ function CreateDepartmentWizard({
 
   // ----- validation per step -----
   const trimmedName = name.trim();
+  // Collisions are checked against the things this feature owns or maps to
+  // (built-in payroll departments + the in-app registry) -- deliberately NOT
+  // against Global Master List department strings, which live elsewhere.
   const existingNames = useMemo(() => {
     const set = new Set<string>();
     for (const d of DEPARTMENTS) set.add(d.name.toLowerCase());
     for (const e of registry) set.add(e.name.toLowerCase());
-    for (const p of roster) {
-      const dep = p.department.trim().toLowerCase();
-      if (dep) set.add(dep);
-    }
     return set;
-  }, [registry, roster]);
+  }, [registry]);
   const nameCollision =
     trimmedName.length > 0 &&
     (existingNames.has(trimmedName.toLowerCase()) || normalizeDeptToKey(trimmedName) !== null);
@@ -916,9 +918,9 @@ function StepName({
         </AnimatePresence>
       </div>
       <div className="rounded-lg border border-orange-100 bg-orange-50/50 p-3 text-xs leading-relaxed text-zinc-600 dark:border-blue-950/60 dark:bg-blue-950/10 dark:text-zinc-400">
-        This exact name becomes the <span className="font-semibold">Department</span> label on the
-        Global Master List, so it shows up in People, HR onboarding, transfers and manager
-        assignment automatically.
+        Departments created here are self-contained: people and structure are tracked in the
+        Payment Catalog (nothing is written to the Global Master List), managers get dashboard
+        oversight, and the Pay Structure tab carries the rate.
       </div>
     </div>
   );
@@ -959,8 +961,8 @@ function StepSubDepartments({
           Does {deptName || 'this department'} need sub-departments?
         </p>
         <p className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">
-          Like HSL: one department on the master list, split into internal teams
-          (Callback Team, Case Managers, Medical Records...).
+          Like HSL: one department split into internal teams (Callback Team, Case Managers,
+          Medical Records...).
         </p>
         <div className="mt-2.5 inline-flex rounded-md border border-zinc-200 p-0.5 dark:border-zinc-800">
           {(['no', 'yes'] as const).map((opt) => (
@@ -1114,11 +1116,9 @@ function StepPeople({
       ...members,
       {
         id: nextMemberId(),
-        kind: 'existing',
         name: p.name,
         workEmail: p.email,
         personalEmail: null,
-        currentDepartment: p.department || null,
         isManager: members.length === 0, // first person defaults to manager
         subDepartment: null,
       },
@@ -1137,11 +1137,9 @@ function StepPeople({
       ...members,
       {
         id: nextMemberId(),
-        kind: 'new',
         name: newName.trim(),
         workEmail: newWorkEmail.trim().toLowerCase(),
         personalEmail: newPersonalEmail.trim().toLowerCase() || null,
-        currentDepartment: null,
         isManager: members.length === 0,
         subDepartment: null,
         startDate: newStartDate || manilaTodayIso(),
@@ -1247,7 +1245,8 @@ function StepPeople({
               )}
             </AnimatePresence>
             <p className="mt-1.5 text-[11px] text-zinc-400 dark:text-zinc-500">
-              Picking someone transfers their master-list row into {deptName || 'the new department'}.
+              Autofills their name and email into {deptName || 'the new department'} -- their
+              roster row is not touched.
             </p>
           </div>
         ) : (
@@ -1326,12 +1325,7 @@ function StepPeople({
                       </span>
                     )}
                   </span>
-                  <span className="block truncate text-[11px] text-zinc-400">
-                    {m.workEmail}
-                    {m.kind === 'existing'
-                      ? ` · from ${m.currentDepartment || 'no department'}`
-                      : ' · new master-list row'}
-                  </span>
+                  <span className="block truncate text-[11px] text-zinc-400">{m.workEmail}</span>
                 </span>
 
                 {subs.length > 0 && (
@@ -1657,7 +1651,7 @@ function CreationProgress({
         </h2>
         <p className="mx-auto mt-1 max-w-sm text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">
           {summary
-            ? `${summary.managersAdded} manager${summary.managersAdded === 1 ? '' : 's'}, ${summary.membersAdded} member${summary.membersAdded === 1 ? '' : 's'} on the Global Master List${summary.rateSet ? ', starting rate set' : ''}.`
+            ? `${summary.managersAdded} manager${summary.managersAdded === 1 ? '' : 's'} and ${summary.membersAdded} member${summary.membersAdded === 1 ? '' : 's'} added${summary.rateSet ? ', starting rate set' : ''}.`
             : error
               ? error.message
               : 'Creating department, adding managers, adding members and setting pay rates.'}

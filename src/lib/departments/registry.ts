@@ -3,13 +3,13 @@
 // hardcoded in src/lib/payroll/department-bonus.ts, which the Google-Sheet
 // master list sync populates).
 //
-// A department "exists" the moment its label lands in the Global Master List's
-// "Department" column on at least one active row -- every dropdown
-// (/api/departments), the People tab, and manager assignment pick it up from
-// there automatically. What the roster CANNOT hold is the department's
-// STRUCTURE: its sub-departments (HSL-style: one master-list department, many
-// internal teams) and which member belongs to which sub-department. That
-// structure lives here.
+// SELF-CONTAINED BY DESIGN: an in-app department does NOT depend on the Global
+// Master List. Its people, sub-departments (HSL-style internal teams) and
+// structure all live here; creation never writes roster rows or touches the
+// master Google Sheet. The registry connects outward only through things that
+// aren't the master list: department_managers oversight grants and the
+// department-scoped Payment Catalog pay structure (keyed by this entry's
+// `key`).
 //
 // Storage: a single JSON blob in `app_settings` under REGISTRY_SETTING_KEY
 // (see registry-db.ts) -- deliberately no new table, so the feature needs no
@@ -31,18 +31,35 @@ export interface DepartmentSubUnit {
   name: string;
 }
 
+/** A person of an in-app department. The registry is their system of record --
+ *  they may or may not also exist on the Global Master List, and this feature
+ *  neither checks nor cares. Email is the identity key within a department. */
+export interface DepartmentMemberRecord {
+  name: string;
+  /** Lower-cased; unique within the department. */
+  workEmail: string;
+  personalEmail?: string | null;
+  /** Managers also carry a department_managers oversight grant. */
+  isManager: boolean;
+  /** Sub-department key (one of the entry's subDepartments) or null. */
+  subDepartment?: string | null;
+  /** YYYY-MM-DD, informational. */
+  startDate?: string | null;
+  addedBy?: string | null;
+  /** ISO timestamp. */
+  addedAt?: string | null;
+}
+
 export interface DepartmentRegistryEntry {
   /** Stable slug key -- doubles as the PayStructure.departmentKey for this
    *  department's Payment Catalog rates (e.g. "medical_billing"). */
   key: string;
-  /** Exact "Department" string written to Global Master List rows. */
+  /** Display name (e.g. "Medical Billing"). */
   name: string;
   /** HSL-style internal teams. Empty when the department has none. */
   subDepartments: DepartmentSubUnit[];
-  /** work email (lowercased) -> sub-department key, as assigned at creation.
-   *  Advisory structure only -- the master list stays the roster's source of
-   *  truth; this records which internal team each seeded member joined. */
-  memberSubDepartments: Record<string, string>;
+  /** The department's people, managers included. */
+  members: DepartmentMemberRecord[];
   createdBy: string | null;
   /** ISO timestamp. */
   createdAt: string;
@@ -61,10 +78,9 @@ export function slugifyDeptKey(name: string): string {
 /** Built-in payroll department keys (collisions with these are rejected). */
 const BUILTIN_KEYS = new Set(DEPARTMENTS.map((d) => d.key));
 
-/** Resolves a raw master-list "Department" string to a department key, checking
- *  the built-in payroll map first, then the custom registry (name or slug
- *  match). Returns null for unknown strings -- same contract as
- *  normalizeDeptToKey. */
+/** Resolves a raw department label to a department key, checking the built-in
+ *  payroll map first, then the custom registry (name or slug match). Returns
+ *  null for unknown strings -- same contract as normalizeDeptToKey. */
 export function resolveDeptKeyWithRegistry(
   raw: string | null | undefined,
   registry: DepartmentRegistryEntry[],
@@ -81,7 +97,7 @@ export function resolveDeptKeyWithRegistry(
   return null;
 }
 
-/** True when a roster row's raw "Department" string belongs to `entry`. */
+/** True when a raw department label refers to `entry` (label or slug match). */
 export function rawDeptMatchesEntry(raw: string | null | undefined, entry: DepartmentRegistryEntry): boolean {
   if (!raw) return false;
   const needle = raw.trim().toLowerCase();
@@ -93,20 +109,15 @@ export function rawDeptMatchesEntry(raw: string | null | undefined, entry: Depar
 // ---------------------------------------------------------------------------
 
 export interface NewDepartmentMember {
-  /** 'existing' -- picked from the active roster (a transfer into the new
-   *  department); 'new' -- typed by hand (a fresh master-list row). */
-  kind: 'existing' | 'new';
   name: string;
   workEmail: string;
   personalEmail?: string | null;
-  /** The roster department an existing member transfers OUT of. */
-  currentDepartment?: string | null;
   /** Managers are required (at least one) and also get a department_managers
    *  oversight row so the department shows on their Manager dashboard. */
   isManager: boolean;
   /** Sub-department key (one of input.subDepartments) or null. */
   subDepartment?: string | null;
-  /** YYYY-MM-DD "Start Date" for kind 'new' rows (defaults to today, Manila). */
+  /** YYYY-MM-DD, informational (defaults to today, Manila). */
   startDate?: string | null;
 }
 
@@ -243,8 +254,7 @@ export interface CreateDepartmentSummary {
   managersAdded: number;
   membersAdded: number;
   rateSet: boolean;
-  /** Non-fatal issues worth surfacing (e.g. a Google Sheet write that needs a
-   *  manual touch-up). Creation still succeeded. */
+  /** Non-fatal issues worth surfacing. Creation still succeeded. */
   warnings: string[];
 }
 

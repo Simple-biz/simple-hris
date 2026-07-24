@@ -1,41 +1,30 @@
 // Payment Catalog -- Departments.
 //
-// GET  -> { registry, managers } : the custom-department registry plus every
+// GET  -> { registry, managers } : the in-app department registry plus every
 //         active department_managers assignment grouped by department (lower-
 //         cased), so the Department tab can label each department's manager(s).
 // POST -> creates a department end-to-end, STREAMING progress as ndjson lines
 //         (one JSON CreateDepartmentEvent per line) so the wizard's staged
 //         loading animation tracks real work, not a timer:
 //           1. "department" -- registry entry (name + sub-departments)
-//           2. "managers"   -- master-list rows + department_managers grants
-//           3. "members"    -- master-list rows
+//           2. "managers"   -- manager member records + department_managers grants
+//           3. "members"    -- remaining member records
 //           4. "rates"      -- department-scoped Payment Catalog pay structure
 //
-// Master-list writes reuse the two battle-tested paths:
-//   - existing people MOVE via applyDepartmentTransfer (same engine as the
-//     Transfers feature: target-dept reconcile, unique-index safe) + the master
-//     Google Sheet department write-back;
-//   - new people INSERT mirroring promoteHrPendingEmployee's payload (upload-id
-//     stamping so they appear in active_employees, surname-first display name,
-//     idempotent (Work Email, Department) reuse) + the master Sheet append so
-//     the next Sheet sync doesn't retire them.
+// SELF-CONTAINED: in-app departments do NOT depend on the Global Master List.
+// People are stored as member records on the registry entry itself (a JSON
+// blob in app_settings -- see src/lib/departments/registry.ts); nothing here
+// reads or writes global_master_list or the master Google Sheet. The only
+// outward writes are department_managers oversight grants and the Payment
+// Catalog pay structure -- neither is the master list.
 //
 // Every step is idempotent, so a failed run can simply be retried: the registry
-// upserts by key, moves resolve as 'satisfied', inserts reuse the existing row,
-// manager grants no-op, and the rate upsert reuses the dept structure's id.
+// upserts by key, member merges key on work email, manager grants no-op, and
+// the rate upsert reuses the department structure's id.
 
 import { NextResponse } from 'next/server';
 import { deniedResponse, requireRateVisibilitySession } from '@/lib/auth/authorize-email';
 import { requireFeatureEdit } from '@/lib/auth/authorize-feature';
-import { createSupabaseServiceRoleClient } from '@/lib/supabase/server';
-import { getCurrentMasterListUploadId } from '@/lib/supabase/global-master-list-db';
-import { escapeLikePattern } from '@/lib/db/like-escape';
-import { masterListDisplayName } from '@/lib/name/display-name';
-import { applyDepartmentTransfer } from '@/lib/supabase/department-transfer-requests';
-import { manilaTodayIso } from '@/lib/transfers/apply-transfer';
-import { updateMasterSheetDepartment } from '@/lib/google-sheets/update-master-sheet-department';
-import { appendMasterSheetRow } from '@/lib/google-sheets/append-master-sheet';
-import { sheetWriteSucceeded } from '@/lib/supabase/hr-pending-employees';
 import {
   assignManagerDepartment,
   listAllDepartmentManagers,
@@ -50,18 +39,18 @@ import {
   type CreateDepartmentEvent,
   type CreateDepartmentInput,
   type CreateDepartmentStageKey,
+  type DepartmentMemberRecord,
   type DepartmentRegistryEntry,
   type NewDepartmentMember,
 } from '@/lib/departments/registry';
 import {
   getDepartmentRegistry,
+  mergeDepartmentMembers,
   upsertDepartmentRegistryEntry,
 } from '@/lib/departments/registry-db';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
-
-const MASTER_TABLE = process.env.NEXT_PUBLIC_SUPABASE_EMPLOYEES_TABLE?.trim() || 'global_master_list';
 
 export async function GET() {
   // Same read gate as the pay structures this tab sits beside.
@@ -88,147 +77,18 @@ export async function GET() {
   return NextResponse.json({ registry, managers, error: error ?? null });
 }
 
-/** Distinct ACTIVE roster department strings (lower-cased) -- conflict check.
- *  Paged: an unfiltered select silently caps at 1000 rows, which would hide
- *  departments living on later rows and let a duplicate name through. */
-async function listActiveDepartmentNames(): Promise<Set<string>> {
-  const supabase = createSupabaseServiceRoleClient();
-  const out = new Set<string>();
-  if (!supabase) return out;
-  const PAGE = 1000;
-  for (let from = 0; ; from += PAGE) {
-    const { data, error } = await supabase
-      .from('active_employees')
-      .select('Department')
-      .range(from, from + PAGE - 1);
-    if (error) throw new Error(`Could not read active departments: ${error.message}`);
-    const rows = (data ?? []) as Array<{ Department: string | null }>;
-    for (const row of rows) {
-      const dept = (row.Department ?? '').trim().toLowerCase();
-      if (dept) out.add(dept);
-    }
-    if (rows.length < PAGE) break;
-  }
-  return out;
-}
-
-type MemberOutcome = { warning?: string; error?: string };
-
-/** Lands one member's master-list row in the new department (move or insert),
- *  plus the matching best-effort Google Sheet write so the next Sheet sync
- *  keeps them. Idempotent per member. */
-async function ensureMemberRow(params: {
-  member: NewDepartmentMember;
-  deptName: string;
-  uploadId: string | null;
-}): Promise<MemberOutcome> {
-  const { member, deptName, uploadId } = params;
-  const supabase = createSupabaseServiceRoleClient();
-  if (!supabase) return { error: 'Supabase not configured' };
-
-  const workEmail = member.workEmail.trim().toLowerCase();
-  const personalEmail = member.personalEmail?.trim().toLowerCase() || null;
-  const who = member.name.trim() || workEmail;
-
-  // Existing roster people transfer in. If the roster row has vanished since
-  // the wizard loaded (off-board race), fall through to a fresh insert below --
-  // we hold everything an insert needs.
-  if (member.kind === 'existing') {
-    const moved = await applyDepartmentTransfer({
-      personalEmail,
-      workEmail,
-      fromDepartment: member.currentDepartment ?? '',
-      toDepartment: deptName,
-    });
-    if (moved.error) return { error: `${who}: ${moved.error}` };
-    if (moved.resolution !== 'notFound') {
-      if (moved.resolution === 'satisfied') return {};
-      try {
-        const sheet = await updateMasterSheetDepartment({
-          personalEmail,
-          workEmail,
-          fromDepartment: member.currentDepartment ?? '',
-          toDepartment: deptName,
-        });
-        if (sheet.updated === 0) {
-          return {
-            warning: `${who}: moved on the master list, but the Google Sheet row was not updated (${sheet.reason ?? 'no matching row'}) -- fix the Sheet's Department cell so the next sync doesn't undo the move.`,
-          };
-        }
-      } catch (e) {
-        const reason = e instanceof Error ? e.message : String(e);
-        return {
-          warning: `${who}: moved on the master list, but the Google Sheet write failed (${reason}).`,
-        };
-      }
-      return {};
-    }
-  }
-
-  // Fresh master-list row (kind 'new', or an 'existing' pick that no longer
-  // resolves on the roster).
-  if (!uploadId) {
-    return {
-      error: `${who}: no current master-list upload found, so a new row would be invisible. Run a master-list sync first.`,
-    };
-  }
-
-  const { data: existingRow, error: lookupErr } = await supabase
-    .from(MASTER_TABLE)
-    .select('id')
-    .ilike('Work Email', escapeLikePattern(workEmail))
-    .ilike('Department', escapeLikePattern(deptName))
-    .limit(1)
-    .maybeSingle();
-  if (lookupErr) return { error: `${who}: master lookup failed: ${lookupErr.message}` };
-
-  if (existingRow) {
-    // Re-run after a partial failure: the row is already there -- just make
-    // sure it's attached to the current upload so it stays visible.
-    const { error: touchErr } = await supabase
-      .from(MASTER_TABLE)
-      .update({ last_seen_upload_id: uploadId })
-      .eq('id', (existingRow as { id: string }).id);
-    if (touchErr) return { error: `${who}: master update failed: ${touchErr.message}` };
-  } else {
-    const payload: Record<string, unknown> = {
-      Department: deptName,
-      // Surname-first, nickname-quoted -- the same format every other master
-      // list writer uses (see promoteHrPendingEmployee).
-      Name: masterListDisplayName(member.name),
-      'Personal Email': personalEmail,
-      'Work Email': workEmail,
-      'Start Date': member.startDate ?? manilaTodayIso(),
-      first_seen_upload_id: uploadId,
-      last_seen_upload_id: uploadId,
-      source_file: 'payment_catalog_department_create',
-    };
-    const { error: insertErr } = await supabase.from(MASTER_TABLE).insert(payload);
-    if (insertErr) return { error: `${who}: master insert failed: ${insertErr.message}` };
-  }
-
-  // Master Google Sheet append (best-effort): without it the next Sheet ->
-  // Supabase sync would retire the row from active_employees.
-  try {
-    const sheet = await appendMasterSheetRow({
-      name: masterListDisplayName(member.name),
-      personalEmail: personalEmail ?? '',
-      workEmail,
-      department: deptName,
-      startDate: member.startDate ?? manilaTodayIso(),
-    });
-    if (!sheetWriteSucceeded(sheet)) {
-      return {
-        warning: `${who}: added to the master list, but the Google Sheet append failed (${sheet.reason ?? 'unknown'}) -- add them to the Sheet so the next sync keeps them.`,
-      };
-    }
-  } catch (e) {
-    const reason = e instanceof Error ? e.message : String(e);
-    return {
-      warning: `${who}: added to the master list, but the Google Sheet append failed (${reason}).`,
-    };
-  }
-  return {};
+/** Wizard member -> stored registry record (normalized emails + attribution). */
+function toMemberRecord(m: NewDepartmentMember, actor: string): DepartmentMemberRecord {
+  return {
+    name: m.name.trim(),
+    workEmail: m.workEmail.trim().toLowerCase(),
+    personalEmail: m.personalEmail?.trim().toLowerCase() || null,
+    isManager: m.isManager,
+    subDepartment: m.subDepartment ?? null,
+    startDate: m.startDate ?? null,
+    addedBy: actor,
+    addedAt: new Date().toISOString(),
+  };
 }
 
 export async function POST(request: Request) {
@@ -249,8 +109,9 @@ export async function POST(request: Request) {
   const name = input.name.trim();
   const key = slugifyDeptKey(name);
 
-  // Everything below streams, so resolve the cheap conflict/prereq checks
-  // first while a clean 4xx is still possible.
+  // Resolve the registry before streaming, while a clean 4xx/5xx is possible.
+  // An existing entry with this key means a retry / re-run, which is safe end
+  // to end (everything below merges idempotently).
   let registry: DepartmentRegistryEntry[];
   try {
     registry = await getDepartmentRegistry();
@@ -259,36 +120,6 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: message }, { status: 500 });
   }
   const existingEntry = registry.find((entry) => entry.key === key) ?? null;
-
-  try {
-    const activeDepts = await listActiveDepartmentNames();
-    // A roster department we did NOT create is a real conflict; our own entry
-    // just means this is a retry / re-run, which is safe end to end.
-    if (!existingEntry && activeDepts.has(name.toLowerCase())) {
-      return NextResponse.json(
-        { error: `"${name}" already exists on the Global Master List.` },
-        { status: 409 },
-      );
-    }
-  } catch (e) {
-    const message = e instanceof Error ? e.message : 'Could not check existing departments';
-    return NextResponse.json({ error: message }, { status: 500 });
-  }
-
-  const supabase = createSupabaseServiceRoleClient();
-  if (!supabase) {
-    return NextResponse.json({ error: 'Supabase not configured' }, { status: 500 });
-  }
-  const uploadId = await getCurrentMasterListUploadId(supabase);
-  if (!uploadId && input.members.some((m) => m.kind === 'new')) {
-    return NextResponse.json(
-      {
-        error:
-          'No current master-list upload found -- new people would be invisible on the roster. Run a master-list sync first, then retry.',
-      },
-      { status: 409 },
-    );
-  }
 
   const encoder = new TextEncoder();
   const stream = new ReadableStream<Uint8Array>({
@@ -302,22 +133,12 @@ export async function POST(request: Request) {
       };
 
       try {
-        const warnings: string[] = [];
-
         // -- Stage 1: the department itself ---------------------------------
         emit({ type: 'stage', stage: 'department', status: 'start' });
         const subUnits = input.subDepartments.map((subName) => ({
           key: slugifyDeptKey(subName),
           name: subName.trim(),
         }));
-        const memberSubDepartments: Record<string, string> = {
-          ...(existingEntry?.memberSubDepartments ?? {}),
-        };
-        for (const m of input.members) {
-          if (m.subDepartment) {
-            memberSubDepartments[m.workEmail.trim().toLowerCase()] = m.subDepartment;
-          }
-        }
         const mergedSubs = [...(existingEntry?.subDepartments ?? [])];
         for (const sub of subUnits) {
           if (!mergedSubs.some((s) => s.key === sub.key)) mergedSubs.push(sub);
@@ -326,7 +147,8 @@ export async function POST(request: Request) {
           key,
           name: existingEntry?.name ?? name,
           subDepartments: mergedSubs,
-          memberSubDepartments,
+          // Members land in stages 2 + 3; a retry keeps the ones already there.
+          members: existingEntry?.members ?? [],
           createdBy: existingEntry?.createdBy ?? actor,
           createdAt: existingEntry?.createdAt ?? new Date().toISOString(),
         };
@@ -344,10 +166,12 @@ export async function POST(request: Request) {
         const others = input.members.filter((m) => !m.isManager);
 
         emit({ type: 'stage', stage: 'managers', status: 'start' });
+        const managerMerge = await mergeDepartmentMembers(
+          key,
+          managers.map((m) => toMemberRecord(m, actor)),
+        );
+        if (managerMerge.error) return fail('managers', managerMerge.error);
         for (const member of managers) {
-          const outcome = await ensureMemberRow({ member, deptName: entry.name, uploadId });
-          if (outcome.error) return fail('managers', outcome.error);
-          if (outcome.warning) warnings.push(outcome.warning);
           const grant = await assignManagerDepartment({
             manager_email: member.workEmail,
             department: entry.name,
@@ -365,10 +189,12 @@ export async function POST(request: Request) {
         });
 
         emit({ type: 'stage', stage: 'members', status: 'start' });
-        for (const member of others) {
-          const outcome = await ensureMemberRow({ member, deptName: entry.name, uploadId });
-          if (outcome.error) return fail('members', outcome.error);
-          if (outcome.warning) warnings.push(outcome.warning);
+        if (others.length > 0) {
+          const memberMerge = await mergeDepartmentMembers(
+            key,
+            others.map((m) => toMemberRecord(m, actor)),
+          );
+          if (memberMerge.error) return fail('members', memberMerge.error);
         }
         emit({
           type: 'stage',
@@ -413,7 +239,7 @@ export async function POST(request: Request) {
           user_name: whoActor.user_name,
           user_role: whoActor.user_role,
           action: 'department.create',
-          resource: 'global_master_list',
+          resource: 'payment_catalog_departments',
           resource_id: key,
           details: {
             department: entry.name,
@@ -421,7 +247,6 @@ export async function POST(request: Request) {
             managers: managers.map((m) => m.workEmail.trim().toLowerCase()),
             members: others.map((m) => m.workEmail.trim().toLowerCase()),
             rate_set: rateSet,
-            warnings,
           },
         }).catch(() => undefined);
 
@@ -433,7 +258,7 @@ export async function POST(request: Request) {
             managersAdded: managers.length,
             membersAdded: others.length,
             rateSet,
-            warnings,
+            warnings: [],
           },
         });
         controller.close();

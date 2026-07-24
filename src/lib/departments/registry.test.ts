@@ -21,14 +21,13 @@ const entry: DepartmentRegistryEntry = {
   key: 'medical_billing',
   name: 'Medical Billing',
   subDepartments: [{ key: 'intake_team', name: 'Intake Team' }],
-  memberSubDepartments: {},
+  members: [],
   createdBy: 'kaner@simple.biz',
   createdAt: '2026-07-24T00:00:00.000Z',
 };
 
 function member(overrides: Partial<NewDepartmentMember> = {}): NewDepartmentMember {
   return {
-    kind: 'new',
     name: 'Juan Dela Cruz',
     workEmail: 'juan@simple.biz',
     isManager: true,
