@@ -12,10 +12,11 @@ import {
 import { departmentMatchesManagedAssignments } from '@/lib/managed-department-scope';
 import {
   insertTransferRequest,
-  listAllTransferRequests,
   listTransferRequestsByRequester,
   listIncomingTransfersForDepartments,
   listResolvedTransfersForDepartments,
+  listPendingTransfers,
+  listAllResolvedTransfers,
   hasPendingTransferForEmployee,
 } from '@/lib/supabase/department-transfer-requests';
 import { loadActiveDeptsByEmail, partitionStaleTransfers } from '@/lib/transfers/stale-transfers';
@@ -86,10 +87,36 @@ export async function GET(request: Request) {
   const isHr = roles.includes('hr_coordinator') || roles.includes('admin');
   const isManager = roles.includes('manager');
 
+  // Admin / HR see EVERY team's requests (not just ones they manage), but the
+  // three tabs must still split by status the same way a manager's do — otherwise
+  // every resolved (applied/approved/declined/cancelled) request lands in the
+  // Release-requests action queue wearing live Release/Decline buttons. Honor the
+  // same `scope` contract as the manager path, just without the per-department
+  // narrowing:
+  //   incoming -> only PENDING (things actually awaiting a decision), all teams
+  //   done     -> only RESOLVED, all teams
+  //   default  -> requests THIS admin raised (their own outbox)
   if (isHr) {
-    const { rows, error } = await listAllTransferRequests();
+    const scope = new URL(request.url).searchParams.get('scope');
+    if (scope === 'incoming') {
+      const { rows, error } = await listPendingTransfers();
+      if (error) return NextResponse.json({ rows: [], error }, { status: 500 });
+      // Same stale-hide as the manager queue: drop pending rows whose employee has
+      // already been moved out by another path. Fail-open on a roster read error.
+      if (rows.length === 0) return NextResponse.json({ rows, error: null });
+      const { index, error: idxErr } = await loadActiveDeptsByEmail();
+      if (idxErr) return NextResponse.json({ rows, error: null });
+      const { live } = partitionStaleTransfers(rows, index);
+      return NextResponse.json({ rows: live, error: null });
+    }
+    if (scope === 'done') {
+      const { rows, error } = await listAllResolvedTransfers();
+      if (error) return NextResponse.json({ rows: [], error }, { status: 500 });
+      return NextResponse.json({ rows, error: null });
+    }
+    const { rows, error } = await listTransferRequestsByRequester(sessionEmail);
     if (error) return NextResponse.json({ rows: [], error }, { status: 500 });
-    return NextResponse.json({ rows, error: null });
+    return NextResponse.json({ rows: await attachPendingWith(rows, sessionEmail), error: null });
   }
   if (isManager) {
     const scope = new URL(request.url).searchParams.get('scope');

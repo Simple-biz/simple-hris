@@ -5,6 +5,8 @@ import { AnimatePresence, motion } from 'motion/react';
 import {
   ArrowRight,
   ArrowRightLeft,
+  Ban,
+  CalendarClock,
   Check,
   CheckCircle2,
   ChevronLeft,
@@ -19,6 +21,7 @@ import {
   Trash2,
   TrendingUp,
   X,
+  XCircle,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
@@ -46,7 +49,7 @@ type SubTab = 'release' | 'mine' | 'done';
 /** Rows shown per page in each queue view. Charts/KPIs still read the full lists;
  *  only the visible queue is paginated so a long history (Done can hold 300 rows)
  *  stays scannable. */
-const PAGE_SIZE = 15;
+const PAGE_SIZE = 10;
 
 const STATUS_STYLE: Record<TransferRequestStatus, string> = {
   pending: 'bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300',
@@ -57,10 +60,46 @@ const STATUS_STYLE: Record<TransferRequestStatus, string> = {
 };
 const STATUS_LABEL: Record<TransferRequestStatus, string> = {
   pending: 'Awaiting release',
-  approved: 'Released — scheduled',
+  approved: 'Released, scheduled',
   applied: 'Applied',
   rejected: 'Declined',
   cancelled: 'Cancelled',
+};
+
+/** Per-status visual anchor for the Done tab: a leading status icon and the
+ *  matching text/soft-fill colors. Reuses the same hues as {@link STATUS_STYLE}
+ *  (amber/sky/emerald/rose/zinc) so the pill, the icon, and the row read as one
+ *  color language rather than introducing anything new. `icon` is a lucide
+ *  component; `dot` styles the round icon chip; `text` tints the status word. */
+const STATUS_META: Record<
+  TransferRequestStatus,
+  { icon: typeof CheckCircle2; dot: string; text: string }
+> = {
+  pending: {
+    icon: CalendarClock,
+    dot: 'bg-amber-100 text-amber-600 dark:bg-amber-500/15 dark:text-amber-400',
+    text: 'text-amber-700 dark:text-amber-300',
+  },
+  approved: {
+    icon: CalendarClock,
+    dot: 'bg-sky-100 text-sky-600 dark:bg-sky-500/15 dark:text-sky-400',
+    text: 'text-sky-700 dark:text-sky-300',
+  },
+  applied: {
+    icon: CheckCircle2,
+    dot: 'bg-emerald-100 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-400',
+    text: 'text-emerald-700 dark:text-emerald-300',
+  },
+  rejected: {
+    icon: XCircle,
+    dot: 'bg-rose-100 text-rose-600 dark:bg-rose-500/15 dark:text-rose-400',
+    text: 'text-rose-700 dark:text-rose-300',
+  },
+  cancelled: {
+    icon: Ban,
+    dot: 'bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400',
+    text: 'text-zinc-500 dark:text-zinc-400',
+  },
 };
 
 /** Solid arc colors for the donut — chosen to read in both themes. Keyed to
@@ -1082,59 +1121,100 @@ export default function ManagerTransfers({ myDepartments, canInitiate }: Props) 
                     <div className="flex flex-col items-center gap-2 rounded-2xl border border-dashed border-blue-200 bg-white py-14 text-center dark:border-blue-950/40 dark:bg-[#0d1117]">
                       <ClipboardCheck className="h-7 w-7 text-blue-300 dark:text-blue-800" />
                       <p className="text-sm text-zinc-500">
-                        Released and declined requests for your team will show up here.
+                        Resolved transfers show up here once released, applied, declined, or cancelled.
                       </p>
                     </div>
                   ) : (
                     <>
                     <div className="overflow-hidden rounded-2xl border border-blue-100/80 bg-white dark:border-blue-950/40 dark:bg-zinc-950">
                       <div className="divide-y divide-blue-100/70 dark:divide-blue-950/40">
-                        {pageDone.map((r) => (
-                          <div key={r.id} className="flex flex-wrap items-center justify-between gap-2 px-3 py-2.5">
-                            <div className="min-w-0">
-                              <div className="text-[13px] font-medium text-zinc-800 dark:text-zinc-200">
-                                {r.employee_name ?? r.employee_email}
-                              </div>
-                              <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[11px] text-zinc-500">
-                                <span>{r.from_department}</span>
-                                <ArrowRight className="h-3 w-3" />
-                                <span>{r.to_department}</span>
-                                {(r.effective_date || r.proposed_effective_date) && (
-                                  <span className="text-zinc-400">
-                                    · eff {r.effective_date ?? r.proposed_effective_date}
-                                  </span>
-                                )}
-                                <span className="text-zinc-400">· requested by {r.requested_by}</span>
-                                {(() => {
-                                  const stamp =
-                                    r.status === 'applied'
-                                      ? r.applied_at ?? r.decided_at ?? r.updated_at
-                                      : r.decided_at ?? r.updated_at;
-                                  const label = r.status === 'applied' ? 'applied' : 'decided';
-                                  return (
-                                    <span className="text-zinc-400" title={fullStamp(stamp)}>
-                                      · {label} {timeAgo(stamp)}
-                                    </span>
-                                  );
-                                })()}
-                                {(r.status === 'rejected' || r.status === 'cancelled') && r.approver_note ? (
-                                  <span className="text-rose-500">· &ldquo;{r.approver_note}&rdquo;</span>
-                                ) : null}
-                              </div>
-                            </div>
-                            <div className="flex shrink-0 items-center gap-2">
+                        {pageDone.map((r) => {
+                          const meta = STATUS_META[r.status];
+                          const StatusIcon = meta.icon;
+                          const stamp =
+                            r.status === 'applied'
+                              ? r.applied_at ?? r.decided_at ?? r.updated_at
+                              : r.decided_at ?? r.updated_at;
+                          const effDate = r.effective_date ?? r.proposed_effective_date;
+                          const note =
+                            (r.status === 'rejected' || r.status === 'cancelled') && r.approver_note
+                              ? r.approver_note
+                              : null;
+                          return (
+                            <div
+                              key={r.id}
+                              className="group flex items-start gap-3 px-3 py-3 transition-colors hover:bg-zinc-50/80 dark:hover:bg-zinc-900/40"
+                            >
+                              {/* Status anchor — scan the outcome straight down the left edge. */}
                               <span
                                 className={cn(
-                                  'rounded-full px-2 py-0.5 text-[11px] font-semibold',
-                                  STATUS_STYLE[r.status],
+                                  'mt-0.5 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full',
+                                  meta.dot,
                                 )}
+                                title={STATUS_LABEL[r.status]}
                               >
-                                {STATUS_LABEL[r.status]}
+                                <StatusIcon className="h-4 w-4" />
                               </span>
-                              {renderDeleteControl(r)}
+
+                              <div className="min-w-0 flex-1">
+                                {/* Line 1 — name + outcome word, timestamp trails right. */}
+                                <div className="flex items-baseline justify-between gap-2">
+                                  <div className="flex min-w-0 items-baseline gap-1.5">
+                                    <span className="truncate text-[13px] font-semibold text-zinc-900 dark:text-white">
+                                      {r.employee_name ?? r.employee_email}
+                                    </span>
+                                    <span
+                                      className={cn(
+                                        'shrink-0 text-[11px] font-medium',
+                                        meta.text,
+                                      )}
+                                    >
+                                      {STATUS_LABEL[r.status]}
+                                    </span>
+                                  </div>
+                                  <span
+                                    className="shrink-0 text-[11px] tabular-nums text-zinc-400 dark:text-zinc-500"
+                                    title={fullStamp(stamp)}
+                                  >
+                                    {timeAgo(stamp)}
+                                  </span>
+                                </div>
+
+                                {/* Line 2 — the move, as chips consistent with the Release queue. */}
+                                <div className="mt-1.5 flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 text-[11px]">
+                                  <span className="shrink-0 rounded bg-zinc-100 px-1.5 py-0.5 font-medium text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
+                                    {r.from_department}
+                                  </span>
+                                  <ArrowRight className="h-3 w-3 shrink-0 text-zinc-400" />
+                                  <span className="shrink-0 rounded bg-blue-600 px-1.5 py-0.5 font-medium text-white">
+                                    {r.to_department}
+                                  </span>
+                                  {effDate && (
+                                    <span className="shrink-0 text-zinc-400 dark:text-zinc-500">
+                                      eff {effDate}
+                                    </span>
+                                  )}
+                                  <span className="min-w-0 truncate text-zinc-400 dark:text-zinc-500">
+                                    by {r.requested_by}
+                                  </span>
+                                </div>
+
+                                {/* Line 3 — the decline/cancel reason, given room to read. */}
+                                {note && (
+                                  <p className="mt-1.5 rounded-md bg-rose-50 px-2 py-1 text-[11px] leading-snug text-rose-700 dark:bg-rose-500/10 dark:text-rose-300">
+                                    &ldquo;{note}&rdquo;
+                                  </p>
+                                )}
+                              </div>
+
+                              {/* Delete — quiet until you reach for the row, but always
+                                  reachable on touch (no hover) via the faint resting state. */}
+                              <div className="mt-0.5 shrink-0 opacity-40 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100">
+                                {renderDeleteControl(r)}
+                              </div>
                             </div>
-                          </div>
-                        ))}
+                          );
+                        })}
                       </div>
                     </div>
                     <Paginator

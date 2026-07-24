@@ -154,6 +154,11 @@ import {
 import { downloadPayrollReportPdf, type PayrollReportRow } from '@/lib/payroll-wizard/report-pdf';
 import { usePabPeriodSettings } from '@/hooks/usePabPeriodSettings';
 import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
+import {
+  resolveDeptKeyWithRegistry,
+  slugifyDeptKey,
+  type DepartmentRegistryEntry,
+} from '@/lib/departments/registry';
 import { isFinalPayrollWeekOfMonth } from '@/lib/payroll/bonus-cadence';
 import { isFinalPabWeek as gateIsFinalPabWeek } from '@/lib/payroll/dispatch-bonuses';
 import { parseLocalDateFromIso, resolvePabRangeForMonth, yearMonthKey, PAB_PERIOD_EXCLUSIONS_KEY } from '@/lib/pab-period-settings';
@@ -1402,6 +1407,10 @@ export default function PayrollWizard({
   }>>([]);
   const [decidingDispute, setDecidingDispute] = useState<string | null>(null);
   const [employeeDepts, setEmployeeDepts] = useState<Record<string, string>>({});
+  /** In-app departments created from Payment Catalog → Department (the registry).
+   *  Lets the Additions dept rail + dept-name resolution recognise departments
+   *  that aren't in the hard-coded built-in `DEPARTMENTS` list. */
+  const [customDepartments, setCustomDepartments] = useState<DepartmentRegistryEntry[]>([]);
   const [employeeBonuses, setEmployeeBonuses] = useState<Record<string, Record<string, boolean>>>({});
   /** Accounting-side per-employee bonus overrides. When present, replaces the auto-computed total. */
   const [bonusOverrides, setBonusOverrides] = useState<Record<string, number>>({});
@@ -5001,6 +5010,56 @@ export default function PayrollWizard({
     [sysBonusCfg, deptKeyForEmail],
   );
 
+  /**
+   * The department list the Additions tab renders as its rail (and every
+   * dept-name lookup resolves against). Built-in `DEPARTMENTS` are always
+   * present; on top of them we surface:
+   *   • in-app departments from the registry (Payment Catalog → Department), and
+   *   • any dept key that people in THIS run resolved to but that isn't a
+   *     built-in or a registry entry (a master-list department label whose slug
+   *     has no dedicated tab) — so nobody is dropped into an invisible bucket.
+   * Same `{ key, name, bonuses }` shape as `DEPARTMENTS`; custom/derived
+   * departments carry no built-in bonus toggles (`bonuses: []`).
+   */
+  const additionsDepartments = useMemo(() => {
+    const list = DEPARTMENTS.map(d => ({ ...d }));
+    const seen = new Set(list.map(d => d.key));
+
+    // In-app registry departments.
+    for (const entry of customDepartments) {
+      if (seen.has(entry.key)) continue;
+      seen.add(entry.key);
+      list.push({ key: entry.key, name: entry.name, bonuses: [] });
+    }
+
+    // Any dept key present on a payable row but not yet represented (e.g. a
+    // master-list department label with no built-in/registry tab). Prefer a
+    // registry display name; otherwise humanise the slug.
+    const nameForKey = (key: string): string => {
+      const reg = customDepartments.find(e => e.key === key);
+      if (reg) return reg.name;
+      return key
+        .split('_')
+        .map(w => (w ? w[0].toUpperCase() + w.slice(1) : w))
+        .join(' ');
+    };
+    for (const key of Object.values(employeeDepts)) {
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      list.push({ key, name: nameForKey(key), bonuses: [] });
+    }
+
+    return list;
+  }, [customDepartments, employeeDepts]);
+
+  /** Resolve a dept key → its Additions-list entry (built-in, registry, or
+   *  derived), replacing the old hard-coded `DEPARTMENTS.find(...)` lookups. */
+  const findAdditionsDept = useCallback(
+    (key: string | null | undefined) =>
+      key ? additionsDepartments.find(d => d.key === key) : undefined,
+    [additionsDepartments],
+  );
+
   const bonusTotals = useMemo(() => {
     const result: Record<string, number> = {};
 
@@ -5294,7 +5353,7 @@ export default function PayrollWizard({
       }
       const deptKey = employeeDepts[r.email] ?? null;
       const deptName = deptKey
-        ? DEPARTMENTS.find((d) => d.key === deptKey)?.name ?? null
+        ? findAdditionsDept(deptKey)?.name ?? null
         : null;
       const toggles = employeeBonuses[r.email] ?? {};
       // No rates in Supabase → employee is US / paid externally / unseeded.
@@ -5448,6 +5507,7 @@ export default function PayrollWizard({
     isTechDeptEligible,
     isPabExcluded,
     usdToPhpRate,
+    findAdditionsDept,
   ]);
 
   /**
@@ -6076,6 +6136,31 @@ export default function PayrollWizard({
   }, [currentStep, calcSourceFile, loadSourceFileRows]);
 
   /**
+   * Load the in-app department registry (Payment Catalog → Department) once on
+   * mount so the Additions dept rail and dept-name resolution recognise
+   * departments beyond the hard-coded built-ins. Best-effort — a failed read
+   * just leaves the built-in list, exactly as before.
+   */
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch('/api/payment-catalog/departments');
+        if (!res.ok) return;
+        const json = await res.json();
+        if (!cancelled && Array.isArray(json?.registry)) {
+          setCustomDepartments(json.registry as DepartmentRegistryEntry[]);
+        }
+      } catch {
+        /* built-in departments only */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  /**
    * Auto-populate employeeDepts whenever calcResults, masterEmployees, or
    * hubstaffData change. Existing manual assignments are preserved.
    *
@@ -6129,7 +6214,12 @@ export default function PayrollWizard({
           deptRaw = hubRow?.department ?? null;
         }
 
-        const deptKey = normalizeDeptToKey(deptRaw);
+        // Built-in payroll key first; then in-app departments (Payment Catalog →
+        // Department) by name/slug, so a person whose department is a custom dept
+        // (e.g. "Executive Assistants") gets a real bucket instead of being
+        // silently dropped from every Additions tab.
+        const deptKey =
+          normalizeDeptToKey(deptRaw) ?? resolveDeptKeyWithRegistry(deptRaw, customDepartments);
         if (deptKey) {
           next[calcRow.email] = deptKey;
           changed = true;
@@ -6138,7 +6228,7 @@ export default function PayrollWizard({
 
       return changed ? next : prev;
     });
-  }, [calcResults, masterIndex, ratesByEmail, hubstaffByEmail]);
+  }, [calcResults, masterIndex, ratesByEmail, hubstaffByEmail, customDepartments]);
 
   const payrollComparison = useMemo(
     () => comparePayrollToMaster(masterEmployees, hubstaffData),
@@ -8439,7 +8529,7 @@ export default function PayrollWizard({
       case 5: {
         // ──────────── Additions step ────────────
         // (Defined here after the Orphanage block; Orphanage = step 3, HSL = step 4, Additions = step 5.)
-        const activeDept = DEPARTMENTS.find(d => d.key === activeDeptTab) ?? DEPARTMENTS[0]!;
+        const activeDept = findAdditionsDept(activeDeptTab) ?? additionsDepartments[0]!;
         // Hide the PAB / Tech columns entirely for a department that the bonus
         // is not assigned to (or is globally disabled) — no empty placeholder.
         const pabColShown = isDeptEligible(sysBonusCfg.pab, activeDeptTab);
@@ -9362,7 +9452,7 @@ export default function PayrollWizard({
                 <p className="hidden px-1 pb-1 text-[10px] font-semibold uppercase tracking-wider text-zinc-400 xl:block dark:text-zinc-500">
                   Departments
                 </p>
-                {DEPARTMENTS.filter(dept => dept.key !== 'hogan_smith_law').map(dept => {
+                {additionsDepartments.filter(dept => dept.key !== 'hogan_smith_law').map(dept => {
                   const count = effectiveCalcResults.filter(r => employeeDepts[r.email] === dept.key).length;
                   const pendingAdj = pendingAdjustmentCountByDept.get(dept.key) ?? 0;
                   const isActive = activeDeptTab === dept.key;
@@ -10392,7 +10482,7 @@ export default function PayrollWizard({
                                   const parts = breakdown
                                     ? Object.entries(breakdown)
                                         .filter(([, v]) => v)
-                                        .map(([d, v]) => `${DEPARTMENTS.find((x) => x.key === d)?.name ?? d} — ${formatPHP(v)}`)
+                                        .map(([d, v]) => `${findAdditionsDept(d)?.name ?? d} — ${formatPHP(v)}`)
                                     : [];
                                   const multi = parts.length > 1;
                                   const title = parts.length > 0
@@ -11874,7 +11964,7 @@ export default function PayrollWizard({
           return {
             ...r,
             deptKey: employeeDepts[r.email] ?? null,
-            deptName: DEPARTMENTS.find(d => d.key === employeeDepts[r.email])?.name ?? '—',
+            deptName: findAdditionsDept(employeeDepts[r.email])?.name ?? '—',
             bonusTotal: getEffectiveBonus(r.email),
             mesaDeduction: mesaDed,
             orphanagePay,
@@ -12155,7 +12245,7 @@ export default function PayrollWizard({
                 else groupMap.set(k, [row]);
               }
               const deptGroups: { key: string; name: string; rows: typeof finalPayRows }[] = [
-                ...DEPARTMENTS.filter(d => groupMap.has(d.key)).map(d => ({
+                ...additionsDepartments.filter(d => groupMap.has(d.key)).map(d => ({
                   key: d.key,
                   name: d.name,
                   rows: groupMap.get(d.key)!,

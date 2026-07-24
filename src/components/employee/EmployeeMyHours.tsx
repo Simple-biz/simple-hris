@@ -171,17 +171,16 @@ type EmployeeMyHoursProps = {
 const WORK_START_HOUR_EDT = 9; // 9 AM EDT
 const WORK_HOURS_PER_DAY = 8; // 9 AM - 5 PM EDT
 const DAY_LABELS_FULL = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-// Weekly pay cap: regular rate covers the first 40h of the Mon-Sun week, the OT
-// rate the next 5h; hours past 45 in the week are unpaid. Both rates are
+// Weekly pay: regular rate covers the first 40h of the Mon-Sun week; EVERY hour
+// past 40h is paid at the OT rate with NO upper ceiling — real Hubstaff overtime
+// shows in full ("if there's overtime, it is what it is"). Both rates are
 // per-employee (resolved from their rate history / cache).
 const WEEKLY_REG_CAP_HOURS = 40;
-const WEEKLY_OT_CAP_HOURS = 5;
-const WEEKLY_PAID_CAP_HOURS = WEEKLY_REG_CAP_HOURS + WEEKLY_OT_CAP_HOURS; // 45
 
 /**
  * Pay for `hours` worked starting at `startCum` cumulative hours into the week,
- * splitting across the regular band (0-40h) and OT band (40-45h). Hours beyond
- * 45h in the week earn nothing.
+ * splitting across the regular band (0-40h) and the OT band (everything past
+ * 40h). There is no weekly ceiling — hours beyond 40h all earn the OT rate.
  */
 function weeklyCappedPay(
   startCum: number,
@@ -191,8 +190,7 @@ function weeklyCappedPay(
 ): number {
   const end = startCum + hours;
   const regH = Math.max(0, Math.min(end, WEEKLY_REG_CAP_HOURS) - Math.min(startCum, WEEKLY_REG_CAP_HOURS));
-  const otH =
-    Math.max(0, Math.min(end, WEEKLY_PAID_CAP_HOURS) - Math.max(startCum, WEEKLY_REG_CAP_HOURS));
+  const otH = Math.max(0, end - Math.max(startCum, WEEKLY_REG_CAP_HOURS));
   return regH * regRate + otH * (otRate ?? regRate);
 }
 
@@ -398,8 +396,8 @@ function WeeklyEarningsRail({
         </div>
         <p className="pl-10 text-[10px] leading-snug text-zinc-500 dark:text-zinc-500">
           {liveDays
-            ? 'Real Hubstaff tracked time — today updates every few minutes while you track. Capped at 40h regular + 5h OT per week.'
-            : 'Projected at a full 8h day (9 AM–5 PM EDT). Today ticks live. Capped at 40h regular + 5h OT per week.'}
+            ? 'Real Hubstaff tracked time — today updates every few minutes while you track. First 40h/week at your regular rate, every hour past 40h at your OT rate — no cap.'
+            : 'Projected at a full 8h day (9 AM–5 PM EDT). Today ticks live. First 40h/week at your regular rate, every hour past 40h at your OT rate — no cap.'}
         </p>
       </CardHeader>
       <CardContent className="flex flex-1 flex-col gap-3 px-4 pb-5 pt-0 sm:px-5">

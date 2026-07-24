@@ -349,6 +349,26 @@ export async function cancelTransferRequestIfOwned(params: {
   return { error: error?.message ?? null };
 }
 
+/**
+ * Every RESOLVED release request across all departments (anything NOT pending —
+ * approved / applied / rejected / cancelled), newest-activity first. Feeds the
+ * admin/HR "Done" tab, which spans all teams (unlike the per-department
+ * {@link listResolvedTransfersForDepartments}).
+ */
+export async function listAllResolvedTransfers(
+  limit = 300,
+): Promise<{ rows: DepartmentTransferRequestRow[]; error: string | null }> {
+  const supabase = createSupabaseServiceRoleClient();
+  if (!supabase) return { rows: [], error: 'Supabase not configured' };
+  const { data, error } = await supabase
+    .from(TABLE)
+    .select('*')
+    .neq('status', 'pending')
+    .order('updated_at', { ascending: false })
+    .limit(limit);
+  return { rows: (data ?? []) as DepartmentTransferRequestRow[], error: error?.message ?? null };
+}
+
 /** Every still-pending release request (any source department) — the stale-sweep
  *  input for the transfer cron. */
 export async function listPendingTransfers(
