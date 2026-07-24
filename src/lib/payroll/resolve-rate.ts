@@ -37,6 +37,7 @@ import {
 import { phpPerUnit, type FxRates } from '@/lib/fx/currency-fx';
 import { normEmail } from '@/lib/email/norm-email';
 import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
+import { slugifyDeptKey } from '@/lib/departments/registry';
 
 /** Indexed view of the catalog for O(1) per-employee resolution. */
 export interface CatalogRateIndex {
@@ -133,8 +134,16 @@ export function resolveDeptCatalogRate(
   fx: FxRates,
 ): ResolvedCatalogRate | null {
   if (!deptRaw) return null;
-  // Accept either a raw department name or an already-canonical key.
-  const key = normalizeDeptToKey(deptRaw) ?? (index.byDeptKey.has(deptRaw) ? deptRaw : null);
+  // Accept a raw department name or an already-canonical key. In-app
+  // departments (Payment Catalog -> Department) key their structures by the
+  // slug of their label ("Executive Assistants" -> "executive_assistants"),
+  // which the built-in alias map doesn't know -- so when it misses, try the
+  // slug before giving up. Keeps Readiness / People / live dispatch resolving
+  // a custom department's base rate exactly like a built-in one.
+  const slug = slugifyDeptKey(deptRaw);
+  const key =
+    normalizeDeptToKey(deptRaw) ??
+    (index.byDeptKey.has(deptRaw) ? deptRaw : slug && index.byDeptKey.has(slug) ? slug : null);
   if (!key) return null;
   const s = index.byDeptKey.get(key);
   return s ? toResolved(s, fx) : null;
