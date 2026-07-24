@@ -63,7 +63,15 @@ import { cn } from '@/lib/utils';
 import { normEmail } from '@/lib/email/norm-email';
 import type { EmployeeRow } from '@/lib/supabase/employees';
 import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
+import { slugifyDeptKey } from '@/lib/departments/registry';
 import { DEPARTMENTS, DEPT_DESCRIPTION, MANAGER_BONUS_DEPT_KEYS } from '@/lib/payroll/department-bonus';
+
+/** Unknown keys are in-app (Payment Catalog -> Department) departments whose
+ *  slug derives from the label -- humanize it back ("executive_assistants" ->
+ *  "Executive Assistants"). Built-in keys never reach this fallback. */
+function humanizeDeptKey(key: string): string {
+  return key.replace(/_+/g, ' ').replace(/(^|\s)[a-z]/g, (c) => c.toUpperCase());
+}
 import { isFinalPayrollWeekOfMonth } from '@/lib/payroll/bonus-cadence';
 import { QC_DEPT_KEYS, isQcDeptKey } from '@/lib/qc/constants';
 import { parseDateRangeFromFilename } from '@/lib/hubstaff/calendar-column-dedupe';
@@ -821,12 +829,29 @@ export default function DeptBonusCalculator({
     void fetchCatalog();
   }, [fetchCatalog]);
 
+  // In-app (Payment Catalog -> Department) departments a manager oversees:
+  // their grant strings miss the built-in alias map, and their catalog key is
+  // the slug of the label ("Executive Assistants" -> "executive_assistants").
+  // `hsl:*` grant strings are namespaced HSL access keys, never departments.
+  const customManagedKeys = useMemo(() => {
+    const keys = new Set<string>();
+    for (const d of managedDepts) {
+      if (!d || d.includes(':') || normalizeDeptToKey(d)) continue;
+      const slug = slugifyDeptKey(d);
+      if (slug) keys.add(slug);
+    }
+    return keys;
+  }, [managedDepts]);
+
   // Roster grouped by normalized department key, limited to this calculator's depts.
   const rosterByDept = useMemo(() => {
     const map = new Map<string, { email: string; name: string }[]>();
     for (const r of teamMembers) {
-      const key = normalizeDeptToKey(r.department);
-      if (!key || !MANAGER_BONUS_DEPT_KEYS.includes(key)) continue;
+      // Unmapped labels resolve to their slug so a managed in-app department's
+      // people group under its card; slug buckets outside customManagedKeys
+      // stay invisible (visibleDeptKeys never includes them).
+      const key = normalizeDeptToKey(r.department) ?? slugifyDeptKey(r.department ?? '');
+      if (!key || (!MANAGER_BONUS_DEPT_KEYS.includes(key) && !customManagedKeys.has(key))) continue;
       const email = rowEmail(r);
       if (!email) continue;
       const list = map.get(key) ?? [];
@@ -835,7 +860,7 @@ export default function DeptBonusCalculator({
     }
     for (const list of map.values()) list.sort((a, b) => a.name.localeCompare(b.name));
     return map;
-  }, [teamMembers]);
+  }, [teamMembers, customManagedKeys]);
 
   // Every email a single person owns — personal, work, and any alternate work
   // address — collapses to ONE identity key: the same personal-first key the
@@ -959,8 +984,8 @@ export default function DeptBonusCalculator({
   const deptLabelByKey = useMemo<Record<string, string>>(() => {
     const out: Record<string, string> = {};
     const add = (raw: string | null | undefined) => {
-      if (!raw) return;
-      const k = normalizeDeptToKey(raw);
+      if (!raw || raw.includes(':')) return;
+      const k = normalizeDeptToKey(raw) ?? slugifyDeptKey(raw);
       if (k && !(k in out)) out[k] = raw.trim();
     };
     for (const r of teamMembers) add(r.department);
@@ -1004,8 +1029,11 @@ export default function DeptBonusCalculator({
       const k = normalizeDeptToKey(d);
       if (k && MANAGER_BONUS_DEPT_KEYS.includes(k)) keys.add(k);
     }
+    // Managed in-app departments get a card too — catalog-driven like the rest
+    // (roster + any bonuses assigned under their slug key; empty state otherwise).
+    for (const k of customManagedKeys) keys.add(k);
     return Array.from(keys);
-  }, [isQc, isElevated, managedDepts, rosterByDept, commonByDept, individualByDept, qcRosterByDept]);
+  }, [isQc, isElevated, managedDepts, rosterByDept, commonByDept, individualByDept, qcRosterByDept, customManagedKeys]);
 
   const [state, setState] = useState<AllState>({});
   // Landing: filter the department cards by name.
@@ -1724,7 +1752,7 @@ export default function DeptBonusCalculator({
       patchDept(key, { dirty: false });
       const stillDraft = d.status !== 'ready' && d.status !== 'locked';
       const applied = `${rows.length} bonus${rows.length === 1 ? '' : 'es'} applied`;
-      toast.success(`${DEPARTMENTS.find((x) => x.key === key)?.name ?? key} saved`, {
+      toast.success(`${DEPARTMENTS.find((x) => x.key === key)?.name ?? humanizeDeptKey(key)} saved`, {
         description: isQc
           ? `${applied} · lock & send to manager when done`
           : stillDraft
@@ -1927,7 +1955,7 @@ export default function DeptBonusCalculator({
   const dq = deptSearch.trim().toLowerCase();
   const filteredDeptKeys = dq
     ? visibleDeptKeys.filter((k) =>
-        (DEPARTMENTS.find((d) => d.key === k)?.name ?? k).toLowerCase().includes(dq),
+        (DEPARTMENTS.find((d) => d.key === k)?.name ?? humanizeDeptKey(k)).toLowerCase().includes(dq),
       )
     : visibleDeptKeys;
 
@@ -2736,7 +2764,7 @@ export default function DeptBonusCalculator({
                   tabIndex={-1}
                   role="dialog"
                   aria-modal="true"
-                  aria-label={`${DEPARTMENTS.find((d) => d.key === openId)?.name ?? openId} KPI calculator`}
+                  aria-label={`${DEPARTMENTS.find((d) => d.key === openId)?.name ?? humanizeDeptKey(openId)} KPI calculator`}
                   className="fixed inset-0 z-[61] flex bg-white outline-none dark:bg-[#0b0e15]"
                   initial={reduceMotion ? false : { opacity: 0, scale: 1.012 }}
                   animate={{ opacity: 1, scale: 1, x: 0 }}
@@ -2771,7 +2799,7 @@ export default function DeptBonusCalculator({
                               <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: c }} aria-hidden />
                               <span className="min-w-0 flex-1">
                                 <span className="block truncate text-[12.5px] font-medium text-zinc-800 dark:text-zinc-100">
-                                  {DEPARTMENTS.find((d) => d.key === k)?.name ?? k}
+                                  {DEPARTMENTS.find((d) => d.key === k)?.name ?? humanizeDeptKey(k)}
                                 </span>
                                 <span className="block font-mono text-[10px] text-zinc-400">{fmtTotals(sub)}</span>
                               </span>
@@ -2797,7 +2825,7 @@ export default function DeptBonusCalculator({
                   tabIndex={-1}
                   role="dialog"
                   aria-modal="true"
-                  aria-label={`${DEPARTMENTS.find((d) => d.key === openId)?.name ?? openId} KPI calculator`}
+                  aria-label={`${DEPARTMENTS.find((d) => d.key === openId)?.name ?? humanizeDeptKey(openId)} KPI calculator`}
                   className="fixed left-1/2 top-1/2 z-[61] flex h-[88vh] max-h-[860px] w-[min(1120px,94vw)] flex-col overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-2xl outline-none dark:border-zinc-800 dark:bg-[#0b0e15]"
                   style={{ borderTop: `3px solid ${deptColor(openId)}` }}
                   initial={reduceMotion ? false : { x: '-50%', y: '-48%', scale: 0.96, opacity: 0 }}
@@ -2814,7 +2842,7 @@ export default function DeptBonusCalculator({
                   tabIndex={-1}
                   role="dialog"
                   aria-modal="true"
-                  aria-label={`${DEPARTMENTS.find((d) => d.key === openId)?.name ?? openId} KPI calculator`}
+                  aria-label={`${DEPARTMENTS.find((d) => d.key === openId)?.name ?? humanizeDeptKey(openId)} KPI calculator`}
                   className="fixed inset-y-0 right-0 z-[61] flex max-w-[calc(100vw_-_1.5rem)] flex-col shadow-2xl outline-none md:max-w-[calc(100vw_-_220px_-_1.5rem)]"
                   style={{ width: `${drawerWidthPx}px`, borderTop: `3px solid ${deptColor(openId)}` }}
                   initial={reduceMotion ? false : { x: '100%' }}
@@ -2840,7 +2868,7 @@ export default function DeptBonusCalculator({
               key="kpi-submit-modal"
               kind={submit.kind}
               phase={submit.phase}
-              deptName={DEPARTMENTS.find((d) => d.key === submit.key)?.name ?? submit.key}
+              deptName={DEPARTMENTS.find((d) => d.key === submit.key)?.name ?? humanizeDeptKey(submit.key)}
               msg={submit.msg}
               reduce={!!reduceMotion}
               qc={isQc}
@@ -2861,7 +2889,7 @@ export default function DeptBonusCalculator({
           {extAddKey && (
             <AddExternalMemberModal
               key="kpi-ext-add-modal"
-              deptName={DEPARTMENTS.find((d) => d.key === extAddKey)?.name ?? extAddKey}
+              deptName={DEPARTMENTS.find((d) => d.key === extAddKey)?.name ?? humanizeDeptKey(extAddKey)}
               color={deptColor(extAddKey)}
               reduce={!!reduceMotion}
               onAdd={(name, email) => {
@@ -2891,7 +2919,9 @@ export default function DeptBonusCalculator({
           isElevated
             ? 'All Departments'
             : visibleDeptKeys.length === 1
-              ? (DEPARTMENTS.find((d) => d.key === visibleDeptKeys[0])?.name ?? 'Department')
+              ? (DEPARTMENTS.find((d) => d.key === visibleDeptKeys[0])?.name ??
+                deptLabelByKey[visibleDeptKeys[0]] ??
+                humanizeDeptKey(visibleDeptKeys[0]))
               : 'My Departments'
         }
         cards={Math.max(visibleDeptKeys.length, isElevated ? 6 : 1)}
@@ -2912,7 +2942,9 @@ export default function DeptBonusCalculator({
               {isElevated
                 ? 'All Departments'
                 : visibleDeptKeys.length === 1
-                  ? DEPARTMENTS.find((d) => d.key === visibleDeptKeys[0])?.name
+                  ? (DEPARTMENTS.find((d) => d.key === visibleDeptKeys[0])?.name ??
+                    deptLabelByKey[visibleDeptKeys[0]] ??
+                    humanizeDeptKey(visibleDeptKeys[0]))
                   : 'My Departments'}
             </h2>
             <div className="mt-2">
@@ -3042,10 +3074,10 @@ export default function DeptBonusCalculator({
             return (
               <DeptSummaryCard
                 key={key}
-                name={v.dept?.name ?? key}
+                name={v.dept?.name ?? deptLabelByKey[key] ?? humanizeDeptKey(key)}
                 desc={DEPT_DESCRIPTION[key] ?? ''}
                 color={v.color}
-                monogram={deptAbbrevByKey[key] ?? initials(v.dept?.name ?? key)}
+                monogram={deptAbbrevByKey[key] ?? initials(v.dept?.name ?? deptLabelByKey[key] ?? humanizeDeptKey(key))}
                 headcount={v.allMembers.length}
                 entered={v.entered}
                 status={v.d?.status ?? 'draft'}

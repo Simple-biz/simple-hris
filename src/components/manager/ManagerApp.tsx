@@ -53,6 +53,7 @@ import DeptBonusCalculator from '@/components/manager/DeptBonusCalculator';
 import ManagerBonusHistory from '@/components/manager/ManagerBonusHistory';
 import { HSL_DEPT_KEYS, canAccessHslDept } from '@/lib/hsl-bonus/schema';
 import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
+import { slugifyDeptKey } from '@/lib/departments/registry';
 import { DEPT_INPUT_CONFIG } from '@/lib/payroll/department-bonus';
 import { isLeadGenDepartment } from '@/lib/hr/calltools-username';
 import ManagerMemberDialog from '@/components/manager/ManagerMemberDialog';
@@ -459,7 +460,12 @@ export default function ManagerApp() {
                   elevated ||
                   managed.some((dStr) => {
                     const k = normalizeDeptToKey(dStr);
-                    return !!k && k in DEPT_INPUT_CONFIG;
+                    if (k) return k in DEPT_INPUT_CONFIG;
+                    // In-app (Payment Catalog -> Department) departments miss
+                    // the alias map; the calculator renders them as
+                    // catalog-driven cards. `hsl:*` strings are HSL access
+                    // keys, not departments.
+                    return !!dStr && !dStr.includes(':') && slugifyDeptKey(dStr) !== '';
                   });
                 if (!hslVisible && !deptVisible) {
                   return (
@@ -486,6 +492,7 @@ export default function ManagerApp() {
                     if (dStr.toLowerCase().startsWith('hsl:')) return 'hsl';
                     const k = normalizeDeptToKey(dStr);
                     if (k && k in DEPT_INPUT_CONFIG) return 'dept';
+                    if (!k && !dStr.includes(':') && slugifyDeptKey(dStr)) return 'dept';
                   }
                   return 'hsl';
                 })();

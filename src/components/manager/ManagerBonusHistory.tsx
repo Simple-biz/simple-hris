@@ -25,6 +25,7 @@ import {
 } from '@/lib/hsl-bonus/schema';
 import { DEPARTMENTS, MANAGER_BONUS_DEPT_KEYS } from '@/lib/payroll/department-bonus';
 import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
+import { slugifyDeptKey } from '@/lib/departments/registry';
 import HslBonusReadyPreview from './HslBonusReadyPreview';
 import { toast } from 'sonner';
 
@@ -91,13 +92,20 @@ const CATALOG_DEPT_COLOR: Record<string, string> = {
   site_building: '#64748b',
 };
 
+/** Unknown keys are in-app (Payment Catalog -> Department) departments whose
+ *  slug derives from the label -- humanize it back ("executive_assistants" ->
+ *  "Executive Assistants"). Already-human labels pass through unchanged. */
+function humanizeDeptKey(key: string): string {
+  return key.replace(/_+/g, ' ').replace(/(^|\s)[a-z]/g, (c) => c.toUpperCase());
+}
+
 function deptDisplay(kind: RowKind, department: string): { name: string; color: string | undefined } {
   if (kind === 'hsl') {
     const d = HSL_DEPTS[department as HslDeptKey];
     return { name: d?.name ?? department, color: d?.color };
   }
   const d = DEPARTMENTS.find((x) => x.key === department);
-  return { name: d?.name ?? department, color: CATALOG_DEPT_COLOR[department] };
+  return { name: d?.name ?? humanizeDeptKey(department), color: CATALOG_DEPT_COLOR[department] };
 }
 
 const STATUS_PALETTE: Record<
@@ -183,7 +191,14 @@ export default function ManagerBonusHistory({
     const keys = new Set<string>();
     for (const d of managedDepts) {
       const k = normalizeDeptToKey(d);
-      if (k && MANAGER_BONUS_DEPT_KEYS.includes(k)) keys.add(k);
+      if (k && MANAGER_BONUS_DEPT_KEYS.includes(k)) {
+        keys.add(k);
+      } else if (!k && d && !d.includes(':')) {
+        // Managed in-app (Payment Catalog -> Department) departments: their
+        // applied rows are keyed by the slug of the label.
+        const slug = slugifyDeptKey(d);
+        if (slug) keys.add(slug);
+      }
     }
     return Array.from(keys);
   }, [managedDepts, isElevated]);
@@ -427,7 +442,7 @@ export default function ManagerBonusHistory({
     ...visibleHslDepts.map((k) => ({ key: k, label: HSL_DEPTS[k].name, color: HSL_DEPTS[k].color })),
     ...visibleCatalogDepts.map((k) => ({
       key: k,
-      label: DEPARTMENTS.find((d) => d.key === k)?.name ?? k,
+      label: DEPARTMENTS.find((d) => d.key === k)?.name ?? humanizeDeptKey(k),
       color: CATALOG_DEPT_COLOR[k],
     })),
   ];

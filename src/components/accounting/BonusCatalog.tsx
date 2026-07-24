@@ -965,6 +965,7 @@ export default function BonusCatalog({ initialData }: { initialData?: InitialAcc
                 bonuses={bonuses}
                 assignments={assignments}
                 roster={roster}
+                extraDepartments={customDepartments}
                 onAdd={addAssignment}
                 onRemove={removeAssignment}
               />
@@ -2874,15 +2875,26 @@ function AssignmentsTab({
   bonuses,
   assignments,
   roster,
+  extraDepartments,
   onAdd,
   onRemove,
 }: {
   bonuses: BonusDef[];
   assignments: BonusAssignment[];
   roster: RosterEntry[];
+  /** Custom departments created from the Department tab ({key, name}). */
+  extraDepartments: { key: string; name: string }[];
   onAdd: (a: BonusAssignment) => void;
   onRemove: (id: string) => void;
 }) {
+  const allDepts = useMemo(
+    () => [
+      ...DEPARTMENTS.map((d) => ({ key: d.key, name: d.name })),
+      ...extraDepartments,
+    ],
+    [extraDepartments],
+  );
+
   const [selectedDept, setSelectedDept] = useState<string>(DEPARTMENTS[0]?.key ?? '');
   const [deptSearch, setDeptSearch] = useState('');
 
@@ -2900,10 +2912,10 @@ function AssignmentsTab({
 
   const filteredDepts = useMemo(() => {
     const q = deptSearch.trim().toLowerCase();
-    return DEPARTMENTS.filter((d) => !q || d.name.toLowerCase().includes(q));
-  }, [deptSearch]);
+    return allDepts.filter((d) => !q || d.name.toLowerCase().includes(q));
+  }, [deptSearch, allDepts]);
 
-  const dept = DEPARTMENTS.find((d) => d.key === selectedDept) ?? DEPARTMENTS[0];
+  const dept = allDepts.find((d) => d.key === selectedDept) ?? allDepts[0];
 
   const commonForDept = assignments.filter(
     (a) => a.scope === 'department' && a.departmentKey === selectedDept,
@@ -2912,11 +2924,17 @@ function AssignmentsTab({
     (a) => a.scope === 'employee' && a.departmentKey === selectedDept,
   );
 
-  // Members of the selected department -- the pool a common bonus can exclude from.
-  const deptRoster = useMemo(
-    () => roster.filter((r) => normalizeDeptToKey(r.department) === selectedDept),
-    [roster, selectedDept],
-  );
+  // Members of the selected department -- the pool a common bonus can exclude
+  // from. Custom (Department-tab) departments have no alias-map entry, so fall
+  // back to the exact label match (same rule as the Pay Structure tab).
+  const deptRoster = useMemo(() => {
+    const nameKey = (dept?.name ?? '').trim().toLowerCase();
+    return roster.filter(
+      (r) =>
+        normalizeDeptToKey(r.department) === selectedDept ||
+        (nameKey !== '' && r.department.trim().toLowerCase() === nameKey),
+    );
+  }, [roster, selectedDept, dept]);
 
   const addAssignment = (a: BonusAssignment) => onAdd(a);
   const removeAssignment = (id: string) => onRemove(id);
@@ -2979,7 +2997,7 @@ function AssignmentsTab({
             ariaLabel="Select department"
             value={selectedDept}
             onChange={setSelectedDept}
-            options={DEPARTMENTS.map((d) => ({ value: d.key, label: d.name }))}
+            options={allDepts.map((d) => ({ value: d.key, label: d.name }))}
           />
         </div>
 
