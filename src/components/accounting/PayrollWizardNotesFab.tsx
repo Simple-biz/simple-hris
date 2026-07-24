@@ -1477,6 +1477,11 @@ function KpiDeptRow({
               HSL
             </span>
           )}
+          {dept.source === "custom" && (
+            <span className="shrink-0 rounded bg-orange-100/70 px-1 py-px text-[8.5px] font-semibold uppercase tracking-wide text-orange-700 dark:bg-blue-900/50 dark:text-blue-200">
+              In-app
+            </span>
+          )}
         </div>
         {/* Completeness bar — scored vs expected. */}
         <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-zinc-100 dark:bg-zinc-800">
@@ -2538,7 +2543,9 @@ function PayrollReadinessGlance({
                         key={`${d.source}:${d.key}`}
                         dept={d}
                         reduceMotion={reduceMotion}
-                        onOpen={canEdit ? () => setKpiDept(d) : undefined}
+                        // In-app (registry) departments have no KPI calculator
+                        // to open — their row is informational.
+                        onOpen={canEdit && d.source !== "custom" ? () => setKpiDept(d) : undefined}
                       />
                     ))}
                   </div>

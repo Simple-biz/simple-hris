@@ -61,6 +61,7 @@ import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
 import { isFinalPayrollWeekOfMonth } from '@/lib/payroll/bonus-cadence';
 import { DEPARTMENTS, MANAGER_BONUS_DEPT_KEYS } from '@/lib/payroll/department-bonus';
 import { listBonusCatalog } from '@/lib/supabase/bonus-catalog-db';
+import { getDepartmentRegistry } from '@/lib/departments/registry-db';
 import { HSL_DEPTS, HSL_DEPT_KEYS, type HslDeptKey } from '@/lib/hsl-bonus/schema';
 import { weekRangeLabel } from '@/lib/payroll/manila-week';
 import {
@@ -87,8 +88,10 @@ export type KpiDeptStatus = 'ready' | 'locked' | 'draft' | 'na' | 'no_bonus';
 export interface ReadinessKpiDept {
   key: string;
   name: string;
-  /** 'general' = manager-KPI (bonus_catalog_applied); 'hsl' = an HSL sub-dept. */
-  source: 'general' | 'hsl';
+  /** 'general' = manager-KPI (bonus_catalog_applied); 'hsl' = an HSL sub-dept;
+   *  'custom' = an in-app department (Payment Catalog -> Department registry) —
+   *  listed for visibility, no KPI calculator of its own. */
+  source: 'general' | 'hsl' | 'custom';
   cadence: 'weekly' | 'monthly';
   status: KpiDeptStatus;
   /** People with a scored (>0) entry this week. */
@@ -294,11 +297,24 @@ async function buildKpiReadiness(weekStart: string, isMonthly: boolean): Promise
     }
   }
 
+  // In-app departments (Payment Catalog -> Department registry) join the KPI
+  // list for visibility. Best-effort: a registry read failure must not take
+  // down readiness for the built-in departments.
+  let customDepts: { key: string; name: string }[] = [];
+  try {
+    const builtin = new Set<string>([...MANAGER_BONUS_DEPT_KEYS, ...HSL_DEPT_KEYS]);
+    customDepts = (await getDepartmentRegistry())
+      .filter((e) => !builtin.has(e.key))
+      .map((e) => ({ key: e.key, name: e.name }));
+  } catch {
+    customDepts = [];
+  }
+
   // General (catalog) dept aggregates for the week. Scoped to this week's
   // period_start at the DB so we don't pull the entire applied-bonus history
   // just to keep one week (this was the readiness snapshot's slowest query).
   const appliedRows: Awaited<ReturnType<typeof summarizeApplied>> = await summarizeApplied(
-    [...MANAGER_BONUS_DEPT_KEYS],
+    [...MANAGER_BONUS_DEPT_KEYS, ...customDepts.map((d) => d.key)],
     weekStart,
   ).catch(() => []);
   const appliedByDept = new Map(appliedRows.map((r) => [r.department, r]));
@@ -345,6 +361,32 @@ async function buildKpiReadiness(weekStart: string, isMonthly: boolean): Promise
       key,
       name: DEPT_NAME_BY_KEY[key] ?? key,
       source: 'general',
+      cadence: 'weekly',
+      status: deptStatus,
+      scoredCount: applied?.employee_count ?? 0,
+      employeeCount: applied?.employee_count ?? 0,
+      totalBonus: Math.round(applied?.total_bonus ?? 0),
+      updatedAt: status?.updated_at ?? applied?.applied_at ?? null,
+      lockedBy: status?.locked_by ?? applied?.applied_by ?? null,
+    });
+  }
+
+  // In-app departments — same auto-Ready rule as general depts: nothing in the
+  // catalog for its manager to submit means there is nothing pending. A custom
+  // dept that DOES get catalog assignments (keyed on its slug) follows the
+  // normal draft/applied logic.
+  for (const { key, name } of customDepts) {
+    const status = statusByDept.get(key);
+    const applied = appliedByDept.get(key);
+    const hasCatalogBonus = catalogDeptKeys === null || catalogDeptKeys.has(key);
+    let deptStatus = (status?.status ?? 'draft') as KpiDeptStatus;
+    if (deptStatus === 'draft' && !hasCatalogBonus && (applied?.employee_count ?? 0) === 0) {
+      deptStatus = 'no_bonus';
+    }
+    out.push({
+      key,
+      name,
+      source: 'custom',
       cadence: 'weekly',
       status: deptStatus,
       scoredCount: applied?.employee_count ?? 0,
