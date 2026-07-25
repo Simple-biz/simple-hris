@@ -13245,9 +13245,11 @@ export default function PayrollWizard({
             <DialogDescription className="text-zinc-600 dark:text-zinc-400">
               This removes the batch{' '}
               <span className="font-mono">{deleteSourceFilePending ?? ''}</span> entirely &mdash; its
-              entry in the uploaded-batches list and every hourly row tagged with it. Dispatched
-              payments and Reports-tab history for the cycle are kept. If this was the active
-              week, the newest remaining batch becomes active. Other batches are not affected.
+              entry in the uploaded-batches list, every hourly row tagged with it, the week&apos;s
+              MESA deposits (unless another upload still covers the same week), and its
+              &ldquo;Salary Ready to View&rdquo; notifications. Dispatched payments and Reports-tab
+              history for the cycle are kept. If this was the active week, the newest remaining
+              batch becomes active. Other batches are not affected.
             </DialogDescription>
           </DialogHeader>
           <div className="flex justify-end gap-2 pt-2">

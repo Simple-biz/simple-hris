@@ -1107,8 +1107,9 @@ export default function AdminCsvImports() {
             <DialogDescription className="text-zinc-600 dark:text-zinc-400">
               This permanently removes every row in{' '}
               <span className="font-mono text-zinc-700 dark:text-zinc-300">public.hubstaff_hours</span>{' '}
-              tagged with <span className="font-mono">{deletePending ?? ''}</span>. Other CSV batches
-              are not affected.
+              tagged with <span className="font-mono">{deletePending ?? ''}</span>, plus the week&apos;s
+              MESA deposits (unless another upload still covers the same week) and its &ldquo;Salary
+              Ready to View&rdquo; notifications. Other CSV batches are not affected.
             </DialogDescription>
           </DialogHeader>
           <div className="flex justify-end gap-2 pt-2">

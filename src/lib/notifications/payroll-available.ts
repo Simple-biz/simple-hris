@@ -154,6 +154,33 @@ export async function notifyPayrollAvailable(opts: {
   return { inserted, skipped, matched };
 }
 
+/**
+ * Reverses `notifyPayrollAvailable` when a payroll week is deleted from the
+ * Payroll Wizard: removes every "Salary Ready to View" notification whose
+ * "Open Pay Stub" button points at the deleted batch (details.source_file).
+ * Keyed on the exact filename — the same key the insert de-dupes on — so this
+ * also re-arms notifications for a corrected re-upload of the week. Other
+ * notification types (e.g. payroll.paid, written at mark-paid) are untouched.
+ */
+export async function deletePayrollAvailableNotifications(opts: {
+  sourceFile?: string | null;
+}): Promise<{ deleted: number }> {
+  const sourceFile = opts.sourceFile?.trim() || null;
+  if (!sourceFile) return { deleted: 0 };
+
+  const supabase = createSupabaseServiceRoleClient();
+  if (!supabase) return { deleted: 0 };
+
+  const { count, error } = await supabase
+    .from("employee_notifications")
+    .delete({ count: "exact" })
+    .eq("type", "payroll.available")
+    .eq("details->>source_file", sourceFile);
+  if (error) throw new Error(error.message);
+
+  return { deleted: count ?? 0 };
+}
+
 /** Pull the Sun→Sat ISO date range out of a weekly-summary filename, if present. */
 function parseWeekRange(filename: string): { start: string; end: string } | null {
   const m = /(\d{4}-\d{2}-\d{2})_to_(\d{4}-\d{2}-\d{2})/.exec(filename);

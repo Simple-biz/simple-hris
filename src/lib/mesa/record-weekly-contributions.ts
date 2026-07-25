@@ -1,6 +1,7 @@
 import { createSupabaseServiceRoleClient } from "@/lib/supabase/server";
 import { normEmail } from "@/lib/email/norm-email";
 import { mapHubstaffHoursRow } from "@/lib/supabase/hubstaff-hours";
+import { listHubstaffUploads } from "@/lib/supabase/hubstaff-hours-db";
 import {
   getEmployeeHourlyRatesRows,
   indexHourlyRatesByEmail,
@@ -200,4 +201,56 @@ export async function recordMesaWeeklyContributions(opts: {
   }
 
   return { inserted, skipped, members: members.size, weekEnd };
+}
+
+/**
+ * Reverses `recordMesaWeeklyContributions` when a payroll week is deleted from
+ * the Payroll Wizard (DELETE /api/hubstaff-hours?source_file=…) — otherwise the
+ * week's ₱100+₱300 deposits linger in `mesa_ledger` and the Employee Dashboard
+ * MESA balance keeps counting a week that no longer exists.
+ *
+ * Call AFTER `deleteHubstaffRowsBySourceFile` has removed the batch. Deposits
+ * are per-WEEK (the recorder dedupes across the Sun→Sat window), so if another
+ * remaining upload still covers the same week — a corrected re-upload under a
+ * different filename — the deposits stay and we report `weekStillCovered`.
+ *
+ * Only rows this app wrote are eligible: dated exactly on the week end with the
+ * standard ₱100/₱300 amounts and NO tracker provenance (`status`,
+ * `opt_in_number`, `fpu_completion_date` all null — every sheet-backfilled row
+ * carries opt-in tracker fields, and mid-week-dated backfill deposits never
+ * match the week-end date). Disbursement rows are excluded outright.
+ */
+export async function deleteMesaWeeklyContributions(opts: {
+  sourceFile: string;
+}): Promise<{ deleted: number; weekEnd: string | null; weekStillCovered: boolean }> {
+  const weekEnd = parseWeekEnd(opts.sourceFile);
+  // No locked date range in the filename → the recorder never wrote deposits
+  // for this batch (it skips undatable weeks), so there is nothing to reverse.
+  if (!weekEnd) return { deleted: 0, weekEnd: null, weekStillCovered: false };
+
+  const supabase = createSupabaseServiceRoleClient();
+  if (!supabase) return { deleted: 0, weekEnd, weekStillCovered: false };
+
+  // If any surviving upload still covers this pay week, its members were deduped
+  // against the very rows we'd delete — removing them would strip a week the
+  // roster still legitimately contains. Errors propagate: when we can't verify
+  // coverage, we must not touch financial rows.
+  const uploads = await listHubstaffUploads();
+  const stillCovered = uploads.some((u) => parseWeekEnd(u.source_file) === weekEnd);
+  if (stillCovered) return { deleted: 0, weekEnd, weekStillCovered: true };
+
+  const { count, error } = await supabase
+    .from(LEDGER_TABLE)
+    .delete({ count: "exact" })
+    .eq("deposit_date", weekEnd)
+    .eq("worker_contribution_php", WORKER_CONTRIB)
+    .eq("simple_match_php", COMPANY_MATCH)
+    .is("status", null)
+    .is("opt_in_number", null)
+    .is("fpu_completion_date", null)
+    .is("disbursement_date", null)
+    .is("disbursement_amount_php", null);
+  if (error) throw new Error(error.message);
+
+  return { deleted: count ?? 0, weekEnd, weekStillCovered: false };
 }

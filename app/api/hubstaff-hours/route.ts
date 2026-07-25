@@ -15,8 +15,14 @@ import {
   sortHubstaffColumnsForDisplay,
 } from "@/lib/supabase/hubstaff-hours-db";
 import { insertAuditLog } from "@/lib/supabase/audit-log";
-import { notifyPayrollAvailable } from "@/lib/notifications/payroll-available";
-import { recordMesaWeeklyContributions } from "@/lib/mesa/record-weekly-contributions";
+import {
+  notifyPayrollAvailable,
+  deletePayrollAvailableNotifications,
+} from "@/lib/notifications/payroll-available";
+import {
+  recordMesaWeeklyContributions,
+  deleteMesaWeeklyContributions,
+} from "@/lib/mesa/record-weekly-contributions";
 import {
   fetchDailyActivities,
   fetchDailyActivitiesCached,
@@ -370,6 +376,23 @@ export async function DELETE(req: NextRequest) {
 
     const { deleted, uploadsDeleted, repointedTo } = await deleteHubstaffRowsBySourceFile(sourceFile);
 
+    // Mirror the upload's side-effects: this batch also wrote the week's MESA
+    // deposits and "Salary Ready to View" notifications, so they leave with it.
+    // Best-effort — the hours are already gone, so a cleanup failure is warned
+    // and reported rather than failing the whole delete.
+    let mesaDeleted: Awaited<ReturnType<typeof deleteMesaWeeklyContributions>> | null = null;
+    try {
+      mesaDeleted = await deleteMesaWeeklyContributions({ sourceFile });
+    } catch (mesaErr) {
+      console.warn("[DELETE /api/hubstaff-hours] MESA weekly deposit cleanup failed:", mesaErr);
+    }
+    let notificationsDeleted: number | null = null;
+    try {
+      ({ deleted: notificationsDeleted } = await deletePayrollAvailableNotifications({ sourceFile }));
+    } catch (notifyErr) {
+      console.warn("[DELETE /api/hubstaff-hours] payroll.available cleanup failed:", notifyErr);
+    }
+
     const actor = await getSessionActor();
     void insertAuditLog({
       user_name:   actor.user_name,
@@ -377,11 +400,26 @@ export async function DELETE(req: NextRequest) {
       action:      'csv.delete',
       resource:    'hubstaff_hours',
       resource_id: sourceFile,
-      details:     { file: sourceFile, rows_deleted: deleted, uploads_deleted: uploadsDeleted, repointed_to: repointedTo },
+      details:     {
+        file: sourceFile,
+        rows_deleted: deleted,
+        uploads_deleted: uploadsDeleted,
+        repointed_to: repointedTo,
+        mesa_deposits_deleted: mesaDeleted?.deleted ?? null,
+        mesa_week_still_covered: mesaDeleted?.weekStillCovered ?? null,
+        notifications_deleted: notificationsDeleted,
+      },
       ip_address:  clientIp(req),
     });
 
-    return NextResponse.json({ success: true, deleted, uploadsDeleted, repointedTo });
+    return NextResponse.json({
+      success: true,
+      deleted,
+      uploadsDeleted,
+      repointedTo,
+      mesaDeleted,
+      notificationsDeleted,
+    });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     console.error("[DELETE /api/hubstaff-hours]", msg);
