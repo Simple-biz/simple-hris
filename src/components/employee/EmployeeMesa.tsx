@@ -27,6 +27,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { AnimatePresence, motion } from 'motion/react';
 import { cn } from '@/lib/utils';
+import { parseDateOnlyLocal } from '@/lib/date-only';
 import { SmoothSelect } from '@/components/ui/smooth-select';
 import { DatePicker } from '@/components/ui/date-picker';
 import { toast } from 'sonner';
@@ -1606,7 +1607,9 @@ function RealMesaHistory({
   const q = query.trim().toLowerCase();
   const visibleLines = q
     ? lines.filter((l) => {
-        const dateLabel = l.date ? formatDateShort(new Date(l.date)).toLowerCase() : '';
+        const dateLabel = l.date
+          ? formatDateShort(parseDateOnlyLocal(l.date) ?? new Date(l.date)).toLowerCase()
+          : '';
         return (
           dateLabel.includes(q) ||
           (l.label ?? '').toLowerCase().includes(q) ||
@@ -1632,7 +1635,7 @@ function RealMesaHistory({
               {summary.firstDeposit ? (
                 <> since{' '}
                   <span className="font-semibold text-zinc-900 dark:text-white">
-                    {formatDateLong(new Date(summary.firstDeposit))}
+                    {formatDateLong(parseDateOnlyLocal(summary.firstDeposit) ?? new Date(summary.firstDeposit))}
                   </span>
                 </>
               ) : null}
@@ -1716,7 +1719,9 @@ function RealMesaHistory({
                   )}
                 >
                   <td className="px-3 py-2 text-zinc-700 dark:text-zinc-300" data-label="Date">
-                    <span className="font-medium">{l.date ? formatDateShort(new Date(l.date)) : '—'}</span>
+                    <span className="font-medium">
+                      {l.date ? formatDateShort(parseDateOnlyLocal(l.date) ?? new Date(l.date)) : '—'}
+                    </span>
                     {l.kind === 'disbursement' && (
                       <span className="ml-2 inline-flex items-center rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-800 dark:bg-amber-500/20 dark:text-amber-200">
                         {l.label}
@@ -1761,6 +1766,10 @@ function RealMesaHistory({
 function parseStartDate(input: string | null | undefined): Date | null {
   const s = input?.trim();
   if (!s) return null;
+  // Bare YYYY-MM-DD must parse as a LOCAL calendar date — `new Date(s)` reads
+  // it as UTC midnight, which renders one day early west of UTC.
+  const dateOnly = parseDateOnlyLocal(s);
+  if (dateOnly) return dateOnly;
   const d = new Date(s);
   if (!Number.isNaN(d.getTime())) return d;
   // Fallback for MM/DD/YY → JS Date doesn't always parse 2-digit years correctly.

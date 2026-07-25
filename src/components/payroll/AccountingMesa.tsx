@@ -41,6 +41,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { SmoothSelect } from '@/components/ui/smooth-select';
 import { cn } from '@/lib/utils';
+import { parseDateOnlyLocal } from '@/lib/date-only';
 import { toast } from 'sonner';
 import { clearTabCache, getTabCache, hasTabCache, setTabCache, TAB_CACHE_KEYS } from '@/lib/accounting/tab-cache';
 import {
@@ -1839,7 +1840,9 @@ function MesaActiveMembers() {
   };
 
   const fmtSince = (d: string | null) =>
-    d ? new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—';
+    d
+      ? (parseDateOnlyLocal(d) ?? new Date(d)).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+      : '—';
 
   // Export of the members currently in view. Money figures are recomputed over
   // the filtered set so the stat band always matches the exported rows. The
@@ -1893,7 +1896,7 @@ function MesaActiveMembers() {
         (r.ledger?.disbursed ?? 0) > 0 ? formatPhpExport(r.ledger!.disbursed) : '-',
         formatPhpExport(r.ledger?.balance ?? 0),
         r.mesaMemberSince
-          ? new Date(r.mesaMemberSince).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+          ? (parseDateOnlyLocal(r.mesaMemberSince) ?? new Date(r.mesaMemberSince)).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
           : '-',
       ]),
       notes: [
@@ -2251,7 +2254,9 @@ function MesaMemberDetail({
   };
 
   const fmtDate = (d: string | null) =>
-    d ? new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—';
+    d
+      ? (parseDateOnlyLocal(d) ?? new Date(d)).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+      : '—';
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-[2px] animate-in fade-in duration-200 ease-out motion-reduce:animate-none">
