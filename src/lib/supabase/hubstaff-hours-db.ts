@@ -7,6 +7,15 @@ function getTableName(): string {
   return process.env.NEXT_PUBLIC_SUPABASE_HUBSTAFF_HOURS_TABLE?.trim() || "hubstaff_hours";
 }
 
+/**
+ * Emails hard-blocked from Hubstaff ingestion. Their CSV rows are dropped at
+ * upload/sync time, so they never reach hubstaff_hours or anything derived
+ * from it (Payroll Wizard, disbursement seeding, paystubs, notifications).
+ * Randal Hayes exists only in the Hubstaff org — no employee/master/rate/role
+ * record anywhere (see scripts/delete-randal-hayes.mjs).
+ */
+const HUBSTAFF_INGEST_BLOCKED_EMAILS = new Set(["randalh@hogansmith.com"]);
+
 function requireServiceRole(): SupabaseClient {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim();
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim();
@@ -720,7 +729,17 @@ export async function replaceHubstaffHoursFromCsvText(
   }
 
   const csvHeaders = grid[0].map((h) => h.trim());
-  const dataRows = grid.slice(1).filter((row) => row.some((cell) => cell.trim() !== ""));
+  const allDataRows = grid.slice(1).filter((row) => row.some((cell) => cell.trim() !== ""));
+
+  // Drop hard-blocked people before anything is written. Single choke point:
+  // both CSV upload and live Hubstaff sync route through this function.
+  const emailIdx = csvHeaders.findIndex((h) => h.toLowerCase() === "email");
+  const dataRows =
+    emailIdx === -1
+      ? allDataRows
+      : allDataRows.filter(
+          (row) => !HUBSTAFF_INGEST_BLOCKED_EMAILS.has((row[emailIdx] ?? "").trim().toLowerCase()),
+        );
 
   const insertCols = await resolveColumnMapping(csvHeaders, table);
   if (insertCols.length === 0) {
