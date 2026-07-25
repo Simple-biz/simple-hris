@@ -1172,6 +1172,10 @@ export default function PayrollWizard({
    * Global + sticky: stays excluded until switched back on.
    */
   const [pausedDeptKeys, setPausedDeptKeys] = useState<Set<string>>(new Set());
+  /** Always-current mirror of {@link pausedDeptKeys}, updated synchronously by
+   *  every writer — so two toggle events landing in the same tick both compute
+   *  from the latest set instead of a stale render closure. */
+  const pausedDeptKeysRef = useRef<Set<string>>(pausedDeptKeys);
   /** Per-control save feedback on the Configuration tab, keyed `pay_<dept>` / `ot_<dept>`. */
   const [configSaveStates, setConfigSaveStates] = useState<Record<string, 'idle' | 'saving' | 'saved' | 'error'>>({});
   const [configSearch, setConfigSearch] = useState('');
@@ -2334,7 +2338,9 @@ export default function PayrollWizard({
         const values = json.values ?? {};
         setOtGlobalSuspended(values['ot_global_suspended'] === 'true');
         setHslWeekModelCutover(values[HSL_WEEK_MODEL_CUTOVER_KEY] ?? null);
-        setPausedDeptKeys(parsePausedDeptKeys(values[DEPT_PAY_PAUSED_SETTING_KEY]));
+        const paused = parsePausedDeptKeys(values[DEPT_PAY_PAUSED_SETTING_KEY]);
+        pausedDeptKeysRef.current = paused;
+        setPausedDeptKeys(paused);
         const deptMap: Record<string, boolean> = {};
         for (const key of otKeys) {
           const val = values[key];
@@ -5122,9 +5128,13 @@ export default function PayrollWizard({
    *  paused set to ONE app_settings key; reverts on failure. */
   const handleConfigPayToggle = useCallback(async (deptKey: string, deptName: string, pay: boolean) => {
     const stateKey = `pay_${deptKey}`;
-    const prev = new Set(pausedDeptKeys);
-    const next = new Set(pausedDeptKeys);
+    // Read + update through the ref so a second toggle firing before React
+    // re-renders still builds on the newest set (never a stale closure).
+    const prev = new Set(pausedDeptKeysRef.current);
+    if (pay === !prev.has(deptKey)) return; // no-op: already in the asked state
+    const next = new Set(prev);
     if (pay) next.delete(deptKey); else next.add(deptKey);
+    pausedDeptKeysRef.current = next;
     setPausedDeptKeys(next);
     setConfigSaveStates(p => ({ ...p, [stateKey]: 'saving' }));
     try {
@@ -5149,12 +5159,13 @@ export default function PayrollWizard({
       );
       setTimeout(() => setConfigSaveStates(p => ({ ...p, [stateKey]: 'idle' })), 2000);
     } catch (e) {
+      pausedDeptKeysRef.current = prev;
       setPausedDeptKeys(prev);
       setConfigSaveStates(p => ({ ...p, [stateKey]: 'error' }));
       toast.error('Save failed', { description: e instanceof Error ? e.message : 'Unknown error' });
       setTimeout(() => setConfigSaveStates(p => ({ ...p, [stateKey]: 'idle' })), 3000);
     }
-  }, [pausedDeptKeys, savePabSetting, sessionEmail, sessionRole, auditCycle]);
+  }, [savePabSetting, sessionEmail, sessionRole, auditCycle]);
 
   /** Configuration tab — per-department "Overtime" switch. Writes the SAME
    *  `ot_dept_<key>` keys System Settings uses, so both surfaces stay in sync. */
@@ -8059,7 +8070,10 @@ export default function PayrollWizard({
                             </div>
 
                             <div className="flex shrink-0 items-center gap-5">
-                              <label className="flex cursor-pointer items-center gap-2">
+                              {/* NOT a <label>: the Switch renders a <button> (a labelable
+                                  element), so a wrapping label re-dispatches the click and
+                                  every toggle would fire twice — off then straight back on. */}
+                              <div className="flex items-center gap-2">
                                 <span className={cn(
                                   'text-xs font-medium',
                                   paused ? 'text-red-500 dark:text-red-400' : 'text-zinc-600 dark:text-zinc-300',
@@ -8073,9 +8087,9 @@ export default function PayrollWizard({
                                   onCheckedChange={(v: boolean) => void handleConfigPayToggle(dept.key, dept.name, v)}
                                   className="data-checked:bg-emerald-500"
                                 />
-                              </label>
-                              <label className={cn(
-                                'flex cursor-pointer items-center gap-2',
+                              </div>
+                              <div className={cn(
+                                'flex items-center gap-2',
                                 (paused || otGlobalSuspended) && 'opacity-40',
                               )}>
                                 <span className="text-xs font-medium text-zinc-600 dark:text-zinc-300">Overtime</span>
@@ -8086,7 +8100,7 @@ export default function PayrollWizard({
                                   onCheckedChange={(v: boolean) => void handleConfigOtToggle(dept.key, dept.name, v)}
                                   className="data-checked:bg-indigo-500"
                                 />
-                              </label>
+                              </div>
                             </div>
                           </div>
                         );
