@@ -54,7 +54,7 @@ import type {
 } from "@/lib/supabase/payroll-wizard-notes";
 import { DEPARTMENTS } from "@/lib/payroll/department-bonus";
 import {
-  DEPT_PAY_PAUSED_SETTING_KEY,
+  deptPayPausedSettingKey,
   parsePausedDeptKeys,
 } from "@/lib/payroll/dept-pay-config";
 import { normalizeDeptToKey } from "@/lib/payroll/normalize-dept-key";
@@ -733,7 +733,7 @@ export default function PayrollWizardNotesFab({
               exit="exit"
               transition={{ duration: reduceMotion ? 0 : 0.24, ease: EASE }}
             >
-              <RatesGlance />
+              <RatesGlance wizardSourceFile={wizardSourceFile} />
             </motion.div>
           ) : modalTab === "readiness" ? (
             <motion.div
@@ -961,12 +961,13 @@ export default function PayrollWizardNotesFab({
  * detail — currency editing, history, and everything else stays in the
  * Payment Catalog tab.
  */
-function RatesGlance() {
+function RatesGlance({ wizardSourceFile }: { wizardSourceFile: string | null }) {
   const [structures, setStructures] = useState<PayStructure[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  /** Departments excluded from this week's pay (wizard step 1 → Configuration).
-   *  Their rate cards are discounted from this glance. Best-effort: a failed
-   *  settings read simply shows every card. */
+  /** Departments excluded from the wizard's CURRENT pay week (step 1 →
+   *  Configuration; the setting is per-week, keyed on the wizard's source
+   *  file). Their rate cards are discounted from this glance. Best-effort: no
+   *  known week or a failed settings read simply shows every card. */
   const [pausedDepts, setPausedDepts] = useState<Set<string>>(new Set());
 
   useEffect(() => {
@@ -980,7 +981,21 @@ function RatesGlance() {
       .catch((e) => {
         if (alive) setError(e instanceof Error ? e.message : "Could not load rates");
       });
-    fetch(`/api/app-settings?key=${encodeURIComponent(DEPT_PAY_PAUSED_SETTING_KEY)}`, { cache: "no-store" })
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!wizardSourceFile) {
+      setPausedDepts(new Set());
+      return;
+    }
+    let alive = true;
+    fetch(
+      `/api/app-settings?key=${encodeURIComponent(deptPayPausedSettingKey(wizardSourceFile))}`,
+      { cache: "no-store" },
+    )
       .then(async (res) => (await res.json()) as { value?: string | null })
       .then((j) => {
         if (alive) setPausedDepts(parsePausedDeptKeys(j.value ?? null));
@@ -991,7 +1006,7 @@ function RatesGlance() {
     return () => {
       alive = false;
     };
-  }, []);
+  }, [wizardSourceFile]);
 
   if (error) {
     return (

@@ -11,7 +11,7 @@ import { getAppSetting } from "./app-settings";
 import { getDepartmentRegistry } from "@/lib/departments/registry-db";
 import { resolveDeptKeyWithRegistry } from "@/lib/departments/registry";
 import {
-  DEPT_PAY_PAUSED_SETTING_KEY,
+  deptPayPausedSettingKey,
   parsePausedDeptKeys,
 } from "@/lib/payroll/dept-pay-config";
 
@@ -425,11 +425,19 @@ export async function listPayrollWorkerOptions(): Promise<{
 
   // Departments excluded from this week's pay (Payroll Wizard step 1 →
   // Configuration → "Pay this week" off) are discounted here too: their people
-  // don't suggest in the Worker cell. Best-effort — a settings/registry read
-  // failure must never break the picker, so it just skips the filter.
+  // don't suggest in the Worker cell. The setting is PER PAY WEEK, keyed on the
+  // upload's source_file — read it off the rows we just fetched so the picker
+  // and the setting always describe the same week. Best-effort — a
+  // settings/registry read failure must never break the picker, so it just
+  // skips the filter.
   let isPausedDept: (dept: string | null) => boolean = () => false;
   try {
-    const paused = parsePausedDeptKeys(await getAppSetting(DEPT_PAY_PAUSED_SETTING_KEY));
+    const currentFile = rows
+      .map((r) => (typeof r.source_file === "string" ? r.source_file.trim() : ""))
+      .find(Boolean);
+    const paused = currentFile
+      ? parsePausedDeptKeys(await getAppSetting(deptPayPausedSettingKey(currentFile)))
+      : new Set<string>();
     if (paused.size > 0) {
       const registry = await getDepartmentRegistry().catch(() => []);
       isPausedDept = (dept) => {

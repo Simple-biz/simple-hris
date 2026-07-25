@@ -65,7 +65,7 @@ import { getDepartmentRegistry } from '@/lib/departments/registry-db';
 import { resolveDeptKeyWithRegistry, type DepartmentRegistryEntry } from '@/lib/departments/registry';
 import { getAppSetting } from '@/lib/supabase/app-settings';
 import {
-  DEPT_PAY_PAUSED_SETTING_KEY,
+  deptPayPausedSettingKey,
   parsePausedDeptKeys,
 } from '@/lib/payroll/dept-pay-config';
 import { HSL_DEPTS, HSL_DEPT_KEYS, type HslDeptKey } from '@/lib/hsl-bonus/schema';
@@ -750,14 +750,17 @@ export async function getPayrollReadiness(
   const { weekStart, sourceFile: resolvedFile } = await resolveCurrentWeek(sourceFile);
   const isMonthlyPayWeek = isFinalPayrollWeekOfMonth(weekStart);
 
-  // Departments excluded from this week's pay (the wizard's step-1
-  // Configuration tab). They vanish from every readiness dimension —
-  // numerators AND denominators — so the score describes only the
-  // departments actually being paid, and snaps back the moment one is
-  // switched on again. Best-effort reads: a settings/registry failure
-  // must never take readiness down, it just skips the exclusion.
+  // Departments excluded from THIS pay week (the wizard's step-1 Configuration
+  // tab — keyed per Hubstaff source file, so the exclusion never outlives its
+  // week). They leave every readiness dimension — numerators AND denominators —
+  // so the score describes only the departments actually being paid, and a new
+  // week's upload snaps everything back automatically. Best-effort reads: a
+  // settings/registry failure must never take readiness down, it just skips
+  // the exclusion.
   const [pausedRaw, registry] = await Promise.all([
-    getAppSetting(DEPT_PAY_PAUSED_SETTING_KEY).catch(() => null),
+    resolvedFile
+      ? getAppSetting(deptPayPausedSettingKey(resolvedFile)).catch(() => null)
+      : Promise.resolve(null),
     getDepartmentRegistry().catch(() => [] as DepartmentRegistryEntry[]),
   ]);
   const pausedDeptKeys = parsePausedDeptKeys(pausedRaw);

@@ -156,7 +156,7 @@ import { downloadPayrollReportPdf, type PayrollReportRow } from '@/lib/payroll-w
 import { usePabPeriodSettings } from '@/hooks/usePabPeriodSettings';
 import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
 import {
-  DEPT_PAY_PAUSED_SETTING_KEY,
+  deptPayPausedSettingKey,
   otDeptSettingKey,
   parsePausedDeptKeys,
   serializePausedDeptKeys,
@@ -1163,13 +1163,15 @@ export default function PayrollWizard({
   // ── Uploaded-files browser tab state ──
   const [hubstaffActiveTab, setHubstaffActiveTab] = useState<'files' | 'upload' | 'config'>('upload');
   /**
-   * Departments excluded from this week's pay (the step-1 Configuration tab's
+   * Departments excluded from THIS pay week (the step-1 Configuration tab's
    * "Pay this week" switch, off). Workers of a paused department are dropped
    * from {@link effectiveCalcResults} — so they vanish from every wizard step,
    * the dispatch set and the paystub snapshot — and the department's tab
    * disappears from the Additions rail. Server surfaces (Payroll Notes picker,
-   * readiness score) read the SAME app_settings key and discount them too.
-   * Global + sticky: stays excluded until switched back on.
+   * readiness score) read the SAME per-week app_settings key and discount them
+   * too. Scoped to the week it was set on (keyed by {@link calcSourceFile},
+   * like exclusions/additions): a new week's upload starts with every
+   * department paying again.
    */
   const [pausedDeptKeys, setPausedDeptKeys] = useState<Set<string>>(new Set());
   /** Always-current mirror of {@link pausedDeptKeys}, updated synchronously by
@@ -2328,7 +2330,7 @@ export default function PayrollWizard({
           ...DEPARTMENTS.map(d => otDeptSettingKey(d.key)),
           ...customDepartments.map(d => otDeptSettingKey(d.key)),
         ];
-        const allKeys = ['ot_global_suspended', HSL_WEEK_MODEL_CUTOVER_KEY, DEPT_PAY_PAUSED_SETTING_KEY, ...otKeys];
+        const allKeys = ['ot_global_suspended', HSL_WEEK_MODEL_CUTOVER_KEY, ...otKeys];
         const res = await fetch(
           `/api/app-settings?keys=${encodeURIComponent(allKeys.join(','))}`,
           { cache: 'no-store' },
@@ -2338,9 +2340,6 @@ export default function PayrollWizard({
         const values = json.values ?? {};
         setOtGlobalSuspended(values['ot_global_suspended'] === 'true');
         setHslWeekModelCutover(values[HSL_WEEK_MODEL_CUTOVER_KEY] ?? null);
-        const paused = parsePausedDeptKeys(values[DEPT_PAY_PAUSED_SETTING_KEY]);
-        pausedDeptKeysRef.current = paused;
-        setPausedDeptKeys(paused);
         const deptMap: Record<string, boolean> = {};
         for (const key of otKeys) {
           const val = values[key];
@@ -2459,6 +2458,38 @@ export default function PayrollWizard({
       console.warn('[persistExclusions]', e);
     }
   }, [calcSourceFile, isReplay, savePabSetting]);
+
+  // ── Per-week department pay exclusions (step-1 Configuration tab) ─────────
+  // Keyed by the Hubstaff source file like exclusions/additions: selecting (or
+  // uploading) a week loads THAT week's set, and a week with no entry starts
+  // with every department paying — the exclusion never outlives its week.
+  useEffect(() => {
+    if (!calcSourceFile) {
+      pausedDeptKeysRef.current = new Set();
+      setPausedDeptKeys(new Set());
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(
+          `/api/app-settings?key=${encodeURIComponent(deptPayPausedSettingKey(calcSourceFile))}`,
+          { cache: 'no-store' },
+        );
+        const json = (await res.json()) as { value?: string | null };
+        if (cancelled) return;
+        const paused = parsePausedDeptKeys(json.value ?? null);
+        pausedDeptKeysRef.current = paused;
+        setPausedDeptKeys(paused);
+      } catch {
+        if (!cancelled) {
+          pausedDeptKeysRef.current = new Set();
+          setPausedDeptKeys(new Set());
+        }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [calcSourceFile]);
 
   /** Toggle an employee in/out of the "do not pay" set (Validation step). */
   const toggleExcluded = React.useCallback((email: string) => {
@@ -5125,8 +5156,15 @@ export default function PayrollWizard({
   }, [pausedDeptKeys, activeDeptTab, additionsDepartments]);
 
   /** Configuration tab — "Pay this week" switch. Optimistic write of the whole
-   *  paused set to ONE app_settings key; reverts on failure. */
+   *  paused set to the CURRENT WEEK's app_settings key; reverts on failure.
+   *  Week-scoped by design: the exclusion dies with its pay week. */
   const handleConfigPayToggle = useCallback(async (deptKey: string, deptName: string, pay: boolean) => {
+    if (!calcSourceFile) {
+      toast.error('No pay week selected', {
+        description: 'Upload or select a Hubstaff week first — the pay switch applies to one specific week.',
+      });
+      return;
+    }
     const stateKey = `pay_${deptKey}`;
     // Read + update through the ref so a second toggle firing before React
     // re-renders still builds on the newest set (never a stale closure).
@@ -5138,15 +5176,16 @@ export default function PayrollWizard({
     setPausedDeptKeys(next);
     setConfigSaveStates(p => ({ ...p, [stateKey]: 'saving' }));
     try {
-      await savePabSetting(DEPT_PAY_PAUSED_SETTING_KEY, serializePausedDeptKeys(next));
+      const settingKey = deptPayPausedSettingKey(calcSourceFile);
+      await savePabSetting(settingKey, serializePausedDeptKeys(next));
       void logAudit({
         user_name: sessionEmail ?? 'anonymous',
         user_role: sessionRole ?? 'user',
         action: 'wizard.config.dept_pay',
         resource: 'app_settings',
-        resource_id: DEPT_PAY_PAUSED_SETTING_KEY,
+        resource_id: settingKey,
         cycle: auditCycle,
-        details: { department: deptName, dept_key: deptKey, pay_this_week: pay },
+        details: { department: deptName, dept_key: deptKey, pay_this_week: pay, source_file: calcSourceFile },
       });
       setConfigSaveStates(p => ({ ...p, [stateKey]: 'saved' }));
       toast.success(
@@ -5154,7 +5193,7 @@ export default function PayrollWizard({
         {
           description: pay
             ? 'Its workers are back in the wizard, Payroll Notes and the readiness score.'
-            : 'Hidden from the wizard, Payroll Notes and the readiness score until switched back on.',
+            : `Hidden from the wizard, Payroll Notes and the readiness score for ${formatPeriodLabel(calcSourceFile)} only — next week starts paying again.`,
         },
       );
       setTimeout(() => setConfigSaveStates(p => ({ ...p, [stateKey]: 'idle' })), 2000);
@@ -5165,7 +5204,7 @@ export default function PayrollWizard({
       toast.error('Save failed', { description: e instanceof Error ? e.message : 'Unknown error' });
       setTimeout(() => setConfigSaveStates(p => ({ ...p, [stateKey]: 'idle' })), 3000);
     }
-  }, [savePabSetting, sessionEmail, sessionRole, auditCycle]);
+  }, [calcSourceFile, savePabSetting, sessionEmail, sessionRole, auditCycle, formatPeriodLabel]);
 
   /** Configuration tab — per-department "Overtime" switch. Writes the SAME
    *  `ot_dept_<key>` keys System Settings uses, so both surfaces stay in sync. */
@@ -7952,17 +7991,45 @@ export default function PayrollWizard({
               return (
                 <div className="space-y-4">
                   <div>
-                    <h3 className="text-lg font-semibold text-zinc-900 dark:text-white">Configuration</h3>
+                    <h3 className="flex flex-wrap items-center gap-2 text-lg font-semibold text-zinc-900 dark:text-white">
+                      Configuration
+                      {calcSourceFile ? (
+                        <span
+                          className="inline-flex items-center gap-1.5 rounded-full border border-indigo-200 bg-indigo-50 px-2.5 py-0.5 text-xs font-semibold text-indigo-700 dark:border-indigo-800/60 dark:bg-indigo-950/40 dark:text-indigo-300"
+                          title={calcSourceFile}
+                        >
+                          <CalendarDays className="h-3.5 w-3.5" />
+                          Setting week: {formatPeriodLabel(calcSourceFile)}
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1.5 rounded-full border border-zinc-200 bg-zinc-50 px-2.5 py-0.5 text-xs font-medium text-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400">
+                          <CalendarDays className="h-3.5 w-3.5" />
+                          No week selected
+                        </span>
+                      )}
+                    </h3>
                     <p className="text-sm text-zinc-600 dark:text-zinc-400">
                       Two switches per department, nothing else.{' '}
                       <span className="font-medium text-zinc-700 dark:text-zinc-300">Pay this week</span> off
-                      = the department sits this pay run out: its people disappear from every wizard step,
-                      Payroll Notes skips them, and the readiness score is recalculated without them — their
-                      KPI standing is untouched until you switch them back on.{' '}
+                      = the department sits <span className="font-medium text-zinc-700 dark:text-zinc-300">this pay week only</span> out:
+                      its people disappear from every wizard step, Payroll Notes skips them, and the readiness
+                      score is recalculated without them — their KPI standing is untouched, and the next
+                      week&apos;s upload starts with everyone paying again.{' '}
                       <span className="font-medium text-zinc-700 dark:text-zinc-300">Overtime</span> off
-                      = OT hours are zeroed and everyone in the department is paid regular hours only.
+                      = OT hours are zeroed and everyone in the department is paid regular hours only
+                      (a standing setting, shared with System Settings).
                     </p>
                   </div>
+
+                  {!calcSourceFile && (
+                    <div className="flex items-start gap-2 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2.5 text-sm text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300">
+                      <Info className="mt-0.5 h-4 w-4 shrink-0" />
+                      <span>
+                        No pay week selected yet — upload or pick a Hubstaff week first. The{' '}
+                        <span className="font-medium">Pay this week</span> switches apply to one specific week.
+                      </span>
+                    </div>
+                  )}
 
                   {otGlobalSuspended && (
                     <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-sm text-amber-800 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-300">
@@ -8059,7 +8126,7 @@ export default function PayrollWizard({
                               </div>
                               {paused && (
                                 <p className="mt-0.5 text-[11px] text-red-500 dark:text-red-400">
-                                  Excluded — hidden from the wizard, Payroll Notes and the readiness score until switched back on.
+                                  Excluded this week only — hidden from the wizard, Payroll Notes and the readiness score; next week&apos;s upload pays them again.
                                 </p>
                               )}
                               {!paused && !otOn && !otGlobalSuspended && (
@@ -8083,7 +8150,7 @@ export default function PayrollWizard({
                                 <SaveDot id={`pay_${dept.key}`} />
                                 <Switch
                                   checked={!paused}
-                                  disabled={paySaving}
+                                  disabled={paySaving || !calcSourceFile}
                                   onCheckedChange={(v: boolean) => void handleConfigPayToggle(dept.key, dept.name, v)}
                                   className="data-checked:bg-emerald-500"
                                 />
@@ -8109,9 +8176,9 @@ export default function PayrollWizard({
                   </div>
 
                   <p className="text-xs text-zinc-400 dark:text-zinc-500">
-                    Switches apply to the pay week the wizard is on and stay as set until changed here.
-                    Overtime uses the same per-department switches as System Settings — changing it in one
-                    place changes it everywhere.
+                    Pay switches are saved per pay week ({calcSourceFile ? formatPeriodLabel(calcSourceFile) : 'none selected'}) —
+                    they never carry over to the next week&apos;s upload. Overtime uses the same per-department
+                    switches as System Settings — changing it in one place changes it everywhere, every week.
                   </p>
                 </div>
               );
