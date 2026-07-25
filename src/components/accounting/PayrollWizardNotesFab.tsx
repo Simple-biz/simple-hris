@@ -52,6 +52,10 @@ import type {
   PayrollWorkerOption,
 } from "@/lib/supabase/payroll-wizard-notes";
 import { DEPARTMENTS } from "@/lib/payroll/department-bonus";
+import {
+  DEPT_PAY_PAUSED_SETTING_KEY,
+  parsePausedDeptKeys,
+} from "@/lib/payroll/dept-pay-config";
 import { normalizeDeptToKey } from "@/lib/payroll/normalize-dept-key";
 import { HSL_DEPTS, HSL_DEPT_KEYS, hslAccessKey, type HslDeptKey } from "@/lib/hsl-bonus/schema";
 import type { EmployeeRow } from "@/lib/supabase/employees";
@@ -959,6 +963,10 @@ export default function PayrollWizardNotesFab({
 function RatesGlance() {
   const [structures, setStructures] = useState<PayStructure[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  /** Departments excluded from this week's pay (wizard step 1 → Configuration).
+   *  Their rate cards are discounted from this glance. Best-effort: a failed
+   *  settings read simply shows every card. */
+  const [pausedDepts, setPausedDepts] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     let alive = true;
@@ -970,6 +978,14 @@ function RatesGlance() {
       })
       .catch((e) => {
         if (alive) setError(e instanceof Error ? e.message : "Could not load rates");
+      });
+    fetch(`/api/app-settings?key=${encodeURIComponent(DEPT_PAY_PAUSED_SETTING_KEY)}`, { cache: "no-store" })
+      .then(async (res) => (await res.json()) as { value?: string | null })
+      .then((j) => {
+        if (alive) setPausedDepts(parsePausedDeptKeys(j.value ?? null));
+      })
+      .catch(() => {
+        /* unfiltered glance is fine */
       });
     return () => {
       alive = false;
@@ -992,7 +1008,7 @@ function RatesGlance() {
     );
   }
 
-  const cards = DEPARTMENTS.map((d) => ({
+  const cards = DEPARTMENTS.filter((d) => !pausedDepts.has(d.key)).map((d) => ({
     key: d.key,
     name: d.name,
     dept: structures.find((s) => s.scope === "department" && s.departmentKey === d.key) ?? null,
@@ -1000,6 +1016,7 @@ function RatesGlance() {
       .filter((s) => s.scope === "employee" && s.departmentKey === d.key)
       .sort((a, b) => (a.employeeName ?? a.employeeEmail ?? "").localeCompare(b.employeeName ?? b.employeeEmail ?? "")),
   })).filter((c) => c.dept || c.people.length > 0);
+  const hiddenCount = DEPARTMENTS.filter((d) => pausedDepts.has(d.key)).length;
 
   if (cards.length === 0) {
     return (
@@ -1011,6 +1028,12 @@ function RatesGlance() {
 
   return (
     <div className="h-[70vh] overflow-y-auto pr-1">
+      {hiddenCount > 0 && (
+        <p className="mb-2 text-[11px] text-zinc-400 dark:text-zinc-500">
+          {hiddenCount} department{hiddenCount === 1 ? "" : "s"} hidden — excluded from this week&apos;s
+          pay in the wizard&apos;s Configuration tab.
+        </p>
+      )}
       {/* auto-fill fills the modal's width; rows keep their natural compact
           height so cards never stretch tall. */}
       <div className="grid grid-cols-[repeat(auto-fill,minmax(13rem,1fr))] content-start gap-3">

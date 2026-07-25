@@ -46,6 +46,7 @@ import {
   Radio,
   Zap,
   UserX,
+  Settings2,
 } from 'lucide-react';
 import { useDispatchLock } from '@/hooks/useDispatchLock';
 import { useWizardDispatchLock } from '@/hooks/useWizardDispatchLock';
@@ -154,6 +155,12 @@ import {
 import { downloadPayrollReportPdf, type PayrollReportRow } from '@/lib/payroll-wizard/report-pdf';
 import { usePabPeriodSettings } from '@/hooks/usePabPeriodSettings';
 import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
+import {
+  DEPT_PAY_PAUSED_SETTING_KEY,
+  otDeptSettingKey,
+  parsePausedDeptKeys,
+  serializePausedDeptKeys,
+} from '@/lib/payroll/dept-pay-config';
 import {
   resolveDeptKeyWithRegistry,
   slugifyDeptKey,
@@ -1154,7 +1161,20 @@ export default function PayrollWizard({
   } | null>(null);
 
   // ── Uploaded-files browser tab state ──
-  const [hubstaffActiveTab, setHubstaffActiveTab] = useState<'files' | 'upload'>('upload');
+  const [hubstaffActiveTab, setHubstaffActiveTab] = useState<'files' | 'upload' | 'config'>('upload');
+  /**
+   * Departments excluded from this week's pay (the step-1 Configuration tab's
+   * "Pay this week" switch, off). Workers of a paused department are dropped
+   * from {@link effectiveCalcResults} — so they vanish from every wizard step,
+   * the dispatch set and the paystub snapshot — and the department's tab
+   * disappears from the Additions rail. Server surfaces (Payroll Notes picker,
+   * readiness score) read the SAME app_settings key and discount them too.
+   * Global + sticky: stays excluded until switched back on.
+   */
+  const [pausedDeptKeys, setPausedDeptKeys] = useState<Set<string>>(new Set());
+  /** Per-control save feedback on the Configuration tab, keyed `pay_<dept>` / `ot_<dept>`. */
+  const [configSaveStates, setConfigSaveStates] = useState<Record<string, 'idle' | 'saving' | 'saved' | 'error'>>({});
+  const [configSearch, setConfigSearch] = useState('');
   const [uploadedSourceFiles, setUploadedSourceFiles] = useState<string[]>(
     initialData?.sourceFiles ?? [],
   );
@@ -2292,13 +2312,19 @@ export default function PayrollWizard({
     });
   }, [calcSourceFile, auditCycle, sessionEmail]);
 
-  // Fetch overtime settings (global + per-department) — single bulk call to
-  // /api/app-settings?keys=… instead of one round-trip per key.
+  // Fetch overtime settings (global + per-department) and the Configuration
+  // tab's paused-departments set — single bulk call to /api/app-settings?keys=…
+  // instead of one round-trip per key. Re-runs when the Payment Catalog
+  // department registry lands so in-app departments get their OT flags too.
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
-        const allKeys = ['ot_global_suspended', HSL_WEEK_MODEL_CUTOVER_KEY, ...DEPARTMENTS.map(d => `ot_dept_${d.key}`)];
+        const otKeys = [
+          ...DEPARTMENTS.map(d => otDeptSettingKey(d.key)),
+          ...customDepartments.map(d => otDeptSettingKey(d.key)),
+        ];
+        const allKeys = ['ot_global_suspended', HSL_WEEK_MODEL_CUTOVER_KEY, DEPT_PAY_PAUSED_SETTING_KEY, ...otKeys];
         const res = await fetch(
           `/api/app-settings?keys=${encodeURIComponent(allKeys.join(','))}`,
           { cache: 'no-store' },
@@ -2308,18 +2334,19 @@ export default function PayrollWizard({
         const values = json.values ?? {};
         setOtGlobalSuspended(values['ot_global_suspended'] === 'true');
         setHslWeekModelCutover(values[HSL_WEEK_MODEL_CUTOVER_KEY] ?? null);
+        setPausedDeptKeys(parsePausedDeptKeys(values[DEPT_PAY_PAUSED_SETTING_KEY]));
         const deptMap: Record<string, boolean> = {};
-        DEPARTMENTS.forEach((d) => {
-          const val = values[`ot_dept_${d.key}`];
-          deptMap[`ot_dept_${d.key}`] = val == null ? true : val === 'true';
-        });
+        for (const key of otKeys) {
+          const val = values[key];
+          deptMap[key] = val == null ? true : val === 'true';
+        }
         setOtDeptEnabled(deptMap);
       } catch {
-        // keep defaults (all OT enabled)
+        // keep defaults (all OT enabled, nobody paused)
       }
     })();
     return () => { cancelled = true; };
-  }, []);
+  }, [customDepartments]);
 
   const loadEmployeeHourlyRates = React.useCallback(async () => {
     setHourlyRatesLoading(true);
@@ -4608,12 +4635,21 @@ export default function PayrollWizard({
   }, [currentStep, isReplay, calcSourceFile, hasCalcRows, pullNotesAdjustments, dispatchValuesLock.loading, dispatchValuesLock.state.locked]);
 
   /**
-   * Applies per-department and global OT suspension from System Settings.
-   * If a department's OT is turned off (or global OT is suspended), otHours/otPay
-   * are zeroed and initialPay is recalculated as regularPay only.
+   * Applies the step-1 Configuration tab + System Settings to the raw calc rows:
+   *   1. Departments excluded from this week's pay ("Pay this week" off) are
+   *      FILTERED OUT entirely — their workers disappear from every downstream
+   *      step (Additions, HSL, Validation, Dispatch, Reports, snapshots).
+   *   2. If a department's OT is turned off (or global OT is suspended),
+   *      otHours/otPay are zeroed and initialPay is recalculated as regularPay only.
    */
   const effectiveCalcResults = useMemo<CalcRow[]>(() => {
-    return calcResults.map((row) => {
+    const included = pausedDeptKeys.size === 0
+      ? calcResults
+      : calcResults.filter((row) => {
+          const dk = employeeDepts[row.email] ?? employeeDepts[(row.email ?? '').toLowerCase()];
+          return !(dk && pausedDeptKeys.has(dk));
+        });
+    return included.map((row) => {
       const deptKey = employeeDepts[row.email];
       const deptOtOn = otGlobalSuspended
         ? false
@@ -4644,7 +4680,7 @@ export default function PayrollWizard({
       }
       return base;
     });
-  }, [calcResults, employeeDepts, otGlobalSuspended, otDeptEnabled, timeAdjustDeltaHoursByEmail]);
+  }, [calcResults, employeeDepts, otGlobalSuspended, otDeptEnabled, timeAdjustDeltaHoursByEmail, pausedDeptKeys]);
 
   /**
    * Orphanage paste tool (step 3): parse pasted "Pay week ⇥ Work email ⇥ Hours" TSV
@@ -5011,9 +5047,8 @@ export default function PayrollWizard({
   );
 
   /**
-   * The department list the Additions tab renders as its rail (and every
-   * dept-name lookup resolves against). Built-in `DEPARTMENTS` are always
-   * present; on top of them we surface:
+   * EVERY department the wizard knows about — the step-1 Configuration tab's
+   * roster. Built-in `DEPARTMENTS` are always present; on top of them we surface:
    *   • in-app departments from the registry (Payment Catalog → Department), and
    *   • any dept key that people in THIS run resolved to but that isn't a
    *     built-in or a registry entry (a master-list department label whose slug
@@ -5021,15 +5056,15 @@ export default function PayrollWizard({
    * Same `{ key, name, bonuses }` shape as `DEPARTMENTS`; custom/derived
    * departments carry no built-in bonus toggles (`bonuses: []`).
    */
-  const additionsDepartments = useMemo(() => {
-    const list = DEPARTMENTS.map(d => ({ ...d }));
+  const allWizardDepartments = useMemo(() => {
+    const list = DEPARTMENTS.map(d => ({ ...d, isCustom: false }));
     const seen = new Set(list.map(d => d.key));
 
     // In-app registry departments.
     for (const entry of customDepartments) {
       if (seen.has(entry.key)) continue;
       seen.add(entry.key);
-      list.push({ key: entry.key, name: entry.name, bonuses: [] });
+      list.push({ key: entry.key, name: entry.name, bonuses: [], isCustom: true });
     }
 
     // Any dept key present on a payable row but not yet represented (e.g. a
@@ -5046,11 +5081,112 @@ export default function PayrollWizard({
     for (const key of Object.values(employeeDepts)) {
       if (!key || seen.has(key)) continue;
       seen.add(key);
-      list.push({ key, name: nameForKey(key), bonuses: [] });
+      list.push({ key, name: nameForKey(key), bonuses: [], isCustom: true });
     }
 
     return list;
   }, [customDepartments, employeeDepts]);
+
+  /**
+   * The department list the Additions tab renders as its rail (and every
+   * dept-name lookup resolves against): {@link allWizardDepartments} minus the
+   * departments excluded from this week's pay in the Configuration tab.
+   */
+  const additionsDepartments = useMemo(
+    () => allWizardDepartments.filter(d => !pausedDeptKeys.has(d.key)),
+    [allWizardDepartments, pausedDeptKeys],
+  );
+
+  /** Workers in the current Hubstaff upload per dept key — Config-tab counts.
+   *  Built from the RAW calc rows so an excluded department still shows how
+   *  many people it would cover if switched back on. */
+  const configDeptWorkerCounts = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const r of calcResults) {
+      const dk = employeeDepts[r.email] ?? employeeDepts[(r.email ?? '').toLowerCase()];
+      if (dk) m.set(dk, (m.get(dk) ?? 0) + 1);
+    }
+    return m;
+  }, [calcResults, employeeDepts]);
+
+  // The Additions rail hides paused departments — if the active tab is one of
+  // them, snap to the first still-payable department so the step never opens
+  // onto an invisible (empty) bucket.
+  useEffect(() => {
+    if (!pausedDeptKeys.has(activeDeptTab)) return;
+    const fallback = additionsDepartments[0]?.key;
+    if (fallback) setActiveDeptTab(fallback);
+  }, [pausedDeptKeys, activeDeptTab, additionsDepartments]);
+
+  /** Configuration tab — "Pay this week" switch. Optimistic write of the whole
+   *  paused set to ONE app_settings key; reverts on failure. */
+  const handleConfigPayToggle = useCallback(async (deptKey: string, deptName: string, pay: boolean) => {
+    const stateKey = `pay_${deptKey}`;
+    const prev = new Set(pausedDeptKeys);
+    const next = new Set(pausedDeptKeys);
+    if (pay) next.delete(deptKey); else next.add(deptKey);
+    setPausedDeptKeys(next);
+    setConfigSaveStates(p => ({ ...p, [stateKey]: 'saving' }));
+    try {
+      await savePabSetting(DEPT_PAY_PAUSED_SETTING_KEY, serializePausedDeptKeys(next));
+      void logAudit({
+        user_name: sessionEmail ?? 'anonymous',
+        user_role: sessionRole ?? 'user',
+        action: 'wizard.config.dept_pay',
+        resource: 'app_settings',
+        resource_id: DEPT_PAY_PAUSED_SETTING_KEY,
+        cycle: auditCycle,
+        details: { department: deptName, dept_key: deptKey, pay_this_week: pay },
+      });
+      setConfigSaveStates(p => ({ ...p, [stateKey]: 'saved' }));
+      toast.success(
+        pay ? `${deptName} included in this week's pay` : `${deptName} excluded from this week's pay`,
+        {
+          description: pay
+            ? 'Its workers are back in the wizard, Payroll Notes and the readiness score.'
+            : 'Hidden from the wizard, Payroll Notes and the readiness score until switched back on.',
+        },
+      );
+      setTimeout(() => setConfigSaveStates(p => ({ ...p, [stateKey]: 'idle' })), 2000);
+    } catch (e) {
+      setPausedDeptKeys(prev);
+      setConfigSaveStates(p => ({ ...p, [stateKey]: 'error' }));
+      toast.error('Save failed', { description: e instanceof Error ? e.message : 'Unknown error' });
+      setTimeout(() => setConfigSaveStates(p => ({ ...p, [stateKey]: 'idle' })), 3000);
+    }
+  }, [pausedDeptKeys, savePabSetting, sessionEmail, sessionRole, auditCycle]);
+
+  /** Configuration tab — per-department "Overtime" switch. Writes the SAME
+   *  `ot_dept_<key>` keys System Settings uses, so both surfaces stay in sync. */
+  const handleConfigOtToggle = useCallback(async (deptKey: string, deptName: string, otOn: boolean) => {
+    const stateKey = `ot_${deptKey}`;
+    const settingKey = otDeptSettingKey(deptKey);
+    const prevVal = otDeptEnabled[settingKey] ?? true;
+    setOtDeptEnabled(p => ({ ...p, [settingKey]: otOn }));
+    setConfigSaveStates(p => ({ ...p, [stateKey]: 'saving' }));
+    try {
+      await savePabSetting(settingKey, String(otOn));
+      void logAudit({
+        user_name: sessionEmail ?? 'anonymous',
+        user_role: sessionRole ?? 'user',
+        action: 'settings.ot.department',
+        resource: 'app_settings',
+        resource_id: settingKey,
+        cycle: auditCycle,
+        details: { department: deptName, enabled: otOn },
+      });
+      setConfigSaveStates(p => ({ ...p, [stateKey]: 'saved' }));
+      toast.success(otOn ? `Overtime resumed for ${deptName}` : `Overtime suspended for ${deptName}`, {
+        description: otOn ? 'OT hours pay at the OT rate again.' : 'OT hours are zeroed — regular pay only.',
+      });
+      setTimeout(() => setConfigSaveStates(p => ({ ...p, [stateKey]: 'idle' })), 2000);
+    } catch (e) {
+      setOtDeptEnabled(p => ({ ...p, [settingKey]: prevVal }));
+      setConfigSaveStates(p => ({ ...p, [stateKey]: 'error' }));
+      toast.error('Save failed', { description: e instanceof Error ? e.message : 'Unknown error' });
+      setTimeout(() => setConfigSaveStates(p => ({ ...p, [stateKey]: 'idle' })), 3000);
+    }
+  }, [otDeptEnabled, savePabSetting, sessionEmail, sessionRole, auditCycle]);
 
   /** Resolve a dept key → its Additions-list entry (built-in, registry, or
    *  derived), replacing the old hard-coded `DEPARTMENTS.find(...)` lookups. */
@@ -6766,6 +6902,26 @@ export default function PayrollWizard({
                 <Upload className="h-3.5 w-3.5" />
                 Upload CSV
               </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={hubstaffActiveTab === 'config'}
+                className={cn(
+                  'flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors',
+                  hubstaffActiveTab === 'config'
+                    ? 'bg-white text-zinc-900 shadow-sm dark:bg-zinc-800 dark:text-white'
+                    : 'text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200',
+                )}
+                onClick={() => setHubstaffActiveTab('config')}
+              >
+                <Settings2 className="h-3.5 w-3.5" />
+                Configuration
+                {pausedDeptKeys.size > 0 && (
+                  <Badge className="ml-1 h-5 min-w-[20px] justify-center border-red-200 bg-red-50 px-1.5 text-[10px] font-bold text-red-600 hover:bg-red-50 dark:border-red-900/50 dark:bg-red-950/40 dark:text-red-400">
+                    {pausedDeptKeys.size} off
+                  </Badge>
+                )}
+              </button>
             </div>
 
             {/* ── TAB: Uploaded Files ── */}
@@ -7761,6 +7917,191 @@ export default function PayrollWizard({
                 )}
               </div>
             )}
+
+            {/* ── TAB: Configuration (per-department pay + overtime switches) ── */}
+            {hubstaffActiveTab === 'config' && (() => {
+              const q = configSearch.trim().toLowerCase();
+              const rows = [...allWizardDepartments]
+                .sort((a, b) => a.name.localeCompare(b.name))
+                .filter(d => !q || d.name.toLowerCase().includes(q) || d.key.includes(q));
+              const excludedCount = allWizardDepartments.filter(d => pausedDeptKeys.has(d.key)).length;
+              const otOffCount = allWizardDepartments.filter(
+                d => (otDeptEnabled[otDeptSettingKey(d.key)] ?? true) === false,
+              ).length;
+              const SaveDot = ({ id }: { id: string }) => {
+                const s = configSaveStates[id];
+                return (
+                  <span className="inline-flex w-3.5 items-center justify-center">
+                    {s === 'saving' && <Loader2 className="h-3 w-3 animate-spin text-zinc-400" />}
+                    {s === 'saved' && <CheckCircle2 className="h-3 w-3 text-emerald-500" />}
+                    {s === 'error' && <AlertTriangle className="h-3 w-3 text-red-400" />}
+                  </span>
+                );
+              };
+              return (
+                <div className="space-y-4">
+                  <div>
+                    <h3 className="text-lg font-semibold text-zinc-900 dark:text-white">Configuration</h3>
+                    <p className="text-sm text-zinc-600 dark:text-zinc-400">
+                      Two switches per department, nothing else.{' '}
+                      <span className="font-medium text-zinc-700 dark:text-zinc-300">Pay this week</span> off
+                      = the department sits this pay run out: its people disappear from every wizard step,
+                      Payroll Notes skips them, and the readiness score is recalculated without them — their
+                      KPI standing is untouched until you switch them back on.{' '}
+                      <span className="font-medium text-zinc-700 dark:text-zinc-300">Overtime</span> off
+                      = OT hours are zeroed and everyone in the department is paid regular hours only.
+                    </p>
+                  </div>
+
+                  {otGlobalSuspended && (
+                    <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-sm text-amber-800 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-300">
+                      <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                      <span>
+                        Overtime is suspended <span className="font-semibold">globally</span> in System
+                        Settings, so the per-department Overtime switches below have no effect until the
+                        global suspension is lifted.
+                      </span>
+                    </div>
+                  )}
+
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-700 dark:border-emerald-800/50 dark:bg-emerald-950/30 dark:text-emerald-400">
+                      <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                      {allWizardDepartments.length - excludedCount} paying this week
+                    </span>
+                    <span className={cn(
+                      'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium',
+                      excludedCount > 0
+                        ? 'border-red-200 bg-red-50 text-red-600 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-400'
+                        : 'border-zinc-200 bg-zinc-50 text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400',
+                    )}>
+                      <span className={cn('h-1.5 w-1.5 rounded-full', excludedCount > 0 ? 'bg-red-500' : 'bg-zinc-300 dark:bg-zinc-600')} />
+                      {excludedCount} excluded
+                    </span>
+                    <span className={cn(
+                      'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium',
+                      otOffCount > 0
+                        ? 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-400'
+                        : 'border-zinc-200 bg-zinc-50 text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400',
+                    )}>
+                      <Timer className="h-3 w-3" />
+                      {otOffCount} OT suspended
+                    </span>
+                    <div className="relative ml-auto">
+                      <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400" />
+                      <input
+                        type="text"
+                        value={configSearch}
+                        onChange={(e) => setConfigSearch(e.target.value)}
+                        placeholder="Find a department…"
+                        className="h-8 w-56 rounded-md border border-zinc-200 bg-white pl-8 pr-2 text-sm text-zinc-900 placeholder:text-zinc-400 focus:border-zinc-400 focus:outline-none dark:border-zinc-800 dark:bg-zinc-950 dark:text-white dark:focus:border-zinc-600"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="overflow-hidden rounded-xl border border-zinc-200 dark:border-zinc-800">
+                    {rows.length === 0 ? (
+                      <div className="px-4 py-10 text-center text-sm text-zinc-500">
+                        No department matches “{configSearch.trim()}”.
+                      </div>
+                    ) : (
+                      rows.map((dept, i) => {
+                        const paused = pausedDeptKeys.has(dept.key);
+                        const otOn = otDeptEnabled[otDeptSettingKey(dept.key)] ?? true;
+                        const workerCount = configDeptWorkerCounts.get(dept.key) ?? 0;
+                        const paySaving = configSaveStates[`pay_${dept.key}`] === 'saving';
+                        const otSaving = configSaveStates[`ot_${dept.key}`] === 'saving';
+                        return (
+                          <div
+                            key={dept.key}
+                            className={cn(
+                              'flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3 transition-colors',
+                              i > 0 && 'border-t border-zinc-100 dark:border-zinc-800/60',
+                              paused
+                                ? 'bg-red-50/50 dark:bg-red-950/10'
+                                : 'bg-white hover:bg-zinc-50/70 dark:bg-zinc-950 dark:hover:bg-zinc-900/40',
+                            )}
+                          >
+                            <span className={cn(
+                              'h-2 w-2 shrink-0 rounded-full',
+                              paused ? 'bg-red-400' : 'bg-emerald-500',
+                            )} />
+                            <div className="min-w-0 flex-1">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span className={cn(
+                                  'text-sm font-medium',
+                                  paused ? 'text-zinc-500 line-through decoration-red-300 dark:text-zinc-400' : 'text-zinc-800 dark:text-zinc-100',
+                                )}>
+                                  {dept.name}
+                                </span>
+                                {dept.isCustom && (
+                                  <span className="rounded border border-indigo-200 bg-indigo-50 px-1.5 py-0 text-[9px] font-bold uppercase tracking-wide text-indigo-600 dark:border-indigo-800/60 dark:bg-indigo-950/40 dark:text-indigo-400">
+                                    Payment Catalog
+                                  </span>
+                                )}
+                                {workerCount > 0 && (
+                                  <span className="inline-flex items-center gap-1 text-[11px] text-zinc-400">
+                                    <Users className="h-3 w-3" />
+                                    {workerCount} this week
+                                  </span>
+                                )}
+                              </div>
+                              {paused && (
+                                <p className="mt-0.5 text-[11px] text-red-500 dark:text-red-400">
+                                  Excluded — hidden from the wizard, Payroll Notes and the readiness score until switched back on.
+                                </p>
+                              )}
+                              {!paused && !otOn && !otGlobalSuspended && (
+                                <p className="mt-0.5 text-[11px] text-amber-600 dark:text-amber-400">
+                                  Overtime suspended — OT hours pay at ₱0; regular hours only.
+                                </p>
+                              )}
+                            </div>
+
+                            <div className="flex shrink-0 items-center gap-5">
+                              <label className="flex cursor-pointer items-center gap-2">
+                                <span className={cn(
+                                  'text-xs font-medium',
+                                  paused ? 'text-red-500 dark:text-red-400' : 'text-zinc-600 dark:text-zinc-300',
+                                )}>
+                                  Pay this week
+                                </span>
+                                <SaveDot id={`pay_${dept.key}`} />
+                                <Switch
+                                  checked={!paused}
+                                  disabled={paySaving}
+                                  onCheckedChange={(v: boolean) => void handleConfigPayToggle(dept.key, dept.name, v)}
+                                  className="data-checked:bg-emerald-500"
+                                />
+                              </label>
+                              <label className={cn(
+                                'flex cursor-pointer items-center gap-2',
+                                (paused || otGlobalSuspended) && 'opacity-40',
+                              )}>
+                                <span className="text-xs font-medium text-zinc-600 dark:text-zinc-300">Overtime</span>
+                                <SaveDot id={`ot_${dept.key}`} />
+                                <Switch
+                                  checked={otOn && !otGlobalSuspended}
+                                  disabled={otSaving || otGlobalSuspended}
+                                  onCheckedChange={(v: boolean) => void handleConfigOtToggle(dept.key, dept.name, v)}
+                                  className="data-checked:bg-indigo-500"
+                                />
+                              </label>
+                            </div>
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+
+                  <p className="text-xs text-zinc-400 dark:text-zinc-500">
+                    Switches apply to the pay week the wizard is on and stay as set until changed here.
+                    Overtime uses the same per-department switches as System Settings — changing it in one
+                    place changes it everywhere.
+                  </p>
+                </div>
+              );
+            })()}
           </div>
         );
       case 2: {
@@ -8529,7 +8870,10 @@ export default function PayrollWizard({
       case 5: {
         // ──────────── Additions step ────────────
         // (Defined here after the Orphanage block; Orphanage = step 3, HSL = step 4, Additions = step 5.)
-        const activeDept = findAdditionsDept(activeDeptTab) ?? additionsDepartments[0]!;
+        // Last resort covers "every department excluded in Configuration" —
+        // the rail is empty, so render a harmless placeholder instead of crashing.
+        const activeDept = findAdditionsDept(activeDeptTab) ?? additionsDepartments[0]
+          ?? { key: activeDeptTab, name: 'No departments payable', bonuses: [], isCustom: false };
         // Hide the PAB / Tech columns entirely for a department that the bonus
         // is not assigned to (or is globally disabled) — no empty placeholder.
         const pabColShown = isDeptEligible(sysBonusCfg.pab, activeDeptTab);

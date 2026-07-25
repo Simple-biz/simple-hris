@@ -7,6 +7,13 @@ import { fetchHubstaffRowsOrdered, rowsToPayrollRows } from "./hubstaff-hours-db
 import { manilaMonthDayStamp, payrollNotesWeekStart, sundayOf } from "@/lib/payroll/manila-week";
 import { formatAdjustmentText } from "@/lib/payroll/adjustment-bridge";
 import { stripMiddleMarker } from "@/lib/name/name-parts";
+import { getAppSetting } from "./app-settings";
+import { getDepartmentRegistry } from "@/lib/departments/registry-db";
+import { resolveDeptKeyWithRegistry } from "@/lib/departments/registry";
+import {
+  DEPT_PAY_PAUSED_SETTING_KEY,
+  parsePausedDeptKeys,
+} from "@/lib/payroll/dept-pay-config";
 
 /**
  * Data access for the Payroll Wizard's floating "Notes" checklist (see
@@ -416,6 +423,24 @@ export async function listPayrollWorkerOptions(): Promise<{
     };
   }
 
+  // Departments excluded from this week's pay (Payroll Wizard step 1 →
+  // Configuration → "Pay this week" off) are discounted here too: their people
+  // don't suggest in the Worker cell. Best-effort — a settings/registry read
+  // failure must never break the picker, so it just skips the filter.
+  let isPausedDept: (dept: string | null) => boolean = () => false;
+  try {
+    const paused = parsePausedDeptKeys(await getAppSetting(DEPT_PAY_PAUSED_SETTING_KEY));
+    if (paused.size > 0) {
+      const registry = await getDepartmentRegistry().catch(() => []);
+      isPausedDept = (dept) => {
+        const key = resolveDeptKeyWithRegistry(dept, registry);
+        return !!key && paused.has(key);
+      };
+    }
+  } catch {
+    /* picker stays unfiltered */
+  }
+
   // One suggestion per person in the timesheet. Mirror the wizard's own display:
   // it shows the Hubstaff Member name, falling back to the email (PayrollWizard's
   // `name: p.name ?? p.email`). A row with neither can't be picked or linked.
@@ -424,11 +449,13 @@ export async function listPayrollWorkerOptions(): Promise<{
     const work_email = clean(r.email)?.toLowerCase() ?? null;
     const name = clean(r.name) ?? work_email;
     if (!name) continue;
+    const department = clean(r.department);
+    if (isPausedDept(department)) continue;
     const key = work_email ?? name.toLowerCase();
     if (byKey.has(key)) continue;
     byKey.set(key, {
       name,
-      department: clean(r.department),
+      department,
       work_email,
       off_boarded_at: null,
     });

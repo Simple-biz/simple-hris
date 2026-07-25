@@ -62,6 +62,12 @@ import { isFinalPayrollWeekOfMonth } from '@/lib/payroll/bonus-cadence';
 import { DEPARTMENTS, MANAGER_BONUS_DEPT_KEYS } from '@/lib/payroll/department-bonus';
 import { listBonusCatalog } from '@/lib/supabase/bonus-catalog-db';
 import { getDepartmentRegistry } from '@/lib/departments/registry-db';
+import { resolveDeptKeyWithRegistry, type DepartmentRegistryEntry } from '@/lib/departments/registry';
+import { getAppSetting } from '@/lib/supabase/app-settings';
+import {
+  DEPT_PAY_PAUSED_SETTING_KEY,
+  parsePausedDeptKeys,
+} from '@/lib/payroll/dept-pay-config';
 import { HSL_DEPTS, HSL_DEPT_KEYS, type HslDeptKey } from '@/lib/hsl-bonus/schema';
 import { weekRangeLabel } from '@/lib/payroll/manila-week';
 import {
@@ -267,7 +273,14 @@ interface HslEntryAgg {
 
 // ── KPI readiness ─────────────────────────────────────────────────────────────
 
-async function buildKpiReadiness(weekStart: string, isMonthly: boolean): Promise<ReadinessKpiDept[]> {
+async function buildKpiReadiness(
+  weekStart: string,
+  isMonthly: boolean,
+  registry: DepartmentRegistryEntry[],
+  /** Departments excluded from this week's pay (wizard Configuration tab) —
+   *  dropped from the KPI list entirely so they cost / earn nothing while off. */
+  paused: Set<string>,
+): Promise<ReadinessKpiDept[]> {
   const supabase = createSupabaseServiceRoleClient();
 
   // Status for every dept-week (implicit draft when absent). The GET-all shape.
@@ -298,17 +311,12 @@ async function buildKpiReadiness(weekStart: string, isMonthly: boolean): Promise
   }
 
   // In-app departments (Payment Catalog -> Department registry) join the KPI
-  // list for visibility. Best-effort: a registry read failure must not take
-  // down readiness for the built-in departments.
-  let customDepts: { key: string; name: string }[] = [];
-  try {
-    const builtin = new Set<string>([...MANAGER_BONUS_DEPT_KEYS, ...HSL_DEPT_KEYS]);
-    customDepts = (await getDepartmentRegistry())
-      .filter((e) => !builtin.has(e.key))
-      .map((e) => ({ key: e.key, name: e.name }));
-  } catch {
-    customDepts = [];
-  }
+  // list for visibility. The registry is loaded (best-effort) by the caller so
+  // the pay-paused predicate and this list share one read.
+  const builtin = new Set<string>([...MANAGER_BONUS_DEPT_KEYS, ...HSL_DEPT_KEYS]);
+  const customDepts: { key: string; name: string }[] = registry
+    .filter((e) => !builtin.has(e.key) && !paused.has(e.key))
+    .map((e) => ({ key: e.key, name: e.name }));
 
   // General (catalog) dept aggregates for the week. Scoped to this week's
   // period_start at the DB so we don't pull the entire applied-bonus history
@@ -346,8 +354,9 @@ async function buildKpiReadiness(weekStart: string, isMonthly: boolean): Promise
 
   const out: ReadinessKpiDept[] = [];
 
-  // General manager-KPI departments.
+  // General manager-KPI departments (skipping any excluded from this week's pay).
   for (const key of MANAGER_BONUS_DEPT_KEYS) {
+    if (paused.has(key)) continue;
     const status = statusByDept.get(key);
     const applied = appliedByDept.get(key);
     const hasCatalogBonus = catalogDeptKeys === null || catalogDeptKeys.has(key);
@@ -398,7 +407,9 @@ async function buildKpiReadiness(weekStart: string, isMonthly: boolean): Promise
   }
 
   // HSL sub-departments (monthly ones are only "due" on the month's final week).
+  // Pausing the Hogan Smith Law payroll department pauses every sub-dept with it.
   for (const key of HSL_DEPT_KEYS as readonly HslDeptKey[]) {
+    if (paused.has('hogan_smith_law') || paused.has(key)) continue;
     const cfg = HSL_DEPTS[key];
     const monthly = cfg.cadence === 'monthly';
     const due = !monthly || isMonthly;
@@ -430,6 +441,10 @@ async function buildKpiReadiness(weekStart: string, isMonthly: boolean): Promise
 async function buildMissingRates(
   sourceFile: string | null,
   excludeIdentities: Set<string>,
+  /** True when a raw department label belongs to a pay-paused department —
+   *  its workers leave both the missing list AND the denominator, so the
+   *  score re-curves over the people actually being paid. */
+  isPausedDept: (dept: string | null | undefined) => boolean,
 ): Promise<{ rows: ReadinessMissingRate[]; workerCount: number }> {
   // The workers considered are exactly the week-in-view's Hubstaff roster: the
   // named file when the wizard is on a specific (possibly replayed) week, else
@@ -481,6 +496,10 @@ async function buildMissingRates(
     // count (mirrors the missing-bank list's off-channel exclusion) so the stat
     // stays honest.
     if (isOffChannelDept(dept)) continue;
+
+    // Departments excluded from this week's pay (wizard Configuration tab)
+    // aren't being paid, so their people can't block readiness either.
+    if (isPausedDept(dept)) continue;
 
     // Onboarding-exception people (still onboarding / no-show / started this week)
     // are expected NOT to be paid, so a missing rate for them must never cost
@@ -549,6 +568,9 @@ function excludeByIdentity(
 
 async function buildMissingBank(
   excludeIdentities: Set<string>,
+  /** See {@link buildMissingRates} — pay-paused departments leave the bank
+   *  list and its denominator alike. */
+  isPausedDept: (dept: string | null | undefined) => boolean,
 ): Promise<{ rows: ReadinessMissingBank[]; eligibleCount: number }> {
   const [{ employees }, idsRes, ratesRes] = await Promise.all([
     getEmployeesForAuthorizedServerRoute(),
@@ -581,6 +603,7 @@ async function buildMissingBank(
   let eligibleCount = 0;
   for (const e of employees) {
     if (isOffChannelDept(e.department)) continue;
+    if (isPausedDept(e.department)) continue;
     // Onboarding-exception people (e.g. a `started_this_week` hire already
     // promoted onto the active roster) are expected NOT to be paid this week, so
     // an incomplete employee_ids row for them must never cost readiness points.
@@ -720,19 +743,39 @@ export async function getPayrollReadiness(
   const { weekStart, sourceFile: resolvedFile } = await resolveCurrentWeek(sourceFile);
   const isMonthlyPayWeek = isFinalPayrollWeekOfMonth(weekStart);
 
+  // Departments excluded from this week's pay (the wizard's step-1
+  // Configuration tab). They vanish from every readiness dimension —
+  // numerators AND denominators — so the score describes only the
+  // departments actually being paid, and snaps back the moment one is
+  // switched on again. Best-effort reads: a settings/registry failure
+  // must never take readiness down, it just skips the exclusion.
+  const [pausedRaw, registry] = await Promise.all([
+    getAppSetting(DEPT_PAY_PAUSED_SETTING_KEY).catch(() => null),
+    getDepartmentRegistry().catch(() => [] as DepartmentRegistryEntry[]),
+  ]);
+  const pausedDeptKeys = parsePausedDeptKeys(pausedRaw);
+  const isPausedDept = (dept: string | null | undefined): boolean => {
+    if (pausedDeptKeys.size === 0) return false;
+    const key = resolveDeptKeyWithRegistry(dept, registry);
+    return !!key && pausedDeptKeys.has(key);
+  };
+
   // Exceptions resolve first: their identity set feeds the rate/bank checks so an
   // expected non-payment (onboarding / no-show / started-this-week) never costs
   // points on ANY score dimension. KPI is per-department, so it needs no
   // per-person exclusion and still runs alongside.
   const [exceptionsRes, kpi] = await Promise.all([
     buildExceptions(weekStart),
-    buildKpiReadiness(weekStart, isMonthlyPayWeek),
+    buildKpiReadiness(weekStart, isMonthlyPayWeek, registry, pausedDeptKeys),
   ]);
-  const { rows: exceptions, identities: exceptionIdentities } = exceptionsRes;
+  const { identities: exceptionIdentities } = exceptionsRes;
+  // Pay-paused departments' hires are expected non-payments of a different
+  // kind — the whole department is off — so they don't clutter the list.
+  const exceptions = exceptionsRes.rows.filter((r) => !isPausedDept(r.department));
 
   const [ratesRes, bankRes] = await Promise.all([
-    buildMissingRates(resolvedFile, exceptionIdentities),
-    buildMissingBank(exceptionIdentities),
+    buildMissingRates(resolvedFile, exceptionIdentities, isPausedDept),
+    buildMissingBank(exceptionIdentities, isPausedDept),
   ]);
 
   // KPI due/submitted for the score: monthly depts not due this week ('na') are
