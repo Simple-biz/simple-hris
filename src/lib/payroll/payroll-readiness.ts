@@ -88,8 +88,11 @@ export { computeReadinessScore };
  *  readiness. `no_bonus` = a general dept with NO Payment Catalog bonus the
  *  manager could apply this week (the calculator is catalog-driven, so an empty
  *  catalog renders "No bonuses assigned" — there is nothing to submit), so it
- *  auto-reads Ready. */
-export type KpiDeptStatus = 'ready' | 'locked' | 'draft' | 'na' | 'no_bonus';
+ *  auto-reads Ready. `excluded` = the department is switched out of this week's
+ *  pay in the Payroll Wizard's step-1 Configuration tab — still listed for
+ *  visibility, but it neither owes a submission nor counts toward the score
+ *  until it's switched back on. */
+export type KpiDeptStatus = 'ready' | 'locked' | 'draft' | 'na' | 'no_bonus' | 'excluded';
 
 export interface ReadinessKpiDept {
   key: string;
@@ -315,7 +318,7 @@ async function buildKpiReadiness(
   // the pay-paused predicate and this list share one read.
   const builtin = new Set<string>([...MANAGER_BONUS_DEPT_KEYS, ...HSL_DEPT_KEYS]);
   const customDepts: { key: string; name: string }[] = registry
-    .filter((e) => !builtin.has(e.key) && !paused.has(e.key))
+    .filter((e) => !builtin.has(e.key))
     .map((e) => ({ key: e.key, name: e.name }));
 
   // General (catalog) dept aggregates for the week. Scoped to this week's
@@ -354,9 +357,9 @@ async function buildKpiReadiness(
 
   const out: ReadinessKpiDept[] = [];
 
-  // General manager-KPI departments (skipping any excluded from this week's pay).
+  // General manager-KPI departments. Pay-excluded ones (wizard Configuration
+  // tab) stay LISTED but read 'excluded' — visible, owing nothing.
   for (const key of MANAGER_BONUS_DEPT_KEYS) {
-    if (paused.has(key)) continue;
     const status = statusByDept.get(key);
     const applied = appliedByDept.get(key);
     const hasCatalogBonus = catalogDeptKeys === null || catalogDeptKeys.has(key);
@@ -366,6 +369,7 @@ async function buildKpiReadiness(
     if (deptStatus === 'draft' && !hasCatalogBonus && (applied?.employee_count ?? 0) === 0) {
       deptStatus = 'no_bonus';
     }
+    if (paused.has(key)) deptStatus = 'excluded';
     out.push({
       key,
       name: DEPT_NAME_BY_KEY[key] ?? key,
@@ -392,6 +396,7 @@ async function buildKpiReadiness(
     if (deptStatus === 'draft' && !hasCatalogBonus && (applied?.employee_count ?? 0) === 0) {
       deptStatus = 'no_bonus';
     }
+    if (paused.has(key)) deptStatus = 'excluded';
     out.push({
       key,
       name,
@@ -407,9 +412,10 @@ async function buildKpiReadiness(
   }
 
   // HSL sub-departments (monthly ones are only "due" on the month's final week).
-  // Pausing the Hogan Smith Law payroll department pauses every sub-dept with it.
+  // Pausing the Hogan Smith Law payroll department pauses every sub-dept with it —
+  // they stay listed but read 'excluded'.
   for (const key of HSL_DEPT_KEYS as readonly HslDeptKey[]) {
-    if (paused.has('hogan_smith_law') || paused.has(key)) continue;
+    const hslExcluded = paused.has('hogan_smith_law') || paused.has(key);
     const cfg = HSL_DEPTS[key];
     const monthly = cfg.cadence === 'monthly';
     const due = !monthly || isMonthly;
@@ -420,7 +426,7 @@ async function buildKpiReadiness(
       name: cfg.name,
       source: 'hsl',
       cadence: cfg.cadence,
-      status: !due ? 'na' : ((status?.status ?? 'draft') as KpiDeptStatus),
+      status: hslExcluded ? 'excluded' : !due ? 'na' : ((status?.status ?? 'draft') as KpiDeptStatus),
       scoredCount: agg?.scoredCount ?? 0,
       employeeCount: agg?.employeeCount ?? 0,
       totalBonus: Math.round(agg?.totalBonus ?? 0),
@@ -430,8 +436,9 @@ async function buildKpiReadiness(
   }
 
   // Sort: not-ready first (draft before ready before locked before n/a), then
-  // by name — so what still needs attention floats to the top.
-  const rank: Record<KpiDeptStatus, number> = { draft: 0, ready: 1, locked: 2, no_bonus: 3, na: 4 };
+  // by name — so what still needs attention floats to the top. Excluded
+  // departments sink to the bottom: nothing to do there until re-enabled.
+  const rank: Record<KpiDeptStatus, number> = { draft: 0, ready: 1, locked: 2, no_bonus: 3, na: 4, excluded: 5 };
   out.sort((a, b) => rank[a.status] - rank[b.status] || a.name.localeCompare(b.name));
   return out;
 }
@@ -778,11 +785,12 @@ export async function getPayrollReadiness(
     buildMissingBank(exceptionIdentities, isPausedDept),
   ]);
 
-  // KPI due/submitted for the score: monthly depts not due this week ('na') are
-  // excluded from the denominator; everything else is due, and "submitted" means
-  // the manager marked it ready/locked — or there is no bonus configured for the
-  // dept at all ('no_bonus'), which is Ready by definition.
-  const kpiDue = kpi.filter((d) => d.status !== 'na').length;
+  // KPI due/submitted for the score: monthly depts not due this week ('na') and
+  // departments switched out of this week's pay ('excluded') are dropped from
+  // the denominator; everything else is due, and "submitted" means the manager
+  // marked it ready/locked — or there is no bonus configured for the dept at
+  // all ('no_bonus'), which is Ready by definition.
+  const kpiDue = kpi.filter((d) => d.status !== 'na' && d.status !== 'excluded').length;
   const kpiSubmitted = kpi.filter(
     (d) => d.status === 'ready' || d.status === 'locked' || d.status === 'no_bonus',
   ).length;

@@ -21,6 +21,7 @@ import {
   Lock,
   Pencil,
   Plus,
+  PowerOff,
   Search,
   ShieldCheck,
   Sparkles,
@@ -1113,13 +1114,21 @@ const KPI_STATUS_PILL: Record<KpiDeptStatus, { label: string; cls: string; Icon:
     cls: "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-300",
     Icon: CheckCircle2,
   },
+  // Switched out of this week's pay in the Payroll Wizard's step-1
+  // Configuration tab — listed for visibility, owes nothing, scores nothing.
+  excluded: {
+    label: "Excluded",
+    cls: "border-red-200 bg-red-50 text-red-500 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-300",
+    Icon: PowerOff,
+  },
 };
 
 /** A KPI dept is "settled" for the week when its manager marked it ready/locked,
- *  it isn't due this week, or it has no bonus configured at all. Draft = still
+ *  it isn't due this week, it has no bonus configured at all, or it's excluded
+ *  from this week's pay in the wizard's Configuration tab. Draft = still
  *  left to do. */
 function isKpiSettled(s: KpiDeptStatus): boolean {
-  return s === "ready" || s === "locked" || s === "na" || s === "no_bonus";
+  return s === "ready" || s === "locked" || s === "na" || s === "no_bonus" || s === "excluded";
 }
 
 const EXCEPTION_META: Record<ExceptionKind, { label: string; cls: string; Icon: typeof UserPlus }> = {
@@ -1507,18 +1516,21 @@ function KpiDeptRow({
   onOpen?: () => void;
 }) {
   const settled = isKpiSettled(dept.status);
-  const pct =
-    dept.employeeCount > 0
+  const excluded = dept.status === "excluded";
+  const pct = excluded
+    ? 0
+    : dept.employeeCount > 0
       ? Math.round((dept.scoredCount / dept.employeeCount) * 100)
       : settled
         ? 100
         : 0;
   const pill = KPI_STATUS_PILL[dept.status];
-  const barCls = settled
-    ? "bg-gradient-to-r from-emerald-400 to-teal-500"
-    : "bg-gradient-to-r from-amber-400 to-orange-500";
-  const rowCls =
-    "flex w-full items-center gap-3 rounded-lg px-2 py-1.5 transition-colors hover:bg-orange-50/50 dark:hover:bg-blue-950/30";
+  const barCls = excluded
+    ? "bg-zinc-300 dark:bg-zinc-700"
+    : settled
+      ? "bg-gradient-to-r from-emerald-400 to-teal-500"
+      : "bg-gradient-to-r from-amber-400 to-orange-500";
+  const rowCls = `flex w-full items-center gap-3 rounded-lg px-2 py-1.5 transition-colors hover:bg-orange-50/50 dark:hover:bg-blue-950/30${excluded ? " opacity-60" : ""}`;
   const inner = (
     <>
       <div className="min-w-0 flex-1">
@@ -1550,7 +1562,11 @@ function KpiDeptRow({
           <pill.Icon className="h-2.5 w-2.5" />
           {pill.label}
         </span>
-        {dept.status === "no_bonus" ? (
+        {dept.status === "excluded" ? (
+          <span className="text-[9.5px] text-red-400/80 dark:text-red-400/70">
+            off in wizard Configuration
+          </span>
+        ) : dept.status === "no_bonus" ? (
           <span className="text-[9.5px] text-zinc-400 dark:text-zinc-500">no bonus set</span>
         ) : (
           dept.employeeCount > 0 && (
@@ -2469,7 +2485,10 @@ function PayrollReadinessGlance({
   }
 
   const kpiPending = data.kpi.filter((d) => !isKpiSettled(d.status));
-  const kpiDue = data.kpi.filter((d) => d.status !== "na");
+  // Not-due monthly depts ('na') and Configuration-tab exclusions ('excluded')
+  // leave the denominator — the tile describes only departments being paid.
+  const kpiDue = data.kpi.filter((d) => d.status !== "na" && d.status !== "excluded");
+  const kpiExcluded = data.kpi.filter((d) => d.status === "excluded").length;
   const kpiSubmitted = kpiDue.length - kpiPending.length;
 
   const blockers = data.missingRates.length; // hard blocker: can't pay at all
@@ -2517,7 +2536,13 @@ function PayrollReadinessGlance({
         <ReadinessStat
           label="KPIs submitted"
           value={`${kpiSubmitted}/${kpiDue.length}`}
-          sub={kpiPending.length === 0 ? "all departments in" : `${kpiPending.length} still pending`}
+          sub={
+            kpiPending.length > 0
+              ? `${kpiPending.length} still pending`
+              : kpiExcluded > 0
+                ? `all in · ${kpiExcluded} excluded`
+                : "all departments in"
+          }
           tone={kpiPending.length === 0 ? "emerald" : "amber"}
           Icon={ClipboardList}
           percent={dimensionPercent("kpi")}
