@@ -37,6 +37,7 @@ import { useLiveRefresh } from "@/hooks/useLiveRefresh";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
+import { SmoothSelect } from "@/components/ui/smooth-select";
 import { Switch } from "@/components/ui/switch";
 import {
   Dialog,
@@ -1935,29 +1936,26 @@ function SetBankDialog({
         </DialogHeader>
         <div className="grid gap-3">
           <div className="grid gap-1">
-            <label className={EDITOR_LABEL_CLS} htmlFor="readiness-bank-processor">
-              Processor
-            </label>
-            <select
-              id="readiness-bank-processor"
+            <span className={EDITOR_LABEL_CLS}>Processor</span>
+            <SmoothSelect
               value={processor}
-              onChange={(e) => setProcessor(e.target.value)}
+              onChange={setProcessor}
               disabled={locked}
-              className={EDITOR_SELECT_CLS}
-            >
-              {locked ? (
-                <option value={lockedProcessor}>{processorLabel}</option>
-              ) : (
-                <>
-                  <option value="">Pick a processor…</option>
-                  {EMPLOYEE_SELECTABLE_PROCESSOR_OPTIONS.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.label}
-                    </option>
-                  ))}
-                </>
-              )}
-            </select>
+              aria-label="Processor"
+              className="w-full"
+              triggerClassName="h-8"
+              options={
+                locked
+                  ? [{ value: lockedProcessor, label: processorLabel }]
+                  : [
+                      { value: "", label: "Pick a processor…" },
+                      ...EMPLOYEE_SELECTABLE_PROCESSOR_OPTIONS.map((p) => ({
+                        value: p.id as string,
+                        label: p.label,
+                      })),
+                    ]
+              }
+            />
             {locked && (
               <p className="text-[10px] text-zinc-400 dark:text-zinc-500">
                 Already routed via {processorLabel} — just complete the missing details
