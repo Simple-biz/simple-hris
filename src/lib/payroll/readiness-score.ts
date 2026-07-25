@@ -28,6 +28,11 @@ export interface ReadinessScoreComponent {
   maxPoints: number;
   /** How many items are still open for this dimension (0 = clear). */
   open: number;
+  /** 0–100 monitoring percent for this dimension — the display form of
+   *  `coverage`, with the same honesty rule as the points: exactly 100 only
+   *  when nothing is open, otherwise floored (and capped at 99) so "1 missing
+   *  of 500" can never round back up to a clean 100%. */
+  percent: number;
 }
 
 /** The blocker-weighted Payroll Readiness score. 100 = everything settled.
@@ -118,6 +123,9 @@ export function computeReadinessScore(args: {
     points,
     maxPoints: Math.round(weight * 100),
     open,
+    // Same honesty rule as the points: 100% only when truly clear; any open
+    // item floors (and caps at 99) so it never rounds back up to full.
+    percent: open === 0 ? 100 : Math.min(99, Math.floor(cov * 100)),
   });
 
   const components = [

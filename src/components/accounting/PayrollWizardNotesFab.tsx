@@ -1128,20 +1128,26 @@ type ReadinessTab = "kpi" | "rate" | "bank" | "exc";
 const READINESS_TAB_ORDER: ReadinessTab[] = ["kpi", "rate", "bank", "exc"];
 
 /** A single readiness stat tile (§6.3) — a read-only summary count. `tone` picks
- *  the palette. (Switching between the four detail lists is the job of the
- *  explicit tab strip below the tiles, not the tiles themselves.) */
+ *  the palette. When `percent` is given (the dimension's 0–100 score from the
+ *  server's readiness-score components), the tile also shows the percent and a
+ *  thin progress bar, so each dimension is monitorable as a score — it moves
+ *  the moment a bank account / rate / KPI submission lands (live refresh).
+ *  (Switching between the four detail lists is the job of the explicit tab
+ *  strip below the tiles, not the tiles themselves.) */
 function ReadinessStat({
   label,
   value,
   sub,
   tone,
   Icon,
+  percent,
 }: {
   label: string;
   value: number | string;
   sub: string;
   tone: "emerald" | "amber" | "sky" | "orange";
   Icon: typeof CheckCircle2;
+  percent?: number;
 }) {
   const palette: Record<string, { ring: string; icon: string; text: string }> = {
     emerald: {
@@ -1172,13 +1178,35 @@ function ReadinessStat({
       <div className="relative flex items-start justify-between gap-2">
         <div className="min-w-0">
           <div className={`text-[9px] font-semibold uppercase tracking-[0.14em] ${p.text}`}>{label}</div>
-          <div className="mt-0.5 text-base font-bold tracking-tight tabular-nums sm:text-lg">{value}</div>
+          <div className="mt-0.5 flex items-baseline gap-1.5">
+            <span className="text-base font-bold tracking-tight tabular-nums sm:text-lg">{value}</span>
+            {percent != null && (
+              <span className={`text-[11px] font-bold tabular-nums ${p.text}`}>{percent}%</span>
+            )}
+          </div>
           <div className="mt-0.5 truncate text-[10px] text-zinc-500 dark:text-zinc-400">{sub}</div>
         </div>
         <div className={`hidden h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br ${p.icon} text-white sm:flex`}>
           <Icon className="h-4 w-4" />
         </div>
       </div>
+      {/* Score bar — the dimension's percent, so progress is visible at a
+          glance and moves live as items are fixed. */}
+      {percent != null && (
+        <div
+          className="relative mt-1.5 h-1 overflow-hidden rounded-full bg-zinc-200/70 dark:bg-zinc-800"
+          role="progressbar"
+          aria-valuenow={percent}
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-label={`${label} score`}
+        >
+          <div
+            className={`h-full rounded-full bg-gradient-to-r transition-[width] duration-500 ${p.icon}`}
+            style={{ width: `${Math.max(0, Math.min(100, percent))}%` }}
+          />
+        </div>
+      )}
     </div>
   );
 }
@@ -2434,6 +2462,13 @@ function PayrollReadinessGlance({
     matchesQuery(kpiQuery, d.name, d.key, KPI_STATUS_PILL[d.status].label),
   );
 
+  // Per-dimension score percents (0–100) from the server's readiness score —
+  // the same components the hero breakdown shows, so the tiles, the chips, and
+  // the gauge always agree. `undefined` (component absent) just hides the
+  // percent on that tile.
+  const dimensionPercent = (key: "rate" | "kpi" | "bank") =>
+    data.score.components.find((c) => c.key === key)?.percent;
+
   return (
     <div className="flex h-[70vh] flex-col">
       {selectorHeader}
@@ -2462,6 +2497,7 @@ function PayrollReadinessGlance({
           sub={kpiPending.length === 0 ? "all departments in" : `${kpiPending.length} still pending`}
           tone={kpiPending.length === 0 ? "emerald" : "amber"}
           Icon={ClipboardList}
+          percent={dimensionPercent("kpi")}
         />
         <ReadinessStat
           label="No pay rate"
@@ -2469,6 +2505,7 @@ function PayrollReadinessGlance({
           sub={data.missingRates.length === 0 ? "everyone has a rate" : "can't be paid yet"}
           tone={data.missingRates.length === 0 ? "emerald" : "orange"}
           Icon={Wallet}
+          percent={dimensionPercent("rate")}
         />
         <ReadinessStat
           label="No bank info"
@@ -2476,6 +2513,7 @@ function PayrollReadinessGlance({
           sub={data.missingBank.length === 0 ? "all payable" : "missing payout details"}
           tone={data.missingBank.length === 0 ? "emerald" : "amber"}
           Icon={Banknote}
+          percent={dimensionPercent("bank")}
         />
         <ReadinessStat
           label="Exceptions"

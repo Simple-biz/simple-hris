@@ -87,6 +87,39 @@ test('nothing-to-measure week reads 100 / ready (no false penalty)', () => {
   assert.equal(s.grade, 'ready');
 });
 
+test('per-dimension percent: 100 only when clear, floored when anything is open', () => {
+  // Fully clear → every dimension reads exactly 100%.
+  for (const c of computeReadinessScore(CLEAR).components) {
+    assert.equal(c.percent, 100, `${c.key} should read 100% when clear`);
+  }
+
+  // 1 missing bank of 500 — proportionally ~99.8%, must floor to 99, not 100.
+  const bank = computeReadinessScore({ ...CLEAR, bankEligibleCount: 500, missingBank: 1 });
+  const bankComp = bank.components.find((c) => c.key === 'bank')!;
+  assert.equal(bankComp.percent, 99);
+
+  // Setting that last bank account flips the dimension to a clean 100%.
+  const fixed = computeReadinessScore({ ...CLEAR, bankEligibleCount: 500, missingBank: 0 });
+  assert.equal(fixed.components.find((c) => c.key === 'bank')!.percent, 100);
+
+  // Percent tracks coverage: 5 of 10 KPI depts submitted → 50%.
+  const kpi = computeReadinessScore({ ...CLEAR, kpiSubmitted: 5 });
+  assert.equal(kpi.components.find((c) => c.key === 'kpi')!.percent, 50);
+
+  // Everything missing → 0%, and percent always stays within [0,100].
+  const worst = computeReadinessScore({
+    workerCount: 100,
+    missingRates: 100,
+    kpiDue: 10,
+    kpiSubmitted: 0,
+    bankEligibleCount: 100,
+    missingBank: 100,
+  });
+  for (const c of worst.components) {
+    assert.equal(c.percent, 0, `${c.key} should read 0% when fully missing`);
+  }
+});
+
 test('value stays within [0,100] and grades band correctly with no blockers', () => {
   const halfKpi = computeReadinessScore({ ...CLEAR, kpiSubmitted: 5 }); // kpi 12/25
   assert.ok(halfKpi.value >= 0 && halfKpi.value <= 100);
