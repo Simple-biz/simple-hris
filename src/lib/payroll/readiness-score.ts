@@ -4,9 +4,18 @@
  * can be unit-tested and reused on either side of the wire. No I/O, no DB, no
  * `server-only`: just numbers in → score out.
  *
- * Blocker-weighted: no-pay-rate is the hard blocker (half the weight); KPI
+ * Blocker-weighted: no-pay-rate is a hard blocker (half the weight); KPI
  * submission and missing bank info split the rest; onboarding exceptions are
  * excluded entirely (expected non-payments never cost points).
+ *
+ * Missing bank info comes in two severities: someone on THIS WEEK's payroll
+ * with no payout details is a hard blocker too — they will reach Payment
+ * Dispatch and simply not get paid — so any of them pins the bank dimension
+ * low and forces the 'blocked' grade, exactly like a missing rate. Missing
+ * bank on the wider active roster (not being paid this week) stays
+ * proportional: it's data debt, not a payday failure. Before this split, 20%
+ * of the company missing bank info still scored 94/100 — the linear 25-point
+ * bank share could never say "payday is broken".
  */
 
 /** One weighted contributor to the readiness score — surfaced so the UI can show
@@ -28,6 +37,11 @@ export interface ReadinessScoreComponent {
   maxPoints: number;
   /** How many items are still open for this dimension (0 = clear). */
   open: number;
+  /** How many of the open items are HARD BLOCKERS — people whose pay cannot
+   *  happen this week (a no-rate worker; a no-bank worker on this week's
+   *  payroll). Any blocker pins the dimension's points low and forces the
+   *  'blocked' grade; the UI uses this count to say why. Always ≤ `open`. */
+  blockerOpen: number;
   /** 0–100 monitoring percent for this dimension — the display form of
    *  `coverage`, with the same honesty rule as the points: exactly 100 only
    *  when nothing is open, otherwise floored (and capped at 99) so "1 missing
@@ -36,8 +50,9 @@ export interface ReadinessScoreComponent {
 }
 
 /** The blocker-weighted Payroll Readiness score. 100 = everything settled.
- *  No-pay-rate is the hard blocker (heaviest weight); KPI submission and missing
- *  bank info are medium; onboarding exceptions never lower the score. */
+ *  Hard blockers (a no-rate worker, or a no-bank worker on this week's payroll)
+ *  pin their dimension and force 'blocked'; KPI submission and roster-wide bank
+ *  hygiene are proportional; onboarding exceptions never lower the score. */
 export interface ReadinessScore {
   /** 0–100. Equals the sum of the component points. */
   value: number;
@@ -60,6 +75,13 @@ export const SCORE_WEIGHTS = { rate: 0.5, kpi: 0.25, bank: 0.25 } as const;
  *  caps the total at 10(rate)+25(kpi)+25(bank)=60. */
 const BLOCKED_RATE_POINTS = 10;
 
+/** Bank-dimension twin of BLOCKED_RATE_POINTS (same 20% of the dimension's
+ *  weight): any missing-bank person ON THIS WEEK'S PAYROLL pins bank here — a
+ *  worker with hours this week and no payout rail will NOT be paid, which is a
+ *  payday failure no proportion can soften. A bank blocker alone caps the total
+ *  at 50(rate)+25(kpi)+5(bank)=80, and the grade reads 'blocked'. */
+const BLOCKED_BANK_POINTS = 5;
+
 /**
  * Compute the blocker-weighted readiness score from the already-built signals.
  *
@@ -72,9 +94,10 @@ const BLOCKED_RATE_POINTS = 10;
  *   - Any OPEN item floors its dimension below full, and the total below 100 —
  *     `Math.floor` on partial coverage means "1 missing of 500" reads 49, never
  *     rounds back up to 50, so the score can only reach 100 when truly clear.
- *   - Any missing rate (hard blocker) pins the rate dimension to
- *     BLOCKED_RATE_POINTS regardless of proportion, and forces the 'blocked'
- *     grade — a no-rate worker can't be paid, so it dominates.
+ *   - Any hard blocker pins its dimension regardless of proportion and forces
+ *     the 'blocked' grade: a missing rate pins rate to BLOCKED_RATE_POINTS
+ *     (can't compute their pay), and a missing-bank person on this week's
+ *     payroll pins bank to BLOCKED_BANK_POINTS (can't deliver their pay).
  */
 export function computeReadinessScore(args: {
   workerCount: number;
@@ -83,6 +106,10 @@ export function computeReadinessScore(args: {
   kpiSubmitted: number;
   bankEligibleCount: number;
   missingBank: number;
+  /** How many of `missingBank` are on THIS WEEK's payroll (have hours in the
+   *  week's Hubstaff upload). Each one is a person about to NOT get paid — a
+   *  hard blocker, scored like a missing rate. */
+  missingBankOnPayroll: number;
 }): ReadinessScore {
   const coverage = (missing: number, total: number) =>
     total <= 0 ? 1 : Math.max(0, Math.min(1, 1 - missing / total));
@@ -102,11 +129,23 @@ export function computeReadinessScore(args: {
   const rateOpen = args.missingRates;
   const kpiOpen = Math.max(0, args.kpiDue - args.kpiSubmitted);
   const bankOpen = args.missingBank;
+  // Blockers can't exceed their dimension's open count (a payroll-overlap
+  // larger than the missing list would be a caller bug — clamp, stay honest).
+  const bankBlockerOpen = Math.max(0, Math.min(args.missingBankOnPayroll, bankOpen));
 
   // Hard blocker: any missing rate pins the rate dimension to a fixed low score,
   // so the breakdown (and the total) reflect "blocked" honestly.
   const rateMax = Math.round(SCORE_WEIGHTS.rate * 100);
   const ratePoints = rateOpen > 0 ? Math.min(BLOCKED_RATE_POINTS, rateMax) : rateMax;
+
+  // Same for bank: anyone being paid this week with no payout rail pins the
+  // dimension — proportional credit only applies while the open items are
+  // roster hygiene (people not on this week's payroll).
+  const bankMax = Math.round(SCORE_WEIGHTS.bank * 100);
+  const bankPoints =
+    bankBlockerOpen > 0
+      ? Math.min(BLOCKED_BANK_POINTS, bankMax)
+      : earn(bankCov, SCORE_WEIGHTS.bank, bankOpen);
 
   const mk = (
     key: ReadinessScoreComponent['key'],
@@ -114,6 +153,7 @@ export function computeReadinessScore(args: {
     cov: number,
     weight: number,
     open: number,
+    blockerOpen: number,
     points: number,
   ): ReadinessScoreComponent => ({
     key,
@@ -123,26 +163,28 @@ export function computeReadinessScore(args: {
     points,
     maxPoints: Math.round(weight * 100),
     open,
+    blockerOpen,
     // Same honesty rule as the points: 100% only when truly clear; any open
     // item floors (and caps at 99) so it never rounds back up to full.
     percent: open === 0 ? 100 : Math.min(99, Math.floor(cov * 100)),
   });
 
   const components = [
-    mk('rate', 'Pay rates', rateCov, SCORE_WEIGHTS.rate, rateOpen, ratePoints),
-    mk('kpi', 'KPI submission', kpiCov, SCORE_WEIGHTS.kpi, kpiOpen, earn(kpiCov, SCORE_WEIGHTS.kpi, kpiOpen)),
-    mk('bank', 'Bank info', bankCov, SCORE_WEIGHTS.bank, bankOpen, earn(bankCov, SCORE_WEIGHTS.bank, bankOpen)),
+    mk('rate', 'Pay rates', rateCov, SCORE_WEIGHTS.rate, rateOpen, rateOpen, ratePoints),
+    mk('kpi', 'KPI submission', kpiCov, SCORE_WEIGHTS.kpi, kpiOpen, 0, earn(kpiCov, SCORE_WEIGHTS.kpi, kpiOpen)),
+    mk('bank', 'Bank info', bankCov, SCORE_WEIGHTS.bank, bankOpen, bankBlockerOpen, bankPoints),
   ];
 
   // The headline IS the sum of the component points, so the breakdown always
   // adds up to it exactly.
   const value = components.reduce((s, c) => s + c.points, 0);
 
-  // Grade keys off ACTUAL open items, not the rounded value: any blocker →
-  // 'blocked'; fully clear → 'ready'; otherwise band by the value.
+  // Grade keys off ACTUAL open items, not the rounded value: any blocker
+  // (no-rate worker, or no-bank worker on this week's payroll) → 'blocked';
+  // fully clear → 'ready'; otherwise band by the value.
   const anyOpen = rateOpen > 0 || kpiOpen > 0 || bankOpen > 0;
   const grade: ReadinessScore['grade'] =
-    rateOpen > 0
+    rateOpen > 0 || bankBlockerOpen > 0
       ? 'blocked'
       : !anyOpen
         ? 'ready'

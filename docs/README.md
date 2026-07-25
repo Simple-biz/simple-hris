@@ -41,6 +41,7 @@ docs/
 | [rbac-feature-permissions.md](./features/rbac-feature-permissions.md) | Role grants + per-tab Hidden/View/Edit overlay; Admin-provisioned, enforced across all views + API; force-logout/session reset |
 | [accounting-cobrowse.md](./features/accounting-cobrowse.md) | Live "Observe" screen mirroring in Accounting (rrweb over Realtime), built on the collab layer |
 | [orphanage-dispute-flow.md](./features/orphanage-dispute-flow.md) | Orphanage-visit / PAB dispute flow |
+| [orphanage-pab-coverage.md](./features/orphanage-pab-coverage.md) | **TEMPORARY** orphanage → PAB auto-coverage: Orphanage-step hours forgive short weekdays (`worked + hours ≥ 7h`) in the hours' file week **+ the week before** (results arrive one run after the visit); no dispute needed; single source of truth `orphanage-pab-coverage.ts` feeding all 6 eligibility surfaces; frozen-snapshot upgrade rule; removal checklist |
 | [third-party-vendors.md](./features/third-party-vendors.md) | Orphanage 3rd Party Vendors tab: vendor directory (dual banking) + SIMPLE-branded invoice builder with PAID watermark; deliberately separate from Payment Dispatch (own tables, no n8n) |
 | [delete-authorization.md](./features/delete-authorization.md) | Who can delete what, and the audit trail |
 | [system-diagnostics.md](./features/system-diagnostics.md) | Admin diagnostics service map + probes; live auto re-probe feed for watching the DB during an outage |

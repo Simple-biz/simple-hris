@@ -133,8 +133,9 @@ export function resolveEffectivePayoutProcessor(
  *     primary↔alternative when showing the payee's account).
  *   - hurupay/higlobe emails also count from the legacy rates row when the
  *     caller passes it (PD backfills details from there).
- *   - `wise` (like jeeves/wires, a non-wallet rail) is also payable on full
- *     wire details — accounting wires them when no Wise handle is on file.
+ *   - `wise` (like jeeves/wires, a non-wallet rail) is payable ONLY on full
+ *     wire details — payouts go to the payee's bank account, never to a Wise
+ *     email/@tag, so a stored handle alone doesn't make someone payable.
  *   - hurupay/higlobe stay strict: a wallet deposit needs its email, wire
  *     details can't substitute (that's the wires-flip cleanup, not payable).
  *
@@ -164,7 +165,6 @@ export function isPayoutComplete(
         !!(payout.higlobeAccountName || (extras?.higlobeAccountName ?? '').trim())
       );
     case 'wise':
-      return !!(payout.wiseEmail || payout.wiseTag) || hasWireDetails;
     case 'jeeves':
     case 'wires':
       return hasWireDetails;

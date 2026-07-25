@@ -1,0 +1,184 @@
+{
+  "name": "Hubstaff → Weekly Payroll Auto-Sync",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 0 * * 0"
+            }
+          ]
+        }
+      },
+      "id": "c1000000-0000-4000-8000-000000000001",
+      "name": "Every Sunday 00:00 (New York)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        240,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://YOUR-HRIS-DOMAIN/api/cron/sync-hubstaff-week",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer YOUR_CRON_SECRET"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 300000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "c1000000-0000-4000-8000-000000000002",
+      "name": "Trigger HRIS Sync",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        480,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "cond-http-200",
+              "leftValue": "={{ $json.statusCode }}",
+              "rightValue": 200,
+              "operator": {
+                "type": "number",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "cond-body-success",
+              "leftValue": "={{ $json.body.success }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "c1000000-0000-4000-8000-000000000003",
+      "name": "Synced OK?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        720,
+        300
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "c1000000-0000-4000-8000-000000000004",
+      "name": "Sync Complete",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        960,
+        200
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "c1000000-0000-4000-8000-000000000005",
+      "name": "Sync Failed — wire an alert here (Slack/email)",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        960,
+        420
+      ]
+    }
+  ],
+  "connections": {
+    "Every Sunday 00:00 (New York)": {
+      "main": [
+        [
+          {
+            "node": "Trigger HRIS Sync",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Trigger HRIS Sync": {
+      "main": [
+        [
+          {
+            "node": "Synced OK?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Synced OK?": {
+      "main": [
+        [
+          {
+            "node": "Sync Complete",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Sync Failed — wire an alert here (Slack/email)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "America/New_York"
+  },
+  "staticData": null,
+  "pinData": {},
+  "tags": [
+    {
+      "name": "hris"
+    },
+    {
+      "name": "hubstaff"
+    },
+    {
+      "name": "payroll"
+    }
+  ],
+  "meta": {
+    "description": "Weekly payroll auto-sync scheduler. Fires every Sunday at 00:00 America/New_York (DST-aware — set via workflow settings.timezone, so it stays true midnight ET through spring/fall changes), then POSTs the HRIS endpoint POST /api/cron/sync-hubstaff-week with an Authorization: Bearer <CRON_SECRET> header. The HRIS does all the work — it computes the just-completed Sun→Sat pay week, pulls it live from the Hubstaff API, archives + promotes the batch to current, fires payroll.available notifications, and records MESA deposits — identical to the Payroll Wizard 'Sync from Hubstaff' button (shared runHubstaffWeeklySync). n8n is only the trigger; do NOT reimplement the Hubstaff pull here. Idempotent: a retry/re-run replaces the same batch (deterministic filename) — no double pay/notify. BEFORE ACTIVATING: (1) replace YOUR-HRIS-DOMAIN with the production host; (2) replace YOUR_CRON_SECRET with the same value as the HRIS CRON_SECRET env var (better: swap the inline header for an n8n Header Auth credential); (3) wire the 'Sync Failed' NoOp to a Slack/email alert so a failed Sunday sync pings someone. The endpoint returns { success, skipped, reason, weekStart, weekEnd, members, rows } — a week with no tracked time comes back success:false, skipped:true, reason:'no_data' at HTTP 200 (not a failure). For a manual backfill add ?weekStart=YYYY-MM-DD (must be a Sunday) to the URL."
+  }
+}

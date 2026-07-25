@@ -294,7 +294,7 @@ const PROCESSOR_OPTIONS = [
   { value: 'higlobe', label: 'HiGlobe' },
   { value: 'wise', label: 'Wise' },
   { value: 'jeeves', label: 'Jeeves' },
-  { value: 'wires', label: 'Bank transfer (wires)' },
+  { value: 'wires', label: 'Wires' },
 ];
 
 /** A labeled text/date input for the profile editor grid. */
@@ -3094,14 +3094,16 @@ function PersonDetailDialog({
   // single processor field. Unknown/empty processor falls back to a bank if one
   // exists, else nothing.
   const proc = (banking?.preferred_processor ?? '').trim().toLowerCase();
-  // wires AND jeeves both carry full bank/wire details (jeeves also shows phone).
-  const showBank = proc === 'wires' || proc === 'jeeves' || (!proc && !!prefBank.name);
+  // wires, jeeves AND wise all carry full bank/wire details (jeeves also shows
+  // phone). Wise payees are paid into their bank account, not a Wise handle —
+  // same field set as wires (mirrors the Readiness Set-bank editor).
+  const showBank = proc === 'wires' || proc === 'jeeves' || proc === 'wise' || (!proc && !!prefBank.name);
 
   // The editor's field visibility follows the same processor rules as the
   // read view, but driven by the FORM's processor so switching the payment
   // method immediately swaps the relevant fields in.
   const editProc = bankForm.preferred_processor;
-  const editShowsBank = editProc === 'wires' || editProc === 'jeeves' || editProc === '';
+  const editShowsBank = editProc === 'wires' || editProc === 'jeeves' || editProc === 'wise' || editProc === '';
   const editAlt = bankForm.preferred_bank_slot === 'alternative';
 
   const reveal = async (): Promise<Banking | null> => {
@@ -3512,6 +3514,7 @@ function PersonDetailDialog({
                         aria-label="Payment method"
                         className="mt-1 w-full"
                         options={PROCESSOR_OPTIONS}
+                        portal
                       />
                     </div>
                     {editShowsBank && (
@@ -3526,6 +3529,7 @@ function PersonDetailDialog({
                             { value: 'primary', label: 'Primary bank' },
                             { value: 'alternative', label: 'Alternative bank' },
                           ]}
+                          portal
                         />
                       </div>
                     )}
@@ -3559,12 +3563,6 @@ function PersonDetailDialog({
                       <>
                         <EditField label="HiGlobe email" value={bankForm.higlobe_email} onChange={(v) => updBank('higlobe_email', v)} accent={accent} type="email" />
                         <EditField label="HiGlobe account" value={bankForm.higlobe_account_name} onChange={(v) => updBank('higlobe_account_name', v)} accent={accent} />
-                      </>
-                    )}
-                    {editProc === 'wise' && (
-                      <>
-                        <EditField label="Wise email" value={bankForm.wise_email} onChange={(v) => updBank('wise_email', v)} accent={accent} type="email" />
-                        <EditField label="Wise tag" value={bankForm.wise_tag} onChange={(v) => updBank('wise_tag', v)} accent={accent} />
                       </>
                     )}
                   </div>
@@ -3607,12 +3605,6 @@ function PersonDetailDialog({
                     <>
                       <Field label="HiGlobe email" value={banking?.higlobe_email ?? null} />
                       <Field label="HiGlobe account" value={banking?.higlobe_account_name ?? null} />
-                    </>
-                  )}
-                  {proc === 'wise' && (
-                    <>
-                      <Field label="Wise email" value={banking?.wise_email ?? null} />
-                      <Field label="Wise tag" value={banking?.wise_tag ?? null} />
                     </>
                   )}
                   {proc === 'jeeves' && <Field label="Phone" value={banking?.phone_number ?? null} mono />}

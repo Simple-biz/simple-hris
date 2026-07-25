@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
-import { saveOrphanagePay, listOrphanagePay, deleteOrphanagePay, type OrphanagePayRow } from '@/lib/supabase/orphanage-pay-db';
+import { saveOrphanagePay, listOrphanagePay, listAllOrphanagePayHours, deleteOrphanagePay, type OrphanagePayRow } from '@/lib/supabase/orphanage-pay-db';
 import { deniedResponse } from '@/lib/auth/authorize-email';
-import { requireFeatureEdit } from '@/lib/auth/authorize-feature';
+import { requireFeatureEdit, requireFeatureAccess } from '@/lib/auth/authorize-feature';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -12,6 +12,23 @@ export const runtime = 'nodejs';
  */
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
+
+  // ?all=1 — every locked-in orphanage row across ALL pay weeks, reduced to
+  // (source_file, email, hours). Powers the Payroll Wizard's month-wide
+  // orphanage → PAB coverage; gated to accounting since it exposes the full
+  // fleet's history (the per-source_file read below stays open to any employee).
+  if (searchParams.get('all') === '1') {
+    const authz = await requireFeatureAccess('accounting', 'payroll_wizard', 'view');
+    if (!authz.ok) return deniedResponse(authz);
+    try {
+      const rows = await listAllOrphanagePayHours();
+      return NextResponse.json({ rows, error: null });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      return NextResponse.json({ rows: [], error: msg }, { status: 500 });
+    }
+  }
+
   const sourceFile = searchParams.get('source_file');
   if (!sourceFile) {
     return NextResponse.json({ rows: [], error: 'source_file required' }, { status: 400 });

@@ -1375,16 +1375,20 @@ function ReadinessSearch({
   placeholder,
   shown,
   total,
+  className,
 }: {
   value: string;
   onChange: (v: string) => void;
   placeholder: string;
   shown: number;
   total: number;
+  /** Wrapper class override — defaults to `mb-2` for the standalone layout;
+   *  pass e.g. `min-w-0 flex-1` when the box shares a filter row. */
+  className?: string;
 }) {
   const active = value.trim() !== "";
   return (
-    <div className="relative mb-2">
+    <div className={`relative ${className ?? "mb-2"}`}>
       <Search aria-hidden className="pointer-events-none absolute top-1/2 left-2.5 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400" />
       <Input
         value={value}
@@ -1426,6 +1430,10 @@ function NoMatches({ query }: { query: string }) {
 /** Rows per page for the paginated people lists (No Pay Rate / Bank Info /
  *  Exceptions). Ten keeps a page short enough to scan without scrolling. */
 const READINESS_PAGE_SIZE = 10;
+
+/** Sentinel value for the Bank Info department filter selecting rows that have
+ *  no department on the roster (can't be `""` — that means "all"). */
+const BANK_NO_DEPT = "__no_dept__";
 
 /**
  * Client-side pagination over an already-filtered list. Returns the current
@@ -2290,6 +2298,11 @@ function PayrollReadinessGlance({
   const [rateQuery, setRateQuery] = useState("");
   const [bankQuery, setBankQuery] = useState("");
   const [excQuery, setExcQuery] = useState("");
+  // Department filter for the Bank Info list ("" = all departments).
+  const [bankDept, setBankDept] = useState("");
+  // "Paying this week" filter for the Bank Info list — when on, only people
+  // with hours in the week-in-view's Hubstaff file (the hard blockers) show.
+  const [bankOnPayrollOnly, setBankOnPayrollOnly] = useState(false);
   // Which of the four detail lists is showing. The stat tiles double as the tab
   // strip; only the selected list renders below them, swapped with a directional
   // slide. `readinessDir` carries the slide direction (+1 later tab / −1 earlier)
@@ -2434,8 +2447,50 @@ function PayrollReadinessGlance({
   const ratesShown = (data?.missingRates ?? []).filter((r) =>
     matchesQuery(rateQuery, r.name, r.email, r.department),
   );
-  const bankShown = (data?.missingBank ?? []).filter((r) =>
-    matchesQuery(bankQuery, r.name, r.email, r.department, r.processor),
+  // Unique departments present in the Bank Info list (with row counts), powering
+  // the bank pane's department dropdown. BANK_NO_DEPT stands in for rows without
+  // a department so they stay reachable through the filter too.
+  const bankDeptOptions = useMemo(() => {
+    const counts = new Map<string, number>();
+    let none = 0;
+    for (const r of data?.missingBank ?? []) {
+      const dept = r.department?.trim();
+      if (dept) counts.set(dept, (counts.get(dept) ?? 0) + 1);
+      else none += 1;
+    }
+    const opts = [...counts.entries()]
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .map(([dept, n]) => ({ value: dept, label: `${dept} (${n})` }));
+    if (none > 0) opts.push({ value: BANK_NO_DEPT, label: `No department (${none})` });
+    return [{ value: "", label: "All departments" }, ...opts];
+  }, [data?.missingBank]);
+  // If a live refresh clears the selected department's last row (or a week
+  // switch swaps the list), fall back to "all" so the filter never strands an
+  // empty view behind a selection the dropdown no longer offers.
+  useEffect(() => {
+    if (bankDept !== "" && !bankDeptOptions.some((o) => o.value === bankDept)) {
+      setBankDept("");
+    }
+  }, [bankDept, bankDeptOptions]);
+  // How many missing-bank rows are on this week's payroll — the count shown on
+  // the "Paying this week" toggle chip. When it drops to zero (fixed the last
+  // one, or a week switch) the chip hides, so also release the filter to keep
+  // the list from stranding empty behind an invisible control.
+  const bankOnPayrollCount = useMemo(
+    () => (data?.missingBank ?? []).reduce((n, r) => n + (r.onPayroll ? 1 : 0), 0),
+    [data?.missingBank],
+  );
+  useEffect(() => {
+    if (bankOnPayrollOnly && bankOnPayrollCount === 0) setBankOnPayrollOnly(false);
+  }, [bankOnPayrollOnly, bankOnPayrollCount]);
+  const bankShown = (data?.missingBank ?? []).filter(
+    (r) =>
+      matchesQuery(bankQuery, r.name, r.email, r.department, r.processor) &&
+      (!bankOnPayrollOnly || r.onPayroll) &&
+      (bankDept === "" ||
+        (bankDept === BANK_NO_DEPT
+          ? !r.department?.trim()
+          : (r.department ?? "").trim() === bankDept)),
   );
   const excShown = (data?.exceptions ?? []).filter((r) =>
     matchesQuery(excQuery, r.name, r.email, r.department, r.detail, EXCEPTION_META[r.kind].label),
@@ -2444,7 +2499,10 @@ function PayrollReadinessGlance({
   // search snaps back to page 1; the hook also clamps the page if a live refresh
   // shrinks the list under it.
   const ratesPage = usePagedList(ratesShown, rateQuery);
-  const bankPage = usePagedList(bankShown, bankQuery);
+  // The bank list narrows on the dept pick and the paying-this-week toggle too,
+  // so both join the reset key (newline-joined so "a"+"b" can never collide
+  // with "ab").
+  const bankPage = usePagedList(bankShown, `${bankDept}\n${bankOnPayrollOnly ? "1" : "0"}\n${bankQuery}`);
   const excPage = usePagedList(excShown, excQuery);
 
   // The selector header stays mounted across every body state (loading / error /
@@ -2506,8 +2564,12 @@ function PayrollReadinessGlance({
   const kpiExcluded = data.kpi.filter((d) => d.status === "excluded").length;
   const kpiSubmitted = kpiDue.length - kpiPending.length;
 
-  const blockers = data.missingRates.length; // hard blocker: can't pay at all
-  const warnings = kpiPending.length + data.missingBank.length; // needs attention
+  // Hard blockers: people whose pay CANNOT happen this week — no rate to
+  // compute it, or (new) no payout rail while on this week's Hubstaff file.
+  const bankBlockers = data.missingBankOnPayroll;
+  const blockers = data.missingRates.length + bankBlockers;
+  // Everything else open is review work, not a payday failure.
+  const warnings = kpiPending.length + (data.missingBank.length - bankBlockers);
   const isReady = blockers === 0 && kpiPending.length === 0 && data.missingBank.length === 0;
 
   // KPI search — filter the dept list live (name / key / status). The three
@@ -2537,13 +2599,36 @@ function PayrollReadinessGlance({
           blocker (no-rate worker) exists. */}
       <ReadinessHero
         isReady={isReady}
-        blockers={blockers}
+        rateBlockers={data.missingRates.length}
+        bankBlockers={bankBlockers}
         warnings={warnings}
         weekLabel={data.weekLabel}
         isMonthly={data.isMonthlyPayWeek}
         score={data.score}
         reduceMotion={reduceMotion}
       />
+
+      {/* Partial-data warning — the server reports any source it could NOT
+          read this load (Hubstaff file, roster, employee_ids, legacy rates,
+          onboarding, Configuration). A broken read reshapes the numbers
+          quietly (usually to look BETTER), so it must be said out loud; the
+          server also refuses to grade 'ready' while any of these are up. */}
+      {(data.degraded?.length ?? 0) > 0 && (
+        <div
+          role="alert"
+          className="rounded-xl border border-amber-300/70 bg-amber-50/80 px-3 py-2 dark:border-amber-500/30 dark:bg-amber-950/30"
+        >
+          <div className="flex items-center gap-1.5 text-[11px] font-semibold text-amber-800 dark:text-amber-200">
+            <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+            Partial data this load — these checks couldn&apos;t run fully
+          </div>
+          <ul className="mt-1 list-disc space-y-0.5 pl-5 text-[10.5px] text-amber-700/90 dark:text-amber-300/80">
+            {data.degraded.map((d) => (
+              <li key={d}>{d}</li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       {/* Stat tiles — a read-only at-a-glance summary of the four dimensions.
           (Switching between the detail lists is the tab strip's job, below.) */}
@@ -2573,8 +2658,14 @@ function PayrollReadinessGlance({
         <ReadinessStat
           label="No bank info"
           value={data.missingBank.length}
-          sub={data.missingBank.length === 0 ? "all payable" : "missing payout details"}
-          tone={data.missingBank.length === 0 ? "emerald" : "amber"}
+          sub={
+            data.missingBank.length === 0
+              ? "all payable"
+              : bankBlockers > 0
+                ? `${bankBlockers} on this week's payroll`
+                : "missing payout details"
+          }
+          tone={data.missingBank.length === 0 ? "emerald" : bankBlockers > 0 ? "orange" : "amber"}
           Icon={Banknote}
           percent={dimensionPercent("bank")}
         />
@@ -2716,15 +2807,58 @@ function PayrollReadinessGlance({
                   <AllClear text="Everyone has payout details on file." />
                 ) : (
                   <>
-                    <ReadinessSearch
-                      value={bankQuery}
-                      onChange={setBankQuery}
-                      placeholder="Search people…"
-                      shown={bankShown.length}
-                      total={data.missingBank.length}
-                    />
+                    <div className="mb-2 flex flex-wrap items-center gap-2">
+                      <ReadinessSearch
+                        className="min-w-0 flex-1"
+                        value={bankQuery}
+                        onChange={setBankQuery}
+                        placeholder="Search people…"
+                        shown={bankShown.length}
+                        total={data.missingBank.length}
+                      />
+                      {/* Blocker filter — narrows the list to people with hours
+                          in this week's Hubstaff file (the rose-badge rows).
+                          Hidden when no row qualifies; the effect above also
+                          releases the filter then. */}
+                      {bankOnPayrollCount > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => setBankOnPayrollOnly((v) => !v)}
+                          aria-pressed={bankOnPayrollOnly}
+                          title="Only show people with hours in this week's Hubstaff file — they will not be paid until payout details are set"
+                          className={`h-7 shrink-0 rounded-md border px-2 text-[10px] font-semibold uppercase tracking-wide transition-colors ${
+                            bankOnPayrollOnly
+                              ? "border-rose-300 bg-rose-100 text-rose-700 dark:border-rose-500/40 dark:bg-rose-500/15 dark:text-rose-300"
+                              : "border-zinc-200 bg-white text-zinc-500 hover:border-rose-200 hover:text-rose-600 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400 dark:hover:border-rose-500/30 dark:hover:text-rose-300"
+                          }`}
+                        >
+                          Paying this week ({bankOnPayrollCount})
+                        </button>
+                      )}
+                      <SmoothSelect
+                        value={bankDept}
+                        onChange={setBankDept}
+                        options={bankDeptOptions}
+                        aria-label="Filter by department"
+                        searchable
+                        searchPlaceholder="Search departments…"
+                        className="w-40 shrink-0 sm:w-48"
+                        triggerClassName="h-7 rounded-md"
+                      />
+                    </div>
                     {bankShown.length === 0 ? (
-                      <NoMatches query={bankQuery} />
+                      bankQuery.trim() !== "" ? (
+                        <NoMatches query={bankQuery} />
+                      ) : (
+                        // Only the dept/paying-this-week filters can empty an
+                        // unsearched list, so name the culprit rather than
+                        // showing a blank page.
+                        <div className="px-3 py-4 text-center text-xs text-zinc-400">
+                          {bankOnPayrollOnly
+                            ? "No one in this department is on this week's payroll and missing bank info."
+                            : "No one in this department is missing bank info."}
+                        </div>
+                      )
                     ) : (
                       <>
                         <div className="space-y-0.5">
@@ -2736,6 +2870,14 @@ function PayrollReadinessGlance({
                               department={r.department}
                               right={
                                 <div className="flex shrink-0 items-center gap-1.5">
+                                  {r.onPayroll && (
+                                    <span
+                                      className="shrink-0 rounded-full border border-rose-200 bg-rose-50 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-rose-700 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-300"
+                                      title="Has hours in this week's Hubstaff file — will not be paid until payout details are set"
+                                    >
+                                      Paying this week
+                                    </span>
+                                  )}
                                   <span className="shrink-0 rounded-full border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-amber-700 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300">
                                     {r.processor ? `${r.processor} · incomplete` : "No processor"}
                                   </span>
@@ -3099,11 +3241,13 @@ function ReadinessSkeleton({ reduceMotion = false }: { reduceMotion?: boolean })
 }
 
 /** The readiness hero banner — a single at-a-glance verdict that flips to green
- *  when the cycle is clear. Blockers (no-rate workers) read rose; warnings
- *  (pending KPI / missing bank) read amber. */
+ *  when the cycle is clear. Blockers (no-rate workers, and no-bank workers on
+ *  this week's payroll) read rose; warnings (pending KPI / roster-hygiene
+ *  missing bank) read amber. */
 function ReadinessHero({
   isReady,
-  blockers,
+  rateBlockers,
+  bankBlockers,
   warnings,
   weekLabel,
   isMonthly,
@@ -3111,13 +3255,15 @@ function ReadinessHero({
   reduceMotion,
 }: {
   isReady: boolean;
-  blockers: number;
+  rateBlockers: number;
+  bankBlockers: number;
   warnings: number;
   weekLabel: string;
   isMonthly: boolean;
   score: ReadinessScore;
   reduceMotion: boolean;
 }) {
+  const blockers = rateBlockers + bankBlockers;
   // Tone follows the score grade (blocked → rose, ready → emerald, else amber),
   // so the banner colour and the gauge always agree.
   const tone = score.grade === "ready" ? "emerald" : score.grade === "blocked" ? "rose" : "amber";
@@ -3142,7 +3288,10 @@ function ReadinessHero({
   const sub = isReady
     ? "Every department is in and everyone can be paid."
     : [
-        blockers > 0 ? `${blockers} worker${blockers === 1 ? "" : "s"} with no rate` : null,
+        rateBlockers > 0 ? `${rateBlockers} worker${rateBlockers === 1 ? "" : "s"} with no rate` : null,
+        bankBlockers > 0
+          ? `${bankBlockers} on this week's payroll with no bank info`
+          : null,
         warnings > 0 ? `${warnings} item${warnings === 1 ? "" : "s"} to review` : null,
       ]
         .filter(Boolean)
@@ -3183,15 +3332,25 @@ function ReadinessHero({
         <div className="mt-1.5 hidden flex-wrap items-center gap-x-3 gap-y-1 sm:flex">
           {score.components.map((c) => {
             const full = c.open === 0;
+            // A dimension with hard blockers (pinned points) reads rose; open
+            // but proportional work reads amber. `blockerOpen` covers both the
+            // rate pin and the new on-payroll bank pin without key checks.
+            const hasBlockers = (c.blockerOpen ?? 0) > 0;
             return (
               <span
                 key={c.key}
                 className="inline-flex items-center gap-1 text-[10px] text-zinc-500 dark:text-zinc-400"
-                title={`${c.label}: ${c.points}/${c.maxPoints} pts${c.open > 0 ? ` · ${c.open} open` : " · clear"}`}
+                title={`${c.label}: ${c.points}/${c.maxPoints} pts${
+                  hasBlockers
+                    ? ` · ${c.blockerOpen} blocking payday${c.open > c.blockerOpen ? ` (${c.open} open)` : ""}`
+                    : c.open > 0
+                      ? ` · ${c.open} open`
+                      : " · clear"
+                }`}
               >
                 <span
                   className={`inline-block h-1.5 w-1.5 rounded-full ${
-                    full ? "bg-emerald-500" : c.key === "rate" ? "bg-rose-500" : "bg-amber-500"
+                    full ? "bg-emerald-500" : hasBlockers ? "bg-rose-500" : "bg-amber-500"
                   }`}
                 />
                 <span className="font-medium text-zinc-600 dark:text-zinc-300">{c.label}</span>

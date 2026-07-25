@@ -5,6 +5,10 @@
 export function normalizeDeptToKey(raw: string | null | undefined): string | null {
   if (!raw) return null;
   const s = raw.trim().toLowerCase();
+  // Department transfers into an HSL sub-team write the namespaced access key
+  // (e.g. "hsl:intake_specialist") into the master list's Department column.
+  // Whatever the sub-team, those people belong to Hogan Smith Law.
+  if (s.startsWith('hsl:')) return 'hogan_smith_law';
   const map: Record<string, string> = {
     accounting: 'accounting',
     'accounting team': 'accounting',
@@ -49,7 +53,10 @@ export function normalizeDeptToKey(raw: string | null | undefined): string | nul
     hogan: 'hogan_smith_law',
     hsl: 'hogan_smith_law',
     smm: 'smm',
-    'smm freelancer': 'smm',
+    // "SMM Freelancer" is its own master-list department (flat-rate freelancers,
+    // distinct from the in-house Social Media Team) — its own wizard tab.
+    'smm freelancer': 'smm_freelancer',
+    'smm freelancers': 'smm_freelancer',
     'social media': 'smm',
     'social media team': 'smm',
     'pm team': 'pm_team',

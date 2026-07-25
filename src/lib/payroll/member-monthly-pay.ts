@@ -40,6 +40,11 @@ import {
   pabMonthFromWeekStart,
 } from '@/lib/payroll/dispatch-bonuses';
 import { listSystemBonuses } from '@/lib/supabase/system-bonuses-db';
+import { listAllOrphanagePayHours } from '@/lib/supabase/orphanage-pay-db';
+import {
+  buildOrphanageHoursIndex,
+  orphanageHoursByCoveredDate,
+} from '@/lib/payroll/orphanage-pab-coverage';
 import { resolveSystemBonuses, isDeptEligible } from '@/lib/payment-catalog/system-bonus';
 import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
 import {
@@ -505,11 +510,21 @@ export async function computeMemberMonthlyPay(args: {
   // (disputes + time adjustments) in parallel. Forgiveness is applied to the
   // PAB eligibility check only — never to paid hours — so the dashboard / My
   // Hours bonus matches what dispatch actually pays.
-  const [hsRes, forgivenDates] = await Promise.all([
+  const [hsRes, forgivenDates, orphanagePayRows] = await Promise.all([
     fetchHubstaffRowsForEmail(aliasNorms),
     fetchForgivenDatesForEmails(aliasNorms),
+    // TEMPORARY orphanage → PAB coverage (see orphanage-pab-coverage.ts).
+    listAllOrphanagePayHours(aliasNorms),
   ]);
   if (hsRes.error) return { data: null, error: hsRes.error };
+
+  // AUTO mode: orphanage hours forgive short weekdays in their coverage window
+  // (file week + week before) — no dispute record needed. Alias-keyed rows are
+  // collapsed onto this employee's single identity so a lookup always lands.
+  const orphanageHoursIndex = buildOrphanageHoursIndex(
+    orphanagePayRows.map((r) => ({ sourceFile: r.source_file, email: emailNorm, hours: r.hours })),
+  );
+  const orphanageHoursByIso = orphanageHoursByCoveredDate(orphanageHoursIndex, emailNorm);
 
   // Find this employee's rate row (lookup by either email).
   const rateRow = (rates.rows ?? []).find((r) => {
@@ -600,7 +615,7 @@ export async function computeMemberMonthlyPay(args: {
   // auto-pass — exactly mirroring the dispatch path (`dispatch-bonuses.ts`).
   // Paid hours (`hoursByDateKey`) are never touched.
   const holidaySet = new Set(holidayMap.keys());
-  const eligibilityHours = applyPabAdjustments(hoursByDateKey, forgivenDates, holidaySet);
+  const eligibilityHours = applyPabAdjustments(hoursByDateKey, forgivenDates, holidaySet, orphanageHoursByIso);
 
   function computeEligibilityForPabMonth(year: number, month: number): boolean {
     const key = yearMonthKey(year, month);

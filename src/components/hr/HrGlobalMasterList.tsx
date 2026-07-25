@@ -77,9 +77,9 @@ const EASE = [0.22, 1, 0.36, 1] as const;
 type ViewMode = 'cards' | 'table';
 
 // Sticky per-session view choice — survives HR tab switches (this component
-// unmounts) without localStorage, so SSR always renders the 'cards' default
+// unmounts) without localStorage, so SSR always renders the 'table' default
 // and there is no hydration mismatch.
-let viewMemory: ViewMode = 'cards';
+let viewMemory: ViewMode = 'table';
 
 type RosterEntry = { row: EmployeeRow; online: boolean; statusText: string };
 
@@ -132,8 +132,8 @@ function rowKey(r: EmployeeRow, i: number): string {
 function ViewToggle({ view, onChange }: { view: ViewMode; onChange: (v: ViewMode) => void }) {
   const reduce = useReducedMotion();
   const options = [
-    { value: 'cards' as const, label: 'Cards', Icon: LayoutGrid },
     { value: 'table' as const, label: 'Table', Icon: Table2 },
+    { value: 'cards' as const, label: 'Cards', Icon: LayoutGrid },
   ];
   return (
     <div className="inline-flex shrink-0 items-center self-start rounded-lg border border-zinc-200 bg-zinc-50/80 p-0.5 dark:border-zinc-700 dark:bg-zinc-900">

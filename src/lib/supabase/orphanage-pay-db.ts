@@ -91,3 +91,54 @@ export async function listOrphanagePay(sourceFile: string): Promise<Record<strin
   if (error || !data) return [];
   return data as Record<string, unknown>[];
 }
+
+/** A locked-in orphanage row reduced to what PAB-coverage mapping needs. */
+export interface OrphanagePayHoursRow {
+  source_file: string | null;
+  employee_email: string;
+  hours: number;
+}
+
+/**
+ * Every locked-in orphanage row across ALL pay weeks — just the columns the
+ * TEMPORARY orphanage → PAB coverage rule needs (source_file for the week +
+ * email + hours). Used by the server eligibility paths (current-pay,
+ * member-monthly-pay) to top up orphanage-excused days. Optionally scoped to a
+ * set of emails (already lower-cased) for the per-employee dashboard path.
+ * Paginated — orphanage_pay accumulates across every period.
+ */
+export async function listAllOrphanagePayHours(
+  emails?: Iterable<string>,
+): Promise<OrphanagePayHoursRow[]> {
+  const supabase = createSupabaseServiceRoleClient();
+  if (!supabase) return [];
+  const emailFilter = emails ? Array.from(new Set([...emails].map((e) => e.trim().toLowerCase()).filter(Boolean))) : null;
+  if (emailFilter && emailFilter.length === 0) return [];
+  const PAGE = 1000;
+  const out: OrphanagePayHoursRow[] = [];
+  let from = 0;
+  while (true) {
+    let query = supabase
+      .from(TABLE)
+      .select('source_file, employee_email, hours')
+      // Deterministic order across pages (the composite PK) so OFFSET pagination
+      // never drops or duplicates a row once the table exceeds one page — a dropped
+      // row would silently remove that person/week's orphanage hours from coverage.
+      .order('source_file', { ascending: true })
+      .order('employee_email', { ascending: true })
+      .range(from, from + PAGE - 1);
+    if (emailFilter) query = query.in('employee_email', emailFilter);
+    const { data, error } = await query;
+    if (error || !data) break;
+    for (const r of data as Array<Record<string, unknown>>) {
+      out.push({
+        source_file: typeof r.source_file === 'string' ? r.source_file : null,
+        employee_email: String(r.employee_email ?? ''),
+        hours: Number(r.hours ?? 0),
+      });
+    }
+    if (data.length < PAGE) break;
+    from += PAGE;
+  }
+  return out;
+}

@@ -24,12 +24,11 @@ import {
   deleteMesaWeeklyContributions,
 } from "@/lib/mesa/record-weekly-contributions";
 import {
-  fetchDailyActivities,
   fetchDailyActivitiesCached,
   getHubstaffOrgId,
   hubstaffApiConfigured,
 } from "@/lib/hubstaff/api-client";
-import { apiSyncFileName, buildWeeklySummaryCsv } from "@/lib/hubstaff/build-weekly-summary";
+import { classifySyncError, runHubstaffWeeklySync } from "@/lib/hubstaff/run-weekly-sync";
 import { normEmail } from "@/lib/email/norm-email";
 import { getSessionActor } from "@/lib/auth/session-actor";
 import { requireFeatureEdit } from "@/lib/auth/authorize-feature";
@@ -597,6 +596,10 @@ export async function POST(req: NextRequest) {
  * produces, and feeds that through `replaceHubstaffHoursFromCsvText` — so an API
  * batch is archived, promoted, and consumed downstream exactly like a CSV upload.
  * Auth (`requireFeatureEdit`) and the service-role check already ran in POST.
+ *
+ * The heavy lifting lives in `runHubstaffWeeklySync` so the weekly auto-sync cron
+ * (/api/cron/sync-hubstaff-week) runs byte-identical logic; this handler only
+ * parses the request and maps thrown errors to HTTP status codes.
  */
 async function handleApiSync(req: NextRequest) {
   const body = (await req.json().catch(() => ({}))) as {
@@ -614,110 +617,21 @@ async function handleApiSync(req: NextRequest) {
 
   const weekStart = typeof body.weekStart === "string" ? body.weekStart.trim() : "";
   const weekEnd = typeof body.weekEnd === "string" ? body.weekEnd.trim() : "";
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(weekStart) || !/^\d{4}-\d{2}-\d{2}$/.test(weekEnd)) {
-    return NextResponse.json(
-      { success: false, error: "weekStart and weekEnd must be YYYY-MM-DD dates." },
-      { status: 400 },
-    );
-  }
-
-  // The pay week is strictly Sunday → Saturday: a precise 7-day cutoff keyed to
-  // the Sun→Sat pay model. Rejecting anything else here guarantees API batches
-  // can never reintroduce the legacy 8-day Sun→Sun overlap (dropped-Sunday bug).
-  const startMs = Date.parse(`${weekStart}T00:00:00Z`);
-  const spanDays = Math.round((Date.parse(`${weekEnd}T00:00:00Z`) - startMs) / 86_400_000) + 1;
-  if (new Date(startMs).getUTCDay() !== 0 || spanDays !== 7) {
-    return NextResponse.json(
-      { success: false, error: "Pick a Sunday-to-Saturday pay week — weekStart must be a Sunday and weekEnd the following Saturday." },
-      { status: 400 },
-    );
-  }
-
-  if (!hubstaffApiConfigured()) {
-    return NextResponse.json(
-      {
-        success: false,
-        error:
-          "Hubstaff API sync is not configured. Set HUBSTAFF_PAT (Personal Access Token from " +
-          "developer.hubstaff.com) and HUBSTAFF_ORG_ID in the environment, then redeploy.",
-      },
-      { status: 503 },
-    );
-  }
-
-  const startedAt = Date.now();
-  const orgId = getHubstaffOrgId()!;
-
-  // Pull the week from Hubstaff. Upstream failures carry an HTTP `status`
-  // (see api-client): a 429 rate limit is transient and retryable, so answer
-  // 429; other Hubstaff errors (401/403/404/5xx) are gateway problems, so 502.
-  // Only genuine bugs in this route fall through to POST's 500 handler.
-  let synced: Awaited<ReturnType<typeof fetchDailyActivities>>;
-  try {
-    synced = await fetchDailyActivities(orgId, weekStart, weekEnd);
-  } catch (e) {
-    const status = (e as { status?: number })?.status;
-    const msg = e instanceof Error ? e.message : String(e);
-    if (typeof status === "number") {
-      return NextResponse.json(
-        { success: false, error: msg, retryable: status === 429 },
-        { status: status === 429 ? 429 : 502 },
-      );
-    }
-    throw e;
-  }
-
-  const { activities, users } = synced;
-  if (activities.length === 0) {
-    return NextResponse.json(
-      { success: false, error: `No Hubstaff time entries found between ${weekStart} and ${weekEnd}.` },
-      { status: 400 },
-    );
-  }
-
-  const { csvText, rowCount: memberCount } = buildWeeklySummaryCsv(
-    users,
-    activities,
-    weekStart,
-    weekEnd,
-  );
-  const fileName = apiSyncFileName(weekStart, weekEnd);
   const uploadedBy = typeof body.uploaded_by === "string" ? body.uploaded_by.trim() || null : null;
-
-  const { rowCount, uploadId } = await replaceHubstaffHoursFromCsvText(csvText, fileName, uploadedBy);
-
-  console.log(
-    `[hubstaff api_sync] ${weekStart}→${weekEnd} org=${orgId} members=${memberCount} rows=${rowCount} in ${Date.now() - startedAt}ms`,
-  );
-
   const actor = await getSessionActor();
-  void insertAuditLog({
-    user_name:   uploadedBy ?? actor.user_name,
-    user_role:   actor.user_role,
-    action:      'hubstaff.api_sync',
-    resource:    'hubstaff_hours',
-    resource_id: fileName,
-    details:     { file: fileName, week_start: weekStart, week_end: weekEnd, members: memberCount, rows: rowCount, upload_id: uploadId },
-    ip_address:  clientIp(req),
-  });
 
-  // Same "salary ready to view" alert as the manual CSV path — an API sync is a
-  // new payroll week too. Best-effort; never fails the sync.
-  let notified: Awaited<ReturnType<typeof notifyPayrollAvailable>> | null = null;
   try {
-    notified = await notifyPayrollAvailable({ sourceFile: fileName, uploadId });
-  } catch (notifyErr) {
-    console.warn("[hubstaff api_sync] payroll.available notify failed:", notifyErr);
+    const result = await runHubstaffWeeklySync({
+      weekStart,
+      weekEnd,
+      uploadedBy,
+      actor: { ...actor, ip_address: clientIp(req) },
+    });
+    return NextResponse.json({ success: true, ...result });
+  } catch (e) {
+    const { httpStatus, retryable, message } = classifySyncError(e);
+    // Untagged errors are genuine bugs — let POST's outer 500 handler catch them.
+    if (httpStatus === 500) throw e;
+    return NextResponse.json({ success: false, error: message, retryable }, { status: httpStatus });
   }
-
-  // Same weekly MESA deposit as the manual CSV path — an API sync is a new
-  // payroll week too. weekEnd is known exactly here (validated Sun→Sat above).
-  let mesaRecorded: Awaited<ReturnType<typeof recordMesaWeeklyContributions>> | null = null;
-  try {
-    mesaRecorded = await recordMesaWeeklyContributions({ uploadId, sourceFile: fileName, weekEnd });
-  } catch (mesaErr) {
-    console.warn("[hubstaff api_sync] MESA weekly contribution record failed:", mesaErr);
-  }
-
-  return NextResponse.json({ success: true, rowCount, uploadId, fileName, csvText, notified, mesaRecorded });
 }

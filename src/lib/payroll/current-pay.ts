@@ -29,6 +29,8 @@ import {
   createSupabaseServiceRoleClient,
 } from "@/lib/supabase/server";
 import { listOrphanageBudgetRequests } from "@/lib/supabase/orphanage-budget-requests";
+import { listAllOrphanagePayHours } from "@/lib/supabase/orphanage-pay-db";
+import { buildOrphanageCoverageMap } from "@/lib/payroll/orphanage-pab-coverage";
 import { buildFxRates, USD_TO_COP_SETTINGS_KEY, type FxRates } from "@/lib/fx/currency-fx";
 import { normEmail } from "@/lib/email/norm-email";
 import {
@@ -524,6 +526,9 @@ export async function computeCurrentPay(
   // unconditionally was the single biggest source of lag. We fetch it below,
   // and only when `weekIsFinalPab` turns out to be true.
   let allHubstaffRows: Record<string, unknown>[] = [];
+  // TEMPORARY orphanage → PAB coverage: email -> (iso -> orphanage hours) for
+  // approved orphanage-visit days. Fetched only when PAB is actually computed.
+  let orphanageHoursByEmailIso: Map<string, Map<string, number>> | undefined;
 
   const pabOverridesValue = appSettings[PAB_PERIOD_OVERRIDES_KEY];
   const pabExclusionsValue = appSettings[PAB_PERIOD_EXCLUSIONS_KEY];
@@ -654,7 +659,17 @@ export async function computeCurrentPay(
   // Hubstaff scan only if PAB eligibility actually needs computing. On every
   // other week this stays empty and the expensive scan is skipped entirely.
   if (supabase && weekIsFinalPab) {
-    allHubstaffRows = await fetchAllHubstaffRowsForBonusMonth(supabase);
+    const [rows, orphanageRows] = await Promise.all([
+      fetchAllHubstaffRowsForBonusMonth(supabase),
+      listAllOrphanagePayHours(),
+    ]);
+    allHubstaffRows = rows;
+    // AUTO mode: orphanage hours forgive short weekdays in their coverage
+    // window (file week + week before) — no dispute/excuse record needed.
+    const coverage = buildOrphanageCoverageMap(
+      orphanageRows.map((r) => ({ sourceFile: r.source_file, email: r.employee_email, hours: r.hours })),
+    );
+    if (coverage.size) orphanageHoursByEmailIso = coverage;
   }
 
   // 2. Build HSL email set + start_date map + master-email set from master.
@@ -763,6 +778,7 @@ export async function computeCurrentPay(
       hslEmails,
       approvedDisputeDates,
       usHolidayDates,
+      orphanageHoursByEmailIso,
       weekModel: hslWeekModel,
     });
     for (const e of passes) pabEligible.add(e);

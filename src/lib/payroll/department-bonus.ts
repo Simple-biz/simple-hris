@@ -46,6 +46,11 @@ export const DEPARTMENTS: {
     ],
   },
   { key: 'smm',              name: 'Social Media',       bonuses: [] },
+  // Distinct from the in-house Social Media Team: the master list carries both
+  // "Social Media Team" (→ smm) and "SMM Freelancer" labels, and they are
+  // separate cohorts (the freelancers are paid on a flat per-deliverable basis
+  // and generally have no Hubstaff hours).
+  { key: 'smm_freelancer',   name: 'SMM Freelancer',     bonuses: [] },
   { key: 'pm_team',          name: 'PM Team',            bonuses: [] },
   { key: 'client_va',        name: 'Client VA',          bonuses: [] },
   { key: 'site_building',    name: 'Site Building',      bonuses: [] },
@@ -218,6 +223,7 @@ export const DEPT_INPUT_CONFIG: Record<string, DeptInputConfig> = {
     formula: '₱150 per sale last week.',
   },
   smm: { employeeFields: [], deptFields: [], formula: 'No bonus formula defined yet — roster only.' },
+  smm_freelancer: { employeeFields: [], deptFields: [], formula: 'No bonus formula defined yet — roster only.' },
   pm_team: { employeeFields: [], deptFields: [], formula: 'No bonus formula defined yet — roster only.' },
   client_va: { employeeFields: [], deptFields: [], formula: 'No bonus formula defined yet — roster only.' },
   site_building: { employeeFields: [], deptFields: [], formula: 'No bonus formula defined yet — roster only.' },
@@ -238,6 +244,7 @@ export const DEPT_DESCRIPTION: Record<string, string> = {
   hr: 'Recruits, onboards, and supports the workforce, keeping new talent flowing in.',
   sales_assistant: 'Backs up the sales team and closes assisted deals week over week.',
   smm: 'Runs the social channels and grows audience, reach, and engagement.',
+  smm_freelancer: 'Freelance social-media creators producing content on a per-deliverable basis.',
   pm_team: 'Coordinates projects across teams and keeps delivery on schedule.',
   client_va: 'Dedicated virtual assistants embedded directly with client accounts.',
   site_building: 'Builds and launches client websites end to end.',

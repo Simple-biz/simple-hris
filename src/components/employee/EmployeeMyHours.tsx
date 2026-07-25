@@ -27,6 +27,12 @@ import {
 import { phpHourlyPayFromSeconds } from '@/lib/payroll/money-php';
 import type { MemberMonthlyPay } from '@/lib/payroll/member-monthly-pay';
 import {
+  buildOrphanageHoursIndex,
+  orphanageHoursByCoveredDate,
+  orphanageCoversDay,
+  type OrphanageHoursIndex,
+} from '@/lib/payroll/orphanage-pab-coverage';
+import {
   buildCalendarMonthWeeksIncludingWeekends,
   columnsAreAllCanonical,
   getCurrentPabMonth,
@@ -548,6 +554,9 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
   const [timeAdjustDialog, setTimeAdjustDialog] = useState<{ date: string; seconds: number; existing: TimeAdjustmentRow | null } | null>(null);
   const [orphanageVisits, setOrphanageVisits] = useState<PabDayDisputeRow[]>([]);
   const [orphanageLoading, setOrphanageLoading] = useState(true);
+  /** TEMPORARY orphanage → PAB coverage (see orphanage-pab-coverage.ts): this
+   *  employee's locked-in orphanage hours per week, indexed for date lookup. */
+  const [orphanageHoursIndex, setOrphanageHoursIndex] = useState<OrphanageHoursIndex>(new Map());
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   /** Live per-day tracked seconds (ISO date → sec) from the Hubstaff API for the
@@ -907,6 +916,23 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
     void fetchOrphanageVisits();
   }, [fetchOrphanageVisits]);
 
+  // TEMPORARY orphanage → PAB coverage: load this employee's locked-in orphanage
+  // hours (session-scoped) so an orphanage-excused day can be topped up to 7h.
+  useEffect(() => {
+    const ctrl = new AbortController();
+    fetch('/api/employee/orphanage-hours', { cache: 'no-store', signal: ctrl.signal })
+      .then((res) => (res.ok ? res.json() : { rows: [] }))
+      .then((json: { rows?: { source_file: string | null; hours: number }[] }) => {
+        setOrphanageHoursIndex(
+          buildOrphanageHoursIndex(
+            (json.rows ?? []).map((r) => ({ sourceFile: r.source_file, email, hours: r.hours })),
+          ),
+        );
+      })
+      .catch(() => setOrphanageHoursIndex(new Map()));
+    return () => ctrl.abort();
+  }, [email]);
+
   useEffect(() => {
     let cancelled = false;
     void (async () => {
@@ -1054,8 +1080,31 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
       const key = `${y}-${m}-${day}`;
       hoursByDateKey.set(key, set * 3600);
     }
+
     return hoursByDateKey;
   }, [mergedRow, mergedColumns, disputes, liveHours]);
+
+  /**
+   * TEMPORARY orphanage → PAB coverage (AUTO mode, see orphanage-pab-coverage.ts):
+   * weekdays whose REAL tracked time + the orphanage hours recorded in the
+   * Payroll Wizard reach 7h. Window = the hours' file week + the week before
+   * (hours land one payroll run after the visit). Keys are pabDateKey format.
+   * The calendar keeps the honest tracked time and renders these days as
+   * "Forgiven by Accounting" (like dispute-forgiven days) instead of silently
+   * showing a full 7h; eligibility below treats them as passing.
+   */
+  const orphanageCoveredKeys = useMemo<Set<string>>(() => {
+    const covered = new Set<string>();
+    if (!orphanageHoursIndex.size) return covered;
+    for (const [isoDate, orphHours] of orphanageHoursByCoveredDate(orphanageHoursIndex, email)) {
+      const [y, m, d] = isoDate.split('-').map(Number);
+      if (!y || !m || !d) continue;
+      const key = `${y}-${m}-${d}`; // pabDateKey format (unpadded)
+      const workedSec = mergedHoursByDateKey.get(key) ?? 0;
+      if (workedSec < 7 * 3600 && orphanageCoversDay(workedSec, orphHours)) covered.add(key);
+    }
+    return covered;
+  }, [orphanageHoursIndex, email, mergedHoursByDateKey]);
 
   const isHsl = (memberPay?.department ?? '').trim().toLowerCase() === 'hsl';
 
@@ -1224,13 +1273,15 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
         const dispute = disputesByDate.get(iso);
         const forgiven = !!dispute && disputeGrantsPabForgiveness(dispute);
         const hslOvernight = isHsl && hslOvernightIsos.has(iso);
-        const passes = sec >= 7 * 3600 || usHolidayDates.has(iso) || forgiven || hslOvernight;
+        const passes =
+          sec >= 7 * 3600 || usHolidayDates.has(iso) || forgiven || hslOvernight ||
+          orphanageCoveredKeys.has(pabDateKey(cur)); // TEMP orphanage coverage
         if (!passes) return false;
       }
       cur.setDate(cur.getDate() + 1);
     }
     return anyWeekday;
-  }, [pabRange, mergedHoursByDateKey, usHolidayDates, disputesByDate, isHsl, hslOvernightIsos]);
+  }, [pabRange, mergedHoursByDateKey, usHolidayDates, disputesByDate, isHsl, hslOvernightIsos, orphanageCoveredKeys]);
 
   /** Hourly rates loaded — gates both PAB and Tech bonus visibility. */
   const hasRates = useMemo(() => {
@@ -1566,9 +1617,15 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
                           !!dispute &&
                           disputeGrantsPabForgiveness(dispute) &&
                           !day.passes;
+                        // TEMPORARY orphanage → PAB coverage: tracked time + the orphanage
+                        // hours Accounting recorded in the Payroll Wizard reach 7h — the day
+                        // keeps its REAL hours but counts as forgiven. See orphanage-pab-coverage.ts.
+                        const orphanageForgiven =
+                          inMonth && !weekend && !day.passes &&
+                          orphanageCoveredKeys.has(pabDateKey(day.date));
                         // For HSL: overnight-qualifying days (today + tomorrow OR yesterday + today ≥ 7h) show green
                         const hslOvernight = isHsl && inMonth && hslOvernightIsos.has(dayIso);
-                        const effectivelyPasses = day.passes || forgiven || hslOvernight;
+                        const effectivelyPasses = day.passes || forgiven || orphanageForgiven || hslOvernight;
 
                         let cellBorder: string;
                         if (!inMonth) {
@@ -1647,6 +1704,10 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
                         const titleDispute =
                           inMonth && day.passes
                             ? ' · OK'
+                            : inMonth && orphanageForgiven
+                              ? ' · Forgiven by Accounting — orphanage hours recorded in payroll'
+                            : inMonth && forgiven
+                              ? ' · Forgiven by Accounting'
                             : inMonth && isToday
                               ? ' — in progress'
                             : inMonth && isFutureOrToday
@@ -1699,6 +1760,11 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
                                   <p className="whitespace-nowrap text-[10px] text-zinc-500 dark:text-zinc-400">
                                     {hours > 0 ? `${hours.toFixed(1)}h tracked` : 'No hours tracked'}
                                   </p>
+                                  {orphanageForgiven && (
+                                    <p className="mt-0.5 whitespace-nowrap text-[9.5px] font-medium text-emerald-600 dark:text-emerald-400">
+                                      Forgiven by Accounting — orphanage hours
+                                    </p>
+                                  )}
                                   {(adjustment || canRequestAdjust) && (
                                     <p className="mt-0.5 whitespace-nowrap text-[9.5px] font-medium text-orange-600 dark:text-orange-400">
                                       {adjustment ? 'Click to view your request' : 'Click to request time adjustment'}
@@ -1715,7 +1781,7 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
                                 Holiday
                               </span>
                             )}
-                            {forgiven && !isHoliday && (
+                            {(forgiven || orphanageForgiven) && !isHoliday && (
                               <span className="pointer-events-none max-w-[calc(100%-2px)] truncate text-[6px] font-semibold leading-none tracking-tight text-emerald-600 dark:text-emerald-400 sm:text-[7px]">
                                 Forgiven
                               </span>
@@ -1848,7 +1914,9 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
               </summary>
               <div className="border-t border-rose-100 px-3 py-2 dark:border-rose-950/50">
                 <p className="mb-2 text-[10px] leading-snug text-zinc-500 dark:text-zinc-500">
-                  Visit dates recorded by HR. The PAB 7-hour floor drops to 4 hours on the visit day and the day after.
+                  Visit dates recorded by HR. Orphanage hours recorded in payroll are automatically added
+                  to your tracked time on short days around the visit — if together they reach 7 hours,
+                  the day still counts toward Perfect Attendance.
                 </p>
                 {orphanageLoading ? (
                   <div className="flex items-center justify-center gap-2 py-4 text-[11px] text-zinc-500">

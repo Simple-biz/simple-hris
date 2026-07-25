@@ -41,6 +41,7 @@ import {
   parseColDate,
 } from "@/lib/hubstaff/calendar-column-dedupe";
 import { normEmail } from "@/lib/email/norm-email";
+import { orphanageCoversDay } from "@/lib/payroll/orphanage-pab-coverage";
 
 export const PAB_BONUS_PHP = 5000;
 export const TECH_BONUS_PHP = 1850;
@@ -119,13 +120,22 @@ function rowSelfReportsHsl(row: RawRow): boolean {
  * US holidays set the day to 7 h so the >= 7 h gate auto-passes without
  * requiring Hubstaff data (same as the wizard's `continue` on holiday dates).
  * Holidays are applied last so they are never overridden by a dispute entry.
+ *
+ * `orphanageHoursByIso` (TEMPORARY orphanage top-up, AUTO mode — see
+ * orphanage-pab-coverage.ts): `iso date -> orphanage hours` for the weekdays
+ * inside the employee's orphanage-hours coverage window (the hours' file week
+ * + the week before). When the day's WORKED time plus those orphanage hours
+ * reaches 7 h, the day is bumped to a full pass — even if worked < 4 h.
  */
 export function applyPabAdjustments(
   hoursByDateKey: Map<string, number>,
   forgivenDates: Map<string, number | null> | undefined,
   usHolidayDates: Set<string> | undefined,
+  orphanageHoursByIso?: Map<string, number>,
 ): Map<string, number> {
-  if (!forgivenDates?.size && !usHolidayDates?.size) return hoursByDateKey;
+  if (!forgivenDates?.size && !usHolidayDates?.size && !orphanageHoursByIso?.size) {
+    return hoursByDateKey;
+  }
   const effective = new Map(hoursByDateKey);
 
   if (forgivenDates) {
@@ -139,6 +149,20 @@ export function applyPabAdjustments(
       const effectiveSec = overrideHours != null ? overrideHours * 3600 : rawSec;
       // Forgiven when dispute exists and effective hours >= 4 h
       effective.set(key, effectiveSec >= 4 * 3600 ? 7 * 3600 : effectiveSec);
+    }
+  }
+
+  // Orphanage top-up: worked + orphanage hours reaching 7 h → full pass. Uses the
+  // RAW worked seconds (never the forgiven-bumped value) so the credit is honest.
+  if (orphanageHoursByIso?.size) {
+    for (const [dateStr, orphHours] of orphanageHoursByIso.entries()) {
+      const parts = dateStr.split('-');
+      if (parts.length !== 3) continue;
+      const d = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
+      if (Number.isNaN(d.getTime())) continue;
+      const key = pabDateKey(d);
+      const rawSec = hoursByDateKey.get(key) ?? 0;
+      if (orphanageCoversDay(rawSec, orphHours)) effective.set(key, 7 * 3600);
     }
   }
 
@@ -188,6 +212,13 @@ export function computePabEligibleEmails(args: {
    */
   usHolidayDates?: Set<string>;
   /**
+   * TEMPORARY orphanage top-up (AUTO mode): `email -> (iso date -> orphanage
+   * hours)` over each person's coverage window (hours' file week + the week
+   * before). A weekday whose worked time + these orphanage hours reaches 7 h
+   * passes PAB. Keyed by lowercased email. See orphanage-pab-coverage.ts.
+   */
+  orphanageHoursByEmailIso?: Map<string, Map<string, number>>;
+  /**
    * HSL week model for the period. 'sun_sat' (post-cutover) walks the ≥5/7
    * eligibility over Sun→Sat weeks; 'mon_sun' (default/legacy) over Mon→Sun.
    * Only affects HSL employees. The caller must compute `hslAdjustedEnd` with
@@ -211,7 +242,13 @@ export function computePabEligibleEmails(args: {
     const rawHours = dateSecondsFromRow(row, cols);
 
     const forgivenDates = args.approvedDisputeDates?.get(email);
-    const hoursByDateKey = applyPabAdjustments(rawHours, forgivenDates, args.usHolidayDates);
+    const orphanageHoursByIso = args.orphanageHoursByEmailIso?.get(email);
+    const hoursByDateKey = applyPabAdjustments(
+      rawHours,
+      forgivenDates,
+      args.usHolidayDates,
+      orphanageHoursByIso,
+    );
 
     const isHsl = hslEmails.has(email) || rowSelfReportsHsl(row);
 

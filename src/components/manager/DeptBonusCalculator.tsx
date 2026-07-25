@@ -122,6 +122,7 @@ const EXTERNAL_MEMBER_DEPTS = new Set([
   'pm_team',
   'site_building',
   'smm',
+  'smm_freelancer',
 ]);
 
 /** Per-member, per-bonus applied state. `vars` holds formula inputs as strings. */

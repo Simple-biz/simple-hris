@@ -34,6 +34,12 @@ import {
   type PabDayDisputeRow,
 } from '@/lib/supabase/pab-day-disputes';
 import {
+  buildOrphanageHoursIndex,
+  orphanageHoursByCoveredDate,
+  orphanageCoversDay,
+  type OrphanageHoursIndex,
+} from '@/lib/payroll/orphanage-pab-coverage';
+import {
   US_HOLIDAYS_ENABLED_KEY,
   US_HOLIDAYS_LIST_KEY,
   parseUsHolidaysList,
@@ -180,6 +186,10 @@ export default function EmployeePabCalendar({
   const [mergedRow, setMergedRow] = useState<Record<string, unknown> | null>(null);
   const [mergedColumns, setMergedColumns] = useState<string[]>([]);
   const [disputes, setDisputes] = useState<PabDayDisputeRow[]>([]);
+  /** TEMPORARY orphanage → PAB coverage (see orphanage-pab-coverage.ts): the
+   *  VIEWED employee's locked-in orphanage hours (accounting-gated ?all=1,
+   *  filtered to their aliases). Best-effort — empty for non-accounting viewers. */
+  const [orphanageHoursIndex, setOrphanageHoursIndex] = useState<OrphanageHoursIndex>(new Map());
   const [rateHistory, setRateHistory] = useState<Array<{
     effectiveFrom: Date;
     regularRate: number | null;
@@ -380,6 +390,27 @@ export default function EmployeePabCalendar({
     }
   }, [email]);
 
+  // TEMPORARY orphanage → PAB coverage: load the viewed employee's locked-in
+  // orphanage hours (accounting-gated ?all=1, filtered to their aliases) so an
+  // orphanage-excused day can be topped up to 7h — matching the wizard/server.
+  useEffect(() => {
+    const emps = new Set((aliasEmails.length ? aliasEmails : [email]).map((e) => e.trim().toLowerCase()));
+    const ctrl = new AbortController();
+    fetch('/api/orphanage-pay?all=1', { cache: 'no-store', signal: ctrl.signal })
+      .then((res) => (res.ok ? res.json() : { rows: [] }))
+      .then((json: { rows?: { source_file: string | null; employee_email: string; hours: number }[] }) => {
+        setOrphanageHoursIndex(
+          buildOrphanageHoursIndex(
+            (json.rows ?? [])
+              .filter((r) => emps.has((r.employee_email ?? '').trim().toLowerCase()))
+              .map((r) => ({ sourceFile: r.source_file, email, hours: r.hours })),
+          ),
+        );
+      })
+      .catch(() => setOrphanageHoursIndex(new Map()));
+    return () => ctrl.abort();
+  }, [aliasEmails, email]);
+
   // Initial load
   useEffect(() => {
     // Wait until aliases are resolved before flipping `loading` off. fetchMerged
@@ -483,6 +514,19 @@ export default function EmployeePabCalendar({
       const key = `${y}-${m}-${day}`;
       hoursByDateKey.set(key, set * 3600);
     }
+    // TEMPORARY orphanage → PAB coverage (AUTO mode): a weekday inside the
+    // employee's orphanage-hours coverage window (file week + week before —
+    // hours land one payroll run after the visit) whose time + orphanage hours
+    // reaches 7h is bumped to a full pass. See orphanage-pab-coverage.ts.
+    if (orphanageHoursIndex.size) {
+      for (const [isoDate, orphHours] of orphanageHoursByCoveredDate(orphanageHoursIndex, email)) {
+        const [y, m, day] = isoDate.split('-').map(Number);
+        if (!y || !m || !day) continue;
+        const key = `${y}-${m}-${day}`;
+        const workedSec = hoursByDateKey.get(key) ?? 0;
+        if (orphanageCoversDay(workedSec, orphHours)) hoursByDateKey.set(key, 7 * 3600);
+      }
+    }
     // US holidays: force-pass (treat as >= 7h) so the employee stays PAB-eligible
     for (const [iso] of usHolidayDates.entries()) {
       const [y, m, day] = iso.split('-').map(Number);
@@ -533,7 +577,7 @@ export default function EmployeePabCalendar({
       pabCalendar: trimmed.length > 0 ? trimmed : weeks.slice(0, 1),
       overnightIsos: overnightSet,
     };
-  }, [mergedRow, mergedColumns, pabMonthRange, disputes, trimToElapsedWeeks, usHolidayDates, isHsl]);
+  }, [mergedRow, mergedColumns, pabMonthRange, disputes, trimToElapsedWeeks, usHolidayDates, isHsl, orphanageHoursIndex, email]);
 
   const allPabDays = pabCalendar?.flat() ?? [];
   const isPAEligible = allPabDays.length > 0 && allPabDays.every((d) => d.passes);

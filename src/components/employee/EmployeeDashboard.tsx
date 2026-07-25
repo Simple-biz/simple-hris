@@ -52,6 +52,12 @@ import {
   splitRegularOvertimeSeconds,
 } from '@/lib/payroll/money-php';
 import {
+  buildOrphanageHoursIndex,
+  orphanageHoursByCoveredDate,
+  orphanageCoversDay,
+  type OrphanageHoursIndex,
+} from '@/lib/payroll/orphanage-pab-coverage';
+import {
   groupDateColumnsByCalendarDay,
   pickPreferredHubstaffColumn,
   getCurrentPabMonth,
@@ -630,6 +636,12 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
   }, []);
 
   const [myDisputes, setMyDisputes] = useState<import('@/lib/supabase/pab-day-disputes').PabDayDisputeRow[]>([]);
+  /** TEMPORARY orphanage → PAB coverage (see orphanage-pab-coverage.ts): this
+   *  employee's locked-in orphanage hours per week, indexed for date lookup.
+   *  AUTO mode — the hours alone forgive short weekdays in their coverage
+   *  window; the raw rows are kept for the "Orphanage – Visits" panel. */
+  const [orphanageHoursIndex, setOrphanageHoursIndex] = useState<OrphanageHoursIndex>(new Map());
+  const [orphanageHourRows, setOrphanageHourRows] = useState<{ source_file: string | null; hours: number }[]>([]);
   /** Live per-day tracked seconds (ISO date → sec) from the Hubstaff API for the
    *  trailing two weeks — fills today/this week on the PAB calendar before
    *  accounting ingests the batch. Null when the deployment has no Hubstaff API
@@ -1265,6 +1277,26 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
       .catch(() => setMyDisputes([]));
   }, [pabMonthRange, email]);
 
+  // TEMPORARY orphanage → PAB coverage (AUTO mode): load this employee's
+  // locked-in orphanage hours (session-scoped); short weekdays inside each
+  // week's coverage window are topped up to 7h automatically.
+  useEffect(() => {
+    const ctrl = new AbortController();
+    fetch('/api/employee/orphanage-hours', { cache: 'no-store', signal: ctrl.signal })
+      .then((res) => (res.ok ? res.json() : { rows: [] }))
+      .then((json: { rows?: { source_file: string | null; hours: number }[] }) => {
+        const rows = json.rows ?? [];
+        setOrphanageHourRows(rows);
+        setOrphanageHoursIndex(
+          buildOrphanageHoursIndex(
+            rows.map((r) => ({ sourceFile: r.source_file, email, hours: r.hours })),
+          ),
+        );
+      })
+      .catch(() => { setOrphanageHourRows([]); setOrphanageHoursIndex(new Map()); });
+    return () => ctrl.abort();
+  }, [email]);
+
   useEffect(() => { fetchMyDisputes(); }, [fetchMyDisputes]);
 
   const refreshDashboard = useCallback(async () => {
@@ -1495,6 +1527,63 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
   const pabWeekdayHours = pabDailyHours.filter((d) => d.weekday);
   const allPabDays = pabCalendar?.flat() ?? [];
 
+  /**
+   * TEMPORARY orphanage → PAB coverage (AUTO mode, see orphanage-pab-coverage.ts):
+   * weekdays whose REAL tracked time + the orphanage hours recorded in the
+   * Payroll Wizard reach 7h. Window = the hours' file week + the week before
+   * (hours land one payroll run after the visit). Keys are pabDateKey format.
+   * The calendar keeps the honest tracked time and renders these days as
+   * forgiven; eligibility below treats them as passing.
+   */
+  const orphanageCoveredKeys = useMemo<Set<string>>(() => {
+    const covered = new Set<string>();
+    if (!orphanageHoursIndex.size || !pabCalendar) return covered;
+    const secByKey = new Map<string, number>();
+    for (const d of pabCalendar.flat()) secByKey.set(pabDateKey(d.date), d.seconds);
+    for (const [isoDate, orphHours] of orphanageHoursByCoveredDate(orphanageHoursIndex, email)) {
+      const [y, m, dd] = isoDate.split('-').map(Number);
+      if (!y || !m || !dd) continue;
+      const key = `${y}-${m}-${dd}`; // pabDateKey format (unpadded)
+      const sec = secByKey.get(key);
+      if (sec == null) continue; // date not on this calendar view
+      if (sec < 7 * 3600 && orphanageCoversDay(sec, orphHours)) covered.add(key);
+    }
+    return covered;
+  }, [orphanageHoursIndex, email, pabCalendar]);
+
+  /**
+   * TEMPORARY orphanage → PAB coverage (AUTO mode): the employee's locked-in
+   * orphanage hours per pay week + any weekday in that week's coverage window
+   * (file week + week before) that is STILL short of 7h after the top-up —
+   * covered days already render as 7h on the calendar, so what remains short is
+   * exactly what the hours could NOT rescue. Surfaced as the "Orphanage –
+   * Visits" panel below the calendar.
+   */
+  const orphanageVisitSummary = useMemo(() => {
+    const days = pabCalendar?.flat() ?? [];
+    const out: { id: string; weekLabel: string; hours: number; stillShort: { label: string; workedH: number }[] }[] = [];
+    for (const r of orphanageHourRows) {
+      const hours = Number(r.hours);
+      if (!(hours > 0) || !r.source_file) continue;
+      const range = parseDateRangeFromFilename(r.source_file);
+      if (!range) continue;
+      const winStart = new Date(range.start.getFullYear(), range.start.getMonth(), range.start.getDate() - 7);
+      const fmt = (d: Date) => d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+      const stillShort = days
+        .filter((d) =>
+          d.date >= winStart && d.date <= range.end &&
+          d.date.getDay() >= 1 && d.date.getDay() <= 5 &&
+          d.hasData && !d.passes && d.seconds < 7 * 3600 &&
+          // Covered days keep their real (short) hours but count as forgiven —
+          // only list days the orphanage hours could NOT rescue.
+          !orphanageCoveredKeys.has(pabDateKey(d.date)),
+        )
+        .map((d) => ({ label: fmt(d.date), workedH: Math.round((d.seconds / 3600) * 100) / 100 }));
+      out.push({ id: r.source_file, weekLabel: `${fmt(range.start)} – ${fmt(range.end)}`, hours, stillShort });
+    }
+    return out.sort((a, b) => a.id.localeCompare(b.id));
+  }, [orphanageHourRows, pabCalendar, orphanageCoveredKeys]);
+
   /** Is the current PAB period still in progress? (today ≤ period end, viewing default period) */
   const isPabPeriodInProgress = useMemo(() => {
     if (!pabMonthRange) return false;
@@ -1542,7 +1631,9 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
   }, [pabCalendar]);
 
   const isPAEligible =
-    !isPabPeriodInProgress && allPabDays.length > 0 && allPabDays.every((d) => d.passes);
+    !isPabPeriodInProgress && allPabDays.length > 0 &&
+    // TEMP orphanage coverage: covered days count as passing (see orphanageCoveredKeys).
+    allPabDays.every((d) => d.passes || orphanageCoveredKeys.has(pabDateKey(d.date)));
 
   const perfectAttendanceBonusStatus = useMemo<
     'eligible' | 'not_eligible' | 'pending' | 'unknown'
@@ -3197,11 +3288,17 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
                             // `forgiven` below). Only holidays remain clickable (details modal).
                             const cellClickable = isHoliday;
 
-                            const forgiven =
+                            const disputeForgiven =
                               !!dispute &&
                               disputeGrantsPabForgiveness(dispute) &&
                               !day.passes &&
                               (isOrphanageStyleReason(dispute.reason) || day.seconds >= 4 * 3600);
+                            // TEMPORARY orphanage → PAB coverage: tracked time + the orphanage
+                            // hours Accounting recorded in the Payroll Wizard reach 7h — the day
+                            // keeps its REAL hours but renders forgiven. See orphanage-pab-coverage.ts.
+                            const orphanageForgiven =
+                              !day.passes && orphanageCoveredKeys.has(pabDateKey(day.date));
+                            const forgiven = disputeForgiven || orphanageForgiven;
                             const effectivelyPasses = day.passes || forgiven;
 
                             let cellBorder: string;
@@ -3248,7 +3345,7 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
                               <div
                                 key={di}
                                 className={`group relative flex h-10 flex-col overflow-hidden rounded-lg border transition-transform duration-200 ease-[cubic-bezier(0.34,1.4,0.64,1)] hover:z-10 hover:shadow-md motion-safe:hover:scale-[1.05] lg:h-full lg:min-h-[2.5rem] ${cellBorder} ${cellClickable ? `cursor-pointer ${isHoliday ? 'hover:ring-2 hover:ring-sky-400/50' : 'hover:ring-2 hover:ring-orange-300/50'}` : ''}`}
-                                title={`${day.dayLabel} ${day.dateStr}${holidayName ? ` · ${holidayName} (holiday — click for details)` : ''}: ${secondsToDisplay(day.seconds)}${day.passes ? ' ✓' : isToday ? ' — in progress' : isFutureOrToday ? ' — not yet' : stillProcessing ? ' — processing' : day.hasData ? ' ✗ needs 7h' : ' — no data'}${rateTooltipSuffix}`}
+                                title={`${day.dayLabel} ${day.dateStr}${holidayName ? ` · ${holidayName} (holiday — click for details)` : ''}: ${secondsToDisplay(day.seconds)}${day.passes ? ' ✓' : orphanageForgiven ? ' ✓ Forgiven by Accounting — orphanage hours recorded in payroll' : disputeForgiven ? ' ✓ Forgiven by Accounting' : isToday ? ' — in progress' : isFutureOrToday ? ' — not yet' : stillProcessing ? ' — processing' : day.hasData ? ' ✗ needs 7h' : ' — no data'}${rateTooltipSuffix}`}
                                 style={{
                                   // `backwards` (not `both`): hold the hidden start-state during the
                                   // stagger delay, but release the transform once the entrance ends so
@@ -3412,6 +3509,47 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
             </Card>
 
           </div>
+
+          {/* TEMPORARY orphanage → PAB coverage (see orphanage-pab-coverage.ts):
+              the employee's orphanage-visit days and how they count toward PAB. */}
+          {orphanageVisitSummary.length > 0 && (
+            <Card className="shrink-0 overflow-hidden border-rose-200/80 bg-rose-50/30 dark:border-rose-900/40 dark:bg-rose-950/20">
+              <CardHeader className="pb-2">
+                <CardTitle className="flex items-center gap-2 text-sm text-rose-800 dark:text-rose-300">
+                  <CalendarDays className="h-4 w-4 text-rose-500" /> Orphanage – Visits
+                  <span className="rounded-full bg-rose-100 px-1.5 py-px font-mono text-[10px] tabular-nums text-rose-700 dark:bg-rose-950/60 dark:text-rose-300">
+                    {orphanageVisitSummary.length}
+                  </span>
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="pb-4 text-[13px]">
+                <p className="mb-2 text-[11px] leading-snug text-zinc-500 dark:text-zinc-500">
+                  Orphanage hours recorded in payroll automatically top up your short days around the
+                  visit — if tracked time + orphanage hours reach 7 hours, the day still counts toward
+                  Perfect Attendance. Covered days already show as passing on the calendar above.
+                </p>
+                <ul className="divide-y divide-rose-100/70 dark:divide-rose-950/50">
+                  {orphanageVisitSummary.map((v) => (
+                    <li key={v.id} className="flex flex-wrap items-center gap-2 py-1.5">
+                      <span className="font-medium tabular-nums text-zinc-700 dark:text-zinc-300">{v.hours}h orphanage hours</span>
+                      <span className="text-[11px] text-zinc-500 dark:text-zinc-500">week {v.weekLabel}</span>
+                      <span className="ml-auto flex flex-wrap items-center gap-1">
+                        {v.stillShort.length === 0 ? (
+                          <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-medium text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300">No short days remaining</span>
+                        ) : (
+                          v.stillShort.map((s) => (
+                            <span key={s.label} className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-medium text-amber-700 dark:bg-amber-950/50 dark:text-amber-300" title={`${s.workedH}h tracked + ${v.hours}h orphanage hours still under 7h`}>
+                              {s.label} · {s.workedH}h — not covered
+                            </span>
+                          ))
+                        )}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </CardContent>
+            </Card>
+          )}
         </div>
       )}
       </div>

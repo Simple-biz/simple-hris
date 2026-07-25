@@ -9,7 +9,7 @@ export const PROCESSOR_OPTIONS = [
   { id: 'hurupay', label: 'Hurupay', blurb: 'Email only', Icon: Wallet, logoSrc: '/hurupay.png' },
   { id: 'wepay', label: 'Wepay', blurb: 'Email only', Icon: Wallet },
   { id: 'higlobe', label: 'Higlobe', blurb: 'Email + account holder', Icon: Wallet, logoSrc: '/higlobe.png' },
-  { id: 'wise', label: 'Wise', blurb: 'Email or Wise tag', Icon: Wallet, logoSrc: '/wise.png' },
+  { id: 'wise', label: 'Wise', blurb: 'Bank wire details', Icon: Wallet, logoSrc: '/wise.png' },
   { id: 'jeeves', label: 'Jeeves', blurb: 'Phone + wire details', Icon: Wallet, logoSrc: '/jeeves.png' },
   { id: 'wires', label: 'Wires', blurb: 'Manual bank wire', Icon: Banknote },
 ] as const;
@@ -137,7 +137,7 @@ export function processorDescription(p: ProcessorId): string {
     case 'higlobe':
       return 'HiGlobe needs the email and the name on your account.';
     case 'wise':
-      return 'Wise needs the email registered to your account; the @tag is optional.';
+      return 'Wise payouts are sent to your bank account — account, SWIFT code, and full address.';
     case 'jeeves':
       return 'Jeeves needs your phone plus full bank wire details.';
     case 'wires':

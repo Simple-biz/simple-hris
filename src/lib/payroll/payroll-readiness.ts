@@ -34,7 +34,7 @@ import 'server-only';
  */
 
 import { normEmail } from '@/lib/email/norm-email';
-import { getEmployeesForAuthorizedServerRoute } from '@/lib/supabase/employees';
+import { getEmployeesForAuthorizedServerRoute, type EmployeeRow } from '@/lib/supabase/employees';
 import { getEmployeeIds } from '@/lib/supabase/employee-ids';
 import {
   isPayoutComplete,
@@ -62,7 +62,11 @@ import { isFinalPayrollWeekOfMonth } from '@/lib/payroll/bonus-cadence';
 import { DEPARTMENTS, MANAGER_BONUS_DEPT_KEYS } from '@/lib/payroll/department-bonus';
 import { listBonusCatalog } from '@/lib/supabase/bonus-catalog-db';
 import { getDepartmentRegistry } from '@/lib/departments/registry-db';
-import { resolveDeptKeyWithRegistry, type DepartmentRegistryEntry } from '@/lib/departments/registry';
+import {
+  resolveDeptKeyWithRegistry,
+  slugifyDeptKey,
+  type DepartmentRegistryEntry,
+} from '@/lib/departments/registry';
 import { getAppSetting } from '@/lib/supabase/app-settings';
 import {
   deptPayPausedSettingKey,
@@ -131,6 +135,10 @@ export interface ReadinessMissingBank {
    *  employee_ids write should key on. `email` above stays the display value. */
   workEmail: string | null;
   personalEmail: string | null;
+  /** True when this person has hours in the week-in-view's Hubstaff upload —
+   *  they are being PAID this week with no payout rail, which makes them a
+   *  hard blocker (pins the score's bank dimension, like a missing rate). */
+  onPayroll: boolean;
 }
 
 /** Why a person is expected NOT to be paid this week (an onboarding exception). */
@@ -166,6 +174,13 @@ export interface PayrollReadiness {
   workerCount: number;
   /** Count of active on-channel employees considered for the bank check. */
   bankEligibleCount: number;
+  /** How many of `missingBank` are on this week's payroll (hard blockers). */
+  missingBankOnPayroll: number;
+  /** Data sources that could NOT be read this load, in human-readable form.
+   *  Non-empty means one or more dimensions were judged on partial data — the
+   *  UI shows these as a warning, and the grade can never read 'ready' (a
+   *  broken read must never paint the dashboard green). Empty on a clean load. */
+  degraded: string[];
   /** The blocker-weighted readiness score (0–100) + its breakdown. */
   score: ReadinessScore;
 }
@@ -281,8 +296,17 @@ async function buildKpiReadiness(
   isMonthly: boolean,
   registry: DepartmentRegistryEntry[],
   /** Departments excluded from this week's pay (wizard Configuration tab) —
-   *  dropped from the KPI list entirely so they cost / earn nothing while off. */
+   *  still LISTED (status 'excluded') but owing nothing. */
   paused: Set<string>,
+  /** Distinct raw Department labels on the active master roster. Labels that
+   *  don't resolve to an already-enumerated dept (built-in / HSL / registry)
+   *  join the list as derived rows — so a master-list-only department like
+   *  "Orphan Ministry" is VISIBLE here exactly like the Payroll Wizard shows
+   *  it: 'excluded' when switched off in Configuration, auto-Ready
+   *  ('no_bonus') when it has nothing to submit. Before this, such depts
+   *  simply never appeared, which read as "missing" rather than "nothing
+   *  owed". */
+  masterDeptLabels: string[],
 ): Promise<ReadinessKpiDept[]> {
   const supabase = createSupabaseServiceRoleClient();
 
@@ -321,11 +345,31 @@ async function buildKpiReadiness(
     .filter((e) => !builtin.has(e.key))
     .map((e) => ({ key: e.key, name: e.name }));
 
+  // Master-list-derived departments: any roster Department label that doesn't
+  // resolve to a dept already enumerated above. HSL-ish labels ("HSL",
+  // "hsl:intake_specialist", anything Hogan) are skipped — HSL is represented
+  // by its per-sub-dept rows, and a derived catch-all "HSL" row would wrongly
+  // read no-bonus/Ready next to them.
+  const enumerated = new Set<string>([...builtin, ...customDepts.map((d) => d.key)]);
+  const masterDepts: { key: string; name: string }[] = [];
+  for (const raw of masterDeptLabels) {
+    const label = (raw ?? '').trim();
+    if (!label) continue;
+    const l = label.toLowerCase();
+    if (l.startsWith('hsl') || l.includes('hogan')) continue;
+    const key = resolveDeptKeyWithRegistry(label, registry) ?? slugifyDeptKey(label);
+    if (!key || enumerated.has(key)) continue;
+    enumerated.add(key);
+    masterDepts.push({ key, name: label });
+  }
+
   // General (catalog) dept aggregates for the week. Scoped to this week's
   // period_start at the DB so we don't pull the entire applied-bonus history
   // just to keep one week (this was the readiness snapshot's slowest query).
+  // Derived master-list depts are included so an applied bonus keyed on one of
+  // their slugs still reads as activity rather than silently vanishing.
   const appliedRows: Awaited<ReturnType<typeof summarizeApplied>> = await summarizeApplied(
-    [...MANAGER_BONUS_DEPT_KEYS, ...customDepts.map((d) => d.key)],
+    [...MANAGER_BONUS_DEPT_KEYS, ...customDepts.map((d) => d.key), ...masterDepts.map((d) => d.key)],
     weekStart,
   ).catch(() => []);
   const appliedByDept = new Map(appliedRows.map((r) => [r.department, r]));
@@ -387,8 +431,10 @@ async function buildKpiReadiness(
   // In-app departments — same auto-Ready rule as general depts: nothing in the
   // catalog for its manager to submit means there is nothing pending. A custom
   // dept that DOES get catalog assignments (keyed on its slug) follows the
-  // normal draft/applied logic.
-  for (const { key, name } of customDepts) {
+  // normal draft/applied logic. Master-list-derived depts (e.g. "Orphan
+  // Ministry") ride the exact same rules and render as 'custom' (informational
+  // row, "In-app" chip, no calculator to open).
+  for (const { key, name } of [...customDepts, ...masterDepts]) {
     const status = statusByDept.get(key);
     const applied = appliedByDept.get(key);
     const hasCatalogBonus = catalogDeptKeys === null || catalogDeptKeys.has(key);
@@ -447,12 +493,27 @@ async function buildKpiReadiness(
 
 async function buildMissingRates(
   sourceFile: string | null,
+  /** The active master roster, fetched ONCE by getPayrollReadiness and shared
+   *  with the bank check — one snapshot, no double read, no drift. */
+  employees: EmployeeRow[],
   excludeIdentities: Set<string>,
   /** True when a raw department label belongs to a pay-paused department —
    *  its workers leave both the missing list AND the denominator, so the
    *  score re-curves over the people actually being paid. */
   isPausedDept: (dept: string | null | undefined) => boolean,
-): Promise<{ rows: ReadinessMissingRate[]; workerCount: number }> {
+): Promise<{
+  rows: ReadinessMissingRate[];
+  workerCount: number;
+  /** Every normalized email (all master-roster aliases) of everyone with hours
+   *  in the week's Hubstaff upload — the "being paid this week" identity set
+   *  the bank check uses to split hard blockers from roster hygiene. Built
+   *  from ALL distinct workers on the file (before the rate-denominator
+   *  exclusions): an off-channel/paused/excepted person is never in the bank
+   *  list anyway, so the extra keys can't mislabel anyone. */
+  payrollEmails: Set<string>;
+  /** Human-readable notes for reads that failed (see PayrollReadiness.degraded). */
+  degraded: string[];
+}> {
   // The workers considered are exactly the week-in-view's Hubstaff roster: the
   // named file when the wizard is on a specific (possibly replayed) week, else
   // the live `is_current` upload.
@@ -462,14 +523,23 @@ async function buildMissingRates(
       ? await fetchHubstaffRowsBySourceFile(sourceFile)
       : await fetchHubstaffRowsOrdered());
   } catch {
-    return { rows: [], workerCount: 0 };
+    // MUST be reported, never swallowed: with no Hubstaff roster the rate
+    // check reads clear (0 of 0) and the bank check loses its payday-blocker
+    // signal — both make the score LOOK BETTER exactly when the data broke.
+    return {
+      rows: [],
+      workerCount: 0,
+      payrollEmails: new Set(),
+      degraded: [
+        "Hubstaff hours couldn't be read — the pay-rate check and this week's payday-blocker detection were skipped.",
+      ],
+    };
   }
 
   const rateCtx = await loadPeopleRateContext();
   // Master roster: work→personal alias sets + department, so a Hubstaff row
   // keyed on the work email resolves via every alias the person owns (the
   // People roster's exact behaviour).
-  const { employees } = await getEmployeesForAuthorizedServerRoute();
   const aliasesByEmail = new Map<string, string[]>();
   const deptByEmail = new Map<string, string | null>();
   for (const e of employees) {
@@ -485,6 +555,7 @@ async function buildMissingRates(
   const workers = rowsToPayrollRows(hubstaffRows);
   const seen = new Set<string>();
   const missing: ReadinessMissingRate[] = [];
+  const payrollEmails = new Set<string>();
   let workerCount = 0;
   for (const w of workers) {
     const email = normEmail(w.email ?? '');
@@ -497,6 +568,11 @@ async function buildMissingRates(
     // master-list dept (falls back to the Hubstaff row's own dept label).
     const aliases = (email && aliasesByEmail.get(email)) || (email ? [email] : []);
     const dept = (email && deptByEmail.get(email)) ?? w.department ?? null;
+
+    // "Being paid this week" identity set — every alias, recorded BEFORE the
+    // exclusions below (see the return-type note on why that's safe).
+    if (email) payrollEmails.add(email);
+    for (const a of aliases) payrollEmails.add(a);
 
     // USEE / US Employees are paid off-channel, so a missing hourly rate isn't a
     // payroll blocker for them — skip them from BOTH the list and the considered
@@ -527,7 +603,7 @@ async function buildMissingRates(
     }
   }
   missing.sort((a, b) => a.name.localeCompare(b.name));
-  return { rows: missing, workerCount };
+  return { rows: missing, workerCount, payrollEmails, degraded: [] };
 }
 
 // ── Missing bank info (active roster, USEE excluded) ──────────────────────────
@@ -574,21 +650,36 @@ function excludeByIdentity(
 }
 
 async function buildMissingBank(
+  /** See {@link buildMissingRates} — the shared roster snapshot. */
+  employees: EmployeeRow[],
   excludeIdentities: Set<string>,
   /** See {@link buildMissingRates} — pay-paused departments leave the bank
    *  list and its denominator alike. */
   isPausedDept: (dept: string | null | undefined) => boolean,
-): Promise<{ rows: ReadinessMissingBank[]; eligibleCount: number }> {
-  const [{ employees }, idsRes, ratesRes] = await Promise.all([
-    getEmployeesForAuthorizedServerRoute(),
-    getEmployeeIds(),
+): Promise<{ rows: ReadinessMissingBank[]; eligibleCount: number; degraded: string[] }> {
+  const [idsRes, ratesRes] = await Promise.all([
+    getEmployeeIds().catch(() => ({ rows: [], error: 'unreachable' })),
     // The legacy rates-sheet row is Payment Dispatch's fallback for both the
     // processor (the free-text `bank_preferred` cell) and the hurupay/higlobe
     // emails — completeness must judge with the same fallbacks or this list
-    // flags people the dispatch queue pays fine. Best-effort: on error we
-    // just judge without the extras.
-    getEmployeeHourlyRatesRows().catch(() => ({ rows: [], error: null })),
+    // flags people the dispatch queue pays fine. On error we still judge
+    // without the extras (fail toward over-flagging, the safe direction) but
+    // the outage is REPORTED so an over-flagged list is never mistaken for a
+    // real regression.
+    getEmployeeHourlyRatesRows().catch(() => ({ rows: [], error: 'unreachable' })),
   ]);
+
+  const degraded: string[] = [];
+  if (idsRes.error) {
+    degraded.push(
+      'Payout records (employee_ids) couldn’t be read — everyone reads as missing bank info until it recovers.',
+    );
+  }
+  if (ratesRes.error) {
+    degraded.push(
+      'The legacy rates sheet couldn’t be read — bank completeness was judged without its fallbacks and may over-flag.',
+    );
+  }
 
   // employee_ids row keyed by every email it carries (the row itself — payable
   // is judged per person below, with that person's legacy extras).
@@ -646,10 +737,13 @@ async function buildMissingBank(
       processor: resolveEffectivePayoutProcessor(idRow, extras),
       workEmail: e.work_email ?? null,
       personalEmail: e.personal_email ?? null,
+      // Stamped for real by getPayrollReadiness once the week's Hubstaff
+      // identity set is in hand — this fn only knows the roster.
+      onPayroll: false,
     });
   }
   out.sort((a, b) => a.name.localeCompare(b.name));
-  return { rows: out, eligibleCount };
+  return { rows: out, eligibleCount, degraded };
 }
 
 // ── Onboarding exceptions ─────────────────────────────────────────────────────
@@ -662,12 +756,20 @@ async function buildMissingBank(
  *  and a normalized-name fallback for rows with no email. */
 async function buildExceptions(
   weekStart: string,
-): Promise<{ rows: ReadinessException[]; identities: Set<string> }> {
+): Promise<{ rows: ReadinessException[]; identities: Set<string>; degraded: string[] }> {
   let rows: Awaited<ReturnType<typeof listHrPendingEmployees>>['rows'] = [];
   try {
     ({ rows } = await listHrPendingEmployees());
   } catch {
-    return { rows: [], identities: new Set() };
+    // Reported: with no exception identities, expected non-payments (onboarding
+    // hires) leak back into the rate/bank checks and cost points they shouldn't.
+    return {
+      rows: [],
+      identities: new Set(),
+      degraded: [
+        'Onboarding records couldn’t be read — expected non-payments may be counted against readiness.',
+      ],
+    };
   }
 
   const weekEnd = (() => {
@@ -731,7 +833,7 @@ async function buildExceptions(
     }
   }
   out.sort((a, b) => a.name.localeCompare(b.name));
-  return { rows: out, identities };
+  return { rows: out, identities, degraded: [] };
 }
 
 // ── Public entry point ────────────────────────────────────────────────────────
@@ -756,37 +858,85 @@ export async function getPayrollReadiness(
   // so the score describes only the departments actually being paid, and a new
   // week's upload snaps everything back automatically. Best-effort reads: a
   // settings/registry failure must never take readiness down, it just skips
-  // the exclusion.
-  const [pausedRaw, registry] = await Promise.all([
+  // the exclusion (and is REPORTED via `degraded`).
+  //
+  // The active master roster is fetched ONCE here and shared by the KPI
+  // (department universe), rate (aliases), and bank (population) checks — one
+  // consistent snapshot instead of three racing reads.
+  const [pausedRaw, registry, rosterRes, exceptionsRes] = await Promise.all([
     resolvedFile
-      ? getAppSetting(deptPayPausedSettingKey(resolvedFile)).catch(() => null)
+      ? getAppSetting(deptPayPausedSettingKey(resolvedFile)).catch(() => undefined)
       : Promise.resolve(null),
-    getDepartmentRegistry().catch(() => [] as DepartmentRegistryEntry[]),
+    getDepartmentRegistry().catch(() => null),
+    getEmployeesForAuthorizedServerRoute().catch(() => ({
+      employees: [] as EmployeeRow[],
+      error: 'unreachable',
+    })),
+    buildExceptions(weekStart),
   ]);
-  const pausedDeptKeys = parsePausedDeptKeys(pausedRaw);
+
+  const degraded: string[] = [...exceptionsRes.degraded];
+  if (pausedRaw === undefined) {
+    degraded.push(
+      'The pay-week Configuration (excluded departments) couldn’t be read — exclusions were not applied this load.',
+    );
+  }
+  if (registry === null) {
+    degraded.push('The department registry couldn’t be read — in-app departments may be missing from the KPI list.');
+  }
+  if (rosterRes.error && rosterRes.employees.length === 0) {
+    degraded.push(
+      'The employee roster couldn’t be read — bank-info coverage and department visibility are incomplete.',
+    );
+  }
+  const employees = rosterRes.employees;
+  const registrySafe = registry ?? ([] as DepartmentRegistryEntry[]);
+
+  const pausedDeptKeys = parsePausedDeptKeys(pausedRaw ?? null);
   const isPausedDept = (dept: string | null | undefined): boolean => {
     if (pausedDeptKeys.size === 0) return false;
-    const key = resolveDeptKeyWithRegistry(dept, registry);
+    const key = resolveDeptKeyWithRegistry(dept, registrySafe);
     return !!key && pausedDeptKeys.has(key);
   };
 
-  // Exceptions resolve first: their identity set feeds the rate/bank checks so an
-  // expected non-payment (onboarding / no-show / started-this-week) never costs
-  // points on ANY score dimension. KPI is per-department, so it needs no
-  // per-person exclusion and still runs alongside.
-  const [exceptionsRes, kpi] = await Promise.all([
-    buildExceptions(weekStart),
-    buildKpiReadiness(weekStart, isMonthlyPayWeek, registry, pausedDeptKeys),
-  ]);
+  // The department universe the KPI list must cover = every distinct label on
+  // the master roster (matches the Payroll Wizard, which tabs every dept).
+  const masterDeptLabels = [
+    ...new Set(employees.map((e) => (e.department ?? '').trim()).filter(Boolean)),
+  ];
+
+  // The exceptions' identity set feeds the rate/bank checks so an expected
+  // non-payment (onboarding / no-show / started-this-week) never costs points
+  // on ANY score dimension. KPI is per-department, so it needs no per-person
+  // exclusion.
   const { identities: exceptionIdentities } = exceptionsRes;
   // Pay-paused departments' hires are expected non-payments of a different
   // kind — the whole department is off — so they don't clutter the list.
   const exceptions = exceptionsRes.rows.filter((r) => !isPausedDept(r.department));
 
-  const [ratesRes, bankRes] = await Promise.all([
-    buildMissingRates(resolvedFile, exceptionIdentities, isPausedDept),
-    buildMissingBank(exceptionIdentities, isPausedDept),
+  const [kpi, ratesRes, bankRes] = await Promise.all([
+    buildKpiReadiness(weekStart, isMonthlyPayWeek, registrySafe, pausedDeptKeys, masterDeptLabels),
+    buildMissingRates(resolvedFile, employees, exceptionIdentities, isPausedDept),
+    buildMissingBank(employees, exceptionIdentities, isPausedDept),
   ]);
+  degraded.push(...ratesRes.degraded, ...bankRes.degraded);
+
+  // Split the missing-bank list by severity: someone with hours in THIS WEEK's
+  // upload is about to not get paid (hard blocker — pins the score's bank
+  // dimension); the rest is roster hygiene. Matched on either email — the
+  // payroll set carries every master-roster alias, so an alt-work-email
+  // Hubstaff row still connects to the person's work/personal identity here.
+  const onWeekPayroll = (r: ReadinessMissingBank): boolean =>
+    [r.workEmail, r.personalEmail].some((e) => {
+      const em = normEmail(e);
+      return !!em && ratesRes.payrollEmails.has(em);
+    });
+  const missingBank = bankRes.rows
+    .map((r) => ({ ...r, onPayroll: onWeekPayroll(r) }))
+    // Blockers surface first so the list starts with the people whose payday
+    // is actually at stake this week; names stay alphabetical within groups.
+    .sort((a, b) => Number(b.onPayroll) - Number(a.onPayroll) || a.name.localeCompare(b.name));
+  const missingBankOnPayroll = missingBank.reduce((n, r) => n + (r.onPayroll ? 1 : 0), 0);
 
   // KPI due/submitted for the score: monthly depts not due this week ('na') and
   // departments switched out of this week's pay ('excluded') are dropped from
@@ -798,14 +948,23 @@ export async function getPayrollReadiness(
     (d) => d.status === 'ready' || d.status === 'locked' || d.status === 'no_bonus',
   ).length;
 
-  const score = computeReadinessScore({
+  let score = computeReadinessScore({
     workerCount: ratesRes.workerCount,
     missingRates: ratesRes.rows.length,
     kpiDue,
     kpiSubmitted,
     bankEligibleCount: bankRes.eligibleCount,
-    missingBank: bankRes.rows.length,
+    missingBank: missingBank.length,
+    missingBankOnPayroll,
   });
+  // A partial load must never paint the dashboard green: dimensions judged on
+  // missing data read BETTER, not worse (an unreadable Hubstaff file zeroes the
+  // rate check; an unreadable roster empties the bank list). The pure scorer
+  // stays honest about the numbers it was given — this cap is the composer
+  // saying "the numbers themselves are suspect".
+  if (degraded.length > 0 && score.grade === 'ready') {
+    score = { ...score, grade: 'at_risk' };
+  }
 
   return {
     weekStart,
@@ -814,10 +973,12 @@ export async function getPayrollReadiness(
     sourceFile: resolvedFile,
     kpi,
     missingRates: ratesRes.rows,
-    missingBank: bankRes.rows,
+    missingBank,
     exceptions,
     workerCount: ratesRes.workerCount,
     bankEligibleCount: bankRes.eligibleCount,
+    missingBankOnPayroll,
+    degraded,
     score,
   };
 }

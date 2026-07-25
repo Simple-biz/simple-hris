@@ -311,7 +311,10 @@ export function PayoutDetailsFields({
   const meta = PROCESSOR_OPTIONS.find((p) => p.id === processor)!;
   const ProcIcon = meta.Icon;
   const procLogoSrc = 'logoSrc' in meta ? (meta as typeof meta & { logoSrc?: string }).logoSrc : undefined;
-  const supportsMultipleBanks = processor === 'jeeves' || processor === 'wires';
+  // Wise payees are paid into their bank account (not a Wise handle), so wise
+  // collects the same wire field set as wires — mirrors the Readiness
+  // Set-bank editor and the People → Banking editor.
+  const supportsMultipleBanks = processor === 'jeeves' || processor === 'wires' || processor === 'wise';
 
   const update = <K extends keyof PayoutFields>(key: K, val: PayoutFields[K]) =>
     setPayout((p) => ({ ...p, [key]: val }));
@@ -429,29 +432,6 @@ export function PayoutDetailsFields({
           </>
         )}
 
-        {processor === 'wise' && (
-          <>
-            <FormField
-            disabled={disabled}
-              label="Wise Email"
-              required
-              type="email"
-              placeholder="you@example.com"
-              value={payout.wiseEmail}
-              onChange={(v) => update('wiseEmail', v)}
-              hint="The email registered to your Wise account."
-            />
-            <FormField
-            disabled={disabled}
-              label="Wise Tag"
-              placeholder="@yourwisetag"
-              value={payout.wiseTag}
-              onChange={(v) => update('wiseTag', v)}
-              hint="Optional — your Wise @tag if you have one."
-            />
-          </>
-        )}
-
         {processor === 'jeeves' && (
           <>
             <div className="sm:col-span-2">
@@ -551,7 +531,7 @@ export function PayoutDetailsFields({
           </>
         )}
 
-        {processor === 'wires' && (
+        {(processor === 'wires' || processor === 'wise') && (
           <>
             <div className="sm:col-span-2">
               <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">

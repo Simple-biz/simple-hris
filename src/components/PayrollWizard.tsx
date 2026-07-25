@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useRef, useEffect, useMemo, useTransition, useCallback } from 'react';
+import { useSession } from 'next-auth/react';
 import { motion, AnimatePresence } from 'motion/react';
 import * as XLSX from 'xlsx';
 import {
@@ -66,6 +67,7 @@ import { formatPeriodRange, periodLabelFromFilename } from '@/lib/hubstaff/perio
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
 import { Switch } from '@/components/ui/switch';
+import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select';
 import { toast } from 'sonner';
 import { MOCK_USERS, MOCK_TIME_RECORDS, MOCK_PAYMENTS } from '@/constants';
 import { User, TimeRecord, PaymentLineItem, HubstaffRow, ReconciliationIssue } from '@/types';
@@ -86,6 +88,12 @@ import {
   pabDateKey,
 } from '@/lib/hubstaff/calendar-column-dedupe';
 import { getHslAdjustedEnd } from '@/lib/payroll/dispatch-bonuses';
+import {
+  buildOrphanageHoursIndex,
+  orphanageHoursByCoveredDate,
+  orphanageCoversDay,
+  type OrphanageHoursIndex,
+} from '@/lib/payroll/orphanage-pab-coverage';
 import {
   HSL_WEEK_MODEL_CUTOVER_KEY,
   resolveHslWeekModelWithDefault,
@@ -187,6 +195,8 @@ import {
 } from '@/components/ui/dialog';
 import { HSL_DEPT_KEYS, HSL_DEPTS, calcManagerBonus } from '@/lib/hsl-bonus/schema';
 import WizardCursorOverlay, { type WizardCursorOverlayHandle } from '@/components/payroll/WizardCursorOverlay';
+import LockToggleConfirmDialog, { deriveFirstName } from '@/components/payroll/LockToggleConfirmDialog';
+import { playStagePrepped, stopStagePrepped } from '@/lib/sound/ping-chime';
 
 function findHeaderColumn(header: string[], ...labels: string[]): number {
   const norm = header.map((h) => h.trim().toLowerCase());
@@ -698,6 +708,88 @@ function PhpWithUsd({
   );
 }
 
+const SCROLLBAR_CLS =
+  '[scrollbar-width:thin] [&::-webkit-scrollbar]:h-2 [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-zinc-300/80 [&::-webkit-scrollbar-track]:bg-transparent dark:[&::-webkit-scrollbar-thumb]:bg-zinc-600/80';
+
+/**
+ * Wraps a wide + tall table so BOTH scrollbars stay usable no matter where the
+ * page is scrolled:
+ *   • the `toolbar` (e.g. the search box) and a horizontal "navigation scroll
+ *     bar" are frozen together in a header that sticks to the top of the page,
+ *     so the horizontal scrollbar is always reachable while scrolling up/down,
+ *   • the rows scroll VERTICALLY inside a bounded-height box, with the table's
+ *     own sticky <thead>/<tfoot> staying put.
+ * The top bar is a thin proxy whose inner spacer matches the table's scrollWidth;
+ * it and the body mirror each other's scrollLeft. It renders only when the table
+ * actually overflows horizontally.
+ */
+function ScrollableTable({
+  toolbar,
+  children,
+  maxHeightClass = 'max-h-[70vh]',
+}: {
+  toolbar?: React.ReactNode;
+  children: React.ReactNode;
+  maxHeightClass?: string;
+}) {
+  const topRef = useRef<HTMLDivElement>(null);
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const [contentWidth, setContentWidth] = useState(0);
+  const [overflowing, setOverflowing] = useState(false);
+
+  useEffect(() => {
+    const body = bodyRef.current;
+    if (!body) return;
+    const measure = () => {
+      setContentWidth(body.scrollWidth);
+      setOverflowing(body.scrollWidth - body.clientWidth > 1);
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(body);
+    const inner = body.firstElementChild;
+    if (inner) ro.observe(inner);
+    return () => ro.disconnect();
+  }, [children]);
+
+  // Mirror scrollLeft between the top proxy and the table body. Setting
+  // scrollLeft fires `scroll` only when the value changes, so the pair settles
+  // after a single bounce — no feedback loop, no guard flag needed.
+  const syncFromTop = () => {
+    if (topRef.current && bodyRef.current) bodyRef.current.scrollLeft = topRef.current.scrollLeft;
+  };
+  const syncFromBody = () => {
+    if (topRef.current && bodyRef.current) topRef.current.scrollLeft = bodyRef.current.scrollLeft;
+  };
+
+  return (
+    <div className="rounded-xl border border-zinc-200 dark:border-zinc-800">
+      {/* Header pinned to the page: toolbar + horizontal navigation scrollbar.
+          Stays on screen while you scroll up/down, so the scrollbar is always
+          usable. */}
+      <div className="sticky top-0 z-30 rounded-t-xl border-b border-zinc-200 bg-white/95 backdrop-blur dark:border-zinc-800 dark:bg-zinc-950/95">
+        {toolbar}
+        {overflowing && (
+          <div
+            ref={topRef}
+            onScroll={syncFromTop}
+            aria-hidden
+            className={cn(
+              'overflow-x-auto overflow-y-hidden border-t border-zinc-200 bg-zinc-100/80 dark:border-zinc-800 dark:bg-zinc-900/60',
+              SCROLLBAR_CLS,
+            )}
+          >
+            <div style={{ width: contentWidth, height: 1 }} />
+          </div>
+        )}
+      </div>
+      <div ref={bodyRef} onScroll={syncFromBody} className={cn(maxHeightClass, 'overflow-auto rounded-b-xl', SCROLLBAR_CLS)}>
+        {children}
+      </div>
+    </div>
+  );
+}
+
 function parseRateField(v: string | null | undefined): number | null {
   if (v == null) return null;
   const s = String(v).trim().replace(/,/g, '');
@@ -1060,6 +1152,19 @@ export default function PayrollWizard({
   const cursorOverlayRef = useRef<WizardCursorOverlayHandle>(null);
   const [togglingLock, setTogglingLock] = useState(false);
   const [confirmingLockToggle, setConfirmingLockToggle] = useState(false);
+  // Greeting shown inside the Start/Stop modal's "Preparing Dispatch" scene —
+  // same fallback chain as Payment Dispatch (NextAuth name → email → "there").
+  const { data: authSession } = useSession();
+  const lockFirstName = useMemo(
+    () => deriveFirstName(authSession?.user?.name, authSession?.user?.email ?? sessionEmail),
+    [authSession?.user?.name, authSession?.user?.email, sessionEmail],
+  );
+  // When the Start/Stop modal closes, fade out the "stage prepped" sound so
+  // the long clip doesn't keep playing behind the wizard. Runs on the
+  // open→closed transition (covers success + any dismissal path).
+  useEffect(() => {
+    if (!confirmingLockToggle) stopStagePrepped();
+  }, [confirmingLockToggle]);
 
   // ── Collaborative "oversee" / follow mode ─────────────────────────────────
   // When processing is started, the operator who toggled it is the "driver".
@@ -1135,6 +1240,10 @@ export default function PayrollWizard({
   const [initialCalcPage, setInitialCalcPage] = useState(1);
   const [hslSearch, setHslSearch] = useState('');
   const [hslPage, setHslPage] = useState(1);
+  // KPI Bonus column visibility in the HSL table — hidden by default, toggled via
+  // the Show/Hide dropdown in the table toolbar. Display-only: the KPI amount still
+  // folds into each row's Total Pay and into dispatch regardless of this setting.
+  const [hslKpiColShown, setHslKpiColShown] = useState(false);
   const HSL_PAGE_SIZE = 50;
   const [approveUploadDialogOpen, setApproveUploadDialogOpen] = useState(false);
   const [previewPaystubsOpen, setPreviewPaystubsOpen] = useState(false);
@@ -2086,6 +2195,11 @@ export default function PayrollWizard({
 
   const [approvedDisputeDates, setApprovedDisputeDates] = useState<Map<string, Map<string, number | null>>>(new Map());
   const [approvedDisputeIds, setApprovedDisputeIds] = useState<Map<string, Map<string, string>>>(new Map());
+  /** TEMPORARY orphanage → PAB coverage (see orphanage-pab-coverage.ts): all
+   *  locked-in orphanage hours across every pay week, indexed by email→week.
+   *  AUTO mode — the hours alone forgive short weekdays in their coverage
+   *  window (file week + week before); no dispute/excuse record needed. */
+  const [orphanageHoursIndex, setOrphanageHoursIndex] = useState<OrphanageHoursIndex>(new Map());
   /** Approved time-adjustment overrides: normalized work_email -> (ISO date -> SET hours). */
   const [approvedTimeAdjustments, setApprovedTimeAdjustments] = useState<Map<string, Map<string, number>>>(new Map());
   /**
@@ -3137,6 +3251,35 @@ export default function PayrollWizard({
       .catch(() => { setApprovedDisputeDates(new Map()); setApprovedDisputeIds(new Map()); });
   }, [pabMonthRange]);
 
+  // TEMPORARY orphanage → PAB coverage: load every week's locked-in orphanage
+  // hours (accounting-gated ?all=1) so a visit from ANY week of the PAB month
+  // can top up its excused day. Best-effort — no coverage if the table/endpoint
+  // is unavailable (rule simply doesn't apply). See orphanage-pab-coverage.ts.
+  const refreshOrphanageHoursIndex = React.useCallback(() => {
+    const ctrl = new AbortController();
+    fetch('/api/orphanage-pay?all=1', { cache: 'no-store', signal: ctrl.signal })
+      .then((res) => {
+        if (!res.ok) {
+          console.warn(`[orphanage-pab] /api/orphanage-pay?all=1 → ${res.status}; PAB orphanage coverage inactive this session`);
+          return { rows: [] };
+        }
+        return res.json();
+      })
+      .then((json: { rows?: { source_file: string | null; employee_email: string; hours: number }[] }) => {
+        setOrphanageHoursIndex(
+          buildOrphanageHoursIndex(
+            (json.rows ?? []).map((r) => ({ sourceFile: r.source_file, email: r.employee_email, hours: r.hours })),
+          ),
+        );
+      })
+      .catch(() => { /* leave the last-known index; rule just doesn't newly apply */ });
+    return () => ctrl.abort();
+  }, []);
+  useEffect(() => {
+    if (!pabMonthRange) return;
+    return refreshOrphanageHoursIndex();
+  }, [pabMonthRange, refreshOrphanageHoursIndex]);
+
   // Approved time-adjustment overrides for the PAB period — folded into pay + PAB.
   const refreshApprovedAdjustmentOverrides = useCallback(() => {
     if (!pabMonthRange) return;
@@ -3165,9 +3308,11 @@ export default function PayrollWizard({
     refreshApprovedAdjustmentOverrides();
   }, [refreshApprovedAdjustmentOverrides]);
 
-  // All time-adjustment requests for the Additions review panel (step 3).
-  // No date restriction — requests from any past period are shown to Accounting.
-  // Accounting can only ACT on manager_approved rows; pending rows are shown read-only.
+  // Time-adjustment requests for the Additions review panel (step 5). Fetched
+  // across all periods here, then filtered at render time to the pay week the
+  // wizard is currently processing (see `weekScopedAdjustmentRows`) so only the
+  // requests that concern this run are shown. Accounting can only ACT on
+  // manager_approved rows; pending rows are shown read-only.
   const fetchTimeAdjustmentReview = useCallback(() => {
     fetch(
       `/api/time-adjustments?status=pending&status=manager_approved&status=manager_denied&status=approved&status=denied&limit=500`,
@@ -3306,6 +3451,35 @@ export default function PayrollWizard({
   }, [hubstaffRowsForPab, allDaysColumnGroups]);
 
   /**
+   * TEMPORARY orphanage → PAB coverage overlay (see orphanage-pab-coverage.ts).
+   * AUTO mode: a copy of `effectiveOverrides` where each weekday inside a
+   * person's orphanage-hours coverage window (the hours' file week + the week
+   * BEFORE it — hours land one payroll run after the visit) whose WORKED hours
+   * + orphanage hours reach 7 h is SET to 7 h, so every PAB path below counts
+   * it as a full pass. No dispute/excuse record needed. Only fills a date that
+   * has no explicit override yet; never overrides an explicit SET, never
+   * lowers a day. Additive to the existing ≥4h floor. Feeds ONLY the PAB
+   * memos — pay is untouched (coverage never contributes to pay).
+   */
+  const effectiveOverridesForPab = useMemo<Map<string, Map<string, number | null>>>(() => {
+    if (orphanageHoursIndex.size === 0) return effectiveOverrides;
+    const out = new Map<string, Map<string, number | null>>();
+    for (const [em, dates] of effectiveOverrides) out.set(em, new Map(dates));
+    for (const em of orphanageHoursIndex.keys()) {
+      const workedByDate = rawDayHoursByEmail.get(em);
+      let target = out.get(em);
+      for (const [iso, orphHours] of orphanageHoursByCoveredDate(orphanageHoursIndex, em)) {
+        if (target && target.get(iso) != null) continue; // respect an explicit SET
+        const workedSec = (workedByDate?.get(iso) ?? 0) * 3600;
+        if (!orphanageCoversDay(workedSec, orphHours)) continue;
+        if (!target) { target = new Map(); out.set(em, target); }
+        target.set(iso, 7);
+      }
+    }
+    return out;
+  }, [effectiveOverrides, orphanageHoursIndex, rawDayHoursByEmail]);
+
+  /**
    * Per-employee pay delta (in hours) from approved time adjustments: sum of
    * (approved_hours - raw tracked hours) over adjustment dates that fall within the
    * current pay period. Positive values increase pay; folded into initialPay below.
@@ -3409,7 +3583,7 @@ export default function PayrollWizard({
       const email = normEmail(rawEmail) ?? rawEmail.toLowerCase();
       if (!email) continue;
 
-      const forgivenDates = effectiveOverrides.get(email);
+      const forgivenDates = effectiveOverridesForPab.get(email);
       // Check both raw and normalized keys since employeeDepts is keyed by raw Hubstaff email
       const isHsl =
         employeeDepts[rawEmail] === 'hogan_smith_law' ||
@@ -3476,7 +3650,7 @@ export default function PayrollWizard({
     pabMonthColumnCoverageComplete,
     weekdayColumnGroups,
     allDaysColumnGroups,
-    effectiveOverrides,
+    effectiveOverridesForPab,
     usHolidayDates,
     employeeDepts,
     pabExcludedActiveMonth,
@@ -3497,7 +3671,7 @@ export default function PayrollWizard({
       const rawEmail = String(row['Email'] ?? row['email'] ?? '').trim();
       const email = normEmail(rawEmail) ?? rawEmail.toLowerCase();
       if (!email) continue;
-      const forgivenDates = effectiveOverrides.get(email);
+      const forgivenDates = effectiveOverridesForPab.get(email);
       map.set(
         email,
         weekdayColumnGroups.map(group => {
@@ -3526,7 +3700,7 @@ export default function PayrollWizard({
       );
     }
     return map;
-  }, [hubstaffRowsForPab, weekdayColumnGroups, effectiveOverrides, usHolidayDates]);
+  }, [hubstaffRowsForPab, weekdayColumnGroups, effectiveOverridesForPab, usHolidayDates]);
 
   /**
    * Per-employee Mon–Sun breakdown for HSL PAB display. Same structure as
@@ -3544,7 +3718,7 @@ export default function PayrollWizard({
       const rawEmail = String(row['Email'] ?? row['email'] ?? '').trim();
       const email = normEmail(rawEmail) ?? rawEmail.toLowerCase();
       if (!email) continue;
-      const forgivenDates = effectiveOverrides.get(email);
+      const forgivenDates = effectiveOverridesForPab.get(email);
       map.set(
         email,
         allDaysColumnGroups.map(group => {
@@ -3569,7 +3743,7 @@ export default function PayrollWizard({
       );
     }
     return map;
-  }, [hubstaffRowsForPab, allDaysColumnGroups, effectiveOverrides, usHolidayDates]);
+  }, [hubstaffRowsForPab, allDaysColumnGroups, effectiveOverridesForPab, usHolidayDates]);
 
   /**
    * Tri-state PAB display status per employee:
@@ -3647,7 +3821,13 @@ export default function PayrollWizard({
     // the lock) still get their LIVE verdict instead of the pill's
     // 'in_progress' lookup-miss default.
     for (const [email, status] of pabStatusByEmail.entries()) {
-      if (!snap.has(email)) snap.set(email, status);
+      if (!snap.has(email)) { snap.set(email, status); continue; }
+      // TEMPORARY orphanage → PAB coverage (see orphanage-pab-coverage.ts):
+      // orphanage hours are pasted one payroll run AFTER the visit week, so a
+      // snapshot frozen before the paste can hold a stale 'ineligible' the live
+      // computation has since rescued. Live verdicts may UPGRADE a frozen
+      // ineligible — never downgrade a frozen eligible/in_progress.
+      if (snap.get(email) === 'ineligible' && status !== 'ineligible') snap.set(email, status);
     }
     // A snapshot frozen mid-period carries 'in_progress' verdicts. Once the PAB
     // period has ended, those employees are locked-in eligible for the rest of the
@@ -5086,10 +5266,12 @@ export default function PayrollWizard({
   /**
    * EVERY department the wizard knows about — the step-1 Configuration tab's
    * roster. Built-in `DEPARTMENTS` are always present; on top of them we surface:
-   *   • in-app departments from the registry (Payment Catalog → Department), and
-   *   • any dept key that people in THIS run resolved to but that isn't a
-   *     built-in or a registry entry (a master-list department label whose slug
-   *     has no dedicated tab) — so nobody is dropped into an invisible bucket.
+   *   • in-app departments from the registry (Payment Catalog → Department),
+   *   • every department label on the ACTIVE master list, even when nobody from
+   *     it is in this week's Hubstaff file (labels with no built-in/registry
+   *     mapping get a slug key + their master-list label as the tab name), and
+   *   • any dept key that people in THIS run resolved to but that isn't already
+   *     represented — so nobody is dropped into an invisible bucket.
    * Same `{ key, name, bonuses }` shape as `DEPARTMENTS`; custom/derived
    * departments carry no built-in bonus toggles (`bonuses: []`).
    */
@@ -5104,9 +5286,24 @@ export default function PayrollWizard({
       list.push({ key: entry.key, name: entry.name, bonuses: [], isCustom: true });
     }
 
+    // Every master-list department: a label that resolves to a built-in or
+    // registry key is already represented above; anything else (e.g. "USEE")
+    // becomes its own derived tab under its master-list label.
+    for (const emp of masterEmployees) {
+      const label = emp.department?.trim();
+      if (!label) continue;
+      const key =
+        normalizeDeptToKey(label) ??
+        resolveDeptKeyWithRegistry(label, customDepartments) ??
+        slugifyDeptKey(label);
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      list.push({ key, name: label, bonuses: [], isCustom: true });
+    }
+
     // Any dept key present on a payable row but not yet represented (e.g. a
-    // master-list department label with no built-in/registry tab). Prefer a
-    // registry display name; otherwise humanise the slug.
+    // rates-table/Hubstaff-only label from someone missing on the master list).
+    // Prefer a registry display name; otherwise humanise the slug.
     const nameForKey = (key: string): string => {
       const reg = customDepartments.find(e => e.key === key);
       if (reg) return reg.name;
@@ -5122,7 +5319,7 @@ export default function PayrollWizard({
     }
 
     return list;
-  }, [customDepartments, employeeDepts]);
+  }, [customDepartments, employeeDepts, masterEmployees]);
 
   /**
    * The department list the Additions tab renders as its rail (and every
@@ -5856,10 +6053,13 @@ export default function PayrollWizard({
         { description: 'Saved to this period — see "Locked in this period" below.' },
       );
       setOrphanagePaste('');
+      // Refresh the month-wide orphanage-hours index so the just-locked hours
+      // immediately feed PAB eligibility (top-up) without a reload.
+      refreshOrphanageHoursIndex();
     } finally {
       setOrphanageLockingIn(false);
     }
-  }, [isReplay, orphanagePasteParse, orphanageAmounts, updateOrphanageAmount, saveAdditionsProgress, publishFinalPaySnapshot, calcSourceFile]);
+  }, [isReplay, orphanagePasteParse, orphanageAmounts, updateOrphanageAmount, saveAdditionsProgress, publishFinalPaySnapshot, calcSourceFile, refreshOrphanageHoursIndex]);
 
   /** Load the locked-in orphanage pay detail (hours / OT split) for the active period
    *  when the user lands on the Orphanage step, so the "Locked in this period" list shows
@@ -5913,7 +6113,9 @@ export default function PayrollWizard({
         await fetch(`/api/orphanage-pay?source_file=${encodeURIComponent(calcSourceFile)}&email=${encodeURIComponent(email)}`, { method: 'DELETE' });
       } catch { /* best-effort — the additions blob is already updated */ }
     }
-  }, [isReplay, orphanageAmounts, updateOrphanageAmount, saveAdditionsProgress, publishFinalPaySnapshot, calcSourceFile]);
+    // Removing hours may drop a day back below the 7h top-up — refresh coverage.
+    refreshOrphanageHoursIndex();
+  }, [isReplay, orphanageAmounts, updateOrphanageAmount, saveAdditionsProgress, publishFinalPaySnapshot, calcSourceFile, refreshOrphanageHoursIndex]);
 
   /**
    * Live publish: while accounting edits the wizard (Adj./Orphanage/bonus/metric
@@ -6401,11 +6603,15 @@ export default function PayrollWizard({
         }
 
         // Built-in payroll key first; then in-app departments (Payment Catalog →
-        // Department) by name/slug, so a person whose department is a custom dept
-        // (e.g. "Executive Assistants") gets a real bucket instead of being
-        // silently dropped from every Additions tab.
+        // Department) by name/slug; finally the label's slug itself — every
+        // department label groups people under a real tab (allWizardDepartments
+        // derives the same slug key from the master list), so a person whose
+        // department is e.g. "USEE" lands in a "USEE" bucket instead of the
+        // unassigned pile.
         const deptKey =
-          normalizeDeptToKey(deptRaw) ?? resolveDeptKeyWithRegistry(deptRaw, customDepartments);
+          normalizeDeptToKey(deptRaw) ??
+          resolveDeptKeyWithRegistry(deptRaw, customDepartments) ??
+          (deptRaw ? slugifyDeptKey(deptRaw) || null : null);
         if (deptKey) {
           next[calcRow.email] = deptKey;
           changed = true;
@@ -6732,8 +6938,14 @@ export default function PayrollWizard({
     if (togglingLock) return;
     setTogglingLock(true);
     const goingLocked = !lockState.locked;
+    // Fire the "stage prepped" alert the instant Start is confirmed — synced
+    // with the Preparing Dispatch scene, same as Payment Dispatch. Start only.
+    if (goingLocked) playStagePrepped();
+    // Minimum on-screen time for the "Preparing Dispatch…" scene so it plays
+    // gracefully instead of flashing by when the optimistic POST returns fast.
+    const minShow = new Promise((r) => setTimeout(r, 1600));
     try {
-      await setLocked(goingLocked);
+      await Promise.all([setLocked(goingLocked), minShow]);
       // Instantly notify peers via broadcast before Postgres Realtime catches up.
       if (goingLocked) broadcastLockAcquired(currentStep);
       toast.success(
@@ -7577,37 +7789,16 @@ export default function PayrollWizard({
                   </motion.button>
                 </div>
 
-                {/* Confirm toggle dialog */}
-                <Dialog open={confirmingLockToggle} onOpenChange={setConfirmingLockToggle}>
-                  <DialogContent className="max-w-sm">
-                    <DialogHeader>
-                      <DialogTitle>{lockState.locked ? 'Stop processing?' : 'Start processing?'}</DialogTitle>
-                      <DialogDescription>
-                        {lockState.locked
-                          ? 'This will unlock employee issues. Employees will be able to file issues again.'
-                          : 'This will lock employee issues and signal that payroll is being processed. Employees will not be able to file issues until you stop.'}
-                      </DialogDescription>
-                    </DialogHeader>
-                    <div className="flex justify-end gap-2 pt-2">
-                      <Button variant="outline" onClick={() => setConfirmingLockToggle(false)}>
-                        Cancel
-                      </Button>
-                      <Button
-                        disabled={togglingLock}
-                        onClick={() => void handleLockToggle()}
-                        className={cn(
-                          lockState.locked
-                            ? 'bg-rose-600 hover:bg-rose-700'
-                            : 'bg-emerald-600 hover:bg-emerald-700',
-                          'text-white',
-                        )}
-                      >
-                        {togglingLock && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                        {lockState.locked ? 'Stop processing' : 'Start processing'}
-                      </Button>
-                    </div>
-                  </DialogContent>
-                </Dialog>
+                {/* Confirm toggle dialog — the exact Payment Dispatch modal
+                    (confirm copy + "Preparing Dispatch" scene + sound). */}
+                <LockToggleConfirmDialog
+                  open={confirmingLockToggle}
+                  locked={lockState.locked}
+                  submitting={togglingLock}
+                  firstName={lockFirstName}
+                  onClose={() => setConfirmingLockToggle(false)}
+                  onConfirm={() => void handleLockToggle()}
+                />
 
                 <Card className="border-zinc-200 bg-zinc-50/80 ring-0 dark:border-zinc-800 dark:bg-zinc-900/40">
                   <CardHeader className="pb-2">
@@ -8960,6 +9151,40 @@ export default function PayrollWizard({
         const pabColShown = isDeptEligible(sysBonusCfg.pab, activeDeptTab);
         const techColShown = isDeptEligible(sysBonusCfg.tech, activeDeptTab);
         const deptEmployees = effectiveCalcResults.filter(r => employeeDepts[r.email] === activeDeptTab);
+        // Master-list members of the active department with NO row in this week's
+        // Hubstaff file (roster-only departments like SMM Freelancer have nobody
+        // tracking Hubstaff time at all). Listed read-only below the table so the
+        // department's roster is always visible; they carry no calc row, so the
+        // wizard computes no pay for them — one-off payments cover them instead.
+        const calcEmailSet = new Set<string>();
+        const calcNameTokenSet = new Set<string>();
+        for (const r of effectiveCalcResults) {
+          const em = normEmail(r.email);
+          if (em) calcEmailSet.add(em);
+          if (r.name) {
+            const tokens = normalizeNameTokens(r.name);
+            if (tokens) calcNameTokenSet.add(tokens);
+          }
+        }
+        const rosterOnlyMembers = masterEmployees
+          .filter((emp) => {
+            const label = emp.department?.trim();
+            if (!label) return false;
+            const key =
+              normalizeDeptToKey(label) ??
+              resolveDeptKeyWithRegistry(label, customDepartments) ??
+              slugifyDeptKey(label);
+            if (key !== activeDeptTab) return false;
+            const inCalcByEmail = [emp.work_email, emp.personal_email, emp.alternate_work_email, emp.alternate_work_email_2]
+              .some((e) => {
+                const n = normEmail(e ?? '');
+                return n ? calcEmailSet.has(n) : false;
+              });
+            if (inCalcByEmail) return false;
+            const tokens = emp.name ? normalizeNameTokens(emp.name) : null;
+            return !(tokens && calcNameTokenSet.has(tokens));
+          })
+          .sort((a, b) => (a.name ?? '').localeCompare(b.name ?? ''));
         // Resolve each assigned employee's department by normalized email so time-adjustment
         // rows (keyed by work_email) can be grouped under the active department.
         const normEmailToDeptKey = new Map<string, string>();
@@ -8970,13 +9195,25 @@ export default function PayrollWizard({
         }
         const adjustmentDeptKey = (workEmail: string): string | undefined =>
           normEmailToDeptKey.get(normEmail(workEmail) ?? (workEmail ?? '').trim().toLowerCase());
+        // Scope the review panel to the pay week the wizard is currently processing:
+        // a time adjustment only concerns this run when the day it corrects
+        // (`adjust_date`) falls inside the active Hubstaff batch's date window. An
+        // adjustment for a different week belongs to that week's run, not this one.
+        // Fall back to showing everything when no batch (or no parseable range) is set.
+        const weekScopedAdjustmentRows = activeBatchDateRange
+          ? timeAdjustmentRows.filter(
+              (a) =>
+                a.adjust_date >= activeBatchDateRange.startKey &&
+                a.adjust_date <= activeBatchDateRange.endKey,
+            )
+          : timeAdjustmentRows;
         const pendingAdjustmentCountByDept = new Map<string, number>();
-        for (const a of timeAdjustmentRows) {
+        for (const a of weekScopedAdjustmentRows) {
           if (a.status !== 'pending') continue;
           const d = adjustmentDeptKey(a.work_email);
           if (d) pendingAdjustmentCountByDept.set(d, (pendingAdjustmentCountByDept.get(d) ?? 0) + 1);
         }
-        const deptAdjustments = timeAdjustmentRows
+        const deptAdjustments = weekScopedAdjustmentRows
           .filter(a => adjustmentDeptKey(a.work_email) === activeDeptTab)
           .sort((a, b) => (a.status === 'pending' ? 0 : 1) - (b.status === 'pending' ? 0 : 1));
         const unassignedEmployees = effectiveCalcResults.filter(r => !employeeDepts[r.email]);
@@ -10515,16 +10752,23 @@ export default function PayrollWizard({
               {/* Employee bonus table */}
               <div className="flex min-w-0 flex-col gap-2">
                 {deptEmployees.length === 0 ? (
-                  <div className="flex h-64 flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed border-zinc-200 bg-zinc-50/50 text-center dark:border-zinc-800 dark:bg-zinc-950/30">
+                  <div className={cn(
+                    'flex flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed border-zinc-200 bg-zinc-50/50 text-center dark:border-zinc-800 dark:bg-zinc-950/30',
+                    rosterOnlyMembers.length > 0 ? 'h-36' : 'h-64',
+                  )}>
                     <div className="flex h-12 w-12 items-center justify-center rounded-full bg-zinc-100 dark:bg-zinc-900">
                       <Calculator className="h-5 w-5 text-zinc-400" />
                     </div>
                     <div>
                       <div className="text-sm font-medium text-zinc-500 dark:text-zinc-400">
-                        No employees in {activeDept.name}
+                        {rosterOnlyMembers.length > 0
+                          ? `Nobody in ${activeDept.name} has Hubstaff hours this week`
+                          : `No employees in ${activeDept.name}`}
                       </div>
                       <div className="mt-1 text-xs text-zinc-400 dark:text-zinc-500">
-                        Employees are auto-assigned from Supabase department data
+                        {rosterOnlyMembers.length > 0
+                          ? `The department's master-list roster is listed below`
+                          : 'Employees are auto-assigned from Supabase department data'}
                       </div>
                     </div>
                   </div>
@@ -11175,6 +11419,39 @@ export default function PayrollWizard({
                   </div>
                   );
                 })()}
+
+                {/* Master-list roster with no Hubstaff row this week — read-only.
+                    Keeps every department's people visible (roster-only depts like
+                    SMM Freelancer would otherwise render as an empty tab). */}
+                {rosterOnlyMembers.length > 0 && (
+                  <div className="rounded-xl border border-zinc-200 bg-white shadow-sm dark:border-zinc-800 dark:bg-zinc-950">
+                    <div className="flex items-start justify-between gap-3 border-b border-zinc-100 px-4 py-2.5 dark:border-zinc-900">
+                      <div className="min-w-0">
+                        <div className="text-xs font-semibold text-zinc-700 dark:text-zinc-200">
+                          On the master list — no Hubstaff hours this week
+                        </div>
+                        <div className="mt-0.5 text-[11px] text-zinc-400 dark:text-zinc-500">
+                          Pay is computed from the week's Hubstaff file, so these {activeDept.name} people have
+                          no payable row here. Use People → Pay (one-off payment) to pay someone outside the file.
+                        </div>
+                      </div>
+                      <span className="mt-0.5 shrink-0 rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] font-bold leading-none text-zinc-500 dark:bg-zinc-900 dark:text-zinc-400">
+                        {rosterOnlyMembers.length}
+                      </span>
+                    </div>
+                    <div className="grid max-h-64 grid-cols-1 gap-x-6 overflow-y-auto px-4 py-1.5 sm:grid-cols-2">
+                      {rosterOnlyMembers.map((m, i) => (
+                        <div
+                          key={m.id ?? m.work_email ?? m.personal_email ?? `${m.name}-${i}`}
+                          className="flex min-w-0 items-baseline justify-between gap-2 border-b border-zinc-100/70 py-1.5 last:border-0 dark:border-zinc-900/60"
+                        >
+                          <span className="truncate text-xs text-zinc-600 dark:text-zinc-300">{m.name ?? m.work_email ?? '—'}</span>
+                          <span className="shrink-0 text-[11px] text-zinc-400 dark:text-zinc-500">{m.work_email ?? m.personal_email ?? ''}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
                   </motion.div>
                 </AnimatePresence>
@@ -11742,49 +12019,74 @@ export default function PayrollWizard({
 
               return (
                 <div className="flex flex-col gap-0">
-                  {/* Sticky search bar */}
-                  <div className="sticky top-0 z-10 rounded-t-xl border border-b-0 border-zinc-200 bg-white/95 px-3 py-2.5 backdrop-blur dark:border-zinc-800 dark:bg-zinc-950/95">
-                    <div className="relative">
-                      <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400 dark:text-zinc-500" />
-                      <Input
-                        type="search"
-                        placeholder="Search by name or email..."
-                        value={hslSearch}
-                        onChange={e => { setHslSearch(e.target.value); setHslPage(1); }}
-                        className="h-8 w-full pl-8 text-xs"
-                      />
-                      {hslSearch && (
-                        <button
-                          type="button"
-                          onClick={() => { setHslSearch(''); setHslPage(1); }}
-                          className="absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300"
+                  {/* Search box + horizontal navigation scrollbar are frozen together
+                      at the top of the page (see ScrollableTable) so both scrollbars
+                      stay usable no matter where the page is scrolled; the header +
+                      totals freeze in place and the rows scroll vertically. */}
+                  <ScrollableTable
+                    toolbar={
+                      <div className="flex items-start gap-2 px-3 py-2.5">
+                        <div className="min-w-0 flex-1">
+                          <div className="relative">
+                            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400 dark:text-zinc-500" />
+                            <Input
+                              type="search"
+                              placeholder="Search by name or email..."
+                              value={hslSearch}
+                              onChange={e => { setHslSearch(e.target.value); setHslPage(1); }}
+                              className="h-8 w-full pl-8 text-xs"
+                            />
+                            {hslSearch && (
+                              <button
+                                type="button"
+                                onClick={() => { setHslSearch(''); setHslPage(1); }}
+                                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300"
+                              >
+                                <X className="h-3.5 w-3.5" />
+                              </button>
+                            )}
+                          </div>
+                          {needle && (
+                            <p className="mt-1.5 text-[10px] text-zinc-500 dark:text-zinc-400">
+                              {filteredHsl.length} of {visibleHslRows.length} employees
+                            </p>
+                          )}
+                        </div>
+                        {/* Show / hide the KPI Bonus column (display-only — the amount
+                            still folds into Total Pay and dispatch). */}
+                        <Select
+                          value={hslKpiColShown ? 'show' : 'hide'}
+                          onValueChange={v => setHslKpiColShown(v === 'show')}
                         >
-                          <X className="h-3.5 w-3.5" />
-                        </button>
-                      )}
-                    </div>
-                    {needle && (
-                      <p className="mt-1.5 text-[10px] text-zinc-500 dark:text-zinc-400">
-                        {filteredHsl.length} of {visibleHslRows.length} employees
-                      </p>
-                    )}
-                  </div>
-
-                  {/* Table */}
-                  <div className="overflow-hidden rounded-b-xl border border-zinc-200 dark:border-zinc-800">
+                          <SelectTrigger
+                            title="Show or hide the KPI Bonus column"
+                            className="h-8 shrink-0 gap-1.5 text-xs"
+                          >
+                            <BarChart3 className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
+                            <span className="text-zinc-500 dark:text-zinc-400">KPI Bonus:</span>
+                            <span className="font-medium text-zinc-700 dark:text-zinc-200">{hslKpiColShown ? 'Shown' : 'Hidden'}</span>
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="show">Show</SelectItem>
+                            <SelectItem value="hide">Hide</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    }
+                  >
                     {filteredHsl.length === 0 ? (
                       <p className="py-10 text-center text-sm text-zinc-500 dark:text-zinc-400">
                         No employees match &ldquo;{hslSearch}&rdquo;.
                       </p>
                     ) : (
-                      <table className="w-full text-sm">
-                        <thead className="border-b border-zinc-200 bg-zinc-50/80 text-[11px] font-semibold uppercase tracking-wider text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900/60 dark:text-zinc-400">
+                      <table className="w-full min-w-[1180px] text-xs">
+                        <thead className="sticky top-0 z-20 border-b border-zinc-200 bg-zinc-50 text-[11px] font-semibold uppercase tracking-wider text-zinc-500 shadow-[0_1px_0_0_rgb(228_228_231)] dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400 dark:shadow-[0_1px_0_0_rgb(39_39_42)]">
                           <tr>
                             <th className="px-4 py-2.5 text-left">Employee</th>
                             <th className="px-3 py-2.5 text-right">Hours</th>
                             <th className="px-3 py-2.5 text-right" title="+15 PHP/h for Saturday and Sunday hours (included in Initial Pay)">Wknd +</th>
                             <th className="px-3 py-2.5 text-right">Initial Pay</th>
-                            <th className="px-3 py-2.5 text-right">KPI Bonus</th>
+                            {hslKpiColShown && <th className="px-3 py-2.5 text-right">KPI Bonus</th>}
                             {pabColShownHsl && <th className="px-3 py-2.5 text-center">PAB</th>}
                             {techColShownHsl && <th className="px-3 py-2.5 text-center">Tech Bonus</th>}
                             <th className="px-3 py-2.5 text-right" title="MESA — ₱100/paycheck deduction for enrolled members, plus any accounting-approved disbursement (paid out this run). Both fold into Total Pay.">MESA</th>
@@ -11830,17 +12132,17 @@ export default function PayrollWizard({
                                 <td className="px-4 py-3">
                                   <div className="font-medium text-zinc-900 dark:text-zinc-100">{r.name}</div>
                                   <div className="flex items-center gap-2 mt-0.5">
-                                    <span className="font-mono text-[10px] text-zinc-400 dark:text-zinc-500">{r.email}</span>
+                                    <span className="font-mono text-[9px] text-zinc-400 dark:text-zinc-500">{r.email}</span>
                                   </div>
                                 </td>
-                                <td className="px-3 py-3 text-right font-mono text-xs text-zinc-600 tabular-nums dark:text-zinc-400">
+                                <td className="px-3 py-3 text-right font-mono text-[11px] text-zinc-600 tabular-nums dark:text-zinc-400">
                                   {r.totalHours != null ? r.totalHours.toFixed(2) : '—'}
                                 </td>
                                 {(() => {
                                   const wp = weekendPremiumByEmail.get(em);
                                   const wkndTotal = wp ? Math.round((wp.regPremiumPHP + wp.otPremiumPHP) * 100) / 100 : 0;
                                   return (
-                                    <td className="px-3 py-3 text-right font-mono text-xs tabular-nums" title="+15 PHP/h for Sat/Sun hours">
+                                    <td className="px-3 py-3 text-right font-mono text-[11px] tabular-nums" title="+15 PHP/h for Sat/Sun hours">
                                       {wkndTotal > 0 ? (
                                         <span className="font-semibold text-amber-600 dark:text-amber-400">+{formatPHP(wkndTotal)}</span>
                                       ) : (
@@ -11849,10 +12151,11 @@ export default function PayrollWizard({
                                     </td>
                                   );
                                 })()}
-                                <td className="px-3 py-3 text-right font-mono text-xs font-semibold tabular-nums text-zinc-800 dark:text-zinc-200">
+                                <td className="px-3 py-3 text-right font-mono text-[11px] font-semibold tabular-nums text-zinc-800 dark:text-zinc-200">
                                   {r.initialPay != null ? formatPHP(r.initialPay) : '—'}
                                 </td>
-                                <td className="px-3 py-3 text-right font-mono text-xs tabular-nums">
+                                {hslKpiColShown && (
+                                <td className="px-3 py-3 text-right font-mono text-[11px] tabular-nums">
                                   {kpiBonus > 0 ? (
                                     <span className="font-semibold text-emerald-700 dark:text-emerald-400">
                                       +{formatPHP(kpiBonus)}
@@ -11861,6 +12164,7 @@ export default function PayrollWizard({
                                     <span className="text-zinc-400 dark:text-zinc-600">—</span>
                                   )}
                                 </td>
+                                )}
                                 {/* PAB — tri-state pill, click opens calendar modal */}
                                 {pabColShownHsl && (
                                 <td className="px-3 py-3 text-center">
@@ -11926,7 +12230,7 @@ export default function PayrollWizard({
                                     accounting-approved disbursement (paid out this run). Both fold into Total Pay. */}
                                 <td
                                   className={cn(
-                                    'px-3 py-3 text-right font-mono text-xs tabular-nums',
+                                    'px-3 py-3 text-right font-mono text-[11px] tabular-nums',
                                     empMesaDisbursement > 0
                                       ? 'font-semibold text-emerald-600 dark:text-emerald-400'
                                       : empMesaDeduction > 0
@@ -11951,7 +12255,7 @@ export default function PayrollWizard({
                                     '—'
                                   )}
                                 </td>
-                                <td className="px-3 py-3 text-right">
+                                <td className="px-3 py-3 text-right text-[11px]">
                                   {override !== null ? (
                                     <div className="flex items-center justify-end gap-1">
                                       <SignedAmountInput
@@ -11984,7 +12288,7 @@ export default function PayrollWizard({
                                   )}
                                 </td>
                                 {/* Orphanage pay — manual positive amount added to total pay; own paystub line */}
-                                <td className="px-3 py-3 text-right">
+                                <td className="px-3 py-3 text-right text-[11px]">
                                   {hasOrphanage ? (
                                     <div className="flex items-center justify-end gap-1">
                                       <input
@@ -12026,14 +12330,14 @@ export default function PayrollWizard({
                                   <PhpWithUsd
                                     php={totalPay}
                                     usdToPhp={usdToPhpRate}
-                                    phpClassName="font-mono text-sm font-bold tabular-nums text-zinc-900 dark:text-zinc-100"
+                                    phpClassName="font-mono text-[11px] font-bold tabular-nums text-zinc-900 dark:text-zinc-100"
                                   />
                                 </td>
                               </tr>
                             );
                           })}
                         </tbody>
-                        <tfoot className="border-t-2 border-zinc-200 bg-zinc-50/60 dark:border-zinc-800 dark:bg-zinc-900/40">
+                        <tfoot className="sticky bottom-0 z-20 border-t-2 border-zinc-200 bg-zinc-50 shadow-[0_-1px_0_0_rgb(228_228_231)] dark:border-zinc-800 dark:bg-zinc-900 dark:shadow-[0_-1px_0_0_rgb(39_39_42)]">
                           {(() => {
                             let totalInitialPay = 0, totalPab = 0, totalTech = 0, totalKpi = 0, totalAdj = 0, totalOrphanage = 0, totalWkndPremium = 0, totalMesaDeduction = 0, totalMesaDisbursement = 0;
                             for (const r of visibleHslRows) {
@@ -12063,26 +12367,28 @@ export default function PayrollWizard({
                                 <td colSpan={2} className="px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
                                   Totals ({visibleHslRows.length} employees)
                                 </td>
-                                <td className="px-3 py-2.5 text-right font-mono text-sm font-bold tabular-nums text-amber-600 dark:text-amber-400">
+                                <td className="px-3 py-2.5 text-right font-mono text-[11px] font-bold tabular-nums text-amber-600 dark:text-amber-400">
                                   {totalWkndPremium > 0 ? `+${formatPHP(Math.round(totalWkndPremium * 100) / 100)}` : <span className="text-zinc-400 dark:text-zinc-600">—</span>}
                                 </td>
-                                <td className="px-3 py-2.5 text-right font-mono text-sm font-bold tabular-nums text-zinc-700 dark:text-zinc-300">
+                                <td className="px-3 py-2.5 text-right font-mono text-[11px] font-bold tabular-nums text-zinc-700 dark:text-zinc-300">
                                   {formatPHP(totalInitialPay)}
                                 </td>
-                                <td className="px-3 py-2.5 text-right font-mono text-sm font-bold tabular-nums text-emerald-700 dark:text-emerald-400">
+                                {hslKpiColShown && (
+                                <td className="px-3 py-2.5 text-right font-mono text-[11px] font-bold tabular-nums text-emerald-700 dark:text-emerald-400">
                                   {totalKpi > 0 ? `+${formatPHP(totalKpi)}` : <span className="text-zinc-400 dark:text-zinc-600">—</span>}
                                 </td>
+                                )}
                                 {pabColShownHsl && (
-                                <td className="px-3 py-2.5 text-center font-mono text-sm font-bold tabular-nums text-emerald-700 dark:text-emerald-400">
+                                <td className="px-3 py-2.5 text-center font-mono text-[11px] font-bold tabular-nums text-emerald-700 dark:text-emerald-400">
                                   {totalPab > 0 ? `+${formatPHP(totalPab)}` : <span className="text-zinc-400 dark:text-zinc-600">—</span>}
                                 </td>
                                 )}
                                 {techColShownHsl && (
-                                <td className="px-3 py-2.5 text-center font-mono text-sm font-bold tabular-nums text-sky-700 dark:text-sky-400">
+                                <td className="px-3 py-2.5 text-center font-mono text-[11px] font-bold tabular-nums text-sky-700 dark:text-sky-400">
                                   {totalTech > 0 ? `+${formatPHP(totalTech)}` : <span className="text-zinc-400 dark:text-zinc-600">—</span>}
                                 </td>
                                 )}
-                                <td className="px-3 py-2.5 text-right font-mono text-sm font-bold tabular-nums">
+                                <td className="px-3 py-2.5 text-right font-mono text-[11px] font-bold tabular-nums">
                                   {totalMesaDisbursement > 0 ? (
                                     <div className="flex flex-col items-end leading-tight">
                                       <span className="text-emerald-600 dark:text-emerald-400">+{formatPHP(totalMesaDisbursement)}</span>
@@ -12096,17 +12402,17 @@ export default function PayrollWizard({
                                     <span className="text-zinc-400 dark:text-zinc-600">—</span>
                                   )}
                                 </td>
-                                <td className="px-3 py-2.5 text-right font-mono text-sm font-bold tabular-nums text-amber-600 dark:text-amber-400">
+                                <td className="px-3 py-2.5 text-right font-mono text-[11px] font-bold tabular-nums text-amber-600 dark:text-amber-400">
                                   {totalAdj !== 0 ? `${totalAdj > 0 ? '+' : ''}${formatPHP(totalAdj)}` : <span className="text-zinc-400 dark:text-zinc-600">—</span>}
                                 </td>
-                                <td className="px-3 py-2.5 text-right font-mono text-sm font-bold tabular-nums text-pink-600 dark:text-pink-400">
+                                <td className="px-3 py-2.5 text-right font-mono text-[11px] font-bold tabular-nums text-pink-600 dark:text-pink-400">
                                   {totalOrphanage > 0 ? `+${formatPHP(totalOrphanage)}` : <span className="text-zinc-400 dark:text-zinc-600">—</span>}
                                 </td>
                                 <td className="px-3 py-2.5 text-right">
                                   <PhpWithUsd
                                     php={totalInitialPay + totalKpi + totalAdj + totalOrphanage + totalPab + totalTech - totalMesaDeduction + totalMesaDisbursement}
                                     usdToPhp={usdToPhpRate}
-                                    phpClassName="font-mono text-sm font-bold tabular-nums text-zinc-900 dark:text-zinc-100"
+                                    phpClassName="font-mono text-[11px] font-bold tabular-nums text-zinc-900 dark:text-zinc-100"
                                   />
                                 </td>
                               </tr>
@@ -12115,7 +12421,7 @@ export default function PayrollWizard({
                         </tfoot>
                       </table>
                     )}
-                  </div>
+                  </ScrollableTable>
 
                   {/* Pagination */}
                   {totalHslPages > 1 && (
