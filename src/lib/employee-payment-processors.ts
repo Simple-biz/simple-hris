@@ -29,6 +29,16 @@ export const SELECTABLE_PROCESSOR_OPTIONS = PROCESSOR_OPTIONS.filter(
   (p) => !RETIRED_PROCESSOR_IDS.includes(p.id),
 );
 
+/**
+ * Employee-facing pickers (Employee Dashboard payment method, Payroll
+ * Readiness "Set bank details", People tab) offer Wise again as of 2026-07-25.
+ * Wise stays retired for NEW contractor-invoice gateway selections, which keep
+ * using SELECTABLE_PROCESSOR_OPTIONS.
+ */
+export const EMPLOYEE_SELECTABLE_PROCESSOR_OPTIONS = PROCESSOR_OPTIONS.filter(
+  (p) => !RETIRED_PROCESSOR_IDS.includes(p.id) || p.id === 'wise',
+);
+
 export type ProcessorOption = {
   id: ProcessorId;
   label: string;

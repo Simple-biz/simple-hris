@@ -63,8 +63,8 @@ import {
   type PayStructure,
 } from "@/lib/payment-catalog/pay-structure";
 import {
+  EMPLOYEE_SELECTABLE_PROCESSOR_OPTIONS,
   PROCESSOR_OPTIONS,
-  SELECTABLE_PROCESSOR_OPTIONS,
   type ProcessorId,
 } from "@/lib/employee-payment-processors";
 import { addWeeks, payrollNotesWeekStart, weekRangeLabel } from "@/lib/payroll/manila-week";
@@ -1841,6 +1841,7 @@ function SetBankDialog({
   // Wise is deliberately NOT a wallet here: like wires/jeeves it's payable on
   // full wire details (isPayoutComplete), and accounting wires these people
   // when no Wise handle is on file — so the editor collects bank details.
+  // That's why the picker can offer Wise with the same fields as Wires.
   const isWallet =
     processor === "hurupay" || processor === "wepay" || processor === "higlobe";
   const needsWalletName = processor === "higlobe";
@@ -1949,7 +1950,7 @@ function SetBankDialog({
               ) : (
                 <>
                   <option value="">Pick a processor…</option>
-                  {SELECTABLE_PROCESSOR_OPTIONS.map((p) => (
+                  {EMPLOYEE_SELECTABLE_PROCESSOR_OPTIONS.map((p) => (
                     <option key={p.id} value={p.id}>
                       {p.label}
                     </option>

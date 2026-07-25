@@ -5,8 +5,8 @@ import { CheckCircle, ChevronDown, Search } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
+  EMPLOYEE_SELECTABLE_PROCESSOR_OPTIONS,
   PROCESSOR_OPTIONS,
-  SELECTABLE_PROCESSOR_OPTIONS,
   processorDescription,
   type ProcessorId,
 } from '@/lib/employee-payment-processors';
@@ -232,10 +232,10 @@ export function PreferredPaymentMethodRadios({
           disabled && 'pointer-events-none opacity-60',
         )}
       >
-        {SELECTABLE_PROCESSOR_OPTIONS
+        {EMPLOYEE_SELECTABLE_PROCESSOR_OPTIONS
           // Keep a retired processor visible only if it's the current selection,
           // so existing employees aren't silently shown an empty picker.
-          .concat(PROCESSOR_OPTIONS.filter((p) => p.id === value && !SELECTABLE_PROCESSOR_OPTIONS.includes(p)))
+          .concat(PROCESSOR_OPTIONS.filter((p) => p.id === value && !EMPLOYEE_SELECTABLE_PROCESSOR_OPTIONS.includes(p)))
           .map(({ id, label, blurb, Icon, ...rest }) => {
           const logoSrc = 'logoSrc' in rest ? (rest as { logoSrc?: string }).logoSrc : undefined;
           const active = value === id;
