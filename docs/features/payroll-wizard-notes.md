@@ -8,6 +8,12 @@ spreadsheet and lives behind a floating FAB on the Accounting → Payroll Wizard
 Built Jul 15–17, 2026. Sessions: notes board + FAB (Jul 15), Adjustment column
 and weekly period selector (Jul 17, `f1f930d2`).
 
+> **The FAB is now "Adjustments and Notes" and hosts a second pane:** the
+> **Readiness** pre-flight dashboard (KPI submissions / pay rates / bank info /
+> exceptions, with a scored dial and inline fixers), built Jul 23–25 2026 — see
+> [payroll-readiness.md](./payroll-readiness.md). This doc covers the Notes
+> checklist pane only.
+
 ## Surfaces
 
 | Piece | File |

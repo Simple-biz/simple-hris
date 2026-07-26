@@ -47,7 +47,8 @@ for (const d of r.degraded) console.log(`  ! ${d}`);
 
 console.log(`\nNo pay rate: ${r.missingRates.length} of ${r.workerCount} workers`);
 console.log(
-  `Missing bank: ${r.missingBank.length} of ${r.bankEligibleCount} eligible · ON THIS WEEK'S PAYROLL: ${r.missingBankOnPayroll}`,
+  `Missing bank: ${r.missingBank.length} of ${r.bankEligibleCount} eligible (roster list) · ` +
+    `SCORED: ${r.missingBankOnPayroll} of ${r.bankOnPayrollCount} on this week's payroll`,
 );
 console.log(`Exceptions: ${r.exceptions.length}`);
 

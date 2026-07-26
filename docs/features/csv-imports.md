@@ -1,6 +1,6 @@
 # CSV Imports & Google Sheet Sync
 
-Admin-only data ingestion for the three CSV-shaped sources the HRIS depends on: the global master list (employee roster), the All-Dept payroll rates ledger, and Hubstaff weekly timesheets. Two transport mechanisms are supported per source: **direct CSV upload** and (for master + rates) **manual sync from a configured Google Sheet**. There is no automated cron — every sync runs only on a user click.
+Admin-only data ingestion for the three CSV-shaped sources the HRIS depends on: the global master list (employee roster), the All-Dept payroll rates ledger, and Hubstaff weekly timesheets. Two transport mechanisms are supported per source: **direct CSV upload** and (for master + rates) **manual sync from a configured Google Sheet**. Master + rates have no automated cron — those syncs run only on a user click. Hubstaff additionally has a **weekly auto-sync** (n8n → `/api/cron/sync-hubstaff-week`, added 2026-07-25) — see [hubstaff-weekly-auto-sync.md](./hubstaff-weekly-auto-sync.md).
 
 > Last updated: 2026-06-16. This doc is the umbrella reference for the **Admin → CSV imports** tab, the underlying API endpoints, and the case-handling fixes made during the Google Sheet sync rollout.
 
@@ -150,9 +150,18 @@ Input: CSV text + source label. Output: `{ rowCount, uploadId, inserted, updated
 4. **Apply** — UPDATEs in parallel chunks of 20 *(added 2026-05-07)*. INSERTs in batches of 50.
 5. **Promote** new upload to `is_current = true`.
 
-### Hubstaff (`replaceHubstaffHoursFromCsvText`) — unchanged this session
+### Hubstaff (`replaceHubstaffHoursFromCsvText`)
 
 Append-only with `upload_id` stamp on every row. New upload promoted to current; old `upload_id` rows kept for history but excluded from current-payroll reads. No identity-key dedup (every row is its own data point).
+
+**Ingest blocklist (2026-07-25).** `HUBSTAFF_INGEST_BLOCKED_EMAILS` in
+`src/lib/supabase/hubstaff-hours-db.ts` drops named identities at ingest — both
+CSV upload and API sync — so a blocked person can never re-enter via a weekly
+report. Added for `randalh@hogansmith.com` ("Randal Hayes"), an unknown identity
+that kept re-arriving with each upload after his rows were purged; his historical
+`hubstaff_hours` rows were deleted 2026-07-25. Note the find-email-everywhere
+discovery script does **not** probe `hubstaff_hours` — check that table directly
+when hunting an identity.
 
 ---
 
@@ -183,7 +192,9 @@ Returns `{ uploads: [...], error }` newest-first from `rates_uploads`. Powers th
 
 ### Hubstaff
 
-#### `POST /api/hubstaff-hours`, `GET ?source_files=1`, `GET ?source_file=<f>`, `DELETE ?source_file=<f>` — unchanged this session. See [api-reference.md](../reference/api-reference.md).
+#### `POST /api/hubstaff-hours`, `GET ?source_files=1`, `GET ?source_file=<f>`, `DELETE ?source_file=<f>` — see [api-reference.md](../reference/api-reference.md).
+
+Since 2026-07-25: `POST` (upload/sync) also records the week's MESA ledger deposits + `payroll.available` notifications, and `DELETE ?source_file=` **cascades** — it reverses that week's MESA deposits (unless another upload still covers the week) and deletes its `payroll.available` notifications. See [mesa.md](./mesa.md) §"Weekly deposits from the Hubstaff upload".
 
 ---
 

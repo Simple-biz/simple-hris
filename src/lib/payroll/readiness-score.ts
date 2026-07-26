@@ -11,11 +11,16 @@
  * Missing bank info comes in two severities: someone on THIS WEEK's payroll
  * with no payout details is a hard blocker too — they will reach Payment
  * Dispatch and simply not get paid — so any of them pins the bank dimension
- * low and forces the 'blocked' grade, exactly like a missing rate. Missing
- * bank on the wider active roster (not being paid this week) stays
- * proportional: it's data debt, not a payday failure. Before this split, 20%
- * of the company missing bank info still scored 94/100 — the linear 25-point
- * bank share could never say "payday is broken".
+ * low and forces the 'blocked' grade, exactly like a missing rate.
+ *
+ * SCOPE (2026-07-26): the composer (`getPayrollReadiness`) feeds this fn ONLY
+ * the people being paid the week in view — `missingBank` is the on-payroll
+ * missing count over the on-payroll denominator. Roster-wide bank hygiene
+ * (missing bank but not being paid this week) stays on the dashboard's LIST
+ * but never reaches the score, same as excluded departments and onboarding
+ * exceptions: if we don't need it to pay this week, it can't cost points.
+ * The proportional (non-blocker) bank path below is kept generic all the same,
+ * so the scorer stays a pure numbers-in → score-out fn.
  */
 
 /** One weighted contributor to the readiness score — surfaced so the UI can show

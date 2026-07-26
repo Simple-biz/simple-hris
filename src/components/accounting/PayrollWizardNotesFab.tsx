@@ -2316,6 +2316,8 @@ function PayrollReadinessGlance({
   const [bankPerson, setBankPerson] = useState<ReadinessMissingBank | null>(null);
   // Dept whose KPI Calculator modal is open (null = closed).
   const [kpiDept, setKpiDept] = useState<ReadinessKpiDept | null>(null);
+  // "Why this score?" breakdown modal — opened by clicking the score dial.
+  const [scoreDetailsOpen, setScoreDetailsOpen] = useState(false);
   const pickReadinessTab = useCallback((next: ReadinessTab) => {
     setReadinessTab((cur) => {
       if (cur === next) return cur;
@@ -2568,9 +2570,15 @@ function PayrollReadinessGlance({
   // compute it, or (new) no payout rail while on this week's Hubstaff file.
   const bankBlockers = data.missingBankOnPayroll;
   const blockers = data.missingRates.length + bankBlockers;
+  // Missing bank info for people NOT on this week's payroll — roster hygiene.
+  // Stays visible in the Bank Info list but affects neither the score nor the
+  // ready verdict (we don't need it to pay this week).
+  const bankHygiene = data.missingBank.length - bankBlockers;
   // Everything else open is review work, not a payday failure.
-  const warnings = kpiPending.length + (data.missingBank.length - bankBlockers);
-  const isReady = blockers === 0 && kpiPending.length === 0 && data.missingBank.length === 0;
+  const warnings = kpiPending.length + bankHygiene;
+  // Ready = everyone being PAID THIS WEEK is covered and every due KPI is in —
+  // the same rule the server's score/grade follows.
+  const isReady = blockers === 0 && kpiPending.length === 0;
 
   // KPI search — filter the dept list live (name / key / status). The three
   // people lists (rate/bank/exc) are filtered + paginated above, before the
@@ -2601,11 +2609,13 @@ function PayrollReadinessGlance({
         isReady={isReady}
         rateBlockers={data.missingRates.length}
         bankBlockers={bankBlockers}
+        bankHygiene={bankHygiene}
         warnings={warnings}
         weekLabel={data.weekLabel}
         isMonthly={data.isMonthlyPayWeek}
         score={data.score}
         reduceMotion={reduceMotion}
+        onScoreDetails={() => setScoreDetailsOpen(true)}
       />
 
       {/* Partial-data warning — the server reports any source it could NOT
@@ -2663,7 +2673,7 @@ function PayrollReadinessGlance({
               ? "all payable"
               : bankBlockers > 0
                 ? `${bankBlockers} on this week's payroll`
-                : "missing payout details"
+                : "none paid this week — no score impact"
           }
           tone={data.missingBank.length === 0 ? "emerald" : bankBlockers > 0 ? "orange" : "amber"}
           Icon={Banknote}
@@ -2989,6 +2999,9 @@ function PayrollReadinessGlance({
           onSaved={() => void load()}
         />
       )}
+      {scoreDetailsOpen && (
+        <ScoreDetailsDialog data={data} onClose={() => setScoreDetailsOpen(false)} />
+      )}
       {kpiDept && (
         <KpiCalculatorDialog
           dept={kpiDept}
@@ -3248,20 +3261,27 @@ function ReadinessHero({
   isReady,
   rateBlockers,
   bankBlockers,
+  bankHygiene,
   warnings,
   weekLabel,
   isMonthly,
   score,
   reduceMotion,
+  onScoreDetails,
 }: {
   isReady: boolean;
   rateBlockers: number;
   bankBlockers: number;
+  /** Missing-bank rows NOT on this week's payroll — visible review work that
+   *  costs nothing (neither the score nor the ready verdict). */
+  bankHygiene: number;
   warnings: number;
   weekLabel: string;
   isMonthly: boolean;
   score: ReadinessScore;
   reduceMotion: boolean;
+  /** Opens the "Why this score?" breakdown modal (the dial + mobile chip). */
+  onScoreDetails: () => void;
 }) {
   const blockers = rateBlockers + bankBlockers;
   // Tone follows the score grade (blocked → rose, ready → emerald, else amber),
@@ -3286,7 +3306,9 @@ function ReadinessHero({
       ? "Not ready — blockers to clear"
       : "Almost there — a few items left";
   const sub = isReady
-    ? "Every department is in and everyone can be paid."
+    ? bankHygiene > 0
+      ? `Everyone being paid this week is covered — ${bankHygiene} roster bank item${bankHygiene === 1 ? "" : "s"} to review (not paid this week, no score impact).`
+      : "Every department is in and everyone can be paid."
     : [
         rateBlockers > 0 ? `${rateBlockers} worker${rateBlockers === 1 ? "" : "s"} with no rate` : null,
         bankBlockers > 0
@@ -3324,6 +3346,17 @@ function ReadinessHero({
             {weekLabel}
             {isMonthly ? " · month-end" : ""}
           </span>
+          {/* Mobile stand-in for the score dial (hidden below sm): a tappable
+              score chip so the "why this score?" modal stays reachable. */}
+          <button
+            type="button"
+            onClick={onScoreDetails}
+            title="See how this score was calculated"
+            className="inline-flex shrink-0 items-center rounded-full border border-zinc-200 bg-white/70 px-1.5 py-0.5 text-[10px] font-bold tabular-nums text-zinc-700 transition-colors hover:border-zinc-300 hover:bg-white sm:hidden dark:border-zinc-700 dark:bg-zinc-900/60 dark:text-zinc-200 dark:hover:border-zinc-600"
+          >
+            {Math.max(0, Math.min(100, score.value))}
+            <span className="font-semibold text-zinc-400 dark:text-zinc-500">/100</span>
+          </button>
         </div>
         <p className="mt-0.5 truncate text-xs text-zinc-600 dark:text-zinc-300">{sub}</p>
         {/* Component breakdown — the points each dimension is contributing, so
@@ -3364,8 +3397,9 @@ function ReadinessHero({
         </div>
       </div>
 
-      {/* The Readiness Score dial — the headline number for the week. */}
-      <ScoreGauge score={score} tone={tone} reduceMotion={reduceMotion} />
+      {/* The Readiness Score dial — the headline number for the week. Click
+          opens the full "why this score?" breakdown. */}
+      <ScoreGauge score={score} tone={tone} reduceMotion={reduceMotion} onClick={onScoreDetails} />
     </motion.div>
   );
 }
@@ -3380,10 +3414,14 @@ function ScoreGauge({
   score,
   tone,
   reduceMotion,
+  onClick,
 }: {
   score: ReadinessScore;
   tone: "emerald" | "amber" | "rose";
   reduceMotion: boolean;
+  /** Opens the score-details modal. The dial renders as a button so the
+   *  breakdown is one click away from the headline number itself. */
+  onClick: () => void;
 }) {
   const R = 26;
   const C = 2 * Math.PI * R;
@@ -3401,11 +3439,12 @@ function ScoreGauge({
     blocked: "Blocked",
   };
   return (
-    <div
-      className="relative hidden h-[70px] w-[70px] shrink-0 sm:block"
-      role="img"
-      aria-label={`Readiness score ${pct} out of 100 — ${gradeLabel[score.grade]}`}
-      title={`Readiness score: ${pct}/100 (${gradeLabel[score.grade]})`}
+    <button
+      type="button"
+      onClick={onClick}
+      className="relative hidden h-[70px] w-[70px] shrink-0 cursor-pointer rounded-full transition-transform hover:scale-[1.04] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-400/70 focus-visible:ring-offset-2 sm:block dark:focus-visible:ring-blue-500/60"
+      aria-label={`Readiness score ${pct} out of 100 — ${gradeLabel[score.grade]}. See how this score was calculated.`}
+      title={`Readiness score: ${pct}/100 (${gradeLabel[score.grade]}) — click for the breakdown`}
     >
       <svg viewBox="0 0 64 64" className="h-full w-full -rotate-90">
         <circle
@@ -3440,7 +3479,242 @@ function ScoreGauge({
           {gradeLabel[score.grade]}
         </span>
       </div>
-    </div>
+    </button>
+  );
+}
+
+/**
+ * "Why this score?" — the breakdown modal behind the Readiness Score dial (and
+ * the mobile score chip). Explains the week's number the way the scorer built
+ * it: each dimension's earned points with the exact counts behind them, the
+ * hard-blocker pinning rule, what is deliberately NOT counted (anyone we
+ * aren't paying this week), the grade bands, and any partial-data warnings.
+ * Pure client-side read of the payload the tab already has — no extra fetch.
+ */
+function ScoreDetailsDialog({
+  data,
+  onClose,
+}: {
+  data: PayrollReadiness;
+  onClose: () => void;
+}) {
+  const { score } = data;
+  const gradeLabel: Record<ReadinessScore["grade"], string> = {
+    ready: "Ready",
+    almost: "Almost",
+    at_risk: "At risk",
+    blocked: "Blocked",
+  };
+  // The same counts the server scored with — all present on the payload.
+  const kpiDue = data.kpi.filter((d) => d.status !== "na" && d.status !== "excluded").length;
+  const kpiSubmitted = data.kpi.filter(
+    (d) => d.status === "ready" || d.status === "locked" || d.status === "no_bonus",
+  ).length;
+  const kpiExcluded = data.kpi.filter((d) => d.status === "excluded").length;
+  const kpiNotDue = data.kpi.filter((d) => d.status === "na").length;
+  const bankHygiene = data.missingBank.length - data.missingBankOnPayroll;
+  const plural = (n: number) => (n === 1 ? "" : "s");
+
+  // One explainer row per score component: who was counted, what's open, and
+  // the rule that produced the points shown.
+  const rows = score.components.map((c) => {
+    const pinned = c.blockerOpen > 0;
+    if (c.key === "rate") {
+      return {
+        c,
+        Icon: Wallet,
+        counted: `${data.workerCount} worker${plural(data.workerCount)} with hours on this week's file`,
+        state:
+          c.open === 0
+            ? "Everyone being paid this week has a pay rate."
+            : `${c.open} of them ${c.open === 1 ? "has" : "have"} no resolvable rate — their pay can't even be computed.`,
+        rule: pinned
+          ? `Hard blocker: any missing rate pins this dimension to ${c.points}/${c.maxPoints} and grades the whole week Blocked.`
+          : "A missing rate here would be a hard blocker — it pins this dimension to a fixed low score and grades the week Blocked.",
+      };
+    }
+    if (c.key === "kpi") {
+      return {
+        c,
+        Icon: ClipboardList,
+        counted: `${kpiDue} department${plural(kpiDue)} due this week${
+          kpiExcluded > 0 || kpiNotDue > 0
+            ? ` (${[
+                kpiExcluded > 0 ? `${kpiExcluded} excluded` : null,
+                kpiNotDue > 0 ? `${kpiNotDue} not due` : null,
+              ]
+                .filter(Boolean)
+                .join(", ")} — not counted)`
+            : ""
+        }`,
+        state:
+          c.open === 0
+            ? "Every due department has submitted (or has no bonus to submit)."
+            : `${kpiSubmitted}/${kpiDue} submitted — ${c.open} still pending.`,
+        rule: "Proportional: each due department that hasn't marked its KPI ready costs an even share of these points.",
+      };
+    }
+    return {
+      c,
+      Icon: Banknote,
+      counted: `${data.bankOnPayrollCount} ${data.bankOnPayrollCount === 1 ? "person" : "people"} being paid this week`,
+      state:
+        c.open === 0
+          ? "Everyone being paid this week has complete payout details."
+          : `${c.open} of them ${c.open === 1 ? "is" : "are"} missing payout details — they will reach dispatch and not get paid.`,
+      rule: pinned
+        ? `Hard blocker: anyone on this week's payroll without bank info pins this dimension to ${c.points}/${c.maxPoints} and grades the week Blocked.`
+        : bankHygiene > 0
+          ? `${bankHygiene} more ${bankHygiene === 1 ? "person" : "people"} on the roster ${bankHygiene === 1 ? "is" : "are"} missing bank info but ${bankHygiene === 1 ? "isn't" : "aren't"} being paid this week — listed under Bank Info, zero score impact.`
+          : "Only people actually on this week's payroll are judged here.",
+    };
+  });
+
+  const bands: { g: ReadinessScore["grade"]; desc: string }[] = [
+    {
+      g: "blocked",
+      desc: "Someone being paid this week can't be — a missing rate, or missing bank info with hours on the file.",
+    },
+    { g: "ready", desc: "Nothing open: every due KPI is in and everyone being paid this week is covered." },
+    { g: "almost", desc: "No payday blockers, score 85 or higher." },
+    { g: "at_risk", desc: "No payday blockers but the score is below 85 — or this load had partial data." },
+  ];
+
+  const rowTone = (open: number, blockers: number) =>
+    open === 0
+      ? "text-emerald-600 dark:text-emerald-400"
+      : blockers > 0
+        ? "text-rose-600 dark:text-rose-400"
+        : "text-amber-600 dark:text-amber-400";
+  const barTone = (open: number, blockers: number) =>
+    open === 0 ? "bg-emerald-500" : blockers > 0 ? "bg-rose-500" : "bg-amber-500";
+
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-w-[min(96vw,34rem)] sm:max-w-[min(96vw,34rem)]">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Sparkles className="h-4 w-4 text-orange-500" />
+            Readiness Score — {score.value}/100
+            <span className="rounded-full border border-zinc-200 bg-white/70 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-[0.14em] text-zinc-500 dark:border-zinc-700 dark:bg-zinc-900/60 dark:text-zinc-400">
+              {gradeLabel[score.grade]}
+            </span>
+          </DialogTitle>
+          <DialogDescription>
+            {data.weekLabel} — the score only counts what&apos;s needed to pay THIS week. Anyone not
+            being paid this week (excluded departments, onboarding exceptions, roster data debt)
+            never moves it.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="max-h-[62vh] space-y-3 overflow-y-auto overscroll-contain pr-1">
+          {/* Per-dimension breakdown — the points sum exactly to the headline. */}
+          <div className="space-y-2">
+            {rows.map(({ c, Icon, counted, state, rule }) => (
+              <div
+                key={c.key}
+                className="rounded-xl border border-zinc-200/80 bg-white/70 p-3 dark:border-zinc-800 dark:bg-zinc-900/50"
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className="flex items-center gap-1.5 text-xs font-semibold text-zinc-800 dark:text-zinc-100">
+                    <Icon className="h-3.5 w-3.5 text-orange-500/80" />
+                    {c.label}
+                  </span>
+                  <span className={`text-xs font-bold tabular-nums ${rowTone(c.open, c.blockerOpen)}`}>
+                    {c.points}
+                    <span className="font-semibold text-zinc-400 dark:text-zinc-500">/{c.maxPoints} pts</span>
+                  </span>
+                </div>
+                <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-zinc-200/70 dark:bg-zinc-800">
+                  <div
+                    className={`h-full rounded-full ${barTone(c.open, c.blockerOpen)}`}
+                    style={{ width: `${Math.max(2, Math.round((c.points / Math.max(1, c.maxPoints)) * 100))}%` }}
+                  />
+                </div>
+                <div className="mt-1.5 space-y-0.5 text-[11px] leading-snug text-zinc-600 dark:text-zinc-300">
+                  <p>
+                    <span className="font-semibold text-zinc-500 dark:text-zinc-400">Counted:</span> {counted}
+                  </p>
+                  <p>{state}</p>
+                  <p className="text-zinc-500 dark:text-zinc-400">{rule}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* What never moves the score — the deliberate exclusions. */}
+          <div className="rounded-xl border border-zinc-200/80 bg-zinc-50/70 p-3 dark:border-zinc-800 dark:bg-zinc-900/30">
+            <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-400">
+              Never counted against the score
+            </div>
+            <ul className="mt-1.5 list-disc space-y-0.5 pl-4 text-[11px] leading-snug text-zinc-600 dark:text-zinc-300">
+              <li>
+                Departments switched off for this pay week in the wizard&apos;s Configuration tab
+                {kpiExcluded > 0 ? ` (${kpiExcluded} this week)` : ""}.
+              </li>
+              <li>
+                Onboarding exceptions — still onboarding, no-shows, or started this week
+                {data.exceptions.length > 0 ? ` (${data.exceptions.length} this week)` : ""}.
+              </li>
+              <li>
+                People missing bank info who have no hours this week
+                {bankHygiene > 0 ? ` (${bankHygiene} right now)` : ""} — roster data debt, not a
+                payday problem.
+              </li>
+              <li>US Employees (USEE) — paid off-channel, outside this pipeline.</li>
+            </ul>
+          </div>
+
+          {/* Grade bands, with the current one highlighted. */}
+          <div className="rounded-xl border border-zinc-200/80 bg-white/70 p-3 dark:border-zinc-800 dark:bg-zinc-900/50">
+            <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-400">
+              How the grade is decided
+            </div>
+            <ul className="mt-1.5 space-y-1">
+              {bands.map((b) => {
+                const active = b.g === score.grade;
+                return (
+                  <li
+                    key={b.g}
+                    className={`flex items-start gap-2 rounded-lg px-2 py-1 text-[11px] leading-snug ${
+                      active
+                        ? "bg-orange-50 text-zinc-800 ring-1 ring-orange-200 dark:bg-blue-950/40 dark:text-zinc-100 dark:ring-blue-900/60"
+                        : "text-zinc-500 dark:text-zinc-400"
+                    }`}
+                  >
+                    <span
+                      className={`mt-px shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide ${
+                        active
+                          ? "bg-orange-500 text-white dark:bg-blue-600"
+                          : "bg-zinc-200/80 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400"
+                      }`}
+                    >
+                      {gradeLabel[b.g]}
+                    </span>
+                    <span>{b.desc}</span>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+
+          {/* Partial-data honesty — the same warnings the dashboard banner shows. */}
+          {data.degraded.length > 0 && (
+            <div className="rounded-xl border border-amber-300/70 bg-amber-50/80 p-3 dark:border-amber-500/30 dark:bg-amber-950/30">
+              <div className="flex items-center gap-1.5 text-[11px] font-semibold text-amber-800 dark:text-amber-200">
+                <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                Partial data this load — the numbers above may be judged on incomplete reads
+              </div>
+              <ul className="mt-1 list-disc space-y-0.5 pl-4 text-[10.5px] text-amber-700/90 dark:text-amber-300/80">
+                {data.degraded.map((d) => (
+                  <li key={d}>{d}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 

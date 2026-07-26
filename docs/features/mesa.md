@@ -1,6 +1,6 @@
 # MESA (Medical Emergency Savings Account)
 
-> **Status:** Requests flow shipped 2026-06-01; contribution ledger backfilled + surfaced 2026-06-26; roster-grounded Non Members (never-joined: not opted in, no start date) / Active Members tabs with bulk Opt In/Out + Requests bulk review, the temporary manual-enrollment bridge, an Active-sheet membership seed, and the `mesa_notes` internal notes log shipped 2026-07-16. **Per-stint MESA accounts** (`mesa_accounts` + `YY-MM-#####` account numbers, opt-out closes/zeroes the account, re-opt-in opens a fresh one) also shipped 2026-07-16 — run `references/sql/migrate/2026-07-16_mesa_accounts.sql` then `node scripts/seed-mesa-accounts.mjs --apply`. This doc covers the whole feature. For the accounting-side payout mechanics (Urgent Payments queue, weekly Sun–Sat reconciliation) see [urgent-payments.md](urgent-payments.md); for the underlying tables see [data-sources.md §10 (`mesa_requests`) and §15 (`mesa_ledger`)](../reference/data-sources.md).
+> **Status:** Requests flow shipped 2026-06-01; contribution ledger backfilled + surfaced 2026-06-26; roster-grounded Non Members (never-joined: not opted in, no start date) / Active Members tabs with bulk Opt In/Out + Requests bulk review, the temporary manual-enrollment bridge, an Active-sheet membership seed, and the `mesa_notes` internal notes log shipped 2026-07-16. **Per-stint MESA accounts** (`mesa_accounts` + `YY-MM-#####` account numbers, opt-out closes/zeroes the account, re-opt-in opens a fresh one) also shipped 2026-07-16 — run `references/sql/migrate/2026-07-16_mesa_accounts.sql` then `node scripts/seed-mesa-accounts.mjs --apply`. Weekly Hubstaff-upload ledger deposits shipped 2026-07-20; the week-delete cascade (deposits + notifications reversed) and the date-only timezone fix shipped 2026-07-25. This doc covers the whole feature. For the accounting-side payout mechanics (Urgent Payments queue, weekly Sun–Sat reconciliation) see [urgent-payments.md](urgent-payments.md); for the underlying tables see [data-sources.md §10 (`mesa_requests`) and §15 (`mesa_ledger`)](../reference/data-sources.md).
 
 MESA is an **employee savings / contribution program** framed as a *Medical Emergency Savings Account*. Enrolled members have **₱100 deducted from their paycheck each week**, which Simple.biz **matches three times over (+₱300)** — so the account grows by **₱400/week**. Funds are meant for infrequent emergencies: medical needs for the member or immediate family (spouse + children only), natural disasters, or a necessary primary-computer repair. Program rules (from the About tab): one disbursement per 90 days, receipts within 14 days / 30 calendar days, and temporary removal for non-compliance.
 
@@ -21,7 +21,7 @@ Contribution amounts are single-sourced in `EmployeeMesa.tsx`:
 MESA is backed by a **request queue**, a **contribution ledger**, an **account registry**, and an **internal notes log** — four separate concerns.
 
 - **`mesa_requests`** — employee-submitted opt-in / opt-out / disbursement / return requests, plus their review + dispatch state. This is the *workflow* table.
-- **`mesa_ledger`** — a faithful 1:1 mirror of the external MESA program tracker (originally backfilled 2026-06-26 with ~7,235 event rows; reloaded from the 2026-07-16 Active-sheet export to 8,076 rows). Each row is one event: a weekly deposit, a disbursement, or a status snapshot. This is the *historical record* of money in/out. The app never mutates it; it is **refreshed from sheet exports** (see "Refreshing the ledger" below). Two of its columns, `notes` / `additional_notes`, are frozen free text carried over from the tracker — read-only, surfaced (when present) inline on the Accounting View drill-down's Timeline tab.
+- **`mesa_ledger`** — a faithful 1:1 mirror of the external MESA program tracker (originally backfilled 2026-06-26 with ~7,235 event rows; reloaded from the 2026-07-16 Active-sheet export to 8,076 rows). Each row is one event: a weekly deposit, a disbursement, or a status snapshot. This is the *historical record* of money in/out. It is **refreshed from sheet exports** (see "Refreshing the ledger" below); since 2026-07-20 the app also **appends** one ₱100+₱300 deposit row per opted-in member when a payroll week's Hubstaff hours land, and (since 2026-07-25) **removes** exactly those rows again if that week is deleted — see "Weekly deposits from the Hubstaff upload" below. The app never touches sheet-backfilled rows. Two of its columns, `notes` / `additional_notes`, are frozen free text carried over from the tracker — read-only, surfaced (when present) inline on the Accounting View drill-down's Timeline tab.
 - **`mesa_accounts`** (`references/sql/migrate/2026-07-16_mesa_accounts.sql`) — one row per **enrollment stint**, each with a unique **account number `YY-MM-#####`** (opening year+month + per-month serial, e.g. `26-07-00001`). Opting out **closes** the open account (`closed_on`) — it is settled/"zeroed"; opting back in opens a **new** account with a **new** number. The member's current account number is also denormalized onto `employee_hourly_rates.mesa_account_number` (same pattern as `mesa_member`) so it flows through the existing rates plumbing. Backfilled by `scripts/seed-mesa-accounts.mjs` (stints derived from ledger termination events — an `Inactive` status row or an `Opt-out`/`Termination` disbursement, resolved per sheet member id so re-issued/concurrent ids don't split an account).
 - **`mesa_notes`** (`references/sql/create/create_mesa_notes.sql`) — an ongoing, append-only internal annotation log per member, added via `POST /api/mesa-notes` from the View drill-down's Notes tab. Unlike the ledger's frozen notes, this is a live, growing log with no historical backfill.
 
@@ -131,6 +131,37 @@ Wizard now mirrors that tab exactly so a flag-drifted ex-member is never charged
 - Everything downstream (paystub-fresh, Payment Dispatch, Mark Paid) inherits the
   Wizard's `mesa_deduction`, so this one change fixes the whole chain.
 
+### Weekly deposits from the Hubstaff upload (and their reversal)
+
+Uploading a pay week's Hubstaff CSV — or the API sync, manual or the
+[weekly auto-sync cron](./hubstaff-weekly-auto-sync.md) — writes one **₱100 + ₱300
+deposit row into `mesa_ledger` per opted-in member** for that Sun–Sat week
+(`recordMesaWeeklyContributions`, `src/lib/mesa/record-weekly-contributions.ts`;
+added 2026-07-20). It is idempotent per (member, week): re-uploading the same
+week dedupes against existing deposits, and undatable filenames are skipped.
+
+**Deleting a week cascades (2026-07-25).** `DELETE /api/hubstaff-hours?source_file=…`
+now also:
+
+- **Reverses the week's deposits** via `deleteMesaWeeklyContributions` — but only
+  rows this app wrote (dated exactly on the week end, standard ₱100/₱300, no
+  tracker provenance: `status` / `opt_in_number` / `fpu_completion_date` all
+  null; disbursement rows excluded outright). If another surviving upload still
+  covers the same pay week (a corrected re-upload under a new filename) the
+  deposits stay and the call reports `weekStillCovered`.
+- **Deletes the week's `payroll.available` notifications**
+  (`deletePayrollAvailableNotifications`, keyed by source file).
+
+Before the cascade existed, a deleted week left orphaned deposits inflating
+Employee-Dashboard balances — the 2026-07-25 incident was cleaned up with the
+one-off `scripts/cleanup-orphaned-mesa-week.mjs` (dry-run default; backup kept).
+
+**Date rendering gotcha:** `mesa_ledger` date columns are Postgres `DATE`
+(date-only). Rendering them with `new Date('YYYY-MM-DD')` shifts them a day west
+of UTC — use `parseDateOnlyLocal` from `src/lib/date-only.ts` (Accounting +
+Employee MESA views were fixed 2026-07-25; other DATE-column surfaces in the app
+may still shift).
+
 **Related — the rates sheet no longer touches `mesa_member`.** A rates-sheet
 re-upload used to write `mesa_member` (a silent re-enrollment path that could flip
 an HRIS opt-out back to `true`). That write was removed
@@ -184,6 +215,9 @@ Approving a disbursement in Accounting is a *signal*, not a payment. The actual 
 | `references/sql/create/create_mesa_notes.sql` | `mesa_notes` table |
 | `references/sql/seed/seed_mesa_active_membership.sql` | Seeds `mesa_member=true` for the Active-sheet members |
 | `references/sql/alter/add_mesa_dispatched_at.sql` | `mesa_requests.dispatched_at` + urgent-queue index |
+| `src/lib/mesa/record-weekly-contributions.ts` | Weekly ₱100+₱300 ledger deposits on Hubstaff upload/sync + their reversal on week delete |
+| `src/lib/date-only.ts` | `parseDateOnlyLocal` — timezone-safe rendering of DATE columns |
+| `scripts/cleanup-orphaned-mesa-week.mjs` | One-off purge of deposits orphaned by a pre-cascade week delete (dry-run default) |
 | `scripts/load-mesa-ledger.mjs` | Batched REST upsert of the original ledger backfill |
 | `scripts/load-mesa-ledger-from-csv.mjs` | Refresh the ledger from a new Active-sheet CSV export (preserves dropped disbursement history) |
 | `references/sql/migrate/2026-07-16_reload_mesa_ledger_from_active_sheet.sql` | The 2026-07-16 ledger reload as SQL (likely too large for the SQL Editor — use the script) |

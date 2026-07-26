@@ -6,7 +6,9 @@ team, proposes an effective date, and the person's **current (source) manager** 
 `global_master_list` and the master Google Sheet — while the effective date is retained only as the
 anchor payroll prorates *pay* by. HR and Accounting only **watch** the history (HR sees no pay;
 Accounting sees the Payment-Catalog rate delta each move implies). Built Jul 8–10 2026; supersedes
-the old "source manager pushes out → HR approves" flow.
+the old "source manager pushes out → HR approves" flow. **Updated Jul 24 2026:** apply now
+reconciles by *target* department (fixing the stuck "Apply now" backlog), and all three Transfers
+tabs got KPI cards — the Manager tab a full charts redesign, the Accounting tab search + export.
 
 Key files:
 
@@ -21,9 +23,12 @@ Key files:
 - `src/lib/supabase/department-transfer-requests.ts` — table row type + all read/write helpers.
 - `src/lib/google-sheets/update-master-sheet-department.ts` — the master-Sheet Department write-back.
 - `src/lib/payroll/rate-history-resolve.ts` — client-safe as-of-date rate resolution.
-- `src/components/manager/ManagerTransfers.tsx` — the Manager Transfers tab (3 sub-tabs).
-- `src/components/accounting/AccountingTransfers.tsx` — Accounting read-only, rate-linked view.
+- `src/components/manager/ManagerTransfers.tsx` — the Manager Transfers tab (3 sub-tabs, KPI + charts layout).
+- `src/components/manager/transfer-charts.tsx` — `StatusDonut` / `FlowBars` for the analytics rail.
+- `src/components/accounting/AccountingTransfers.tsx` — Accounting read-only, rate-linked view (KPI cards, search, export).
+- `src/lib/transfers/transfers-export.ts` — client-side CSV/XLSX/PDF export of the Accounting table.
 - `src/components/hr/HrTransfers.tsx` — HR read-only history (no pay).
+- `scripts/clear-stuck-transfers.mts` — one-off backlog cleanup for stuck `approved` rows (dry-run default).
 - `references/sql/migrate/2026-07-09_transfers_v2.sql` — v2 schema migration (pending SQL #107).
 
 ---
@@ -109,10 +114,23 @@ was the old "released but nothing changed" limbo. The effective date lives on pu
 
 `applyApprovedTransfer` (`src/lib/transfers/apply-transfer.ts`):
 
-1. **Master list (authoritative).** `applyDepartmentTransfer` sets `Department = to_department` on
-   the `global_master_list` row(s) matched by personal **or** work email **and** currently sitting in
-   `from_department` — so a person holding rows in multiple departments only has the source row moved.
-   A master-list failure is **fatal**: nothing is applied and the row stays `approved`.
+1. **Master list (authoritative) — reconciled by TARGET dept (Jul 24 2026).** The old logic
+   insisted on a row still sitting in `from_department`, which stranded overdue transfers whose
+   source row had drifted (re-synced, re-labeled, or already half-moved) and could crash into the
+   `(work_email, Department)` unique constraint. `applyDepartmentTransfer` now asks the pure
+   `planDepartmentApply` (tested in `department-transfer-requests.test.ts`) what the person's
+   master rows require to reach the **goal state** ("exactly one row in `to_department`"):
+   - `moved` — flip the source row(s) to the target; if a target-dept row already exists, the
+     redundant source duplicates are **deleted** instead of moved (dodging the unique constraint);
+   - `satisfied` — already in the target: nothing to write, and the Sheet write-back is skipped
+     (`sheet_synced=true`, the Sheet already reflects the end state);
+   - `notFound` — no roster row by any email: an **expected** outcome, not an error — the request is
+     **auto-cancelled** with a note ("not on the active roster … off-boarded or email changed")
+     instead of stranding in `approved` forever. (A bug where `notFound` returned a non-null error
+     and tripped the error guard *before* the auto-cancel branch was fixed in the same pass.)
+   A genuine master-list write failure is still **fatal**: nothing is applied and the row stays
+   `approved`. `scripts/clear-stuck-transfers.mts` (`npx tsx`, dry-run by default) pushes any
+   historical stuck-`approved` backlog through the new logic.
 2. **Google Sheet write-back (best-effort).** `updateMasterSheetDepartment` reads the master tab,
    finds the matching row (same email-AND-source-dept match) and flips its Department cell via
    `values:batchUpdate`. This is the whole point of v2 — the Sheet is the roster source of truth and
@@ -141,8 +159,13 @@ then flips to `applied`).
 
 ### Manager → Transfers tab (`ManagerTransfers.tsx`)
 
-A dedicated tab (id `transfers`, feature `transfers`) with an **animated segmented control** (motion
-`layoutId` pill + `AnimatePresence` view transitions) over three sub-tabs, driven by
+A dedicated tab (id `transfers`, feature `transfers`), redesigned Jul 24 2026 (via `impeccable`)
+into a full-width two-column layout: the **requests list on the left** (compact rows, paginated
+15/page) and an **analytics rail on the right** — three stacked KPI cards plus charts
+(`StatusDonut` / `FlowBars` from `src/components/manager/transfer-charts.tsx`). The **Done** sub-tab
+rows lead with a status icon chip (green check = Applied, sky calendar = Released/scheduled, rose X
+= Declined), paginated 10/page. An **animated segmented control** (motion `layoutId` pill +
+`AnimatePresence` view transitions) drives three sub-tabs via
 `GET /api/department-transfers?scope=…`:
 
 | Sub-tab | Scope | Contents |
@@ -159,14 +182,19 @@ manager, or an admin. "Request transfer in" opens `ManagerTransferDialog` from t
 
 ### HR → Transfers tab (`HrTransfers.tsx`)
 
-Read-only history, **no pay**. HR no longer approves anything (v2). Split into **In progress**
-(pending) and **History** (everything else), showing who was moved, both manager decisions
-(`requested_by` / `approver_email`), the effective date, and a Sheet-synced / not-synced badge.
+Read-only history, **no pay**. HR no longer approves anything (v2). Four KPI cards (Total /
+In progress / Completed / Declined-cancelled), then **In progress** (pending) and **History**
+(everything else), showing who was moved, both manager decisions (`requested_by` /
+`approver_email`), the effective date, and a Sheet-synced / not-synced badge.
 
 ### Accounting → Transfers tab (`AccountingTransfers.tsx`)
 
 Rate-visible only — `GET /api/accounting/transfers` is gated by `requireRateVisibilitySession`
-(admin / accounting / ceo). A table of every transfer joined to the pay-rate change it implies. The
+(admin / accounting / ceo). Since Jul 24 2026 the table sits under **four click-to-filter KPI
+cards** and a **search bar**, with **CSV / XLSX / PDF export** (landscape PDF) via
+`src/lib/transfers/transfers-export.ts` — a spec-driven export lib modeled on
+`people-roster-export.ts`, entirely client-side. A table of every transfer joined to the pay-rate
+change it implies. The
 **Rate change** column (`buildAccountingTransfers` → `RateCell`) reads **Payment Catalog DEPARTMENT
 base rates** — the from-dept base vs. the to-dept base, **each side in its own currency** — via
 `buildCatalogRateIndex` over `listPayStructures`. It does **not** read `employee_rate_history`

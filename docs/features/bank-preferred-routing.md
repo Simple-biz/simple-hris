@@ -1,6 +1,7 @@
 # Bank Preferred — send-from routing, approval gate & WIRES lock
 
-*Shipped 2026-07-22. Two employee-notification migrations still PENDING (see
+*Shipped 2026-07-22; Wise updates + the No-Bank clobber discovery added
+2026-07-25 (§7). Two employee-notification migrations still PENDING (see
 [Migrations](#migrations)).*
 
 "Bank Preferred" is the processor **Accounting sends a salary OUT on** — the
@@ -163,6 +164,32 @@ details back to `employee_ids` via
   Hurupay-routed with neither a Hurupay email nor wire info — a data-collection
   gap (`references/backups/2026-07-22_hurupay_no_payout_data.csv`), candidates for
   the People "Notify" missing-bank-info flow.
+
+## 7. Wise updates & the No-Bank clobber discovery (2026-07-25)
+
+- **Wise un-retired on employee-facing pickers.** `EMPLOYEE_SELECTABLE_PROCESSOR_OPTIONS`
+  (`src/lib/employee-payment-processors.ts`) adds Wise to the Readiness "Set bank"
+  processor picker and the Employee Dashboard disbursement radios; contractor
+  gateways still exclude it. (The People tab always offered it.)
+- **Wise = wire fields.** Since Wise payouts land in the payee's **bank account**,
+  picking Wise now collects/shows the same field set as Wires (bank, account
+  holder/number, SWIFT, address) in People → Banking (editor + reveal), the
+  employee payout form (`employee-payout-fields.tsx`), and the Readiness Set-bank
+  dialog.
+- **PH Global Freelancers Wise seed.** 27 Global-Master-List people from
+  `references/docs/PH Global Freelancers .xlsx` were seeded with `wise_email`, a
+  last-4 tag, and `bank_preferred='wise'` (`scripts/seed-ph-freelancers-wise.mjs`;
+  person-first matching to dodge stale `employee_ids` rows). 15 sheet emails had
+  no master row and were skipped; spot-check joshs' `x1153`-style→Wise flip on the
+  next cycle.
+- **⚠ The §6 seed clobbered self-submissions — restoration OPEN.** An audit of the
+  No-Bank list (`scripts/audit-nobank-external-link.mjs`, read-only) found **34 of
+  145 listed people had already set their bank** — 28 of them complete Jul-21/22
+  **external-link submissions** whose `preferred_processor` the Jul-22 PD-Data
+  seed cleared, orphaning their details from the display/routing path. Old values
+  are recoverable from `bank_update_history.changes`; the restore has **not been
+  run** (Kane's call). One flagged row (Chris Lawang) was a misread — a SELF-row
+  shadow, not a clobber.
 
 ## Migrations
 

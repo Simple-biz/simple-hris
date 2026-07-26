@@ -172,8 +172,14 @@ export interface PayrollReadiness {
   exceptions: ReadinessException[];
   /** Count of current-week Hubstaff workers considered for the rate check. */
   workerCount: number;
-  /** Count of active on-channel employees considered for the bank check. */
+  /** Count of active on-channel employees considered for the bank check (the
+   *  full roster-hygiene LIST's denominator — the score uses the on-payroll
+   *  slice below instead). */
   bankEligibleCount: number;
+  /** Of `bankEligibleCount`, how many have hours in this week's Hubstaff file —
+   *  the people actually being PAID this week, and the denominator the score's
+   *  bank dimension is judged over. */
+  bankOnPayrollCount: number;
   /** How many of `missingBank` are on this week's payroll (hard blockers). */
   missingBankOnPayroll: number;
   /** Data sources that could NOT be read this load, in human-readable form.
@@ -656,7 +662,15 @@ async function buildMissingBank(
   /** See {@link buildMissingRates} — pay-paused departments leave the bank
    *  list and its denominator alike. */
   isPausedDept: (dept: string | null | undefined) => boolean,
-): Promise<{ rows: ReadinessMissingBank[]; eligibleCount: number; degraded: string[] }> {
+): Promise<{
+  rows: ReadinessMissingBank[];
+  eligibleCount: number;
+  /** Per eligible person, their normalized emails — so the composer can count
+   *  how many of them are on this week's payroll (the score's bank denominator)
+   *  by intersecting with the Hubstaff identity set. */
+  eligibleEmails: string[][];
+  degraded: string[];
+}> {
   const [idsRes, ratesRes] = await Promise.all([
     getEmployeeIds().catch(() => ({ rows: [], error: 'unreachable' })),
     // The legacy rates-sheet row is Payment Dispatch's fallback for both the
@@ -698,6 +712,7 @@ async function buildMissingBank(
   // or not; `out` is only the ones missing payout details.
   const seen = new Set<string>();
   const out: ReadinessMissingBank[] = [];
+  const eligibleEmails: string[][] = [];
   let eligibleCount = 0;
   for (const e of employees) {
     if (isOffChannelDept(e.department)) continue;
@@ -716,6 +731,7 @@ async function buildMissingBank(
     if (seen.has(idKey)) continue;
     seen.add(idKey);
     eligibleCount += 1;
+    eligibleEmails.push([w, p].filter(Boolean));
 
     const idRow = (w && idRowByEmail.get(w)) || (p && idRowByEmail.get(p)) || null;
     const rates = (w && ratesByEmail.get(w)) || (p && ratesByEmail.get(p)) || null;
@@ -743,7 +759,7 @@ async function buildMissingBank(
     });
   }
   out.sort((a, b) => a.name.localeCompare(b.name));
-  return { rows: out, eligibleCount, degraded };
+  return { rows: out, eligibleCount, eligibleEmails, degraded };
 }
 
 // ── Onboarding exceptions ─────────────────────────────────────────────────────
@@ -942,6 +958,16 @@ export async function getPayrollReadiness(
     .sort((a, b) => Number(b.onPayroll) - Number(a.onPayroll) || a.name.localeCompare(b.name));
   const missingBankOnPayroll = missingBank.reduce((n, r) => n + (r.onPayroll ? 1 : 0), 0);
 
+  // The score's bank denominator: eligible roster people who are actually being
+  // PAID this week (any alias with hours in the week's Hubstaff file). The full
+  // `eligibleCount` stays on the payload for the roster-hygiene list's "X of Y"
+  // framing, but it must not shape the score — someone we aren't paying this
+  // week can't block this week's payroll.
+  const bankOnPayrollCount = bankRes.eligibleEmails.reduce(
+    (n, aliases) => n + (aliases.some((e) => ratesRes.payrollEmails.has(e)) ? 1 : 0),
+    0,
+  );
+
   // KPI due/submitted for the score: monthly depts not due this week ('na') and
   // departments switched out of this week's pay ('excluded') are dropped from
   // the denominator; everything else is due, and "submitted" means the manager
@@ -952,13 +978,20 @@ export async function getPayrollReadiness(
     (d) => d.status === 'ready' || d.status === 'locked' || d.status === 'no_bonus',
   ).length;
 
+  // The score judges ONLY the people we need to pay THIS WEEK. Rates and KPI
+  // are already payroll-scoped (this week's Hubstaff workers; due departments).
+  // Bank joins them here: the numerator is the missing-bank people ON this
+  // week's payroll, over the on-payroll denominator — the roster-hygiene rows
+  // (missing bank but not being paid this week) stay VISIBLE in the list but
+  // never move the score, exactly like excluded departments and onboarding
+  // exceptions.
   let score = computeReadinessScore({
     workerCount: ratesRes.workerCount,
     missingRates: ratesRes.rows.length,
     kpiDue,
     kpiSubmitted,
-    bankEligibleCount: bankRes.eligibleCount,
-    missingBank: missingBank.length,
+    bankEligibleCount: bankOnPayrollCount,
+    missingBank: missingBankOnPayroll,
     missingBankOnPayroll,
   });
   // A partial load must never paint the dashboard green: dimensions judged on
@@ -981,6 +1014,7 @@ export async function getPayrollReadiness(
     exceptions,
     workerCount: ratesRes.workerCount,
     bankEligibleCount: bankRes.eligibleCount,
+    bankOnPayrollCount,
     missingBankOnPayroll,
     degraded,
     score,

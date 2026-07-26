@@ -5,9 +5,36 @@ accounting-editable adjustments layered on top. Covers the **Initial Calculation
 the **Additions** table (step 3), and the **HSL** table (step 5).
 
 Source: [`src/components/PayrollWizard.tsx`](../../src/components/PayrollWizard.tsx).
-Last substantive update: **2026-07-10**.
+Last substantive update: **2026-07-25**.
 
 ---
+
+## 2026-07-25 updates
+
+- **Every master-list department is visible.** The wizard previously folded or
+  dropped whole departments: `SMM Freelancer` was normalized into the built-in
+  `smm` ("Social Media") tab, `hsl:*`-keyed people scattered, and master-list
+  departments with no built-in mapping had no tab at all. Now `smm_freelancer`
+  is split into its own tab, `hsl:*` members roll into the **HSL** tab
+  (**pay-affecting** — ~35 people who previously fell through), unknown
+  departments get **derived-slug tabs** (e.g. USEE), and members with no
+  Hubstaff hours appear on a **read-only roster card** so a department is never
+  silently empty. (`src/lib/payroll/normalize-dept-key.ts` + the wizard rail.)
+- **Step-1 Configuration tab.** Per-department **Pay this week** (week-scoped
+  exclusion) and **Overtime** switches — see
+  [payroll-wizard-configuration-tab.md](./payroll-wizard-configuration-tab.md).
+- **Catalog-created departments get paid.** Departments minted in the Payment
+  Catalog's Department tab appear in the wizard/Additions like any other — see
+  [payment-catalog-departments.md](./payment-catalog-departments.md).
+- **Time Adjustments are week-gated.** The Additions "Time Adjustments" fold-in
+  only shows requests belonging to the wizard's **current pay week**; other
+  weeks' requests no longer bleed into every run.
+- **HSL table UX.** Pinned always-visible horizontal + vertical scrollbars,
+  Additions-matching text size, and the **KPI Bonus column hidden by default**
+  behind a Show/Hide dropdown in the toolbar.
+- **Orphanage PAB auto-coverage (temporary).** Orphanage-step hours can
+  auto-forgive short PAB weekdays — see
+  [orphanage-pab-coverage.md](./orphanage-pab-coverage.md).
 
 ## 2026-07 updates
 
