@@ -15,9 +15,9 @@
  *     Hurupay WINS over HiGlobe when both emails are present.
  *   - else HiGlobe Email     → bank_preferred='higlobe' + higlobe_email +
  *     higlobe_account_name, plus receiving bank details when present.
- *   - else From = Wise/x1161 → receiving bank details (bank name, account
- *     holder, Primary Bank Acount Number, SWIFT) + bank_preferred
- *     ('wise' for Wise, 'wires' for x1161 — the send-from rail).
+ *   - else From = Wise/x1161/x1153 → receiving bank details (bank name,
+ *     account holder, Primary Bank Acount Number, SWIFT) + bank_preferred
+ *     ('wise' for Wise, 'wires' for x1161/x1153 — the send-from rail).
  *   - Everything is fill-EMPTY-only. Existing values are never overwritten;
  *     conflicts are reported instead.
  *
@@ -28,12 +28,17 @@
  * at all (real id from active_employees, occupancy-checked).
  *
  * Usage:
- *   node scripts/seed-hsl-npd-bank-list.mjs            # dry run (default)
- *   node scripts/seed-hsl-npd-bank-list.mjs --apply    # write
- *   node scripts/seed-hsl-npd-bank-list.mjs --verbose  # also list unmatched people
+ *   node scripts/seed-hsl-npd-bank-list.mjs                 # dry run (default, Hogan CSV)
+ *   node scripts/seed-hsl-npd-bank-list.mjs --csv "references/data/NPD Bank List - All Dept.csv"
+ *   node scripts/seed-hsl-npd-bank-list.mjs --apply         # write
+ *   node scripts/seed-hsl-npd-bank-list.mjs --verbose       # also list unmatched people
  *
- * Backup: pre-update rows → references/backups/<date>_seed_hsl_npd_bank_backup.json
- *         created rows    → references/backups/<date>_seed_hsl_npd_bank_created_rows.json
+ * The All Dept CSV lacks the account-holder-name and bank-address columns and
+ * has float-mangled ("1.09332E+11") account numbers — those are dropped with a
+ * note (digits unrecoverable); wallet-email rows still seed as wallet-only.
+ *
+ * Backup: pre-update rows → references/backups/<date>_seed_npd_<tag>_backup.json
+ *         created rows    → references/backups/<date>_seed_npd_<tag>_created_rows.json
  */
 import { createClient } from "@supabase/supabase-js";
 import dotenv from "dotenv";
@@ -56,7 +61,17 @@ if (!url || !key) {
 }
 const supabase = createClient(url, key);
 
-const CSV_PATH = path.join("references", "data", "NPD Bank List - Hogan.csv");
+const csvArgIdx = process.argv.indexOf("--csv");
+const CSV_PATH =
+  csvArgIdx !== -1 && process.argv[csvArgIdx + 1]
+    ? process.argv[csvArgIdx + 1]
+    : path.join("references", "data", "NPD Bank List - Hogan.csv");
+const TAG = path
+  .basename(CSV_PATH, path.extname(CSV_PATH))
+  .toLowerCase()
+  .replace(/npd bank list/g, "")
+  .replace(/[^a-z0-9]+/g, "_")
+  .replace(/^_+|_+$/g, "") || "csv";
 
 const norm = (e) => (e == null ? "" : String(e).trim().toLowerCase());
 const filled = (v) => v != null && String(v).trim() !== "";
@@ -163,8 +178,8 @@ function parseCsv() {
     let acct = String(r["Primary Bank Acount Number"] ?? "").trim();
     let swift = String(r["Primary Bank SWIFT Code"] ?? "").trim();
 
-    // Column-shift repair: some rows have acct in Address, SWIFT in AcctNumber,
-    // address text in SWIFT (berne/ivanmm/gibsn pattern).
+    // Column-shift repair (only possible when the sheet HAS an address column):
+    // acct in Address, SWIFT in AcctNumber, address text in SWIFT.
     const addressDigits = address.replace(/[\s-]/g, "");
     if (acct && /[A-Za-z]/.test(acct) && /^\d{6,}$/.test(addressDigits)) {
       notes.push(`column-shift repaired (acct was "${acct}")`);
@@ -174,9 +189,21 @@ function parseCsv() {
     }
 
     acct = acct.replace(/\s+/g, "");
-    if (acct && /[^0-9-]/.test(acct)) {
-      notes.push(`account number dropped (non-numeric: "${acct}")`);
+    if (/^\d+(\.\d+)?E\+\d+$/i.test(acct)) {
+      // Float-mangled by the sheet export — the real digits are gone.
+      notes.push(`account number dropped (float-mangled: "${acct}")`);
       acct = "";
+    }
+    if (acct && /[^0-9-]/.test(acct)) {
+      // Mojibake/junk prefix before an otherwise clean number → strip it.
+      const m = /^[^0-9]+([0-9][0-9-]*)$/.exec(acct);
+      if (m) {
+        notes.push(`account number junk prefix stripped ("${acct}" → "${m[1]}")`);
+        acct = m[1];
+      } else {
+        notes.push(`account number dropped (non-numeric: "${acct}")`);
+        acct = "";
+      }
     }
     swift = swift.toUpperCase().replace(/\s+/g, "");
     if (swift && !SWIFT_RE.test(swift)) {
@@ -238,7 +265,7 @@ function planFields(csv) {
       note: !csv.higlobeName && name ? "higlobe_account_name from Primary Bank Account Name" : null,
     };
   }
-  if (csv.from === "wise" || csv.from === "x1161") {
+  if (csv.from === "wise" || csv.from === "x1161" || csv.from === "x1153") {
     if (!csv.acct) return { processor: null, reason: `From=${csv.from} but no usable account number` };
     if (!csv.bankName) return { processor: null, reason: `From=${csv.from} but no bank name (wire details would stay incomplete)` };
     return {
@@ -246,7 +273,7 @@ function planFields(csv) {
       fields: { bank_preferred: csv.from === "wise" ? "wise" : "wires", ...bankDetails },
     };
   }
-  return { processor: null, reason: `no hurupay/higlobe email and From="${csv.from}" is not wise/x1161` };
+  return { processor: null, reason: `no hurupay/higlobe email and From="${csv.from}" is not wise/x1161/x1153` };
 }
 
 // ── Load everything the readiness endpoint loads ─────────────────────────────
@@ -639,7 +666,7 @@ const flaggedAliases = new Set(missing.flatMap((m) => m.aliases));
 const csvNotFlagged = [...csvByEmail.keys()].filter((e) => !flaggedAliases.has(e));
 
 // ── Report ───────────────────────────────────────────────────────────────────
-console.log(`${APPLY ? "APPLY" : "DRY RUN"} — NPD Bank List (Hogan) → No Bank Info seed, week ${weekStart}\n`);
+console.log(`${APPLY ? "APPLY" : "DRY RUN"} — NPD Bank List (${TAG}) → No Bank Info seed, week ${weekStart}\n`);
 console.log(`Will UPDATE existing row     : ${toUpdate.length}`);
 console.log(`Will CREATE payout row       : ${toCreate.length}`);
 console.log(`Skip — submitted (HRIS/link) : ${skipSubmitted.length}`);
@@ -711,7 +738,7 @@ fs.mkdirSync(outDir, { recursive: true });
 const stamp = new Date().toISOString().slice(0, 10);
 
 if (toUpdate.length) {
-  const backupPath = path.join(outDir, `${stamp}_seed_hsl_npd_bank_backup.json`);
+  const backupPath = path.join(outDir, `${stamp}_seed_npd_${TAG}_backup.json`);
   fs.writeFileSync(backupPath, JSON.stringify(toUpdate.map((t) => t.row), null, 2));
   console.log(`\nBacked up ${toUpdate.length} pre-update row(s) → ${backupPath}`);
 }
@@ -720,7 +747,7 @@ let updated = 0;
 let created = 0;
 let failed = 0;
 const createdRows = [];
-const createdPath = path.join(outDir, `${stamp}_seed_hsl_npd_bank_created_rows.json`);
+const createdPath = path.join(outDir, `${stamp}_seed_npd_${TAG}_created_rows.json`);
 
 for (const t of toUpdate) {
   // Re-read by PK and re-verify each field is STILL empty (no clobber race).
