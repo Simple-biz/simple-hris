@@ -8,7 +8,11 @@
  *     readiness endpoint, against the Jul 12-18 upload) are touched.
  *   - Anyone with evidence of a submission via HRIS / External Link
  *     (bank_update_history, audit_log bank_update.saved, self-update stamp,
- *     SELF- rows, pending bank_preferred_change_requests) is SKIPPED.
+ *     SELF- rows, pending bank_preferred_change_requests) gets a
+ *     BANK-DETAILS-ONLY fill (bank name / account holder / Primary Bank
+ *     Acount Number / SWIFT, empty fields only — Kane 2026-07-26: "seed them
+ *     properly"). Their processor/wallet fields are NEVER touched — their own
+ *     submission owns those.
  *   - Anyone with a payable employee_ids row anywhere is SKIPPED (misread).
  *   - Hurupay Email present  → bank_preferred='hurupay' + hurupay_email,
  *     plus receiving bank details (account number etc.) when the CSV has them.
@@ -543,7 +547,9 @@ for (const m of missing) {
     continue;
   }
 
-  // Gate 2: submitted via HRIS / external link → do not clobber.
+  // Gate 2: submitted via HRIS / external link → their processor/wallet fields
+  // are off-limits, but receiving bank details from the sheet still get a
+  // fill-empty seed (Kane 2026-07-26) onto the row readiness reads.
   const hist = m.aliases.flatMap((a) => historyByEmail.get(a) ?? []);
   const audits = m.aliases.flatMap((a) => auditByEmail.get(a) ?? []);
   const stamped = rows.filter((r) => r.bank_last_self_updated_at);
@@ -559,7 +565,36 @@ for (const m of missing) {
     ]
       .filter(Boolean)
       .join(", ");
-    skipSubmitted.push({ ...m, evidence: src });
+    const details = {
+      ...(csv.bankName ? { bank_name: csv.bankName } : {}),
+      ...(csv.acctName ? { account_holder_name: csv.acctName } : {}),
+      ...(csv.acct ? { account_number: csv.acct } : {}),
+      ...(csv.swift ? { swift_code: csv.swift } : {}),
+    };
+    const target = m.pickedRow ? rows.find((r) => r.id === m.pickedRow.id) ?? m.pickedRow : rows[0];
+    if (!target || !Object.keys(details).length) {
+      skipSubmitted.push({ ...m, evidence: src, note: !target ? "no row to fill" : "no bank details in CSV" });
+      continue;
+    }
+    const fields = Object.fromEntries(Object.entries(details).filter(([k]) => !filled(target[k])));
+    if (!Object.keys(fields).length || claimedPkIds.has(target.id)) {
+      skipSubmitted.push({ ...m, evidence: src, note: "bank-detail fields already set" });
+      continue;
+    }
+    claimedPkIds.add(target.id);
+    const after = whyIncomplete({ ...target, ...fields }, m.extras);
+    toUpdate.push({
+      m,
+      csv,
+      plan: { processor: "(details only — submitted)" },
+      pk: target.id,
+      row: target,
+      fields,
+      after,
+      allowSelfStamped: true,
+      rowLabel: `${target.employee_id ?? "?"} ${target.name ?? ""} <${target.work_email ?? target.personal_email ?? ""}>`,
+    });
+    if (after) residuals.push({ ...m, note: `details seeded but still incomplete: ${after}`, after });
     continue;
   }
 
@@ -698,7 +733,8 @@ if (toCreate.length) {
 }
 if (skipSubmitted.length) {
   console.log(`\nSkipped — submitted via HRIS/external link (NOT touched):`);
-  for (const x of skipSubmitted) console.log(`  ${label(x)} · ${x.reason} · evidence: ${x.evidence}`);
+  for (const x of skipSubmitted)
+    console.log(`  ${label(x)} · ${x.reason} · evidence: ${x.evidence}${x.note ? ` · ${x.note}` : ""}`);
 }
 if (skipPayable.length) {
   console.log(`\nSkipped — payable row already exists (readiness misread, NOT touched):`);
@@ -754,7 +790,9 @@ for (const t of toUpdate) {
     console.error(`  FAIL ${t.m.w}: re-read failed (${curErr?.message ?? "row gone"})`);
     continue;
   }
-  if (cur.bank_last_self_updated_at || String(cur.employee_id ?? "").startsWith("SELF-")) {
+  // Bank-details-only fills intentionally target self-service rows; everything
+  // else still refuses to touch a row that self-updated since selection.
+  if (!t.allowSelfStamped && (cur.bank_last_self_updated_at || String(cur.employee_id ?? "").startsWith("SELF-"))) {
     console.log(`  SKIP ${t.m.w}: self-service submission appeared since selection — untouched`);
     continue;
   }
