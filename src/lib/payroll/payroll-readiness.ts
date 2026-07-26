@@ -895,7 +895,11 @@ export async function getPayrollReadiness(
   const pausedDeptKeys = parsePausedDeptKeys(pausedRaw ?? null);
   const isPausedDept = (dept: string | null | undefined): boolean => {
     if (pausedDeptKeys.size === 0) return false;
-    const key = resolveDeptKeyWithRegistry(dept, registrySafe);
+    // Same key derivation as the KPI dept list: master-list-only labels
+    // ("Manager") have no built-in/registry key, so they pause by their
+    // derived slug — otherwise their people stay on the rate/bank lists
+    // even though the whole department is excluded from this pay week.
+    const key = resolveDeptKeyWithRegistry(dept, registrySafe) ?? (dept?.trim() ? slugifyDeptKey(dept) : null);
     return !!key && pausedDeptKeys.has(key);
   };
 

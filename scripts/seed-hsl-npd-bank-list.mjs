@@ -150,10 +150,7 @@ function whyIncomplete(row, extras) {
       const name = pick(row ?? {}, "higlobe_account_name") || (extras?.higlobeAccountName ?? "").trim();
       return email && name ? null : `higlobe: missing ${!email ? "email" : ""}${!email && !name ? "+" : ""}${!name ? "account name" : ""}`;
     }
-    case "wise":
-      return pick(row ?? {}, "wise_email") || pick(row ?? {}, "wise_tag") || hasWireDetails
-        ? null
-        : "wise: no handle and no wire details";
+    case "wise": // like jeeves/wires: payable ONLY on full wire details (2026-07 tightening — a stored handle alone doesn't pay)
     case "jeeves":
     case "wires":
       return hasWireDetails ? null : `${processor}: incomplete wire details`;
