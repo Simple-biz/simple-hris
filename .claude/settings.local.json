@@ -882,7 +882,17 @@
       "Bash(node scripts/find-email-everywhere.mjs vano@simple.biz)",
       "Bash(node \"C:\\\\Users\\\\Kane\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-Kane-Desktop-simple-hris\\\\0d3ca406-b9b0-4a03-b5d8-e34436ba1922\\\\scratchpad\\\\probe-vano.mjs\")",
       "Bash(cp \"C:\\\\Users\\\\Kane\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-Kane-Desktop-simple-hris\\\\0d3ca406-b9b0-4a03-b5d8-e34436ba1922\\\\scratchpad\\\\probe-vano.mjs\" \"c:\\\\Users\\\\Kane\\\\Desktop\\\\simple-hris\\\\scripts\\\\probe-vano.tmp.mjs\")",
-      "Bash(node scripts/probe-vano.tmp.mjs)"
+      "Bash(node scripts/probe-vano.tmp.mjs)",
+      "Bash(node \"C:\\\\Users\\\\Kane\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-Kane-Desktop-simple-hris\\\\9cce9d6e-57ca-4d14-98f7-2b6517393abb\\\\scratchpad\\\\check-brianr-dupe.mjs\")",
+      "Bash(cp \"C:\\\\Users\\\\Kane\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-Kane-Desktop-simple-hris\\\\9cce9d6e-57ca-4d14-98f7-2b6517393abb\\\\scratchpad\\\\check-brianr-dupe.mjs\" scripts/tmp-check-brianr-dupe.mjs)",
+      "Bash(node scripts/tmp-check-brianr-dupe.mjs)",
+      "Bash(rm scripts/tmp-check-brianr-dupe.mjs)",
+      "Bash(node scripts/tmp-check-week-dupe.mjs)",
+      "Bash(node scripts/cleanup-duplicate-hubstaff-uploads.mjs)",
+      "Bash(node scripts/cleanup-duplicate-hubstaff-uploads.mjs --apply)",
+      "Bash(cp \"C:\\\\Users\\\\Kane\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-Kane-Desktop-simple-hris\\\\9cce9d6e-57ca-4d14-98f7-2b6517393abb\\\\scratchpad\\\\check-brianr-dupe.mjs\" scripts/tmp-verify.mjs)",
+      "Bash(node scripts/tmp-verify.mjs)",
+      "Bash(rm scripts/tmp-verify.mjs)"
     ],
     "additionalDirectories": [
       "c:\\Users\\Itachi\\.claude\\projects\\c--Users-Itachi-Desktop-simple-hris\\memory",

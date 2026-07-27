@@ -905,6 +905,54 @@ export async function getUploadedSourceFiles(): Promise<string[]> {
 }
 
 /**
+ * Collapses one file's rows down to a single upload batch when a re-upload of
+ * the SAME filename left rows from multiple `upload_id`s under one
+ * `source_file` (an aborted first ingest + a completed retry). Without this,
+ * every reader that filters by source_file alone sees the overlap twice —
+ * duplicate wizard paystubs and double final pay. The preferred batch is the
+ * one hubstaff_uploads ranks first (`is_current`, then newest); if none of the
+ * rows carry that id, the largest batch wins (an aborted ingest is the smaller
+ * one). Single-batch files (including legacy rows with no upload_id) pass
+ * through unchanged.
+ */
+function collapseToSingleUploadBatch(
+  rows: Record<string, unknown>[],
+  preferredUploadId: string | null,
+): Record<string, unknown>[] {
+  const batches = new Map<string, Record<string, unknown>[]>();
+  for (const r of rows) {
+    const id = typeof r["upload_id"] === "string" ? (r["upload_id"] as string) : "";
+    const list = batches.get(id);
+    if (list) list.push(r);
+    else batches.set(id, [r]);
+  }
+  if (batches.size <= 1) return rows;
+  if (preferredUploadId && batches.has(preferredUploadId)) {
+    return batches.get(preferredUploadId)!;
+  }
+  let best = rows;
+  let bestLen = -1;
+  for (const list of batches.values()) {
+    if (list.length > bestLen) {
+      best = list;
+      bestLen = list.length;
+    }
+  }
+  return best;
+}
+
+/** True when rows span more than one distinct upload_id. */
+function hasMultipleUploadBatches(rows: Record<string, unknown>[]): boolean {
+  let seen: unknown = undefined;
+  for (const r of rows) {
+    const id = typeof r["upload_id"] === "string" ? r["upload_id"] : "";
+    if (seen === undefined) seen = id;
+    else if (id !== seen) return true;
+  }
+  return false;
+}
+
+/**
  * Fetches rows from hubstaff_hours filtered by source_file.
  */
 export async function fetchHubstaffRowsBySourceFile(sourceFile: string): Promise<{
@@ -936,7 +984,11 @@ export async function fetchHubstaffRowsBySourceFile(sourceFile: string): Promise
     from += PAGE;
   }
 
-  const rows = allRows.filter((r) => !rowIsEmpty(r));
+  let rows = allRows.filter((r) => !rowIsEmpty(r));
+  if (hasMultipleUploadBatches(rows)) {
+    const preferred = await getHubstaffUploadIdBySourceFile(supabase, sourceFile);
+    rows = collapseToSingleUploadBatch(rows, preferred);
+  }
 
   let columns =
     rows.length > 0
@@ -998,6 +1050,21 @@ export async function fetchHubstaffRowsGroupedBySourceFile(): Promise<{
     const list = byFile.get(sf);
     if (list) list.push(row);
     else byFile.set(sf, [row]);
+  }
+
+  // Same double-ingest guard as fetchHubstaffRowsBySourceFile: a file whose
+  // rows span multiple upload batches collapses to its preferred batch. One
+  // uploads-table read covers every affected file.
+  if ([...byFile.values()].some(hasMultipleUploadBatches)) {
+    const uploads = await listHubstaffUploads();
+    for (const [sf, rows] of byFile) {
+      if (!hasMultipleUploadBatches(rows)) continue;
+      const preferred =
+        uploads.find((u) => u.source_file === sf && u.is_current)?.id ??
+        uploads.find((u) => u.source_file === sf)?.id ??
+        null;
+      byFile.set(sf, collapseToSingleUploadBatch(rows, preferred));
+    }
   }
 
   const specColumnsSorted = sortHubstaffColumnsForDisplay(specCols);
