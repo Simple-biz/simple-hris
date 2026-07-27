@@ -103,6 +103,7 @@ test('deptMatchKey symmetry: same team compares equal, different teams do not', 
     ['Callback Team', 'Callback Squad'], // "Squad" variant not in synonym map
     ['devs', 'AI Team'], // "AI Team" not in synonym map -> raw
     ['Growth Pod', 'Growth Team'], // two distinct custom depts
+    ['Sales', 'Sales Assistant'], // split 2026-07-27: two separate departments
   ];
   for (const [a, b] of diffTeam) {
     assert.notEqual(deptMatchKey(a), deptMatchKey(b), `expected different teams: "${a}" vs "${b}"`);
