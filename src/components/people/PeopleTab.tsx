@@ -360,6 +360,12 @@ function mergeMaster(row: RosterRow, m: MasterProfileFields): RosterRow {
   };
 }
 
+// Case-insensitive A→Z by display name — every people list in this tab (main
+// table, excluded-payout modal, missing-bank modal) presents in this order.
+function byName(a: RosterRow, b: RosterRow): number {
+  return (a.name ?? '').trim().localeCompare((b.name ?? '').trim(), undefined, { sensitivity: 'base' });
+}
+
 function fmtMoney(amount: number | null | undefined, currency: Currency = 'PHP'): string {
   if (amount == null) return '—';
   const opts = { minimumFractionDigits: 2, maximumFractionDigits: 2 };
@@ -708,7 +714,7 @@ export default function PeopleTab({
         return name.includes(q) || email.includes(q) || dept.includes(q) || id.includes(q);
       })
       // Always present names A→Z (case-insensitive), regardless of API order.
-      .sort((a, b) => (a.name ?? '').localeCompare(b.name ?? '', undefined, { sensitivity: 'base' }));
+      .sort(byName);
   }, [rows, query, deptFilter, otOnly]);
 
   // Reset to page 1 whenever the filters change so results never land on an
@@ -767,7 +773,7 @@ export default function PeopleTab({
   // selected pay week AND are in the Global Master List. The roster is already
   // built only from master-list employees, so "in master list" is implicit.
   // The excluded set (no hours this week) powers the "Payouts to send" modal.
-  const excludedRows = useMemo(() => rows.filter((r) => !(r.hours.thisWeek > 0)), [rows]);
+  const excludedRows = useMemo(() => rows.filter((r) => !(r.hours.thisWeek > 0)).sort(byName), [rows]);
   const payoutCount = rows.length - excludedRows.length;
 
   // People in the roster with NO bank / payout method on file at all — powers the
@@ -777,9 +783,9 @@ export default function PeopleTab({
   // through a separate channel, so we don't flag them as missing bank info.
   const noBankingRows = useMemo(
     () =>
-      rows.filter(
-        (r) => !r.hasBanking && (r.department ?? '').trim().toUpperCase() !== 'USEE',
-      ),
+      rows
+        .filter((r) => !r.hasBanking && (r.department ?? '').trim().toUpperCase() !== 'USEE')
+        .sort(byName),
     [rows],
   );
 
