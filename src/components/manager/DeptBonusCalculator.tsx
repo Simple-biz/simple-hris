@@ -1721,7 +1721,10 @@ export default function DeptBonusCalculator({
     const exMap = commonExclusionsByDept.get(deptKey);
     for (const b of commonByDept.get(deptKey) ?? []) {
       if (sharedSet?.has(b.id)) continue; // team-effort amount lives on the dept, not the member
-      if (exMap?.get(b.id)?.has(email)) continue;
+      // Check the alias-folded identity too: an exclusion recorded under the
+      // person's roster email must still hold when they're added under a
+      // different (e.g. Hubstaff) address.
+      if (exMap?.get(b.id)?.has(email) || exMap?.get(b.id)?.has(folded)) continue;
       applied[b.id] = { on: true, vars: {} };
     }
     const member: MemberState = { email, name: name.trim(), applied, external: true };

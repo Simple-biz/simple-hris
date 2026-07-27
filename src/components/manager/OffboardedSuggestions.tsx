@@ -132,8 +132,8 @@ export function OffboardedStrip({
           Offboarded ({people.length})
         </span>
         <span className="text-[11px] text-amber-700/80 dark:text-amber-300/70">
-          Recently left this team — add them to score their final bonuses; they’re paid with the week that
-          covers their last hours.
+          Recently left this team — add them to score their final bonuses. Payout follows the week covering
+          their last hours; if payroll can’t stage them, Accounting pays via People → Pay.
         </span>
       </div>
       <div className="mt-2 flex flex-wrap items-center gap-1.5">

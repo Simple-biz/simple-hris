@@ -377,7 +377,20 @@ export async function listRecentlyOffboardedPeople(days = 90): Promise<{
         const hits = [
           ...new Set(
             hubRows
-              .filter((h) => !activeEmails.has(h.email) && h.tokens.size >= 2 && isSubset(h.tokens, toks))
+              .filter(
+                (h) =>
+                  !activeEmails.has(h.email) &&
+                  h.tokens.size >= 2 &&
+                  // Near-complete coverage, not just any subset: the master
+                  // name may carry ONE extra token (the quoted-nickname dupe
+                  // or a middle name), but a hub row matching far fewer
+                  // tokens ("Jan Reroma" ⊂ "Jan Kane Reroma Teves") is a
+                  // DIFFERENT person — bridging to them would pay the wrong
+                  // (inactive) human, the one failure nothing downstream can
+                  // catch.
+                  h.tokens.size >= toks.size - 1 &&
+                  isSubset(h.tokens, toks),
+              )
               .map((h) => h.email),
           ),
         ];
