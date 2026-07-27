@@ -4900,6 +4900,26 @@ export default function PayrollWizard({
   }, [calcResults, employeeDepts, otGlobalSuspended, otDeptEnabled, timeAdjustDeltaHoursByEmail, pausedDeptKeys]);
 
   /**
+   * Safety net for the "Pay this week" pause: workers who logged hours this
+   * week AND have a real hourly rate (the wizard would have paid them) but sit
+   * in a paused department, so they are invisible on every step after 1.
+   * Surfaced as a Step-2 banner and a Validation check so a miscategorized
+   * worker (e.g. landing in the wrong sales cohort after the 2026-07 split)
+   * can't silently drop out of payroll. Zero-rate/no-rate people (salaried US,
+   * USEE) are expected to sit unpaid behind a pause and are NOT flagged.
+   */
+  const pausedHiddenPayableRows = useMemo<Array<CalcRow & { deptKey: string }>>(() => {
+    if (pausedDeptKeys.size === 0) return [];
+    const out: Array<CalcRow & { deptKey: string }> = [];
+    for (const row of calcResults) {
+      const dk = employeeDepts[row.email] ?? employeeDepts[(row.email ?? '').toLowerCase()];
+      if (!dk || !pausedDeptKeys.has(dk)) continue;
+      if (row.totalHours > 0 && (row.regularRate ?? 0) > 0) out.push({ ...row, deptKey: dk });
+    }
+    return out;
+  }, [calcResults, employeeDepts, pausedDeptKeys]);
+
+  /**
    * Orphanage paste tool (step 3): parse pasted "Pay week ⇥ Work email ⇥ Hours" TSV
    * and resolve each row to an Additions employee + a PHP amount (hours × regular rate).
    * Pay week is informational only — every matched row applies to the period being
@@ -8506,6 +8526,44 @@ export default function PayrollWizard({
                 Refresh rates
               </Button>
             </div>
+
+            {/* Hour-logging workers with a real rate hidden by a "Pay this week"
+                pause — without this banner they'd vanish from every later step
+                with zero signal (how vano@ went missing after the sales split). */}
+            {pausedHiddenPayableRows.length > 0 && (() => {
+              const deptNameByKey = new Map(allWizardDepartments.map((d) => [d.key, d.name]));
+              const shown = pausedHiddenPayableRows.slice(0, 12);
+              return (
+                <div className="rounded-xl border border-amber-300 bg-amber-50/80 px-4 py-3 dark:border-amber-700/60 dark:bg-amber-950/30">
+                  <div className="flex items-start gap-2">
+                    <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-semibold text-amber-900 dark:text-amber-200">
+                        {pausedHiddenPayableRows.length} worker{pausedHiddenPayableRows.length !== 1 ? 's' : ''} logged hours this week but {pausedHiddenPayableRows.length !== 1 ? 'are' : 'is'} hidden from every pay step
+                      </p>
+                      <p className="mt-0.5 text-xs text-amber-800/90 dark:text-amber-300/90">
+                        Their department is switched off in <strong>Step 1 → Configuration</strong> (&quot;Pay this week&quot;), yet they have a real hourly rate — they would otherwise be paid. Re-enable the department, or fix their department / sales-cohort assignment if they&apos;re miscategorized.
+                      </p>
+                      <ul className="mt-1.5 space-y-0.5 text-xs text-amber-900 dark:text-amber-200">
+                        {shown.map((r) => (
+                          <li key={r.email} className="truncate">
+                            <span className="font-medium">{r.name || r.email}</span>
+                            <span className="text-amber-700/90 dark:text-amber-400/90"> · {r.email}</span>
+                            <span className="font-mono tabular-nums"> · {r.totalHours.toFixed(2)} h</span>
+                            <span> · {deptNameByKey.get(r.deptKey) ?? r.deptKey}</span>
+                          </li>
+                        ))}
+                        {pausedHiddenPayableRows.length > shown.length && (
+                          <li className="text-amber-700/80 dark:text-amber-400/80">
+                            …and {pausedHiddenPayableRows.length - shown.length} more
+                          </li>
+                        )}
+                      </ul>
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
 
             {/* Source file selector */}
             {uploadedSourceFiles.length > 0 && (
@@ -13322,6 +13380,12 @@ export default function PayrollWizard({
                   { label: 'Hubstaff Hours Uploaded', pass: hubstaffData.length > 0 },
                   { label: 'Initial Calculations Complete', pass: effectiveCalcResults.some(r => r.initialPay != null) },
                   { label: 'All Employees Dept-Assigned', pass: unassignedCount === 0 },
+                  {
+                    label: pausedHiddenPayableRows.length === 0
+                      ? 'No Rated Workers Hidden by "Pay this week"'
+                      : `${pausedHiddenPayableRows.length} Rated Worker${pausedHiddenPayableRows.length !== 1 ? 's' : ''} Hidden by "Pay this week" (see Step 2)`,
+                    pass: pausedHiddenPayableRows.length === 0,
+                  },
                   {
                     label: 'Perfect Attendance Evaluated',
                     pass: !pabMonthRange || pabMonthColumnCoverageComplete,

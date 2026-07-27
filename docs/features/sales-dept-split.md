@@ -10,7 +10,15 @@ department everywhere.
 | Cohort | Department | Key | People |
 | --- | --- | --- | --- |
 | US sales team | **Sales** (new) | `sales` | dee, will, brad, shawn, randy, chad, justin, locke |
-| PH assistants | **Sales Assistant** | `sales_assistant` | aleighshaa, mar, vine, markf, deanm, debm, heartm, gladysp, jcr, larat |
+| PH assistants | **Sales Assistant** | `sales_assistant` | aleighshaa, mar, vine, markf, deanm, debm, heartm, gladysp, jcr, larat, vano |
+
+> 2026-07-27: `vano@simple.biz` (Ortiz, Van Aeron — ex-Lead Gen, PH/Lucena) was
+> moved to "Sales" by the sheet sync but wasn't on the pin list, so he resolved
+> to the **US** `sales` key — which is paused in the wizard's Configuration tab —
+> and silently vanished from every wizard step after Initialize while logging
+> 39:56:24. Added to the pin list; the wizard now also surfaces hour-logging
+> workers with a real rate hidden behind a "Pay this week" pause (Step 2 banner
+> + Validation check).
 
 The sheet labels **all of them `Sales`** (there is no "Sales Assistant" label
 anywhere in the sheet), so the split cannot come from the label alone:
