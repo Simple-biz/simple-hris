@@ -301,10 +301,11 @@ export const HSL_DEPTS: Record<HslDeptKey, DeptConfig> = {
         type: 'tiered',
         key: 'attested_cases',
         label: 'Attested Cases',
+        // =IF(Cases>=50,Cases*100,IF(Cases>=35,Cases*75,IF(Cases>=25,Cases*50,0)))
         tiers: [
-          { min: 0,  max: 29, rate: 0 },
-          { min: 30, max: 39, rate: 50 },
-          { min: 40, max: 49, rate: 75 },
+          { min: 0,  max: 24, rate: 0 },
+          { min: 25, max: 34, rate: 50 },
+          { min: 35, max: 49, rate: 75 },
           { min: 50, max: null, rate: 100 },
         ],
       },
