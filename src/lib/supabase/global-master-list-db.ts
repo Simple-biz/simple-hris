@@ -382,9 +382,9 @@ async function promoteMasterListUploadToCurrent(
  * following week) — and the sheet routinely still lists fresh leavers, so an
  * unguarded sync would erase the offboard mid final-pay-cycle (they'd vanish
  * from the KPI calculators' "Offboarded — Last Pay" strips and re-enter the
- * roster as ghosts). 14 also stays ABOVE both deletion timers (7d Lead Gen /
- * 14d others, src/lib/hr/offboard-webhooks.ts), so a stale sheet row can never
- * resurrect someone whose account the cron already deleted.
+ * roster as ghosts). This is a pure DB-record guard: account teardown
+ * (webhooks/automation) is untouched — the offboard FACT simply can't be
+ * un-written by a stale sheet row while the final check may still be pending.
  *
  * This never blocks a real re-hire: the guard only applies to same-person
  * (personal email) matches, and the HR Offboarding tab's Restore button

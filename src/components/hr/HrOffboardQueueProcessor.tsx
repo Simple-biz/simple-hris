@@ -119,9 +119,8 @@ export default function HrOffboardQueueProcessor({ open, items, onOpenChange, on
   );
 
   // Off-board every eligible remaining person in a SINGLE request. The API
-  // coalesces them into at most three deletion-mode-grouped deactivate webhooks
-  // (deletes only ever fire later, from the scheduled-deletion cron), so this
-  // is one round-trip regardless of headcount. Ineligible rows (no work
+  // coalesces them into at most two phase-grouped webhooks (delete vs deactivate),
+  // so this is one round-trip regardless of headcount. Ineligible rows (no work
   // email, or an unpicked/incomplete reason) are left for the one-by-one flow.
   const handleOffboardAll = async () => {
     const eligible = batchEligible;

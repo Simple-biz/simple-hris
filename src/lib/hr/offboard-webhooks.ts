@@ -3,16 +3,9 @@ import { normalizeDeptToKey } from "@/lib/payroll/normalize-dept-key";
 
 /**
  * Offboarding is a two-phase, department-aware teardown driven entirely by the
- * HRIS (n8n does no waiting). EVERY offboard starts with a suspend, never a
- * delete — the person's final pay cycle (payroll pays one week in arrears)
- * must complete with their data intact:
+ * HRIS (n8n does no waiting):
  *
- *   Lead Gen        -> fire `offboarding_deactivate` immediately (suspend) AND
- *                      stamp scheduled_deletion_at = now()+7d — the FINAL PAY
- *                      GRACE window, long enough for the last check to go out.
- *                      The daily cron fires `offboarding_delete` afterwards.
- *                      (Until 2026-07-27 Lead Gen was deleted immediately,
- *                      which destroyed accounts before final pay was sent.)
+ *   Lead Gen        -> fire `offboarding_delete` immediately. No timer.
  *   Other depts     -> fire `offboarding_deactivate` immediately (suspend the
  *                      Workspace account, send the termination email, remove the
  *                      Hubstaff member at pay_rate 0) AND stamp
@@ -23,11 +16,6 @@ import { normalizeDeptToKey } from "@/lib/payroll/normalize-dept-key";
  *                      deletion_mode: "none" and NO scheduled_deletion_at, for
  *                      ANY department — the account is never deleted; the person
  *                      is expected back via re-onboarding.
- *
- * The same 7-day grace also protects the offboard RECORD itself: the master
- * sheet sync's clearOffboarded re-activation skips anyone stamped within the
- * window (see OFFBOARD_REACTIVATION_GRACE_DAYS in global-master-list-db.ts),
- * so a stale sheet row can't un-offboard someone mid final-pay-cycle.
  *
  * The legacy single 'offboarding' slug is retired. URL resolution still goes
  * through the Admin -> Webhooks slug registry (resolveWebhookUrl), so the
@@ -50,15 +38,8 @@ const MANAGER_OFFBOARD_NOTIFY_DEFAULT_URL =
 /** Days a non-Lead-Gen account stays deactivated before the cron deletes it. */
 export const DELETION_DELAY_DAYS = 14;
 
-/** Days an all-Lead-Gen account stays deactivated (suspended, data intact)
- *  before the cron deletes it — the FINAL PAY GRACE window. One week covers
- *  the pay cycle: payroll pays the just-completed week, so a leaver's last
- *  check goes out within days of the stamp; deleting sooner (the old
- *  immediate-delete rule) destroyed the account before that happened. */
-export const LEAD_GEN_DELETION_DELAY_DAYS = 7;
-
 /**
- * Lead Gen gets the shorter (7-day) deletion deferral; anything that does not
+ * Lead Gen is the only department deleted immediately. Anything that does not
  * normalize to the 'lead_gen' key (incl. unknown department strings) is treated
  * as non-Lead-Gen and gets the safer 14-day deferral.
  */
