@@ -70,6 +70,7 @@ import {
   matchesOffboardedQuery,
   type OffboardedCandidate,
 } from './OffboardedSuggestions';
+import { offboardedRelevantToWeek } from '@/lib/roster/offboarded-week-relevance';
 import type { EmployeeRow } from '@/lib/supabase/employees';
 import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
 import { slugifyDeptKey } from '@/lib/departments/registry';
@@ -1120,7 +1121,34 @@ export default function DeptBonusCalculator({
   const [extAddKey, setExtAddKey] = useState<string | null>(null);
   // Recently offboarded people (final bonuses may still be owed) — fetched once
   // and shared by the per-dept Offboarded strips and the add-member modal.
-  const offboardedPeople = useOffboardedPeople(!isQc);
+  const { people: offboardedPeople, hoursWeekFloor: offboardedHoursFloor } = useOffboardedPeople(!isQc);
+  // Only the ones still in their FINAL pay cycle for the week in view: left
+  // during/after the scored week, or logged hours in it. Anyone who left
+  // before the scored week started got their last check in an earlier run —
+  // re-offering them here only invites double-paying an old bonus. Until the
+  // week resolves to a real payroll Sunday, the Monday local-clock seed would
+  // filter against the WRONG week — skip scoping until then ('' = no filter).
+  const offboardedForWeek = useMemo(
+    () =>
+      offboardedPeople.filter((p) =>
+        offboardedRelevantToWeek(p, weekResolved ? weekStart : '', offboardedHoursFloor),
+      ),
+    [offboardedPeople, offboardedHoursFloor, weekStart, weekResolved],
+  );
+  // Canonical identity emails of the week-relevant offboarded people, so table
+  // rows can tag an added offboarded person ("Offboarded — Last Pay") apart
+  // from a plain external member — including rows re-materialized from a saved
+  // draft, where nothing about the original add survives.
+  const offboardedEmailSet = useMemo(() => {
+    const s = new Set<string>();
+    for (const p of offboardedForWeek) {
+      for (const e of [p.hubstaff_email, p.work_email, p.personal_email]) {
+        const ce = e ? canonEmail(e) : '';
+        if (ce) s.add(ce);
+      }
+    }
+    return s;
+  }, [offboardedForWeek, canonEmail]);
   // Mirror of `submit` for the (stable) Escape handler so it can defer to the
   // modal without re-binding the drawer's keydown listener.
   const submitRef = useRef(submit);
@@ -2132,11 +2160,13 @@ export default function DeptBonusCalculator({
     const canAddExternal = !isQc && EXTERNAL_MEMBER_DEPTS.has(key) && !readOnly && !!d?.loaded;
     // Recently offboarded members of THIS department — surfaced so their final
     // bonuses can still be scored (they've left the roster, so they never show
-    // in `teamMembers`). Excludes anyone already on the table under any of
-    // their identity emails. Only offered where external members are supported:
-    // elsewhere the saved applied rows couldn't be re-materialized in this UI.
+    // in `teamMembers`). Week-scoped: only people whose final pay cycle is the
+    // week in view (offboardedForWeek). Excludes anyone already on the table
+    // under any of their identity emails. Only offered where external members
+    // are supported: elsewhere the saved applied rows couldn't be
+    // re-materialized in this UI.
     const offboardedForDept = canAddExternal
-      ? offboardedPeople.filter((p) => {
+      ? offboardedForWeek.filter((p) => {
           const pKey =
             normalizeDeptToKey(p.department) ??
             (p.department?.trim() ? slugifyDeptKey(p.department) : null);
@@ -2490,14 +2520,22 @@ export default function DeptBonusCalculator({
                               >
                                 {m.name}
                               </span>
-                              {m.external && (
-                                <span
-                                  className="shrink-0 rounded bg-sky-100 px-1 py-0.5 font-mono text-[8px] font-bold uppercase tracking-wide text-sky-700 dark:bg-sky-950/60 dark:text-sky-300"
-                                  title="External member — not on the team roster; receives the team's common bonus"
-                                >
-                                  Ext
-                                </span>
-                              )}
+                              {m.external &&
+                                (offboardedEmailSet.has(canonEmail(m.email)) ? (
+                                  <span
+                                    className="shrink-0 rounded bg-amber-100 px-1 py-0.5 font-mono text-[8px] font-bold uppercase tracking-wide text-amber-700 dark:bg-amber-950/60 dark:text-amber-300"
+                                    title="Offboarded — scoring the final bonuses owed on their last check"
+                                  >
+                                    Offboarded — Last Pay
+                                  </span>
+                                ) : (
+                                  <span
+                                    className="shrink-0 rounded bg-sky-100 px-1 py-0.5 font-mono text-[8px] font-bold uppercase tracking-wide text-sky-700 dark:bg-sky-950/60 dark:text-sky-300"
+                                    title="External member — not on the team roster; receives the team's common bonus"
+                                  >
+                                    Ext
+                                  </span>
+                                ))}
                             </span>
                             {m.external && (
                               <span className="block truncate font-mono text-[9px] text-zinc-400" title={m.email}>
@@ -3057,7 +3095,7 @@ export default function DeptBonusCalculator({
               key="kpi-ext-add-modal"
               deptName={DEPARTMENTS.find((d) => d.key === extAddKey)?.name ?? humanizeDeptKey(extAddKey)}
               color={deptColor(extAddKey)}
-              offboarded={offboardedPeople}
+              offboarded={offboardedForWeek}
               reduce={!!reduceMotion}
               onAdd={(name, email) => {
                 const err = addExternalMember(extAddKey, name, email);
@@ -4010,7 +4048,7 @@ function AddExternalMemberModal({
                   {offboardedShown.length > 0 && (
                     <>
                       <div className="border-b border-amber-200/60 bg-amber-50/70 px-3 py-1.5 font-mono text-[9px] font-semibold uppercase tracking-[0.14em] text-amber-700 dark:border-amber-500/20 dark:bg-amber-500/[0.08] dark:text-amber-300">
-                        Offboarded recently — final bonuses may still be owed
+                        Offboarded — Last Pay: final bonuses owed on their last check
                       </div>
                       {offboardedShown.map((o) => {
                         const c: ExternalCandidate = { ...o, offboarded: true };

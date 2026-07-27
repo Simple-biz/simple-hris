@@ -31,6 +31,10 @@ export interface OffboardedCandidate {
   /** The email their recent Hubstaff hours are keyed on (the payable
    *  identity), when determinable. */
   hubstaff_email: string | null;
+  /** Week-start day of the newest timesheet their hours appear in — feeds
+   *  offboardedRelevantToWeek so each calculator only lists people whose FINAL
+   *  pay cycle is the week it's viewing. */
+  last_hours_week_start?: string | null;
 }
 
 /**
@@ -70,32 +74,40 @@ export function matchesOffboardedQuery(c: OffboardedCandidate, q: string): boole
   );
 }
 
+export interface OffboardedPeopleState {
+  people: OffboardedCandidate[];
+  /** The server's `hours_week_floor`: the older week of its two-week Hubstaff
+   *  evidence window. Weeks before it can't be week-scoped — pass this to
+   *  offboardedRelevantToWeek so it degrades to the full list there. */
+  hoursWeekFloor: string | null;
+}
+
 /**
  * Fetch the offboarded candidates once per surface. Both the per-dept strips
  * and the add-member modal share the result, so the calculators fetch a single
  * time on mount rather than per keystroke (the underlying union reads the last
- * two Hubstaff files — not something to re-run while typing).
+ * two Hubstaff weeks — not something to re-run while typing).
  */
-export function useOffboardedPeople(enabled: boolean): OffboardedCandidate[] {
-  const [people, setPeople] = useState<OffboardedCandidate[]>([]);
+export function useOffboardedPeople(enabled: boolean): OffboardedPeopleState {
+  const [state, setState] = useState<OffboardedPeopleState>({ people: [], hoursWeekFloor: null });
   useEffect(() => {
     if (!enabled) return;
     let cancelled = false;
     fetch('/api/manager/transfer-candidates?offboarded=1', { cache: 'no-store' })
       .then((r) => r.json())
-      .then((j: { offboarded?: OffboardedCandidate[] }) => {
-        if (!cancelled) setPeople(j.offboarded ?? []);
+      .then((j: { offboarded?: OffboardedCandidate[]; hours_week_floor?: string | null }) => {
+        if (!cancelled) setState({ people: j.offboarded ?? [], hoursWeekFloor: j.hours_week_floor ?? null });
       })
       .catch(() => {
         // Best-effort: the strips/picker group simply don't render. The manual
         // search path (active candidates) is unaffected.
-        if (!cancelled) setPeople([]);
+        if (!cancelled) setState({ people: [], hoursWeekFloor: null });
       });
     return () => {
       cancelled = true;
     };
   }, [enabled]);
-  return people;
+  return state;
 }
 
 /**
@@ -129,11 +141,11 @@ export function OffboardedStrip({
     <div className="rounded-lg border border-amber-200/80 bg-amber-50/60 px-3 py-2.5 dark:border-amber-500/25 dark:bg-amber-500/[0.07]">
       <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
         <span className="font-mono text-[10px] font-semibold uppercase tracking-[0.14em] text-amber-700 dark:text-amber-300">
-          Offboarded ({people.length})
+          Offboarded — Last Pay ({people.length})
         </span>
         <span className="text-[11px] text-amber-700/80 dark:text-amber-300/70">
-          Recently left this team — add them to score their final bonuses. Payout follows the week covering
-          their last hours; if payroll can’t stage them, Accounting pays via People → Pay.
+          Left this pay week or since — add them to score the final bonuses owed on their last check. Payout
+          follows the week covering their last hours; if payroll can’t stage them, Accounting pays via People → Pay.
         </span>
       </div>
       <div className="mt-2 flex flex-wrap items-center gap-1.5">

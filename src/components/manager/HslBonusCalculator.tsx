@@ -37,6 +37,7 @@ import {
   matchesOffboardedQuery,
   type OffboardedCandidate,
 } from './OffboardedSuggestions';
+import { offboardedRelevantToWeek } from '@/lib/roster/offboarded-week-relevance';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -455,7 +456,36 @@ export default function HslBonusCalculator({
   const [addingMemberDept, setAddingMemberDept] = useState<HslDeptKey | null>(null);
   // Recently offboarded people (final bonuses may still be owed) — fetched once
   // and shared by the per-dept Offboarded strips and the add-member modal.
-  const offboardedPeople = useOffboardedPeople(true);
+  const { people: offboardedPeople, hoursWeekFloor: offboardedHoursFloor } = useOffboardedPeople(true);
+  // Only the ones still in their FINAL pay cycle for the week in view: left
+  // during/after the scored week, or logged hours in it. Anyone who left
+  // before the scored week started got their last check in an earlier run —
+  // re-offering them here only invites double-paying an old bonus. (Monthly
+  // branches use the same weekly rule: once the final check is out, nothing
+  // can pay a late-scored bonus anyway.) Until the week resolves to a real
+  // payroll Sunday, the Monday local-clock seed would filter against the WRONG
+  // week — skip scoping until then ('' = no filter).
+  const offboardedForWeek = useMemo(
+    () =>
+      offboardedPeople.filter((p) =>
+        offboardedRelevantToWeek(p, weekResolved ? weekStart : '', offboardedHoursFloor),
+      ),
+    [offboardedPeople, offboardedHoursFloor, weekStart, weekResolved],
+  );
+  // Identity emails of the week-relevant offboarded people, so table rows can
+  // tag an added offboarded person ("Offboarded — Last Pay") apart from a
+  // plain external member — including entries reloaded from saved rows, where
+  // nothing about the original add survives.
+  const offboardedEmails = useMemo(() => {
+    const s = new Set<string>();
+    for (const p of offboardedForWeek) {
+      for (const e of [p.hubstaff_email, p.work_email, p.personal_email]) {
+        const ce = normEmail(e ?? '');
+        if (ce) s.add(ce);
+      }
+    }
+    return s;
+  }, [offboardedForWeek]);
   /** Offboarded people attributed to a specific HSL branch: the master list
    *  labels branch members either with the raw `hsl:<key>` slug or with the
    *  branch's display name (e.g. "Callback Team" for the Simple-side branches
@@ -463,7 +493,7 @@ export default function HslBonusCalculator({
    *  branch — those people stay findable via the Add member search instead. */
   const offboardedByDept = useMemo(() => {
     const m = new Map<HslDeptKey, OffboardedCandidate[]>();
-    for (const p of offboardedPeople) {
+    for (const p of offboardedForWeek) {
       const label = (p.department ?? '').trim().toLowerCase();
       if (!label) continue;
       for (const key of HSL_DEPT_KEYS) {
@@ -476,7 +506,7 @@ export default function HslBonusCalculator({
       }
     }
     return m;
-  }, [offboardedPeople]);
+  }, [offboardedForWeek]);
 
   function periodStart(dept: DeptConfig): string {
     return dept.cadence === 'weekly' ? weekStart : monthStart;
@@ -1194,6 +1224,7 @@ export default function HslBonusCalculator({
               });
             }}
             rosterEmails={deptState[key]!.rosterEmails}
+            offboardedEmails={offboardedEmails}
             onAddMember={() => setAddingMemberDept(key)}
             offboardedSuggestions={(offboardedByDept.get(key) ?? []).filter((p) => {
               const emailTaken = [p.hubstaff_email, p.work_email, p.personal_email].some((e) => {
@@ -1278,7 +1309,7 @@ export default function HslBonusCalculator({
           <HslAddMemberModal
             deptName={HSL_DEPTS[addingMemberDept].name}
             color={HSL_DEPTS[addingMemberDept].color}
-            offboarded={offboardedPeople}
+            offboarded={offboardedForWeek}
             onAdd={(name, email) => addMember(addingMemberDept, name, email)}
             onClose={() => setAddingMemberDept(null)}
           />
@@ -1343,6 +1374,9 @@ interface DeptBlockProps {
   payrollLocked: boolean;
   markUnreadySubmitting: boolean;
   rosterEmails: Set<string>;
+  /** Identity emails of week-relevant offboarded people — tags their table
+   *  rows "Offboarded — Last Pay" instead of the generic ext chip. */
+  offboardedEmails?: Set<string>;
   onAddMember: () => void;
   /** Recently offboarded members of this branch (already de-duped against the
    *  current entries) — rendered as a one-click "Offboarded" strip so their
@@ -1360,7 +1394,7 @@ function DeptBlock({
   onKpiChange, onToggleManager,
   onSave, onMarkReady, onMarkUnready, onView, onSubTeamChange, ssdShareForTeam,
   payrollLocked, markUnreadySubmitting,
-  rosterEmails, onAddMember, offboardedSuggestions, onQuickAddOffboarded, onRemoveMember,
+  rosterEmails, offboardedEmails, onAddMember, offboardedSuggestions, onQuickAddOffboarded, onRemoveMember,
 }: DeptBlockProps) {
   const dept = HSL_DEPTS[deptKey];
   const deptTotal = state.entries.reduce((s, e) => s + e.calculated_bonus, 0);
@@ -1643,6 +1677,7 @@ function DeptBlock({
             onKpiChange={onKpiChange}
             onToggleManager={onToggleManager}
             rosterEmails={rosterEmails}
+            offboardedEmails={offboardedEmails}
             onRemoveMember={onRemoveMember}
           />
         )}
@@ -1655,6 +1690,7 @@ function DeptBlock({
             isLocked={readOnly}
             onKpiChange={onKpiChange}
             rosterEmails={rosterEmails}
+            offboardedEmails={offboardedEmails}
             onRemoveMember={onRemoveMember}
           />
         )}
@@ -1688,6 +1724,7 @@ function DeptBlock({
                 activeFilter={subTeamFilter}
                 onFilterChange={setSubTeamFilter}
                 rosterEmails={rosterEmails}
+                offboardedEmails={offboardedEmails}
                 onRemoveMember={onRemoveMember}
               />
             </div>
@@ -1808,10 +1845,30 @@ interface KpiTableProps {
   onKpiChange: (email: string, key: string, val: number | boolean) => void;
   onToggleManager: (email: string) => void;
   rosterEmails?: Set<string>;
+  offboardedEmails?: Set<string>;
   onRemoveMember?: (email: string) => void;
 }
 
-export function KpiTable({ dept, entries, subtotal, isLocked, onKpiChange, onToggleManager, rosterEmails, onRemoveMember }: KpiTableProps) {
+/** The off-roster tag on a table row: a week-relevant offboarded person reads
+ *  "Offboarded — Last Pay" (their final check is this pay cycle), anyone else
+ *  the generic "ext". */
+function ExtChip({ email, offboardedEmails }: { email: string; offboardedEmails?: Set<string> }) {
+  const lastPay = !!offboardedEmails?.has(email);
+  return (
+    <span
+      className="shrink-0 rounded bg-amber-100 px-1 py-0.5 font-mono text-[8px] font-semibold uppercase tracking-wider text-amber-700 dark:bg-amber-950/50 dark:text-amber-300"
+      title={
+        lastPay
+          ? 'Offboarded — scoring the final bonuses owed on their last check'
+          : 'External member — not on this branch roster'
+      }
+    >
+      {lastPay ? 'Offboarded — Last Pay' : 'ext'}
+    </span>
+  );
+}
+
+export function KpiTable({ dept, entries, subtotal, isLocked, onKpiChange, onToggleManager, rosterEmails, offboardedEmails, onRemoveMember }: KpiTableProps) {
   const rules = dept.rules.filter((r) => r.type !== 'team_split');
 
   return (
@@ -1852,11 +1909,7 @@ export function KpiTable({ dept, entries, subtotal, isLocked, onKpiChange, onTog
                   <div className="min-w-0">
                     <div className="flex items-center gap-1.5 font-medium text-zinc-900 dark:text-zinc-100">
                       <span className="truncate">{e.employee_name}</span>
-                      {isExternal && (
-                        <span className="shrink-0 rounded bg-amber-100 px-1 py-0.5 font-mono text-[8px] font-semibold uppercase tracking-wider text-amber-700 dark:bg-amber-950/50 dark:text-amber-300">
-                          ext
-                        </span>
-                      )}
+                      {isExternal && <ExtChip email={e.employee_email} offboardedEmails={offboardedEmails} />}
                     </div>
                     <div className="font-mono text-[10px] text-zinc-500">{e.employee_email}</div>
                   </div>
@@ -1945,6 +1998,7 @@ interface HslManagersTableProps {
   isLocked: boolean;
   onKpiChange: (email: string, key: string, val: number | boolean) => void;
   rosterEmails?: Set<string>;
+  offboardedEmails?: Set<string>;
   onRemoveMember?: (email: string) => void;
 }
 
@@ -1952,7 +2006,7 @@ interface HslManagersTableProps {
  *  person's own hardcoded incentive checklist (HSL_MANAGERS). Ticking a component
  *  adds its fixed amount; the row total sums every ticked component. */
 export function HslManagersTable({
-  entries, subtotal, isLocked, onKpiChange, rosterEmails, onRemoveMember,
+  entries, subtotal, isLocked, onKpiChange, rosterEmails, offboardedEmails, onRemoveMember,
 }: HslManagersTableProps) {
   return (
     <div className="overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
@@ -1988,11 +2042,7 @@ export function HslManagersTable({
                     <div className="min-w-0">
                       <div className="flex items-center gap-1.5 font-medium text-zinc-900 dark:text-zinc-100">
                         <span className="truncate">{e.employee_name}</span>
-                        {isExternal && (
-                          <span className="shrink-0 rounded bg-amber-100 px-1 py-0.5 font-mono text-[8px] font-semibold uppercase tracking-wider text-amber-700 dark:bg-amber-950/50 dark:text-amber-300">
-                            ext
-                          </span>
-                        )}
+                        {isExternal && <ExtChip email={e.employee_email} offboardedEmails={offboardedEmails} />}
                       </div>
                       <div className="font-mono text-[10px] text-zinc-500">{e.employee_email}</div>
                     </div>
@@ -2243,6 +2293,7 @@ interface SsdEmployeeTableProps {
   /** Set the active roster filter. */
   onFilterChange?: (f: SubTeamFilter) => void;
   rosterEmails?: Set<string>;
+  offboardedEmails?: Set<string>;
   onRemoveMember?: (email: string) => void;
 }
 
@@ -2309,7 +2360,7 @@ export function SubTeamChips({
 
 export function SsdEmployeeTable({
   entries, allEntries, isLocked, ssdShareForTeam, onSubTeamAssign,
-  activeFilter = 'ALL', onFilterChange, rosterEmails, onRemoveMember,
+  activeFilter = 'ALL', onFilterChange, rosterEmails, offboardedEmails, onRemoveMember,
 }: SsdEmployeeTableProps) {
   const SUB_TEAM_NAMES: SubTeamName[] = ['BLUE', 'GREEN', 'YELLOW', 'ORANGE', 'PURPLE', 'RED'];
 
@@ -2588,9 +2639,7 @@ export function SsdEmployeeTable({
                         <div className="flex items-center gap-1.5 font-medium text-zinc-900 dark:text-zinc-100">
                           <span className="truncate">{e.employee_name}</span>
                           {!!rosterEmails && !rosterEmails.has(e.employee_email) && (
-                            <span className="shrink-0 rounded bg-amber-100 px-1 py-0.5 font-mono text-[8px] font-semibold uppercase tracking-wider text-amber-700 dark:bg-amber-950/50 dark:text-amber-300">
-                              ext
-                            </span>
+                            <ExtChip email={e.employee_email} offboardedEmails={offboardedEmails} />
                           )}
                         </div>
                         <div className="font-mono text-[10px] text-zinc-500">{e.employee_email}</div>
@@ -2854,7 +2903,7 @@ function HslAddMemberModal({
                   {offboardedShown.length > 0 && (
                     <>
                       <div className="border-b border-amber-200/60 bg-amber-50/70 px-3 py-1.5 font-mono text-[9px] font-semibold uppercase tracking-[0.14em] text-amber-700 dark:border-amber-500/20 dark:bg-amber-500/[0.08] dark:text-amber-300">
-                        Offboarded recently — final bonuses may still be owed
+                        Offboarded — Last Pay: final bonuses owed on their last check
                       </div>
                       {offboardedShown.map((o) => {
                         const c: ExternalCandidate = { ...o, offboarded: true };

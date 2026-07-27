@@ -55,6 +55,13 @@ export interface RecentlyOffboardedPerson {
    *  doc. Null when they have no hours in those files (their final pay is
    *  already out, or they never tracked). */
   hubstaff_email: string | null;
+  /** Week-start day (`YYYY-MM-DD`, the file's Sunday) of the NEWEST timesheet
+   *  their hours appear in — i.e. the last week they actually worked, as far
+   *  as the two-file window can see. Dates the undated fell-off-the-sheet
+   *  people, and lets callers scope the list to one pay week (a person is only
+   *  scorable for a week they either worked or hadn't yet left). Null whenever
+   *  `hubstaff_email` is null. */
+  last_hours_week_start: string | null;
 }
 
 /** Calendar-date prefix of an ISO timestamp / date string. */
@@ -119,10 +126,15 @@ function nameKey(raw: string | null | undefined): string {
  */
 export async function listRecentlyOffboardedPeople(days = 90): Promise<{
   people: RecentlyOffboardedPerson[];
+  /** Older week-start day of the two-week hours-evidence window. Weeks BEFORE
+   *  this have no hours signal at all — week-scoping consumers must degrade to
+   *  the full list there instead of trusting "no hours" (see
+   *  offboarded-week-relevance.ts). Null only when no Hubstaff file exists. */
+  hoursWeekFloor: string | null;
   error: string | null;
 }> {
   const supabase = createSupabaseServiceRoleClient();
-  if (!supabase) return { people: [], error: 'Supabase not configured' };
+  if (!supabase) return { people: [], hoursWeekFloor: null, error: 'Supabase not configured' };
 
   const cutoff = toDay(new Date(Date.now() - days * 86_400_000).toISOString())!;
 
@@ -145,7 +157,7 @@ export async function listRecentlyOffboardedPeople(days = 90): Promise<{
   };
 
   // ── Reads (see the failure-semantics note in the function doc) ────────────
-  const [gmlRes, currentUploadRes, usIdsRes, queueRows, sheetRows, hubRows] = await Promise.all([
+  const [gmlRes, currentUploadRes, usIdsRes, queueRows, sheetRows, hubRes] = await Promise.all([
     readAll((from, to) =>
       supabase
         .from('global_master_list')
@@ -190,24 +202,47 @@ export async function listRecentlyOffboardedPeople(days = 90): Promise<{
         })
         .filter((u): u is { file: string; start: Date } => !!u.file && !!u.start && !Number.isNaN(u.start.getTime()))
         .sort((a, b) => b.start.getTime() - a.start.getTime());
-      const files = [...new Set(dated.map((u) => u.file))].slice(0, 2);
-      const out: { email: string; tokens: Set<string> }[] = [];
+      // Keep every file of the TWO newest distinct WEEKS (keyed by the file's
+      // parsed range start — the same day KPI weeks are keyed on). Deduping by
+      // week, not filename, matters: one week can carry several distinct files
+      // (the n8n api_sync export plus a manual CSV re-upload), and a
+      // two-FILENAME window would then silently collapse the lookback to a
+      // single week.
+      const weekDays: string[] = [];
+      const files: { file: string; weekStartDay: string }[] = [];
+      const seenFiles = new Set<string>();
+      for (const u of dated) {
+        const weekStartDay = `${u.start.getFullYear()}-${String(u.start.getMonth() + 1).padStart(2, '0')}-${String(u.start.getDate()).padStart(2, '0')}`;
+        if (!weekDays.includes(weekStartDay)) {
+          if (weekDays.length >= 2) continue; // an older week — out of window
+          weekDays.push(weekStartDay);
+        }
+        if (seenFiles.has(u.file)) continue;
+        seenFiles.add(u.file);
+        files.push({ file: u.file, weekStartDay });
+      }
+      const out: { email: string; tokens: Set<string>; weekStartDay: string }[] = [];
       const seen = new Set<string>();
-      for (const f of files) {
-        const { rows } = await fetchHubstaffRowsBySourceFile(f);
+      for (const { file, weekStartDay } of files) {
+        const { rows } = await fetchHubstaffRowsBySourceFile(file);
         for (const r of rowsToPayrollRows(rows)) {
           const em = normEmail(r.email ?? '');
           if (!em || seen.has(em)) continue;
           seen.add(em);
-          out.push({ email: em, tokens: nameTokens(r.name) });
+          // Files iterate newest-week-first and `seen` keeps the first hit, so
+          // each email's row carries the NEWEST week they logged hours in.
+          out.push({ email: em, tokens: nameTokens(r.name), weekStartDay });
         }
       }
-      return out;
+      // weekFloor = the OLDER kept week: the boundary below which the hours
+      // evidence sees nothing. Callers week-scoping the list must not trust
+      // "no hours" for weeks before it.
+      return { rows: out, weekFloor: weekDays.length ? weekDays[weekDays.length - 1]! : null };
     })().catch(() => null),
   ]);
 
   if (gmlRes.error && gmlRes.rows.length === 0) {
-    return { people: [], error: gmlRes.error };
+    return { people: [], hoursWeekFloor: null, error: gmlRes.error };
   }
   // Fail closed on an unresolvable current upload: with no (or an ambiguous)
   // is_current row, the active-roster exclusion below would match NOBODY and
@@ -215,20 +250,27 @@ export async function listRecentlyOffboardedPeople(days = 90): Promise<{
   // one is_current row is the only trustworthy state — a sheet-sync promote
   // window (zero rows) or the documented sync race (two rows) both bail.
   if (currentUploadRes.error) {
-    return { people: [], error: `master_list_uploads: ${currentUploadRes.error.message}` };
+    return { people: [], hoursWeekFloor: null, error: `master_list_uploads: ${currentUploadRes.error.message}` };
   }
   const currentRows = (currentUploadRes.data ?? []) as { id: unknown }[];
   if (currentRows.length !== 1) {
     return {
       people: [],
+      hoursWeekFloor: null,
       error: `master_list_uploads has ${currentRows.length} is_current rows — cannot resolve the active roster`,
     };
   }
   const currentUploadId = str(currentRows[0].id);
-  if (hubRows === null) {
-    return { people: [], error: 'Hubstaff timesheets could not be read — payable identities cannot be resolved' };
+  if (hubRes === null) {
+    return {
+      people: [],
+      hoursWeekFloor: null,
+      error: 'Hubstaff timesheets could not be read — payable identities cannot be resolved',
+    };
   }
+  const { rows: hubRows, weekFloor: hoursWeekFloor } = hubRes;
   const hubEmails = new Set(hubRows.map((h) => h.email));
+  const hubWeekByEmail = new Map(hubRows.map((h) => [h.email, h.weekStartDay]));
   const usEmails = new Set<string>();
   for (const r of (usIdsRes.data ?? []) as { work_email?: string | null; personal_email?: string | null }[]) {
     for (const e of [r.work_email, r.personal_email]) {
@@ -418,6 +460,7 @@ export async function listRecentlyOffboardedPeople(days = 90): Promise<{
       personal_email: g.personal_email,
       off_boarded_at: g.off,
       hubstaff_email,
+      last_hours_week_start: hubstaff_email ? hubWeekByEmail.get(hubstaff_email) ?? null : null,
     });
   }
 
@@ -428,5 +471,5 @@ export async function listRecentlyOffboardedPeople(days = 90): Promise<{
       (b.off_boarded_at ?? '9999-99-99').localeCompare(a.off_boarded_at ?? '9999-99-99') ||
       a.name.localeCompare(b.name),
   );
-  return { people: people.slice(0, 300), error: null };
+  return { people: people.slice(0, 300), hoursWeekFloor, error: null };
 }

@@ -41,15 +41,19 @@ export async function GET(request: Request) {
   // who recently left (pipeline offboard, offboarded sheet, or fell off the
   // roster) whose FINAL bonuses may still need scoring. Same shape as the
   // active candidates plus off_boarded_at + hubstaff_email (the identity
-  // payroll actually pays — see src/lib/roster/recently-offboarded.ts). The
+  // payroll actually pays — see src/lib/roster/recently-offboarded.ts) +
+  // last_hours_week_start. The list is a recent-departures SUPERSET: each
+  // calculator scopes it to the pay week it's viewing (only people whose
+  // final pay cycle is that week — src/lib/roster/offboarded-week-relevance.ts),
+  // so someone who left two-plus weeks ago no longer clutters the strips. The
   // transfer picker never sends this flag, so transfers keep offering only
   // active people. No dept exclusion here: these people have left their dept
   // by definition, and managers add them precisely to score their own team's
   // final week.
   if (new URL(request.url).searchParams.get('offboarded') === '1') {
-    const { people: offboarded, error: offErr } = await listRecentlyOffboardedPeople();
+    const { people: offboarded, hoursWeekFloor, error: offErr } = await listRecentlyOffboardedPeople();
     if (offErr) return NextResponse.json({ offboarded: [], error: offErr }, { status: 500 });
-    return NextResponse.json({ offboarded, error: null });
+    return NextResponse.json({ offboarded, hours_week_floor: hoursWeekFloor, error: null });
   }
 
   const { people, error } = await listActiveMasterListPeople();
