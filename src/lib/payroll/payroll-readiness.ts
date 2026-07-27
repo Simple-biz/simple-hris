@@ -158,12 +158,12 @@ export interface ReadinessMissingBank {
    *  they are being PAID this week with no payout rail, which makes them a
    *  hard blocker (pins the score's bank dimension, like a missing rate). */
   onPayroll: boolean;
-  /** Set (`YYYY-MM-DD`) when this person is off-boarded but still listed
-   *  because their FINAL pay hasn't gone out yet — they either have hours in
-   *  the week in view or left during/after it. Once the pay week in view
-   *  starts after their off-board date they age off the list entirely (their
-   *  final pay was already covered by an earlier week). Null for everyone
-   *  still active. */
+  /** Set (`YYYY-MM-DD`) when this person left during/after the pay week in
+   *  view but is still listed because their FINAL pay hasn't gone out yet.
+   *  Once the week in view starts after their off-board date they age off the
+   *  list entirely (their final pay was covered by an earlier week's run).
+   *  Null for everyone still active — including people with a STALE off-board
+   *  record who are demonstrably still working (see `buildMissingBank`). */
   offBoardedAt: string | null;
 }
 
@@ -1094,7 +1094,7 @@ async function buildMissingBank(
     // the list AND the denominator. Someone who left during/after the week,
     // or who has hours in its file (a payday blocker), stays until the run
     // that pays them is behind us.
-    const offBoardedAt = (() => {
+    const offAt = (() => {
       const dates = [w, p]
         .map((em) => (em ? offboardDateByEmail.get(em) : undefined))
         .filter((d): d is string => Boolean(d));
@@ -1103,7 +1103,12 @@ async function buildMissingBank(
       const started = normalizeStartDate(e.start_date);
       return started && latest > started ? latest : null;
     })();
-    if (offBoardedAt && offBoardedAt < weekStart && !onPayroll) continue;
+    if (offAt && offAt < weekStart && !onPayroll) continue;
+    // The badge only claims "Left" when the off-board lands in/after the week
+    // in view. Someone on payroll with an OLDER off-board date is a stale
+    // record for a person who's clearly still working (re-hire whose master
+    // start date never moved) — they stay listed as a normal row, unlabeled.
+    const offBoardedAt = offAt && offAt >= weekStart ? offAt : null;
 
     eligibleCount += 1;
     if (onPayroll) onPayrollEligibleCount += 1;

@@ -66,6 +66,17 @@ No migration — everything reads existing tables.
    Each row carries `onPayroll`: true when any of the person's aliases has
    hours in the week's Hubstaff file — a **hard blocker** (they will reach
    Payment Dispatch and simply not get paid). Blockers sort first.
+   **Off-boarded people age off once their final pay is out** (2026-07-27): HR
+   keeps a leaver on the master sheet (⇒ the active roster) through their last
+   pay, so the roster alone would list them for weeks. The check unions every
+   off-board record (stamped duplicate `global_master_list` rows, the
+   `offboarded_sheet` snapshot, completed `offboarding_queue` requests — see
+   `loadOffboardDatesByEmail`), guards it against the person's own start date
+   (a re-hire / recycled email never matches its predecessor's off-board), and
+   drops anyone who left BEFORE the pay week in view and has no hours in its
+   file — from the list AND the eligible denominator. Someone who left
+   during/after the week (or with hours in its file) stays until the run that
+   pays them is behind us, labeled "Left · final pay" in the UI.
 4. **Exceptions** — HR onboarding-pipeline people expected NOT to be paid this
    week: `onboarding`, `awaiting_orientation`, `no_show`, `started_this_week`
    (first pay period hasn't closed). **Excluded from the score entirely** —
