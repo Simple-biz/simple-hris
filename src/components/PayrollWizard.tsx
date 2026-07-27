@@ -5371,7 +5371,10 @@ export default function PayrollWizard({
    * departments excluded from this week's pay in the Configuration tab.
    */
   const additionsDepartments = useMemo(
-    () => allWizardDepartments.filter(d => !pausedDeptKeys.has(d.key)),
+    () =>
+      allWizardDepartments
+        .filter(d => !pausedDeptKeys.has(d.key))
+        .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' })),
     [allWizardDepartments, pausedDeptKeys],
   );
 
@@ -11863,11 +11866,14 @@ export default function PayrollWizard({
           hslDeptCounts.set(d, (hslDeptCounts.get(d) ?? 0) + 1);
         }
         const hslPeriodDeptSet = new Set(hslStepPeriods.map(p => p.department));
-        // Rail order follows canonical HSL_DEPT_KEYS; a dept appears if it has people
-        // this cycle OR a ready/locked KPI period.
+        // Rail lists depts alphabetically by display name ("All HSL" pinned first,
+        // "Unassigned" last); a dept appears if it has people this cycle OR a
+        // ready/locked KPI period.
+        const hslDeptName = (k: string) =>
+          (HSL_DEPTS as Record<string, { name?: string }>)[k]?.name ?? k;
         const hslRailDeptKeys = HSL_DEPT_KEYS.filter(
           k => (hslDeptCounts.get(k) ?? 0) > 0 || hslPeriodDeptSet.has(k),
-        );
+        ).sort((a, b) => hslDeptName(a).localeCompare(hslDeptName(b), undefined, { sensitivity: 'base' }));
         const hslHasUnassigned = (hslDeptCounts.get('unassigned') ?? 0) > 0;
         const hslValidDeptKeys = new Set<string>([
           'all',

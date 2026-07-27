@@ -852,7 +852,20 @@
       "PowerShell($env:TSX_TSCONFIG_PATH=\"tsconfig.readiness-verify.json\"; node --import tsx scripts/_tmp-verify-split-roster.mts)",
       "PowerShell(npx tsc --noEmit 2>$null; echo \"exit: $LASTEXITCODE\")",
       "PowerShell(git add src/lib/departments/dept-email-overrides.ts)",
-      "Bash(node -e \"console.log\\(JSON.parse\\(require\\('fs'\\).readFileSync\\('package.json'\\)\\).scripts\\)\")"
+      "Bash(node -e \"console.log\\(JSON.parse\\(require\\('fs'\\).readFileSync\\('package.json'\\)\\).scripts\\)\")",
+      "Bash(node scripts/_tmp-probe-leadgen-offboarded.mjs)",
+      "Bash(xargs wc -l)",
+      "Bash(node scripts/_tmp-probe-leadgen-stragglers.mjs)",
+      "Bash(TSX_TSCONFIG_PATH=tsconfig.readiness-verify.json node --import tsx scripts/verify-offboarded-people.mts hannam@simple.biz cathypa@simple.biz josec@simple.biz jomarp@simple.biz cyrusm@simple.biz markcr@simple.biz pepitos@simple.biz dianea@simple.biz)",
+      "PowerShell(git -C C:\\\\Users\\\\Kane\\\\Desktop\\\\simple-hris diff -- src/components/manager/DeptBonusCalculator.tsx)",
+      "PowerShell(git -C C:\\\\Users\\\\Kane\\\\Desktop\\\\simple-hris diff -- src/components/manager/HslBonusCalculator.tsx)",
+      "PowerShell(git -C C:\\\\Users\\\\Kane\\\\Desktop\\\\simple-hris diff -- app/api/manager/transfer-candidates/route.ts)",
+      "PowerShell($env:TSX_TSCONFIG_PATH=\"tsconfig.readiness-verify.json\"; node --import tsx \"C:\\\\Users\\\\Kane\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-Kane-Desktop-simple-hris\\\\32352e11-813b-41e0-9a4a-ede8867b8421\\\\scratchpad\\\\verify-offboarded-claim.mts\")",
+      "PowerShell(npx tsc --noEmit -p tsconfig.json; Write-Output \"TSC_EXIT=$LASTEXITCODE\")",
+      "Bash(TSX_TSCONFIG_PATH=tsconfig.readiness-verify.json node --import tsx -e ' *)",
+      "Bash(TSX_TSCONFIG_PATH=tsconfig.readiness-verify.json node --import tsx scripts/_tmp-check-active-leaks.mts)",
+      "Bash(rm scripts/_tmp-check-active-leaks.mts)",
+      "Bash(grep -n \"hsl:\\\\${key}\" c:/Users/Kane/Desktop/simple-hris/src/components/manager/HslBonusCalculator.tsx)"
     ],
     "additionalDirectories": [
       "c:\\Users\\Itachi\\.claude\\projects\\c--Users-Itachi-Desktop-simple-hris\\memory",
