@@ -3006,6 +3006,18 @@ function PayrollReadinessGlance({
                               department={r.department}
                               right={
                                 <div className="flex shrink-0 items-center gap-1.5">
+                                  {/* Off-boarded but still owed their final pay —
+                                      explains why a leaver is on the list. They
+                                      age off automatically once the week being
+                                      paid starts after their off-board date. */}
+                                  {r.offBoardedAt && (
+                                    <span
+                                      className="shrink-0 rounded-full border border-zinc-200 bg-zinc-50 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-zinc-500 dark:border-zinc-700 dark:bg-zinc-800/60 dark:text-zinc-400"
+                                      title={`Off-boarded ${formatStartDate(r.offBoardedAt)} — still listed because their final pay hasn't gone out; they drop off after the week that pays it`}
+                                    >
+                                      Left · final pay
+                                    </span>
+                                  )}
                                   {r.onPayroll && (
                                     <span
                                       className="shrink-0 rounded-full border border-rose-200 bg-rose-50 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-rose-700 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-300"

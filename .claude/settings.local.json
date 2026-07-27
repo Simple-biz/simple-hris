@@ -851,7 +851,8 @@
       "Bash(node scripts/_tmp-probe-offboarded-bank.mjs)",
       "PowerShell($env:TSX_TSCONFIG_PATH=\"tsconfig.readiness-verify.json\"; node --import tsx scripts/_tmp-verify-split-roster.mts)",
       "PowerShell(npx tsc --noEmit 2>$null; echo \"exit: $LASTEXITCODE\")",
-      "PowerShell(git add src/lib/departments/dept-email-overrides.ts)"
+      "PowerShell(git add src/lib/departments/dept-email-overrides.ts)",
+      "Bash(node -e \"console.log\\(JSON.parse\\(require\\('fs'\\).readFileSync\\('package.json'\\)\\).scripts\\)\")"
     ],
     "additionalDirectories": [
       "c:\\Users\\Itachi\\.claude\\projects\\c--Users-Itachi-Desktop-simple-hris\\memory",

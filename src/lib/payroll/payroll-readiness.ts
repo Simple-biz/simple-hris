@@ -17,6 +17,10 @@ import 'server-only';
  *                           missing hourly rate isn't a blocker for them).
  *   3. Missing bank info  — active employees whose employee_ids row isn't payable
  *                           (isPayoutComplete === false), USEE/US Employees aside.
+ *                           Off-boarded people stay only while their final pay is
+ *                           pending (hours in the week in view, or left during/
+ *                           after it) — once the week being paid starts after
+ *                           their off-board date they age off the list.
  *   4. Exceptions         — HR onboarding-pipeline hires who naturally won't be
  *                           paid this week (still onboarding, no-show, or started
  *                           this week so their first period hasn't closed).
@@ -154,6 +158,13 @@ export interface ReadinessMissingBank {
    *  they are being PAID this week with no payout rail, which makes them a
    *  hard blocker (pins the score's bank dimension, like a missing rate). */
   onPayroll: boolean;
+  /** Set (`YYYY-MM-DD`) when this person is off-boarded but still listed
+   *  because their FINAL pay hasn't gone out yet — they either have hours in
+   *  the week in view or left during/after it. Once the pay week in view
+   *  starts after their off-board date they age off the list entirely (their
+   *  final pay was already covered by an earlier week). Null for everyone
+   *  still active. */
+  offBoardedAt: string | null;
 }
 
 /** Why a person is expected NOT to be paid this week (an onboarding exception). */
@@ -890,6 +901,100 @@ function excludeByIdentity(
   return identityKeys(workEmail, personalEmail, name).some((k) => exclude.has(k));
 }
 
+/**
+ * Latest known off-board date per normalized email, unioned from every place an
+ * off-board gets recorded. Needed because the ACTIVE roster can't see recent
+ * leavers: HR keeps someone on the master sheet through their final pay (~2
+ * weeks), so their active row reads `off_boarded_at IS NULL` the whole time —
+ * yet the off-board is already on record in one of:
+ *
+ *   • a DUPLICATE `global_master_list` row stamped `off_boarded_at` (the sheet
+ *     carries dupe person rows; the stamped one drops out of the active view),
+ *   • the `offboarded_sheet` snapshot (the master sheet's "Offboarded" tab),
+ *   • a completed `offboarding_queue` request (`decided_at` = when HR
+ *     completed it).
+ *
+ * The bank check uses this to age leavers off its list once their final pay is
+ * out (see `buildMissingBank`). Best-effort by design: a failed read just
+ * leaves people listed longer (today's behavior) — it never hides anyone and
+ * never touches the score, so it doesn't join `degraded`.
+ */
+async function loadOffboardDatesByEmail(): Promise<Map<string, string>> {
+  const byEmail = new Map<string, string>();
+  const supabase = createSupabaseServiceRoleClient();
+  if (!supabase) return byEmail;
+
+  const note = (email: unknown, when: unknown) => {
+    const em = normEmail(typeof email === 'string' ? email : '');
+    const day = normalizeStartDate(typeof when === 'string' ? when : null);
+    if (!em || !day) return;
+    const cur = byEmail.get(em);
+    if (!cur || day > cur) byEmail.set(em, day);
+  };
+
+  type Row = Record<string, unknown>;
+  const readAll = async (
+    page: (from: number, to: number) => PromiseLike<{ data: unknown; error: { message: string } | null }>,
+  ): Promise<Row[]> => {
+    const PAGE = 1000;
+    const out: Row[] = [];
+    let from = 0;
+    while (true) {
+      const { data, error } = await page(from, from + PAGE - 1);
+      if (error) throw new Error(error.message);
+      const batch = (data ?? []) as Row[];
+      out.push(...batch);
+      if (batch.length < PAGE) break;
+      from += PAGE;
+    }
+    return out;
+  };
+
+  await Promise.all([
+    readAll((from, to) =>
+      supabase
+        .from('global_master_list')
+        .select('"Work Email","Personal Email",off_boarded_at')
+        .not('off_boarded_at', 'is', null)
+        .range(from, to),
+    )
+      .then((rows) => {
+        for (const r of rows) {
+          note(r['Work Email'], r['off_boarded_at']);
+          note(r['Personal Email'], r['off_boarded_at']);
+        }
+      })
+      .catch(() => {}),
+    readAll((from, to) =>
+      supabase.from('offboarded_sheet').select('work_email, personal_email, off_boarded_at').range(from, to),
+    )
+      .then((rows) => {
+        for (const r of rows) {
+          note(r['work_email'], r['off_boarded_at']);
+          note(r['personal_email'], r['off_boarded_at']);
+        }
+      })
+      .catch(() => {}),
+    readAll((from, to) =>
+      supabase
+        .from('offboarding_queue')
+        .select('employee_email, employee_work_email, employee_personal_email, decided_at')
+        .eq('status', 'completed')
+        .range(from, to),
+    )
+      .then((rows) => {
+        for (const r of rows) {
+          note(r['employee_email'], r['decided_at']);
+          note(r['employee_work_email'], r['decided_at']);
+          note(r['employee_personal_email'], r['decided_at']);
+        }
+      })
+      .catch(() => {}),
+  ]);
+
+  return byEmail;
+}
+
 async function buildMissingBank(
   /** See {@link buildMissingRates} — the shared roster snapshot. */
   employees: EmployeeRow[],
@@ -897,13 +1002,22 @@ async function buildMissingBank(
   /** See {@link buildMissingRates} — pay-paused departments leave the bank
    *  list and its denominator alike. */
   isPausedDept: (dept: string | null | undefined) => boolean,
+  /** The pay week in view (see `weekKeyFromSourceFile`) — the aging boundary
+   *  for off-boarded people (left before this week started ⇒ final pay is
+   *  already out ⇒ off the list). */
+  weekStart: string,
+  /** Every normalized email with hours in the week-in-view's Hubstaff upload
+   *  (from `buildMissingRates`) — someone being PAID this week must stay
+   *  listed no matter what the off-board records say. */
+  payrollEmails: Set<string>,
+  /** See {@link loadOffboardDatesByEmail}. */
+  offboardDateByEmail: Map<string, string>,
 ): Promise<{
   rows: ReadinessMissingBank[];
   eligibleCount: number;
-  /** Per eligible person, their normalized emails — so the composer can count
-   *  how many of them are on this week's payroll (the score's bank denominator)
-   *  by intersecting with the Hubstaff identity set. */
-  eligibleEmails: string[][];
+  /** Of `eligibleCount`, how many are on this week's payroll (any alias with
+   *  hours in the week's Hubstaff file) — the score's bank denominator. */
+  onPayrollEligibleCount: number;
   degraded: string[];
 }> {
   const [idsRes, ratesRes] = await Promise.all([
@@ -947,8 +1061,8 @@ async function buildMissingBank(
   // or not; `out` is only the ones missing payout details.
   const seen = new Set<string>();
   const out: ReadinessMissingBank[] = [];
-  const eligibleEmails: string[][] = [];
   let eligibleCount = 0;
+  let onPayrollEligibleCount = 0;
   for (const e of employees) {
     if (isOffChannelDept(e.department)) continue;
     if (isPausedDept(e.department)) continue;
@@ -965,8 +1079,34 @@ async function buildMissingBank(
     const idKey = `${base}|${n}`;
     if (seen.has(idKey)) continue;
     seen.add(idKey);
+
+    const onPayroll = [w, p].some((em) => !!em && payrollEmails.has(em));
+
+    // Off-boarded people age off this check once their FINAL pay is out. HR
+    // keeps a leaver on the master sheet (⇒ the active roster) through their
+    // last pay, so the roster alone would list them for weeks after the money
+    // left. The off-board is on record elsewhere (see
+    // `loadOffboardDatesByEmail`); guard it against the person's own start
+    // date so a re-hire / recycled email never matches their PREDECESSOR's
+    // off-board (an unparseable start date fails safe: the person stays
+    // listed). Someone who left BEFORE the pay week in view began can have no
+    // hours in it — their final pay was an earlier week's run — so they leave
+    // the list AND the denominator. Someone who left during/after the week,
+    // or who has hours in its file (a payday blocker), stays until the run
+    // that pays them is behind us.
+    const offBoardedAt = (() => {
+      const dates = [w, p]
+        .map((em) => (em ? offboardDateByEmail.get(em) : undefined))
+        .filter((d): d is string => Boolean(d));
+      if (dates.length === 0) return null;
+      const latest = dates.sort()[dates.length - 1];
+      const started = normalizeStartDate(e.start_date);
+      return started && latest > started ? latest : null;
+    })();
+    if (offBoardedAt && offBoardedAt < weekStart && !onPayroll) continue;
+
     eligibleCount += 1;
-    eligibleEmails.push([w, p].filter((e): e is string => Boolean(e)));
+    if (onPayroll) onPayrollEligibleCount += 1;
 
     const idRow = (w && idRowByEmail.get(w)) || (p && idRowByEmail.get(p)) || null;
     const rates = (w && ratesByEmail.get(w)) || (p && ratesByEmail.get(p)) || null;
@@ -988,13 +1128,14 @@ async function buildMissingBank(
       processor: resolveEffectivePayoutProcessor(idRow, extras),
       workEmail: e.work_email ?? null,
       personalEmail: e.personal_email ?? null,
-      // Stamped for real by getPayrollReadiness once the week's Hubstaff
-      // identity set is in hand — this fn only knows the roster.
-      onPayroll: false,
+      onPayroll,
+      offBoardedAt,
     });
   }
-  out.sort((a, b) => a.name.localeCompare(b.name));
-  return { rows: out, eligibleCount, eligibleEmails, degraded };
+  // Blockers surface first so the list starts with the people whose payday is
+  // actually at stake this week; names stay alphabetical within groups.
+  out.sort((a, b) => Number(b.onPayroll) - Number(a.onPayroll) || a.name.localeCompare(b.name));
+  return { rows: out, eligibleCount, onPayrollEligibleCount, degraded };
 }
 
 // ── Onboarding exceptions ─────────────────────────────────────────────────────
@@ -1118,7 +1259,7 @@ export async function getPayrollReadiness(
   // The active master roster is fetched ONCE here and shared by the KPI
   // (department universe), rate (aliases), and bank (population) checks — one
   // consistent snapshot instead of three racing reads.
-  const [pausedRaw, registry, rosterRes, exceptionsRes] = await Promise.all([
+  const [pausedRaw, registry, rosterRes, exceptionsRes, offboardDateByEmail] = await Promise.all([
     resolvedFile
       ? getAppSetting(deptPayPausedSettingKey(resolvedFile)).catch(() => undefined)
       : Promise.resolve(null),
@@ -1128,6 +1269,7 @@ export async function getPayrollReadiness(
       error: 'unreachable',
     })),
     buildExceptions(weekStart),
+    loadOffboardDatesByEmail(),
   ]);
 
   const degraded: string[] = [...weekDegraded, ...exceptionsRes.degraded];
@@ -1173,28 +1315,26 @@ export async function getPayrollReadiness(
   // kind — the whole department is off — so they don't clutter the list.
   const exceptions = exceptionsRes.rows.filter((r) => !isPausedDept(r.department));
 
-  const [kpi, ratesRes, bankRes] = await Promise.all([
+  const [kpi, ratesRes] = await Promise.all([
     buildKpiReadiness(weekStart, isMonthlyPayWeek, registrySafe, pausedDeptKeys, masterDeptLabels),
     buildMissingRates(resolvedFile, employees, exceptionIdentities, isPausedDept, weekStart),
-    buildMissingBank(employees, exceptionIdentities, isPausedDept),
   ]);
+  // The bank check runs AFTER the rate check on purpose: it needs the week's
+  // Hubstaff identity set (`payrollEmails`) both to split hard blockers from
+  // roster hygiene and to keep an off-boarded person listed while their final
+  // pay is still in this week's file. Its own reads are two small queries, so
+  // the sequencing costs little.
+  const bankRes = await buildMissingBank(
+    employees,
+    exceptionIdentities,
+    isPausedDept,
+    weekStart,
+    ratesRes.payrollEmails,
+    offboardDateByEmail,
+  );
   degraded.push(...ratesRes.degraded, ...bankRes.degraded);
 
-  // Split the missing-bank list by severity: someone with hours in THIS WEEK's
-  // upload is about to not get paid (hard blocker — pins the score's bank
-  // dimension); the rest is roster hygiene. Matched on either email — the
-  // payroll set carries every master-roster alias, so an alt-work-email
-  // Hubstaff row still connects to the person's work/personal identity here.
-  const onWeekPayroll = (r: ReadinessMissingBank): boolean =>
-    [r.workEmail, r.personalEmail].some((e) => {
-      const em = normEmail(e);
-      return !!em && ratesRes.payrollEmails.has(em);
-    });
-  const missingBank = bankRes.rows
-    .map((r) => ({ ...r, onPayroll: onWeekPayroll(r) }))
-    // Blockers surface first so the list starts with the people whose payday
-    // is actually at stake this week; names stay alphabetical within groups.
-    .sort((a, b) => Number(b.onPayroll) - Number(a.onPayroll) || a.name.localeCompare(b.name));
+  const missingBank = bankRes.rows;
   const missingBankOnPayroll = missingBank.reduce((n, r) => n + (r.onPayroll ? 1 : 0), 0);
 
   // The score's bank denominator: eligible roster people who are actually being
@@ -1202,10 +1342,7 @@ export async function getPayrollReadiness(
   // `eligibleCount` stays on the payload for the roster-hygiene list's "X of Y"
   // framing, but it must not shape the score — someone we aren't paying this
   // week can't block this week's payroll.
-  const bankOnPayrollCount = bankRes.eligibleEmails.reduce(
-    (n, aliases) => n + (aliases.some((e) => ratesRes.payrollEmails.has(e)) ? 1 : 0),
-    0,
-  );
+  const bankOnPayrollCount = bankRes.onPayrollEligibleCount;
 
   // KPI due/submitted for the score: monthly depts not due this week ('na') and
   // departments switched out of this week's pay ('excluded') are dropped from
