@@ -62,6 +62,14 @@ import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
 import { normEmail } from '@/lib/email/norm-email';
+import {
+  OffboardedStrip,
+  useOffboardedPeople,
+  offboardedAddEmail,
+  offboardedLeftLabel,
+  matchesOffboardedQuery,
+  type OffboardedCandidate,
+} from './OffboardedSuggestions';
 import type { EmployeeRow } from '@/lib/supabase/employees';
 import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
 import { slugifyDeptKey } from '@/lib/departments/registry';
@@ -1110,6 +1118,9 @@ export default function DeptBonusCalculator({
   } | null>(null);
   // "Add External Member" modal: the dept key it's adding into (null = closed).
   const [extAddKey, setExtAddKey] = useState<string | null>(null);
+  // Recently offboarded people (final bonuses may still be owed) — fetched once
+  // and shared by the per-dept Offboarded strips and the add-member modal.
+  const offboardedPeople = useOffboardedPeople(!isQc);
   // Mirror of `submit` for the (stable) Escape handler so it can defer to the
   // modal without re-binding the drawer's keydown listener.
   const submitRef = useRef(submit);
@@ -1689,9 +1700,20 @@ export default function DeptBonusCalculator({
   function addExternalMember(deptKey: string, name: string, emailRaw: string): string | null {
     const d = state[deptKey];
     if (!d) return 'This department has not finished loading yet.';
-    const email = canonEmail(emailRaw);
+    // Render-time gating isn't enough: live refresh can flip the week out of
+    // draft while the add modal sits open, and an add that lands then would
+    // never reach the rows Accounting reads.
+    if (d.status !== 'draft') return 'This week has already been submitted — reopen it to make changes.';
+    // Stored VERBATIM (normalized only): the caller picked this email as the
+    // payable identity (offboarded adds key on the person's Hubstaff login).
+    // canonEmail is used for the duplicate CHECK only — its alias map is built
+    // from ACTIVE teammates, and letting it rewrite the stored key could
+    // re-key an offboarded person onto an active teammate who happens to hold
+    // the address in an alternate-email column.
+    const email = normEmail(emailRaw) || '';
     if (!email) return 'A valid email is required.';
-    if (d.members.some((m) => canonEmail(m.email) === email)) {
+    const folded = canonEmail(emailRaw);
+    if (d.members.some((m) => canonEmail(m.email) === folded || canonEmail(m.email) === email)) {
       return 'Someone with this email is already on this calculator.';
     }
     const applied: Record<string, AppliedState> = {};
@@ -2105,6 +2127,29 @@ export default function DeptBonusCalculator({
     const readOnly = statusReadOnly || editLocked;
     // "Add External Member": manager mode, an allowed dept, week still editable.
     const canAddExternal = !isQc && EXTERNAL_MEMBER_DEPTS.has(key) && !readOnly && !!d?.loaded;
+    // Recently offboarded members of THIS department — surfaced so their final
+    // bonuses can still be scored (they've left the roster, so they never show
+    // in `teamMembers`). Excludes anyone already on the table under any of
+    // their identity emails. Only offered where external members are supported:
+    // elsewhere the saved applied rows couldn't be re-materialized in this UI.
+    const offboardedForDept = canAddExternal
+      ? offboardedPeople.filter((p) => {
+          const pKey =
+            normalizeDeptToKey(p.department) ??
+            (p.department?.trim() ? slugifyDeptKey(p.department) : null);
+          if (pKey !== key) return false;
+          const emailTaken = [p.hubstaff_email, p.work_email, p.personal_email].some((e) => {
+            const ce = e ? canonEmail(e) : '';
+            return !!ce && (d?.members ?? []).some((m) => canonEmail(m.email) === ce);
+          });
+          // Name check too: an earlier add may be keyed under a bridged email
+          // the server no longer reports (the Hubstaff window slides weekly) —
+          // without it the same person re-surfaces as an addable chip.
+          const pName = p.name.trim().toLowerCase();
+          const nameTaken = (d?.members ?? []).some((m) => m.name.trim().toLowerCase() === pName);
+          return !emailTaken && !nameTaken;
+        })
+      : [];
     const accentSoft = hexA(color, 0.13);
     const accentBorder = hexA(color, 0.4);
     const tableReady = !!d?.loaded && hasAnyBonus && allMembers.length > 0;
@@ -2217,6 +2262,22 @@ export default function DeptBonusCalculator({
                 reduce={!!reduceMotion}
               />
             </div>
+          </div>
+        )}
+
+        {/* Recently offboarded members of this dept — one click to add them so
+            their final bonuses can be scored (Kane's "Offboarded" group). */}
+        {offboardedForDept.length > 0 && (
+          <div className="flex-none border-b border-zinc-100 px-4 py-2.5 dark:border-zinc-800/70 sm:px-5">
+            <OffboardedStrip
+              people={offboardedForDept}
+              disabled={readOnly}
+              onAdd={(c) => {
+                const email = offboardedAddEmail(c, true);
+                if (!email) return 'No usable email on file.';
+                return addExternalMember(key, c.name, email);
+              }}
+            />
           </div>
         )}
 
@@ -2993,6 +3054,7 @@ export default function DeptBonusCalculator({
               key="kpi-ext-add-modal"
               deptName={DEPARTMENTS.find((d) => d.key === extAddKey)?.name ?? humanizeDeptKey(extAddKey)}
               color={deptColor(extAddKey)}
+              offboarded={offboardedPeople}
               reduce={!!reduceMotion}
               onAdd={(name, email) => {
                 const err = addExternalMember(extAddKey, name, email);
@@ -3708,17 +3770,34 @@ function SubmitModal({
 }
 
 /** One person from the Global Master List, as served by
- *  /api/manager/transfer-candidates (name + emails only — never rates). */
+ *  /api/manager/transfer-candidates (name + emails only — never rates).
+ *  Candidates from the modal's "Offboarded" group carry the extra fields. */
 interface ExternalCandidate {
   name: string;
   department: string | null;
   work_email: string | null;
   personal_email: string | null;
+  /** True for picks from the Offboarded group (see OffboardedSuggestions). */
+  offboarded?: boolean;
+  off_boarded_at?: string | null;
+  hubstaff_email?: string | null;
 }
 
 /** The identity email an external candidate would be keyed under — personal
- *  first, matching how the roster keys members (rowEmail). */
+ *  first, matching how the roster keys members (rowEmail). EXCEPT offboarded
+ *  picks: the wizard's master-index bridge covers active people only, so an
+ *  off-roster person's bonus pays solely via DIRECT Hubstaff-email match —
+ *  key them Hubstaff-first (then work email, its normal alias) or the amount
+ *  silently resolves to no payable row. */
 function candidateEmail(c: ExternalCandidate): string {
+  if (c.offboarded) {
+    return (
+      normEmail(c.hubstaff_email ?? null) ||
+      normEmail(c.work_email ?? null) ||
+      normEmail(c.personal_email ?? null) ||
+      ''
+    );
+  }
   return normEmail(c.personal_email ?? null) || normEmail(c.work_email ?? null) || '';
 }
 
@@ -3730,12 +3809,16 @@ function candidateEmail(c: ExternalCandidate): string {
 function AddExternalMemberModal({
   deptName,
   color,
+  offboarded,
   onAdd,
   onClose,
   reduce,
 }: {
   deptName: string;
   color: string;
+  /** Recently offboarded people (fetched once by the calculator) — rendered as
+   *  a second, clearly-labeled group so final bonuses can still be scored. */
+  offboarded: OffboardedCandidate[];
   /** Attempt the add; returns an error message to surface, or null on success. */
   onAdd: (name: string, email: string) => string | null;
   onClose: () => void;
@@ -3800,6 +3883,9 @@ function AddExternalMemberModal({
   }
 
   const selectedEmail = selected ? candidateEmail(selected) : '';
+  // The offboarded group filters locally — the list is small and fetched once,
+  // so it must not re-query per keystroke like the active candidates do.
+  const offboardedShown = offboarded.filter((c) => matchesOffboardedQuery(c, query));
 
   return (
     <motion.div
@@ -3861,59 +3947,122 @@ function AddExternalMemberModal({
                 <div className="flex items-center justify-center gap-2 px-3 py-10 text-xs text-zinc-400">
                   <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> Searching the master list…
                 </div>
-              ) : candidates.length === 0 ? (
+              ) : candidates.length === 0 && offboardedShown.length === 0 ? (
                 <div className="px-3 py-10 text-center text-xs text-zinc-400">
                   No one on the master list matches{query.trim() ? ` “${query.trim()}”` : ''}.
                 </div>
               ) : (
-                candidates.map((c) => {
-                  const email = candidateEmail(c);
-                  const isSelected =
-                    !!selected && candidateEmail(selected) === email && selected.name === c.name;
-                  const noEmail = !email;
-                  return (
-                    <button
-                      key={`${c.name}:${email || c.department || ''}`}
-                      type="button"
-                      disabled={noEmail}
-                      onClick={() => {
-                        setSelected(c);
-                        setError(null);
-                      }}
-                      title={noEmail ? 'No email on file — cannot be added' : undefined}
-                      className={cn(
-                        'flex w-full items-center gap-2.5 border-b border-zinc-100 px-3 py-2 text-left transition-colors last:border-0 dark:border-zinc-800/60',
-                        noEmail
-                          ? 'cursor-not-allowed opacity-45'
-                          : isSelected
-                            ? 'bg-emerald-50 dark:bg-emerald-950/30'
-                            : 'hover:bg-zinc-50 dark:hover:bg-zinc-900/50',
-                      )}
-                    >
-                      <span
-                        className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[9px] font-bold"
-                        style={{ backgroundColor: hexA(color, 0.14), color }}
-                        aria-hidden
+                <>
+                  {candidates.map((c) => {
+                    const email = candidateEmail(c);
+                    const isSelected =
+                      !!selected && !selected.offboarded && candidateEmail(selected) === email && selected.name === c.name;
+                    const noEmail = !email;
+                    return (
+                      <button
+                        key={`${c.name}:${email || c.department || ''}`}
+                        type="button"
+                        disabled={noEmail}
+                        onClick={() => {
+                          setSelected(c);
+                          setError(null);
+                        }}
+                        title={noEmail ? 'No email on file — cannot be added' : undefined}
+                        className={cn(
+                          'flex w-full items-center gap-2.5 border-b border-zinc-100 px-3 py-2 text-left transition-colors last:border-0 dark:border-zinc-800/60',
+                          noEmail
+                            ? 'cursor-not-allowed opacity-45'
+                            : isSelected
+                              ? 'bg-emerald-50 dark:bg-emerald-950/30'
+                              : 'hover:bg-zinc-50 dark:hover:bg-zinc-900/50',
+                        )}
                       >
-                        {initials(c.name)}
-                      </span>
-                      <span className="min-w-0 flex-1">
-                        <span className="block truncate text-[12.5px] font-medium text-zinc-800 dark:text-zinc-100">
-                          {c.name}
+                        <span
+                          className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[9px] font-bold"
+                          style={{ backgroundColor: hexA(color, 0.14), color }}
+                          aria-hidden
+                        >
+                          {initials(c.name)}
                         </span>
-                        <span className="block truncate font-mono text-[10px] text-zinc-400">
-                          {email || 'no email on file'}
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-[12.5px] font-medium text-zinc-800 dark:text-zinc-100">
+                            {c.name}
+                          </span>
+                          <span className="block truncate font-mono text-[10px] text-zinc-400">
+                            {email || 'no email on file'}
+                          </span>
                         </span>
-                      </span>
-                      {c.department && (
-                        <span className="shrink-0 rounded bg-zinc-100 px-1.5 py-0.5 font-mono text-[9px] font-semibold text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
-                          {c.department}
-                        </span>
-                      )}
-                      {isSelected && <Check className="h-3.5 w-3.5 shrink-0 text-emerald-600 dark:text-emerald-400" aria-hidden />}
-                    </button>
-                  );
-                })
+                        {c.department && (
+                          <span className="shrink-0 rounded bg-zinc-100 px-1.5 py-0.5 font-mono text-[9px] font-semibold text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
+                            {c.department}
+                          </span>
+                        )}
+                        {isSelected && <Check className="h-3.5 w-3.5 shrink-0 text-emerald-600 dark:text-emerald-400" aria-hidden />}
+                      </button>
+                    );
+                  })}
+                  {/* Offboarded group — recently-left people whose final bonuses
+                      may still need scoring. Keyed Hubstaff-first on add so the
+                      amount resolves to their payable row (see candidateEmail). */}
+                  {offboardedShown.length > 0 && (
+                    <>
+                      <div className="border-b border-amber-200/60 bg-amber-50/70 px-3 py-1.5 font-mono text-[9px] font-semibold uppercase tracking-[0.14em] text-amber-700 dark:border-amber-500/20 dark:bg-amber-500/[0.08] dark:text-amber-300">
+                        Offboarded recently — final bonuses may still be owed
+                      </div>
+                      {offboardedShown.map((o) => {
+                        const c: ExternalCandidate = { ...o, offboarded: true };
+                        const email = candidateEmail(c);
+                        const isSelected =
+                          !!selected && !!selected.offboarded && candidateEmail(selected) === email && selected.name === c.name;
+                        const noEmail = !email;
+                        return (
+                          <button
+                            key={`off:${c.name}:${email || c.off_boarded_at || ''}`}
+                            type="button"
+                            disabled={noEmail}
+                            onClick={() => {
+                              setSelected(c);
+                              setError(null);
+                            }}
+                            title={noEmail ? 'No usable email on file — cannot be added' : undefined}
+                            className={cn(
+                              'flex w-full items-center gap-2.5 border-b border-zinc-100 px-3 py-2 text-left transition-colors last:border-0 dark:border-zinc-800/60',
+                              noEmail
+                                ? 'cursor-not-allowed opacity-45'
+                                : isSelected
+                                  ? 'bg-emerald-50 dark:bg-emerald-950/30'
+                                  : 'hover:bg-zinc-50 dark:hover:bg-zinc-900/50',
+                            )}
+                          >
+                            <span
+                              className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-amber-100 text-[9px] font-bold text-amber-700 dark:bg-amber-500/15 dark:text-amber-300"
+                              aria-hidden
+                            >
+                              {initials(c.name)}
+                            </span>
+                            <span className="min-w-0 flex-1">
+                              <span className="block truncate text-[12.5px] font-medium text-zinc-800 dark:text-zinc-100">
+                                {c.name}
+                              </span>
+                              <span className="block truncate font-mono text-[10px] text-zinc-400">
+                                {email || 'no usable email on file'}
+                              </span>
+                            </span>
+                            <span className="shrink-0 rounded-full border border-amber-200 bg-amber-50 px-1.5 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-wide text-amber-700 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300">
+                              {offboardedLeftLabel(o)}
+                            </span>
+                            {c.department && (
+                              <span className="shrink-0 rounded bg-zinc-100 px-1.5 py-0.5 font-mono text-[9px] font-semibold text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
+                                {c.department}
+                              </span>
+                            )}
+                            {isSelected && <Check className="h-3.5 w-3.5 shrink-0 text-emerald-600 dark:text-emerald-400" aria-hidden />}
+                          </button>
+                        );
+                      })}
+                    </>
+                  )}
+                </>
               )}
             </div>
             {error && (
@@ -3950,10 +4099,17 @@ function AddExternalMemberModal({
               </div>
               {selected?.department && (
                 <div className="mt-0.5 truncate font-mono text-[10px] text-zinc-400">
-                  Currently in: {selected.department}
+                  {selected.offboarded ? 'Was in' : 'Currently in'}: {selected.department}
                 </div>
               )}
             </div>
+            {selected?.offboarded && (
+              <p className="w-full rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-left text-[11px] leading-relaxed text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200">
+                This person is <span className="font-semibold">offboarded</span> — you’re scoring their final
+                bonuses. The amount pays with the week that covers their last hours; if they have no hours in
+                the pay week, ask Accounting to use People → Pay instead.
+              </p>
+            )}
             <p className="text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">
               This person is outside the {deptName} team. Once added, they’ll receive the{' '}
               <span className="font-semibold text-zinc-700 dark:text-zinc-300">{deptName} team’s common bonus</span> in

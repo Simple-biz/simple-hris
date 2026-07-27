@@ -4,6 +4,7 @@ import { authOptions } from '@/lib/auth/auth-options';
 import { normEmail } from '@/lib/email/norm-email';
 import { listDepartmentsForManager } from '@/lib/supabase/department-managers';
 import { listActiveMasterListPeople } from '@/lib/supabase/global-master-list-db';
+import { listRecentlyOffboardedPeople } from '@/lib/roster/recently-offboarded';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -34,6 +35,21 @@ export async function GET(request: Request) {
       { people: [], departments: [], error: 'Manager or admin role required' },
       { status: 403 },
     );
+  }
+
+  // `?offboarded=1` — the KPI calculators' "Offboarded" picker group: people
+  // who recently left (pipeline offboard, offboarded sheet, or fell off the
+  // roster) whose FINAL bonuses may still need scoring. Same shape as the
+  // active candidates plus off_boarded_at + hubstaff_email (the identity
+  // payroll actually pays — see src/lib/roster/recently-offboarded.ts). The
+  // transfer picker never sends this flag, so transfers keep offering only
+  // active people. No dept exclusion here: these people have left their dept
+  // by definition, and managers add them precisely to score their own team's
+  // final week.
+  if (new URL(request.url).searchParams.get('offboarded') === '1') {
+    const { people: offboarded, error: offErr } = await listRecentlyOffboardedPeople();
+    if (offErr) return NextResponse.json({ offboarded: [], error: offErr }, { status: 500 });
+    return NextResponse.json({ offboarded, error: null });
   }
 
   const { people, error } = await listActiveMasterListPeople();
