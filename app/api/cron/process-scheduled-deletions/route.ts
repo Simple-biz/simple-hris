@@ -31,9 +31,11 @@ function isAuthorized(req: NextRequest): boolean {
 /**
  * GET/POST /api/cron/process-scheduled-deletions
  *
- * Daily Vercel cron (see vercel.json). Finds off-boarded non-Lead-Gen rows whose
- * 14-day deactivation window has elapsed and fires `offboarding_delete` to
- * permanently delete the Workspace account.
+ * Daily Vercel cron (see vercel.json). Finds off-boarded rows whose
+ * deactivation window has elapsed (7 days for all-Lead-Gen — the final-pay
+ * grace window — 14 days for everyone else; the timer itself lives in
+ * `scheduled_deletion_at`, stamped at offboard time) and fires
+ * `offboarding_delete` to permanently delete the Workspace account.
  *
  * Idempotency: rows are row-keyed (not email-keyed) and stamped with
  * `deletion_processed_at` only after the webhook succeeds, so a Vercel cron
@@ -89,6 +91,9 @@ async function run(req: NextRequest): Promise<NextResponse> {
     const webhook = await fireOffboardWebhook(OFFBOARD_DELETE_SLUG, {
       event: "employee.offboarded",
       phase: "delete",
+      // Kept as "delayed_14d" for every row (incl. the 7-day Lead Gen grace
+      // window) — it's the delete-flow value n8n already handles, and the
+      // actual delay lives in scheduled_deletion_at, not this label.
       deletion_mode: "delayed_14d",
       scheduled: true,
       work_email: workEmail || null,

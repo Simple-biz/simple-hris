@@ -9,8 +9,8 @@ import {
 } from "@/lib/auth/authorize-email";
 import { requireFeatureEdit } from "@/lib/auth/authorize-feature";
 import {
+  LEAD_GEN_DELETION_DELAY_DAYS,
   OFFBOARD_DEACTIVATE_SLUG,
-  OFFBOARD_DELETE_SLUG,
   fireOffboardWebhook,
   isLeadGenDepartment,
   scheduledDeletionFrom,
@@ -80,8 +80,12 @@ interface OffboardEmployeePayload {
 }
 
 type Phase = "deactivate" | "delete";
-/** "none" = temporary pause: suspended via deactivate, never deleted. */
-type DeletionMode = "immediate" | "delayed_14d" | "none";
+/** "none" = temporary pause: suspended via deactivate, never deleted.
+ *  "delayed_7d" = all-Lead-Gen: suspended now, cron-deleted after the 7-day
+ *  final-pay grace window. "delayed_14d" = everyone else. Nothing deletes
+ *  immediately anymore — a leaver's account and data must survive their final
+ *  pay cycle (n8n treats delayed_7d exactly like delayed_14d: suspend only). */
+type DeletionMode = "delayed_7d" | "delayed_14d" | "none";
 
 interface OffboardOutcome {
   work_email: string;
@@ -181,23 +185,29 @@ async function offboardOnePerson(
     .map((r) => r.Department)
     .filter((d): d is string => !!d);
 
-  // Lead Gen (immediate delete) only when EVERY department this person holds is
-  // Lead Gen. If any role is non-Lead-Gen, defer deletion 14 days.
-  // Temporary pause overrides both: suspend the account (deactivate) and never
-  // schedule the delete — the person is expected back. Even an all-Lead-Gen
-  // person is suspended rather than deleted.
+  // EVERY offboard suspends first (deactivate) — deletion always runs through
+  // the scheduled-deletion cron, so the person's account and data survive their
+  // final pay cycle. All-Lead-Gen people get the short 7-day final-pay grace
+  // window; any non-Lead-Gen role defers deletion 14 days. Temporary pause
+  // overrides both: suspend and never schedule the delete — the person is
+  // expected back.
   const allLeadGen =
     lookupDepartments.length > 0 && lookupDepartments.every(isLeadGenDepartment);
-  const phase: Phase = !isTemporaryPause && allLeadGen ? "delete" : "deactivate";
+  const phase: Phase = "deactivate";
   const deletionMode: DeletionMode = isTemporaryPause
     ? "none"
     : allLeadGen
-      ? "immediate"
+      ? "delayed_7d"
       : "delayed_14d";
   const scheduledDeletionAt =
-    deletionMode === "delayed_14d" ? scheduledDeletionFrom(offBoardedAt) : null;
+    deletionMode === "none"
+      ? null
+      : scheduledDeletionFrom(
+          offBoardedAt,
+          deletionMode === "delayed_7d" ? LEAD_GEN_DELETION_DELAY_DAYS : undefined,
+        );
 
-  // Stamp off_boarded_* (and the deletion timer for non-Lead-Gen) on every active
+  // Stamp off_boarded_* (and the deletion timer) on every active
   // row for this work_email. Covers dual-role employees with multiple rows.
   const { data, error } = await supabase
     .from(MASTER_TABLE)
@@ -335,7 +345,9 @@ async function offboardOnePerson(
       deletion_mode: deletionMode,
       scheduled_deletion_at: scheduledDeletionAt,
       rbac_revoked: rbacRevoked,
-      webhook_slug: phase === "delete" ? OFFBOARD_DELETE_SLUG : OFFBOARD_DEACTIVATE_SLUG,
+      // Every offboard fires deactivate now; the delete slug fires later from
+      // the scheduled-deletion cron.
+      webhook_slug: OFFBOARD_DEACTIVATE_SLUG,
       batched: true,
     },
   });
@@ -372,12 +384,14 @@ async function offboardOnePerson(
  *   Batch:                { employees: [{ work_email, reason, note? }, ...] }
  *
  * Marks every matching `global_master_list` row as off-boarded, tears down RBAC,
- * and fires the department-aware account teardown. Firing is COALESCED by
- * (phase, deletion_mode): Lead-Gen people go out in one `offboarding_delete`
- * envelope, regular deactivates in one `offboarding_deactivate` envelope, and
- * temporary pauses in a second `offboarding_deactivate` envelope with
- * `deletion_mode: "none"` — so a batch of any size is at most three webhook
- * POSTs, each carrying an `employees[]` array for n8n's Split Out.
+ * and fires the account SUSPENSION (`offboarding_deactivate`) — never a delete;
+ * deletion happens later via the scheduled-deletion cron once the final-pay
+ * grace window elapses (7d all-Lead-Gen, 14d others). Firing is COALESCED by
+ * (phase, deletion_mode): all-Lead-Gen people go out in one envelope
+ * (`deletion_mode: "delayed_7d"`), other deactivates in one (`"delayed_14d"`),
+ * and temporary pauses in one with `deletion_mode: "none"` — so a batch of any
+ * size is at most three webhook POSTs, each carrying an `employees[]` array
+ * for n8n's Split Out.
  *
  * Response: `{ success, count, results[], webhooks[], webhook }`. `webhook` is
  * the first fired webhook (kept so the single-person dialog toast still works).
@@ -456,11 +470,13 @@ export async function POST(req: Request) {
   // Coalesce successes by (phase, deletion_mode) and fire at most one webhook
   // per group. Temporary pauses share the deactivate slug with regular
   // deactivates but go out in their own envelope (deletion_mode: "none") so the
-  // n8n flow can branch on it — so a batch is at most THREE POSTs.
+  // n8n flow can branch on it — so a batch is at most THREE POSTs. Every group
+  // is a deactivate now: deletes only ever fire from the scheduled-deletion
+  // cron once the person's final-pay grace window has elapsed.
   const groupDefs: Array<{ phase: Phase; deletion_mode: DeletionMode }> = [
     { phase: "deactivate", deletion_mode: "none" },
+    { phase: "deactivate", deletion_mode: "delayed_7d" },
     { phase: "deactivate", deletion_mode: "delayed_14d" },
-    { phase: "delete", deletion_mode: "immediate" },
   ];
 
   const webhooks: Array<{
@@ -478,7 +494,9 @@ export async function POST(req: Request) {
       (o) => o.phase === phase && o.deletion_mode === deletion_mode,
     );
     if (group.length === 0) continue;
-    const slug = phase === "delete" ? OFFBOARD_DELETE_SLUG : OFFBOARD_DEACTIVATE_SLUG;
+    // Always the deactivate slug: this route never fires deletes anymore (the
+    // scheduled-deletion cron owns OFFBOARD_DELETE_SLUG).
+    const slug = OFFBOARD_DEACTIVATE_SLUG;
     const result = await fireOffboardWebhook(slug, {
       event: "employee.offboarded",
       phase,

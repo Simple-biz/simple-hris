@@ -69,13 +69,13 @@ const KNOWN_SLUGS: Array<{ slug: string; label: string; description: string }> =
     slug: 'offboarding_deactivate',
     label: 'Offboarding - Deactivate (n8n)',
     description:
-      'Fired immediately when a non-Lead-Gen employee is off-boarded: suspends the Workspace account, sends the termination notice, and removes the member from Hubstaff (pay_rate 0).',
+      'Fired immediately when ANY employee is off-boarded (incl. Lead Gen since 2026-07-27): suspends the Workspace account, sends the termination notice, and removes the member from Hubstaff (pay_rate 0). The account and data stay intact through the final pay cycle.',
   },
   {
     slug: 'offboarding_delete',
     label: 'Offboarding - Delete (n8n)',
     description:
-      'Permanently deletes the Workspace account. Fired immediately for Lead Gen; fired by the scheduled-deletion cron 14 days after deactivation for other departments.',
+      'Permanently deletes the Workspace account. For EMPLOYEE offboards it fires only from the scheduled-deletion cron: 7 days after deactivation for all-Lead-Gen people (the final-pay grace window), 14 days for other departments — never immediately. No-show and cancelled pending hires (people who never started, so no pay is owed) still tear down immediately.',
   },
   {
     slug: 'new_hire_checklist_lock',

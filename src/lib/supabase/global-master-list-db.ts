@@ -374,6 +374,24 @@ async function promoteMasterListUploadToCurrent(
  *      the `active_employees` view automatically.
  *   5. Promote the new upload to `is_current=true`.
  */
+/**
+ * FINAL PAY GRACE window: a clearOffboarded sync re-activates a stamped row
+ * only when the stamp is OLDER than this many days. Payroll pays one week in
+ * arrears, so a leaver's last check can be marked paid up to ~13 days after
+ * the stamp (offboarded at the START of a pay week → paid at the END of the
+ * following week) — and the sheet routinely still lists fresh leavers, so an
+ * unguarded sync would erase the offboard mid final-pay-cycle (they'd vanish
+ * from the KPI calculators' "Offboarded — Last Pay" strips and re-enter the
+ * roster as ghosts). 14 also stays ABOVE both deletion timers (7d Lead Gen /
+ * 14d others, src/lib/hr/offboard-webhooks.ts), so a stale sheet row can never
+ * resurrect someone whose account the cron already deleted.
+ *
+ * This never blocks a real re-hire: the guard only applies to same-person
+ * (personal email) matches, and the HR Offboarding tab's Restore button
+ * (/api/hr/reonboard) re-activates anyone instantly regardless of the window.
+ */
+export const OFFBOARD_REACTIVATION_GRACE_DAYS = 14;
+
 export async function replaceGlobalMasterListFromCsvText(
   csvText: string,
   sourceFile: string,
@@ -389,6 +407,18 @@ export async function replaceGlobalMasterListFromCsvText(
   duplicatesInCsv: number;
   /** How many previously off-boarded rows were re-activated because clearOffboarded=true. */
   reonboarded: number;
+  /** Re-activations SKIPPED because the person was off-boarded within the last
+   *  OFFBOARD_REACTIVATION_GRACE_DAYS — their final pay cycle. The row still
+   *  syncs (fields + last_seen bump) but keeps its off_boarded_* stamps, so a
+   *  stale sheet row can't un-offboard someone before their last check is out.
+   *  Re-run the sync with clearOffboarded after the window to re-activate. */
+  reonboardSkippedRecent: number;
+  /** Who was skipped (capped at 100), so the sync caller can surface them. */
+  reonboardSkippedPeople: Array<{
+    name: string | null;
+    work_email: string | null;
+    off_boarded_at: string;
+  }>;
   /** Rows matched to an existing DB row by Work Email + Department when (Personal Email, Department) did not match — fixes sheet/DB personal-email drift. */
   reconciledViaWorkEmail: number;
   /** INSERT candidates dropped because their (work email, department) was already
@@ -544,6 +574,13 @@ export async function replaceGlobalMasterListFromCsvText(
   let inserted = 0;
   let updated = 0;
   let reonboarded = 0;
+  let reonboardSkippedRecent = 0;
+  const reonboardSkippedKeys = new Set<string>();
+  const reonboardSkippedPeople: Array<{
+    name: string | null;
+    work_email: string | null;
+    off_boarded_at: string;
+  }> = [];
   let reconciledViaWorkEmail = 0;
   let skippedWorkDeptCollisions = 0;
   const rowsToInsert: Record<string, string | null>[] = [];
@@ -618,14 +655,57 @@ export async function replaceGlobalMasterListFromCsvText(
         }
       }
 
-      const isOffboarded =
-        match.kind === "work" ? !!match.row.off_boarded_at : !!match.off_boarded_at;
-      if (clearOffboarded && isOffboarded) reonboarded += 1;
+      const offBoardedAtRaw =
+        match.kind === "work" ? match.row.off_boarded_at : match.off_boarded_at;
+      const isOffboarded = !!offBoardedAtRaw;
+      // FINAL PAY GRACE: never re-activate someone off-boarded within the
+      // grace window, even with clearOffboarded=true. Payroll pays one week in
+      // arrears, so their last check goes out during this window — and the
+      // sheet routinely still lists fresh leavers (rows lag HR), which used to
+      // silently erase real offboard stamps mid final-pay-cycle (2026-07-27:
+      // a sync un-offboarded 19 Lead Gen leavers stamped 1-4 days earlier).
+      // The row still syncs normally below; only the stamp-clearing is skipped.
+      //
+      // Scope guards (each keeps a documented flow working):
+      //  - PERSONAL-email matches only. A work-email-only match means the
+      //    personal emails differ — that's the recycled-work-email REPLACEMENT
+      //    HIRE pattern (a different human), and skipping would hide the new
+      //    hire from the roster while mislabeling them a leaver.
+      //  - age >= 0. A FUTURE stamp (hand-typed sheet date, e.g. the known
+      //    2027 typo) is corruption, not a fresh leaver — keep the pre-guard
+      //    self-heal where a clearOffboarded sync restores the row.
+      let reactivate = clearOffboarded && isOffboarded;
+      if (reactivate && offBoardedAtRaw && match.kind === "personal") {
+        const age = Date.now() - Date.parse(offBoardedAtRaw);
+        const withinGrace =
+          Number.isFinite(age) &&
+          age >= 0 &&
+          age < OFFBOARD_REACTIVATION_GRACE_DAYS * 86_400_000;
+        if (withinGrace) {
+          reactivate = false;
+          // Count PEOPLE, not rows — dual-role leavers have one stamped row
+          // per department and would otherwise double-count/double-list.
+          const skipKey =
+            normalizeEmail(payload["Work Email"]) || personalEmail || `name:${payload["Name"] ?? ""}`;
+          if (!reonboardSkippedKeys.has(skipKey)) {
+            reonboardSkippedKeys.add(skipKey);
+            reonboardSkippedRecent += 1;
+            if (reonboardSkippedPeople.length < 100) {
+              reonboardSkippedPeople.push({
+                name: payload["Name"] ?? null,
+                work_email: payload["Work Email"] ?? null,
+                off_boarded_at: offBoardedAtRaw,
+              });
+            }
+          }
+        }
+      }
+      if (reactivate) reonboarded += 1;
       const updatePayload: Record<string, string | null> = {
         ...payload,
         last_seen_upload_id: uploadId,
       };
-      if (clearOffboarded && isOffboarded) {
+      if (reactivate) {
         updatePayload["off_boarded_at"] = null;
         updatePayload["off_boarded_reason"] = null;
         updatePayload["off_boarded_by"] = null;
@@ -840,6 +920,8 @@ export async function replaceGlobalMasterListFromCsvText(
     rowsMissingPersonalEmail,
     duplicatesInCsv,
     reonboarded,
+    reonboardSkippedRecent,
+    reonboardSkippedPeople,
     reconciledViaWorkEmail,
     skippedWorkDeptCollisions,
   };

@@ -123,6 +123,14 @@ interface MasterSheetSyncResponse {
   inserted?: number;
   updated?: number;
   reonboarded?: number;
+  /** Re-activations skipped because the person was off-boarded within the
+   *  final-pay grace window (their last check hasn't gone out yet). */
+  reonboardSkippedRecent?: number;
+  reonboardSkippedPeople?: Array<{
+    name: string | null;
+    work_email: string | null;
+    off_boarded_at: string;
+  }>;
   reconciledViaWorkEmail?: number;
   rowsMissingPersonalEmail?: number;
   duplicatesInCsv?: number;
@@ -522,6 +530,17 @@ export default function AdminCsvImports() {
       ];
       if ((json.reonboarded ?? 0) > 0) {
         sublines.push(`${json.reonboarded} off-boarded employees restored to active roster`);
+      }
+      if ((json.reonboardSkippedRecent ?? 0) > 0) {
+        const names = (json.reonboardSkippedPeople ?? [])
+          .slice(0, 6)
+          .map((p) => p.name || p.work_email || '?')
+          .join(', ');
+        sublines.push(
+          `${json.reonboardSkippedRecent} kept off-boarded (recent leaver — final-pay protection; restore via HR → Offboarding if this is a mistake)${
+            names ? `: ${names}${(json.reonboardSkippedRecent ?? 0) > 6 ? ', …' : ''}` : ''
+          }`,
+        );
       }
       if ((json.rowsMissingPersonalEmail ?? 0) > 0) {
         sublines.push(`${json.rowsMissingPersonalEmail} rows missing personal email (orphan)`);
