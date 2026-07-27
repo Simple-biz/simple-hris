@@ -74,16 +74,18 @@ export function overrideDeptLabel(
  * Same override for a raw PostgREST row (quoted-column shape:
  * `Department` / `Work Email` / `Personal Email` / alternates). Returns the
  * row unchanged unless the override applies — callers can map over pages
- * without re-allocating untouched rows.
+ * without re-allocating untouched rows. Accepts any object row shape (typed
+ * interfaces without index signatures included).
  */
-export function applyDeptOverrideToRawRow<T extends Record<string, unknown>>(row: T): T {
-  const dept = typeof row['Department'] === 'string' ? (row['Department'] as string) : null;
+export function applyDeptOverrideToRawRow<T extends object>(row: T): T {
+  const r = row as Record<string, unknown>;
+  const dept = typeof r['Department'] === 'string' ? (r['Department'] as string) : null;
   const effective = overrideDeptLabel(
     dept,
-    row['Work Email'] as string | null | undefined,
-    row['Personal Email'] as string | null | undefined,
-    row['Alternate Work Email'] as string | null | undefined,
-    row['Alternate Work Email 2'] as string | null | undefined,
+    r['Work Email'] as string | null | undefined,
+    r['Personal Email'] as string | null | undefined,
+    r['Alternate Work Email'] as string | null | undefined,
+    r['Alternate Work Email 2'] as string | null | undefined,
   );
   if (effective === dept) return row;
   return { ...row, Department: effective };
