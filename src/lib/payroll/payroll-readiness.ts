@@ -58,6 +58,7 @@ import { pickCurrentSourceFile } from '@/lib/hubstaff/current-upload';
 import { summarizeApplied } from '@/lib/supabase/bonus-catalog-applied-db';
 import { listHrPendingEmployees } from '@/lib/supabase/hr-pending-employees';
 import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
+import { applyDeptOverrideToRawRow } from '@/lib/departments/dept-email-overrides';
 import { isFinalPayrollWeekOfMonth } from '@/lib/payroll/bonus-cadence';
 import { DEPARTMENTS, MANAGER_BONUS_DEPT_KEYS } from '@/lib/payroll/department-bonus';
 import { listBonusCatalog } from '@/lib/supabase/bonus-catalog-db';
@@ -123,6 +124,20 @@ export interface ReadinessMissingRate {
   name: string;
   email: string | null;
   department: string | null;
+  /** Master-list "Start Date", normalized to `YYYY-MM-DD`. Null when the column
+   *  is blank or unparseable (it's free text on the sheet). */
+  startDate: string | null;
+  /** True when the start date lands in the pay week in view OR the week before
+   *  it: a brand-new hire who already logged hours (that's why they're on this
+   *  week's Hubstaff file at all) but has no rate in the Payment Catalog yet.
+   *  Triage signal only — a new hire's missing rate blocks pay exactly like
+   *  anyone else's, so it still scores the same. */
+  recentlyOnboarded: boolean;
+  /** Set when the department/start date came from an OFF-BOARDED master row: the
+   *  person worked part of the week and then left. They still need a rate if
+   *  those final hours are being paid, so the row stays — this just explains it.
+   *  `YYYY-MM-DD` of the off-board, or null for anyone still active. */
+  offBoardedAt: string | null;
 }
 
 export interface ReadinessMissingBank {
@@ -247,8 +262,9 @@ function parseLocalIso(iso: string): Date | null {
  */
 async function resolveCurrentWeek(
   preferredSourceFile?: string | null,
-): Promise<{ weekStart: string; sourceFile: string | null }> {
+): Promise<{ weekStart: string; sourceFile: string | null; degraded: string[] }> {
   let sourceFile: string | null = (preferredSourceFile ?? '').trim() || null;
+  const degraded: string[] = [];
   if (!sourceFile) {
     try {
       const uploads = await listHubstaffUploads();
@@ -257,16 +273,24 @@ async function resolveCurrentWeek(
         undefined,
       );
     } catch {
+      // MUST be reported. Losing the upload list doesn't just blank a field — it
+      // drops us on the calendar-week fallback below, where the rate check runs
+      // over EVERY Hubstaff row ever loaded instead of this week's file. That
+      // reads as hundreds of phantom no-rate workers (people long gone) and a
+      // wrecked score, with nothing on screen to say the data was bad.
       sourceFile = null;
+      degraded.push(
+        'The Hubstaff upload list couldn’t be read — the pay week fell back to the calendar week, so the pay-rate check may cover the wrong hours.',
+      );
     }
   }
   if (sourceFile) {
     const weekStart = weekKeyFromSourceFile(sourceFile);
-    if (weekStart) return { weekStart, sourceFile };
+    if (weekStart) return { weekStart, sourceFile, degraded };
   }
   // No usable upload filename → fall back to the current calendar week's Monday
   // so the tab still renders before any upload exists.
-  return { weekStart: isoWeekStartOf(new Date()), sourceFile };
+  return { weekStart: isoWeekStartOf(new Date()), sourceFile, degraded };
 }
 
 // ── Department enumeration ────────────────────────────────────────────────────
@@ -497,6 +521,179 @@ async function buildKpiReadiness(
 
 // ── Missing rates (current-week Hubstaff workers, USEE excluded) ──────────────
 
+/**
+ * Normalize a master-list "Start Date" cell to a `YYYY-MM-DD` calendar date, so
+ * it can be compared against the week key and rendered without a timezone shift.
+ * The column is free text (it comes off the sheet), so three shapes are handled;
+ * anything else returns null rather than a guess.
+ */
+function normalizeStartDate(raw: string | null | undefined): string | null {
+  const s = (raw ?? '').trim();
+  if (!s) return null;
+  // Already a date (or a timestamp) — take the calendar-date prefix verbatim.
+  const iso = /^(\d{4})-(\d{2})-(\d{2})/.exec(s);
+  if (iso) return `${iso[1]}-${iso[2]}-${iso[3]}`;
+  // Sheet exports write M/D/YYYY. Native Date parsing of that is locale-dependent
+  // on Node ("5/4/2026" can read as April 5), so parse the parts explicitly.
+  const mdy = /^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/.exec(s);
+  if (mdy) {
+    const month = Number(mdy[1]);
+    const day = Number(mdy[2]);
+    const year = mdy[3].length === 2 ? 2000 + Number(mdy[3]) : Number(mdy[3]);
+    if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+    return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+  }
+  // Spelled-out forms ("July 20, 2026") parse to LOCAL midnight, so local getters
+  // read back the same calendar date that was written.
+  const d = new Date(s);
+  return Number.isNaN(d.getTime()) ? null : toIsoDate(d);
+}
+
+/** Name → comparable token set: lowercased words, with the master list's
+ *  surname-first commas, quoted nicknames and curly quotes stripped. So
+ *  `Zambas, Alehzandra "Alexa"` → {zambas, alehzandra, alexa}, which a Hubstaff
+ *  "Alexa Zambas" is a subset of. */
+function nameTokens(raw: string | null | undefined): Set<string> {
+  return new Set(
+    (raw ?? '')
+      .toLowerCase()
+      .replace(/["“”'’,.]/g, ' ')
+      .split(/\s+/)
+      .filter((t) => t.length > 0),
+  );
+}
+
+/**
+ * Fill in department / start date for missing-rate rows the ACTIVE roster
+ * couldn't resolve, reading `global_master_list` directly.
+ *
+ * The roster snapshot readiness scores against is `active_employees`, which by
+ * design drops anyone off-boarded or missed by the last sheet sync — and those
+ * are exactly the people who pile up on this list (they have hours but no rate
+ * precisely because nothing links them to a department any more). Verified
+ * against the Jul 5–11 week, where all five no-rate rows were invisible to the
+ * active view: four off-boarded mid-week, one (alehzandra@ vs alehzandraz@) whose
+ * Hubstaff address never matched her master row at all.
+ *
+ * Two passes, most-trustworthy first: every email alias on the master row, then
+ * — only for a row still unresolved — a name-token match that must land on
+ * exactly ONE person. This is display-only enrichment (it never moves a number
+ * or the score), so on a read failure the columns just stay blank.
+ */
+async function enrichMissingRatesFromMaster(missing: ReadinessMissingRate[]): Promise<void> {
+  const unresolved = missing.filter((m) => !m.department || !m.startDate);
+  if (unresolved.length === 0) return;
+
+  const supabase = createSupabaseServiceRoleClient();
+  if (!supabase) return;
+
+  const FULL =
+    'Department,Name,"Start Date","Work Email","Personal Email","Alternate Work Email","Alternate Work Email 2",off_boarded_at,last_seen_upload_id';
+  const BASE = 'Department,Name,"Start Date","Work Email","Personal Email",off_boarded_at';
+  type MasterRow = Record<string, unknown>;
+
+  const readAll = async (sel: string): Promise<MasterRow[] | null> => {
+    const PAGE = 1000;
+    const out: MasterRow[] = [];
+    let from = 0;
+    while (true) {
+      const { data, error } = await supabase
+        .from('global_master_list')
+        .select(sel)
+        .range(from, from + PAGE - 1);
+      if (error) return null;
+      const page = (data ?? []) as unknown as MasterRow[];
+      out.push(...page);
+      if (page.length < PAGE) break;
+      from += PAGE;
+    }
+    return out;
+  };
+
+  // The alternate-email + last_seen_upload_id columns post-date the original
+  // table, so fall back to the base projection rather than losing the whole read.
+  const rows = (await readAll(FULL)) ?? (await readAll(BASE));
+  if (!rows || rows.length === 0) return;
+
+  const str = (v: unknown): string | null => {
+    const s = v == null ? '' : String(v).trim();
+    return s ? s : null;
+  };
+
+  interface Candidate {
+    department: string | null;
+    startDate: string | null;
+    offBoardedAt: string | null;
+    tokens: Set<string>;
+    /** Sort key for picking between duplicate rows for the same person. */
+    seenId: number;
+  }
+  // Prefer a row that is still active, then the one seen in the latest upload:
+  // the master list carries duplicate person rows (and recycled work emails),
+  // and a live row describes the person better than a historical one. Active
+  // beats off-boarded OUTRIGHT — never let a stale row win on `seenId`.
+  const better = (a: Candidate, b: Candidate): boolean => {
+    const aLive = a.offBoardedAt === null;
+    const bLive = b.offBoardedAt === null;
+    if (aLive !== bLive) return aLive;
+    return a.seenId > b.seenId;
+  };
+
+  const byEmail = new Map<string, Candidate>();
+  const candidates: Candidate[] = [];
+  for (const rawRow of rows) {
+    // Effective department (Sales/Sales-Assistant email split) so exception
+    // rows label and pause-filter on the person's real department.
+    const r = applyDeptOverrideToRawRow(rawRow);
+    const seen = Number(r['last_seen_upload_id'] ?? 0);
+    const c: Candidate = {
+      department: str(r['Department']),
+      startDate: normalizeStartDate(str(r['Start Date'])),
+      offBoardedAt: normalizeStartDate(str(r['off_boarded_at'])),
+      tokens: nameTokens(str(r['Name'])),
+      seenId: Number.isFinite(seen) ? seen : 0,
+    };
+    candidates.push(c);
+    for (const col of [
+      'Work Email',
+      'Personal Email',
+      'Alternate Work Email',
+      'Alternate Work Email 2',
+    ]) {
+      const em = normEmail(str(r[col]) ?? '');
+      if (!em) continue;
+      const cur = byEmail.get(em);
+      if (!cur || better(c, cur)) byEmail.set(em, c);
+    }
+  }
+
+  for (const m of unresolved) {
+    let hit = m.email ? byEmail.get(normEmail(m.email) ?? '') ?? null : null;
+    if (!hit) {
+      // Last resort: the Hubstaff display name. Only accepted when exactly one
+      // person matches — a near-miss must leave the columns blank rather than
+      // attribute someone else's department to this row.
+      const want = nameTokens(m.name);
+      if (want.size >= 2) {
+        const matches = candidates.filter((c) => [...want].every((t) => c.tokens.has(t)));
+        const distinct = new Map<string, Candidate>();
+        for (const c of matches) {
+          // Same person, duplicated across master rows → collapse on the name
+          // token set so the uniqueness test below counts PEOPLE, not rows.
+          const key = [...c.tokens].sort().join(' ');
+          const cur = distinct.get(key);
+          if (!cur || better(c, cur)) distinct.set(key, c);
+        }
+        if (distinct.size === 1) hit = [...distinct.values()][0];
+      }
+    }
+    if (!hit) continue;
+    m.department = m.department ?? hit.department;
+    m.startDate = m.startDate ?? hit.startDate;
+    m.offBoardedAt = hit.offBoardedAt;
+  }
+}
+
 async function buildMissingRates(
   sourceFile: string | null,
   /** The active master roster, fetched ONCE by getPayrollReadiness and shared
@@ -507,6 +704,9 @@ async function buildMissingRates(
    *  its workers leave both the missing list AND the denominator, so the
    *  score re-curves over the people actually being paid. */
   isPausedDept: (dept: string | null | undefined) => boolean,
+  /** The pay week in view (see `weekKeyFromSourceFile`). Only used to label a
+   *  missing-rate row as recently onboarded. */
+  weekStart: string,
 ): Promise<{
   rows: ReadinessMissingRate[];
   workerCount: number;
@@ -548,6 +748,7 @@ async function buildMissingRates(
   // People roster's exact behaviour).
   const aliasesByEmail = new Map<string, string[]>();
   const deptByEmail = new Map<string, string | null>();
+  const startDateByEmail = new Map<string, string | null>();
   for (const e of employees) {
     const aliases = [e.work_email, e.personal_email, e.alternate_work_email, e.alternate_work_email_2]
       .map((a) => normEmail(a ?? ''))
@@ -555,8 +756,23 @@ async function buildMissingRates(
     for (const a of aliases) {
       if (!aliasesByEmail.has(a)) aliasesByEmail.set(a, aliases);
       if (!deptByEmail.has(a)) deptByEmail.set(a, e.department ?? null);
+      // First-wins, like the department above: the master list carries duplicate
+      // person rows, and the first one is the same row the dept came from.
+      if (!startDateByEmail.has(a)) startDateByEmail.set(a, normalizeStartDate(e.start_date));
     }
   }
+
+  // "Recently onboarded" = started no earlier than the week BEFORE the week in
+  // view. Anyone who started IN the week in view and is still in the onboarding
+  // pipeline is already an exception (`started_this_week`) and never reaches this
+  // list; what's left is the hire whose first full week is being paid right now
+  // and whose Payment Catalog rate was never set. No upper bound — a start date
+  // past this week is even more clearly a brand-new row.
+  const recentStartCutoff = (() => {
+    const d = parseLocalIso(weekStart);
+    if (!d) return null;
+    return toIsoDate(new Date(d.getFullYear(), d.getMonth(), d.getDate() - 7));
+  })();
 
   const workers = rowsToPayrollRows(hubstaffRows);
   const seen = new Set<string>();
@@ -605,8 +821,27 @@ async function buildMissingRates(
 
     const rate = resolvePeopleRate(rateCtx, aliases, dept);
     if (rate.source === null) {
-      missing.push({ name, email: email || null, department: dept });
+      missing.push({
+        name,
+        email: email || null,
+        department: dept,
+        startDate: (email && startDateByEmail.get(email)) ?? null,
+        // Both stamped below, once the master-list fallback has had its say.
+        recentlyOnboarded: false,
+        offBoardedAt: null,
+      });
     }
+  }
+
+  // Backfill department / start date for the rows the active roster couldn't
+  // resolve, THEN decide who's a new hire — the enriched date is usually the
+  // only one there is (a brand-new or just-left worker is exactly who the active
+  // view misses).
+  await enrichMissingRatesFromMaster(missing);
+  for (const m of missing) {
+    m.recentlyOnboarded = Boolean(
+      m.startDate && recentStartCutoff && m.startDate >= recentStartCutoff,
+    );
   }
   missing.sort((a, b) => a.name.localeCompare(b.name));
   return { rows: missing, workerCount, payrollEmails, degraded: [] };
@@ -731,7 +966,7 @@ async function buildMissingBank(
     if (seen.has(idKey)) continue;
     seen.add(idKey);
     eligibleCount += 1;
-    eligibleEmails.push([w, p].filter(Boolean));
+    eligibleEmails.push([w, p].filter((e): e is string => Boolean(e)));
 
     const idRow = (w && idRowByEmail.get(w)) || (p && idRowByEmail.get(p)) || null;
     const rates = (w && ratesByEmail.get(w)) || (p && ratesByEmail.get(p)) || null;
@@ -865,7 +1100,11 @@ async function buildExceptions(
 export async function getPayrollReadiness(
   sourceFile?: string | null,
 ): Promise<PayrollReadiness> {
-  const { weekStart, sourceFile: resolvedFile } = await resolveCurrentWeek(sourceFile);
+  const {
+    weekStart,
+    sourceFile: resolvedFile,
+    degraded: weekDegraded,
+  } = await resolveCurrentWeek(sourceFile);
   const isMonthlyPayWeek = isFinalPayrollWeekOfMonth(weekStart);
 
   // Departments excluded from THIS pay week (the wizard's step-1 Configuration
@@ -891,7 +1130,7 @@ export async function getPayrollReadiness(
     buildExceptions(weekStart),
   ]);
 
-  const degraded: string[] = [...exceptionsRes.degraded];
+  const degraded: string[] = [...weekDegraded, ...exceptionsRes.degraded];
   if (pausedRaw === undefined) {
     degraded.push(
       'The pay-week Configuration (excluded departments) couldn’t be read — exclusions were not applied this load.',
@@ -936,7 +1175,7 @@ export async function getPayrollReadiness(
 
   const [kpi, ratesRes, bankRes] = await Promise.all([
     buildKpiReadiness(weekStart, isMonthlyPayWeek, registrySafe, pausedDeptKeys, masterDeptLabels),
-    buildMissingRates(resolvedFile, employees, exceptionIdentities, isPausedDept),
+    buildMissingRates(resolvedFile, employees, exceptionIdentities, isPausedDept, weekStart),
     buildMissingBank(employees, exceptionIdentities, isPausedDept),
   ]);
   degraded.push(...ratesRes.degraded, ...bankRes.degraded);

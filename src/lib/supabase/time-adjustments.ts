@@ -2,6 +2,7 @@ import { createSupabaseServiceRoleClient } from './server';
 import { insertAuditLog } from './audit-log';
 import { canActOnDisputes, resolveUserRole } from './pab-day-disputes';
 import { normEmail } from '@/lib/email/norm-email';
+import { overrideDeptLabel } from '@/lib/departments/dept-email-overrides';
 import { listDepartmentsForManager } from './department-managers';
 
 /**
@@ -336,9 +337,16 @@ export async function managerDecideTimeAdjustment(
     .select('"Department"')
     .ilike('"Work Email"', row.work_email)
     .maybeSingle();
-  const empDept = ((masterData as Record<string, unknown> | null)?.['Department'] as string | null)
-    ?.trim()
-    .toLowerCase() ?? '';
+  // Effective department (Sales/Sales-Assistant email split) so the right
+  // department's manager is authorized over the request.
+  const empDept = (
+    overrideDeptLabel(
+      (masterData as Record<string, unknown> | null)?.['Department'] as string | null,
+      row.work_email,
+    ) ?? ''
+  )
+    .trim()
+    .toLowerCase();
   if (!empDept || !managedDepts.includes(empDept)) {
     return { error: 'Not authorized — employee is not in your managed departments' };
   }
@@ -419,9 +427,16 @@ export async function recallTimeAdjustment(
     .select('"Department"')
     .ilike('"Work Email"', row.work_email)
     .maybeSingle();
-  const empDept = ((masterData as Record<string, unknown> | null)?.['Department'] as string | null)
-    ?.trim()
-    .toLowerCase() ?? '';
+  // Effective department (Sales/Sales-Assistant email split) so the right
+  // department's manager is authorized over the request.
+  const empDept = (
+    overrideDeptLabel(
+      (masterData as Record<string, unknown> | null)?.['Department'] as string | null,
+      row.work_email,
+    ) ?? ''
+  )
+    .trim()
+    .toLowerCase();
   if (!empDept || !managedDepts.includes(empDept)) {
     return { error: 'Not authorized — employee is not in your managed departments' };
   }

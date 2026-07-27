@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { createSupabaseServiceRoleClient } from '@/lib/supabase/server';
 import { requireElevatedSession, deniedResponse } from '@/lib/auth/authorize-email';
 import { getDepartmentRegistry } from '@/lib/departments/registry-db';
+import { applyDeptOverrideToRawRow } from '@/lib/departments/dept-email-overrides';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -26,9 +27,13 @@ export async function GET() {
     );
   }
 
+  // Emails ride along so the Sales/Sales-Assistant email override can compute
+  // each row's EFFECTIVE department — with it, both "Sales" (US) and
+  // "Sales Assistant" (PH override cohort) surface as selectable labels even
+  // though the sheet labels every one of those rows "Sales".
   const { data, error } = await supabase
     .from('active_employees')
-    .select('"Department"')
+    .select('"Department", "Work Email", "Personal Email"')
     .range(0, 9999);
   if (error) return NextResponse.json({ departments: [], error: error.message }, { status: 500 });
 
@@ -43,7 +48,7 @@ export async function GET() {
     set.add(d);
   };
   for (const row of (data ?? []) as Array<Record<string, unknown>>) {
-    add(String(row['Department'] ?? ''));
+    add(String(applyDeptOverrideToRawRow(row)['Department'] ?? ''));
   }
   // In-app departments (best-effort: a registry read failure must not take
   // down the roster-derived list).

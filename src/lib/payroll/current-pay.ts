@@ -33,6 +33,7 @@ import { listAllOrphanagePayHours } from "@/lib/supabase/orphanage-pay-db";
 import { buildOrphanageCoverageMap } from "@/lib/payroll/orphanage-pab-coverage";
 import { buildFxRates, USD_TO_COP_SETTINGS_KEY, type FxRates } from "@/lib/fx/currency-fx";
 import { normEmail } from "@/lib/email/norm-email";
+import { applyDeptOverrideToRawRow } from "@/lib/departments/dept-email-overrides";
 import {
   getPabMonthRange,
   parseDateRangeFromFilename,
@@ -297,7 +298,10 @@ async function fetchMasterMin(
     if (page.length < PAGE) break;
     from += PAGE;
   }
-  return raw.map((r) => ({
+  // applyDeptOverrideToRawRow: effective department (Sales/Sales-Assistant
+  // email split) — keeps the PH cohort's PAB/Tech eligibility + dept key on
+  // the sales_assistant side of the split.
+  return raw.map(applyDeptOverrideToRawRow).map((r) => ({
     work_email: typeof r["Work Email"] === "string" ? (r["Work Email"] as string) : null,
     personal_email:
       typeof r["Personal Email"] === "string" ? (r["Personal Email"] as string) : null,

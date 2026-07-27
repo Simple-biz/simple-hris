@@ -17,6 +17,7 @@ import {
 import { getEmployeeHourlyRatesRows } from '@/lib/supabase/employee-hourly-rates';
 import { getAppSetting, getAppSettings } from '@/lib/supabase/app-settings';
 import { normEmail } from '@/lib/email/norm-email';
+import { applyDeptOverrideToRawRow } from '@/lib/departments/dept-email-overrides';
 import {
   US_HOLIDAYS_ENABLED_KEY,
   US_HOLIDAYS_LIST_KEY,
@@ -299,7 +300,10 @@ async function fetchMasterRowsForEmail(
     .select('"Work Email", "Personal Email", "Start Date", "Department", "Alternate Work Email", "Alternate Work Email 2"');
   if (!data) return { row: null, allHsl };
   let myRow: MasterMin | null = null;
-  for (const raw of data as Array<Record<string, unknown>>) {
+  for (const rawRow of data as Array<Record<string, unknown>>) {
+    // Effective department (Sales/Sales-Assistant email split) — keeps a PH
+    // assistant's PAB/Tech eligibility keyed on sales_assistant.
+    const raw = applyDeptOverrideToRawRow(rawRow);
     const m: MasterMin = {
       work_email: typeof raw['Work Email'] === 'string' ? (raw['Work Email'] as string) : null,
       personal_email:

@@ -41,7 +41,17 @@ export const HUBSTAFF_LEAVE_STATUS = 'On Leave';
  * they're tallied as an exception. Matched case-insensitively against the raw
  * Department label.
  */
-const HUBSTAFF_EXEMPT_DEPTS = new Set(['smm freelancer', 'site building', 'sales', 'usee']);
+// 'sales' + 'sales assistant': one dept until the 2026-07-27 split — 'Sales'
+// is now the US team (salaried, never tracked) and 'Sales Assistant' the PH
+// cohort whose effective label the email override rewrites. Both stay exempt,
+// exactly as the combined dept was before the split.
+const HUBSTAFF_EXEMPT_DEPTS = new Set([
+  'smm freelancer',
+  'site building',
+  'sales',
+  'sales assistant',
+  'usee',
+]);
 
 export function isHubstaffExemptDept(department: string | null | undefined): boolean {
   if (!department) return false;

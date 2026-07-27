@@ -5272,23 +5272,20 @@ export default function PayrollWizard({
    *     mapping get a slug key + their master-list label as the tab name), and
    *   • any dept key that people in THIS run resolved to but that isn't already
    *     represented — so nobody is dropped into an invisible bucket.
-   * Same `{ key, name, bonuses }` shape as `DEPARTMENTS`; custom/derived
-   * departments carry no built-in bonus toggles (`bonuses: []`).
+   * Same `{ key, name, bonuses }` shape as `DEPARTMENTS`, plus `masterLabels` —
+   * the Global Master List "Department" labels that resolve INTO this key. A
+   * built-in payroll name often differs from the sheet label it covers
+   * ("Edit" ← `Edit Team`, "Hogan Smith Law" ← `HSL`/`hsl:*`, "Smart Staff" ←
+   * `SmartClicks/Sterling`), so the Configuration tab shows the labels on the
+   * row and searches them — otherwise the sheet's department reads as missing.
+   * (Sales vs Sales Assistant is NOT a label fold: they're separate depts, the
+   * PH cohort's label is rewritten upstream by the email override list.)
+   * Custom/derived departments carry no built-in bonus toggles (`bonuses: []`).
    */
   const allWizardDepartments = useMemo(() => {
-    const list = DEPARTMENTS.map(d => ({ ...d, isCustom: false }));
-    const seen = new Set(list.map(d => d.key));
-
-    // In-app registry departments.
-    for (const entry of customDepartments) {
-      if (seen.has(entry.key)) continue;
-      seen.add(entry.key);
-      list.push({ key: entry.key, name: entry.name, bonuses: [], isCustom: true });
-    }
-
-    // Every master-list department: a label that resolves to a built-in or
-    // registry key is already represented above; anything else (e.g. "USEE")
-    // becomes its own derived tab under its master-list label.
+    // Master-list labels grouped by the dept key they resolve to (built-in,
+    // registry, or the label's own slug), in first-seen order.
+    const labelsByKey = new Map<string, string[]>();
     for (const emp of masterEmployees) {
       const label = emp.department?.trim();
       if (!label) continue;
@@ -5296,9 +5293,49 @@ export default function PayrollWizard({
         normalizeDeptToKey(label) ??
         resolveDeptKeyWithRegistry(label, customDepartments) ??
         slugifyDeptKey(label);
-      if (!key || seen.has(key)) continue;
+      if (!key) continue;
+      const labels = labelsByKey.get(key);
+      if (!labels) labelsByKey.set(key, [label]);
+      else if (!labels.some(l => l.toLowerCase() === label.toLowerCase())) labels.push(label);
+    }
+    const labelsFor = (key: string) => labelsByKey.get(key) ?? [];
+
+    const list = DEPARTMENTS.map(d => ({
+      ...d,
+      isCustom: false,
+      isRegistry: false,
+      masterLabels: labelsFor(d.key),
+    }));
+    const seen = new Set(list.map(d => d.key));
+
+    // In-app registry departments.
+    for (const entry of customDepartments) {
+      if (seen.has(entry.key)) continue;
+      seen.add(entry.key);
+      list.push({
+        key: entry.key,
+        name: entry.name,
+        bonuses: [],
+        isCustom: true,
+        isRegistry: true,
+        masterLabels: labelsFor(entry.key),
+      });
+    }
+
+    // Every master-list department: a label that resolves to a built-in or
+    // registry key is already represented above; anything else (e.g. "USEE")
+    // becomes its own derived tab under its master-list label.
+    for (const [key, labels] of labelsByKey) {
+      if (seen.has(key)) continue;
       seen.add(key);
-      list.push({ key, name: label, bonuses: [], isCustom: true });
+      list.push({
+        key,
+        name: labels[0],
+        bonuses: [],
+        isCustom: true,
+        isRegistry: false,
+        masterLabels: labels,
+      });
     }
 
     // Any dept key present on a payable row but not yet represented (e.g. a
@@ -5315,7 +5352,14 @@ export default function PayrollWizard({
     for (const key of Object.values(employeeDepts)) {
       if (!key || seen.has(key)) continue;
       seen.add(key);
-      list.push({ key, name: nameForKey(key), bonuses: [], isCustom: true });
+      list.push({
+        key,
+        name: nameForKey(key),
+        bonuses: [],
+        isCustom: true,
+        isRegistry: customDepartments.some(e => e.key === key),
+        masterLabels: [],
+      });
     }
 
     return list;
@@ -8164,7 +8208,15 @@ export default function PayrollWizard({
               const q = configSearch.trim().toLowerCase();
               const rows = [...allWizardDepartments]
                 .sort((a, b) => a.name.localeCompare(b.name))
-                .filter(d => !q || d.name.toLowerCase().includes(q) || d.key.includes(q));
+                // Master-list labels are searchable too: the payroll name can
+                // differ from the sheet's ("Edit Team" lives on the Edit row),
+                // and typing the sheet label must find it.
+                .filter(d =>
+                  !q ||
+                  d.name.toLowerCase().includes(q) ||
+                  d.key.includes(q) ||
+                  d.masterLabels.some(l => l.toLowerCase().includes(q)),
+                );
               const excludedCount = allWizardDepartments.filter(d => pausedDeptKeys.has(d.key)).length;
               const otOffCount = allWizardDepartments.filter(
                 d => (otDeptEnabled[otDeptSettingKey(d.key)] ?? true) === false,
@@ -8303,11 +8355,26 @@ export default function PayrollWizard({
                                 )}>
                                   {dept.name}
                                 </span>
-                                {dept.isCustom && (
+                                {dept.isRegistry && (
                                   <span className="rounded border border-indigo-200 bg-indigo-50 px-1.5 py-0 text-[9px] font-bold uppercase tracking-wide text-indigo-600 dark:border-indigo-800/60 dark:bg-indigo-950/40 dark:text-indigo-400">
                                     Payment Catalog
                                   </span>
                                 )}
+                                {/* The payroll name often differs from the sheet label it
+                                    covers (Edit ← "Edit Team", Hogan Smith Law ← "HSL").
+                                    Show the Global Master List labels so no department
+                                    reads as missing. */}
+                                {dept.masterLabels
+                                  .filter(l => l.toLowerCase() !== dept.name.toLowerCase())
+                                  .map(l => (
+                                    <span
+                                      key={l}
+                                      title={`Global Master List department “${l}” is paid on this row`}
+                                      className="rounded border border-zinc-200 bg-zinc-50 px-1.5 py-0 text-[10px] font-medium text-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400"
+                                    >
+                                      {l}
+                                    </span>
+                                  ))}
                                 {workerCount > 0 && (
                                   <span className="inline-flex items-center gap-1 text-[11px] text-zinc-400">
                                     <Users className="h-3 w-3" />
@@ -9145,7 +9212,14 @@ export default function PayrollWizard({
         // Last resort covers "every department excluded in Configuration" —
         // the rail is empty, so render a harmless placeholder instead of crashing.
         const activeDept = findAdditionsDept(activeDeptTab) ?? additionsDepartments[0]
-          ?? { key: activeDeptTab, name: 'No departments payable', bonuses: [], isCustom: false };
+          ?? {
+            key: activeDeptTab,
+            name: 'No departments payable',
+            bonuses: [],
+            isCustom: false,
+            isRegistry: false,
+            masterLabels: [],
+          };
         // Hide the PAB / Tech columns entirely for a department that the bonus
         // is not assigned to (or is globally disabled) — no empty placeholder.
         const pabColShown = isDeptEligible(sysBonusCfg.pab, activeDeptTab);

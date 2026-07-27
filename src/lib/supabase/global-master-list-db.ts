@@ -1,5 +1,6 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { parseCsv } from "@/lib/csv/parse-csv";
+import { applyDeptOverrideToRawRow } from "@/lib/departments/dept-email-overrides";
 
 const MASTER_LIST_UPLOADS_TABLE = "master_list_uploads";
 
@@ -1052,7 +1053,11 @@ export async function listActiveMasterListPeople(): Promise<{
   // listed twice; distinct departments for the same human stay as separate rows.
   const seen = new Set<string>();
   const people: ActiveMasterListPerson[] = [];
-  for (const row of (data ?? []) as Record<string, unknown>[]) {
+  for (const rawRow of (data ?? []) as Record<string, unknown>[]) {
+    // Effective department (Sales/Sales-Assistant email split) — read-only
+    // surface (Payroll Notes worker picker); the sheet-sync paths above stay
+    // raw on purpose so they keep mirroring the sheet verbatim.
+    const row = applyDeptOverrideToRawRow(rawRow);
     const name = typeof row["Name"] === "string" ? (row["Name"] as string).trim() : "";
     if (!name) continue;
     const department = normalizeDepartment(row["Department"] as string | null);

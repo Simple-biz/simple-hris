@@ -112,6 +112,14 @@ export const TITLES_BY_DEPT_KEY: Record<string, readonly string[]> = {
     'Inside Sales Representative',
     'Customer Support Representative',
   ],
+  sales: [
+    'Sales Representative',
+    'Account Executive',
+    'Sales Manager',
+    'Business Development Representative',
+    'Inside Sales Representative',
+    'Closer',
+  ],
   sales_assistant: [
     'Sales Assistant',
     'Sales Development Representative',

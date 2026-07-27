@@ -389,6 +389,22 @@ export default function HslBonusCalculator({
   const today = new Date();
   const [weekStart, setWeekStart] = useState(() => isoWeekStart(today));
   const [monthStart] = useState(() => isoMonthStart(today));
+  /**
+   * Whether `weekStart` is the REAL payroll week (the Hubstaff upload's Sun–Sat
+   * range start) rather than the local-clock guess it's seeded with.
+   *
+   * This matters because (department, period_start) is the only address KPI rows
+   * have. The seed above is MONDAY-anchored while every stored key is the
+   * upload's SUNDAY, so scoring against an unresolved week reads an empty
+   * dept-week and writes rows nobody — no other manager, not Payroll Readiness,
+   * not payroll — will ever read back. That has already happened: see
+   * `npx tsx scripts/audit-kpi-key-drift.mts` for the stranded Monday-keyed
+   * weeks. So weekly branches stay gated until this flips true.
+   */
+  const [weekResolved, setWeekResolved] = useState(false);
+  /** Resolution failed outright (after retries) — say so instead of silently
+   *  scoring the wrong week. */
+  const [weekError, setWeekError] = useState(false);
 
   const visibleDepts = useMemo<HslDeptKey[]>(
     () => HSL_DEPT_KEYS.filter((k) => canAccessHslDept(managedDepts, k, isElevated)),
@@ -423,6 +439,9 @@ export default function HslBonusCalculator({
   // "All" shows a collapsed overview and a single dept can be focused.
   const [activeFilter, setActiveFilter] = useState<HslDeptKey | 'all'>(initialFilter ?? 'all');
   const [manualOpen, setManualOpen] = useState<Record<string, boolean>>({});
+  /** Cross-branch people search: type a work email (or a name) and only the
+   *  branches that score that person stay on screen, expanded and pre-filtered. */
+  const [personSearch, setPersonSearch] = useState('');
   /** Which dept's "add external member" modal is open (null = closed). */
   const [addingMemberDept, setAddingMemberDept] = useState<HslDeptKey | null>(null);
 
@@ -510,6 +529,11 @@ export default function HslBonusCalculator({
 
   const loadDept = useCallback(async (key: HslDeptKey) => {
     const dept = HSL_DEPTS[key];
+    // A weekly branch's period key is the Hubstaff upload's week — reading before
+    // that resolves queries a key nothing was ever saved under, which is what made
+    // one manager's scores look empty on another account. Monthly branches key on
+    // the 1st of the month, which the local clock already knows.
+    if (dept.cadence === 'weekly' && !weekResolved) return;
     const start = periodStart(dept);
     setLoadingDepts((prev) => new Set([...prev, key]));
     try {
@@ -607,7 +631,7 @@ export default function HslBonusCalculator({
         return next;
       });
     }
-  }, [weekStart, monthStart]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [weekStart, monthStart, weekResolved]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // First-load gate: show a loading screen until every visible dept's initial
   // fetch has settled, so switching to the tab doesn't flash an empty calculator.
@@ -616,7 +640,10 @@ export default function HslBonusCalculator({
     let cancelled = false;
     void (async () => {
       await Promise.all(visibleDepts.map((k) => loadDept(k)));
-      if (!cancelled) setBooted(true);
+      // Stay on the loading screen until the payroll week is known either way —
+      // weekly branches skip their fetch while it's unresolved, so flipping
+      // `booted` first would flash an empty calculator that looks like "no scores".
+      if (!cancelled && (weekResolved || weekError)) setBooted(true);
     })();
     return () => {
       cancelled = true;
@@ -663,23 +690,38 @@ export default function HslBonusCalculator({
   // the Payroll Wizard does (pickCurrentSourceFile) to keep the manager's KPI
   // week in lock-step with the week accounting processes.
   useEffect(() => {
+    let cancelled = false;
     (async () => {
-      try {
-        const res = await fetch('/api/hubstaff-hours?source_files=1', { cache: 'no-store' });
-        const json = (await res.json()) as HubstaffSourceFilesResponse;
-        const latest = pickCurrentSourceFile(json.uploads, json.files);
-        if (latest) {
-          const range = parseDateRangeFromFilename(latest);
+      // Retry before giving up: a cold start or a blip here used to leave the
+      // week silently wrong for the whole session.
+      for (let attempt = 0; attempt < 3 && !cancelled; attempt += 1) {
+        try {
+          const res = await fetch('/api/hubstaff-hours?source_files=1', { cache: 'no-store' });
+          const json = (await res.json()) as HubstaffSourceFilesResponse;
+          const latest = pickCurrentSourceFile(json.uploads, json.files);
+          const range = latest ? parseDateRangeFromFilename(latest) : null;
           if (range) {
             const d = range.start;
             const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+            if (cancelled) return;
             setWeekStart(iso);
+            setWeekResolved(true);
+            setWeekError(false);
+            return;
           }
+        } catch {
+          /* fall through to the retry / error below */
         }
-      } catch {
-        // keep today's week on any error
+        if (attempt < 2) await new Promise((r) => setTimeout(r, 400 * (attempt + 1)));
       }
+      // Out of attempts: NEVER fall back to the local-clock week — that writes
+      // rows under a key nothing reads. Weekly branches stay blocked and the
+      // banner tells the scorer to reload.
+      if (!cancelled) setWeekError(true);
     })();
+    return () => {
+      cancelled = true;
+    };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Save entries to DB ─────────────────────────────────────────────────────
@@ -687,6 +729,15 @@ export default function HslBonusCalculator({
   async function saveDept(key: HslDeptKey) {
     const d = deptState[key]!;
     const dept = HSL_DEPTS[key];
+    // Refuse rather than strand the work: an unresolved week would write this
+    // dept-week under a key no reader asks for (invisible scores, and a duplicate
+    // if it's re-scored later under the right key).
+    if (dept.cadence === 'weekly' && !weekResolved) {
+      toast.error('Payroll week not confirmed', {
+        description: 'Reload the page before saving — scores saved now would not be visible to anyone else.',
+      });
+      return;
+    }
     const start = periodStart(dept);
     const end = periodEnd(dept, start);
 
@@ -724,6 +775,14 @@ export default function HslBonusCalculator({
 
   async function setStatus(key: HslDeptKey, next: BonusStatus): Promise<boolean> {
     const dept = HSL_DEPTS[key];
+    // Same reason as saveDept: a status row on an unresolved week is a dept-week
+    // Readiness will never see, so the branch would read "Pending" forever.
+    if (dept.cadence === 'weekly' && !weekResolved) {
+      toast.error('Payroll week not confirmed', {
+        description: 'Reload the page and try again — this submission would not reach Accounting.',
+      });
+      return false;
+    }
     const start = periodStart(dept);
     try {
       const res = await fetch('/api/hsl-bonus/period-status', {
@@ -833,19 +892,38 @@ export default function HslBonusCalculator({
     }
   }, [activeFilter, visibleDepts]);
 
-  const filteredDepts = useMemo<HslDeptKey[]>(
-    () => (activeFilter === 'all' ? visibleDepts : visibleDepts.filter((k) => k === activeFilter)),
-    [activeFilter, visibleDepts],
-  );
+  // Branches that contain someone matching the people search. Entries are keyed
+  // on the work email, so pasting a work address finds the person directly; the
+  // display name matches too.
+  const personQuery = personSearch.trim().toLowerCase();
+  const personHitDepts = useMemo<HslDeptKey[]>(() => {
+    if (!personQuery) return [];
+    return visibleDepts.filter((k) =>
+      (deptState[k]?.entries ?? []).some(
+        (e) =>
+          e.employee_name.toLowerCase().includes(personQuery) ||
+          e.employee_email.toLowerCase().includes(personQuery),
+      ),
+    );
+  }, [personQuery, visibleDepts, deptState]);
+
+  const filteredDepts = useMemo<HslDeptKey[]>(() => {
+    // A people search spans every branch — it outranks the focus pill, otherwise
+    // you'd have to already know which branch the person sits in.
+    if (personQuery) return personHitDepts;
+    return activeFilter === 'all' ? visibleDepts : visibleDepts.filter((k) => k === activeFilter);
+  }, [personQuery, personHitDepts, activeFilter, visibleDepts]);
 
   // "All" overview lays the collapsed branches out as a grid; an expanded card
   // spans the full width so its wide tables aren't squeezed into one column.
-  const gridMode = activeFilter === 'all' && multiDept;
+  const gridMode = !personQuery && activeFilter === 'all' && multiDept;
 
   /** A block is expanded when: only one dept exists, it's the focused filter,
-   *  or the user manually opened it. With multiple depts under "All" the blocks
-   *  start collapsed so the page reads as a tidy overview. */
+   *  a people search matched inside it, or the user manually opened it. With
+   *  multiple depts under "All" the blocks start collapsed so the page reads as
+   *  a tidy overview. */
   function isOpen(key: HslDeptKey): boolean {
+    if (personQuery) return true; // searched branches always show their match
     if (key in manualOpen) return manualOpen[key]!;
     if (!multiDept) return true;
     return activeFilter === key;
@@ -936,29 +1014,73 @@ export default function HslBonusCalculator({
           </div>
         </div>
 
-        {/* Department filter rail — focus one branch or scan them all */}
+        {/* The payroll week couldn't be confirmed from the Hubstaff upload, so
+            weekly branches are held back rather than scored against a guessed
+            week key (which is invisible to everyone else — see `weekResolved`). */}
+        {weekError && (
+          <div
+            role="alert"
+            className="rounded-lg border border-rose-300 bg-rose-50 px-3 py-2 text-xs text-rose-800 dark:border-rose-500/40 dark:bg-rose-950/30 dark:text-rose-200"
+          >
+            <span className="font-semibold">Couldn&apos;t confirm the payroll week.</span> Weekly
+            branches are paused — anything scored now would be saved under the wrong week and
+            wouldn&apos;t be visible to Accounting or the other managers. Reload the page to try
+            again.
+          </div>
+        )}
+
+        {/* Department filter rail — focus one branch or scan them all, plus a
+            cross-branch people search (find someone by work email). */}
         {multiDept && (
-          <div className="-mx-1 flex items-center gap-1.5 overflow-x-auto px-1 pb-0.5">
-            <DeptPill
-              active={activeFilter === 'all'}
-              label="All"
-              count={visibleDepts.length}
-              onClick={() => setActiveFilter('all')}
-            />
-            {visibleDepts.map((k) => (
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="relative w-full max-w-[260px]">
+              <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400" aria-hidden />
+              <input
+                type="search"
+                value={personSearch}
+                onChange={(e) => setPersonSearch(e.target.value)}
+                placeholder="Find a person by work email…"
+                aria-label="Find a person across branches by name or work email"
+                title="Type a work email or name — only the branches scoring that person stay on screen"
+                className="h-8 w-full rounded-md border border-zinc-200 bg-white pl-8 pr-2 text-xs text-zinc-900 outline-none transition-colors focus:border-blue-400 focus:ring-1 focus:ring-blue-200 dark:border-zinc-800 dark:bg-zinc-900/60 dark:text-zinc-100"
+              />
+            </div>
+            <div className="-mx-1 flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto px-1 pb-0.5">
               <DeptPill
-                key={k}
-                active={activeFilter === k}
-                label={HSL_DEPTS[k].name}
-                color={HSL_DEPTS[k].color}
-                count={deptState[k]!.entries.length}
+                active={!personQuery && activeFilter === 'all'}
+                label="All"
+                count={visibleDepts.length}
                 onClick={() => {
-                  setActiveFilter(k);
-                  setManualOpen((m) => ({ ...m, [k]: true }));
+                  setPersonSearch('');
+                  setActiveFilter('all');
                 }}
               />
-            ))}
+              {visibleDepts.map((k) => (
+                <DeptPill
+                  key={k}
+                  active={!personQuery && activeFilter === k}
+                  label={HSL_DEPTS[k].name}
+                  color={HSL_DEPTS[k].color}
+                  count={deptState[k]!.entries.length}
+                  onClick={() => {
+                    // Picking a branch ends the cross-branch search — the two
+                    // filters would otherwise fight over what's on screen.
+                    setPersonSearch('');
+                    setActiveFilter(k);
+                    setManualOpen((m) => ({ ...m, [k]: true }));
+                  }}
+                />
+              ))}
+            </div>
           </div>
+        )}
+
+        {personQuery && (
+          <p className="font-mono text-[10px] text-zinc-500 dark:text-zinc-400">
+            {personHitDepts.length === 0
+              ? `No one matches “${personSearch.trim()}” in your branches.`
+              : `Matched in ${personHitDepts.length} ${personHitDepts.length === 1 ? 'branch' : 'branches'}: ${personHitDepts.map((k) => HSL_DEPTS[k].name).join(', ')}`}
+          </p>
         )}
       </div>
 
@@ -987,6 +1109,7 @@ export default function HslBonusCalculator({
             loading={loadingDepts.has(key)}
             collapsible={multiDept}
             open={isOpen(key)}
+            searchSeed={personSearch}
             sectionClassName={cn(gridMode && isOpen(key) && 'sm:col-span-2 xl:col-span-3')}
             onToggleOpen={() => toggleOpen(key)}
             periodStartStr={periodStart(HSL_DEPTS[key])}
@@ -1141,6 +1264,10 @@ interface DeptBlockProps {
   loading: boolean;
   collapsible: boolean;
   open: boolean;
+  /** Query pushed down from the top bar's cross-branch people search. Whenever
+   *  it changes it takes over this block's own search box, so a branch that
+   *  surfaced from a work-email search opens already filtered to that person. */
+  searchSeed?: string;
   sectionClassName?: string;
   onToggleOpen: () => void;
   periodStartStr: string;
@@ -1162,7 +1289,7 @@ interface DeptBlockProps {
 const DEPT_PAGE_SIZE = 10;
 
 function DeptBlock({
-  deptKey, state, loading, collapsible, open, sectionClassName, onToggleOpen, periodStartStr,
+  deptKey, state, loading, collapsible, open, searchSeed, sectionClassName, onToggleOpen, periodStartStr,
   onKpiChange, onToggleManager,
   onSave, onMarkReady, onMarkUnready, onView, onSubTeamChange, ssdShareForTeam,
   payrollLocked, markUnreadySubmitting,
@@ -1183,8 +1310,14 @@ function DeptBlock({
   }
 
   // Per-dept search + pagination
-  const [search, setSearch] = useState('');
+  const [search, setSearch] = useState(searchSeed ?? '');
   const [page, setPage] = useState(1);
+
+  // The top bar's cross-branch search drives this box; the manager can still
+  // retype here afterwards (the effect only fires when the seed itself changes).
+  useEffect(() => {
+    if (searchSeed !== undefined) setSearch(searchSeed);
+  }, [searchSeed]);
 
   // SSD sub-team filter — shared between the colored scoring boxes (left) and the
   // employee table (right) so clicking either surface filters the roster live.

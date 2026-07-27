@@ -74,6 +74,7 @@ import {
   type ProcessorId,
 } from "@/lib/employee-payment-processors";
 import { addWeeks, payrollNotesWeekStart, weekRangeLabel } from "@/lib/payroll/manila-week";
+import { parseDateOnlyLocal } from "@/lib/date-only";
 import { periodLabelFromFilename } from "@/lib/hubstaff/period-label";
 import type {
   PayrollReadiness,
@@ -1427,6 +1428,100 @@ function NoMatches({ query }: { query: string }) {
   );
 }
 
+/**
+ * Column template shared by the No Pay Rate list's header and its rows, so the
+ * department / start-date columns line up: person · department · start · action.
+ * Below `sm` the modal is too narrow for four columns, so the grid collapses to
+ * one and each cell carries its own inline label.
+ */
+const RATE_COLS =
+  "grid grid-cols-1 items-start gap-x-3 gap-y-0.5 sm:grid-cols-[minmax(0,1fr)_minmax(0,8.5rem)_minmax(0,9rem)_auto] sm:items-center";
+
+/** "Jul 20, 2026" for a `YYYY-MM-DD` start date. Parsed as a LOCAL calendar date
+ *  (see parseDateOnlyLocal) so it never renders a day early west of UTC. */
+function formatStartDate(iso: string | null): string {
+  const d = parseDateOnlyLocal(iso);
+  if (!d) return "—";
+  try {
+    return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+  } catch {
+    return iso ?? "—";
+  }
+}
+
+/** One row of the No Pay Rate list, in the {@link RATE_COLS} column layout.
+ *  Department and start date are shown as their own columns (not squeezed into
+ *  the email sub-line) because they're how Accounting triages this list: which
+ *  team owes the rate, and whether the person is a brand-new hire. */
+function RatePersonRow({
+  person,
+  canEdit,
+  onFix,
+}: {
+  person: ReadinessMissingRate;
+  canEdit: boolean;
+  onFix: () => void;
+}) {
+  return (
+    <div
+      className={`${RATE_COLS} rounded-lg px-2 py-1.5 transition-colors hover:bg-orange-50/50 dark:hover:bg-blue-950/30`}
+    >
+      <div className="min-w-0">
+        <div className="truncate text-[13px] font-medium text-zinc-800 dark:text-zinc-100">
+          {person.name}
+        </div>
+        <div className="truncate text-[10px] text-zinc-400 dark:text-zinc-500">
+          {person.email || "—"}
+        </div>
+      </div>
+      <div className="min-w-0 truncate text-[11px] text-zinc-600 dark:text-zinc-300">
+        <span className="text-zinc-400 sm:hidden dark:text-zinc-500">Dept · </span>
+        {person.department?.trim() || "—"}
+      </div>
+      <div className="min-w-0 text-[11px] text-zinc-600 dark:text-zinc-300">
+        <span className="text-zinc-400 sm:hidden dark:text-zinc-500">Started · </span>
+        {formatStartDate(person.startDate)}
+        {person.recentlyOnboarded && (
+          <span
+            title="Onboarded within the last two payroll weeks — they already have hours, they just need a rate set in the Payment Catalog"
+            className="ml-1 inline-block rounded-full border border-amber-200 bg-amber-50 px-1.5 py-0.5 align-middle text-[9px] font-semibold uppercase tracking-wide text-amber-700 sm:ml-0 sm:mt-0.5 sm:block sm:w-fit dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300"
+          >
+            New hire
+          </span>
+        )}
+      </div>
+      <div className="flex shrink-0 items-center gap-1.5 sm:justify-end">
+        {/* Off-boarded mid-week: explains the row (nothing links them to a
+            department any more) without dismissing it — final hours still need
+            a rate to be paid. */}
+        {person.offBoardedAt && (
+          <span
+            title={`Off-boarded ${formatStartDate(person.offBoardedAt)} — still needs a rate if their final hours are being paid`}
+            className="shrink-0 rounded-full border border-zinc-200 bg-zinc-50 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-zinc-500 dark:border-zinc-700 dark:bg-zinc-800/60 dark:text-zinc-400"
+          >
+            Left
+          </span>
+        )}
+        <span className="shrink-0 rounded-full border border-rose-200 bg-rose-50 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-rose-700 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-300">
+          No rate
+        </span>
+        {canEdit && (
+          <RowFixButton
+            label="Set rate"
+            onClick={onFix}
+            disabled={!person.email}
+            title={
+              person.email
+                ? "Set this person's pay rate"
+                : "No email on the roster — set the rate from the Payment Catalog"
+            }
+          />
+        )}
+      </div>
+    </div>
+  );
+}
+
 /** Rows per page for the paginated people lists (No Pay Rate / Bank Info /
  *  Exceptions). Ten keeps a page short enough to scan without scrolling. */
 const READINESS_PAGE_SIZE = 10;
@@ -2298,6 +2393,9 @@ function PayrollReadinessGlance({
   const [rateQuery, setRateQuery] = useState("");
   const [bankQuery, setBankQuery] = useState("");
   const [excQuery, setExcQuery] = useState("");
+  // "Recently onboarded" filter for the No Pay Rate list — when on, only new
+  // hires (started this pay week or the one before) show.
+  const [rateNewOnly, setRateNewOnly] = useState(false);
   // Department filter for the Bank Info list ("" = all departments).
   const [bankDept, setBankDept] = useState("");
   // "Paying this week" filter for the Bank Info list — when on, only people
@@ -2446,8 +2544,20 @@ function PayrollReadinessGlance({
   // hooks below can run unconditionally (Rules of Hooks) — a null `data` just
   // yields empty lists. KPI isn't paginated (bounded dept list), so it's still
   // filtered inline in the render below.
-  const ratesShown = (data?.missingRates ?? []).filter((r) =>
-    matchesQuery(rateQuery, r.name, r.email, r.department),
+  // How many missing-rate rows are recent hires — the count on the "Recently
+  // onboarded" chip. Zero hides the chip, so the effect below also releases the
+  // filter to keep the list from stranding empty behind an invisible control.
+  const rateNewCount = useMemo(
+    () => (data?.missingRates ?? []).reduce((n, r) => n + (r.recentlyOnboarded ? 1 : 0), 0),
+    [data?.missingRates],
+  );
+  useEffect(() => {
+    if (rateNewOnly && rateNewCount === 0) setRateNewOnly(false);
+  }, [rateNewOnly, rateNewCount]);
+  const ratesShown = (data?.missingRates ?? []).filter(
+    (r) =>
+      matchesQuery(rateQuery, r.name, r.email, r.department, formatStartDate(r.startDate)) &&
+      (!rateNewOnly || r.recentlyOnboarded),
   );
   // Unique departments present in the Bank Info list (with row counts), powering
   // the bank pane's department dropdown. BANK_NO_DEPT stands in for rows without
@@ -2500,7 +2610,9 @@ function PayrollReadinessGlance({
   // Paginate each people list (10/page). Keyed on the search query so a new
   // search snaps back to page 1; the hook also clamps the page if a live refresh
   // shrinks the list under it.
-  const ratesPage = usePagedList(ratesShown, rateQuery);
+  // The rate list narrows on the recently-onboarded toggle too, so it joins the
+  // reset key (newline-joined, like the bank list's, so keys can't collide).
+  const ratesPage = usePagedList(ratesShown, `${rateNewOnly ? "1" : "0"}\n${rateQuery}`);
   // The bank list narrows on the dept pick and the paying-this-week toggle too,
   // so both join the reset key (newline-joined so "a"+"b" can never collide
   // with "ab").
@@ -2758,43 +2870,57 @@ function PayrollReadinessGlance({
                   <AllClear text="Every current-week worker has a rate." />
                 ) : (
                   <>
-                    <ReadinessSearch
-                      value={rateQuery}
-                      onChange={setRateQuery}
-                      placeholder="Search people…"
-                      shown={ratesShown.length}
-                      total={data.missingRates.length}
-                    />
+                    <div className="mb-2 flex flex-wrap items-center gap-2">
+                      <ReadinessSearch
+                        className="min-w-0 flex-1"
+                        value={rateQuery}
+                        onChange={setRateQuery}
+                        placeholder="Search people…"
+                        shown={ratesShown.length}
+                        total={data.missingRates.length}
+                      />
+                      {/* New-hire filter — narrows the list to people onboarded
+                          this pay week or the one before (the "New hire" chip
+                          rows). Hidden when none qualify; the effect above also
+                          releases the filter then. */}
+                      {rateNewCount > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => setRateNewOnly((v) => !v)}
+                          aria-pressed={rateNewOnly}
+                          title="Only show people onboarded in the last two payroll weeks — they already have hours, they just need a rate set in the Payment Catalog"
+                          className={`h-7 shrink-0 rounded-md border px-2 text-[10px] font-semibold uppercase tracking-wide transition-colors ${
+                            rateNewOnly
+                              ? "border-amber-300 bg-amber-100 text-amber-700 dark:border-amber-500/40 dark:bg-amber-500/15 dark:text-amber-300"
+                              : "border-zinc-200 bg-white text-zinc-500 hover:border-amber-200 hover:text-amber-600 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400 dark:hover:border-amber-500/30 dark:hover:text-amber-300"
+                          }`}
+                        >
+                          Recently onboarded ({rateNewCount})
+                        </button>
+                      )}
+                    </div>
                     {ratesShown.length === 0 ? (
                       <NoMatches query={rateQuery} />
                     ) : (
                       <>
+                        {/* Column headers — sm+ only; the grid stacks below that
+                            and each cell labels itself inline instead. */}
+                        <div
+                          className={`${RATE_COLS} hidden px-2 pb-1 text-[9px] font-semibold uppercase tracking-wide text-zinc-400 sm:grid dark:text-zinc-500`}
+                          aria-hidden
+                        >
+                          <span>Person</span>
+                          <span>Department</span>
+                          <span>Start date</span>
+                          <span className="text-right">Status</span>
+                        </div>
                         <div className="space-y-0.5">
                           {ratesPage.pageItems.map((r) => (
-                            <PersonLine
+                            <RatePersonRow
                               key={r.email ?? r.name}
-                              name={r.name}
-                              email={r.email}
-                              department={r.department}
-                              right={
-                                <div className="flex shrink-0 items-center gap-1.5">
-                                  <span className="shrink-0 rounded-full border border-rose-200 bg-rose-50 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-rose-700 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-300">
-                                    No rate
-                                  </span>
-                                  {canEdit && (
-                                    <RowFixButton
-                                      label="Set rate"
-                                      onClick={() => setRatePerson(r)}
-                                      disabled={!r.email}
-                                      title={
-                                        r.email
-                                          ? "Set this person's pay rate"
-                                          : "No email on the roster — set the rate from the Payment Catalog"
-                                      }
-                                    />
-                                  )}
-                                </div>
-                              }
+                              person={r}
+                              canEdit={canEdit}
+                              onFix={() => setRatePerson(r)}
                             />
                           ))}
                         </div>

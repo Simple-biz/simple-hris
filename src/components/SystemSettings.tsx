@@ -91,6 +91,7 @@ const DEPARTMENTS = [
   { key: 'qc',               name: 'QC' },
   { key: 'discovery',        name: 'Discovery' },
   { key: 'hr',               name: 'HR' },
+  { key: 'sales',            name: 'Sales' },
   { key: 'sales_assistant',  name: 'Sales Assistant' },
   { key: 'smart_staff',      name: 'Smart Staff' },
   { key: 'hogan_smith_law',  name: 'Hogan Smith Law' },

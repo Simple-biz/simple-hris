@@ -1,4 +1,5 @@
 import { normEmail } from "@/lib/email/norm-email";
+import { applyDeptOverrideToRawRow } from "@/lib/departments/dept-email-overrides";
 import {
   createSupabaseServerClient,
   createSupabaseServiceRoleClient,
@@ -809,7 +810,9 @@ async function fetchMasterRowsForProfiles(masterTable: string): Promise<{
     }
   }
 
-  return { rows, error: null };
+  // Effective departments (Sales/Sales-Assistant email split) for Rates &
+  // Profiles and every People-tab consumer of these master rows.
+  return { rows: rows.map(applyDeptOverrideToRawRow), error: null };
 }
 
 function parseExcludeTables(): Set<string> {

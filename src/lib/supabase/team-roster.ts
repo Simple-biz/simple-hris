@@ -1,5 +1,6 @@
 import { createSupabaseServiceRoleClient } from './server';
 import { normEmail } from '../email/norm-email';
+import { applyDeptOverrideToRawRow } from '@/lib/departments/dept-email-overrides';
 import { listManagersByDepartment } from './department-managers';
 import { listSkillSetsForEmails } from './employee-skill-sets';
 
@@ -75,7 +76,10 @@ export async function getTeamRoster(
   }
 
   const managerSet = new Set<string>(mgrEmails);
-  const rows = (empsRes.data ?? []) as ActiveEmployeeRow[];
+  // Effective departments: the Sales/Sales-Assistant email override applies
+  // here too, so a PH assistant lands on the Sales Assistant team roster (and
+  // the dept-match filter below compares against the effective label).
+  const rows = ((empsRes.data ?? []) as ActiveEmployeeRow[]).map(applyDeptOverrideToRawRow);
 
   const profiles: TeamRosterProfile[] = [];
   // Managers we've already surfaced from active_employees — used to figure out
@@ -127,7 +131,7 @@ export async function getTeamRoster(
       .or(`"Work Email".in.(${quoted}),"Personal Email".in.(${quoted})`)
       .is('off_boarded_at', null);
     const seenIds = new Set(profiles.map((pr) => pr.id));
-    for (const r of (mgrRows ?? []) as ActiveEmployeeRow[]) {
+    for (const r of ((mgrRows ?? []) as ActiveEmployeeRow[]).map(applyDeptOverrideToRawRow)) {
       const id = String(r.id);
       if (seenIds.has(id)) continue;
       const workEmail = (r['Work Email'] ?? '').toString().trim() || null;

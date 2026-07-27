@@ -7,6 +7,7 @@ import {
 import { listHubstaffUploads } from '@/lib/supabase/hubstaff-hours-db';
 import { formatDisbursementReportName } from '@/lib/payroll/disbursement-reports';
 import { normEmail } from '@/lib/email/norm-email';
+import { applyDeptOverrideToRawRow } from '@/lib/departments/dept-email-overrides';
 
 /**
  * Executive "Financial Reports" data layer — the company's payout history over
@@ -185,15 +186,13 @@ async function loadDeptByEmail(supabase: Supabase): Promise<Map<string, string>>
       .select('"Work Email", "Personal Email", "Department"')
       .range(from, from + PAGE - 1);
     if (error || !data) break;
-    for (const r of data as Array<{
-      'Work Email': string | null;
-      'Personal Email': string | null;
-      Department: string | null;
-    }>) {
-      const dept = (r.Department ?? '').trim();
+    for (const raw of data as Array<Record<string, unknown>>) {
+      // Effective department (Sales/Sales-Assistant email split).
+      const r = applyDeptOverrideToRawRow(raw);
+      const dept = String(r.Department ?? '').trim();
       if (!dept) continue;
-      const we = normEmail(r['Work Email']);
-      const pe = normEmail(r['Personal Email']);
+      const we = normEmail(r['Work Email'] as string | null);
+      const pe = normEmail(r['Personal Email'] as string | null);
       if (we && !out.has(we)) out.set(we, dept);
       if (pe && !out.has(pe)) out.set(pe, dept);
     }

@@ -32,6 +32,13 @@ export const DEPARTMENTS: {
   { key: 'qc',               name: 'QC',                 bonuses: [] },
   { key: 'discovery',        name: 'Discovery',          bonuses: [] },
   { key: 'hr',               name: 'HR',                 bonuses: [] },
+  // Sales (US sales team) and Sales Assistant (PH cohort) are separate
+  // departments (split 2026-07-27). The master sheet labels both "Sales" —
+  // the PH people are pinned to Sales Assistant by the email override list in
+  // src/lib/departments/dept-email-overrides.ts. The US team is salaried
+  // outside PHP payroll (Hubstaff-exempt, like USEE), so its wizard tab is a
+  // read-only roster card and it carries no peso bonus config.
+  { key: 'sales',            name: 'Sales',              bonuses: [] },
   { key: 'sales_assistant',  name: 'Sales Assistant',    bonuses: [] },
   { key: 'smart_staff',      name: 'Smart Staff',        bonuses: [] },
   {
@@ -217,6 +224,10 @@ export const DEPT_INPUT_CONFIG: Record<string, DeptInputConfig> = {
     deptFields: [{ key: 'newHires', label: 'New Hires (passed 4 weeks)', hint: 'pool ÷ new hires' }],
     formula: 'Pool = (billable members, excluding Teal) × ₱1,000 ÷ new hires. Everyone gets an equal share.',
   },
+  // US sales team — no peso KPI formula; the ₱150/sale rule belongs to the
+  // PH Sales Assistant cohort below. Roster-only keeps the dept first-class
+  // on the manager calculator + Readiness (auto-Ready via 'no_bonus').
+  sales: { employeeFields: [], deptFields: [], formula: 'No bonus formula defined yet — roster only.' },
   sales_assistant: {
     employeeFields: [{ key: 'salesLastWeek', label: 'Sales (last week)', hint: '₱150 each' }],
     deptFields: [],
@@ -242,7 +253,8 @@ export const DEPT_DESCRIPTION: Record<string, string> = {
   qc: 'Quality-checks finished units before they ship, protecting output standards.',
   discovery: 'Runs discovery calls and surfaces fresh sales opportunities each week.',
   hr: 'Recruits, onboards, and supports the workforce, keeping new talent flowing in.',
-  sales_assistant: 'Backs up the sales team and closes assisted deals week over week.',
+  sales: 'The US sales team — closes deals and owns client acquisition end to end.',
+  sales_assistant: 'PH-based assistants backing up the US sales team and closing assisted deals week over week.',
   smm: 'Runs the social channels and grows audience, reach, and engagement.',
   smm_freelancer: 'Freelance social-media creators producing content on a per-deliverable basis.',
   pm_team: 'Coordinates projects across teams and keeps delivery on schedule.',

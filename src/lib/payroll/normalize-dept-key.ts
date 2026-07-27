@@ -39,7 +39,12 @@ export function normalizeDeptToKey(raw: string | null | undefined): string | nul
     hr: 'hr',
     'human resources': 'hr',
     'sales assistant': 'sales_assistant',
-    sales: 'sales_assistant',
+    // Sales and Sales Assistant are DIFFERENT departments (split 2026-07-27).
+    // The master sheet labels both cohorts "Sales"; the PH Sales Assistant
+    // people are re-labelled at roster-load time via the email override list
+    // (src/lib/departments/dept-email-overrides.ts), so by the time a label
+    // reaches this map, "Sales" means the US sales team.
+    sales: 'sales',
     'smart staff': 'smart_staff',
     smartstaff: 'smart_staff',
     // Same team, labeled differently across sources: the master list (authoritative

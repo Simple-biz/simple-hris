@@ -1,4 +1,5 @@
 import { createSupabaseServerClient, createSupabaseServiceRoleClient } from "./server";
+import { overrideDeptLabel } from "@/lib/departments/dept-email-overrides";
 
 /**
  * View in Supabase that filters `global_master_list` down to rows whose
@@ -220,7 +221,18 @@ export function mapEmployeeRow(row: RawRow): EmployeeRow {
     // is null (legacy rows that pre-date the persistence migration), the value
     // stays null here and generateEmployeeIds() fills it in downstream.
     employee_id: employee_id != null ? String(employee_id).trim() || null : null,
-    department: department != null ? String(department) : null,
+    // Effective department: the Sales/Sales-Assistant email override rewrites
+    // the ambiguous sheet label "Sales" for the PH cohort HERE, at the row-map
+    // choke point, so every EmployeeRow consumer (wizard, readiness, People,
+    // Employee/Manager dashboards, transfers) sees the split without its own
+    // per-site logic. See src/lib/departments/dept-email-overrides.ts.
+    department: overrideDeptLabel(
+      department != null ? String(department) : null,
+      work_email != null ? String(work_email) : null,
+      personal_email != null ? String(personal_email) : null,
+      alternate_work_email != null ? String(alternate_work_email) : null,
+      alternate_work_email_2 != null ? String(alternate_work_email_2) : null,
+    ),
     name: name != null ? String(name) : null,
     personal_email: personal_email != null ? String(personal_email) : null,
     work_email: work_email != null ? String(work_email) : null,

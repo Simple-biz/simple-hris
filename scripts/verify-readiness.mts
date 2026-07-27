@@ -59,6 +59,16 @@ for (const c of r.score.components) {
   );
 }
 
+const newHires = r.missingRates.filter((m) => m.recentlyOnboarded);
+console.log(
+  `\nNo-rate rows (${r.missingRates.length}) — ${newHires.length} recently onboarded (this pay week or the one before):`,
+);
+for (const m of r.missingRates) {
+  console.log(
+    `  - ${m.name.padEnd(28)} [${m.department ?? "no dept"}] started=${m.startDate ?? "—"}${m.offBoardedAt ? ` left=${m.offBoardedAt}` : ""}${m.recentlyOnboarded ? "  << NEW HIRE" : ""}`,
+  );
+}
+
 const blockers = r.missingBank.filter((m) => m.onPayroll);
 console.log(`\nFirst 10 on-payroll bank blockers (of ${blockers.length}):`);
 for (const m of blockers.slice(0, 10)) {

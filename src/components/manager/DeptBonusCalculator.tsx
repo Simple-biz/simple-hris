@@ -52,6 +52,7 @@ import {
   Unlock,
   User,
   UserPlus,
+  UserSearch,
   Users,
   X,
   Zap,
@@ -204,6 +205,9 @@ const DEPT_COLOR: Record<string, string> = {
   qc: '#f97316',
   discovery: '#14b8a6',
   hr: '#ec4899',
+  // Distinct hues on purpose: the fallback color IS #6366f1, so giving Sales
+  // its own value keeps the two sales-family cards tellable apart.
+  sales: '#ef4444',
   sales_assistant: '#6366f1',
   smm: '#d946ef',
   pm_team: '#0ea5e9',
@@ -732,6 +736,19 @@ export default function DeptBonusCalculator({
   const weekIsControlled = controlledWeek != null;
   const [internalWeek, setInternalWeek] = useState(() => isoWeekStart(new Date()));
   const weekStart = weekIsControlled ? (controlledWeek as string) : internalWeek;
+  /**
+   * Whether `weekStart` is a real payroll week rather than the local-clock seed
+   * above. The seed is MONDAY-anchored; every stored KPI row is keyed on the
+   * Hubstaff upload's SUNDAY. Applying bonuses against the seed writes a
+   * (department, period_start) pair no reader ever asks for — the scores then look
+   * missing on every other account, and Readiness reads the dept as Pending
+   * forever. (`scripts/audit-kpi-key-drift.mts` lists the weeks this already
+   * stranded.) The shell-controlled week is resolved by definition.
+   */
+  const [weekResolvedFromUploads, setWeekResolvedFromUploads] = useState(false);
+  const weekResolved = weekIsControlled || weekResolvedFromUploads;
+  /** Upload list unreachable after retries — say so instead of scoring a guess. */
+  const [weekError, setWeekError] = useState(false);
   const weekEnd = useMemo(() => weekEndFromStart(weekStart), [weekStart]);
   // Monthly catalog bonuses pay once per month, on the LAST payroll week of the
   // month (mirrors PAB). They are only appliable in that week: in every other
@@ -910,6 +927,30 @@ export default function DeptBonusCalculator({
     }
     return map;
   }, [teamMembers]);
+
+  // Identity email → EVERY address that person owns (personal, work and both
+  // alternate work addresses), inverted from the alias map. Searching by any one
+  // of them finds the single member card they're keyed under.
+  const emailsByIdentity = useMemo(() => {
+    const map = new Map<string, string[]>();
+    for (const [addr, canonical] of emailAlias) {
+      const list = map.get(canonical) ?? [];
+      if (!list.includes(addr)) list.push(addr);
+      map.set(canonical, list);
+    }
+    return map;
+  }, [emailAlias]);
+
+  // One matcher behind both people searches — the landing search over department
+  // cards and the per-department search inside an open calculator. `q` must be
+  // lowercased + trimmed by the caller.
+  const memberMatchesQuery = useCallback(
+    (m: { name: string; email: string }, q: string): boolean =>
+      m.name.toLowerCase().includes(q) ||
+      m.email.toLowerCase().includes(q) ||
+      (emailsByIdentity.get(m.email) ?? []).some((e) => e.includes(q)),
+    [emailsByIdentity],
+  );
 
   // Common + per-employee catalog bonuses resolved per department key.
   const commonByDept = useMemo(() => {
@@ -1117,6 +1158,11 @@ export default function DeptBonusCalculator({
 
   const loadDept = useCallback(
     async (key: string) => {
+      // Hold off until the week is a real payroll week: reading with the
+      // local-clock seed queries a dept-week nothing was saved under, which is
+      // what made another manager's applied bonuses look absent. Re-runs on its
+      // own when `weekResolved` flips (it's in this callback's deps).
+      if (!weekResolved) return;
       // QC mode: the roster IS the officer's assigned slots for this dept (which
       // includes transferred people under their old dept). Manager mode groups
       // the live team roster by department as usual.
@@ -1272,7 +1318,7 @@ export default function DeptBonusCalculator({
         });
       }
     },
-    [rosterByDept, individualByDept, commonByDept, commonExclusionsByDept, sharedCommonByDept, weekStart, canonEmail, isQc, qcRosterByDept, qcEmailsByDept, appliedEndpoint],
+    [rosterByDept, individualByDept, commonByDept, commonExclusionsByDept, sharedCommonByDept, weekStart, weekResolved, canonEmail, isQc, qcRosterByDept, qcEmailsByDept, appliedEndpoint],
   );
 
   useEffect(() => {
@@ -1359,43 +1405,57 @@ export default function DeptBonusCalculator({
   useEffect(() => {
     const toIso = (d: Date) =>
       `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-    (async () => {
-      try {
-        const res = await fetch('/api/hubstaff-hours?source_files=1', { cache: 'no-store' });
-        const json = (await res.json()) as HubstaffSourceFilesResponse;
+    /** One attempt at the upload list. True once the live payroll week is known. */
+    const tryResolve = async (): Promise<boolean> => {
+      const res = await fetch('/api/hubstaff-hours?source_files=1', { cache: 'no-store' });
+      const json = (await res.json()) as HubstaffSourceFilesResponse;
 
-        // Build the week menu: one entry per distinct uploaded Hubstaff week.
-        const seen = new Set<string>();
-        const weeks: { start: string; end: string }[] = [];
-        const allFiles = [
-          ...(json.uploads?.map((u) => u.source_file ?? '') ?? []),
-          ...(json.files ?? []),
-        ];
-        for (const f of allFiles) {
-          const range = f ? parseDateRangeFromFilename(f) : null;
-          if (!range) continue;
-          const startIso = toIso(range.start);
-          if (seen.has(startIso)) continue;
-          seen.add(startIso);
-          weeks.push({ start: startIso, end: weekEndFromStart(startIso) });
-        }
-        weeks.sort((a, b) => (a.start < b.start ? 1 : a.start > b.start ? -1 : 0));
-        setAvailableWeeks(weeks);
-
-        // Pin the *live* week to the batch accounting is dispatching (is_current).
-        const latest = pickCurrentSourceFile(json.uploads, json.files);
-        const range = latest ? parseDateRangeFromFilename(latest) : null;
-        if (range) {
-          const iso = toIso(range.start);
-          setCurrentWeekStart(iso);
-          // Default the view to the live week (only while still on today's auto-week).
-          // Skipped when the shell controls the week — it does its own defaulting,
-          // and overriding here would fight the controlled value on mount.
-          if (!weekIsControlled) setInternalWeek((cur) => (cur === isoWeekStart(new Date()) ? iso : cur));
-        }
-      } catch {
-        // keep today's week on any error
+      // Build the week menu: one entry per distinct uploaded Hubstaff week.
+      const seen = new Set<string>();
+      const weeks: { start: string; end: string }[] = [];
+      const allFiles = [
+        ...(json.uploads?.map((u) => u.source_file ?? '') ?? []),
+        ...(json.files ?? []),
+      ];
+      for (const f of allFiles) {
+        const range = f ? parseDateRangeFromFilename(f) : null;
+        if (!range) continue;
+        const startIso = toIso(range.start);
+        if (seen.has(startIso)) continue;
+        seen.add(startIso);
+        weeks.push({ start: startIso, end: weekEndFromStart(startIso) });
       }
+      weeks.sort((a, b) => (a.start < b.start ? 1 : a.start > b.start ? -1 : 0));
+      setAvailableWeeks(weeks);
+
+      // Pin the *live* week to the batch accounting is dispatching (is_current).
+      const latest = pickCurrentSourceFile(json.uploads, json.files);
+      const range = latest ? parseDateRangeFromFilename(latest) : null;
+      if (!range) return false;
+      const iso = toIso(range.start);
+      setCurrentWeekStart(iso);
+      // Default the view to the live week (only while still on today's auto-week).
+      // Skipped when the shell controls the week — it does its own defaulting,
+      // and overriding here would fight the controlled value on mount.
+      if (!weekIsControlled) setInternalWeek((cur) => (cur === isoWeekStart(new Date()) ? iso : cur));
+      setWeekResolvedFromUploads(true);
+      setWeekError(false);
+      return true;
+    };
+    (async () => {
+      // Retried: one blip here used to leave the whole session scoring a week key
+      // nothing reads back.
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        try {
+          if (await tryResolve()) return;
+        } catch {
+          /* fall through to the retry / error below */
+        }
+        if (attempt < 2) await new Promise((r) => setTimeout(r, 400 * (attempt + 1)));
+      }
+      // Out of attempts: NEVER keep the local-clock week as if it were real —
+      // reads/writes stay blocked and the banner explains why.
+      setWeekError(true);
     })();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -1463,14 +1523,7 @@ export default function DeptBonusCalculator({
       const sharedCommon = common.filter((b) => sharedSet?.has(b.id));
       const allMembers = d?.members ?? [];
       const cq = (cardSearch[key] ?? '').trim().toLowerCase();
-      const members = cq
-        ? allMembers.filter(
-            (e) =>
-              e.name.toLowerCase().includes(cq) ||
-              e.email.toLowerCase().includes(cq) ||
-              (workEmailByIdentity.get(e.email)?.includes(cq) ?? false),
-          )
-        : allMembers;
+      const members = cq ? allMembers.filter((e) => memberMatchesQuery(e, cq)) : allMembers;
       const hasIndividual = (individualByDept.get(key)?.size ?? 0) > 0;
       const hasAnyBonus = common.length > 0 || hasIndividual;
 
@@ -1550,7 +1603,7 @@ export default function DeptBonusCalculator({
     },
     [
       state, cardSearch, deptTotal, commonByDept, sharedCommonByDept,
-      individualByDept, applicableBonuses, fx, workEmailByIdentity, isQc, qcLocked,
+      individualByDept, applicableBonuses, fx, memberMatchesQuery, isQc, qcLocked,
     ],
   );
 
@@ -1706,6 +1759,15 @@ export default function DeptBonusCalculator({
   async function saveDept(key: string): Promise<boolean> {
     const d = state[key];
     if (!d) return false;
+    // Refuse rather than write an unreadable dept-week (see `weekResolved`):
+    // applied rows saved under the local-clock week are invisible to every other
+    // account and to payroll.
+    if (!weekResolved) {
+      toast.error('Payroll week not confirmed', {
+        description: 'Reload the page before saving — bonuses applied now would not be visible to anyone else.',
+      });
+      return false;
+    }
     patchDept(key, { saving: true });
     let ok = false;
     try {
@@ -1770,6 +1832,17 @@ export default function DeptBonusCalculator({
   }
 
   async function setStatus(key: string, next: BonusStatus, opts?: { silent?: boolean }): Promise<boolean> {
+    // Same reason as saveDept: a status row on an unreadable week never reaches
+    // Readiness, so the department would show Pending no matter how often it's
+    // submitted.
+    if (!weekResolved) {
+      if (!opts?.silent) {
+        toast.error('Payroll week not confirmed', {
+          description: 'Reload the page and try again — this submission would not reach Accounting.',
+        });
+      }
+      return false;
+    }
     try {
       const res = await fetch('/api/hsl-bonus/period-status', {
         method: 'POST',
@@ -1954,9 +2027,37 @@ export default function DeptBonusCalculator({
   );
 
   const dq = deptSearch.trim().toLowerCase();
+
+  // The landing search also finds PEOPLE: type a work email (or a personal /
+  // alternate address, or a name) and the department that scores that person
+  // surfaces its calculator card. Members are keyed on the personal-first
+  // identity email, so every address a person owns resolves to the same card.
+  const matchedPeopleByDept = useMemo(() => {
+    const out = new Map<string, { name: string; email: string }[]>();
+    if (!dq) return out;
+    for (const k of visibleDeptKeys) {
+      const hits = (state[k]?.members ?? [])
+        .filter((m) => memberMatchesQuery(m, dq))
+        .map((m) => ({
+          name: m.name,
+          // Show the address that actually matched; fall back to their work
+          // email (then the identity key) when the hit was on the name.
+          email:
+            [m.email, ...(emailsByIdentity.get(m.email) ?? [])].find((e) => e.includes(dq)) ??
+            workEmailByIdentity.get(m.email) ??
+            m.email,
+        }));
+      if (hits.length > 0) out.set(k, hits);
+    }
+    return out;
+  }, [dq, visibleDeptKeys, state, memberMatchesQuery, emailsByIdentity, workEmailByIdentity]);
+
   const filteredDeptKeys = dq
-    ? visibleDeptKeys.filter((k) =>
-        (DEPARTMENTS.find((d) => d.key === k)?.name ?? humanizeDeptKey(k)).toLowerCase().includes(dq),
+    ? visibleDeptKeys.filter(
+        (k) =>
+          (DEPARTMENTS.find((d) => d.key === k)?.name ?? deptLabelByKey[k] ?? humanizeDeptKey(k))
+            .toLowerCase()
+            .includes(dq) || matchedPeopleByDept.has(k),
       )
     : visibleDeptKeys;
 
@@ -2957,6 +3058,20 @@ export default function DeptBonusCalculator({
                 onChange={selectWeek}
               />
             </div>
+            {/* The upload list never answered, so the week shown above is only a
+                local-clock guess — scoring against it would save rows nobody can
+                read back (see `weekResolved`). Everything is held until reload. */}
+            {weekError && (
+              <div
+                role="alert"
+                className="mt-2 rounded-lg border border-rose-300 bg-rose-50 px-3 py-2 text-xs text-rose-800 dark:border-rose-500/40 dark:bg-rose-950/30 dark:text-rose-200"
+              >
+                <span className="font-semibold">Couldn&apos;t confirm the payroll week.</span>{' '}
+                Applying bonuses is paused — anything saved now would be filed under the wrong week
+                and wouldn&apos;t be visible to Accounting or the other managers. Reload the page to
+                try again.
+              </div>
+            )}
           </div>
           <div className="flex items-stretch gap-2.5">
             <motion.div
@@ -3019,18 +3134,20 @@ export default function DeptBonusCalculator({
             <span className="hidden font-mono text-[10px] uppercase tracking-[0.14em] text-zinc-400 sm:inline">
               Department calculators
             </span>
-            {visibleDeptKeys.length > 1 && (
-              <div className="relative min-w-0 max-w-[260px] flex-1">
-                <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400" aria-hidden />
-                <input
-                  type="search"
-                  value={deptSearch}
-                  onChange={(e) => setDeptSearch(e.target.value)}
-                  placeholder="Search departments…"
-                  className="h-8 w-full rounded-md border border-zinc-200 bg-white pl-8 pr-2 text-xs text-zinc-900 outline-none transition-colors focus:border-emerald-400 focus:ring-1 focus:ring-emerald-200 dark:border-zinc-800 dark:bg-zinc-900/60 dark:text-zinc-100"
-                />
-              </div>
-            )}
+            {/* Shown even with a single department — the search finds PEOPLE too,
+                and opening a hit lands on that person's row. */}
+            <div className="relative min-w-0 max-w-[260px] flex-1">
+              <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400" aria-hidden />
+              <input
+                type="search"
+                value={deptSearch}
+                onChange={(e) => setDeptSearch(e.target.value)}
+                placeholder="Search departments or a work email…"
+                aria-label="Search departments, or a person by name or email"
+                title="Search a department name, or a person by name / work email — the department that scores them shows up"
+                className="h-8 w-full rounded-md border border-zinc-200 bg-white pl-8 pr-2 text-xs text-zinc-900 outline-none transition-colors focus:border-emerald-400 focus:ring-1 focus:ring-emerald-200 dark:border-zinc-800 dark:bg-zinc-900/60 dark:text-zinc-100"
+              />
+            </div>
           </div>
           <div className="flex items-center gap-2">
             <Button
@@ -3072,6 +3189,7 @@ export default function DeptBonusCalculator({
         <AnimatePresence mode="popLayout">
           {filteredDeptKeys.map((key) => {
             const v = buildDeptView(key);
+            const peopleHits = matchedPeopleByDept.get(key) ?? [];
             return (
               <DeptSummaryCard
                 key={key}
@@ -3090,7 +3208,15 @@ export default function DeptBonusCalculator({
                 loading={!v.d?.loaded}
                 isOpen={openId === key}
                 reduce={!!reduceMotion}
-                onOpen={() => open(key)}
+                matches={peopleHits}
+                // Opened off a person hit: carry the query into the panel's
+                // people search so the calculator lands on that person.
+                onOpen={() => {
+                  if (peopleHits.length > 0) {
+                    setCardSearch((prev) => ({ ...prev, [key]: deptSearch.trim() }));
+                  }
+                  open(key);
+                }}
               />
             );
           })}
@@ -3099,7 +3225,10 @@ export default function DeptBonusCalculator({
 
       {filteredDeptKeys.length === 0 && (
         <div className="mx-4 mb-6 rounded-xl border border-dashed border-zinc-300 px-6 py-12 text-center text-sm text-zinc-400 dark:border-zinc-700 sm:mx-6">
-          No departments match “{deptSearch}”.
+          No department or person matches “{deptSearch}”.
+          <span className="mt-1 block text-xs text-zinc-400 dark:text-zinc-500">
+            Search a department name, or someone&rsquo;s name or work email.
+          </span>
         </div>
       )}
 
@@ -3221,6 +3350,7 @@ function DeptSummaryCard({
   loading,
   isOpen,
   reduce,
+  matches = [],
   onOpen,
 }: {
   name: string;
@@ -3238,6 +3368,9 @@ function DeptSummaryCard({
   loading: boolean;
   isOpen: boolean;
   reduce: boolean;
+  /** People in this department that the landing search matched — shown so it's
+   *  obvious why a card surfaced when the query was an email, not a dept name. */
+  matches?: { name: string; email: string }[];
   onOpen: () => void;
 }) {
   return (
@@ -3293,6 +3426,23 @@ function DeptSummaryCard({
           )}
         </div>
         <p className="mt-0.5 line-clamp-1 text-[12px] leading-snug text-zinc-500 dark:text-zinc-400">{desc}</p>
+        {matches.length > 0 && (
+          <div className="mt-1 flex flex-wrap items-center gap-1">
+            <UserSearch className="h-3 w-3 shrink-0 text-emerald-500" aria-hidden />
+            {matches.slice(0, 2).map((m) => (
+              <span
+                key={m.email}
+                className="max-w-full truncate rounded-full bg-emerald-50 px-1.5 py-0.5 font-mono text-[10px] text-emerald-700 ring-1 ring-emerald-200/70 dark:bg-emerald-950/40 dark:text-emerald-300 dark:ring-emerald-900/60"
+                title={`${m.name} · ${m.email}`}
+              >
+                {m.name} · {m.email}
+              </span>
+            ))}
+            {matches.length > 2 && (
+              <span className="font-mono text-[10px] text-zinc-400">+{matches.length - 2} more</span>
+            )}
+          </div>
+        )}
         {hasAnyBonus && headcount > 0 && !loading && (
           <div className="mt-1.5">
             <CompletionGauge entered={entered} total={headcount} toFill={toFill} size="sm" reduce={reduce} />

@@ -85,6 +85,7 @@ const CATALOG_DEPT_COLOR: Record<string, string> = {
   qc: '#f97316',
   discovery: '#14b8a6',
   hr: '#ec4899',
+  sales: '#ef4444', // keep in lockstep with DeptBonusCalculator's DEPT_COLOR
   sales_assistant: '#6366f1',
   smm: '#d946ef',
   pm_team: '#0ea5e9',

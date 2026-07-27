@@ -1,4 +1,5 @@
 import { createSupabaseServiceRoleClient } from './server';
+import { applyDeptOverrideToRawRow } from '@/lib/departments/dept-email-overrides';
 import { listManagersByDepartment } from './department-managers';
 
 export type LeaveRequestStatus = 'pending' | 'approved' | 'rejected' | 'cancelled';
@@ -109,7 +110,10 @@ async function enrichRowsWithMissingNames(rows: LeaveRequestRow[]): Promise<void
     .range(0, 9999);
   if (error) return;
   const byEmail = new Map<string, { name: string | null; department: string | null }>();
-  for (const row of (data ?? []) as Array<Record<string, unknown>>) {
+  for (const raw of (data ?? []) as Array<Record<string, unknown>>) {
+    // Effective department (Sales/Sales-Assistant email override) so a PH
+    // assistant's leave request routes to the Sales Assistant manager.
+    const row = applyDeptOverrideToRawRow(raw);
     const we = String(row['Work Email'] ?? '').trim().toLowerCase();
     const pe = String(row['Personal Email'] ?? '').trim().toLowerCase();
     const entry = {
@@ -398,7 +402,8 @@ export async function listManagersForDepartment(
   if (rolesRes.error || empsRes.error) return [];
 
   const out = new Set<string>();
-  for (const row of (empsRes.data ?? []) as Array<Record<string, unknown>>) {
+  for (const raw of (empsRes.data ?? []) as Array<Record<string, unknown>>) {
+    const row = applyDeptOverrideToRawRow(raw); // effective dept (sales split)
     const rowDept = String(row['Department'] ?? '').trim().toLowerCase();
     if (!rowDept || rowDept !== dept) continue;
     const we = String(row['Work Email'] ?? '').trim().toLowerCase();
@@ -430,7 +435,8 @@ export async function lookupEmployeeNameAndDepartment(
     .range(0, 9999);
   if (error) return { name: null, department: null };
 
-  for (const row of (data ?? []) as Array<Record<string, unknown>>) {
+  for (const raw of (data ?? []) as Array<Record<string, unknown>>) {
+    const row = applyDeptOverrideToRawRow(raw); // effective dept (sales split)
     const we = String(row['Work Email'] ?? '').trim().toLowerCase();
     const pe = String(row['Personal Email'] ?? '').trim().toLowerCase();
     if (we === target || pe === target) {

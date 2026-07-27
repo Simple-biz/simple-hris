@@ -28,6 +28,28 @@ key), and any dept key people in the current run resolved to — nobody sits in
 an invisible bucket. Rows are searchable, show this week's worker count, and
 the header shows paying / excluded / OT-suspended tallies.
 
+### Global Master List labels on the row
+
+A built-in payroll name often differs from the sheet label that feeds it —
+`normalizeDeptToKey` folds **Edit Team** → `edit` ("Edit"), **Accounting
+Team** → `accounting`, **Callback Team**/**Callbacks** → `callback`, **Social
+Media Team** → `smm`, **SmartClicks/Sterling** → `smart_staff`, **HSL**/`hsl:*`
+→ `hogan_smith_law` — so the department read as *missing* from the tab. Each
+row now carries `masterLabels`: the master-list labels resolving into that
+key, rendered as grey chips next to the name (only when they differ from it)
+and matched by the search box, so typing the sheet label finds the row that
+pays it. The "Payment Catalog" badge is gated on a new `isRegistry` flag —
+derived master-list tabs (e.g. USEE) are `isCustom` but not registry entries
+and were mis-badged before.
+
+**Sales vs Sales Assistant** (split 2026-07-27) is *not* one of these label
+folds: they are two separate departments. The sheet labels both cohorts
+"Sales"; the PH cohort's label is rewritten to "Sales Assistant" at
+roster-load time by the email override list
+(`src/lib/departments/dept-email-overrides.ts`), and the remaining "Sales"
+label maps to the `sales` key (US team). See
+[sales-dept-split.md](sales-dept-split.md).
+
 ## "Pay this week" switch
 
 Off = the department sits **this pay run** out:
