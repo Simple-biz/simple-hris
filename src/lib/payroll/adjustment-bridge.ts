@@ -13,8 +13,24 @@
  */
 
 import type { PayCurrency } from "@/lib/payment-catalog/pay-structure";
+import { sundayOf } from "@/lib/payroll/manila-week";
 
 export type ParsedAdjustment = { amount: number; currency: PayCurrency };
+
+/**
+ * The pay-period Sunday a Hubstaff upload covers, read out of the
+ * `…_YYYY-MM-DD_to_YYYY-MM-DD.csv` range every wizard batch filename carries
+ * and snapped to its Sunday — the same anchor a note's `week_start` uses, so
+ * the two can be compared directly.
+ *
+ * This is what lets the pull tell "this row belongs to the payroll I am running
+ * now" from "this row was applied in an earlier week and is history". Null for a
+ * hand-named upload with no range; callers then fall back to Done-only skipping.
+ */
+export function payWeekStartFromSourceFile(file: string | null | undefined): string | null {
+  const m = /(\d{4}-\d{2}-\d{2})_to_\d{4}-\d{2}-\d{2}/.exec(file ?? "");
+  return m ? sundayOf(m[1]!) : null;
+}
 
 /** Window event the Notes board's "Apply Changes" button dispatches
  *  (cancelable — the mounted wizard preventDefault()s to say it took it,

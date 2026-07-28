@@ -92,6 +92,8 @@ import {
   NOTE_ADJUSTMENT_REMOVED_EVENT,
   WIZARD_CYCLE_EVENT,
   REQUEST_WIZARD_CYCLE_EVENT,
+  parseAdjustmentAmount,
+  payWeekStartFromSourceFile,
   type WizardCycleDetail,
 } from "@/lib/payroll/adjustment-bridge";
 import { READINESS_SOURCE } from "@/lib/payroll/readiness-audit";
@@ -474,6 +476,74 @@ export default function PayrollWizardNotesFab({
     }
     void saveRow(id, values);
   };
+
+  /**
+   * Whether an Adjustment cell can actually reach the wizard's Adj. column, and
+   * if not, why — the same four rules the wizard's pull applies (linked worker ·
+   * plain amount · present in the loaded timesheet · belongs to the week being
+   * paid). Rendered under the cell, and ONLY when something is wrong: a clerk
+   * used to type an amount, see it accepted, and get no hint that the row would
+   * be skipped in silence.
+   *
+   * `null` = nothing to say (empty cell, or the row is fine).
+   */
+  const adjustmentIssue = useCallback(
+    (row: PayrollWizardNoteRow): { label: string; title: string } | null => {
+      const text = (row.adjustment ?? "").trim();
+      if (text === "") return null;
+      if (!parseAdjustmentAmount(text)) {
+        return {
+          label: "not a plain amount",
+          title:
+            "The wizard only auto-applies a cell that is JUST a figure — +₱500, -250.50, $50, COP 50,000. Put the reason in Notes and leave the number alone here.",
+        };
+      }
+      const email = (row.worker_email ?? "").trim().toLowerCase();
+      if (!email) {
+        return {
+          label: "worker not linked",
+          title:
+            "This row isn't tied to a person, so the amount has nowhere to land. Pick the Worker from the suggestion list (typed text that isn't an exact match unlinks the row).",
+        };
+      }
+      // `workers` IS the loaded timesheet (same endpoint the wizard's CSV step
+      // reads), so an email missing from it has no paystub to adjust this week.
+      // Only meaningful once the list has loaded.
+      if (workers.length > 0 && !workers.some((w) => (w.work_email ?? "").toLowerCase() === email)) {
+        return {
+          label: "not in this week's timesheet",
+          title: `${email} has no hours in the Hubstaff CSV the wizard has loaded, so there is no paystub to adjust. The row stays open and carries over.`,
+        };
+      }
+      // Ticked Done in a week the wizard is no longer paying: history, not a
+      // pending item. It will not be re-applied (that would pay it twice).
+      const cycleWeek = payWeekStartFromSourceFile(wizardSourceFile);
+      if (row.done && cycleWeek !== null && row.week_start !== null && row.week_start !== cycleWeek) {
+        return {
+          label: "applied in an earlier week",
+          title: `Filed Done under the week of ${row.week_start} — the wizard is paying ${cycleWeek}, so this amount is history and won't be applied again. Add a fresh row if it needs to be paid now.`,
+        };
+      }
+      // Same worker, same week, two amounts: the wizard keeps only the
+      // newest-written one. Flag BOTH rows — the loser is invisible otherwise.
+      const rivals = rows.filter(
+        (o) =>
+          o.id !== row.id &&
+          (o.worker_email ?? "").trim().toLowerCase() === email &&
+          o.week_start === row.week_start &&
+          parseAdjustmentAmount(o.adjustment) !== null,
+      );
+      if (rivals.length > 0) {
+        return {
+          label: `${rivals.length + 1} amounts for this worker`,
+          title:
+            "This worker has more than one Adjustment on this week's board. Only the most recently written one is applied — the others are ignored. Combine them into a single cell if they should all be paid.",
+        };
+      }
+      return null;
+    },
+    [workers, wizardSourceFile, rows],
+  );
 
   /** Tell the wizard a linked adjustment left the board — the row was deleted
    *  or its Adjustment cell cleared — so a MATCHING Adj. override is deleted
@@ -878,7 +948,9 @@ export default function PayrollWizardNotesFab({
                           aria-label={`Mark ${row.worker || "note"} as done`}
                         />
                       </td>
-                      {COLUMNS.slice(2).map(({ field }) => (
+                      {COLUMNS.slice(2).map(({ field }) => {
+                        const issue = field === "adjustment" ? adjustmentIssue(row) : null;
+                        return (
                         <td key={field} className="px-1 py-0.5 align-top">
                           {field === "worker" && canEdit ? (
                             <WorkerNoteCell
@@ -899,8 +971,21 @@ export default function PayrollWizardNotesFab({
                               onBlur={onCellBlur}
                             />
                           )}
+                          {/* Why this amount won't reach the wizard's Adj. column.
+                              Shown only when there IS a problem — a clean row stays
+                              quiet, so the warning means something. */}
+                          {issue && (
+                            <span
+                              title={issue.title}
+                              className="mt-0.5 flex items-center gap-1 text-[9px] font-medium leading-tight text-amber-600 dark:text-amber-400"
+                            >
+                              <AlertTriangle className="h-2.5 w-2.5 shrink-0" />
+                              {issue.label}
+                            </span>
+                          )}
                         </td>
-                      ))}
+                        );
+                      })}
                       {canEdit && (
                         <td className="px-1 pt-1 pb-0.5 text-center align-top">
                           {/* Owner-only: you can only delete notes you created

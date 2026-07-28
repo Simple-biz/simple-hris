@@ -22,6 +22,8 @@ and weekly period selector (Jul 17, `f1f930d2`).
 | Data layer | `src/lib/supabase/payroll-wizard-notes.ts` |
 | API (access-gated) | `app/api/payroll-wizard/notes` |
 | Week math (shared server/client) | `src/lib/payroll/manila-week.ts` |
+| Adjustment ↔ Adj. bridge (+ tests) | `src/lib/payroll/adjustment-bridge.ts` · `adjustment-bridge.test.ts` |
+| Bridge diagnostic (read-only) | `scripts/diagnose-notes-adjustments.mjs` |
 | CEO assistant read tool | `src/lib/anthropic/ceo-tools.ts` (reports `week_of` + `adjustment`) |
 | Table DDL | `references/sql/create/create_payroll_wizard_notes.sql` |
 | Column migration (Jul 17) | `references/sql/alter/add_adjustment_and_week_start_to_payroll_wizard_notes.sql` |
@@ -32,8 +34,12 @@ and weekly period selector (Jul 17, `f1f930d2`).
 `Date | Payroll Clerk | Done | Worker | Adjustment | Notes`
 
 - All free text except `done` (boolean). **Adjustment** (added 2026-07-17) is
-  the concrete pay change the note calls for ("+$50 bonus", "-2 hrs");
-  **Notes** keeps the free-form context.
+  the concrete pay change the note calls for. To reach the wizard it must be
+  **just the figure** — `+500`, `-250.50`, `-₱900`, `$50`, `COP 50,000` (a bare
+  number is PHP). Prose like `+500 bonus` or `-2 hrs` deliberately does **not**
+  parse — the reason belongs in **Notes**. The board now prints a small amber
+  reason under any cell that won't apply, so a skipped row says so instead of
+  looking accepted (see the bridge section below).
 - New/edited fields flow through a shared field whitelist, so the API, blank
   row seeding, the open-count badge on the FAB, the skeleton row, and the CEO
   chat tool all pick up a column addition in one place.
@@ -92,6 +98,64 @@ and weekly period selector (Jul 17, `f1f930d2`).
 The Jul 17 columns require running
 `references/sql/alter/add_adjustment_and_week_start_to_payroll_wizard_notes.sql`
 in the Supabase SQL Editor (idempotent). Until it runs, board edits fail.
+
+## Adjustment ↔ wizard "Adj." bridge (hardened 2026-07-28)
+
+The board's Adjustment column and the wizard's Additions/HSL **Adj.** override
+hold the same fact. `src/lib/payroll/adjustment-bridge.ts` owns the translation
+(`parseAdjustmentAmount`, `adjustmentToPhp`, `formatAdjustmentText`,
+`payWeekStartFromSourceFile`) and is covered by `adjustment-bridge.test.ts`.
+
+- **Wizard → board**: every manual Adj. edit is mirrored (debounced) onto the
+  worker's live-week row; clearing it clears that row's Adjustment text.
+- **Board → wizard**: entering step 4/5/7/8 pulls open rows (merge-only), and a
+  clerk's **Apply Changes** force-applies their rows and files them Done.
+
+### What went wrong (2026-07-28) and what now prevents it
+
+The week of Jul 19–25 was found with **101 board rows carrying real amounts
+against `bonusOverrides: {}` on file** — every row ticked Done, so nothing could
+re-apply them. Three compounding causes, all now closed:
+
+1. **`Done` was the eligibility gate.** The pull skipped every Done row, and
+   Apply Changes set Done. Once the wizard's in-memory copy was lost, the
+   amounts were unreachable from the board. → Eligibility is now decided by
+   **`week_start` vs. the cycle's pay week** (parsed from the loaded CSV's
+   `…_YYYY-MM-DD_to_YYYY-MM-DD` range). A Done row stamped to the week being
+   paid stays eligible, so the column **self-heals**; a Done row from an earlier
+   week stays history and is never paid twice. Rows staged on an **upcoming**
+   week are now excluded from the current cycle (they used to price it).
+2. **The additions blob was a blind whole-map replace.** `loadAdditionsProgress`
+   overwrote `bonusOverrides` with whatever was on file — including `{}` — even
+   when it resolved *after* the board had applied amounts. The next manual
+   "Lock in additions progress" then persisted that empty map. → An edit
+   generation counter (`additionsEditGenRef`) makes a hydration that raced a
+   local write **merge under** it, and a payload for a file the clerk has since
+   switched away from is dropped.
+3. **Applied amounts were only in memory** until someone remembered to click
+   "Lock in additions progress". → An apply (and a board retract) now persists
+   the blob itself, silently. Auto-saves are gated on `additionsHydratedFor` so
+   they can never write a half-hydrated payload.
+
+Also hardened:
+
+- **Nothing is skipped in silence.** Apply Changes reports unlinked workers,
+  cells that aren't plain amounts, workers absent from the loaded timesheet, and
+  workers with **more than one amount this week** (only the newest applies). The
+  board shows the same reasons per row.
+- **A bare `0` no longer blocks a pull.** Clicking the `—` placeholder opens the
+  Adj. input at 0 without committing anything; that empty shell used to make the
+  merge-only pull skip the worker forever.
+- **Key-casing agreement.** The Adj. column reads through the same raw-then-
+  lowercased resolution the pay computation and dispatch payload use
+  (`overrideKeyFor`), so it can't show "—" beside an adjustment that is paid.
+- While a cycle is **LOCKED** for Payment Dispatch the automatic pull stays
+  suspended by design — Unlock in Validation, apply, then lock again.
+
+`scripts/diagnose-notes-adjustments.mjs` is a read-only replay of all of these
+rules against live data: it prints what would pre-fill, what is recovered, what
+is history, competing amounts, and any gap between the board and the saved
+additions blob.
 
 ## Worker cell autocomplete
 

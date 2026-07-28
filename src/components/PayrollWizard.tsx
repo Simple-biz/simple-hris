@@ -148,6 +148,7 @@ import {
   REQUEST_WIZARD_CYCLE_EVENT,
   adjustmentToPhp,
   parseAdjustmentAmount,
+  payWeekStartFromSourceFile,
 } from '@/lib/payroll/adjustment-bridge';
 import {
   parseSignedAmountInput,
@@ -1382,6 +1383,23 @@ export default function PayrollWizard({
   /** Source file selected for Initial Calculation (step 2). Defaults to latest uploaded file. */
   const [calcSourceFile, setCalcSourceFile] = useState<string | null>(null);
   const [calcSourceFileLoading, setCalcSourceFileLoading] = useState(false);
+  /** Latest selected file, readable from async callbacks — an additions load
+   *  that resolves after the clerk switched periods must not apply its payload. */
+  const calcSourceFileRef = useRef<string | null>(null);
+  calcSourceFileRef.current = calcSourceFile;
+  /**
+   * Bumped by every LOCAL write to the additions maps (a typed Adj., a board
+   * "Apply Changes", a board retract). `loadAdditionsProgress` compares it
+   * across its own fetch: if it moved, the saved blob is merged UNDER the live
+   * values instead of replacing them.
+   *
+   * Without this, a hydration in flight when the board applied its amounts
+   * replaced them wholesale with the blob's (often empty) map — and because the
+   * next manual "Lock in additions progress" then persisted that empty map,
+   * a full week of adjustments was silently destroyed. Seen live: 101 board
+   * rows carrying real amounts against `bonusOverrides: {}` on file.
+   */
+  const additionsEditGenRef = useRef(0);
   // Per-cycle "values locked" flag for Payment Dispatch (realtime). Lock = send
   // values to dispatch; Unlock = pull them back (dispatch shows nothing).
   const dispatchValuesLock = useWizardDispatchLock(calcSourceFile);
@@ -1987,6 +2005,10 @@ export default function PayrollWizard({
     // a publish mid-load would write zeroed adjustments/orphanage over the
     // snapshot that Payment Dispatch prices from and the paystub merge trusts.
     setAdditionsHydratedFor(null);
+    // Snapshot what a fresh payload is allowed to overwrite. Anything written
+    // locally while this read is in flight is NEWER than the blob on file, so
+    // it survives the hydration (see additionsEditGenRef).
+    const genAtStart = additionsEditGenRef.current;
     try {
       const res = await fetch(`/api/app-settings?key=payroll.wizard.additions.${sourceFile}`);
       const json = await res.json();
@@ -1999,8 +2021,22 @@ export default function PayrollWizard({
       // period-specific field to this file's saved value, or to empty if it has none, so
       // adjustments/notes/bonuses never bleed from a previously-viewed pay period.
       const data = json.value ? JSON.parse(json.value) : {};
-      setBonusOverrides(data.bonusOverrides ?? {});
-      setBonusOverrideNotes(data.bonusOverrideNotes ?? {});
+      // The clerk switched pay periods mid-flight — this payload belongs to a
+      // file nobody is looking at any more. Applying it would cross-contaminate
+      // the selected period's additions.
+      if (calcSourceFileRef.current !== sourceFile) return;
+      const savedOverrides = (data.bonusOverrides ?? {}) as Record<string, number>;
+      const savedOverrideNotes = (data.bonusOverrideNotes ?? {}) as Record<string, string>;
+      if (additionsEditGenRef.current !== genAtStart) {
+        // An adjustment was written while this read was in flight. Freshest
+        // wins: fill the gaps from the blob, keep every live value. A blind
+        // replace here is what wiped an applied week of board amounts.
+        setBonusOverrides((prev) => ({ ...savedOverrides, ...prev }));
+        setBonusOverrideNotes((prev) => ({ ...savedOverrideNotes, ...prev }));
+      } else {
+        setBonusOverrides(savedOverrides);
+        setBonusOverrideNotes(savedOverrideNotes);
+      }
       setOrphanageAmounts(data.orphanageAmounts ?? {});
       setEmployeeMetrics(data.employeeMetrics ?? {});
       setDeptMetrics(data.deptMetrics ?? {});
@@ -3861,23 +3897,37 @@ export default function PayrollWizard({
     return snap;
   }, [lockedPabSnapshot, pabStatusByEmail, pabMonthRange]);
 
-  const saveAdditionsProgress = React.useCallback(async (opts?: { orphanageAmounts?: Record<string, number> }) => {
+  const saveAdditionsProgress = React.useCallback(async (opts?: {
+    orphanageAmounts?: Record<string, number>;
+    /** Fresh Adj. maps from a caller that just wrote them (the board apply) —
+     *  the closure's copies are a render behind, and saving those would persist
+     *  the state as it was BEFORE the amounts landed. */
+    bonusOverrides?: Record<string, number>;
+    bonusOverrideNotes?: Record<string, string>;
+    /** Skip the success toast (an automatic save riding along with its own toast). */
+    silent?: boolean;
+  }) => {
     if (!calcSourceFile) {
-      toast.error('No source file selected to lock progress against.');
+      if (!opts?.silent) toast.error('No source file selected to lock progress against.');
       return;
     }
     if (isReplay) {
-      toast.error('Replaying a past period is view-only', { description: 'Return to the current period to make changes.' });
+      if (!opts?.silent) toast.error('Replaying a past period is view-only', { description: 'Return to the current period to make changes.' });
       return;
     }
+    // An automatic save may only run once this file's additions have hydrated:
+    // the payload carries every additions field, so writing it mid-hydration
+    // would persist empty maps for the ones it isn't trying to change. (A
+    // manual lock-in is the clerk's explicit call and isn't gated.)
+    if (opts?.silent && additionsHydratedFor !== calcSourceFile) return;
     setAdditionsSaving(true);
     try {
       // Callers that just batch-wrote orphanageAmounts (e.g. the Orphanage paste tool)
       // pass the fresh map explicitly — the closure's `orphanageAmounts` is a render behind.
       const orphanageAmountsToSave = opts?.orphanageAmounts ?? orphanageAmounts;
       const payload = {
-        bonusOverrides,
-        bonusOverrideNotes,
+        bonusOverrides: opts?.bonusOverrides ?? bonusOverrides,
+        bonusOverrideNotes: opts?.bonusOverrideNotes ?? bonusOverrideNotes,
         orphanageAmounts: orphanageAmountsToSave,
         employeeMetrics,
         deptMetrics,
@@ -3891,13 +3941,21 @@ export default function PayrollWizard({
       await savePabSetting(`payroll.wizard.additions.${calcSourceFile}`, JSON.stringify(payload));
       setAdditionsSavedAt(new Date());
       setLockedPabSnapshot(Object.fromEntries(pabStatusByEmail) as Record<string, 'eligible' | 'ineligible' | 'in_progress'>);
-      toast.success('Additions progress locked in');
+      if (!opts?.silent) toast.success('Additions progress locked in');
     } catch (e) {
+      // Never silent: a failed save is exactly the case where the clerk must
+      // know the amounts are still only in this tab.
       toast.error('Failed to lock in additions', { description: e instanceof Error ? e.message : 'Unknown error' });
     } finally {
       setAdditionsSaving(false);
     }
-  }, [calcSourceFile, isReplay, bonusOverrides, bonusOverrideNotes, orphanageAmounts, employeeMetrics, deptMetrics, employeeDepts, employeeDeptsManual, employeeBonuses, techBonusManualGrants, techBonusManualRevokes, pabStatusByEmail, savePabSetting]);
+  }, [calcSourceFile, isReplay, additionsHydratedFor, bonusOverrides, bonusOverrideNotes, orphanageAmounts, employeeMetrics, deptMetrics, employeeDepts, employeeDeptsManual, employeeBonuses, techBonusManualGrants, techBonusManualRevokes, pabStatusByEmail, savePabSetting]);
+
+  /** Latest {@link saveAdditionsProgress}, reachable from callbacks that must
+   *  stay identity-stable — `pullNotesAdjustments` drives a step-entry effect,
+   *  so taking the save as a dependency would re-fire the pull on every edit. */
+  const saveAdditionsProgressRef = useRef<typeof saveAdditionsProgress | null>(null);
+  saveAdditionsProgressRef.current = saveAdditionsProgress;
 
   /**
    * US-holiday forgiveness summary scoped to the current pay-period WEEK: for each
@@ -4104,12 +4162,46 @@ export default function PayrollWizard({
       // results — nothing downstream (Adj. column, Validation, pay stubs,
       // Payment Dispatch) would ever read an override keyed to them.
       const skippedWorkers: string[] = [];
+      // Rows an explicit apply must not drop in silence: a worker the board
+      // never linked to an email, and an Adjustment cell that isn't a plain
+      // amount. Both used to vanish into a generic "nothing to apply".
+      const skippedUnlinked: string[] = [];
+      const skippedUnparseable: string[] = [];
+      // Every amount seen per worker this cycle. Only the newest row wins (see
+      // `byEmail`), so two rows for one person means one of the two amounts is
+      // being dropped — the clerk has to know which, because summing vs.
+      // superseding is their call, not ours.
+      const amountsByWorker = new Map<string, { name: string; amounts: number[] }>();
+      // The pay week this wizard run is paying, straight off the loaded CSV's
+      // filename range — the same Sunday anchor a note carries in `week_start`.
+      const cycleWeek = payWeekStartFromSourceFile(calcSourceFileRef.current);
       for (const r of rows) {
-        if (r.done) continue;
         if (only && !only.has(r.id)) continue;
+        // `week_start` — not the Done tick — decides whether a row belongs to
+        // THIS payroll. Done means "already pushed into the wizard": for an
+        // earlier period that's history (it was paid then; re-applying would
+        // pay it twice), but for the week being paid the row still describes
+        // this run, so it stays eligible. That is what makes the Adj. column
+        // self-healing — a reload, a period switch, or a hydration that
+        // dropped the applied amounts re-fills them on the next step entry,
+        // instead of stranding them behind a Done tick nothing can undo.
+        const isCycleWeek = cycleWeek !== null && r.week_start === cycleWeek;
+        if (r.done && !isCycleWeek) continue;
+        // A row staged on an UPCOMING period isn't due yet — staging next week
+        // ahead of time must never price this week's payroll.
+        if (cycleWeek !== null && r.week_start !== null && r.week_start > cycleWeek) continue;
         const normalized = (r.worker_email ?? '').trim().toLowerCase();
-        const parsed = parseAdjustmentAmount(r.adjustment);
-        if (!normalized || !parsed) continue;
+        const text = (r.adjustment ?? '').trim();
+        if (text === '') continue;
+        const parsed = parseAdjustmentAmount(text);
+        if (!normalized) {
+          skippedUnlinked.push(`${r.worker?.trim() || '(no worker)'} — ${text}`);
+          continue;
+        }
+        if (!parsed) {
+          skippedUnparseable.push(`${r.worker?.trim() || normalized} — "${text}"`);
+          continue;
+        }
         // Key by the wizard's own casing — ONLY when the worker resolves to a
         // calc row. A worker with no hours in the loaded Hubstaff CSV has no
         // paystub for the amount to land on; applying it anyway would file the
@@ -4122,6 +4214,9 @@ export default function PayrollWizard({
         }
         const amount = adjustmentToPhp(parsed, fxRates);
         if (amount === null) continue;
+        const seen = amountsByWorker.get(email);
+        if (seen) seen.amounts.push(amount);
+        else amountsByWorker.set(email, { name: r.worker?.trim() || normalized, amounts: [amount] });
         const baseNote = r.notes?.trim() || `From Payroll Notes (${r.payroll_clerk ?? 'board'})`;
         byEmail.set(email, {
           amount,
@@ -4145,12 +4240,53 @@ export default function PayrollWizard({
           },
         );
       }
+      // Same rule for the other two ways a row can fail to apply — an unlinked
+      // Worker and a cell that isn't a plain amount. Silence here is what made
+      // "I added adjustments and nothing happened" impossible to diagnose.
+      if (force && skippedUnlinked.length > 0) {
+        toast.warning(
+          `${skippedUnlinked.length} row${skippedUnlinked.length === 1 ? '' : 's'} skipped — Worker not linked`,
+          {
+            description: `${skippedUnlinked.slice(0, 4).join(' · ')}${skippedUnlinked.length > 4 ? ' …' : ''}. Re-pick the Worker from the suggestion list (typing a name that isn't an exact match unlinks the row).`,
+          },
+        );
+      }
+      if (force && skippedUnparseable.length > 0) {
+        toast.warning(
+          `${skippedUnparseable.length} row${skippedUnparseable.length === 1 ? '' : 's'} skipped — Adjustment isn't a plain amount`,
+          {
+            description: `${skippedUnparseable.slice(0, 4).join(' · ')}${skippedUnparseable.length > 4 ? ' …' : ''}. Use just the figure (+₱500, -$25, COP 50,000) and put the reason in Notes.`,
+          },
+        );
+      }
+      // Two rows, one worker, one week: the newest wins and the other amount is
+      // NOT paid. Never silent — if both were meant to apply they have to be
+      // combined into one cell by hand.
+      const competing = [...amountsByWorker.values()].filter((w) => w.amounts.length > 1);
+      if (force && competing.length > 0) {
+        toast.warning(
+          `${competing.length} worker${competing.length === 1 ? '' : 's'} ${competing.length === 1 ? 'has' : 'have'} more than one Adjustment this week — only the newest applies`,
+          {
+            description: competing
+              .slice(0, 4)
+              .map((w) => `${w.name}: ${w.amounts.map((a) => formatPHP(a)).join(' / ')} → ${formatPHP(w.amounts[w.amounts.length - 1]!)}`)
+              .join(' · ') + (competing.length > 4 ? ' …' : '') + '. Combine them into a single cell if both should be paid.',
+          },
+        );
+      }
       const existing = auditCtxRef.current.bonusOverrides;
       const adds = force
         ? [...byEmail.entries()]
-        : [...byEmail.entries()].filter(([email]) => existing[email] === undefined);
+        // Merge-only, with one exception: a bare 0. Clicking the "—" placeholder
+        // OPENS the Adj. input at 0 without committing anything, and that empty
+        // shell used to block the board's real amount from ever pre-filling —
+        // the column looked touched, so the pull politely left it alone. 0 is no
+        // money, so there is nothing to protect.
+        : [...byEmail.entries()].filter(([email]) => existing[email] === undefined || existing[email] === 0);
       if (adds.length === 0) {
-        if (force) {
+        // Only when nothing was skipped either — otherwise this contradicts the
+        // specific "here's what was skipped and why" warnings just raised.
+        if (force && skippedWorkers.length + skippedUnlinked.length + skippedUnparseable.length === 0) {
           toast.info('No board adjustments to apply', {
             description:
               'A row applies when its Worker was picked from the suggestion list and its Adjustment is a plain amount like +₱500, -$25, or COP 50,000.',
@@ -4162,19 +4298,44 @@ export default function PayrollWizard({
       // automatic pull is merge-only (anything already in prev wins).
       const amounts = Object.fromEntries(adds.map(([email, a]) => [email, a.amount]));
       const notes = Object.fromEntries(adds.map(([email, a]) => [email, a.note]));
-      setBonusOverrides(prev => (force ? { ...prev, ...amounts } : { ...amounts, ...prev }));
-      setBonusOverrideNotes(prev => (force ? { ...prev, ...notes } : { ...notes, ...prev }));
+      // These amounts are now newer than anything on file — an additions
+      // hydration still in flight must merge around them, not over them.
+      additionsEditGenRef.current += 1;
+      // Captured for the durable save below: setState is a render behind, so a
+      // save reading the closure would persist the map as it was BEFORE this.
+      let mergedOverrides: Record<string, number> = {};
+      let mergedNotes: Record<string, string> = {};
+      setBonusOverrides(prev => {
+        mergedOverrides = force ? { ...prev, ...amounts } : { ...amounts, ...prev };
+        return mergedOverrides;
+      });
+      setBonusOverrideNotes(prev => {
+        mergedNotes = force ? { ...prev, ...notes } : { ...notes, ...prev };
+        return mergedNotes;
+      });
       toast.success(
         `${adds.length} adjustment${adds.length === 1 ? '' : 's'} ${force ? 'applied' : 'pre-filled'} from Payroll Notes`,
         force
           ? { description: 'The Adj. column in the HSL and Additions steps now shows the board values.' }
           : undefined,
       );
+      // Persist immediately. Until this, applied board amounts lived ONLY in
+      // this tab until somebody remembered to click "Lock in additions
+      // progress" — one reload and the week's adjustments were gone. An
+      // explicit apply is a commitment, so it writes the blob itself; the
+      // automatic pre-fill saves too, so the pull is idempotent across reloads
+      // rather than something that has to succeed again next time.
+      void saveAdditionsProgressRef.current?.({
+        bonusOverrides: mergedOverrides,
+        bonusOverrideNotes: mergedNotes,
+        silent: true,
+      });
       // An explicit "Apply Changes" commits these rows, so file them as Done on
       // the board. This runs ONLY here — after the read/apply above — so it can
-      // never race the `if (r.done) continue` filter and skip the very rows it
-      // is applying. A later edit to a Worker/Adjustment reopens the row
-      // (cleared board-side), so a fresh change is never left marked Done.
+      // never race the Done filter and skip the very rows it is applying. The
+      // tick is no longer load-bearing for correctness either: a Done row in
+      // the week being paid stays eligible for the pull (see the loop above),
+      // so filing it can't strand its amount.
       if (force) {
         void Promise.all(
           adds.map(([, a]) =>
@@ -4246,16 +4407,27 @@ export default function PayrollWizard({
             : (rawFromCalc ?? normalized);
       const current = ctx.bonusOverrides[email];
       if (php === null || current === undefined || Math.abs(current - php) > 0.01) return;
+      additionsEditGenRef.current += 1;
+      let clearedOverrides: Record<string, number> = {};
+      let clearedNotes: Record<string, string> = {};
       setBonusOverrides(prev => {
         const next = { ...prev };
         delete next[email];
+        clearedOverrides = next;
         return next;
       });
       setBonusOverrideNotes(prev => {
-        if (!(email in prev)) return prev;
         const next = { ...prev };
         delete next[email];
+        clearedNotes = next;
         return next;
+      });
+      // A retraction has to be as durable as the apply that put it there —
+      // otherwise a reload brings back an adjustment the board already dropped.
+      void saveAdditionsProgressRef.current?.({
+        bonusOverrides: clearedOverrides,
+        bonusOverrideNotes: clearedNotes,
+        silent: true,
       });
       void logAudit({
         user_name: ctx.sessionEmail ?? 'anonymous',
@@ -4460,6 +4632,8 @@ export default function PayrollWizard({
     if (isReplayRef.current) return; // view-only replay of a past period
     const ctx = auditCtxRef.current;
     const prevValue = ctx.bonusOverrides[email] ?? null;
+    // Hand-typed value beats anything an in-flight hydration is about to apply.
+    additionsEditGenRef.current += 1;
     setBonusOverrides(prev => {
       const next = { ...prev };
       if (value === null) delete next[email];
@@ -4496,9 +4670,27 @@ export default function PayrollWizard({
     }
   }, [scheduleAdjustmentBridge]);
 
+  /**
+   * The key an employee's Adj. override actually lives under.
+   *
+   * Overrides are keyed by the wizard's RAW calc-result email casing, but a
+   * value bridged in from the Payroll Notes board (or restored from a blob
+   * saved before that casing fix) can still sit under the lowercased twin. The
+   * pay computation and the dispatch payload already fall back to it — the Adj.
+   * column did not, so it rendered "—" beside an adjustment that was genuinely
+   * being paid. Reading AND writing through this key keeps the two agreeing,
+   * and an edit migrates the value onto the key everything else prefers.
+   */
+  const overrideKeyFor = React.useCallback((email: string): string => {
+    if (bonusOverrides[email] !== undefined) return email;
+    const norm = normEmail(email);
+    return norm && norm !== email && bonusOverrides[norm] !== undefined ? norm : email;
+  }, [bonusOverrides]);
+
   /** Set/clear the free-text note attached to an employee's adjustment. Empty text removes it. */
   const updateBonusOverrideNote = React.useCallback((email: string, note: string) => {
     if (isReplayRef.current) return; // view-only replay of a past period
+    additionsEditGenRef.current += 1;
     setBonusOverrideNotes(prev => {
       const next = { ...prev };
       if (note.trim() === '') delete next[email];
@@ -11125,10 +11317,14 @@ export default function PayrollWizard({
                             </TableRow>
                           ) : filteredDeptEmployees.map((emp) => {
                             const autoBonus = bonusTotals[emp.email] ?? 0;
-                            const hasOverride = bonusOverrides[emp.email] !== undefined;
+                            // Read the Adj. through the same key resolution the pay
+                            // computation uses, so the column can never show "—" for
+                            // an override that IS being paid (see overrideKeyFor).
+                            const adjKey = overrideKeyFor(emp.email);
+                            const hasOverride = bonusOverrides[adjKey] !== undefined;
                             // Adj. is a signed delta added on top of the auto subtotal
                             // (PAB + Tech + KPI + dept bonuses), never a replacement.
-                            const adj = bonusOverrides[emp.email] ?? 0;
+                            const adj = bonusOverrides[adjKey] ?? 0;
                             const bonusTotal = autoBonus + adj;
                             const empRateRow = ratesByEmail.get(normEmail(emp.email) ?? '');
                             // Accounting-approved disbursement (not yet paid via Urgent Payments) — paid out in this run.
@@ -11408,25 +11604,25 @@ export default function PayrollWizard({
                                     <div className="flex flex-col items-end gap-1">
                                       <div className="flex items-center justify-end gap-1">
                                         <SignedAmountInput
-                                          value={bonusOverrides[emp.email] ?? null}
+                                          value={bonusOverrides[adjKey] ?? null}
                                           emptyValue={0}
                                           // Empty keeps the override OPEN at 0 (the X button clears
                                           // it) — only a real number or a negative commits a delta.
-                                          onCommit={(v) => updateBonusOverride(emp.email, v)}
+                                          onCommit={(v) => updateBonusOverride(adjKey, v)}
                                           disabled={isReplay}
                                           title={`Signed adjustment added on top of auto-computed bonuses (${formatPHP(autoBonus)}). Use a negative value to deduct.`}
                                           className="h-6 w-[88px] rounded border border-amber-400/70 bg-white px-1.5 text-right font-mono text-[11px] font-bold tabular-nums text-amber-700 focus:outline-none focus:ring-1 focus:ring-amber-400 disabled:cursor-not-allowed disabled:opacity-60 dark:border-amber-700/60 dark:bg-zinc-900 dark:text-amber-300"
                                         />
                                         {/* When notes are hidden, flag rows that have one so it isn't forgotten. */}
-                                        {!showAdjNotes && (bonusOverrideNotes[emp.email]?.trim() ?? '') !== '' && (
-                                          <span title={bonusOverrideNotes[emp.email]} className="inline-flex shrink-0">
+                                        {!showAdjNotes && (bonusOverrideNotes[adjKey]?.trim() ?? '') !== '' && (
+                                          <span title={bonusOverrideNotes[adjKey]} className="inline-flex shrink-0">
                                             <FileText className="h-3 w-3 text-amber-500 dark:text-amber-400" />
                                           </span>
                                         )}
                                         {!isReplay && (
                                           <button
                                             type="button"
-                                            onClick={() => updateBonusOverride(emp.email, null)}
+                                            onClick={() => updateBonusOverride(adjKey, null)}
                                             title={`Clear adjustment (auto bonuses: ${formatPHP(autoBonus)})`}
                                             className="text-zinc-400 hover:text-red-500"
                                           >
@@ -11437,8 +11633,8 @@ export default function PayrollWizard({
                                       {showAdjNotes && (
                                         <input
                                           type="text"
-                                          value={bonusOverrideNotes[emp.email] ?? ''}
-                                          onChange={(e) => updateBonusOverrideNote(emp.email, e.target.value)}
+                                          value={bonusOverrideNotes[adjKey] ?? ''}
+                                          onChange={(e) => updateBonusOverrideNote(adjKey, e.target.value)}
                                           disabled={isReplay}
                                           placeholder={isReplay ? 'No note' : 'Add a note…'}
                                           title="Why was this adjustment made? Saved with the adjustment for this pay period."
@@ -11451,7 +11647,7 @@ export default function PayrollWizard({
                                       type="button"
                                       disabled={isReplay}
                                       title={isReplay ? `Auto bonuses: ${formatPHP(autoBonus)}` : `Auto bonuses: ${formatPHP(autoBonus)} — click to add a signed adjustment`}
-                                      onClick={() => updateBonusOverride(emp.email, 0)}
+                                      onClick={() => updateBonusOverride(adjKey, 0)}
                                       className="text-zinc-300 hover:text-amber-600 disabled:cursor-default disabled:hover:text-zinc-300 dark:text-zinc-700 dark:hover:text-amber-400 dark:disabled:hover:text-zinc-700"
                                     >
                                       —
@@ -12299,7 +12495,10 @@ export default function PayrollWizard({
                             // pay rate, so gate the KPI the same way here.
                             const hasRates = r.regularRate != null || r.otRate != null;
                             const kpiBonus = hasRates ? (hslKpiAmounts[em] ?? 0) : 0;
-                            const override = bonusOverrides[r.email] ?? null;
+                            // Same key resolution as the Additions column — an override
+                            // sitting under the lowercased twin still shows here.
+                            const adjKey = overrideKeyFor(r.email);
+                            const override = bonusOverrides[adjKey] ?? null;
                             // Adj. is a signed delta added on top of the KPI bonus, never a replacement.
                             const effectiveBonus = kpiBonus + (override ?? 0);
                             const paStatus = effectivePabStatus.get(em) ?? 'in_progress';
@@ -12460,13 +12659,13 @@ export default function PayrollWizard({
                                         emptyValue={0}
                                         // Empty keeps the override OPEN at 0 (the X button clears
                                         // it) — only a real number or a negative commits a delta.
-                                        onCommit={(v) => updateBonusOverride(r.email, v)}
+                                        onCommit={(v) => updateBonusOverride(adjKey, v)}
                                         title={`Signed adjustment added on top of the KPI bonus (${formatPHP(kpiBonus)}). Use a negative value to deduct.`}
                                         className="h-6 w-[88px] rounded border border-amber-400/70 bg-white px-1.5 text-right font-mono text-[11px] font-bold tabular-nums text-amber-700 focus:outline-none focus:ring-1 focus:ring-amber-400 dark:border-amber-700/60 dark:bg-zinc-900 dark:text-amber-300"
                                       />
                                       <button
                                         type="button"
-                                        onClick={() => updateBonusOverride(r.email, null)}
+                                        onClick={() => updateBonusOverride(adjKey, null)}
                                         title={`Clear adjustment (KPI bonus: ${formatPHP(kpiBonus)})`}
                                         className="text-zinc-400 hover:text-red-500"
                                       >
@@ -12477,7 +12676,7 @@ export default function PayrollWizard({
                                     <button
                                       type="button"
                                       title={`KPI bonus: ${formatPHP(kpiBonus)} — click to add a signed adjustment`}
-                                      onClick={() => updateBonusOverride(r.email, 0)}
+                                      onClick={() => updateBonusOverride(adjKey, 0)}
                                       className="text-zinc-300 hover:text-amber-600 dark:text-zinc-700 dark:hover:text-amber-400"
                                     >
                                       —
@@ -12541,7 +12740,7 @@ export default function PayrollWizard({
                               const em = (r.email ?? '').toLowerCase();
                               totalInitialPay += r.initialPay ?? 0;
                               totalKpi += (r.regularRate != null || r.otRate != null) ? (hslKpiAmounts[em] ?? 0) : 0;
-                              totalAdj += bonusOverrides[r.email] ?? 0;
+                              totalAdj += bonusOverrides[overrideKeyFor(r.email)] ?? 0;
                               totalOrphanage += orphanageAmounts[r.email] ?? 0;
                               const st = effectivePabStatus.get(em) ?? 'in_progress';
                               if (st === 'eligible' && isPabDeptEligible(r.email) && !isPabExcluded(r.email)) totalPab += pabAmountPhp;
