@@ -107,7 +107,19 @@ export const DISPATCH_PROCESSORS: ProcessorMeta[] = PROCESSORS.filter(
  * No Current Pay / No Hours" tab so Lenny can see why someone is missing from
  * the active queue rather than them silently disappearing.
  */
-export type ExclusionReason = 'no_bank' | 'no_pay' | 'no_hours' | 'do_not_pay' | 'no_rate';
+export type ExclusionReason =
+  | 'no_bank'
+  | 'no_pay'
+  | 'no_hours'
+  | 'do_not_pay'
+  | 'no_rate'
+  /**
+   * A contractor invoice whose Mark Paid stamped the claim but then failed to
+   * write the payment row AND failed to release it. Deliberately NOT payable
+   * (a dispatch row may or may not exist) but visible, so an owed invoice can
+   * never quietly vanish. Investigate before paying out of band.
+   */
+  | 'claim_stuck';
 
 export interface ExcludedRow {
   id: string;

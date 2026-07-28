@@ -38,7 +38,11 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ active: [], excluded: [], contractorEmails: [], error: 'Supabase client unavailable' });
     }
     const result = await loadContractorDispatchRows(supabase, { sourceFile, fxRate });
-    return NextResponse.json({ ...result, error: null });
+    // Two distinct channels, because they need opposite UI copy:
+    //   error    — the contractor half is MISSING (migration, cycle, read failure)
+    //   advisory — the load SUCCEEDED but something needs attention (stuck invoices)
+    const { notice, advisory, ...rest } = result;
+    return NextResponse.json({ ...rest, error: notice ?? null, advisory: advisory ?? null });
   } catch (e) {
     const error = e instanceof Error ? e.message : String(e);
     return NextResponse.json({ active: [], excluded: [], contractorEmails: [], error });

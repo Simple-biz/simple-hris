@@ -1319,7 +1319,7 @@ function ReportDetail({
                           {rec.bank_used}
                         </td>
                         <td className="px-4 py-2 font-mono text-[11px] text-zinc-700 dark:text-zinc-300">
-                          {rec.transaction_id}
+                          {rec.transaction_id?.trim() || '—'}
                         </td>
                         <td className="px-4 py-2 text-zinc-700 dark:text-zinc-300">
                           {rec.sent_date}

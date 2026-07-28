@@ -21,8 +21,10 @@ import { DEPARTMENTS } from '@/lib/payroll/department-bonus';
  *   would make it impossible to settle one of Claire's seven approved invoices
  *   without hiding the other six, because the existing already-paid filter is
  *   keyed per (recipient_email, cycle).
- * - APPROVED ONLY, and only while unclaimed (`dispatch_id`/`dispatch_claimed_at`
- *   both NULL). A pending invoice is money Accounting has not authorized.
+ * - APPROVED ONLY, and only while unsettled (`dispatch_id` NULL). A pending invoice
+ *   is money Accounting has not authorized. An invoice whose claim leaked
+ *   (`dispatch_claimed_at` set, `dispatch_id` still NULL) is read too, but only so
+ *   it can be shown as an unpayable `claim_stuck` row — never as payable.
  * - BANK INFO COMES FROM `employee_ids` FIRST. All 18 invoices carry
  *   `payment_method = NULL` and `contractor_profiles` is nearly empty, while
  *   `employee_ids` holds real details for 7 of the 8 invoicing contractors — so
@@ -39,6 +41,20 @@ import { DEPARTMENTS } from '@/lib/payroll/department-bonus';
 export interface ContractorDispatchQueueResult {
   active: QueueRow[];
   excluded: ExcludedRow[];
+  /**
+   * HARD FAILURE: the contractor half could not be loaded (migration missing, cycle
+   * unresolved, read failed), so approved invoices are genuinely NOT in the queue.
+   * Without it that state is indistinguishable from "no approved invoices" — real
+   * money silently absent from a queue that looks perfectly healthy.
+   */
+  notice?: string | null;
+  /**
+   * ADVISORY on an otherwise SUCCESSFUL load — e.g. some invoices are stuck
+   * mid-dispatch. Kept separate from {@link notice} because the two need opposite
+   * copy: saying "invoices could not be loaded" over a successful load that DID
+   * list payable rows would tell the clerk the exact opposite of the truth.
+   */
+  advisory?: string | null;
   /**
    * Lowercased emails holding an un-revoked `contractor` role. Used to badge
    * hourly-payroll rows (e.g. thea@, issa@ — contractors who DO log Hubstaff
@@ -77,6 +93,8 @@ export type InvoiceRow = {
   from_name: string | null;
   from_entity_name: string | null;
   created_at: string | null;
+  /** Set once a Mark Paid has claimed this invoice; see `strandedIds`. */
+  dispatch_claimed_at?: string | null;
 };
 
 export type ProfileRow = Record<string, string | null> & { contractor_email: string };
@@ -90,6 +108,11 @@ export interface ContractorRowInputs {
   nameByEmail: Map<string, string | null>;
   /** USD→PHP. 0 = unknown; the converted side is then left null rather than guessed. */
   fxRate: number;
+  /**
+   * Invoice ids whose claim leaked (dispatch_claimed_at set, dispatch_id null).
+   * Rendered unpayable-but-visible rather than dropped.
+   */
+  strandedIds?: Set<string>;
 }
 
 const norm = (v: string | null | undefined): string => (v ?? '').trim().toLowerCase();
@@ -232,8 +255,21 @@ export async function loadContractorDispatchRows(
   );
   const currentSourceFile = (currentUpload as { source_file?: string } | null)?.source_file ?? null;
   const viewing = opts.sourceFile?.trim() || null;
-  const isCurrentCycle = !!currentSourceFile && (!viewing || viewing === currentSourceFile);
-  if (!isCurrentCycle) return { active: [], excluded: [], contractorEmails };
+  if (!currentSourceFile) {
+    // Could not resolve the live cycle — fail CLOSED (no rows) but SAY SO, since
+    // approved invoices do exist and are simply not being shown.
+    return {
+      active: [],
+      excluded: [],
+      contractorEmails,
+      notice: 'Could not resolve the current pay cycle, so contractor invoices are not shown.',
+    };
+  }
+  // Viewing a closed week: approval carries no pay-week, so showing today's approved
+  // invoices there would misrepresent them as owed in that week. Silent by design.
+  if (viewing && viewing !== currentSourceFile) {
+    return { active: [], excluded: [], contractorEmails };
+  }
 
   // Before add_contractor_dispatch_link.sql has been applied, dispatch_id /
   // dispatch_claimed_at do not exist and this query 42703s. Degrade to "no
@@ -248,17 +284,32 @@ export async function loadContractorDispatchRows(
           .select(INVOICE_COLUMNS)
           .eq('status', 'approved')
           .is('dispatch_id', null)
-          .is('dispatch_claimed_at', null)
           .range(from, to),
       )
     ).filter((i) => norm(i.contractor_email));
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     console.error('[contractor-dispatch-queue] invoice read failed — run references/sql/alter/add_contractor_dispatch_link.sql', msg);
-    return { active: [], excluded: [], contractorEmails };
+    return {
+      active: [],
+      excluded: [],
+      contractorEmails,
+      notice: /dispatch_id|dispatch_claimed_at/.test(msg)
+        ? 'Contractor payments are not enabled yet — run references/sql/alter/add_contractor_dispatch_link.sql (node scripts/apply-contractor-dispatch-migration.mjs).'
+        : `Contractor invoices could not be read: ${msg}`,
+    };
   }
 
   if (invoices.length === 0) return { active: [], excluded: [], contractorEmails };
+
+  // A claim with no dispatch_id means a Mark Paid stamped the claim and then failed
+  // to write the money row AND failed to release it. Such an invoice is NOT payable
+  // (paying it could double-pay if a row was in fact written), but it must not be
+  // INVISIBLE either — that is how an owed invoice quietly disappears. Surfaced as
+  // an unpayable Excluded row instead.
+  const strandedIds = new Set(
+    invoices.filter((i) => !!i.dispatch_claimed_at).map((i) => i.id),
+  );
 
   const emails = [...new Set(invoices.map((i) => norm(i.contractor_email)))];
 
@@ -312,8 +363,16 @@ export async function loadContractorDispatchRows(
     deptByEmail,
     nameByEmail,
     fxRate: opts.fxRate,
+    strandedIds,
   });
-  return { active, excluded, contractorEmails };
+  return {
+    active,
+    excluded,
+    contractorEmails,
+    advisory: strandedIds.size
+      ? `${strandedIds.size} approved invoice(s) are stuck mid-dispatch — claimed but no payment recorded. They are listed in Excluded under "Stuck mid-dispatch". Every OTHER approved invoice is listed here as normal.`
+      : null,
+  };
 }
 
 /**
@@ -325,6 +384,7 @@ export function buildContractorRows(
   input: ContractorRowInputs,
 ): { active: QueueRow[]; excluded: ExcludedRow[] } {
   const { invoices, idsByEmail, profileByEmail, deptByEmail, nameByEmail } = input;
+  const stranded = input.strandedIds ?? new Set<string>();
   const fx = input.fxRate > 0 ? input.fxRate : 0;
   const active: QueueRow[] = [];
   const excluded: ExcludedRow[] = [];
@@ -384,7 +444,7 @@ export function buildContractorRows(
     const bankPreferredRaw = pickFirst(ids?.bank_preferred, ids?.preferred_processor, profile?.preferred_processor, rail) ?? null;
     const invoiceNumber = inv.invoice_number?.trim() || null;
 
-    if (!processor || unsupportedCurrency) {
+    if (!processor || unsupportedCurrency || stranded.has(inv.id)) {
       // Same gate employees get: no resolvable rail → visible in Excluded, not
       // payable. (`accounting@simple.biz` has no employee_ids row at all.)
       // An unsupported currency lands here too rather than being mispriced.
@@ -397,7 +457,7 @@ export function buildContractorRows(
         amountPHP: unsupportedCurrency ? null : amountPHP,
         amountCOP: null,
         bankPreferredRaw,
-        reasons: ['no_bank'],
+        reasons: stranded.has(inv.id) ? ['claim_stuck'] : ['no_bank'],
         departmentKey,
         departmentName,
         payeeKind: 'contractor',

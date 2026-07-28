@@ -113,7 +113,12 @@ try {
         AND pronamespace='public'::regnamespace`,
   );
   const def = fnRows[0]?.def ?? "";
-  const guarded = /COALESCE\s*\(\s*NEW\.payee_type\s*,\s*'employee'\s*\)\s*<>\s*'employee'/i.test(def);
+  // Spelling-agnostic on purpose. The same guard is also installed by
+  // references/sql/seed/seed_disbursement_records_sync.sql, which is documented as
+  // re-runnable — both files CREATE OR REPLACE this function, so whichever ran last
+  // wins. Pinning the regex to one spelling turned a legitimate re-run of that seed
+  // into a false "guard MISSING — do NOT pay any contractor" alarm.
+  const guarded = /payee_type[\s\S]{0,60}<>\s*'employee'[\s\S]{0,80}RETURN\s+NEW/i.test(def);
   console.log(`\nsync_disbursement_from_dispatch payee_type guard: ${guarded ? "PRESENT ✓" : "MISSING ✗"}`);
   if (!guarded) {
     fail(

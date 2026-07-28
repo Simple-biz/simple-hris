@@ -43,7 +43,7 @@ export default function PayrollClerkApp() {
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [viewerEmail, setViewerEmail] = useState<string | null>(null);
 
-  const { rows: fetched, excluded, paid, period, wizardReady, loading, error, refresh } = useDispatchQueue();
+  const { rows: fetched, excluded, paid, period, wizardReady, loading, error, contractorError, contractorAdvisory, refresh } = useDispatchQueue();
   // Realtime "values locked" flag — re-pull when the wizard locks/unlocks so the
   // queue appears/clears live.
   const cycleLock = useWizardDispatchLock(period.sourceFile);
@@ -192,7 +192,15 @@ export default function PayrollClerkApp() {
       if (!res.ok || json.error) throw new Error(json.error ?? 'Could not log dispatch');
       if (payload.status === 'paid' && json.paystub?.sent) {
         toast.success(`${row.name} marked paid · paystub emailed`);
-      } else if (payload.status === 'paid' && json.paystub && !json.paystub.staged) {
+      } else if (
+        payload.status === 'paid' &&
+        json.paystub &&
+        !json.paystub.staged &&
+        // A contractor invoice never has a staged paystub, so this warning (and its
+        // implied "lock the cycle in the wizard" advice) would be wrong on every
+        // contractor payment. Matches PayrollDispatch.
+        !row.contractorInvoiceId
+      ) {
         toast.warning(`${row.name} marked paid — no staged paystub to email`);
       } else {
         toast.success(`${row.name} marked paid`);
@@ -328,7 +336,27 @@ export default function PayrollClerkApp() {
           </span>
         </header>
 
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">{renderContent()}</div>
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+          {/* Contractor invoices failed to load — employee payroll below is fine,
+              but approved invoices are NOT shown, so say so rather than letting the
+              queue look healthy and empty. Mirrors PayrollDispatch. */}
+          {contractorError && !['reports', 'urgent', 'history', 'excluded'].includes(activeTab) && (
+            <div className="mx-4 mt-3 flex items-start gap-2 rounded-lg border border-amber-300/70 bg-amber-50 px-3 py-2 text-[11px] text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200">
+              <span>
+                <strong className="font-semibold">Contractor invoices could not be loaded</strong> —
+                approved invoices are not shown here. Employee payroll is unaffected.
+                <span className="ml-1 font-mono opacity-80">{contractorError}</span>
+              </span>
+            </div>
+          )}
+          {contractorAdvisory && !['reports', 'urgent', 'history'].includes(activeTab) && (
+            <div className="mx-4 mt-3 rounded-lg border border-fuchsia-300/70 bg-fuchsia-50 px-3 py-2 text-[11px] text-fuchsia-900 dark:border-fuchsia-500/30 dark:bg-fuchsia-500/10 dark:text-fuchsia-200">
+              <strong className="font-semibold">Contractor invoices need attention</strong>{' '}
+              {contractorAdvisory}
+            </div>
+          )}
+          {renderContent()}
+        </div>
         <AppFooter />
       </main>
 

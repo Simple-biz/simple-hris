@@ -52,10 +52,20 @@ export async function GET(
 
   // Urgent (MESA) weekly reports have no disbursement_records — each row is a
   // payment_dispatch. Fall back to a dispatches-only export in that case.
+  //
+  // Contractor settlements are appended as their OWN rows. They deliberately create
+  // no disbursement_records row (that is what the payee_type guard in
+  // sync_disbursement_from_dispatch enforces), so buildDispatchExportRows — which
+  // emits one line per disbursement record — has nothing to attach them to and would
+  // drop them entirely, leaving the export unable to tie to the bank statement.
+  const contractorDispatches = report.dispatches.filter((d) => d.payee_type === 'contractor');
   const exportRows =
     records.length === 0 && report.dispatches.length > 0
       ? buildDispatchExportRowsFromDispatches(report.dispatches, ratesRows)
-      : buildDispatchExportRows(records, report.dispatches, ratesRows, idsRows);
+      : [
+          ...buildDispatchExportRows(records, report.dispatches, ratesRows, idsRows),
+          ...buildDispatchExportRowsFromDispatches(contractorDispatches, ratesRows),
+        ];
   const csv = dispatchRowsToCsv(exportRows);
   const filename = dispatchExportFilename(
     report.cycleId,

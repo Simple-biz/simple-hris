@@ -29,9 +29,31 @@ if (!url || !key) {
 const supabase = createClient(url, key, { auth: { persistSession: false } });
 const norm = (e) => (e == null ? "" : String(e).trim().toLowerCase());
 
+/** Retry a probe on a THROWN/transport error — `TypeError: fetch failed` is a real flake here. */
+async function withRetry(label, run) {
+  let last = null;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const res = await run();
+      // postgrest-js returns transport failures as an error object, not a throw.
+      if (res?.error && /fetch failed|ECONNRESET|ETIMEDOUT|socket hang up/i.test(res.error.message ?? '')) {
+        last = res.error;
+      } else {
+        return res;
+      }
+    } catch (e) {
+      last = e;
+    }
+    await new Promise((r) => setTimeout(r, 400 * (attempt + 1)));
+  }
+  throw new Error(`${label}: ${last?.message ?? String(last)}`);
+}
+
 /** Does `table.column` exist? Probed by selecting it — PostgREST 42703s when it doesn't. */
 async function hasColumn(table, column) {
-  const { error } = await supabase.from(table).select(column).limit(1);
+  const { error } = await withRetry(`${table}.${column}`, () =>
+    supabase.from(table).select(column).limit(1),
+  );
   if (!error) return true;
   if (/does not exist|column/i.test(error.message)) return false;
   throw new Error(`${table}.${column}: ${error.message}`);

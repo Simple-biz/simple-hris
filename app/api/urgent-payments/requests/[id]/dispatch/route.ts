@@ -64,11 +64,26 @@ export async function POST(
       note?: string | null;
     };
 
-    for (const f of ['recipient_email', 'transaction_id', 'bank_used', 'sent_date'] as const) {
+    // Hurupay and Higlobe return no usable confirmation reference, so a transaction
+    // ID cannot be required for them — the clerk would have to invent one. This
+    // queue uses the SHARED MarkPaidDialog with a clerk-picked processor, so the
+    // rule has to match the dialog's (`txnOptional`) or a legitimately blank field
+    // would be accepted by the UI and then 400 here.
+    const txnOptional = ['hurupay', 'higlobe'].includes(
+      String(body.processor ?? '').trim().toLowerCase(),
+    );
+    const requiredFields = (
+      txnOptional
+        ? ['recipient_email', 'bank_used', 'sent_date']
+        : ['recipient_email', 'transaction_id', 'bank_used', 'sent_date']
+    ) as Array<'recipient_email' | 'transaction_id' | 'bank_used' | 'sent_date'>;
+    for (const f of requiredFields) {
       if (!body[f]) {
         return NextResponse.json({ error: `Missing required field: ${f}` }, { status: 400 });
       }
     }
+    // transaction_id is NOT NULL in the database — store a blank, never null.
+    if (txnOptional) body.transaction_id = String(body.transaction_id ?? '').trim();
 
     const supabase = createSupabaseServiceRoleClient() ?? createSupabaseServerClient();
     if (!supabase) return NextResponse.json({ error: 'DB unavailable' }, { status: 500 });

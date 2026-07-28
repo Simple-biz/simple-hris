@@ -207,7 +207,7 @@ export default function PayrollDispatch() {
   // past week's source file so accounting can work historical data while not
   // yet live; everything (queue, dispatches, paystubs) follows the chosen week.
   const [selectedSourceFile, setSelectedSourceFile] = useState<string | null>(null);
-  const { rows: fetched, excluded, paid, period, wizardReady, loading, error, contractorError, refresh } =
+  const { rows: fetched, excluded, paid, period, wizardReady, loading, error, contractorError, contractorAdvisory, refresh } =
     useDispatchQueue(selectedSourceFile);
   const viewingPastWeek = selectedSourceFile != null;
   const { state: lockState, setLocked } = useDispatchLock();
@@ -361,10 +361,22 @@ export default function PayrollDispatch() {
   // Universe = still-pending payable (all currencies) + already-paid; excluded
   // (no-bank / no-pay / do-not-pay) people are intentionally left out, exactly
   // as this screen sets them aside — that's what removes the old over-count.
-  const distinctPaidCount = useMemo(
-    () => new Set(paidRows.map((p) => p.recipient_email.trim().toLowerCase())).size,
-    [paidRows],
-  );
+  //
+  // Counted as SETTLEMENTS, not people, because `pending` is one row per payment
+  // and a contractor has one row per invoice. Distinct emails for employees (a
+  // person can hold several dispatch rows for one cycle) plus one per contractor
+  // invoice — otherwise paying 4 of Claire's 7 invoices would collapse to a single
+  // "paid" while `pending` shed 4, so the progress strip, the Pending card and the
+  // CEO tile would all drift while `totalSent` counted 4.
+  const distinctPaidCount = useMemo(() => {
+    const employeeEmails = new Set<string>();
+    let contractorSettlements = 0;
+    for (const p of paidRows) {
+      if ((p.payee_type ?? 'employee') === 'contractor') contractorSettlements += 1;
+      else employeeEmails.add(p.recipient_email.trim().toLowerCase());
+    }
+    return employeeEmails.size + contractorSettlements;
+  }, [paidRows]);
   usePaymentsLivePublisher({
     enabled:
       !viewingPastWeek && wizardReady && hydrated && !loading && Boolean(period.sourceFile),
@@ -667,6 +679,22 @@ export default function PayrollDispatch() {
         <strong className="font-semibold">Contractor invoices could not be loaded</strong> — approved
         invoices are NOT shown in this queue. Employee payroll below is unaffected.
         <span className="ml-1 font-mono opacity-80">{contractorError}</span>
+      </span>
+    </div>
+  ) : null;
+
+  /**
+   * The contractor half loaded FINE but something needs attention (invoices stuck
+   * mid-dispatch). Deliberately distinct copy from the failure banner above: saying
+   * "could not be loaded" here would tell the clerk the opposite of the truth and
+   * could push them to pay out of band.
+   */
+  const contractorAdvisoryBanner = contractorAdvisory ? (
+    <div className="mx-4 mt-3 flex items-start gap-2 rounded-lg border border-fuchsia-300/70 bg-fuchsia-50 px-3 py-2 text-[11px] text-fuchsia-900 dark:border-fuchsia-500/30 dark:bg-fuchsia-500/10 dark:text-fuchsia-200">
+      <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+      <span>
+        <strong className="font-semibold">Contractor invoices need attention</strong>{' '}
+        {contractorAdvisory}
       </span>
     </div>
   ) : null;
@@ -1121,7 +1149,12 @@ export default function PayrollDispatch() {
             >
               {/* Only over queue views — Reports / Urgent / Orphanage / Notifications
                   do not read the contractor source. */}
-              {!['reports', 'notifications', 'orphanage', 'urgent'].includes(activeTab) && contractorErrorBanner}
+              {!['reports', 'notifications', 'orphanage', 'urgent'].includes(activeTab) && (
+                <>
+                  {contractorErrorBanner}
+                  {contractorAdvisoryBanner}
+                </>
+              )}
               {renderBody()}
             </motion.div>
           </AnimatePresence>

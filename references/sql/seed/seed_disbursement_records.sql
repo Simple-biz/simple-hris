@@ -231,6 +231,14 @@ latest_dispatch AS (
     pd.transaction_id
   FROM public.payment_dispatches pd
   WHERE pd.cycle_source_file IS NOT NULL
+    -- A contractor-invoice payment must never seed/overlay an HOURLY disbursement
+    -- record: this CTE keys on (email, source_file), so for someone who both
+    -- invoices and draws a salary it would stamp the invoice's status / amount_usd /
+    -- sent_date / bank_used / transaction_id onto their salary row — money never
+    -- sent reading as PAID. Same guard as sync_disbursement_from_dispatch() and
+    -- seedMissingDisbursementRecords(). Read via to_jsonb so this file stays valid
+    -- before add_contractor_dispatch_link.sql adds the column.
+    AND COALESCE(to_jsonb(pd) ->> 'payee_type', 'employee') = 'employee'
   ORDER BY LOWER(pd.recipient_email), pd.cycle_source_file, pd.created_at DESC
 ),
 

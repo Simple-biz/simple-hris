@@ -33,6 +33,7 @@ import {
   FileSpreadsheet,
   Table2,
   Loader2,
+  AlertTriangle,
 } from 'lucide-react';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -366,6 +367,10 @@ export default function AccountingMesa() {
   const [reviewTarget, setReviewTarget] = useState<MesaRequest | null>(null);
   const [reviewNotes, setReviewNotes] = useState('');
   const [reviewing, setReviewing] = useState(false);
+  /** MESA rollup for the member under review — the balance a disbursement is
+   *  judged against. Loaded per-modal-open, so it's fresh at decision time. */
+  const [reviewLedger, setReviewLedger] = useState<MesaMemberSummary | null>(null);
+  const [reviewLedgerState, setReviewLedgerState] = useState<'loading' | 'ready' | 'error'>('loading');
   const [busyId, setBusyId] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<MesaRequest | null>(null);
   const [bulkBusy, setBulkBusy] = useState(false);
@@ -516,6 +521,48 @@ export default function AccountingMesa() {
     setReviewTarget(r);
     setReviewNotes('');
   };
+
+  // Pull the reviewed member's MESA rollup when the modal opens. Keyed on the
+  // email STRING, not the row object, so parent re-renders don't re-fetch. The
+  // ledger route follows pre-drift email aliases, so the request's work_email is
+  // enough even when contributions were recorded under an older address.
+  const reviewEmail = reviewTarget?.work_email ?? null;
+  useEffect(() => {
+    if (!reviewEmail) return;
+    let cancelled = false;
+    setReviewLedger(null);
+    setReviewLedgerState('loading');
+    fetch(`/api/mesa-ledger?email=${encodeURIComponent(reviewEmail)}&events=0`, { cache: 'no-store' })
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
+      .then((j: { summary?: MesaMemberSummary | null }) => {
+        if (cancelled) return;
+        setReviewLedger(j.summary ?? null);
+        setReviewLedgerState('ready');
+      })
+      .catch(() => {
+        if (!cancelled) setReviewLedgerState('error');
+      });
+    return () => { cancelled = true; };
+  }, [reviewEmail]);
+
+  // Other disbursements from the same member that will still draw on this
+  // balance — pending, or approved but not yet paid out. The ledger can't know
+  // about them (a payout only lands there once recorded), so the projection in
+  // the modal would overstate what's left; surfaced as a caveat instead of
+  // being folded into the arithmetic.
+  const otherOpenDraws = useMemo(() => {
+    if (!reviewTarget) return { count: 0, amount: 0 };
+    const email = reviewTarget.work_email.toLowerCase();
+    const open = rows.filter(
+      (r) =>
+        r.id !== reviewTarget.id &&
+        r.work_email.toLowerCase() === email &&
+        r.request_type === 'disbursement' &&
+        !r.dispatched_at &&
+        (r.status === 'pending' || r.status === 'approved'),
+    );
+    return { count: open.length, amount: open.reduce((s, r) => s + (r.amount_needed ?? 0), 0) };
+  }, [rows, reviewTarget]);
 
   const submitReview = async (status: 'approved' | 'denied') => {
     if (!reviewTarget) return;
@@ -983,8 +1030,11 @@ export default function AccountingMesa() {
       {/* Review modal */}
       {reviewTarget && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-[2px] p-4 animate-in fade-in duration-200 ease-out motion-reduce:animate-none">
-          <div className="w-full max-w-md rounded-2xl border border-zinc-200 bg-white shadow-2xl dark:border-zinc-800 dark:bg-zinc-950 animate-in fade-in zoom-in-95 slide-in-from-bottom-2 duration-200 ease-out motion-reduce:animate-none">
-            <div className="flex items-center justify-between border-b border-zinc-200 px-5 py-4 dark:border-zinc-800">
+          {/* Column layout with a scrolling body: the balance panel + a long
+              explanation can outgrow a short viewport, and the decision buttons
+              must stay reachable. */}
+          <div className="flex max-h-[88vh] w-full max-w-md flex-col overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-2xl dark:border-zinc-800 dark:bg-zinc-950 animate-in fade-in zoom-in-95 slide-in-from-bottom-2 duration-200 ease-out motion-reduce:animate-none">
+            <div className="flex shrink-0 items-center justify-between border-b border-zinc-200 px-5 py-4 dark:border-zinc-800">
               <div>
                 <p className="text-[11px] font-semibold uppercase tracking-wide text-teal-600 dark:text-teal-400">
                   {TYPE_LABELS[reviewTarget.request_type]} Request
@@ -1002,7 +1052,7 @@ export default function AccountingMesa() {
                 <X className="h-4 w-4" />
               </button>
             </div>
-            <div className="space-y-3 px-5 py-4">
+            <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-5 py-4">
               <InfoRow label="Email" value={reviewTarget.work_email} />
               <InfoRow label="Department" value={reviewTarget.department} />
               {reviewTarget.fpu_date && <InfoRow label="FPU Completed" value={reviewTarget.fpu_date} />}
@@ -1013,12 +1063,12 @@ export default function AccountingMesa() {
                   <p className="mt-1 text-sm leading-relaxed text-zinc-700 dark:text-zinc-300">{reviewTarget.explanation}</p>
                 </div>
               )}
-              {reviewTarget.amount_needed != null && (
-                <InfoRow
-                  label="Amount Requested"
-                  value={`PHP ${reviewTarget.amount_needed.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
-                />
-              )}
+              <MesaBalanceImpact
+                request={reviewTarget}
+                ledger={reviewLedger}
+                state={reviewLedgerState}
+                otherOpen={otherOpenDraws}
+              />
               <div>
                 <label className="text-[11px] font-semibold uppercase tracking-wide text-zinc-400 dark:text-zinc-500">
                   Review Notes (optional)
@@ -1032,7 +1082,7 @@ export default function AccountingMesa() {
                 />
               </div>
             </div>
-            <div className="flex items-center justify-end gap-2 border-t border-zinc-200 px-5 py-4 dark:border-zinc-800">
+            <div className="flex shrink-0 items-center justify-end gap-2 border-t border-zinc-200 px-5 py-4 dark:border-zinc-800">
               <Button
                 type="button"
                 variant="outline"
@@ -1155,6 +1205,168 @@ function InfoRow({ label, value }: { label: string; value: string }) {
     <div>
       <p className="text-[11px] font-semibold uppercase tracking-wide text-zinc-400 dark:text-zinc-500">{label}</p>
       <p className="mt-0.5 text-sm text-zinc-800 dark:text-zinc-200">{value}</p>
+    </div>
+  );
+}
+
+/**
+ * Balance impact of a money request, shown inside the review modal: what's in
+ * the member's MESA account now, what this request takes out, and what would be
+ * left. Reviewing a disbursement without this meant approving blind — a request
+ * larger than the account balance is exactly what this panel exists to catch.
+ *
+ * The requested amount comes from the request row, so it renders even when the
+ * ledger fetch is still in flight or has failed; only the balance-derived lines
+ * wait on `state`.
+ */
+function MesaBalanceImpact({
+  request,
+  ledger,
+  state,
+  otherOpen,
+}: {
+  request: MesaRequest;
+  ledger: MesaMemberSummary | null;
+  state: 'loading' | 'ready' | 'error';
+  /** Same member's other not-yet-paid disbursements, absent from the ledger. */
+  otherOpen: { count: number; amount: number };
+}) {
+  const isReturn = request.request_type === 'return';
+  const isOptOut = request.request_type === 'opt_out';
+  // Legacy/partial rows: a disbursement that never captured an amount can't be
+  // subtracted, so the projection is suppressed rather than shown as −PHP0.00.
+  const amountMissing = request.request_type === 'disbursement' && request.amount_needed == null;
+  const balance = ledger?.balance ?? 0;
+  // An approved opt-out settles the whole account, so the draw is the entire
+  // balance; a disbursement takes only what was asked for. A return is an
+  // inflow and carries no amount on the request row.
+  const draw = isReturn ? 0 : isOptOut ? balance : request.amount_needed ?? 0;
+  const ready = state === 'ready';
+  // Balance is only known once the ledger resolves, so an opt-out's draw is too.
+  const drawKnown = ready || !isOptOut;
+  const showProjection = !isReturn && !amountMissing;
+  const remaining = balance - draw;
+  const shortfall = draw - balance;
+  // Half-centavo epsilon — float sums of peso figures shouldn't trip a warning.
+  const insufficient = ready && showProjection && shortfall > 0.005;
+
+  const shimmer = (
+    <span className="inline-block h-4 w-24 animate-pulse rounded bg-teal-200/60 align-middle dark:bg-teal-800/50" />
+  );
+  const figure = (value: number) => (ready ? formatPHP(value) : state === 'loading' ? shimmer : '—');
+
+  return (
+    <div
+      className={cn(
+        'rounded-xl border p-3.5',
+        insufficient
+          ? 'border-rose-200 bg-rose-50/60 dark:border-rose-800/50 dark:bg-rose-950/20'
+          : 'border-teal-200 bg-teal-50/50 dark:border-teal-800/50 dark:bg-teal-950/20',
+      )}
+    >
+      <div className="flex items-center justify-between gap-2">
+        <p className="inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-teal-700 dark:text-teal-300">
+          <PiggyBank className="h-3.5 w-3.5" />
+          MESA account
+        </p>
+        {ledger?.accountNumber && (
+          <span className="font-mono text-[10.5px] text-zinc-500 dark:text-zinc-400">
+            Acct {ledger.accountNumber}
+          </span>
+        )}
+      </div>
+
+      <dl className="mt-2.5 space-y-1.5 text-sm">
+        <div className="flex items-baseline justify-between gap-3">
+          <dt className="text-zinc-600 dark:text-zinc-400">Current balance</dt>
+          <dd className="font-mono font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">
+            {figure(balance)}
+          </dd>
+        </div>
+
+        {showProjection && (
+          <>
+            <div className="flex items-baseline justify-between gap-3">
+              <dt className="text-zinc-600 dark:text-zinc-400">
+                {isOptOut ? 'Full payout on opt-out' : 'This disbursement request'}
+              </dt>
+              <dd className="font-mono font-semibold tabular-nums text-rose-600 dark:text-rose-400">
+                {drawKnown ? `− ${formatPHP(draw)}` : state === 'loading' ? shimmer : '—'}
+              </dd>
+            </div>
+            <div className="flex items-baseline justify-between gap-3 border-t border-teal-200/70 pt-1.5 dark:border-teal-800/40">
+              <dt className="font-semibold text-zinc-800 dark:text-zinc-200">
+                {isOptOut ? 'Balance after closing' : 'Balance after payout'}
+              </dt>
+              <dd
+                className={cn(
+                  'font-mono text-base font-bold tabular-nums',
+                  !ready
+                    ? 'text-zinc-400 dark:text-zinc-500'
+                    : insufficient
+                      ? 'text-rose-600 dark:text-rose-400'
+                      : 'text-teal-700 dark:text-teal-300',
+                )}
+              >
+                {figure(remaining)}
+              </dd>
+            </div>
+          </>
+        )}
+      </dl>
+
+      {insufficient && (
+        <p className="mt-2.5 flex items-start gap-1.5 text-[11.5px] font-medium leading-relaxed text-rose-700 dark:text-rose-300">
+          <AlertTriangle className="mt-px h-3.5 w-3.5 shrink-0" />
+          <span>
+            Exceeds the available balance by {formatPHP(shortfall)} — approving this would overdraw
+            the account.
+          </span>
+        </p>
+      )}
+
+      {showProjection && otherOpen.count > 0 && (
+        <p className="mt-2 flex items-start gap-1.5 text-[11.5px] leading-relaxed text-amber-700 dark:text-amber-300">
+          <AlertTriangle className="mt-px h-3.5 w-3.5 shrink-0" />
+          <span>
+            {otherOpen.count} other unpaid disbursement request
+            {otherOpen.count === 1 ? '' : 's'} totalling {formatPHP(otherOpen.amount)} — not counted
+            above.
+          </span>
+        </p>
+      )}
+
+      {ready && !ledger && (
+        <p className="mt-2 text-[11.5px] leading-relaxed text-zinc-500 dark:text-zinc-400">
+          No MESA ledger history for this member yet, so the balance reads as {formatPHP(0)}.
+        </p>
+      )}
+
+      {state === 'error' && (
+        <p className="mt-2 text-[11.5px] leading-relaxed text-rose-600 dark:text-rose-400">
+          Couldn&apos;t load the MESA ledger — balance unavailable. Check the member&apos;s account
+          on the MESA Active Members tab before deciding.
+        </p>
+      )}
+
+      {isReturn && (
+        <p className="mt-2 text-[11.5px] leading-relaxed text-zinc-500 dark:text-zinc-400">
+          A return adds funds back — the balance above updates once Accounting records the deposit.
+        </p>
+      )}
+
+      {amountMissing && (
+        <p className="mt-2 text-[11.5px] leading-relaxed text-amber-700 dark:text-amber-300">
+          This request has no amount recorded, so the balance after payout can&apos;t be projected.
+        </p>
+      )}
+
+      {ready && ledger && (
+        <p className="mt-2.5 border-t border-teal-200/60 pt-2 font-mono text-[10.5px] text-zinc-500 dark:border-teal-800/40 dark:text-zinc-400">
+          Contributed {formatPHP(ledger.contributed)} · Matched {formatPHP(ledger.matched)}
+          {ledger.disbursed > 0 ? ` · Disbursed ${formatPHP(ledger.disbursed)}` : ''}
+        </p>
+      )}
     </div>
   );
 }

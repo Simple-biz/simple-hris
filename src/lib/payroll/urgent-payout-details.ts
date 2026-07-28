@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { ProcessorId, QueueRow } from '@/components/payroll-clerk/mock-queue';
+import { effectiveUsdToPhpRateFromStored } from '@/lib/fx/usd-php';
 
 // Shared payout pre-fill for the Urgent queue's pending sources (MESA
 // disbursements + People-tab one-off payments). Both need the recipient's saved
@@ -108,4 +109,31 @@ export async function fetchPayoutIdsByEmail(
     if (e) byEmail[e] = row;
   }
   return byEmail;
+}
+
+/**
+ * The active USD→PHP rate (PHP per $1) from `app_settings`, falling back to the
+ * official rate when unset/invalid. Urgent payments are filed in PHP, so this is
+ * what turns them into the USD figure the dispatch queue and weekly report
+ * headline in.
+ */
+export async function fetchUsdToPhpRate(supabase: SupabaseClient): Promise<number> {
+  const { data } = await supabase
+    .from('app_settings')
+    .select('value')
+    .eq('key', 'usd_to_php_rate')
+    .maybeSingle();
+  return effectiveUsdToPhpRateFromStored((data as { value?: string | null } | null)?.value);
+}
+
+/**
+ * USD equivalent of a PHP-denominated urgent amount, rounded to cents. Mirrors
+ * the conversion the dispatch routes persist onto `payment_dispatches.amount_usd`,
+ * so the figure the clerk sees on the card is the figure that lands in the
+ * weekly report. Null in → null out (amount not yet set).
+ */
+export function usdFromPhp(amountPhp: number | null | undefined, usdToPhp: number): number | null {
+  if (amountPhp == null || !Number.isFinite(Number(amountPhp))) return null;
+  if (!(usdToPhp > 0)) return null;
+  return Math.round((Number(amountPhp) / usdToPhp) * 100) / 100;
 }

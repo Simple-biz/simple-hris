@@ -308,27 +308,79 @@ export async function listExcludedArrears(): Promise<{
   const supabase = createSupabaseServiceRoleClient() ?? createSupabaseServerClient();
   if (!supabase) return { entries: [], error: "Supabase client unavailable" };
 
-  const { data: held, error: heldErr } = await supabase
-    .from("paystub_dispatch_queue")
-    .select(
-      "cycle_source_file, recipient_email, recipient_name, amount_php, amount_usd, locked_at, sent_at, last_error",
-    )
-    .eq("excluded", true);
-  if (heldErr) return { entries: [], error: heldErr.message };
+  // PAGINATED. PostgREST caps a response at 1000 rows and BOTH selects here span
+  // every cycle, not one: live there are ~7.7k staged rows and ~3.2k paid
+  // dispatches. Unranged, `held` silently lost rows and — far worse — `paidSet`
+  // below saw an arbitrary ~30% sample of settlements, so an ALREADY-PAID held week
+  // reappeared on the arrears ledger as still owed. (Pre-existing; fixed here
+  // because this function's paid-set is now also payee-filtered.)
+  const PAGE = 1000;
 
-  const { data: paid, error: paidErr } = await supabase
-    .from("payment_dispatches")
-    .select("cycle_source_file, recipient_email")
-    .eq("status", "paid");
-  if (paidErr) return { entries: [], error: paidErr.message };
+  type HeldRow = {
+    cycle_source_file: string | null;
+    recipient_email: string;
+    recipient_name: string | null;
+    amount_php: number | null;
+    amount_usd: number | null;
+    locked_at: string | null;
+    sent_at: string | null;
+    last_error: string | null;
+  };
+  const held: HeldRow[] = [];
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await supabase
+      .from("paystub_dispatch_queue")
+      .select(
+        "cycle_source_file, recipient_email, recipient_name, amount_php, amount_usd, locked_at, sent_at, last_error",
+      )
+      .eq("excluded", true)
+      .range(from, from + PAGE - 1);
+    if (error) return { entries: [], error: error.message };
+    const page = (data ?? []) as HeldRow[];
+    held.push(...page);
+    if (page.length < PAGE) break;
+  }
 
+  // `payee_type` is selected so contractor-invoice settlements can be excluded
+  // below. It only exists after add_contractor_dispatch_link.sql, so retry without
+  // it — correct in that case, since no contractor dispatch row can exist yet.
+  type PaidRow = { cycle_source_file: string | null; recipient_email: string; payee_type?: string | null };
+  const paid: PaidRow[] = [];
+  {
+    // Probe once for the column, then page through with whichever select works.
+    const probe = await supabase.from("payment_dispatches").select("payee_type").limit(1);
+    let columns = "cycle_source_file, recipient_email, payee_type";
+    if (probe.error) {
+      const isMissingColumn =
+        probe.error.code === "42703" ||
+        probe.error.code === "PGRST204" ||
+        /payee_type/.test(probe.error.message ?? "");
+      // Only a missing column may drop the payee filter — a transient error must
+      // not silently reintroduce the "invoice settles a salary" defect.
+      if (!isMissingColumn) return { entries: [], error: probe.error.message };
+      columns = "cycle_source_file, recipient_email";
+    }
+    for (let from = 0; ; from += PAGE) {
+      const { data, error } = await supabase
+        .from("payment_dispatches")
+        .select(columns)
+        .eq("status", "paid")
+        .range(from, from + PAGE - 1);
+      if (error) return { entries: [], error: error.message };
+      const page = (data ?? []) as unknown as PaidRow[];
+      paid.push(...page);
+      if (page.length < PAGE) break;
+    }
+  }
+
+  // Contractor settlements are excluded: this set is keyed by (cycle, EMAIL) and is
+  // used to decide whether a HELD week has been paid off. Settling someone's invoice
+  // would otherwise erase their genuinely-owed held week from the arrears ledger —
+  // the same defect as the dispatch queue's paidEmails filter.
   const paidSet = new Set(
-    (paid ?? []).map(
-      (p) =>
-        `${(p as { cycle_source_file: string | null }).cycle_source_file ?? ""}|${(
-          p as { recipient_email: string }
-        ).recipient_email.trim().toLowerCase()}`,
-    ),
+    paid
+      .filter((p) => (p.payee_type ?? "employee") === "employee")
+      .map((p) => `${p.cycle_source_file ?? ""}|${p.recipient_email.trim().toLowerCase()}`),
   );
 
   const byEmail = new Map<string, ArrearsEntry>();

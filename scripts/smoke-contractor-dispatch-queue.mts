@@ -214,6 +214,45 @@ for (const r of sim.active) {
   }
 }
 
+// ── 1c. STRANDED CLAIM ────────────────────────────────────────────────────────
+// The claim_stuck path cannot be reached from live data (it needs a leaked claim),
+// so exercise it directly: feed the same real invoices in with one marked stranded
+// and assert it becomes EXCLUDED-and-unpayable, never payable.
+console.log('\n=== 1c. STRANDED CLAIM (claim_stuck) ===');
+if (approved.length > 0) {
+  const victim = approved[0]!;
+  const victimWasPayable = sim.active.some((r) => r.contractorInvoiceId === victim.id);
+  const strandedSim = buildContractorRows({
+    invoices: approved,
+    idsByEmail,
+    profileByEmail,
+    deptByEmail,
+    nameByEmail,
+    fxRate: FX,
+    strandedIds: new Set([victim.id]),
+  });
+  const stillActive = strandedSim.active.some((r) => r.contractorInvoiceId === victim.id);
+  const nowExcluded = strandedSim.excluded.find((r) => r.contractorInvoiceId === victim.id);
+  console.log(
+    `  marked ${victim.invoice_number} stranded → payable=${stillActive ? 'YES (BAD)' : 'no'}` +
+      ` · excluded reasons=${nowExcluded ? nowExcluded.reasons.join(',') : 'MISSING (BAD)'}` +
+      ` · payableRow=${nowExcluded ? String(nowExcluded.payable) : 'n/a'}`,
+  );
+  if (stillActive) problems.push('stranded invoice is still PAYABLE — it could be double-paid');
+  if (!nowExcluded) problems.push('stranded invoice vanished from both lists — invisible owed money');
+  if (nowExcluded && !nowExcluded.reasons.includes('claim_stuck')) {
+    problems.push(`stranded invoice reasons=${nowExcluded.reasons.join(',')} instead of claim_stuck`);
+  }
+  if (nowExcluded && nowExcluded.payable) problems.push('stranded invoice carries a payable row');
+  // No collateral damage: only the marked invoice should change.
+  const expectedActive = sim.active.length - (victimWasPayable ? 1 : 0);
+  if (strandedSim.active.length !== expectedActive) {
+    problems.push(
+      `marking one invoice stranded changed others: active ${sim.active.length} → ${strandedSim.active.length} (expected ${expectedActive})`,
+    );
+  }
+}
+
 console.log('\n=== 2. PAST CYCLE (gate must return zero rows) ===');
 const { data: past } = await supabase
   .from('hubstaff_uploads')

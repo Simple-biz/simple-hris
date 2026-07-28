@@ -325,17 +325,29 @@ export default function MarkPaidDialog({
     bank: string; holder: string; acct: string; swift: string;
   } | null>(null);
 
-  // The primary (top) amount shown in the hero — COP or USD depending on the
-  // payout currency.
-  const heroAmount = row?.payCurrency === 'COP' ? row?.amountCOP : row?.amountUSD;
+  // The hero leads with the currency the recipient is actually PAID in, because
+  // that's the figure the clerk keys into the processor — the USD anchor drops
+  // to the secondary line beneath it. Every rail settles locally: the wallets
+  // (Hurupay, HiGlobe, Wise) deposit in local currency, and `wires` for a PHP
+  // payee is a domestic peso wire. Only genuinely USD-paid people (US managers,
+  // USD contractors) lead with dollars, and they keep the PHP equivalent below.
+  const heroCurrency = row?.payCurrency ?? 'PHP';
+  const heroAmount =
+    (heroCurrency === 'COP' ? row?.amountCOP
+      : heroCurrency === 'USD' ? row?.amountUSD
+      : row?.amountPHP) ?? null;
+  const formatHero =
+    heroCurrency === 'COP' ? formatCOP : heroCurrency === 'USD' ? formatUSD : formatPHP;
+  const subAmount =
+    heroCurrency === 'USD' ? formatPHP(row?.amountPHP ?? null) : formatUSD(row?.amountUSD ?? null);
 
   const copyAmount = useCallback(() => {
     if (heroAmount == null || !row) return;
-    // Copy exactly what's shown in the hero, minus the currency symbol and the
-    // grouping commas — so "$1,234.50" pastes as "1234.50" (cents preserved)
-    // straight into processors / spreadsheets.
-    const shown = row.payCurrency === 'COP' ? formatCOP(heroAmount) : formatUSD(heroAmount);
-    const text = shown.replace(/[^\d.]/g, '');
+    // Copy the hero amount as a bare number — "$1,234.50" / "₱1,234.50" paste
+    // as "1234.50" (cents preserved) straight into processors / spreadsheets.
+    // COP copies whole pesos ("$COP1.234.567" → "1234567"): es-CO groups with
+    // dots, so stripping the formatted string would fabricate a decimal point.
+    const text = heroCurrency === 'COP' ? String(Math.round(heroAmount)) : heroAmount.toFixed(2);
     const done = () => {
       setCopied(true);
       window.setTimeout(() => setCopied(false), 1400);
@@ -345,7 +357,7 @@ export default function MarkPaidDialog({
     } else {
       done();
     }
-  }, [heroAmount, row]);
+  }, [heroAmount, heroCurrency, row]);
 
   // Copy the recipient's account / wallet ID verbatim — unlike the amount, this
   // pastes as-is (email, account number, or tag) straight into the processor.
@@ -437,7 +449,17 @@ export default function MarkPaidDialog({
   }, [row?.id, defaults, row]);
 
   const open    = row != null;
-  const valid   = transactionId.trim().length > 0 && bankUsed.trim().length > 0 && sentDate.length > 0;
+  /**
+   * Hurupay and Higlobe don't hand back a usable confirmation reference, so a
+   * transaction ID can't be required for them — the clerk would have to invent one.
+   * Every other rail still requires it. Mirrored server-side in
+   * POST /api/payment-dispatches (TXN_OPTIONAL_PROCESSORS).
+   */
+  const txnOptional = row?.processor === 'hurupay' || row?.processor === 'higlobe';
+  const valid =
+    (txnOptional || transactionId.trim().length > 0) &&
+    bankUsed.trim().length > 0 &&
+    sentDate.length > 0;
   // Whether the recipient is paid INTO a bank account — a genuine wire, OR a
   // wallet-routed employee (e.g. Wise) whose dashboard payout is their own bank.
   // Drives the SWIFT field, the account placeholder, and the wallet hint so the
@@ -603,7 +625,7 @@ export default function MarkPaidDialog({
 
               <div className="mt-2.5 flex items-center gap-2.5">
                 <span className="font-mono text-[2.65rem] font-black leading-none tracking-tight text-white drop-shadow-sm">
-                  {row?.payCurrency === 'COP' ? formatCOP(row?.amountCOP ?? null) : formatUSD(row?.amountUSD ?? null)}
+                  {formatHero(heroAmount)}
                 </span>
                 <button
                   type="button"
@@ -618,7 +640,7 @@ export default function MarkPaidDialog({
                 </button>
               </div>
               <div className="mt-1.5 font-mono text-[13px] font-semibold tracking-wide text-white/65">
-                {formatPHP(row?.amountPHP ?? null)}
+                {subAmount}
               </div>
 
               {row && row.bonusTotalPHP > 0 && (
@@ -698,11 +720,15 @@ export default function MarkPaidDialog({
           className="grid max-h-[44vh] gap-4 overflow-y-auto overflow-x-hidden bg-white px-6 py-5 dark:bg-zinc-950"
         >
 
-          <Field id="txn" label="Transaction ID" cfg={cfg}>
+          <Field id="txn" label={txnOptional ? 'Transaction ID (optional)' : 'Transaction ID'} cfg={cfg}>
             <FieldInput
               id="txn"
               cfg={cfg}
-              placeholder="Paste confirmation from processor"
+              placeholder={
+                txnOptional
+                  ? 'Optional — Hurupay/Higlobe give no reference'
+                  : 'Paste confirmation from processor'
+              }
               value={transactionId}
               onChange={(e) => setTransactionId(e.target.value)}
               className="font-mono text-xs"

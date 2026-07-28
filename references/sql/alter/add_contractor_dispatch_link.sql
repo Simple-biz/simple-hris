@@ -28,8 +28,9 @@ BEGIN;
 
 -- ── PART 1 — invoice → dispatch link ────────────────────────────────────────
 -- dispatch_claimed_at is stamped BEFORE the dispatch row is written (the claim),
--- dispatch_id after it (the settlement). Both are cleared by the PART 3 trigger.
--- last_dispatched_at is never cleared — it is historical breadcrumb only.
+-- dispatch_id after it (the settlement). Both are cleared by the PART 3 trigger on
+-- Undo. last_dispatched_at survives an Undo as a historical breadcrumb; it is only
+-- cleared when a claim is rolled back because the payment was never recorded at all.
 ALTER TABLE public.contractor_invoices
   ADD COLUMN IF NOT EXISTS dispatch_id uuid REFERENCES public.payment_dispatches(id) ON DELETE SET NULL,
   ADD COLUMN IF NOT EXISTS dispatch_claimed_at timestamptz,
@@ -40,15 +41,20 @@ COMMENT ON COLUMN public.contractor_invoices.dispatch_id IS
 COMMENT ON COLUMN public.contractor_invoices.dispatch_claimed_at IS
   'Set immediately before a paid dispatch row is written, so two concurrent Mark Paid clicks cannot both settle this invoice.';
 COMMENT ON COLUMN public.contractor_invoices.last_dispatched_at IS
-  'Informational: when this invoice was last dispatched, retained across an Undo.';
+  'Informational: when this invoice was last dispatched. Retained across an Undo; cleared only when a claim is rolled back because no payment was recorded.';
 
 CREATE INDEX IF NOT EXISTS contractor_invoices_dispatch_id_idx
   ON public.contractor_invoices (dispatch_id);
 
--- Covers the dispatch-queue read: approved AND unclaimed.
+-- Covers the dispatch-queue read, which selects approved + UNSETTLED invoices
+-- (dispatch_id IS NULL). Claimed-but-unlinked rows are included by that query on
+-- purpose so they can be shown as unpayable "stuck mid-dispatch" rows, so the
+-- predicate must NOT also require dispatch_claimed_at IS NULL — that would make the
+-- index unusable for the query it exists to serve.
+DROP INDEX IF EXISTS public.contractor_invoices_payable_idx;
 CREATE INDEX IF NOT EXISTS contractor_invoices_payable_idx
   ON public.contractor_invoices (status)
-  WHERE dispatch_id IS NULL AND dispatch_claimed_at IS NULL;
+  WHERE dispatch_id IS NULL;
 
 
 -- ── PART 2 — payee discriminator + double-pay guard ─────────────────────────
@@ -131,7 +137,13 @@ CREATE OR REPLACE FUNCTION public.sync_disbursement_from_dispatch()
 RETURNS TRIGGER AS $$
 BEGIN
   -- Contractor payments settle an invoice, not an hourly disbursement record.
-  IF COALESCE(NEW.payee_type, 'employee') <> 'employee' THEN
+  --
+  -- Written EXACTLY as in references/sql/seed/seed_disbursement_records_sync.sql,
+  -- which also CREATE OR REPLACEs this function and is documented as re-runnable:
+  -- one spelling means whichever file ran last leaves an identical body, and the
+  -- migration verifier's assertion cannot false-alarm. The to_jsonb form also keeps
+  -- this body valid if it is ever applied before PART 2 adds the column.
+  IF COALESCE(to_jsonb(NEW) ->> 'payee_type', 'employee') <> 'employee' THEN
     RETURN NEW;
   END IF;
 

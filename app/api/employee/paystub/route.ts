@@ -684,9 +684,15 @@ export async function GET(req: NextRequest) {
     listPaystubEntriesForEmployee(email),
   ]);
 
+  // Contractor-invoice settlements are excluded: they carry the live cycle's
+  // source_file and the person's email, so for someone who both invoices and draws
+  // a salary (e.g. a contractor-role holder who also logs hours) a settled invoice
+  // would unlock an hourly PAY STUB for a week whose salary was never paid.
+  // `payee_type` is absent pre-migration, and `undefined !== 'contractor'` keeps
+  // today's behaviour exactly.
   const paidFiles = new Set(
     dispatches
-      .filter((r) => r.status === "paid" && r.cycle_source_file)
+      .filter((r) => r.status === "paid" && r.cycle_source_file && r.payee_type !== "contractor")
       .map((r) => r.cycle_source_file as string),
   );
   const stagedFiles = new Set(staged.map((r) => r.cycle_source_file));

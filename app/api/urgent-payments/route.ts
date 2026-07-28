@@ -5,7 +5,9 @@ import type { ProcessorId, QueueRow } from '@/components/payroll-clerk/mock-queu
 import {
   buildPayoutDetails,
   fetchPayoutIdsByEmail,
+  fetchUsdToPhpRate,
   preferredProcessor,
+  usdFromPhp,
 } from '@/lib/payroll/urgent-payout-details';
 
 export const dynamic = 'force-dynamic';
@@ -19,6 +21,9 @@ interface UrgentPaymentRow {
   disbursement_reason: string | null;
   explanation: string | null;
   amount_needed: number | null;
+  /** USD equivalent of `amount_needed` at the active FX rate — the same figure
+   *  the dispatch route will persist, so the queue can headline in dollars. */
+  amount_usd: number | null;
   created_at: string;
   reviewed_by: string | null;
   reviewed_at: string | null;
@@ -64,13 +69,18 @@ export async function GET() {
       reviewed_at: string | null;
     }>;
 
-    // Batch-fetch employee_ids for processor preference + payout pre-fill.
-    const idsByEmail = await fetchPayoutIdsByEmail(supabase, rows.map((r) => r.work_email));
+    // Batch-fetch employee_ids for processor preference + payout pre-fill, and
+    // the FX rate for the USD equivalent (one query each, not per row).
+    const [idsByEmail, usdToPhp] = await Promise.all([
+      fetchPayoutIdsByEmail(supabase, rows.map((r) => r.work_email)),
+      fetchUsdToPhpRate(supabase),
+    ]);
 
     const result: UrgentPaymentRow[] = rows.map((r) => {
       const ids = idsByEmail[r.work_email.trim().toLowerCase()];
       return {
         ...r,
+        amount_usd: usdFromPhp(r.amount_needed, usdToPhp),
         processor: preferredProcessor(ids),
         details: buildPayoutDetails(ids, r.work_email),
       };

@@ -1019,11 +1019,21 @@ export async function seedMissingDisbursementRecords(opts: {
       .in("cycle_source_file", unseededFiles)
       .order("created_at", { ascending: false });
     if (withPayee.error) {
+      // ONLY a missing column may fall back. Falling back on any error (a network
+      // blip, a timeout) would silently drop the payee filter and re-open the
+      // clobber this guard exists to prevent — an invoice payment stamped onto an
+      // employee's salary record.
+      const isMissingColumn =
+        withPayee.error.code === "42703" ||
+        withPayee.error.code === "PGRST204" ||
+        /payee_type/.test(withPayee.error.message ?? "");
+      if (!isMissingColumn) throw new Error(withPayee.error.message);
       const fallback = await supabase
         .from("payment_dispatches")
         .select(DISPATCH_COLS)
         .in("cycle_source_file", unseededFiles)
         .order("created_at", { ascending: false });
+      if (fallback.error) throw new Error(fallback.error.message);
       dispatchData = fallback.data ?? null;
     } else {
       dispatchData = withPayee.data ?? null;

@@ -42,19 +42,46 @@ export async function PATCH(
     // NOTE: `contractor_name` and `amount` do NOT exist on this table (the real
     // column is `total`). Selecting them made every request error, so prevRow was
     // always null and every contractor.decided audit entry logged nulls.
-    const { data: prevRow } = await supabase
-      .from('contractor_invoices')
-      .select('id, status, contractor_email, total, currency, invoice_number, from_name, dispatch_id, dispatch_claimed_at')
-      .eq('id', id)
-      .maybeSingle();
+    //
+    // The dispatch columns only exist after add_contractor_dispatch_link.sql, so
+    // the select is attempted WITH them and retried without — and its error is
+    // handled rather than discarded, otherwise a failed read would silently null
+    // the whole audit entry again (and skip the freeze guard below).
+    const BASE_COLS = 'id, status, contractor_email, total, currency, invoice_number, from_name';
+    const DISPATCH_COLS = 'dispatch_id, dispatch_claimed_at';
+    let prevRow: Record<string, unknown> | null = null;
+    let dispatchColumnsExist = true;
+    {
+      const withDispatch = await supabase
+        .from('contractor_invoices')
+        .select(`${BASE_COLS}, ${DISPATCH_COLS}`)
+        .eq('id', id)
+        .maybeSingle();
+      if (withDispatch.error) {
+        dispatchColumnsExist = false;
+        const fallback = await supabase
+          .from('contractor_invoices')
+          .select(BASE_COLS)
+          .eq('id', id)
+          .maybeSingle();
+        if (fallback.error) throw fallback.error;
+        prevRow = fallback.data as Record<string, unknown> | null;
+      } else {
+        prevRow = withDispatch.data as Record<string, unknown> | null;
+      }
+    }
+    if (!prevRow) return NextResponse.json({ error: 'Invoice not found.' }, { status: 404 });
 
     // Once an invoice has been dispatched, its status is frozen: re-opening it
     // to 'approved' would put an already-PAID invoice back in the dispatch queue
     // as payable. Undoing the payment (dispatch → Done → "send back to the pay
     // processor") is the supported reversal — the AFTER DELETE trigger clears
     // both columns and the invoice becomes payable again on its own.
-    const dispatched = prevRow as { dispatch_id?: string | null; dispatch_claimed_at?: string | null } | null;
-    if (dispatched?.dispatch_id || dispatched?.dispatch_claimed_at) {
+    //
+    // Enforced in the WHERE clause of the UPDATE as well as here, because the
+    // read above is a check-then-act: a Mark Paid claim can land in between, and a
+    // status write must not be able to overtake a payment that is already in flight.
+    if (prevRow.dispatch_id || prevRow.dispatch_claimed_at) {
       return NextResponse.json(
         {
           error:
@@ -64,11 +91,21 @@ export async function PATCH(
       );
     }
 
-    const { error } = await supabase
-      .from('contractor_invoices')
-      .update({ status })
-      .eq('id', id);
+    let update = supabase.from('contractor_invoices').update({ status }).eq('id', id);
+    if (dispatchColumnsExist) {
+      update = update.is('dispatch_id', null).is('dispatch_claimed_at', null);
+    }
+    const { data: updated, error } = await update.select('id');
     if (error) throw error;
+    if (!updated || updated.length === 0) {
+      return NextResponse.json(
+        {
+          error:
+            'This invoice was just dispatched for payment. Undo the payment in Payment Dispatch → Done before changing its status.',
+        },
+        { status: 409 },
+      );
+    }
 
     // Best-effort operator capture for the audit trail.
     let decidedBy = 'unknown';

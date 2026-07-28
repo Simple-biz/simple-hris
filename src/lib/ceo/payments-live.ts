@@ -112,29 +112,71 @@ async function exactCount(
  *  keyed by recipient email so a person appears once (their latest dispatch).
  *  Called once per identifier (source file, then upload id) — belt-and-braces
  *  against a cycle-key mismatch, exactly like {@link collectPaidEmails}. */
+/**
+ * Is this dispatch row an EMPLOYEE payroll payment?
+ *
+ * The CEO card counts one slot per staged EMPLOYEE, so a contractor-invoice
+ * settlement must never consume one: it would make `remaining = total - paid`
+ * understate what is still owed (potentially reading "all paid" while salaries are
+ * unsent) and would mark that person's department complete on the progress strip.
+ *
+ * `payee_type` only exists after add_contractor_dispatch_link.sql; absent means
+ * employee, which is exactly right for every pre-migration row.
+ */
+function isEmployeePayment(row: { payee_type?: string | null }): boolean {
+  return (row.payee_type ?? 'employee') === 'employee';
+}
+
+/** Select list + a missing-column fallback, so the guard degrades cleanly. */
+async function selectPaidDispatches<T>(
+  supabase: Supabase,
+  columns: string,
+  build: (q: ReturnType<ReturnType<Supabase['from']>['select']>) => unknown,
+): Promise<T[] | null> {
+  const withPayee = (await build(
+    supabase.from('payment_dispatches').select(`${columns}, payee_type`) as never,
+  )) as { data: unknown; error: { code?: string; message?: string } | null };
+  if (!withPayee.error) return (withPayee.data ?? []) as T[];
+  const msg = withPayee.error.message ?? '';
+  const missingColumn =
+    withPayee.error.code === '42703' || withPayee.error.code === 'PGRST204' || /payee_type/.test(msg);
+  if (!missingColumn) return null;
+  const fallback = (await build(
+    supabase.from('payment_dispatches').select(columns) as never,
+  )) as { data: unknown; error: unknown };
+  if (fallback.error) return null;
+  return (fallback.data ?? []) as T[];
+}
+
 async function collectRecentPaid(
   supabase: Supabase,
   column: 'cycle_source_file' | 'cycle_id',
   value: string,
   into: Map<string, PaidFeedEntry>,
 ): Promise<void> {
-  const { data, error } = await supabase
-    .from('payment_dispatches')
-    .select('recipient_email, recipient_name, amount_usd, amount_php, amount_cop, created_at')
-    .eq(column, value)
-    .eq('status', 'paid')
-    .order('created_at', { ascending: false })
-    .limit(200);
-  if (error) return;
-  const rows = (data ?? []) as {
+  const rows = await selectPaidDispatches<{
     recipient_email: string | null;
     recipient_name: string | null;
     amount_usd: number | null;
     amount_php: number | null;
     amount_cop: number | null;
     created_at: string | null;
-  }[];
+    payee_type?: string | null;
+  }>(
+    supabase,
+    'recipient_email, recipient_name, amount_usd, amount_php, amount_cop, created_at',
+    (q) =>
+      (q as never as ReturnType<ReturnType<Supabase['from']>['select']>)
+        .eq(column, value)
+        .eq('status', 'paid')
+        .order('created_at', { ascending: false })
+        .limit(200),
+  );
+  if (!rows) return;
   for (const r of rows) {
+    // The CEO feed shows SALARY payments; an invoice settlement for a
+    // dual-identity person would otherwise appear as their salary going out.
+    if (!isEmployeePayment(r)) continue;
     const email = (r.recipient_email ?? '').trim().toLowerCase();
     if (!email) continue;
     const paidAt = r.created_at ?? '';
@@ -161,15 +203,19 @@ async function collectPaidEmails(
   const PAGE = 1000;
   let from = 0;
   for (;;) {
-    const { data, error } = await supabase
-      .from('payment_dispatches')
-      .select('recipient_email')
-      .eq(column, value)
-      .eq('status', 'paid')
-      .range(from, from + PAGE - 1);
-    if (error) break;
-    const page = (data ?? []) as { recipient_email: string | null }[];
+    const page = await selectPaidDispatches<{ recipient_email: string | null; payee_type?: string | null }>(
+      supabase,
+      'recipient_email',
+      (q) =>
+        (q as never as ReturnType<ReturnType<Supabase['from']>['select']>)
+          .eq(column, value)
+          .eq('status', 'paid')
+          .range(from, from + PAGE - 1),
+    );
+    if (!page) break;
     for (const r of page) {
+      // A contractor settlement must not consume an employee's "paid" slot.
+      if (!isEmployeePayment(r)) continue;
       const e = (r.recipient_email ?? '').trim().toLowerCase();
       if (e) into.add(e);
     }

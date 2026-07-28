@@ -78,6 +78,12 @@ interface DispatchQueueState {
    * absent, so the UI must say so rather than looking healthy and empty.
    */
   contractorError: string | null;
+  /**
+   * Something needs attention on an otherwise successful contractor load — today,
+   * invoices stuck mid-dispatch. Separate from {@link contractorError} because the
+   * copy is the opposite: the queue below IS complete.
+   */
+  contractorAdvisory: string | null;
   /** Re-pulls dispatches + queue. Call after Mark paid succeeds. */
   refresh: () => Promise<void>;
 }
@@ -103,6 +109,7 @@ function seedState(cacheKey: string): Omit<DispatchQueueState, 'refresh'> {
     loading: cached === undefined,
     error: null,
     contractorError: null,
+    contractorAdvisory: null,
   };
 }
 
@@ -132,6 +139,8 @@ async function loadAll(
   error: string | null;
   /** Contractor-side failure, if any. Never blanks the employee queue. */
   contractorError: string | null;
+  /** Advisory on a SUCCESSFUL contractor load (e.g. invoices stuck mid-dispatch). */
+  contractorAdvisory: string | null;
 }> {
   // When the clerk picks a PAST week in the dispatch CSV selector, pay + cycle
   // are computed for that source file instead of the live `is_current` cycle.
@@ -189,6 +198,7 @@ async function loadAll(
       wizardReady: true,
       error: ratesJson.error,
       contractorError: null,
+      contractorAdvisory: null,
     };
   }
 
@@ -342,6 +352,7 @@ async function loadAll(
   let contractorExcluded: ExcludedRow[] = [];
   let contractorRoleEmails = new Set<string>();
   let contractorError: string | null = null;
+  let contractorAdvisory: string | null = null;
   try {
     const fxForContractors = payJson.fxRate ?? 0;
     const params = new URLSearchParams();
@@ -356,6 +367,7 @@ async function loadAll(
       excluded?: ExcludedRow[];
       contractorEmails?: string[];
       error?: string | null;
+      advisory?: string | null;
     };
     contractorActive = cJson.active ?? [];
     contractorExcluded = cJson.excluded ?? [];
@@ -365,6 +377,7 @@ async function loadAll(
     // fetch is indistinguishable from "no approved invoices" — the queue looks
     // perfectly healthy with real money simply absent from it.
     contractorError = cJson.error?.trim() || null;
+    contractorAdvisory = cJson.advisory?.trim() || null;
   } catch (e) {
     // Additive by design; employee payroll still dispatches.
     contractorError = e instanceof Error ? e.message : String(e);
@@ -454,6 +467,13 @@ async function loadAll(
         reasons: ['do_not_pay'],
         departmentKey: ex.departmentKey,
         departmentName: deptNameFromKey(ex.departmentKey),
+        // Carried explicitly: this row is REBUILT field-by-field rather than
+        // spread, so the badge (and the invoice link on the payable copy) would
+        // otherwise be silently dropped on the way into the Excluded tab.
+        contractorRole: row.contractorRole,
+        payeeKind: row.payeeKind,
+        contractorInvoiceId: row.contractorInvoiceId,
+        invoiceNumber: row.invoiceNumber,
         payable: row,
         paystubSentAt: ex.sentAt,
       });
@@ -520,6 +540,8 @@ async function loadAll(
       amountCOP: base?.amountCOP ?? null,
       bankPreferredRaw: base?.bankPreferredRaw ?? null,
       reasons: ['do_not_pay'],
+      // Same reason as above — rebuilt row, so the badge must be carried over.
+      contractorRole: base?.contractorRole,
       payable: base ? { ...base, amountPHP: ar.totalPHP, amountUSD: ar.totalUSD } : null,
       arrears: ar,
     });
@@ -586,6 +608,7 @@ async function loadAll(
       reasons,
       departmentKey: s.department_key ?? null,
       departmentName: deptNameFromKey(s.department_key),
+      contractorRole: contractorRoleEmails.has(email) || (personal ? contractorRoleEmails.has(personal) : false),
       payable: null,
       paystubSentAt: s.sent_at,
     });
@@ -603,6 +626,7 @@ async function loadAll(
     wizardReady,
     error: null,
     contractorError,
+    contractorAdvisory,
   };
 }
 
@@ -659,6 +683,7 @@ export function useDispatchQueue(sourceFile?: string | null): DispatchQueueState
         loading: false,
         error: result.error,
         contractorError: result.contractorError,
+        contractorAdvisory: result.contractorAdvisory,
       });
     } catch (e) {
       if (signal?.aborted) return;
@@ -679,6 +704,7 @@ export function useDispatchQueue(sourceFile?: string | null): DispatchQueueState
         loading: false,
         error: e instanceof Error ? e.message : 'Failed to load dispatch queue',
         contractorError: null,
+        contractorAdvisory: null,
       });
     }
   }, [sel, cacheKey]);

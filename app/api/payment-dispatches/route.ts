@@ -53,11 +53,21 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ row: null, error: "Invalid JSON body" }, { status: 400 });
   }
 
-  // Required field guards.
+  // ── Required field guards ──────────────────────────────────────────────────
+  // Hurupay and Higlobe return no usable confirmation reference, so a transaction
+  // ID cannot be required for them — requiring it would only make the clerk type a
+  // placeholder, which is worse than an honest blank. Mirrored client-side in
+  // MarkPaidDialog (`txnOptional`).
+  //
+  // `transaction_id` is NOT NULL in the database, so an omitted value is stored as
+  // an empty string rather than null.
+  const TXN_OPTIONAL_PROCESSORS = new Set(["hurupay", "higlobe"]);
+  const txnOptional = TXN_OPTIONAL_PROCESSORS.has(String(body.processor ?? "").trim().toLowerCase());
+
   const required: Array<keyof PostBody> = [
     "recipient_email",
     "processor",
-    "transaction_id",
+    ...(txnOptional ? [] : (["transaction_id"] as Array<keyof PostBody>)),
     "bank_used",
     "sent_date",
   ];
@@ -69,6 +79,7 @@ export async function POST(req: NextRequest) {
       );
     }
   }
+  if (txnOptional) body.transaction_id = String(body.transaction_id ?? "").trim();
 
   // ── Contractor payee validation ────────────────────────────────────────────
   // A contractor dispatch settles exactly one approved invoice, so it must name
@@ -175,14 +186,39 @@ export async function POST(req: NextRequest) {
   });
   if (error || !row) {
     // Release the claim — no money was recorded, so the invoice must stay payable.
+    // Scoped to `dispatch_id IS NULL` so this can never un-settle an invoice that
+    // some other request has already linked to a real payment. If the release
+    // itself fails the invoice is stranded (claimed but unlinked), which the queue
+    // surfaces as an unpayable "claim_stuck" row rather than hiding it — so say so
+    // in the response instead of leaving the clerk with a bare "Insert failed".
+    let releaseFailed = false;
     if (claimsInvoice && contractorInvoiceId) {
       const supabase = createSupabaseServiceRoleClient();
-      await supabase
+      const { error: releaseErr } = (await supabase
         ?.from('contractor_invoices')
-        .update({ dispatch_claimed_at: null })
-        .eq('id', contractorInvoiceId);
+        .update({ dispatch_claimed_at: null, last_dispatched_at: null })
+        .eq('id', contractorInvoiceId)
+        .is('dispatch_id', null)) ?? { error: null };
+      if (releaseErr) {
+        releaseFailed = true;
+        console.error('[payment-dispatches] insert failed AND claim release failed — invoice is stranded', {
+          contractorInvoiceId,
+          insertError: error,
+          releaseError: releaseErr.message,
+        });
+      }
     }
-    return NextResponse.json({ row: null, error: error ?? "Insert failed" }, { status: 500 });
+    return NextResponse.json(
+      {
+        row: null,
+        error:
+          (error ?? 'Insert failed') +
+          (releaseFailed
+            ? ' — and the invoice could not be released. It will show in the Excluded tab as "Claim stuck"; no money was logged.'
+            : ''),
+      },
+      { status: 500 },
+    );
   }
 
   // Settle: link the invoice to the dispatch row that paid it. The AFTER DELETE
