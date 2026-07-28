@@ -79,6 +79,7 @@ import {
   downloadOnboardingXlsx,
   type OnboardingExportInput,
 } from '@/lib/hr/onboarding-export';
+import { downloadContractsPacketPdf } from '@/lib/hr/onboarding-contracts-pdf';
 
 function isPlausibleEmail(s: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s.trim());
@@ -5762,7 +5763,7 @@ function LinkCreatedDialog({
 
 // Left-to-right order of the detail tabs — drives the directional slide so a
 // jump to a later tab enters from the right, an earlier tab from the left.
-const DETAIL_TAB_ORDER = ['summary', 'ip_assignment', 'non_solicitation', 'privacy', 'contract'] as const;
+const DETAIL_TAB_ORDER = ['summary', 'ip_assignment', 'non_solicitation', 'privacy', 'contract', 'download'] as const;
 
 function SubmissionDetailDialog({
   row: rowProp,
@@ -5913,6 +5914,7 @@ function SubmissionDetailDialog({
     { value: 'non_solicitation', label: 'Non-Solicitation', signed: !!row.non_solicitation_signature },
     { value: 'privacy', label: 'Privacy', signed: !!row.privacy_signature },
     { value: 'contract', label: 'Contract', signed: !!row.contract_signature },
+    { value: 'download', label: 'Download' },
   ] as const;
 
   return (
@@ -6158,7 +6160,7 @@ function SubmissionDetailDialog({
                   <AgreementTab title={AGREEMENT_TITLES.privacy} signatureSrc={row.privacy_signature}>
                     <PrivacyText />
                   </AgreementTab>
-                ) : (
+                ) : tab === 'contract' ? (
                   <AgreementTab
                     title={AGREEMENT_TITLES.contract}
                     signatureSrc={row.contract_signature}
@@ -6166,6 +6168,11 @@ function SubmissionDetailDialog({
                   >
                     <ContractWorkerText />
                   </AgreementTab>
+                ) : (
+                  <ContractsDownloadTab
+                    row={row}
+                    signaturesReady={!!fullRow && fullRow.id === row.id}
+                  />
                 )}
               </motion.div>
             </AnimatePresence>
@@ -6196,7 +6203,7 @@ function SubmissionDetailSkeleton() {
     <div className="flex min-h-0 flex-1 flex-col px-6 pb-6 pt-4" aria-busy="true">
       {/* Tab bar */}
       <div className="flex flex-wrap items-end gap-1 border-b border-zinc-200/80 dark:border-zinc-700/70">
-        {[64, 96, 104, 72, 80].map((w, i) => (
+        {[64, 96, 104, 72, 80, 84].map((w, i) => (
           <Skeleton key={i} className="mb-1 h-8 rounded-t-lg" style={{ width: w }} />
         ))}
       </div>
@@ -6467,6 +6474,131 @@ function AgreementTab({
             No signature captured — the hiree has not signed this agreement.
           </p>
         )}
+      </div>
+    </div>
+  );
+}
+
+/** The "Download" tab: compiles all four onboarding agreements into one
+ *  Simple-branded PDF (built client-side from the row already in the modal),
+ *  with each captured signature baked in and a per-page footer carrying the
+ *  agreement's signed date + the packet's generated date. */
+function ContractsDownloadTab({
+  row,
+  signaturesReady,
+}: {
+  row: SubmissionRow;
+  /** The list row omits the heavy signature data-URLs; this flips true once
+   *  the full-row fetch has merged them in, so we never bake blank lines. */
+  signaturesReady: boolean;
+}) {
+  const [generating, setGenerating] = useState(false);
+
+  const submittedOn = row.submitted_at ? fmtDate(row.submitted_at) : null;
+  const docs = [
+    {
+      label: AGREEMENT_TITLES.intellectualProperty,
+      signed: !!row.ip_agreement_signature || !!row.ip_agreement_agreed,
+      signedOn: row.ip_agreement_date ? formatLongDate(row.ip_agreement_date) : submittedOn,
+    },
+    {
+      label: AGREEMENT_TITLES.nonSolicitation,
+      signed: !!row.non_solicitation_signature,
+      signedOn: submittedOn,
+    },
+    {
+      label: AGREEMENT_TITLES.privacy,
+      signed: !!row.privacy_signature,
+      signedOn: submittedOn,
+    },
+    {
+      label: AGREEMENT_TITLES.contract,
+      signed: !!row.contract_signature,
+      signedOn: row.contract_date ? fmtDate(row.contract_date) : submittedOn,
+    },
+  ];
+  const signedCount = docs.filter((d) => d.signed).length;
+  const allSigned = signedCount === docs.length;
+
+  async function handleDownload() {
+    setGenerating(true);
+    try {
+      await downloadContractsPacketPdf(row);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not generate the contracts PDF');
+    } finally {
+      setGenerating(false);
+    }
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between gap-3">
+        <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+          Signed contracts packet
+        </h3>
+        <span
+          className={cn(
+            'inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold',
+            allSigned
+              ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300'
+              : 'bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300',
+          )}
+        >
+          {allSigned ? <CheckCircle2 className="h-3 w-3" /> : null}
+          {signedCount} of {docs.length} signed
+        </span>
+      </div>
+
+      <p className="text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">
+        Compiles the agreements below into one Simple-branded PDF — each starts on its own
+        page with the exact copy the hire saw plus their captured signature, and every page&apos;s
+        footer shows the date that agreement was signed and the date the file was generated.
+      </p>
+
+      <ul className="divide-y divide-zinc-100 overflow-hidden rounded-lg border border-zinc-200 bg-zinc-50/50 dark:divide-zinc-800 dark:border-zinc-800 dark:bg-zinc-900/40">
+        {docs.map((d) => (
+          <li key={d.label} className="flex items-center justify-between gap-3 px-3 py-2.5">
+            <div className="flex min-w-0 items-center gap-2">
+              <FileText className="h-4 w-4 shrink-0 text-emerald-700 dark:text-emerald-400" />
+              <span
+                className="truncate text-xs font-medium text-zinc-800 dark:text-zinc-200"
+                title={d.label}
+              >
+                {d.label}
+              </span>
+            </div>
+            {d.signed ? (
+              <span className="shrink-0 text-[11px] text-emerald-700 dark:text-emerald-300">
+                Signed{d.signedOn ? ` ${d.signedOn}` : ''}
+              </span>
+            ) : (
+              <span className="shrink-0 text-[11px] font-medium text-amber-600 dark:text-amber-400">
+                Not signed
+              </span>
+            )}
+          </li>
+        ))}
+      </ul>
+
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <p className="text-[11px] text-zinc-400 dark:text-zinc-500">
+          Unsigned agreements are included with a blank signature line.
+        </p>
+        <Button
+          size="sm"
+          disabled={generating || !signaturesReady}
+          onClick={() => void handleDownload()}
+          className="bg-gradient-to-br from-emerald-500 to-teal-700 text-white shadow-md shadow-emerald-600/25 transition-colors hover:from-emerald-500 hover:to-teal-600"
+          title={!signaturesReady ? 'Still loading the captured signatures…' : undefined}
+        >
+          {generating || !signaturesReady ? (
+            <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
+          ) : (
+            <Download className="mr-1 h-3.5 w-3.5" />
+          )}
+          {!signaturesReady ? 'Loading signatures…' : generating ? 'Generating…' : 'Download PDF'}
+        </Button>
       </div>
     </div>
   );
