@@ -66,6 +66,49 @@ function requireServiceRole(): SupabaseClient {
 
 const tableColumnsFromSpecCache = new Map<string, Promise<string[]>>();
 
+/** Sleep helper for the transient-failure retries below. */
+function backoff(attempt: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, 300 * 2 ** attempt));
+}
+
+/**
+ * True when a PostgREST/fetch failure looks like a TRANSIENT network error
+ * (undici "fetch failed", connection reset, DNS hiccup) rather than a
+ * deterministic data error (constraint violation, bad payload). Only these are
+ * worth retrying — a data error would fail identically every attempt.
+ */
+function isTransientNetworkError(message: string): boolean {
+  return /fetch failed|ECONNRESET|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN|UND_ERR|socket hang up|other side closed|network/i.test(
+    message,
+  );
+}
+
+/**
+ * Run a Supabase call, retrying transient network failures a few times with
+ * a short backoff (2026-07-27: mid-run "TypeError: fetch failed" killed
+ * three consecutive sheet syncs — one reset connection aborted the whole
+ * ~1320-row run, on reads and writes alike). Deterministic errors (constraint
+ * violations, bad payloads) surface immediately — retrying those is pointless.
+ * Returns the successful result so read call sites can use `data`. `op` must
+ * build a FRESH query per call (closures below do) — PostgREST builders are
+ * single-shot.
+ */
+async function withTransientRetry<T extends { error: { message: string } | null }>(
+  op: () => PromiseLike<T>,
+  label: string,
+  retries = 3,
+): Promise<T> {
+  let lastMessage = "";
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    if (attempt > 0) await backoff(attempt - 1);
+    const result = await op();
+    if (!result.error) return result;
+    lastMessage = result.error.message;
+    if (!isTransientNetworkError(lastMessage)) break;
+  }
+  throw new Error(`${label}: ${lastMessage}`);
+}
+
 async function getTableColumnsFromSpec(table: string): Promise<string[]> {
   let cached = tableColumnsFromSpecCache.get(table);
   if (!cached) {
@@ -73,23 +116,34 @@ async function getTableColumnsFromSpec(table: string): Promise<string[]> {
       const url = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim();
       const key = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim();
       if (!url || !key) return [];
-      try {
-        const res = await fetch(`${url}/rest/v1/?apikey=${key}`, {
-          headers: { Authorization: `Bearer ${key}` },
-        });
-        if (!res.ok) return [];
-        const spec = (await res.json()) as {
-          definitions?: Record<string, { properties?: Record<string, unknown> }>;
-        };
-        const props = spec.definitions?.[table]?.properties;
-        return props ? Object.keys(props) : [];
-      } catch {
-        return [];
+      // Retry the OpenAPI introspection a few times: a transient network
+      // failure here used to abort the whole sync ("Could not load … columns").
+      for (let attempt = 0; attempt < 3; attempt++) {
+        if (attempt > 0) await backoff(attempt - 1);
+        try {
+          const res = await fetch(`${url}/rest/v1/?apikey=${key}`, {
+            headers: { Authorization: `Bearer ${key}` },
+          });
+          if (!res.ok) continue;
+          const spec = (await res.json()) as {
+            definitions?: Record<string, { properties?: Record<string, unknown> }>;
+          };
+          const props = spec.definitions?.[table]?.properties;
+          return props ? Object.keys(props) : [];
+        } catch {
+          /* transient — retry */
+        }
       }
+      return [];
     })();
     tableColumnsFromSpecCache.set(table, cached);
   }
-  return cached;
+  const cols = await cached;
+  // Never cache an empty result: it means the introspection FAILED (network,
+  // auth), not that the table has no columns — and a poisoned cache entry
+  // would break every subsequent sync in this long-lived server process.
+  if (cols.length === 0) tableColumnsFromSpecCache.delete(table);
+  return cols;
 }
 
 function normHeader(s: string): string {
@@ -287,12 +341,15 @@ async function fetchAllMasterRowsForReconcile(
   const pageSize = 1000;
   const out: MasterReconcileRow[] = [];
   for (let from = 0; ; from += pageSize) {
-    const { data, error } = await supabase
-      .from(table)
-      .select(selectCols)
-      .not('"Department"', "is", null)
-      .range(from, from + pageSize - 1);
-    if (error) throw new Error(`Could not read ${table} for reconciliation: ${error.message}`);
+    const { data } = await withTransientRetry(
+      () =>
+        supabase
+          .from(table)
+          .select(selectCols)
+          .not('"Department"', "is", null)
+          .range(from, from + pageSize - 1),
+      `Could not read ${table} for reconciliation`,
+    );
     const batch = (data ?? []) as unknown as MasterReconcileRow[];
     out.push(...batch);
     if (batch.length < pageSize) break;
@@ -319,38 +376,48 @@ async function createPendingMasterListUpload(
   sourceFile: string,
   rowCount: number,
 ): Promise<string> {
-  const { data, error } = await supabase
-    .from(MASTER_LIST_UPLOADS_TABLE)
-    .insert({
-      source_file: sourceFile || null,
-      row_count: rowCount,
-      is_current: false,
-    })
-    .select("id")
-    .single();
-  if (error) throw new Error(`Could not create master_list_uploads row: ${error.message}`);
+  // Retry-safe: a lost-response retry can at worst leave an extra
+  // is_current=false uploads row (inert); the sync only ever promotes the id
+  // this call RETURNS.
+  const { data } = await withTransientRetry(
+    () =>
+      supabase
+        .from(MASTER_LIST_UPLOADS_TABLE)
+        .insert({
+          source_file: sourceFile || null,
+          row_count: rowCount,
+          is_current: false,
+        })
+        .select("id")
+        .single(),
+    "Could not create master_list_uploads row",
+  );
   const id = (data as { id?: string }).id;
   if (!id) throw new Error("master_list_uploads insert returned no id");
   return id;
 }
 
-/** Flips all prior uploads to `is_current=false` and sets this one to `true`. */
+/** Flips all prior uploads to `is_current=false` and sets this one to `true`.
+ *  Both legs retry transient network failures: dying between the clear and the
+ *  set would leave NO current upload — an empty active_employees roster. */
 async function promoteMasterListUploadToCurrent(
   supabase: SupabaseClient,
   newUploadId: string,
 ): Promise<void> {
-  const { error: clearErr } = await supabase
-    .from(MASTER_LIST_UPLOADS_TABLE)
-    .update({ is_current: false })
-    .eq("is_current", true)
-    .neq("id", newUploadId);
-  if (clearErr) throw new Error(`Failed to clear prior current uploads: ${clearErr.message}`);
+  await withTransientRetry(
+    () =>
+      supabase
+        .from(MASTER_LIST_UPLOADS_TABLE)
+        .update({ is_current: false })
+        .eq("is_current", true)
+        .neq("id", newUploadId),
+    "Failed to clear prior current uploads",
+  );
 
-  const { error: setErr } = await supabase
-    .from(MASTER_LIST_UPLOADS_TABLE)
-    .update({ is_current: true })
-    .eq("id", newUploadId);
-  if (setErr) throw new Error(`Failed to mark upload ${newUploadId} current: ${setErr.message}`);
+  await withTransientRetry(
+    () => supabase.from(MASTER_LIST_UPLOADS_TABLE).update({ is_current: true }).eq("id", newUploadId),
+    `Failed to mark upload ${newUploadId} current`,
+  );
 }
 
 /**
@@ -864,12 +931,12 @@ export async function replaceGlobalMasterListFromCsvText(
     for (let start = 0; start < updateOps.length; start += UPDATE_CONCURRENCY) {
       const chunk = updateOps.slice(start, start + UPDATE_CONCURRENCY);
       await Promise.all(
-        chunk.map(async ({ id, payload }) => {
-          const { error } = await supabase.from(table).update(payload).eq("id", id);
-          if (error) {
-            throw new Error(`Update failed for id ${String(id)}: ${error.message}`);
-          }
-        }),
+        chunk.map(({ id, payload }) =>
+          withTransientRetry(
+            () => supabase.from(table).update(payload).eq("id", id),
+            `Update failed for id ${String(id)}`,
+          ),
+        ),
       );
       updated += chunk.length;
     }
@@ -880,12 +947,12 @@ export async function replaceGlobalMasterListFromCsvText(
     const BATCH = 50;
     for (let start = 0; start < rowsToInsert.length; start += BATCH) {
       const batch = rowsToInsert.slice(start, start + BATCH);
-      const { error } = await supabase.from(table).insert(batch);
-      if (error) {
-        throw new Error(
-          `Insert failed (batch ${start}–${start + batch.length}): ${error.message}`,
-        );
-      }
+      // Retry-safe: rows in a failed batch were never committed (PostgREST
+      // inserts are atomic per request), so re-running the insert is clean.
+      await withTransientRetry(
+        () => supabase.from(table).insert(batch),
+        `Insert failed (batch ${start}–${start + batch.length})`,
+      );
       inserted += batch.length;
     }
   }
@@ -968,12 +1035,18 @@ export async function restampActiveNonSheetRows(
   // active_employees far past the sheet's real headcount. We now restrict the
   // re-stamp to the US employees only, so every PH row is governed by the sheet:
   // vanish from the sheet → drop from active_employees until re-onboarded.
-  const { data: usIds, error: usErr } = await supabase
-    .from("employee_ids")
-    .select("work_email, personal_email")
-    .like("employee_id", "US-%");
-  if (usErr) {
-    console.warn(`[restampActiveNonSheetRows] could not read US employee_ids: ${usErr.message}`);
+  let usIds: unknown[] | null;
+  try {
+    ({ data: usIds } = await withTransientRetry(
+      () =>
+        supabase
+          .from("employee_ids")
+          .select("work_email, personal_email")
+          .like("employee_id", "US-%"),
+      "[restampActiveNonSheetRows] could not read US employee_ids",
+    ));
+  } catch (e) {
+    console.warn(e instanceof Error ? e.message : String(e));
     return 0;
   }
   const emails = new Set<string>();
@@ -996,19 +1069,23 @@ export async function restampActiveNonSheetRows(
   const list = [...emails];
   let total = 0;
   for (const column of ['"Work Email"', '"Personal Email"'] as const) {
-    const { data, error } = await supabase
-      .from(table)
-      .update({ last_seen_upload_id: uploadId })
-      .is("off_boarded_at", null)
-      .neq("last_seen_upload_id", uploadId)
-      .in(column, list)
-      .select("id");
-    if (error) {
+    try {
+      const { data } = await withTransientRetry(
+        () =>
+          supabase
+            .from(table)
+            .update({ last_seen_upload_id: uploadId })
+            .is("off_boarded_at", null)
+            .neq("last_seen_upload_id", uploadId)
+            .in(column, list)
+            .select("id"),
+        `[restampActiveNonSheetRows] ${column} update failed`,
+      );
+      total += (data ?? []).length;
+    } catch (e) {
       // Non-fatal: the sync already succeeded; log and continue.
-      console.warn(`[restampActiveNonSheetRows] ${column} update failed: ${error.message}`);
-      continue;
+      console.warn(e instanceof Error ? e.message : String(e));
     }
-    total += (data ?? []).length;
   }
   return total;
 }

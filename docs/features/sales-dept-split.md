@@ -10,15 +10,18 @@ department everywhere.
 | Cohort | Department | Key | People |
 | --- | --- | --- | --- |
 | US sales team | **Sales** (new) | `sales` | dee, will, brad, shawn, randy, chad, justin, locke |
-| PH assistants | **Sales Assistant** | `sales_assistant` | aleighshaa, mar, vine, markf, deanm, debm, heartm, gladysp, jcr, larat, vano |
+| PH assistants | **Sales Assistant** | `sales_assistant` | aleighshaa, mar, vine, markf, deanm, debm, heartm, gladysp, jcr, larat |
 
-> 2026-07-27: `vano@simple.biz` (Ortiz, Van Aeron — ex-Lead Gen, PH/Lucena) was
-> moved to "Sales" by the sheet sync but wasn't on the pin list, so he resolved
-> to the **US** `sales` key — which is paused in the wizard's Configuration tab —
-> and silently vanished from every wizard step after Initialize while logging
-> 39:56:24. Added to the pin list; the wizard now also surfaces hour-logging
-> workers with a real rate hidden behind a "Pay this week" pause (Step 2 banner
-> + Validation check).
+> 2026-07-27: `vano@simple.biz` (Ortiz, Van Aeron — Lead Gen, PH/Lucena) was
+> mislabelled "Sales" on the sheet for a few hours; not being on the pin list,
+> he resolved to the **US** `sales` key — which is paused in the wizard's
+> Configuration tab — and silently vanished from every wizard step after
+> Initialize while logging 39:56:24. He is NOT part of either sales cohort:
+> Kane corrected the sheet back to Lead Gen (roster seeded via
+> `scripts/seed-vano-leadgen.mjs` when the sheet sync kept failing on network
+> errors). Fallout hardening: the wizard now surfaces hour-logging workers with
+> a real rate hidden behind a "Pay this week" pause (Step 2 banner + Validation
+> check), and the master sync retries transient network failures.
 
 The sheet labels **all of them `Sales`** (there is no "Sales Assistant" label
 anywhere in the sheet), so the split cannot come from the label alone:

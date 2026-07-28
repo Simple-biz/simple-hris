@@ -50,7 +50,8 @@ export const SALES_ASSISTANT_OVERRIDE_EMAILS: ReadonlySet<string> = new Set([
   'gladysp@simple.biz',    // Parreno, Gladys
   'jcr@simple.biz',        // Rosales, Jolly
   'larat@simple.biz',      // Trinidad Co, Lara Mae
-  'vano@simple.biz',       // Ortiz, Van Aeron — ex-Lead Gen; sheet moved him to "Sales" 2026-07-27 (PH → Sales Assistant)
+  // NOT vano@simple.biz — briefly added 2026-07-27 when the sheet showed him
+  // as "Sales", but Kane confirmed he is LEAD GEN and fixed the sheet label.
 ]);
 
 /**
