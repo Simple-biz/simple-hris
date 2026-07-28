@@ -20,6 +20,8 @@ but 94/100" fix).
 | Pure scorer (no I/O, unit-tested) | `src/lib/payroll/readiness-score.ts` (+ `readiness-score.test.ts`) |
 | API | `app/api/payroll-wizard/readiness/route.ts` — `GET /api/payroll-wizard/readiness[?source_file=…]` |
 | Readiness pane + inline fixers | `src/components/accounting/PayrollWizardNotesFab.tsx` (`PayrollReadinessGlance`, `SetRateDialog`, `SetBankDialog`, `KpiCalculatorDialog`) |
+| 100% celebration — trigger rule (pure, unit-tested) | `src/lib/payroll/readiness-celebration.ts` (+ `readiness-celebration.test.ts`) |
+| 100% celebration — canvas confetti | `components/ui/confetti-burst.tsx` (`ConfettiBurst`) |
 | Change-source tagging (audit) | `src/lib/payroll/readiness-audit.ts` (`READINESS_SOURCE = 'payroll_wizard_readiness'`) |
 | Rate-fix write path | `app/api/payment-catalog/pay-structures/route.ts` |
 | Bank-fix write path | `app/api/update-employee-ids/route.ts` |
@@ -60,7 +62,15 @@ No migration — everything reads existing tables.
 2. **No Pay Rate** — this week's Hubstaff workers with no resolvable rate
    (individual Payment Catalog → sheet → dept base, via `resolvePeopleRate`
    over every master-roster alias). USEE/US Employees are excluded (paid
-   off-channel).
+   off-channel), and so is anyone holding an active `contractor` dashboard
+   role (Admin → Roles & Permissions; 2026-07-27): contractors are paid
+   per-invoice via the wizard's Contractor Invoices step, never by hourly
+   rate, so they leave the list AND the worker denominator
+   (`loadContractorEmails`, matched on every master-roster alias with the
+   Hubstaff email as fallback). The exclusion is rate-check-only — a
+   contractor also on the employee roster keeps their normal Bank Info
+   treatment. Best-effort read: a role-table failure re-lists contractors
+   (over-flags, never hides an employee), so it doesn't join `degraded`.
 3. **Bank Info** — active on-channel employees whose `employee_ids` row isn't
    payable (`isPayoutComplete`, judged WITH the legacy rates-sheet fallbacks).
    Each row carries `onPayroll`: true when any of the person's aliases has
@@ -175,6 +185,26 @@ on 7 tables (period status, entries, applied bonuses, rates, pay structures,
 accounting `payroll_wizard` view grant (same as the notes board); the inline
 actions additionally require the edit grant (`canEdit`), and the write APIs
 enforce their own grants.
+
+### 100% confetti celebration (2026-07-27)
+
+When the week's score reaches a **full 100/Ready while the tab is open** — the
+accountant just watched the last blocker clear (their own inline fix landing, a
+manager marking ready over the live refresh, the 30s poll) — a ~3s canvas
+confetti burst erupts from the hero banner. `ConfettiBurst`
+(`components/ui/confetti-burst.tsx`) draws on ONE full-viewport canvas
+(pointer-events-none, `aria-hidden`) portaled at `z-[60]`: above the notes
+dialog (z-50), deliberately below dropdowns/popovers (`z-[140]`). Colors stay
+on-palette (readiness greens + brand amber/orange + one sky accent).
+
+The trigger rule is pure and unit-tested (`readiness-celebration.ts`,
+mirroring the `readiness-score.ts` split): only a live not-ready → 100/Ready
+transition of the **same week** fires. Opening onto an already-clean week,
+switching weeks onto one, and repeat ready payloads all stay quiet; a degraded
+"100" can't fire (the composer already caps its grade off `ready`); a score
+that dips and clears again is a real re-transition and celebrates again.
+Reduced motion skips the confetti entirely — the hero's green flip is the
+celebration.
 
 - **KPI rows** — name + completeness bar (scored/expected) + status pill.
   Clicking a row (edit grant, non-`custom` source) opens that dept's **KPI

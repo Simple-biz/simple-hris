@@ -47,6 +47,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { ConfettiBurst } from "@/components/ui/confetti-burst";
 import type {
   PayrollWizardNoteField,
   PayrollWizardNoteRow,
@@ -85,6 +86,7 @@ import type {
   ExceptionKind,
   ReadinessScore,
 } from "@/lib/payroll/payroll-readiness";
+import { celebrationStep, type ReadyWatchState } from "@/lib/payroll/readiness-celebration";
 import {
   APPLY_NOTE_ADJUSTMENTS_EVENT,
   NOTE_ADJUSTMENT_REMOVED_EVENT,
@@ -2416,6 +2418,46 @@ function PayrollReadinessGlance({
   const [kpiDept, setKpiDept] = useState<ReadinessKpiDept | null>(null);
   // "Why this score?" breakdown modal — opened by clicking the score dial.
   const [scoreDetailsOpen, setScoreDetailsOpen] = useState(false);
+  // ── "Payroll Ready" celebration ────────────────────────────────────────
+  // Confetti when THIS week's score reaches a full 100/Ready while the tab is
+  // open — the accountant just watched the last blocker clear (their own
+  // inline fix landing, a manager marking ready over the live refresh, the
+  // poll). Landing on a week that is ALREADY ready stays quiet (nothing
+  // happened live), and the ref keys on the week so switching onto a clean
+  // week can't fake a transition. A score that dips and clears again is a
+  // real re-transition — it celebrates again. `celebration` is a counter so
+  // each firing remounts the burst (key change); onDone drops it back to 0.
+  const [celebration, setCelebration] = useState(0);
+  const [confettiOrigins, setConfettiOrigins] = useState<{ x: number; y: number }[] | undefined>();
+  const heroRef = useRef<HTMLDivElement | null>(null);
+  const readyStateRef = useRef<ReadyWatchState | null>(null);
+  useEffect(() => {
+    if (!data) return;
+    // celebrationStep owns the rule (unit-tested in readiness-celebration):
+    // fully-ready is the dial's own "100 · Ready" — never a degraded load.
+    const { celebrate, next } = celebrationStep(
+      readyStateRef.current,
+      data.sourceFile ?? data.weekLabel,
+      data.score,
+    );
+    readyStateRef.current = next;
+    if (!celebrate) return;
+    // Reduced motion: the hero's green flip IS the celebration — no confetti.
+    if (reduceMotion) return;
+    // Erupt from the hero banner (the thing that just flipped green) — its
+    // rect is viewport-space, same as the burst canvas. No rect (shouldn't
+    // happen; the hero is in the frozen header) → the burst's own fallback.
+    const rect = heroRef.current?.getBoundingClientRect();
+    setConfettiOrigins(
+      rect && rect.width > 0
+        ? [
+            { x: rect.left + rect.width * 0.18, y: rect.top + rect.height * 0.55 },
+            { x: rect.left + rect.width * 0.82, y: rect.top + rect.height * 0.55 },
+          ]
+        : undefined,
+    );
+    setCelebration((n) => n + 1);
+  }, [data, reduceMotion]);
   const pickReadinessTab = useCallback((next: ReadinessTab) => {
     setReadinessTab((cur) => {
       if (cur === next) return cur;
@@ -2716,19 +2758,22 @@ function PayrollReadinessGlance({
           tab controls. Only the detail body below scrolls. */}
       <div className="shrink-0 space-y-3">
       {/* Hero: green when ready, amber while there's work, rose when a hard
-          blocker (no-rate worker) exists. */}
-      <ReadinessHero
-        isReady={isReady}
-        rateBlockers={data.missingRates.length}
-        bankBlockers={bankBlockers}
-        bankHygiene={bankHygiene}
-        warnings={warnings}
-        weekLabel={data.weekLabel}
-        isMonthly={data.isMonthlyPayWeek}
-        score={data.score}
-        reduceMotion={reduceMotion}
-        onScoreDetails={() => setScoreDetailsOpen(true)}
-      />
+          blocker (no-rate worker) exists. The wrapper ref anchors the 100%
+          confetti burst to the banner that flips green. */}
+      <div ref={heroRef}>
+        <ReadinessHero
+          isReady={isReady}
+          rateBlockers={data.missingRates.length}
+          bankBlockers={bankBlockers}
+          bankHygiene={bankHygiene}
+          warnings={warnings}
+          weekLabel={data.weekLabel}
+          isMonthly={data.isMonthlyPayWeek}
+          score={data.score}
+          reduceMotion={reduceMotion}
+          onScoreDetails={() => setScoreDetailsOpen(true)}
+        />
+      </div>
 
       {/* Partial-data warning — the server reports any source it could NOT
           read this load (Hubstaff file, roster, employee_ids, legacy rates,
@@ -3149,6 +3194,15 @@ function PayrollReadinessGlance({
             // Whatever was saved / marked ready inside → reflect it right away.
             void load();
           }}
+        />
+      )}
+      {/* The 100%-live celebration itself — keyed on the counter so a re-clear
+          fires a fresh burst; unmounts when the canvas reports done. */}
+      {celebration > 0 && (
+        <ConfettiBurst
+          key={celebration}
+          origins={confettiOrigins}
+          onDone={() => setCelebration(0)}
         />
       )}
     </div>
@@ -3800,6 +3854,10 @@ function ScoreDetailsDialog({
                 payday problem.
               </li>
               <li>US Employees (USEE) — paid off-channel, outside this pipeline.</li>
+              <li>
+                Contractors (provisioned in Admin → Roles) — paid per invoice in the wizard&apos;s
+                Contractor Invoices step, never by hourly rate.
+              </li>
             </ul>
           </div>
 
