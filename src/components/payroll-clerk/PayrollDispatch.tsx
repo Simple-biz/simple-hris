@@ -377,12 +377,39 @@ export default function PayrollDispatch() {
     }
     return employeeEmails.size + contractorSettlements;
   }, [paidRows]);
+  // People flagged Problem this cycle. They're OUT of the pending queue (see
+  // useDispatchQueue's lockedEmails) yet nobody has been paid, so they stay in
+  // the progress DENOMINATOR — otherwise flagging the last few stuck payments
+  // would flip the strip to "everyone paid" with the money still stuck.
+  const blockedCount = useMemo(() => {
+    // Someone flagged and then paid anyway (problem row left in place) is
+    // already counted as paid — never count them twice.
+    const settled = new Set(
+      paidRows
+        .filter((p) => (p.payee_type ?? 'employee') !== 'contractor')
+        .map((p) => p.recipient_email.trim().toLowerCase()),
+    );
+    const emails = new Set<string>();
+    for (const p of paid) {
+      if (p.status !== 'problem') continue;
+      // A contractor problem marker leaves its invoice payable (the API only
+      // claims an invoice on 'paid'), so that row is STILL in `pending` — adding
+      // it here would count the same money in the denominator twice.
+      if ((p.payee_type ?? 'employee') === 'contractor') continue;
+      const email = p.recipient_email.trim().toLowerCase();
+      if (!settled.has(email)) emails.add(email);
+    }
+    return emails.size;
+  }, [paid, paidRows]);
   usePaymentsLivePublisher({
     enabled:
       !viewingPastWeek && wizardReady && hydrated && !loading && Boolean(period.sourceFile),
     sourceFile: period.sourceFile,
     label: period.sourceFile ? formatCycleLabelFromFile(period.sourceFile) : 'Current pay week',
-    total: pending.length + distinctPaidCount,
+    // Problem-flagged people count in `total` (still owed, just blocked) but not
+    // in `remaining` (they're no longer in the queue Lenny can send from), so the
+    // CEO tile and this screen share one denominator.
+    total: pending.length + distinctPaidCount + blockedCount,
     paid: distinctPaidCount,
     remaining: pending.length,
   });
@@ -412,10 +439,11 @@ export default function PayrollDispatch() {
     [pending],
   );
   // One universe for the progress strip + the KPI fractions: people still to
-  // pay (ALL currencies) + people already paid — the same numbers broadcast to
-  // the CEO live card above, so every surface tells one story. "Started" is
-  // what the week began with; it shrinks/grows only if the queue itself does.
-  const startedCount = pending.length + distinctPaidCount;
+  // pay (ALL currencies) + people already paid + people blocked on a problem —
+  // the same numbers broadcast to the CEO live card above, so every surface
+  // tells one story. "Started" is what the week began with; it shrinks/grows
+  // only if the queue itself does.
+  const startedCount = pending.length + distinctPaidCount + blockedCount;
   const paidPct = startedCount > 0 ? Math.round((distinctPaidCount / startedCount) * 100) : 0;
   // The week's full dollar bill = what already went out + what's still owed.
   const totalWeekUSD = totalPaidUSD + totalPendingUSD;
@@ -921,6 +949,7 @@ export default function PayrollDispatch() {
             paid={distinctPaidCount}
             started={startedCount}
             remaining={pending.length}
+            blocked={blockedCount}
             pct={paidPct}
           />
           <div className="grid grid-cols-3 gap-2 sm:gap-4">
@@ -1322,18 +1351,23 @@ function DispatchProgress({
   paid,
   started,
   remaining,
+  blocked,
   pct,
 }: {
   /** Distinct people already paid this week. */
   paid: number;
-  /** People the week started with (still pending + already paid). */
+  /** People the week started with (pending + paid + blocked on a problem). */
   started: number;
   /** People still waiting on a payment (all currencies). */
   remaining: number;
+  /** People flagged Problem — out of the queue, still unpaid. */
+  blocked: number;
   /** Whole-number % paid, precomputed against the same universe. */
   pct: number;
 }) {
-  const complete = started > 0 && remaining === 0;
+  // A flagged person is out of the queue but NOT paid, so the week isn't done
+  // while any problem is still open.
+  const complete = started > 0 && remaining === 0 && blocked === 0;
   const fmt = (n: number) => Math.round(n).toLocaleString('en-US');
   return (
     <motion.div
@@ -1376,7 +1410,11 @@ function DispatchProgress({
                 ? 'waiting for the queue'
                 : complete
                   ? 'everyone paid'
-                  : `${fmt(remaining)} left to pay`}
+                  : remaining === 0
+                    ? `${fmt(blocked)} flagged problem`
+                    : `${fmt(remaining)} left to pay${
+                        blocked > 0 ? ` · ${fmt(blocked)} flagged problem` : ''
+                      }`}
             </span>
           </div>
           <div className="flex flex-shrink-0 items-baseline gap-1.5 font-mono text-[10px] text-zinc-500 dark:text-zinc-400">

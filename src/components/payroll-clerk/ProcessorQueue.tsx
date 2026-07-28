@@ -345,7 +345,7 @@ function ProcessorQueue({ processor, rows, onMarkPaid, onViewPaystub, periodStar
                   : view === 'threshold'
                     ? 'Dispatches held below the payout threshold — still payable once cleared.'
                     : view === 'problem'
-                      ? 'Dispatches flagged with a problem — still payable once the issue is resolved.'
+                      ? 'Dispatches flagged with a problem — pulled out of the pending queue. Clear one to send it back.'
                       : processor
                         ? `${meta?.blurb ?? ''} · send via ${meta?.label}, then mark paid`
                         : allLabel?.subtitle ?? 'Everything Lenny still has to dispatch this cycle.'}

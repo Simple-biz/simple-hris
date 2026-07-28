@@ -29,9 +29,13 @@ import {
 
 /**
  * Per-status presentation for the records panel. `paid` is the original green
- * "already sent" view; the other three are the non-paid dispatch outcomes that
- * are logged but where money never actually moved (the person stays payable in
- * the pending queue). Colors mirror the status pills in the Mark Paid dialog.
+ * "already sent" view; the other three are the non-paid dispatch outcomes —
+ * logged, but no money actually moved.
+ *
+ * Not Paid / Threshold leave the person in the pending queue for a retry.
+ * `problem` does NOT: a flagged person is pulled out of pending (see
+ * useDispatchQueue) and only comes back when the row is cleared from here.
+ * Colors mirror the status pills in the Mark Paid dialog.
  */
 const STATUS_UI: Record<
   PaymentDispatchStatus,
@@ -132,8 +136,9 @@ export default function PaidRecordsPanel({
   const ui = STATUS_UI[statusFilter];
   const isPaidView = statusFilter === 'paid';
   // Rows for this view = dispatches logged with the selected status. For 'paid'
-  // that's money actually sent; the other three are retry markers (money never
-  // moved — the person is still payable in the pending queue).
+  // that's money actually sent; the other three are markers where money never
+  // moved — Not Paid / Threshold keep the person payable in the pending queue,
+  // 'problem' holds them out of it until the row is cleared.
   const paid = useMemo(
     () => records.filter((r) => r.status === statusFilter),
     [records, statusFilter],
@@ -344,7 +349,9 @@ export default function PaidRecordsPanel({
                 title={
                   isPaidView
                     ? 'Undo every selected payment and send them back to the pay processor as pending'
-                    : 'Clear the selected records — they stay payable in the pending queue'
+                    : statusFilter === 'problem'
+                      ? 'Clear the selected problems — those people go back into the pending queue'
+                      : 'Clear the selected records — they stay payable in the pending queue'
                 }
                 className="inline-flex h-7 items-center gap-1.5 rounded-md border border-amber-300 bg-amber-50 px-2.5 text-[11px] font-semibold text-amber-800 shadow-sm transition-colors hover:border-amber-400 hover:bg-amber-100 disabled:opacity-50 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-300 dark:hover:bg-amber-500/20"
               >
@@ -521,7 +528,9 @@ export default function PaidRecordsPanel({
                           title={
                             isPaidView
                               ? 'Undo this payment and send it back to the pay processor'
-                              : 'Clear this record — the person stays payable in the pending queue'
+                              : statusFilter === 'problem'
+                                ? 'Clear this problem — the person goes back into the pending queue'
+                                : 'Clear this record — the person stays payable in the pending queue'
                           }
                           className="inline-flex h-7 items-center gap-1.5 rounded-md border border-amber-200 bg-white px-2.5 text-[11px] font-medium text-amber-700 transition-colors hover:border-amber-300 hover:bg-amber-50 disabled:opacity-50 dark:border-amber-500/30 dark:bg-zinc-950 dark:text-amber-300 dark:hover:bg-amber-500/10"
                         >

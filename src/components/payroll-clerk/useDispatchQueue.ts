@@ -395,9 +395,14 @@ async function loadAll(
       ? { ...r, contractorRole: true }
       : r;
 
-  // Only `status='paid'` rows lock a recipient out of the pending queue —
-  // Threshold and Problem rows leave the person available for retry, since
-  // money never actually moved for those.
+  // Two outcomes END a recipient's turn in the pending queue: `paid` (money
+  // moved) and `problem` (flagged blocked — they belong in the Problem tab, not
+  // back in pending where the next clerk would just try to send again). Not Paid
+  // and Threshold still leave the person available for retry: those mean "not
+  // sent yet", not "don't send".
+  // Nothing is stranded by the Problem lock-out — clearing the row from the
+  // Problem tab (PaidRecordsPanel "Clear" → /api/payment-dispatches/undo) deletes
+  // it and the person is back in pending on the next refresh.
   // Contractor settlements are excluded: this set is keyed by EMAIL and is applied
   // to the employee rows below, so a settled invoice would delete that person's
   // hourly salary row from pending, from Excluded and from the staged safety net —
@@ -406,9 +411,14 @@ async function loadAll(
   // by the contractor builder's own dispatch_id/dispatch_claimed_at query.
   // Pre-migration-safe: the column is absent from the payload, and
   // `undefined !== 'contractor'` preserves today's behaviour exactly.
-  const paidEmails = new Set(
+  //
+  // Scoped to the current cycle (the `paid` array is fetched by cycle_id), so a
+  // problem logged one week never blocks the next week's pay.
+  const lockedEmails = new Set(
     paid
-      .filter((p) => p.status === 'paid' && p.payee_type !== 'contractor')
+      .filter(
+        (p) => (p.status === 'paid' || p.status === 'problem') && p.payee_type !== 'contractor',
+      )
       .map((p) => p.recipient_email.trim().toLowerCase()),
   );
   const { active, excluded } = buildQueueFromRates(
@@ -439,12 +449,12 @@ async function loadAll(
     inMaster(r) || stagedEmails.has(r.id) || stagedEmails.has(r.email.trim().toLowerCase());
 
   const pendingActive = active
-    .filter((r) => !paidEmails.has(r.id))
+    .filter((r) => !lockedEmails.has(r.id))
     .filter(inMasterOrStaged)
     .map(applyWizardFinal)
     .map(tagContractorRole);
   const excludedBase = excluded
-    .filter((r) => !paidEmails.has(r.id))
+    .filter((r) => !lockedEmails.has(r.id))
     .filter(inMasterOrStaged)
     .map(applyWizardFinal)
     .map(tagContractorRole);
@@ -549,11 +559,15 @@ async function loadAll(
 
   // ── Merge the contractor payees ────────────────────────────────────────────
   // Placed AFTER the employee filters, and deliberately skipping three of them:
-  //  • paidEmails      — that filter is keyed per (email, cycle); settlement for
+  //  • lockedEmails    — that filter is keyed per (email, cycle); settlement for
   //                      an invoice is per-INVOICE (contractor_invoices.dispatch_id),
   //                      already applied by the builder's query. Reusing the email
   //                      filter would hide Claire's other six approved invoices
-  //                      the moment one of them was paid.
+  //                      the moment one of them was paid — or flagged a problem.
+  //                      (A contractor invoice logged 'problem' therefore STAYS
+  //                      payable: the API deliberately doesn't claim the invoice
+  //                      for a non-paid outcome, and the marker row carries no
+  //                      invoice id to filter on.)
   //  • inMasterOrStaged — a contractor need not be on the master list at all.
   //  • applyWizardFinal — that overlay is the wizard's HOURLY final pay, keyed by
   //                      email. Claire/Carla also have employee identities, so it
@@ -568,7 +582,7 @@ async function loadAll(
   // locked in (staged) whose pay came from the employee/department CATALOG has
   // no rates row, so buildQueueFromRates never emitted them — they'd disappear
   // from Payment Dispatch entirely despite being owed money. Surface every
-  // staged person we haven't already placed (pending / excluded / paid) into the
+  // staged person we haven't already placed (pending / excluded / locked) into the
   // Excluded tab, flagged 'no_rate' (+ 'do_not_pay' when the wizard excluded
   // them in validation), so accounting can see them and set up a rate/bank.
   //
@@ -588,7 +602,7 @@ async function loadAll(
     representedEmails.add(r.id);
     representedEmails.add(r.email.trim().toLowerCase());
   }
-  for (const e of paidEmails) representedEmails.add(e);
+  for (const e of lockedEmails) representedEmails.add(e);
   for (const s of stagedItems) {
     const email = s.recipient_email.trim().toLowerCase();
     const personal = s.personal_email?.trim().toLowerCase() ?? null;

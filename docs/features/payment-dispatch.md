@@ -124,7 +124,11 @@ Modal organised into two field groups (`MarkPaidDialog.tsx`):
 
 **Outcome:**
 
-- **Status** — pill segmented control: `Paid` (default) · `Not Paid` · `Threshold` · `Problem`. Determines whether the row counts toward the hero "Paid" stat and whether the recipient stays in the pending queue (only `Paid` removes them — Threshold and Problem leave the person available for retry).
+- **Status** — pill segmented control: `Paid` (default) · `Not Paid` · `Threshold` · `Problem`. Determines whether the row counts toward the hero "Paid" stat and whether the recipient stays in the pending queue:
+  - `Paid` removes them (money moved).
+  - `Problem` also removes them — a flagged person is held out of pending and lives in the **Problem** tab until someone clicks **Clear** there (which deletes the marker via `/api/payment-dispatches/undo` and returns them to pending). They stay in the Dispatch Progress denominator while flagged, so the strip can't read "everyone paid" with money still stuck.
+  - `Not Paid` and `Threshold` leave the person available for retry in pending.
+  - Exception: a **contractor invoice** logged `Problem` stays payable. `POST /api/payment-dispatches` only claims an invoice on `Paid`, and the marker row deliberately carries no `contractor_invoice_id`, so there's nothing to filter that invoice on.
 - **Note** — optional free-text textarea for context (e.g. "bank rejected, retrying tomorrow"). Stored in `payment_dispatches.note`.
 
 The confirm button label and color adapt to the chosen status (`Confirm sent` / `Log dispatch` with emerald / amber / rose / zinc background).
