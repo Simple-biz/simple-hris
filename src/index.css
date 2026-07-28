@@ -1078,6 +1078,36 @@
 }
 
 /* ────────────────────────────────────────────────────────────────────────
+   Record hatch — a faint diagonal weave for detail-record headers (the
+   manager Transfers "Transfer record" modal). Texture as MATERIAL, not
+   decoration: hairline bands at ~4% of the accent hue on a 7px period read
+   as woven paper at a glance and disappear when you're reading the data.
+   Deliberately quiet — this app handles people's pay, so surfaces reassure
+   rather than perform.
+
+   Pair with a 1px inset ring for edge definition. The dark variant lifts
+   opacity slightly because the bands are lightening rather than darkening.
+   ──────────────────────────────────────────────────────────────────── */
+.record-hatch {
+  background-image: repeating-linear-gradient(
+    135deg,
+    rgba(37, 99, 235, 0.05) 0,
+    rgba(37, 99, 235, 0.05) 1px,
+    transparent 1px,
+    transparent 7px
+  );
+}
+.dark .record-hatch {
+  background-image: repeating-linear-gradient(
+    135deg,
+    rgba(96, 165, 250, 0.08) 0,
+    rgba(96, 165, 250, 0.08) 1px,
+    transparent 1px,
+    transparent 7px
+  );
+}
+
+/* ────────────────────────────────────────────────────────────────────────
    Modern progress stripe — diagonal indigo/violet bands that march along
    the X axis. Used as the Payroll Wizard's top-of-content progress bar.
 

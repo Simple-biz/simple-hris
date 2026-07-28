@@ -75,13 +75,7 @@ import type { EmployeeRow } from '@/lib/supabase/employees';
 import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
 import { slugifyDeptKey } from '@/lib/departments/registry';
 import { DEPARTMENTS, DEPT_DESCRIPTION, MANAGER_BONUS_DEPT_KEYS } from '@/lib/payroll/department-bonus';
-
-/** Unknown keys are in-app (Payment Catalog -> Department) departments whose
- *  slug derives from the label -- humanize it back ("executive_assistants" ->
- *  "Executive Assistants"). Built-in keys never reach this fallback. */
-function humanizeDeptKey(key: string): string {
-  return key.replace(/_+/g, ' ').replace(/(^|\s)[a-z]/g, (c) => c.toUpperCase());
-}
+import { catalogDeptColor as deptColor, humanizeDeptKey } from '@/lib/departments/dept-identity';
 import { isFinalPayrollWeekOfMonth } from '@/lib/payroll/bonus-cadence';
 import { QC_DEPT_KEYS, isQcDeptKey } from '@/lib/qc/constants';
 import { parseDateRangeFromFilename } from '@/lib/hubstaff/calendar-column-dedupe';
@@ -204,29 +198,6 @@ interface DeptBonusCalculatorProps {
 }
 
 // -- Per-department colour identity (hex; inline-styled to dodge Tailwind purge) --
-
-const DEPT_COLOR: Record<string, string> = {
-  accounting: '#10b981',
-  edit: '#3b82f6',
-  devs: '#8b5cf6',
-  lead_gen: '#f59e0b',
-  callback: '#06b6d4',
-  qc: '#f97316',
-  discovery: '#14b8a6',
-  hr: '#ec4899',
-  // Distinct hues on purpose: the fallback color IS #6366f1, so giving Sales
-  // its own value keeps the two sales-family cards tellable apart.
-  sales: '#ef4444',
-  sales_assistant: '#6366f1',
-  smm: '#d946ef',
-  pm_team: '#0ea5e9',
-  client_va: '#84cc16',
-  site_building: '#64748b',
-};
-
-function deptColor(key: string): string {
-  return DEPT_COLOR[key] ?? '#6366f1';
-}
 
 /** hex (#rrggbb) -> rgba string at the given alpha. */
 function hexA(hex: string, alpha: number): string {

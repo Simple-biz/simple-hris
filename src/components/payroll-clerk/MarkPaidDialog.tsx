@@ -14,6 +14,7 @@ import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { playPaymentConfirmed } from '@/lib/sound/ping-chime';
 import { formatPHP, formatUSD, formatCOP, type QueueRow } from './mock-queue';
+import ContractorChip, { showsContractorBadge } from './ContractorChip';
 import { resolveMarkPaidDefaults } from '@/lib/payroll/mark-paid-defaults';
 
 export type DispatchStatus = 'paid' | 'not_paid' | 'threshold' | 'problem';
@@ -635,11 +636,19 @@ export default function MarkPaidDialog({
               <p className="mt-0.5 text-[9.5px] font-medium uppercase tracking-widest text-white/50">
                 {row?.processor ?? ''}
               </p>
-              {row?.departmentName && (
-                <span className="mt-1.5 inline-flex items-center rounded-full bg-white/20 px-2 py-0.5 text-[9.5px] font-semibold text-white backdrop-blur-sm">
-                  {row.departmentName}
-                </span>
-              )}
+              <div className="mt-1.5 flex flex-wrap items-center justify-end gap-1">
+                {/* Which invoice this settles — the safeguard for contractors who
+                    also have an employee identity and can legitimately have two
+                    payable rows in the same cycle. */}
+                {row && showsContractorBadge(row) && (
+                  <ContractorChip variant="hero" invoiceNumber={row.invoiceNumber} />
+                )}
+                {row?.departmentName && (
+                  <span className="inline-flex items-center rounded-full bg-white/20 px-2 py-0.5 text-[9.5px] font-semibold text-white backdrop-blur-sm">
+                    {row.departmentName}
+                  </span>
+                )}
+              </div>
             </div>
             </motion.div>
           </AnimatePresence>

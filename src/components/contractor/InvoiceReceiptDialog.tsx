@@ -16,7 +16,9 @@
 // fits by default ("100%"), with +/- controls to zoom in for detail.
 
 import { FileText, Globe, Phone, Mail, Check, ZoomIn, ZoomOut, Maximize2 } from 'lucide-react';
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useSession } from 'next-auth/react';
+import { normEmail } from '@/lib/email/norm-email';
 import { formatMoney, normalizeCurrency } from '@/lib/contractor-currency';
 import {
   invoiceProcessor,
@@ -107,6 +109,68 @@ export function PunchedHoles({ position }: { position: 'top' | 'bottom' }) {
   );
 }
 
+// ─── Logo resolution ────────────────────────────────────────────────────────
+// An invoice with no company logo falls back to the contractor's Google SSO
+// image, so the logo box carries a face instead of an empty placeholder.
+//
+// Two sources, in order:
+//   1. The viewer's own session photo — only when the viewer IS the contractor.
+//      This is the live Google SSO image, present the moment they sign in.
+//   2. /api/employee-profile-photo (?_fmt=img) — the stored avatar any signed-in
+//      viewer may read, so Accounting sees the invoice the same way. It serves an
+//      uploaded HRIS photo if there is one, else google_photo_url, which
+//      persistGooglePhoto() stamps onto the master row on every Google sign-in.
+//
+// Resolved live rather than snapshotted onto the invoice row: Google photo URLs
+// rotate, and invoices already submitted without a logo pick the fallback up too.
+
+export function contractorPhotoSrc(email: string | null | undefined): string | null {
+  const e = email?.trim();
+  return e ? `/api/employee-profile-photo?email=${encodeURIComponent(e)}&_fmt=img` : null;
+}
+
+/**
+ * Order: the invoice's own logo → contractor Google SSO / profile photo → null,
+ * which leaves the caller's own placeholder ("Upload Logo" / file icon) in place.
+ * `onPhotoError` steps to the next photo source — and finally back to the
+ * placeholder — when one 404s or its URL has rotated, so a broken image never shows.
+ */
+export function useInvoiceLogoSrc(
+  logoDataUrl: string | null | undefined,
+  contractorEmail: string | null | undefined,
+) {
+  const { data: session } = useSession();
+  const logo = logoDataUrl?.trim() || null;
+
+  const sessionEmail = normEmail(session?.user?.email);
+  const subjectEmail = normEmail(contractorEmail);
+  // Guarded on the email so a viewer never sees their OWN face on someone
+  // else's invoice — Accounting falls through to the stored avatar instead.
+  const ownPhoto =
+    sessionEmail && subjectEmail && sessionEmail === subjectEmail
+      ? session?.user?.image?.trim() || null
+      : null;
+
+  const candidates = useMemo(
+    () => [ownPhoto, contractorPhotoSrc(contractorEmail)].filter((s): s is string => !!s),
+    [ownPhoto, contractorEmail],
+  );
+  const [failedCount, setFailedCount] = useState(0);
+  const candidateKey = candidates.join('|');
+
+  useEffect(() => {
+    setFailedCount(0);
+  }, [candidateKey]);
+
+  const photo = candidates[failedCount] ?? null;
+  const src = logo ?? photo;
+  return {
+    src,
+    isPhotoFallback: !logo && photo != null,
+    onPhotoError: () => setFailedCount((n) => n + 1),
+  };
+}
+
 // ─── Read-only field primitives (mirror the builder's FieldLabel + FormInput) ──
 
 function FieldLabel({ children }: { children: React.ReactNode }) {
@@ -154,6 +218,11 @@ function InvoiceDocument({ invoice }: { invoice: SavedInvoice }) {
   const payProc = pm ? invoiceProcessor(pm.processor) : undefined;
   const payLines = paymentMethodLines(pm);
   const railOptions = invoiceProcessorsForCurrency(isUsd);
+  // No uploaded logo → the contractor's profile / Google SSO photo.
+  const { src: logoSrc, isPhotoFallback, onPhotoError } = useInvoiceLogoSrc(
+    invoice.logo_data_url,
+    invoice.contractor_email,
+  );
 
   return (
     <div className="relative">
@@ -166,11 +235,17 @@ function InvoiceDocument({ invoice }: { invoice: SavedInvoice }) {
           <div
             className={cn(
               'flex h-28 w-28 shrink-0 flex-col items-center justify-center gap-1.5 rounded-xl border-2 border-dashed border-zinc-200 bg-zinc-50 text-center dark:border-zinc-700 dark:bg-zinc-800/40',
-              invoice.logo_data_url && 'border-solid border-blue-200 bg-white p-1 dark:border-blue-900/60 dark:bg-zinc-900',
+              logoSrc && 'border-solid border-blue-200 bg-white p-1 dark:border-blue-900/60 dark:bg-zinc-900',
             )}
           >
-            {invoice.logo_data_url ? (
-              <img src={invoice.logo_data_url} alt="Company logo" className="h-full w-full rounded-lg object-contain" />
+            {logoSrc ? (
+              <img
+                src={logoSrc}
+                alt={isPhotoFallback ? 'Contractor profile photo' : 'Company logo'}
+                referrerPolicy="no-referrer"
+                className="h-full w-full rounded-lg object-contain"
+                onError={isPhotoFallback ? onPhotoError : undefined}
+              />
             ) : (
               <FileText className="h-6 w-6 text-zinc-400" />
             )}

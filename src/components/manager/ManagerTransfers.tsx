@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
+  AlertTriangle,
   ArrowRight,
   ArrowRightLeft,
   Ban,
@@ -12,10 +13,15 @@ import {
   ChevronLeft,
   ChevronRight,
   ClipboardCheck,
+  Eye,
   Inbox,
+  LayoutDashboard,
   Loader2,
+  Pencil,
+  Percent,
   Plus,
   RefreshCw,
+  Search,
   Send,
   SendHorizonal,
   Trash2,
@@ -24,10 +30,21 @@ import {
   XCircle,
 } from 'lucide-react';
 import { toast } from 'sonner';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
+import { DatePicker } from '@/components/ui/date-picker';
 import { cn } from '@/lib/utils';
 import { useLiveRefresh } from '@/hooks/useLiveRefresh';
 import ManagerTransferDialog from '@/components/manager/ManagerTransferDialog';
+import { TransferExportMenu, TransferKpiCard } from '@/components/transfers/TransferToolbar';
+import { MANAGER_PDF_THEME, type TransferExportSource } from '@/lib/transfers/transfers-export';
 import { PayoutTrendChart, type ChartPoint } from '@/components/ceo/financial-chart';
 import { StatusDonut, FlowBars, type DonutSegment, type FlowRow } from '@/components/manager/transfer-charts';
 import type {
@@ -44,12 +61,27 @@ interface Props {
   canInitiate: boolean;
 }
 
-type SubTab = 'release' | 'mine' | 'done';
+type SubTab = 'release' | 'mine' | 'done' | 'summary';
 
 /** Rows shown per page in each queue view. Charts/KPIs still read the full lists;
  *  only the visible queue is paginated so a long history (Done can hold 300 rows)
  *  stays scannable. */
 const PAGE_SIZE = 10;
+
+/** Stable empty list for the Summary tab, which has no queue to paginate.
+ *  Module-level so the pagination effect doesn't see a new array each render. */
+const NO_ROWS: DepartmentTransferRequestRow[] = [];
+
+/** Outcome a Done-tab KPI card narrows the table to. Mirrors the four statuses
+ *  a resolved row can hold — Done never contains `pending`. */
+type DoneFilter = 'applied' | 'approved' | 'rejected' | 'cancelled';
+
+const DONE_FILTER_LABEL: Record<DoneFilter, string> = {
+  applied: 'Applied',
+  approved: 'Released, scheduled',
+  rejected: 'Declined',
+  cancelled: 'Withdrawn',
+};
 
 const STATUS_STYLE: Record<TransferRequestStatus, string> = {
   pending: 'bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300',
@@ -66,40 +98,16 @@ const STATUS_LABEL: Record<TransferRequestStatus, string> = {
   cancelled: 'Cancelled',
 };
 
-/** Per-status visual anchor for the Done tab: a leading status icon and the
- *  matching text/soft-fill colors. Reuses the same hues as {@link STATUS_STYLE}
- *  (amber/sky/emerald/rose/zinc) so the pill, the icon, and the row read as one
- *  color language rather than introducing anything new. `icon` is a lucide
- *  component; `dot` styles the round icon chip; `text` tints the status word. */
-const STATUS_META: Record<
-  TransferRequestStatus,
-  { icon: typeof CheckCircle2; dot: string; text: string }
-> = {
-  pending: {
-    icon: CalendarClock,
-    dot: 'bg-amber-100 text-amber-600 dark:bg-amber-500/15 dark:text-amber-400',
-    text: 'text-amber-700 dark:text-amber-300',
-  },
-  approved: {
-    icon: CalendarClock,
-    dot: 'bg-sky-100 text-sky-600 dark:bg-sky-500/15 dark:text-sky-400',
-    text: 'text-sky-700 dark:text-sky-300',
-  },
-  applied: {
-    icon: CheckCircle2,
-    dot: 'bg-emerald-100 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-400',
-    text: 'text-emerald-700 dark:text-emerald-300',
-  },
-  rejected: {
-    icon: XCircle,
-    dot: 'bg-rose-100 text-rose-600 dark:bg-rose-500/15 dark:text-rose-400',
-    text: 'text-rose-700 dark:text-rose-300',
-  },
-  cancelled: {
-    icon: Ban,
-    dot: 'bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400',
-    text: 'text-zinc-500 dark:text-zinc-400',
-  },
+/** Per-status visual anchor for the Done table: the status icon carried inside
+ *  the pill, and the tint for that row's decided-at stamp. Reuses the same hues
+ *  as {@link STATUS_STYLE} (amber/sky/emerald/rose/zinc) so the pill, the icon,
+ *  and the timestamp read as one color language. */
+const STATUS_META: Record<TransferRequestStatus, { icon: typeof CheckCircle2; text: string }> = {
+  pending: { icon: CalendarClock, text: 'text-amber-700 dark:text-amber-300' },
+  approved: { icon: CalendarClock, text: 'text-sky-700 dark:text-sky-300' },
+  applied: { icon: CheckCircle2, text: 'text-emerald-700 dark:text-emerald-300' },
+  rejected: { icon: XCircle, text: 'text-rose-700 dark:text-rose-300' },
+  cancelled: { icon: Ban, text: 'text-zinc-500 dark:text-zinc-400' },
 };
 
 /** Solid arc colors for the donut — chosen to read in both themes. Keyed to
@@ -151,22 +159,24 @@ const STAT_ACCENT = {
   amber: {
     chip: 'bg-amber-100 text-amber-600 dark:bg-amber-500/15 dark:text-amber-300',
     value: 'text-amber-600 dark:text-amber-300',
-    ring: 'ring-amber-400/50 dark:ring-amber-500/40',
   },
   blue: {
     chip: 'bg-blue-100 text-blue-600 dark:bg-blue-500/15 dark:text-blue-300',
     value: 'text-blue-600 dark:text-blue-300',
-    ring: 'ring-blue-400/50 dark:ring-blue-500/40',
   },
   emerald: {
     chip: 'bg-emerald-100 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-300',
     value: 'text-emerald-600 dark:text-emerald-300',
-    ring: 'ring-emerald-400/50 dark:ring-emerald-500/40',
+  },
+  violet: {
+    chip: 'bg-violet-100 text-violet-600 dark:bg-violet-500/15 dark:text-violet-300',
+    value: 'text-violet-600 dark:text-violet-300',
   },
 } as const;
 
-/** One compact stat tile in the analytics rail. Clickable when `onClick` jumps
- *  to its matching queue view. */
+/** One compact stat tile on the Summary dashboard. Clickable when `onClick`
+ *  jumps to its matching queue view. `value` is pre-formatted by the caller so
+ *  a tile can read as a count ("7") or a rate ("82%"). */
 function StatTile({
   label,
   value,
@@ -174,15 +184,15 @@ function StatTile({
   icon: Icon,
   accent,
   onClick,
-  active,
+  title,
 }: {
   label: string;
-  value: number;
+  value: number | string;
   hint: string;
   icon: typeof Inbox;
   accent: keyof typeof STAT_ACCENT;
   onClick?: () => void;
-  active?: boolean;
+  title?: string;
 }) {
   const a = STAT_ACCENT[accent];
   return (
@@ -190,15 +200,14 @@ function StatTile({
       type="button"
       onClick={onClick}
       disabled={!onClick}
+      title={title}
       whileHover={onClick ? { y: -2 } : undefined}
       whileTap={onClick ? { scale: 0.98 } : undefined}
       transition={{ type: 'spring', stiffness: 400, damping: 30 }}
-      aria-pressed={onClick ? !!active : undefined}
       className={cn(
         'group relative flex items-center gap-3 rounded-xl border bg-white p-3 text-left shadow-sm transition-colors dark:bg-zinc-950',
         'border-zinc-200/80 dark:border-zinc-800/80',
         onClick ? 'cursor-pointer hover:border-zinc-300 dark:hover:border-zinc-700' : 'cursor-default',
-        active && cn('ring-1 ring-inset', a.ring),
       )}
     >
       <span className={cn('inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg', a.chip)}>
@@ -218,6 +227,88 @@ function StatTile({
         </span>
       </span>
     </motion.button>
+  );
+}
+
+/**
+ * One label/value row in the View dialog. Label left, value right — the detail
+ * -sheet pattern, which stays readable at a narrow modal width where a
+ * two-column grid would crush long emails. Renders an em-dash for empty values
+ * so the row keeps its rhythm instead of collapsing.
+ *
+ * Labels and the empty-value dash sit at zinc-600 / zinc-400, measured at
+ * 7.1:1 and 7.0:1 against this dialog's gradient surface. The muted zinc-400
+ * default that reads as "elegant" only manages 2.5:1 in light mode and fails
+ * AA outright — this app targets WCAG AA in both themes.
+ */
+function DetailRow({ label, value }: { label: string; value: string | null | undefined }) {
+  return (
+    <div className="flex items-baseline justify-between gap-4 py-1">
+      <dt className="shrink-0 text-[11px] font-medium uppercase tracking-wide text-zinc-600 dark:text-zinc-400">
+        {label}
+      </dt>
+      <dd className="min-w-0 break-words text-right text-xs font-medium text-zinc-800 dark:text-zinc-100">
+        {value || <span className="font-normal text-zinc-600 dark:text-zinc-400">—</span>}
+      </dd>
+    </div>
+  );
+}
+
+/**
+ * A titled group of rows. The heading is sentence-case with weight contrast
+ * rather than another tier of tracked small-caps: the field labels already own
+ * the uppercase register, and stacking four all-caps eyebrows down one modal
+ * turns the whole surface into noise.
+ */
+function DetailSection({
+  title,
+  icon: Icon,
+  children,
+}: {
+  title: string;
+  icon: typeof Inbox;
+  children: React.ReactNode;
+}) {
+  return (
+    <section>
+      <h4 className="mb-1 flex items-center gap-1.5 border-b border-zinc-200/80 pb-1.5 text-[12px] font-semibold text-zinc-900 dark:border-zinc-800 dark:text-zinc-100">
+        <Icon className="h-3.5 w-3.5 text-zinc-400 dark:text-zinc-500" />
+        {title}
+      </h4>
+      <dl className="divide-y divide-zinc-100/80 dark:divide-zinc-800/60">{children}</dl>
+    </section>
+  );
+}
+
+/** Free-text block (reason / approver note) — given room to read rather than
+ *  squeezed into a value cell. The inset ring gives it an edge without adding
+ *  another border weight to the stack. */
+function DetailNote({
+  label,
+  value,
+  tone = 'neutral',
+}: {
+  label: string;
+  value: string | null;
+  tone?: 'neutral' | 'rose';
+}) {
+  if (!value) return null;
+  return (
+    <div className="pt-2">
+      <p className="text-[11px] font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+        {label}
+      </p>
+      <p
+        className={cn(
+          'mt-1 rounded-lg px-2.5 py-2 text-xs leading-relaxed ring-1 ring-inset',
+          tone === 'rose'
+            ? 'bg-rose-50/70 text-rose-800 ring-rose-200/70 dark:bg-rose-500/10 dark:text-rose-200 dark:ring-rose-500/20'
+            : 'bg-zinc-50 text-zinc-700 ring-zinc-200/70 dark:bg-zinc-900/60 dark:text-zinc-200 dark:ring-zinc-700/50',
+        )}
+      >
+        {value}
+      </p>
+    </div>
   );
 }
 
@@ -314,15 +405,19 @@ function Paginator({
 }
 
 /**
- * Manager → Transfers tab — a full-width workspace. The left column is the work
- * queue (three sub-tabs behind an animated segmented control); the right rail is
- * live analytics (activity trend, pipeline donut, busiest routes, stat tiles).
+ * Manager → Transfers tab — a full-width workspace. Four sub-tabs behind an
+ * animated segmented control, one view at a time so the dashboard never competes
+ * with the work queues:
  *
+ *   • Summary — the landing view. KPI cards (including the transfer rate), the
+ *     activity trend, the pipeline donut, and the busiest routes. Each KPI card
+ *     is a jump-link into the queue it summarises.
  *   • Release requests — incoming; where THIS manager owns the SOURCE department.
  *     Release locks the requester's proposed effective date and applies the move.
  *   • My requests — the manager's own outbox (status + cancel-while-pending).
  *   • Done — resolved release requests on their team (released/declined/applied/
- *     cancelled). A read-only record so past decisions aren't lost once acted on.
+ *     cancelled) as a table, with View / Edit / Delete per row. A record, so past
+ *     decisions aren't lost once acted on.
  * "Request transfer in" (the pull-in picker) lives in the header, always available.
  */
 export default function ManagerTransfers({ myDepartments, canInitiate }: Props) {
@@ -334,8 +429,25 @@ export default function ManagerTransfers({ myDepartments, canInitiate }: Props) 
   const [busyId, setBusyId] = useState<string | null>(null);
   const [declineFor, setDeclineFor] = useState<string | null>(null);
   const [declineNote, setDeclineNote] = useState('');
-  const [sub, setSub] = useState<SubTab>('release');
+  // Summary is the landing view — the overview the queues hang off. The
+  // "Awaiting your release" count still rides on the Release requests tab, so
+  // the action queue announces itself without being the default.
+  const [sub, setSub] = useState<SubTab>('summary');
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  // Done-tab row actions: View opens a read-only detail sheet; Edit opens the
+  // correctable paperwork (effective date / reason / note). Both track the row
+  // by ID and re-read it from `done` on every render, so a live refresh (or
+  // another manager's action) updates an open dialog instead of leaving it
+  // showing a stale snapshot — and closes it outright if the row is deleted.
+  const [viewRowId, setViewRowId] = useState<string | null>(null);
+  const [editRowId, setEditRowId] = useState<string | null>(null);
+  const [editEffective, setEditEffective] = useState('');
+  const [editReason, setEditReason] = useState('');
+  const [editNote, setEditNote] = useState('');
+  const [savingEdit, setSavingEdit] = useState(false);
+  // Done-tab toolbar: free-text search + a single click-to-filter KPI card.
+  const [doneQuery, setDoneQuery] = useState('');
+  const [doneFilter, setDoneFilter] = useState<DoneFilter | null>(null);
   // 1-based page index for the active queue view. Reset whenever the sub-tab
   // changes so a switch always lands on page 1 (see the effect below).
   const [page, setPage] = useState(1);
@@ -510,6 +622,45 @@ export default function ManagerTransfers({ myDepartments, canInitiate }: Props) 
     }
   };
 
+  /** Seed the Edit dialog from the row being corrected. */
+  const openEdit = (row: DepartmentTransferRequestRow) => {
+    setEditRowId(row.id);
+    // Seed ONLY from the LOCKED date. Falling back to proposed_effective_date
+    // here would silently promote a non-binding proposal into the locked
+    // effective date the moment anyone opened Edit to fix a typo in the reason —
+    // on a declined/withdrawn record that invents a transfer date that never
+    // happened, and payroll prorates rate changes off this field.
+    setEditEffective(row.effective_date ?? '');
+    setEditReason(row.reason ?? '');
+    setEditNote(row.approver_note ?? '');
+  };
+
+  const saveEdit = async () => {
+    if (!editRow) return;
+    setSavingEdit(true);
+    try {
+      const res = await fetch(`/api/department-transfers/${editRow.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'update',
+          effective_date: editEffective || null,
+          reason: editReason,
+          note: editNote,
+        }),
+      });
+      const json = (await res.json()) as { error?: string };
+      if (!res.ok || json.error) throw new Error(json.error || `Request failed (${res.status})`);
+      toast.success('Transfer record updated');
+      setEditRowId(null);
+      load({ silent: true });
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not save changes');
+    } finally {
+      setSavingEdit(false);
+    }
+  };
+
   const deleteRequest = async (row: DepartmentTransferRequestRow) => {
     setBusyId(row.id);
     try {
@@ -532,14 +683,126 @@ export default function ManagerTransfers({ myDepartments, canInitiate }: Props) 
     [outgoing],
   );
 
-  // The full list backing the active view — the source of truth for pagination.
-  const activeList = sub === 'release' ? incoming : sub === 'mine' ? sortedOutgoing : done;
+  // ── Done tab: KPIs, search + filter, export ────────────────────────────────
 
-  // Reset to page 1 whenever the view or its length changes, so a tab switch
-  // (or a live refresh that shrinks the list) never strands you on an empty page.
+  // Counts over ALL resolved rows (not the filtered view) — a stable read that
+  // doesn't shift as you narrow the search.
+  const doneKpis = useMemo(() => {
+    let applied = 0;
+    let scheduled = 0;
+    let declined = 0;
+    let withdrawn = 0;
+    for (const r of done) {
+      if (r.status === 'applied') applied += 1;
+      else if (r.status === 'approved') scheduled += 1;
+      else if (r.status === 'rejected') declined += 1;
+      else if (r.status === 'cancelled') withdrawn += 1;
+    }
+    return { applied, scheduled, declined, withdrawn };
+  }, [done]);
+
+  // Search matches the person (name + email), both departments, the requester,
+  // the releaser, the status wording, and the free-text reason/note — so a
+  // manager can find a record by whatever they happen to remember about it.
+  const filteredDone = useMemo(() => {
+    const q = doneQuery.trim().toLowerCase();
+    if (!q && !doneFilter) return done;
+    return done.filter((r) => {
+      if (doneFilter && r.status !== doneFilter) return false;
+      if (!q) return true;
+      const hay = [
+        r.employee_name,
+        r.employee_email,
+        r.employee_work_email,
+        r.from_department,
+        r.to_department,
+        r.requested_by,
+        r.approver_email,
+        r.reason,
+        r.approver_note,
+        STATUS_LABEL[r.status],
+      ]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase();
+      return hay.includes(q);
+    });
+  }, [done, doneQuery, doneFilter]);
+
+  // Human-facing description of the active filter, threaded into the export's
+  // provenance preamble so a saved file records what it was scoped to.
+  const doneFilterLabel = useMemo(() => {
+    const parts: string[] = [];
+    if (doneFilter) parts.push(DONE_FILTER_LABEL[doneFilter]);
+    if (doneQuery.trim()) parts.push(`matching "${doneQuery.trim()}"`);
+    return parts.length ? parts.join(' · ') : 'All resolved transfers';
+  }, [doneFilter, doneQuery]);
+
+  // The export lib keys the releaser off `decided_by`; this list stores it as
+  // `approver_email`. Map across, and drop the rate column — catalog rates are
+  // resolved on the Accounting side only.
+  const doneExportRows = useMemo<TransferExportSource[]>(
+    () =>
+      filteredDone.map((r) => ({
+        employee_name: r.employee_name,
+        employee_email: r.employee_email,
+        from_department: r.from_department,
+        to_department: r.to_department,
+        status: r.status,
+        requested_by: r.requested_by,
+        decided_by: r.approver_email,
+        effective_date: r.effective_date,
+        proposed_effective_date: r.proposed_effective_date,
+        sheet_synced: r.sheet_synced,
+        created_at: r.created_at,
+      })),
+    [filteredDone],
+  );
+
+  // The live row behind each open dialog. Null (→ dialog closes) once the row
+  // no longer exists, e.g. another manager deleted it while you had it open.
+  const viewRow = useMemo(
+    () => (viewRowId ? (done.find((r) => r.id === viewRowId) ?? null) : null),
+    [done, viewRowId],
+  );
+  const editRow = useMemo(
+    () => (editRowId ? (done.find((r) => r.id === editRowId) ?? null) : null),
+    [done, editRowId],
+  );
+
+  const doneHasFilter = doneQuery.trim().length > 0 || doneFilter !== null;
+  const clearDoneFilters = () => {
+    setDoneQuery('');
+    setDoneFilter(null);
+  };
+  const toggleDoneFilter = (f: DoneFilter) => setDoneFilter((cur) => (cur === f ? null : f));
+
+  // The full list backing the active view — the source of truth for pagination.
+  // Summary has no queue, so it pages over nothing.
+  const activeList =
+    sub === 'release'
+      ? incoming
+      : sub === 'mine'
+        ? sortedOutgoing
+        : sub === 'done'
+          ? filteredDone
+          : NO_ROWS;
+
+  // Reset to page 1 whenever the view, its length, or the Done tab's search /
+  // KPI filter changes — so a tab switch (or a live refresh that shrinks the
+  // list) never strands you on an empty page, and narrowing the search always
+  // lands on the first result even when the row COUNT happens to be unchanged.
   useEffect(() => {
     setPage(1);
-  }, [sub, activeList.length]);
+  }, [sub, activeList.length, doneQuery, doneFilter]);
+
+  // Disarm a pending two-click delete whenever the row it belongs to could have
+  // left the screen (page turn, search, filter, tab switch). Without this the
+  // armed row returns already-armed when you navigate back, so the next single
+  // click deletes it — exactly what the two-click guard exists to prevent.
+  useEffect(() => {
+    setConfirmDeleteId(null);
+  }, [sub, page, doneQuery, doneFilter]);
 
   // Clamp the requested page into range, then slice. `pageStart`/`pageEnd` are the
   // 1-based bounds shown in the paginator's "Showing X–Y of N" read-out.
@@ -556,14 +819,27 @@ export default function ManagerTransfers({ myDepartments, canInitiate }: Props) 
     [sub, sortedOutgoing, safePage],
   );
   const pageDone = useMemo(
-    () => (sub === 'done' ? done.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE) : []),
-    [sub, done, safePage],
+    () => (sub === 'done' ? filteredDone.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE) : []),
+    [sub, filteredDone, safePage],
   );
 
-  // Three at-a-glance KPIs from the already-loaded lists (no extra fetch):
+  // ── Chart data, all derived from the loaded lists (no extra fetch) ──────────
+
+  // Every row this manager can see, deduped by id across the three scoped lists.
+  const allRows = useMemo(() => {
+    const byId = new Map<string, DepartmentTransferRequestRow>();
+    for (const r of [...incoming, ...outgoing, ...done]) if (!byId.has(r.id)) byId.set(r.id, r);
+    return [...byId.values()];
+  }, [incoming, outgoing, done]);
+
+  // Four at-a-glance KPIs from the already-loaded lists (no extra fetch):
   //   • Awaiting your release — incoming still pending; this manager's action queue.
   //   • My requests in flight — outgoing not yet resolved (pending + released/scheduled).
-  //   • Applied this month     — team transfers that actually landed since the 1st.
+  //   • Applied this month    — team transfers that actually landed since the 1st.
+  //   • Transfer rate         — of every request that has REACHED an outcome,
+  //     the share that actually moved someone. Denominator is applied + declined
+  //     + withdrawn; still-open work (pending/scheduled) is excluded so the rate
+  //     can't be dragged down by requests that simply haven't been decided yet.
   const kpis = useMemo(() => {
     const awaitingRelease = incoming.filter((r) => r.status === 'pending').length;
     const myInFlight = outgoing.filter(
@@ -583,17 +859,24 @@ export default function ManagerTransfers({ myDepartments, canInitiate }: Props) 
         .map((r) => r.id),
     ).size;
 
-    return { awaitingRelease, myInFlight, myScheduled, appliedThisMonth };
-  }, [incoming, outgoing, done]);
+    const appliedTotal = allRows.filter((r) => r.status === 'applied').length;
+    const declinedTotal = allRows.filter((r) => r.status === 'rejected').length;
+    const withdrawnTotal = allRows.filter((r) => r.status === 'cancelled').length;
+    const resolvedTotal = appliedTotal + declinedTotal + withdrawnTotal;
+    const transferRate = resolvedTotal > 0 ? Math.round((appliedTotal / resolvedTotal) * 100) : null;
 
-  // ── Chart data, all derived from the loaded lists (no extra fetch) ──────────
-
-  // Every row this manager can see, deduped by id across the three scoped lists.
-  const allRows = useMemo(() => {
-    const byId = new Map<string, DepartmentTransferRequestRow>();
-    for (const r of [...incoming, ...outgoing, ...done]) if (!byId.has(r.id)) byId.set(r.id, r);
-    return [...byId.values()];
-  }, [incoming, outgoing, done]);
+    return {
+      awaitingRelease,
+      myInFlight,
+      myScheduled,
+      appliedThisMonth,
+      appliedTotal,
+      declinedTotal,
+      withdrawnTotal,
+      resolvedTotal,
+      transferRate,
+    };
+  }, [incoming, outgoing, done, allRows]);
 
   // Pipeline donut: the whole visible book of work by stage. `approved` reads as
   // "Scheduled"; `cancelled` folds into "Declined" (both are closed-not-applied).
@@ -696,18 +979,119 @@ export default function ManagerTransfers({ myDepartments, canInitiate }: Props) 
     );
 
   const TABS: { id: SubTab; label: string; count: number; icon: typeof Inbox }[] = [
+    // Summary leads — it's the overview the queues hang off. A dashboard, not a
+    // queue, so it carries no count badge.
+    { id: 'summary', label: 'Summary', count: 0, icon: LayoutDashboard },
     { id: 'release', label: 'Release requests', count: incoming.length, icon: Inbox },
     { id: 'mine', label: 'My requests', count: sortedOutgoing.length, icon: Send },
     { id: 'done', label: 'Done', count: done.length, icon: ClipboardCheck },
   ];
 
-  // ── Analytics area (wide, right of the queue) ──────────────────────────────
-  // KPI cards in a row on top, then the Activity trend full width, then Pipeline
-  // and Busiest routes side by side. Everything collapses to one column on narrow
-  // screens, where this whole area sits beneath the queue.
+  // ── Done tab toolbar ───────────────────────────────────────────────────────
+  // Four click-to-filter KPI cards over the resolved record, a search box, and a
+  // CSV / Excel / PDF export of whatever is currently in view. Mirrors the
+  // Accounting → Transfers toolbar, in this tab's blue.
+  const doneToolbar = (
+    <div className="space-y-3">
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <TransferKpiCard
+          label="Applied"
+          value={doneKpis.applied}
+          hint={doneFilter === 'applied' ? 'Filtering · click to clear' : 'Completed department moves'}
+          tone="emerald"
+          onClick={() => toggleDoneFilter('applied')}
+          active={doneFilter === 'applied'}
+        />
+        <TransferKpiCard
+          label="Scheduled"
+          value={doneKpis.scheduled}
+          hint={doneFilter === 'approved' ? 'Filtering · click to clear' : 'Released, not yet applied'}
+          tone="sky"
+          onClick={() => toggleDoneFilter('approved')}
+          active={doneFilter === 'approved'}
+        />
+        <TransferKpiCard
+          label="Declined"
+          value={doneKpis.declined}
+          hint={doneFilter === 'rejected' ? 'Filtering · click to clear' : 'Release refused'}
+          tone="rose"
+          onClick={() => toggleDoneFilter('rejected')}
+          active={doneFilter === 'rejected'}
+        />
+        <TransferKpiCard
+          label="Withdrawn"
+          value={doneKpis.withdrawn}
+          hint={doneFilter === 'cancelled' ? 'Filtering · click to clear' : 'Pulled by the requester'}
+          tone="zinc"
+          onClick={() => toggleDoneFilter('cancelled')}
+          active={doneFilter === 'cancelled'}
+        />
+      </div>
+
+      <div className="flex flex-wrap items-center gap-2">
+        {/* basis-full below sm: the search takes its own row rather than
+            shrinking to a few characters once the count + Clear + Export
+            controls appear beside it on a phone. */}
+        <div className="relative min-w-0 basis-full sm:max-w-md sm:basis-0 sm:flex-1">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" />
+          <input
+            type="text"
+            value={doneQuery}
+            onChange={(e) => setDoneQuery(e.target.value)}
+            placeholder="Search people, departments, requester…"
+            aria-label="Search resolved transfers"
+            className="h-9 w-full rounded-xl border border-blue-100 bg-white pl-9 pr-9 text-sm text-zinc-900 placeholder:text-zinc-400 focus:border-blue-300 focus:outline-none focus:ring-2 focus:ring-blue-200/60 dark:border-blue-950/40 dark:bg-zinc-950 dark:text-zinc-100 dark:focus:ring-blue-500/20"
+          />
+          {doneQuery && (
+            <button
+              type="button"
+              onClick={() => setDoneQuery('')}
+              aria-label="Clear search"
+              className="absolute right-2.5 top-1/2 -translate-y-1/2 rounded-md p-0.5 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-600 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          )}
+        </div>
+        {doneHasFilter && (
+          <>
+            <span className="text-xs text-zinc-500 dark:text-zinc-400">
+              {filteredDone.length.toLocaleString()} of {done.length.toLocaleString()}
+            </span>
+            <button
+              type="button"
+              onClick={clearDoneFilters}
+              className="text-xs font-medium text-blue-600 hover:underline dark:text-blue-400"
+            >
+              Clear filters
+            </button>
+          </>
+        )}
+        <div className="ml-auto">
+          <TransferExportMenu
+            rows={doneExportRows}
+            total={done.length}
+            filterLabel={doneFilterLabel}
+            title="Team Transfers"
+            eyebrow="MANAGER - RESOLVED TEAM TRANSFERS"
+            fileBase="team-transfers"
+            includeRateChange={false}
+            pdfTheme={MANAGER_PDF_THEME}
+            accent="blue"
+          />
+        </div>
+      </div>
+    </div>
+  );
+
+  // ── Summary dashboard ──────────────────────────────────────────────────────
+  // Lives in its own sub-tab so the work queues stay uncluttered. KPI cards on
+  // top, then the Activity trend full width, then Pipeline and Busiest routes
+  // side by side. Collapses to one column on narrow screens. Each KPI card is a
+  // jump-link into the queue it summarises.
   const analytics = (
     <div className="space-y-4">
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <StatTile
           label="Awaiting your release"
           value={kpis.awaitingRelease}
@@ -719,7 +1103,6 @@ export default function ManagerTransfers({ myDepartments, canInitiate }: Props) 
           icon={Inbox}
           accent="amber"
           onClick={() => setSub('release')}
-          active={sub === 'release'}
         />
         <StatTile
           label="My requests in flight"
@@ -732,7 +1115,6 @@ export default function ManagerTransfers({ myDepartments, canInitiate }: Props) 
           icon={SendHorizonal}
           accent="blue"
           onClick={() => setSub('mine')}
-          active={sub === 'mine'}
         />
         <StatTile
           label="Applied this month"
@@ -740,8 +1122,35 @@ export default function ManagerTransfers({ myDepartments, canInitiate }: Props) 
           hint="Transfers completed since the 1st"
           icon={CheckCircle2}
           accent="emerald"
-          onClick={() => setSub('done')}
-          active={sub === 'done'}
+          // Land on Done scoped to Applied. Without setting the filter
+          // explicitly the tab would keep whatever search/filter was left
+          // behind — so a non-zero tile could open an empty table.
+          onClick={() => {
+            setDoneQuery('');
+            setDoneFilter('applied');
+            setSub('done');
+          }}
+        />
+        <StatTile
+          label="Transfer rate"
+          value={kpis.transferRate === null ? '—' : `${kpis.transferRate}%`}
+          hint={
+            kpis.transferRate === null
+              ? 'No decided requests yet'
+              : `${kpis.appliedTotal} of ${kpis.resolvedTotal} decided moved`
+          }
+          icon={Percent}
+          accent="violet"
+          title={
+            kpis.transferRate === null
+              ? 'Share of decided transfer requests that actually moved someone. Nothing has been decided yet.'
+              : `${kpis.appliedTotal} applied vs ${kpis.declinedTotal} declined and ${kpis.withdrawnTotal} withdrawn. Requests still pending or scheduled are not counted.`
+          }
+          // The rate spans every outcome, so open Done unfiltered.
+          onClick={() => {
+            clearDoneFilters();
+            setSub('done');
+          }}
         />
       </div>
 
@@ -822,11 +1231,13 @@ export default function ManagerTransfers({ myDepartments, canInitiate }: Props) 
           </div>
         </div>
 
-        {/* Segmented sub-tab control with a sliding pill indicator */}
+        {/* Segmented sub-tab control with a sliding pill indicator. Four tabs
+            outgrow a phone, so the strip scrolls sideways rather than wrapping. */}
+        <div className="-mx-1 mt-3.5 overflow-x-auto px-1 pb-0.5">
         <div
           role="tablist"
           aria-label="Transfer views"
-          className="mt-3.5 inline-flex rounded-xl border border-zinc-200/80 bg-zinc-100/70 p-1 dark:border-zinc-800 dark:bg-zinc-900/60"
+          className="inline-flex rounded-xl border border-zinc-200/80 bg-zinc-100/70 p-1 dark:border-zinc-800 dark:bg-zinc-900/60"
         >
           {TABS.map((t) => {
             const active = sub === t.id;
@@ -839,7 +1250,7 @@ export default function ManagerTransfers({ myDepartments, canInitiate }: Props) 
                 aria-selected={active}
                 onClick={() => setSub(t.id)}
                 className={cn(
-                  'relative z-10 inline-flex items-center gap-1.5 rounded-lg px-3.5 py-1.5 text-[13px] font-medium transition-colors duration-200',
+                  'relative z-10 inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg px-3.5 py-1.5 text-[13px] font-medium transition-colors duration-200',
                   active
                     ? 'text-blue-700 dark:text-blue-300'
                     : 'text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200',
@@ -870,15 +1281,27 @@ export default function ManagerTransfers({ myDepartments, canInitiate }: Props) 
             );
           })}
         </div>
+        </div>
       </div>
 
-      {/* Body: a NARROW work-queue column on the LEFT (compact rows need little
-          width), and a WIDE analytics area on the RIGHT so the charts get room.
-          Stacks with the queue on top on narrow screens. */}
+      {/* Body: one view at a time. The three work queues each get the full width
+          (capped to a readable measure — the rows are compact); Summary gets the
+          whole area to itself so the dashboard never competes with the queue. */}
       <div className="min-h-0 flex-1 overflow-y-auto bg-[#fafaf8] px-3 py-4 sm:px-6 sm:py-6 dark:bg-[#0d1117]">
-        <div className="grid grid-cols-1 gap-5 xl:grid-cols-[minmax(0,440px)_minmax(0,1fr)] 2xl:grid-cols-[minmax(0,500px)_minmax(0,1fr)]">
-          {/* QUEUE — left (narrow) */}
-          <div className="order-1 min-w-0">
+        {sub === 'summary' ? (
+          <motion.div
+            key="summary"
+            initial={{ opacity: 0, y: 6 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
+            className="min-w-0"
+          >
+            {analytics}
+          </motion.div>
+        ) : (
+          // Done is a wide table — let it use the room. The two card queues stay
+          // capped to a readable measure.
+          <div className={cn('w-full min-w-0', sub !== 'done' && 'mx-auto max-w-4xl')}>
             {loading ? (
               <div className="flex items-center justify-center gap-2 py-16 text-sm text-zinc-500">
                 <Loader2 className="h-4 w-4 animate-spin" />
@@ -1126,118 +1549,229 @@ export default function ManagerTransfers({ myDepartments, canInitiate }: Props) 
                     </div>
                   ) : (
                     <>
+                    {doneToolbar}
+                    {filteredDone.length === 0 ? (
+                      <div className="flex flex-col items-center gap-2 rounded-2xl border border-dashed border-blue-200 bg-white py-14 text-center dark:border-blue-950/40 dark:bg-[#0d1117]">
+                        <Search className="h-7 w-7 text-blue-300 dark:text-blue-800" />
+                        <p className="text-sm text-zinc-500">No transfers match this view.</p>
+                        <button
+                          type="button"
+                          onClick={clearDoneFilters}
+                          className="text-xs font-medium text-blue-600 hover:underline dark:text-blue-400"
+                        >
+                          Clear filters
+                        </button>
+                      </div>
+                    ) : (
+                    <>
+                    {/* Done is a record, not a work queue — a plain table (same
+                        shape as the MESA tables, in the Transfers blue) reads
+                        faster across many rows and has room for the fields the
+                        card layout hid: who decided it, and the locked effective
+                        date. Below 640px the global responsive-table CSS stacks
+                        each row into a labelled card (see data-label). */}
                     <div className="overflow-hidden rounded-2xl border border-blue-100/80 bg-white dark:border-blue-950/40 dark:bg-zinc-950">
-                      <div className="divide-y divide-blue-100/70 dark:divide-blue-950/40">
-                        {pageDone.map((r) => {
-                          const meta = STATUS_META[r.status];
-                          const StatusIcon = meta.icon;
-                          const stamp =
-                            r.status === 'applied'
-                              ? r.applied_at ?? r.decided_at ?? r.updated_at
-                              : r.decided_at ?? r.updated_at;
-                          const effDate = r.effective_date ?? r.proposed_effective_date;
-                          const note =
-                            (r.status === 'rejected' || r.status === 'cancelled') && r.approver_note
-                              ? r.approver_note
-                              : null;
-                          return (
-                            <div
-                              key={r.id}
-                              className="group flex items-start gap-3 px-3 py-3 transition-colors hover:bg-zinc-50/80 dark:hover:bg-zinc-900/40"
-                            >
-                              {/* Status anchor — scan the outcome straight down the left edge. */}
-                              <span
-                                className={cn(
-                                  'mt-0.5 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full',
-                                  meta.dot,
-                                )}
-                                title={STATUS_LABEL[r.status]}
-                              >
-                                <StatusIcon className="h-4 w-4" />
-                              </span>
-
-                              <div className="min-w-0 flex-1">
-                                {/* Line 1 — name + outcome word, timestamp trails right. */}
-                                <div className="flex items-baseline justify-between gap-2">
-                                  <div className="flex min-w-0 items-baseline gap-1.5">
-                                    <span className="truncate text-[13px] font-semibold text-zinc-900 dark:text-white">
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-left text-xs">
+                          <thead className="border-b border-blue-100/80 bg-blue-50/40 text-[11px] font-semibold uppercase tracking-wide text-blue-700 dark:border-blue-900/40 dark:bg-blue-950/30 dark:text-blue-300">
+                            <tr>
+                              <th className="px-4 py-2.5">Employee</th>
+                              <th className="px-4 py-2.5">Move</th>
+                              <th className="px-4 py-2.5">Status</th>
+                              <th className="px-4 py-2.5">Effective</th>
+                              <th className="px-4 py-2.5">Requested by</th>
+                              <th className="px-4 py-2.5">Decided by</th>
+                              <th className="px-4 py-2.5 text-right">Actions</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-blue-100/60 dark:divide-blue-900/40">
+                            {pageDone.map((r) => {
+                              const meta = STATUS_META[r.status];
+                              const StatusIcon = meta.icon;
+                              const decidedStamp =
+                                r.status === 'applied'
+                                  ? r.applied_at ?? r.decided_at ?? r.updated_at
+                                  : r.decided_at ?? r.updated_at;
+                              // The locked date once released; until then the
+                              // requester's proposal, flagged as not yet binding.
+                              const effLocked = !!r.effective_date;
+                              const effDate = r.effective_date ?? r.proposed_effective_date;
+                              const sheetFailed = r.status === 'applied' && r.sheet_synced === false;
+                              return (
+                                <tr
+                                  key={r.id}
+                                  className="transition-colors hover:bg-blue-50/40 dark:hover:bg-blue-950/20"
+                                >
+                                  <td className="px-4 py-3" data-label="Employee">
+                                    <div className="font-medium text-zinc-900 dark:text-zinc-100">
                                       {r.employee_name ?? r.employee_email}
+                                    </div>
+                                    {r.employee_name && (
+                                      <div className="mt-0.5 truncate text-[11px] text-zinc-500 dark:text-zinc-400">
+                                        {r.employee_email}
+                                      </div>
+                                    )}
+                                  </td>
+
+                                  <td className="px-4 py-3" data-label="Move">
+                                    <span className="inline-flex items-center gap-1.5">
+                                      <span className="rounded bg-zinc-100 px-1.5 py-0.5 font-medium text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
+                                        {r.from_department}
+                                      </span>
+                                      <ArrowRight className="h-3 w-3 shrink-0 text-zinc-400" />
+                                      <span className="rounded bg-blue-600 px-1.5 py-0.5 font-medium text-white">
+                                        {r.to_department}
+                                      </span>
                                     </span>
+                                  </td>
+
+                                  <td className="px-4 py-3" data-label="Status">
                                     <span
                                       className={cn(
-                                        'shrink-0 text-[11px] font-medium',
-                                        meta.text,
+                                        'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold',
+                                        STATUS_STYLE[r.status],
                                       )}
                                     >
+                                      <StatusIcon className="h-3 w-3" />
                                       {STATUS_LABEL[r.status]}
                                     </span>
-                                  </div>
-                                  <span
-                                    className="shrink-0 text-[11px] tabular-nums text-zinc-400 dark:text-zinc-500"
-                                    title={fullStamp(stamp)}
-                                  >
-                                    {timeAgo(stamp)}
-                                  </span>
-                                </div>
+                                    {sheetFailed && (
+                                      <div
+                                        className="mt-1 inline-flex items-center gap-1 text-[11px] font-medium text-amber-600 dark:text-amber-400"
+                                        title={r.sheet_sync_error ?? 'The Google Sheet write-back failed.'}
+                                      >
+                                        <AlertTriangle className="h-3 w-3" />
+                                        Sheet not synced
+                                      </div>
+                                    )}
+                                  </td>
 
-                                {/* Line 2 — the move, as chips consistent with the Release queue. */}
-                                <div className="mt-1.5 flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 text-[11px]">
-                                  <span className="shrink-0 rounded bg-zinc-100 px-1.5 py-0.5 font-medium text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
-                                    {r.from_department}
-                                  </span>
-                                  <ArrowRight className="h-3 w-3 shrink-0 text-zinc-400" />
-                                  <span className="shrink-0 rounded bg-blue-600 px-1.5 py-0.5 font-medium text-white">
-                                    {r.to_department}
-                                  </span>
-                                  {effDate && (
-                                    <span className="shrink-0 text-zinc-400 dark:text-zinc-500">
-                                      eff {effDate}
-                                    </span>
-                                  )}
-                                  <span className="min-w-0 truncate text-zinc-400 dark:text-zinc-500">
-                                    by {r.requested_by}
-                                  </span>
-                                </div>
+                                  <td className="px-4 py-3" data-label="Effective">
+                                    {effDate ? (
+                                      <>
+                                        <div className="tabular-nums text-zinc-700 dark:text-zinc-200">
+                                          {effDate}
+                                        </div>
+                                        {!effLocked && (
+                                          <div className="mt-0.5 text-[11px] text-zinc-400 dark:text-zinc-500">
+                                            proposed
+                                          </div>
+                                        )}
+                                      </>
+                                    ) : (
+                                      <span className="text-zinc-400 dark:text-zinc-600">—</span>
+                                    )}
+                                  </td>
 
-                                {/* Line 3 — the decline/cancel reason, given room to read. */}
-                                {note && (
-                                  <p className="mt-1.5 rounded-md bg-rose-50 px-2 py-1 text-[11px] leading-snug text-rose-700 dark:bg-rose-500/10 dark:text-rose-300">
-                                    &ldquo;{note}&rdquo;
-                                  </p>
-                                )}
-                              </div>
+                                  <td className="px-4 py-3" data-label="Requested by">
+                                    <div className="truncate text-zinc-700 dark:text-zinc-200">
+                                      {r.requested_by}
+                                    </div>
+                                    <div
+                                      className="mt-0.5 text-[11px] text-zinc-400 dark:text-zinc-500"
+                                      title={fullStamp(r.created_at)}
+                                    >
+                                      {timeAgo(r.created_at)}
+                                    </div>
+                                  </td>
 
-                              {/* Delete — quiet until you reach for the row, but always
-                                  reachable on touch (no hover) via the faint resting state. */}
-                              <div className="mt-0.5 shrink-0 opacity-40 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100">
-                                {renderDeleteControl(r)}
-                              </div>
-                            </div>
-                          );
-                        })}
+                                  <td className="px-4 py-3" data-label="Decided by">
+                                    {r.approver_email ? (
+                                      <div className="truncate text-zinc-700 dark:text-zinc-200">
+                                        {r.approver_email}
+                                      </div>
+                                    ) : (
+                                      <div className="text-zinc-400 dark:text-zinc-600">
+                                        {r.status === 'cancelled' ? 'Withdrawn' : '—'}
+                                      </div>
+                                    )}
+                                    <div
+                                      className={cn('mt-0.5 text-[11px]', meta.text)}
+                                      title={fullStamp(decidedStamp)}
+                                    >
+                                      {timeAgo(decidedStamp)}
+                                    </div>
+                                  </td>
+
+                                  <td className="px-4 py-3 text-right" data-label="Actions">
+                                    {confirmDeleteId === r.id ? (
+                                      <span className="inline-flex items-center justify-end gap-2">
+                                        <button
+                                          type="button"
+                                          onClick={() => void deleteRequest(r)}
+                                          disabled={busyId === r.id}
+                                          className="inline-flex items-center gap-1 font-semibold text-rose-600 hover:underline disabled:opacity-50 dark:text-rose-400"
+                                        >
+                                          {busyId === r.id ? (
+                                            <Loader2 className="h-3 w-3 animate-spin" />
+                                          ) : (
+                                            <Trash2 className="h-3 w-3" />
+                                          )}
+                                          Confirm
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() => setConfirmDeleteId(null)}
+                                          className="text-zinc-400 hover:underline"
+                                        >
+                                          Cancel
+                                        </button>
+                                      </span>
+                                    ) : (
+                                      <span className="inline-flex items-center justify-end gap-3">
+                                        <button
+                                          type="button"
+                                          onClick={() => setViewRowId(r.id)}
+                                          className="inline-flex items-center gap-1 font-medium text-blue-600 hover:underline dark:text-blue-400"
+                                        >
+                                          <Eye className="h-3 w-3" />
+                                          View
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() => openEdit(r)}
+                                          className="inline-flex items-center gap-1 font-medium text-zinc-600 hover:underline dark:text-zinc-300"
+                                        >
+                                          <Pencil className="h-3 w-3" />
+                                          Edit
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() => setConfirmDeleteId(r.id)}
+                                          disabled={busyId === r.id}
+                                          className="inline-flex items-center gap-1 font-medium text-zinc-500 hover:text-rose-600 hover:underline disabled:opacity-50 dark:text-zinc-400 dark:hover:text-rose-400"
+                                        >
+                                          <Trash2 className="h-3 w-3" />
+                                          Delete
+                                        </button>
+                                      </span>
+                                    )}
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
                       </div>
                     </div>
                     <Paginator
                       page={safePage}
                       pageCount={pageCount}
-                      total={done.length}
+                      total={filteredDone.length}
                       from={pageStart}
                       to={pageEnd}
                       onPage={setPage}
                       noun="records"
                     />
                     </>
+                    )}
+                    </>
                   )}
                 </motion.div>
               </AnimatePresence>
             )}
           </div>
-
-          {/* ANALYTICS — wide right area. Below the queue on narrow screens. */}
-          <aside className="order-2 min-w-0">
-            {analytics}
-          </aside>
-        </div>
+        )}
       </div>
 
       {canRequest && (
@@ -1248,6 +1782,247 @@ export default function ManagerTransfers({ myDepartments, canInitiate }: Props) 
           onSubmitted={() => load()}
         />
       )}
+
+      {/* View — the whole record, grouped into the four questions you actually
+          ask of a transfer: who moved, who asked, who decided, and did the
+          downstream write land. Everything the table can't fit lives here. */}
+      <Dialog open={!!viewRow} onOpenChange={(o) => !o && setViewRowId(null)}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <ArrowRightLeft className="h-4 w-4 text-blue-600 dark:text-blue-400" />
+              Transfer record
+            </DialogTitle>
+            <DialogDescription>
+              The full history of this move, including what the table doesn&rsquo;t show.
+            </DialogDescription>
+          </DialogHeader>
+
+          {viewRow &&
+            (() => {
+              const meta = STATUS_META[viewRow.status];
+              const StatusIcon = meta.icon;
+              const effLocked = !!viewRow.effective_date;
+              const effDate = viewRow.effective_date ?? viewRow.proposed_effective_date;
+              return (
+                <div className="max-h-[62vh] space-y-4 overflow-y-auto pr-1">
+                  {/* Banner — who, the move, and the outcome at a glance. The
+                      hatch is the record's one material moment: a woven
+                      hairline weave that gives the header a surface to sit on
+                      without adding colour weight. */}
+                  <div className="record-hatch overflow-hidden rounded-xl bg-blue-50/60 p-3 ring-1 ring-inset ring-blue-200/70 dark:bg-blue-950/25 dark:ring-blue-900/50">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="truncate text-sm font-semibold text-zinc-900 dark:text-white">
+                          {viewRow.employee_name ?? viewRow.employee_email}
+                        </div>
+                        <div className="truncate text-[11px] text-zinc-600 dark:text-zinc-400">
+                          {viewRow.employee_email}
+                        </div>
+                      </div>
+                      <span
+                        className={cn(
+                          'inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold',
+                          STATUS_STYLE[viewRow.status],
+                        )}
+                      >
+                        <StatusIcon className="h-3 w-3" />
+                        {STATUS_LABEL[viewRow.status]}
+                      </span>
+                    </div>
+
+                    <div className="mt-3 flex items-center gap-1.5 text-[11px]">
+                      <span className="min-w-0 truncate rounded bg-white/90 px-1.5 py-0.5 font-medium text-zinc-700 ring-1 ring-inset ring-zinc-200/80 dark:bg-zinc-800 dark:text-zinc-200 dark:ring-zinc-700/60">
+                        {viewRow.from_department}
+                      </span>
+                      <ArrowRight className="h-3 w-3 shrink-0 text-blue-500 dark:text-blue-400" />
+                      <span className="min-w-0 truncate rounded bg-blue-600 px-1.5 py-0.5 font-semibold text-white">
+                        {viewRow.to_department}
+                      </span>
+                    </div>
+
+                    {effDate && (
+                      <div className="mt-2 inline-flex items-center gap-1 text-[11px] text-zinc-600 dark:text-zinc-400">
+                        <CalendarClock className="h-3 w-3 shrink-0" />
+                        Effective {effDate}
+                        {/* "locked" inherits the line's colour; "proposed" is
+                            the exception worth flagging, so it takes amber-800
+                            (6.1:1 here — amber-700 measured 4.3:1 and fails). */}
+                        <span
+                          className={
+                            effLocked ? undefined : 'font-medium text-amber-800 dark:text-amber-400'
+                          }
+                        >
+                          ({effLocked ? 'locked' : 'proposed'})
+                        </span>
+                      </div>
+                    )}
+                  </div>
+
+                  <DetailSection title="Request" icon={Send}>
+                    <DetailRow label="Requested by" value={viewRow.requested_by} />
+                    <DetailRow label="Requested at" value={fullStamp(viewRow.created_at) ?? null} />
+                  </DetailSection>
+                  <DetailNote label="Reason" value={viewRow.reason} />
+
+                  <DetailSection title="Decision" icon={ClipboardCheck}>
+                    <DetailRow
+                      label="Decided by"
+                      value={
+                        viewRow.approver_email ??
+                        (viewRow.status === 'cancelled' ? 'Withdrawn by the requester' : null)
+                      }
+                    />
+                    <DetailRow label="Decided at" value={fullStamp(viewRow.decided_at) ?? null} />
+                    {viewRow.applied_at && (
+                      <DetailRow label="Applied at" value={fullStamp(viewRow.applied_at) ?? null} />
+                    )}
+                  </DetailSection>
+                  <DetailNote
+                    label="Approver note"
+                    value={viewRow.approver_note}
+                    tone={
+                      viewRow.status === 'rejected' || viewRow.status === 'cancelled' ? 'rose' : 'neutral'
+                    }
+                  />
+
+                  <DetailSection title="Employee contact" icon={Inbox}>
+                    <DetailRow
+                      label="Personal email"
+                      value={viewRow.employee_personal_email ?? viewRow.employee_email}
+                    />
+                    <DetailRow label="Work email" value={viewRow.employee_work_email} />
+                  </DetailSection>
+
+                  {viewRow.status === 'applied' && (
+                    <>
+                      <DetailSection title="Downstream sync" icon={RefreshCw}>
+                        <DetailRow
+                          label="Google Sheet"
+                          value={viewRow.sheet_synced ? 'Synced' : 'Not synced'}
+                        />
+                      </DetailSection>
+                      <DetailNote label="Sync error" value={viewRow.sheet_sync_error} tone="rose" />
+                    </>
+                  )}
+                </div>
+              );
+            })()}
+
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                const r = viewRow;
+                setViewRowId(null);
+                if (r) openEdit(r);
+              }}
+              className="gap-1.5"
+            >
+              <Pencil className="h-3.5 w-3.5" />
+              Edit
+            </Button>
+            <Button type="button" size="sm" onClick={() => setViewRowId(null)}>
+              Close
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit — correctable paperwork only. Status and the departments are
+          deliberately absent: the move has already been written to the master
+          list, so editing them here would desync the record from reality. */}
+      <Dialog open={!!editRow} onOpenChange={(o) => !o && setEditRowId(null)}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Pencil className="h-4 w-4 text-blue-600 dark:text-blue-400" />
+              Edit transfer record
+            </DialogTitle>
+            <DialogDescription>
+              {editRow?.employee_name ?? editRow?.employee_email} — {editRow?.from_department} →{' '}
+              {editRow?.to_department}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-3">
+            <div>
+              <label className="mb-1 flex items-center gap-1.5 text-xs font-medium text-zinc-600 dark:text-zinc-400">
+                <CalendarClock className="h-3.5 w-3.5" />
+                Effective date
+              </label>
+              <DatePicker
+                value={editEffective}
+                onChange={setEditEffective}
+                className="h-9 text-sm focus-visible:border-blue-300 focus-visible:ring-blue-200 dark:bg-zinc-900"
+              />
+              <p className="mt-1 text-[11px] text-zinc-400">
+                Payroll prorates the rate change from this date, so it still matters after the move
+                has been applied.
+                {!editRow?.effective_date && editRow?.proposed_effective_date && (
+                  <>
+                    {' '}
+                    This transfer has no locked date — the requester proposed{' '}
+                    <strong className="text-zinc-500 dark:text-zinc-300">
+                      {editRow.proposed_effective_date}
+                    </strong>
+                    .
+                  </>
+                )}
+              </p>
+            </div>
+
+            <div>
+              <label className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-400">
+                Reason
+              </label>
+              <textarea
+                value={editReason}
+                onChange={(e) => setEditReason(e.target.value)}
+                rows={2}
+                placeholder="Why this transfer was requested"
+                className="w-full rounded-lg border border-zinc-200 bg-white px-2.5 py-2 text-sm text-zinc-900 placeholder:text-zinc-400 focus:border-blue-300 focus:outline-none focus:ring-1 focus:ring-blue-200 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
+              />
+            </div>
+
+            <div>
+              <label className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-400">
+                Approver note
+              </label>
+              <textarea
+                value={editNote}
+                onChange={(e) => setEditNote(e.target.value)}
+                rows={2}
+                placeholder="The decline / withdrawal note shown to the requester"
+                className="w-full rounded-lg border border-zinc-200 bg-white px-2.5 py-2 text-sm text-zinc-900 placeholder:text-zinc-400 focus:border-blue-300 focus:outline-none focus:ring-1 focus:ring-blue-200 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
+              />
+            </div>
+
+            <p className="rounded-lg bg-zinc-50 px-2.5 py-2 text-[11px] leading-snug text-zinc-500 dark:bg-zinc-900 dark:text-zinc-400">
+              Status and departments aren&rsquo;t editable — the move is already written to the
+              master list. To reverse a transfer, raise a new one in the other direction.
+            </p>
+          </div>
+
+          <DialogFooter>
+            <Button type="button" variant="outline" size="sm" onClick={() => setEditRowId(null)}>
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              onClick={() => void saveEdit()}
+              disabled={savingEdit}
+              className="gap-1.5 bg-blue-600 text-white hover:bg-blue-700"
+            >
+              {savingEdit ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
+              Save changes
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

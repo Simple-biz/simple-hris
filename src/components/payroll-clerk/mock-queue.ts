@@ -128,6 +128,13 @@ export interface ExcludedRow {
    */
   departmentKey?: string | null;
   departmentName?: string | null;
+  /** See {@link QueueRow.payeeKind}. Absent means 'employee'. */
+  payeeKind?: 'employee' | 'contractor';
+  /** See {@link QueueRow.contractorRole} — display only. */
+  contractorRole?: boolean;
+  /** The `contractor_invoices.id` behind this row, when it came from an invoice. */
+  contractorInvoiceId?: string | null;
+  invoiceNumber?: string | null;
   /**
    * Present when this person was excluded from pay in the Payroll Wizard
    * ('do_not_pay') but is otherwise dispatchable (has bank + pay + hours). The
@@ -239,6 +246,37 @@ export interface QueueRow {
    */
   departmentKey: string | null;
   departmentName: string | null;
+  /**
+   * SETTLEMENT KIND. Absent/undefined means 'employee' — the hourly payroll rows
+   * built by {@link buildQueueFromRates}, i.e. every row that existed before
+   * contractors joined the queue.
+   *
+   * 'contractor' is set ONLY by src/lib/contractor/contractor-dispatch-queue.ts,
+   * on a row that settles one approved `contractor_invoices` row, and it always
+   * travels with {@link contractorInvoiceId}. It is paid through the same
+   * processors, the same Mark Paid dialog and the same already-paid filter as
+   * anyone else; the flag only selects the invoice-settlement path on the POST.
+   *
+   * NEVER set this for display purposes — an hourly row that carries it would
+   * POST payee_type='contractor' with no invoice id and be rejected 400, making
+   * that employee unpayable. Use {@link contractorRole} to badge a person.
+   *
+   * Deliberately OPTIONAL: three call sites build a QueueRow (here, plus
+   * `toQueueRow` / `toQueueRowOneOff` in UrgentPaymentsQueue.tsx), and a required
+   * field would break the Urgent adapters.
+   */
+  payeeKind?: 'employee' | 'contractor';
+  /**
+   * DISPLAY ONLY: this person holds the `contractor` role, so the Contractor
+   * badge shows on their row even when this particular payment is ordinary hourly
+   * payroll (e.g. thea@, issa@ — contractors who also log Hubstaff hours).
+   * Deliberately has no effect on settlement.
+   */
+  contractorRole?: boolean;
+  /** The `contractor_invoices.id` this row settles. Only set on invoice-derived rows. */
+  contractorInvoiceId?: string | null;
+  /** Human invoice number (e.g. "circarrst-7-19-26-10"), shown beside the badge. */
+  invoiceNumber?: string | null;
   details: {
     email?: string;
     hurupay_email?: string;

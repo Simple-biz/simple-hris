@@ -23,9 +23,10 @@ import {
   canAccessHslDept,
   formatPeso,
 } from '@/lib/hsl-bonus/schema';
-import { DEPARTMENTS, MANAGER_BONUS_DEPT_KEYS } from '@/lib/payroll/department-bonus';
+import { MANAGER_BONUS_DEPT_KEYS } from '@/lib/payroll/department-bonus';
 import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
 import { slugifyDeptKey } from '@/lib/departments/registry';
+import { CATALOG_DEPT_COLOR, catalogDeptName } from '@/lib/departments/dept-identity';
 import HslBonusReadyPreview from './HslBonusReadyPreview';
 import { toast } from 'sonner';
 
@@ -75,38 +76,12 @@ interface ManagerBonusHistoryProps {
   isElevated: boolean;
 }
 
-// Catalog department colours (mirror DeptBonusCalculator's identity palette).
-const CATALOG_DEPT_COLOR: Record<string, string> = {
-  accounting: '#10b981',
-  edit: '#3b82f6',
-  devs: '#8b5cf6',
-  lead_gen: '#f59e0b',
-  callback: '#06b6d4',
-  qc: '#f97316',
-  discovery: '#14b8a6',
-  hr: '#ec4899',
-  sales: '#ef4444', // keep in lockstep with DeptBonusCalculator's DEPT_COLOR
-  sales_assistant: '#6366f1',
-  smm: '#d946ef',
-  pm_team: '#0ea5e9',
-  client_va: '#84cc16',
-  site_building: '#64748b',
-};
-
-/** Unknown keys are in-app (Payment Catalog -> Department) departments whose
- *  slug derives from the label -- humanize it back ("executive_assistants" ->
- *  "Executive Assistants"). Already-human labels pass through unchanged. */
-function humanizeDeptKey(key: string): string {
-  return key.replace(/_+/g, ' ').replace(/(^|\s)[a-z]/g, (c) => c.toUpperCase());
-}
-
 function deptDisplay(kind: RowKind, department: string): { name: string; color: string | undefined } {
   if (kind === 'hsl') {
     const d = HSL_DEPTS[department as HslDeptKey];
     return { name: d?.name ?? department, color: d?.color };
   }
-  const d = DEPARTMENTS.find((x) => x.key === department);
-  return { name: d?.name ?? humanizeDeptKey(department), color: CATALOG_DEPT_COLOR[department] };
+  return { name: catalogDeptName(department), color: CATALOG_DEPT_COLOR[department] };
 }
 
 const STATUS_PALETTE: Record<
@@ -443,7 +418,7 @@ export default function ManagerBonusHistory({
     ...visibleHslDepts.map((k) => ({ key: k, label: HSL_DEPTS[k].name, color: HSL_DEPTS[k].color })),
     ...visibleCatalogDepts.map((k) => ({
       key: k,
-      label: DEPARTMENTS.find((d) => d.key === k)?.name ?? humanizeDeptKey(k),
+      label: catalogDeptName(k),
       color: CATALOG_DEPT_COLOR[k],
     })),
   ];

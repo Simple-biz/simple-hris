@@ -123,6 +123,41 @@ export async function getTransferRequestById(id: string): Promise<{
   return { row: (data as DepartmentTransferRequestRow) ?? null, error: error?.message ?? null };
 }
 
+/**
+ * Edits the RECORD fields of a transfer request (the Done tab's Edit action).
+ *
+ * Deliberately excludes `status` and the from/to departments: those are already
+ * reflected in the master list (and the Sheet), so editing them here would
+ * desync the record from what actually happened to the person. What's left is
+ * genuinely correctable paperwork:
+ *   effective_date — still load-bearing AFTER an apply: payroll prorates the
+ *                    rate change by it, so a wrong date is a real pay bug.
+ *   reason         — the requester's rationale.
+ *   approver_note  — the decline/cancel note.
+ *
+ * `updated_at` is bumped so the edit surfaces as the row's latest activity
+ * (Done is ordered by updated_at).
+ */
+export async function updateTransferRequestFields(params: {
+  id: string;
+  effective_date: string | null;
+  reason: string | null;
+  approver_note: string | null;
+}): Promise<{ error: string | null }> {
+  const supabase = createSupabaseServiceRoleClient();
+  if (!supabase) return { error: 'Supabase not configured' };
+  const { error } = await supabase
+    .from(TABLE)
+    .update({
+      effective_date: params.effective_date,
+      reason: params.reason,
+      approver_note: params.approver_note,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', params.id);
+  return { error: error?.message ?? null };
+}
+
 /** Hard-delete a transfer request row (record cleanup). Does NOT reverse an
  *  already-applied department move — it only removes the request record. */
 export async function deleteTransferRequestById(id: string): Promise<{ error: string | null }> {

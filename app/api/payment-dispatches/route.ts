@@ -70,6 +70,28 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  // ── Contractor payee validation ────────────────────────────────────────────
+  // A contractor dispatch settles exactly one approved invoice, so it must name
+  // it. Neither field joins the `required` list above — an employee payment must
+  // keep working with a body that has never heard of them.
+  const payeeType = body.payee_type === 'contractor' ? 'contractor' : 'employee';
+  const contractorInvoiceId =
+    typeof body.contractor_invoice_id === 'string' && body.contractor_invoice_id.trim()
+      ? body.contractor_invoice_id.trim()
+      : null;
+  if (payeeType === 'contractor' && !contractorInvoiceId) {
+    return NextResponse.json(
+      { row: null, error: 'contractor_invoice_id is required when payee_type is contractor' },
+      { status: 400 },
+    );
+  }
+  if (payeeType === 'employee' && contractorInvoiceId) {
+    return NextResponse.json(
+      { row: null, error: 'contractor_invoice_id requires payee_type "contractor"' },
+      { status: 400 },
+    );
+  }
+
   // Identify the operator for audit trail.
   let createdBy: string | null = null;
   let createdByRole = 'user';
@@ -81,9 +103,106 @@ export async function POST(req: NextRequest) {
     /* ignore — audit trail is best-effort */
   }
 
-  const { row, error } = await insertPaymentDispatch({ ...body, created_by: createdBy });
+  // ── CLAIM BEFORE MONEY ─────────────────────────────────────────────────────
+  // Stamp dispatch_claimed_at first, conditional on the invoice still being
+  // approved AND unclaimed. Two clerks clicking Mark Paid at once therefore
+  // produce one 200 and one 409, and no dispatch row is written for the loser.
+  // Mirrors the retract race guard in /api/contractor/invoices.
+  //
+  // Only a 'paid' outcome claims: a 'problem' / 'not_paid' / 'threshold' attempt
+  // is a log entry, not a settlement, so the invoice must stay payable for the
+  // retry. (The partial unique index is scoped to status='paid' for the same
+  // reason.)
+  const claimsInvoice = payeeType === 'contractor' && (body.status ?? 'paid') === 'paid';
+  let invoiceNumberForNote: string | null = null;
+  if (claimsInvoice && contractorInvoiceId) {
+    const supabase = createSupabaseServiceRoleClient();
+    if (!supabase) {
+      return NextResponse.json({ row: null, error: 'Supabase client unavailable' }, { status: 500 });
+    }
+    const nowIso = new Date().toISOString();
+    const { data: claimed, error: claimErr } = await supabase
+      .from('contractor_invoices')
+      .update({ dispatch_claimed_at: nowIso, last_dispatched_at: nowIso })
+      .eq('id', contractorInvoiceId)
+      .eq('status', 'approved')
+      .is('dispatch_id', null)
+      .is('dispatch_claimed_at', null)
+      .select('id, invoice_number');
+    if (claimErr) {
+      return NextResponse.json({ row: null, error: `Could not claim invoice: ${claimErr.message}` }, { status: 500 });
+    }
+    if (!claimed || claimed.length === 0) {
+      return NextResponse.json(
+        {
+          row: null,
+          error:
+            'This invoice was already dispatched (or is no longer approved). Refresh the queue — no payment was logged.',
+        },
+        { status: 409 },
+      );
+    }
+    invoiceNumberForNote = (claimed[0] as { invoice_number?: string | null }).invoice_number ?? null;
+  } else if (payeeType === 'contractor' && contractorInvoiceId) {
+    // Non-settling attempt (problem / not_paid / threshold): the id is deliberately
+    // NOT persisted on the row, so the note is the only trace of which invoice this
+    // attempt was for. Best-effort.
+    const supabase = createSupabaseServiceRoleClient();
+    const { data } = (await supabase
+      ?.from('contractor_invoices')
+      .select('invoice_number')
+      .eq('id', contractorInvoiceId)
+      .maybeSingle()) ?? { data: null };
+    invoiceNumberForNote = (data as { invoice_number?: string | null } | null)?.invoice_number ?? null;
+  }
+
+  const noteWithInvoice = invoiceNumberForNote
+    ? [body.note?.trim() || null, `Contractor invoice: ${invoiceNumberForNote}`].filter(Boolean).join(' · ')
+    : body.note;
+
+  const { row, error } = await insertPaymentDispatch({
+    ...body,
+    note: noteWithInvoice ?? null,
+    payee_type: payeeType,
+    // Only the row that actually CLAIMED the invoice stores its id. A
+    // 'problem'/'not_paid'/'threshold' attempt deliberately leaves the invoice
+    // payable, so if it also carried the id, deleting that retry marker later
+    // would trip the release trigger's fallback branch and un-settle an invoice
+    // the successful retry had already paid. The invoice number stays in `note`
+    // for traceability on those attempts.
+    contractor_invoice_id: claimsInvoice ? contractorInvoiceId : null,
+    created_by: createdBy,
+  });
   if (error || !row) {
+    // Release the claim — no money was recorded, so the invoice must stay payable.
+    if (claimsInvoice && contractorInvoiceId) {
+      const supabase = createSupabaseServiceRoleClient();
+      await supabase
+        ?.from('contractor_invoices')
+        .update({ dispatch_claimed_at: null })
+        .eq('id', contractorInvoiceId);
+    }
     return NextResponse.json({ row: null, error: error ?? "Insert failed" }, { status: 500 });
+  }
+
+  // Settle: link the invoice to the dispatch row that paid it. The AFTER DELETE
+  // trigger clears both this and dispatch_claimed_at if the payment is undone.
+  if (claimsInvoice && contractorInvoiceId) {
+    const supabase = createSupabaseServiceRoleClient();
+    const { error: linkErr } = (await supabase
+      ?.from('contractor_invoices')
+      .update({ dispatch_id: row.id })
+      .eq('id', contractorInvoiceId)) ?? { error: null };
+    if (linkErr) {
+      // The money IS recorded, so never fail the request here — but the invoice
+      // would stay claimed-but-unlinked, which the queue already treats as not
+      // payable. Log loudly so it can be reconciled.
+      console.error('[payment-dispatches] invoice settled but dispatch_id link failed', {
+        contractorInvoiceId,
+        dispatchId: row.id,
+        error: linkErr.message,
+      });
+    }
   }
 
   // Nudge the CEO live "payments to send" counter to refetch (via app_settings
@@ -107,6 +226,9 @@ export async function POST(req: NextRequest) {
       bank_used: row.bank_used,
       sent_date: row.sent_date,
       status: row.status,
+      payee_type: payeeType,
+      contractor_invoice_id: contractorInvoiceId,
+      invoice_number: invoiceNumberForNote,
       cycle: {
         cycle_id: row.cycle_id,
         source_file: row.cycle_source_file ?? null,
@@ -140,7 +262,11 @@ export async function POST(req: NextRequest) {
     sent: false,
     error: null,
   };
-  if (row.status === "paid" && row.cycle_source_file) {
+  // Contractor rows are excluded: an invoice payment has no staged paystub, and
+  // pushing one would email an employee-shaped statement, fire a false "Salary
+  // Paid" notification, and raise a bogus amount-mismatch warning against the
+  // ₱0 staged rows that Claire/Carla carry from their employee identities.
+  if (row.status === "paid" && row.cycle_source_file && payeeType !== 'contractor') {
     try {
       // Freshest truth for this (cycle, employee): the staged payload with any
       // NEWER wizard-snapshot figures merged over it. The wizard keeps

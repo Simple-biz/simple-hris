@@ -207,7 +207,7 @@ export default function PayrollDispatch() {
   // past week's source file so accounting can work historical data while not
   // yet live; everything (queue, dispatches, paystubs) follows the chosen week.
   const [selectedSourceFile, setSelectedSourceFile] = useState<string | null>(null);
-  const { rows: fetched, excluded, paid, period, wizardReady, loading, error, refresh } =
+  const { rows: fetched, excluded, paid, period, wizardReady, loading, error, contractorError, refresh } =
     useDispatchQueue(selectedSourceFile);
   const viewingPastWeek = selectedSourceFile != null;
   const { state: lockState, setLocked } = useDispatchLock();
@@ -487,8 +487,17 @@ export default function PayrollDispatch() {
     // payment + one paystub email per cycle (each keyed to its own staged
     // payload). A normal pay is just the single current cycle. Prior cycles get
     // their real period dates back from the filename.
+    // A contractor row settles ONE invoice in the cycle being viewed, so it never
+    // takes the multi-cycle arrears path — that loop would POST the same
+    // contractor_invoice_id once per held cycle and every attempt after the first
+    // would 409 on the claim guard.
+    //
+    // Gated on the INVOICE LINK, never on the badge: `contractorRole` marks people
+    // who hold the contractor role but are being paid ordinary hourly payroll, and
+    // treating them as invoice settlements would 400 every one of their payments.
+    const isContractorRow = !!row.contractorInvoiceId;
     const cycles =
-      arrears && arrears.cycles.length > 0
+      arrears && arrears.cycles.length > 0 && !isContractorRow
         ? arrears.cycles.map((c) => {
             const p = parseCyclePeriodFromFile(c.sourceFile);
             return {
@@ -551,6 +560,11 @@ export default function PayrollDispatch() {
             arrival_date: payload.arrivalDate || null,
             status: payload.status,
             note: payload.note || null,
+            // Contractor settlement. Only sent on the leg that matches the cycle
+            // being viewed, so no arrears fan-out can claim the same invoice twice.
+            payee_type: isContractorRow ? 'contractor' : 'employee',
+            contractor_invoice_id:
+              isContractorRow && c.sourceFile === period.sourceFile ? row.contractorInvoiceId ?? null : null,
           }),
         });
         const json = (await res.json()) as {
@@ -623,14 +637,39 @@ export default function PayrollDispatch() {
       toast.warning(`${row.name} marked paid — paystub email failed`, {
         description: `${lastSendError ?? 'send error'}. Re-send from the Excluded tab.`,
       });
-    } else if (notStaged) {
+    } else if (notStaged && !isContractorRow) {
+      // Contractors are paid off an invoice and never have a staged paystub, so
+      // this warning (and its "lock in this cycle" advice) would be wrong on
+      // every contractor payment — they fall through to the plain success toast.
       toast.warning(`${row.name} marked paid — no staged paystub to email`, {
         description: 'Lock in this cycle from the Payroll Wizard to enable paystub emails.',
+      });
+    } else if (isContractorRow) {
+      toast.success(`${row.name} marked paid`, {
+        icon: '✨',
+        description: row.invoiceNumber ? `Invoice ${row.invoiceNumber} settled.` : undefined,
       });
     } else {
       toast.success(`${row.name} marked paid`, { icon: '✨' });
     }
   };
+
+  /**
+   * Contractor invoices failed to load. NOT an error state for the whole screen —
+   * employee payroll is unaffected — but it must be visible: otherwise a missing
+   * migration or a failed read looks exactly like "no approved invoices" and real
+   * money is silently absent from a queue that appears healthy.
+   */
+  const contractorErrorBanner = contractorError ? (
+    <div className="mx-4 mt-3 flex items-start gap-2 rounded-lg border border-amber-300/70 bg-amber-50 px-3 py-2 text-[11px] text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200">
+      <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+      <span>
+        <strong className="font-semibold">Contractor invoices could not be loaded</strong> — approved
+        invoices are NOT shown in this queue. Employee payroll below is unaffected.
+        <span className="ml-1 font-mono opacity-80">{contractorError}</span>
+      </span>
+    </div>
+  ) : null;
 
   const renderBody = () => {
     // Show the skeleton while the network is still in flight OR while we
@@ -1080,6 +1119,9 @@ export default function PayrollDispatch() {
               transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
               className="flex h-full min-h-0 flex-col"
             >
+              {/* Only over queue views — Reports / Urgent / Orphanage / Notifications
+                  do not read the contractor source. */}
+              {!['reports', 'notifications', 'orphanage', 'urgent'].includes(activeTab) && contractorErrorBanner}
               {renderBody()}
             </motion.div>
           </AnimatePresence>

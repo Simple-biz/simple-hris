@@ -5,10 +5,11 @@ import { resolveFirstName } from '@/lib/name/first-name';
 import { toast } from 'sonner';
 import AppFooter from '@/components/AppFooter';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { AnimatePresence, motion } from 'motion/react';
+import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import {
   AlertTriangle,
   Briefcase,
+  CalendarDays,
   Camera,
   Check,
   CheckCircle2,
@@ -27,6 +28,7 @@ import {
   Loader2,
   Mail,
   Pencil,
+  Sparkles,
   Undo2,
   UserMinus,
   X,
@@ -51,7 +53,13 @@ import SWall from '@/components/swall/SWall';
 import HslBonusCalculator from '@/components/manager/HslBonusCalculator';
 import DeptBonusCalculator from '@/components/manager/DeptBonusCalculator';
 import ManagerBonusHistory from '@/components/manager/ManagerBonusHistory';
-import { HSL_DEPT_KEYS, canAccessHslDept } from '@/lib/hsl-bonus/schema';
+import { HSL_DEPT_KEYS, canAccessHslDept, type HslDeptKey } from '@/lib/hsl-bonus/schema';
+import {
+  isOutstanding,
+  useBonusScoringQueue,
+  type BonusScoringQueue,
+  type ScoringState,
+} from '@/lib/manager/use-bonus-scoring-queue';
 import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
 import { slugifyDeptKey } from '@/lib/departments/registry';
 import { DEPT_INPUT_CONFIG } from '@/lib/payroll/department-bonus';
@@ -299,10 +307,30 @@ export default function ManagerApp() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [permsReady, pagesReady, visibleManagerKey, activeTab]);
 
+  // Deep-link from the Overview "Bonuses to score" panel into the KPI Calculator
+  // with one department already open. Consumed by each calculator's own
+  // initial-open prop when it mounts (the tab switch remounts it).
+  const [kpiFocus, setKpiFocus] = useState<{ kind: 'hsl' | 'catalog'; key: string } | null>(null);
+
   const handleNavigate = (tab: ManagerTab) => {
     setActiveTab(tab);
     setMobileNavOpen(false);
+    // A plain nav is not a deep-link: drop any pending Overview focus so the KPI
+    // tab doesn't re-open a department the manager already dealt with.
+    setKpiFocus(null);
   };
+
+  const handleJumpToScoring = React.useCallback(
+    (dept?: { kind: 'hsl' | 'catalog'; key: string }) => {
+      setKpiFocus(dept ?? null);
+      // Managers who own both calculators see one at a time — show the one that
+      // owns the clicked department.
+      if (dept) setKpiCalc(dept.kind === 'hsl' ? 'hsl' : 'dept');
+      setActiveTab('hsl-bonus');
+      setMobileNavOpen(false);
+    },
+    [],
+  );
 
   // Deep-link from the Overview spotlight into My Team with a specific employee's
   // profile open. `teamFocusEmail` is consumed (cleared) once the panel opens it.
@@ -396,9 +424,12 @@ export default function ManagerApp() {
                   teamMembers={teamMembers}
                   teamCount={teamGate.kind === 'loading' ? null : teamMembers.length}
                   teamGate={teamGate}
+                  canScoreBonuses={visibleManagerTabs.includes('hsl-bonus')}
+                  scoringGateReady={permsReady && pagesReady}
                   onJumpToApprovals={() => handleNavigate('time-adjustments')}
                   onJumpToTeam={() => handleNavigate('team')}
                   onViewEmployee={handleViewEmployee}
+                  onJumpToScoring={handleJumpToScoring}
                 />
               )}
               {activeTab === 'time-adjustments' && (
@@ -533,7 +564,14 @@ export default function ManagerApp() {
                       </div>
                     )}
                     {active === 'hsl' && hslVisible && (
-                      <HslBonusCalculator viewerEmail={viewerEmail} managedDepts={managed} isElevated={elevated} />
+                      <HslBonusCalculator
+                        viewerEmail={viewerEmail}
+                        managedDepts={managed}
+                        isElevated={elevated}
+                        initialFilter={
+                          kpiFocus?.kind === 'hsl' ? (kpiFocus.key as HslDeptKey) : undefined
+                        }
+                      />
                     )}
                     {active === 'dept' && deptVisible && (
                       <DeptBonusCalculator
@@ -541,6 +579,7 @@ export default function ManagerApp() {
                         teamMembers={teamMembers}
                         managedDepts={managed}
                         isElevated={elevated}
+                        initialOpenDept={kpiFocus?.kind === 'catalog' ? kpiFocus.key : null}
                       />
                     )}
                   </div>
@@ -580,9 +619,18 @@ interface OverviewProps {
   teamMembers: EmployeeRow[];
   teamCount: number | null;
   teamGate: ManagerTeamGate;
+  /** Whether the KPI Calculator tab is available to this viewer — the "Bonuses
+   *  to score" box is hidden when it isn't (nothing to click through to). */
+  canScoreBonuses: boolean;
+  /** False while feature permissions / the department gate are still resolving.
+   *  `canScoreBonuses` isn't trustworthy until then, so the box holds a skeleton
+   *  rather than flashing "no access" at a manager who has it. */
+  scoringGateReady: boolean;
   onJumpToApprovals: () => void;
   onJumpToTeam: () => void;
   onViewEmployee: (email: string) => void;
+  /** Open the KPI Calculator, optionally landing on one department's card. */
+  onJumpToScoring: (dept?: { kind: 'hsl' | 'catalog'; key: string }) => void;
 }
 
 function Overview({
@@ -594,9 +642,12 @@ function Overview({
   teamMembers,
   teamCount,
   teamGate,
+  canScoreBonuses,
+  scoringGateReady,
   onJumpToApprovals,
   onJumpToTeam,
   onViewEmployee,
+  onJumpToScoring,
 }: OverviewProps) {
   // Resolve the manager's real first name. The email local part alone is
   // unreliable (e.g. "j.delacruz@…" → "J"), so look up the employee record and
@@ -631,6 +682,17 @@ function Overview({
     [realName, viewerEmail],
   );
 
+  // What the KPI Calculator still owes payroll for the live pay week. Shared by
+  // the tile and the "Bonuses to score" panel below so both read one fetch.
+  const scoring = useBonusScoringQueue({
+    managedDepts: teamGate.kind === 'department' ? teamGate.departments : [],
+    isElevated: teamGate.kind === 'elevated',
+    ready: scoringGateReady && canScoreBonuses && teamGate.kind !== 'loading',
+  });
+  // Keep the card's slot while the gate resolves; drop it once we know the
+  // viewer has no KPI Calculator to click through to.
+  const showScoring = !scoringGateReady || canScoreBonuses;
+
   // Warm, time-of-day welcome. Computed only after mount so the first client
   // render matches the server (UTC) and we don't trip the Manila-vs-UTC
   // hydration mismatch (React #418).
@@ -642,9 +704,9 @@ function Overview({
   }, [mounted]);
 
   return (
-    <div className="flex flex-col gap-5 px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
-      {/* Compact header — no marketing banner */}
-      <header className="flex items-start justify-between gap-4">
+    <div className="flex w-full flex-1 flex-col gap-4 px-4 py-5 sm:px-6 lg:px-8 lg:py-7">
+      {/* Gradient hero — the whole greeting lives in one calm band */}
+      <header className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-blue-600 via-blue-700 to-indigo-900 px-5 py-7 shadow-lg shadow-blue-900/20 sm:px-8">
         <style>{`
           @keyframes wave {
             0%, 60%, 100% { transform: rotate(0deg); }
@@ -654,34 +716,42 @@ function Overview({
             50%           { transform: rotate(-4deg); }
           }
         `}</style>
-        <div className="flex gap-3">
-          <div className="mt-1.5 h-8 w-0.5 shrink-0 rounded-full bg-blue-500" />
-          <div>
-            <div className="text-[10px] font-semibold uppercase tracking-[0.2em] text-zinc-500">
+        <div
+          aria-hidden
+          className="pointer-events-none absolute -right-20 -top-24 h-64 w-64 rounded-full bg-sky-300/25 blur-3xl"
+        />
+        <div
+          aria-hidden
+          className="pointer-events-none absolute -bottom-24 left-1/4 h-52 w-52 rounded-full bg-violet-400/20 blur-3xl"
+        />
+        <div className="relative flex items-start justify-between gap-4">
+          <div className="min-w-0">
+            <div className="text-[10px] font-semibold uppercase tracking-[0.22em] text-blue-100/80">
               Manager workspace
             </div>
-            <h1 className="mt-0.5 text-2xl font-bold tracking-tight text-zinc-900 sm:text-3xl dark:text-white">
-              Hi {greeting} <span className="inline-block origin-[70%_70%] motion-safe:animate-[wave_1.6s_ease-in-out_1]" aria-hidden>👋</span>
+            <h1 className="mt-1 text-2xl font-bold tracking-tight text-white sm:text-3xl">
+              Hi {greeting}{' '}
+              <span className="inline-block origin-[70%_70%] motion-safe:animate-[wave_1.6s_ease-in-out_1]" aria-hidden>
+                👋
+              </span>
             </h1>
-            <p className="mt-1 max-w-lg text-sm text-zinc-500 dark:text-zinc-400">
-              {welcome}
-            </p>
+            <p className="mt-1.5 max-w-lg text-sm text-blue-100/85">{welcome}</p>
           </div>
-        </div>
-        <div className="hidden shrink-0 items-center gap-1.5 rounded-full border border-zinc-200 bg-white px-3 py-1.5 text-[11px] font-medium text-zinc-500 sm:flex dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400">
-          <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-400" />
-          Live
+          <span className="hidden shrink-0 items-center gap-1.5 rounded-full border border-white/25 bg-white/10 px-3 py-1.5 text-[11px] font-medium text-white backdrop-blur-sm sm:inline-flex">
+            <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-300" />
+            Live
+          </span>
         </div>
       </header>
 
-      {/* KPI cards */}
-      <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+      {/* Three numbers, nothing else */}
+      <section className="grid gap-3 sm:grid-cols-3">
         <StatTile
           label="Pending approvals"
           value={pendingApprovals}
-          hint={pendingApprovals === 0 ? 'Nothing in your queue' : 'Time adjustments awaiting your sign-off'}
+          hint={pendingApprovals === 0 ? 'Nothing in your queue' : 'Awaiting your sign-off'}
           icon={ClipboardCheck}
-          accent="blue-bright"
+          accent="blue"
           onClick={onJumpToApprovals}
         />
         <StatTile
@@ -695,51 +765,147 @@ function Overview({
                 : teamGate.kind === 'department' && teamGate.departments.length === 0
                   ? 'No departments assigned yet — ask an admin'
                   : teamGate.kind === 'department'
-                    ? `Departments: ${teamGate.departments.join(', ')}`
+                    ? teamGate.departments.join(', ')
                     : teamCount === 0
                       ? 'No matching employees in roster'
-                      : 'Active roster (org-wide visibility)'
+                      : 'Active roster (org-wide)'
           }
           icon={Users}
-          accent="blue-deep"
+          accent="indigo"
           onClick={onJumpToTeam}
         />
         <StatTile
-          label="This pay cycle"
-          value="—"
-          hint="Sun–Sat. Bonus entry not wired yet."
-          icon={Clock}
-          accent="mono"
+          label="Bonuses to score"
+          value={
+            !showScoring
+              ? '—'
+              : scoring.loading || scoring.weekUnresolved
+                ? '—'
+                : scoring.outstanding
+          }
+          hint={
+            !showScoring
+              ? 'No KPI Calculator access'
+              : scoring.loading
+                ? 'Checking this pay cycle…'
+                : scoring.weekUnresolved
+                  ? 'Waiting on this week’s Hubstaff upload'
+                  : scoring.items.length === 0
+                    ? 'No bonus departments assigned'
+                    : scoring.outstanding === 0
+                      ? `All submitted · ${fmtPayWeek(scoring.weekStart, scoring.weekEnd)}`
+                      : `${scoring.outstanding === 1 ? 'Department' : 'Departments'} left · ${fmtPayWeek(scoring.weekStart, scoring.weekEnd)}`
+          }
+          icon={Sparkles}
+          accent={showScoring && scoring.outstanding > 0 ? 'amber' : 'slate'}
+          onClick={showScoring ? () => onJumpToScoring() : undefined}
         />
       </section>
 
-      {/* Gallery — latest request as the hero (left) + live team spotlight (right) */}
-      <section className="grid gap-5 lg:grid-cols-5">
-        <div className="lg:col-span-3">
-          <LatestRequestHero
-            requests={pendingRequests}
-            signedUrls={pendingSignedUrls}
-            loading={requestsLoading}
-            onReview={onJumpToApprovals}
+      {/* Plain panels — what needs you, who's around, and what payroll is still
+          waiting on. `flex-1` lets them stretch to the bottom of the viewport
+          instead of floating mid-page. */}
+      <section
+        className={cn('grid flex-1 gap-4 lg:grid-cols-2', showScoring && 'xl:grid-cols-3')}
+      >
+        <ApprovalsPanel
+          requests={pendingRequests}
+          signedUrls={pendingSignedUrls}
+          loading={requestsLoading}
+          onReview={onJumpToApprovals}
+        />
+        <TeamGlancePanel
+          members={teamMembers}
+          loading={teamGate.kind === 'loading'}
+          onOpenTeam={onJumpToTeam}
+          onViewEmployee={onViewEmployee}
+        />
+        {showScoring && (
+          <BonusScoringPanel
+            queue={scoring}
+            // Third card in a two-column grid: span the row on lg so it doesn't
+            // sit as a lonely half-width box, then take its own column at xl.
+            className="lg:col-span-2 xl:col-span-1"
+            onOpenCalculator={onJumpToScoring}
           />
-        </div>
-        <div className="lg:col-span-2">
-          <TeamSpotlight
-            members={teamMembers}
-            loading={teamGate.kind === 'loading'}
-            onOpenTeam={onJumpToTeam}
-            onViewEmployee={onViewEmployee}
-          />
-        </div>
+        )}
       </section>
-
     </div>
   );
 }
 
-// ─── Overview: latest-request gallery hero ───────────────────────────────────
+// ─── Overview: shared panel shell ────────────────────────────────────────────
 
-function LatestRequestHero({
+/** Plain card: gradient hairline, icon + title, body, one full-width action. */
+function OverviewPanel({
+  icon: Icon,
+  title,
+  meta,
+  gradient,
+  action,
+  className,
+  children,
+}: {
+  icon: React.ComponentType<{ className?: string }>;
+  title: string;
+  meta?: React.ReactNode;
+  /** Tailwind `from-… to-…` pair, reused for the hairline, chip and button. */
+  gradient: string;
+  action?: { label: string; onClick: () => void };
+  /** Grid placement from the caller (column spans). */
+  className?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div
+      className={cn(
+        'flex min-h-[17rem] flex-col overflow-hidden rounded-2xl border border-zinc-200/80 bg-white shadow-sm dark:border-zinc-800 dark:bg-zinc-950',
+        className,
+      )}
+    >
+      <div className={cn('h-1 w-full shrink-0 bg-gradient-to-r', gradient)} />
+      <div className="flex shrink-0 items-center justify-between gap-2 px-4 py-3">
+        <div className="flex min-w-0 items-center gap-2">
+          <span
+            className={cn(
+              'flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br text-white shadow-sm',
+              gradient,
+            )}
+          >
+            <Icon className="h-3.5 w-3.5" />
+          </span>
+          <span className="truncate text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+            {title}
+          </span>
+        </div>
+        {meta}
+      </div>
+      <div className="flex min-h-0 flex-1 flex-col px-4 pb-4">{children}</div>
+      {action && (
+        <div className="shrink-0 px-4 pb-4">
+          <button
+            type="button"
+            onClick={action.onClick}
+            className={cn(
+              'inline-flex w-full items-center justify-center gap-1 rounded-lg bg-gradient-to-r px-3 py-2 text-xs font-semibold text-white shadow-sm transition hover:brightness-110',
+              gradient,
+            )}
+          >
+            {action.label}
+            <ChevronRight className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Overview: pending approvals ─────────────────────────────────────────────
+
+/** How many pending rows the Overview previews before deferring to the queue. */
+const APPROVALS_PREVIEW = 6;
+
+function ApprovalsPanel({
   requests,
   signedUrls,
   loading,
@@ -750,231 +916,116 @@ function LatestRequestHero({
   loading: boolean;
   onReview: () => void;
 }) {
-  // Which request is featured (auto-cycles), and which evidence image within it.
-  const [reqIdx, setReqIdx] = useState(0);
-  const [imgIdx, setImgIdx] = useState(0);
-  const [paused, setPaused] = useState(false);
-
-  const total = requests.length;
-  const safeReq = total ? reqIdx % total : 0;
-  const latestPending = requests[safeReq] ?? null;
-
-  // Reset to the first request when the underlying list changes.
-  useEffect(() => { setReqIdx(0); }, [total]);
-  // Reset the featured image whenever the active request changes.
-  useEffect(() => { setImgIdx(0); }, [latestPending?.id]);
-
-  // Auto-advance through pending requests. Pauses on hover/focus.
-  useEffect(() => {
-    if (paused || total <= 1) return;
-    const t = window.setInterval(() => setReqIdx((i) => (i + 1) % total), 5000);
-    return () => window.clearInterval(t);
-  }, [paused, total]);
-
-  const urls = useMemo(
-    () => (latestPending?.image_paths ?? []).map((p) => signedUrls[p]).filter(Boolean) as string[],
-    [latestPending, signedUrls],
-  );
-
-  if (loading) {
-    return (
-      <div className="flex h-full min-h-[18rem] flex-col overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-sm dark:border-zinc-800 dark:bg-zinc-950">
-        <div className="flex items-center gap-1.5 border-b border-zinc-100 bg-zinc-50/60 px-3 py-1.5 dark:border-zinc-800 dark:bg-zinc-900/40">
-          <div className="h-1.5 w-1.5 rounded-full bg-zinc-200 dark:bg-zinc-700" />
-          <div className="h-2 w-24 animate-pulse rounded bg-zinc-200 dark:bg-zinc-700" />
-        </div>
-        <div className="aspect-[16/5] w-full animate-pulse bg-zinc-100 dark:bg-zinc-900" />
-        <div className="flex flex-1 flex-col gap-3 px-5 py-4">
-          <div className="h-2.5 w-28 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
-          <div className="h-4 w-3/4 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
-          <div className="h-3 w-1/2 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
-        </div>
-      </div>
-    );
-  }
-  const featured = urls[imgIdx] ?? urls[0] ?? null;
-  const setActive = setImgIdx;
-  const active = imgIdx;
-
-  if (!latestPending) {
-    // No pending requests — keep the slot (same card chrome) and show an
-    // "all cleared" message in the body so the gallery layout stays intact.
-    return (
-      <div className="flex h-full min-h-[18rem] flex-col overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-sm dark:border-zinc-800 dark:bg-zinc-950">
-        {/* Banner — mirrors the populated card */}
-        <div className="flex items-center gap-1.5 border-b border-zinc-100 bg-zinc-50/60 px-3 py-1.5 dark:border-zinc-800 dark:bg-zinc-900/40">
-          <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-          <span className="text-[9px] font-semibold uppercase tracking-[0.16em] text-zinc-500 dark:text-zinc-400">
-            Latest request
-          </span>
-        </div>
-        {/* All-cleared body */}
-        <div className="flex flex-1 flex-col items-center justify-center px-6 py-8 text-center">
-          <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-full border border-emerald-200 bg-emerald-50 dark:border-emerald-500/30 dark:bg-emerald-500/10">
-            <CheckCircle2 className="h-6 w-6 text-emerald-500" />
-          </div>
-          <p className="text-sm font-semibold text-zinc-800 dark:text-zinc-100">All cleared</p>
-          <p className="mt-1 max-w-xs text-xs text-zinc-500 dark:text-zinc-500">
-            No time adjustments are waiting on you. New requests from your team will appear here.
-          </p>
-        </div>
-      </div>
-    );
-  }
+  const rows = requests.slice(0, APPROVALS_PREVIEW);
+  const thumbFor = (r: TimeAdjustmentRow) =>
+    (r.image_paths ?? []).map((p) => signedUrls[p]).find(Boolean) ?? null;
 
   return (
-    <motion.div
-      whileHover={{ y: -4 }}
-      transition={{ type: 'spring', stiffness: 360, damping: 28, mass: 0.6 }}
-      // Animate only the transform (GPU). A constant shadow-md keeps the card
-      // looking raised without transitioning box-shadow, which is what made the
-      // lift stutter on a large card with an image inside.
-      className="flex h-full transform-gpu flex-col overflow-hidden rounded-xl border border-blue-200 bg-white shadow-md transition-colors duration-300 will-change-transform hover:border-blue-300 dark:border-blue-900/50 dark:bg-zinc-950 dark:hover:border-blue-800/70"
-      onMouseEnter={() => setPaused(true)}
-      onMouseLeave={() => setPaused(false)}
-      onFocusCapture={() => setPaused(true)}
-      onBlurCapture={() => setPaused(false)}
+    <OverviewPanel
+      icon={ClipboardCheck}
+      title="Pending approvals"
+      gradient="from-blue-500 to-indigo-600"
+      meta={
+        loading ? null : requests.length > 0 ? (
+          <span className="shrink-0 rounded-full bg-gradient-to-r from-blue-500 to-indigo-600 px-2 py-0.5 text-[10px] font-bold tabular-nums text-white">
+            {requests.length}
+          </span>
+        ) : (
+          <span className="shrink-0 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400">
+            Clear
+          </span>
+        )
+      }
+      action={
+        requests.length > 0
+          ? { label: requests.length === 1 ? 'Review request' : 'Review all requests', onClick: onReview }
+          : undefined
+      }
     >
-      {/* Banner */}
-      <div className="flex items-center justify-between gap-2 border-b border-blue-100 bg-blue-50/60 px-3 py-1.5 dark:border-blue-900/40 dark:bg-blue-950/20">
-        <div className="flex items-center gap-1.5">
-          <span className="relative flex h-1.5 w-1.5">
-            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-blue-400 opacity-75" />
-            <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-blue-500" />
-          </span>
-          <span className="text-[9px] font-semibold uppercase tracking-[0.16em] text-blue-700 dark:text-blue-300">
-            {total > 1 ? 'Pending requests' : 'Latest request'}
-          </span>
-        </div>
-        {total > 1 && (
-          <span className="rounded-full bg-blue-600 px-1.5 py-0.5 text-[9px] font-semibold tabular-nums text-white">
-            {safeReq + 1} / {total}
-          </span>
-        )}
-      </div>
-
-      {/* Featured evidence image */}
-      <button
-        type="button"
-        onClick={onReview}
-        className="group relative aspect-[16/5] w-full shrink-0 overflow-hidden bg-zinc-100 dark:bg-zinc-900"
-        aria-label="Open the time adjustment queue to review this request"
-      >
-        {featured ? (
-          <>
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src={featured}
-              alt="Evidence submitted by the employee"
-              className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-[1.04]"
-            />
-            <div className="absolute inset-0 bg-gradient-to-t from-black/55 via-transparent to-transparent" />
-            <span className="absolute left-2 top-2 inline-flex items-center gap-1 rounded bg-black/55 px-1.5 py-0.5 text-[9px] font-medium text-white backdrop-blur-sm">
-              <Camera className="h-2.5 w-2.5" />
-              Proof
-            </span>
-            <div className="absolute bottom-0 left-0 right-0 flex items-end justify-between gap-2 p-2.5">
-              <div className="min-w-0">
-                <p className="truncate text-xs font-semibold text-white">{latestPending.work_email}</p>
-                <p className="truncate font-mono text-[10px] text-white/80">
-                  {latestPending.adjust_date}
-                </p>
+      {loading ? (
+        <div className="space-y-1.5">
+          {[0, 1, 2].map((i) => (
+            <div
+              key={i}
+              className="flex items-center gap-3 rounded-xl border border-zinc-100 px-2.5 py-2 dark:border-zinc-800"
+            >
+              <div className="h-9 w-9 shrink-0 animate-pulse rounded-lg bg-zinc-200 dark:bg-zinc-800" />
+              <div className="min-w-0 flex-1 space-y-1.5">
+                <div className="h-2.5 w-2/3 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
+                <div className="h-2 w-1/3 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
               </div>
             </div>
-          </>
-        ) : (
-          <span className="flex h-full w-full flex-col items-center justify-center gap-1 text-zinc-400 dark:text-zinc-600">
-            <ImageOff className="h-5 w-5" />
-            <span className="text-[10px] font-medium">No image attached</span>
-          </span>
-        )}
-      </button>
-
-      {/* Thumbnail strip — switch the featured image */}
-      {urls.length > 1 && (
-        <div className="flex gap-1.5 overflow-x-auto border-b border-zinc-100 px-2.5 py-1.5 dark:border-zinc-800">
-          {urls.map((u, i) => (
-            <button
-              key={i}
-              type="button"
-              onClick={() => setActive(i)}
-              className={cn(
-                'relative h-7 w-10 shrink-0 overflow-hidden rounded border-2 transition',
-                i === active
-                  ? 'border-blue-500 ring-1 ring-blue-500/20'
-                  : 'border-transparent opacity-60 hover:opacity-100',
-              )}
-              aria-label={`Show evidence image ${i + 1}`}
-            >
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={u} alt={`Evidence ${i + 1}`} className="h-full w-full object-cover" />
-            </button>
           ))}
         </div>
-      )}
-
-      {/* Details */}
-      <div className="flex min-h-0 flex-1 flex-col gap-1.5 p-2.5">
-        <div className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[10px] text-zinc-500 dark:text-zinc-400">
-          <span className="rounded bg-blue-50 px-1.5 py-0.5 font-medium text-blue-700 dark:bg-blue-500/10 dark:text-blue-300">
-            {TA_REASON_LABEL(latestPending.reason)}
+      ) : rows.length === 0 ? (
+        <div className="flex flex-1 flex-col items-center justify-center gap-2 pb-6 text-center">
+          <span className="flex h-11 w-11 items-center justify-center rounded-full bg-gradient-to-br from-emerald-400 to-teal-600 text-white shadow-sm shadow-emerald-500/30">
+            <CheckCircle2 className="h-5 w-5" />
           </span>
-          {latestPending.requested_hours != null && (
-            <span className="font-medium text-zinc-700 dark:text-zinc-300">
-              {(latestPending.requested_segments ?? []).length > 0 ? '+' : ''}
-              {latestPending.requested_hours}h requested
-            </span>
-          )}
-          {(latestPending.requested_segments ?? []).length > 0 && (
-            <span className="font-mono text-zinc-600 dark:text-zinc-400">
-              {fmtAdjustmentSegments(latestPending.requested_segments)}
-            </span>
-          )}
-        </div>
-        {latestPending.explanation && (
-          <p className="line-clamp-1 rounded border border-zinc-200 bg-zinc-50 px-2 py-1 text-[10px] leading-snug text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400">
-            &ldquo;{latestPending.explanation}&rdquo;
+          <p className="text-sm font-semibold text-zinc-800 dark:text-zinc-100">All cleared</p>
+          <p className="max-w-[16rem] text-xs text-zinc-500 dark:text-zinc-500">
+            Nothing is waiting on you. New time adjustments from your team land here.
           </p>
-        )}
-        <div className="mt-auto flex items-center justify-between gap-2 pt-0.5">
-          <Button
-            size="sm"
-            className="h-6 bg-blue-600 text-[11px] text-white hover:bg-blue-700"
-            onClick={onReview}
-          >
-            Review request
-          </Button>
-          {/* Request-cycling dots */}
-          {total > 1 && (
-            <div className="flex items-center gap-1">
-              {requests.slice(0, 8).map((_, i) => (
-                <button
-                  key={i}
-                  type="button"
-                  onClick={() => setReqIdx(i)}
-                  aria-label={`Show pending request ${i + 1}`}
-                  className={cn(
-                    'h-1 rounded-full transition-all',
-                    i === safeReq
-                      ? 'w-4 bg-blue-500'
-                      : 'w-1 bg-zinc-300 hover:bg-zinc-400 dark:bg-zinc-700 dark:hover:bg-zinc-600',
-                  )}
-                />
-              ))}
-              {total > 8 && (
-                <span className="ml-0.5 text-[9px] tabular-nums text-zinc-400 dark:text-zinc-600">
-                  +{total - 8}
-                </span>
-              )}
-            </div>
-          )}
         </div>
-      </div>
-    </motion.div>
+      ) : (
+        <ul className="space-y-1.5">
+          {rows.map((r) => {
+            const thumb = thumbFor(r);
+            return (
+              <li key={r.id}>
+                <button
+                  type="button"
+                  onClick={onReview}
+                  className="flex w-full items-center gap-3 rounded-xl border border-zinc-100 bg-gradient-to-r from-blue-50/70 to-transparent px-2.5 py-2 text-left transition hover:border-blue-200 hover:from-blue-100/70 dark:border-zinc-800 dark:from-blue-950/25 dark:hover:border-blue-900"
+                >
+                  {thumb ? (
+                    // eslint-disable-next-line @next/next/no-img-element -- signed storage URL
+                    <img
+                      src={thumb}
+                      alt=""
+                      className="h-9 w-9 shrink-0 rounded-lg object-cover"
+                    />
+                  ) : (
+                    <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-zinc-100 text-zinc-400 dark:bg-zinc-900 dark:text-zinc-600">
+                      <ImageOff className="h-3.5 w-3.5" />
+                    </span>
+                  )}
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-xs font-semibold text-zinc-900 dark:text-zinc-100">
+                      {r.work_email}
+                    </p>
+                    <p className="truncate text-[11px] text-zinc-500 dark:text-zinc-400">
+                      {TA_REASON_LABEL(r.reason)}
+                      <span className="mx-1 text-zinc-300 dark:text-zinc-700">&middot;</span>
+                      <span className="font-mono">{r.adjust_date}</span>
+                      {r.requested_hours != null && (
+                        <>
+                          <span className="mx-1 text-zinc-300 dark:text-zinc-700">&middot;</span>
+                          {r.requested_hours}h
+                        </>
+                      )}
+                    </p>
+                  </div>
+                  <ChevronRight className="h-4 w-4 shrink-0 text-zinc-300 dark:text-zinc-600" />
+                </button>
+              </li>
+            );
+          })}
+          {requests.length > rows.length && (
+            <li className="pt-0.5 text-center text-[11px] text-zinc-400 dark:text-zinc-500">
+              +{requests.length - rows.length} more waiting
+            </li>
+          )}
+        </ul>
+      )}
+    </OverviewPanel>
   );
 }
 
-// ─── Overview: live team spotlight (auto-cycling) ────────────────────────────
+// ─── Overview: roster glance ─────────────────────────────────────────────────
+
+/** How many faces the Overview shows before deferring to the My Team tab. */
+const TEAM_GLANCE_LIMIT = 24;
 
 /** Round avatar at an arbitrary pixel size — photo proxy with initials fallback. */
 function SpotlightAvatar({
@@ -1016,7 +1067,8 @@ function SpotlightAvatar({
   );
 }
 
-function TeamSpotlight({
+/** Who's on the roster right now — online first, click through to a profile. */
+function TeamGlancePanel({
   members,
   loading,
   onOpenTeam,
@@ -1037,311 +1089,363 @@ function TeamSpotlight({
     [onlineEmails],
   );
 
-  // Bulk-fetch skill sets so each card can show "currently working on".
-  const [skillSets, setSkillSets] = useState<Record<string, TeamSkillSet>>({});
-  const emailsKey = useMemo(
-    () => members.map((m) => normEmail(m.work_email ?? '') ?? '').filter(Boolean).join(','),
-    [members],
+  // Online members float to the front so the panel reads as live at a glance.
+  const ordered = useMemo(
+    () => [...members].sort((a, b) => Number(isOnline(b)) - Number(isOnline(a))),
+    [members, isOnline],
   );
-  useEffect(() => {
-    if (!emailsKey) { setSkillSets({}); return; }
-    let cancelled = false;
-    fetch(`/api/employee-skill-sets?emails=${encodeURIComponent(emailsKey)}`, { cache: 'no-store' })
-      .then((r) => r.json())
-      .then((j: { rows?: (TeamSkillSet & { work_email: string })[] }) => {
-        if (cancelled) return;
-        const map: Record<string, TeamSkillSet> = {};
-        for (const row of j.rows ?? []) {
-          const k = normEmail(row.work_email ?? '') ?? '';
-          if (k) map[k] = row;
-        }
-        setSkillSets(map);
-      })
-      .catch(() => { /* non-fatal - cards render without detail */ });
-    return () => { cancelled = true; };
-  }, [emailsKey]);
-
-  // Order: online members first so the spotlight always feels alive, but the
-  // rotation still walks the entire roster so everyone gets seen.
-  const ordered = useMemo(() => {
-    return [...members].sort((a, b) => Number(isOnline(b)) - Number(isOnline(a)));
-  }, [members, isOnline]);
-
   const onlineCount = useMemo(() => members.filter(isOnline).length, [members, isOnline]);
-
-  const [idx, setIdx] = useState(0);
-  const [paused, setPaused] = useState(false);
-  useEffect(() => { setIdx(0); }, [emailsKey]);
-
-  // Auto-advance the spotlight. Pauses on hover/focus so a manager can read.
-  useEffect(() => {
-    if (paused || ordered.length <= 1) return;
-    const t = window.setInterval(() => {
-      setIdx((i) => (i + 1) % ordered.length);
-    }, 4200);
-    return () => window.clearInterval(t);
-  }, [paused, ordered.length]);
-
-  const safeIdx = ordered.length ? idx % ordered.length : 0;
-  const current = ordered[safeIdx] ?? null;
-
-  // The next few members in the rotation — shown as a clickable "Up next" rail.
-  const upNext = useMemo(() => {
-    if (ordered.length <= 1) return [] as { m: EmployeeRow; i: number }[];
-    const out: { m: EmployeeRow; i: number }[] = [];
-    const count = Math.min(8, ordered.length - 1);
-    for (let k = 1; k <= count; k += 1) {
-      const i = (safeIdx + k) % ordered.length;
-      out.push({ m: ordered[i]!, i });
-    }
-    return out;
-  }, [ordered, safeIdx]);
-
-  const skillFor = (m: EmployeeRow) => {
-    const w = normEmail(m.work_email ?? '');
-    return w ? skillSets[w] : undefined;
-  };
-  const roleFor = (m: EmployeeRow) => skillFor(m)?.role_title || m.hsl_role || '';
-
-  // Manual back/forward through the rotation.
-  const goPrev = () => setIdx((i) => (i - 1 + ordered.length) % ordered.length);
-  const goNext = () => setIdx((i) => (i + 1) % ordered.length);
-
-  // Hold-to-open: while the card is hovered/focused (which also pauses the
-  // rotation), arm a 10s timer that jumps into My Team with this employee's
-  // profile open. Re-arms whenever the featured member changes.
-  const currentEmail = current ? (current.work_email ?? current.personal_email ?? null) : null;
-  useEffect(() => {
-    if (!paused || !currentEmail) return;
-    const t = window.setTimeout(() => onViewEmployee(currentEmail), 10000);
-    return () => window.clearTimeout(t);
-  }, [paused, currentEmail, onViewEmployee]);
-
-  if (loading) {
-    return (
-      <div className="flex h-full flex-col overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-sm dark:border-zinc-800 dark:bg-zinc-950">
-        <div className="flex items-center justify-between gap-2 border-b border-zinc-100 px-3 py-1.5 dark:border-zinc-800">
-          <div className="flex items-center gap-1.5">
-            <div className="h-3.5 w-3.5 animate-pulse rounded bg-zinc-200 dark:bg-zinc-700" />
-            <div className="h-2 w-20 animate-pulse rounded bg-zinc-200 dark:bg-zinc-700" />
-          </div>
-          <div className="h-4 w-12 animate-pulse rounded-full bg-zinc-200 dark:bg-zinc-700" />
-        </div>
-        <div className="flex flex-1 flex-col items-center justify-center gap-4 px-5 py-6">
-          <div className="h-20 w-20 animate-pulse rounded-full bg-zinc-200 dark:bg-zinc-800" />
-          <div className="flex flex-col items-center gap-2">
-            <div className="h-4 w-36 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
-            <div className="h-3 w-24 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
-            <div className="h-3 w-16 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
-          </div>
-        </div>
-        <div className="flex items-center gap-2 border-t border-zinc-100 px-4 py-3 dark:border-zinc-800">
-          {[0,1,2,3,4].map((i) => (
-            <div key={i} className="h-9 w-9 animate-pulse rounded-full bg-zinc-200 dark:bg-zinc-800" />
-          ))}
-        </div>
-      </div>
-    );
-  }
+  const shown = ordered.slice(0, TEAM_GLANCE_LIMIT);
 
   return (
-    <div
-      className="flex h-full flex-col overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-sm dark:border-zinc-800 dark:bg-zinc-950"
-      onMouseEnter={() => setPaused(true)}
-      onMouseLeave={() => setPaused(false)}
-      onFocusCapture={() => setPaused(true)}
-      onBlurCapture={() => setPaused(false)}
+    <OverviewPanel
+      icon={Users}
+      title="My team"
+      gradient="from-indigo-500 to-violet-600"
+      meta={
+        loading ? null : (
+          <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400">
+            <span className="relative flex h-1.5 w-1.5">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+              <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-500" />
+            </span>
+            {onlineCount} active
+          </span>
+        )
+      }
+      action={members.length > 0 ? { label: 'Open My Team', onClick: onOpenTeam } : undefined}
     >
-      {/* Header */}
-      <div className="flex items-center justify-between gap-2 border-b border-zinc-100 px-3 py-1.5 dark:border-zinc-800">
-        <div className="flex items-center gap-1.5">
-          <Users className="h-3.5 w-3.5 text-zinc-400 dark:text-zinc-500" />
-          <span className="text-[9px] font-semibold uppercase tracking-[0.16em] text-zinc-500 dark:text-zinc-400">
-            Team spotlight
-          </span>
+      {loading ? (
+        <div className="grid grid-cols-[repeat(auto-fill,minmax(4.25rem,1fr))] gap-2">
+          {Array.from({ length: 12 }).map((_, i) => (
+            <div key={i} className="flex flex-col items-center gap-1.5 py-1.5">
+              <div className="h-10 w-10 animate-pulse rounded-full bg-zinc-200 dark:bg-zinc-800" />
+              <div className="h-2 w-8 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
+            </div>
+          ))}
         </div>
-        <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-1.5 py-0.5 text-[9px] font-semibold text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400">
-          <span className="relative flex h-1.5 w-1.5">
-            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
-            <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-500" />
+      ) : shown.length === 0 ? (
+        <div className="flex flex-1 flex-col items-center justify-center gap-2 pb-6 text-center">
+          <span className="flex h-11 w-11 items-center justify-center rounded-full bg-gradient-to-br from-indigo-400 to-violet-600 text-white shadow-sm shadow-indigo-500/30">
+            <Users className="h-5 w-5" />
           </span>
-          {onlineCount} active
-        </span>
-      </div>
-
-      {/* Cycling member card — profile picture + what they're working on */}
-      <div className="relative flex flex-1 items-stretch">
-        {current ? (
-          <AnimatePresence mode="wait" initial={false}>
-            <motion.div
-              key={current.work_email ?? current.personal_email ?? current.name ?? safeIdx}
-              role="button"
-              tabIndex={0}
-              onClick={onOpenTeam}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpenTeam(); }
-              }}
-              initial={{ opacity: 0, y: 8 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -8 }}
-              transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
-              className="flex w-full cursor-pointer flex-col items-center justify-center gap-2.5 px-9 py-5 text-center"
-            >
-              {/* Big highlighted profile picture */}
-              <div className="relative">
-                <span
-                  className={cn(
-                    'block rounded-full p-1 ring-2 ring-offset-2 ring-offset-white dark:ring-offset-zinc-950',
-                    isOnline(current)
-                      ? 'ring-emerald-400/80'
-                      : 'ring-zinc-200 dark:ring-zinc-700',
-                  )}
+          <p className="text-sm font-semibold text-zinc-800 dark:text-zinc-100">No team yet</p>
+          <p className="max-w-[16rem] text-xs text-zinc-500 dark:text-zinc-500">
+            Once a department is assigned to you, its members show up here.
+          </p>
+        </div>
+      ) : (
+        <>
+          <div className="grid grid-cols-[repeat(auto-fill,minmax(4.25rem,1fr))] gap-1">
+            {shown.map((m, i) => {
+              const email = m.work_email ?? m.personal_email ?? null;
+              return (
+                <button
+                  key={email ?? m.name ?? `member-${i}`}
+                  type="button"
+                  onClick={() => (email ? onViewEmployee(email) : onOpenTeam())}
+                  title={m.name ?? email ?? undefined}
+                  className="group flex flex-col items-center gap-1 rounded-lg px-0.5 py-1.5 transition hover:bg-indigo-50/70 dark:hover:bg-indigo-950/30"
                 >
-                  <SpotlightAvatar
-                    name={current.name ?? '—'}
-                    email={current.work_email ?? current.personal_email}
-                    px={108}
-                  />
-                </span>
-                {isOnline(current) && (
-                  <span className="absolute bottom-1.5 right-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-white dark:bg-zinc-950">
-                    <span className="h-3 w-3 rounded-full bg-emerald-500" />
-                  </span>
-                )}
-              </div>
-
-              {/* Name + role/department */}
-              <div className="min-w-0 px-2">
-                <p className="truncate text-base font-bold tracking-tight text-zinc-900 dark:text-white">
-                  {current.name ?? current.work_email ?? '—'}
-                </p>
-                {(roleFor(current) || current.department) && (
-                  <p className="mt-0.5 truncate text-[11px] font-medium text-zinc-500 dark:text-zinc-400">
-                    {roleFor(current)}
-                    {roleFor(current) && current.department && (
-                      <span className="mx-1 text-zinc-300 dark:text-zinc-600">&middot;</span>
+                  <span className="relative">
+                    <SpotlightAvatar name={m.name ?? '—'} email={email} px={40} />
+                    {isOnline(m) && (
+                      <span className="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full bg-emerald-500 ring-2 ring-white dark:ring-zinc-950" />
                     )}
-                    {current.department}
-                  </p>
-                )}
-              </div>
-
-              {/* Active / offline */}
-              {isOnline(current) ? (
-                <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-2.5 py-1 text-[10px] font-semibold text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400">
-                  <span className="relative flex h-1.5 w-1.5">
-                    <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
-                    <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-500" />
                   </span>
-                  Active now
-                </span>
-              ) : (
-                <span className="inline-flex items-center gap-1.5 rounded-full bg-zinc-100 px-2.5 py-1 text-[10px] font-medium text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
-                  <span className="h-1.5 w-1.5 rounded-full bg-zinc-400 dark:bg-zinc-600" />
-                  Offline
-                </span>
-              )}
-
-              {/* Currently working on — the emphasized highlight */}
-              <div className="w-full rounded-xl border-l-2 border-blue-400 bg-blue-50/60 px-3 py-2 text-left dark:border-blue-500/60 dark:bg-blue-500/5">
-                <div className="mb-0.5 flex items-center gap-1 text-[8px] font-semibold uppercase tracking-[0.14em] text-blue-500/90 dark:text-blue-400/90">
-                  <Briefcase className="h-2.5 w-2.5" />
-                  Working on
-                </div>
-                <p className="line-clamp-3 text-xs font-medium leading-snug text-zinc-800 dark:text-zinc-100">
-                  {formatCurrentProjects(
-                    skillFor(current)?.current_projects,
-                    skillFor(current)?.currently_working_on,
-                  ) ?? 'Nothing logged yet'}
-                </p>
-              </div>
-            </motion.div>
-          </AnimatePresence>
-        ) : (
-          <div className="flex flex-1 flex-col items-center justify-center gap-1.5 px-4 py-6 text-center">
-            <Users className="h-6 w-6 text-zinc-300 dark:text-zinc-700" />
-            <p className="text-[11px] text-zinc-500 dark:text-zinc-500">
-              No team members to show yet.
+                  <span className="w-full truncate text-center text-[10px] font-medium text-zinc-600 group-hover:text-zinc-900 dark:text-zinc-400 dark:group-hover:text-zinc-100">
+                    {resolveFirstName({ name: m.name ?? null, email })}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+          {members.length > shown.length && (
+            <p className="mt-1 text-center text-[11px] text-zinc-400 dark:text-zinc-500">
+              +{members.length - shown.length} more on your roster
             </p>
-          </div>
-        )}
+          )}
+        </>
+      )}
+    </OverviewPanel>
+  );
+}
 
-        {/* Back / forward navigation */}
-        {ordered.length > 1 && (
-          <>
-            <button
-              type="button"
-              onClick={goPrev}
-              aria-label="Previous team member"
-              className="absolute left-1.5 top-1/2 z-10 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-full border border-zinc-200 bg-white/90 text-zinc-500 shadow-sm backdrop-blur transition hover:bg-white hover:text-zinc-800 dark:border-zinc-700 dark:bg-zinc-900/90 dark:text-zinc-400 dark:hover:text-zinc-100"
-            >
-              <ChevronLeft className="h-4 w-4" />
-            </button>
-            <button
-              type="button"
-              onClick={goNext}
-              aria-label="Next team member"
-              className="absolute right-1.5 top-1/2 z-10 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-full border border-zinc-200 bg-white/90 text-zinc-500 shadow-sm backdrop-blur transition hover:bg-white hover:text-zinc-800 dark:border-zinc-700 dark:bg-zinc-900/90 dark:text-zinc-400 dark:hover:text-zinc-100"
-            >
-              <ChevronRight className="h-4 w-4" />
-            </button>
-          </>
-        )}
+// ─── Overview: bonuses to score ──────────────────────────────────────────────
 
-        {/* Hold-to-open progress — fills over 10s while hovered, then opens the
-            profile in My Team. Communicates the dwell behavior. */}
-        {paused && currentEmail && (
-          <motion.div
-            key={`hold-${currentEmail}`}
-            initial={{ scaleX: 0 }}
-            animate={{ scaleX: 1 }}
-            transition={{ duration: 10, ease: 'linear' }}
-            style={{ transformOrigin: 'left' }}
-            className="pointer-events-none absolute left-0 top-0 z-10 h-0.5 w-full bg-blue-500/80"
-          />
-        )}
-      </div>
+/** "Jul 20 – Jul 26" for a resolved pay week; an em dash before it resolves. */
+function fmtPayWeek(start: string | null, end: string | null): string {
+  if (!start) return '—';
+  const opts = { month: 'short', day: 'numeric' } as const;
+  const s = new Date(`${start}T00:00:00`).toLocaleDateString('en-US', opts);
+  if (!end) return s;
+  return `${s} – ${new Date(`${end}T00:00:00`).toLocaleDateString('en-US', opts)}`;
+}
 
-      {/* Up next — clickable avatar rail of upcoming members */}
-      {upNext.length > 0 && (
-        <div className="flex items-center gap-2 border-t border-zinc-100 px-3 py-2 dark:border-zinc-800">
-          <span className="shrink-0 text-[8px] font-semibold uppercase tracking-[0.14em] text-zinc-400 dark:text-zinc-500">
-            Up next
+/** How the row for each scoring state reads. Two groups only, visually: things
+ *  that still need the manager (amber/zinc) and things already handled (green). */
+const SCORING_CHIP: Record<ScoringState, { label: string; cls: string }> = {
+  todo: {
+    label: 'Not scored',
+    cls: 'bg-amber-100 text-amber-800 dark:bg-amber-500/15 dark:text-amber-300',
+  },
+  in_progress: {
+    label: 'Draft',
+    cls: 'bg-blue-100 text-blue-800 dark:bg-blue-500/15 dark:text-blue-300',
+  },
+  submitted: {
+    label: 'Submitted',
+    cls: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-500/15 dark:text-emerald-300',
+  },
+  locked: {
+    label: 'Locked',
+    cls: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-500/15 dark:text-emerald-300',
+  },
+  nothing: {
+    label: 'No bonuses',
+    cls: 'bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400',
+  },
+  not_due: {
+    label: 'Month end',
+    cls: 'bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400',
+  },
+};
+
+/** Departments per page in the panel's rotation. */
+const SCORING_PAGE_SIZE = 5;
+/** How long each page of departments stays on screen. */
+const SCORING_PAGE_MS = 10_000;
+
+/**
+ * What the KPI Calculator still owes payroll for the live pay week — one row per
+ * department the manager scores, outstanding ones first. Clicking a row opens
+ * that department's calculator directly.
+ *
+ * A manager can own more departments than fit the card, so the list pages itself
+ * every 10s rather than hiding the tail behind a "+N more". Rotation pauses
+ * while the pointer (or keyboard focus) is inside the card — the rows are
+ * buttons, and a page turning mid-click would open the wrong department.
+ */
+function BonusScoringPanel({
+  queue,
+  className,
+  onOpenCalculator,
+}: {
+  queue: BonusScoringQueue;
+  className?: string;
+  onOpenCalculator: (dept?: { kind: 'hsl' | 'catalog'; key: string }) => void;
+}) {
+  const { loading, items, outstanding, weekStart, weekEnd, weekUnresolved, error } = queue;
+  const gradient = 'from-amber-500 to-orange-600';
+  const reduceMotion = useReducedMotion();
+
+  const pageCount = Math.max(1, Math.ceil(items.length / SCORING_PAGE_SIZE));
+  const [page, setPage] = useState(0);
+  const [paused, setPaused] = useState(false);
+
+  // The list can shrink under us (a dept gets submitted, the roster reloads).
+  useEffect(() => {
+    if (page >= pageCount) setPage(0);
+  }, [page, pageCount]);
+
+  // `page` is a dependency on purpose: a manual dot click restarts the dwell so
+  // the page the manager just picked gets its full 10s.
+  useEffect(() => {
+    if (pageCount < 2 || paused) return;
+    const id = setTimeout(() => setPage((p) => (p + 1) % pageCount), SCORING_PAGE_MS);
+    return () => clearTimeout(id);
+  }, [page, pageCount, paused]);
+
+  const safePage = Math.min(page, pageCount - 1);
+  // Outstanding departments sort first, so page 1 is always the actual work.
+  const rows = items.slice(safePage * SCORING_PAGE_SIZE, (safePage + 1) * SCORING_PAGE_SIZE);
+  // Short last page: hold the card's height so the layout doesn't jump on turn.
+  const filler = pageCount > 1 ? SCORING_PAGE_SIZE - rows.length : 0;
+
+  return (
+    <OverviewPanel
+      icon={Sparkles}
+      title="Bonuses to score"
+      gradient={gradient}
+      className={className}
+      meta={
+        loading ? null : outstanding > 0 ? (
+          <span className={cn('shrink-0 rounded-full bg-gradient-to-r px-2 py-0.5 text-[10px] font-bold tabular-nums text-white', gradient)}>
+            {outstanding}
           </span>
-          {/* Scrollable, padded rail: py/px give the online badges and the
-              hover-scale room to render without being clipped at the borders;
-              a soft right fade signals there's more rather than hard-cutting. */}
-          <div
-            className="flex min-w-0 flex-1 items-center gap-2 overflow-x-auto overflow-y-visible px-1 py-1.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-            style={{
-              maskImage:
-                'linear-gradient(to right, transparent 0, #000 12px, #000 calc(100% - 12px), transparent 100%)',
-              WebkitMaskImage:
-                'linear-gradient(to right, transparent 0, #000 12px, #000 calc(100% - 12px), transparent 100%)',
-            }}
-          >
-            {upNext.map(({ m, i }) => (
-              <button
-                key={i}
-                type="button"
-                onClick={() => setIdx(i)}
-                aria-label={`Show ${m.name ?? 'team member'}`}
-                className="relative shrink-0 transition hover:scale-110"
-                title={m.name ?? m.work_email ?? undefined}
-              >
-                <SpotlightAvatar name={m.name ?? '—'} email={m.work_email ?? m.personal_email} px={28} />
-                {isOnline(m) && (
-                  <span className="absolute -bottom-0.5 -right-0.5 h-2 w-2 rounded-full bg-emerald-500 ring-1 ring-white dark:ring-zinc-950" />
-                )}
-              </button>
-            ))}
-          </div>
-          <span className="shrink-0 text-[9px] tabular-nums text-zinc-400 dark:text-zinc-600">
-            {safeIdx + 1}/{ordered.length}
+        ) : items.length > 0 ? (
+          <span className="shrink-0 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400">
+            Submitted
           </span>
+        ) : null
+      }
+      action={
+        items.length > 0
+          ? {
+              label: outstanding > 0 ? 'Open KPI Calculator' : 'Review in KPI Calculator',
+              onClick: () => onOpenCalculator(),
+            }
+          : undefined
+      }
+    >
+      {loading ? (
+        <div className="space-y-1.5">
+          {[0, 1, 2, 3].map((i) => (
+            <div
+              key={i}
+              className="flex items-center gap-3 rounded-xl border border-zinc-100 px-2.5 py-2 dark:border-zinc-800"
+            >
+              <div className="h-2 w-2 shrink-0 animate-pulse rounded-full bg-zinc-200 dark:bg-zinc-800" />
+              <div className="min-w-0 flex-1 space-y-1.5">
+                <div className="h-2.5 w-1/2 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
+                <div className="h-2 w-1/4 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : weekUnresolved ? (
+        // The pay week comes from the Hubstaff upload. Without it every status
+        // would be read from a period key nothing was saved under, so say so
+        // rather than show a list of false to-dos.
+        <div className="flex flex-1 flex-col items-center justify-center gap-2 pb-6 text-center">
+          <span className="flex h-11 w-11 items-center justify-center rounded-full bg-gradient-to-br from-zinc-300 to-zinc-500 text-white shadow-sm dark:from-zinc-700 dark:to-zinc-800">
+            <Clock className="h-5 w-5" />
+          </span>
+          <p className="text-sm font-semibold text-zinc-800 dark:text-zinc-100">Pay week not open yet</p>
+          <p className="max-w-[16rem] text-xs text-zinc-500 dark:text-zinc-500">
+            Scoring unlocks once Accounting uploads this week&apos;s Hubstaff hours.
+          </p>
+        </div>
+      ) : items.length === 0 ? (
+        <div className="flex flex-1 flex-col items-center justify-center gap-2 pb-6 text-center">
+          <span className="flex h-11 w-11 items-center justify-center rounded-full bg-gradient-to-br from-zinc-300 to-zinc-500 text-white shadow-sm dark:from-zinc-700 dark:to-zinc-800">
+            <Sparkles className="h-5 w-5" />
+          </span>
+          <p className="text-sm font-semibold text-zinc-800 dark:text-zinc-100">No bonus departments</p>
+          <p className="max-w-[16rem] text-xs text-zinc-500 dark:text-zinc-500">
+            Ask an admin to assign you a department under Roles &amp; permissions.
+          </p>
+        </div>
+      ) : (
+        <div
+          onMouseEnter={() => setPaused(true)}
+          onMouseLeave={() => setPaused(false)}
+          onFocusCapture={() => setPaused(true)}
+          onBlurCapture={() => setPaused(false)}
+        >
+          <div className="mb-1.5 flex items-center justify-between gap-2 text-[11px]">
+            <span className="inline-flex items-center gap-1 text-zinc-500 dark:text-zinc-400">
+              <CalendarDays className="h-3 w-3" />
+              {fmtPayWeek(weekStart, weekEnd)}
+            </span>
+            <span className={cn('font-medium', outstanding > 0 ? 'text-amber-700 dark:text-amber-400' : 'text-emerald-700 dark:text-emerald-400')}>
+              {outstanding > 0
+                ? `${outstanding} of ${items.length} left`
+                : 'Everything submitted'}
+            </span>
+          </div>
+          <AnimatePresence mode="wait" initial={false}>
+            <motion.ul
+              key={safePage}
+              className="space-y-1.5"
+              initial={{ opacity: 0, y: reduceMotion ? 0 : 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: reduceMotion ? 0 : -8 }}
+              transition={{ duration: 0.26, ease: [0.22, 1, 0.36, 1] }}
+            >
+              {rows.map((d) => {
+                const chip = SCORING_CHIP[d.state];
+                const pending = isOutstanding(d.state);
+                return (
+                  <li key={`${d.kind}:${d.key}`}>
+                    <button
+                      type="button"
+                      onClick={() => onOpenCalculator({ kind: d.kind, key: d.key })}
+                      className={cn(
+                        'flex w-full items-center gap-2.5 rounded-xl border px-2.5 py-2 text-left transition',
+                        pending
+                          ? 'border-zinc-100 bg-gradient-to-r from-amber-50/70 to-transparent hover:border-amber-200 hover:from-amber-100/70 dark:border-zinc-800 dark:from-amber-950/20 dark:hover:border-amber-900'
+                          : 'border-zinc-100 hover:border-zinc-200 hover:bg-zinc-50 dark:border-zinc-800 dark:hover:border-zinc-700 dark:hover:bg-zinc-900/60',
+                      )}
+                    >
+                      <span
+                        aria-hidden
+                        className="h-6 w-1 shrink-0 rounded-full"
+                        style={{ backgroundColor: d.color }}
+                      />
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-xs font-semibold text-zinc-900 dark:text-zinc-100">
+                          {d.name}
+                        </p>
+                        <p className="truncate text-[11px] text-zinc-500 dark:text-zinc-400">
+                          {d.scoredCount > 0 ? (
+                            <>
+                              {d.scoredCount} scored
+                              {d.totalBonus > 0 && (
+                                <>
+                                  <span className="mx-1 text-zinc-300 dark:text-zinc-700">&middot;</span>
+                                  <span className="font-mono">
+                                    ₱{d.totalBonus.toLocaleString('en-PH')}
+                                  </span>
+                                </>
+                              )}
+                            </>
+                          ) : d.state === 'nothing' ? (
+                            'Nothing assigned this week'
+                          ) : d.state === 'not_due' ? (
+                            'Pays on the month’s final week'
+                          ) : (
+                            'Waiting on your scores'
+                          )}
+                        </p>
+                      </div>
+                      <span className={cn('shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-semibold', chip.cls)}>
+                        {chip.label}
+                      </span>
+                      <ChevronRight className="h-4 w-4 shrink-0 text-zinc-300 dark:text-zinc-600" />
+                    </button>
+                  </li>
+                );
+              })}
+              {/* Short last page: an invisible clone of a row's box holds the
+                  card's height so the layout doesn't jump as pages turn. */}
+              {Array.from({ length: filler }).map((_, i) => (
+                <li
+                  key={`filler-${i}`}
+                  aria-hidden
+                  className="invisible rounded-xl border px-2.5 py-2"
+                >
+                  <p className="text-xs font-semibold">&nbsp;</p>
+                  <p className="text-[11px]">&nbsp;</p>
+                </li>
+              ))}
+            </motion.ul>
+          </AnimatePresence>
+          {pageCount > 1 && (
+            <div className="mt-2 flex items-center justify-center gap-1.5">
+              {Array.from({ length: pageCount }).map((_, i) => (
+                <button
+                  key={i}
+                  type="button"
+                  onClick={() => setPage(i)}
+                  aria-label={`Show departments ${i * SCORING_PAGE_SIZE + 1}–${Math.min((i + 1) * SCORING_PAGE_SIZE, items.length)} of ${items.length}`}
+                  aria-current={i === safePage ? 'true' : undefined}
+                  className={cn(
+                    'h-1.5 rounded-full transition-all',
+                    i === safePage
+                      ? cn('w-5 bg-gradient-to-r', gradient)
+                      : 'w-1.5 bg-zinc-200 hover:bg-zinc-300 dark:bg-zinc-700 dark:hover:bg-zinc-600',
+                  )}
+                />
+              ))}
+            </div>
+          )}
+          {error && (
+            <p className="mt-1.5 text-center text-[11px] text-amber-700 dark:text-amber-400">{error}</p>
+          )}
         </div>
       )}
-    </div>
+    </OverviewPanel>
   );
 }
 
@@ -3937,19 +4041,43 @@ interface StatTileProps {
   value: number | string;
   hint: string;
   icon: React.ComponentType<{ className?: string }>;
-  accent: 'blue-bright' | 'blue-deep' | 'mono';
+  accent: 'blue' | 'indigo' | 'amber' | 'slate';
   onClick?: () => void;
 }
 
+/** Soft gradient surface + gradient icon chip + gradient numeral. One number each. */
 function StatTile({ label, value, hint, icon: Icon, accent, onClick }: StatTileProps) {
-  const accentMap = {
-    'blue-bright':
-      'bg-gradient-to-br from-blue-400 to-blue-600 text-white shadow-blue-500/30',
-    'blue-deep':
-      'bg-gradient-to-br from-blue-700 to-black text-white shadow-blue-900/40',
-    mono:
-      'bg-gradient-to-br from-zinc-900 to-black text-white shadow-zinc-900/30 dark:from-zinc-100 dark:to-white dark:text-zinc-900 dark:shadow-zinc-100/20',
-  } as const;
+  const tone = {
+    blue: {
+      surface:
+        'border-blue-100 bg-gradient-to-br from-blue-50 via-white to-white dark:border-blue-950/60 dark:from-blue-950/40 dark:via-zinc-950 dark:to-zinc-950',
+      hover: 'hover:border-blue-300 hover:shadow-blue-500/10 dark:hover:border-blue-800',
+      chip: 'from-blue-500 to-blue-700 shadow-blue-500/30',
+      value: 'from-blue-700 to-indigo-900 dark:from-blue-200 dark:to-indigo-300',
+    },
+    indigo: {
+      surface:
+        'border-indigo-100 bg-gradient-to-br from-indigo-50 via-white to-white dark:border-indigo-950/60 dark:from-indigo-950/40 dark:via-zinc-950 dark:to-zinc-950',
+      hover: 'hover:border-indigo-300 hover:shadow-indigo-500/10 dark:hover:border-indigo-800',
+      chip: 'from-indigo-500 to-violet-700 shadow-indigo-500/30',
+      value: 'from-indigo-700 to-violet-900 dark:from-indigo-200 dark:to-violet-300',
+    },
+    amber: {
+      surface:
+        'border-amber-100 bg-gradient-to-br from-amber-50 via-white to-white dark:border-amber-950/60 dark:from-amber-950/40 dark:via-zinc-950 dark:to-zinc-950',
+      hover: 'hover:border-amber-300 hover:shadow-amber-500/10 dark:hover:border-amber-800',
+      chip: 'from-amber-500 to-orange-600 shadow-amber-500/30',
+      value: 'from-amber-600 to-orange-800 dark:from-amber-200 dark:to-orange-300',
+    },
+    slate: {
+      surface:
+        'border-zinc-200 bg-gradient-to-br from-zinc-50 via-white to-white dark:border-zinc-800 dark:from-zinc-900 dark:via-zinc-950 dark:to-zinc-950',
+      hover: 'hover:border-zinc-300 dark:hover:border-zinc-700',
+      // Inverts in dark mode, so the glyph flips dark to stay legible.
+      chip: 'from-zinc-600 to-zinc-900 shadow-zinc-900/25 dark:from-zinc-300 dark:to-zinc-500 dark:text-zinc-900',
+      value: 'from-zinc-700 to-zinc-900 dark:from-zinc-200 dark:to-zinc-400',
+    },
+  }[accent];
 
   const Wrapper = onClick ? 'button' : 'div';
 
@@ -3958,26 +4086,32 @@ function StatTile({ label, value, hint, icon: Icon, accent, onClick }: StatTileP
       type={onClick ? 'button' : undefined}
       onClick={onClick}
       className={cn(
-        'group relative flex items-center gap-4 overflow-hidden rounded-xl border border-blue-100/70 bg-white/90 px-4 py-4 text-left ring-1 ring-blue-500/5 backdrop-blur-sm transition-all dark:border-blue-950/50 dark:bg-zinc-950/70 dark:ring-blue-400/10',
-        onClick && 'cursor-pointer hover:-translate-y-0.5 hover:border-blue-300/80 hover:shadow-md hover:shadow-blue-500/10 dark:hover:border-blue-800',
+        'group relative flex items-center gap-3.5 overflow-hidden rounded-2xl border px-4 py-4 text-left shadow-sm transition-all',
+        tone.surface,
+        onClick && cn('cursor-pointer hover:-translate-y-0.5 hover:shadow-md', tone.hover),
       )}
     >
-      <div
+      <span
         className={cn(
-          'flex h-10 w-10 shrink-0 items-center justify-center rounded-lg shadow-md',
-          accentMap[accent],
+          'flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br text-white shadow-md',
+          tone.chip,
         )}
       >
         <Icon className="h-5 w-5" />
-      </div>
+      </span>
       <div className="min-w-0 flex-1">
-        <div className="text-[11px] font-medium uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
+        <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-zinc-500 dark:text-zinc-400">
           {label}
         </div>
-        <div className="mt-0.5 bg-gradient-to-br from-zinc-900 to-blue-900 bg-clip-text text-2xl font-bold tabular-nums text-transparent dark:from-white dark:to-blue-300">
+        <div
+          className={cn(
+            'mt-0.5 bg-gradient-to-br bg-clip-text text-2xl font-bold tabular-nums text-transparent',
+            tone.value,
+          )}
+        >
           {value}
         </div>
-        <div className="mt-0.5 text-[11px] text-zinc-500 dark:text-zinc-400">{hint}</div>
+        <div className="mt-0.5 truncate text-[11px] text-zinc-500 dark:text-zinc-400">{hint}</div>
       </div>
     </Wrapper>
   );

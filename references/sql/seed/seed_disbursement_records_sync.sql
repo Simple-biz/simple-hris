@@ -18,6 +18,24 @@ BEGIN;
 CREATE OR REPLACE FUNCTION public.sync_disbursement_from_dispatch()
 RETURNS TRIGGER AS $$
 BEGIN
+  -- Contractor-invoice payments must never touch an hourly disbursement record:
+  -- the match below is (source_file, email) only, so paying an invoice for someone
+  -- who also draws a salary would overwrite that salary row's status / amount /
+  -- transaction id — unpaid salary reading as PAID.
+  --
+  -- KEEP IN SYNC with references/sql/alter/add_contractor_dispatch_link.sql (PART 4),
+  -- which installs the same guard. It lives in BOTH files on purpose: this seed is
+  -- documented as re-runnable, and a re-run without the guard here would silently
+  -- revert it.
+  --
+  -- Read through to_jsonb rather than NEW.payee_type so this body stays valid on a
+  -- database where that column does not exist yet (a direct field reference would
+  -- fail at execution with "record NEW has no field payee_type", and an
+  -- information_schema lookup would run per row).
+  IF COALESCE(to_jsonb(NEW) ->> 'payee_type', 'employee') <> 'employee' THEN
+    RETURN NEW;
+  END IF;
+
   UPDATE public.disbursement_records dr
   SET
     status          = NEW.status,
@@ -80,6 +98,10 @@ SET
   updated_at      = now()
 FROM public.payment_dispatches pd
 WHERE dr.source_file = pd.cycle_source_file
-  AND LOWER(dr.recipient_email) = LOWER(pd.recipient_email);
+  AND LOWER(dr.recipient_email) = LOWER(pd.recipient_email)
+  -- Same guard as the trigger above: a contractor-invoice payment must never be
+  -- backfilled onto an hourly disbursement record. jsonb form so this stays valid
+  -- before add_contractor_dispatch_link.sql adds the column.
+  AND COALESCE(to_jsonb(pd) ->> 'payee_type', 'employee') = 'employee';
 
 COMMIT;

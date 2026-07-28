@@ -18,6 +18,7 @@ import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { formatPHP, formatUSD, formatCOP, PROCESSORS } from './mock-queue';
 import QueuePagination from './QueuePagination';
+import ContractorChip from './ContractorChip';
 import type { PaymentDispatchRow, PaymentDispatchStatus } from '@/lib/supabase/payment-dispatches';
 import {
   buildSentRows,
@@ -471,8 +472,13 @@ export default function PaidRecordsPanel({
                         />
                       </td>
                       <td className="px-4 py-2.5">
-                        <div className="font-medium text-zinc-900 dark:text-zinc-100">
-                          {rec.recipient_name ?? rec.recipient_email}
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <span className="font-medium text-zinc-900 dark:text-zinc-100">
+                            {rec.recipient_name ?? rec.recipient_email}
+                          </span>
+                          {/* Read off the DB row, so the badge survives into Done,
+                              every per-processor paid sub-view and history. */}
+                          {rec.payee_type === 'contractor' && <ContractorChip />}
                         </div>
                         <div className="font-mono text-[10px] text-[#71717a] dark:text-zinc-500">
                           {rec.recipient_email}

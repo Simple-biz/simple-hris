@@ -50,6 +50,7 @@ import {
 import {
   InvoiceViewDialog,
   PunchedHoles,
+  useInvoiceLogoSrc,
   type LineItem,
   type SavedInvoice,
 } from '@/components/contractor/InvoiceReceiptDialog';
@@ -341,6 +342,11 @@ function NewInvoiceForm({
 
   const { subtotal, taxTotal, total } = calcTotals(form.lineItems);
 
+  // Nothing uploaded → preview the contractor's profile / Google SSO photo, the
+  // same fallback the submitted invoice shows to Accounting. Never written into
+  // form.logoUrl, so "Remove logo" still means "remove the logo I uploaded".
+  const { src: logoSrc, isPhotoFallback, onPhotoError } = useInvoiceLogoSrc(form.logoUrl, contractorEmail);
+
   // Read-only payment preview — the method itself is owned by Profile → Payment Gateway.
   const paymentProc = form.paymentProcessor && isInvoiceProcessorId(form.paymentProcessor) ? form.paymentProcessor : null;
   const paymentOpt = paymentProc ? invoiceProcessor(paymentProc) : null;
@@ -404,16 +410,23 @@ function NewInvoiceForm({
         <div
           className={cn(
             'flex h-28 w-28 shrink-0 cursor-pointer flex-col items-center justify-center gap-1.5 rounded-xl border-2 border-dashed border-zinc-200 bg-zinc-50 text-center transition-colors hover:border-blue-300 hover:bg-blue-50/50 dark:border-zinc-700 dark:bg-zinc-800/40 dark:hover:border-blue-700',
-            form.logoUrl && 'border-solid border-blue-200 bg-white p-1 dark:border-blue-900/60 dark:bg-zinc-900',
+            logoSrc && 'border-solid border-blue-200 bg-white p-1 dark:border-blue-900/60 dark:bg-zinc-900',
           )}
           onClick={() => logoInputRef.current?.click()}
           role="button"
           tabIndex={0}
           onKeyDown={(e) => e.key === 'Enter' && logoInputRef.current?.click()}
           aria-label="Upload company logo"
+          title={isPhotoFallback ? 'Your profile photo — click to upload a company logo instead' : 'Upload company logo'}
         >
-          {form.logoUrl ? (
-            <img src={form.logoUrl} alt="Company logo" className="h-full w-full rounded-lg object-contain" />
+          {logoSrc ? (
+            <img
+              src={logoSrc}
+              alt={isPhotoFallback ? 'Your profile photo' : 'Company logo'}
+              referrerPolicy="no-referrer"
+              className="h-full w-full rounded-lg object-contain"
+              onError={isPhotoFallback ? onPhotoError : undefined}
+            />
           ) : (
             <>
               <Upload className="h-5 w-5 text-zinc-400" />
@@ -433,7 +446,7 @@ function NewInvoiceForm({
         <div className="flex flex-1 items-start justify-end">
           <div className="text-right">
             <h2 className="text-3xl font-black uppercase tracking-[0.15em] text-zinc-900 dark:text-white">INVOICE</h2>
-            {form.logoUrl && (
+            {form.logoUrl ? (
               <button
                 type="button"
                 onClick={() => set('logoUrl', null)}
@@ -441,7 +454,9 @@ function NewInvoiceForm({
               >
                 <X className="h-3 w-3" /> Remove logo
               </button>
-            )}
+            ) : isPhotoFallback ? (
+              <span className="mt-1 block text-[10px] text-zinc-400">Using your profile photo</span>
+            ) : null}
           </div>
         </div>
       </div>

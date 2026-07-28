@@ -19,6 +19,7 @@ import {
   type QueueRow,
 } from './mock-queue';
 import QueuePagination from './QueuePagination';
+import ContractorChip, { showsContractorBadge } from './ContractorChip';
 
 const PROCESSOR_LABEL: Record<ProcessorId, string> = PROCESSORS.reduce(
   (acc, p) => {
@@ -492,6 +493,7 @@ export default function ExcludedQueue({ rows, onMarkPaid }: ExcludedQueueProps) 
                       {row.email}
                     </div>
                     <div className="mt-1 flex flex-wrap items-center gap-1">
+                      {showsContractorBadge(row) && <ContractorChip invoiceNumber={row.invoiceNumber} />}
                       <span
                         className="inline-flex items-center gap-1 rounded-full border border-zinc-200 bg-zinc-50 px-1.5 py-0.5 text-[10px] font-semibold text-zinc-600 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300"
                         title="Preferred bank / processor"

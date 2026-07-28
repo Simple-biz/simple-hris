@@ -12,6 +12,8 @@ import {
   declineTransfer,
   cancelTransferRequestIfOwned,
   deleteTransferRequestById,
+  updateTransferRequestFields,
+  type DepartmentTransferRequestRow,
 } from '@/lib/supabase/department-transfer-requests';
 import { applyApprovedTransfer, manilaTodayIso } from '@/lib/transfers/apply-transfer';
 import { requireFeatureEdit } from '@/lib/auth/authorize-feature';
@@ -28,6 +30,24 @@ function clientIp(request: Request): string | null {
 type SessionLike = { user?: { email?: string | null; roles?: string[] } | null } | null;
 function rolesOf(session: SessionLike): string[] {
   return (session?.user?.roles ?? []) as string[];
+}
+
+/**
+ * May this caller act on the RECORD (edit / delete)? An admin, the original
+ * requester, or a manager of the SOURCE department. Shared by the `update`
+ * action and DELETE so the two can't drift apart.
+ */
+async function mayManageRecord(
+  row: DepartmentTransferRequestRow,
+  sessionEmail: string,
+  isAdmin: boolean,
+): Promise<boolean> {
+  if (isAdmin || row.requested_by.toLowerCase() === sessionEmail) return true;
+  const authz = await requireFeatureEdit('manager', 'team');
+  if (!authz.ok) return false;
+  const { rows: assigns } = await listDepartmentsForManager(sessionEmail);
+  const departments = assigns.map((a) => a.department.trim()).filter(Boolean);
+  return departmentMatchesManagedAssignments(row.from_department, departments);
 }
 
 /**
@@ -52,13 +72,65 @@ export async function PATCH(
     const roles = rolesOf(session);
     const isAdmin = roles.includes('admin');
 
-    const body = (await request.json()) as { action?: string; note?: string | null };
+    const body = (await request.json()) as {
+      action?: string;
+      note?: string | null;
+      effective_date?: string | null;
+      reason?: string | null;
+    };
     const action = body.action?.trim();
     const note = body.note?.trim() || null;
 
     const { row, error: fetchErr } = await getTransferRequestById(id);
     if (fetchErr) return NextResponse.json({ error: fetchErr }, { status: 500 });
     if (!row) return NextResponse.json({ error: 'Transfer request not found' }, { status: 404 });
+
+    // ── Edit the record's correctable fields ──
+    // Paperwork only: effective date, reason, approver note. Status and the
+    // from/to departments are NOT editable — they're already reflected in the
+    // master list, so changing them here would desync the record from reality.
+    if (action === 'update') {
+      if (!(await mayManageRecord(row, sessionEmail, isAdmin))) {
+        return NextResponse.json(
+          { error: 'Only the requester, a manager of the source department, or an admin can edit this request.' },
+          { status: 403 },
+        );
+      }
+      const rawDate = typeof body.effective_date === 'string' ? body.effective_date.trim() : '';
+      if (rawDate && !/^\d{4}-\d{2}-\d{2}$/.test(rawDate)) {
+        return NextResponse.json({ error: 'Effective date must be YYYY-MM-DD' }, { status: 400 });
+      }
+      const effective_date = rawDate || null;
+      const reason = typeof body.reason === 'string' ? body.reason.trim() || null : row.reason;
+
+      const { error } = await updateTransferRequestFields({
+        id,
+        effective_date,
+        reason,
+        approver_note: note,
+      });
+      if (error) return NextResponse.json({ error }, { status: 500 });
+
+      void insertAuditLog({
+        user_name: sessionEmail,
+        user_role: isAdmin ? 'Admin' : 'Manager',
+        action: 'department_transfer.updated',
+        resource: 'department_transfer_requests',
+        resource_id: id,
+        details: {
+          employee_email: row.employee_email,
+          status: row.status,
+          before: {
+            effective_date: row.effective_date,
+            reason: row.reason,
+            approver_note: row.approver_note,
+          },
+          after: { effective_date, reason, approver_note: note },
+        },
+        ip_address: clientIp(request),
+      });
+      return NextResponse.json({ success: true, error: null });
+    }
 
     // ── Receiving manager self-cancel (only while pending) ──
     if (action === 'cancel') {
@@ -140,7 +212,7 @@ export async function PATCH(
     // ── Source-manager decision (release / decline) ──
     if (action !== 'release' && action !== 'decline') {
       return NextResponse.json(
-        { error: "action must be 'release', 'decline', 'apply', or 'cancel'" },
+        { error: "action must be 'release', 'decline', 'apply', 'cancel', or 'update'" },
         { status: 400 },
       );
     }
@@ -298,17 +370,8 @@ export async function DELETE(
     if (fetchErr) return NextResponse.json({ error: fetchErr }, { status: 500 });
     if (!row) return NextResponse.json({ success: true, error: null }); // already gone
 
-    let allowed = isAdmin || row.requested_by.toLowerCase() === sessionEmail;
-    if (!allowed) {
-      // A manager of the source department may also delete a request on their team.
-      const authz = await requireFeatureEdit('manager', 'team');
-      if (authz.ok) {
-        const { rows: assigns } = await listDepartmentsForManager(sessionEmail);
-        const departments = assigns.map((a) => a.department.trim()).filter(Boolean);
-        allowed = departmentMatchesManagedAssignments(row.from_department, departments);
-      }
-    }
-    if (!allowed) {
+    // Admin, the original requester, or a manager of the source department.
+    if (!(await mayManageRecord(row, sessionEmail, isAdmin))) {
       return NextResponse.json(
         { error: 'Only the requester, a manager of the source department, or an admin can delete this request.' },
         { status: 403 },

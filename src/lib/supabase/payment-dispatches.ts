@@ -29,6 +29,18 @@ export type PaymentDispatchRow = {
   status: PaymentDispatchStatus;
   /** Free-text note Lenny can attach (e.g. "bank rejected, retrying tomorrow"). */
   note: string | null;
+  /**
+   * Which kind of payee this row paid. 'employee' (the DB default, so every
+   * pre-existing row reads correctly) = hourly payroll. 'contractor' = settles
+   * one approved `contractor_invoices` row, identified by contractor_invoice_id.
+   *
+   * Also read by `sync_disbursement_from_dispatch()`: contractor rows return
+   * early there, so paying an invoice can't overwrite that person's employee
+   * disbursement record for the same week.
+   */
+  payee_type: 'employee' | 'contractor';
+  /** The invoice this row settled. Cleared by trigger if the row is deleted (Undo). */
+  contractor_invoice_id: string | null;
   created_by: string | null;
   created_at: string;
 };
@@ -55,6 +67,9 @@ export interface InsertPaymentDispatchInput {
   arrival_date?: string | null;
   status?: PaymentDispatchStatus;
   note?: string | null;
+  /** Defaults to 'employee' so every existing call site keeps its meaning. */
+  payee_type?: 'employee' | 'contractor';
+  contractor_invoice_id?: string | null;
   created_by?: string | null;
 }
 
@@ -88,6 +103,20 @@ export async function insertPaymentDispatch(
       arrival_date: input.arrival_date ?? null,
       status: input.status ?? "paid",
       note: input.note ?? null,
+      // Named ONLY for a contractor payment. PostgREST rejects a payload that
+      // mentions an unknown column (PGRST204, from its schema cache) before the
+      // row is ever written, so naming these unconditionally would 500 EVERY
+      // insert — employee Mark Paid, MESA disbursements and urgent one-offs all
+      // route through this one function — until
+      // references/sql/alter/add_contractor_dispatch_link.sql is applied.
+      // Omitting them is semantically identical for employees: payee_type
+      // defaults to 'employee' in the DB.
+      ...(input.payee_type === "contractor"
+        ? {
+            payee_type: "contractor",
+            contractor_invoice_id: input.contractor_invoice_id ?? null,
+          }
+        : {}),
       created_by: input.created_by ?? null,
     })
     .select("*")

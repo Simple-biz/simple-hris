@@ -72,6 +72,12 @@ interface DispatchQueueState {
   wizardReady: boolean;
   loading: boolean;
   error: string | null;
+  /**
+   * A contractor-side failure (missing migration, failed read, aborted fetch).
+   * The employee queue is unaffected — but contractor invoices are silently
+   * absent, so the UI must say so rather than looking healthy and empty.
+   */
+  contractorError: string | null;
   /** Re-pulls dispatches + queue. Call after Mark paid succeeds. */
   refresh: () => Promise<void>;
 }
@@ -96,6 +102,7 @@ function seedState(cacheKey: string): Omit<DispatchQueueState, 'refresh'> {
     wizardReady: cached?.wizardReady ?? true,
     loading: cached === undefined,
     error: null,
+    contractorError: null,
   };
 }
 
@@ -123,6 +130,8 @@ async function loadAll(
   fxRate: number;
   wizardReady: boolean;
   error: string | null;
+  /** Contractor-side failure, if any. Never blanks the employee queue. */
+  contractorError: string | null;
 }> {
   // When the clerk picks a PAST week in the dispatch CSV selector, pay + cycle
   // are computed for that source file instead of the live `is_current` cycle.
@@ -179,6 +188,7 @@ async function loadAll(
       fxRate: 0,
       wizardReady: true,
       error: ratesJson.error,
+      contractorError: null,
     };
   }
 
@@ -320,12 +330,72 @@ async function loadAll(
     /* ignore — arrears rollup is additive; queue still works without it */
   }
 
+  // ── Contractor payees ──────────────────────────────────────────────────────
+  // Second payee source: one row per approved, unclaimed contractor invoice.
+  // Contractors bill by invoice and mostly have no rates row or Hubstaff hours,
+  // so buildQueueFromRates can never emit them.
+  //
+  // Its OWN try/catch, deliberately NOT a Promise.all sibling: a rejection up
+  // there would fall into the shared catch and blank the entire employee queue.
+  // A contractor-side failure must degrade to "no contractor rows", nothing more.
+  let contractorActive: QueueRow[] = [];
+  let contractorExcluded: ExcludedRow[] = [];
+  let contractorRoleEmails = new Set<string>();
+  let contractorError: string | null = null;
+  try {
+    const fxForContractors = payJson.fxRate ?? 0;
+    const params = new URLSearchParams();
+    if (period.sourceFile) params.set('source_file', period.sourceFile);
+    if (fxForContractors > 0) params.set('fx', String(fxForContractors));
+    const cRes = await fetch(`/api/contractor/dispatch-queue?${params.toString()}`, {
+      cache: 'no-store',
+      signal,
+    });
+    const cJson = (await cRes.json()) as {
+      active?: QueueRow[];
+      excluded?: ExcludedRow[];
+      contractorEmails?: string[];
+      error?: string | null;
+    };
+    contractorActive = cJson.active ?? [];
+    contractorExcluded = cJson.excluded ?? [];
+    contractorRoleEmails = new Set((cJson.contractorEmails ?? []).map((e) => e.trim().toLowerCase()));
+    // The route answers 200-with-error so it can never blank employee payroll.
+    // Surface it: otherwise a missing migration, a failed read, or an aborted
+    // fetch is indistinguishable from "no approved invoices" — the queue looks
+    // perfectly healthy with real money simply absent from it.
+    contractorError = cJson.error?.trim() || null;
+  } catch (e) {
+    // Additive by design; employee payroll still dispatches.
+    contractorError = e instanceof Error ? e.message : String(e);
+  }
+
+  /**
+   * Badge hourly rows belonging to a contractor-role holder (e.g. thea@, issa@).
+   *
+   * Sets `contractorRole` (DISPLAY ONLY) — never `payeeKind`. Stamping payeeKind
+   * here would make the POST send payee_type='contractor' with no invoice id,
+   * which the API rejects 400, leaving those employees permanently unpayable.
+   */
+  const tagContractorRole = <T extends { id: string; email: string; contractorRole?: boolean }>(r: T): T =>
+    contractorRoleEmails.has(r.id) || contractorRoleEmails.has(r.email.trim().toLowerCase())
+      ? { ...r, contractorRole: true }
+      : r;
+
   // Only `status='paid'` rows lock a recipient out of the pending queue —
   // Threshold and Problem rows leave the person available for retry, since
   // money never actually moved for those.
+  // Contractor settlements are excluded: this set is keyed by EMAIL and is applied
+  // to the employee rows below, so a settled invoice would delete that person's
+  // hourly salary row from pending, from Excluded and from the staged safety net —
+  // salary still owed, silently invisible, while Done shows a green paid row against
+  // their address for the invoice amount. Per-invoice payability is already enforced
+  // by the contractor builder's own dispatch_id/dispatch_claimed_at query.
+  // Pre-migration-safe: the column is absent from the payload, and
+  // `undefined !== 'contractor'` preserves today's behaviour exactly.
   const paidEmails = new Set(
     paid
-      .filter((p) => p.status === 'paid')
+      .filter((p) => p.status === 'paid' && p.payee_type !== 'contractor')
       .map((p) => p.recipient_email.trim().toLowerCase()),
   );
   const { active, excluded } = buildQueueFromRates(
@@ -358,11 +428,13 @@ async function loadAll(
   const pendingActive = active
     .filter((r) => !paidEmails.has(r.id))
     .filter(inMasterOrStaged)
-    .map(applyWizardFinal);
+    .map(applyWizardFinal)
+    .map(tagContractorRole);
   const excludedBase = excluded
     .filter((r) => !paidEmails.has(r.id))
     .filter(inMasterOrStaged)
-    .map(applyWizardFinal);
+    .map(applyWizardFinal)
+    .map(tagContractorRole);
 
   // Split pending into truly-pending vs wizard-excluded.
   const pendingQueue: QueueRow[] = [];
@@ -453,6 +525,22 @@ async function loadAll(
     });
   }
 
+  // ── Merge the contractor payees ────────────────────────────────────────────
+  // Placed AFTER the employee filters, and deliberately skipping three of them:
+  //  • paidEmails      — that filter is keyed per (email, cycle); settlement for
+  //                      an invoice is per-INVOICE (contractor_invoices.dispatch_id),
+  //                      already applied by the builder's query. Reusing the email
+  //                      filter would hide Claire's other six approved invoices
+  //                      the moment one of them was paid.
+  //  • inMasterOrStaged — a contractor need not be on the master list at all.
+  //  • applyWizardFinal — that overlay is the wizard's HOURLY final pay, keyed by
+  //                      email. Claire/Carla also have employee identities, so it
+  //                      could silently overwrite an invoice total.
+  for (const r of contractorActive) pendingQueue.push(r);
+  pendingQueue.sort((a, b) => a.name.localeCompare(b.name));
+  for (const r of contractorExcluded) withArrears.push(r);
+  withArrears.sort((a, b) => a.name.localeCompare(b.name));
+
   // ── Safety-net: never let a wizard-locked person vanish ────────────────────
   // The queue above is built from employee_hourly_rates. Anyone the wizard
   // locked in (staged) whose pay came from the employee/department CATALOG has
@@ -461,12 +549,20 @@ async function loadAll(
   // staged person we haven't already placed (pending / excluded / paid) into the
   // Excluded tab, flagged 'no_rate' (+ 'do_not_pay' when the wizard excluded
   // them in validation), so accounting can see them and set up a rate/bank.
+  //
+  // Contractor rows are skipped when seeding it: an approved INVOICE says nothing
+  // about whether that person's staged hourly pay has been placed, so counting it
+  // as "represented" would silently drop their catalog-paid salary row from the
+  // Excluded tab. The two populations do overlap — holding the contractor role is
+  // what lets thea@/issa@ invoice at all.
   const representedEmails = new Set<string>();
   for (const r of pendingQueue) {
+    if (r.payeeKind === 'contractor') continue;
     representedEmails.add(r.id);
     representedEmails.add(r.email.trim().toLowerCase());
   }
   for (const r of withArrears) {
+    if (r.payeeKind === 'contractor') continue;
     representedEmails.add(r.id);
     representedEmails.add(r.email.trim().toLowerCase());
   }
@@ -506,6 +602,7 @@ async function loadAll(
     fxRate: payJson.fxRate ?? 0,
     wizardReady,
     error: null,
+    contractorError,
   };
 }
 
@@ -561,6 +658,7 @@ export function useDispatchQueue(sourceFile?: string | null): DispatchQueueState
         wizardReady: result.wizardReady,
         loading: false,
         error: result.error,
+        contractorError: result.contractorError,
       });
     } catch (e) {
       if (signal?.aborted) return;
@@ -580,6 +678,7 @@ export function useDispatchQueue(sourceFile?: string | null): DispatchQueueState
         wizardReady: true,
         loading: false,
         error: e instanceof Error ? e.message : 'Failed to load dispatch queue',
+        contractorError: null,
       });
     }
   }, [sel, cacheKey]);

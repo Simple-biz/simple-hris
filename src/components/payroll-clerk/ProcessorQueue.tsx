@@ -4,6 +4,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'motion/react';
 import { ChevronDown, Copy, Download, Eye, Receipt, RefreshCw, Search, SearchX, Send, Sparkles, X } from 'lucide-react';
 import QueuePagination from './QueuePagination';
+import ContractorChip, { showsContractorBadge } from './ContractorChip';
 import { cn } from '@/lib/utils';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -286,7 +287,11 @@ function ProcessorQueue({ processor, rows, onMarkPaid, onViewPaystub, periodStar
         r.email.toLowerCase().includes(q) ||
         r.id.toLowerCase().includes(q) ||
         (r.bankPreferredRaw ?? '').toLowerCase().includes(q) ||
-        (r.departmentName ?? '').toLowerCase().includes(q),
+        (r.departmentName ?? '').toLowerCase().includes(q) ||
+        // Let the clerk pull up contractor rows by typing "contractor" or an
+        // invoice number.
+        (showsContractorBadge(r) && 'contractor'.includes(q)) ||
+        (r.invoiceNumber ?? '').toLowerCase().includes(q),
     );
   }, [rows, debouncedQuery, deptFilter]);
 
@@ -632,8 +637,11 @@ const QueueRowItem = React.memo(function QueueRowItem({
                 </motion.span>
               </div>
               <div className="truncate font-mono text-[11px] text-zinc-500">{row.email}</div>
-              {row.departmentName && (
-                <div className="mt-1">
+              {/* Badge must render even with no department, so the wrapper is
+                  gated on either chip having something to show. */}
+              {(row.departmentName || showsContractorBadge(row)) && (
+                <div className="mt-1 flex flex-wrap items-center gap-1">
+                  {showsContractorBadge(row) && <ContractorChip invoiceNumber={row.invoiceNumber} />}
                   <DeptChip name={row.departmentName} />
                 </div>
               )}
@@ -752,11 +760,14 @@ const QueueRowItem = React.memo(function QueueRowItem({
           </div>
         </button>
 
-        <div className="min-w-0">
+        <div className="flex min-w-0 flex-wrap items-center gap-1">
+          {showsContractorBadge(row) && <ContractorChip invoiceNumber={row.invoiceNumber} />}
           {row.departmentName ? (
             <DeptChip name={row.departmentName} />
           ) : (
-            <span className="text-[11px] text-zinc-300 dark:text-zinc-600">—</span>
+            !showsContractorBadge(row) && (
+              <span className="text-[11px] text-zinc-300 dark:text-zinc-600">—</span>
+            )
           )}
         </div>
 

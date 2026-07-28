@@ -12724,10 +12724,21 @@ export default function PayrollWizard({
           }
         };
 
-        const pendingInvoices  = contractorInvoicesInPeriod.filter((i) => i.status === 'pending');
+        // PENDING is deliberately NOT window-scoped. An invoice can only be paid
+        // once Accounting approves it (Payment Dispatch pays approved invoices),
+        // so hiding an invoice whose date falls outside the batch window strands
+        // it forever — nobody can approve what nobody can see. Approved/rejected
+        // stay window-scoped: that's this run's history.
+        const pendingInvoices  = contractorInvoices.filter((i) => i.status === 'pending');
         const approvedInvoices = contractorInvoicesInPeriod.filter((i) => i.status === 'approved');
         const rejectedInvoices = contractorInvoicesInPeriod.filter((i) => i.status === 'rejected');
         const approvedByCurrency = sumByCurrency(approvedInvoices);
+        // What the table renders: every pending invoice (so it can be actioned) +
+        // this period's approved/rejected history.
+        const inPeriodIds = new Set(contractorInvoicesInPeriod.map((i) => i.id));
+        const visibleInvoices = contractorInvoices.filter(
+          (i) => i.status === 'pending' || inPeriodIds.has(i.id),
+        );
 
         const monthLabelContractors = pabMonthRange
           ? `${pabMonthRange.monthName} ${pabMonthRange.year}`
@@ -12767,13 +12778,13 @@ export default function PayrollWizard({
                 <Loader2 className="h-5 w-5 animate-spin" />
                 <span className="text-sm">Loading invoices…</span>
               </div>
-            ) : contractorInvoicesInPeriod.length === 0 ? (
+            ) : visibleInvoices.length === 0 ? (
               <div className="flex flex-col items-center gap-3 py-16 text-center text-zinc-500 dark:text-zinc-400">
                 <HardHat className="h-10 w-10 opacity-25" />
                 <p className="text-sm">
                   {contractorInvoices.length === 0
                     ? 'No contractor invoices have been submitted yet.'
-                    : 'No contractor invoices fall within this pay period.'}
+                    : 'Nothing pending, and no decided invoices fall within this pay period.'}
                 </p>
               </div>
             ) : (
@@ -12790,7 +12801,7 @@ export default function PayrollWizard({
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-emerald-50 bg-white dark:divide-emerald-950/30 dark:bg-zinc-950/40">
-                    {contractorInvoicesInPeriod.map((inv) => (
+                    {visibleInvoices.map((inv) => (
                       <tr key={inv.id} className="transition-colors hover:bg-emerald-50/40 dark:hover:bg-emerald-950/15">
                         <td className="px-4 py-3">
                           <div className="font-medium text-zinc-900 dark:text-white">{inv.from_entity_name || inv.from_name || '—'}</div>
@@ -13451,8 +13462,12 @@ export default function PayrollWizard({
                   },
                   { label: 'Cycle Separation (Standard vs Hogan)', pass: true },
                   {
-                    label: `Contractor Invoices Reviewed (${contractorInvoicesInPeriod.filter(i => i.status === 'pending').length} pending)`,
-                    pass: contractorInvoicesInPeriod.filter(i => i.status === 'pending').length === 0,
+                    // Counts ALL pending invoices, not just this window's: an
+                    // unapproved invoice can never be paid, so a pending one dated
+                    // outside the batch window is still outstanding work — scoping
+                    // this to the window showed a green tick over stranded money.
+                    label: `Contractor Invoices Reviewed (${contractorInvoices.filter(i => i.status === 'pending').length} pending)`,
+                    pass: contractorInvoices.filter(i => i.status === 'pending').length === 0,
                   },
                 ].map((check, i) => (
                   <div

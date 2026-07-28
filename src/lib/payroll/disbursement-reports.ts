@@ -496,6 +496,9 @@ async function loadUrgentDispatchRows(): Promise<PaymentDispatchRow[]> {
       arrival_date: null,
       status: o.status,
       note: o.note,
+      // Synthesized from a one-off/MESA urgent payment, not a contractor invoice.
+      payee_type: "employee",
+      contractor_invoice_id: null,
       created_by: o.paid_by ?? o.created_by ?? null,
       created_at: o.created_at,
     });
@@ -1002,13 +1005,30 @@ export async function seedMissingDisbursementRecords(opts: {
 
   // Existing dispatches for unseeded source_files.
   const unseededFiles = unseeded.map((u) => u.source_file as string);
-  const { data: dispatchData } = await supabase
-    .from("payment_dispatches")
-    .select(
-      "id, recipient_email, cycle_source_file, status, amount_usd, sent_date, bank_used, transaction_id",
-    )
-    .in("cycle_source_file", unseededFiles)
-    .order("created_at", { ascending: false });
+  // `payee_type` is selected so contractor-invoice payments can be skipped below.
+  // It only exists once add_contractor_dispatch_link.sql has been applied, so fall
+  // back to the old column list when it is missing — correct in that case, since no
+  // contractor dispatch row can exist yet either.
+  const DISPATCH_COLS =
+    "id, recipient_email, cycle_source_file, status, amount_usd, sent_date, bank_used, transaction_id";
+  let dispatchData: unknown[] | null = null;
+  {
+    const withPayee = await supabase
+      .from("payment_dispatches")
+      .select(`${DISPATCH_COLS}, payee_type`)
+      .in("cycle_source_file", unseededFiles)
+      .order("created_at", { ascending: false });
+    if (withPayee.error) {
+      const fallback = await supabase
+        .from("payment_dispatches")
+        .select(DISPATCH_COLS)
+        .in("cycle_source_file", unseededFiles)
+        .order("created_at", { ascending: false });
+      dispatchData = fallback.data ?? null;
+    } else {
+      dispatchData = withPayee.data ?? null;
+    }
+  }
   const dispatchMap = new Map<
     string,
     {
@@ -1029,7 +1049,15 @@ export async function seedMissingDisbursementRecords(opts: {
     sent_date: string | null;
     bank_used: string | null;
     transaction_id: string | null;
+    payee_type?: string | null;
   }>) {
+    // A contractor-invoice payment must NEVER seed an hourly disbursement record:
+    // the map is keyed by (source_file, email), so for someone who both invoices
+    // and draws a salary it would stamp their employee row status='paid' with the
+    // INVOICE's amount and transaction id — salary that was never sent reading as
+    // paid, and dropping out of `outstanding`. Same invariant the migration's
+    // sync_disbursement_from_dispatch() guard enforces for the trigger path.
+    if ((d.payee_type ?? "employee") !== "employee") continue;
     const key = `${d.cycle_source_file}|${d.recipient_email?.trim().toLowerCase()}`;
     if (!dispatchMap.has(key)) dispatchMap.set(key, d);
   }

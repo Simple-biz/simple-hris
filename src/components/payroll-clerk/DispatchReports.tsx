@@ -15,7 +15,9 @@ import {
   Download,
   FileSpreadsheet,
   Gauge,
+  LayoutGrid,
   Loader2,
+  Rows3,
   Search,
   Send,
   Sparkles,
@@ -31,6 +33,7 @@ import type {
   PaymentDispatchStatus,
 } from '@/lib/supabase/payment-dispatches';
 import AnimatedNumber from './AnimatedNumber';
+import ContractorChip from './ContractorChip';
 
 interface ReportTotals {
   paidCount: number;
@@ -163,6 +166,10 @@ function formatTimestamp(iso: string): string {
 }
 
 const REPORTS_PER_PAGE = 6;
+const TABLE_ROWS_PER_PAGE = 12;
+
+type ReportsView = 'cards' | 'table';
+const REPORTS_VIEW_STORAGE_KEY = 'dispatch-reports-view';
 
 export default function DispatchReports() {
   const [summaries, setSummaries] = useState<ReportSummary[]>([]);
@@ -173,6 +180,7 @@ export default function DispatchReports() {
   const [selectedError, setSelectedError] = useState<string | null>(null);
   const [page, setPage] = useState(0);
   const [search, setSearch] = useState('');
+  const [view, setView] = useState<ReportsView>('cards');
   const [unseeded, setUnseeded] = useState<UnseededUpload[]>([]);
   const [seeding, setSeeding] = useState(false);
   const [seedError, setSeedError] = useState<string | null>(null);
@@ -215,6 +223,27 @@ export default function DispatchReports() {
     loadReports(controller.signal);
     return () => controller.abort();
   }, [loadReports]);
+
+  // Restore the clerk's last-used view (cards vs table) after mount so SSR
+  // markup stays deterministic.
+  useEffect(() => {
+    try {
+      const stored = window.localStorage.getItem(REPORTS_VIEW_STORAGE_KEY);
+      if (stored === 'cards' || stored === 'table') setView(stored);
+    } catch {
+      /* storage unavailable — keep default */
+    }
+  }, []);
+
+  const changeView = (next: ReportsView) => {
+    setView(next);
+    setPage(0);
+    try {
+      window.localStorage.setItem(REPORTS_VIEW_STORAGE_KEY, next);
+    } catch {
+      /* storage unavailable — preference just won't persist */
+    }
+  };
 
   // Seed either a targeted subset (per-upload button) or all seedable uploads
   // (Seed all button). `files === null` means "seed all".
@@ -307,9 +336,12 @@ export default function DispatchReports() {
               Weekly payroll cycles and urgent (MESA) payouts.
             </p>
           </div>
-          <div className="hidden items-center gap-1.5 rounded-full border border-orange-200/80 bg-white/70 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-orange-700 backdrop-blur-md dark:border-orange-900/40 dark:bg-orange-950/30 dark:text-orange-300 sm:inline-flex">
-            <Sparkles className="h-3 w-3" />
-            {summaries.length} {summaries.length === 1 ? 'report' : 'reports'}
+          <div className="flex items-center gap-2">
+            <div className="hidden items-center gap-1.5 rounded-full border border-orange-200/80 bg-white/70 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-orange-700 backdrop-blur-md dark:border-orange-900/40 dark:bg-orange-950/30 dark:text-orange-300 sm:inline-flex">
+              <Sparkles className="h-3 w-3" />
+              {summaries.length} {summaries.length === 1 ? 'report' : 'reports'}
+            </div>
+            <ViewToggle view={view} onChange={changeView} />
           </div>
         </div>
         {/* Search bar */}
@@ -473,8 +505,9 @@ export default function DispatchReports() {
             </div>
           </div>
         ) : (
-          <PaginatedReportGrid
+          <PaginatedReportList
             summaries={filteredSummaries}
+            view={view}
             page={page}
             onPageChange={setPage}
             onOpen={openReport}
@@ -498,42 +531,87 @@ function ReportListSkeleton() {
   );
 }
 
-function PaginatedReportGrid({
+function ViewToggle({
+  view,
+  onChange,
+}: {
+  view: ReportsView;
+  onChange: (next: ReportsView) => void;
+}) {
+  const options = [
+    { id: 'cards' as const, label: 'Cards', Icon: LayoutGrid },
+    { id: 'table' as const, label: 'Table', Icon: Rows3 },
+  ];
+  return (
+    <div
+      role="group"
+      aria-label="Report list view"
+      className="inline-flex items-center rounded-lg border border-zinc-200 bg-zinc-50 p-0.5 dark:border-zinc-700 dark:bg-zinc-900"
+    >
+      {options.map(({ id, label, Icon }) => (
+        <button
+          key={id}
+          type="button"
+          onClick={() => onChange(id)}
+          aria-pressed={view === id}
+          className={cn(
+            'flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[11px] font-medium transition-colors',
+            view === id
+              ? 'bg-white text-zinc-900 shadow-sm dark:bg-zinc-800 dark:text-white'
+              : 'text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200',
+          )}
+        >
+          <Icon className="h-3.5 w-3.5" />
+          <span className="hidden sm:inline">{label}</span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function PaginatedReportList({
   summaries,
+  view,
   page,
   onPageChange,
   onOpen,
 }: {
   summaries: ReportSummary[];
+  view: ReportsView;
   page: number;
   onPageChange: (next: number) => void;
   onOpen: (cycleId: string) => void;
 }) {
+  const perPage = view === 'table' ? TABLE_ROWS_PER_PAGE : REPORTS_PER_PAGE;
   const total = summaries.length;
-  const pageCount = Math.max(1, Math.ceil(total / REPORTS_PER_PAGE));
+  const pageCount = Math.max(1, Math.ceil(total / perPage));
   const safePage = Math.min(page, pageCount - 1);
-  const start = safePage * REPORTS_PER_PAGE;
-  const visible = summaries.slice(start, start + REPORTS_PER_PAGE);
+  const start = safePage * perPage;
+  const visible = summaries.slice(start, start + perPage);
 
   return (
     <div className="flex flex-col gap-4">
-      <motion.ul
-        key={safePage}
-        initial="hidden"
-        animate="visible"
-        variants={{
-          hidden: { opacity: 0 },
-          visible: {
-            opacity: 1,
-            transition: { staggerChildren: 0.04, delayChildren: 0.02 },
-          },
-        }}
-        className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3"
-      >
-        {visible.map((s) => (
-          <ReportCard key={s.cycleId} report={s} onOpen={() => onOpen(s.cycleId)} />
-        ))}
-      </motion.ul>
+      {view === 'table' ? (
+        <ReportTable summaries={visible} onOpen={onOpen} />
+      ) : (
+        <motion.ul
+          key={safePage}
+          initial="hidden"
+          animate="visible"
+          variants={{
+            hidden: { opacity: 0 },
+            visible: {
+              opacity: 1,
+              transition: { staggerChildren: 0.04, delayChildren: 0.02 },
+            },
+          }}
+          className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3"
+        >
+          {visible.map((s) => (
+            <ReportCard key={s.cycleId} report={s} onOpen={() => onOpen(s.cycleId)} />
+          ))}
+        </motion.ul>
+      )}
 
       {pageCount > 1 && (
         <Pagination
@@ -545,6 +623,103 @@ function PaginatedReportGrid({
           onPageChange={onPageChange}
         />
       )}
+    </div>
+  );
+}
+
+function ReportTable({
+  summaries,
+  onOpen,
+}: {
+  summaries: ReportSummary[];
+  onOpen: (cycleId: string) => void;
+}) {
+  return (
+    <div className="overflow-hidden rounded-2xl border border-[#ececec] bg-white dark:border-zinc-800 dark:bg-zinc-950">
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[860px] text-xs">
+          <thead className="bg-[#fafaf8] text-[10px] uppercase tracking-wide text-[#71717a] dark:bg-zinc-900 dark:text-zinc-400">
+            <tr>
+              <th className="px-4 py-2 text-left font-medium">Report</th>
+              <th className="px-4 py-2 text-left font-medium">Period</th>
+              <th className="px-4 py-2 text-left font-medium">Uploaded</th>
+              <th className="px-4 py-2 text-right font-medium">Paid</th>
+              <th className="px-4 py-2 text-right font-medium">Sent</th>
+              <th className="px-4 py-2 text-right font-medium">Pending</th>
+              <th className="px-4 py-2 text-right font-medium">Total paid out</th>
+              <th className="px-4 py-2" aria-hidden />
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-[#ececec] dark:divide-zinc-800">
+            {summaries.map((s) => {
+              const isUrgent = s.sourceFile?.startsWith('urgent_') ?? false;
+              const pending =
+                s.totals.notPaidCount + s.totals.thresholdCount + s.totals.problemCount;
+              return (
+                <tr
+                  key={s.cycleId}
+                  onClick={() => onOpen(s.cycleId)}
+                  className="cursor-pointer transition-colors hover:bg-[#fafaf8] dark:hover:bg-zinc-900/50"
+                >
+                  <td className="px-4 py-2.5">
+                    <div className="flex items-center gap-2">
+                      <span className="font-medium text-zinc-900 dark:text-zinc-100">
+                        {s.reportName}
+                      </span>
+                      {isUrgent && (
+                        <span className="inline-flex shrink-0 items-center gap-1 rounded-full border border-amber-200 bg-gradient-to-br from-amber-50 to-orange-50 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-[0.14em] text-amber-700 dark:border-amber-900/40 dark:from-amber-950/40 dark:to-orange-950/30 dark:text-amber-300">
+                          <Zap className="h-2.5 w-2.5" />
+                          Urgent
+                        </span>
+                      )}
+                      {!isUrgent && s.isCurrent && (
+                        <span className="inline-flex shrink-0 items-center gap-1 rounded-full border border-orange-200 bg-gradient-to-br from-orange-50 to-rose-50 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-[0.14em] text-orange-700 dark:border-orange-900/40 dark:from-orange-950/40 dark:to-rose-950/30 dark:text-orange-300">
+                          Current
+                        </span>
+                      )}
+                    </div>
+                    {s.sourceFile && (
+                      <div className="mt-0.5 max-w-[260px] truncate font-mono text-[10px] text-zinc-400 dark:text-zinc-500">
+                        {s.sourceFile}
+                      </div>
+                    )}
+                  </td>
+                  <td className="whitespace-nowrap px-4 py-2.5 text-zinc-700 dark:text-zinc-300">
+                    {formatDateLong(s.periodStart)} → {formatDateLong(s.periodEnd)}
+                  </td>
+                  <td className="whitespace-nowrap px-4 py-2.5 text-zinc-500 dark:text-zinc-400">
+                    {formatTimestamp(s.uploadedAt)}
+                    {s.uploadedBy ? ` by ${s.uploadedBy}` : ''}
+                  </td>
+                  <td className="px-4 py-2.5 text-right font-semibold tabular-nums text-emerald-700 dark:text-emerald-300">
+                    {s.totals.paidCount}
+                  </td>
+                  <td className="px-4 py-2.5 text-right font-semibold tabular-nums text-violet-700 dark:text-violet-300">
+                    {s.totals.sentCount}
+                  </td>
+                  <td
+                    className={cn(
+                      'px-4 py-2.5 text-right font-semibold tabular-nums',
+                      pending > 0
+                        ? 'text-amber-700 dark:text-amber-300'
+                        : 'text-zinc-400 dark:text-zinc-600',
+                    )}
+                  >
+                    {pending}
+                  </td>
+                  <td className="px-4 py-2.5 text-right font-mono font-semibold tabular-nums text-emerald-700 dark:text-emerald-400">
+                    {formatUSD(s.totals.paidUSD)}
+                  </td>
+                  <td className="px-4 py-2.5 text-right text-orange-600 dark:text-orange-400">
+                    <span aria-hidden>→</span>
+                    <span className="sr-only">View report</span>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
@@ -1118,8 +1293,11 @@ function ReportDetail({
                     return (
                       <tr key={rec.id} className="hover:bg-[#fafaf8] dark:hover:bg-zinc-900/50">
                         <td className="px-4 py-2">
-                          <div className="font-medium text-zinc-900 dark:text-zinc-100">
-                            {rec.recipient_name ?? rec.recipient_email}
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <span className="font-medium text-zinc-900 dark:text-zinc-100">
+                              {rec.recipient_name ?? rec.recipient_email}
+                            </span>
+                            {rec.payee_type === 'contractor' && <ContractorChip />}
                           </div>
                           <div className="font-mono text-[10px] text-[#71717a] dark:text-zinc-500">
                             {rec.recipient_email}
@@ -1194,7 +1372,8 @@ function PaidRecipientsPanel({ recipients }: { recipients: ReportRecipient[] }) 
           Paid this week
         </h2>
         <span className="font-mono text-[10px] tabular-nums text-emerald-800/80 dark:text-emerald-300/80">
-          {recipients.length} employee{recipients.length === 1 ? '' : 's'}
+          {/* "employees" became inaccurate once contractor invoices are paid here. */}
+          {recipients.length} payee{recipients.length === 1 ? '' : 's'}
         </span>
       </div>
 

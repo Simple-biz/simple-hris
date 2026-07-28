@@ -17,6 +17,7 @@ export const runtime = 'nodejs';
  * GET — read applied catalog bonuses. Any authenticated employee may read
  * (middleware gates /api); the surfaces that consume it are permission-scoped.
  *   ?summary=1&depts=a,b        -> per-(dept,period) rollups for Bonus History
+ *                                  (+ &period_start=Y to scope to one pay week)
  *   ?dept=X&period_start=Y      -> rows for one dept-week (calculator / history view)
  *   ?depts=a,b&period_start=Y   -> rows across depts for a week (Payroll Wizard)
  */
@@ -30,7 +31,10 @@ export async function GET(request: Request) {
 
     if (summary === '1') {
       const depts = (deptsParam ?? '').split(',').map((s) => s.trim()).filter(Boolean);
-      const rows = await summarizeApplied(depts);
+      // `period_start` is optional here: Bonus History wants every period, while
+      // one-week callers (the Overview "Bonuses to score" panel) scope the query
+      // so the DB doesn't return the whole applied-bonus history.
+      const rows = await summarizeApplied(depts, periodStart ?? undefined);
       return NextResponse.json({ rows, error: null });
     }
 

@@ -28,6 +28,7 @@ const COLUMNS: { key: string; header: string }[] = [
   { key: 'name',            header: 'Name' },
   { key: 'personal_email',  header: 'Personal Email' },
   { key: 'work_email',      header: 'Work Email' },
+  { key: 'payee_type',      header: 'Payee Type' },
   { key: 'processor',       header: 'Processor' },
   { key: 'amount_usd',      header: 'Amount (USD)' },
   { key: 'amount_php',      header: 'Amount (PHP)' },
@@ -119,6 +120,13 @@ export function buildDispatchExportRows(
   // email → most recent dispatch overlay (created_at desc, paid wins ties)
   const dispatchByEmail = new Map<string, PaymentDispatchRow>();
   for (const d of dispatches) {
+    // Contractor-invoice payments are NOT overlays for an hourly disbursement
+    // record. This map is keyed by email, so for someone who both invoices and
+    // draws a salary the invoice's transaction id, bank_used, arrival date and
+    // snapshotted bank details would be written onto their HOURLY export line,
+    // next to their hourly amount — whoever reconciles against the processor
+    // statement would match a salary figure to an invoice payment.
+    if ((d.payee_type ?? 'employee') !== 'employee') continue;
     const key = normEmail(d.recipient_email);
     if (!key) continue;
     const prev = dispatchByEmail.get(key);
@@ -164,6 +172,9 @@ export function buildDispatchExportRows(
       name: dispatch?.recipient_name ?? r.recipient_name ?? '',
       personal_email: personalByEmail.get(key) ?? '',
       work_email: r.recipient_email,
+      // disbursement_records are hourly-payroll rows; a contractor dispatch never
+      // syncs into one (see the payee_type guard in sync_disbursement_from_dispatch).
+      payee_type: dispatch?.payee_type === 'contractor' ? 'Contractor' : 'Employee',
       processor,
       amount_usd: fmtMoney(amountUSD),
       amount_php: fmtMoney(r.amount_php),
@@ -207,6 +218,7 @@ export function buildDispatchExportRowsFromDispatches(
       name: d.recipient_name ?? '',
       personal_email: personalByEmail.get(key) ?? '',
       work_email: d.recipient_email,
+      payee_type: d.payee_type === 'contractor' ? 'Contractor' : 'Employee',
       processor: d.processor ?? '',
       amount_usd: fmtMoney(d.amount_usd),
       amount_php: fmtMoney(d.amount_php),

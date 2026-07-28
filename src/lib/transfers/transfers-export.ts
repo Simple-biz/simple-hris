@@ -1,4 +1,10 @@
-// Accounting Transfers → CSV + XLSX + PDF export.
+// Transfers → CSV + XLSX + PDF export.
+//
+// Shared by two surfaces, each passing its own title/theme (see
+// TransferExportSource, TransferPdfTheme):
+//   • Accounting → Transfers — the whole book, with catalog rate changes.
+//   • Manager → Transfers → Done — that manager's resolved team transfers,
+//     blue-themed, no rate column (managers don't resolve catalog rates).
 //
 // Turns the transfer history currently in view (respecting the active search)
 // into a portable audit record in three formats:
@@ -46,6 +52,30 @@ const STATUS_LABEL: Record<TransferRequestStatus, string> = {
   cancelled: 'Cancelled',
 };
 
+/**
+ * The minimum shape a row needs to be exportable. Deliberately structural rather
+ * than tied to one concrete row type, so both callers can feed it:
+ *   • Accounting — {@link AccountingTransferRow} satisfies this as-is.
+ *   • Manager    — maps `DepartmentTransferRequestRow` (whose releaser field is
+ *                  `approver_email`) onto `decided_by`.
+ * `rate_change` is optional: only Accounting resolves catalog rates, so the
+ * manager export drops that column entirely (see `includeRateChange`).
+ */
+export interface TransferExportSource {
+  employee_name: string | null;
+  employee_email: string;
+  from_department: string;
+  to_department: string;
+  status: TransferRequestStatus;
+  requested_by: string;
+  decided_by: string | null;
+  effective_date: string | null;
+  proposed_effective_date: string | null;
+  sheet_synced: boolean;
+  created_at: string;
+  rate_change?: TransferRateChange | null;
+}
+
 /** One transfer, normalized for the flat table. */
 export interface TransferExportRecord {
   employee: string;
@@ -67,11 +97,21 @@ export interface TransferExportModel {
   total: number;
   /** Describes the in-view filter, e.g. "All transfers" or 'matching "kane"'. */
   filterLabel: string;
+  /** Document heading, e.g. "Department Transfers" / "Team Transfers". */
+  title: string;
+  /** Small caps eyebrow above the PDF title, e.g. "ACCOUNTING - ...". */
+  eyebrow: string;
+  /** Download filename stem (a YYYY-MM-DD suffix is appended). */
+  fileBase: string;
+  /** Emit the "Rate Change" column? Off when no catalog rates were resolved. */
+  includeRateChange: boolean;
   // ── Rollups over the exported (filtered) rows ──
   appliedCount: number;
   awaitingCount: number;
   scheduledCount: number;
   sheetFailCount: number;
+  declinedCount: number;
+  cancelledCount: number;
 }
 
 function clean(v: string | null | undefined): string {
@@ -108,23 +148,29 @@ function rateChangeStr(rc: TransferRateChange | null, ascii = false): string {
 }
 
 /** Effective date, or the proposed one flagged as such, mirroring the table cell. */
-function effectiveStr(r: AccountingTransferRow): string {
+function effectiveStr(r: TransferExportSource): string {
   if (r.effective_date) return formatDate(r.effective_date);
   if (r.proposed_effective_date) return `${formatDate(r.proposed_effective_date)} (proposed)`;
   return DASH;
 }
 
 /** Sheet-sync state as a short label — only meaningful for applied rows. */
-function sheetSyncStr(r: AccountingTransferRow): string {
+function sheetSyncStr(r: TransferExportSource): string {
   if (r.status !== 'applied') return DASH;
   return r.sheet_synced ? 'Synced' : 'Not synced';
 }
 
 /** Shape the raw transfer rows into a clean, per-transfer export model + rollups. */
 export function buildTransferExport(input: {
-  rows: readonly AccountingTransferRow[];
+  rows: readonly TransferExportSource[];
   total: number;
   filterLabel?: string;
+  /** Document heading. Defaults to the Accounting wording. */
+  title?: string;
+  eyebrow?: string;
+  fileBase?: string;
+  /** Include the catalog rate-change column. Defaults to true (Accounting). */
+  includeRateChange?: boolean;
 }): TransferExportModel {
   const rows: TransferExportRecord[] = input.rows.map((r) => ({
     employee: clean(r.employee_name) || clean(r.employee_email) || 'Unknown',
@@ -134,7 +180,7 @@ export function buildTransferExport(input: {
     requestedBy: clean(r.requested_by) || DASH,
     releasedBy: clean(r.decided_by) || DASH,
     effective: effectiveStr(r),
-    rateChange: rateChangeStr(r.rate_change),
+    rateChange: rateChangeStr(r.rate_change ?? null),
     sheetSync: sheetSyncStr(r),
     createdAt: formatDate(r.created_at),
   }));
@@ -143,10 +189,14 @@ export function buildTransferExport(input: {
   let awaitingCount = 0;
   let scheduledCount = 0;
   let sheetFailCount = 0;
+  let declinedCount = 0;
+  let cancelledCount = 0;
   for (const r of input.rows) {
     if (r.status === 'applied') appliedCount += 1;
     if (r.status === 'pending') awaitingCount += 1;
     if (r.status === 'approved') scheduledCount += 1;
+    if (r.status === 'rejected') declinedCount += 1;
+    if (r.status === 'cancelled') cancelledCount += 1;
     if (r.status === 'applied' && !r.sheet_synced) sheetFailCount += 1;
   }
 
@@ -155,10 +205,16 @@ export function buildTransferExport(input: {
     rows,
     total: input.total,
     filterLabel: clean(input.filterLabel) || 'All transfers',
+    title: clean(input.title) || 'Department Transfers',
+    eyebrow: clean(input.eyebrow) || 'ACCOUNTING - DEPARTMENT TRANSFERS',
+    fileBase: clean(input.fileBase) || 'department-transfers',
+    includeRateChange: input.includeRateChange ?? true,
     appliedCount,
     awaitingCount,
     scheduledCount,
     sheetFailCount,
+    declinedCount,
+    cancelledCount,
   };
 }
 
@@ -189,9 +245,20 @@ function scopeCountLabel(model: TransferExportModel): string {
   return `${countLabel(shown)} of ${model.total.toLocaleString()} loaded`;
 }
 
-/** The provenance summary line shared across all three formats. */
+/** The provenance summary line shared across all three formats. Only non-empty
+ *  buckets appear, so a Done-only export doesn't claim "0 awaiting release". */
 function summaryLine(model: TransferExportModel): string {
-  return `${scopeCountLabel(model)} · ${model.appliedCount} applied · ${model.awaitingCount} awaiting release · ${model.scheduledCount} scheduled${model.sheetFailCount > 0 ? ` · ${model.sheetFailCount} sheet-sync failure${model.sheetFailCount === 1 ? '' : 's'}` : ''}`;
+  const parts = [scopeCountLabel(model)];
+  const add = (n: number, label: string) => {
+    if (n > 0) parts.push(`${n} ${label}`);
+  };
+  add(model.appliedCount, 'applied');
+  add(model.awaitingCount, 'awaiting release');
+  add(model.scheduledCount, 'scheduled');
+  add(model.declinedCount, 'declined');
+  add(model.cancelledCount, 'withdrawn');
+  add(model.sheetFailCount, `sheet-sync failure${model.sheetFailCount === 1 ? '' : 's'}`);
+  return parts.join(' · ');
 }
 
 // ---------------------------------------------------------------------------
@@ -200,21 +267,26 @@ function summaryLine(model: TransferExportModel): string {
 
 interface FlatColumn {
   header: string;
+  width: number;
   get: (r: TransferExportRecord) => string;
 }
 
-const FLAT_COLUMNS: FlatColumn[] = [
-  { header: 'Employee', get: (r) => r.employee },
-  { header: 'From', get: (r) => r.from },
-  { header: 'To', get: (r) => r.to },
-  { header: 'Effective', get: (r) => r.effective },
-  { header: 'Requested By', get: (r) => r.requestedBy },
-  { header: 'Released By', get: (r) => r.releasedBy },
-  { header: 'Rate Change', get: (r) => r.rateChange },
-  { header: 'Status', get: (r) => r.status },
-  { header: 'Sheet Sync', get: (r) => r.sheetSync },
-  { header: 'Requested On', get: (r) => r.createdAt },
-];
+/** The flat table's columns, minus any the model opts out of. */
+function flatColumns(model: TransferExportModel): FlatColumn[] {
+  const cols: FlatColumn[] = [
+    { header: 'Employee', width: 26, get: (r) => r.employee },
+    { header: 'From', width: 18, get: (r) => r.from },
+    { header: 'To', width: 18, get: (r) => r.to },
+    { header: 'Effective', width: 20, get: (r) => r.effective },
+    { header: 'Requested By', width: 26, get: (r) => r.requestedBy },
+    { header: 'Released By', width: 26, get: (r) => r.releasedBy },
+    { header: 'Rate Change', width: 24, get: (r) => r.rateChange },
+    { header: 'Status', width: 16, get: (r) => r.status },
+    { header: 'Sheet Sync', width: 12, get: (r) => r.sheetSync },
+    { header: 'Requested On', width: 16, get: (r) => r.createdAt },
+  ];
+  return model.includeRateChange ? cols : cols.filter((c) => c.header !== 'Rate Change');
+}
 
 // ---------------------------------------------------------------------------
 // CSV
@@ -230,8 +302,9 @@ function csvEscape(v: unknown): string {
 /** Serialize the model to a single flat CSV table (with a UTF-8 BOM). */
 export function transfersToCsv(model: TransferExportModel): string {
   const year = model.generatedAt.getFullYear();
+  const columns = flatColumns(model);
   const preamble = [
-    ['Department Transfers'],
+    [model.title],
     [`Filter: ${model.filterLabel}`],
     ['Pulled from Simple-HRIS System'],
     [`Exported: ${formatTimestamp(model.generatedAt)}`],
@@ -240,9 +313,9 @@ export function transfersToCsv(model: TransferExportModel): string {
     [''],
   ].map((row) => row.map(csvEscape).join(','));
 
-  const header = ['#', ...FLAT_COLUMNS.map((c) => c.header)].map(csvEscape).join(',');
+  const header = ['#', ...columns.map((c) => c.header)].map(csvEscape).join(',');
   const body = model.rows.map((r, i) =>
-    [i + 1, ...FLAT_COLUMNS.map((c) => c.get(r))].map(csvEscape).join(','),
+    [i + 1, ...columns.map((c) => c.get(r))].map(csvEscape).join(','),
   );
   return '﻿' + [...preamble, header, ...body].join('\r\n');
 }
@@ -251,26 +324,25 @@ export function transfersToCsv(model: TransferExportModel): string {
 // XLSX
 // ---------------------------------------------------------------------------
 
-const XLSX_COLUMN_WIDTHS = [26, 18, 18, 20, 26, 26, 24, 16, 12, 16];
-
 /** Build a native Excel workbook: a titled sheet with one row per transfer. */
 export function buildTransfersWorkbook(model: TransferExportModel): XLSX.WorkBook {
   const wb = XLSX.utils.book_new();
+  const columns = flatColumns(model);
   const aoa: (string | number)[][] = [
-    ['Department Transfers'],
+    [model.title],
     [`Filter: ${model.filterLabel}`],
     [`Exported ${formatTimestamp(model.generatedAt)} · ${summaryLine(model)}`],
     [],
-    ['#', ...FLAT_COLUMNS.map((c) => c.header)],
+    ['#', ...columns.map((c) => c.header)],
   ];
   model.rows.forEach((r, i) => {
-    aoa.push([i + 1, ...FLAT_COLUMNS.map((c) => c.get(r))]);
+    aoa.push([i + 1, ...columns.map((c) => c.get(r))]);
   });
 
   const ws = XLSX.utils.aoa_to_sheet(aoa);
-  ws['!cols'] = [{ wch: 5 }, ...XLSX_COLUMN_WIDTHS.map((wch) => ({ wch }))];
+  ws['!cols'] = [{ wch: 5 }, ...columns.map((c) => ({ wch: c.width }))];
   const headerRow = 5; // 1-indexed row that holds the column headers
-  const lastCol = FLAT_COLUMNS.length; // 0=`#`, then one per column
+  const lastCol = columns.length; // 0=`#`, then one per column
   ws['!autofilter'] = { ref: `A${headerRow}:${XLSX.utils.encode_col(lastCol)}${headerRow + model.rows.length}` };
   ws['!merges'] = [
     { s: { r: 0, c: 0 }, e: { r: 0, c: lastCol } },
@@ -291,20 +363,55 @@ const MARGIN = 40;
 const CONTENT_W = PAGE_W - MARGIN * 2; // 712
 const BOTTOM = 52;
 
-type RGB = readonly [number, number, number];
+export type RGB = readonly [number, number, number];
 const C_ORANGE: RGB = [0.918, 0.345, 0.047]; // #EA580C  orange-600
 const C_ORANGE_500: RGB = [0.976, 0.451, 0.086]; // #F97316  orange-500
 const C_ROSE: RGB = [0.957, 0.247, 0.369]; // #F43F5E  rose-500
 const C_AMBER: RGB = [0.961, 0.62, 0.043]; // #F59E0B  amber-500
 const tup = (c: RGB) => rgb(c[0], c[1], c[2]);
 
-const ORANGE = tup(C_ORANGE);
-const AMBER = tup(C_AMBER);
 const WHITE = rgb(1, 1, 1);
 const INK = rgb(0.094, 0.094, 0.106); // zinc-900  #18181B
 const MUTED = rgb(0.443, 0.443, 0.478); // zinc-500  #71717A
-const ROW_ALT = rgb(1, 0.969, 0.929); // orange-50  #FFF7ED  (warm zebra)
-const BORDER = rgb(0.914, 0.871, 0.812); // warm hairline
+
+/**
+ * The PDF's colour treatment. Each surface that exports transfers passes the
+ * palette matching its own dashboard, so a saved report looks like the page it
+ * came from: Accounting is warm orange→rose, the manager Transfers tab is blue.
+ */
+export interface TransferPdfTheme {
+  /** Table header fill + headline numerals. */
+  accent: RGB;
+  /** Gradient rule under the masthead + footer (from → to). */
+  gradientFrom: RGB;
+  gradientTo: RGB;
+  /** Top stripe on the at-a-glance metric cards. */
+  stripe: RGB;
+  /** Zebra fill for alternating table rows + metric card body. */
+  rowAlt: RGB;
+  /** Hairline rule under each row. */
+  border: RGB;
+}
+
+/** Accounting's warm orange→rose treatment (the original, and the default). */
+export const ACCOUNTING_PDF_THEME: TransferPdfTheme = {
+  accent: C_ORANGE,
+  gradientFrom: C_ORANGE_500,
+  gradientTo: C_ROSE,
+  stripe: C_AMBER,
+  rowAlt: [1, 0.969, 0.929], // orange-50  #FFF7ED
+  border: [0.914, 0.871, 0.812], // warm hairline
+};
+
+/** The manager Transfers tab's blue, matching its on-screen table. */
+export const MANAGER_PDF_THEME: TransferPdfTheme = {
+  accent: [0.145, 0.388, 0.922], // #2563EB  blue-600
+  gradientFrom: [0.231, 0.51, 0.965], // #3B82F6  blue-500
+  gradientTo: [0.055, 0.647, 0.914], // #0EA5E9  sky-500
+  stripe: [0.055, 0.647, 0.914], // sky-500
+  rowAlt: [0.937, 0.965, 1], // blue-50  #EFF6FF
+  border: [0.839, 0.886, 0.973], // cool hairline (~blue-100)
+};
 
 // pdf-lib's Helvetica is WinAnsi-encoded; characters outside it throw. Replace
 // the few symbols that show up (smart punctuation, arrows) with safe equivalents.
@@ -373,11 +480,17 @@ async function loadLogoBytes(url: string): Promise<ArrayBuffer | null> {
   }
 }
 
-/** Build the Accounting-themed PDF report. Returns the raw PDF bytes. */
+/** Build the themed PDF report. Returns the raw PDF bytes. */
 export async function generateTransfersPdf(
   model: TransferExportModel,
-  opts: { logoUrl?: string } = {},
+  opts: { logoUrl?: string; theme?: TransferPdfTheme } = {},
 ): Promise<Uint8Array> {
+  const theme = opts.theme ?? ACCOUNTING_PDF_THEME;
+  const ACCENT = tup(theme.accent);
+  const STRIPE = tup(theme.stripe);
+  const ROW_ALT = tup(theme.rowAlt);
+  const BORDER = tup(theme.border);
+
   const doc = await PDFDocument.create();
   const font = await doc.embedFont(StandardFonts.Helvetica);
   const bold = await doc.embedFont(StandardFonts.HelveticaBold);
@@ -411,7 +524,7 @@ export async function generateTransfersPdf(
       const w = (logo.width / logo.height) * h;
       state.page.drawImage(logo, { x: MARGIN, y: top - h, width: w, height: h });
     } else {
-      state.page.drawText('Simple', { x: MARGIN, y: top - 24, size: 24, font: bold, color: ORANGE });
+      state.page.drawText('Simple', { x: MARGIN, y: top - 24, size: 24, font: bold, color: ACCENT });
     }
 
     const right = (text: string, y: number, size: number, f: PDFFont, color = MUTED) => {
@@ -424,37 +537,59 @@ export async function generateTransfersPdf(
     right(`${String.fromCharCode(0xa9)} ${year} Simple.biz`, top - 32, 8, font);
 
     state.y = top - 48;
-    state.page.drawText('ACCOUNTING - DEPARTMENT TRANSFERS', { x: MARGIN, y: state.y, size: 8.5, font: bold, color: ORANGE });
+    state.page.drawText(sanitize(model.eyebrow), { x: MARGIN, y: state.y, size: 8.5, font: bold, color: ACCENT });
     state.y -= 18;
-    state.page.drawText('Department Transfers', { x: MARGIN, y: state.y, size: 17, font: bold, color: INK });
+    state.page.drawText(sanitize(model.title), { x: MARGIN, y: state.y, size: 17, font: bold, color: INK });
     state.y -= 14;
     state.page.drawText(sanitize(model.filterLabel), { x: MARGIN, y: state.y, size: 9, font, color: MUTED });
     state.y -= 11;
     state.page.drawText(sanitize(scopeCountLabel(model)), { x: MARGIN, y: state.y, size: 9, font, color: MUTED });
     state.y -= 9;
-    drawHGradient(state.page, MARGIN, state.y - 2.4, CONTENT_W, 2.4, C_ORANGE_500, C_ROSE);
+    drawHGradient(state.page, MARGIN, state.y - 2.4, CONTENT_W, 2.4, theme.gradientFrom, theme.gradientTo);
     state.y -= 18;
   }
 
-  // ── At-a-glance metric band (amber-topped stat cards) ──────────────────────
+  // ── At-a-glance metric band (accent-topped stat cards) ─────────────────────
+  // At most four cards. Only buckets that actually occur are shown, so a
+  // resolved-only export doesn't waste a card announcing "0 awaiting release".
+  // Two are PINNED rather than competing for the four slots on position:
+  //   • Applied — the anchor metric, always first even at zero.
+  //   • Sheet-sync failures — reserved whenever non-zero. It's the only
+  //     actionable number here (Accounting has a Retry for it) and the PDF
+  //     never draws summaryLine, so if this card is dropped the count vanishes
+  //     from the document entirely. A plain positional slice used to evict it
+  //     as soon as three ordinary status buckets were also non-zero.
   {
-    const items: { label: string; value: string; sub: string }[] = [
-      { label: 'Applied', value: model.appliedCount.toLocaleString(), sub: 'completed moves' },
-      { label: 'Awaiting release', value: model.awaitingCount.toLocaleString(), sub: 'pending requests' },
-      { label: 'Scheduled', value: model.scheduledCount.toLocaleString(), sub: 'released, not applied' },
-      { label: 'Sheet-sync failures', value: model.sheetFailCount.toLocaleString(), sub: 'need a retry' },
-    ];
+    const anchor = { label: 'Applied', count: model.appliedCount, sub: 'completed moves' };
+    const alert = { label: 'Sheet-sync failures', count: model.sheetFailCount, sub: 'need a retry' };
+    const middle = [
+      { label: 'Awaiting release', count: model.awaitingCount, sub: 'pending requests' },
+      { label: 'Scheduled', count: model.scheduledCount, sub: 'released, not applied' },
+      { label: 'Declined', count: model.declinedCount, sub: 'release refused' },
+      { label: 'Withdrawn', count: model.cancelledCount, sub: 'pulled by requester' },
+    ].filter((c) => c.count > 0);
+
+    const keepAlert = alert.count > 0;
+    const items = [
+      anchor,
+      ...middle.slice(0, keepAlert ? 2 : 3),
+      ...(keepAlert ? [alert] : []),
+    ].map((c) => ({ label: c.label, value: c.count.toLocaleString(), sub: c.sub }));
+
     const gap = 10;
-    const boxW = (CONTENT_W - gap * (items.length - 1)) / items.length;
+    // Cap at the natural four-up width so a one- or two-bucket export lays out
+    // as normal-sized cards rather than stretching one card across the page.
+    const maxBoxW = (CONTENT_W - gap * 3) / 4;
+    const boxW = Math.min((CONTENT_W - gap * (items.length - 1)) / items.length, maxBoxW);
     const boxH = 52;
     ensure(boxH + 10);
     state.y -= boxH;
     items.forEach((item, i) => {
       const x = MARGIN + i * (boxW + gap);
       state.page.drawRectangle({ x, y: state.y, width: boxW, height: boxH, color: ROW_ALT, borderColor: BORDER, borderWidth: 0.5 });
-      state.page.drawRectangle({ x, y: state.y + boxH - 3, width: boxW, height: 3, color: AMBER });
+      state.page.drawRectangle({ x, y: state.y + boxH - 3, width: boxW, height: 3, color: STRIPE });
       state.page.drawText(sanitize(item.label.toUpperCase()), { x: x + 9, y: state.y + boxH - 16, size: 7, font: bold, color: MUTED });
-      state.page.drawText(sanitize(item.value), { x: x + 9, y: state.y + 17, size: 18, font: bold, color: ORANGE });
+      state.page.drawText(sanitize(item.value), { x: x + 9, y: state.y + 17, size: 18, font: bold, color: ACCENT });
       state.page.drawText(sanitize(item.sub), { x: x + 9, y: state.y + 7, size: 7, font, color: MUTED });
     });
     state.y -= 16;
@@ -466,8 +601,15 @@ export async function generateTransfersPdf(
   const PAD_X = 6;
   const PAD_Y = 5;
 
-  // Column widths sum to CONTENT_W (712). The last column absorbs the remainder.
-  const w = { num: 20, emp: 96, move: 118, eff: 78, req: 92, rel: 92, rate: 108 };
+  // Column widths sum to CONTENT_W (712). The last column absorbs the remainder,
+  // so dropping the rate column redistributes its space rather than leaving a gap.
+  // `num` must fit three Helvetica digits at 8pt plus PAD_X*2 (13.35 + 12 = 25.4):
+  // at the old 20pt the usable width was 8pt — narrower than "10" (8.9pt) — so
+  // every row from #10 on hard-broke into stacked digits and doubled its height.
+  const w = model.includeRateChange
+    ? { num: 26, emp: 96, move: 118, eff: 78, req: 92, rel: 92, rate: 102 }
+    : { num: 26, emp: 128, move: 150, eff: 86, req: 108, rel: 102, rate: 0 };
+  const used = w.num + w.emp + w.move + w.eff + w.req + w.rel + w.rate;
   const columns: Col[] = [
     { header: '#', width: w.num, align: 'right' },
     { header: 'Employee', width: w.emp },
@@ -475,8 +617,8 @@ export async function generateTransfersPdf(
     { header: 'Effective', width: w.eff },
     { header: 'Requested by', width: w.req },
     { header: 'Released by', width: w.rel },
-    { header: 'Rate change', width: w.rate },
-    { header: 'Status', width: CONTENT_W - w.num - w.emp - w.move - w.eff - w.req - w.rel - w.rate },
+    ...(model.includeRateChange ? [{ header: 'Rate change', width: w.rate } as Col] : []),
+    { header: 'Status', width: CONTENT_W - used },
   ];
   const tableRows = model.rows.map((r, i) => [
     String(i + 1),
@@ -485,14 +627,14 @@ export async function generateTransfersPdf(
     r.effective,
     r.requestedBy,
     r.releasedBy,
-    rateChangeAscii(r),
+    ...(model.includeRateChange ? [rateChangeAscii(r)] : []),
     r.sheetSync !== DASH ? `${r.status} (${r.sheetSync})` : r.status,
   ]);
 
   const drawTable = (cols: Col[], rows: string[][]) => {
     const headerH = LH + PAD_Y * 2;
     const drawHeader = () => {
-      state.page.drawRectangle({ x: MARGIN, y: state.y - headerH, width: CONTENT_W, height: headerH, color: ORANGE });
+      state.page.drawRectangle({ x: MARGIN, y: state.y - headerH, width: CONTENT_W, height: headerH, color: ACCENT });
       let x = MARGIN;
       for (const c of cols) {
         const label = wrapText(c.header, bold, BODY, c.width - PAD_X * 2)[0];
@@ -558,7 +700,7 @@ export async function generateTransfersPdf(
   const total = pages.length;
   const footerText = `Developed by AI/API Team / Simple.biz ${String.fromCharCode(0xa9)} ${year}`;
   pages.forEach((p: PDFPage, i: number) => {
-    drawHGradient(p, MARGIN, 37, CONTENT_W, 1, C_ORANGE_500, C_ROSE, 40);
+    drawHGradient(p, MARGIN, 37, CONTENT_W, 1, theme.gradientFrom, theme.gradientTo, 40);
     p.drawText(sanitize(footerText), { x: MARGIN, y: 24, size: 8, font, color: MUTED });
     const pg = `Page ${i + 1} of ${total}`;
     const pw = font.widthOfTextAtSize(pg, 8);
@@ -598,7 +740,7 @@ function downloadBlob(filename: string, blob: Blob): void {
 }
 
 function baseName(model: TransferExportModel): string {
-  return `department-transfers-${dateSuffix(model.generatedAt)}`;
+  return `${model.fileBase}-${dateSuffix(model.generatedAt)}`;
 }
 
 /** Build + download the CSV report. */
@@ -619,10 +761,10 @@ export function downloadTransfersXlsx(model: TransferExportModel): void {
   );
 }
 
-/** Build + download the Accounting-themed PDF report. */
+/** Build + download the themed PDF report (Accounting orange unless overridden). */
 export async function downloadTransfersPdf(
   model: TransferExportModel,
-  opts?: { logoUrl?: string },
+  opts?: { logoUrl?: string; theme?: TransferPdfTheme },
 ): Promise<void> {
   const bytes = await generateTransfersPdf(model, opts);
   // Copy into a fresh ArrayBuffer so the Blob gets a plain ArrayBuffer.

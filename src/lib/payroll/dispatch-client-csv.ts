@@ -22,6 +22,8 @@ type CsvRow = Record<string, string>;
 const PENDING_COLUMNS: { key: string; header: string }[] = [
   { key: 'name',            header: 'Name' },
   { key: 'email',           header: 'Email' },
+  { key: 'payee_type',      header: 'Payee Type' },
+  { key: 'invoice_number',  header: 'Invoice #' },
   { key: 'department',      header: 'Department' },
   { key: 'processor',       header: 'Processor' },
   { key: 'amount_usd',      header: 'Amount (USD)' },
@@ -47,6 +49,7 @@ const SENT_COLUMNS: { key: string; header: string }[] = [
   { key: 'processor',                 header: 'Processor' },
   { key: 'recipient_name',            header: 'Name' },
   { key: 'recipient_email',           header: 'Email' },
+  { key: 'payee_type',                header: 'Payee Type' },
   { key: 'amount_usd',                header: 'Amount (USD)' },
   { key: 'amount_php',                header: 'Amount (PHP)' },
   { key: 'bank_used',                 header: 'Bank Used' },
@@ -92,6 +95,9 @@ export function buildPendingRows(rows: QueueRow[]): CsvRow[] {
   return rows.map((r) => ({
     name: r.name,
     email: r.email,
+    // Settlement kind for the export; the badge also shows for role-holders.
+    payee_type: r.payeeKind === 'contractor' ? 'Contractor' : r.contractorRole ? 'Employee (contractor role)' : 'Employee',
+    invoice_number: r.invoiceNumber ?? '',
     department: r.departmentName ?? '',
     processor: r.processor,
     amount_usd: fmtMoney(r.amountUSD),
@@ -119,6 +125,7 @@ export function buildSentRows(records: PaymentDispatchRow[]): CsvRow[] {
     processor: r.processor,
     recipient_name: r.recipient_name ?? '',
     recipient_email: r.recipient_email,
+    payee_type: r.payee_type === 'contractor' ? 'Contractor' : 'Employee',
     amount_usd: fmtMoney(r.amount_usd),
     amount_php: fmtMoney(r.amount_php),
     bank_used: r.bank_used,

@@ -8,7 +8,9 @@ import { deniedResponse } from '@/lib/auth/authorize-email';
 function errMsg(err: unknown): string {
   if (err instanceof Error) return err.message;
   if (typeof err === 'object' && err !== null && 'message' in err) return String((err as Record<string, unknown>).message);
-  return errMsg(err);
+  // Was `return errMsg(err)` — infinite recursion (stack overflow) on any
+  // non-Error throw, in the code path that now authorizes money.
+  return String(err);
 }
 
 function getServiceClient() {
@@ -37,11 +39,30 @@ export async function PATCH(
     const supabase = getServiceClient();
 
     // Fetch previous state for the audit trail's old → new diff.
+    // NOTE: `contractor_name` and `amount` do NOT exist on this table (the real
+    // column is `total`). Selecting them made every request error, so prevRow was
+    // always null and every contractor.decided audit entry logged nulls.
     const { data: prevRow } = await supabase
       .from('contractor_invoices')
-      .select('id, status, contractor_email, contractor_name, amount, currency, invoice_number')
+      .select('id, status, contractor_email, total, currency, invoice_number, from_name, dispatch_id, dispatch_claimed_at')
       .eq('id', id)
       .maybeSingle();
+
+    // Once an invoice has been dispatched, its status is frozen: re-opening it
+    // to 'approved' would put an already-PAID invoice back in the dispatch queue
+    // as payable. Undoing the payment (dispatch → Done → "send back to the pay
+    // processor") is the supported reversal — the AFTER DELETE trigger clears
+    // both columns and the invoice becomes payable again on its own.
+    const dispatched = prevRow as { dispatch_id?: string | null; dispatch_claimed_at?: string | null } | null;
+    if (dispatched?.dispatch_id || dispatched?.dispatch_claimed_at) {
+      return NextResponse.json(
+        {
+          error:
+            'This invoice has already been dispatched for payment. Undo the payment in Payment Dispatch → Done before changing its status.',
+        },
+        { status: 409 },
+      );
+    }
 
     const { error } = await supabase
       .from('contractor_invoices')
@@ -70,9 +91,9 @@ export async function PATCH(
         previous_status: prevRow?.status ?? null,
         new_status: status,
         contractor_email: prevRow?.contractor_email ?? null,
-        contractor_name: prevRow?.contractor_name ?? null,
+        contractor_name: prevRow?.from_name ?? null,
         invoice_number: prevRow?.invoice_number ?? null,
-        amount: prevRow?.amount ?? null,
+        amount: prevRow?.total ?? null,
         currency: prevRow?.currency ?? null,
       },
     });

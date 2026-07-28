@@ -173,6 +173,16 @@ export default function PayrollClerkApp() {
           arrival_date: payload.arrivalDate || null,
           status: payload.status,
           note: payload.note || null,
+          // Contractor settlement. This shell shares useDispatchQueue with
+          // PayrollDispatch, so contractor invoice rows appear here too — without
+          // these fields the API would treat the payment as an employee one, never
+          // claim the invoice, and the SAME invoice would come straight back into
+          // the queue as payable (paying it twice on the processor).
+          // Gated on the invoice link, never on the badge: contractorRole marks
+          // people paid ordinary hourly payroll.
+          ...(row.contractorInvoiceId
+            ? { payee_type: 'contractor', contractor_invoice_id: row.contractorInvoiceId }
+            : {}),
         }),
       });
       const json = (await res.json()) as {
