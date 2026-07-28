@@ -17,7 +17,10 @@ body,table,td,div,p,a{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Ro
 .amount-main,.line-amount{font-variant-numeric:tabular-nums;font-feature-settings:"tnum" 1;}
 .sec-head{background-color:#334155;padding:5px 12px;font-size:11px;line-height:13px;font-weight:800;letter-spacing:0.12em;text-transform:uppercase;color:#fff;mso-line-height-rule:exactly;}
 .line-label{width:44%;padding:6px 0;font-size:13px;line-height:15px;color:#26384d;border-bottom:1px solid #edf2f7;}
-.detail-col{width:28%;padding:6px 8px;font-size:12px;line-height:15px;color:#556377;border-bottom:1px solid #edf2f7;white-space:nowrap;}
+/* No nowrap here: a long adjustment_note would widen the 560px card and push
+   the Amount column out of view. It wraps; only .line-amount stays unbreakable. */
+.detail-col{width:28%;padding:6px 8px;font-size:12px;line-height:15px;color:#556377;border-bottom:1px solid #edf2f7;word-break:break-word;vertical-align:top;}
+.line-label,.line-amount{vertical-align:top;}
 .line-amount{width:28%;padding:6px 0;font-size:13px;line-height:15px;font-weight:700;color:#102034;border-bottom:1px solid #edf2f7;white-space:nowrap;}
 @media screen and (max-width:600px){
 .email-shell{padding:18px 10px !important;}

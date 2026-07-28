@@ -14508,7 +14508,17 @@ export default function PayrollWizard({
                             <div className="bg-[#334155] px-3 py-[5px] text-[11px] font-extrabold uppercase leading-[13px] tracking-[0.12em] text-white">
                               Earnings
                             </div>
-                            <table className="table-keep w-full border-collapse tabular-nums">
+                            {/* align-top keeps the label + amount on the note's first
+                                line when a long adjustment_note wraps — same rule as
+                                the shared PayStubStatement, so preview == dispatch. */}
+                            <table className="table-keep w-full table-fixed border-collapse tabular-nums [&_td]:align-top [&_td]:break-words">
+                              {/* Fixed 44/28/28 like the emailed statement, so a long
+                                  note can never shift the columns or push Amount out. */}
+                              <colgroup>
+                                <col className="w-[44%]" />
+                                <col className="w-[28%]" />
+                                <col className="w-[28%]" />
+                              </colgroup>
                               <tbody>
                                 <tr>
                                   <td className="border-b border-[#cbd5e1] bg-[#f1f5f9] py-1 text-[10px] font-bold uppercase leading-3 tracking-[0.06em] text-[#334155]">Description</td>
@@ -14517,12 +14527,12 @@ export default function PayrollWizard({
                                 </tr>
                                 <tr>
                                   <td className="border-b border-[#edf2f7] py-1.5 text-[13px] leading-[15px] text-[#26384d]">Regular Hours</td>
-                                  <td className="whitespace-nowrap border-b border-[#edf2f7] px-2 py-1.5 text-[12px] leading-[15px] text-[#556377]">{selected.hours.regular.toFixed(2)}h × ₱{fmtRate(selected.rates_php.regular)}</td>
+                                  <td className="border-b border-[#edf2f7] px-2 py-1.5 text-[12px] leading-[15px] text-[#556377]">{selected.hours.regular.toFixed(2)}h × ₱{fmtRate(selected.rates_php.regular)}</td>
                                   <td className="whitespace-nowrap border-b border-[#edf2f7] py-1.5 text-right text-[13px] font-bold leading-[15px] text-[#102034]">{fmt(pp.regular)}</td>
                                 </tr>
                                 <tr>
                                   <td className="border-b border-[#edf2f7] py-1.5 text-[13px] leading-[15px] text-[#26384d]">Overtime</td>
-                                  <td className="whitespace-nowrap border-b border-[#edf2f7] px-2 py-1.5 text-[12px] leading-[15px] text-[#556377]">{selected.hours.ot.toFixed(2)}h × ₱{fmtRate(selected.rates_php.ot)}</td>
+                                  <td className="border-b border-[#edf2f7] px-2 py-1.5 text-[12px] leading-[15px] text-[#556377]">{selected.hours.ot.toFixed(2)}h × ₱{fmtRate(selected.rates_php.ot)}</td>
                                   <td className="whitespace-nowrap border-b border-[#edf2f7] py-1.5 text-right text-[13px] font-bold leading-[15px] text-[#102034]">{fmt(pp.ot)}</td>
                                 </tr>
                                 <tr>
@@ -14560,7 +14570,17 @@ export default function PayrollWizard({
                             <div className="bg-[#334155] px-3 py-[5px] text-[11px] font-extrabold uppercase leading-[13px] tracking-[0.12em] text-white">
                               MESA Adjustment
                             </div>
-                            <table className="table-keep w-full border-collapse tabular-nums">
+                            {/* align-top keeps the label + amount on the note's first
+                                line when a long adjustment_note wraps — same rule as
+                                the shared PayStubStatement, so preview == dispatch. */}
+                            <table className="table-keep w-full table-fixed border-collapse tabular-nums [&_td]:align-top [&_td]:break-words">
+                              {/* Fixed 44/28/28 like the emailed statement, so a long
+                                  note can never shift the columns or push Amount out. */}
+                              <colgroup>
+                                <col className="w-[44%]" />
+                                <col className="w-[28%]" />
+                                <col className="w-[28%]" />
+                              </colgroup>
                               <tbody>
                                 <tr>
                                   <td className="border-b border-[#cbd5e1] bg-[#f1f5f9] py-1 text-[10px] font-bold uppercase leading-3 tracking-[0.06em] text-[#334155]">Description</td>
