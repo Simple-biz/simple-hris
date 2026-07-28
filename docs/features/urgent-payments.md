@@ -54,6 +54,28 @@ On mount it fetches both sources in parallel and renders two sections. `onCountC
 
 `OrphanageMarkPaidDialog` was extracted from `OrphanageQueue.tsx` into its own file (`src/components/payroll-clerk/OrphanageMarkPaidDialog.tsx`) so the Orphanage tab and the Urgent queue share one implementation.
 
+### Section 3 — One-off Payments
+
+- **Source:** `GET /api/urgent-payments/requests` — `pending` `urgent_payment_requests`, filed by the People tab's "Pay" action. Enriched with the same preferred-processor + `details` pre-fill as MESA.
+- **Send →** the shared `MarkPaidDialog` → `POST /api/urgent-payments/requests/[id]/dispatch`.
+
+### Amounts on the cards
+
+Both feeds return **`amount_usd`** alongside the filed peso figure, converted server-side by `usdFromPhp(amount, fetchUsdToPhpRate(...))` (`src/lib/payroll/urgent-payout-details.ts`) — the *same* conversion the dispatch routes persist onto `payment_dispatches.amount_usd`, so the number the clerk approves is the number that lands in the weekly report. Cards headline the **USD equivalent** with the peso amount beneath it, matching the rest of the dispatch queue, and fall back to peso-only if the conversion is unavailable. The USD figure also rides into `MarkPaidDialog` as `amountUSD`, so its secondary line shows dollars instead of a dash.
+
+### Removing an item (delete)
+
+Each MESA and one-off card carries a trash button that opens a confirm dialog before anything happens. The two sources use their own sanctioned removal path:
+
+| Source | Endpoint | Effect |
+|---|---|---|
+| MESA disbursement | `DELETE /api/mesa-requests/[id]` | Hard-deletes the request. Refuses (409) anything with `dispatched_at` set. Requires `mesa` **edit** (MESA's own gate), audit-logged as `mesa.request.deleted`. |
+| One-off payment | `DELETE /api/urgent-payments/requests/[id]` | Flips `status` `pending`→`cancelled`, conditionally on it still being `pending` — so an item paid by a concurrent Send can never be removed (409). Requires `payment_dispatch` **edit**, audit-logged as `urgent_payment.cancelled`. |
+
+One-off payments cancel rather than delete because their table's `status` CHECK carries `'cancelled'` for exactly this, and People-tab "Pay" is a money action whose paper trail should outlive the queue card. Either way the card leaves the queue, since both feeds select only pending rows.
+
+Orphanage budget requests have **no** remove button: they are approved records owned by the Orphanage module's own workflow, so they are withdrawn there, not from a payments screen.
+
 ---
 
 ## The dispatch route (MESA)

@@ -8,13 +8,22 @@ import {
   CheckCircle2,
   Clock,
   HeartHandshake,
+  Loader2,
   RefreshCw,
   Send,
+  Trash2,
   Wallet,
   Zap,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import MarkPaidDialog, { type MarkPaidPayload } from './MarkPaidDialog';
@@ -30,6 +39,8 @@ export interface UrgentPaymentRow {
   disbursement_reason: string | null;
   explanation: string | null;
   amount_needed: number | null;
+  /** USD equivalent of `amount_needed`, converted server-side at the active FX rate. */
+  amount_usd: number | null;
   created_at: string;
   reviewed_by: string | null;
   reviewed_at: string | null;
@@ -46,6 +57,8 @@ export interface UrgentOneOffRow {
   full_name: string;
   department: string | null;
   amount_php: number | null;
+  /** USD equivalent of `amount_php`, converted server-side at the active FX rate. */
+  amount_usd: number | null;
   note: string | null;
   requested_by: string | null;
   requested_at: string;
@@ -60,6 +73,21 @@ interface Props {
   onCountChange?: (n: number) => void;
 }
 
+/**
+ * A queue item the clerk asked to remove, held while the confirm dialog is open.
+ * `kind` picks the endpoint AND the wording, because the two sources are removed
+ * by different sanctioned paths: a MESA disbursement request is deleted outright
+ * (MESA's own DELETE, which refuses anything already paid), while a one-off
+ * payment is cancelled — its table carries a 'cancelled' status so the money
+ * request keeps its paper trail. Both leave the Urgent bucket.
+ */
+type RemoveTarget = {
+  kind: 'mesa' | 'oneoff';
+  id: string;
+  name: string;
+  amountPhp: number | null;
+};
+
 const PROCESSOR_LABEL: Record<ProcessorId, string> = PROCESSORS.reduce(
   (acc, p) => { acc[p.id] = p.label; return acc; },
   {} as Record<ProcessorId, string>,
@@ -70,6 +98,11 @@ function formatPHP(v: number | null | undefined) {
   return v.toLocaleString('en-PH', { style: 'currency', currency: 'PHP', minimumFractionDigits: 2 });
 }
 
+function formatUSD(v: number | null | undefined) {
+  if (v == null) return '—';
+  return '$' + v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
 // Build a QueueRow compatible with MarkPaidDialog from a MESA request + the
 // processor the clerk picked for this payout.
 function toQueueRow(r: UrgentPaymentRow, processor: ProcessorId): QueueRow {
@@ -78,11 +111,13 @@ function toQueueRow(r: UrgentPaymentRow, processor: ProcessorId): QueueRow {
     processor,
     name: r.full_name,
     email: r.work_email,
-    amountUSD: null,
+    // MESA disbursements are filed in PHP; the USD equivalent comes from the feed
+    // so Mark Paid's secondary line shows a real dollar figure, not a dash.
+    amountUSD: r.amount_usd,
     amountPHP: r.amount_needed,
     amountCOP: null,
     payCurrency: 'PHP',
-    initialPayUSD: null,
+    initialPayUSD: r.amount_usd,
     initialPayPHP: r.amount_needed,
     pabBonusPHP: 0,
     techBonusPHP: 0,
@@ -104,11 +139,12 @@ function toQueueRowOneOff(r: UrgentOneOffRow, processor: ProcessorId): QueueRow 
     processor,
     name: r.full_name,
     email: r.work_email,
-    amountUSD: null,
+    // Filed in PHP; USD equivalent supplied by the feed (see toQueueRow).
+    amountUSD: r.amount_usd,
     amountPHP: r.amount_php,
     amountCOP: null,
     payCurrency: 'PHP',
-    initialPayUSD: null,
+    initialPayUSD: r.amount_usd,
     initialPayPHP: r.amount_php,
     pabBonusPHP: 0,
     techBonusPHP: 0,
@@ -142,6 +178,9 @@ export default function UrgentPaymentsQueue({ onCountChange }: Props) {
   const [oneOffProcessorByRow, setOneOffProcessorByRow] = useState<Record<string, ProcessorId>>({});
   // Top filter rail — narrow the MESA queue to one processor.
   const [filter, setFilter] = useState<ProcessorId | 'all'>('all');
+  // Pending removal awaiting confirmation (null = dialog closed).
+  const [removeTarget, setRemoveTarget] = useState<RemoveTarget | null>(null);
+  const [removing, setRemoving] = useState(false);
 
   const load = useCallback(async (silent = false) => {
     if (!silent) setLoading(true); else setRefreshing(true);
@@ -334,6 +373,47 @@ export default function UrgentPaymentsQueue({ onCountChange }: Props) {
     }
   };
 
+  /**
+   * Remove the confirmed item from the queue. Awaits the server before dropping
+   * the card — unlike Send (which is optimistic to keep the clerk moving), a
+   * failed removal must leave the payment plainly still there rather than
+   * flashing it away and back.
+   */
+  const handleRemove = async () => {
+    if (!removeTarget || removing) return;
+    const target = removeTarget;
+    setRemoving(true);
+    try {
+      const url =
+        target.kind === 'mesa'
+          ? `/api/mesa-requests/${encodeURIComponent(target.id)}`
+          : `/api/urgent-payments/requests/${encodeURIComponent(target.id)}`;
+      const res = await fetch(url, { method: 'DELETE' });
+      const json = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok || json.error) throw new Error(json.error ?? 'Could not remove this payment');
+
+      if (target.kind === 'mesa') {
+        setRows((prev) => {
+          const next = prev.filter((r) => r.id !== target.id);
+          onCountChange?.(next.length + oneOffRows.length + budgetItems.length);
+          return next;
+        });
+      } else {
+        setOneOffRows((prev) => {
+          const next = prev.filter((r) => r.id !== target.id);
+          onCountChange?.(rows.length + next.length + budgetItems.length);
+          return next;
+        });
+      }
+      setRemoveTarget(null);
+      toast.success(`Removed — ${target.name} will not be paid from this queue.`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not remove this payment');
+    } finally {
+      setRemoving(false);
+    }
+  };
+
   const handleConfirmBudget = async (item: OrphanagePendingItem, payload: OrphanageMarkPaidPayload) => {
     const res = await fetch('/api/orphanage-dispatches', {
       method: 'POST',
@@ -480,6 +560,14 @@ export default function UrgentPaymentsQueue({ onCountChange }: Props) {
                         processor={processorFor(r)}
                         onProcessorChange={(p) => setProcessorFor(r.id, p)}
                         onSend={() => setMarkRow(r)}
+                        onRemove={() =>
+                          setRemoveTarget({
+                            kind: 'mesa',
+                            id: r.id,
+                            name: r.full_name,
+                            amountPhp: r.amount_needed,
+                          })
+                        }
                       />
                     ))}
                   </div>
@@ -499,6 +587,14 @@ export default function UrgentPaymentsQueue({ onCountChange }: Props) {
                       processor={processorForOneOff(r)}
                       onProcessorChange={(p) => setOneOffProcessorFor(r.id, p)}
                       onSend={() => setMarkOneOff(r)}
+                      onRemove={() =>
+                        setRemoveTarget({
+                          kind: 'oneoff',
+                          id: r.id,
+                          name: r.full_name,
+                          amountPhp: r.amount_php,
+                        })
+                      }
                     />
                   ))}
                 </div>
@@ -535,6 +631,60 @@ export default function UrgentPaymentsQueue({ onCountChange }: Props) {
         onClose={() => setMarkBudget(null)}
         onConfirm={handleConfirmBudget}
       />
+
+      {/* Remove confirmation — money-adjacent, so never a one-click delete. */}
+      <Dialog
+        open={removeTarget != null}
+        onOpenChange={(o) => { if (!o && !removing) setRemoveTarget(null); }}
+      >
+        <DialogContent className="sm:max-w-[420px]">
+          <DialogTitle className="flex items-center gap-2 text-base">
+            <span className="flex h-8 w-8 items-center justify-center rounded-full bg-rose-50 text-rose-600 dark:bg-rose-950/40 dark:text-rose-400">
+              <Trash2 className="h-4 w-4" />
+            </span>
+            {removeTarget?.kind === 'mesa' ? 'Delete disbursement?' : 'Delete payment?'}
+          </DialogTitle>
+          <DialogDescription className="text-[13px] leading-relaxed">
+            {removeTarget && (
+              <>
+                <span className="font-semibold text-zinc-900 dark:text-zinc-100">
+                  {removeTarget.name}
+                </span>
+                {removeTarget.amountPhp != null && (
+                  <>
+                    {' — '}
+                    <span className="font-mono font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">
+                      {formatPHP(removeTarget.amountPhp)}
+                    </span>
+                  </>
+                )}
+                {removeTarget.kind === 'mesa'
+                  ? '. This removes the approved MESA disbursement request entirely — nothing is paid, and it will not come back to this queue.'
+                  : '. This cancels the one-off payment request — nothing is paid, and it leaves this queue for good.'}
+              </>
+            )}
+          </DialogDescription>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={removing}
+              onClick={() => setRemoveTarget(null)}
+            >
+              Keep it
+            </Button>
+            <Button
+              type="button"
+              disabled={removing}
+              onClick={() => void handleRemove()}
+              className="gap-1.5 bg-rose-600 text-white hover:bg-rose-700 dark:bg-rose-600 dark:hover:bg-rose-500"
+            >
+              {removing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+              Delete
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -594,16 +744,67 @@ function FilterChip({
   );
 }
 
+/**
+ * Amount block on an urgent card. The USD equivalent leads because the dispatch
+ * queue and the weekly report both headline in dollars; the peso figure the
+ * request was actually filed in sits beneath it. Falls back to peso-only if the
+ * conversion is unavailable, so a missing FX rate never blanks the amount.
+ */
+function AmountBlock({ php, usd }: { php: number | null; usd: number | null }) {
+  return (
+    <div className="text-right">
+      <div className="text-[11px] font-medium uppercase tracking-wide text-zinc-400 dark:text-zinc-500">
+        Amount
+      </div>
+      {php == null ? (
+        <div className="text-sm text-zinc-400">—</div>
+      ) : usd == null ? (
+        <div className="font-mono text-lg font-bold tabular-nums text-zinc-900 dark:text-zinc-100">
+          {formatPHP(php)}
+        </div>
+      ) : (
+        <>
+          <div className="font-mono text-lg font-bold tabular-nums text-zinc-900 dark:text-zinc-100">
+            {formatUSD(usd)}
+          </div>
+          <div className="font-mono text-[11px] font-medium tabular-nums text-zinc-500 dark:text-zinc-400">
+            {formatPHP(php)}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+/** Trash affordance shared by the removable urgent cards. */
+function RemoveButton({ onClick, title }: { onClick: () => void; title: string }) {
+  return (
+    <Button
+      type="button"
+      variant="outline"
+      size="sm"
+      onClick={onClick}
+      aria-label={title}
+      title={title}
+      className="h-8 w-8 shrink-0 border-zinc-200 p-0 text-zinc-400 transition-colors hover:border-rose-300 hover:bg-rose-50 hover:text-rose-600 dark:border-zinc-700 dark:text-zinc-500 dark:hover:border-rose-800/60 dark:hover:bg-rose-950/30 dark:hover:text-rose-400"
+    >
+      <Trash2 className="h-3.5 w-3.5" />
+    </Button>
+  );
+}
+
 function UrgentCard({
   row,
   processor,
   onProcessorChange,
   onSend,
+  onRemove,
 }: {
   row: UrgentPaymentRow;
   processor: ProcessorId;
   onProcessorChange: (p: ProcessorId) => void;
   onSend: () => void;
+  onRemove: () => void;
 }) {
   const approvedDate = row.reviewed_at
     ? new Date(row.reviewed_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
@@ -651,16 +852,7 @@ function UrgentCard({
 
       {/* Amount + processor + action */}
       <div className="flex items-center gap-3 sm:flex-col sm:items-end sm:gap-2">
-        <div className="text-right">
-          <div className="text-[11px] font-medium uppercase tracking-wide text-zinc-400 dark:text-zinc-500">Amount</div>
-          {row.amount_needed != null ? (
-            <div className="font-mono text-lg font-bold tabular-nums text-zinc-900 dark:text-zinc-100">
-              {formatPHP(row.amount_needed)}
-            </div>
-          ) : (
-            <div className="text-sm text-zinc-400">—</div>
-          )}
-        </div>
+        <AmountBlock php={row.amount_needed} usd={row.amount_usd} />
         <div className="flex items-center gap-2">
           <label className="sr-only" htmlFor={`proc-${row.id}`}>Payment processor</label>
           <select
@@ -683,6 +875,7 @@ function UrgentCard({
             <Send className="h-3.5 w-3.5" />
             Send
           </Button>
+          <RemoveButton onClick={onRemove} title="Delete this disbursement" />
         </div>
       </div>
     </div>
@@ -694,11 +887,13 @@ function OneOffCard({
   processor,
   onProcessorChange,
   onSend,
+  onRemove,
 }: {
   row: UrgentOneOffRow;
   processor: ProcessorId;
   onProcessorChange: (p: ProcessorId) => void;
   onSend: () => void;
+  onRemove: () => void;
 }) {
   const requestedDate = new Date(row.requested_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 
@@ -730,16 +925,7 @@ function OneOffCard({
 
       {/* Amount + processor + action */}
       <div className="flex items-center gap-3 sm:flex-col sm:items-end sm:gap-2">
-        <div className="text-right">
-          <div className="text-[11px] font-medium uppercase tracking-wide text-zinc-400 dark:text-zinc-500">Amount</div>
-          {row.amount_php != null ? (
-            <div className="font-mono text-lg font-bold tabular-nums text-zinc-900 dark:text-zinc-100">
-              {formatPHP(row.amount_php)}
-            </div>
-          ) : (
-            <div className="text-sm text-zinc-400">—</div>
-          )}
-        </div>
+        <AmountBlock php={row.amount_php} usd={row.amount_usd} />
         <div className="flex items-center gap-2">
           <label className="sr-only" htmlFor={`oneoff-proc-${row.id}`}>Payment processor</label>
           <select
@@ -762,6 +948,7 @@ function OneOffCard({
             <Send className="h-3.5 w-3.5" />
             Send
           </Button>
+          <RemoveButton onClick={onRemove} title="Delete this payment" />
         </div>
       </div>
     </div>

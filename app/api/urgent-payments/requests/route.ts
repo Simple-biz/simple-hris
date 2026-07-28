@@ -19,6 +19,9 @@ export interface UrgentOneOffRow {
   full_name: string;
   department: string | null;
   amount_php: number | null;
+  /** USD equivalent of `amount_php` at the active FX rate — the same figure the
+   *  dispatch route will persist, so the queue can headline in dollars. */
+  amount_usd: number | null;
   note: string | null;
   requested_by: string | null;
   requested_at: string;
@@ -59,12 +62,16 @@ export async function GET() {
       requested_at: string;
     }>;
 
-    const idsByEmail = await fetchPayoutIdsByEmail(supabase, rows.map((r) => r.work_email));
+    const [idsByEmail, usdToPhp] = await Promise.all([
+      fetchPayoutIdsByEmail(supabase, rows.map((r) => r.work_email)),
+      fetchUsdToPhpRate(supabase),
+    ]);
 
     const result: UrgentOneOffRow[] = rows.map((r) => {
       const ids = idsByEmail[r.work_email.trim().toLowerCase()];
       return {
         ...r,
+        amount_usd: usdFromPhp(r.amount_php, usdToPhp),
         processor: preferredProcessor(ids),
         details: buildPayoutDetails(ids, r.work_email),
       };
