@@ -399,6 +399,14 @@ export default function PayrollDispatch() {
     () => pending.reduce((sum, r) => sum + (r.amountUSD ?? 0), 0),
     [pending],
   );
+  // One universe for the progress strip + the KPI fractions: people still to
+  // pay (ALL currencies) + people already paid — the same numbers broadcast to
+  // the CEO live card above, so every surface tells one story. "Started" is
+  // what the week began with; it shrinks/grows only if the queue itself does.
+  const startedCount = pending.length + distinctPaidCount;
+  const paidPct = startedCount > 0 ? Math.round((distinctPaidCount / startedCount) * 100) : 0;
+  // The week's full dollar bill = what already went out + what's still owed.
+  const totalWeekUSD = totalPaidUSD + totalPendingUSD;
 
   const visibleRows = useMemo(() => {
     if (activeTab === 'all') return phpPending;
@@ -834,45 +842,59 @@ export default function PayrollDispatch() {
         animate={{ gridTemplateColumns: '340px minmax(0,1fr)' }}
         transition={FOCUS_TRANSITION}
       >
-        {/* RIGHT TOP — Hero stats. Order 1 on mobile so stats sit above
-            everything else. lg: top-right cell. */}
+        {/* RIGHT TOP — Dispatch progress strip + hero stats. Order 1 on mobile
+            so they sit above everything else. lg: top-right cell. */}
         <motion.div
           variants={containerStagger}
           initial="hidden"
           animate="visible"
-          className="order-1 grid grid-cols-3 gap-2 sm:gap-4 lg:order-none lg:col-start-2 lg:row-start-1"
+          className="order-1 flex flex-col gap-2 sm:gap-3 lg:order-none lg:col-start-2 lg:row-start-1"
         >
-          <HeroStat
-            tone="orange"
-            label="Pending"
-            value={totalPending}
-            sub={totalPending === 1 ? 'person to pay' : 'people to pay'}
-            Icon={Send}
-            compact={focusMode}
+          <DispatchProgress
+            paid={distinctPaidCount}
+            started={startedCount}
+            remaining={pending.length}
+            pct={paidPct}
           />
-          <HeroStat
-            tone="emerald"
-            label="Sent"
-            value={totalSent}
-            sub={totalSent === 1 ? 'payment logged' : 'payments logged'}
-            Icon={CheckCircle2}
-            compact={focusMode}
-          />
-          <HeroStat
-            tone="violet"
-            label="Paid"
-            value={totalPaidUSD}
-            sub={
-              totalSent === 0
-                ? 'no payments logged yet'
-                : totalPendingUSD > 0
-                  ? `$${Math.round(totalPendingUSD).toLocaleString('en-US')} still owed`
-                  : `all paid · ${totalSent} dispatch${totalSent === 1 ? '' : 'es'}`
-            }
-            Icon={Coins}
-            currency
-            compact={focusMode}
-          />
+          <div className="grid grid-cols-3 gap-2 sm:gap-4">
+            <HeroStat
+              tone="orange"
+              label="Pending"
+              value={pending.length}
+              over={startedCount > 0 ? startedCount.toLocaleString('en-US') : undefined}
+              sub={pending.length === 1 ? 'person to pay' : 'people to pay'}
+              Icon={Send}
+              compact={focusMode}
+            />
+            <HeroStat
+              tone="emerald"
+              label="Sent"
+              value={totalSent}
+              sub={totalSent === 1 ? 'payment logged' : 'payments logged'}
+              Icon={CheckCircle2}
+              compact={focusMode}
+            />
+            <HeroStat
+              tone="violet"
+              label="Paid"
+              value={totalPaidUSD}
+              over={
+                totalWeekUSD > 0
+                  ? `$${Math.round(totalWeekUSD).toLocaleString('en-US')}`
+                  : undefined
+              }
+              sub={
+                totalSent === 0
+                  ? 'no payments logged yet'
+                  : totalPendingUSD > 0
+                    ? `$${Math.round(totalPendingUSD).toLocaleString('en-US')} still owed`
+                    : `all paid · ${totalSent} dispatch${totalSent === 1 ? '' : 'es'}`
+              }
+              Icon={Coins}
+              currency
+              compact={focusMode}
+            />
+          </div>
         </motion.div>
 
         {/* LEFT — Bank cards (filter rail). Order 2 on mobile (between stats
@@ -1218,6 +1240,119 @@ function ProcessingPill({ locked }: { locked: boolean }) {
   );
 }
 
+/** Wizard-style progress strip pinned above the KPI cards — fills as payments
+ *  go out (people paid / people the week started with) and flips emerald once
+ *  the queue is clear. Same visual language as the Payroll Wizard's bar. */
+function DispatchProgress({
+  paid,
+  started,
+  remaining,
+  pct,
+}: {
+  /** Distinct people already paid this week. */
+  paid: number;
+  /** People the week started with (still pending + already paid). */
+  started: number;
+  /** People still waiting on a payment (all currencies). */
+  remaining: number;
+  /** Whole-number % paid, precomputed against the same universe. */
+  pct: number;
+}) {
+  const complete = started > 0 && remaining === 0;
+  const fmt = (n: number) => Math.round(n).toLocaleString('en-US');
+  return (
+    <motion.div
+      variants={itemPop}
+      className="relative overflow-hidden rounded-xl border border-white/60 bg-white/70 px-3 py-2 shadow-[0_4px_16px_-8px_rgba(0,0,0,0.08)] backdrop-blur-md dark:border-zinc-800 dark:bg-zinc-900/60 sm:rounded-2xl sm:px-4 sm:py-2.5"
+    >
+      {/* Soft indigo (emerald when done) wash so the strip reads as part of the KPI family. */}
+      <div
+        className={cn(
+          'absolute inset-0 bg-gradient-to-r transition-opacity duration-500',
+          complete
+            ? 'from-emerald-100/50 via-teal-50/30 to-emerald-100/50 dark:from-emerald-950/40 dark:via-teal-950/20 dark:to-emerald-950/40'
+            : 'from-white via-indigo-50/60 to-white dark:from-zinc-900/60 dark:via-indigo-950/30 dark:to-zinc-900/60',
+        )}
+        aria-hidden
+      />
+      <div className="relative">
+        <div className="mb-1.5 flex flex-wrap items-center justify-between gap-1.5">
+          <div className="flex min-w-0 items-center gap-2">
+            <span className="relative flex h-1.5 w-1.5 flex-shrink-0">
+              <span
+                className={cn(
+                  'absolute inline-flex h-full w-full rounded-full opacity-75',
+                  complete ? 'animate-ping bg-emerald-400' : 'animate-ping bg-indigo-400',
+                )}
+              />
+              <span
+                className={cn(
+                  'relative inline-flex h-1.5 w-1.5 rounded-full',
+                  complete ? 'bg-emerald-500' : 'bg-indigo-500',
+                )}
+              />
+            </span>
+            <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-700 sm:text-[11px] dark:text-zinc-200">
+              Dispatch Progress
+            </span>
+            <span className="truncate text-[10px] text-zinc-500 dark:text-zinc-400 sm:text-[11px]">
+              &middot;{' '}
+              {started === 0
+                ? 'waiting for the queue'
+                : complete
+                  ? 'everyone paid'
+                  : `${fmt(remaining)} left to pay`}
+            </span>
+          </div>
+          <div className="flex flex-shrink-0 items-baseline gap-1.5 font-mono text-[10px] text-zinc-500 dark:text-zinc-400">
+            <span className="font-semibold text-zinc-700 dark:text-zinc-200">
+              <AnimatedNumber value={paid} formatter={fmt} />
+            </span>
+            <span>/</span>
+            <span>{fmt(started)}</span>
+            <span>paid</span>
+            <span
+              className={cn(
+                'ml-1 rounded-md px-1.5 py-0.5 text-[10px] font-bold',
+                complete
+                  ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300'
+                  : 'bg-indigo-100 text-indigo-700 dark:bg-indigo-950/50 dark:text-indigo-300',
+              )}
+            >
+              {pct}%
+            </span>
+          </div>
+        </div>
+        <div className="relative h-2.5 w-full overflow-hidden rounded-full bg-zinc-200/70 ring-1 ring-inset ring-zinc-300/50 dark:bg-zinc-800/80 dark:ring-zinc-700/50">
+          <motion.div
+            className={cn(
+              'relative h-full min-w-[0.625rem] overflow-hidden rounded-full',
+              complete
+                ? 'bg-gradient-to-r from-emerald-400 via-emerald-500 to-teal-500 shadow-[0_0_14px_-2px_rgba(16,185,129,0.65)]'
+                : 'bg-gradient-to-r from-indigo-500 via-violet-500 to-fuchsia-500 shadow-[0_0_14px_-2px_rgba(139,92,246,0.6)]',
+            )}
+            initial={false}
+            animate={{ width: `${pct}%` }}
+            transition={{ duration: 0.55, ease: [0.22, 1, 0.36, 1] }}
+            role="progressbar"
+            aria-valuenow={pct}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-label={`${fmt(paid)} of ${fmt(started)} people paid`}
+          >
+            {/* Glass top-highlight — a soft sheen along the upper half of the fill. */}
+            <span aria-hidden className="pointer-events-none absolute inset-x-0 top-0 h-1/2 rounded-full bg-white/25" />
+            {/* Light streak that sweeps across the filled portion (transform-only). */}
+            <span aria-hidden className="progress-sheen pointer-events-none absolute inset-y-0 left-0 w-2/5 bg-gradient-to-r from-transparent via-white/60 to-transparent" />
+            {/* Bright leading edge so the fill head reads as a glowing tip. */}
+            <span aria-hidden className="pointer-events-none absolute inset-y-0 right-0 w-1 rounded-full bg-white/80 blur-[0.5px]" />
+          </motion.div>
+        </div>
+      </div>
+    </motion.div>
+  );
+}
+
 function HeroStat({
   tone,
   label,
@@ -1226,6 +1361,7 @@ function HeroStat({
   Icon,
   currency = false,
   compact = false,
+  over,
 }: {
   tone: 'orange' | 'emerald' | 'violet';
   label: string;
@@ -1235,6 +1371,9 @@ function HeroStat({
   currency?: boolean;
   /** Focus mode — collapse to a slim one-line stat so the table gets the room. */
   compact?: boolean;
+  /** Pre-formatted denominator rendered as "/ 1,500" after the big value, so a
+   *  card can read as a fraction of the week's starting total. */
+  over?: string;
 }) {
   const palette = {
     orange: {
@@ -1311,6 +1450,17 @@ function HeroStat({
                 />
               )}
             </span>
+            {/* "of the week's total" denominator — e.g. 1,000 / 1,500. */}
+            {over != null && value != null && (
+              <span
+                className={cn(
+                  'shrink-0 whitespace-nowrap font-semibold tracking-tight text-zinc-400 tabular-nums transition-[font-size] duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] dark:text-zinc-500',
+                  compact ? 'text-[10px] sm:text-xs' : 'text-xs sm:text-base',
+                )}
+              >
+                / {over}
+              </span>
+            )}
           </div>
           {/* Sub-caption collapses away in focus mode so the card can go slim. */}
           <AnimatePresence initial={false}>

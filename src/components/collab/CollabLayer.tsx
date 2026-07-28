@@ -17,7 +17,7 @@ import {
   useReducedMotion,
 } from 'motion/react';
 import { createPortal } from 'react-dom';
-import { Eye, EyeOff, Send } from 'lucide-react';
+import { Eye, EyeOff, Send, Users } from 'lucide-react';
 import { useSession } from 'next-auth/react';
 import { getSupabaseBrowserClient } from '@/lib/supabase/browser';
 import { normEmail } from '@/lib/email/norm-email';
@@ -25,6 +25,7 @@ import { hashEmail } from '@/lib/collab/peer-color';
 import { playPingChime, playPingSent } from '@/lib/sound/ping-chime';
 import CobrowseSurface from './CobrowseSurface';
 import { useCobrowse } from '@/hooks/useCobrowse';
+import { useDispatchLock } from '@/hooks/useDispatchLock';
 
 /**
  * Live "who's in this dashboard" collaboration layer.
@@ -1014,6 +1015,15 @@ export interface CollabLayerProps {
    * default for every other dashboard) to keep the visible-area behavior.
    */
   scrollSurface?: HTMLElement | null;
+  /**
+   * Retract the collab chrome (remote cursors, click ripples, avatar rail)
+   * while payroll processing is locked — the same trigger that auto-collapses
+   * the dashboard sidebar — so the operator can go heads-down. Presence,
+   * cursor broadcast, and the cobrowse driver all KEEP RUNNING underneath
+   * (this person stays observable); only the visuals slide away, and they
+   * return on their usual entry animations the moment processing stops.
+   */
+  retractWhileProcessing?: boolean;
 }
 
 export default function CollabLayer({
@@ -1026,6 +1036,7 @@ export default function CollabLayer({
   accent = DEFAULT_ACCENT,
   surfaceLabel = 'Accounting dashboard',
   scrollSurface = null,
+  retractWhileProcessing = false,
 }: CollabLayerProps) {
   const { data: session } = useSession();
   const normSelf = useMemo(() => (selfEmail ? normEmail(selfEmail) ?? selfEmail.trim().toLowerCase() : null), [selfEmail]);
@@ -1043,6 +1054,27 @@ export default function CollabLayer({
   // Active incoming pings, keyed by SENDER email -> the bubble shown on that
   // sender's avatar in our rail. One live bubble per sender at a time.
   const [pings, setPings] = useState<Map<string, PingState>>(new Map());
+
+  // Heads-down mode: while payroll processing is locked (and the host opted
+  // in), the cursors + avatar rail retract exactly like the app sidebar does.
+  // A floating "show" chip stays at the rail's spot so the operator can peek
+  // at people + cursors on demand; the peek resets when processing ends so the
+  // next run starts heads-down again.
+  const { state: dispatchLock } = useDispatchLock();
+  const processingLocked = retractWhileProcessing && dispatchLock.locked;
+  const [peekWhileProcessing, setPeekWhileProcessing] = useState(false);
+  const processingRetract = processingLocked && !peekWhileProcessing;
+  useEffect(() => {
+    if (!processingLocked) setPeekWhileProcessing(false);
+  }, [processingLocked]);
+  useEffect(() => {
+    if (!processingRetract) return;
+    // Fold away anything pinned open and drop in-flight click ripples so
+    // nothing pops back mid-animation when the chrome returns later.
+    setOpenPeer(null);
+    setOverflowOpen(false);
+    setRipples([]);
+  }, [processingRetract]);
 
   const selfName = session?.user?.name ?? (normSelf ? toLabel(normSelf) : null);
   const selfAvatarUrl = (uploadedPhoto && uploadedPhoto.trim()) || session?.user?.image || null;
@@ -1424,7 +1456,7 @@ export default function CollabLayer({
   const cursorNodes = (
     <>
       <AnimatePresence>
-        {Array.from(cursors.values()).map((c) => (
+        {!processingRetract && Array.from(cursors.values()).map((c) => (
           <RemoteCursor
             key={c.email}
             email={c.email}
@@ -1438,7 +1470,7 @@ export default function CollabLayer({
       </AnimatePresence>
 
       <AnimatePresence>
-        {ripples.map((r) => (
+        {!processingRetract && ripples.map((r) => (
           <div
             key={r.id}
             className="absolute"
@@ -1500,7 +1532,7 @@ export default function CollabLayer({
           children fully. To stay on-screen without a scrollbar we cap the
           visible avatars and surface the rest as a "+N" chip. */}
       <AnimatePresence>
-        {peers.length > 0 && (
+        {peers.length > 0 && !processingRetract && (
           <motion.div
             className="pointer-events-none absolute right-2.5 top-1/2 z-[60] hidden -translate-y-1/2 flex-col items-end gap-3 py-2 md:flex"
             initial={{ opacity: 0, x: 16 }}
@@ -1508,6 +1540,20 @@ export default function CollabLayer({
             exit={{ opacity: 0, x: 16 }}
             transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
           >
+            {/* Peeking during processing — a Hide chip so the operator can tuck
+                the chrome away again without waiting for processing to end. */}
+            {processingLocked && (
+              <button
+                type="button"
+                onClick={() => setPeekWhileProcessing(false)}
+                title="Hide people & live cursors while processing"
+                aria-label="Hide people and live cursors while processing"
+                className={`pointer-events-auto flex h-7 items-center gap-1.5 rounded-full bg-zinc-900/90 px-2.5 text-[10px] font-semibold text-white shadow-md outline-none ring-2 ring-white/70 backdrop-blur-md transition-transform hover:scale-105 focus-visible:ring-2 dark:ring-zinc-700/70 ${accent.focusRing}`}
+              >
+                <EyeOff className="h-3 w-3" />
+                Hide
+              </button>
+            )}
             <AnimatePresence mode="popLayout" initial>
               {peers.slice(0, MAX_RAIL_AVATARS).map((p, i) => (
                 <RailAvatar
@@ -1594,6 +1640,32 @@ export default function CollabLayer({
               )}
             </AnimatePresence>
           </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Retracted during processing — a floating "show" chip holds the rail's
+          spot so the operator can peek at who's here (and their cursors) on
+          demand. Mirrors the "+N" chip styling so it reads as the same rail,
+          just folded away. */}
+      <AnimatePresence>
+        {processingRetract && peers.length > 0 && (
+          <motion.button
+            key="collab-peek"
+            type="button"
+            onClick={() => setPeekWhileProcessing(true)}
+            title={`Show ${peers.length} ${peers.length === 1 ? 'person' : 'people'} & live cursors (hidden while processing)`}
+            aria-label={`Show ${peers.length} ${peers.length === 1 ? 'person' : 'people'} and live cursors, hidden while processing`}
+            className={`absolute right-2.5 top-1/2 z-[60] hidden h-11 w-11 -translate-y-1/2 items-center justify-center rounded-full bg-zinc-900/90 text-white shadow-md outline-none ring-2 ring-white/70 backdrop-blur-md transition-transform hover:scale-105 focus-visible:ring-2 md:flex dark:ring-zinc-700/70 ${accent.focusRing}`}
+            initial={{ opacity: 0, x: 16 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: 16 }}
+            transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
+          >
+            <Users className="h-4 w-4" />
+            <span className="absolute -left-1 -top-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-indigo-500 px-1 text-[10px] font-bold ring-2 ring-white/80 dark:ring-zinc-900">
+              {peers.length}
+            </span>
+          </motion.button>
         )}
       </AnimatePresence>
 
