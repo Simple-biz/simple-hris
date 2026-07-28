@@ -1542,6 +1542,14 @@ export default function PayrollWizard({
   }>>([]);
   const [decidingDispute, setDecidingDispute] = useState<string | null>(null);
   const [employeeDepts, setEmployeeDepts] = useState<Record<string, string>>({});
+  /** Explicit per-period dept moves (the Assign/Remove-from-dept UI). These
+   *  always win and never re-derive — a deliberate re-cohort must survive
+   *  roster refreshes — while plain `employeeDepts` entries snap back to the
+   *  master list whenever it changes (it is the SOURCE OF TRUTH; a stale sheet
+   *  label locked into a save must heal itself once the sheet is corrected).
+   *  `null` marks a manual UNASSIGN: never auto-re-assigned. Persisted with
+   *  the additions blob, scoped to the pay period like everything else in it. */
+  const [employeeDeptsManual, setEmployeeDeptsManual] = useState<Record<string, string | null>>({});
   /** In-app departments created from Payment Catalog → Department (the registry).
    *  Lets the Additions dept rail + dept-name resolution recognise departments
    *  that aren't in the hard-coded built-in `DEPARTMENTS` list. */
@@ -2008,6 +2016,11 @@ export default function PayrollWizard({
       const savedPabSnapshot = data.pabStatusSnapshot as Record<string, 'eligible' | 'ineligible' | 'in_progress'> | undefined;
       setLockedPabSnapshot(savedPabSnapshot && Object.keys(savedPabSnapshot).length > 0 ? savedPabSnapshot : null);
       if (data.employeeDepts) setEmployeeDepts(data.employeeDepts);
+      // Always reset (no bleed between pay periods); saves that predate the
+      // field simply have no manual moves — every entry re-derives from master.
+      setEmployeeDeptsManual(
+        (data.employeeDeptsManual as Record<string, string | null> | undefined) ?? {},
+      );
       if (json.value) {
         setAdditionsSavedAt(new Date()); // Mark as having a saved state
         toast.info('Restored locked-in additions progress');
@@ -3869,6 +3882,7 @@ export default function PayrollWizard({
         employeeMetrics,
         deptMetrics,
         employeeDepts,
+        employeeDeptsManual,
         employeeBonuses,
         techBonusManualGrants: Array.from(techBonusManualGrants),
         techBonusManualRevokes: Array.from(techBonusManualRevokes),
@@ -3883,7 +3897,7 @@ export default function PayrollWizard({
     } finally {
       setAdditionsSaving(false);
     }
-  }, [calcSourceFile, isReplay, bonusOverrides, bonusOverrideNotes, orphanageAmounts, employeeMetrics, deptMetrics, employeeDepts, employeeBonuses, techBonusManualGrants, techBonusManualRevokes, pabStatusByEmail, savePabSetting]);
+  }, [calcSourceFile, isReplay, bonusOverrides, bonusOverrideNotes, orphanageAmounts, employeeMetrics, deptMetrics, employeeDepts, employeeDeptsManual, employeeBonuses, techBonusManualGrants, techBonusManualRevokes, pabStatusByEmail, savePabSetting]);
 
   /**
    * US-holiday forgiveness summary scoped to the current pay-period WEEK: for each
@@ -4296,6 +4310,8 @@ export default function PayrollWizard({
     const ctx = auditCtxRef.current;
     const prevValue = ctx.employeeDepts[email] ?? null;
     setEmployeeDepts(prev => ({ ...prev, [email]: deptKey }));
+    // Pin the explicit move so the master-list re-derivation never undoes it.
+    setEmployeeDeptsManual(prev => ({ ...prev, [email]: deptKey }));
     if (valuesDiffer(prevValue, deptKey)) {
       void logAudit({
         user_name: ctx.sessionEmail ?? 'anonymous',
@@ -4322,6 +4338,8 @@ export default function PayrollWizard({
       delete next[email];
       return next;
     });
+    // Pin the explicit unassign (`null`) so auto-populate can't re-add them.
+    setEmployeeDeptsManual(prev => ({ ...prev, [email]: null }));
     if (prevValue !== null) {
       void logAudit({
         user_name: ctx.sessionEmail ?? 'anonymous',
@@ -6617,7 +6635,7 @@ export default function PayrollWizard({
 
   /**
    * Auto-populate employeeDepts whenever calcResults, masterEmployees, or
-   * hubstaffData change. Existing manual assignments are preserved.
+   * hubstaffData change.
    *
    * The Global Master List (active_employees) Department is the SOURCE OF TRUTH.
    * Resolution order (first hit wins):
@@ -6628,6 +6646,23 @@ export default function PayrollWizard({
    *                              when the employee isn't in the master list.
    *  3. Hubstaff dept fallback — Hubstaff "Job type" column, for employees in
    *                              neither the master list nor the rates table.
+   *
+   * Because tier 1 is the source of truth, a master-resolved department is
+   * RE-derived on every run — an auto-stamped key persisted by an earlier
+   * "Lock in" must not outlive a master-list correction. (vano@ 2026-07-27:
+   * the sheet briefly said "Sales", the wrong key got locked into this file's
+   * additions save, and once the sheet was fixed the old fill-blanks-only rule
+   * meant the save could never heal — he sat invisible in the pay-paused Sales
+   * cohort while the roster said Lead Gen.) Three carve-outs:
+   *  • employeeDeptsManual (the explicit Assign/Remove UI) always wins — a
+   *    deliberate re-cohort survives roster refreshes; `null` = manually
+   *    unassigned, never auto-re-assigned.
+   *  • Tiers 2/3 only ever FILL a blank: they are weaker signals (a stale
+   *    rates-sheet dept, the Hubstaff "Job type" cell) and must not clobber an
+   *    existing assignment while the roster is mid-load or unreadable.
+   *  • Replayed past periods keep their persisted grouping verbatim (view-only
+   *    history — today's master list must not re-label an old week); blanks
+   *    still fill so pre-feature replays keep rendering dept tabs.
    */
   useEffect(() => {
     if (calcResults.length === 0) return;
@@ -6636,8 +6671,28 @@ export default function PayrollWizard({
       const next = { ...prev };
       let changed = false;
 
+      const put = (email: string, deptKey: string | null) => {
+        if (deptKey === null) {
+          if (email in next) {
+            delete next[email];
+            changed = true;
+          }
+        } else if (next[email] !== deptKey) {
+          next[email] = deptKey;
+          changed = true;
+        }
+      };
+
       for (const calcRow of calcResults) {
-        if (next[calcRow.email]) continue; // keep manual assignments
+        // Explicit move for this pay period — wins outright (null = unassign).
+        const manual = employeeDeptsManual[calcRow.email];
+        if (manual !== undefined) {
+          put(calcRow.email, manual);
+          continue;
+        }
+
+        // Replays are view-only history: keep the saved grouping, fill blanks only.
+        if (isReplay && next[calcRow.email]) continue;
 
         const em = normEmail(calcRow.email);
         const rateRow = em ? ratesByEmail.get(em) : undefined;
@@ -6655,8 +6710,9 @@ export default function PayrollWizard({
           if (tokens) master = masterIndex.byNameTokens.get(tokens);
         }
 
-        // Tier 1: master-list Department (authoritative).
-        let deptRaw: string | null = master?.department ?? null;
+        // Tier 1: master-list Department (authoritative — may overwrite).
+        const masterRaw: string | null = master?.department ?? null;
+        let deptRaw: string | null = masterRaw;
 
         // Tier 2: rates-table Department — only when not in the master list.
         if (!deptRaw && rateRow?.department) {
@@ -6679,15 +6735,18 @@ export default function PayrollWizard({
           normalizeDeptToKey(deptRaw) ??
           resolveDeptKeyWithRegistry(deptRaw, customDepartments) ??
           (deptRaw ? slugifyDeptKey(deptRaw) || null : null);
-        if (deptKey) {
-          next[calcRow.email] = deptKey;
-          changed = true;
+        if (!deptKey) continue; // nothing derivable → keep whatever exists
+
+        if (masterRaw) {
+          put(calcRow.email, deptKey); // source of truth: re-derive/overwrite
+        } else if (!next[calcRow.email]) {
+          put(calcRow.email, deptKey); // weaker tiers: fill blanks only
         }
       }
 
       return changed ? next : prev;
     });
-  }, [calcResults, masterIndex, ratesByEmail, hubstaffByEmail, customDepartments]);
+  }, [calcResults, masterIndex, ratesByEmail, hubstaffByEmail, customDepartments, employeeDeptsManual, isReplay]);
 
   const payrollComparison = useMemo(
     () => comparePayrollToMaster(masterEmployees, hubstaffData),
