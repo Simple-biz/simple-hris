@@ -14,7 +14,11 @@ import 'server-only';
  *                           rate (individual catalog → sheet → dept base all
  *                           absent) — they literally can't be paid yet. USEE/US
  *                           Employees are excluded (paid off-channel, so a
- *                           missing hourly rate isn't a blocker for them).
+ *                           missing hourly rate isn't a blocker for them), and
+ *                           so is anyone provisioned the `contractor` dashboard
+ *                           role in Admin → Roles (contractors are paid
+ *                           per-invoice via the wizard's Contractor Invoices
+ *                           step, never by hourly rate).
  *   3. Missing bank info  — active employees whose employee_ids row isn't payable
  *                           (isPayoutComplete === false), USEE/US Employees aside.
  *                           Off-boarded people stay only while their final pay is
@@ -705,6 +709,45 @@ async function enrichMissingRatesFromMaster(missing: ReadinessMissingRate[]): Pr
   }
 }
 
+/**
+ * Every email holding an ACTIVE `contractor` dashboard role (Admin → Roles &
+ * Permissions). Contractors are paid per-invoice — the wizard's Contractor
+ * Invoices step, riding `contractor_invoices` — never by hourly rate, so a
+ * missing rate can't block their pay and they must not appear on (or count
+ * toward) the No Pay Rate check. Best-effort by design, like
+ * `loadOffboardDatesByEmail`: a failed read just leaves contractors listed
+ * (the pre-exclusion behavior) — it over-flags but never hides a real
+ * employee's gap, so it doesn't join `degraded`.
+ */
+async function loadContractorEmails(): Promise<Set<string>> {
+  const out = new Set<string>();
+  const supabase = createSupabaseServiceRoleClient();
+  if (!supabase) return out;
+  try {
+    const PAGE = 1000;
+    let from = 0;
+    while (true) {
+      const { data, error } = await supabase
+        .from('employee_roles')
+        .select('work_email')
+        .eq('role', 'contractor')
+        .is('revoked_at', null)
+        .range(from, from + PAGE - 1);
+      if (error) break;
+      const rows = (data ?? []) as { work_email: string | null }[];
+      for (const r of rows) {
+        const em = normEmail(r.work_email ?? '');
+        if (em) out.add(em);
+      }
+      if (rows.length < PAGE) break;
+      from += PAGE;
+    }
+  } catch {
+    // best-effort — see the doc comment above.
+  }
+  return out;
+}
+
 async function buildMissingRates(
   sourceFile: string | null,
   /** The active master roster, fetched ONCE by getPayrollReadiness and shared
@@ -718,6 +761,9 @@ async function buildMissingRates(
   /** The pay week in view (see `weekKeyFromSourceFile`). Only used to label a
    *  missing-rate row as recently onboarded. */
   weekStart: string,
+  /** See {@link loadContractorEmails} — Admin-provisioned contractors leave
+   *  this check (list and denominator alike). */
+  contractorEmails: Set<string>,
 ): Promise<{
   rows: ReadinessMissingRate[];
   workerCount: number;
@@ -726,7 +772,11 @@ async function buildMissingRates(
    *  the bank check uses to split hard blockers from roster hygiene. Built
    *  from ALL distinct workers on the file (before the rate-denominator
    *  exclusions): an off-channel/paused/excepted person is never in the bank
-   *  list anyway, so the extra keys can't mislabel anyone. */
+   *  list anyway, so the extra keys can't mislabel anyone. Contractors are
+   *  deliberately NOT subtracted either — the contractor exclusion is a
+   *  rate-check rule (they're paid per-invoice, not per-hour); a contractor
+   *  who is ALSO on the employee roster keeps whatever bank-list treatment
+   *  they had before. */
   payrollEmails: Set<string>;
   /** Human-readable notes for reads that failed (see PayrollReadiness.degraded). */
   degraded: string[];
@@ -812,6 +862,16 @@ async function buildMissingRates(
     // count (mirrors the missing-bank list's off-channel exclusion) so the stat
     // stays honest.
     if (isOffChannelDept(dept)) continue;
+
+    // Admin-provisioned contractors (the `contractor` dashboard role) are the
+    // other off-rate channel: paid per-invoice, never by hourly rate, so they
+    // leave the list AND the denominator exactly like USEE. Matched on every
+    // master-roster alias so a role keyed on the primary work email still
+    // catches a Hubstaff row logged under an alternate; a contractor with no
+    // master row (an external identity, or a stale `last_seen_upload_id` that
+    // dropped them from the active view) still matches on the Hubstaff email
+    // itself, since `aliases` falls back to exactly that.
+    if (aliases.some((a) => contractorEmails.has(a))) continue;
 
     // Departments excluded from this week's pay (wizard Configuration tab)
     // aren't being paid, so their people can't block readiness either.
@@ -1264,18 +1324,20 @@ export async function getPayrollReadiness(
   // The active master roster is fetched ONCE here and shared by the KPI
   // (department universe), rate (aliases), and bank (population) checks — one
   // consistent snapshot instead of three racing reads.
-  const [pausedRaw, registry, rosterRes, exceptionsRes, offboardDateByEmail] = await Promise.all([
-    resolvedFile
-      ? getAppSetting(deptPayPausedSettingKey(resolvedFile)).catch(() => undefined)
-      : Promise.resolve(null),
-    getDepartmentRegistry().catch(() => null),
-    getEmployeesForAuthorizedServerRoute().catch(() => ({
-      employees: [] as EmployeeRow[],
-      error: 'unreachable',
-    })),
-    buildExceptions(weekStart),
-    loadOffboardDatesByEmail(),
-  ]);
+  const [pausedRaw, registry, rosterRes, exceptionsRes, offboardDateByEmail, contractorEmails] =
+    await Promise.all([
+      resolvedFile
+        ? getAppSetting(deptPayPausedSettingKey(resolvedFile)).catch(() => undefined)
+        : Promise.resolve(null),
+      getDepartmentRegistry().catch(() => null),
+      getEmployeesForAuthorizedServerRoute().catch(() => ({
+        employees: [] as EmployeeRow[],
+        error: 'unreachable',
+      })),
+      buildExceptions(weekStart),
+      loadOffboardDatesByEmail(),
+      loadContractorEmails(),
+    ]);
 
   const degraded: string[] = [...weekDegraded, ...exceptionsRes.degraded];
   if (pausedRaw === undefined) {
@@ -1322,7 +1384,14 @@ export async function getPayrollReadiness(
 
   const [kpi, ratesRes] = await Promise.all([
     buildKpiReadiness(weekStart, isMonthlyPayWeek, registrySafe, pausedDeptKeys, masterDeptLabels),
-    buildMissingRates(resolvedFile, employees, exceptionIdentities, isPausedDept, weekStart),
+    buildMissingRates(
+      resolvedFile,
+      employees,
+      exceptionIdentities,
+      isPausedDept,
+      weekStart,
+      contractorEmails,
+    ),
   ]);
   // The bank check runs AFTER the rate check on purpose: it needs the week's
   // Hubstaff identity set (`payrollEmails`) both to split hard blockers from
