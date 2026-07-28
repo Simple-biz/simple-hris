@@ -167,6 +167,30 @@ function todayISO(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
+/**
+ * An amount as a bare pasteable number — no symbol, no grouping — so it drops
+ * straight into a processor field or a spreadsheet: "1234.50" for USD/PHP (cents
+ * preserved), whole pesos for COP. COP can't be derived by stripping its
+ * formatted string: es-CO groups with dots ("$COP1.234.567"), so removing
+ * non-digits would fabricate a decimal point.
+ */
+function copyableAmount(value: number, currency: 'USD' | 'PHP' | 'COP'): string {
+  return currency === 'COP' ? String(Math.round(value)) : value.toFixed(2);
+}
+
+/** Write `text` to the clipboard, flashing a confirmation tick for ~1.4s. */
+function copyToClipboard(text: string, flash: (on: boolean) => void) {
+  const done = () => {
+    flash(true);
+    window.setTimeout(() => flash(false), 1400);
+  };
+  if (navigator.clipboard?.writeText) {
+    navigator.clipboard.writeText(text).then(done).catch(() => {});
+  } else {
+    done();
+  }
+}
+
 /* ---- reactive field components --------------------------------------- */
 
 interface FieldInputProps extends Omit<React.ComponentPropsWithoutRef<'input'>, 'style'> {
@@ -313,6 +337,7 @@ export default function MarkPaidDialog({
   const [note,                   setNote]                   = useState('');
   const [submitting,             setSubmitting]             = useState(false);
   const [copied,                 setCopied]                 = useState(false);
+  const [copiedSub,              setCopiedSub]              = useState(false);
   const [copiedAcct,             setCopiedAcct]             = useState(false);
 
   // ── Profile override (pencil on the Recipient divider) ─────────────────
@@ -338,41 +363,29 @@ export default function MarkPaidDialog({
       : row?.amountPHP) ?? null;
   const formatHero =
     heroCurrency === 'COP' ? formatCOP : heroCurrency === 'USD' ? formatUSD : formatPHP;
-  const subAmount =
-    heroCurrency === 'USD' ? formatPHP(row?.amountPHP ?? null) : formatUSD(row?.amountUSD ?? null);
+  // Secondary line: the other side of the pair. A local-currency hero shows the
+  // USD anchor beneath; a USD hero shows the PHP equivalent. Both are copyable,
+  // because which one the clerk needs depends on the rail they're keying into.
+  const subCurrency: 'USD' | 'PHP' = heroCurrency === 'USD' ? 'PHP' : 'USD';
+  const subValue = (subCurrency === 'PHP' ? row?.amountPHP : row?.amountUSD) ?? null;
+  const subAmount = subCurrency === 'PHP' ? formatPHP(subValue) : formatUSD(subValue);
 
   const copyAmount = useCallback(() => {
-    if (heroAmount == null || !row) return;
-    // Copy the hero amount as a bare number — "$1,234.50" / "₱1,234.50" paste
-    // as "1234.50" (cents preserved) straight into processors / spreadsheets.
-    // COP copies whole pesos ("$COP1.234.567" → "1234567"): es-CO groups with
-    // dots, so stripping the formatted string would fabricate a decimal point.
-    const text = heroCurrency === 'COP' ? String(Math.round(heroAmount)) : heroAmount.toFixed(2);
-    const done = () => {
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 1400);
-    };
-    if (navigator.clipboard?.writeText) {
-      navigator.clipboard.writeText(text).then(done).catch(() => {});
-    } else {
-      done();
-    }
-  }, [heroAmount, heroCurrency, row]);
+    if (heroAmount == null) return;
+    copyToClipboard(copyableAmount(heroAmount, heroCurrency), setCopied);
+  }, [heroAmount, heroCurrency]);
 
-  // Copy the recipient's account / wallet ID verbatim — unlike the amount, this
+  const copySub = useCallback(() => {
+    if (subValue == null) return;
+    copyToClipboard(copyableAmount(subValue, subCurrency), setCopiedSub);
+  }, [subValue, subCurrency]);
+
+  // Copy the recipient's account / wallet ID verbatim — unlike the amounts, this
   // pastes as-is (email, account number, or tag) straight into the processor.
   const copyAccount = useCallback(() => {
     const text = recipientAccountNumber.trim();
     if (!text) return;
-    const done = () => {
-      setCopiedAcct(true);
-      window.setTimeout(() => setCopiedAcct(false), 1400);
-    };
-    if (navigator.clipboard?.writeText) {
-      navigator.clipboard.writeText(text).then(done).catch(() => {});
-    } else {
-      done();
-    }
+    copyToClipboard(text, setCopiedAcct);
   }, [recipientAccountNumber]);
 
   const enterOverride = useCallback(() => {
@@ -632,15 +645,28 @@ export default function MarkPaidDialog({
                   onClick={copyAmount}
                   onMouseDown={(e) => e.preventDefault()}
                   disabled={heroAmount == null}
-                  aria-label={copied ? 'Amount copied' : 'Copy amount'}
-                  title={copied ? 'Copied' : 'Copy amount'}
+                  aria-label={copied ? `${heroCurrency} amount copied` : `Copy ${heroCurrency} amount`}
+                  title={copied ? 'Copied' : `Copy ${heroCurrency} amount`}
                   className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-white/15 text-white outline-none backdrop-blur-sm transition-[background,opacity] hover:bg-white/25 focus:outline-none focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-30"
                 >
                   {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
                 </button>
               </div>
-              <div className="mt-1.5 font-mono text-[13px] font-semibold tracking-wide text-white/65">
-                {subAmount}
+              <div className="mt-1.5 flex items-center gap-1.5">
+                <span className="font-mono text-[13px] font-semibold tracking-wide text-white/65">
+                  {subAmount}
+                </span>
+                <button
+                  type="button"
+                  onClick={copySub}
+                  onMouseDown={(e) => e.preventDefault()}
+                  disabled={subValue == null}
+                  aria-label={copiedSub ? `${subCurrency} amount copied` : `Copy ${subCurrency} amount`}
+                  title={copiedSub ? 'Copied' : `Copy ${subCurrency} amount`}
+                  className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-white/10 text-white/70 outline-none backdrop-blur-sm transition-[background,color,opacity] hover:bg-white/25 hover:text-white focus:outline-none focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-30"
+                >
+                  {copiedSub ? <Check className="h-2.5 w-2.5" /> : <Copy className="h-2.5 w-2.5" />}
+                </button>
               </div>
 
               {row && row.bonusTotalPHP > 0 && (
