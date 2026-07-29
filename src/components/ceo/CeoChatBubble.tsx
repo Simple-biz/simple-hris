@@ -13,17 +13,28 @@ const SUGGESTIONS = [
 ];
 
 /**
- * Floating CEO assistant — the always-available chat bubble. Shares its backend
- * and logic with the full-page Penny AI tab via {@link useCeoChat}. When the CEO
- * is on the Penny AI tab, `CeoApp` passes `hidden` so only one chat shows at once.
+ * Floating Penny AI assistant — the always-available chat bubble. Shares its
+ * backend and logic with the full-page Penny AI tab via {@link useCeoChat}.
+ * Defaults to the CEO assistant; the Admin dashboard remounts it with its own
+ * `endpoint`/`subtitle`/`suggestions`. When the full Penny AI tab is open, the
+ * shell passes `hidden` so only one chat shows at once.
  */
 export default function CeoChatBubble({
   hidden = false,
   onOpenFullView,
+  endpoint,
+  subtitle = 'Payroll & reports assistant',
+  suggestions = SUGGESTIONS,
 }: {
   hidden?: boolean;
   /** When provided, shows an "expand" button that opens the full Penny AI tab. */
   onOpenFullView?: () => void;
+  /** Chat backend to POST to (defaults to the CEO assistant's). */
+  endpoint?: string;
+  /** Small line under "Penny AI" in the panel header. */
+  subtitle?: string;
+  /** Empty-state starter prompts. */
+  suggestions?: string[];
 }) {
   const [open, setOpen] = useState(false);
 
@@ -40,7 +51,7 @@ export default function CeoChatBubble({
     rateMessage,
     lastMsg,
     awaitingFirstToken,
-  } = useCeoChat({ inputRef });
+  } = useCeoChat({ inputRef, endpoint });
 
   // Collapse the panel whenever the bubble is hidden (e.g. switched to Penny AI).
   useEffect(() => {
@@ -85,7 +96,7 @@ export default function CeoChatBubble({
           <motion.div
             key="ceo-chat-panel"
             role="dialog"
-            aria-label="CEO assistant"
+            aria-label="Penny AI assistant"
             initial={{ opacity: 0, y: 16 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 16 }}
@@ -101,7 +112,7 @@ export default function CeoChatBubble({
                 <div className="min-w-0">
                   <p className="truncate text-sm font-semibold leading-tight">Penny AI</p>
                   <p className="truncate text-[11px] leading-tight text-fuchsia-50/80">
-                    Payroll &amp; reports assistant
+                    {subtitle}
                   </p>
                 </div>
               </div>
@@ -153,7 +164,7 @@ export default function CeoChatBubble({
                     Hi 👋 What can I help you with?
                   </p>
                   <div className="flex flex-col gap-2">
-                    {SUGGESTIONS.map((s) => (
+                    {suggestions.map((s) => (
                       <button
                         key={s}
                         type="button"

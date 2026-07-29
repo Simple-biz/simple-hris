@@ -350,25 +350,33 @@ async function getEmployeePay(workEmail: string, weeksRaw: unknown): Promise<Too
 
   // PostgREST or() values are NOT quoted (emails contain no reserved chars).
   const orFilter = [...aliases].map((a) => `recipient_email.ilike.${a}`).join(',');
-  const { data, error } = await supabase
-    .from('disbursement_records')
-    .select(
-      'cycle_period_start, cycle_period_end, recipient_name, total_hours, regular_hours, ot_hours, amount_php, amount_usd, status, paid_amount_usd, paid_at',
-    )
-    .or(orFilter)
-    .order('cycle_period_start', { ascending: false })
-    .limit(weeks);
+  const [disbRes, dispatchRes] = await Promise.all([
+    supabase
+      .from('disbursement_records')
+      .select(
+        'cycle_period_start, cycle_period_end, recipient_name, total_hours, regular_hours, ot_hours, amount_php, amount_usd, status, paid_amount_usd, paid_at',
+      )
+      .or(orFilter)
+      .order('cycle_period_start', { ascending: false })
+      .limit(weeks),
+    // The live dispatch log is the clerk's ground truth and leads the weekly
+    // records: the NEWEST cycle's payments land here first and only mirror
+    // into disbursement_records where that cycle was already seeded. Overlay
+    // it so "was I paid this week?" is answered from the freshest data.
+    supabase
+      .from('payment_dispatches')
+      .select(
+        'cycle_period_start, cycle_period_end, recipient_name, amount_usd, amount_php, amount_cop, status, sent_date, created_at, payee_type',
+      )
+      .or(orFilter)
+      .eq('status', 'paid')
+      .order('cycle_period_start', { ascending: false })
+      .limit(40),
+  ]);
 
-  if (error) return { error: error.message };
+  if (disbRes.error) return { error: disbRes.error.message };
 
-  const rows = (data ?? []) as Array<Record<string, unknown>>;
-  if (rows.length === 0) {
-    return {
-      work_email: email,
-      weeks: [],
-      note: 'No payroll disbursement records found for this employee. They may be a new hire, on a non-payroll arrangement, or paid outside this system.',
-    };
-  }
+  const rows = (disbRes.data ?? []) as Array<Record<string, unknown>>;
 
   const entries = rows.map((r) => ({
     period_start: r.cycle_period_start,
@@ -380,21 +388,96 @@ async function getEmployeePay(workEmail: string, weeksRaw: unknown): Promise<Too
     amount_usd: numOrNull(r.amount_usd),
     status: r.status,
     paid_amount_usd: numOrNull(r.paid_amount_usd),
-    paid_at: r.paid_at,
+    paid_at: r.paid_at as string | null,
+    paid_amount_php: null as number | null,
+    source: 'weekly_records' as string,
   }));
+
+  // Aggregate paid dispatches per cycle (skip urgent one-offs, which carry no
+  // period, and contractor-invoice settlements).
+  const dispatched = new Map<
+    string,
+    { start: string; end: string | null; usd: number | null; php: number | null; at: string; name: string | null }
+  >();
+  for (const d of (dispatchRes.data ?? []) as Array<Record<string, unknown>>) {
+    if (d.payee_type === 'contractor') continue;
+    const start = (d.cycle_period_start as string | null) ?? '';
+    if (!start) continue;
+    const prev = dispatched.get(start);
+    const usd = numOrNull(d.amount_usd);
+    const php = numOrNull(d.amount_php);
+    const at = String(d.created_at ?? d.sent_date ?? '');
+    if (prev) {
+      prev.usd = usd == null && prev.usd == null ? null : (prev.usd ?? 0) + (usd ?? 0);
+      prev.php = php == null && prev.php == null ? null : (prev.php ?? 0) + (php ?? 0);
+      if (at > prev.at) prev.at = at;
+    } else {
+      dispatched.set(start, {
+        start,
+        end: (d.cycle_period_end as string | null) ?? null,
+        usd,
+        php,
+        at,
+        name: (d.recipient_name as string | null) ?? null,
+      });
+    }
+  }
+
+  const byStart = new Map(entries.map((e) => [String(e.period_start ?? ''), e]));
+  let dispatchName: string | null = null;
+  for (const [start, d] of dispatched) {
+    dispatchName = dispatchName ?? d.name;
+    const existing = byStart.get(start);
+    if (existing) {
+      // The weekly record hasn't caught up to the dispatch — trust the dispatch.
+      if (existing.status !== 'paid') {
+        existing.status = 'paid';
+        existing.paid_amount_usd = existing.paid_amount_usd ?? d.usd;
+        existing.paid_amount_php = d.php;
+        existing.paid_at = existing.paid_at ?? d.at;
+        existing.source = 'weekly_records + live_dispatch_log';
+      }
+    } else {
+      entries.push({
+        period_start: start,
+        period_end: d.end,
+        total_hours: 0,
+        regular_hours: 0,
+        ot_hours: 0,
+        amount_php: null,
+        amount_usd: null,
+        status: 'paid',
+        paid_amount_usd: d.usd,
+        paid_amount_php: d.php,
+        paid_at: d.at,
+        source: 'live_dispatch_log',
+      });
+    }
+  }
+
+  entries.sort((a, b) => (String(a.period_start) < String(b.period_start) ? 1 : -1));
+  const shown = entries.slice(0, weeks);
+
+  if (shown.length === 0) {
+    return {
+      work_email: email,
+      weeks: [],
+      note: 'No payroll disbursement records found for this employee. They may be a new hire, on a non-payroll arrangement, or paid outside this system.',
+    };
+  }
 
   return {
     work_email: email,
-    recipient_name: rows[0].recipient_name ?? null,
+    recipient_name: rows[0]?.recipient_name ?? dispatchName ?? null,
     currency: 'amounts are in PHP (amount_php) and USD (amount_usd / paid_amount_usd)',
     field_notes:
-      'amount_php / amount_usd = computed regular + OT pay for that week (does NOT include PAB/Tech bonuses). paid_amount_usd = the amount actually disbursed, set only when status="paid" (this is what was really sent, and includes any bonuses). status: paid = sent; pending = owed but not yet sent; not_paid/threshold/problem = held.',
-    weeks: entries,
+      'amount_php / amount_usd = computed regular + OT pay for that week (does NOT include PAB/Tech bonuses). paid_amount_usd = the amount actually disbursed, set only when status="paid" (this is what was really sent, and includes any bonuses). status: paid = sent; pending = owed but not yet sent; not_paid/threshold/problem = held. source "live_dispatch_log" = this week\'s payment comes straight from the live payment log (freshest data; the weekly record isn\'t seeded yet, so hours/computed amounts may be missing — the paid amount is authoritative).',
+    weeks: shown,
     totals: {
-      weeks_returned: entries.length,
-      sum_amount_php: round2(sumNullable(entries.map((e) => e.amount_php))),
-      sum_amount_usd: round2(sumNullable(entries.map((e) => e.amount_usd))),
-      sum_paid_usd: round2(sumNullable(entries.map((e) => e.paid_amount_usd))),
+      weeks_returned: shown.length,
+      sum_amount_php: round2(sumNullable(shown.map((e) => e.amount_php))),
+      sum_amount_usd: round2(sumNullable(shown.map((e) => e.amount_usd))),
+      sum_paid_usd: round2(sumNullable(shown.map((e) => e.paid_amount_usd))),
     },
   };
 }

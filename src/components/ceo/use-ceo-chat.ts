@@ -21,7 +21,13 @@ export type CeoMsg = {
   rating?: 'up' | 'down' | null;
 };
 
-export function useCeoChat(opts?: { inputRef?: RefObject<HTMLTextAreaElement | null> }) {
+export function useCeoChat(opts?: {
+  inputRef?: RefObject<HTMLTextAreaElement | null>;
+  /** Chat backend to POST to. Defaults to the CEO assistant; the Admin
+   *  dashboard passes its own admin-gated endpoint. */
+  endpoint?: string;
+}) {
+  const endpoint = opts?.endpoint ?? '/api/ceo/chat';
   const [messages, setMessages] = useState<CeoMsg[]>([]);
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
@@ -47,7 +53,7 @@ export function useCeoChat(opts?: { inputRef?: RefObject<HTMLTextAreaElement | n
     setMessages((m) => [...m, { id: replyId, role: 'assistant', content: '', key: replyKey }]);
 
     try {
-      const res = await fetch('/api/ceo/chat', {
+      const res = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

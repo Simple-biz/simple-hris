@@ -23,7 +23,23 @@ const SUGGESTIONS: { title: string; sub: string }[] = [
   { title: 'Who still has outstanding pay this cycle?', sub: 'Owed but not yet sent' },
 ];
 
-export default function BizAiTab() {
+export type BizAiTabProps = {
+  /** Chat backend to POST to (defaults to the CEO assistant's). */
+  endpoint?: string;
+  /** Small line under the "Penny AI" heading. */
+  subtitle?: string;
+  /** Empty-state paragraph under "How can I help today?". */
+  emptyBlurb?: string;
+  /** Empty-state starter prompts. */
+  suggestions?: { title: string; sub: string }[];
+};
+
+export default function BizAiTab({
+  endpoint,
+  subtitle = 'Conversational payroll & reports — reads your live data',
+  emptyBlurb = 'Ask me anything about payroll, a person’s pay, or company-wide reports. I pull from your live disbursement data — no guessing.',
+  suggestions = SUGGESTIONS,
+}: BizAiTabProps = {}) {
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -37,7 +53,7 @@ export default function BizAiTab() {
     rateMessage,
     lastMsg,
     awaitingFirstToken,
-  } = useCeoChat({ inputRef });
+  } = useCeoChat({ inputRef, endpoint });
 
   const empty = messages.length === 0;
 
@@ -82,7 +98,7 @@ export default function BizAiTab() {
               Penny AI
             </h1>
             <p className="truncate text-[11px] leading-tight text-zinc-500 dark:text-zinc-400">
-              Conversational payroll &amp; reports — reads your live data
+              {subtitle}
             </p>
           </div>
         </div>
@@ -116,12 +132,11 @@ export default function BizAiTab() {
                   How can I help today?
                 </h2>
                 <p className="mx-auto max-w-md text-sm leading-relaxed text-zinc-500 dark:text-zinc-400">
-                  Ask me anything about payroll, a person&apos;s pay, or company-wide reports.
-                  I pull from your live disbursement data — no guessing.
+                  {emptyBlurb}
                 </p>
               </div>
               <div className="grid w-full grid-cols-1 gap-2.5 sm:grid-cols-2">
-                {SUGGESTIONS.map((s, i) => (
+                {suggestions.map((s, i) => (
                   <motion.button
                     key={s.title}
                     type="button"

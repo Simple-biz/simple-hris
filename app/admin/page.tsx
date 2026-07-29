@@ -16,6 +16,8 @@ import AdminPages from '@/components/admin/AdminPages';
 import AdminDesignSpecs from '@/components/admin/AdminDesignSpecs';
 import AuditLogPanel from '@/components/audit/AuditLogPanel';
 import SystemDiagnostics from '@/components/SystemDiagnostics';
+import BizAiTab from '@/components/ceo/BizAiTab';
+import CeoChatBubble from '@/components/ceo/CeoChatBubble';
 import { Construction, Menu } from 'lucide-react';
 import NotificationsPanel from '@/components/notifications/NotificationsPanel';
 import { Button } from '@/components/ui/button';
@@ -37,6 +39,21 @@ function isPlausibleEmail(s: string): boolean {
 function AdminShellFallback() {
   return <DashboardSwitchLoader view="admin" />;
 }
+
+// Admin Penny AI — same assistant as the CEO's, remounted against the
+// admin-gated backend with operations tools (audit log, diagnostics, wizard
+// state, rate/transfer/onboarding/bank history) on top of the payroll tools.
+const PENNY_ADMIN_ENDPOINT = '/api/admin/penny-chat';
+const PENNY_ADMIN_SUBTITLE = 'Audit, diagnostics & payroll operations — reads your live data';
+const PENNY_ADMIN_BLURB =
+  'Ask who did what in the audit log, how the diagnostic probes look, whether the payroll wizard is processing, or about a person’s rates, transfers, onboarding, and bank changes.';
+const PENNY_ADMIN_TAB_SUGGESTIONS: { title: string; sub: string }[] = [
+  { title: 'Has the payroll wizard started processing?', sub: 'Lock state and live dispatch progress' },
+  { title: 'Run a diagnostics check — anything unhealthy?', sub: 'Live probe health across the platform' },
+  { title: 'Show the latest audit log activity', sub: 'Who did what, most recent first' },
+  { title: 'Who made the most recent bank info changes?', sub: 'Self-service vs admin-side edits' },
+];
+const PENNY_ADMIN_BUBBLE_SUGGESTIONS = PENNY_ADMIN_TAB_SUGGESTIONS.slice(0, 3).map((s) => s.title);
 
 interface WebhookEntry {
   slug: string;
@@ -72,7 +89,7 @@ function AdminPageInner() {
   // "Role Management & Sessions" link in System Settings).
   useEffect(() => {
     const known = new Set([
-      'overview', 'roles', 'global-master-list', 'workspace', 'webhooks',
+      'overview', 'penny-ai', 'roles', 'global-master-list', 'workspace', 'webhooks',
       'pages', 'design-specs', 'notifications', 'audit', 'diagnostics', 'api-tokens', 'backups', 'settings',
     ]);
     if (tabFromQuery && known.has(tabFromQuery)) setActiveTab(tabFromQuery);
@@ -156,6 +173,17 @@ function AdminPageInner() {
     switch (activeTab) {
       case 'overview':
         return <AdminOverview userEmail={adminEmail} onNavigate={navigate} />;
+      case 'penny-ai':
+        return (
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+            <BizAiTab
+              endpoint={PENNY_ADMIN_ENDPOINT}
+              subtitle={PENNY_ADMIN_SUBTITLE}
+              emptyBlurb={PENNY_ADMIN_BLURB}
+              suggestions={PENNY_ADMIN_TAB_SUGGESTIONS}
+            />
+          </div>
+        );
       case 'roles':
         return <AdminRoles />;
       case 'global-master-list':
@@ -268,6 +296,15 @@ function AdminPageInner() {
         </div>
         <AppFooter />
       </main>
+      {/* Floating Penny AI — available on every admin tab; collapses while the
+          dedicated Penny AI tab is open so only one chat shows at a time. */}
+      <CeoChatBubble
+        endpoint={PENNY_ADMIN_ENDPOINT}
+        subtitle="Audit & operations assistant"
+        suggestions={PENNY_ADMIN_BUBBLE_SUGGESTIONS}
+        hidden={activeTab === 'penny-ai'}
+        onOpenFullView={() => navigate('penny-ai')}
+      />
     </div>
   );
 }

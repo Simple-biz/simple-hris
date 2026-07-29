@@ -272,7 +272,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Invalid request body' }, { status: 400 });
   }
 
-  const messages: ChatMessage[] = (body.messages ?? [])
+  let messages: ChatMessage[] = (body.messages ?? [])
     .filter(
       (m): m is ChatMessage =>
         !!m &&
@@ -282,6 +282,12 @@ export async function POST(request: Request) {
     )
     .map((m) => ({ role: m.role, content: m.content.slice(0, 8000) }))
     .slice(-20); // cap history to keep requests bounded
+
+  // The window must START on a user turn — an alternating transcript sliced to
+  // an even count begins with an assistant message, which the API rejects with
+  // a 400 (breaking every reply from the ~11th exchange on).
+  const firstUser = messages.findIndex((m) => m.role === 'user');
+  if (firstUser > 0) messages = messages.slice(firstUser);
 
   if (messages.length === 0 || messages[messages.length - 1]!.role !== 'user') {
     return NextResponse.json({ error: 'Expected a trailing user message' }, { status: 400 });

@@ -19,6 +19,7 @@ import {
   Settings,
   Sheet,
   ShieldCheck,
+  Sparkles,
   Sun,
   UserCog,
   Webhook,
@@ -63,6 +64,7 @@ const systemNav: Array<{
   badge?: 'count' | 'alert';
 }> = [
   { id: 'overview', label: 'Overview', icon: LayoutDashboard },
+  { id: 'penny-ai', label: 'Penny AI', icon: Sparkles },
   { id: 'roles', label: 'Roles & permissions', icon: UserCog, badge: 'count' },
   { id: 'global-master-list', label: 'Global Master List', icon: Sheet, badge: 'count' },
   { id: 'workspace', label: 'Google Workspace', icon: Settings },
