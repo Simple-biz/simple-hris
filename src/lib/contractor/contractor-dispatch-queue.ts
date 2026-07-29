@@ -1,5 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
-import type { ExcludedRow, ProcessorId, QueueRow } from '@/components/payroll-clerk/mock-queue';
+import type { ExcludedRow, ExclusionReason, ProcessorId, QueueRow } from '@/components/payroll-clerk/mock-queue';
 import { processorIdFromBankPreferred } from '@/components/payroll-clerk/mock-queue';
 import { buildPayoutDetails, isKnownProcessor, type IdsRow } from '@/lib/payroll/urgent-payout-details';
 import { normalizeCurrency } from '@/lib/contractor-currency';
@@ -21,10 +21,12 @@ import { DEPARTMENTS } from '@/lib/payroll/department-bonus';
  *   would make it impossible to settle one of Claire's seven approved invoices
  *   without hiding the other six, because the existing already-paid filter is
  *   keyed per (recipient_email, cycle).
- * - APPROVED ONLY, and only while unsettled (`dispatch_id` NULL). A pending invoice
- *   is money Accounting has not authorized. An invoice whose claim leaked
- *   (`dispatch_claimed_at` set, `dispatch_id` still NULL) is read too, but only so
- *   it can be shown as an unpayable `claim_stuck` row — never as payable.
+ * - APPROVED = PAYABLE, and only while unsettled (`dispatch_id` NULL). A pending
+ *   invoice is money Accounting has not authorized, so it is read but surfaced
+ *   only as an unpayable `pending_approval` row in Excluded — the clerk sees the
+ *   week's filed invoices without being able to pay unauthorized money. An
+ *   invoice whose claim leaked (`dispatch_claimed_at` set, `dispatch_id` still
+ *   NULL) is likewise shown only as an unpayable `claim_stuck` row.
  * - BANK INFO COMES FROM `employee_ids` FIRST. All 18 invoices carry
  *   `payment_method = NULL` and `contractor_profiles` is nearly empty, while
  *   `employee_ids` holds real details for 7 of the 8 invoicing contractors — so
@@ -113,6 +115,12 @@ export interface ContractorRowInputs {
    * Rendered unpayable-but-visible rather than dropped.
    */
   strandedIds?: Set<string>;
+  /**
+   * Invoice ids still awaiting Accounting approval (`status = 'pending'`).
+   * Rendered unpayable-but-visible in Excluded so the week's filed invoices
+   * appear in Payment Dispatch before approval.
+   */
+  pendingApprovalIds?: Set<string>;
 }
 
 const norm = (v: string | null | undefined): string => (v ?? '').trim().toLowerCase();
@@ -282,7 +290,7 @@ export async function loadContractorDispatchRows(
         supabase
           .from('contractor_invoices')
           .select(INVOICE_COLUMNS)
-          .eq('status', 'approved')
+          .in('status', ['pending', 'approved'])
           .is('dispatch_id', null)
           .range(from, to),
       )
@@ -309,6 +317,11 @@ export async function loadContractorDispatchRows(
   // an unpayable Excluded row instead.
   const strandedIds = new Set(
     invoices.filter((i) => !!i.dispatch_claimed_at).map((i) => i.id),
+  );
+
+  // Awaiting Accounting approval — visible in Excluded, never payable.
+  const pendingApprovalIds = new Set(
+    invoices.filter((i) => i.status === 'pending' && !i.dispatch_claimed_at).map((i) => i.id),
   );
 
   const emails = [...new Set(invoices.map((i) => norm(i.contractor_email)))];
@@ -364,14 +377,21 @@ export async function loadContractorDispatchRows(
     nameByEmail,
     fxRate: opts.fxRate,
     strandedIds,
+    pendingApprovalIds,
   });
+  const advisories = [
+    strandedIds.size
+      ? `${strandedIds.size} approved invoice(s) are stuck mid-dispatch — claimed but no payment recorded. They are listed in Excluded under "Stuck mid-dispatch". Every OTHER approved invoice is listed here as normal.`
+      : null,
+    pendingApprovalIds.size
+      ? `${pendingApprovalIds.size} contractor invoice(s) are awaiting Accounting approval — listed in Excluded under "Awaiting approval". They become payable once approved in the Payroll Wizard's Contractors step.`
+      : null,
+  ].filter(Boolean);
   return {
     active,
     excluded,
     contractorEmails,
-    advisory: strandedIds.size
-      ? `${strandedIds.size} approved invoice(s) are stuck mid-dispatch — claimed but no payment recorded. They are listed in Excluded under "Stuck mid-dispatch". Every OTHER approved invoice is listed here as normal.`
-      : null,
+    advisory: advisories.length ? advisories.join(' ') : null,
   };
 }
 
@@ -385,6 +405,7 @@ export function buildContractorRows(
 ): { active: QueueRow[]; excluded: ExcludedRow[] } {
   const { invoices, idsByEmail, profileByEmail, deptByEmail, nameByEmail } = input;
   const stranded = input.strandedIds ?? new Set<string>();
+  const pendingApproval = input.pendingApprovalIds ?? new Set<string>();
   const fx = input.fxRate > 0 ? input.fxRate : 0;
   const active: QueueRow[] = [];
   const excluded: ExcludedRow[] = [];
@@ -444,10 +465,19 @@ export function buildContractorRows(
     const bankPreferredRaw = pickFirst(ids?.bank_preferred, ids?.preferred_processor, profile?.preferred_processor, rail) ?? null;
     const invoiceNumber = inv.invoice_number?.trim() || null;
 
-    if (!processor || unsupportedCurrency || stranded.has(inv.id)) {
+    if (!processor || unsupportedCurrency || stranded.has(inv.id) || pendingApproval.has(inv.id)) {
       // Same gate employees get: no resolvable rail → visible in Excluded, not
       // payable. (`accounting@simple.biz` has no employee_ids row at all.)
       // An unsupported currency lands here too rather than being mispriced.
+      // A stuck claim outranks everything; a pending invoice shows "Awaiting
+      // approval" PLUS "No bank preferred" when its rail is also unresolved, so
+      // approving it doesn't surprise-swap the row's reason.
+      const reasons: ExclusionReason[] = stranded.has(inv.id)
+        ? ['claim_stuck']
+        : [
+            ...(pendingApproval.has(inv.id) ? (['pending_approval'] as const) : []),
+            ...(!processor || unsupportedCurrency ? (['no_bank'] as const) : []),
+          ];
       excluded.push({
         id: `invoice:${inv.id}`,
         name,
@@ -457,7 +487,7 @@ export function buildContractorRows(
         amountPHP: unsupportedCurrency ? null : amountPHP,
         amountCOP: null,
         bankPreferredRaw,
-        reasons: stranded.has(inv.id) ? ['claim_stuck'] : ['no_bank'],
+        reasons,
         departmentKey,
         departmentName,
         payeeKind: 'contractor',

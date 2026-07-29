@@ -160,6 +160,9 @@ On confirm: POST to `/api/payment-dispatches` with all 4 send fields + 4 recipie
 | `no_pay` | "No current pay" (amber) | `computeCurrentPay()` returned no USD amount |
 | `no_hours` | "No hours" (rose) | no hours on the Hubstaff row |
 | `do_not_pay` | "Excluded in wizard" (violet) | Payroll Wizard's per-row **Exclude** tickbox (staged on `paystub_dispatch_queue.excluded`) |
+| `no_rate` | "No rate on file" (sky) | wizard-staged person with no `employee_hourly_rates` row (catalog-paid safety net) |
+| `claim_stuck` | "Stuck mid-dispatch" (fuchsia) | contractor invoice claimed by a Mark Paid that never recorded the payment (`dispatch_claimed_at` set, `dispatch_id` null) — investigate before paying out of band |
+| `pending_approval` | "Awaiting approval" (teal) | contractor invoice still `pending` — filed but not yet approved by Accounting; becomes a payable queue row once approved in the wizard's Contractors step |
 
 `useDispatchQueue.ts` reads `paystub_dispatch_queue` for the current `source_file`; any row flagged `excluded` is moved out of the pending queue into this tab (keyed by lowercased work email), carrying the last paystub `sent_at` for a "Paystub sent" badge.
 

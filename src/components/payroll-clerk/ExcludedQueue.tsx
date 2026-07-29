@@ -2,7 +2,7 @@
 
 import React, { useEffect, useMemo, useState } from 'react';
 import { motion } from 'motion/react';
-import { AlertTriangle, Ban, Banknote, Building2, CheckCircle2, ChevronDown, Clock, DollarSign, Layers, Search, SearchX, Send, ShieldOff, X } from 'lucide-react';
+import { AlertTriangle, Ban, Banknote, Building2, CheckCircle2, ChevronDown, Clock, DollarSign, Hourglass, Layers, Search, SearchX, Send, ShieldOff, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Input } from '@/components/ui/input';
 import { useDebouncedValue } from '@/hooks/useDebouncedValue';
@@ -106,9 +106,15 @@ const REASON_META: Record<
     tone: 'border-fuchsia-200 bg-fuchsia-50 text-fuchsia-700 dark:border-fuchsia-500/30 dark:bg-fuchsia-500/10 dark:text-fuchsia-300',
     activeTone: 'border-fuchsia-500 bg-fuchsia-500 text-white shadow-sm shadow-fuchsia-500/30 dark:border-fuchsia-400 dark:bg-fuchsia-500 dark:text-white',
   },
+  pending_approval: {
+    label: 'Awaiting approval',
+    Icon: Hourglass,
+    tone: 'border-teal-200 bg-teal-50 text-teal-700 dark:border-teal-500/30 dark:bg-teal-500/10 dark:text-teal-300',
+    activeTone: 'border-teal-500 bg-teal-500 text-white shadow-sm shadow-teal-500/30 dark:border-teal-400 dark:bg-teal-500 dark:text-white',
+  },
 };
 
-const REASON_ORDER: ExclusionReason[] = ['claim_stuck', 'no_bank', 'no_pay', 'no_hours', 'no_rate', 'do_not_pay'];
+const REASON_ORDER: ExclusionReason[] = ['claim_stuck', 'pending_approval', 'no_bank', 'no_pay', 'no_hours', 'no_rate', 'do_not_pay'];
 
 function avatarColors(seed: string) {
   const palettes = [
@@ -158,7 +164,7 @@ export default function ExcludedQueue({ rows, onMarkPaid }: ExcludedQueueProps) 
 
   // Aggregate counts per reason for the header summary chips.
   const counts = useMemo(() => {
-    const c: Record<ExclusionReason, number> = { no_bank: 0, no_pay: 0, no_hours: 0, do_not_pay: 0, no_rate: 0, claim_stuck: 0 };
+    const c: Record<ExclusionReason, number> = { no_bank: 0, no_pay: 0, no_hours: 0, do_not_pay: 0, no_rate: 0, claim_stuck: 0, pending_approval: 0 };
     for (const r of rows) for (const reason of r.reasons) c[reason] += 1;
     return c;
   }, [rows]);

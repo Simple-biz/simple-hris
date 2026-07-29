@@ -119,7 +119,14 @@ export type ExclusionReason =
    * (a dispatch row may or may not exist) but visible, so an owed invoice can
    * never quietly vanish. Investigate before paying out of band.
    */
-  | 'claim_stuck';
+  | 'claim_stuck'
+  /**
+   * A contractor invoice still awaiting Accounting approval. NOT payable —
+   * a pending invoice is money Accounting has not authorized — but visible,
+   * so the current week's filed invoices show up in Payment Dispatch instead
+   * of silently waiting in the Payroll Wizard's Contractors step.
+   */
+  | 'pending_approval';
 
 export interface ExcludedRow {
   id: string;
