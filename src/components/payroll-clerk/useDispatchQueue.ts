@@ -8,6 +8,7 @@ import type { PaymentDispatchRow } from '@/lib/supabase/payment-dispatches';
 import type { PaystubQueueListItem, ArrearsEntry } from '@/lib/supabase/paystub-dispatch-queue';
 import {
   buildQueueFromRates,
+  buildStagedOnlyPlacement,
   formatCycleLabelFromFile,
   type ArrearsInfo,
   type ExcludedRow,
@@ -631,10 +632,17 @@ async function loadAll(
   // The queue above is built from employee_hourly_rates. Anyone the wizard
   // locked in (staged) whose pay came from the employee/department CATALOG has
   // no rates row, so buildQueueFromRates never emitted them — they'd disappear
-  // from Payment Dispatch entirely despite being owed money. Surface every
-  // staged person we haven't already placed (pending / excluded / locked) into the
-  // Excluded tab, flagged 'no_rate' (+ 'do_not_pay' when the wizard excluded
-  // them in validation), so accounting can see them and set up a rate/bank.
+  // from Payment Dispatch entirely despite being owed money. Place every staged
+  // person we haven't already placed (pending / excluded / locked) via
+  // buildStagedOnlyPlacement, which routes them on their employee_ids bank pick
+  // exactly like a rates-row payee: payable when a processor resolves, otherwise
+  // Excluded with the real reason ('no_bank' / 'no_pay', + 'do_not_pay' when the
+  // wizard excluded them in validation).
+  //
+  // These rows used to be synthesized from the staged paystub alone — no
+  // employee_ids lookup — so they ALWAYS read "No bank" + "No rate on file" and
+  // were never payable, even with complete bank details on the People tab. That
+  // stranded 7 people (₱59,911) in the 2026-07-19 cycle alone.
   //
   // Contractor rows are skipped when seeding it: an approved INVOICE says nothing
   // about whether that person's staged hourly pay has been placed, so counting it
@@ -653,30 +661,33 @@ async function loadAll(
     representedEmails.add(r.email.trim().toLowerCase());
   }
   for (const e of lockedEmails) representedEmails.add(e);
+  const payByEmail = payJson.byEmail ?? {};
+  let promotedStaged = 0;
   for (const s of stagedItems) {
     const email = s.recipient_email.trim().toLowerCase();
     const personal = s.personal_email?.trim().toLowerCase() ?? null;
     if (representedEmails.has(email) || (personal && representedEmails.has(personal))) continue;
     representedEmails.add(email);
-    const reasons: ExclusionReason[] = ['no_rate'];
-    if (s.excluded) reasons.push('do_not_pay');
-    withArrears.push({
-      id: email,
-      name: s.recipient_name?.trim() || s.recipient_email,
-      email: s.recipient_email,
-      totalHours: null,
-      amountUSD: s.amount_usd,
-      amountPHP: s.amount_php,
-      amountCOP: null,
-      bankPreferredRaw: null,
-      reasons,
-      departmentKey: s.department_key ?? null,
-      departmentName: deptNameFromKey(s.department_key),
-      contractorRole: contractorRoleEmails.has(email) || (personal ? contractorRoleEmails.has(personal) : false),
-      payable: null,
-      paystubSentAt: s.sent_at,
+    const placement = buildStagedOnlyPlacement({
+      staged: s,
+      idsRow: idsByEmail.get(email) ?? (personal ? idsByEmail.get(personal) : undefined),
+      pay: payByEmail[email] ?? (personal ? payByEmail[personal] : undefined),
+      contractorRole:
+        contractorRoleEmails.has(email) || (personal ? contractorRoleEmails.has(personal) : false),
     });
+    if (placement.kind === 'pending') {
+      // applyWizardFinal for parity with every other pending row: the published
+      // snapshot (catalog-staleness-guarded) overrides the staged amount when it
+      // exists, and is a no-op otherwise.
+      pendingQueue.push(applyWizardFinal(placement.row));
+      promotedStaged += 1;
+    } else {
+      withArrears.push(placement.row);
+    }
   }
+  // Both arrays were sorted before the safety net appended to them.
+  if (promotedStaged > 0) pendingQueue.sort((a, b) => a.name.localeCompare(b.name));
+  withArrears.sort((a, b) => a.name.localeCompare(b.name));
 
   return {
     // Until the wizard locks this cycle, Payment Dispatch shows NO queue data —

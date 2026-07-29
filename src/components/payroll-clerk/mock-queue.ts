@@ -112,6 +112,18 @@ export type ExclusionReason =
   | 'no_pay'
   | 'no_hours'
   | 'do_not_pay'
+  /**
+   * RETIRED — nothing emits this any more. It used to mean "no
+   * `employee_hourly_rates` row", which stopped being a problem when the Payment
+   * Catalog became the rate source of truth: catalog-paid people legitimately have
+   * no rates row, and {@link buildStagedOnlyPlacement} now routes them on their
+   * actual bank pick instead of flagging them.
+   *
+   * KEPT in the union (and in ExcludedQueue's label map) deliberately: the
+   * dispatch queue is cached in sessionStorage, which survives a page reload, so
+   * a queue cached before this change can still contain 'no_rate' rows. Dropping
+   * the member would leave those rows without a label.
+   */
   | 'no_rate'
   /**
    * A contractor invoice whose Mark Paid stamped the claim but then failed to
@@ -327,6 +339,87 @@ function preferredBankSlot(row: EmployeeIdRow | undefined): 'primary' | 'alterna
   return row?.preferred_bank_slot === 'alternative' ? 'alternative' : 'primary';
 }
 
+/** Canonical name for a payroll department key (null when unknown/blank). */
+function deptNameForKey(key: string | null | undefined): string | null {
+  if (!key) return null;
+  return DEPARTMENTS.find((d) => d.key === key)?.name ?? null;
+}
+
+/**
+ * The processor the EMPLOYEE picked: their "Bank Preferred" send-from rail wins,
+ * then their Disbursement channel (`preferred_processor`). Null when they've
+ * picked neither — callers then fall back to the legacy rates-sheet cell.
+ *
+ * Shared by the rates-driven queue and the wizard-staged safety net so both
+ * route a person the same way.
+ */
+function resolveChosenProcessor(idsRow: EmployeeIdRow | undefined): ProcessorId | null {
+  const choseBankPreferred = (idsRow?.bank_preferred ?? '').trim().toLowerCase();
+  const choseProcessor = (idsRow?.preferred_processor ?? '').trim().toLowerCase();
+  return (
+    (isKnownProcessor(choseBankPreferred) ? choseBankPreferred : null) ??
+    (isKnownProcessor(choseProcessor) ? choseProcessor : null)
+  );
+}
+
+/** Rates-row fields that can backfill payout details. Optional — staged-only
+ *  payees (catalog-paid, no rates row) simply pass nothing. */
+type RatesDetailSource = Pick<
+  EmployeeHourlyRateRow,
+  | 'hurupay_email'
+  | 'higlobe_email'
+  | 'higlobe_account_name'
+  | 'phone_number'
+  | 'full_address'
+  | 'city'
+  | 'province_state'
+>;
+
+/**
+ * The payout details Lenny sees on a row (and MarkPaidDialog auto-fills from).
+ * Employee-provided `employee_ids` values win over the rates-side equivalents;
+ * wire fields live solely on `employee_ids` and follow the preferred bank slot,
+ * falling back to the other slot so a person with details in only one slot still
+ * shows an account.
+ */
+function buildPayeeDetails(
+  email: string,
+  idsRow: EmployeeIdRow | undefined,
+  r?: RatesDetailSource | null,
+): QueueRow['details'] {
+  const bankSlot = preferredBankSlot(idsRow);
+  return {
+    email,
+    hurupay_email: pickFirst(idsRow?.hurupay_email, r?.hurupay_email),
+    wepay_email: pickFirst(idsRow?.wepay_email),
+    higlobe_email: pickFirst(idsRow?.higlobe_email, r?.higlobe_email),
+    higlobe_account_name: pickFirst(idsRow?.higlobe_account_name, r?.higlobe_account_name),
+    wise_email: pickFirst(idsRow?.wise_email),
+    wise_tag: pickFirst(idsRow?.wise_tag),
+    phone_number: pickFirst(idsRow?.phone_number, r?.phone_number),
+    full_address: pickFirst(idsRow?.full_address, r?.full_address),
+    city: pickFirst(r?.city),
+    province_state: pickFirst(r?.province_state),
+    // Wire-only fields live solely on employee_ids (employee-provided).
+    bank_name:
+      bankSlot === 'alternative'
+        ? pickFirst(idsRow?.alt_bank_name, idsRow?.bank_name)
+        : pickFirst(idsRow?.bank_name, idsRow?.alt_bank_name),
+    account_holder_name:
+      bankSlot === 'alternative'
+        ? pickFirst(idsRow?.alt_account_holder_name, idsRow?.account_holder_name)
+        : pickFirst(idsRow?.account_holder_name, idsRow?.alt_account_holder_name),
+    account_number:
+      bankSlot === 'alternative'
+        ? pickFirst(idsRow?.alt_account_number, idsRow?.account_number)
+        : pickFirst(idsRow?.account_number, idsRow?.alt_account_number),
+    swift_code:
+      bankSlot === 'alternative'
+        ? pickFirst(idsRow?.alt_routing_number, idsRow?.swift_code, idsRow?.routing_number)
+        : pickFirst(idsRow?.swift_code, idsRow?.routing_number, idsRow?.alt_routing_number),
+  };
+}
+
 /** Map the free-text "Bank Preferred" cell to one of our processor tabs. */
 export function processorIdFromBankPreferred(raw: string | null | undefined): ProcessorId | null {
   if (!raw) return null;
@@ -398,12 +491,7 @@ export function buildQueueFromRates(
     // Processor precedence: the employee's "Bank Preferred" pick wins, then
     // their Disbursement channel, then the rates-side legacy field for anyone
     // who hasn't picked either. All three share the ProcessorId value space.
-    const choseBankPreferred = (idsRow?.bank_preferred ?? '').trim().toLowerCase();
-    const choseProcessor = (idsRow?.preferred_processor ?? '').trim().toLowerCase();
-    const chosen =
-      (isKnownProcessor(choseBankPreferred) ? choseBankPreferred : null) ??
-      (isKnownProcessor(choseProcessor) ? choseProcessor : null);
-    const processor = chosen ?? processorIdFromBankPreferred(r.bank_preferred);
+    const processor = resolveChosenProcessor(idsRow) ?? processorIdFromBankPreferred(r.bank_preferred);
     const name =
       idsRow?.name?.trim() ||
       email
@@ -446,19 +534,6 @@ export function buildQueueFromRates(
     // pay carries nothing.
     const dept = resolvePayeeDept(pay, r.department);
     const departmentName = dept.name;
-    const bankSlot = preferredBankSlot(idsRow);
-    const preferredBankName = bankSlot === 'alternative'
-      ? pickFirst(idsRow?.alt_bank_name, idsRow?.bank_name)
-      : pickFirst(idsRow?.bank_name, idsRow?.alt_bank_name);
-    const preferredAccountHolder = bankSlot === 'alternative'
-      ? pickFirst(idsRow?.alt_account_holder_name, idsRow?.account_holder_name)
-      : pickFirst(idsRow?.account_holder_name, idsRow?.alt_account_holder_name);
-    const preferredAccountNumber = bankSlot === 'alternative'
-      ? pickFirst(idsRow?.alt_account_number, idsRow?.account_number)
-      : pickFirst(idsRow?.account_number, idsRow?.alt_account_number);
-    const preferredSwiftCode = bankSlot === 'alternative'
-      ? pickFirst(idsRow?.alt_routing_number, idsRow?.swift_code, idsRow?.routing_number)
-      : pickFirst(idsRow?.swift_code, idsRow?.routing_number, idsRow?.alt_routing_number);
 
     out.push({
       id: email.toLowerCase(),
@@ -482,30 +557,142 @@ export function buildQueueFromRates(
       bankPreferredRaw: r.bank_preferred,
       departmentKey: dept.key,
       departmentName,
-      details: {
-        email,
-        // Employee-provided values (employee_ids) win over rates-side ones.
-        hurupay_email: pickFirst(idsRow?.hurupay_email, r.hurupay_email),
-        wepay_email: pickFirst(idsRow?.wepay_email),
-        higlobe_email: pickFirst(idsRow?.higlobe_email, r.higlobe_email),
-        higlobe_account_name: pickFirst(idsRow?.higlobe_account_name, r.higlobe_account_name),
-        wise_email: pickFirst(idsRow?.wise_email),
-        wise_tag: pickFirst(idsRow?.wise_tag),
-        phone_number: pickFirst(idsRow?.phone_number, r.phone_number),
-        full_address: pickFirst(idsRow?.full_address, r.full_address),
-        city: pickFirst(r.city),
-        province_state: pickFirst(r.province_state),
-        // Wire-only fields live solely on employee_ids (employee-provided).
-        bank_name: preferredBankName,
-        account_holder_name: preferredAccountHolder,
-        account_number: preferredAccountNumber,
-        swift_code: preferredSwiftCode,
-      },
+      details: buildPayeeDetails(email, idsRow, r),
     });
   }
   out.sort((a, b) => a.name.localeCompare(b.name));
   excluded.sort((a, b) => a.name.localeCompare(b.name));
   return { active: out, excluded };
+}
+
+/**
+ * The wizard-staged paystub fields the safety net needs. Structurally a subset of
+ * `PaystubQueueListItem` so a staged row can be passed straight through.
+ */
+export interface StagedOnlyPayee {
+  recipient_email: string;
+  personal_email: string | null;
+  recipient_name: string | null;
+  department_key: string | null;
+  amount_php: number | null;
+  amount_usd: number | null;
+  excluded: boolean;
+  sent_at: string | null;
+}
+
+/** Where a staged-only payee belongs: the payable queue, or Excluded with reasons. */
+export type StagedOnlyPlacement =
+  | { kind: 'pending'; row: QueueRow }
+  | { kind: 'excluded'; row: ExcludedRow };
+
+/**
+ * Build the dispatch row for someone the Payroll Wizard LOCKED IN who has no
+ * `employee_hourly_rates` row, so {@link buildQueueFromRates} could never emit
+ * them. That's the normal shape now: since the Payment Catalog became the rate
+ * source of truth, catalog-paid people have no legacy rates row at all.
+ *
+ * This used to synthesize a row from the staged paystub alone — no `employee_ids`
+ * lookup — which hardcoded `bankPreferredRaw: null` and `payable: null`. A person
+ * with complete bank details on the People tab therefore showed in Excluded as
+ * "No bank" + "No rate on file" + "Can't pay here", and re-saving their bank
+ * details could never fix it (vanessade@simple.biz, 2026-07-29; 7 people /
+ * ₱59,911 stranded in that one cycle).
+ *
+ * So route them exactly like everyone else: processor by the same precedence
+ * ({@link resolveChosenProcessor}), payout details from `employee_ids`, hours from
+ * the pay layer (which covers catalog-paid people). Only genuinely missing data
+ * excludes them, and even then they stay payable when a processor resolves.
+ *
+ * The staged AMOUNT is authoritative — it's the number on the paystub that went
+ * to this person — so it is not recomputed from the pay layer.
+ *
+ * Deliberately does NOT gate on hours: absent Hubstaff hours is a display gap,
+ * not grounds to strand a salary the wizard already computed. Nor does it gate on
+ * full payout completeness — that would hold staged payees to a stricter standard
+ * than rates-row payees, who reach the queue on a resolvable processor alone.
+ */
+export function buildStagedOnlyPlacement(params: {
+  staged: StagedOnlyPayee;
+  idsRow: EmployeeIdRow | undefined;
+  pay: CurrentPayEntry | undefined;
+  /** DISPLAY ONLY — badges a contractor-role holder. Never sets payeeKind. */
+  contractorRole?: boolean;
+}): StagedOnlyPlacement {
+  const { staged, idsRow, pay } = params;
+  const contractorRole = params.contractorRole ?? false;
+  const email = staged.recipient_email.trim();
+  const id = email.toLowerCase();
+  const name = staged.recipient_name?.trim() || idsRow?.name?.trim() || email;
+  const processor = resolveChosenProcessor(idsRow);
+
+  // Staged department is the wizard's own assignment; pay is the fallback.
+  const departmentKey = staged.department_key ?? pay?.departmentKey ?? null;
+  const departmentName = deptNameForKey(departmentKey) ?? pay?.departmentName ?? null;
+
+  const amountPHP = staged.amount_php ?? pay?.totalPayPHP ?? null;
+  const amountUSD = staged.amount_usd ?? pay?.totalPayUSD ?? null;
+  const payCurrency: PayCurrency = pay?.payCurrency ?? 'PHP';
+  // Native COP is only meaningful for COP-paid people; mirrors QueueRow's contract.
+  const amountCOP = payCurrency === 'COP' ? (pay?.totalPayCOP ?? null) : null;
+  // Mirrors contractor-dispatch-queue: non-rates payees carry their employee_ids
+  // routing pick here, so the Excluded tab's bank label never reads "No bank" for
+  // someone who has one.
+  const bankPreferredRaw = pickFirst(idsRow?.bank_preferred, idsRow?.preferred_processor) ?? null;
+
+  const payable: QueueRow | null = processor
+    ? {
+        id,
+        processor,
+        name,
+        email,
+        amountUSD,
+        amountPHP,
+        amountCOP,
+        payCurrency,
+        initialPayUSD: pay?.initialPayUSD ?? null,
+        initialPayPHP: pay?.initialPayPHP ?? null,
+        pabBonusPHP: pay?.pabBonusPHP ?? 0,
+        techBonusPHP: pay?.techBonusPHP ?? 0,
+        bonusTotalPHP: pay?.bonusTotalPHP ?? 0,
+        totalHours: pay?.totalHours ?? null,
+        otHours: pay?.otHours ?? null,
+        bankPreferredRaw,
+        departmentKey,
+        departmentName,
+        contractorRole,
+        details: buildPayeeDetails(email, idsRow),
+      }
+    : null;
+
+  const reasons: ExclusionReason[] = [];
+  if (!processor) reasons.push('no_bank');
+  if (amountPHP == null && amountUSD == null) reasons.push('no_pay');
+  if (staged.excluded) reasons.push('do_not_pay');
+
+  // No blockers → this is an ordinary payable row, not an exception.
+  if (payable && reasons.length === 0) return { kind: 'pending', row: payable };
+
+  return {
+    kind: 'excluded',
+    row: {
+      id,
+      name,
+      email,
+      totalHours: pay?.totalHours ?? null,
+      amountUSD,
+      amountPHP,
+      amountCOP,
+      bankPreferredRaw,
+      reasons,
+      departmentKey,
+      departmentName,
+      contractorRole,
+      // Non-null whenever a processor resolves, so a wizard-held person can still
+      // be paid from the Excluded tab once accounting clears them.
+      payable,
+      paystubSentAt: staged.sent_at,
+    },
+  };
 }
 
 const KNOWN_PROCESSOR_IDS: ReadonlySet<string> = new Set([
