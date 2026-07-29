@@ -48,6 +48,7 @@ import {
   Zap,
   UserX,
   Settings2,
+  Mail,
 } from 'lucide-react';
 import { useDispatchLock } from '@/hooks/useDispatchLock';
 import { useWizardDispatchLock } from '@/hooks/useWizardDispatchLock';
@@ -1282,11 +1283,13 @@ export default function PayrollWizard({
   const [previewSearch, setPreviewSearch] = useState('');
   const [previewTab, setPreviewTab] = useState<'paystubs' | 'contractors'>('paystubs');
   const [previewPage, setPreviewPage] = useState(1);
-  // Reset pagination whenever the active tab or search query changes so the
-  // user always lands back on the first page of the new result set.
+  /** Preview Emails dept filter — scopes the Paystubs tab only ('all' = every dept). */
+  const [previewDept, setPreviewDept] = useState<string>('all');
+  // Reset pagination whenever the active tab, search query or dept filter
+  // changes so the user always lands back on the first page of the new result set.
   useEffect(() => {
     setPreviewPage(1);
-  }, [previewTab, previewSearch]);
+  }, [previewTab, previewSearch, previewDept]);
   const [isDispatching, setIsDispatching] = useState(false);
   /**
    * Work emails (lowercased) accounting flagged "do not pay" in the Validation
@@ -14975,6 +14978,7 @@ export default function PayrollWizard({
             setPreviewSearch('');
             setPreviewTab('paystubs');
             setPreviewPage(1);
+            setPreviewDept('all');
           }
         }}
       >
@@ -15224,14 +15228,43 @@ export default function PayrollWizard({
               );
             }
             const needle = previewSearch.trim().toLowerCase();
+            // Dept filter options — every dept present in this batch's paystub
+            // rows, alphabetical with "Unassigned" pinned last (mirrors the
+            // step-2 Initial Calculation dept filter).
+            const previewDeptOptions = (() => {
+              const counts = new Map<string, { name: string; count: number }>();
+              for (const e of dispatchData.rows) {
+                const key = e.department_key ?? 'unassigned';
+                const cur = counts.get(key);
+                if (cur) cur.count += 1;
+                else counts.set(key, { name: e.department_name ?? 'Unassigned', count: 1 });
+              }
+              return [...counts.entries()]
+                .map(([key, v]) => ({ key, name: v.name, count: v.count }))
+                .sort((a, b) =>
+                  a.key === 'unassigned' ? 1 : b.key === 'unassigned' ? -1
+                    : a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
+            })();
+            // Guard against a stale dept selection (dept emptied out after a new upload).
+            const previewDeptSafe =
+              previewDept !== 'all' && !previewDeptOptions.some((o) => o.key === previewDept)
+                ? 'all'
+                : previewDept;
+            const deptScopedPaystubs =
+              previewDeptSafe === 'all'
+                ? dispatchData.rows
+                : dispatchData.rows.filter(
+                    (e) => (e.department_key ?? 'unassigned') === previewDeptSafe,
+                  );
             const filteredPaystubs = needle
-              ? dispatchData.rows.filter(
+              ? deptScopedPaystubs.filter(
                   (e) =>
                     e.name.toLowerCase().includes(needle) ||
                     e.email.toLowerCase().includes(needle) ||
-                    e.personal_email.toLowerCase().includes(needle),
+                    e.personal_email.toLowerCase().includes(needle) ||
+                    (e.department_name ?? 'Unassigned').toLowerCase().includes(needle),
                 )
-              : dispatchData.rows;
+              : deptScopedPaystubs;
             const approvedContractors = contractorInvoicesInPeriod.filter((i) => i.status === 'approved');
             const filteredContractors = needle
               ? approvedContractors.filter((inv) =>
@@ -15258,8 +15291,11 @@ export default function PayrollWizard({
             const pageLast = Math.min(pageEnd, activeCount);
             return (
               <>
-                <DialogHeader className="px-6 pt-6">
-                  <DialogTitle className="text-zinc-900 dark:text-white">Preview Emails</DialogTitle>
+                <DialogHeader className="border-b border-zinc-200 bg-gradient-to-br from-white via-zinc-50/70 to-indigo-50/40 px-6 py-4 dark:border-zinc-800 dark:from-zinc-950 dark:via-zinc-900/40 dark:to-indigo-950/30">
+                  <DialogTitle className="flex items-center gap-2 text-zinc-900 dark:text-white">
+                    <Mail className="h-5 w-5 shrink-0 text-indigo-500" />
+                    Preview Emails
+                  </DialogTitle>
                   <DialogDescription className="text-zinc-600 dark:text-zinc-400">
                     {previewTab === 'paystubs'
                       ? `${dispatchData.rows.length} paystub${dispatchData.rows.length === 1 ? '' : 's'} queued for this batch.`
@@ -15275,12 +15311,19 @@ export default function PayrollWizard({
                       className={cn(
                         'flex-1 rounded-[5px] px-3 py-1.5 text-xs font-semibold transition',
                         previewTab === 'paystubs'
-                          ? 'bg-white text-zinc-900 shadow-sm dark:bg-zinc-950 dark:text-white'
+                          ? 'bg-white text-indigo-700 shadow-sm dark:bg-zinc-950 dark:text-indigo-300'
                           : 'text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200',
                       )}
                     >
                       Paystubs
-                      <span className="ml-1.5 rounded bg-zinc-200 px-1 text-[10px] font-medium text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400">
+                      <span
+                        className={cn(
+                          'ml-1.5 rounded px-1 text-[10px] font-medium',
+                          previewTab === 'paystubs'
+                            ? 'bg-indigo-600 text-white dark:bg-indigo-500'
+                            : 'bg-zinc-200 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400',
+                        )}
+                      >
                         {dispatchData.rows.length}
                       </span>
                     </button>
@@ -15290,24 +15333,55 @@ export default function PayrollWizard({
                       className={cn(
                         'flex-1 rounded-[5px] px-3 py-1.5 text-xs font-semibold transition',
                         previewTab === 'contractors'
-                          ? 'bg-white text-zinc-900 shadow-sm dark:bg-zinc-950 dark:text-white'
+                          ? 'bg-white text-indigo-700 shadow-sm dark:bg-zinc-950 dark:text-indigo-300'
                           : 'text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200',
                       )}
                     >
                       Contractors
-                      <span className="ml-1.5 rounded bg-zinc-200 px-1 text-[10px] font-medium text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400">
+                      <span
+                        className={cn(
+                          'ml-1.5 rounded px-1 text-[10px] font-medium',
+                          previewTab === 'contractors'
+                            ? 'bg-indigo-600 text-white dark:bg-indigo-500'
+                            : 'bg-zinc-200 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400',
+                        )}
+                      >
                         {approvedContractors.length}
                       </span>
                     </button>
                   </div>
                 </div>
-                <div className="px-6 pt-3">
+                <div className="flex flex-col gap-2 px-6 pt-3 sm:flex-row sm:items-center">
+                  {previewTab === 'paystubs' && (
+                    <Select value={previewDeptSafe} onValueChange={(v) => setPreviewDept(v ?? 'all')}>
+                      <SelectTrigger
+                        title="Filter by department"
+                        className="w-full shrink-0 gap-1.5 border-zinc-200 bg-white text-xs data-[size=default]:h-9 dark:border-zinc-800 dark:bg-zinc-900 sm:w-auto"
+                      >
+                        <Building2 className="h-3.5 w-3.5 shrink-0 text-violet-500 dark:text-violet-400" />
+                        <span className="text-zinc-500 dark:text-zinc-400">Dept:</span>
+                        <span className="max-w-[11rem] truncate font-medium text-zinc-700 dark:text-zinc-200">
+                          {previewDeptSafe === 'all'
+                            ? 'All departments'
+                            : previewDeptOptions.find((o) => o.key === previewDeptSafe)?.name ?? previewDeptSafe}
+                        </span>
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All departments ({dispatchData.rows.length})</SelectItem>
+                        {previewDeptOptions.map((o) => (
+                          <SelectItem key={o.key} value={o.key}>
+                            {o.name} ({o.count})
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  )}
                   <input
                     type="text"
                     value={previewSearch}
                     onChange={(ev) => setPreviewSearch(ev.target.value)}
-                    placeholder="Search by name or email…"
-                    className="w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 placeholder:text-zinc-400 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:border-zinc-800 dark:bg-zinc-900 dark:text-white"
+                    placeholder={previewTab === 'paystubs' ? 'Search by name, email or department…' : 'Search by name or email…'}
+                    className="h-9 w-full flex-1 rounded-md border border-zinc-200 bg-white px-3 text-sm text-zinc-900 placeholder:text-zinc-400 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:border-zinc-800 dark:bg-zinc-900 dark:text-white"
                   />
                 </div>
                 <div className="min-h-[220px] max-h-[55vh] overflow-y-auto px-6 pb-4 pt-3">
@@ -15316,18 +15390,25 @@ export default function PayrollWizard({
                       <div className="py-8 text-center text-sm text-zinc-500 dark:text-zinc-400">
                         {dispatchData.rows.length === 0
                           ? 'No employees queued for dispatch.'
-                          : `No employees match “${previewSearch}”.`}
+                          : needle
+                            ? `No employees match “${previewSearch}”.`
+                            : 'No employees in the selected department.'}
                       </div>
                     ) : (
                       <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                         {filteredPaystubs.slice(pageStart, pageEnd).map((e) => (
                           <div
                             key={e.email}
-                            className="flex items-center justify-between gap-3 rounded-lg border border-zinc-200 bg-white px-3 py-2.5 dark:border-zinc-800 dark:bg-zinc-900/40"
+                            className="flex items-center justify-between gap-3 rounded-lg border border-zinc-200 bg-white px-3 py-2.5 transition-colors hover:border-indigo-300/70 dark:border-zinc-800 dark:bg-zinc-900/40 dark:hover:border-indigo-700/60"
                           >
                             <div className="min-w-0 flex-1">
-                              <div className="truncate text-sm font-medium text-zinc-900 dark:text-white">
-                                {e.name}
+                              <div className="flex items-center gap-1.5">
+                                <span className="min-w-0 truncate text-sm font-medium text-zinc-900 dark:text-white">
+                                  {e.name}
+                                </span>
+                                <span className="max-w-[10rem] shrink-0 truncate rounded bg-indigo-600/10 px-1.5 py-0.5 text-[10px] font-semibold leading-none text-indigo-700 dark:bg-indigo-500/20 dark:text-indigo-200">
+                                  {e.department_name ?? 'Unassigned'}
+                                </span>
                               </div>
                               <div className="truncate font-mono text-xs text-zinc-500 dark:text-zinc-400">
                                 {e.personal_email}
@@ -15357,7 +15438,7 @@ export default function PayrollWizard({
                         {filteredContractors.slice(pageStart, pageEnd).map((inv) => (
                           <div
                             key={inv.id}
-                            className="flex items-center justify-between gap-3 rounded-lg border border-zinc-200 bg-white px-3 py-2.5 dark:border-zinc-800 dark:bg-zinc-900/40"
+                            className="flex items-center justify-between gap-3 rounded-lg border border-zinc-200 bg-white px-3 py-2.5 transition-colors hover:border-indigo-300/70 dark:border-zinc-800 dark:bg-zinc-900/40 dark:hover:border-indigo-700/60"
                           >
                             <div className="min-w-0 flex-1">
                               <div className="truncate text-sm font-medium text-zinc-900 dark:text-white">
@@ -15382,7 +15463,7 @@ export default function PayrollWizard({
                   )}
                 </div>
                 {activeCount > 0 && (
-                  <div className="flex items-center justify-between gap-3 border-t border-zinc-200 px-6 py-3 dark:border-zinc-800">
+                  <div className="flex items-center justify-between gap-3 border-t border-zinc-200 bg-zinc-50/60 px-6 py-3 dark:border-zinc-800 dark:bg-zinc-900/40">
                     <span className="text-xs text-zinc-500 dark:text-zinc-400">
                       Showing{' '}
                       <span className="font-medium text-zinc-700 dark:text-zinc-300">
