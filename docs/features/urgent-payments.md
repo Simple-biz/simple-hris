@@ -14,6 +14,23 @@ Urgent payments are non-weekly payouts that must be sent **immediately upon appr
 
 ---
 
+## The urgent marker: `cycle_source_file`, never `cycle_id`
+
+**File:** `src/lib/payroll/urgent-cycle.ts` — the single source of truth for bucketing urgent payouts. Writers and readers must both go through it.
+
+An urgent `payment_dispatches` row is identified by its `cycle_source_file` starting with `urgent_`. Its `cycle_id` is **NULL**, because `cycle_id` is `UUID REFERENCES hubstaff_uploads(id)` and an urgent payment has no Hubstaff upload behind it.
+
+> **Fixed 2026-07-29 — why this rule exists.** Both dispatch routes used to write the sentinel string `cycle_id: 'urgent'`, and `loadUrgentDispatchRows` filtered `.eq('cycle_id','urgent')`. Postgres rejected both against a `uuid` column with `22P02 invalid input syntax for type uuid: "urgent"`, so **every** urgent Send / Mark as Paid failed (MESA *and* one-off), and because the reader discarded its error the weekly Urgent report just looked empty rather than broken. Not one urgent dispatch row was ever recorded. A migration to retype the column to `text` was written but never applied; removing the sentinel fixed it with no DDL and kept the FK.
+
+Two invariants worth keeping:
+
+- **Every** bucket name keeps the `urgent_` prefix, including the no-date fallback (`urgent_unbucketed`). `getDisbursementReportDetail` locates an urgent week by that prefix alone, so a name without it (the old `mesa_urgent` / `oneoff_urgent`) makes the payment unopenable in the report detail view.
+- `_` is a single-character wildcard in SQL `LIKE`, so the server-side `like('cycle_source_file','urgent_%')` is a *prefilter*; `isUrgentSourceFile` re-checks each row exactly.
+
+Covered by `src/lib/payroll/urgent-cycle.test.ts`.
+
+---
+
 ## Where it lives
 
 - **Accounting → Payment Dispatch** (`src/components/payroll-clerk/PayrollDispatch.tsx`) — the URGENT card sits **directly above Hurupay** in the processor filter rail (right after "All pending"), amber/Zap themed with a pulsing glow.
@@ -85,7 +102,7 @@ Orphanage budget requests have **no** remove button: they are approved records o
 On dispatch of an approved, not-yet-dispatched disbursement:
 
 1. **Processor:** `body.processor` validated against the known set; defaults to `wise`.
-2. **Weekly bucket:** `sundayWeekRange(sent_date)` → `cycle_source_file = urgent_<weekStart>_to_<weekEnd>`, with `cycle_period_start/end` set to the week bounds. `cycle_id = 'urgent'`.
+2. **Weekly bucket:** `urgentCycleSourceFile(sent_date)` → `cycle_source_file = urgent_<weekStart>_to_<weekEnd>`, with `cycle_period_start/end` set to the week bounds. `cycle_id = NULL` (see **The urgent marker** below).
 3. **USD:** `amount_usd = amount_php / fx` where `fx = app_settings.usd_to_php_rate` (so the USD-centric weekly report totals include it).
 4. Inserts the `payment_dispatches` row, stamps `mesa_requests.dispatched_at`, and writes an audit log (`mesa.disbursement.dispatched`) including processor + cycle_source_file.
 
@@ -101,7 +118,7 @@ Guards: 404 if the request is missing, 400 if not a `disbursement` or not `appro
 
 Returns a single normalized list combining both sources:
 
-- **MESA:** real `payment_dispatches` where `cycle_id = 'urgent'` (used as-is).
+- **MESA + one-off:** real `payment_dispatches` whose `cycle_source_file` starts with `urgent_` (used as-is).
 - **Orphanage budgets:** paid/problem `orphanage_dispatches` of `dispatch_type = 'budget_request'`, synthesized into `PaymentDispatchRow` shape:
   - `processor = 'wires'`, `recipient_email = submitter_email`, `recipient_name = label`.
   - `amount_usd = amount_php / fx` (current FX rate); `amount_php` preserved.
@@ -154,7 +171,7 @@ MESA:
     → accounting approves (AccountingMesa)        status=approved, dispatched_at=null
     → GET /api/urgent-payments                    (+ preferred processor + details)
     → UrgentPaymentsQueue (MESA section)          clerk picks processor → Send
-    → POST /api/mesa-requests/[id]/dispatch        payment_dispatches (cycle_id=urgent,
+    → POST /api/mesa-requests/[id]/dispatch        payment_dispatches (cycle_id=NULL,
                                                     cycle_source_file=urgent_<week>, amount_usd)
                                                     + mesa_requests.dispatched_at stamped
     → listDisbursementReports → "Urgent · <week>" report card

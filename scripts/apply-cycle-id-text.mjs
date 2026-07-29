@@ -1,4 +1,11 @@
 /**
+ * ⚠️ NO LONGER REQUIRED (2026-07-29) — do not run this to fix Urgent payments.
+ * Urgent Send / Mark as Paid was fixed in code instead: the sentinel cycle_id='urgent'
+ * is gone (urgent rows write cycle_id=NULL and are tagged by the `urgent_`
+ * cycle_source_file prefix — src/lib/payroll/urgent-cycle.ts), so no DDL is needed
+ * and `cycle_id` can stay UUID with its hubstaff_uploads FK intact.
+ * Kept for reference; see the header of the SQL file below.
+ *
  * Applies references/sql/migrate/2026-07-29_payment_dispatches_cycle_id_text.sql —
  * payment_dispatches.cycle_id UUID → TEXT (drops the hubstaff_uploads FK) — then
  * verifies the column type and that the urgent-queue filter no longer errors.

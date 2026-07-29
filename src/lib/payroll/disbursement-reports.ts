@@ -29,6 +29,12 @@ import {
 } from "@/lib/payroll/resolve-rate";
 import { fetchAllRateHistory } from "@/lib/payroll/rate-history";
 import { computeProratedRowPay } from "@/lib/payroll/current-pay";
+import {
+  URGENT_SOURCE_FILE_PREFIX,
+  isUrgentSourceFile,
+  sundayWeekRange,
+  urgentCycleSourceFile,
+} from "@/lib/payroll/urgent-cycle";
 import type {
   PaymentDispatchRow,
   PaymentDispatchStatus,
@@ -389,24 +395,10 @@ async function loadProcessorByEmail(): Promise<Map<string, string>> {
   return out;
 }
 
-/** Bucket an ISO date into its Sunday→Saturday week (matches the payroll cycle). */
-function sundayWeekRange(isoDate: string): { start: string; end: string } | null {
-  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(isoDate);
-  if (!m) return null;
-  const d = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3]));
-  if (Number.isNaN(d.getTime())) return null;
-  const start = new Date(d);
-  start.setUTCDate(d.getUTCDate() - d.getUTCDay());
-  const end = new Date(start);
-  end.setUTCDate(start.getUTCDate() + 6);
-  const fmt = (x: Date) =>
-    `${x.getUTCFullYear()}-${String(x.getUTCMonth() + 1).padStart(2, "0")}-${String(x.getUTCDate()).padStart(2, "0")}`;
-  return { start: fmt(start), end: fmt(end) };
-}
-
 /**
  * Loads every "urgent" dispatch row, normalized to PaymentDispatchRow shape:
- *   • Real `payment_dispatches` where cycle_id='urgent' (MESA disbursements).
+ *   • Real `payment_dispatches` tagged urgent by `cycle_source_file`
+ *     (MESA disbursements + one-off People-tab payments).
  *   • Approved orphanage BUDGET REQUESTS paid via `orphanage_dispatches`
  *     (dispatch_type='budget_request'), synthesized into PaymentDispatchRow
  *     entries: processor='wires' (paid by wire to the orphanage bank), PHP→USD
@@ -423,13 +415,27 @@ async function loadUrgentDispatchRows(): Promise<PaymentDispatchRow[]> {
 
   const rows: PaymentDispatchRow[] = [];
 
-  // 1. Real urgent payment_dispatches (MESA).
-  const { data: pd } = await supabase
+  // 1. Real urgent payment_dispatches (MESA + one-off), identified by the
+  //    `urgent_` cycle_source_file prefix. NOT by cycle_id: that column is
+  //    `uuid REFERENCES hubstaff_uploads(id)`, so the old `.eq("cycle_id","urgent")`
+  //    made Postgres reject this query outright (22P02) and the discarded error
+  //    left the weekly Urgent report silently empty. See @/lib/payroll/urgent-cycle.
+  //
+  //    `_` is a single-char wildcard in LIKE, so the server-side filter is a
+  //    prefilter; isUrgentSourceFile re-checks it exactly.
+  const { data: pd, error: pdErr } = await supabase
     .from("payment_dispatches")
     .select("*")
-    .eq("cycle_id", "urgent")
+    .like("cycle_source_file", `${URGENT_SOURCE_FILE_PREFIX}%`)
     .order("created_at", { ascending: false });
-  rows.push(...((pd ?? []) as PaymentDispatchRow[]));
+  if (pdErr) {
+    // Never swallow this again — an empty urgent report must not be indistinguishable
+    // from a failed query.
+    console.warn("[disbursement-reports] urgent payment_dispatches query failed:", pdErr.message);
+  }
+  rows.push(
+    ...((pd ?? []) as PaymentDispatchRow[]).filter((r) => isUrgentSourceFile(r.cycle_source_file)),
+  );
 
   // 2. FX rate (PHP → USD) for converting orphanage budget amounts.
   const { data: fxData } = await supabase
@@ -475,10 +481,12 @@ async function loadUrgentDispatchRows(): Promise<PaymentDispatchRow[]> {
     const amountPhp = num(o.amount_php);
     rows.push({
       id: o.id,
-      cycle_id: "urgent",
+      // Synthetic row (never inserted), but kept consistent with what the urgent
+      // dispatch routes now write: no Hubstaff upload, so no cycle_id.
+      cycle_id: null,
       cycle_period_start: wk?.start ?? null,
       cycle_period_end: wk?.end ?? null,
-      cycle_source_file: wk ? `urgent_${wk.start}_to_${wk.end}` : "mesa_urgent",
+      cycle_source_file: urgentCycleSourceFile(basis),
       recipient_email: o.submitter_email,
       recipient_name: o.label,
       processor: "wires",
@@ -533,7 +541,10 @@ async function buildUrgentWeeklyReports(): Promise<DisbursementReportSummary[]> 
   const buckets = new Map<string, Bucket>();
 
   for (const d of data) {
-    const sourceFile = d.cycle_source_file || "mesa_urgent";
+    // Fall back to a name that still carries the `urgent_` prefix — the report
+    // detail lookup finds an urgent week by that prefix alone, so the old
+    // "mesa_urgent" made such a bucket unopenable.
+    const sourceFile = d.cycle_source_file || urgentCycleSourceFile(null);
     let bucket = buckets.get(sourceFile);
     if (!bucket) {
       bucket = {
@@ -787,7 +798,7 @@ export async function listDisbursementReports(): Promise<{
   const unseededCount = unseeded.length;
 
   // Append synthesized weekly urgent (MESA) reports — these live in
-  // payment_dispatches (cycle_id='urgent'), not disbursement_records, and are
+  // payment_dispatches (urgent_ cycle_source_file), not disbursement_records, and are
   // additive: a failure here must not break the regular cycle reports.
   try {
     reports.push(...(await buildUrgentWeeklyReports()));
@@ -1249,7 +1260,7 @@ export async function getDisbursementReportDetail(
   // Urgent (MESA + orphanage budget) weeks have no disbursement_records — the
   // dispatch rows come from the same combined loader the summary was built
   // from, filtered to this week's bucket. No outstanding for urgent reports.
-  if (summary.sourceFile.startsWith("urgent_")) {
+  if (isUrgentSourceFile(summary.sourceFile)) {
     const all = await loadUrgentDispatchRows();
     const dispatches = all.filter((d) => d.cycle_source_file === summary.sourceFile);
     return {

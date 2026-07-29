@@ -1,5 +1,17 @@
 -- payment_dispatches.cycle_id: UUID → TEXT.
 --
+-- ⚠️ NO LONGER REQUIRED (2026-07-29). This migration was written to make the
+-- sentinel cycle_id='urgent' storable. It never ran (it needs DATABASE_URL, which
+-- isn't configured), so Urgent stayed broken. The fix instead removed the sentinel:
+-- urgent dispatches now write cycle_id=NULL and are identified by the `urgent_`
+-- cycle_source_file prefix (src/lib/payroll/urgent-cycle.ts) — which is the marker
+-- the rest of the report pipeline already used. Urgent Send / Mark as Paid works
+-- with cycle_id left as UUID, so no DDL is needed.
+--
+-- Kept for reference only. Running it is still safe and idempotent, and the code
+-- works either way (NULL is valid in both a uuid and a text column) — but it buys
+-- nothing and costs the FK to hubstaff_uploads. Prefer leaving it unapplied.
+--
 -- WHY: the Urgent queue (MESA disbursements + one-off People-tab payments) has
 -- always written sentinel cycle_id='urgent' (app/api/mesa-requests/[id]/dispatch,
 -- app/api/urgent-payments/requests/[id]/dispatch), and the weekly urgent report

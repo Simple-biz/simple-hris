@@ -5,35 +5,18 @@ import { insertAuditLog } from '@/lib/supabase/audit-log';
 import { getSessionActor } from '@/lib/auth/session-actor';
 import { deniedResponse } from '@/lib/auth/authorize-email';
 import { requireFeatureEdit } from '@/lib/auth/authorize-feature';
+import { sundayWeekRange, urgentCycleSourceFile } from '@/lib/payroll/urgent-cycle';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
 const KNOWN_PROCESSORS = new Set(['hurupay', 'wepay', 'higlobe', 'wise', 'jeeves', 'wires']);
 
-/**
- * Bucket a sent date into its Sunday→Saturday payroll week. One-off payments
- * reconcile weekly alongside the regular Hubstaff cycles (which also run Sun→Sat),
- * so we group by the same boundaries — mirroring the MESA urgent dispatch route.
- */
-function sundayWeekRange(isoDate: string): { start: string; end: string } | null {
-  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(isoDate);
-  if (!m) return null;
-  const d = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3]));
-  if (Number.isNaN(d.getTime())) return null;
-  const start = new Date(d);
-  start.setUTCDate(d.getUTCDate() - d.getUTCDay()); // back up to Sunday
-  const end = new Date(start);
-  end.setUTCDate(start.getUTCDate() + 6); // Saturday
-  const fmt = (x: Date) =>
-    `${x.getUTCFullYear()}-${String(x.getUTCMonth() + 1).padStart(2, '0')}-${String(x.getUTCDate()).padStart(2, '0')}`;
-  return { start: fmt(start), end: fmt(end) };
-}
-
 // POST /api/urgent-payments/requests/[id]/dispatch
 // Accounting/payroll-clerk: send a pending one-off payment. Creates a
-// payment_dispatches record (cycle_id='urgent'), stamps the request 'dispatched',
-// and notifies the employee. Mirrors app/api/mesa-requests/[id]/dispatch.
+// payment_dispatches record tagged as urgent via cycle_source_file, stamps the
+// request 'dispatched', and notifies the employee. Mirrors
+// app/api/mesa-requests/[id]/dispatch.
 export async function POST(
   request: Request,
   { params }: { params: Promise<{ id: string }> },
@@ -127,7 +110,7 @@ export async function POST(
 
     // Bucket into the Sun→Sat week it's being sent so it reconciles weekly.
     const week = sundayWeekRange(body.sent_date!);
-    const cycleSourceFile = week ? `urgent_${week.start}_to_${week.end}` : 'oneoff_urgent';
+    const cycleSourceFile = urgentCycleSourceFile(body.sent_date);
 
     // Amount is authoritative from the STORED request (set + validated at
     // creation by POST /api/people/pay), never the client body — the Mark Paid
@@ -149,7 +132,11 @@ export async function POST(
     }
 
     const { row: dispatch, error: dispatchErr } = await insertPaymentDispatch({
-      cycle_id: 'urgent',
+      // NULL, never a sentinel: cycle_id is `uuid REFERENCES hubstaff_uploads(id)`
+      // and a one-off payment has no Hubstaff upload. Writing 'urgent' here is what
+      // made every Send fail with `invalid input syntax for type uuid: "urgent"`.
+      // The urgent marker is cycle_source_file — see @/lib/payroll/urgent-cycle.
+      cycle_id: null,
       cycle_source_file: cycleSourceFile,
       cycle_period_start: week?.start ?? null,
       cycle_period_end: week?.end ?? null,
