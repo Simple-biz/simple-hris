@@ -20,7 +20,10 @@ import type { EmployeeHourlyRateRow } from '@/lib/supabase/employee-hourly-rates
 import type { EmployeeIdRow } from '@/lib/supabase/employee-ids';
 import type { DisbursementRecordRow } from '@/lib/payroll/disbursement-reports';
 import { isProcessorId } from '@/lib/employee-payment-processors';
-import { processorIdFromBankPreferred } from '@/components/payroll-clerk/mock-queue';
+import {
+  isSmallWiresAmountPHP,
+  processorIdFromBankPreferred,
+} from '@/components/payroll-clerk/mock-queue';
 
 type DispatchExportRow = Record<string, string>;
 
@@ -157,11 +160,19 @@ export function buildDispatchExportRows(
     // Processor precedence: a recorded dispatch wins; else the employee's own
     // choice (Bank Preferred > Disbursement, from employee_ids); else infer
     // from the rates' legacy bank_preferred cell.
-    const processor =
+    let processor =
       dispatch?.processor ??
       chosenProcessorByEmail.get(key) ??
       processorIdFromBankPreferred(bankPreferredByEmail.get(key) ?? null) ??
       '';
+    // Sub-₱7k wires → Wise, mirroring the dispatch queue so a pending row's
+    // export matches the tab it sits in. Only rows the clerk hasn't touched:
+    // a recorded dispatch — or a backfilled paid row — reflects what actually
+    // happened and is never rewritten. A null PHP amount (USD/COP payee)
+    // coerces to 0, which the helper treats as "nothing to send" → no flip.
+    if (!dispatch && r.status !== 'paid' && processor === 'wires' && isSmallWiresAmountPHP(num(r.amount_php))) {
+      processor = 'wise';
+    }
 
     // Date sent: dispatch.sent_date wins; otherwise pull the date portion of paid_at.
     const dateSent =

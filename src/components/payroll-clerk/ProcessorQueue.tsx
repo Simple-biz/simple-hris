@@ -160,9 +160,12 @@ function DeptChip({ name }: { name: string | null }) {
 function BankCell({
   processor,
   bankPreferredRaw,
+  smallWiresViaWise,
 }: {
   processor: ProcessorId;
   bankPreferredRaw: string | null;
+  /** Sub-₱7k wires payment temporarily sent via Wise this week (see mock-queue). */
+  smallWiresViaWise?: boolean;
 }) {
   const meta = PROCESSORS.find((p) => p.id === processor);
   const isWireSuffix = bankPreferredRaw && /^x?\d{3,5}$/i.test(bankPreferredRaw.trim());
@@ -172,6 +175,14 @@ function BankCell({
         <span className={cn('h-1.5 w-1.5 rounded-full', PROCESSOR_DOT[processor])} aria-hidden />
         {meta?.label ?? processor}
       </span>
+      {smallWiresViaWise && (
+        <span
+          className="ml-2 text-[10px] font-medium text-emerald-700 dark:text-emerald-400"
+          title="Under ₱7,000 this week, so this payment goes out via Wise instead of Wires. They move back to Wires the first week their pay is ₱7,000 or more."
+        >
+          Wires → Wise · under ₱7k
+        </span>
+      )}
       {isWireSuffix && (
         <span className="ml-2 font-mono text-[10px] text-amber-700 dark:text-amber-400" title="Account suffix in source">
           {bankPreferredRaw}
@@ -674,7 +685,11 @@ const QueueRowItem = React.memo(function QueueRowItem({
 
         <div className="flex flex-wrap items-center justify-between gap-2 pl-[2.875rem]">
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px]">
-            <BankCell processor={row.processor} bankPreferredRaw={row.bankPreferredRaw} />
+            <BankCell
+              processor={row.processor}
+              bankPreferredRaw={row.bankPreferredRaw}
+              smallWiresViaWise={row.smallWiresViaWise}
+            />
             {row.totalHours != null && (
               <>
                 <span className="text-zinc-300 dark:text-zinc-600">·</span>
@@ -773,7 +788,11 @@ const QueueRowItem = React.memo(function QueueRowItem({
 
         {isAllView && (
           <div className="min-w-0">
-            <BankCell processor={row.processor} bankPreferredRaw={row.bankPreferredRaw} />
+            <BankCell
+              processor={row.processor}
+              bankPreferredRaw={row.bankPreferredRaw}
+              smallWiresViaWise={row.smallWiresViaWise}
+            />
           </div>
         )}
 

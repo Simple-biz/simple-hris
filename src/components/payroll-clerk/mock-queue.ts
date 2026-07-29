@@ -269,6 +269,14 @@ export interface QueueRow {
   /** Raw bank_preferred string from the rates row (e.g. "x1161") for surfaces that need it. */
   bankPreferredRaw: string | null;
   /**
+   * TRUE when this row's send rail was temporarily rerouted wires → Wise because
+   * the week's PHP amount is under ₱7,000 (owner rule, 2026-07-29 — see
+   * {@link applySmallWiresWiseReroute}). Display/audit only: `bankPreferredRaw`
+   * still carries the stored wires routing and nothing is written back to
+   * `employee_ids`, so a ≥₱7k week routes the person straight back to Wires.
+   */
+  smallWiresViaWise?: boolean;
+  /**
    * Payroll department this person belongs to, carried from the rates row so the
    * dispatch queue + Mark Paid dialog can show accounting which team each payee
    * is in. `departmentKey` is the normalized key (null when the raw value can't
@@ -433,6 +441,42 @@ export function processorIdFromBankPreferred(raw: string | null | undefined): Pr
   // Account-suffix codes ("x1161", "x1153", etc.) are manually-keyed wires.
   if (/^x?\d{3,5}$/.test(v) || v === 'wire' || v === 'wires' || v.startsWith('wire')) return 'wires';
   return null;
+}
+
+/**
+ * Sub-₱7k wires payments go out through Wise for that week (owner rule,
+ * 2026-07-29): wire fees dwarf small transfers. STRICTLY under ₱7,000 — a week
+ * at exactly ₱7,000 or more stays on Wires. Evaluated per pay cycle against the
+ * final amount being sent and never persisted, so the route self-corrects on
+ * the next paycheck.
+ */
+export const SMALL_WIRES_WISE_THRESHOLD_PHP = 7000;
+
+/** True when a wires payment of this PHP amount must go out via Wise instead.
+ *  Null/zero amounts never reroute — there's nothing to send. */
+export function isSmallWiresAmountPHP(amountPHP: number | null | undefined): boolean {
+  return (
+    amountPHP != null &&
+    Number.isFinite(amountPHP) &&
+    amountPHP > 0 &&
+    amountPHP < SMALL_WIRES_WISE_THRESHOLD_PHP
+  );
+}
+
+/**
+ * Apply the sub-₱7k wires → Wise reroute to a finished queue row. Only PHP-paid
+ * rows on the wires rail move; contractor settlements (Wise is not a contractor
+ * gateway) and USD/COP payees never do. Wise pays into the same receiving bank
+ * account a wires person already has on file (Wise = wire fields), so the flip
+ * changes the send rail only. Call AFTER every amount overlay (wizard final,
+ * arrears rollup) — the decision keys on the amount actually being sent.
+ */
+export function applySmallWiresWiseReroute(row: QueueRow): QueueRow {
+  if (row.processor !== 'wires') return row;
+  if (row.payeeKind === 'contractor') return row;
+  if (row.payCurrency !== 'PHP') return row;
+  if (!isSmallWiresAmountPHP(row.amountPHP)) return row;
+  return { ...row, processor: 'wise', smallWiresViaWise: true };
 }
 
 /**

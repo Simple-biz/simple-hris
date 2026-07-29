@@ -1061,6 +1061,49 @@ in the Issues tab), and the **WIRES lock** (a wires/null/legacy employee can
 never be switched to hurupay/higlobe) — has its own doc:
 [bank-preferred-routing.md](./bank-preferred-routing.md).
 
+#### 12.3.1 Sub-₱7k wires → Wise (temporary weekly reroute, 2026-07-29)
+
+Owner rule layered ON TOP of the precedence above, after it resolves: a
+**wires**-routed person whose pay for the week is **strictly under ₱7,000**
+is dispatched **via Wise that week** — wire fees dwarf small transfers. The
+first week their pay is ₱7,000 or more they are back in the Wires tab
+automatically.
+
+- **Nothing is persisted.** `employee_ids` is never written; the flip is
+  recomputed per cycle from the amount actually being sent, inside
+  `applySmallWiresWiseReroute` / `SMALL_WIRES_WISE_THRESHOLD_PHP`
+  ([mock-queue.ts](src/components/payroll-clerk/mock-queue.ts), unit-tested in
+  `small-wires-wise.test.ts`). No interaction with the WIRES lock — that gate
+  guards *stored* `bank_preferred` transitions.
+- **Applied LAST in [useDispatchQueue.ts](src/components/payroll-clerk/useDispatchQueue.ts)** —
+  after the wizard-final overlay, the arrears rollup and the staged safety
+  net — because the decision keys on the final amount. An excluded (held)
+  person's reroute rides on their `payable` copy, so the Excluded tab's bank
+  label and "Pay now" follow the same rule; a multi-cycle arrears settle is
+  judged on the **cumulative** balance being sent.
+- **Exemptions:** contractor settlements (Wise is not a contractor gateway),
+  USD/COP payees (PHP threshold doesn't apply), and null/zero amounts.
+- **Receiving side is unchanged.** Wise pays into the same bank account
+  (Wise = wire fields); `resolveMarkPaidDefaults` already surfaces the
+  person's own bank + SWIFT for a Wise row with wire details. The dialog's
+  hero leads with the **PHP** figure (Wise is keyed in pesos).
+- **Visible everywhere it matters:** a `smallWiresViaWise` flag on the row
+  renders a **"Wires → Wise · under ₱7k"** note in the queue's bank cell and
+  a chip in the Mark Paid hero; `bankPreferredRaw` still carries the stored
+  wires/x-suffix routing, and Mark Paid records `processor: 'wise'` (the rail
+  actually used). The Reports CSV export mirrors the flip for rows with **no
+  recorded dispatch and not yet paid** only — recorded history is never
+  rewritten (`dispatch-export-csv.ts`).
+- **Deliberately NOT applied to:** Urgent one-off payments (no "next
+  paycheck" to re-evaluate against), the paystub's scheduled-pay-date label
+  (`resolveEmployeeProcessor` still reads the stored rail, so a rerouted
+  person's stub still projects the wires Thursday), and the Reports
+  `byProcessor` paid-history breakdown.
+- **Preview who flips this week:**
+  `node scripts/verify-small-wires-wise.mjs` (read-only; `--file=` for a past
+  week) — mirrors staging + routing precedence and lists names, amounts, and
+  who already settled.
+
 ### 12.4 Mark Paid — recipient-bank override + own-bank pre-fill
 
 Extends §3.5's "Recipient banking" group (previously *pre-filled/snapshotted,

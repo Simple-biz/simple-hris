@@ -7,6 +7,7 @@ import type { CurrentPayResult, PayrollPeriod } from '@/lib/payroll/current-pay'
 import type { PaymentDispatchRow } from '@/lib/supabase/payment-dispatches';
 import type { PaystubQueueListItem, ArrearsEntry } from '@/lib/supabase/paystub-dispatch-queue';
 import {
+  applySmallWiresWiseReroute,
   buildQueueFromRates,
   buildStagedOnlyPlacement,
   formatCycleLabelFromFile,
@@ -689,12 +690,27 @@ async function loadAll(
   if (promotedStaged > 0) pendingQueue.sort((a, b) => a.name.localeCompare(b.name));
   withArrears.sort((a, b) => a.name.localeCompare(b.name));
 
+  // ── Sub-₱7k wires → Wise (this cycle only) ────────────────────────────────
+  // Owner rule (2026-07-29): a wires person whose FINAL pay this week is under
+  // ₱7,000 is paid through Wise this week instead. Nothing is written back to
+  // employee_ids — the flip is recomputed from each week's amount, so a ≥₱7k
+  // week lands them back in the Wires tab on its own. Applied LAST, after the
+  // wizard-final overlay, the arrears rollup and the staged safety net, because
+  // the decision keys on the amount actually being sent. Excluded rows carry
+  // the reroute on their `payable` copy so the "Pay now" path and the Excluded
+  // tab's bank label follow the same rule. Contractor settlements and USD/COP
+  // payees are exempt inside the helper.
+  const routedPending = pendingQueue.map(applySmallWiresWiseReroute);
+  const routedExcluded = withArrears.map((r) =>
+    r.payable ? { ...r, payable: applySmallWiresWiseReroute(r.payable) } : r,
+  );
+
   return {
     // Until the wizard locks this cycle, Payment Dispatch shows NO queue data —
     // just the "not ready" note. (Reports / Urgent / Orphanage are separate and
     // not gated by this in the component.)
-    rows: wizardReady ? pendingQueue : [],
-    excluded: wizardReady ? withArrears : [],
+    rows: wizardReady ? routedPending : [],
+    excluded: wizardReady ? routedExcluded : [],
     paid: wizardReady ? paid : [],
     period,
     fxRate: payJson.fxRate ?? 0,

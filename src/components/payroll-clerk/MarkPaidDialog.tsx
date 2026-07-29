@@ -689,6 +689,16 @@ export default function MarkPaidDialog({
                 {row?.processor ?? ''}
               </p>
               <div className="mt-1.5 flex flex-wrap items-center justify-end gap-1">
+                {/* Sub-₱7k wires payment going out via Wise this week — tells the
+                    clerk why a wires person is being keyed into Wise. */}
+                {row?.smallWiresViaWise && (
+                  <span
+                    className="inline-flex items-center rounded-full bg-white/20 px-2 py-0.5 text-[9.5px] font-semibold text-white backdrop-blur-sm"
+                    title="Under ₱7,000 this week, so this payment goes out via Wise instead of Wires. They move back to Wires the first week their pay is ₱7,000 or more."
+                  >
+                    Wires → Wise · under ₱7k
+                  </span>
+                )}
                 {/* Which invoice this settles — the safeguard for contractors who
                     also have an employee identity and can legitimately have two
                     payable rows in the same cycle. */}

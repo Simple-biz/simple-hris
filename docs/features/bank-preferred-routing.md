@@ -64,6 +64,14 @@ Applied in the routing resolvers: `mock-queue.ts` (the live queue),
 first). The `preferred_processor` value must be **NULL** for the CSV-seeded
 routing to be authoritative, since it outranks the legacy CSV column.
 
+> **Sub-₱7k wires → Wise (2026-07-29).** After the precedence resolves to
+> `wires`, Payment Dispatch reroutes the payment **via Wise for that week** when
+> the week's PHP amount is strictly under ₱7,000 — recomputed every cycle, never
+> written to `employee_ids`, so a ≥₱7k week lands the person back on Wires by
+> itself. No interaction with the WIRES lock (§4), which guards *stored*
+> transitions. Detail:
+> [payment-dispatch.md §12.3.1](./payment-dispatch.md#1231-sub-₱7k-wires--wise-temporary-weekly-reroute-2026-07-29).
+
 > **Known gap (accepted, awaiting a product call):** the All-Dept rates sheet
 > writes free-text "Bank Preferred" into the lowest-precedence
 > `employee_hourly_rates."Bank Preferred"` column
