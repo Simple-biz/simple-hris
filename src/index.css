@@ -589,6 +589,20 @@
   }
 }
 
+/* Scrollbar for the collab layer's dark-glass surfaces (the "+N" overflow
+   popover). Those panels are near-black in BOTH themes, so the light theme's
+   pastel-orange thumb clashed on them; scope a neutral glass-fitting thumb
+   that ignores the app theme. Unlayered on purpose, like .onboarding-public. */
+.collab-dark-scroll {
+  scrollbar-color: rgba(255, 255, 255, 0.22) transparent; /* Firefox */
+}
+.collab-dark-scroll::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.18);
+}
+.collab-dark-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.3);
+}
+
 /* The public onboarding form is light-only (its surfaces have no dark
    variants). Shared bits — the form inputs AND the agreement prose — carry
    dark: text variants, so under the app's dark theme they rendered near-white

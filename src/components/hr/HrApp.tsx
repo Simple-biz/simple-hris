@@ -225,7 +225,10 @@ export default function HrApp() {
         constructionTabs={constructionHrTabs}
       />
 
-      <main ref={mainRef} className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+      {/* `isolate`: keep the collab chrome (rail z-[60], ping bubbles z-[70])
+          below body-portaled dialogs/selects (z-50), same as the Accounting
+          shell — without it the rail floats over open modals' scrims. */}
+      <main ref={mainRef} className="isolate relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
         <header className="flex shrink-0 items-center gap-3 border-b border-emerald-100/70 bg-white/95 px-3 py-2.5 backdrop-blur-md dark:border-emerald-950/40 dark:bg-[#0d1117]/95 md:hidden">
           <Button
             type="button"

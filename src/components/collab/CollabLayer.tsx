@@ -626,7 +626,10 @@ function RailAvatar({
                   animate={{ opacity: 1, height: 'auto' }}
                   exit={{ opacity: 0, height: 0 }}
                   transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
-                  className="mt-2 overflow-hidden text-left"
+                  // p-px: the height animation needs overflow-hidden, which
+                  // otherwise clips the input's 1px ring (an outside
+                  // box-shadow) flush at the form's top/left edges.
+                  className="mt-2 overflow-hidden p-px text-left"
                   onSubmit={(e) => { e.preventDefault(); submitPing(draft); }}
                 >
                   <div className="flex items-center gap-1.5">
@@ -1542,17 +1545,25 @@ export default function CollabLayer({
           >
             {/* Peeking during processing — a Hide chip so the operator can tuck
                 the chrome away again without waiting for processing to end. */}
+            {/* Hover/press scale runs through motion (like the avatars), NOT
+                `transition-transform hover:scale-105`: the global unlayered
+                `*` transition rule in index.css overrides Tailwind's
+                transition utilities, so the CSS version snapped instead of
+                easing — inconsistent next to the spring-animated avatars. */}
             {processingLocked && (
-              <button
+              <motion.button
                 type="button"
                 onClick={() => setPeekWhileProcessing(false)}
                 title="Hide people & live cursors while processing"
                 aria-label="Hide people and live cursors while processing"
-                className={`pointer-events-auto flex h-7 items-center gap-1.5 rounded-full bg-zinc-900/90 px-2.5 text-[10px] font-semibold text-white shadow-md outline-none ring-2 ring-white/70 backdrop-blur-md transition-transform hover:scale-105 focus-visible:ring-2 dark:ring-zinc-700/70 ${accent.focusRing}`}
+                whileHover={{ scale: 1.05 }}
+                whileTap={{ scale: 0.95 }}
+                transition={POP_SPRING}
+                className={`pointer-events-auto flex h-7 items-center gap-1.5 rounded-full bg-zinc-900/90 px-2.5 text-[10px] font-semibold text-white shadow-md outline-none ring-2 ring-white/70 backdrop-blur-md focus-visible:ring-2 dark:ring-zinc-700/70 ${accent.focusRing}`}
               >
                 <EyeOff className="h-3 w-3" />
                 Hide
-              </button>
+              </motion.button>
             )}
             <AnimatePresence mode="popLayout" initial>
               {peers.slice(0, MAX_RAIL_AVATARS).map((p, i) => (
@@ -1602,7 +1613,7 @@ export default function CollabLayer({
                           </div>
                           <div className="text-[10px] text-zinc-400">Also in {surfaceLabel}</div>
                         </div>
-                        <div className="flex-1 space-y-0.5 overflow-y-auto p-1.5">
+                        <div className="collab-dark-scroll flex-1 space-y-0.5 overflow-y-auto p-1.5">
                           {overflowPeers.map((p) => (
                             <OverflowRow
                               key={p.email}
@@ -1621,12 +1632,15 @@ export default function CollabLayer({
                       </motion.div>
                     )}
                   </AnimatePresence>
-                  <button
+                  <motion.button
                     type="button"
                     onClick={() => setOverflowOpen((v) => !v)}
                     aria-expanded={overflowOpen}
                     aria-label={`Show ${overflowPeers.length} more ${overflowPeers.length === 1 ? 'person' : 'people'} in ${surfaceLabel}`}
-                    className={`relative flex h-11 w-11 items-center justify-center rounded-full bg-zinc-900/90 text-[12px] font-bold text-white shadow-md outline-none ring-2 ring-white/70 backdrop-blur-md transition-transform hover:scale-105 focus-visible:ring-2 dark:ring-zinc-700/70 ${accent.focusRing}`}
+                    whileHover={{ scale: 1.05 }}
+                    whileTap={{ scale: 0.95 }}
+                    transition={POP_SPRING}
+                    className={`relative flex h-11 w-11 items-center justify-center rounded-full bg-zinc-900/90 text-[12px] font-bold text-white shadow-md outline-none ring-2 ring-white/70 backdrop-blur-md focus-visible:ring-2 dark:ring-zinc-700/70 ${accent.focusRing}`}
                   >
                     +{overflowPeers.length}
                     {overflowHasPing && !overflowOpen && (
@@ -1635,7 +1649,7 @@ export default function CollabLayer({
                         <span className="relative inline-flex h-3.5 w-3.5 rounded-full border-2 border-zinc-900 bg-sky-500" />
                       </span>
                     )}
-                  </button>
+                  </motion.button>
                 </motion.div>
               )}
             </AnimatePresence>
@@ -1655,7 +1669,13 @@ export default function CollabLayer({
             onClick={() => setPeekWhileProcessing(true)}
             title={`Show ${peers.length} ${peers.length === 1 ? 'person' : 'people'} & live cursors (hidden while processing)`}
             aria-label={`Show ${peers.length} ${peers.length === 1 ? 'person' : 'people'} and live cursors, hidden while processing`}
-            className={`absolute right-2.5 top-1/2 z-[60] hidden h-11 w-11 -translate-y-1/2 items-center justify-center rounded-full bg-zinc-900/90 text-white shadow-md outline-none ring-2 ring-white/70 backdrop-blur-md transition-transform hover:scale-105 focus-visible:ring-2 md:flex dark:ring-zinc-700/70 ${accent.focusRing}`}
+            // Scale via motion, not `transition-transform hover:scale-105`:
+            // a CSS transform transition on a motion-animated element would
+            // re-target every inline transform frame of the x slide (and the
+            // global `*` transition rule kills the CSS version anyway).
+            whileHover={{ scale: 1.05 }}
+            whileTap={{ scale: 0.95 }}
+            className={`absolute right-2.5 top-1/2 z-[60] hidden h-11 w-11 -translate-y-1/2 items-center justify-center rounded-full bg-zinc-900/90 text-white shadow-md outline-none ring-2 ring-white/70 backdrop-blur-md focus-visible:ring-2 md:flex dark:ring-zinc-700/70 ${accent.focusRing}`}
             initial={{ opacity: 0, x: 16 }}
             animate={{ opacity: 1, x: 0 }}
             exit={{ opacity: 0, x: 16 }}

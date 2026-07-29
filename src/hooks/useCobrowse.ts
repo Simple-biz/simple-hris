@@ -218,11 +218,38 @@ export function useCobrowse({ selfEmail, observedEmail, channel = DEFAULT_CHANNE
       // invisible. Injecting these rules INTO the replay iframe only (never the
       // real page) forces such elements to their visible end-state so a driver's
       // modals/overlays actually show up in the observer's mirror.
+      //
+      // `[class*=":animate-in"]` also catches variant-prefixed reveal tokens
+      // (`motion-safe:animate-in` on SmoothSelect / DatePicker panels,
+      // `data-open:animate-in` on Base UI popups) that the bare `.animate-in`
+      // class selector can't match — those panels were still invisible in the
+      // mirror after the original dialog fix.
+      //
+      // Deliberately NO `transform:none` here: killing the animation already
+      // discards the enter keyframe's stuck opacity-0/scaled first frame, and
+      // Base UI *Positioner* elements carry `data-open` while being placed via
+      // an inline floating-ui `transform: translate(x, y)` — the old
+      // `transform:none!important` stripped that, snapping every open
+      // dropdown/select/tooltip to the page corner in the mirror.
       insertStyleRules: [
-        '[data-slot="dialog-content"],[data-slot="dialog-overlay"],[data-slot="dialog-popup"],.animate-in,[data-starting-style],[data-open]{animation:none!important;transition:none!important;opacity:1!important;transform:none!important;}',
+        '[data-slot="dialog-content"],[data-slot="dialog-overlay"],[data-slot="dialog-popup"],.animate-in,[class*=":animate-in"],[data-starting-style],[data-open]{animation:none!important;transition:none!important;opacity:1!important;}',
       ],
     });
     replayer.startLive(full.timestamp);
+    // When the DRIVER resizes their window mid-session, rrweb resizes the
+    // replay iframe from the ViewportResize event but our fit-to-container
+    // scale/centering still used the ORIGINAL Meta size — the mirror ended up
+    // clipped or floating off-center until the recording restarted. Track the
+    // replayer's own resize event and re-fit.
+    replayer.on('resize', (d: AnyEvent) => {
+      const w = d?.width ?? 0;
+      const h = d?.height ?? 0;
+      if (!w || !h) return;
+      const size = { w, h };
+      recordedSizeRef.current = size;
+      setRecordedSize(size);
+      fitScale();
+    });
     replayerRef.current = replayer;
     startedRef.current = true;
     log('live mirror started', recordedSizeRef.current);

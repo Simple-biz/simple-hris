@@ -340,7 +340,13 @@ export default function App({ initialData }: { initialData?: InitialAccountingDa
         />
       )}
       <Sidebar activeTab={activeTab} setActiveTab={navigate} mobileOpen={mobileNavOpen} allowedTabs={allowedTabs} constructionTabs={constructionTabs} />
-      <main ref={mainRef} className="relative flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+      {/* `isolate`: cap the collab chrome's z-indexes (rail z-[60], ping
+          bubbles z-[70], cursor overlay z-50) inside <main> so body-portaled
+          surfaces (Base UI dialogs/selects at z-50) always paint above them.
+          Without it the avatar rail floated over open modals' scrims while
+          the cursor overlay dimmed underneath — half the chrome dimmed,
+          half didn't. */}
+      <main ref={mainRef} className="isolate relative flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
         <header className="flex shrink-0 items-center gap-3 border-b border-orange-100 bg-white/95 px-3 py-2.5 backdrop-blur-md supports-[padding:max(0px)]:pt-[max(0.625rem,env(safe-area-inset-top))] dark:border-blue-950/60 dark:bg-[#0d1117]/95 md:hidden">
           <Button
             type="button"

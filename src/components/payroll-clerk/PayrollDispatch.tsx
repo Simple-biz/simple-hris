@@ -1823,14 +1823,17 @@ function CycleSelector({
 
       {open && (
         <>
-          {/* Click-away backdrop. */}
+          {/* Click-away backdrop. z-[75] so it also covers the collab avatar
+              rail (z-[60]) / ping bubbles (z-[70]) — otherwise clicking an
+              avatar that overlaps the open panel opened a peer card instead
+              of closing the dropdown. */}
           <button
             type="button"
             aria-label="Close week selector"
-            className="fixed inset-0 z-40 cursor-default"
+            className="fixed inset-0 z-[75] cursor-default"
             onClick={() => setOpen(false)}
           />
-          <div className="absolute right-0 z-50 mt-1.5 max-h-[60vh] w-72 overflow-y-auto rounded-xl border border-zinc-200 bg-white p-1 shadow-xl dark:border-zinc-800 dark:bg-zinc-950">
+          <div className="absolute right-0 z-[80] mt-1.5 max-h-[60vh] w-72 overflow-y-auto rounded-xl border border-zinc-200 bg-white p-1 shadow-xl dark:border-zinc-800 dark:bg-zinc-950">
             <button
               type="button"
               onClick={() => { onChange(null); setOpen(false); }}
