@@ -1092,9 +1092,11 @@ automatically.
   a chip in the Mark Paid hero; `bankPreferredRaw` still carries the stored
   wires/x-suffix routing, and Mark Paid records `processor: 'wise'` (the rail
   actually used). An **"Under ₱7k" filter chip** beside the department filter
-  (with a live count) narrows the queue to just these reroutes so the clerk
-  can batch them; it appears only where such rows exist (All pending / Wise
-  tabs), resets on tab switch, and the CSV export follows it. The Reports CSV export mirrors the flip for rows with **no
+  (with a live count) instantly narrows the tab to **every PHP payment
+  strictly under ₱7,000** — a pure client-side toggle, no fetch — so on the
+  Wise tab that's the temp reroutes (still wearing their badge) plus genuine
+  small Wise payments. It appears only where such rows exist, resets on tab
+  switch, and the CSV export follows it. The Reports CSV export mirrors the flip for rows with **no
   recorded dispatch and not yet paid** only — recorded history is never
   rewritten (`dispatch-export-csv.ts`).
 - **Deliberately NOT applied to:** Urgent one-off payments (no "next

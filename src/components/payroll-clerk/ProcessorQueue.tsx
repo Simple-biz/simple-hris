@@ -11,7 +11,7 @@ import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
 import { useDebouncedValue } from '@/hooks/useDebouncedValue';
 import { SmoothSelect } from '@/components/ui/smooth-select';
-import { PROCESSORS, formatPHP, formatUSD, formatCOP, type ProcessorId, type QueueRow } from './mock-queue';
+import { PROCESSORS, formatPHP, formatUSD, formatCOP, isSmallWiresAmountPHP, type ProcessorId, type QueueRow } from './mock-queue';
 import type { PayCurrency } from '@/lib/payment-catalog/pay-structure';
 import type { PaymentDispatchRow, PaymentDispatchStatus } from '@/lib/supabase/payment-dispatches';
 import PaidRecordsPanel from './PaidRecordsPanel';
@@ -31,6 +31,13 @@ function rowPrimaryAmount(row: QueueRow): string {
 }
 function rowPrimaryNull(row: QueueRow): boolean {
   return row.payCurrency === 'COP' ? row.amountCOP == null : row.amountUSD == null;
+}
+
+/** Under-₱7k predicate for the queue's instant filter chip — PHP-paid rows
+ *  strictly under ₱7,000, the same boundary as the wires → Wise reroute
+ *  (₱7,000.00 exactly is out; null/zero amounts are out). */
+function isUnderSevenK(r: QueueRow): boolean {
+  return r.payCurrency === 'PHP' && isSmallWiresAmountPHP(r.amountPHP);
 }
 import {
   buildPendingRows,
@@ -279,12 +286,15 @@ function ProcessorQueue({ processor, rows, onMarkPaid, onViewPaystub, periodStar
     return opts;
   }, [rows]);
 
-  // "Under ₱7k" — only the wires people going out via Wise this week under the
-  // sub-₱7,000 rule (row.smallWiresViaWise), so the clerk can batch the temp
-  // reroutes. The chip renders only where such rows exist (All pending / Wise).
+  // "Under ₱7k" — click to see ONLY the payments under ₱7,000 in this tab.
+  // An INSTANT client-side toggle over the already-loaded rows (no fetch, no
+  // debounce). Amount-based on purpose: on the Wise tab that's the temp
+  // wires → Wise reroutes plus genuine small Wise payments, and the reroutes
+  // stay distinguishable by their "Wires → Wise" badge. The chip renders only
+  // when the tab actually holds such rows.
   const [underSevenKOnly, setUnderSevenKOnly] = useState(false);
   const underSevenKCount = useMemo(
-    () => rows.reduce((n, r) => n + (r.smallWiresViaWise ? 1 : 0), 0),
+    () => rows.reduce((n, r) => n + (isUnderSevenK(r) ? 1 : 0), 0),
     [rows],
   );
 
@@ -293,7 +303,7 @@ function ProcessorQueue({ processor, rows, onMarkPaid, onViewPaystub, periodStar
 
   const filtered = useMemo(() => {
     let list = rows;
-    if (underSevenKOnly) list = list.filter((r) => r.smallWiresViaWise);
+    if (underSevenKOnly) list = list.filter(isUnderSevenK);
     if (deptFilter) {
       list =
         deptFilter === NO_DEPT
@@ -477,7 +487,7 @@ function ProcessorQueue({ processor, rows, onMarkPaid, onViewPaystub, periodStar
                 type="button"
                 onClick={() => setUnderSevenKOnly((v) => !v)}
                 aria-pressed={underSevenKOnly}
-                title="Only sub-₱7,000 wires payments going out via Wise this week"
+                title="Show only payments under ₱7,000 in this tab"
                 className={cn(
                   'inline-flex h-8 items-center gap-1.5 rounded-md border px-2.5 text-[11px] font-semibold shadow-sm transition-colors',
                   underSevenKOnly
