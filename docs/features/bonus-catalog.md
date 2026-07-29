@@ -158,6 +158,50 @@ Example: `IF(tickets >= 10, 500, 250) * tickets` -> variables `[tickets]`; with
 - Optimistic updates with refetch-on-error; framer-motion for expand/collapse and
   card transitions.
 
+### Search tab *(added 2026-07-29)*
+
+A Google-style people lookup (`SearchTab` in `BonusCatalog.tsx`, second tab
+after Overview): the Simple wordmark over a centered bar (dark mode renders the
+navy PNG as a white silhouette via `brightness-0 invert`). Typing ranks roster
+matches by name prefix → name word → name substring → email → department (top
+30). Each result row carries an **effective-rate chip resolved the way payroll
+does** — individual catalog rate (emerald), else the rates-sheet rate marked
+"(sheet)", else the department base marked "(dept)", else an amber "No rate
+set" — plus a bonus-reach count, and **View** / **Edit** buttons that open the
+same person card in view or edit mode (`EditToggle` flips between them).
+
+`computePersonComp` deliberately mirrors the engine, not just the catalog:
+`employeeCatalog ?? sheetRate ?? departmentBase` (same precedence as
+`current-pay.ts`), later-one-wins structure indexing (`buildCatalogRateIndex`
+semantics), work+personal **alias-email matching** (`RosterEntry.aliases`), the
+rates sheet read from `initialData.hourlyRates`, and system-bonus eligibility
+via the engine's own `resolveSystemBonuses` + `isDeptEligible` (fail-open on
+unresolvable departments, amounts always PHP).
+
+- **Pay rate** — shows the effective layer with a source line; the shared
+  `RateHistoryPanel` sits alongside (paginated, 5 per page; refetches ~1.5s
+  after an in-card save since the route writes history asynchronously). Edit
+  mode reuses `PayRateEditor` + the required **Effective from** date, prefilled
+  from the effective layer; a sheet-paid person gets an amber warning that
+  saving creates an individual rate that overrides the sheet. Removing the
+  individual rate falls back to sheet/department.
+- **Personal bonuses** — employee-scope assignments; edit mode adds an assign
+  picker (revalidated against live state so a Realtime race can't duplicate)
+  and per-row remove. Writes file under the person's **current roster-resolved
+  dept key** (`normalizeDeptToKey` → custom-registry name → `slugifyDeptKey`),
+  and assigning is blocked with an explanation when that key isn't a real
+  catalog department (slug/'unassigned' assignments would never pay).
+- **Department bonuses** — common assignments reaching their department; an
+  excluded person shows a muted row, and edit mode toggles **Exclude /
+  Include** by upserting the assignment's `excludedEmails`.
+- **System bonuses** — PAB/Tech rows that apply per `isDeptEligible`
+  (read-only, "engine-timed").
+
+Everything derives from state already on the client (no new API); Realtime
+keeps the open card live. For view-only users the search input, View button,
+back button, and rate-history pager are `data-readonly-allow` navigation
+carve-outs; every mutating control stays blocked.
+
 ---
 
 ## 4. API (`app/api/bonus-catalog/route.ts`)

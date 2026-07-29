@@ -41,7 +41,10 @@ import {
   Eye,
   Wallet,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   ArrowDownUp,
+  ArrowLeft,
   Check,
   Download,
   FileText,
@@ -91,9 +94,12 @@ import {
 } from '@/lib/payment-catalog/catalog-export';
 import {
   SYSTEM_BONUS_DEFAULTS,
+  resolveSystemBonuses,
+  isDeptEligible,
   type SystemBonus,
   type SystemBonusCode,
 } from '@/lib/payment-catalog/system-bonus';
+import type { EmployeeHourlyRateRow } from '@/lib/supabase/employee-hourly-rates';
 import { effectiveUsdToPhpRateFromStored } from '@/lib/fx/usd-php';
 import {
   effectiveUsdToCopRateFromStored,
@@ -103,7 +109,7 @@ import {
 } from '@/lib/fx/currency-fx';
 import PaymentCatalogOverview from './PaymentCatalogOverview';
 import DepartmentsTab from './DepartmentsTab';
-import type { DepartmentRegistryEntry } from '@/lib/departments/registry';
+import { slugifyDeptKey, type DepartmentRegistryEntry } from '@/lib/departments/registry';
 
 // Always render exactly 2 decimals so the exact amount is shown without ever
 // rounding cents away to a whole number (1500 -> "₱1,500.00", 1500.5 -> "₱1,500.50").
@@ -484,17 +490,32 @@ function ExportMenu({
   );
 }
 
-type RosterEntry = { email: string; name: string; department: string };
+type RosterEntry = {
+  email: string;
+  name: string;
+  department: string;
+  /** Every email the catalog may key this person's rows under (work +
+   *  personal) -- dispatch resolves structures across aliases, so surfaces
+   *  that mirror it (the Search tab) must match the same way. */
+  aliases: string[];
+};
 
 function buildRoster(initialData?: InitialAccountingData | null): RosterEntry[] {
   const rows = initialData?.employees ?? [];
   const seen = new Set<string>();
   const out: RosterEntry[] = [];
   for (const r of rows) {
-    const email = (r.work_email || r.personal_email || '').trim().toLowerCase();
+    const work = (r.work_email || '').trim().toLowerCase();
+    const personal = (r.personal_email || '').trim().toLowerCase();
+    const email = work || personal;
     if (!email || seen.has(email)) continue;
     seen.add(email);
-    out.push({ email, name: (r.name || email).trim(), department: (r.department || '').trim() });
+    out.push({
+      email,
+      name: (r.name || email).trim(),
+      department: (r.department || '').trim(),
+      aliases: work && personal && work !== personal ? [work, personal] : [email],
+    });
   }
   out.sort((a, b) => a.name.localeCompare(b.name));
   return out;
@@ -504,7 +525,7 @@ function buildRoster(initialData?: InitialAccountingData | null): RosterEntry[] 
 // Top-level component
 // ---------------------------------------------------------------------------
 
-type CatalogTab = 'overview' | 'departments' | 'pay-structure' | 'library' | 'assignments' | 'system-bonuses';
+type CatalogTab = 'overview' | 'search' | 'departments' | 'pay-structure' | 'library' | 'assignments' | 'system-bonuses';
 
 export default function BonusCatalog({ initialData }: { initialData?: InitialAccountingData | null }) {
   const [bonuses, setBonuses] = useState<BonusDef[]>([]);
@@ -788,6 +809,7 @@ export default function BonusCatalog({ initialData }: { initialData?: InitialAcc
 
   const tabs = [
     { id: 'overview', label: 'Overview', icon: LayoutDashboard, count: 0 },
+    { id: 'search', label: 'Search', icon: Search, count: 0 },
     { id: 'departments', label: 'Department', icon: FolderTree, count: deptRegistry.length },
     { id: 'pay-structure', label: 'Pay Structure', icon: Wallet, count: payStructures.length },
     { id: 'library', label: 'Bonus Library', icon: Sparkles, count: bonuses.length },
@@ -894,6 +916,29 @@ export default function BonusCatalog({ initialData }: { initialData?: InitialAcc
                 systemBonuses={systemBonuses}
                 roster={roster}
                 fx={fx}
+              />
+            </motion.div>
+          ) : tab === 'search' ? (
+            <motion.div
+              key="search"
+              initial={{ opacity: 0, x: -14 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: 14 }}
+              transition={{ duration: 0.24, ease: EASE }}
+              className="h-full"
+            >
+              <SearchTab
+                payStructures={payStructures}
+                bonuses={bonuses}
+                assignments={assignments}
+                systemBonuses={systemBonuses}
+                roster={roster}
+                hourlyRates={initialData?.hourlyRates ?? []}
+                customDepartments={customDepartments}
+                onUpsertPay={upsertPay}
+                onDeletePay={deletePay}
+                onAddAssignment={addAssignment}
+                onRemoveAssignment={removeAssignment}
               />
             </motion.div>
           ) : tab === 'departments' ? (
@@ -1815,19 +1860,29 @@ type RawHistoryRow = {
   created_by: string | null;
 };
 
-function RateHistoryPanel({ email }: { email: string }) {
+/** Rows per rate-history page — sized so the panel stays compact next to the
+ *  rate editor even for people with long histories. */
+const RATE_HISTORY_PAGE_SIZE = 5;
+
+function RateHistoryPanel({ email, refreshKey = 0 }: { email: string; refreshKey?: number }) {
   const [rows, setRows] = useState<RawHistoryRow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [page, setPage] = useState(0);
 
   useEffect(() => {
     if (!email) return;
     setLoading(true);
+    setPage(0);
     fetch(`/api/employee-rate-history?email=${encodeURIComponent(email)}`)
       .then((r) => r.json())
       .then((json: { rows?: RawHistoryRow[] }) => setRows(json.rows ?? []))
       .catch(() => setRows([]))
       .finally(() => setLoading(false));
-  }, [email]);
+  }, [email, refreshKey]);
+
+  const pageCount = Math.max(1, Math.ceil(rows.length / RATE_HISTORY_PAGE_SIZE));
+  const start = page * RATE_HISTORY_PAGE_SIZE;
+  const pageRows = rows.slice(start, start + RATE_HISTORY_PAGE_SIZE);
 
   return (
     <div className="min-w-0 flex-1">
@@ -1839,39 +1894,71 @@ function RateHistoryPanel({ email }: { email: string }) {
       ) : rows.length === 0 ? (
         <p className="text-xs text-zinc-400">No history yet.</p>
       ) : (
-        <div className="space-y-1.5">
-          {rows.map((r, i) => (
-            <div
-              key={i}
-              className={`rounded border px-2.5 py-1.5 text-xs ${
-                i === 0
-                  ? 'border-emerald-200 bg-emerald-50/60 dark:border-emerald-900/40 dark:bg-emerald-950/20'
-                  : 'border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950'
-              }`}
-            >
-              <div className="flex items-center justify-between gap-2">
-                <span className="font-semibold tabular-nums text-zinc-800 dark:text-zinc-200">
-                  {r.regular_rate ?? '—'}
-                  {r.ot_rate ? (
-                    <span className="ml-1.5 font-normal text-zinc-500">/ OT {r.ot_rate}</span>
-                  ) : null}
-                </span>
-                {i === 0 && (
-                  <span className="rounded-full bg-emerald-100 px-1.5 py-px text-[9px] font-bold uppercase tracking-wide text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-400">
-                    current
-                  </span>
-                )}
-              </div>
-              <div className="mt-0.5 text-[10px] text-zinc-400">
-                {r.effective_from}
-                {r.created_by && <span> &middot; {r.created_by}</span>}
-                {r.note && r.note !== 'Set via Payment Catalog' && (
-                  <span> &middot; {r.note}</span>
-                )}
-              </div>
+        <>
+          <div className="space-y-1.5">
+            {pageRows.map((r, i) => {
+              // "current" = newest row overall, not the first row of every page.
+              const isCurrent = start + i === 0;
+              return (
+                <div
+                  key={start + i}
+                  className={`rounded border px-2.5 py-1.5 text-xs ${
+                    isCurrent
+                      ? 'border-emerald-200 bg-emerald-50/60 dark:border-emerald-900/40 dark:bg-emerald-950/20'
+                      : 'border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950'
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-semibold tabular-nums text-zinc-800 dark:text-zinc-200">
+                      {r.regular_rate ?? '—'}
+                      {r.ot_rate ? (
+                        <span className="ml-1.5 font-normal text-zinc-500">/ OT {r.ot_rate}</span>
+                      ) : null}
+                    </span>
+                    {isCurrent && (
+                      <span className="rounded-full bg-emerald-100 px-1.5 py-px text-[9px] font-bold uppercase tracking-wide text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-400">
+                        current
+                      </span>
+                    )}
+                  </div>
+                  <div className="mt-0.5 text-[10px] text-zinc-400">
+                    {r.effective_from}
+                    {r.created_by && <span> &middot; {r.created_by}</span>}
+                    {r.note && r.note !== 'Set via Payment Catalog' && (
+                      <span> &middot; {r.note}</span>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          {pageCount > 1 && (
+            // Pagination is read-only navigation — stays live for view-only users.
+            <div data-readonly-allow className="mt-2 flex items-center justify-between">
+              <button
+                type="button"
+                aria-label="Newer rates"
+                disabled={page === 0}
+                onClick={() => setPage((p) => Math.max(0, p - 1))}
+                className="rounded p-1 text-zinc-400 transition-colors hover:bg-zinc-100 hover:text-zinc-600 disabled:opacity-30 disabled:hover:bg-transparent dark:hover:bg-zinc-800 dark:hover:text-zinc-300"
+              >
+                <ChevronLeft className="h-3.5 w-3.5" />
+              </button>
+              <span className="text-[10px] tabular-nums text-zinc-400">
+                {page + 1} / {pageCount}
+              </span>
+              <button
+                type="button"
+                aria-label="Older rates"
+                disabled={page >= pageCount - 1}
+                onClick={() => setPage((p) => Math.min(pageCount - 1, p + 1))}
+                className="rounded p-1 text-zinc-400 transition-colors hover:bg-zinc-100 hover:text-zinc-600 disabled:opacity-30 disabled:hover:bg-transparent dark:hover:bg-zinc-800 dark:hover:text-zinc-300"
+              >
+                <ChevronRight className="h-3.5 w-3.5" />
+              </button>
             </div>
-          ))}
-        </div>
+          )}
+        </>
       )}
     </div>
   );
@@ -3505,6 +3592,892 @@ function CommonAssignmentRow({
 // ---------------------------------------------------------------------------
 // Small shared bits
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Search tab -- Google-style people lookup. Type a name to find anyone on the
+// roster, then View or Edit their whole compensation picture in one place: the
+// effective pay rate (individual catalog rate -> rates-sheet rate -> department
+// base, exactly the engine's precedence), rate history, and every bonus that
+// reaches them (personal, department-wide and system). All of it derives from
+// state already on the client, so results update live with Realtime like the
+// rest of the tabs.
+// ---------------------------------------------------------------------------
+
+/** Resolve a roster department label to a catalog department key: the payroll
+ *  alias map first, then custom (Department-tab) departments by exact name,
+ *  then the raw slug (the same last-resort rule live rate resolution uses). */
+function resolveRosterDeptKey(
+  department: string,
+  customDepartments: { key: string; name: string }[],
+): string | null {
+  const mapped = normalizeDeptToKey(department);
+  if (mapped) return mapped;
+  const nameKey = department.trim().toLowerCase();
+  if (!nameKey) return null;
+  const custom = customDepartments.find((d) => d.name.trim().toLowerCase() === nameKey);
+  return custom?.key ?? (slugifyDeptKey(department) || null);
+}
+
+/** Sheet rates arrive as text ("1,234.50") -- same parse the engine uses. */
+function parseRateText(v: string | null | undefined): number | null {
+  if (v == null) return null;
+  const s = String(v).trim().replace(/,/g, '');
+  if (!s) return null;
+  const n = parseFloat(s);
+  return Number.isFinite(n) ? n : null;
+}
+
+type SheetRate = { reg: number | null; ot: number | null };
+
+/** Prebuilt lookups shared by every result row and the open person card.
+ *  Mirrors the payroll engine's indexes: later-one-wins on duplicate structure
+ *  keys (buildCatalogRateIndex) and work-then-personal email for the sheet. */
+type PersonCompIndexes = {
+  structByEmail: Map<string, PayStructure>;
+  deptStructByKey: Map<string, PayStructure>;
+  sheetRateByEmail: Map<string, SheetRate>;
+  resolvedSystem: ReturnType<typeof resolveSystemBonuses>;
+  systemBonuses: SystemBonus[];
+  assignments: BonusAssignment[];
+  customDepartments: { key: string; name: string }[];
+};
+
+/** Everything the catalog knows about one person's compensation. */
+type PersonComp = {
+  deptKey: string | null;
+  /** Their employee-scope catalog structure, when one exists (any alias). */
+  override: PayStructure | undefined;
+  /** Their rates-sheet row (the engine's middle rate layer), when present. */
+  sheetRate: SheetRate | null;
+  /** The department-scope base rate their department falls back to. */
+  deptBase: PayStructure | undefined;
+  /** The layer the engine actually pays: employee catalog -> sheet -> dept base. */
+  rateSource: 'individual' | 'sheet' | 'department' | 'none';
+  employeeAssignments: BonusAssignment[];
+  commonAssignments: { assignment: BonusAssignment; excluded: boolean }[];
+  systemRows: { code: SystemBonusCode; label: string; amount: number; currency: PayCurrency }[];
+};
+
+function computePersonComp(person: RosterEntry, idx: PersonCompIndexes): PersonComp {
+  const aliases = person.aliases.length ? person.aliases : [person.email.toLowerCase()];
+  const aliasSet = new Set(aliases);
+
+  // First alias with a structure wins, like resolveEmployeeCatalogRate.
+  let override: PayStructure | undefined;
+  for (const a of aliases) {
+    override = idx.structByEmail.get(a);
+    if (override) break;
+  }
+  let sheetRate: SheetRate | null = null;
+  for (const a of aliases) {
+    const hit = idx.sheetRateByEmail.get(a);
+    if (hit) {
+      sheetRate = hit;
+      break;
+    }
+  }
+  const hasSheet = sheetRate != null && (sheetRate.reg != null || sheetRate.ot != null);
+
+  // The roster label resolves the department; a stored override's key is the
+  // last resort (only blank/punctuation-only labels resolve to nothing).
+  const deptKey =
+    resolveRosterDeptKey(person.department, idx.customDepartments) ?? override?.departmentKey ?? null;
+  const deptBase = deptKey ? idx.deptStructByKey.get(deptKey) : undefined;
+
+  // Engine precedence (current-pay.ts): the individual catalog rate overrides
+  // everything; the dept base applies only when there is NO sheet rate.
+  const rateSource: PersonComp['rateSource'] = override
+    ? 'individual'
+    : hasSheet
+      ? 'sheet'
+      : deptBase
+        ? 'department'
+        : 'none';
+
+  const employeeAssignments = idx.assignments.filter(
+    (a) => a.scope === 'employee' && aliasSet.has((a.employeeEmail ?? '').toLowerCase()),
+  );
+  const commonAssignments = (
+    deptKey
+      ? idx.assignments.filter((a) => a.scope === 'department' && a.departmentKey === deptKey)
+      : []
+  ).map((assignment) => ({
+    assignment,
+    excluded: (assignment.excludedEmails ?? []).some((e) => aliasSet.has(e.toLowerCase())),
+  }));
+
+  // Engine semantics exactly: isDeptEligible fail-opens on unresolvable
+  // departments, and amounts always pay in PHP whatever the row's currency flag.
+  const systemRows = (['pab', 'tech'] as SystemBonusCode[]).flatMap((code) => {
+    const cfg = idx.resolvedSystem[code];
+    if (!isDeptEligible(cfg, deptKey)) return [];
+    const row = idx.systemBonuses.find((b) => b.code === code);
+    return [
+      {
+        code,
+        label: row?.label ?? SYSTEM_BONUS_DEFAULTS[code].label,
+        amount: cfg.amountPHP,
+        currency: 'PHP' as PayCurrency,
+      },
+    ];
+  });
+
+  return {
+    deptKey,
+    override,
+    sheetRate: hasSheet ? sheetRate : null,
+    deptBase,
+    rateSource,
+    employeeAssignments,
+    commonAssignments,
+    systemRows,
+  };
+}
+
+function SearchTab({
+  payStructures,
+  bonuses,
+  assignments,
+  systemBonuses,
+  roster,
+  hourlyRates,
+  customDepartments,
+  onUpsertPay,
+  onDeletePay,
+  onAddAssignment,
+  onRemoveAssignment,
+}: {
+  payStructures: PayStructure[];
+  bonuses: BonusDef[];
+  assignments: BonusAssignment[];
+  systemBonuses: SystemBonus[];
+  roster: RosterEntry[];
+  /** The rates-sheet table (employee_hourly_rates) -- the engine's middle rate layer. */
+  hourlyRates: EmployeeHourlyRateRow[];
+  /** Custom departments created from the Department tab ({key, name}). */
+  customDepartments: { key: string; name: string }[];
+  onUpsertPay: (s: PayStructure, effectiveDate?: string) => void;
+  onDeletePay: (id: string) => void;
+  onAddAssignment: (a: BonusAssignment) => void;
+  onRemoveAssignment: (id: string) => void;
+}) {
+  const [query, setQuery] = useState('');
+  const [selectedEmail, setSelectedEmail] = useState<string | null>(null);
+  const [editing, setEditing] = useState(false);
+
+  const compIndexes = useMemo<PersonCompIndexes>(() => {
+    const structByEmail = new Map<string, PayStructure>();
+    const deptStructByKey = new Map<string, PayStructure>();
+    for (const s of payStructures) {
+      if (s.scope === 'employee') {
+        const em = (s.employeeEmail ?? '').trim().toLowerCase();
+        if (em) structByEmail.set(em, s);
+      } else if (s.scope === 'department') {
+        deptStructByKey.set(s.departmentKey, s);
+      }
+    }
+    const sheetRateByEmail = new Map<string, SheetRate>();
+    for (const r of hourlyRates) {
+      const entry = { reg: parseRateText(r.regular_rate), ot: parseRateText(r.ot_rate) };
+      const we = (r.work_email ?? '').trim().toLowerCase();
+      const pe = (r.personal_email ?? '').trim().toLowerCase();
+      if (we) sheetRateByEmail.set(we, entry);
+      if (pe && !sheetRateByEmail.has(pe)) sheetRateByEmail.set(pe, entry);
+    }
+    return {
+      structByEmail,
+      deptStructByKey,
+      sheetRateByEmail,
+      resolvedSystem: resolveSystemBonuses(systemBonuses),
+      systemBonuses,
+      assignments,
+      customDepartments,
+    };
+  }, [payStructures, hourlyRates, systemBonuses, assignments, customDepartments]);
+
+  // Departments that actually exist in the catalog universe (built-in payroll
+  // depts + Department-tab registry). Bonus assignments filed outside this set
+  // would be invisible to every calculator and never pay.
+  const knownDeptKeys = useMemo(
+    () => new Set([...DEPARTMENTS.map((d) => d.key), ...customDepartments.map((d) => d.key)]),
+    [customDepartments],
+  );
+
+  // Ranked substring match: name prefix beats a word prefix beats anywhere in
+  // the name, then email and department matches. Capped so a one-letter query
+  // stays a scannable list rather than the whole roster.
+  const results = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return [];
+    const scored: { r: RosterEntry; score: number }[] = [];
+    for (const r of roster) {
+      const name = r.name.toLowerCase();
+      let score: number | null = null;
+      if (name.startsWith(q)) score = 0;
+      else if (name.split(/\s+/).some((w) => w.startsWith(q))) score = 1;
+      else if (name.includes(q)) score = 2;
+      else if (r.email.toLowerCase().includes(q)) score = 3;
+      else if (r.department.toLowerCase().includes(q)) score = 4;
+      if (score != null) scored.push({ r, score });
+    }
+    scored.sort((a, b) => a.score - b.score || a.r.name.localeCompare(b.r.name));
+    return scored.slice(0, 30).map((s) => s.r);
+  }, [roster, query]);
+
+  const selected = selectedEmail ? (roster.find((r) => r.email === selectedEmail) ?? null) : null;
+  const selectedComp = selected ? computePersonComp(selected, compIndexes) : null;
+
+  const open = (email: string, edit: boolean) => {
+    setSelectedEmail(email);
+    setEditing(edit);
+  };
+
+  return (
+    <div className="mx-auto w-full max-w-3xl p-4 sm:p-6">
+      <AnimatePresence mode="wait" initial={false}>
+        {selected && selectedComp ? (
+          <motion.div
+            key={`person-${selected.email}`}
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -10 }}
+            transition={{ duration: 0.2, ease: EASE }}
+          >
+            <PersonCompCard
+              person={selected}
+              comp={selectedComp}
+              bonuses={bonuses}
+              knownDeptKeys={knownDeptKeys}
+              editing={editing}
+              onEditingChange={setEditing}
+              onBack={() => setSelectedEmail(null)}
+              onUpsertPay={onUpsertPay}
+              onDeletePay={onDeletePay}
+              onAddAssignment={onAddAssignment}
+              onRemoveAssignment={onRemoveAssignment}
+            />
+          </motion.div>
+        ) : (
+          <motion.div
+            key="search"
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -10 }}
+            transition={{ duration: 0.2, ease: EASE }}
+          >
+            {/* Google-style landing: the Simple wordmark over a centered bar
+                when idle; both dock compactly once a query is typed. The navy
+                wordmark disappears on dark surfaces, so dark mode renders it
+                as a white silhouette (brightness-0 + invert). */}
+            <div className={`mx-auto max-w-xl transition-all duration-300 ${query.trim() ? 'mt-1' : 'mt-[8vh]'}`}>
+              <div className={`flex justify-center transition-all duration-300 ${query.trim() ? 'mb-4' : 'mb-7'}`}>
+                <img
+                  src="/simple-logo.png"
+                  alt="Simple"
+                  draggable={false}
+                  className={`select-none object-contain transition-all duration-300 dark:brightness-0 dark:invert ${
+                    query.trim() ? 'h-9' : 'h-16 sm:h-20'
+                  }`}
+                />
+              </div>
+              <div className="relative">
+                <Search className="pointer-events-none absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-zinc-400" />
+                <input
+                  autoFocus
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder="Search anyone by name, email, or department..."
+                  aria-label="Search employees"
+                  className="w-full rounded-full border border-zinc-200 bg-white py-3.5 pl-12 pr-10 text-sm text-zinc-800 shadow-sm outline-none transition-shadow placeholder:text-zinc-400 hover:shadow-md focus:border-orange-300 focus:shadow-md dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:shadow-blue-950/40 dark:focus:border-blue-800"
+                />
+                {query && (
+                  <button
+                    type="button"
+                    aria-label="Clear search"
+                    data-readonly-allow
+                    onClick={() => setQuery('')}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 rounded-full p-1 text-zinc-400 transition-colors hover:bg-zinc-100 hover:text-zinc-600 dark:hover:bg-zinc-800 dark:hover:text-zinc-300"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                )}
+              </div>
+              {!query.trim() && (
+                <p className="mt-3 text-center text-xs text-zinc-400 dark:text-zinc-500">
+                  {roster.length.toLocaleString()} people on the roster &middot; view or edit anyone&apos;s
+                  rates and bonuses
+                </p>
+              )}
+            </div>
+
+            {query.trim() &&
+              (results.length === 0 ? (
+                <div className="mt-6">
+                  <EmptyState
+                    icon={Search}
+                    title={`No one matches "${query.trim()}"`}
+                    hint="Try a different spelling, or search by work email or department instead."
+                  />
+                </div>
+              ) : (
+                <div className="mt-5 space-y-2">
+                  <AnimatePresence initial={false} mode="popLayout">
+                    {results.map((r) => (
+                      <motion.div
+                        key={r.email}
+                        layout
+                        initial={{ opacity: 0, y: 8 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0 }}
+                        transition={{ duration: 0.16, ease: EASE }}
+                      >
+                        <SearchResultRow
+                          person={r}
+                          comp={computePersonComp(r, compIndexes)}
+                          onView={() => open(r.email, false)}
+                          onEdit={() => open(r.email, true)}
+                        />
+                      </motion.div>
+                    ))}
+                  </AnimatePresence>
+                </div>
+              ))}
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+function SearchResultRow({
+  person,
+  comp,
+  onView,
+  onEdit,
+}: {
+  person: RosterEntry;
+  comp: PersonComp;
+  onView: () => void;
+  onEdit: () => void;
+}) {
+  // The chip shows the layer the engine actually pays from.
+  const rateChip =
+    comp.rateSource === 'individual' && comp.override
+      ? {
+          text: formatRate(comp.override.regularRate, comp.override.currency),
+          suffix: '',
+          title: 'Individual catalog rate — overrides the rates sheet and department default',
+          own: true,
+        }
+      : comp.rateSource === 'sheet' && comp.sheetRate
+        ? {
+            text: formatRate(comp.sheetRate.reg, 'PHP'),
+            suffix: ' (sheet)',
+            title: 'Paid from the rates sheet',
+            own: false,
+          }
+        : comp.rateSource === 'department' && comp.deptBase
+          ? {
+              text: formatRate(comp.deptBase.regularRate, comp.deptBase.currency),
+              suffix: ' (dept)',
+              title: 'Department default rate — no individual or sheet rate',
+              own: false,
+            }
+          : null;
+  const bonusCount =
+    comp.employeeAssignments.length +
+    comp.commonAssignments.filter((c) => !c.excluded).length +
+    comp.systemRows.length;
+  const initials = person.name
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((w) => w[0]!.toUpperCase())
+    .join('');
+  return (
+    <div className="flex items-center gap-3 rounded-lg border border-zinc-200 bg-white px-3 py-2.5 dark:border-zinc-800 dark:bg-zinc-950">
+      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-orange-100 text-xs font-bold text-orange-700 dark:bg-blue-950/60 dark:text-blue-300">
+        {initials || '?'}
+      </span>
+      <div className="min-w-0 flex-1">
+        <span className="block truncate text-sm font-medium text-zinc-800 dark:text-zinc-200">
+          {person.name}
+        </span>
+        <span className="block truncate text-xs text-zinc-500">
+          {person.department || 'No department'} &middot; {person.email}
+        </span>
+      </div>
+      <div className="hidden shrink-0 items-center gap-1.5 md:flex">
+        {rateChip ? (
+          <span
+            className={`rounded-full px-2 py-0.5 text-[11px] font-medium tabular-nums ${
+              rateChip.own
+                ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300'
+                : 'bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300'
+            }`}
+            title={rateChip.title}
+          >
+            {rateChip.text}
+            {rateChip.suffix}
+          </span>
+        ) : (
+          <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700 dark:bg-amber-950/40 dark:text-amber-300">
+            No rate set
+          </span>
+        )}
+        {bonusCount > 0 && (
+          <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-[11px] font-medium text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
+            {bonusCount} {bonusCount === 1 ? 'bonus' : 'bonuses'}
+          </span>
+        )}
+      </div>
+      <div className="flex shrink-0 items-center gap-1">
+        {/* View is read-only navigation, so it stays live for view-only users. */}
+        <Button type="button" size="sm" variant="outline" onClick={onView} className="gap-1" data-readonly-allow>
+          <Eye className="h-3.5 w-3.5" />
+          View
+        </Button>
+        <Button
+          type="button"
+          size="sm"
+          onClick={onEdit}
+          className="gap-1 bg-orange-500 text-white hover:bg-orange-600"
+        >
+          <Pencil className="h-3.5 w-3.5" />
+          Edit
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function PersonCompCard({
+  person,
+  comp,
+  bonuses,
+  knownDeptKeys,
+  editing,
+  onEditingChange,
+  onBack,
+  onUpsertPay,
+  onDeletePay,
+  onAddAssignment,
+  onRemoveAssignment,
+}: {
+  person: RosterEntry;
+  comp: PersonComp;
+  bonuses: BonusDef[];
+  /** Dept keys that exist in the catalog universe (built-in + registry). */
+  knownDeptKeys: Set<string>;
+  editing: boolean;
+  onEditingChange: (v: boolean) => void;
+  onBack: () => void;
+  onUpsertPay: (s: PayStructure, effectiveDate?: string) => void;
+  onDeletePay: (id: string) => void;
+  onAddAssignment: (a: BonusAssignment) => void;
+  onRemoveAssignment: (id: string) => void;
+}) {
+  const [effectiveDate, setEffectiveDate] = useState<string>(nextMondayIso);
+  const [pickBonus, setPickBonus] = useState('');
+  // Bumped (after a beat -- the POST writes history asynchronously via
+  // `void syncRateHistory`) so the panel refetches after an in-card save.
+  const [historyVersion, setHistoryVersion] = useState(0);
+  const scheduleHistoryRefresh = () => {
+    window.setTimeout(() => setHistoryVersion((v) => v + 1), 1500);
+  };
+
+  const bonusById = useMemo(() => {
+    const m = new Map<string, BonusDef>();
+    for (const b of bonuses) m.set(b.id, b);
+    return m;
+  }, [bonuses]);
+
+  // Writes file under the person's CURRENT roster-resolved department -- the
+  // dept key is load-bearing for bonus assignments (the manager calculator
+  // groups strictly by it), so a stale override key must not win. 'unassigned'
+  // only when everything fails: departmentKey is required, and an honest
+  // bucket beats a fabricated dept.
+  const writeDeptKey = comp.deptKey ?? comp.override?.departmentKey ?? 'unassigned';
+
+  // What the engine currently pays, for the view stats and the edit prefill.
+  const shownRate =
+    comp.rateSource === 'individual' && comp.override
+      ? {
+          reg: comp.override.regularRate as number | null,
+          ot: comp.override.otRate ?? null,
+          currency: comp.override.currency,
+          by: comp.override.updatedBy ?? comp.override.createdBy,
+        }
+      : comp.rateSource === 'sheet' && comp.sheetRate
+        ? { reg: comp.sheetRate.reg, ot: comp.sheetRate.ot, currency: 'PHP' as PayCurrency, by: null }
+        : comp.rateSource === 'department' && comp.deptBase
+          ? {
+              reg: comp.deptBase.regularRate,
+              ot: comp.deptBase.otRate ?? null,
+              currency: comp.deptBase.currency,
+              by: comp.deptBase.updatedBy ?? comp.deptBase.createdBy,
+            }
+          : null;
+  const rateSourceText =
+    comp.rateSource === 'individual'
+      ? 'Individual catalog rate -- overrides the rates sheet and the department default.'
+      : comp.rateSource === 'sheet'
+        ? 'Paid from the rates sheet -- no individual catalog rate.'
+        : comp.rateSource === 'department'
+          ? `Department default${person.department ? ` for ${person.department}` : ''} -- no individual or sheet rate.`
+          : '';
+  const editorInitial =
+    comp.override ??
+    (comp.rateSource === 'sheet' && comp.sheetRate
+      ? {
+          regularRate: comp.sheetRate.reg ?? undefined,
+          otRate: comp.sheetRate.ot ?? undefined,
+          currency: 'PHP' as PayCurrency,
+        }
+      : (comp.deptBase ?? {}));
+
+  const saveRate = (regular: number, ot: number | undefined, currency: PayCurrency) => {
+    onUpsertPay(
+      {
+        id: comp.override?.id ?? newPayId(),
+        scope: 'employee',
+        departmentKey: writeDeptKey,
+        employeeEmail: comp.override?.employeeEmail ?? person.email,
+        employeeName: person.name,
+        regularRate: regular,
+        otRate: ot,
+        currency,
+      },
+      effectiveDate,
+    );
+    scheduleHistoryRefresh();
+  };
+
+  const toggleExcluded = (assignment: BonusAssignment, exclude: boolean) => {
+    const set = new Set((assignment.excludedEmails ?? []).map((e) => e.toLowerCase()));
+    if (exclude) set.add(person.email.toLowerCase());
+    else for (const a of person.aliases) set.delete(a);
+    onAddAssignment({ ...assignment, excludedEmails: [...set] });
+  };
+
+  const assignableBonuses = bonuses.filter(
+    (b) => !comp.employeeAssignments.some((a) => a.bonusId === b.id),
+  );
+  // Assignments filed outside the known-department universe are invisible to
+  // every calculator and would never pay -- block them honestly.
+  const canAssignBonuses = knownDeptKeys.has(writeDeptKey);
+  // Realtime can invalidate a stale pick (teammate assigned the same bonus).
+  const pickAssignable = !!pickBonus && assignableBonuses.some((b) => b.id === pickBonus);
+
+  return (
+    <div>
+      {/* Header */}
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <div className="flex min-w-0 items-center gap-3">
+          <button
+            type="button"
+            onClick={onBack}
+            aria-label="Back to search results"
+            data-readonly-allow
+            className="rounded-md p-1.5 text-zinc-400 transition-colors hover:bg-zinc-100 hover:text-zinc-700 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
+          >
+            <ArrowLeft className="h-4 w-4" />
+          </button>
+          <div className="min-w-0">
+            <h2 className="truncate text-lg font-semibold text-zinc-900 dark:text-zinc-100">
+              {person.name}
+            </h2>
+            <p className="truncate text-xs text-zinc-500">
+              {person.department || 'No department'} &middot; {person.email}
+            </p>
+          </div>
+        </div>
+        <EditToggle on={editing} onChange={onEditingChange} />
+      </div>
+
+      {/* Pay rate */}
+      <Section
+        icon={Wallet}
+        title="Pay rate"
+        subtitle="What this person is paid, resolved the way payroll does: individual catalog rate, else the rates-sheet rate, else the department default."
+      >
+        <div className="flex flex-col gap-4 sm:flex-row">
+          <div className="min-w-0 flex-1">
+            {editing ? (
+              <>
+                {comp.rateSource === 'sheet' && (
+                  <p className="mb-3 rounded-md border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-xs text-amber-800 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-300">
+                    Currently paid from the rates sheet (
+                    {formatRate(comp.sheetRate?.reg, 'PHP')}). Saving creates an individual catalog
+                    rate that overrides the sheet from the effective date.
+                  </p>
+                )}
+                <div className="mb-3 flex flex-col gap-1">
+                  <p className="text-[10px] font-medium uppercase tracking-wide text-emerald-600 dark:text-emerald-400">
+                    Effective from
+                  </p>
+                  <DatePicker
+                    value={effectiveDate}
+                    onChange={setEffectiveDate}
+                    required
+                    containerClassName="w-40"
+                    className="h-9 text-sm font-medium tabular-nums focus-visible:border-emerald-500 focus-visible:ring-emerald-500/20 dark:bg-zinc-900"
+                  />
+                </div>
+                <PayRateEditor
+                  initial={editorInitial}
+                  saveLabel={comp.override ? 'Update rate' : 'Set individual rate'}
+                  onSave={saveRate}
+                />
+                {comp.override && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onDeletePay(comp.override!.id);
+                      scheduleHistoryRefresh();
+                    }}
+                    className="mt-3 flex items-center gap-1.5 text-xs font-medium text-zinc-400 transition-colors hover:text-rose-600 dark:hover:text-rose-400"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                    Remove individual rate (falls back to the rates sheet / department default)
+                  </button>
+                )}
+              </>
+            ) : shownRate ? (
+              <>
+                <div className="flex flex-wrap items-center gap-x-6 gap-y-1">
+                  <RateStat label="Regular" value={formatRate(shownRate.reg, shownRate.currency)} />
+                  <RateStat
+                    label="OT"
+                    value={shownRate.ot != null ? formatRate(shownRate.ot, shownRate.currency) : '-'}
+                  />
+                  <span className="inline-flex items-center gap-1 rounded-full bg-zinc-100 px-2 py-0.5 text-[11px] font-medium text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
+                    {shownRate.currency}
+                  </span>
+                </div>
+                <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-zinc-500">
+                  <span>{rateSourceText}</span>
+                  <ByLine who={shownRate.by} />
+                </div>
+              </>
+            ) : (
+              <p className="text-sm text-zinc-400">
+                No rate anywhere -- no individual catalog rate, no rates-sheet row, and no
+                department default. Flip to edit to set one.
+              </p>
+            )}
+          </div>
+          <div className="w-full sm:w-52">
+            <RateHistoryPanel email={person.email} refreshKey={historyVersion} />
+          </div>
+        </div>
+      </Section>
+
+      {/* Personal bonuses */}
+      <Section icon={User} title="Personal bonuses" subtitle="Assigned to this person only.">
+        {editing &&
+          (canAssignBonuses ? (
+            <div className="mb-3 flex flex-wrap items-center gap-2">
+              <AnimatedSelect
+                ariaLabel="Select a bonus"
+                className="min-w-[12rem]"
+                value={pickBonus}
+                onChange={setPickBonus}
+                placeholder="Select a bonus..."
+                options={assignableBonuses.map((b) => ({ value: b.id, label: b.name }))}
+              />
+              <Button
+                type="button"
+                size="sm"
+                disabled={!pickAssignable}
+                onClick={() => {
+                  // Re-check against live state: a teammate may have assigned
+                  // the same bonus since it was picked (Realtime refetch).
+                  if (!pickBonus || !assignableBonuses.some((b) => b.id === pickBonus)) {
+                    setPickBonus('');
+                    return;
+                  }
+                  onAddAssignment({
+                    id: newId('asg'),
+                    bonusId: pickBonus,
+                    scope: 'employee',
+                    departmentKey: writeDeptKey,
+                    employeeEmail: person.email,
+                    employeeName: person.name,
+                  });
+                  setPickBonus('');
+                }}
+                className="gap-1 bg-orange-500 text-white hover:bg-orange-600"
+              >
+                <Plus className="h-3.5 w-3.5" />
+                Assign
+              </Button>
+            </div>
+          ) : (
+            <p className="mb-3 rounded-md border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-xs text-amber-800 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-300">
+              Personal bonuses can&apos;t be assigned here:{' '}
+              {person.department ? `"${person.department}"` : "this person's department"} isn&apos;t
+              wired into the bonus calculators, so a bonus filed under it would never be applied or
+              paid.
+            </p>
+          ))}
+        {comp.employeeAssignments.length === 0 ? (
+          <p className="text-sm text-zinc-400">No personal bonuses.</p>
+        ) : (
+          <motion.div layout className="space-y-2">
+            <AnimatePresence initial={false} mode="popLayout">
+              {comp.employeeAssignments.map((a) => (
+                <motion.div
+                  key={a.id}
+                  layout
+                  initial={{ opacity: 0, x: -12 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  exit={{ opacity: 0, x: 12, scale: 0.96 }}
+                  transition={{ duration: 0.2, ease: EASE }}
+                >
+                  <PersonBonusRow
+                    bonus={bonusById.get(a.bonusId)}
+                    by={a.createdBy}
+                    action={
+                      editing ? (
+                        <IconButton title="Remove" onClick={() => onRemoveAssignment(a.id)} danger>
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </IconButton>
+                      ) : undefined
+                    }
+                  />
+                </motion.div>
+              ))}
+            </AnimatePresence>
+          </motion.div>
+        )}
+      </Section>
+
+      {/* Department bonuses */}
+      <Section
+        icon={Building2}
+        title="Department bonuses"
+        subtitle={`Common bonuses assigned to everyone in ${person.department || 'their department'}.`}
+      >
+        {comp.commonAssignments.length === 0 ? (
+          <p className="text-sm text-zinc-400">No department-wide bonuses reach this person.</p>
+        ) : (
+          <div className="space-y-2">
+            {comp.commonAssignments.map(({ assignment, excluded }) => (
+              <PersonBonusRow
+                key={assignment.id}
+                bonus={bonusById.get(assignment.bonusId)}
+                by={assignment.createdBy}
+                muted={excluded}
+                note={
+                  excluded
+                    ? 'Excluded -- does not receive this bonus'
+                    : assignment.sharedTeam
+                      ? 'Team effort -- one shared result for the department'
+                      : undefined
+                }
+                action={
+                  editing ? (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() => toggleExcluded(assignment, !excluded)}
+                    >
+                      {excluded ? 'Include' : 'Exclude'}
+                    </Button>
+                  ) : undefined
+                }
+              />
+            ))}
+          </div>
+        )}
+      </Section>
+
+      {/* System bonuses */}
+      <Section
+        icon={Award}
+        title="System bonuses"
+        subtitle="Built-in bonuses that apply to this person's department. Timing and eligibility stay with the payroll engine."
+      >
+        {comp.systemRows.length === 0 ? (
+          <p className="text-sm text-zinc-400">
+            No system bonuses apply to this person&apos;s department.
+          </p>
+        ) : (
+          <div className="space-y-2">
+            {comp.systemRows.map((s) => (
+              <div
+                key={s.code}
+                className="flex items-center justify-between gap-3 rounded-md border border-zinc-200 bg-white px-3 py-2 dark:border-zinc-800 dark:bg-zinc-950"
+              >
+                <div className="flex min-w-0 items-center gap-2">
+                  <span className="truncate text-sm font-medium text-zinc-800 dark:text-zinc-200">
+                    {s.label}
+                  </span>
+                  <span className="text-xs font-medium text-emerald-600 dark:text-emerald-400">
+                    {money(s.amount, s.currency)}
+                  </span>
+                </div>
+                <span className="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
+                  engine-timed
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+      </Section>
+    </div>
+  );
+}
+
+/** One bonus row in the person card. Like AssignmentRow but with a pluggable
+ *  trailing action so the same row renders read-only in view mode. */
+function PersonBonusRow({
+  bonus,
+  note,
+  by,
+  muted,
+  action,
+}: {
+  bonus: BonusDef | undefined;
+  note?: string;
+  by?: string | null;
+  muted?: boolean;
+  action?: React.ReactNode;
+}) {
+  return (
+    <div
+      className={`flex items-center justify-between gap-3 rounded-md border border-zinc-200 bg-white px-3 py-2 dark:border-zinc-800 dark:bg-zinc-950 ${muted ? 'opacity-60' : ''}`}
+    >
+      <div className="min-w-0">
+        <div className="flex items-center gap-2">
+          <span className="truncate text-sm font-medium text-zinc-800 dark:text-zinc-200">
+            {bonus?.name ?? '(deleted bonus)'}
+          </span>
+          {bonus && <KindBadge kind={bonus.kind} />}
+          {bonus && <CurrencyBadge currency={bonus.currency} />}
+          {bonus && <CadenceBadge cadence={bonus.cadence} />}
+        </div>
+        <div className="mt-0.5 flex flex-wrap items-center gap-2 text-xs text-zinc-500">
+          {bonus?.kind === 'flat' && (
+            <span className="font-medium text-emerald-600 dark:text-emerald-400">
+              {money(bonus.amount ?? 0, bonus.currency)}
+            </span>
+          )}
+          {bonus?.kind === 'formula' && (
+            <code className="truncate font-mono text-[11px] text-zinc-500">{bonus.formula}</code>
+          )}
+          {note && (
+            <span className={muted ? 'font-medium text-rose-500 dark:text-rose-400' : ''}>{note}</span>
+          )}
+          <ByLine who={by} />
+        </div>
+      </div>
+      {action && <div className="flex shrink-0 items-center gap-1">{action}</div>}
+    </div>
+  );
+}
 
 function KindBadge({ kind }: { kind: BonusDef['kind'] }) {
   return (
