@@ -39,6 +39,7 @@ import {
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import EmployeePabCalendar from './employee/EmployeePabCalendar';
+import PabCalendarLoader from './employee/PabCalendarLoader';
 import { type AttentionTone, ATTENTION_PALETTE, HeroStatRow } from '@/components/accounting/hero-stat-row';
 import HubstaffMasterMatchesModal from '@/components/accounting/HubstaffMasterMatchesModal';
 import {
@@ -79,6 +80,12 @@ import {
   parseDateRangeFromFilename,
 } from '@/lib/hubstaff/calendar-column-dedupe';
 import { formatPeriodRange } from '@/lib/hubstaff/period-label';
+import { applyPabAdjustments, getHslAdjustedEnd } from '@/lib/payroll/dispatch-bonuses';
+import {
+  HSL_WEEK_MODEL_CUTOVER_KEY,
+  resolveHslWeekModelWithDefault,
+} from '@/lib/payroll/hsl-week-model';
+import { buildOrphanageCoverageMap } from '@/lib/payroll/orphanage-pab-coverage';
 import { HSL_DEPT_KEYS } from '@/lib/hsl-bonus/schema';
 import {
   fetchPabPeriodSettings,
@@ -512,6 +519,18 @@ function SimpleView({
   const [pingNonce, setPingNonce] = useState(0);
   const [pabCalEmail, setPabCalEmail] = useState<string | null>(null);
   const [pabCalIsHsl, setPabCalIsHsl] = useState(false);
+  // Loading modal over the PAB calendar — real progress from the calendar's
+  // hours fetch (not just the skeleton), same pattern as the People dialog.
+  const [pabCalLoading, setPabCalLoading] = useState(true);
+  const [pabCalProgress, setPabCalProgress] = useState(0);
+  const [showPabCalLoader, setShowPabCalLoader] = useState(true);
+  const openPabCalendar = (email: string, isHslRow: boolean) => {
+    setPabCalLoading(true);
+    setPabCalProgress(0);
+    setShowPabCalLoader(true);
+    setPabCalIsHsl(isHslRow);
+    setPabCalEmail(email);
+  };
 
   const pabTotal = pabMetrics.totalEmployees;
   const pabPct = pabTotal > 0 ? Math.round((pabMetrics.eligible / pabTotal) * 100) : 0;
@@ -1582,7 +1601,7 @@ function SimpleView({
                               return (
                                 <button
                                   type="button"
-                                  onClick={() => { if (email) { setPabCalEmail(email); setPabCalIsHsl((row.department ?? '').trim().toLowerCase() === 'hsl'); } }}
+                                  onClick={() => { if (email) openPabCalendar(email, (row.department ?? '').trim().toLowerCase() === 'hsl'); }}
                                   disabled={!email}
                                   title="Open PAB calendar"
                                   className={cn(
@@ -1723,12 +1742,22 @@ function SimpleView({
                   <X className="h-4 w-4" />
                 </button>
               </div>
-              <div className="min-h-0 flex-1 overflow-y-auto p-4">
+              <div className="relative min-h-0 flex-1 overflow-y-auto p-4">
+                {showPabCalLoader && (
+                  <PabCalendarLoader
+                    progress={pabCalProgress}
+                    done={!pabCalLoading}
+                    barClassName="bg-indigo-500"
+                    onDone={() => setShowPabCalLoader(false)}
+                  />
+                )}
                 <EmployeePabCalendar
                   employeeEmail={pabCalEmail}
                   trimToElapsedWeeks={false}
                   pabMonthOverride={pabMetrics.pabMonth}
                   isHsl={pabCalIsHsl}
+                  onLoadingChange={setPabCalLoading}
+                  onProgress={setPabCalProgress}
                 />
               </div>
             </motion.div>
@@ -2366,6 +2395,18 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
     : undefined;
   const [pabCalEmail, setPabCalEmail] = useState<string | null>(null);
   const [pabCalIsHsl, setPabCalIsHsl] = useState(false);
+  // Loading modal over the PAB calendar — real progress from the calendar's
+  // hours fetch (not just the skeleton), same pattern as the People dialog.
+  const [pabCalLoading, setPabCalLoading] = useState(true);
+  const [pabCalProgress, setPabCalProgress] = useState(0);
+  const [showPabCalLoader, setShowPabCalLoader] = useState(true);
+  const openPabCalendar = (email: string, isHslRow: boolean) => {
+    setPabCalLoading(true);
+    setPabCalProgress(0);
+    setShowPabCalLoader(true);
+    setPabCalIsHsl(isHslRow);
+    setPabCalEmail(email);
+  };
   const [employees, setEmployees] = useState<EmployeeRow[]>(initialData?.employees ?? []);
   const [employeesError, setEmployeesError] = useState<string | null>(null);
   const [loading, setLoading] = useState(!initialData?.employees?.length);
@@ -3157,11 +3198,13 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
         const cols = [...allCols];
         const pabCfg = await fetchPabPeriodSettings();
 
-        // Fetch US-holiday forgiveness settings — same shape as PayrollWizard uses.
+        // Fetch US-holiday forgiveness settings — same shape as PayrollWizard uses —
+        // plus the HSL week-model cutover (Mon→Sun legacy vs Sun→Sat post-cutover).
         let usHolidayDates: Map<string, string> = new Map();
+        let hslCutoverValue: string | null = null;
         try {
           const hRes = await fetch(
-            `/api/app-settings?keys=${encodeURIComponent([US_HOLIDAYS_ENABLED_KEY, US_HOLIDAYS_LIST_KEY].join(','))}`,
+            `/api/app-settings?keys=${encodeURIComponent([US_HOLIDAYS_ENABLED_KEY, US_HOLIDAYS_LIST_KEY, HSL_WEEK_MODEL_CUTOVER_KEY].join(','))}`,
             { cache: 'no-store' },
           );
           const hJson = (await hRes.json()) as { values?: Record<string, string | null> };
@@ -3170,6 +3213,7 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
             ? true
             : hValues[US_HOLIDAYS_ENABLED_KEY] === 'true';
           usHolidayDates = getEnabledHolidayMap(parseUsHolidaysList(hValues[US_HOLIDAYS_LIST_KEY] ?? null), hEnabled);
+          hslCutoverValue = hValues[HSL_WEEK_MODEL_CUTOVER_KEY] ?? null;
         } catch { /* no-op — empty holiday map preserves prior behavior */ }
 
         let start: Date;
@@ -3230,6 +3274,69 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
           monthLabel = `${monthNames[pabMonth.month]} ${pabMonth.year}`;
         }
 
+        // Approved-dispute forgiveness + approved TIME ADJUSTMENTS + orphanage
+        // PAB coverage — the SAME adjustments the wizard applies (its
+        // effectiveOverrides = disputes overlaid by time adjustments, then
+        // applyPabAdjustments semantics), so the Eligible pill agrees with the
+        // PAB Calendar modal and what payroll actually pays. Best-effort: a
+        // failed fetch degrades to raw hours exactly like before.
+        // HSL week model for this period (Mon→Sun legacy vs Sun→Sat post-cutover)
+        // — resolved from the period start exactly like the Payroll Wizard.
+        const hslWeekModel = resolveHslWeekModelWithDefault(start, hslCutoverValue);
+
+        const approvedDisputesByEmail = new Map<string, Map<string, number | null>>();
+        const approvedAdjustmentsByEmail = new Map<string, Map<string, number>>();
+        let orphanageCoverage = new Map<string, Map<string, number>>();
+        {
+          const from = `${start.getFullYear()}-${String(start.getMonth() + 1).padStart(2, '0')}-${String(start.getDate()).padStart(2, '0')}`;
+          // Window through the HSL ADJUSTED end (week-closing Sat/Sun), not the
+          // raw period end — HSL's last week extends past `end` and the calendar
+          // modal fetches disputes unwindowed, so stopping at end+1 would let a
+          // forgiven extension day flip the pill but not the calendar.
+          const windowEnd = getHslAdjustedEnd(end, hslWeekModel);
+          const dayAfterEnd = new Date(windowEnd.getFullYear(), windowEnd.getMonth(), windowEnd.getDate() + 1);
+          const to = `${dayAfterEnd.getFullYear()}-${String(dayAfterEnd.getMonth() + 1).padStart(2, '0')}-${String(dayAfterEnd.getDate()).padStart(2, '0')}`;
+          // Each source degrades INDEPENDENTLY (like the wizard's three separate
+          // fetch effects) — a failed orphanage fetch must not drop the disputes
+          // and time adjustments that already succeeded.
+          await Promise.all([
+            fetch(`/api/pab-disputes?status=approved&status=accounting_approved&from=${from}&to=${to}`, { cache: 'no-store' })
+              .then((r) => r.json())
+              .then((dJson: { rows?: { work_email: string; dispute_date: string; override_hours: number | null }[] }) => {
+                for (const row of dJson.rows ?? []) {
+                  const em = (row.work_email ?? '').trim().toLowerCase();
+                  if (!em) continue;
+                  const dates = approvedDisputesByEmail.get(em) ?? new Map<string, number | null>();
+                  dates.set(row.dispute_date, row.override_hours);
+                  approvedDisputesByEmail.set(em, dates);
+                }
+              })
+              .catch(() => { /* best-effort — no dispute forgiveness this pass */ }),
+            fetch(`/api/time-adjustments?status=approved&from=${from}&to=${to}`, { cache: 'no-store' })
+              .then((r) => r.json())
+              .then((tJson: { rows?: { work_email: string; adjust_date: string; approved_hours: number | null }[] }) => {
+                for (const row of tJson.rows ?? []) {
+                  if (row.approved_hours == null) continue;
+                  const em = (row.work_email ?? '').trim().toLowerCase();
+                  if (!em) continue;
+                  const dates = approvedAdjustmentsByEmail.get(em) ?? new Map<string, number>();
+                  dates.set(row.adjust_date, row.approved_hours);
+                  approvedAdjustmentsByEmail.set(em, dates);
+                }
+              })
+              .catch(() => { /* best-effort — no adjustment overlay this pass */ }),
+            fetch('/api/orphanage-pay?all=1', { cache: 'no-store' })
+              .then((r) => r.json())
+              .then((oJson: { rows?: { source_file: string | null; employee_email: string; hours: number }[] }) => {
+                orphanageCoverage = buildOrphanageCoverageMap(
+                  (oJson.rows ?? []).map((r) => ({ sourceFile: r.source_file, email: r.employee_email, hours: r.hours })),
+                );
+              })
+              .catch(() => { /* best-effort — no orphanage coverage this pass */ }),
+          ]);
+        }
+        if (cancelled) return;
+
         // Build HSL email set from the memoized key (stable across no-op employee re-fetches).
         const hslMasterEmails = new Set<string>(hslMasterEmailsKey ? hslMasterEmailsKey.split(',') : []);
 
@@ -3267,25 +3374,34 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
         const evalCeilingSunSat = Math.min(todayMid.getTime(), latestHubstaffDay.getTime(), endSunSat.getTime());
         const standardEvalEndSunSat = new Date(evalCeilingSunSat);
 
-        // For HSL we need WHOLE Mon–Sun weeks (the rule is per-week). Clamp to
-        // the last completed Sunday at or before the standard evaluation
-        // ceiling so an in-progress week isn't penalized for not having Mon–Fri
-        // filled in yet.
+        // For HSL we need WHOLE weeks (the rule is per-week). When the period is
+        // complete, extend to the day that closes its last week (Sunday for
+        // mon_sun, Saturday for sun_sat — wizard parity via getHslAdjustedEnd);
+        // while in progress, clamp to the last completed week-close day at or
+        // before the standard evaluation ceiling so an in-progress week isn't
+        // penalized for not having its days filled in yet.
         const hslEvalEnd = (() => {
-          if (standardEvalEnd.getTime() >= end.getTime()) return end;
-          const dow = standardEvalEnd.getDay();
-          const lastSun = new Date(
+          if (standardEvalEnd.getTime() >= end.getTime()) return getHslAdjustedEnd(end, hslWeekModel);
+          const dow = standardEvalEnd.getDay(); // Sun=0 … Sat=6
+          const daysBack = hslWeekModel === 'sun_sat' ? (dow === 6 ? 0 : dow + 1) : dow;
+          const lastClose = new Date(
             standardEvalEnd.getFullYear(),
             standardEvalEnd.getMonth(),
-            standardEvalEnd.getDate() - dow,
+            standardEvalEnd.getDate() - daysBack,
           );
-          // If even the last Sunday is before the period started, there's nothing
-          // to evaluate yet — return the day before start so the HSL check sees
-          // an empty range and treats the employee as still eligible.
-          if (lastSun.getTime() < start.getTime()) {
-            return new Date(start.getFullYear(), start.getMonth(), start.getDate() - 1);
+          // If even the last week-close day is before the period started, there's
+          // nothing to evaluate yet — return the day before the FIRST WEEK'S
+          // ANCHOR so the HSL check sees an empty range and treats the employee
+          // as still eligible. (`start - 1` is NOT empty under sun_sat: the
+          // anchor Sunday sits on/before it and would score a 1-day fragment.)
+          if (lastClose.getTime() < start.getTime()) {
+            const anchor = new Date(start.getFullYear(), start.getMonth(), start.getDate());
+            const aDow = anchor.getDay();
+            if (hslWeekModel === 'sun_sat') anchor.setDate(anchor.getDate() - aDow);
+            else anchor.setDate(anchor.getDate() + (aDow === 0 ? 1 : aDow === 1 ? 0 : 8 - aDow));
+            return new Date(anchor.getFullYear(), anchor.getMonth(), anchor.getDate() - 1);
           }
-          return lastSun;
+          return lastClose;
         })();
 
         let eligible = 0;
@@ -3300,7 +3416,7 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
         // work or personal email — if they have no Hubstaff row at all, the
         // empty `hoursByDateKey` naturally fails eligibility (no hours
         // tracked = not perfect attendance).
-        const masterEntries: { email: string; row: Record<string, unknown> }[] = [];
+        const masterEntries: { email: string; rowEmail: string; row: Record<string, unknown> }[] = [];
         for (const e of employees) {
           const w = normEmail(e.work_email ?? null);
           const p = normEmail(e.personal_email ?? null);
@@ -3309,11 +3425,21 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
           // Skip departments excluded from the PAB allowlist (e.g. US managers)
           // so they don't inflate the eligible count / accrual.
           if (!isDeptEligible(sysBonusCfg.pab, normalizeDeptToKey(e.department ?? null))) continue;
-          const hubRow = (w && rowsByEmail.get(w)) || (p && rowsByEmail.get(p)) || {};
-          masterEntries.push({ email: key, row: hubRow as Record<string, unknown> });
+          const wRow = w ? rowsByEmail.get(w) : undefined;
+          const pRow = p ? rowsByEmail.get(p) : undefined;
+          const hubRow = wRow ?? pRow ?? {};
+          // The email that KEYED the Hubstaff row — forgiveness lookups below use
+          // this (not every alias) because the wizard and the server pay engine
+          // key dispute/adjustment/orphanage forgiveness strictly by the Hubstaff
+          // row's Email; matching a wider alias set would paint an Eligible pill
+          // for someone payroll dispatch does not actually pay.
+          const rowEmail = wRow ? w! : pRow ? p! : key;
+          masterEntries.push({ email: key, rowEmail, row: hubRow as Record<string, unknown> });
         }
 
-        for (const { email, row: mergedRow } of masterEntries) {
+        const holidayIsoSet = usHolidayDates.size > 0 ? new Set(usHolidayDates.keys()) : undefined;
+
+        for (const { email, rowEmail, row: mergedRow } of masterEntries) {
           evaluated++;
           // Build date → seconds lookup
           const hoursByDateKey = new Map<string, number>();
@@ -3338,18 +3464,20 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
             hoursByDateKey.set(pabDateKey(d), Math.max(hoursByDateKey.get(pabDateKey(d)) ?? 0, maxS));
           }
 
-          // US holidays force-pass: ensure each holiday in the PAB period reads as >= 7h
-          // so the employee doesn't lose PAB for not logging hours on it.
-          if (usHolidayDates.size > 0) {
-            for (const [iso] of usHolidayDates.entries()) {
-              const [y, m, day] = iso.split('-').map(Number);
-              if (!y || !m || !day) continue;
-              const dt = new Date(y, m - 1, day);
-              if (dt.getTime() < start.getTime() || dt.getTime() > end.getTime()) continue;
-              const key = pabDateKey(dt);
-              if ((hoursByDateKey.get(key) ?? 0) < 7 * 3600) hoursByDateKey.set(key, 7 * 3600);
-            }
+          // Engine-parity adjustments — approved-dispute forgiveness overlaid by
+          // approved time adjustments (adjustment wins on the same day — wizard's
+          // effectiveOverrides ordering), US-holiday force-pass, and orphanage
+          // top-up — the exact semantics of the server/wizard engine, keyed by
+          // the Hubstaff row email exactly like both of them.
+          const disputeDates = approvedDisputesByEmail.get(rowEmail);
+          const adjustmentDates = approvedAdjustmentsByEmail.get(rowEmail);
+          let forgivenDates: Map<string, number | null> | undefined;
+          if (disputeDates?.size || adjustmentDates?.size) {
+            forgivenDates = new Map(disputeDates ?? []);
+            if (adjustmentDates) for (const [d, h] of adjustmentDates) forgivenDates.set(d, h);
           }
+          const orphanageByIso = orphanageCoverage.get(rowEmail);
+          const effectiveHours = applyPabAdjustments(hoursByDateKey, forgivenDates, holidayIsoSet, orphanageByIso);
 
           // Determine if this employee falls under the HSL rule.
           // Primary source: master list. Fallback: Job type column in the Hubstaff row
@@ -3362,13 +3490,13 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
 
           let isEligible: boolean;
           if (isHsl) {
-            // HSL rule: Mon–Sun weeks, ≥5 days at ≥7 h per week.
-            // Evaluate only fully-completed weeks during in-progress months.
-            isEligible = checkHslPabEligibility(start, hslEvalEnd, hoursByDateKey);
+            // HSL rule: 7-day weeks (anchor per hslWeekModel), ≥5 days at ≥7 h per
+            // week. Evaluate only fully-completed weeks during in-progress months.
+            isEligible = checkHslPabEligibility(start, hslEvalEnd, effectiveHours, hslWeekModel);
           } else {
             // Non-HSL rule (Sun–Sat weeks): all Mon–Fri days must be ≥7 h.
             // Use the Sun–Sat PAB range and its evaluation ceiling.
-            const weeks = buildPabCalendarWeeks(startSunSat, standardEvalEndSunSat, hoursByDateKey);
+            const weeks = buildPabCalendarWeeks(startSunSat, standardEvalEndSunSat, effectiveHours);
             const allDays = weeks.flat();
             isEligible = allDays.length === 0 || allDays.every(d => d.passes);
           }
@@ -4533,7 +4661,7 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
                                 return (
                                   <button
                                     type="button"
-                                    onClick={() => { if (rowEmail) { setPabCalEmail(rowEmail); setPabCalIsHsl((row.department ?? '').trim().toLowerCase() === 'hsl'); } }}
+                                    onClick={() => { if (rowEmail) openPabCalendar(rowEmail, (row.department ?? '').trim().toLowerCase() === 'hsl'); }}
                                     disabled={!rowEmail}
                                     title="Open PAB calendar"
                                     className={cn(
@@ -4880,12 +5008,22 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
                   <X className="h-4 w-4" />
                 </button>
               </div>
-              <div className="min-h-0 flex-1 overflow-y-auto p-4">
+              <div className="relative min-h-0 flex-1 overflow-y-auto p-4">
+                {showPabCalLoader && (
+                  <PabCalendarLoader
+                    progress={pabCalProgress}
+                    done={!pabCalLoading}
+                    barClassName="bg-indigo-500"
+                    onDone={() => setShowPabCalLoader(false)}
+                  />
+                )}
                 <EmployeePabCalendar
                   employeeEmail={pabCalEmail}
                   trimToElapsedWeeks={false}
                   pabMonthOverride={pabMetrics.pabMonth}
                   isHsl={pabCalIsHsl}
+                  onLoadingChange={setPabCalLoading}
+                  onProgress={setPabCalProgress}
                 />
               </div>
             </motion.div>

@@ -9,6 +9,7 @@ import {
 import {
   payWeekFromUploadStart,
   checkHslPabEligibility,
+  computeHslPabWeekInfo,
   pabDateKey,
   getPabMonthRange,
 } from '../hubstaff/calendar-column-dedupe';
@@ -136,4 +137,107 @@ test('cutover integration: May 31 upload flips to Sun→Sat (June), owning Monda
   // June PAB end (Sun→Sat) snaps forward to the closing Saturday.
   const juneEnd = getPabMonthRange(2026, 5).end;
   assert.equal(getHslAdjustedEnd(juneEnd, 'sun_sat').getDay(), 6, 'snaps to Saturday');
+});
+
+// ── computeHslPabWeekInfo: per-week breakdown behind the eligibility boolean ─
+// Calendars colour cells from this data; it must agree with the engine.
+const H7 = 7 * 3600;
+
+function weeksAllPass(info: Map<string, { weekPasses: boolean }>): boolean {
+  return [...info.values()].every((w) => w.weekPasses);
+}
+
+test('computeHslPabWeekInfo: all-pass verdict equals checkHslPabEligibility (both models)', () => {
+  // Jul 2026: Mon Jul 6 starts the period. Week 2 has a 0h Wednesday that is
+  // RECONCILED by Saturday work (4 weekdays + Sat = 5 of 7).
+  const hours = new Map<string, number>();
+  for (const day of [6, 7, 8, 9, 10]) hours.set(pabDateKey(new Date(2026, 6, day)), H7); // wk1 Mon–Fri
+  for (const day of [13, 14, 16, 17]) hours.set(pabDateKey(new Date(2026, 6, day)), H7); // wk2 Mon,Tue,Thu,Fri
+  hours.set(pabDateKey(new Date(2026, 6, 15)), 0); // wk2 Wed — 0h, no overnight rescue
+  hours.set(pabDateKey(new Date(2026, 6, 18)), 8 * 3600); // wk2 Sat — weekend credit
+
+  const start = new Date(2026, 6, 6);
+  for (const [model, end] of [
+    ['mon_sun', new Date(2026, 6, 19)], // closing Sunday
+    ['sun_sat', new Date(2026, 6, 18)], // closing Saturday (anchor backs to Sun Jul 5)
+  ] as const) {
+    const info = computeHslPabWeekInfo(start, end, hours, model);
+    assert.equal(
+      weeksAllPass(info),
+      checkHslPabEligibility(start, end, hours, model),
+      `parity for ${model}`,
+    );
+    assert.equal(weeksAllPass(info), true, `weekend credit keeps eligibility (${model})`);
+  }
+
+  // Failing variant: remove the Saturday credit → week 2 drops to 4 of 7.
+  const noSat = new Map(hours);
+  noSat.delete(pabDateKey(new Date(2026, 6, 18)));
+  for (const [model, end] of [
+    ['mon_sun', new Date(2026, 6, 19)],
+    ['sun_sat', new Date(2026, 6, 18)],
+  ] as const) {
+    const info = computeHslPabWeekInfo(start, end, noSat, model);
+    assert.equal(weeksAllPass(info), false, `4-of-7 fails (${model})`);
+    assert.equal(
+      weeksAllPass(info),
+      checkHslPabEligibility(start, end, noSat, model),
+      `parity for failing ${model}`,
+    );
+  }
+});
+
+test('computeHslPabWeekInfo: reconciled week reports 5 qualifying days, keyed by anchor day', () => {
+  const hours = new Map<string, number>();
+  for (const day of [13, 14, 16, 17]) hours.set(pabDateKey(new Date(2026, 6, day)), H7);
+  hours.set(pabDateKey(new Date(2026, 6, 18)), 8 * 3600); // Sat
+  const info = computeHslPabWeekInfo(new Date(2026, 6, 13), new Date(2026, 6, 19), hours, 'mon_sun');
+  const wk = info.get('2026-07-13'); // Monday anchors the mon_sun week
+  assert.ok(wk, 'week keyed by its Monday');
+  assert.equal(wk!.qualifyingDays, 5);
+  assert.equal(wk!.weekPasses, true);
+  assert.equal(wk!.overnightIsos.size, 0, '0h Wednesday is reconciled, not overnight');
+});
+
+test('computeHslPabWeekInfo: overnight split days are flagged with their ISO dates', () => {
+  // Mon 4h + Tue 4h — a midnight-split shift. Forward check qualifies Monday,
+  // backward check qualifies Tuesday; Wed–Fri at 7h round out the 5-day quota.
+  const hours = new Map<string, number>();
+  hours.set(pabDateKey(new Date(2026, 6, 6)), 4 * 3600);
+  hours.set(pabDateKey(new Date(2026, 6, 7)), 4 * 3600);
+  for (const day of [8, 9, 10]) hours.set(pabDateKey(new Date(2026, 6, day)), H7);
+  const info = computeHslPabWeekInfo(new Date(2026, 6, 6), new Date(2026, 6, 12), hours, 'mon_sun');
+  const wk = info.get('2026-07-06');
+  assert.ok(wk);
+  assert.equal(wk!.weekPasses, true);
+  assert.ok(wk!.overnightIsos.has('2026-07-06'), 'Monday flagged as overnight');
+  assert.ok(wk!.overnightIsos.has('2026-07-07'), 'Tuesday flagged as overnight');
+});
+
+test('computeHslPabWeekInfo: empty range → empty map (engine treats as eligible)', () => {
+  const start = new Date(2026, 6, 6); // Mon
+  const dayBefore = new Date(2026, 6, 5);
+  const info = computeHslPabWeekInfo(start, dayBefore, new Map(), 'mon_sun');
+  assert.equal(info.size, 0);
+  assert.equal(checkHslPabEligibility(start, dayBefore, new Map(), 'mon_sun'), true);
+});
+
+test('sun_sat boundary: start-1 is NOT an empty range — callers must end before the anchor Sunday', () => {
+  // Under sun_sat the first week ANCHORS BACK to the Sunday on/before the
+  // period start. For a Monday start, `start - 1` IS that anchor Sunday, so
+  // ending there evaluates a 1-day fragment week (0 qualifying days → fails
+  // everyone). The "nothing to evaluate yet" fallback in Overview /
+  // EmployeePabCalendar therefore ends at anchor - 1, which this test pins.
+  const start = new Date(2026, 6, 6); // Mon Jul 6
+  const anchorSunday = new Date(2026, 6, 5); // Sun Jul 5 = start - 1
+  const beforeAnchor = new Date(2026, 6, 4); // Sat Jul 4 = anchor - 1
+
+  const fragment = computeHslPabWeekInfo(start, anchorSunday, new Map(), 'sun_sat');
+  assert.equal(fragment.size, 1, 'start-1 under sun_sat evaluates a fragment week');
+  assert.equal([...fragment.values()][0].weekPasses, false, 'the empty fragment fails');
+  assert.equal(checkHslPabEligibility(start, anchorSunday, new Map(), 'sun_sat'), false);
+
+  const empty = computeHslPabWeekInfo(start, beforeAnchor, new Map(), 'sun_sat');
+  assert.equal(empty.size, 0, 'anchor-1 is the true empty range');
+  assert.equal(checkHslPabEligibility(start, beforeAnchor, new Map(), 'sun_sat'), true);
 });

@@ -638,6 +638,87 @@ export function checkHslPabEligibility(
   return true;
 }
 
+/** Per-week HSL PAB breakdown — the data behind {@link checkHslPabEligibility}'s
+ *  boolean, exposed so calendars can colour each cell the way the engine scored
+ *  it (reconciled weekdays, overnight credits) instead of re-deriving the rule. */
+export interface HslPabWeekInfo {
+  /** How many of the week's 7 days reached ≥ 7 h effective. */
+  qualifyingDays: number;
+  /** `qualifyingDays >= 5` — the week meets HSL's 5-of-7 quota. */
+  weekPasses: boolean;
+  /** ISO dates (`YYYY-MM-DD`) that qualified only via the overnight
+   *  forward/backward combination (own hours < 7 h). */
+  overnightIsos: Set<string>;
+}
+
+/**
+ * Walk the same weeks {@link checkHslPabEligibility} walks and record per-week
+ * data. Keyed by the ISO date of each week's FIRST day (Monday for `mon_sun`,
+ * Sunday for `sun_sat`). An empty map means there was nothing to evaluate
+ * (period ends before the first anchored week) — treat as eligible.
+ *
+ * The day-scoring loop is intentionally identical to `checkHslPabEligibility`:
+ * pass the SAME adjusted hours map (forgiven/holiday/orphanage bumps applied)
+ * and the same `[pabStart, pabEnd]` window and `weeks.every(w => w.weekPasses)`
+ * equals the boolean the engine returns.
+ */
+export function computeHslPabWeekInfo(
+  pabStart: Date,
+  pabEnd: Date,
+  hoursByDateKey: Map<string, number>,
+  weekModel: 'mon_sun' | 'sun_sat' = 'mon_sun',
+): Map<string, HslPabWeekInfo> {
+  const out = new Map<string, HslPabWeekInfo>();
+  const endTime = new Date(pabEnd.getFullYear(), pabEnd.getMonth(), pabEnd.getDate()).getTime();
+
+  const cur = new Date(pabStart.getFullYear(), pabStart.getMonth(), pabStart.getDate());
+  const dow = cur.getDay(); // Sun=0 … Sat=6
+  if (weekModel === 'sun_sat') {
+    cur.setDate(cur.getDate() - dow); // back to Sunday on/before
+  } else {
+    const daysToMon = dow === 0 ? 1 : dow === 1 ? 0 : 8 - dow;
+    cur.setDate(cur.getDate() + daysToMon);
+  }
+
+  while (cur.getTime() <= endTime) {
+    const weekStartIso = `${cur.getFullYear()}-${String(cur.getMonth() + 1).padStart(2, '0')}-${String(cur.getDate()).padStart(2, '0')}`;
+    let qualifyingDays = 0;
+    const overnightIsos = new Set<string>();
+    for (let d = 0; d < 7; d++) {
+      if (cur.getTime() > endTime) break;
+      const todaySec = hoursByDateKey.get(pabDateKey(cur)) ?? 0;
+      let effectiveSec = todaySec;
+      if (todaySec > 0 && todaySec < 7 * 3600) {
+        // Forward: today's shift extends into tomorrow (today is the overnight start)
+        const nextDay = new Date(cur.getFullYear(), cur.getMonth(), cur.getDate() + 1);
+        const nextDaySec = hoursByDateKey.get(pabDateKey(nextDay)) ?? 0;
+        if (todaySec + nextDaySec >= 7 * 3600) {
+          effectiveSec = todaySec + nextDaySec;
+        } else {
+          // Backward: today is the tail of yesterday's overnight shift
+          const prevDay = new Date(cur.getFullYear(), cur.getMonth(), cur.getDate() - 1);
+          const prevDaySec = hoursByDateKey.get(pabDateKey(prevDay)) ?? 0;
+          if (prevDaySec > 0 && prevDaySec < 7 * 3600 && prevDaySec + todaySec >= 7 * 3600) {
+            effectiveSec = prevDaySec + todaySec;
+          }
+        }
+      }
+      if (effectiveSec >= 7 * 3600) {
+        qualifyingDays++;
+        if (todaySec < 7 * 3600) {
+          overnightIsos.add(
+            `${cur.getFullYear()}-${String(cur.getMonth() + 1).padStart(2, '0')}-${String(cur.getDate()).padStart(2, '0')}`,
+          );
+        }
+      }
+      cur.setDate(cur.getDate() + 1);
+    }
+    out.set(weekStartIso, { qualifyingDays, weekPasses: qualifyingDays >= 5, overnightIsos });
+  }
+
+  return out;
+}
+
 /* ------------------------------------------------------------------ */
 /*  Canonical-column → ISO-date resolution for source files            */
 /* ------------------------------------------------------------------ */
