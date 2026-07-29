@@ -28,7 +28,6 @@ import {
   getHubstaffOrgId,
   hubstaffApiConfigured,
 } from "@/lib/hubstaff/api-client";
-import { classifySyncError, runHubstaffWeeklySync } from "@/lib/hubstaff/run-weekly-sync";
 import { normEmail } from "@/lib/email/norm-email";
 import { getSessionActor } from "@/lib/auth/session-actor";
 import { requireFeatureEdit } from "@/lib/auth/authorize-feature";
@@ -530,13 +529,10 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // JSON body → live API sync ("Sync from Hubstaff" in the Payroll Wizard).
-    // Multipart body → the original CSV upload path, unchanged below.
-    const contentType = req.headers.get("content-type") ?? "";
-    if (contentType.includes("application/json")) {
-      return handleApiSync(req);
-    }
-
+    // CSV upload (multipart) is the only ingest path. The manual "Sync from
+    // Hubstaff" wizard action was removed — the Hubstaff API's 1000 req/hour cap
+    // made an on-demand pull unreliable. The weekly auto-sync cron
+    // (/api/cron/sync-hubstaff-week) still pulls live once per week.
     const form = await req.formData();
     const file = form.get("file");
     if (!file || typeof file === "string") {
@@ -587,51 +583,5 @@ export async function POST(req: NextRequest) {
     const msg = e instanceof Error ? e.message : String(e);
     console.error("[POST /api/hubstaff-hours]", msg);
     return NextResponse.json({ success: false, error: msg }, { status: 500 });
-  }
-}
-
-/**
- * Live Hubstaff API sync: pulls the week's daily activity aggregates from the
- * Hubstaff REST API, renders them as the SAME weekly-summary CSV a manual export
- * produces, and feeds that through `replaceHubstaffHoursFromCsvText` — so an API
- * batch is archived, promoted, and consumed downstream exactly like a CSV upload.
- * Auth (`requireFeatureEdit`) and the service-role check already ran in POST.
- *
- * The heavy lifting lives in `runHubstaffWeeklySync` so the weekly auto-sync cron
- * (/api/cron/sync-hubstaff-week) runs byte-identical logic; this handler only
- * parses the request and maps thrown errors to HTTP status codes.
- */
-async function handleApiSync(req: NextRequest) {
-  const body = (await req.json().catch(() => ({}))) as {
-    action?: unknown;
-    weekStart?: unknown;
-    weekEnd?: unknown;
-    uploaded_by?: unknown;
-  };
-  if (body.action !== "api_sync") {
-    return NextResponse.json(
-      { success: false, error: `Unknown action "${String(body.action)}".` },
-      { status: 400 },
-    );
-  }
-
-  const weekStart = typeof body.weekStart === "string" ? body.weekStart.trim() : "";
-  const weekEnd = typeof body.weekEnd === "string" ? body.weekEnd.trim() : "";
-  const uploadedBy = typeof body.uploaded_by === "string" ? body.uploaded_by.trim() || null : null;
-  const actor = await getSessionActor();
-
-  try {
-    const result = await runHubstaffWeeklySync({
-      weekStart,
-      weekEnd,
-      uploadedBy,
-      actor: { ...actor, ip_address: clientIp(req) },
-    });
-    return NextResponse.json({ success: true, ...result });
-  } catch (e) {
-    const { httpStatus, retryable, message } = classifySyncError(e);
-    // Untagged errors are genuine bugs — let POST's outer 500 handler catch them.
-    if (httpStatus === 500) throw e;
-    return NextResponse.json({ success: false, error: message, retryable }, { status: httpStatus });
   }
 }

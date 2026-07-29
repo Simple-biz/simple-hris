@@ -61,11 +61,12 @@ function syncError(message: string, status: number, code?: string): Error {
 }
 
 /**
- * Shared "Sync from Hubstaff" pipeline used by BOTH the manual Payroll Wizard
- * action (POST /api/hubstaff-hours with a JSON body) and the weekly auto-sync cron
- * (/api/cron/sync-hubstaff-week). Keeping it in one place means an API batch is
- * archived, promoted-to-current, notified (`payroll.available`) and MESA-credited
- * identically no matter which path fired it.
+ * Live Hubstaff pull for one Sun→Sat pay week, driven by the weekly auto-sync cron
+ * (/api/cron/sync-hubstaff-week) — the only remaining caller since the Payroll
+ * Wizard's manual "Sync from Hubstaff" button was removed (the API's 1000 req/hour
+ * cap made on-demand pulls unreliable). An API batch is archived,
+ * promoted-to-current, notified (`payroll.available`) and MESA-credited exactly
+ * like a manual CSV upload.
  *
  * Throws (never returns a partial success):
  *   - status 400 for a malformed / non-Sunday-to-Saturday week (code `no_data`

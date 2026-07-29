@@ -56,14 +56,14 @@ import { cn } from '@/lib/utils';
 import { formatMoney, normalizeCurrency, sumByCurrency, CONTRACTOR_CURRENCIES } from '@/lib/contractor-currency';
 import { InvoiceViewDialog, type SavedInvoice } from '@/components/contractor/InvoiceReceiptDialog';
 import { KPI_BONUS_ID, DEPARTMENTS, FORMULA_DEPT_KEYS, MANAGER_BONUS_DEPT_KEYS, ACCOUNTING_WEEKDAY_METRICS, calcLeadGenBonus, isDevsDelivery, isDevsChecking, isJeromeRosero, isTeal } from '@/lib/payroll/department-bonus';
-import { Button, buttonVariants } from '@/components/ui/button';
+import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
-import { DatePicker, WeekPicker, type DateRange } from '@/components/ui/date-picker';
-import { formatPeriodRange, periodLabelFromFilename } from '@/lib/hubstaff/period-label';
+import { DatePicker } from '@/components/ui/date-picker';
+import { periodLabelFromFilename } from '@/lib/hubstaff/period-label';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
 import { Switch } from '@/components/ui/switch';
@@ -886,35 +886,6 @@ function colDayPrefix(col: string): { label: string; order: number; weekday: boo
 }
 
 /**
- * Live Hubstaff API sync is opt-in per environment: the button only renders when the
- * deployment has credentials configured (HUBSTAFF_PAT / HUBSTAFF_ORG_ID server-side),
- * signalled by this build-time flag. CSV upload always remains available as fallback.
- */
-const HUBSTAFF_API_ENABLED = process.env.NEXT_PUBLIC_HUBSTAFF_API_ENABLED === 'true';
-
-/** Local-calendar ISO date arithmetic for the sync week picker. */
-function addDaysToIso(iso: string, days: number): string {
-  const [y, m, d] = iso.split('-').map(Number);
-  const dt = new Date(y, (m ?? 1) - 1, (d ?? 1) + days);
-  return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
-}
-
-/** Today's date in the browser's local calendar (bounds the sync week picker). */
-function localTodayIso(): string {
-  const now = new Date();
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-}
-
-/** The most recent COMPLETED Sun→Sat pay week (uploads are Sun-anchored). */
-function defaultHubstaffSyncWeek(): DateRange {
-  const now = new Date();
-  const d = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  d.setDate(d.getDate() - d.getDay() - 7);
-  const start = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-  return { start, end: addDaysToIso(start, 6) };
-}
-
-/**
  * Returns true when a Hubstaff column name represents a Monday–Friday workday.
  *
  * Priority:
@@ -1142,10 +1113,6 @@ export default function PayrollWizard({
   const [hubstaffPreviewLoading, setHubstaffPreviewLoading] = useState(false);
   const [hubstaffPreviewError, setHubstaffPreviewError] = useState<string | null>(null);
   const [weeklyUploadLoading, setWeeklyUploadLoading] = useState(false);
-  const [hubstaffSyncLoading, setHubstaffSyncLoading] = useState(false);
-  const [hubstaffSyncWeek, setHubstaffSyncWeek] = useState<DateRange>(() =>
-    defaultHubstaffSyncWeek(),
-  );
   const [masterListUploadLoading, setMasterListUploadLoading] = useState(false);
   const [ratesUploadLoading, setRatesUploadLoading] = useState(false);
   const { state: lockState, setLocked } = useDispatchLock();
@@ -4153,10 +4120,11 @@ export default function PayrollWizard({
         const norm = normEmail(cr.email);
         if (norm && !rawByNorm.has(norm)) rawByNorm.set(norm, cr.email);
       }
-      // Newest-written row wins when a worker has several open amounts.
-      // `rowId` is the winning row for that email — the row that actually gets
-      // applied, so it's the one we file as Done afterwards (force only).
-      const byEmail = new Map<string, { amount: number; note: string; rowId: string }>();
+      // Every eligible amount a worker carries this week, oldest-written first —
+      // combined below (different amounts add up, an identical amount repeated
+      // counts once and is flagged as a suspected duplicate). Collected per
+      // email so the whole group is decided together, not row by row.
+      const contributionsByEmail = new Map<string, NoteContribution[]>();
       const rows = [...(json.rows ?? [])].sort((a, b) => a.updated_at.localeCompare(b.updated_at));
       // Linked workers with a parseable amount but NO row in this week's calc
       // results — nothing downstream (Adj. column, Validation, pay stubs,
@@ -7075,63 +7043,6 @@ export default function PayrollWizard({
     }
   };
 
-  /**
-   * Live "Sync from Hubstaff": the server pulls the selected Sun→Sat pay week
-   * straight from the Hubstaff REST API and ingests it through the same pipeline
-   * as a CSV upload. The response echoes the generated CSV so the client-side
-   * post-ingest steps stay identical. The window is exactly the 7 days the
-   * WeekPicker snapped to — no 8-day Sun→Sun overlap like the legacy exports,
-   * so the cutoff is precise on both ends.
-   */
-  const syncFromHubstaffApi = async (week: DateRange) => {
-    if (!week.start || hubstaffSyncLoading) return;
-    setHubstaffSyncLoading(true);
-    try {
-      const weekEnd = addDaysToIso(week.start, 6); // Saturday — always a 7-day week
-      const res = await fetch('/api/hubstaff-hours', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'api_sync',
-          weekStart: week.start,
-          weekEnd,
-          uploaded_by: sessionEmail || undefined,
-        }),
-      });
-      const json = (await res.json()) as {
-        success?: boolean;
-        error?: string;
-        retryable?: boolean;
-        rowCount?: number;
-        fileName?: string;
-        csvText?: string;
-      };
-      if (!res.ok || !json.success) {
-        // A 429 is Hubstaff throttling us, not a failure to act on — surface it
-        // as a calm "try again shortly" rather than an alarming error toast.
-        if (res.status === 429 || json.retryable) {
-          toast.warning('Hubstaff is busy — try again shortly', {
-            description: json.error || 'Hubstaff rate limit hit. Wait about a minute, then sync again.',
-          });
-          return;
-        }
-        throw new Error(json.error || 'Hubstaff sync failed');
-      }
-
-      await finalizeHubstaffIngest(json.csvText ?? '', json.fileName ?? '');
-
-      toast.success('Synced from Hubstaff', {
-        description: `${json.rowCount ?? 0} rows loaded for ${periodLabelFromFilename(json.fileName, `${week.start} → ${weekEnd}`)}.`,
-      });
-      cursorOverlayRef.current?.broadcastSave();
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Hubstaff sync failed';
-      toast.error('Hubstaff sync failed', { description: msg });
-    } finally {
-      setHubstaffSyncLoading(false);
-    }
-  };
-
   const confirmWeeklyUploadToDatabase = async () => {
     if (!pendingWeekly) return;
     setWeeklyUploadLoading(true);
@@ -7929,32 +7840,22 @@ export default function PayrollWizard({
                     </div>
                   </section>
 
-                  {/* 4. Hubstaff weekly timesheet — prism-lit to flag the new live-sync feature */}
-                  <section className="prism-panel relative isolate flex flex-col gap-3 overflow-hidden rounded-xl border border-indigo-200/70 bg-indigo-50/40 p-4 shadow-[0_10px_30px_-16px_rgba(99,102,241,0.5)] dark:border-indigo-900/40 dark:bg-indigo-950/20 dark:shadow-[0_10px_34px_-16px_rgba(99,102,241,0.55)]">
-                    {/* Iridescent jewel rim + occasional facet glint (.prism-* keyframes in index.css). */}
-                    <span aria-hidden className="prism-rim pointer-events-none absolute inset-0 z-0 rounded-[inherit]" />
-                    <span aria-hidden className="prism-sheen pointer-events-none z-0" />
-
-                    <div className="relative z-10 flex flex-1 flex-col gap-3">
-                      <div className="flex items-start gap-3">
-                        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-indigo-200/90 bg-white shadow-sm dark:border-indigo-800/60 dark:bg-indigo-950/50">
-                          <Clock className="h-5 w-5 text-indigo-700 dark:text-indigo-400" aria-hidden />
-                        </div>
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-center gap-1.5">
-                            <p className="text-[10px] font-semibold uppercase tracking-wider text-indigo-800/90 dark:text-indigo-400/90">
-                              Hubstaff timesheets
-                            </p>
-                            <span className="inline-flex items-center gap-1 rounded-full border border-indigo-300/70 bg-white/80 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-indigo-700 shadow-sm dark:border-indigo-500/40 dark:bg-indigo-950/60 dark:text-indigo-300">
-                              <Sparkles className="h-2.5 w-2.5" aria-hidden />
-                              New
-                            </span>
-                          </div>
-                          <h3 className="text-base font-semibold leading-tight text-zinc-900 dark:text-white">
-                            Hubstaff weekly report
-                          </h3>
-                        </div>
+                  {/* 4. Hubstaff weekly timesheet — CSV upload only (the live API sync was
+                      removed: Hubstaff's 1000 req/hour cap made on-demand pulls unreliable). */}
+                  <section className="flex flex-col gap-3 rounded-xl border border-indigo-200/70 bg-indigo-50/40 p-4 dark:border-indigo-900/40 dark:bg-indigo-950/20">
+                    <div className="flex items-start gap-3">
+                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-indigo-200/90 bg-white dark:border-indigo-800/60 dark:bg-indigo-950/50">
+                        <Clock className="h-5 w-5 text-indigo-700 dark:text-indigo-400" aria-hidden />
                       </div>
+                      <div className="min-w-0">
+                        <p className="text-[10px] font-semibold uppercase tracking-wider text-indigo-800/90 dark:text-indigo-400/90">
+                          Hubstaff timesheets
+                        </p>
+                        <h3 className="text-base font-semibold leading-tight text-zinc-900 dark:text-white">
+                          Hubstaff weekly report
+                        </h3>
+                      </div>
+                    </div>
                     <p className="text-xs leading-relaxed text-zinc-600 dark:text-zinc-400">
                       Choose your Hubstaff export CSV. After you confirm, the rows are appended to{' '}
                       <span className="font-mono text-zinc-500">public.hubstaff_hours</span> in Supabase
@@ -7983,61 +7884,6 @@ export default function PayrollWizard({
                         accept=".csv,.CSV,text/csv,application/csv,text/plain"
                         className="hidden"
                       />
-                      {HUBSTAFF_API_ENABLED && (
-                        <>
-                          <div className="flex items-center gap-2 py-0.5">
-                            <div className="h-px flex-1 bg-indigo-200/70 dark:bg-indigo-900/50" />
-                            <span className="text-[10px] font-semibold uppercase tracking-wider text-indigo-400 dark:text-indigo-500">
-                              or sync live
-                            </span>
-                            <div className="h-px flex-1 bg-indigo-200/70 dark:bg-indigo-900/50" />
-                          </div>
-                          {/* Opens the app-standard week calendar: one click selects the whole
-                              Sun→Sat pay week (start + finish), and the confirm CTA inside the
-                              panel pulls exactly those 7 days from the Hubstaff API. */}
-                          <WeekPicker
-                            value={hubstaffSyncWeek}
-                            onChange={setHubstaffSyncWeek}
-                            max={localTodayIso()}
-                            disabled={hubstaffSyncLoading || weeklyUploadLoading}
-                            accent={{
-                              ring: 'focus-visible:ring-indigo-500/30 focus-visible:border-indigo-500',
-                              chipBg: 'bg-indigo-50 dark:bg-indigo-950/40',
-                              chipText: 'text-indigo-800 dark:text-indigo-200',
-                              btn: '',
-                              bar: 'bg-indigo-600 dark:bg-indigo-400',
-                              barText: 'text-white dark:text-indigo-950',
-                              focusRing: 'focus-visible:ring-indigo-500/40',
-                              today: 'text-indigo-700 dark:text-indigo-300',
-                            }}
-                            actionLabel="Sync"
-                            actionBusy={hubstaffSyncLoading}
-                            onAction={(week) => void syncFromHubstaffApi(week)}
-                            className="w-full"
-                            triggerClassName={cn(
-                              buttonVariants({ variant: 'outline' }),
-                              'w-full gap-2 border-indigo-300/80 bg-white text-indigo-900 hover:bg-indigo-50 dark:border-indigo-800 dark:bg-indigo-950/40 dark:text-indigo-100 dark:hover:bg-indigo-950/70',
-                            )}
-                            title="Pick the Sun → Sat pay week, then pull it straight from the Hubstaff API"
-                            aria-label="Sync from Hubstaff — choose the pay week"
-                          >
-                            {hubstaffSyncLoading ? (
-                              <Loader2 className="h-4 w-4 animate-spin" />
-                            ) : (
-                              <RefreshCw className="h-4 w-4" />
-                            )}
-                            {hubstaffSyncLoading ? 'Fetching from Hubstaff…' : 'Sync from Hubstaff'}
-                          </WeekPicker>
-                          <p className="text-center text-[10px] leading-snug text-zinc-500 dark:text-zinc-500">
-                            Week <span className="font-semibold text-zinc-600 dark:text-zinc-400">{formatPeriodRange(
-                              new Date(hubstaffSyncWeek.start + 'T00:00:00'),
-                              new Date(hubstaffSyncWeek.end + 'T00:00:00'),
-                            )}</span>{' '}
-                            · exact Sun → Sat cutoff
-                          </p>
-                        </>
-                      )}
-                      </div>
                     </div>
                   </section>
                 </div>

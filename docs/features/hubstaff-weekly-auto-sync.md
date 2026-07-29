@@ -1,12 +1,17 @@
 # Hubstaff weekly auto-sync (n8n-scheduled cron)
 
-Automates the Payroll Wizard's "Sync from Hubstaff" button: every Sunday at
-midnight America/New_York an n8n workflow POSTs
+Every Sunday at midnight America/New_York an n8n workflow POSTs
 `/api/cron/sync-hubstaff-week`, which pulls the **just-completed Sun→Sat pay
 week** (the batch payroll pays, one week in arrears) live from the Hubstaff
-API and runs it through the exact same pipeline as a manual wizard sync.
+API and runs it through the exact same ingest pipeline as a manual CSV upload.
 
 Built Jul 25, 2026.
+
+> **Jul 29, 2026 — the manual path is gone.** The Payroll Wizard's "Sync from
+> Hubstaff" button and the `action: "api_sync"` JSON branch on
+> `POST /api/hubstaff-hours` were removed: Hubstaff's 1000 req/hour cap made an
+> on-demand pull unreliable, so the wizard is CSV-upload only. This weekly cron
+> is now the **only** live-API ingest path and is unaffected (one pull a week).
 
 ## Key files
 
@@ -14,16 +19,15 @@ Built Jul 25, 2026.
 | --- | --- |
 | Shared sync pipeline + week math + error classifier | `src/lib/hubstaff/run-weekly-sync.ts` |
 | Cron endpoint (GET/POST) | `app/api/cron/sync-hubstaff-week/route.ts` |
-| Manual wizard path (same pipeline, `handleApiSync`) | `app/api/hubstaff-hours/route.ts` |
+| CSV upload ingest (the wizard's only path) | `app/api/hubstaff-hours/route.ts` |
 | n8n scheduler workflow (import me) | `references/n8n/hubstaff-weekly-auto-sync.workflow.json` |
 | CSV rendering + deterministic batch filename | `src/lib/hubstaff/build-weekly-summary.ts` (`apiSyncFileName`) |
 | Elevated-session fallback auth | `src/lib/auth/cron-auth.ts` (`cronSessionElevated`) |
 
-## Shared pipeline — `runHubstaffWeeklySync()`
+## Sync pipeline — `runHubstaffWeeklySync()`
 
-Extracted from the wizard's manual Hubstaff sync so both callers run
-byte-identical logic; the routes only parse the request and map thrown errors
-to HTTP statuses.
+Lives apart from the route so the endpoint only parses the request and maps
+thrown errors to HTTP statuses.
 
 1. Validates the week is **strictly Sunday→Saturday, 7 days** (guards against
    reintroducing the legacy 8-day Sun→Sun overlap / dropped-Sunday bug);
@@ -42,7 +46,7 @@ to HTTP statuses.
    - `recordMesaWeeklyContributions` — the weekly MESA ledger deposit per
      opted-in member, idempotent per member/week.
 
-So a cron run produces exactly what a manual wizard sync does: a current
+So a cron run produces exactly what a manual CSV upload does: a current
 `hubstaff_hours` batch, the payroll notifications, and the MESA deposits.
 
 **`mostRecentlyCompletedPayWeek(now)`** — pure-UTC math returning the last

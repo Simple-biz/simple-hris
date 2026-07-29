@@ -37,8 +37,8 @@ function clientIp(req: NextRequest): string | null {
  * Sunday (01:00 EDT in summer — Vercel cron is UTC-only, no DST). At fire time the
  * new Sun→Sat week has only just begun, so it syncs the week that JUST COMPLETED
  * (previous Sun→Sat) — the batch payroll pays, one week in arrears — pulling it
- * live from the Hubstaff API exactly as the Payroll Wizard's "Sync from Hubstaff"
- * button does (archive + promote-to-current + `payroll.available` + MESA deposit).
+ * live from the Hubstaff API and ingesting it exactly like a manual CSV upload
+ * (archive + promote-to-current + `payroll.available` + MESA deposit).
  *
  * Idempotent: the batch filename is deterministic (`apiSyncFileName`), so a Vercel
  * retry or a manual re-run replaces the same batch instead of duplicating it.
