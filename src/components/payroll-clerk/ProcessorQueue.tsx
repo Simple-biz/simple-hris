@@ -279,11 +279,21 @@ function ProcessorQueue({ processor, rows, onMarkPaid, onViewPaystub, periodStar
     return opts;
   }, [rows]);
 
-  // Drop a stale department filter when switching tabs re-scopes the queue.
-  useEffect(() => { setDeptFilter(''); }, [processor]);
+  // "Under ₱7k" — only the wires people going out via Wise this week under the
+  // sub-₱7,000 rule (row.smallWiresViaWise), so the clerk can batch the temp
+  // reroutes. The chip renders only where such rows exist (All pending / Wise).
+  const [underSevenKOnly, setUnderSevenKOnly] = useState(false);
+  const underSevenKCount = useMemo(
+    () => rows.reduce((n, r) => n + (r.smallWiresViaWise ? 1 : 0), 0),
+    [rows],
+  );
+
+  // Drop stale filters when switching tabs re-scopes the queue.
+  useEffect(() => { setDeptFilter(''); setUnderSevenKOnly(false); }, [processor]);
 
   const filtered = useMemo(() => {
     let list = rows;
+    if (underSevenKOnly) list = list.filter((r) => r.smallWiresViaWise);
     if (deptFilter) {
       list =
         deptFilter === NO_DEPT
@@ -332,7 +342,7 @@ function ProcessorQueue({ processor, rows, onMarkPaid, onViewPaystub, periodStar
   const PAGE_SIZE = 25;
   const [page, setPage] = useState(1);
   const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
-  useEffect(() => { setPage(1); }, [debouncedQuery, processor, deptFilter]);
+  useEffect(() => { setPage(1); }, [debouncedQuery, processor, deptFilter, underSevenKOnly]);
   useEffect(() => { if (page > pageCount) setPage(pageCount); }, [page, pageCount]);
   const pagedRows = useMemo(
     () => filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE),
@@ -461,6 +471,32 @@ function ProcessorQueue({ processor, rows, onMarkPaid, onViewPaystub, periodStar
                 searchPlaceholder="Search departments…"
                 options={deptOptions}
               />
+            )}
+            {(underSevenKCount > 0 || underSevenKOnly) && (
+              <button
+                type="button"
+                onClick={() => setUnderSevenKOnly((v) => !v)}
+                aria-pressed={underSevenKOnly}
+                title="Only sub-₱7,000 wires payments going out via Wise this week"
+                className={cn(
+                  'inline-flex h-8 items-center gap-1.5 rounded-md border px-2.5 text-[11px] font-semibold shadow-sm transition-colors',
+                  underSevenKOnly
+                    ? 'border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100 dark:border-emerald-500/40 dark:bg-emerald-500/15 dark:text-emerald-300 dark:hover:bg-emerald-500/20'
+                    : 'border-zinc-200 bg-white text-zinc-600 hover:border-emerald-300 hover:bg-emerald-50 hover:text-emerald-700 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-300 dark:hover:bg-emerald-500/10 dark:hover:text-emerald-300',
+                )}
+              >
+                Under ₱7k
+                <span
+                  className={cn(
+                    'rounded-full px-1.5 py-0.5 font-mono text-[10px] font-semibold tabular-nums',
+                    underSevenKOnly
+                      ? 'bg-emerald-600/10 text-emerald-800 dark:bg-emerald-400/15 dark:text-emerald-300'
+                      : 'bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400',
+                  )}
+                >
+                  {underSevenKCount}
+                </span>
+              </button>
             )}
           </div>
         )}
