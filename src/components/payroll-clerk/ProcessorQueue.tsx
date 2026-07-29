@@ -324,7 +324,7 @@ function ProcessorQueue({ processor, rows, onMarkPaid, onViewPaystub, periodStar
         (showsContractorBadge(r) && 'contractor'.includes(q)) ||
         (r.invoiceNumber ?? '').toLowerCase().includes(q),
     );
-  }, [rows, debouncedQuery, deptFilter]);
+  }, [rows, debouncedQuery, deptFilter, underSevenKOnly]);
 
   // Keep the live filtered list in a ref so `handleOpenRow` stays referentially
   // stable — otherwise every keystroke would invalidate the memoized rows and
