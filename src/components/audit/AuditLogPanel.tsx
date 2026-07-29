@@ -275,6 +275,33 @@ function syncSummary(details: Record<string, unknown> | null): string {
   return rows != null ? ` — ${rows} rows${detail}` : detail || ' — completed';
 }
 
+/** "Name (email)" when both are present, else whichever exists. */
+function paymentParty(details: Record<string, unknown> | null): string {
+  const name = details?.recipient_name ? String(details.recipient_name).trim() : '';
+  const email = details?.recipient_email ? String(details.recipient_email).trim() : '';
+  if (name && email) return `${name} (${email})`;
+  return name || email || '?';
+}
+
+/** "₱12,345.00 / $220.00 / COP 850,000" from whichever amounts the payment carried. */
+function paymentAmounts(details: Record<string, unknown> | null): string {
+  const parts: string[] = [];
+  if (details?.amount_php != null) {
+    parts.push(
+      `₱${Number(details.amount_php).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+    );
+  }
+  if (details?.amount_usd != null) {
+    parts.push(
+      `$${Number(details.amount_usd).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+    );
+  }
+  if (details?.amount_cop != null) {
+    parts.push(`COP ${Number(details.amount_cop).toLocaleString('en-US')}`);
+  }
+  return parts.join(' / ');
+}
+
 export function formatActionLabel(action: string, details: Record<string, unknown> | null): string {
   switch (action) {
     case 'settings.rule.toggle':
@@ -366,10 +393,32 @@ export function formatActionLabel(action: string, details: Record<string, unknow
     case 'pab_dispute.withdrawn':
       return `PAB issue withdrawn: ${String(details?.employee ?? '?')} ${String(details?.dispute_date ?? '?')}`;
     case 'payment.dispatched': {
-      const recip = String(details?.recipient_email ?? '?');
+      const who = paymentParty(details);
       const proc = String(details?.processor ?? '?');
-      const usd = details?.amount_usd != null ? `$${details.amount_usd}` : '';
-      return `Payment dispatched: ${recip} via ${proc}${usd ? ` (${usd})` : ''}`;
+      const amt = paymentAmounts(details);
+      const status = details?.status && details.status !== 'paid' ? ` · logged as ${String(details.status)}` : '';
+      const invoice = details?.invoice_number ? ` · invoice ${String(details.invoice_number)}` : '';
+      return `Payment dispatched: ${who}${amt ? ` — ${amt}` : ''} via ${proc}${status}${invoice}`;
+    }
+    case 'payment.undone': {
+      // Legacy events (pre-snapshot) only carried { count, ids } — the rows were
+      // already deleted, so there's nothing richer to show for them. Degraded
+      // new events at least carry the batch block; no-op attempts carry count 0.
+      if (details?.recipient_email == null) {
+        const batch = details?.batch as { deleted?: number } | undefined;
+        const n = details?.count ?? batch?.deleted;
+        if (Number(n) === 0) return 'Payment undo attempted: rows were already undone';
+        return `Payment undone: ${n != null ? String(n) : '?'} payment record(s) deleted`;
+      }
+      const who = paymentParty(details);
+      const proc = String(details?.processor ?? '?');
+      const amt = paymentAmounts(details);
+      const origBy = details?.originally_paid_by ? ` · originally paid by ${String(details.originally_paid_by)}` : '';
+      const origStatus =
+        details?.original_status && details.original_status !== 'paid'
+          ? ` · was logged as ${String(details.original_status)}`
+          : '';
+      return `Payment UNDONE: ${who}${amt ? ` — ${amt}` : ''} via ${proc}${origBy}${origStatus}`;
     }
     case 'payroll.dispatch.locked':
       return `Payroll dispatch started — issues paused`;
@@ -611,6 +660,7 @@ function actionDot(action: string): string {
   if (action === 'pab_dispute.edited') return 'bg-yellow-500';
   if (action === 'pab_dispute.withdrawn') return 'bg-zinc-500';
   if (action === 'payment.dispatched') return 'bg-orange-500';
+  if (action === 'payment.undone') return 'bg-rose-600';
   if (action === 'payroll.dispatch.locked') return 'bg-rose-500';
   if (action === 'payroll.dispatch.unlocked') return 'bg-emerald-500';
   if (action === 'payroll.rate.set') return 'bg-amber-500';

@@ -39,6 +39,9 @@ export type AuditAction =
   | 'dispatch.lock_acquired'
   | 'dispatch.lock_released'
   | 'payment.dispatched'
+  // Undo / "Clear problem" — the dispatch row is DELETED, so the audit event
+  // carries the full snapshot of the payment (who, value, cycle, original payer).
+  | 'payment.undone'
   | 'paystubs.dispatched'
   // External bank-info self-update (public /update-bank-info link)
   | 'bank_update.otp_requested'
@@ -130,6 +133,31 @@ export async function insertAuditLog(entry: NewAuditLog): Promise<{ error: strin
     details:     entry.details ?? null,
     ip_address:  entry.ip_address ?? null,
   });
+
+  return { error: error?.message ?? null };
+}
+
+/**
+ * Bulk variant of {@link insertAuditLog} — one insert request for N events.
+ * Used by batch operations (e.g. a multi-select Undo in Payment Dispatch)
+ * where per-row events are wanted without N round-trips.
+ */
+export async function insertAuditLogs(entries: NewAuditLog[]): Promise<{ error: string | null }> {
+  const supabase = createSupabaseServiceRoleClient();
+  if (!supabase) return { error: 'Supabase not configured' };
+  if (entries.length === 0) return { error: null };
+
+  const { error } = await supabase.from('audit_log').insert(
+    entries.map((entry) => ({
+      user_name:   entry.user_name,
+      user_role:   entry.user_role,
+      action:      entry.action,
+      resource:    entry.resource,
+      resource_id: entry.resource_id ?? null,
+      details:     entry.details ?? null,
+      ip_address:  entry.ip_address ?? null,
+    })),
+  );
 
   return { error: error?.message ?? null };
 }

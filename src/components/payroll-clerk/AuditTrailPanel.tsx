@@ -68,6 +68,7 @@ const ACTION_PRESENTATION: Record<string, { label: string; tone: string }> = {
   'dispatch.lock_acquired':   { label: 'Start Processing',   tone: 'bg-orange-50 text-orange-700 border-orange-200 dark:bg-orange-500/10 dark:text-orange-300 dark:border-orange-500/30' },
   'dispatch.lock_released':   { label: 'Stop Processing',    tone: 'bg-orange-50 text-orange-700 border-orange-200 dark:bg-orange-500/10 dark:text-orange-300 dark:border-orange-500/30' },
   'payment.dispatched':       { label: 'Payment dispatched', tone: 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-300 dark:border-emerald-500/30' },
+  'payment.undone':           { label: 'Payment undone',     tone: 'bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-500/10 dark:text-rose-300 dark:border-rose-500/30' },
   'paystubs.dispatched':      { label: 'Paystubs dispatched',tone: 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-300 dark:border-emerald-500/30' },
 };
 

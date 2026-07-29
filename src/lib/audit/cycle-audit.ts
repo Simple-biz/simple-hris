@@ -39,6 +39,11 @@ export const CYCLE_AUDIT_ACTIONS = [
   'dispatch.lock_acquired',
   'dispatch.lock_released',
   'payment.dispatched',
+  // `payment.undone` is deliberately NOT in this time-window whitelist. New
+  // undo events carry explicit `details.cycle` context, so strategy 1 already
+  // surfaces them in the right cycle — and since an undo happens AFTER the
+  // period ends, the window here could only ever pull OTHER cycles' events
+  // (including legacy {count, ids} blobs) into the wrong trail.
   'paystubs.dispatched',
 ];
 

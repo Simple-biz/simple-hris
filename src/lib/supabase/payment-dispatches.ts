@@ -160,37 +160,41 @@ export async function listPaymentDispatches(params: {
  */
 export async function deletePaymentDispatches(
   ids: string[],
-): Promise<{ deleted: number; error: string | null }> {
+): Promise<{ deleted: number; deletedRows: PaymentDispatchRow[]; error: string | null }> {
   const supabase = createSupabaseServiceRoleClient() ?? createSupabaseServerClient();
-  if (!supabase) return { deleted: 0, error: "Supabase client unavailable" };
-  if (ids.length === 0) return { deleted: 0, error: null };
+  if (!supabase) return { deleted: 0, deletedRows: [], error: "Supabase client unavailable" };
+  if (ids.length === 0) return { deleted: 0, deletedRows: [], error: null };
 
   // supabase-js encodes `.in('id', ids)` into the request URL as
   // `?id=in.(uuid1,uuid2,…)`. A large multi-select (e.g. "select all" → 100+
   // UUIDs) overflows the gateway's URL-length limit and fails as a generic
   // "bad request"/500. Deleting in batches keeps each request small and also
   // isolates any single failing row to its own batch.
+  //
+  // `.select("*")` (not "id"): the RETURNING clause is the last atomic look at
+  // rows this call destroys — the undo route's `payment.undone` audit events
+  // are built from these, so a pre-delete snapshot race can never blank them.
   const CHUNK = 50;
-  let deleted = 0;
+  const deletedRows: PaymentDispatchRow[] = [];
   for (let i = 0; i < ids.length; i += CHUNK) {
     const batch = ids.slice(i, i + CHUNK);
     const { data, error } = await supabase
       .from("payment_dispatches")
       .delete()
       .in("id", batch)
-      .select("id");
+      .select("*");
     if (error) {
       const detail = [error.message, error.details, error.hint, error.code]
         .filter(Boolean)
         .join(" · ");
       console.error("[deletePaymentDispatches] batch delete failed", {
         batchSize: batch.length,
-        deletedSoFar: deleted,
+        deletedSoFar: deletedRows.length,
         error,
       });
-      return { deleted, error: detail || "Delete failed" };
+      return { deleted: deletedRows.length, deletedRows, error: detail || "Delete failed" };
     }
-    deleted += (data ?? []).length;
+    for (const row of (data ?? []) as PaymentDispatchRow[]) deletedRows.push(row);
   }
-  return { deleted, error: null };
+  return { deleted: deletedRows.length, deletedRows, error: null };
 }
