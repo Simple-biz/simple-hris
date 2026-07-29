@@ -1573,13 +1573,18 @@ function NoMatches({ query }: { query: string }) {
 }
 
 /**
- * Column template shared by the No Pay Rate list's header and its rows, so the
- * department / start-date columns line up: person · department · start · action.
- * Below `sm` the modal is too narrow for four columns, so the grid collapses to
- * one and each cell carries its own inline label.
+ * Column layout for the No Pay Rate list: person · department · start · action.
+ * The list wrapper ({@link RATE_GRID}) owns the four column tracks and the
+ * header and every row are subgrid rows of it, so the auto-sized status column
+ * resolves ONCE for the whole list — sizing it per row let the "Left" pill
+ * shift the department / start-date columns from row to row. Below `sm` the
+ * modal is too narrow for four columns, so the wrapper stacks normally and
+ * each row collapses to a one-column grid whose cells carry inline labels.
  */
+const RATE_GRID =
+  "space-y-0.5 sm:grid sm:grid-cols-[minmax(0,1fr)_minmax(0,8.5rem)_minmax(0,9rem)_auto] sm:gap-x-3 sm:gap-y-0.5 sm:space-y-0";
 const RATE_COLS =
-  "grid grid-cols-1 items-start gap-x-3 gap-y-0.5 sm:grid-cols-[minmax(0,1fr)_minmax(0,8.5rem)_minmax(0,9rem)_auto] sm:items-center";
+  "grid grid-cols-1 items-start gap-x-3 gap-y-0.5 sm:col-span-4 sm:grid-cols-subgrid sm:items-center";
 
 /** "Jul 20, 2026" for a `YYYY-MM-DD` start date. Parsed as a LOCAL calendar date
  *  (see parseDateOnlyLocal) so it never renders a day early west of UTC. */
@@ -3090,18 +3095,18 @@ function PayrollReadinessGlance({
                       <NoMatches query={rateQuery} />
                     ) : (
                       <>
-                        {/* Column headers — sm+ only; the grid stacks below that
-                            and each cell labels itself inline instead. */}
-                        <div
-                          className={`${RATE_COLS} hidden px-2 pb-1 text-[9px] font-semibold uppercase tracking-wide text-zinc-400 sm:grid dark:text-zinc-500`}
-                          aria-hidden
-                        >
-                          <span>Person</span>
-                          <span>Department</span>
-                          <span>Start date</span>
-                          <span className="text-right">Status</span>
-                        </div>
-                        <div className="space-y-0.5">
+                        <div className={RATE_GRID}>
+                          {/* Column headers — sm+ only; the grid stacks below
+                              that and each cell labels itself inline instead. */}
+                          <div
+                            className={`${RATE_COLS} hidden px-2 pb-1 text-[9px] font-semibold uppercase tracking-wide text-zinc-400 sm:grid dark:text-zinc-500`}
+                            aria-hidden
+                          >
+                            <span>Person</span>
+                            <span>Department</span>
+                            <span>Start date</span>
+                            <span className="text-right">Status</span>
+                          </div>
                           {ratesPage.pageItems.map((r) => (
                             <RatePersonRow
                               key={r.email ?? r.name}
