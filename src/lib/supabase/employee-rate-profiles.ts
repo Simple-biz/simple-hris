@@ -6,6 +6,7 @@ import {
 } from "./server";
 import { isSafeTableName, listPublicTableNames } from "./list-public-tables";
 import { fetchActiveHslDetailsByEmail } from "./hsl-agents";
+import { listPayStructures } from "./pay-structures-db";
 
 type RawRow = Record<string, unknown>;
 
@@ -455,6 +456,82 @@ function rateRowPriority(row: RawRow, currentUploadId: string | null): number {
 }
 
 /**
+ * Descending rate-row order: `rateRowPriority` first, then a DETERMINISTIC
+ * tie-break — newer `created_at`, then `id`. Without the tie-break,
+ * duplicate-person rows that tie on priority were merged in raw PostgREST scan
+ * order, so which duplicate's rate "won" the card could flip between requests
+ * (a stale other-department row vs the real one, decided by physical row
+ * position on disk).
+ */
+function compareRateRowsDesc(a: RawRow, b: RawRow, currentUploadId: string | null): number {
+  const d = rateRowPriority(b, currentUploadId) - rateRowPriority(a, currentUploadId);
+  if (d !== 0) return d;
+  const ca = toStr(getField(a, ["created_at"]));
+  const cb = toStr(getField(b, ["created_at"]));
+  // ISO timestamps: lexicographic order == chronological order.
+  if (ca !== cb) return cb.localeCompare(ca);
+  return toStr(getField(b, ["id"])).localeCompare(toStr(getField(a, ["id"])));
+}
+
+/** Employee-scope Payment Catalog rate, stringified for profile display. */
+type CatalogProfileRate = { regular: string; ot: string | null };
+
+/**
+ * Employee-scope Payment Catalog structures keyed by normalized email. The
+ * catalog is the source of truth for a person's rate: it outranks the merged
+ * sheet rows AND the HSL pay-plan override, mirroring the pay engines'
+ * priority (`employee catalog → sheet → department base`, resolve-rate.ts) so
+ * this page can never display a rate payroll wouldn't pay. PHP structures
+ * only: profiles render peso rates; a USD structure needs the FX-aware overlay
+ * the pay engines apply, so it is left to the sheet value here.
+ */
+async function fetchEmployeeCatalogRatesByEmail(): Promise<Map<string, CatalogProfileRate>> {
+  const map = new Map<string, CatalogProfileRate>();
+  try {
+    const { structures } = await listPayStructures();
+    for (const s of structures) {
+      if (s.scope !== "employee" || s.currency !== "PHP") continue;
+      const em = normEmail(s.employeeEmail ?? null);
+      if (!em || !Number.isFinite(s.regularRate)) continue;
+      map.set(em, {
+        regular: String(s.regularRate),
+        ot: s.otRate != null && Number.isFinite(s.otRate) ? String(s.otRate) : null,
+      });
+    }
+  } catch {
+    // Catalog unavailable — profiles fall back to the merged sheet rows.
+  }
+  return map;
+}
+
+function catalogRateForEmails(
+  catalog: Map<string, CatalogProfileRate>,
+  emails: Array<string | null | undefined>,
+): CatalogProfileRate | null {
+  if (catalog.size === 0) return null;
+  for (const e of emails) {
+    const em = normEmail(e ?? null);
+    if (!em) continue;
+    const hit = catalog.get(em);
+    if (hit) return hit;
+  }
+  return null;
+}
+
+/** Overlay a catalog rate onto a merged rates row (same mechanism as the HSL
+ *  override — and applied AFTER it, because an employee structure wins). */
+function injectCatalogRate(
+  mergedRates: RawRow,
+  catalog: Map<string, CatalogProfileRate>,
+  emails: Array<string | null | undefined>,
+): void {
+  const hit = catalogRateForEmails(catalog, emails);
+  if (!hit) return;
+  mergedRates["Regular Rate"] = hit.regular;
+  if (hit.ot != null) mergedRates["OT Rate"] = hit.ot;
+}
+
+/**
  * Multi-value indexes: two master rows can legitimately share a work_email (dual-role
  * employee listed in two departments). They are only the "same person" when their
  * personal_email also matches. When two masters share work_email but have different
@@ -885,9 +962,10 @@ export async function getEmployeeRateProfiles(): Promise<GetEmployeeRateProfiles
 
   const mergeNotes: string[] = [];
   const byTable = new Map<string, RawRow[]>();
-  const [currentRatesUploadId, hslRes] = await Promise.all([
+  const [currentRatesUploadId, hslRes, catalogRates] = await Promise.all([
     getCurrentRatesUploadIdForProfiles(),
     fetchActiveHslDetailsByEmail(),
+    fetchEmployeeCatalogRatesByEmail(),
   ]);
 
   const fetched = await Promise.all(
@@ -962,8 +1040,8 @@ export async function getEmployeeRateProfiles(): Promise<GetEmployeeRateProfiles
   };
 
   for (const [groupId, groupRows] of groupMap) {
-    const orderedGroupRows = [...groupRows].sort(
-      (a, b) => rateRowPriority(b, currentRatesUploadId) - rateRowPriority(a, currentRatesUploadId),
+    const orderedGroupRows = [...groupRows].sort((a, b) =>
+      compareRateRowsDesc(a, b, currentRatesUploadId),
     );
     const mergedRates = mergeRowsUniqueFieldOrder(orderedGroupRows);
     const master = findMasterForMergedRates(mergedRates, byEmail, byName);
@@ -996,6 +1074,15 @@ export async function getEmployeeRateProfiles(): Promise<GetEmployeeRateProfiles
         if (hit.otRate != null) mergedRates["OT Rate"] = String(hit.otRate);
       }
     }
+
+    // Employee-scope Payment Catalog rate — the source of truth — wins over
+    // both the merged sheet rows and the HSL override above.
+    injectCatalogRate(mergedRates, catalogRates, [
+      toStr(getField(mergedRates, ["Work Email", "work_email", "Work_Email"])),
+      toStr(getField(master, ["Work Email", "work_email", "Work_Email"])),
+      toStr(getField(mergedRates, ["Personal Email", "personal_email", "Personal_Email"])),
+      toStr(getField(master, ["Personal Email", "personal_email", "Personal_Email"])),
+    ]);
 
     const sources: RawRow[] = [mergedRates, master ?? {}];
 
@@ -1142,13 +1229,15 @@ export async function getEmployeeRateProfiles(): Promise<GetEmployeeRateProfiles
     const mergedRates: RawRow =
       matchingRateRows.length > 0
         ? mergeRowsUniqueFieldOrder(
-            [...matchingRateRows].sort(
-              (a, b) =>
-                rateRowPriority(b, currentRatesUploadId) -
-                rateRowPriority(a, currentRatesUploadId),
+            [...matchingRateRows].sort((a, b) =>
+              compareRateRowsDesc(a, b, currentRatesUploadId),
             ),
           )
         : {};
+
+    // Employee-scope Payment Catalog rate — the source of truth — wins over
+    // whichever duplicate sheet row the merge kept.
+    injectCatalogRate(mergedRates, catalogRates, [mWork, mPersonal]);
 
     const identity = buildIdentity(mergedRates, masterRow);
     const sources: RawRow[] = [mergedRates, masterRow];
@@ -1293,11 +1382,12 @@ export async function getEmployeeRateProfileByEmail(
     "employee_hourly_rates";
 
   // Step 1: parallel focused fetch — rates + master rows that match the input email.
-  const [ratesInitial, masterInitial, currentRatesUploadId, hslRes] = await Promise.all([
+  const [ratesInitial, masterInitial, currentRatesUploadId, hslRes, catalogRates] = await Promise.all([
     fetchRowsByEmails(supabase, ratesTable, [norm], ["Work Email", "Personal Email"]),
     fetchRowsByEmails(supabase, "global_master_list", [norm], MASTER_EMAIL_COLUMNS),
     getCurrentRatesUploadIdForProfiles(),
     fetchActiveHslDetailsByEmail(),
+    fetchEmployeeCatalogRatesByEmail(),
   ]);
 
   // Step 2: discover alternate emails from those rows.
@@ -1348,8 +1438,8 @@ export async function getEmployeeRateProfileByEmail(
   }
 
   // Step 4: run the existing merge helpers on this tiny set.
-  const orderedRates = [...rates].sort(
-    (a, b) => rateRowPriority(b, currentRatesUploadId) - rateRowPriority(a, currentRatesUploadId),
+  const orderedRates = [...rates].sort((a, b) =>
+    compareRateRowsDesc(a, b, currentRatesUploadId),
   );
   const mergedRates =
     orderedRates.length > 0 ? mergeRowsUniqueFieldOrder(orderedRates) : ({} as RawRow);
@@ -1368,6 +1458,10 @@ export async function getEmployeeRateProfileByEmail(
       if (hit.otRate != null) mergedRates["OT Rate"] = String(hit.otRate);
     }
   }
+
+  // Employee-scope Payment Catalog rate — the source of truth — wins over both
+  // the merged sheet rows and the HSL override above.
+  injectCatalogRate(mergedRates, catalogRates, [norm, ...allEmails]);
 
   const { byEmail, byName } = buildMasterIndexes(masters);
   const master =
@@ -1445,13 +1539,14 @@ export async function getEmployeeRateProfileSummaries(): Promise<GetEmployeeRate
   const mergeNotes: string[] = [];
   const currentRatesUploadId = await getCurrentRatesUploadIdForProfiles();
 
-  const [ratesRes, masterRes, idsRes, hslRes] = await Promise.all([
+  const [ratesRes, masterRes, idsRes, hslRes, catalogRates] = await Promise.all([
     fetchRatesRowsForProfiles(ratesTable, currentRatesUploadId),
     fetchMasterRowsForProfiles(masterTable),
     fetchEmployeeIdRowsForProfiles(),
     // Pulled in parallel — if the active_hsl_agents view is missing (migration
     // not yet run), we just skip decoration instead of failing the whole load.
     fetchActiveHslDetailsByEmail(),
+    fetchEmployeeCatalogRatesByEmail(),
   ]);
 
   if (ratesRes.error) {
@@ -1509,8 +1604,8 @@ export async function getEmployeeRateProfileSummaries(): Promise<GetEmployeeRate
   };
 
   for (const [groupId, groupRows] of groupMap) {
-    const orderedGroupRows = [...groupRows].sort(
-      (a, b) => rateRowPriority(b, currentRatesUploadId) - rateRowPriority(a, currentRatesUploadId),
+    const orderedGroupRows = [...groupRows].sort((a, b) =>
+      compareRateRowsDesc(a, b, currentRatesUploadId),
     );
     const mergedRates = mergeRowsUniqueFieldOrder(orderedGroupRows);
     const master = findMasterForMergedRates(mergedRates, byEmail, byName);
@@ -1656,10 +1751,8 @@ export async function getEmployeeRateProfileSummaries(): Promise<GetEmployeeRate
     const mergedRates: RawRow =
       matchingRateRows.length > 0
         ? mergeRowsUniqueFieldOrder(
-            [...matchingRateRows].sort(
-              (a, b) =>
-                rateRowPriority(b, currentRatesUploadId) -
-                rateRowPriority(a, currentRatesUploadId),
+            [...matchingRateRows].sort((a, b) =>
+              compareRateRowsDesc(a, b, currentRatesUploadId),
             ),
           )
         : {};
@@ -1729,6 +1822,18 @@ export async function getEmployeeRateProfileSummaries(): Promise<GetEmployeeRate
       if (hit.role) p.hslRole = hit.role;
       if (hit.hourlyRate != null) p.regularRate = String(hit.hourlyRate);
       if (hit.otRate != null) p.otRate = String(hit.otRate);
+    }
+  }
+
+  // Employee-scope Payment Catalog rates — the source of truth — win over both
+  // the merged sheet rows and the HSL decoration above, mirroring the pay
+  // engines' priority so the card always shows the rate payroll would pay.
+  if (catalogRates.size > 0) {
+    for (const p of profiles) {
+      const hit = catalogRateForEmails(catalogRates, [p.workEmail, p.personalEmail]);
+      if (!hit) continue;
+      p.regularRate = hit.regular;
+      if (hit.ot != null) p.otRate = hit.ot;
     }
   }
 

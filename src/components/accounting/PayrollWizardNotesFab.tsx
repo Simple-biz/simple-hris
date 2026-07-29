@@ -92,6 +92,7 @@ import {
   NOTE_ADJUSTMENT_REMOVED_EVENT,
   WIZARD_CYCLE_EVENT,
   REQUEST_WIZARD_CYCLE_EVENT,
+  adjustmentDupKey,
   parseAdjustmentAmount,
   payWeekStartFromSourceFile,
   type WizardCycleDetail,
@@ -470,9 +471,13 @@ export default function PayrollWizardNotesFab({
       values.done = false;
       setRows((p) => p.map((r) => (r.id === id ? { ...r, done: false } : r)));
     }
-    // Clearing a linked row's Adjustment retracts its applied override too.
+    // Clearing a linked row's Adjustment retracts its applied override too
+    // (or, when the worker has other rows this week, subtracts just this one).
     if (field === "adjustment" && next === "" && prev !== "") {
-      notifyAdjustmentRemoved(saved?.worker_email ?? row.worker_email, prev);
+      notifyAdjustmentRemoved(saved?.worker_email ?? row.worker_email, prev, {
+        excludeRowId: id,
+        weekStart: row.week_start,
+      });
     }
     void saveRow(id, values);
   };
@@ -524,8 +529,11 @@ export default function PayrollWizardNotesFab({
           title: `Filed Done under the week of ${row.week_start} — the wizard is paying ${cycleWeek}, so this amount is history and won't be applied again. Add a fresh row if it needs to be paid now.`,
         };
       }
-      // Same worker, same week, two amounts: the wizard keeps only the
-      // newest-written one. Flag BOTH rows — the loser is invisible otherwise.
+      // Same worker, same week, several amounts. Since 2026-07-29 the wizard
+      // ADDS them up — except an identical amount repeated, which it counts once
+      // and treats as a suspected duplicate. Both cases are flagged, because
+      // both change what the worker is paid and only the clerk can say which was
+      // meant. (Before: the newest row silently won.)
       const rivals = rows.filter(
         (o) =>
           o.id !== row.id &&
@@ -534,10 +542,35 @@ export default function PayrollWizardNotesFab({
           parseAdjustmentAmount(o.adjustment) !== null,
       );
       if (rivals.length > 0) {
+        const mine = parseAdjustmentAmount(text)!;
+        const twins = rivals.filter((o) => {
+          const p = parseAdjustmentAmount(o.adjustment);
+          return p !== null && adjustmentDupKey(p) === adjustmentDupKey(mine);
+        });
+        if (twins.length > 0) {
+          return {
+            label: twins.length === rivals.length ? "possible duplicate" : "possible duplicate + combined",
+            title: `${text} appears on ${twins.length + 1} rows for this worker this week. Identical amounts are NEVER added together — the wizard applies it once and warns, because the same figure twice is usually one item entered twice. If both are genuinely owed, put the sum in ONE cell (e.g. ${text.replace(/[\d,.]+/, (n) => String(Number(n.replace(/,/g, "")) * (twins.length + 1)))}) and delete the other row.`,
+          };
+        }
+        // Nothing repeats MY amount, so this row is added in. Show the
+        // arithmetic the wizard will do — deduped the same way (two of the OTHER
+        // rows could still be twins of each other), and only totalled when every
+        // amount is in pesos, since the board has no fx rates of its own.
+        const group = [mine, ...rivals.map((o) => parseAdjustmentAmount(o.adjustment)!)];
+        const uniq = [...new Map(group.map((p) => [adjustmentDupKey(p), p])).values()];
+        const dropped = group.length - uniq.length;
+        const peso = (n: number) =>
+          `${n < 0 ? "-" : "+"}₱${Math.abs(n).toLocaleString("en-PH", { maximumFractionDigits: 2 })}`;
+        const total = Math.round(uniq.reduce((s, p) => s + p.amount, 0) * 100) / 100;
+        const tail = `${dropped > 0 ? ` (a repeated amount among the other rows is counted once)` : ""}. Delete a row instead if it was meant to REPLACE another.`;
         return {
-          label: `${rivals.length + 1} amounts for this worker`,
-          title:
-            "This worker has more than one Adjustment on this week's board. Only the most recently written one is applied — the others are ignored. Combine them into a single cell if they should all be paid.",
+          label: `combined with ${rivals.length} more`,
+          title: uniq.every((p) => p.currency === "PHP")
+            ? `This worker has ${group.length} Adjustments this week; the wizard adds the different ones up: ${uniq
+                .map((p) => peso(p.amount))
+                .join(" ")} = ${peso(total)}${tail}`
+            : `This worker has ${group.length} Adjustments this week; the wizard adds the different ones up, converting the non-peso ones at its live fx rates${tail}`,
         };
       }
       return null;
@@ -546,16 +579,35 @@ export default function PayrollWizardNotesFab({
   );
 
   /** Tell the wizard a linked adjustment left the board — the row was deleted
-   *  or its Adjustment cell cleared — so a MATCHING Adj. override is deleted
-   *  too (the wizard only clears when its current value still equals this
-   *  amount; a hand-typed wizard figure is never touched). */
-  const notifyAdjustmentRemoved = (workerEmail: string | null, adjustment: string | null) => {
+   *  or its Adjustment cell cleared — so the Adj. override it fed comes down
+   *  with it (the wizard acts only while its current value still equals the
+   *  board's total before this removal; a hand-typed wizard figure is never
+   *  touched).
+   *
+   *  `remaining` = that worker's OTHER Adjustment cells for the same pay week.
+   *  Amounts are added together now, so removing one of several is a SUBTRACTION
+   *  — the wizard needs the survivors to know what is still owed. Sent as raw
+   *  text: only the wizard has the fx rates to total mixed currencies. */
+  const notifyAdjustmentRemoved = (
+    workerEmail: string | null,
+    adjustment: string | null,
+    opts: { excludeRowId: string; weekStart: string | null },
+  ) => {
     const email = (workerEmail ?? "").trim().toLowerCase();
     const text = (adjustment ?? "").trim();
     if (!email || !text) return;
+    const remaining = rows
+      .filter(
+        (o) =>
+          o.id !== opts.excludeRowId &&
+          (o.worker_email ?? "").trim().toLowerCase() === email &&
+          o.week_start === opts.weekStart &&
+          parseAdjustmentAmount(o.adjustment) !== null,
+      )
+      .map((o) => (o.adjustment ?? "").trim());
     window.dispatchEvent(
       new CustomEvent(NOTE_ADJUSTMENT_REMOVED_EVENT, {
-        detail: { workerEmail: email, adjustment: text },
+        detail: { workerEmail: email, adjustment: text, remaining },
       }),
     );
   };
@@ -644,8 +696,13 @@ export default function PayrollWizardNotesFab({
       if (!res.ok) throw new Error(json.error || `Delete failed (${res.status})`);
       savedRef.current.delete(id);
       // A deleted note takes its applied adjustment with it (match-checked
-      // wizard-side, so only an override this row produced is cleared).
-      if (removed) notifyAdjustmentRemoved(removed.worker_email, removed.adjustment);
+      // wizard-side, so only an override this row produced is cleared — and
+      // when the worker has other rows this week, only THIS row's share).
+      if (removed)
+        notifyAdjustmentRemoved(removed.worker_email, removed.adjustment, {
+          excludeRowId: removed.id,
+          weekStart: removed.week_start,
+        });
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Could not delete the note");
       setRows(prev);

@@ -1,4 +1,5 @@
 import { resolveWebhookUrl } from "@/lib/webhooks/resolve-webhook";
+import { findRateConsistencyIssues } from "@/lib/payroll/paystub-rate-consistency";
 
 /**
  * Forwards a paystub dispatch payload to the n8n paystub workflow webhook,
@@ -24,9 +25,46 @@ export interface ForwardResult {
   parsed?: unknown;
 }
 
+/**
+ * Reports any pay line whose displayed rate exceeds the rate its own amount was
+ * computed at — the ₱225-shown / ₱175-paid defect. Does NOT block the send: payroll
+ * must never be halted by a check, and the wizard now derives the displayed rate
+ * FROM the rate actually paid, so a freshly-staged payload cannot contradict itself.
+ * This only ever fires on payloads staged before that fix, and it is logged so a
+ * stale queue row is visible rather than silently emailed.
+ */
+function findUnderpaidLines(employees: unknown[]): string[] {
+  const out: string[] = [];
+  for (const e of employees) {
+    if (!e || typeof e !== "object") continue;
+    const emp = e as Record<string, unknown>;
+    const issues = findRateConsistencyIssues({
+      hours: emp.hours as { regular?: number | null; ot?: number | null } | null,
+      ratesPhp: emp.rates_php as { regular?: number | null; ot?: number | null } | null,
+      payPhp: emp.pay_php as { regular?: number | null; ot?: number | null } | null,
+    }).filter((i) => i.deltaPhp > 0);
+    if (issues.length === 0) continue;
+    const who =
+      (typeof emp.name === "string" && emp.name) ||
+      (typeof emp.email === "string" && emp.email) ||
+      "unknown recipient";
+    for (const i of issues) out.push(`${who} — ${i.message}`);
+  }
+  return out;
+}
+
 export async function forwardPaystubDispatch(
   body: PaystubDispatchBody,
 ): Promise<ForwardResult> {
+  const underpaid = findUnderpaidLines(body.employees ?? []);
+  if (underpaid.length > 0) {
+    // Visible in the server log, not fatal — see findUnderpaidLines.
+    console.warn(
+      `[paystub-dispatch] ${underpaid.length} stale pay line(s) show a rate above what was paid: ` +
+        underpaid.slice(0, 5).join(" | "),
+    );
+  }
+
   const webhookUrl = await resolveWebhookUrl("paystub_dispatch", {
     envVars: ["N8N_DISPATCH_WEBHOOK_URL"],
   });

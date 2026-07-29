@@ -21,18 +21,20 @@ import {
   Clock,
   XCircle,
   Search,
+  Paperclip,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { AnimatePresence, motion } from 'motion/react';
+import { Label } from '@/components/ui/label';
+import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import { cn } from '@/lib/utils';
 import { parseDateOnlyLocal } from '@/lib/date-only';
-import { SmoothSelect } from '@/components/ui/smooth-select';
-import { DatePicker } from '@/components/ui/date-picker';
+import { DatePicker, toIso } from '@/components/ui/date-picker';
 import { toast } from 'sonner';
 import type { EmployeeHourlyRateRow } from '@/lib/supabase/employee-hourly-rates';
 import type { MesaLedgerEvent, MesaMemberSummary } from '@/lib/mesa/ledger';
+import MesaReceiptDialog from './MesaReceiptDialog';
 
 interface Props {
   employeeEmail: string;
@@ -660,12 +662,80 @@ function Rule({
 
 type RequestType = 'opt_in' | 'opt_out' | 'disbursement' | 'return' | '';
 
-const DISBURSEMENT_REASONS = [
-  'Medical Emergency',
-  'Natural Disaster',
-  'Computer Repair',
-  'Other',
+// The four qualifying reasons. `value` is what lands in
+// mesa_requests.disbursement_reason and what Accounting's review queue renders,
+// so these strings are a data contract — the hint is display-only.
+const DISBURSEMENT_REASON_OPTIONS: {
+  value: string;
+  hint: string;
+  icon: React.ComponentType<{ className?: string }>;
+}[] = [
+  {
+    value: 'Medical Emergency',
+    hint: 'For you or an immediate family member',
+    icon: Stethoscope,
+  },
+  {
+    value: 'Natural Disaster',
+    hint: 'Typhoon, flood, fire, or earthquake damage',
+    icon: CloudRainWind,
+  },
+  {
+    value: 'Computer Repair',
+    hint: 'Repairs to your primary work device',
+    icon: Laptop,
+  },
+  {
+    value: 'Other',
+    hint: 'Accounting reviews these case by case',
+    icon: ReceiptText,
+  },
 ];
+
+// Verb + object, so the button says what it will do rather than just "Submit".
+const SUBMIT_LABELS: Record<RequestType, string> = {
+  '': 'Submit request',
+  opt_in: 'Submit opt-in request',
+  opt_out: 'Submit opt-out request',
+  disbursement: 'Submit disbursement request',
+  return: 'Submit return request',
+};
+
+const EXPLANATION_MAX = 250;
+
+// One field skin for every text control in this form, so the email/name/amount/
+// explanation inputs can't drift apart. Mirrors components/ui/input.tsx's shape
+// with this surface's teal focus accent.
+const FIELD_CLASS =
+  'w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 transition-colors placeholder:text-zinc-400 focus:border-teal-500 focus:outline-none focus:ring-2 focus:ring-teal-500/20 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:placeholder:text-zinc-500';
+
+const FIELD_LABEL_CLASS = 'text-sm font-semibold text-zinc-900 dark:text-white';
+
+// Money echo under the amount field: show centavos only when the member typed
+// them, so a round ₱5,000 doesn't read as ₱5,000.00.
+const formatPesoAmount = (n: number) =>
+  `₱${n.toLocaleString('en-PH', {
+    minimumFractionDigits: Number.isInteger(n) ? 0 : 2,
+    maximumFractionDigits: 2,
+  })}`;
+
+// Keep the amount field to a typeable number without using <input type="number">
+// (whose scroll-wheel-changes-the-value behaviour is a hazard on a money field).
+// Digits plus at most one decimal point, two centavo places, 9 integer digits.
+function sanitizeAmountInput(raw: string): string {
+  const cleaned = raw.replace(/[^\d.]/g, '');
+  const [whole, ...rest] = cleaned.split('.');
+  const head = whole.slice(0, 9);
+  return rest.length === 0 ? head : `${head}.${rest.join('').slice(0, 2)}`;
+}
+
+function RequiredMark() {
+  return (
+    <span aria-hidden className="text-rose-600 dark:text-rose-400">
+      *
+    </span>
+  );
+}
 
 // Request options rendered as tabs (replaces the old dropdown). Each maps to a
 // RequestType and reveals its own option-specific section below.
@@ -691,6 +761,7 @@ function RequestTypeTabButton({
   icon: React.ComponentType<{ className?: string }>;
   label: string;
 }) {
+  const reduceMotion = useReducedMotion();
   return (
     <button
       type="button"
@@ -699,6 +770,7 @@ function RequestTypeTabButton({
       onClick={onClick}
       className={cn(
         'relative inline-flex flex-1 items-center justify-center gap-1.5 rounded-md px-3 py-2 text-xs font-semibold transition-colors duration-200 sm:flex-none sm:justify-start',
+        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500 focus-visible:ring-offset-1 dark:focus-visible:ring-offset-zinc-900',
         active
           ? 'text-white'
           : 'text-zinc-600 hover:bg-teal-50/70 hover:text-teal-700 dark:text-zinc-400 dark:hover:bg-teal-950/40 dark:hover:text-teal-200',
@@ -709,7 +781,11 @@ function RequestTypeTabButton({
           layoutId="mesa-request-type-pill"
           aria-hidden
           className="absolute inset-0 rounded-md bg-gradient-to-r from-teal-500 to-emerald-500 shadow-sm"
-          transition={{ type: 'spring', stiffness: 380, damping: 32 }}
+          transition={
+            reduceMotion
+              ? { duration: 0 }
+              : { type: 'spring', stiffness: 380, damping: 32 }
+          }
         />
       )}
       <span className="relative z-10 inline-flex items-center gap-1.5">
@@ -717,6 +793,81 @@ function RequestTypeTabButton({
         {label}
       </span>
     </button>
+  );
+}
+
+/**
+ * One qualifying-reason choice in the disbursement form. A real radio input
+ * (visually hidden) drives it, so arrow-key navigation, form semantics, and
+ * screen-reader announcement all come from the platform rather than ARIA
+ * bookkeeping. Four short options are worth showing at once — a dropdown here
+ * would hide the eligibility rules behind a click.
+ */
+function ReasonOption({
+  option,
+  selected,
+  onSelect,
+}: {
+  option: (typeof DISBURSEMENT_REASON_OPTIONS)[number];
+  selected: boolean;
+  onSelect: (value: string) => void;
+}) {
+  const { value, hint, icon: Icon } = option;
+  return (
+    <label
+      className={cn(
+        'relative flex cursor-pointer flex-col gap-1 rounded-lg border p-3 transition-colors',
+        selected
+          ? 'border-teal-500 bg-teal-50/70 dark:border-teal-500/70 dark:bg-teal-950/40'
+          : 'border-zinc-200 bg-white hover:border-teal-300 hover:bg-teal-50/30 dark:border-zinc-700 dark:bg-zinc-900/60 dark:hover:border-teal-700/60 dark:hover:bg-teal-950/20',
+      )}
+    >
+      <input
+        type="radio"
+        name="mesa-disbursement-reason"
+        value={value}
+        checked={selected}
+        onChange={() => onSelect(value)}
+        className="peer sr-only"
+      />
+      {/* Keyboard focus ring — the input itself is visually hidden, so the card
+          carries the indicator on its behalf. */}
+      <span
+        aria-hidden
+        className="pointer-events-none absolute inset-0 rounded-lg peer-focus-visible:ring-2 peer-focus-visible:ring-teal-500 peer-focus-visible:ring-offset-2 dark:peer-focus-visible:ring-offset-zinc-900"
+      />
+      <span className="flex items-center gap-2">
+        <Icon
+          aria-hidden
+          className={cn(
+            'h-4 w-4 shrink-0',
+            selected ? 'text-teal-600 dark:text-teal-300' : 'text-zinc-400 dark:text-zinc-500',
+          )}
+        />
+        <span
+          className={cn(
+            'text-[13px] font-semibold leading-tight',
+            selected ? 'text-teal-900 dark:text-teal-50' : 'text-zinc-800 dark:text-zinc-200',
+          )}
+        >
+          {value}
+        </span>
+        {selected && (
+          <CheckCircle2
+            aria-hidden
+            className="ml-auto h-3.5 w-3.5 shrink-0 text-teal-600 dark:text-teal-300"
+          />
+        )}
+      </span>
+      <span
+        className={cn(
+          'text-[11px] leading-snug',
+          selected ? 'text-teal-800 dark:text-teal-200/90' : 'text-zinc-500 dark:text-zinc-400',
+        )}
+      >
+        {hint}
+      </span>
+    </label>
   );
 }
 
@@ -733,10 +884,17 @@ interface MesaRequestRow {
   request_type: string;
   status: string;
   fpu_date: string | null;
+  /** Opt-out only: the day participation ends. */
+  effective_date: string | null;
   disbursement_reason: string | null;
   amount_needed: number | null;
   created_at: string;
   review_notes: string | null;
+  /** Disbursement only: how many receipt files are attached (0–3). Derived by
+   *  the API from mesa_request_receipts, so it's absent on non-disbursements. */
+  receipt_count?: number;
+  /** Newest receipt's upload time — the 14-day submission rule is judged on it. */
+  receipt_last_uploaded_at?: string | null;
 }
 
 // The date <input> needs a strict YYYY-MM-DD value. mesa_member_since already
@@ -745,6 +903,18 @@ interface MesaRequestRow {
 function toDateInputValue(raw: string | null | undefined): string {
   if (!raw) return '';
   return /^\d{4}-\d{2}-\d{2}$/.test(raw.trim()) ? raw.trim() : '';
+}
+
+// The "what was this about" cell in Past requests: an opt-out carries the date
+// it takes effect, a disbursement its reason, everything else nothing worth a
+// column. Falls back to the raw value if the date is unparseable rather than
+// dropping it — a stored date should always be visible to the member.
+function requestDetailLabel(r: MesaRequestRow): string {
+  if (r.request_type === 'opt_out' && r.effective_date) {
+    const d = parseStartDate(r.effective_date);
+    return `Effective ${d ? d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : r.effective_date}`;
+  }
+  return r.disbursement_reason ?? '—';
 }
 
 function MesaRequestForm({
@@ -765,27 +935,49 @@ function MesaRequestForm({
    *  Primary source for pre-filling the Opt-in "Date you completed FPU" field. */
   fpuCompletedOn: string | null;
 }) {
+  const reduceMotion = useReducedMotion();
   const [requestType, setRequestType] = React.useState<RequestType>('');
   const [agreements, setAgreements] = React.useState<boolean[]>(OPT_IN_AGREEMENTS.map(() => false));
   const [optInChecked, setOptInChecked] = React.useState(false);
-  const [optOutChecked, setOptOutChecked] = React.useState(false);
-  const [disbursementChecked, setDisbursementChecked] = React.useState(false);
+  // Opt-out: the day participation ends. Submitting the form IS the request, so
+  // there's no "yes I mean it" checkbox — this date is the one thing the member
+  // has to tell us, and it's what Accounting stops the deduction on.
+  const [optOutEffective, setOptOutEffective] = React.useState('');
   const [fpuDate, setFpuDate] = React.useState('');
   const [disbursementReason, setDisbursementReason] = React.useState('');
   const [explanation, setExplanation] = React.useState('');
   const [amountNeeded, setAmountNeeded] = React.useState('');
-  const [fullName, setFullName] = React.useState(employeeName ?? '');
-  const [dept, setDept] = React.useState(department ?? '');
   const [submitting, setSubmitting] = React.useState(false);
   const [pastRequests, setPastRequests] = React.useState<MesaRequestRow[]>([]);
   const [loadingHistory, setLoadingHistory] = React.useState(true);
+  /** The disbursement whose receipts are open in the upload dialog. */
+  const [receiptTarget, setReceiptTarget] = React.useState<MesaRequestRow | null>(null);
 
-  React.useEffect(() => {
-    setFullName(employeeName ?? '');
-  }, [employeeName]);
-  React.useEffect(() => {
-    setDept(department ?? '');
-  }, [department]);
+  // Keep the Receipt chip honest after an upload or a removal without refetching
+  // the whole list. Stable identity so the dialog's load effect isn't retriggered
+  // on every render of this form.
+  const applyReceiptCount = React.useCallback((requestId: string, count: number) => {
+    setPastRequests((prev) =>
+      prev.map((r) => (r.id === requestId ? { ...r, receipt_count: count } : r)),
+    );
+  }, []);
+
+  // Identity is read-only: name, department, and email all come from the
+  // employee record so a request can never be filed under someone else's name
+  // and Accounting always sees values that match the master list. When the
+  // record is missing one, the form says so and blocks submit with a fix path
+  // instead of failing on a toast the member can't act on.
+  const fullName = (employeeName ?? '').trim();
+  const dept = (department ?? '').trim();
+  const missingIdentityFields = [
+    !fullName && 'full name',
+    !dept && 'department',
+  ].filter(Boolean) as string[];
+  const identityIncomplete = missingIdentityFields.length > 0;
+
+  const amountValue = parseFloat(amountNeeded);
+  const hasAmount = amountNeeded !== '' && Number.isFinite(amountValue) && amountValue > 0;
+  const explanationAtLimit = explanation.length >= EXPLANATION_MAX;
 
   React.useEffect(() => {
     let cancelled = false;
@@ -832,6 +1024,7 @@ function MesaRequestForm({
         request_type: 'opt_in',
         status: 'approved',
         fpu_date: fpuCompletedOn ?? null,
+        effective_date: null,
         disbursement_reason: null,
         amount_needed: null,
         created_at: enrolledSince,
@@ -859,8 +1052,10 @@ function MesaRequestForm({
   // reflect their standing enrollment: agreements checked + FPU date pre-filled.
   const selectRequestType = (value: RequestType) => {
     setRequestType(value);
-    setOptOutChecked(false);
-    setDisbursementChecked(false);
+    // Default the opt-out to today — the common case is "stop me now" — but
+    // only on the click, never during render, so the clock can't desync
+    // hydration. Anything already typed survives a tab round-trip.
+    if (value === 'opt_out') setOptOutEffective((prev) => prev || toIso(new Date()));
     if (value === 'opt_in' && isMember) {
       setAgreements(OPT_IN_AGREEMENTS.map(() => true));
       setOptInChecked(true);
@@ -875,8 +1070,7 @@ function MesaRequestForm({
     setRequestType('');
     setAgreements(OPT_IN_AGREEMENTS.map(() => false));
     setOptInChecked(false);
-    setOptOutChecked(false);
-    setDisbursementChecked(false);
+    setOptOutEffective('');
     setFpuDate('');
     setDisbursementReason('');
     setExplanation('');
@@ -892,19 +1086,20 @@ function MesaRequestForm({
       if (agreements.some((a) => !a)) { toast.error('Please agree to all terms'); return; }
       if (!fpuDate) { toast.error('Please enter your FPU completion date'); return; }
     }
-    if (requestType === 'opt_out' && !optOutChecked) {
-      toast.error('Please confirm opt-out'); return;
+    if (requestType === 'opt_out' && !optOutEffective) {
+      toast.error('Please pick the date your opt-out takes effect'); return;
     }
     if (requestType === 'disbursement') {
-      if (!disbursementChecked) { toast.error('Please confirm disbursement request'); return; }
       if (!disbursementReason) { toast.error('Please select a disbursement reason'); return; }
       if (!explanation.trim()) { toast.error('Please provide an explanation'); return; }
-      if (!amountNeeded || isNaN(parseFloat(amountNeeded))) {
-        toast.error('Please enter a valid amount'); return;
-      }
+      if (!hasAmount) { toast.error('Please enter the amount you need'); return; }
     }
-    if (!fullName.trim()) { toast.error('Please enter your full name'); return; }
-    if (!dept.trim()) { toast.error('Please enter your department'); return; }
+    if (identityIncomplete) {
+      toast.error(
+        `Your employee record is missing your ${missingIdentityFields.join(' and ')}. Email accounting@simple.biz to have it added.`,
+      );
+      return;
+    }
 
     setSubmitting(true);
     try {
@@ -913,13 +1108,14 @@ function MesaRequestForm({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           work_email: employeeEmail,
-          full_name: fullName.trim(),
-          department: dept.trim(),
+          full_name: fullName,
+          department: dept,
           request_type: requestType,
           fpu_date: requestType === 'opt_in' ? fpuDate : null,
+          effective_date: requestType === 'opt_out' ? optOutEffective : null,
           disbursement_reason: requestType === 'disbursement' ? disbursementReason : null,
           explanation: requestType === 'disbursement' ? explanation.trim() : null,
-          amount_needed: requestType === 'disbursement' ? parseFloat(amountNeeded) : null,
+          amount_needed: requestType === 'disbursement' ? amountValue : null,
         }),
       });
       const json = (await res.json()) as { success?: boolean; error?: string };
@@ -969,12 +1165,12 @@ function MesaRequestForm({
           <form onSubmit={handleSubmit} className="space-y-5">
             {/* Option selector — tabs (one per request type) */}
             <div className="space-y-1.5">
-              <label className="text-sm font-semibold text-zinc-900 dark:text-white">
-                Options <span className="text-rose-500">*</span>
-              </label>
+              <p id="mesa-request-type-label" className={FIELD_LABEL_CLASS}>
+                What do you need? <RequiredMark />
+              </p>
               <div
                 role="tablist"
-                aria-label="Request options"
+                aria-labelledby="mesa-request-type-label"
                 className="grid grid-cols-2 gap-1.5 rounded-lg border border-teal-100/80 bg-white/70 p-1 shadow-sm backdrop-blur sm:flex sm:flex-wrap sm:items-center dark:border-teal-900/40 dark:bg-zinc-900/60"
               >
                 {REQUEST_TYPE_TABS.map((t) => (
@@ -994,9 +1190,9 @@ function MesaRequestForm({
             {requestType && (
               <motion.div
                 key={requestType}
-                initial={{ opacity: 0, y: -8 }}
+                initial={reduceMotion ? { opacity: 0 } : { opacity: 0, y: -8 }}
                 animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+                transition={{ duration: reduceMotion ? 0 : 0.22, ease: [0.22, 1, 0.36, 1] }}
               >
                 {requestType === 'opt_in' && (
                   <div className="space-y-4 rounded-lg border border-teal-100 bg-teal-50/40 p-4 dark:border-teal-900/40 dark:bg-teal-950/20">
@@ -1021,7 +1217,7 @@ function MesaRequestForm({
                         className="mt-0.5 h-4 w-4 rounded border-zinc-300 accent-teal-600"
                       />
                       Select this option to enroll{' '}
-                      <span className="text-rose-500">*</span>
+                      <RequiredMark />
                     </label>
                     <div className="space-y-2 border-t border-teal-100 pt-3 dark:border-teal-900/40">
                       {OPT_IN_AGREEMENTS.map((text, i) => (
@@ -1037,7 +1233,7 @@ function MesaRequestForm({
                             className="mt-0.5 h-4 w-4 shrink-0 rounded border-zinc-300 accent-teal-600"
                           />
                           <span>
-                            Agree <span className="text-rose-500">*</span>
+                            Agree <RequiredMark />
                             <span className="ml-1 text-zinc-600 dark:text-zinc-400">&mdash; {text}</span>
                           </span>
                         </label>
@@ -1045,7 +1241,7 @@ function MesaRequestForm({
                     </div>
                     <div className="space-y-1">
                       <label className="text-sm font-semibold text-zinc-900 dark:text-white">
-                        Date you completed FPU <span className="text-rose-500">*</span>
+                        Date you completed FPU <RequiredMark />
                       </label>
                       <DatePicker
                         value={fpuDate}
@@ -1058,85 +1254,142 @@ function MesaRequestForm({
                 )}
 
                 {requestType === 'opt_out' && (
-                  <div className="rounded-lg border border-rose-100 bg-rose-50/40 p-4 dark:border-rose-900/40 dark:bg-rose-950/20">
-                    <label className="flex cursor-pointer items-start gap-2 text-sm font-medium text-zinc-900 dark:text-white">
-                      <input
-                        type="checkbox"
-                        checked={optOutChecked}
-                        onChange={(e) => setOptOutChecked(e.target.checked)}
-                        className="mt-0.5 h-4 w-4 rounded border-zinc-300 accent-rose-600"
+                  /* No confirmation checkbox: picking the Opt-out tab and
+                     submitting the form already says "remove me" twice over —
+                     a third tick-box was pure ceremony. What's actually needed
+                     is WHEN it takes effect. */
+                  <div className="space-y-5 rounded-lg border border-rose-200/70 bg-rose-50/50 p-4 dark:border-rose-900/40 dark:bg-rose-950/20">
+                    <p className="max-w-prose text-sm leading-relaxed text-rose-900 dark:text-rose-100">
+                      This removes you from MESA. Once Accounting approves it, your{' '}
+                      {formatPHP(WEEKLY_EMPLOYEE_CONTRIB)} weekly contribution and Simple&rsquo;s{' '}
+                      {formatPHP(WEEKLY_COMPANY_MATCH)} match stop, and your remaining balance is
+                      released to you.
+                    </p>
+                    <div className="space-y-1.5">
+                      <label htmlFor="mesa-opt-out-effective" className={FIELD_LABEL_CLASS}>
+                        Effective date <RequiredMark />
+                      </label>
+                      <DatePicker
+                        id="mesa-opt-out-effective"
+                        value={optOutEffective}
+                        onChange={setOptOutEffective}
+                        min={toIso(new Date())}
+                        required
+                        className="bg-white focus-visible:border-rose-500 focus-visible:ring-rose-500/20 dark:bg-zinc-900"
                       />
-                      Select this option to remove yourself from the MESA program{' '}
-                      <span className="text-rose-500">*</span>
-                    </label>
+                      <p className="text-[11px] leading-snug text-rose-800/90 dark:text-rose-200/90">
+                        The date your opt-out takes effect. Defaults to today — pick a later date to
+                        keep contributing until then. Weeks already deducted stay in your account
+                        until it&rsquo;s settled.
+                      </p>
+                    </div>
                   </div>
                 )}
 
                 {requestType === 'disbursement' && (
-                  <div className="space-y-4 rounded-lg border border-amber-100 bg-amber-50/40 p-4 dark:border-amber-900/40 dark:bg-amber-950/20">
-                    <label className="flex cursor-pointer items-start gap-2 text-sm font-medium text-zinc-900 dark:text-white">
-                      <input
-                        type="checkbox"
-                        checked={disbursementChecked}
-                        onChange={(e) => setDisbursementChecked(e.target.checked)}
-                        className="mt-0.5 h-4 w-4 rounded border-zinc-300 accent-amber-600"
-                      />
-                      Select this option if you need your funds sent to you{' '}
-                      <span className="text-rose-500">*</span>
-                    </label>
-                    <div className="space-y-1">
-                      <label className="text-sm font-semibold text-zinc-900 dark:text-white">
-                        Disbursement Reason <span className="text-rose-500">*</span>
-                      </label>
-                      <SmoothSelect
-                        aria-label="Disbursement Reason"
-                        value={disbursementReason}
-                        onChange={(v) => setDisbursementReason(v)}
-                        triggerClassName="w-full"
-                        options={[
-                          { value: '', label: 'Select reason' },
-                          ...DISBURSEMENT_REASONS.map((r) => ({ value: r, label: r })),
-                        ]}
-                      />
-                    </div>
-                    <div className="space-y-1">
-                      <label className="text-sm font-semibold text-zinc-900 dark:text-white">
-                        Explanation <span className="text-rose-500">*</span>
-                      </label>
-                      <textarea
-                        value={explanation}
-                        onChange={(e) => setExplanation(e.target.value.slice(0, 250))}
-                        rows={4}
-                        placeholder="Briefly describe your situation..."
-                        className="w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 placeholder-zinc-400 focus:border-teal-500 focus:outline-none focus:ring-2 focus:ring-teal-500/20 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
-                      />
-                      <p className="text-right text-[11px] text-zinc-400">{explanation.length}/250 characters</p>
-                    </div>
-                    <div className="space-y-1">
-                      <label className="text-sm font-semibold text-zinc-900 dark:text-white">
-                        Amount Needed <span className="text-rose-500">*</span>
-                      </label>
-                      <div className="flex items-center gap-2">
-                        <span className="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm font-medium text-zinc-700 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
-                          PHP
+                  /* Deliberately a calm neutral surface, not the amber "caution"
+                     tone this section used to carry: per §6.3 amber reads as
+                     warning/pending, and a member filing this is often already
+                     in an emergency. Teal marks the choice they make. */
+                  <div className="space-y-5 rounded-lg border border-zinc-200/80 bg-zinc-50/50 p-4 dark:border-zinc-800 dark:bg-zinc-900/40">
+                    <p className="max-w-prose text-sm leading-relaxed text-zinc-600 dark:text-zinc-400">
+                      Accounting checks each request against your balance and the one-per-90-days
+                      limit, then releases the funds to you.
+                    </p>
+
+                    <fieldset className="space-y-2">
+                      <legend className={cn(FIELD_LABEL_CLASS, 'mb-2')}>
+                        Reason <RequiredMark />
+                      </legend>
+                      <div className="grid grid-cols-2 gap-2">
+                        {DISBURSEMENT_REASON_OPTIONS.map((option) => (
+                          <ReasonOption
+                            key={option.value}
+                            option={option}
+                            selected={disbursementReason === option.value}
+                            onSelect={setDisbursementReason}
+                          />
+                        ))}
+                      </div>
+                    </fieldset>
+
+                    <div className="space-y-1.5">
+                      <Label htmlFor="mesa-amount" className={FIELD_LABEL_CLASS}>
+                        Amount needed <RequiredMark />
+                      </Label>
+                      <div className="relative">
+                        <span
+                          aria-hidden
+                          className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 font-mono text-sm text-zinc-500 dark:text-zinc-400"
+                        >
+                          ₱
                         </span>
                         <input
-                          type="number"
-                          min="0"
-                          step="0.01"
+                          id="mesa-amount"
+                          type="text"
+                          inputMode="decimal"
+                          autoComplete="off"
+                          aria-required
+                          aria-describedby="mesa-amount-hint"
                           value={amountNeeded}
-                          onChange={(e) => setAmountNeeded(e.target.value)}
+                          onChange={(e) => setAmountNeeded(sanitizeAmountInput(e.target.value))}
                           placeholder="0.00"
-                          className="flex-1 rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 focus:border-teal-500 focus:outline-none focus:ring-2 focus:ring-teal-500/20 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
+                          className={cn(FIELD_CLASS, 'pl-8 font-mono tabular-nums')}
                         />
                       </div>
-                      <p className="text-[11px] text-zinc-500">Please input numerical values.</p>
+                      <p
+                        id="mesa-amount-hint"
+                        aria-live="polite"
+                        className="text-[11px] text-zinc-500 dark:text-zinc-400"
+                      >
+                        {hasAmount
+                          ? `You are requesting ${formatPesoAmount(amountValue)}.`
+                          : 'Philippine pesos. Numbers only, for example 5000 or 5000.50.'}
+                      </p>
                     </div>
-                    <div className="rounded-md border border-zinc-200 bg-white p-3 text-xs leading-relaxed text-zinc-600 dark:border-zinc-700 dark:bg-zinc-900/60 dark:text-zinc-400">
-                      <strong>Note:</strong> If you are requesting a disbursement because you wish to
-                      stop participating or need to close your account, please select{' '}
-                      <strong>Opt-out</strong> above and follow those prompts.
+
+                    <div className="space-y-1.5">
+                      <Label htmlFor="mesa-explanation" className={FIELD_LABEL_CLASS}>
+                        Explanation <RequiredMark />
+                      </Label>
+                      <textarea
+                        id="mesa-explanation"
+                        value={explanation}
+                        onChange={(e) => setExplanation(e.target.value.slice(0, EXPLANATION_MAX))}
+                        rows={4}
+                        maxLength={EXPLANATION_MAX}
+                        aria-required
+                        aria-describedby="mesa-explanation-count"
+                        placeholder="What happened, and what the funds are for."
+                        className={cn(FIELD_CLASS, 'resize-y leading-relaxed')}
+                      />
+                      <p
+                        id="mesa-explanation-count"
+                        className={cn(
+                          'text-right text-[11px] tabular-nums',
+                          explanationAtLimit
+                            ? 'font-medium text-amber-700 dark:text-amber-300'
+                            : 'text-zinc-500 dark:text-zinc-400',
+                        )}
+                      >
+                        {explanation.length}/{EXPLANATION_MAX}
+                        {explanationAtLimit ? ' · character limit reached' : ' characters'}
+                      </p>
                     </div>
+
+                    <p className="flex items-start gap-2 rounded-md border border-zinc-200 bg-white p-2.5 text-[11px] leading-relaxed text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900/60 dark:text-zinc-400">
+                      <PiggyBank
+                        aria-hidden
+                        className="mt-px h-3.5 w-3.5 shrink-0 text-zinc-400 dark:text-zinc-500"
+                      />
+                      <span>
+                        Leaving the program or closing your account? Choose{' '}
+                        <strong className="font-semibold text-zinc-800 dark:text-zinc-200">
+                          Opt-out
+                        </strong>{' '}
+                        instead, which pays out your full balance.
+                      </span>
+                    </p>
                   </div>
                 )}
 
@@ -1146,16 +1399,18 @@ function MesaRequestForm({
                       Use this option to return funds to your MESA account. Accounting will process
                       this request and update your balance accordingly.
                     </p>
-                    <div className="mt-3 space-y-1">
-                      <label className="text-sm font-semibold text-zinc-900 dark:text-white">
-                        Notes (optional)
-                      </label>
+                    <div className="mt-3 space-y-1.5">
+                      <Label htmlFor="mesa-return-notes" className={FIELD_LABEL_CLASS}>
+                        Notes <span className="font-normal text-zinc-500">(optional)</span>
+                      </Label>
                       <textarea
+                        id="mesa-return-notes"
                         value={explanation}
-                        onChange={(e) => setExplanation(e.target.value.slice(0, 250))}
+                        onChange={(e) => setExplanation(e.target.value.slice(0, EXPLANATION_MAX))}
                         rows={3}
-                        placeholder="Any additional information..."
-                        className="w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 placeholder-zinc-400 focus:border-teal-500 focus:outline-none focus:ring-2 focus:ring-teal-500/20 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
+                        maxLength={EXPLANATION_MAX}
+                        placeholder="Anything Accounting should know about this return."
+                        className={cn(FIELD_CLASS, 'resize-y leading-relaxed')}
                       />
                     </div>
                   </div>
@@ -1163,65 +1418,79 @@ function MesaRequestForm({
               </motion.div>
             )}
 
-            {/* Common fields */}
-            <div className="space-y-1">
-              <label className="text-sm font-semibold text-zinc-900 dark:text-white">
-                Simple.biz Email <span className="text-rose-500">*</span>
-              </label>
-              <input
-                type="email"
-                value={employeeEmail}
-                readOnly
-                className="w-full cursor-not-allowed rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-500 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-400"
-              />
-            </div>
-            <div className="space-y-1">
-              <label className="text-sm font-semibold text-zinc-900 dark:text-white">
-                Full Name <span className="text-rose-500">*</span>
-              </label>
-              <input
-                type="text"
-                value={fullName}
-                onChange={(e) => setFullName(e.target.value)}
-                placeholder="Your full name"
-                className="w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 placeholder-zinc-400 focus:border-teal-500 focus:outline-none focus:ring-2 focus:ring-teal-500/20 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
-              />
-            </div>
-            <div className="space-y-1">
-              <label className="text-sm font-semibold text-zinc-900 dark:text-white">
-                Department <span className="text-rose-500">*</span>
-              </label>
-              <input
-                type="text"
-                value={dept}
-                onChange={(e) => setDept(e.target.value)}
-                placeholder="Your department"
-                className="w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 placeholder-zinc-400 focus:border-teal-500 focus:outline-none focus:ring-2 focus:ring-teal-500/20 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
-              />
-            </div>
-
-            <p className="text-xs text-zinc-500 dark:text-zinc-500">
-              If you have any questions, please email{' '}
-              <a href="mailto:accounting@simple.biz" className="text-teal-600 underline dark:text-teal-400">
-                accounting@simple.biz
-              </a>
-              . Again, welcome to MESA!
-            </p>
-
-            <Button
-              type="submit"
-              disabled={submitting || !requestType}
-              className="w-full bg-orange-500 text-white hover:bg-orange-600 disabled:opacity-50"
-            >
-              {submitting ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Submitting...
-                </>
-              ) : (
-                'Submit'
+            {/* Identity — read-only, straight from the employee record. Presented
+                as values rather than disabled inputs: an input affordance on a
+                field nobody can edit is a false promise (and three greyed-out
+                boxes read as broken). */}
+            <div className="rounded-lg border border-zinc-200/80 bg-zinc-50/60 p-3.5 dark:border-zinc-800 dark:bg-zinc-900/40">
+              <div className="flex items-center gap-1.5">
+                <Lock aria-hidden className="h-3 w-3 text-zinc-400 dark:text-zinc-500" />
+                <h3 className="text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-400">
+                  Submitting as
+                </h3>
+              </div>
+              <dl className="mt-2.5 grid gap-x-5 gap-y-2.5 sm:grid-cols-2">
+                <div className="min-w-0">
+                  <dt className="text-[11px] text-zinc-500 dark:text-zinc-400">Full name</dt>
+                  <dd className="truncate text-sm font-medium text-zinc-900 dark:text-white">
+                    {fullName || (
+                      <span className="text-zinc-400 dark:text-zinc-600">Not on file</span>
+                    )}
+                  </dd>
+                </div>
+                <div className="min-w-0">
+                  <dt className="text-[11px] text-zinc-500 dark:text-zinc-400">Department</dt>
+                  <dd className="truncate text-sm font-medium text-zinc-900 dark:text-white">
+                    {dept || <span className="text-zinc-400 dark:text-zinc-600">Not on file</span>}
+                  </dd>
+                </div>
+                <div className="min-w-0 sm:col-span-2">
+                  <dt className="text-[11px] text-zinc-500 dark:text-zinc-400">Simple.biz email</dt>
+                  <dd className="truncate font-mono text-[12px] text-zinc-700 dark:text-zinc-300">
+                    {employeeEmail}
+                  </dd>
+                </div>
+              </dl>
+              {identityIncomplete && (
+                <p className="mt-3 flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 p-2.5 text-[11px] leading-relaxed text-amber-900 dark:border-amber-500/40 dark:bg-amber-950/30 dark:text-amber-100">
+                  <ShieldAlert aria-hidden className="mt-px h-3.5 w-3.5 shrink-0" />
+                  <span>
+                    Your employee record is missing your{' '}
+                    {missingIdentityFields.join(' and ')}, so this request can&rsquo;t be filed yet.
+                    Email{' '}
+                    <a
+                      href="mailto:accounting@simple.biz"
+                      className="font-semibold underline underline-offset-2"
+                    >
+                      accounting@simple.biz
+                    </a>{' '}
+                    to have it added.
+                  </span>
+                </p>
               )}
-            </Button>
+            </div>
+
+            <div className="space-y-2 border-t border-zinc-200/80 pt-4 dark:border-zinc-800">
+              <Button
+                type="submit"
+                disabled={submitting || !requestType || identityIncomplete}
+                className="w-full bg-orange-500 text-white shadow-sm hover:bg-orange-600 focus-visible:ring-orange-500/40 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-orange-500 dark:hover:bg-orange-400"
+              >
+                {submitting ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Submitting&hellip;
+                  </>
+                ) : (
+                  SUBMIT_LABELS[requestType]
+                )}
+              </Button>
+              {!requestType && (
+                <p className="text-center text-xs text-zinc-500 dark:text-zinc-400">
+                  Pick an option above to continue.
+                </p>
+              )}
+            </div>
           </form>
         </CardContent>
       </Card>
@@ -1241,8 +1510,11 @@ function MesaRequestForm({
                 <thead className="bg-zinc-50/80 text-[11px] uppercase tracking-wide text-zinc-500 dark:bg-zinc-900/60 dark:text-zinc-400">
                   <tr>
                     <th className="px-3 py-2 text-left font-semibold">Type</th>
-                    <th className="px-3 py-2 text-left font-semibold">Reason</th>
+                    <th className="px-3 py-2 text-left font-semibold">Details</th>
                     <th className="px-3 py-2 text-right font-semibold">Amount</th>
+                    {/* Sits next to Amount on purpose: the receipt is the evidence
+                        for that number, and Accounting reads the pair together. */}
+                    <th className="px-3 py-2 text-center font-semibold">Receipt</th>
                     <th className="px-3 py-2 text-right font-semibold">Status</th>
                     <th className="px-3 py-2 text-right font-semibold">Submitted</th>
                   </tr>
@@ -1253,11 +1525,17 @@ function MesaRequestForm({
                       <td className="px-3 py-2 capitalize text-zinc-700 dark:text-zinc-300" data-label="Type">
                         {r.request_type.replace('_', ' ')}
                       </td>
-                      <td className="px-3 py-2 text-zinc-600 dark:text-zinc-400" data-label="Reason">
-                        {r.disbursement_reason ?? '—'}
+                      <td className="px-3 py-2 text-zinc-600 dark:text-zinc-400" data-label="Details">
+                        {requestDetailLabel(r)}
                       </td>
                       <td className="px-3 py-2 text-right tabular-nums text-zinc-700 dark:text-zinc-300" data-label="Amount">
                         {r.amount_needed != null ? `PHP ${r.amount_needed.toLocaleString()}` : '—'}
+                      </td>
+                      <td className="px-3 py-2 text-center" data-label="Receipt">
+                        <ReceiptCell
+                          request={r}
+                          onOpen={() => setReceiptTarget(r)}
+                        />
                       </td>
                       <td className="px-3 py-2 text-right" data-label="Status">
                         <RequestStatusBadge status={r.status} />
@@ -1275,7 +1553,69 @@ function MesaRequestForm({
           )}
         </Section>
       )}
+
+      {/* Receipt upload — portaled, so it isn't clipped by the tab's animated
+          `filter` (which would make it the containing block for a fixed child). */}
+      <MesaReceiptDialog
+        request={receiptTarget}
+        open={receiptTarget !== null}
+        onClose={() => setReceiptTarget(null)}
+        onCountChange={applyReceiptCount}
+      />
     </div>
+  );
+}
+
+/**
+ * The Receipt cell in Past requests.
+ *
+ * Only a disbursement can carry one — an opt-in/opt-out/return has no expense to
+ * substantiate — so every other row reads as a plain dash rather than an action
+ * the member can't complete. A denied request is dashed too: no funds left the
+ * fund, so there is nothing to receipt (the API refuses the upload as well).
+ */
+function ReceiptCell({
+  request,
+  onOpen,
+}: {
+  request: MesaRequestRow & { derived?: boolean };
+  onOpen: () => void;
+}) {
+  const eligible =
+    request.request_type === 'disbursement' && !request.derived && request.status !== 'denied';
+  if (!eligible) {
+    return <span className="text-zinc-300 dark:text-zinc-600">—</span>;
+  }
+
+  const count = request.receipt_count ?? 0;
+
+  if (count === 0) {
+    return (
+      <button
+        type="button"
+        onClick={onOpen}
+        title="Attach a receipt for this disbursement"
+        className="inline-flex items-center gap-1 rounded-md border border-dashed border-teal-300 px-2 py-1 text-[11px] font-semibold text-teal-700 transition-colors hover:border-teal-500 hover:bg-teal-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500 dark:border-teal-700/70 dark:text-teal-300 dark:hover:border-teal-500/80 dark:hover:bg-teal-950/40"
+      >
+        <Paperclip aria-hidden className="h-3 w-3" />
+        Attach
+      </button>
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      title={`${count} receipt${count === 1 ? '' : 's'} attached — click to view or change`}
+      className="inline-flex items-center gap-1 rounded-md border border-teal-200 bg-teal-50 px-2 py-1 text-[11px] font-semibold text-teal-800 transition-colors hover:bg-teal-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500 dark:border-teal-500/40 dark:bg-teal-500/15 dark:text-teal-100 dark:hover:bg-teal-500/25"
+    >
+      <ReceiptText aria-hidden className="h-3 w-3" />
+      {count}
+      <span className="sr-only">
+        receipt{count === 1 ? '' : 's'} attached — open to view or change
+      </span>
+    </button>
   );
 }
 

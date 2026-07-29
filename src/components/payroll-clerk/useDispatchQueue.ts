@@ -217,15 +217,65 @@ async function loadAll(
   let wizardFinalByEmail: Record<string, number> = {};
   if (period.sourceFile) {
     try {
+      // Employee-scope PHP catalog rates — the source of truth. A snapshot entry
+      // whose own rate contradicts the catalog was published by a wizard session
+      // holding pre-change data; its final must NOT set the amount the clerk pays.
+      // Fail-open: if the catalog fetch fails (network, role not rate-visible),
+      // the overlay behaves exactly as before.
+      const catalogClaimByEmail: Record<string, { reg: number; ot: number | null }> = {};
+      try {
+        const catRes = await fetch('/api/payment-catalog/pay-structures', { cache: 'no-store', signal });
+        if (catRes.ok) {
+          const catJson = (await catRes.json()) as {
+            structures?: Array<{
+              scope?: string;
+              employeeEmail?: string | null;
+              regularRate?: number;
+              otRate?: number | null;
+              currency?: string;
+            }>;
+          };
+          for (const s of catJson.structures ?? []) {
+            if (s?.scope !== 'employee' || s.currency !== 'PHP') continue;
+            const em = (s.employeeEmail ?? '').trim().toLowerCase();
+            if (!em || typeof s.regularRate !== 'number' || !Number.isFinite(s.regularRate)) continue;
+            catalogClaimByEmail[em] = {
+              reg: s.regularRate,
+              ot: typeof s.otRate === 'number' && Number.isFinite(s.otRate) ? s.otRate : null,
+            };
+          }
+        }
+      } catch {
+        /* fail-open — no catalog check */
+      }
+
       const snapRes = await fetch(
         `/api/app-settings?key=${encodeURIComponent(`payroll.wizard.final_pay.${period.sourceFile}`)}`,
         { cache: 'no-store', signal },
       );
       const snapJson = (await snapRes.json()) as { value?: string | null };
       if (snapJson?.value) {
-        const parsed = JSON.parse(snapJson.value) as { finals?: Record<string, { final?: number }> };
+        const parsed = JSON.parse(snapJson.value) as {
+          finals?: Record<string, { final?: number; regularRate?: number; otRate?: number }>;
+        };
         for (const [em, entry] of Object.entries(parsed.finals ?? {})) {
-          if (entry && typeof entry.final === 'number') wizardFinalByEmail[em] = entry.final;
+          if (!entry || typeof entry.final !== 'number') continue;
+          const claim = catalogClaimByEmail[em];
+          if (claim) {
+            const snapReg = typeof entry.regularRate === 'number' ? entry.regularRate : null;
+            const snapOt = typeof entry.otRate === 'number' ? entry.otRate : null;
+            const stale =
+              (snapReg != null && Math.abs(snapReg - claim.reg) > 0.005) ||
+              (snapOt != null && claim.ot != null && Math.abs(snapOt - claim.ot) > 0.005);
+            if (stale) {
+              console.warn(
+                `[dispatch] wizard final for ${em} ignored — snapshot rate contradicts the ` +
+                  `Payment Catalog (stale wizard session). Reload the wizard and re-lock the week.`,
+              );
+              continue; // fall back to the staged/current-pay amount for this person
+            }
+          }
+          wizardFinalByEmail[em] = entry.final;
         }
       }
     } catch {

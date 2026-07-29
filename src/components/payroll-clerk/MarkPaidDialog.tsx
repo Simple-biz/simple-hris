@@ -350,13 +350,17 @@ export default function MarkPaidDialog({
     bank: string; holder: string; acct: string; swift: string;
   } | null>(null);
 
-  // The hero leads with the currency the recipient is actually PAID in, because
-  // that's the figure the clerk keys into the processor — the USD anchor drops
-  // to the secondary line beneath it. Every rail settles locally: the wallets
-  // (Hurupay, HiGlobe, Wise) deposit in local currency, and `wires` for a PHP
-  // payee is a domestic peso wire. Only genuinely USD-paid people (US managers,
-  // USD contractors) lead with dollars, and they keep the PHP equivalent below.
-  const heroCurrency = row?.payCurrency ?? 'PHP';
+  // The hero leads with the figure the clerk keys into the processor. Wise is
+  // the only rail keyed in pesos, so it alone leads with the PHP amount; every
+  // other rail (Hurupay, HiGlobe, wires) leads with USD and keeps the PHP
+  // equivalent on the secondary line. COP payees and genuinely USD-paid people
+  // (US managers, USD contractors) are untouched. If a PHP row somehow lacks a
+  // USD figure, fall back to the peso hero rather than showing "—" big.
+  const paidCurrency = row?.payCurrency ?? 'PHP';
+  const heroCurrency: 'USD' | 'PHP' | 'COP' =
+    paidCurrency === 'PHP' && row?.processor !== 'wise' && row?.amountUSD != null
+      ? 'USD'
+      : paidCurrency;
   const heroAmount =
     (heroCurrency === 'COP' ? row?.amountCOP
       : heroCurrency === 'USD' ? row?.amountUSD

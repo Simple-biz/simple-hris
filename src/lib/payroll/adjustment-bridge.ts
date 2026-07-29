@@ -39,10 +39,25 @@ export const APPLY_NOTE_ADJUSTMENTS_EVENT = "payroll-wizard:apply-note-adjustmen
 
 /** Window event the board dispatches when a linked note's adjustment goes
  *  away — the row deleted, or its Adjustment cell cleared. detail:
- *  { workerEmail, adjustment } (the REMOVED text). The wizard clears its Adj.
- *  override only when the current override still equals that amount, so a
- *  hand-typed wizard value is never deleted by a stale board row. */
+ *  `{ workerEmail, adjustment, remaining? }` — the REMOVED text, plus the
+ *  Adjustment texts of that worker's OTHER rows in the same pay week (the board
+ *  works in raw text; only the wizard has the fx rates to total them).
+ *
+ *  The wizard acts only when its current override still equals the board's
+ *  total BEFORE the removal, so a hand-typed wizard value is never touched by a
+ *  stale board row. With `remaining` rows it drops back to their combined total
+ *  (the removed amount is subtracted); with none left it clears the override. */
 export const NOTE_ADJUSTMENT_REMOVED_EVENT = "payroll-wizard:note-adjustment-removed";
+
+/** Shape of a {@link NOTE_ADJUSTMENT_REMOVED_EVENT} detail. */
+export type NoteAdjustmentRemovedDetail = {
+  workerEmail: string;
+  /** The Adjustment text that just left the board. */
+  adjustment: string;
+  /** The worker's other Adjustment cells for the same pay week, still on the
+   *  board. Absent/empty = that was their last one. */
+  remaining?: string[];
+};
 
 /**
  * The wizard broadcasts which pay period it is CURRENTLY on — its
@@ -131,4 +146,137 @@ export function formatAdjustmentText(amount: number): string {
   const abs = Math.abs(amount);
   const rendered = Number.isInteger(abs) ? String(abs) : abs.toFixed(2);
   return `${amount < 0 ? "-" : "+"}₱${rendered}`;
+}
+
+// ── Several rows, one worker, one week: combine ──────────────────────────────
+
+/**
+ * The identity of "the same amount written twice" — currency + cents, NOT the
+ * PHP conversion. Two cells are duplicates only when they say the same thing
+ * ("500" twice); "500" and "$8.93" may convert to nearly the same peso figure
+ * yet are plainly two different notes.
+ */
+export function adjustmentDupKey(parsed: ParsedAdjustment): string {
+  return `${parsed.currency}:${Math.round(parsed.amount * 100)}`;
+}
+
+/** The minimum a caller must hand {@link combineAdjustments}: the cell text, what
+ *  it parsed to, and that amount in PHP (the override's currency). Callers pass
+ *  their own richer row objects — the generic gives them back unchanged. */
+export type AdjustmentContribution = {
+  /** The Adjustment cell exactly as written — quoted back in warnings. */
+  text: string;
+  /** Currency + signed amount read out of {@link parseAdjustmentAmount}. */
+  parsed: ParsedAdjustment;
+  /** The same amount converted to PHP at the caller's live fx rates. */
+  php: number;
+};
+
+export type CombinedAdjustment<T> = {
+  /** What the worker's Adj. override should be, in PHP, cents-rounded. */
+  total: number;
+  /** The rows that fed `total`, oldest → newest. */
+  counted: T[];
+  /** Rows dropped as suspected duplicates — same currency AND same amount as a
+   *  row already counted. Deliberately NOT summed; the clerk is warned instead. */
+  duplicates: T[];
+  /** `total` after each counted row, oldest → newest (so the last entry IS
+   *  `total`). Lets a caller recognise an override this same board produced at
+   *  an earlier point in time — see {@link isBoardDerivedTotal}. */
+  runningTotals: number[];
+};
+
+/**
+ * Fold every board amount a worker carries for one pay week into the single
+ * figure the wizard's Adj. column holds.
+ *
+ * Two rules, both the clerk's stated intent (changed 2026-07-29 — this used to
+ * be "newest row wins", which silently dropped the other amount):
+ *
+ * 1. **Different amounts are ADDED** — signed, so `+₱500` and `-₱200` make
+ *    `+₱300`. Two notes about one person in one week are two separate pay
+ *    changes, and payroll owes them both.
+ * 2. **An identical amount repeated is counted ONCE** — the same figure in the
+ *    same currency twice is far more likely one item entered twice than two
+ *    coincidentally equal ones, and paying a duplicate is the expensive
+ *    mistake. It is never silent: the repeat lands in `duplicates`, the board
+ *    flags both rows, and the wizard warns by name. If both really are owed,
+ *    the clerk combines them into one cell (`+₱1,000`) and the pair becomes a
+ *    single amount again.
+ *
+ * Order matters only for the audit trail (`counted` / `runningTotals` follow the
+ * caller's order — the wizard passes oldest-written first); the total does not
+ * depend on it.
+ */
+export function combineAdjustments<T extends AdjustmentContribution>(
+  contributions: readonly T[],
+): CombinedAdjustment<T> {
+  const counted: T[] = [];
+  const duplicates: T[] = [];
+  const runningTotals: number[] = [];
+  const seen = new Set<string>();
+  let total = 0;
+  for (const c of contributions) {
+    const key = adjustmentDupKey(c.parsed);
+    if (seen.has(key)) {
+      duplicates.push(c);
+      continue;
+    }
+    seen.add(key);
+    counted.push(c);
+    total = Math.round((total + c.php) * 100) / 100;
+    runningTotals.push(total);
+  }
+  return { total, counted, duplicates, runningTotals };
+}
+
+/**
+ * Whether an Adj. override the wizard is already holding is one THIS board
+ * group produced, in any of the three shapes it could have taken:
+ *
+ *  - its **final total** (already applied — a no-op),
+ *  - an earlier **running total** (the state before another row was written),
+ *  - a **single row's amount** — which is what the bridge applied for any group
+ *    before 2026-07-29, when the newest row simply won. Without this the three
+ *    workers found short on week 2026-07-19 (₱4,750 saved where the board says
+ *    ₱6,600) would never have self-healed; only a manual Apply Changes would fix
+ *    them, which is exactly the "someone has to remember" failure the bridge
+ *    keeps being bitten by.
+ *
+ * This is what lets the automatic, merge-only pull upgrade `+₱500` to `+₱1,100`
+ * when a second row appears, while still refusing to touch a figure accounting
+ * typed by hand — anything that isn't one of the above is treated as hand-typed
+ * and left alone.
+ */
+export function isBoardDerivedTotal<T extends AdjustmentContribution>(
+  existing: number,
+  combined: Pick<CombinedAdjustment<T>, "total" | "runningTotals" | "counted" | "duplicates">,
+): boolean {
+  if (Math.abs(existing - combined.total) <= 0.01) return true;
+  if (combined.runningTotals.some((t) => Math.abs(t - existing) <= 0.01)) return true;
+  return [...combined.counted, ...combined.duplicates].some(
+    (c) => Math.abs(c.php - existing) <= 0.01,
+  );
+}
+
+/**
+ * Parse + convert a list of raw Adjustment cells (unparseable ones dropped) and
+ * combine them. The board side of the bridge works in raw text — it has no fx
+ * rates of its own — so this is how a retraction tells the wizard what the
+ * worker's remaining board total is.
+ */
+export function combineAdjustmentTexts(
+  texts: readonly (string | null | undefined)[],
+  fx: { usdToPhp: number; usdToCop: number },
+): CombinedAdjustment<AdjustmentContribution> {
+  const contributions: AdjustmentContribution[] = [];
+  for (const raw of texts) {
+    const text = (raw ?? "").trim();
+    const parsed = parseAdjustmentAmount(text);
+    if (!parsed) continue;
+    const php = adjustmentToPhp(parsed, fx);
+    if (php === null) continue;
+    contributions.push({ text, parsed, php });
+  }
+  return combineAdjustments(contributions);
 }

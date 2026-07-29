@@ -15,6 +15,11 @@ export const runtime = "nodejs";
  * the worker's live-week Payroll Notes row carries the same adjustment —
  * updated in place, or created stamped like a hand-written line. amount=null
  * (override cleared) blanks the linked row's Adjustment text.
+ *
+ * Answers `{ skipped: "multiple_rows", amountRows }` when the worker already has
+ * several amounts on the board this week: the wizard figure is their combined
+ * total, so mirroring it into one row would double-count the others. The client
+ * surfaces that instead of pretending the write happened.
  */
 export async function POST(req: Request) {
   const authz = await requireFeatureEdit("accounting", "payroll_wizard");
@@ -39,7 +44,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "amount must be a finite number or null" }, { status: 400 });
   }
 
-  const { row, created, error } = await bridgeWizardAdjustment({
+  const { row, created, error, skipped, amountRows } = await bridgeWizardAdjustment({
     workEmail,
     amount,
     sessionEmail: authz.sessionEmail,
@@ -58,5 +63,5 @@ export async function POST(req: Request) {
     });
   }
 
-  return NextResponse.json({ row, created });
+  return NextResponse.json({ row, created, skipped: skipped ?? null, amountRows: amountRows ?? null });
 }

@@ -48,7 +48,7 @@ Employees submit from the **Employee → MESA → Request** tab (`src/components
 | Type | What it does | Reviewed by |
 |---|---|---|
 | `opt_in` | Join MESA after FPU. Requires all agreement checkboxes + an FPU completion date. | **HR** |
-| `opt_out` | Leave the program (stops the weekly deduction + match). | **Accounting** |
+| `opt_out` | Leave the program (stops the weekly deduction + match). Requires an **effective date** (`effective_date`, defaults to today, can't be back-dated) — no confirmation checkbox: choosing the tab and submitting *is* the request. | **Accounting** |
 | `disbursement` | Withdraw funds for an emergency. Requires a reason (Medical Emergency / Natural Disaster / Computer Repair / Other), a ≤250-char explanation, and a PHP amount. | **Accounting** |
 | `return` | Return funds to the account (optional notes). | **Accounting** |
 
@@ -72,6 +72,24 @@ Every MESA tab is gated on the active roster (`GET /api/employees` = `active_emp
 `references/sql/seed/seed_mesa_active_membership.sql` flags the ~273 non-Inactive members on the Active sheet (`references/docs/mesa_active_export.csv`) as `mesa_member = true` on `employee_hourly_rates`, anchoring `mesa_member_since` to each member's earliest recorded deposit. Run once in the Supabase SQL Editor; idempotent. Mirrors the scope of `scripts/preload-mesa-membership.mjs` (which does the same from the `mesa_ledger` table when it's populated) but is self-contained from the CSV, so it works even if the ledger was never backfilled. Members flagged here populate the **MESA Active Members** tab; roster employees who have never joined fall to **Non Members** (opted-out ex-members, who keep a start date, appear on neither).
 
 Reviews go through `PATCH /api/mesa-requests/[id]` (`requireFeatureEditAnyView('mesa')`). Approving an `opt_out` also fires `POST /api/toggle-mesa-member` with `mesaMember: false` to stop the deduction; revoking re-enrolls.
+
+**Opt-out effective date** (2026-07-29): the member picks the day their participation ends; it rides on `mesa_requests.effective_date` and shows in the queue's Details column, the Review modal, and the export. **Accounting can edit it** — the Review modal renders it as a date picker that saves on pick (optimistic, rolls back on failure) via `PATCH /api/mesa-requests/[id]` with `{ effective_date }`. That works at any status: a decided opt-out gets a calendar button in the row's Action cell that reopens the same modal in read-only "Details" mode (notes and reviewer shown, no Approve/Deny — revoke from the row to reopen the decision itself). Legacy opt-outs filed before the column existed show "Not set" and can be filled in the same way. Approval is still **immediate and manual** — nothing schedules a future-dated opt-out — so the Review modal flags a future date and tells the reviewer to hold the decision until then if the deduction should keep running. Apply `references/sql/alter/2026-07-29_add_mesa_effective_date.sql` (`node scripts/apply-mesa-effective-date.mjs`, needs `DATABASE_URL`) **before deploying** — the form POSTs the column, so without it every opt-out submission fails.
+
+### Disbursement receipts (`mesa_request_receipts`) — 2026-07-29
+
+The program has always required receipts ("within 14 days… must be valid and include the merchant's name"), but until now there was nowhere to put one: it arrived over email or not at all, so Accounting reviewed a disbursement with **no evidence attached to the request it was deciding**. Members now attach up to **three** files per disbursement.
+
+**Employee side** — a **Receipt** column in Employee → MESA → Request → **Past requests**, sitting next to Amount (the receipt is the evidence for that number). Only a `disbursement` row is eligible; `opt_in` / `opt_out` / `return` and **denied** disbursements render a dash rather than an action that can't complete (the API refuses those uploads too). The cell is an **Attach** chip at zero receipts and a teal `🧾 N` count once there are some; either opens `MesaReceiptDialog` (`src/components/employee/MesaReceiptDialog.tsx`) — drag-and-drop or browse, live thumbnails, per-file remove, and the 14-day/merchant-name rule restated where it applies. It is **portaled to `<body>`**: the MESA tab's content animates `filter`, which makes that element the containing block for fixed-position descendants, so an in-place overlay would be clipped to the tab panel.
+
+**Accounting side** — the Requests queue shows a receipt chip under the reason in the Details cell (`N receipts`, or a muted "No receipt"), so a reviewer sees which of thirty rows are substantiated without opening each one. The Review modal renders the files themselves above the balance panel — whether the claim is substantiated is read *before* whether the fund can cover it — with thumbnails, size, upload date, and **how many days after the request** each landed (past 14 days is called out in amber). Read-only for Accounting on purpose: this is the evidence the decision rests on. A **Receipts** count column is in the CSV/XLSX/PDF export.
+
+**Storage + shape.** Objects live in the **private** `mesa-receipts` bucket at `<sanitized-email>/<request-id>/<slot>-<ts>.<ext>`, read exclusively through 1-hour signed URLs — never a public URL. One row per file in `mesa_request_receipts` (not a JSONB array on `mesa_requests`): per-file `uploaded_at` is what proves the 14-day rule was met, and inserts can't clobber a sibling the way a wholesale blob replace can (see `memory/notes-adjustment-bridge-loss.md`). The **3-file cap is the `(request_id, slot)` unique constraint**, not an API count check a double-submit could race past — `createMesaReceipt` picks the lowest free slot and retries once against a re-read when it loses the race.
+
+**Type checking is by content, not Content-Type.** `sniffReceiptMime` (`src/lib/mesa/receipt-sniff.ts`, covered by `receipt-sniff.test.ts`) reads the magic number: JPEG / PNG / WebP / HEIC / HEIF / PDF only. The declared MIME is never trusted — it's spoofable and genuinely wrong for iPhone HEIC — so an executable renamed `receipt.pdf`, an SVG (a script vector when served back), a ZIP-based Office file, and a PDF signature at a non-zero offset are all rejected before anything reaches the bucket. 5 MB per file, one file per request, uploaded sequentially so a single body stays inside the serverless limit.
+
+**Endpoints** — `GET|POST|DELETE /api/mesa-requests/[id]/receipts`, authorized as the parent request's **owner OR an elevated role** (the same gate as `GET /api/mesa-requests?email=`); `uploaded_by` records which. `GET /api/mesa-requests` attaches `receipt_count` + `receipt_last_uploaded_at` to disbursement rows in one extra round trip. Removal is available to the member (a mis-picked file is the common case) and every deletion is audited — `mesa.receipt.uploaded` / `mesa.receipt.deleted`.
+
+Apply `references/sql/migrate/2026-07-29_mesa_request_receipts.sql` (`node scripts/apply-mesa-receipts.mjs`, needs `DATABASE_URL`) **before deploying**. A deploy that lands first degrades rather than breaks: `countMesaReceipts` swallows a missing table and returns `{}`, so every row reports an unknown count (the chip stays silent, the export prints `-`) until the migration runs.
 
 ### HR tab — `HrMesa.tsx`
 
@@ -186,6 +204,7 @@ Approving a disbursement in Accounting is a *signal*, not a payment. The actual 
 | List own requests / own ledger (`?email=`) | Self (`authorizeEmailAccess`) |
 | List all requests / program-wide balances | `requireElevatedSession` |
 | Approve / deny / revoke / delete a request | `requireFeatureEditAnyView('mesa')` |
+| List / attach / remove a disbursement receipt (`/api/mesa-requests/[id]/receipts`) | Parent request's owner **or** elevated (`authorizeEmailAccess` on the row's `work_email`) |
 | Dispatch an approved disbursement | Elevated session (see urgent-payments.md) |
 | List / add a member's internal note (`/api/mesa-notes`) | `requireElevatedSession` (list) / `requireFeatureEditAnyView('mesa')` (add) |
 | Directly toggle a member's enrollment from Accounting → MESA → Non Members (temporary bridge, bypasses the request queue) | `requireFeatureEditAnyView('mesa')` |
@@ -196,13 +215,20 @@ Approving a disbursement in Accounting is a *signal*, not a payment. The actual 
 
 | Path | Role |
 |---|---|
-| `src/components/employee/EmployeeMesa.tsx` | Employee About / Request / History tabs |
+| `src/components/employee/EmployeeMesa.tsx` | Employee About / Request / History tabs + the Past-requests **Receipt** column |
+| `src/components/employee/MesaReceiptDialog.tsx` | Receipt upload dialog (portaled, drag-and-drop, ≤3 files, thumbnails, per-file remove) |
 | `src/components/payroll/AccountingMesa.tsx` | Accounting Requests queue + Non Members (temp Opt In/Out) + MESA Active Members + View drill-down |
 | `src/components/hr/HrMesa.tsx` | HR Eligible / opt-in Requests / FPU tabs |
 | `src/components/PayrollWizard.tsx` | Weekly deduction + disbursement folded into Final pay |
 | `src/lib/mesa/ledger.ts` | Shared ledger types + `summarizeMember` / `summarizeMembers` |
 | `app/api/mesa-requests/route.ts` | GET (list/own) + POST (submit) |
 | `app/api/mesa-requests/[id]/route.ts` | PATCH (approve/deny/revoke) + DELETE |
+| `app/api/mesa-requests/[id]/receipts/route.ts` | GET (list + signed URLs) / POST (attach one file) / DELETE (`?receipt_id=`) |
+| `src/lib/mesa/receipt-types.ts` | Shared limits + shape (3 files, 5 MB, accepted MIME, size formatting) — browser-safe |
+| `src/lib/mesa/receipts.ts` | Server CRUD: slot assignment w/ race retry, private-bucket upload, signed URLs, audit |
+| `src/lib/mesa/receipt-sniff.ts` | Magic-number content check — the gate on what enters the bucket (tested) |
+| `references/sql/migrate/2026-07-29_mesa_request_receipts.sql` | `mesa-receipts` private bucket + `mesa_request_receipts` table (3-file cap as a unique constraint) |
+| `scripts/apply-mesa-receipts.mjs` | Applies + verifies the receipts migration (`DATABASE_URL`, `--verify` to check only) |
 | `app/api/mesa-requests/[id]/dispatch/route.ts` | Pay out an approved disbursement |
 | `app/api/mesa-ledger/route.ts` | Per-member or program-wide contribution rollup |
 | `app/api/mesa-notes/route.ts` | GET (list) + POST (add) a member's internal notes |

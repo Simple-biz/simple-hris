@@ -17,6 +17,7 @@ import {
   READINESS_SOURCE,
 } from '@/lib/payroll/readiness-audit';
 import { updateEmployeeRates } from '@/lib/supabase/employee-hourly-rates';
+import { invalidateRateProfilesCache } from '@/lib/supabase/employee-rate-profiles';
 import { createSupabaseServiceRoleClient } from '@/lib/supabase/server';
 import { normEmail } from '@/lib/email/norm-email';
 import { updateEmployeeRateInSheet } from '@/lib/google-sheets/update-rates-sheet';
@@ -185,6 +186,10 @@ export async function POST(request: Request) {
   const { row, error } = await upsertPayStructure(s, actor);
   if (error) return NextResponse.json({ error }, { status: 500 });
 
+  // Rates & Profiles overlays employee-scope catalog rates onto its cached
+  // merge — a structure change must show there immediately, not after the TTL.
+  invalidateRateProfilesCache();
+
   if (s.scope === 'employee') {
     void syncRateHistory(s, actor, source, body.effectiveDate ?? undefined).catch((err: unknown) => {
       console.warn('[pay-structures] syncRateHistory failed:', err);
@@ -227,5 +232,7 @@ export async function DELETE(request: Request) {
 
   const { error } = await deletePayStructure(id);
   if (error) return NextResponse.json({ error }, { status: 500 });
+  // Deleting a structure changes which rate Rates & Profiles displays.
+  invalidateRateProfilesCache();
   return NextResponse.json({ error: null });
 }

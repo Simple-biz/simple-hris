@@ -5,9 +5,23 @@ accounting-editable adjustments layered on top. Covers the **Initial Calculation
 the **Additions** table (step 3), and the **HSL** table (step 5).
 
 Source: [`src/components/PayrollWizard.tsx`](../../src/components/PayrollWizard.tsx).
-Last substantive update: **2026-07-25**.
+Last substantive update: **2026-07-29**.
 
 ---
+
+## 2026-07-29 updates
+
+- **HSL rows now show in the Initial Calculation table (step 2).** Previously
+  `hogan_smith_law` rows were filtered out of the step-2 table (a banner pointed
+  to the HSL tab instead), even though their `initialPay` was computed in the
+  same pass. The table now lists **every department**; the banner clarifies that
+  HSL **KPI bonuses** are still added on the HSL tab. Display-only — no
+  money-path change (the HSL tab always read the same rows).
+- **Step-2 department filter.** A `Dept:` dropdown next to the table search
+  narrows the table to one department (options are the departments present in
+  the current run's rows, with counts; people whose email maps to no wizard
+  dept fall under **Unassigned**). Each row also shows its department under the
+  member name, and the search box matches department names too.
 
 ## 2026-07-25 updates
 

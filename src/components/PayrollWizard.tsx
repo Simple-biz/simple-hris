@@ -147,8 +147,14 @@ import {
   WIZARD_CYCLE_EVENT,
   REQUEST_WIZARD_CYCLE_EVENT,
   adjustmentToPhp,
+  combineAdjustments,
+  combineAdjustmentTexts,
+  isBoardDerivedTotal,
   parseAdjustmentAmount,
   payWeekStartFromSourceFile,
+  type CombinedAdjustment,
+  type NoteAdjustmentRemovedDetail,
+  type ParsedAdjustment,
 } from '@/lib/payroll/adjustment-bridge';
 import {
   parseSignedAmountInput,
@@ -176,6 +182,11 @@ import {
   type DepartmentRegistryEntry,
 } from '@/lib/departments/registry';
 import { isFinalPayrollWeekOfMonth } from '@/lib/payroll/bonus-cadence';
+import {
+  findRateConsistencyIssues,
+  totalRateShortfallPhp,
+  type RateConsistencyIssue,
+} from '@/lib/payroll/paystub-rate-consistency';
 import { isFinalPabWeek as gateIsFinalPabWeek } from '@/lib/payroll/dispatch-bonuses';
 import { parseLocalDateFromIso, resolvePabRangeForMonth, yearMonthKey, PAB_PERIOD_EXCLUSIONS_KEY } from '@/lib/pab-period-settings';
 import {
@@ -483,6 +494,33 @@ type CalcRow = {
     newOt: number | null;
     effectiveDate: string; // YYYY-MM-DD
   } | null;
+  /**
+   * The rates this row's pay was actually computed at. Always populated: the
+   * single-rate path pays at the cache rate (so it echoes `regularRate`/`otRate`),
+   * while the per-day history path reports the dated rates it really used.
+   *
+   * `regularRate`/`otRate` above are only what the statement DISPLAYS. Keeping the
+   * paid rates alongside them lets `findRateConsistencyIssues` catch a stub that
+   * advertises a rate no money was computed at — exactly, with no tolerance
+   * guessing, and without mistaking an HSL weekend premium for a discrepancy.
+   */
+  ratesPaid?: { regular: number[]; ot: number[] } | null;
+  /**
+   * Set when the rate that PAID this week differs from the sheet/catalog rate.
+   * `regularRate`/`otRate` above always show the rate actually paid, so the stub's
+   * arithmetic is correct either way — but a disagreement can still mean the
+   * employee is owed money (a raise that reached the sheet and never reached
+   * `employee_rate_history`), so it is surfaced rather than swallowed.
+   *
+   * `shortfallPhp` > 0 ⇒ paid LESS than the sheet rate implies.
+   */
+  rateDisagreement?: {
+    sheetRegular: number | null;
+    paidRegular: number | null;
+    sheetOt: number | null;
+    paidOt: number | null;
+    shortfallPhp: number;
+  } | null;
 };
 
 const REG_WEEK_CAP_SEC = 40 * 3600;
@@ -517,10 +555,28 @@ function proratePayForMidPeriodChange(params: {
     newOt: number | null;
     effectiveDate: string;
   } | null;
+  /**
+   * The distinct per-day rates this function actually PAID at, in first-use order
+   * (excluding the HSL weekend premium, which is a per-day addition, not a rate).
+   *
+   * Reported because the caller displays `regularRate`/`otRate` from the rates
+   * CACHE while taking its pay from here — from dated history. When the two
+   * disagree the statement advertises a rate it never paid, which is how a
+   * ₱2,309.62 shortfall shipped looking perfectly reconciled. Handing the real
+   * rates back lets `paystub-rate-consistency.ts` catch that exactly instead of
+   * inferring it from the arithmetic.
+   */
+  regularRatesUsed: number[];
+  otRatesUsed: number[];
 } | null {
   const { days, isHsl, history, histEmail, fallbackReg, fallbackOt } = params;
   const empHist = history && histEmail ? history.get(histEmail) : undefined;
   if (!empHist || empHist.length === 0 || days.length === 0) return null;
+  const regularRatesUsed: number[] = [];
+  const otRatesUsed: number[] = [];
+  const noteRate = (into: number[], v: number | null) => {
+    if (v != null && Number.isFinite(v) && !into.includes(v)) into.push(v);
+  };
 
   let usedRegSec = 0;
   let regularPayPHP = 0;
@@ -565,10 +621,14 @@ function proratePayForMidPeriodChange(params: {
     if (reg != null) {
       regularPayPHP += (dayRegSec / 3600) * (reg + weekendBonus);
       anyReg = true;
+      // Only count a rate as "paid at" when it actually moved money on this day —
+      // a zero-second day would otherwise smuggle in a rate nobody was paid.
+      if (dayRegSec > 0) noteRate(regularRatesUsed, reg);
     }
     if (ot != null) {
       otPayPHP += (dayOtSec / 3600) * (ot + weekendBonus);
       anyOt = true;
+      if (dayOtSec > 0) noteRate(otRatesUsed, ot);
     }
   }
 
@@ -585,6 +645,8 @@ function proratePayForMidPeriodChange(params: {
     regularPay: anyReg ? Math.round(regularPayPHP * 100) / 100 : null,
     otPay: anyOt ? Math.round(otPayPHP * 100) / 100 : null,
     change,
+    regularRatesUsed,
+    otRatesUsed,
   };
 }
 
@@ -1205,6 +1267,7 @@ export default function PayrollWizard({
   const SOURCE_FILE_PAGE_SIZE = 25;
   const [hubstaffSearch, setHubstaffSearch] = useState('');
   const [initialCalcSearch, setInitialCalcSearch] = useState('');
+  const [initialCalcDept, setInitialCalcDept] = useState('all');
   const [initialCalcPage, setInitialCalcPage] = useState(1);
   const [hslSearch, setHslSearch] = useState('');
   const [hslPage, setHslPage] = useState(1);
@@ -1403,6 +1466,9 @@ export default function PayrollWizard({
   // top of the sheet-synced `hourlyRateRows` in `ratesByEmail` below (live cycle
   // only: skipped while replaying a past period).
   const [payStructures, setPayStructures] = useState<PayStructure[]>([]);
+  // A failed catalog fetch means the calc silently falls back to sheet rates —
+  // the drift class the catalog exists to prevent — so it must be VISIBLE.
+  const [payStructuresError, setPayStructuresError] = useState<string | null>(null);
 
   // ── HSL step: per-dept KPI bonus data loaded on demand (step 4) ─────────────
   const [hslStepPeriods, setHslStepPeriods] = useState<{
@@ -2502,10 +2568,18 @@ export default function PayrollWizard({
     try {
       const res = await fetch('/api/payment-catalog/pay-structures', { cache: 'no-store' });
       const json = (await res.json()) as { structures?: PayStructure[]; error?: string | null };
+      if (!res.ok || json.error) {
+        // Keep whatever loaded before: a failed REfetch must not strip catalog
+        // rates already applied to the calc. Only the error becomes visible.
+        setPayStructuresError(json.error || `Payment Catalog rates failed to load (HTTP ${res.status})`);
+        return;
+      }
       setPayStructures(json.structures ?? []);
-    } catch {
-      // Non-fatal: without the catalog, ratesByEmail falls back to the sheet rates.
-      setPayStructures([]);
+      setPayStructuresError(null);
+    } catch (e) {
+      // Without the catalog, ratesByEmail falls back to the sheet rates — the
+      // run can proceed, but the fallback must be visible, not silent.
+      setPayStructuresError(e instanceof Error ? e.message : 'Payment Catalog rates failed to load');
     }
   }, []);
 
@@ -4027,6 +4101,7 @@ export default function PayrollWizard({
     employeeBonuses,
     employeeDepts,
     bonusOverrides,
+    bonusOverrideNotes,
     orphanageAmounts,
     employeeMetrics,
     deptMetrics,
@@ -4038,6 +4113,7 @@ export default function PayrollWizard({
       employeeBonuses,
       employeeDepts,
       bonusOverrides,
+      bonusOverrideNotes,
       orphanageAmounts,
       employeeMetrics,
       deptMetrics,
@@ -4048,6 +4124,7 @@ export default function PayrollWizard({
     employeeBonuses,
     employeeDepts,
     bonusOverrides,
+    bonusOverrideNotes,
     orphanageAmounts,
     employeeMetrics,
     deptMetrics,
@@ -4080,7 +4157,23 @@ export default function PayrollWizard({
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ work_email: email, amount }),
-        }).catch(() => {});
+        })
+          .then(async (res) => {
+            if (!res.ok) return;
+            const json = (await res.json()) as { skipped?: string | null; amountRows?: number | null };
+            // The board holds SEVERAL amounts for this worker, so the figure
+            // just typed here is their total — writing it into one of those rows
+            // would add it on top of the others. Nothing was mirrored; say so,
+            // because a silent divergence between the two surfaces is exactly
+            // what the bridge exists to prevent.
+            if (json.skipped === 'multiple_rows') {
+              toast.warning('Kept in the wizard only — the board has several rows for this worker', {
+                duration: 10000,
+                description: `${email} has ${json.amountRows ?? 2} Adjustment rows on this week's Payroll Notes board, and the wizard's value is their combined total. Your figure was NOT written back (it would have been added to those rows). Edit the rows on the board if the total should change.`,
+              });
+            }
+          })
+          .catch(() => {});
       }, 900),
     );
   }, []);
@@ -4091,16 +4184,46 @@ export default function PayrollWizard({
     };
   }, []);
 
+  /** One board row's share of a worker's adjustment, as handed to
+   *  `combineAdjustments` (which returns these objects back, grouped). */
+  type NoteContribution = {
+    rowId: string;
+    /** The Adjustment cell exactly as written. */
+    text: string;
+    parsed: ParsedAdjustment;
+    /** `text` in PHP at the live fx rates — the override's currency. */
+    php: number;
+    /** Worker name for the warnings (falls back to the linked email). */
+    worker: string;
+    /** That row's Notes text — the reason, carried onto the pay stub. */
+    rowNote: string;
+  };
+
+  /** Suspected-duplicate warnings already shown, keyed by worker + the exact set
+   *  of amounts that produced them — so the automatic pull can warn about money
+   *  the very first time it sees it without nagging on every step re-entry, yet
+   *  still speaks up when the set changes. */
+  const duplicateWarnedRef = useRef(new Set<string>());
+
   /** Pre-fill Adj. overrides from the Payroll Notes board (open rows linked to
    *  a worker email whose Adjustment text is a pure signed amount — in ₱, $,
    *  or COP; non-PHP amounts convert at the live fx rates since the override
    *  is PHP-denominated).
    *
-   *  Default (automatic, on step entry): merge-only — existing overrides,
-   *  saved or just typed, always win. `force` (a clerk's "Apply Changes"
-   *  button on their board section): the board is the source of truth and its
-   *  amounts OVERWRITE the matching overrides, with explicit result toasts
-   *  either way. `onlyRowIds` scopes the apply to one clerk's rows. */
+   *  SEVERAL rows for one worker in one week are folded into a single figure by
+   *  `combineAdjustments`: different amounts are ADDED (signed, so a bonus and a
+   *  deduction net out), while an identical amount repeated is counted ONCE and
+   *  reported as a suspected duplicate. (Before 2026-07-29 the newest row simply
+   *  won and every other amount was dropped.)
+   *
+   *  Default (automatic, on step entry): merge-only — a hand-typed override
+   *  always wins. The exception is a value this same board group produced
+   *  earlier (`isBoardDerivedTotal`), which is upgraded to the new total, so
+   *  adding a second note mid-week actually takes effect. `force` (a clerk's
+   *  "Apply Changes" button on their board section): the board is the source of
+   *  truth and its amounts OVERWRITE the matching overrides, with explicit
+   *  result toasts either way. `onlyRowIds` scopes the apply to one clerk's
+   *  rows. */
   const pullNotesAdjustments = React.useCallback(async (opts?: { force?: boolean; onlyRowIds?: string[] }) => {
     if (isReplayRef.current) return;
     const force = opts?.force === true;
@@ -4135,16 +4258,17 @@ export default function PayrollWizard({
       // amount. Both used to vanish into a generic "nothing to apply".
       const skippedUnlinked: string[] = [];
       const skippedUnparseable: string[] = [];
-      // Every amount seen per worker this cycle. Only the newest row wins (see
-      // `byEmail`), so two rows for one person means one of the two amounts is
-      // being dropped — the clerk has to know which, because summing vs.
-      // superseding is their call, not ours.
-      const amountsByWorker = new Map<string, { name: string; amounts: number[] }>();
       // The pay week this wizard run is paying, straight off the loaded CSV's
       // filename range — the same Sunday anchor a note carries in `week_start`.
       const cycleWeek = payWeekStartFromSourceFile(calcSourceFileRef.current);
+      // Which workers an `onlyRowIds` apply covers. Scoping has to be per WORKER,
+      // not per row: amounts add up now, so combining only the clicking clerk's
+      // row and force-writing that partial figure would wipe out the amount
+      // another clerk wrote for the same person. "Apply my rows" therefore means
+      // "push my workers' full board state", and every eligible row for those
+      // workers contributes.
+      const scopedEmails = only ? new Set<string>() : null;
       for (const r of rows) {
-        if (only && !only.has(r.id)) continue;
         // `week_start` — not the Done tick — decides whether a row belongs to
         // THIS payroll. Done means "already pushed into the wizard": for an
         // earlier period that's history (it was paid then; re-applying would
@@ -4162,12 +4286,15 @@ export default function PayrollWizard({
         const text = (r.adjustment ?? '').trim();
         if (text === '') continue;
         const parsed = parseAdjustmentAmount(text);
+        // A row outside the clicked section still feeds its worker's total, but
+        // it must not raise warnings the clicking clerk can't act on.
+        const inScope = !only || only.has(r.id);
         if (!normalized) {
-          skippedUnlinked.push(`${r.worker?.trim() || '(no worker)'} — ${text}`);
+          if (inScope) skippedUnlinked.push(`${r.worker?.trim() || '(no worker)'} — ${text}`);
           continue;
         }
         if (!parsed) {
-          skippedUnparseable.push(`${r.worker?.trim() || normalized} — "${text}"`);
+          if (inScope) skippedUnparseable.push(`${r.worker?.trim() || normalized} — "${text}"`);
           continue;
         }
         // Key by the wizard's own casing — ONLY when the worker resolves to a
@@ -4177,23 +4304,65 @@ export default function PayrollWizard({
         // apply) say so, leaving the board row open.
         const email = rawByNorm.get(normalized);
         if (!email) {
-          skippedWorkers.push(r.worker?.trim() || normalized);
+          if (inScope) skippedWorkers.push(r.worker?.trim() || normalized);
           continue;
         }
         const amount = adjustmentToPhp(parsed, fxRates);
         if (amount === null) continue;
-        const seen = amountsByWorker.get(email);
-        if (seen) seen.amounts.push(amount);
-        else amountsByWorker.set(email, { name: r.worker?.trim() || normalized, amounts: [amount] });
-        const baseNote = r.notes?.trim() || `From Payroll Notes (${r.payroll_clerk ?? 'board'})`;
-        byEmail.set(email, {
-          amount,
-          // Converted amounts keep their origin visible next to the ₱ figure.
-          note:
-            parsed.currency === 'PHP'
-              ? baseNote
-              : `${baseNote} · from ${(r.adjustment ?? '').trim()} ${parsed.currency}`,
+        if (inScope) scopedEmails?.add(email);
+        const group = contributionsByEmail.get(email);
+        const contribution: NoteContribution = {
           rowId: r.id,
+          text,
+          parsed,
+          php: amount,
+          worker: r.worker?.trim() || normalized,
+          rowNote: r.notes?.trim() || `From Payroll Notes (${r.payroll_clerk ?? 'board'})`,
+        };
+        if (group) group.push(contribution);
+        else contributionsByEmail.set(email, [contribution]);
+      }
+      // One figure per worker, per the board's combine rule: different amounts
+      // ADD (signed — a bonus and a deduction net out), an identical amount
+      // repeated counts ONCE as a suspected duplicate. `rowIds` is every row
+      // that fed the figure, so an explicit apply files them all as Done.
+      const byEmail = new Map<
+        string,
+        { amount: number; note: string; rowIds: string[]; combined: CombinedAdjustment<NoteContribution> }
+      >();
+      // Workers whose rows had to be summed, and workers carrying a repeat of an
+      // amount already counted — both reported below (the duplicate ones as a
+      // warning: it is the clerk's call whether that repeat is real money).
+      type WorkerCombine = { email: string; name: string; combined: CombinedAdjustment<NoteContribution> };
+      const summedWorkers: WorkerCombine[] = [];
+      const duplicateWorkers: WorkerCombine[] = [];
+      for (const [email, contributions] of contributionsByEmail) {
+        // Workers nobody in the clicked section wrote about are none of this
+        // apply's business (their rows were only read to complete a total).
+        if (scopedEmails && !scopedEmails.has(email)) continue;
+        const combined = combineAdjustments(contributions);
+        const name = contributions[0]!.worker;
+        if (combined.counted.length > 1) summedWorkers.push({ email, name, combined });
+        if (combined.duplicates.length > 0) duplicateWorkers.push({ email, name, combined });
+        // The paystub's adjustment_note has to explain the figure it sits next
+        // to: each row's own reason, then the arithmetic when there was any.
+        const reasons = [...new Set(combined.counted.map((c) => c.rowNote))].join(' · ');
+        const arithmetic =
+          combined.counted.length > 1
+            ? ` · combined ${combined.counted.length} Payroll Notes rows: ${combined.counted
+                .map((c) => c.text)
+                .join(' + ')} = ${formatPHP(combined.total)}`
+            : combined.counted[0] && combined.counted[0].parsed.currency !== 'PHP'
+              ? ` · from ${combined.counted[0].text} ${combined.counted[0].parsed.currency}`
+              : '';
+        byEmail.set(email, {
+          amount: combined.total,
+          note: `${reasons}${arithmetic}`,
+          // Only rows that were COUNTED are filed Done. A suspected duplicate
+          // was not paid, so it stays open on the board for the clerk to keep
+          // (as its own amount, merged into one cell) or delete.
+          rowIds: combined.counted.map((c) => c.rowId),
+          combined,
         });
       }
       // An explicit apply must never SILENTLY drop a row — the clerk thinks
@@ -4227,30 +4396,64 @@ export default function PayrollWizard({
           },
         );
       }
-      // Two rows, one worker, one week: the newest wins and the other amount is
-      // NOT paid. Never silent — if both were meant to apply they have to be
-      // combined into one cell by hand.
-      const competing = [...amountsByWorker.values()].filter((w) => w.amounts.length > 1);
-      if (force && competing.length > 0) {
-        toast.warning(
-          `${competing.length} worker${competing.length === 1 ? '' : 's'} ${competing.length === 1 ? 'has' : 'have'} more than one Adjustment this week — only the newest applies`,
-          {
-            description: competing
-              .slice(0, 4)
-              .map((w) => `${w.name}: ${w.amounts.map((a) => formatPHP(a)).join(' / ')} → ${formatPHP(w.amounts[w.amounts.length - 1]!)}`)
-              .join(' · ') + (competing.length > 4 ? ' …' : '') + '. Combine them into a single cell if both should be paid.',
-          },
-        );
+      // A REPEAT of an amount already counted is the one case the bridge refuses
+      // to add up: the same figure twice in one week is usually one item entered
+      // twice, and paying it twice is the expensive way to be wrong. It is never
+      // silent — warn by name, on an explicit apply AND on the automatic
+      // pre-fill (once per distinct set of amounts, so a step re-entry doesn't
+      // nag), because nobody may click Apply Changes all week.
+      if (duplicateWorkers.length > 0) {
+        const fresh = duplicateWorkers.filter((w) => {
+          const key = `${w.name}|${w.combined.counted
+            .concat(w.combined.duplicates)
+            .map((c) => c.text)
+            .join('|')}`;
+          if (!force && duplicateWarnedRef.current.has(key)) return false;
+          duplicateWarnedRef.current.add(key);
+          return true;
+        });
+        if (fresh.length > 0) {
+          toast.warning(
+            `Possible duplicate adjustment${fresh.length === 1 ? '' : 's'} — ${fresh.length} worker${fresh.length === 1 ? '' : 's'}`,
+            {
+              duration: 12000,
+              description:
+                fresh
+                  .slice(0, 4)
+                  .map(
+                    (w) =>
+                      `${w.name}: ${w.combined.duplicates
+                        .map((c) => c.text)
+                        .join(', ')} repeats an amount already counted — applied once, as ${formatPHP(w.combined.total)}`,
+                  )
+                  .join(' · ') +
+                (fresh.length > 4 ? ' …' : '') +
+                '. Identical amounts are never added up. If both are genuinely owed, put the sum in ONE cell and delete the other row.',
+            },
+          );
+        }
       }
       const existing = auditCtxRef.current.bonusOverrides;
       const adds = force
         ? [...byEmail.entries()]
-        // Merge-only, with one exception: a bare 0. Clicking the "—" placeholder
-        // OPENS the Adj. input at 0 without committing anything, and that empty
-        // shell used to block the board's real amount from ever pre-filling —
-        // the column looked touched, so the pull politely left it alone. 0 is no
-        // money, so there is nothing to protect.
-        : [...byEmail.entries()].filter(([email]) => existing[email] === undefined || existing[email] === 0);
+        : [...byEmail.entries()].filter(([email, a]) => {
+            const current = existing[email];
+            // Nothing there yet — pre-fill.
+            if (current === undefined) return true;
+            // A bare 0: clicking the "—" placeholder OPENS the Adj. input at 0
+            // without committing anything, and that empty shell used to block
+            // the board's real amount from ever pre-filling — the column looked
+            // touched, so the pull politely left it alone. 0 is no money, so
+            // there is nothing to protect.
+            if (current === 0) return true;
+            // Otherwise merge-only — a hand-typed figure always wins. The one
+            // exception: a value THIS board group produced earlier (its total,
+            // or its total before a row was added). Without this, adding a
+            // second note mid-week could only ever take effect through an
+            // explicit Apply Changes — the first amount would sit there as if
+            // the second had never been written.
+            return isBoardDerivedTotal(current, a.combined);
+          });
       if (adds.length === 0) {
         // Only when nothing was skipped either — otherwise this contradicts the
         // specific "here's what was skipped and why" warnings just raised.
@@ -4262,10 +4465,6 @@ export default function PayrollWizard({
         }
         return;
       }
-      // Spread order decides who wins: force = the board overwrites; the
-      // automatic pull is merge-only (anything already in prev wins).
-      const amounts = Object.fromEntries(adds.map(([email, a]) => [email, a.amount]));
-      const notes = Object.fromEntries(adds.map(([email, a]) => [email, a.note]));
       // These amounts are now newer than anything on file — an additions
       // hydration still in flight must merge around them, not over them.
       additionsEditGenRef.current += 1;
@@ -4273,19 +4472,59 @@ export default function PayrollWizard({
       // save reading the closure would persist the map as it was BEFORE this.
       let mergedOverrides: Record<string, number> = {};
       let mergedNotes: Record<string, string> = {};
+      // Which emails were actually written — re-decided against the FRESHEST
+      // state inside the updater (a figure typed between the read above and this
+      // commit must still win over an automatic pre-fill).
+      let appliedEmails: string[] = [];
       setBonusOverrides(prev => {
-        mergedOverrides = force ? { ...prev, ...amounts } : { ...amounts, ...prev };
-        return mergedOverrides;
+        const next = { ...prev };
+        const applied: string[] = [];
+        for (const [email, a] of adds) {
+          const current = next[email];
+          const mayWrite =
+            force || current === undefined || current === 0 || isBoardDerivedTotal(current, a.combined);
+          if (!mayWrite) continue;
+          next[email] = a.amount;
+          applied.push(email);
+        }
+        appliedEmails = applied;
+        mergedOverrides = next;
+        return next;
       });
       setBonusOverrideNotes(prev => {
-        mergedNotes = force ? { ...prev, ...notes } : { ...notes, ...prev };
-        return mergedNotes;
+        const next = { ...prev };
+        // Runs in the same commit, after the updater above — so appliedEmails is
+        // populated by the time this reads it.
+        for (const email of appliedEmails) {
+          const note = byEmail.get(email)?.note;
+          if (note) next[email] = note;
+        }
+        mergedNotes = next;
+        return next;
       });
+      const written = appliedEmails.length > 0 ? appliedEmails.length : adds.length;
+      // Show the arithmetic for the workers whose rows were actually summed —
+      // the clerk has to be able to see "500 + 600 = 1,100" and spot a row that
+      // should have replaced another instead of adding to it.
+      const addedEmails = new Set(adds.map(([email]) => email));
+      const summedApplied = summedWorkers.filter((w) => addedEmails.has(w.email));
       toast.success(
-        `${adds.length} adjustment${adds.length === 1 ? '' : 's'} ${force ? 'applied' : 'pre-filled'} from Payroll Notes`,
-        force
-          ? { description: 'The Adj. column in the HSL and Additions steps now shows the board values.' }
-          : undefined,
+        `${written} adjustment${written === 1 ? '' : 's'} ${force ? 'applied' : 'pre-filled'} from Payroll Notes`,
+        {
+          description:
+            (summedApplied.length > 0
+              ? `${summedApplied
+                  .slice(0, 3)
+                  .map(
+                    (w) =>
+                      `${w.name}: ${w.combined.counted.map((c) => c.text).join(' + ')} = ${formatPHP(w.combined.total)}`,
+                  )
+                  .join(' · ')}${summedApplied.length > 3 ? ` · +${summedApplied.length - 3} more combined` : ''}. `
+              : '') +
+            (force
+              ? 'The Adj. column in the HSL and Additions steps now shows the board values.'
+              : 'Several rows for one worker are added together; an identical amount repeated is counted once.'),
+        },
       );
       // Persist immediately. Until this, applied board amounts lived ONLY in
       // this tab until somebody remembered to click "Lock in additions
@@ -4293,27 +4532,38 @@ export default function PayrollWizard({
       // explicit apply is a commitment, so it writes the blob itself; the
       // automatic pre-fill saves too, so the pull is idempotent across reloads
       // rather than something that has to succeed again next time.
-      void saveAdditionsProgressRef.current?.({
-        bonusOverrides: mergedOverrides,
-        bonusOverrideNotes: mergedNotes,
-        silent: true,
-      });
+      // Never persist an EMPTY map from this path: `adds` is non-empty here, so
+      // an empty merge can only mean the state updater above hasn't run yet —
+      // and writing `{}` over a week of adjustments is precisely the 2026-07-28
+      // incident. Skipping the save just defers durability to the next pull.
+      if (Object.keys(mergedOverrides).length > 0) {
+        void saveAdditionsProgressRef.current?.({
+          bonusOverrides: mergedOverrides,
+          bonusOverrideNotes: mergedNotes,
+          silent: true,
+        });
+      }
       // An explicit "Apply Changes" commits these rows, so file them as Done on
-      // the board. This runs ONLY here — after the read/apply above — so it can
-      // never race the Done filter and skip the very rows it is applying. The
-      // tick is no longer load-bearing for correctness either: a Done row in
-      // the week being paid stays eligible for the pull (see the loop above),
-      // so filing it can't strand its amount.
+      // the board — EVERY row that fed a total, not just one of them (a summed
+      // worker's rows are all paid, so all of them are applied). Suspected
+      // duplicates are deliberately left open: they were not paid. This runs
+      // ONLY here — after the read/apply above — so it can never race the Done
+      // filter and skip the very rows it is applying. The tick is no longer
+      // load-bearing for correctness either: a Done row in the week being paid
+      // stays eligible for the pull (see the loop above), so filing it can't
+      // strand its amount.
       if (force) {
         void Promise.all(
-          adds.map(([, a]) =>
-            fetch('/api/payroll-wizard/notes', {
-              method: 'PATCH',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ id: a.rowId, values: { done: true } }),
-            }).catch(() => {
-              /* board-side Done is a convenience — never fail the apply over it */
-            }),
+          adds.flatMap(([, a]) =>
+            a.rowIds.map((rowId) =>
+              fetch('/api/payroll-wizard/notes', {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ id: rowId, values: { done: true } }),
+              }).catch(() => {
+                /* board-side Done is a convenience — never fail the apply over it */
+              }),
+            ),
           ),
         );
       }
@@ -4350,17 +4600,27 @@ export default function PayrollWizard({
 
   // A linked note left the board (row deleted / Adjustment cell cleared): the
   // adjustment it applied goes with it. Guarded by a value match — the Adj.
-  // override is cleared ONLY while it still equals that note's amount (at the
-  // live fx rates), so a figure accounting typed by hand is never deleted by
-  // a stale or unrelated board row.
+  // override is only touched while it still equals what the board held BEFORE
+  // the removal (at the live fx rates), so a figure accounting typed by hand is
+  // never changed by a stale or unrelated board row.
+  //
+  // With the worker's other rows still on the board (`detail.remaining`) this is
+  // a SUBTRACTION, not a clear: their combined total is what remains owed. One
+  // of two summed rows going away has to leave the other one's amount standing.
   useEffect(() => {
     const onRemoved = (e: Event) => {
       if (isReplayRef.current) return;
-      const detail = (e as CustomEvent<{ workerEmail?: string; adjustment?: string }>).detail;
+      const detail = (e as CustomEvent<Partial<NoteAdjustmentRemovedDetail>>).detail;
       const normalized = (detail?.workerEmail ?? '').trim().toLowerCase();
       const parsed = parseAdjustmentAmount(detail?.adjustment);
       if (!normalized || !parsed) return;
       const php = adjustmentToPhp(parsed, fxRates);
+      // What the board still holds for this worker/week, and what it held with
+      // the removed row included — both through the same combine rule, so a
+      // removed DUPLICATE (which was never added in) correctly changes nothing.
+      const remainingTexts = Array.isArray(detail?.remaining) ? detail!.remaining! : [];
+      const remaining = combineAdjustmentTexts(remainingTexts, fxRates);
+      const before = combineAdjustmentTexts([...remainingTexts, (detail?.adjustment ?? '')], fxRates);
       const ctx = auditCtxRef.current;
       // Overrides are keyed by the wizard's raw calc-result casing; the board sends
       // a lowercased email. Resolve to the actual key before comparing/clearing so
@@ -4374,20 +4634,47 @@ export default function PayrollWizard({
             ? normalized
             : (rawFromCalc ?? normalized);
       const current = ctx.bonusOverrides[email];
-      if (php === null || current === undefined || Math.abs(current - php) > 0.01) return;
+      if (php === null || current === undefined) return;
+      // Act only on a figure the board itself produced — its total before this
+      // removal, an earlier state of it, or a single row's amount (what the
+      // pre-2026-07-29 rule applied). Exactly the test the pull uses to decide
+      // it may overwrite, so the two halves of the bridge agree on what counts
+      // as "ours"; anything else is accounting's own number and stays.
+      if (!isBoardDerivedTotal(current, before)) return;
+      // What the board still owes this worker: nothing (clear the override), or
+      // the other rows' combined total (subtract just the removed row).
+      const nextAmount = remaining.counted.length > 0 ? remaining.total : null;
+      if (nextAmount !== null && Math.abs(nextAmount - current) <= 0.01) return; // a duplicate left — total unchanged
       additionsEditGenRef.current += 1;
-      let clearedOverrides: Record<string, number> = {};
-      let clearedNotes: Record<string, string> = {};
+      // The per-row reasons can't be rebuilt from a removal event, so state the
+      // arithmetic that IS known; the next step-entry pull restores the full
+      // note (the amount now equals the board's total, so it re-applies).
+      const nextNote =
+        nextAmount === null
+          ? null
+          : `Payroll Notes total after a row was removed: ${remaining.counted
+              .map((c) => c.text)
+              .join(' + ')} = ${formatPHP(remaining.total)}`;
+      // Built from the committed maps, NOT captured inside the state updaters
+      // below: a retraction legitimately produces an empty map, so this path
+      // can't lean on the "never save {}" guard the apply side uses — it has to
+      // be right by construction instead.
+      const clearedOverrides = { ...ctx.bonusOverrides };
+      if (nextAmount === null) delete clearedOverrides[email];
+      else clearedOverrides[email] = nextAmount;
+      const clearedNotes = { ...ctx.bonusOverrideNotes };
+      if (nextNote === null) delete clearedNotes[email];
+      else clearedNotes[email] = nextNote;
       setBonusOverrides(prev => {
         const next = { ...prev };
-        delete next[email];
-        clearedOverrides = next;
+        if (nextAmount === null) delete next[email];
+        else next[email] = nextAmount;
         return next;
       });
       setBonusOverrideNotes(prev => {
         const next = { ...prev };
-        delete next[email];
-        clearedNotes = next;
+        if (nextNote === null) delete next[email];
+        else next[email] = nextNote;
         return next;
       });
       // A retraction has to be as durable as the apply that put it there —
@@ -4408,12 +4695,15 @@ export default function PayrollWizard({
           employee_email: email,
           field: 'bonus_override_php',
           previous_value: current,
-          new_value: null,
+          new_value: nextAmount,
           reason: 'payroll_notes_adjustment_removed',
         },
       });
-      toast.info('Adjustment cleared', {
-        description: `${email} — its Payroll Notes row was removed.`,
+      toast.info(nextAmount === null ? 'Adjustment cleared' : 'Adjustment reduced', {
+        description:
+          nextAmount === null
+            ? `${email} — its Payroll Notes row was removed.`
+            : `${email} — one Payroll Notes row was removed; ${formatPHP(current)} → ${formatPHP(nextAmount)} (the rest still stands).`,
       });
     };
     window.addEventListener(NOTE_ADJUSTMENT_REMOVED_EVENT, onRemoved);
@@ -4881,9 +5171,15 @@ export default function PayrollWizard({
         }
       }
 
-      // Rates stored in PHP; compute pay in PHP then derive USD equivalent
+      // Rates stored in PHP; compute pay in PHP then derive USD equivalent.
+      // `regularRate`/`otRate` are the SHEET cache values — the starting point for
+      // pay AND the fallback for per-day resolution. What the statement DISPLAYS is
+      // tracked separately below, because the per-day engine can move pay onto a
+      // different (dated) rate and the two must never disagree on a pay document.
       const regularRate = parseRateField(rateRow?.regular_rate);
       const otRate = parseRateField(rateRow?.ot_rate);
+      let displayRegularRate = regularRate;
+      let displayOtRate = otRate;
 
       let regularPay =
         regularRate != null ? phpHourlyPayFromSeconds(regularRate, regularSec) : null;
@@ -4904,6 +5200,8 @@ export default function PayrollWizard({
       // catalog rate are skipped (their rate is flat all period). Untouched employees
       // (no change) keep the single-rate result above, byte-identical to before.
       let rateChange: CalcRow['rateChange'] = null;
+      let ratesPaid: CalcRow['ratesPaid'] = null;
+      let rateDisagreement: CalcRow['rateDisagreement'] = null;
       const payDay = em ? payDaysByEmail.get(em) : undefined;
       if (payDay && payDay.days.length > 0) {
         // candidate emails for history lookup + individual detection
@@ -4932,6 +5230,42 @@ export default function PayrollWizard({
             // Respect the existing "no OT hours → 0, not null" convention.
             otPay = otSec > 0 ? prorated.otPay : 0;
             rateChange = prorated.change;
+            // Carry the rates history actually paid at. When `change` is null this
+            // override is otherwise SILENT — no badge, no signal — which is exactly
+            // how a stub came to show ₱225/h over amounts computed at ₱175/h.
+            ratesPaid = { regular: prorated.regularRatesUsed, ot: prorated.otRatesUsed };
+
+            // ── Make the statement's arithmetic true by construction ──
+            // Pay just moved to the history rate, so the DISPLAYED rate has to move
+            // with it: a stub may never show a rate that didn't compute its amounts.
+            // Only when the week was paid at ONE rate can a single number represent
+            // it; a genuine mid-week change stays on the sheet rate and is explained
+            // by the `rateChange` badge instead.
+            if (prorated.regularRatesUsed.length === 1) {
+              displayRegularRate = prorated.regularRatesUsed[0];
+            }
+            if (prorated.otRatesUsed.length === 1) {
+              displayOtRate = prorated.otRatesUsed[0];
+            }
+            // The sheet/catalog says one thing, the money says another. Neither is
+            // provably right from here, so surface it instead of silently picking:
+            // the sheet may hold a real raise history never received (money OWED), or
+            // the sheet may be a stale cell that history correctly supersedes.
+            const paidReg = prorated.regularRatesUsed.length === 1 ? prorated.regularRatesUsed[0] : null;
+            if (paidReg != null && regularRate != null && paidReg !== regularRate) {
+              rateDisagreement = {
+                sheetRegular: regularRate,
+                paidRegular: paidReg,
+                sheetOt: otRate,
+                paidOt: prorated.otRatesUsed.length === 1 ? prorated.otRatesUsed[0] : null,
+                // What the week would have paid at the sheet rate, minus what it did.
+                shortfallPhp:
+                  Math.round(
+                    ((regularHours * regularRate + otHours * (otRate ?? regularRate * 1.5)) -
+                      ((prorated.regularPay ?? 0) + (prorated.otPay ?? 0))) * 100,
+                  ) / 100,
+              };
+            }
           }
         }
       }
@@ -4947,12 +5281,23 @@ export default function PayrollWizard({
         totalHours: totalH,
         regularHours,
         otHours,
-        regularRate,
-        otRate,
+        // The rate actually applied — never the sheet cache when pay came from
+        // elsewhere. This is what makes hours × rate reconcile on the statement.
+        regularRate: displayRegularRate,
+        otRate: displayOtRate,
         regularPay,
         otPay,
         initialPay,
         rateChange,
+        rateDisagreement,
+        // No per-day override ⇒ pay came straight from the cache rate, so that IS
+        // the rate paid. Recording it (rather than leaving it null) keeps the
+        // consistency check on its exact path for every row.
+        ratesPaid:
+          ratesPaid ?? {
+            regular: regularRate != null ? [regularRate] : [],
+            ot: otRate != null ? [otRate] : [],
+          },
       };
     });
   }, [
@@ -5081,10 +5426,10 @@ export default function PayrollWizard({
    * Safety net for the "Pay this week" pause: workers who logged hours this
    * week AND have a real hourly rate (the wizard would have paid them) but sit
    * in a paused department, so they are invisible on every step after 1.
-   * Surfaced as a Step-2 banner and a Validation check so a miscategorized
-   * worker (e.g. landing in the wrong sales cohort after the 2026-07 split)
-   * can't silently drop out of payroll. Zero-rate/no-rate people (salaried US,
-   * USEE) are expected to sit unpaid behind a pause and are NOT flagged.
+   * Surfaced as a Step-7 Validation check only — the Step-2 banner was removed
+   * (2026-07-29) as redundant noise, since these people are already excluded at
+   * Initialize Payroll Data. Zero-rate/no-rate people (salaried US, USEE) are
+   * expected to sit unpaid behind a pause and are NOT flagged.
    */
   const pausedHiddenPayableRows = useMemo<Array<CalcRow & { deptKey: string }>>(() => {
     if (pausedDeptKeys.size === 0) return [];
@@ -5957,6 +6302,22 @@ export default function PayrollWizard({
     const rows: DispatchEmployee[] = [];
     const excludedRows: ExcludedDispatchEntry[] = [];
     const missing: string[] = [];
+    /**
+     * Rows whose statement would advertise an hourly rate its own amounts don't
+     * support — the ₱225-shown / ₱175-paid class of defect. Collected here, at the
+     * one place every staged payload is assembled, so neither the emailed stub nor
+     * the dispatch queue can carry a self-contradicting pay statement unnoticed.
+     */
+    const rateIssues: Array<{
+      email: string;
+      name: string;
+      department: string | null;
+      shortfallPhp: number;
+      /** The rate on the sheet vs the rate that actually paid, when they differ. */
+      sheetRate: number | null;
+      paidRate: number | null;
+      issues: RateConsistencyIssue[];
+    }> = [];
     for (const r of effectiveCalcResults) {
       const exclKey = normEmail(r.email) ?? '';
       const isExcluded = exclKey !== '' && excludedEmails.has(exclKey);
@@ -6089,6 +6450,33 @@ export default function PayrollWizard({
         adjustment_note: accountingAdj !== 0 ? (bonusOverrideNotes[overrideKey]?.trim() || null) : null,
       };
 
+      // Two independent checks, neither of which stops the run.
+      //
+      // (1) The statement's own arithmetic. Should now be impossible to fail — the
+      //     displayed rate is derived FROM the rate that paid — so this is a
+      //     regression net, kept because the failure mode was silent and expensive.
+      const issues = findRateConsistencyIssues({
+        hours: emp.hours,
+        ratesPhp: emp.rates_php,
+        payPhp: emp.pay_php,
+        ratesPaid: r.ratesPaid,
+        hasMidPeriodChange: !!r.rateChange,
+      });
+      // (2) The rate SOURCES disagreeing. The stub is correct either way, but the
+      //     employee may still be owed the difference, so it must stay visible.
+      const disagree = r.rateDisagreement;
+      if (issues.length > 0 || disagree) {
+        rateIssues.push({
+          email: r.email,
+          name: r.name,
+          department: deptName,
+          shortfallPhp: disagree ? disagree.shortfallPhp : totalRateShortfallPhp(issues),
+          sheetRate: disagree?.sheetRegular ?? null,
+          paidRate: disagree?.paidRegular ?? null,
+          issues,
+        });
+      }
+
       if (isExcluded) {
         // Staged with its full payload so a later "Pay now" from the Excluded
         // tab still emails the right paystub.
@@ -6105,7 +6493,7 @@ export default function PayrollWizard({
         rows.push(emp);
       }
     }
-    return { rows, excludedRows, missing, payPeriodPayload };
+    return { rows, excludedRows, missing, payPeriodPayload, rateIssues };
   }, [
     effectiveCalcResults,
     ratesByEmail,
@@ -6374,14 +6762,68 @@ export default function PayrollWizard({
     return () => clearTimeout(t);
   }, [calcSourceFile, dispatchData, publishFinalPaySnapshot]);
 
+  /**
+   * Department key + display name for each Initial Calculation row, keyed by the
+   * row's raw email. Rows whose email resolves to no wizard dept fall into an
+   * "unassigned" bucket so the dept filter can still reach them.
+   */
+  const initialCalcDeptByEmail = useMemo(() => {
+    const nameByKey = new Map(allWizardDepartments.map(d => [d.key, d.name]));
+    const map = new Map<string, { key: string; name: string }>();
+    for (const row of effectiveCalcResults) {
+      const key =
+        employeeDepts[row.email] ?? employeeDepts[(row.email ?? '').toLowerCase()] ?? 'unassigned';
+      map.set(row.email, {
+        key,
+        name: key === 'unassigned' ? 'Unassigned' : (nameByKey.get(key) ?? key),
+      });
+    }
+    return map;
+  }, [effectiveCalcResults, employeeDepts, allWizardDepartments]);
+
+  /** Step-2 dept filter options: every dept present in this run's calc rows,
+   *  alphabetical with "Unassigned" pinned last. Counts are per ROW (not per
+   *  unique email) so they always sum to the "All departments" figure, even if
+   *  a duplicate-ingest ever leaves the same email on multiple rows. */
+  const initialCalcDeptOptions = useMemo(() => {
+    const counts = new Map<string, { name: string; count: number }>();
+    for (const row of effectiveCalcResults) {
+      const info = initialCalcDeptByEmail.get(row.email) ?? { key: 'unassigned', name: 'Unassigned' };
+      const cur = counts.get(info.key);
+      if (cur) cur.count += 1;
+      else counts.set(info.key, { name: info.name, count: 1 });
+    }
+    return [...counts.entries()]
+      .map(([key, v]) => ({ key, name: v.name, count: v.count }))
+      .sort((a, b) =>
+        a.key === 'unassigned' ? 1 : b.key === 'unassigned' ? -1
+          : a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
+  }, [effectiveCalcResults, initialCalcDeptByEmail]);
+
+  /** Guard against a stale dept selection (dept emptied out after a new upload). */
+  const initialCalcDeptSafe = useMemo(
+    () =>
+      initialCalcDept !== 'all' && !initialCalcDeptOptions.some(o => o.key === initialCalcDept)
+        ? 'all'
+        : initialCalcDept,
+    [initialCalcDept, initialCalcDeptOptions],
+  );
+
   const filteredCalcResults = useMemo(() => {
     const needle = initialCalcSearch.toLowerCase().trim();
-    const nonHsl = effectiveCalcResults.filter(row => employeeDepts[row.email] !== 'hogan_smith_law');
-    if (!needle) return nonHsl;
-    return nonHsl.filter((row) => {
+    // Every department shows here, Hogan Smith Law included — its KPI bonuses
+    // still land on the HSL tab; this table is the shared hours × rate base.
+    const deptScoped = initialCalcDeptSafe === 'all'
+      ? effectiveCalcResults
+      : effectiveCalcResults.filter(
+          row => (initialCalcDeptByEmail.get(row.email)?.key ?? 'unassigned') === initialCalcDeptSafe,
+        );
+    if (!needle) return deptScoped;
+    return deptScoped.filter((row) => {
       const haystack = [
         row.name,
         row.email,
+        initialCalcDeptByEmail.get(row.email)?.name ?? '',
         row.totalHours.toFixed(2),
         row.regularHours.toFixed(2),
         row.otHours.toFixed(2),
@@ -6395,7 +6837,7 @@ export default function PayrollWizard({
         .toLowerCase();
       return haystack.includes(needle);
     });
-  }, [effectiveCalcResults, initialCalcSearch, employeeDepts]);
+  }, [effectiveCalcResults, initialCalcSearch, initialCalcDeptSafe, initialCalcDeptByEmail]);
 
   const loadHubstaffPreview = React.useCallback(async () => {
     if (sourceFilesLoading) return;
@@ -8603,7 +9045,7 @@ export default function PayrollWizard({
                 <div className="mt-2 flex items-center gap-1.5 rounded-md border border-violet-200 bg-violet-50 px-2.5 py-1.5 dark:border-violet-800/50 dark:bg-violet-950/20">
                   <Building2 className="h-3 w-3 shrink-0 text-violet-500 dark:text-violet-400" />
                   <p className="text-[11px] text-violet-700 dark:text-violet-300">
-                    Hogan Smith Law employees are not listed here &mdash; see the <span className="font-semibold">HSL</span> tab (step 4) for their initial pay and KPI bonuses.
+                    Every department paying this week is listed here, <span className="font-semibold">Hogan Smith Law included</span> &mdash; HSL KPI bonuses are still added on the <span className="font-semibold">HSL</span> tab (step 4). Use the department filter to narrow the table.
                   </p>
                 </div>
               </div>
@@ -8623,44 +9065,6 @@ export default function PayrollWizard({
                 Refresh rates
               </Button>
             </div>
-
-            {/* Hour-logging workers with a real rate hidden by a "Pay this week"
-                pause — without this banner they'd vanish from every later step
-                with zero signal (how vano@ went missing after the sales split). */}
-            {pausedHiddenPayableRows.length > 0 && (() => {
-              const deptNameByKey = new Map(allWizardDepartments.map((d) => [d.key, d.name]));
-              const shown = pausedHiddenPayableRows.slice(0, 12);
-              return (
-                <div className="rounded-xl border border-amber-300 bg-amber-50/80 px-4 py-3 dark:border-amber-700/60 dark:bg-amber-950/30">
-                  <div className="flex items-start gap-2">
-                    <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
-                    <div className="min-w-0 flex-1">
-                      <p className="text-sm font-semibold text-amber-900 dark:text-amber-200">
-                        {pausedHiddenPayableRows.length} worker{pausedHiddenPayableRows.length !== 1 ? 's' : ''} logged hours this week but {pausedHiddenPayableRows.length !== 1 ? 'are' : 'is'} hidden from every pay step
-                      </p>
-                      <p className="mt-0.5 text-xs text-amber-800/90 dark:text-amber-300/90">
-                        Their department is switched off in <strong>Step 1 → Configuration</strong> (&quot;Pay this week&quot;), yet they have a real hourly rate — they would otherwise be paid. Re-enable the department, or fix their department / sales-cohort assignment if they&apos;re miscategorized.
-                      </p>
-                      <ul className="mt-1.5 space-y-0.5 text-xs text-amber-900 dark:text-amber-200">
-                        {shown.map((r) => (
-                          <li key={r.email} className="truncate">
-                            <span className="font-medium">{r.name || r.email}</span>
-                            <span className="text-amber-700/90 dark:text-amber-400/90"> · {r.email}</span>
-                            <span className="font-mono tabular-nums"> · {r.totalHours.toFixed(2)} h</span>
-                            <span> · {deptNameByKey.get(r.deptKey) ?? r.deptKey}</span>
-                          </li>
-                        ))}
-                        {pausedHiddenPayableRows.length > shown.length && (
-                          <li className="text-amber-700/80 dark:text-amber-400/80">
-                            …and {pausedHiddenPayableRows.length - shown.length} more
-                          </li>
-                        )}
-                      </ul>
-                    </div>
-                  </div>
-                </div>
-              );
-            })()}
 
             {/* Source file selector */}
             {uploadedSourceFiles.length > 0 && (
@@ -8935,6 +9339,24 @@ export default function PayrollWizard({
               </div>
             )}
 
+            {payStructuresError && (
+              <div className="flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-900 dark:text-amber-100">
+                <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+                <span>
+                  <span className="font-semibold">Payment Catalog rates did not load</span> — the
+                  calculation below is falling back to the sheet rates, which can be stale.
+                  ({payStructuresError})
+                </span>
+                <button
+                  type="button"
+                  onClick={() => void loadPayStructures()}
+                  className="ml-auto shrink-0 rounded-md border border-amber-500/40 px-2.5 py-1 text-xs font-semibold hover:bg-amber-500/20"
+                >
+                  Retry
+                </button>
+              </div>
+            )}
+
             {/* Warning banner for employees missing rates — expandable list */}
             {(() => {
               if (initialCalcDataLoading) return null;
@@ -9088,7 +9510,7 @@ export default function PayrollWizard({
                 {/* Detached from table: stays visible while the sheet scrolls; not inside the table scrollport */}
                 <div className="sticky top-0 z-30 -mx-4 mb-3 flex shrink-0 flex-col gap-2 rounded-xl border border-zinc-200 bg-white/95 px-4 py-2.5 shadow-sm backdrop-blur-sm sm:flex-row sm:items-center sm:justify-between md:-mx-8 md:px-8 dark:border-zinc-800 dark:bg-zinc-950/95">
                   <div className="text-sm text-zinc-600 dark:text-zinc-400">
-                    {initialCalcSearch.trim() ? (
+                    {initialCalcSearch.trim() || initialCalcDeptSafe !== 'all' ? (
                       <>
                         Showing <span className="font-medium text-zinc-800 dark:text-zinc-200">{filteredCalcResults.length}</span> of{' '}
                         {effectiveCalcResults.length} rows
@@ -9112,33 +9534,60 @@ export default function PayrollWizard({
                       </>
                     )}
                   </div>
-                  <div className="relative w-full sm:max-w-sm">
-                    <svg
-                      className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400 pointer-events-none"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2"
-                      viewBox="0 0 24 24"
+                  <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">
+                    <Select
+                      value={initialCalcDeptSafe}
+                      onValueChange={(v) => { setInitialCalcDept(v ?? 'all'); setInitialCalcPage(1); }}
                     >
-                      <circle cx="11" cy="11" r="8" />
-                      <path d="m21 21-4.35-4.35" />
-                    </svg>
-                    <Input
-                      placeholder="Search member, email, hours, rates, pay…"
-                      value={initialCalcSearch}
-                      onChange={(e) => { setInitialCalcSearch(e.target.value); setInitialCalcPage(1); }}
-                      className="h-8 border-zinc-200 bg-white pl-8 pr-8 text-xs dark:border-zinc-800 dark:bg-zinc-950"
-                    />
-                    {initialCalcSearch && (
-                      <button
-                        type="button"
-                        onClick={() => { setInitialCalcSearch(''); setInitialCalcPage(1); }}
-                        className="absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300"
-                        aria-label="Clear search"
+                      <SelectTrigger
+                        title="Filter by department"
+                        className="h-8 w-full shrink-0 gap-1.5 text-xs sm:w-auto"
                       >
-                        ✕
-                      </button>
-                    )}
+                        <Building2 className="h-3.5 w-3.5 shrink-0 text-violet-500 dark:text-violet-400" />
+                        <span className="text-zinc-500 dark:text-zinc-400">Dept:</span>
+                        <span className="max-w-[11rem] truncate font-medium text-zinc-700 dark:text-zinc-200">
+                          {initialCalcDeptSafe === 'all'
+                            ? 'All departments'
+                            : initialCalcDeptOptions.find(o => o.key === initialCalcDeptSafe)?.name ?? initialCalcDeptSafe}
+                        </span>
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All departments ({effectiveCalcResults.length})</SelectItem>
+                        {initialCalcDeptOptions.map(o => (
+                          <SelectItem key={o.key} value={o.key}>
+                            {o.name} ({o.count})
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <div className="relative w-full sm:w-72">
+                      <svg
+                        className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400 pointer-events-none"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        viewBox="0 0 24 24"
+                      >
+                        <circle cx="11" cy="11" r="8" />
+                        <path d="m21 21-4.35-4.35" />
+                      </svg>
+                      <Input
+                        placeholder="Search member, email, dept, hours, pay…"
+                        value={initialCalcSearch}
+                        onChange={(e) => { setInitialCalcSearch(e.target.value); setInitialCalcPage(1); }}
+                        className="h-8 border-zinc-200 bg-white pl-8 pr-8 text-xs dark:border-zinc-800 dark:bg-zinc-950"
+                      />
+                      {initialCalcSearch && (
+                        <button
+                          type="button"
+                          onClick={() => { setInitialCalcSearch(''); setInitialCalcPage(1); }}
+                          className="absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300"
+                          aria-label="Clear search"
+                        >
+                          ✕
+                        </button>
+                      )}
+                    </div>
                   </div>
                 </div>
 
@@ -9200,7 +9649,14 @@ export default function PayrollWizard({
                             colSpan={10}
                             className="py-8 text-center text-sm text-zinc-500 dark:text-zinc-400"
                           >
-                            No rows match &quot;{initialCalcSearch.trim()}&quot;
+                            {initialCalcSearch.trim() ? (
+                              <>
+                                No rows match &quot;{initialCalcSearch.trim()}&quot;
+                                {initialCalcDeptSafe !== 'all' && ' in the selected department'}
+                              </>
+                            ) : (
+                              'No rows in the selected department'
+                            )}
                           </TableCell>
                         </TableRow>
                       ) : (
@@ -9217,6 +9673,12 @@ export default function PayrollWizard({
                           <TableCell className="px-2 align-middle text-xs font-medium text-zinc-800 dark:text-zinc-200">
                             <span className="block truncate" title={row.name || undefined}>
                               {row.name || '—'}
+                            </span>
+                            <span
+                              className="block truncate text-[10px] font-normal text-zinc-400 dark:text-zinc-500"
+                              title={initialCalcDeptByEmail.get(row.email)?.name ?? 'Unassigned'}
+                            >
+                              {initialCalcDeptByEmail.get(row.email)?.name ?? 'Unassigned'}
                             </span>
                           </TableCell>
                           <TableCell className="px-2 align-middle text-xs text-zinc-500">
@@ -13498,7 +13960,7 @@ export default function PayrollWizard({
                   {
                     label: pausedHiddenPayableRows.length === 0
                       ? 'No Rated Workers Hidden by "Pay this week"'
-                      : `${pausedHiddenPayableRows.length} Rated Worker${pausedHiddenPayableRows.length !== 1 ? 's' : ''} Hidden by "Pay this week" (see Step 2)`,
+                      : `${pausedHiddenPayableRows.length} Rated Worker${pausedHiddenPayableRows.length !== 1 ? 's' : ''} Hidden by "Pay this week" (see Step 1 → Configuration)`,
                     pass: pausedHiddenPayableRows.length === 0,
                   },
                   {
@@ -13604,6 +14066,63 @@ export default function PayrollWizard({
               <span className="text-[10px] font-semibold uppercase tracking-wider text-[#ea4b71]/80">· n8n on Mark Paid</span>
             </a>
 
+            {/* Rate-SOURCE disagreement. Every stub's arithmetic is correct — the
+                displayed rate is the one that paid it — but the rate sheet holds a
+                different number, which can mean the employee is owed the gap. Purely
+                informational: dispatch is never blocked. */}
+            {dispatchData.rateIssues.length > 0 && (
+              <div className="w-full max-w-2xl rounded-xl border border-amber-300 bg-amber-50/80 px-4 py-3 dark:border-amber-900/50 dark:bg-amber-950/20">
+                <div className="flex items-center gap-2 text-sm font-bold text-amber-800 dark:text-amber-300">
+                  <AlertTriangle className="h-4 w-4 shrink-0" />
+                  {dispatchData.rateIssues.length} employee
+                  {dispatchData.rateIssues.length === 1 ? ' was' : 's were'} paid at a rate that
+                  differs from the rate sheet
+                </div>
+                <p className="mt-1 text-xs text-amber-800/80 dark:text-amber-300/70">
+                  Each paystub is internally correct — hours × rate matches its amount. But pay
+                  resolved from the dated history (<code>employee_rate_history</code>) while the
+                  sheet (<code>employee_hourly_rates</code>) says something else. If the sheet
+                  holds a raise history never received, the difference is owed. Record the rate as
+                  a per-employee Payment Catalog structure to settle it in both places.
+                </p>
+                <ul className="mt-2 space-y-1">
+                  {dispatchData.rateIssues.slice(0, 8).map((x) => (
+                    <li key={x.email} className="text-xs text-amber-900 dark:text-amber-200">
+                      <span className="font-semibold">{x.name}</span>
+                      {x.department ? (
+                        <span className="text-amber-800/70 dark:text-amber-300/60">
+                          {' '}
+                          · {x.department}
+                        </span>
+                      ) : null}
+                      {x.paidRate != null && x.sheetRate != null && (
+                        <span>
+                          {' '}
+                          · paid ₱{x.paidRate.toFixed(2)}/h, sheet ₱{x.sheetRate.toFixed(2)}/h
+                        </span>
+                      )}
+                      {x.shortfallPhp > 0 && (
+                        <span className="font-semibold">
+                          {' '}
+                          · ₱
+                          {x.shortfallPhp.toLocaleString('en-US', {
+                            minimumFractionDigits: 2,
+                            maximumFractionDigits: 2,
+                          })}{' '}
+                          short this week
+                        </span>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+                {dispatchData.rateIssues.length > 8 && (
+                  <p className="mt-1.5 text-xs font-medium text-amber-800 dark:text-amber-300">
+                    +{dispatchData.rateIssues.length - 8} more
+                  </p>
+                )}
+              </div>
+            )}
+
             {/* Realtime lock state for this cycle. Locked → Payment Dispatch is
                 live; Unlock pulls the values back (dispatch empties in realtime). */}
             {!dispatchValuesLock.loading && (
@@ -13683,12 +14202,36 @@ export default function PayrollWizard({
                     toast.error('No pay-period file selected');
                     return;
                   }
-                  const { rows: employees, excludedRows, missing, payPeriodPayload } = dispatchData;
+                  const { rows: employees, excludedRows, missing, payPeriodPayload, rateIssues } =
+                    dispatchData;
                   if (employees.length === 0 && excludedRows.length === 0) {
                     toast.error('Nothing to send', {
                       description: 'No employees resolved for this cycle.',
                     });
                     return;
+                  }
+                  // Never block a payroll run. Every staged statement now reconciles
+                  // by construction (the displayed rate IS the rate that paid it), so
+                  // anything left here is a rate-SOURCE disagreement: the sheet holds
+                  // a different rate than the one history paid. That can mean real
+                  // money owed, so it is reported — and the run continues.
+                  if (rateIssues.length > 0) {
+                    const owed = rateIssues.reduce((s, x) => s + x.shortfallPhp, 0);
+                    toast.warning(
+                      `${rateIssues.length} employee${rateIssues.length === 1 ? '' : 's'} paid at a rate that differs from the rate sheet`,
+                      {
+                        duration: 20_000,
+                        description:
+                          rateIssues
+                            .slice(0, 4)
+                            .map((x) => `${x.name}: ${x.issues[0]?.message ?? ''}`)
+                            .join(' · ') +
+                          (rateIssues.length > 4 ? ` · +${rateIssues.length - 4} more` : '') +
+                          (owed > 0
+                            ? ` — ₱${owed.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} possibly owed.`
+                            : ''),
+                      },
+                    );
                   }
                   if (missing.length > 0) {
                     toast.warning(

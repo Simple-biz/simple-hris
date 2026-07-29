@@ -10,6 +10,8 @@ import {
   getFreshPaystubEntry,
   mergeSnapshotIntoStaged,
   finalPaySnapshotKey,
+  getCatalogRateClaimsByEmail,
+  catalogClaimForEmails,
 } from "@/lib/payroll/paystub-fresh";
 import { mapPayloadToPayStub, formatWeekHuman, type PayStubView } from "@/lib/payroll/paystub-view";
 import {
@@ -492,6 +494,11 @@ export async function GET(req: NextRequest) {
   const wantSummary = !!req.nextUrl.searchParams.get("summary");
   const wantAll = !!req.nextUrl.searchParams.get("all");
 
+  // Employee-scope catalog rate claims gate the snapshot merge below — a stale
+  // wizard session's snapshot must not overwrite corrected staged figures
+  // (see mergeSnapshotIntoStaged). One query, shared across every week's row.
+  const catalogClaims = await getCatalogRateClaimsByEmail();
+
   /** View for one staged week in the list/export modes — same freshness rule as
    *  the single-week modal: paid → the frozen as-paid payload; unpaid → the
    *  staged payload with any newer wizard-snapshot figures merged over it, so
@@ -510,7 +517,10 @@ export async function GET(req: NextRequest) {
   ): PayStubView => {
     if (isPaid) return mapPayloadToPayStub(p.payload, p.pay_period);
     const snap = snaps[finalPaySnapshotKey(p.cycle_source_file)];
-    const merged = mergeSnapshotIntoStaged(p, snap?.value ?? null, snap?.updatedAt ?? null);
+    const payloadEmail =
+      p.payload && typeof p.payload.email === "string" ? p.payload.email : null;
+    const claim = catalogClaimForEmails(catalogClaims, [p.recipient_email, payloadEmail]);
+    const merged = mergeSnapshotIntoStaged(p, snap?.value ?? null, snap?.updatedAt ?? null, claim);
     return mapPayloadToPayStub(merged.payload, merged.payPeriod);
   };
 

@@ -107,9 +107,55 @@ hold the same fact. `src/lib/payroll/adjustment-bridge.ts` owns the translation
 `payWeekStartFromSourceFile`) and is covered by `adjustment-bridge.test.ts`.
 
 - **Wizard → board**: every manual Adj. edit is mirrored (debounced) onto the
-  worker's live-week row; clearing it clears that row's Adjustment text.
+  worker's live-week row; clearing it clears that row's Adjustment text. **Not
+  mirrored when the worker already has several amounts on the board** — the
+  wizard figure is their combined total, so writing it into one of those rows
+  would add it on top of the others. The clerk is told (toast) rather than left
+  with two surfaces quietly disagreeing.
 - **Board → wizard**: entering step 4/5/7/8 pulls open rows (merge-only), and a
   clerk's **Apply Changes** force-applies their rows and files them Done.
+
+### Several rows for one worker: combined (changed 2026-07-29)
+
+Two notes about the same person in the same pay week used to mean **the newest
+row won** and the other amount was simply not paid. Now
+`combineAdjustments` (in `adjustment-bridge.ts`, covered by its test file) folds
+the whole group into the single figure the Adj. column holds:
+
+| On the board | Applied | Why |
+| --- | --- | --- |
+| `+500` and `-200` | `+300` | Different amounts are **added**, signed — a bonus and a deduction net out. Two notes are two pay changes and payroll owes both. |
+| `+500` and `+500` | `+500`, **warned** | The same figure in the same currency twice is far more likely one item entered twice. Paying a duplicate is the expensive mistake, so it is counted **once** and flagged — never silently doubled. |
+| `+500`, `+500`, `-200` | `+300`, **warned** | The repeat drops out; everything else still adds. |
+| `500` and `$8.93` | both added | "The same amount" means same currency **and** same figure, so a near-equal conversion is not treated as a duplicate. |
+
+Mechanics worth knowing:
+
+- **The warning is loud on both surfaces.** The board prints `possible
+  duplicate` / `combined with N more` under the cell (with the arithmetic in the
+  tooltip), and the wizard toasts by name — on **Apply Changes** *and* on the
+  automatic pre-fill (once per distinct set of amounts, so a step re-entry
+  doesn't nag), because nobody may click Apply Changes all week.
+- **A repeat is left OPEN on the board.** Only rows that were counted are filed
+  Done, so the pending decision stays visible. If both amounts really are owed,
+  put the sum in one cell and delete the other row.
+- **The automatic pull can now raise an existing override**, but only when the
+  value it finds is one this same board group produced — its current total or
+  its total before a row was added (`isBoardDerivedTotal`). Anything else is
+  treated as hand-typed and left alone. Without this, adding a second note
+  mid-week would only take effect through an explicit Apply Changes.
+- **Removing one of several rows subtracts just that row.** The board sends the
+  worker's surviving cells with the removal event; the wizard drops the override
+  to their combined total (or clears it when none are left), still guarded by a
+  value match against what the board held a moment earlier. Removing a row that
+  was a *duplicate* correctly changes nothing.
+- **Apply Changes is scoped per worker, not per row.** Clicking one clerk's
+  section applies the full board total for the workers that section mentions —
+  otherwise a partial sum would overwrite the amount another clerk wrote for the
+  same person.
+- Multi-row totals reach the pay stub with their arithmetic in
+  `adjustment_note`: `…reasons… · combined 2 Payroll Notes rows: 1850 + 4750 =
+  ₱6,600.00`.
 
 ### What went wrong (2026-07-28) and what now prevents it
 
@@ -141,8 +187,8 @@ Also hardened:
 
 - **Nothing is skipped in silence.** Apply Changes reports unlinked workers,
   cells that aren't plain amounts, workers absent from the loaded timesheet, and
-  workers with **more than one amount this week** (only the newest applies). The
-  board shows the same reasons per row.
+  workers whose rows had to be combined or whose amounts repeat (see the section
+  above). The board shows the same reasons per row.
 - **A bare `0` no longer blocks a pull.** Clicking the `—` placeholder opens the
   Adj. input at 0 without committing anything; that empty shell used to make the
   merge-only pull skip the worker forever.
@@ -154,8 +200,14 @@ Also hardened:
 
 `scripts/diagnose-notes-adjustments.mjs` is a read-only replay of all of these
 rules against live data: it prints what would pre-fill, what is recovered, what
-is history, competing amounts, and any gap between the board and the saved
-additions blob.
+is history, which workers get **combined** totals, which look like
+**duplicates**, and any gap between the board and the saved additions blob.
+
+Run on 2026-07-29 against week `2026-07-19` it found exactly what the combine
+rule was asked for: three workers (`reat@`, `josec@`, `rafa@`) whose saved
+adjustment was the newest row only — short by ₱1,850 / ₱500 / ₱3,700 — and one
+(`allans@`) with `8450` written twice, which is now paid once. That cycle was
+**LOCKED**, so the new totals land only after Unlock in Validation.
 
 ## Worker cell autocomplete
 

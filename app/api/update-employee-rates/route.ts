@@ -134,6 +134,42 @@ export async function POST(req: Request) {
       invalidateRateProfilesCache();
     }
 
+    // Payment Catalog is the source of truth for rates: when this person has an
+    // employee-scope structure, the pay engines resolve THAT ahead of the
+    // history/cache rows this route just wrote — a save that skipped it would
+    // silently not change pay. Keep the structure in step. Immediate changes
+    // only: the catalog holds the CURRENT rate (no effective-date concept), so
+    // a future-dated change lands via rate history when its day comes.
+    if (supabase && isImmediate) {
+      const recipientNorm = String(recipient).trim().toLowerCase();
+      const toNumOrNull = (v: unknown) => {
+        const n = parseFloat(String(v ?? '').replace(/,/g, ''));
+        return Number.isFinite(n) ? n : null;
+      };
+      const regNum = toNumOrNull(regularRate);
+      const otNum = toNumOrNull(otRate);
+      if (regNum != null) {
+        const { data: structRows, error: structErr } = await supabase
+          .from('payment_catalog_pay_structures')
+          .select('id')
+          .eq('scope', 'employee')
+          .ilike('employee_email', recipientNorm);
+        if (structErr) {
+          // eslint-disable-next-line no-console
+          console.warn('[update-employee-rates] catalog lookup failed:', structErr.message);
+        } else if (structRows && structRows.length > 0) {
+          const { error: syncErr } = await supabase
+            .from('payment_catalog_pay_structures')
+            .update({ regular_rate: regNum, ot_rate: otNum, updated_by: actor.user_name })
+            .in('id', structRows.map((r) => (r as { id: string }).id));
+          if (syncErr) {
+            // eslint-disable-next-line no-console
+            console.warn('[update-employee-rates] catalog structure sync failed:', syncErr.message);
+          }
+        }
+      }
+    }
+
     void insertAuditLog({
       user_name:   actor.user_name,
       user_role:   actor.user_role,

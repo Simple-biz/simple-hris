@@ -21,6 +21,7 @@
 import type { PaystubQueueEntry } from "@/lib/supabase/paystub-dispatch-queue";
 import { getPaystubDispatchEntry } from "@/lib/supabase/paystub-dispatch-queue";
 import { getAppSettingWithMeta } from "@/lib/supabase/app-settings";
+import { listPayStructures } from "@/lib/supabase/pay-structures-db";
 import type { WizardFinalPayEntry } from "@/lib/payroll/paystub-recovery";
 
 export interface FreshPaystubEntry {
@@ -34,7 +35,66 @@ export interface FreshPaystubEntry {
   /** True when the snapshot changed at least one figure vs. the staged payload —
    *  the caller should persist the merged payload back to the queue row. */
   refreshed: boolean;
+  /** True when a newer snapshot existed but was REJECTED because its hourly
+   *  rate contradicts the employee's Payment Catalog rate — see
+   *  {@link mergeSnapshotIntoStaged}. The staged payload was returned instead. */
+  staleRateSnapshot?: boolean;
   error: string | null;
+}
+
+/**
+ * An employee-scope Payment Catalog rate (PHP), used to VALIDATE a wizard
+ * snapshot before it is allowed to overwrite staged figures. The catalog is
+ * the source of truth for rates: a snapshot computed at any other rate can
+ * only have come from a wizard session holding pre-change data.
+ */
+export interface CatalogRateClaim {
+  regular: number;
+  ot: number | null;
+}
+
+/**
+ * Employee-scope PHP catalog rates keyed by normalized email — one query,
+ * reusable across a batch of merges. USD/COP structures are omitted: their
+ * PHP-equivalent depends on the FX rate, so an exact comparison against the
+ * snapshot's PHP rate isn't possible; those employees keep the pre-guard
+ * behavior. Returns an empty map when the catalog is unreachable (guard
+ * disabled — merges behave exactly as before).
+ */
+export async function getCatalogRateClaimsByEmail(): Promise<Map<string, CatalogRateClaim>> {
+  const map = new Map<string, CatalogRateClaim>();
+  try {
+    const { structures } = await listPayStructures();
+    // Insertion order is created_at ASC, so a later duplicate for the same
+    // email wins — the same last-write-wins rule as buildCatalogRateIndex.
+    for (const s of structures) {
+      if (s.scope !== "employee" || s.currency !== "PHP") continue;
+      const em = (s.employeeEmail ?? "").trim().toLowerCase();
+      if (!em || !Number.isFinite(s.regularRate)) continue;
+      map.set(em, {
+        regular: s.regularRate,
+        ot: s.otRate != null && Number.isFinite(s.otRate) ? s.otRate : null,
+      });
+    }
+  } catch {
+    // Catalog unavailable — return an empty map so merging degrades gracefully.
+  }
+  return map;
+}
+
+/** Resolve one employee's claim from the bulk map, trying each alias email. */
+export function catalogClaimForEmails(
+  claims: Map<string, CatalogRateClaim>,
+  emails: Array<string | null | undefined>,
+): CatalogRateClaim | null {
+  for (const e of emails) {
+    if (typeof e !== "string") continue;
+    const em = e.trim().toLowerCase();
+    if (!em) continue;
+    const hit = claims.get(em);
+    if (hit) return hit;
+  }
+  return null;
 }
 
 function obj(v: unknown): Record<string, unknown> {
@@ -109,13 +169,28 @@ export interface StagedPaystubLike {
  *  - it was written AFTER the queue row was locked (`updated_at > locked_at`),
  *    so a snapshot predating a re-lock can never regress it;
  *  - it carries the itemized bonus breakdown (snapshots since 2026-07-18) —
- *    an old total-only snapshot can't rebuild a full statement.
+ *    an old total-only snapshot can't rebuild a full statement;
+ *  - when `catalogRatePhp` is supplied (the employee has an employee-scope PHP
+ *    Payment Catalog structure), the snapshot's own rates must MATCH it. The
+ *    catalog is the source of truth for rates, so a snapshot carrying any other
+ *    rate is provably from a wizard session holding pre-change data — a
+ *    still-open stale tab republishing after a rate fix would otherwise merge
+ *    old-rate figures over corrected staged values, and the result is
+ *    internally consistent so no downstream check can catch it (2026-07-29:
+ *    a stale session republished ₱175-computed figures 18 minutes AFTER the
+ *    ₱225 catalog fix). Rejection is signalled via `staleRateSnapshot: true`.
  */
 export function mergeSnapshotIntoStaged(
   staged: StagedPaystubLike,
   snapValue: string | null,
   snapUpdatedAt: string | null,
-): { payload: Record<string, unknown> | null; payPeriod: Record<string, unknown> | null; refreshed: boolean } {
+  catalogRatePhp?: CatalogRateClaim | null,
+): {
+  payload: Record<string, unknown> | null;
+  payPeriod: Record<string, unknown> | null;
+  refreshed: boolean;
+  staleRateSnapshot?: boolean;
+} {
   const base = { payload: staged.payload, payPeriod: staged.pay_period, refreshed: false };
   if (!staged.payload || staged.excluded || !snapValue) return base;
 
@@ -148,6 +223,22 @@ export function mergeSnapshotIntoStaged(
     entry.otherBonuses === undefined
   ) {
     return base;
+  }
+
+  // ── Catalog rate check: the snapshot must have been computed at the rate the
+  // Payment Catalog decrees. A mismatch on any rate the snapshot carries means
+  // the publishing wizard session predates the current catalog — its figures
+  // are stale no matter how new its `updated_at` is. (Snapshots without rate
+  // fields — pre-2026-07-21 — can't be validated and keep the old behavior.)
+  if (catalogRatePhp) {
+    const snapReg = numOrNull(entry.regularRate);
+    const snapOt = numOrNull(entry.otRate);
+    const regStale = snapReg != null && Math.abs(snapReg - catalogRatePhp.regular) > 0.005;
+    const otStale =
+      snapOt != null && catalogRatePhp.ot != null && Math.abs(snapOt - catalogRatePhp.ot) > 0.005;
+    if (regStale || otStale) {
+      return { ...base, staleRateSnapshot: true };
+    }
   }
 
   const p = obj(staged.payload);
@@ -240,6 +331,21 @@ export async function getFreshPaystubEntry(
     snap = null; // snapshot unavailable — the staged payload still renders
   }
 
-  const merged = mergeSnapshotIntoStaged(staged, snap?.value ?? null, snap?.updatedAt ?? null);
+  // The employee's catalog rate claim gates the merge (see mergeSnapshotIntoStaged).
+  const claims = snap ? await getCatalogRateClaimsByEmail() : new Map<string, CatalogRateClaim>();
+  const p = obj(staged.payload);
+  const claim = catalogClaimForEmails(claims, [
+    recipientEmail,
+    typeof p.email === "string" ? p.email : null,
+  ]);
+
+  const merged = mergeSnapshotIntoStaged(staged, snap?.value ?? null, snap?.updatedAt ?? null, claim);
+  if (merged.staleRateSnapshot) {
+    console.warn(
+      `[paystub-fresh] ${sourceFile} / ${recipientEmail}: wizard snapshot rejected — its rate ` +
+        `contradicts the Payment Catalog (stale wizard session). Staged figures kept; ` +
+        `reload the wizard and re-lock the week to heal the snapshot.`,
+    );
+  }
   return { staged, ...merged, error: null };
 }

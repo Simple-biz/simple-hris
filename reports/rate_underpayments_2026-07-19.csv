@@ -1,0 +1,92 @@
+name,email,department,paid_rate,correct_rate,gap_per_hour,regular_hours,ot_hours,got_regular_pay,should_regular_pay,got_ot_pay,should_ot_pay,shortfall_php,already_sent,staged_final,history_signature,duplicate_sheet_rows,sheet_departments
+"Bullor, Shaira Mae ""Shaira""",shairab@simple.biz,Lead Gen,175,260,85,40,1.0047222222222223,7000,10400,263.74,391.84,3528.1,YES,8263.74,2026-05-31 / GSheets Sync,YES,
+"Rosal, Nathaniel A ""Nathan""",nathanr@simple.biz,Lead Gen,175,225,50,40,4.1433333333333335,7000,9000,1087.63,1398.38,2310.75,,12901,2026-05-31 / GSheets Sync,YES,"Hogan Smith Law, Lead Gen"
+"Lama, Honey Girl ""Honey""",honeyl@simple.biz,Lead Gen,175,225,50,40,2.2316666666666665,7000,9000,585.81,753.19,2167.38,YES,8585.810000000001,2026-05-31 / GSheets Sync,YES,Client - VA
+"Ronquillo, Jenny Art ""Jenny""",jennyr@simple.biz,Client VA,175,225,50,40,0.13833333333333334,7000,9000,36.31,46.69,2010.38,,7036.31,2026-05-31 / GSheets Sync,YES,Lead Gen
+"Gupilan, Aloha M. ""Aloha""",alohag@simple.biz,Lead Gen,175,210,35,40,0.17972222222222223,7000,8400,47.18,56.61,1409.43,,7447.18,2026-05-31 / GSheets Sync,YES,
+"Ramos, Rachel ""Rachel""",rachelr@simple.biz,HSL,175,265,90,38.280833333333334,0,8859.25,10144.42,0,0,1285.17,,8859.25,2026-05-31 / GSheets Sync,YES,Hogan Smith Law
+"Tan, Rommel Romeo ""RR""",rrt@simple.biz,Lead Gen,175,225,50,24.309722222222224,0,4254.2,5469.69,0,0,1215.49,,5254.2,2026-05-31 / GSheets Sync,YES,Client - VA
+"Pena, Dan Albert ""Dan""",danp@simple.biz,HSL,175,225,50,40,3.451111111111111,7845.9,9000,1164.75,1164.75,1154.1,,11260.65,2026-05-31 / GSheets Sync,YES,Hogan Smith Law
+"Cepeda, Louis Jane ""Lou""",louc@simple.biz,Callback Team,210,235,25,40,3.1261111111111113,8400,9400,984.73,1101.95,1117.22,YES,9384.73,1970-01-01 / system,YES,Callback
+"Redoble, Fernan John ""Fern""",fernr@simple.biz,Lead Gen,175,225,50,35.108333333333334,0,6846.43,7899.38,0,0,1052.95,,6846.43,2026-05-31 / GSheets Sync,YES,Hogan Smith Law
+"Ruedas, Joshua Andrei ""Josh""",joshr@simple.biz,HSL,175,225,50,38.11083333333333,0,7545.09,8574.94,0,0,1029.85,,10545.09,2026-05-31 / GSheets Sync,YES,"Hogan Smith Law, Lead Gen"
+"Hermanos, Jay Martin ""Jay",jayhe@simple.biz,HSL,175,225,50,39.39361111111111,0,7893.71,8863.56,0,0,969.85,,11393.71,2026-05-31 / GSheets Sync,YES,Hogan Smith Law
+"Barros, Frenz Angelo ""Angelo""",angelob@simple.biz,Lead Gen,175,225,50,40,11.959722222222222,8048.31,9000,4036.41,4036.41,951.69,,13584.72,2026-05-31 / GSheets Sync,YES,"Hogan Smith Law, Client VA"
+"Violanta, James Vincent ""James""",jamesv@simple.biz,HSL,175,225,50,38.73583333333333,0,7833.72,8715.56,0,0,881.84,,9933.720000000001,2026-05-31 / GSheets Sync,YES,Hogan Smith Law
+"Garcia, Glaiza “Glai”",glaizag@simple.biz,Lead Gen,175,225,50,40,0.9713888888888889,8184.04,9000,327.84,327.84,815.96,,8511.88,2026-05-31 / GSheets Sync,YES,Hogan Smith Law
+"Tagubar, Jeraldin “Jera”",jeraldint@simple.biz,Lead Gen,175,225,50,40,0.13083333333333333,8187.07,9000,44.16,44.16,812.93,,8231.23,2026-05-31 / GSheets Sync,YES,Hogan Smith Law
+"Cinco, Yousef Clyde ""Sef"" ",sefc@simple.biz,Lead Gen,175,225,50,38.81777777777778,0,7987.65,8734,0,0,746.35,,7987.65,2026-05-31 / GSheets Sync,YES,Hogan Smith Law
+"Saputalo, Stacy ""Stacy""",stacys@simple.biz,Lead Gen,175,225,50,35.10527777777778,0,7198.02,7898.69,0,0,700.67,,7698.02,2026-05-31 / GSheets Sync,YES,"Hogan Smith Law, Lead Gen"
+"Magdayao, Eden Grace ""Eden""",edenm@simple.biz,Lead Gen,175,225,50,25.878055555555555,0,5190.83,5822.56,0,0,631.73,,5440.83,2026-05-31 / GSheets Sync,YES,Hogan Smith Law
+"Martil, Artchimae ""Art""",artm@simple.biz,HSL,175,225,50,40,3.980277777777778,8621.99,9000,1403.05,1343.34,318.3,,12775.04,2026-05-31 / GSheets Sync,YES,Hogan Smith Law
+"Guirindola, Maria Angelica ""Maria""",mariag@simple.biz,HSL,175,225,50,40,1.6508333333333334,8681.56,9000,581.92,557.16,293.68,,12013.48,2026-05-31 / GSheets Sync,YES,Hogan Smith Law
+"Singzon, Alonzo M ""Alonzo""",alonzos@simple.biz,HSL,175,225,50,40,0.018333333333333333,8714.66,9000,6.46,6.19,285.07,,10471.12,2026-05-31 / GSheets Sync,YES,Hogan Smith Law
+"Ceballos, James Ryan ""James"" ",jamesc@simple.biz,HR,175,225,50,35.11416666666667,0,7900.69,7900.69,0,0,0,,16567.69,1970-01-01 / system,YES,Hogan Smith Law
+"Olarte, Bea Patricia ""Bea""",beao@simple.biz,HSL,175,225,50,27.135833333333334,0,6105.56,6105.56,0,0,0,,7846.31,1970-01-01 / system,YES,Hogan Smith Law
+"Leano, Charles Christopher C. ""Chris""",charlesl@simple.biz,Lead Gen,175,225,50,40,3.0080555555555555,9000,9000,1015.22,1015.22,0,,11515.22,1970-01-01 / system,YES,"Hogan Smith Law, Lead Gen"
+"Cacho, Glenda ""Glenda""",glendac@simple.biz,HSL,175,265,90,35.047777777777775,0,9287.66,9287.66,0,0,0,,9287.66,1970-01-01 / system,YES,Hogan Smith Law
+"Postrano, Reynan ""Rain""",rainp@simple.biz,HSL,210,225,15,29.613611111111112,0,6663.06,6663.06,0,0,0,YES,10163.060000000001,1970-01-01 / system,YES,Hogan Smith Law
+"De Rama, Rufio Alexander  ""Alex""",alexr@simple.biz,HSL,175,225,50,36.19083333333333,0,8142.94,8142.94,0,0,0,YES,9642.939999999999,2026-05-31 / GSheets Sync,YES,"Hogan Smith Law, Lead Gen"
+"Mendez, Ivan Mark ""Ivan""",ivanm@simple.biz,Lead Gen,175,225,50,39.466944444444444,0,8880.06,8880.06,0,0,0,,9630.06,1970-01-01 / system,YES,Hogan Smith Law
+"Sardan, Rosemarie Marquez ""Rose""",roses@simple.biz,Lead Gen,175,265,90,40,3.0669444444444443,10600,10600,1219.11,1219.11,0,,12719.11,1970-01-01 / system,YES,Hogan Smith Law
+"Bahan, Judith “Judy”",judithb@simple.biz,Lead Gen,175,225,50,39.57222222222222,0,8903.75,8903.75,0,0,0,,8903.75,2026-05-31 / GSheets Sync,YES,Hogan Smith Law
+"Narosa, Shaina Blanche ""Shaina""",shainan@simple.biz,Lead Gen,175,225,50,37.373333333333335,0,8409,8409,0,0,0,,8409,1970-01-01 / system,YES,Hogan Smith Law
+"Sancio, Franz Vincent ""Franz"" ",franzs@simple.biz,HSL,175,225,50,39.78,0,8950.5,8950.5,0,0,0,,11950.5,1970-01-01 / system,YES,"Hogan Smith Law, Lead Gen"
+"Querioso, Jaymar Sy ""jay""",jayq@simple.biz,Lead Gen,175,225,50,40,6.072222222222222,9000,9000,2049.38,2049.38,0,,11049.38,1970-01-01 / system,YES,Hogan Smith Law
+"Diego, Charles Vacil Tardo ""Charles""",charlesd@simple.biz,HSL,175,225,50,39.416111111111114,0,8868.63,8868.63,0,0,0,,12768.63,1970-01-01 / system,,Hogan Smith Law
+"Cantoria, Gerald Dela Cruz  ""Gerald""",geraldc@simple.biz,Lead Gen,175,225,50,37.03,0,8331.75,8331.75,0,0,0,,8231.75,1970-01-01 / system,YES,"Lead Gen, Hogan Smith Law"
+"Roxas, Jesica ""Jes""",jesr@simple.biz,HSL,175,225,50,12.679722222222223,0,2852.94,2852.94,0,0,0,YES,8025.6900000000005,1970-01-01 / system,YES,Hogan Smith Law
+"Casona, Julian Karl ""Julz""",julzc@simple.biz,Client VA,175,225,50,40,1.5891666666666666,9000,9000,536.34,536.34,0,,10136.34,2026-05-31 / GSheets Sync,YES,"Hogan Smith Law, Lead Gen"
+"Superta, Jaypee ""Steve Sanders""",steve@simple.biz,PM Team,265,285,20,39.01611111111111,0,11119.59,11119.59,0,0,0,,19869.59,1970-01-01 / system,YES,PM Team
+"Estolonio, Erjie ""Erjie""",erjiee@simple.biz,Lead Gen,175,225,50,40,2.703333333333333,9000,9000,912.38,912.37,-0.01,,9812.38,1970-01-01 / system,YES,Hogan Smith Law
+"Langcuyan, Jerelee ""Jerry""",jerryl@simple.biz,HSL,175,225,50,37.44916666666666,0,8426.32,8426.06,0,0,-0.26,YES,13275.73,1970-01-01 / system,YES,Hogan Smith Law
+"Espinosa, Gil Marc ""Gil""",gile@simple.biz,HSL,175,225,50,40,0.1922222222222222,9000,9000,65.43,64.88,-0.55,,19065.43,1970-01-01 / system,YES,"Hogan Smith Law, Lead Gen"
+"Lumauag, Jason ""Jason""",jasonl@simple.biz,Lead Gen,175,225,50,,,,,,,,,,2026-05-31 / GSheets Sync,YES,Hogan Smith Law
+"Salcedo, Joel ""Joel""",joels@simple.biz,Lead Gen,175,225,50,,,,,,,,,,2026-05-31 / GSheets Sync,YES,Hogan Smith Law
+"Bangas, Novy Kim ""Kim""",kimb@simple.biz,Lead Gen,175,225,50,,,,,,,,,,2026-05-31 / GSheets Sync,YES,Hogan Smith Law
+"Ocsio, Raynald ""Ray""",rayo@simple.biz,HSL,175,225,50,,,,,,,,,,2026-05-31 / GSheets Sync,YES,"Hogan Smith Law, Client - VA"
+"Juaton, Siegfred ""Fred""",fredj@simple.biz,HSL,175,225,50,38.31,0,8622.36,8619.75,0,0,-2.61,YES,11622.36,1970-01-01 / system,YES,Hogan Smith Law
+"Cirilo, Trisha Mae ""Trish""",trishc@simple.biz,HSL,175,225,50,38.44611111111111,0,8658.69,8650.38,0,0,-8.31,,12158.69,1970-01-01 / system,YES,Hogan Smith Law
+"Hernandez, Michael ""Mikey"" ",mikeyh@simple.biz,HSL,175,225,50,37.812222222222225,0,8576.19,8507.75,0,0,-68.44,YES,10676.19,1970-01-01 / system,YES,Hogan Smith Law
+"Punay, Claudine A ""Claude""",claudep@simple.biz,HSL,175,225,50,40,1.0122222222222221,9060.08,9000,356.81,341.62,-75.27,,13916.89,1970-01-01 / system,YES,Hogan Smith Law
+"Rinon, Richard Ian ""Richard""",richardr@simple.biz,HSL,175,225,50,37.984722222222224,0,8622.84,8546.56,0,0,-76.28,,11122.84,1970-01-01 / system,YES,Hogan Smith Law
+"Bontuyan, Febie ""Feb""",febb@simple.biz,HSL,175,225,50,39.2625,0,8913.29,8834.06,0,0,-79.23,,20413.29,1970-01-01 / system,YES,Hogan Smith Law
+"Molarte, Mark ""Mark""",markmo@simple.biz,HSL,175,225,50,31.424166666666668,0,7151.23,7070.44,0,0,-80.79,,10501.23,1970-01-01 / system,YES,Hogan Smith Law
+"Busano, Lorenzo ""Alex""",alexb@simple.biz,HSL,175,225,50,24.845555555555556,0,5682.42,5590.25,0,0,-92.17,,7932.42,1970-01-01 / system,YES,Hogan Smith Law
+"Alamo, Wilburt Jonas “Wilburt”",wilburta@simple.biz,HSL,175,225,50,20.947777777777777,0,4814.66,4713.25,0,0,-101.41,,5814.66,1970-01-01 / system,YES,Hogan Smith Law
+"De La Cruz, Duane ""Duane""",duanec@simple.biz,HSL,175,225,50,35.074444444444445,0,7996.85,7891.75,0,0,-105.1,,11246.85,1970-01-01 / system,YES,Hogan Smith Law
+"Uclaray, Phil Keaggy ""Phil""",philu@simple.biz,HSL,175,225,50,36.04888888888889,0,8218.68,8111,0,0,-107.68,YES,11968.68,1970-01-01 / system,YES,Hogan Smith Law
+"Basilio, Kathrine ""Kath""",kathb@simple.biz,HSL,175,225,50,37.522777777777776,0,8551.23,8442.63,0,0,-108.6,,12801.23,1970-01-01 / system,YES,Hogan Smith Law
+"Zalavarria, Michael ""Mike""",mikez@simple.biz,HSL,175,225,50,40,3.892777777777778,9111.08,9000,1313.81,1313.81,-111.08,YES,13974.89,1970-01-01 / system,YES,Hogan Smith Law
+"Aliser, Jayvee Lloyd ""Jayvee""",jayveea@simple.biz,HSL,210,225,15,33.94722222222222,0,7749.37,7638.13,0,0,-111.24,YES,10499.369999999999,1970-01-01 / system,YES,Hogan Smith Law
+"Aldohueza, Nika Alexis ""Nika""",nikaa@simple.biz,HSL,175,225,50,40,3.1258333333333335,9112.33,9000,1054.97,1054.97,-112.33,,10167.3,1970-01-01 / system,YES,Hogan Smith Law
+"Magallon, Francis ""France""",francem@simple.biz,HSL,175,225,50,39.58111111111111,0,9018.26,8905.75,0,0,-112.51,YES,13768.26,1970-01-01 / system,YES,"Hogan Smith Law, Lead Gen"
+"Tomaquin, Christan Vincent ""Vincent""",vincentt@simple.biz,HSL,175,225,50,37.29194444444445,0,8503.45,8390.69,0,0,-112.76,YES,10503.45,1970-01-01 / system,YES,Hogan Smith Law
+"Mejia, Pearly Dalumpienes ""Pearl""",pearlm@simple.biz,HSL,175,225,50,40,0.1663888888888889,9113.86,9000,56.16,56.16,-113.86,,18070.02,1970-01-01 / system,YES,Hogan Smith Law
+"Revillas, Janice ""Janice""",janicer@simple.biz,HSL,175,225,50,33.8125,0,7723.74,7607.81,0,0,-115.93,,8723.74,1970-01-01 / system,YES,Hogan Smith Law
+"Soriano, Hendrew ""Drew""",drews@simple.biz,HSL,175,225,50,38.95194444444444,0,8881.21,8764.19,0,0,-117.02,YES,12131.21,1970-01-01 / system,YES,Hogan Smith Law
+"Querijero, John Rhiel ""John""",johnq@simple.biz,HSL,210,225,15,40,0.5488888888888889,9110.61,9000,193.48,185.25,-118.84,,9204.09,1970-01-01 / system,YES,Hogan Smith Law
+"Granada, Deffy John ""DJ""",djg@simple.biz,HSL,175,225,50,40,5.0075,9118.84,9000,1690.03,1690.03,-118.84,,13058.87,2026-05-31 / GSheets Sync,YES,"Hogan Smith Law, Lead Gen"
+"Alacre, Loivem ""Grace"" ",gracea@simple.biz,HSL,175,225,50,40,0.6677777777777778,9120.07,9000,225.38,225.38,-120.07,,14595.45,1970-01-01 / system,YES,Hogan Smith Law
+"Hortezuela, Jeneva ""Jen""",jenh@simple.biz,HSL,175,225,50,40,0.7647222222222222,9120.12,9000,258.09,258.09,-120.12,,16478.21,1970-01-01 / system,YES,Hogan Smith Law
+"Gullermo, Jesus Seno ""Jay""",jayg@simple.biz,HSL,175,225,50,29.08861111111111,0,6665.92,6544.94,0,0,-120.98,YES,8415.92,2026-05-31 / GSheets Sync,YES,"Hogan Smith Law, Client VA"
+"Fullente, Christian Jay ""Christian"" ",christianf@simple.biz,HSL,175,225,50,40,0.7344444444444445,9111.75,9000,258.9,247.88,-122.77,,14120.65,1970-01-01 / system,YES,"Hogan Smith Law, Lead Gen"
+"Estomante, Jopie ""Joe"" ",joee@simple.biz,HSL,175,225,50,37.49,0,8558.18,8435.25,0,0,-122.93,,11963.3,1970-01-01 / system,YES,Hogan Smith Law
+"Seledio, Renard ""Renard""",renards@simple.biz,HSL,175,225,50,40,2.966666666666667,9125.18,9000,1001.25,1001.25,-125.18,YES,13876.43,1970-01-01 / system,YES,"Hogan Smith Law, Lead Gen"
+" Padilla, Valentino Fernan ""Val""",valp@simple.biz,HSL,175,225,50,38.660555555555554,0,8828.46,8698.63,0,0,-129.83,YES,11578.46,1970-01-01 / system,YES,Hogan Smith Law
+"Rama, Justine Karl ""Justine""",justiner@simple.biz,HSL,175,225,50,40,2.475,9133.31,9000,835.31,835.31,-133.31,,14218.62,1970-01-01 / system,YES,"Hogan Smith Law, Lead Gen"
+"Guanzon, Bernard Gregory S ""Blake""",blakeg@simple.biz,HSL,175,225,50,40,1.8577777777777778,9106.31,9000,654.87,627,-134.18,,11261.18,1970-01-01 / system,,Hogan Smith Law
+"Ceballo, Jedee Dawn ""Jed""",jedc@simple.biz,HSL,175,225,50,40,2.7255555555555557,9095.03,9000,960.76,919.88,-135.91,YES,13555.79,1970-01-01 / system,YES,Hogan Smith Law
+"Tulaña, Aubrey Joy ""Aubrey""",aubreyt@simple.biz,HSL,175,225,50,40,7.614722222222222,9082.08,9000,2645.26,2569.97,-157.37,,11727.34,1970-01-01 / system,YES,Hogan Smith Law
+"Delos Santos, Kit Lloyd ""Kit""",kits@simple.biz,HSL,175,225,50,35.21805555555556,0,8096.38,7924.06,0,0,-172.32,,11446.380000000001,1970-01-01 / system,YES,Hogan Smith Law
+"Lirio, Mark Bryan ""Bryan""",markl@simple.biz,HSL,175,225,50,32.72416666666667,0,7535.86,7362.94,0,0,-172.92,,8285.86,1970-01-01 / system,YES,Hogan Smith Law
+"Pagliawan, Orlando ""Jayar""",jayarp@simple.biz,HSL,175,225,50,40,1.2372222222222222,9204.76,9000,436.12,417.56,-223.32,YES,13590.88,1970-01-01 / system,YES,Hogan Smith Law
+"Mahusay, Karl Anton ""Karl""",karlm@simple.biz,HSL,175,225,50,38.16555555555556,0,8812.87,8587.25,0,0,-225.62,YES,13312.87,1970-01-01 / system,YES,"Hogan Smith Law, Lead Gen"
+"Lauron, Kimer “Kim”",kimerl@simple.biz,HSL,175,225,50,37.69694444444445,0,8710.68,8481.81,0,0,-228.87,YES,9960.68,1970-01-01 / system,YES,Hogan Smith Law
+"Senido, Paula Jean ""Pau""",paus@simple.biz,HSL,175,225,50,38.2925,0,8844.82,8615.81,0,0,-229.01,,11544.82,1970-01-01 / system,,Hogan Smith Law
+"Damian, Niel ""Niel""",nield@simple.biz,HSL,175,225,50,39.67194444444444,0,9162.29,8926.19,0,0,-236.1,,12162.29,1970-01-01 / system,YES,"Hogan Smith Law, Lead Gen"
+"Damasco, Luis ""Luis""",luisd@simple.biz,HSL,175,225,50,39.13638888888889,0,9042.28,8805.69,0,0,-236.59,YES,12542.28,1970-01-01 / system,YES,Hogan Smith Law
+"Dabasol, Maronn Dois ""Ron""",rond@simple.biz,HSL,175,225,50,40,0.5413888888888889,9232.44,9000,190.84,182.72,-240.56,YES,11673.28,1970-01-01 / system,YES,Hogan Smith Law
+"Chua, Lyka ""Lyka""",lykac@simple.biz,HSL,175,225,50,40,1.0522222222222222,9229.31,9000,370.91,355.13,-245.09,YES,13650.22,1970-01-01 / system,YES,Hogan Smith Law
+"Ventura Jr, Dominador ""Dom""",domv@simple.biz,HSL,175,225,50,40,0.37583333333333335,9242.72,9000,132.48,126.84,-248.36,YES,12625.2,1970-01-01 / system,YES,Hogan Smith Law
+"Guce, Melliza Mae ""Ems""",emsg@simple.biz,HSL,175,225,50,40,2.6855555555555557,9212.98,9000,946.66,906.38,-253.26,,10159.64,1970-01-01 / system,YES,Hogan Smith Law

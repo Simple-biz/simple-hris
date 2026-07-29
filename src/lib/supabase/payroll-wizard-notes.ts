@@ -5,7 +5,7 @@ import {
 import { listActiveMasterListPeople } from "./global-master-list-db";
 import { fetchHubstaffRowsOrdered, rowsToPayrollRows } from "./hubstaff-hours-db";
 import { manilaMonthDayStamp, payrollNotesWeekStart, sundayOf } from "@/lib/payroll/manila-week";
-import { formatAdjustmentText } from "@/lib/payroll/adjustment-bridge";
+import { formatAdjustmentText, parseAdjustmentAmount } from "@/lib/payroll/adjustment-bridge";
 import { stripMiddleMarker } from "@/lib/name/name-parts";
 import { getAppSetting } from "./app-settings";
 import { getDepartmentRegistry } from "@/lib/departments/registry-db";
@@ -526,6 +526,13 @@ async function resolveWorkerDisplayName(
  * fresh stamped row when the worker has none this week. Clearing the override
  * (amount=null) clears the linked row's Adjustment text but never deletes the
  * row — the trail of "someone touched this worker's pay" stays on the board.
+ *
+ * REFUSED when the worker already carries SEVERAL amounts this week: since
+ * 2026-07-29 the wizard's figure is their COMBINED total (see
+ * `combineAdjustments`), so writing it into one of the rows would leave the
+ * board totalling that figure plus the other rows all over again. The rows stay
+ * exactly as the clerk wrote them and the caller is told (`skipped:
+ * "multiple_rows"`) so it can say so.
  */
 export async function bridgeWizardAdjustment(params: {
   workEmail: string;
@@ -535,30 +542,55 @@ export async function bridgeWizardAdjustment(params: {
   sessionName?: string | null;
   /** Display name for a fresh row when the master list doesn't know the email. */
   workerName?: string | null;
-}): Promise<{ row: PayrollWizardNoteRow | null; created: boolean; error: string | null }> {
+}): Promise<{
+  row: PayrollWizardNoteRow | null;
+  created: boolean;
+  error: string | null;
+  /** Why nothing was written, when nothing was. */
+  skipped?: "multiple_rows";
+  /** How many of this worker's rows this week hold an amount (for the message). */
+  amountRows?: number;
+}> {
   const email = clean(params.workEmail)?.toLowerCase();
   if (!email) return { row: null, created: false, error: "A worker email is required." };
 
   const sb = client();
   const week = payrollNotesWeekStart();
-  const { data: existing, error: findErr } = await sb
+  // Every row for this worker/week, not just the preferred one — the count is
+  // what decides whether mirroring is safe at all.
+  const { data: weekRows, error: findErr } = await sb
     .from(TABLE)
     .select("*")
     .eq("worker_email", email)
     .eq("week_start", week)
     .order("done", { ascending: true })
     .order("updated_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
+    .limit(50);
   if (findErr) return { row: null, created: false, error: findErr.message };
+  const rows = (weekRows ?? []) as PayrollWizardNoteRow[];
+  // Same preference as before: open rows first, newest last-written.
+  const existing = rows[0] ?? null;
 
   const adjustment = params.amount === null ? null : formatAdjustmentText(params.amount);
+
+  // Two or more rows already carry a parseable amount → the wizard value is
+  // their total. Leave the clerk's line items alone (see the doc comment).
+  const withAmount = rows.filter((r) => parseAdjustmentAmount(r.adjustment) !== null);
+  if (withAmount.length > 1) {
+    return {
+      row: null,
+      created: false,
+      error: null,
+      skipped: "multiple_rows",
+      amountRows: withAmount.length,
+    };
+  }
 
   if (existing) {
     const { data, error } = await sb
       .from(TABLE)
       .update({ adjustment })
-      .eq("id", (existing as PayrollWizardNoteRow).id)
+      .eq("id", existing.id)
       .select("*")
       .maybeSingle();
     if (error) return { row: null, created: false, error: error.message };

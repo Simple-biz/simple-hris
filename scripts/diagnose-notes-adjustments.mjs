@@ -9,7 +9,9 @@
  *   2. worker_email linked              (null = row never applies)
  *   3. Adjustment parses as pure amount (prose like "+500 bonus" is rejected)
  *   4. worker HAS a row in this week's Hubstaff CSV (else nothing to key to)
- *   5. is the amount actually IN payroll.wizard.additions.<source_file>?
+ *   5. several rows for one worker → DIFFERENT amounts add up, an identical
+ *      amount repeated counts once (suspected duplicate) — since 2026-07-29
+ *   6. is the combined amount actually IN payroll.wizard.additions.<source_file>?
  *
  * Usage: node scripts/diagnose-notes-adjustments.mjs
  */
@@ -48,6 +50,35 @@ function parseAdjustmentAmount(text) {
   const value = Number(m[3].replace(/,/g, ""));
   if (!Number.isFinite(value)) return null;
   return { amount: m[1] === "-" ? -value : value, currency: prefix ?? suffix ?? "PHP" };
+}
+
+/** Mirror of adjustmentDupKey + combineAdjustments (adjustment-bridge.ts).
+ *  Different amounts add up; the same currency+figure repeated counts once. */
+function dupKey(parsed) {
+  return `${parsed.currency}:${Math.round(parsed.amount * 100)}`;
+}
+function combine(contributions) {
+  const counted = [];
+  const duplicates = [];
+  const seen = new Set();
+  let total = 0;
+  for (const c of contributions) {
+    const key = dupKey(c.parsed);
+    if (seen.has(key)) {
+      duplicates.push(c);
+      continue;
+    }
+    seen.add(key);
+    counted.push(c);
+    total = Math.round((total + c.php) * 100) / 100;
+  }
+  return { total, counted, duplicates };
+}
+/** PHP conversion needs the wizard's live fx rates, which a script has no
+ *  access to; peso cells (all but a handful) are exact, and any non-PHP cell is
+ *  called out so a reader knows this total is the PHP-only part. */
+function phpOf(parsed) {
+  return parsed.currency === "PHP" ? parsed.amount : null;
 }
 
 // ── The live pay cycle ──────────────────────────────────────────────────────
@@ -183,40 +214,83 @@ show("Worker not linked (worker_email null) — now flagged on the board", bucke
 show("Adjustment is not a plain amount — now flagged on the board", buckets.unparseable);
 show("Worker has no row in the live Hubstaff CSV", buckets.notInCsv, 20);
 
-// Same worker, same week, several amounts → only the newest is applied.
+// Same worker, same week, several amounts → combined (rule change 2026-07-29).
 const byWorkerWeek = new Map();
 for (const r of withText) {
   const email = (r.worker_email ?? "").trim().toLowerCase();
-  if (!email || !parseAdjustmentAmount(r.adjustment)) continue;
+  const parsed = parseAdjustmentAmount(r.adjustment);
+  if (!email || !parsed) continue;
   if (r.done && r.week_start !== cycleWeek) continue;
   if (cycleWeek !== null && r.week_start !== null && r.week_start > cycleWeek) continue;
   const k = `${email}|${r.week_start}`;
-  byWorkerWeek.set(k, [...(byWorkerWeek.get(k) ?? []), `${r.worker ?? email}=${(r.adjustment ?? "").trim()}`]);
+  byWorkerWeek.set(k, [
+    ...(byWorkerWeek.get(k) ?? []),
+    { name: r.worker ?? email, text: (r.adjustment ?? "").trim(), parsed, php: phpOf(parsed) },
+  ]);
 }
-const dupes = [...byWorkerWeek.entries()].filter(([, v]) => v.length > 1);
-show("COMPETING amounts (same worker+week, only the newest applies)", dupes.map(([k, v]) => `${k}  ${v.join("  |  ")}`));
+const multi = [...byWorkerWeek.entries()].filter(([, v]) => v.length > 1);
+show(
+  "COMBINED — several amounts for one worker+week (different amounts are ADDED)",
+  multi
+    .filter(([, v]) => combine(v).duplicates.length === 0)
+    .map(([k, v]) => {
+      const { total, counted } = combine(v);
+      const exact = counted.every((c) => c.php !== null);
+      return `${k}  ${v.map((c) => c.text).join("  +  ")}  =  ${exact ? total : `${total} + non-PHP cells (converted in the wizard)`}`;
+    }),
+);
+show(
+  "SUSPECTED DUPLICATES — the same amount twice (counted ONCE, clerk warned)",
+  multi
+    .filter(([, v]) => combine(v).duplicates.length > 0)
+    .map(([k, v]) => {
+      const { total, duplicates } = combine(v);
+      return `${k}  ${v.map((c) => c.text).join("  |  ")}  → applied once as ${total}  (dropped: ${duplicates
+        .map((d) => d.text)
+        .join(", ")})`;
+    }),
+);
 
 // The gap that actually matters: an amount the board holds for the week being
-// paid that the wizard's SAVED additions do not (the newest row wins per worker).
-const boardWinner = new Map(); // norm email -> {name, amount}
+// paid that the wizard's SAVED additions do not (per worker, combined).
+const boardWinner = new Map(); // norm email -> {name, amount, exact}
+const boardRows = new Map(); // norm email -> contributions
 for (const r of withText) {
   const email = (r.worker_email ?? "").trim().toLowerCase();
   const parsed = parseAdjustmentAmount(r.adjustment);
   if (!email || !parsed) continue;
   if (r.week_start !== cycleWeek) continue;
   if (csv.size > 0 && !csv.has(email)) continue;
-  boardWinner.set(email, { name: r.worker ?? email, amount: parsed.amount });
+  boardRows.set(email, [
+    ...(boardRows.get(email) ?? []),
+    { name: r.worker ?? email, text: (r.adjustment ?? "").trim(), parsed, php: phpOf(parsed) },
+  ]);
+}
+for (const [email, contributions] of boardRows) {
+  const { total, counted } = combine(contributions);
+  boardWinner.set(email, {
+    name: contributions[0].name,
+    amount: total,
+    // A non-PHP cell can only be totalled with the wizard's live fx rates, so
+    // don't cry "drift" over a figure this script cannot compute exactly.
+    exact: counted.every((c) => c.php !== null),
+  });
 }
 const gap = [...boardWinner.entries()].filter(([e]) => !blobByNorm.has(e));
 const drift = [...boardWinner.entries()].filter(
-  ([e, v]) => blobByNorm.has(e) && Math.abs(Number(blobByNorm.get(e)) - v.amount) > 0.01,
+  // `exact` only: a total that includes a $ / COP cell needs the wizard's live
+  // fx rates, so a mismatch here would be this script's blind spot, not drift.
+  ([e, v]) => v.exact && blobByNorm.has(e) && Math.abs(Number(blobByNorm.get(e)) - v.amount) > 0.01,
 );
 show(
   "ON THE BOARD but NOT in the wizard's saved additions (would be paid short)",
-  gap.map(([e, v]) => `${v.name.slice(0, 26).padEnd(26)} ${String(v.amount).padEnd(12)} <${e}>`),
+  gap.map(
+    ([e, v]) =>
+      `${v.name.slice(0, 26).padEnd(26)} ${String(v.amount).padEnd(12)} <${e}>${v.exact ? "" : "  [+ non-PHP cells]"}`,
+  ),
 );
 show(
-  "DIFFERENT amount saved vs. board (board is newer)",
+  "DIFFERENT amount saved vs. board (the board's combined total is authoritative)",
   drift.map(([e, v]) => `${v.name.slice(0, 26).padEnd(26)} board=${v.amount}  saved=${blobByNorm.get(e)}  <${e}>`),
 );
 console.log(

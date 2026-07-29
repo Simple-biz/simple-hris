@@ -1,0 +1,250 @@
+/**
+ * The invariant nobody was enforcing: a pay statement may never advertise an
+ * hourly rate it did not actually pay.
+ *
+ * Why this exists — the Jul 19–25 2026 stub that started it:
+ *
+ *     Regular Hours   40.00h × ₱225.00      ₱7,000.00
+ *     Overtime         4.14h × ₱337.50      ₱1,087.63
+ *
+ * 40 × 225 is ₱9,000, not ₱7,000. Every amount on that stub was in fact computed
+ * at ₱175.00/h (7000/40 = 175 exactly; 1087.63 / (175 × 1.5) = 4.1434h ≈ "4.14"),
+ * while the displayed rate came from a different table. The two hourly-rate
+ * sources had drifted apart:
+ *
+ *   - `rates_php.*` (DISPLAYED)  ← `employee_hourly_rates`, the current sheet
+ *   - `pay_php.*`   (PAID)       ← `employee_rate_history`, resolved as-of each day
+ *
+ * `computeProratedRowPay` (current-pay.ts) and `proratePayForMidPeriodChange`
+ * (PayrollWizard.tsx) both pay per-day from history and treat the sheet only as a
+ * FALLBACK for dates history doesn't cover. So a stale/missing history row silently
+ * wins over a raise that only ever landed on the sheet. The total still tied out to
+ * the sum of the line amounts, so nothing downstream noticed — the statement was
+ * internally consistent and externally wrong.
+ *
+ * This module makes that class of drift loud instead of silent. It is PURE and
+ * dependency-free so the wizard (client) and the dispatch APIs (server) can run the
+ * identical check on the identical object.
+ *
+ * IMPORTANT — it deliberately does NOT "fix" a mismatch by rewriting the displayed
+ * rate to match the pay. When the two sources disagree, neither is provably right
+ * from inside this function: the sheet may hold a real raise that history is missing
+ * (an UNDERPAYMENT owed to the employee), or history may hold a correct dated rate
+ * the sheet has run ahead of. Silently displaying whatever was paid would convert a
+ * visible ₱2,309.62 shortfall into an invisible one. So: report, refuse to dispatch,
+ * let a human resolve the source data.
+ */
+
+/** Pay lines that carry an hours × rate basis. Bonuses/adjustments have none. */
+export type RateLine = 'regular' | 'ot';
+
+export interface RateConsistencyIssue {
+  line: RateLine;
+  hours: number;
+  /** The rate the statement would DISPLAY (from `rates_php`). */
+  displayedRate: number;
+  /** What the line would pay at the displayed rate: hours × displayedRate. */
+  payAtDisplayedRate: number;
+  /** What the line actually pays (from `pay_php`). */
+  actualPay: number;
+  /**
+   * `payAtDisplayedRate - actualPay`, 2dp. POSITIVE means the employee was paid
+   * LESS than the displayed rate implies — money owed. Negative means more.
+   */
+  deltaPhp: number;
+  /** `actualPay / hours` — the rate the money was really computed at, 4dp. */
+  impliedRate: number | null;
+  /**
+   * The distinct per-day rates the pay engine actually applied, when the caller
+   * knows them. Exact evidence; empty when unavailable.
+   */
+  ratesPaid: number[];
+  /** How this was detected — `rates-paid` is exact, `implied-rate` is inferred. */
+  basis: 'rates-paid' | 'implied-rate';
+  severity: 'error' | 'warning';
+  /** Human-readable one-liner for the wizard UI / API error body. */
+  message: string;
+}
+
+export interface RateConsistencyInput {
+  hours: { regular?: number | null; ot?: number | null } | null | undefined;
+  ratesPhp: { regular?: number | null; ot?: number | null } | null | undefined;
+  payPhp: { regular?: number | null; ot?: number | null } | null | undefined;
+  /**
+   * Distinct per-day rates the engine actually applied, in first-use order. When
+   * supplied this is the authoritative signal and needs no tolerance guessing:
+   * a displayed rate that is not among them was never paid.
+   */
+  ratesPaid?: { regular?: number[] | null; ot?: number[] | null } | null;
+  /**
+   * HSL staff earn a +₱15/h weekend premium folded into per-day pay, so their pay
+   * legitimately EXCEEDS hours × rate. Overpayment headroom is widened rather than
+   * flagged. Never widens the underpayment side.
+   */
+  isHsl?: boolean;
+  /**
+   * A genuine dated rate change inside the pay week makes pay a blend of two
+   * rates, so a single displayed rate legitimately won't reproduce it. Downgrades
+   * an inferred mismatch to a warning; an exact `ratesPaid` conflict still errors.
+   */
+  hasMidPeriodChange?: boolean;
+}
+
+/** Rounding slack. Per-day accumulation rounds once at the end, so allow a cent or two. */
+const ROUNDING_TOLERANCE_PHP = 0.05;
+/** The HSL Sat/Sun premium, PHP per hour — the only sanctioned reason pay exceeds hours × rate. */
+const HSL_WEEKEND_PREMIUM_PHP_PER_HOUR = 15;
+/** Rates are money; compare to the centavo. */
+const RATE_EPSILON = 0.005;
+
+function round(n: number, dp: number): number {
+  const f = 10 ** dp;
+  return Math.round(n * f) / f;
+}
+
+function finite(v: unknown): number | null {
+  return typeof v === 'number' && Number.isFinite(v) ? v : null;
+}
+
+function money(n: number): string {
+  return `₱${n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+function includesRate(rates: number[], rate: number): boolean {
+  return rates.some((r) => Math.abs(r - rate) <= RATE_EPSILON);
+}
+
+function checkLine(
+  line: RateLine,
+  hoursRaw: unknown,
+  rateRaw: unknown,
+  payRaw: unknown,
+  ratesPaidRaw: number[] | null | undefined,
+  isHsl: boolean,
+  hasMidPeriodChange: boolean,
+): RateConsistencyIssue | null {
+  const hours = finite(hoursRaw);
+  const rate = finite(rateRaw);
+  const pay = finite(payRaw);
+
+  // No basis to check: a line with no hours (pure bonus week), no rate on file, or
+  // no computed pay is not a mismatch — it's an absence. Those are other checks'
+  // business (Readiness flags missing rates).
+  if (hours == null || rate == null || pay == null) return null;
+  if (hours <= 0) return null;
+  // A zero rate carries no claim, so there is nothing to contradict.
+  if (rate <= 0) return null;
+
+  const payAtDisplayedRate = round(hours * rate, 2);
+  const deltaPhp = round(payAtDisplayedRate - pay, 2);
+  const impliedRate = round(pay / hours, 4);
+  const ratesPaid = (ratesPaidRaw ?? []).filter((r): r is number => finite(r) != null);
+
+  const label = line === 'regular' ? 'Regular Hours' : 'Overtime';
+
+  // ── Exact path: we know the rates the engine applied. ──
+  if (ratesPaid.length > 0) {
+    if (includesRate(ratesPaid, rate)) return null; // displayed rate was genuinely used
+    const paidList = ratesPaid.map((r) => money(r)).join(' + ');
+    return {
+      line,
+      hours,
+      displayedRate: rate,
+      payAtDisplayedRate,
+      actualPay: pay,
+      deltaPhp,
+      impliedRate,
+      ratesPaid,
+      basis: 'rates-paid',
+      severity: 'error',
+      message:
+        `${label}: statement shows ${money(rate)}/h but the pay was computed at ` +
+        `${paidList}/h. ${hours.toFixed(2)}h at ${money(rate)}/h is ` +
+        `${money(payAtDisplayedRate)}, not ${money(pay)} — a ` +
+        `${deltaPhp > 0 ? 'shortfall' : 'surplus'} of ${money(Math.abs(deltaPhp))}.`,
+    };
+  }
+
+  // ── Inferred path: compare the implied rate against the displayed one. ──
+  // Underpayment side is tight — nothing legitimately pays BELOW the displayed rate.
+  // Overpayment side is widened by the HSL weekend premium, which can lift every
+  // hour in the line by up to ₱15.
+  const overHeadroom =
+    ROUNDING_TOLERANCE_PHP + (isHsl ? HSL_WEEKEND_PREMIUM_PHP_PER_HOUR * hours : 0);
+
+  const underpaid = deltaPhp > ROUNDING_TOLERANCE_PHP;
+  const overpaid = -deltaPhp > overHeadroom;
+  if (!underpaid && !overpaid) return null;
+
+  // A real mid-period rate change blends two rates, so a single displayed rate is
+  // expected not to reproduce the pay. Still worth surfacing, but not a blocker.
+  const severity: 'error' | 'warning' = hasMidPeriodChange ? 'warning' : 'error';
+  const because = hasMidPeriodChange
+    ? ' A dated rate change lands inside this pay week, so a blended rate may be correct — confirm the displayed rate represents the week.'
+    : '';
+
+  return {
+    line,
+    hours,
+    displayedRate: rate,
+    payAtDisplayedRate,
+    actualPay: pay,
+    deltaPhp,
+    impliedRate,
+    ratesPaid,
+    basis: 'implied-rate',
+    severity,
+    message:
+      `${label}: ${hours.toFixed(2)}h × ${money(rate)}/h is ${money(payAtDisplayedRate)}, ` +
+      `but the line pays ${money(pay)} — implying ${money(impliedRate)}/h, a ` +
+      `${deltaPhp > 0 ? 'shortfall' : 'surplus'} of ${money(Math.abs(deltaPhp))}.${because}`,
+  };
+}
+
+/**
+ * Check one employee's pay lines for displayed-rate / paid-rate drift.
+ * Returns [] when consistent. Never throws.
+ */
+export function findRateConsistencyIssues(
+  input: RateConsistencyInput,
+): RateConsistencyIssue[] {
+  const { hours, ratesPhp, payPhp, ratesPaid, isHsl, hasMidPeriodChange } = input ?? {};
+  const out: RateConsistencyIssue[] = [];
+  const reg = checkLine(
+    'regular',
+    hours?.regular,
+    ratesPhp?.regular,
+    payPhp?.regular,
+    ratesPaid?.regular,
+    !!isHsl,
+    !!hasMidPeriodChange,
+  );
+  if (reg) out.push(reg);
+  const ot = checkLine(
+    'ot',
+    hours?.ot,
+    ratesPhp?.ot,
+    payPhp?.ot,
+    ratesPaid?.ot,
+    !!isHsl,
+    !!hasMidPeriodChange,
+  );
+  if (ot) out.push(ot);
+  return out;
+}
+
+/** True when any issue is severe enough to block a dispatch. */
+export function hasBlockingRateIssue(issues: RateConsistencyIssue[]): boolean {
+  return issues.some((i) => i.severity === 'error');
+}
+
+/**
+ * Total PHP the employee is short across all flagged lines (0 when none, negative
+ * when overpaid). This is the number that matters in an arrears conversation.
+ */
+export function totalRateShortfallPhp(issues: RateConsistencyIssue[]): number {
+  return round(
+    issues.reduce((s, i) => s + i.deltaPhp, 0),
+    2,
+  );
+}

@@ -42,10 +42,27 @@ function mapRow(r: PayRow): PayStructure {
 
 export async function listPayStructures(): Promise<{ structures: PayStructure[]; error: string | null }> {
   const supabase = createSupabaseServiceRoleClient();
-  if (!supabase) return { structures: [], error: null };
-  const { data, error } = await supabase.from(TABLE).select('*').order('created_at', { ascending: true });
-  if (error) return { structures: [], error: error.message };
-  return { structures: (data ?? []).map((r) => mapRow(r as PayRow)), error: null };
+  // A missing client must be an ERROR, not an empty catalog: every consumer
+  // treats "no structures" as "nobody has a catalog rate" and silently falls
+  // back to sheet rates — the exact drift the catalog exists to prevent.
+  if (!supabase) return { structures: [], error: 'Supabase service-role client unavailable' };
+  // Page through everything: a single select is capped by PostgREST max-rows
+  // (commonly 1000), and with ascending order the NEWEST structures — the most
+  // recently set rates — would be the ones silently dropped at the cap.
+  const rows: PayRow[] = [];
+  const SIZE = 1000;
+  for (let from = 0; ; from += SIZE) {
+    const { data, error } = await supabase
+      .from(TABLE)
+      .select('*')
+      .order('created_at', { ascending: true })
+      .order('id', { ascending: true })
+      .range(from, from + SIZE - 1);
+    if (error) return { structures: [], error: error.message };
+    rows.push(...((data ?? []) as PayRow[]));
+    if (!data || data.length < SIZE) break;
+  }
+  return { structures: rows.map(mapRow), error: null };
 }
 
 export async function upsertPayStructure(

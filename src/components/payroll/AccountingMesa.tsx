@@ -34,6 +34,10 @@ import {
   Table2,
   Loader2,
   AlertTriangle,
+  ReceiptText,
+  ExternalLink,
+  ImageIcon,
+  FileWarning,
 } from 'lucide-react';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -42,6 +46,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { SmoothSelect } from '@/components/ui/smooth-select';
 import { cn } from '@/lib/utils';
+import { DatePicker, toIso } from '@/components/ui/date-picker';
 import { parseDateOnlyLocal } from '@/lib/date-only';
 import { toast } from 'sonner';
 import { clearTabCache, getTabCache, hasTabCache, setTabCache, TAB_CACHE_KEYS } from '@/lib/accounting/tab-cache';
@@ -53,6 +58,11 @@ import {
 } from '@/lib/accounting/mesa-export';
 import { fetchRosterEmailSet, isOnRoster } from '@/lib/roster/roster-emails';
 import type { MesaLedgerEvent, MesaMemberSummary } from '@/lib/mesa/ledger';
+import {
+  formatReceiptSize,
+  isMesaReceiptImage,
+  type MesaReceiptWithUrl,
+} from '@/lib/mesa/receipt-types';
 import type { EmployeeRow } from '@/lib/supabase/employees';
 import type { EmployeeHourlyRateRow } from '@/lib/supabase/employee-hourly-rates';
 
@@ -61,6 +71,14 @@ type MesaView = 'requests' | 'non-members' | 'active-members';
 /** Peso, two decimals — follows the app-wide money convention. */
 const formatPHP = (n: number) =>
   `₱${n.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+/** A bare DATE column ("2026-08-05") as "Aug 5, 2026" — parsed LOCAL, since
+ *  `new Date(iso)` reads a date-only string as UTC and renders a day early
+ *  west of UTC. */
+const formatDateOnly = (d: string | null | undefined) =>
+  d
+    ? (parseDateOnlyLocal(d) ?? new Date(d)).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+    : '—';
 
 export type MesaRequestType = 'opt_in' | 'opt_out' | 'disbursement' | 'return';
 export type MesaRequestStatus = 'pending' | 'approved' | 'denied';
@@ -72,6 +90,8 @@ interface MesaRequest {
   department: string;
   request_type: MesaRequestType;
   fpu_date: string | null;
+  /** Opt-out only: the day the member's participation ends. */
+  effective_date: string | null;
   disbursement_reason: string | null;
   explanation: string | null;
   amount_needed: number | null;
@@ -81,6 +101,13 @@ interface MesaRequest {
   reviewed_at: string | null;
   dispatched_at: string | null;
   created_at: string;
+  /** Disbursement only: attached receipt files (0–3), derived on read from
+   *  mesa_request_receipts. This is the "was this legitimate" signal — a member
+   *  substantiating their claim, visible before the row is even opened. */
+  receipt_count?: number;
+  /** Newest receipt's upload time. The program requires receipts within 14 days,
+   *  so this — not created_at — is what that rule is measured against. */
+  receipt_last_uploaded_at?: string | null;
 }
 
 interface MesaNote {
@@ -367,6 +394,7 @@ export default function AccountingMesa() {
   const [reviewTarget, setReviewTarget] = useState<MesaRequest | null>(null);
   const [reviewNotes, setReviewNotes] = useState('');
   const [reviewing, setReviewing] = useState(false);
+  const [savingEffective, setSavingEffective] = useState(false);
   /** MESA rollup for the member under review — the balance a disbursement is
    *  judged against. Loaded per-modal-open, so it's fresh at decision time. */
   const [reviewLedger, setReviewLedger] = useState<MesaMemberSummary | null>(null);
@@ -471,6 +499,8 @@ export default function AccountingMesa() {
         return [r.disbursement_reason, r.explanation].filter(Boolean).join(' — ') || '-';
       if (r.request_type === 'return') return r.explanation || '-';
       if (r.request_type === 'opt_in' && r.fpu_date) return `FPU: ${r.fpu_date}`;
+      if (r.request_type === 'opt_out' && r.effective_date)
+        return `Effective: ${formatDateOnly(r.effective_date)}`;
       return '-';
     };
     return {
@@ -493,6 +523,7 @@ export default function AccountingMesa() {
         { header: 'Type', pdfWeight: 52, xlsxWidth: 14 },
         { header: 'Details', pdfWeight: 95, xlsxWidth: 40 },
         { header: 'Amount', align: 'right', pdfWeight: 58, xlsxWidth: 15 },
+        { header: 'Receipts', align: 'right', pdfWeight: 44, xlsxWidth: 11 },
         { header: 'Status', pdfWeight: 46, xlsxWidth: 12 },
         { header: 'Submitted', pdfWeight: 52, xlsxWidth: 14 },
         { header: 'Reviewed by', pdfWeight: 62, xlsxWidth: 22 },
@@ -504,6 +535,10 @@ export default function AccountingMesa() {
         TYPE_LABELS[r.request_type],
         details(r),
         r.amount_needed != null ? formatPhpExport(r.amount_needed) : '-',
+        // Only a disbursement can carry a receipt; "-" for the rest, and for a
+        // list served before the receipts migration ran (count undefined) so the
+        // export never reports a 0 it can't actually vouch for.
+        r.request_type === 'disbursement' && r.receipt_count != null ? String(r.receipt_count) : '-',
         r.status.charAt(0).toUpperCase() + r.status.slice(1),
         new Date(r.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
         r.reviewed_by ?? '-',
@@ -520,6 +555,42 @@ export default function AccountingMesa() {
   const openReview = (r: MesaRequest) => {
     setReviewTarget(r);
     setReviewNotes('');
+  };
+
+  // Accounting can correct an opt-out's effective date — the member picks it,
+  // but they get it wrong, ask for a different day, or agree a new one over
+  // email. Saves on pick (the picker closes on a day click, so there's nothing
+  // else to confirm) and rolls back if the write fails, rather than leaving the
+  // modal showing a date the row doesn't have.
+  const saveEffectiveDate = async (iso: string) => {
+    if (!reviewTarget || !iso || iso === reviewTarget.effective_date) return;
+    const { id } = reviewTarget;
+    const previous = reviewTarget.effective_date;
+    const apply = (value: string | null) => {
+      setReviewTarget((t) => (t && t.id === id ? { ...t, effective_date: value } : t));
+      setRows((rs) => rs.map((r) => (r.id === id ? { ...r, effective_date: value } : r)));
+    };
+
+    apply(iso);
+    setSavingEffective(true);
+    try {
+      const res = await fetch(`/api/mesa-requests/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ effective_date: iso }),
+      });
+      if (!res.ok) {
+        const j = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(j.error ?? `HTTP ${res.status}`);
+      }
+      clearTabCache(TAB_CACHE_KEYS.mesaRequests);
+      toast.success(`Effective date set to ${formatDateOnly(iso)}`);
+    } catch (e) {
+      apply(previous);
+      toast.error(e instanceof Error ? e.message : 'Could not update the effective date');
+    } finally {
+      setSavingEffective(false);
+    }
   };
 
   // Pull the reviewed member's MESA rollup when the modal opens. Keyed on the
@@ -924,13 +995,24 @@ export default function AccountingMesa() {
                                   {r.explanation}
                                 </div>
                               )}
+                              <ReceiptRowChip request={r} onOpen={() => openReview(r)} />
                             </div>
                           )}
                           {r.request_type === 'return' && r.explanation && (
                             <span className="line-clamp-2 text-zinc-500 dark:text-zinc-500">{r.explanation}</span>
                           )}
-                          {(r.request_type === 'opt_out' || (!r.fpu_date && !r.disbursement_reason && !r.explanation)) && (
-                            <span className="text-zinc-400">—</span>
+                          {r.request_type === 'opt_out' ? (
+                            r.effective_date ? (
+                              <span className="text-zinc-600 dark:text-zinc-400">
+                                Effective {formatDateOnly(r.effective_date)}
+                              </span>
+                            ) : (
+                              <span className="text-zinc-400">—</span>
+                            )
+                          ) : (
+                            !r.fpu_date && !r.disbursement_reason && !r.explanation && (
+                              <span className="text-zinc-400">—</span>
+                            )
                           )}
                         </td>
                         <td className="px-4 py-3 text-right tabular-nums text-zinc-700 dark:text-zinc-300" data-label="Amount">
@@ -971,6 +1053,19 @@ export default function AccountingMesa() {
                               <span className="text-[11px] text-zinc-400">
                                 {r.reviewed_by ? `by ${r.reviewed_by.split('@')[0]}` : '—'}
                               </span>
+                              {/* A decided opt-out still needs its effective date
+                                  editable — the member's leaving date can move
+                                  after the decision. */}
+                              {r.request_type === 'opt_out' && (
+                                <button
+                                  type="button"
+                                  title="Edit effective date"
+                                  onClick={() => openReview(r)}
+                                  className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-zinc-200 text-zinc-400 transition-colors hover:border-teal-300 hover:bg-teal-50 hover:text-teal-600 dark:border-zinc-700 dark:hover:border-teal-700/50 dark:hover:bg-teal-950/30 dark:hover:text-teal-400"
+                                >
+                                  <CalendarClock className="h-3.5 w-3.5" />
+                                </button>
+                              )}
                               <button
                                 type="button"
                                 title={r.dispatched_at ? 'Already paid out — cannot revoke' : 'Revoke decision (back to pending)'}
@@ -1040,7 +1135,7 @@ export default function AccountingMesa() {
                   {TYPE_LABELS[reviewTarget.request_type]} Request
                 </p>
                 <h3 className="mt-0.5 text-base font-bold text-zinc-900 dark:text-white">
-                  Review — {reviewTarget.full_name}
+                  {reviewTarget.status === 'pending' ? 'Review' : 'Details'} — {reviewTarget.full_name}
                 </h3>
               </div>
               <button
@@ -1056,6 +1151,43 @@ export default function AccountingMesa() {
               <InfoRow label="Email" value={reviewTarget.work_email} />
               <InfoRow label="Department" value={reviewTarget.department} />
               {reviewTarget.fpu_date && <InfoRow label="FPU Completed" value={reviewTarget.fpu_date} />}
+              {reviewTarget.request_type === 'opt_out' && (
+                <div>
+                  <div className="flex items-baseline justify-between gap-2">
+                    <label
+                      htmlFor="mesa-review-effective"
+                      className="text-[11px] font-semibold uppercase tracking-wide text-zinc-400 dark:text-zinc-500"
+                    >
+                      Effective Date
+                    </label>
+                    <span className="text-[10.5px] text-zinc-400 dark:text-zinc-500">
+                      {savingEffective ? 'Saving…' : 'Editable — saves on pick'}
+                    </span>
+                  </div>
+                  <DatePicker
+                    id="mesa-review-effective"
+                    value={reviewTarget.effective_date ?? ''}
+                    onChange={saveEffectiveDate}
+                    disabled={savingEffective}
+                    required
+                    placeholder="Not set — pick a date"
+                    className="mt-1 dark:bg-zinc-900"
+                  />
+                  {/* Approving unenrolls immediately — there's no scheduler that
+                      holds a future-dated opt-out, so say so rather than let the
+                      date imply one. */}
+                  {reviewTarget.effective_date && reviewTarget.effective_date > toIso(new Date()) && (
+                    <p className="mt-2 flex items-start gap-1.5 rounded-md border border-amber-200 bg-amber-50 p-2.5 text-[11.5px] leading-relaxed text-amber-900 dark:border-amber-500/40 dark:bg-amber-950/30 dark:text-amber-100">
+                      <AlertTriangle className="mt-px h-3.5 w-3.5 shrink-0" />
+                      <span>
+                        Requested for a future date. Approving now unenrolls them right away — hold
+                        the decision until {formatDateOnly(reviewTarget.effective_date)} if the
+                        deduction should keep running until then.
+                      </span>
+                    </p>
+                  )}
+                </div>
+              )}
               {reviewTarget.disbursement_reason && <InfoRow label="Reason" value={reviewTarget.disbursement_reason} />}
               {reviewTarget.explanation && (
                 <div>
@@ -1063,24 +1195,51 @@ export default function AccountingMesa() {
                   <p className="mt-1 text-sm leading-relaxed text-zinc-700 dark:text-zinc-300">{reviewTarget.explanation}</p>
                 </div>
               )}
+              {/* The member's evidence, above the balance panel: whether the claim
+                  is substantiated should be read BEFORE whether the fund can
+                  cover it. */}
+              {reviewTarget.request_type === 'disbursement' && (
+                <MesaReceiptsPanel
+                  requestId={reviewTarget.id}
+                  submittedAt={reviewTarget.created_at}
+                />
+              )}
               <MesaBalanceImpact
                 request={reviewTarget}
                 ledger={reviewLedger}
                 state={reviewLedgerState}
                 otherOpen={otherOpenDraws}
               />
-              <div>
-                <label className="text-[11px] font-semibold uppercase tracking-wide text-zinc-400 dark:text-zinc-500">
-                  Review Notes (optional)
-                </label>
-                <textarea
-                  value={reviewNotes}
-                  onChange={(e) => setReviewNotes(e.target.value)}
-                  rows={3}
-                  placeholder="Add a note for the employee..."
-                  className="mt-1 w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 placeholder-zinc-400 focus:border-teal-500 focus:outline-none focus:ring-2 focus:ring-teal-500/20 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
-                />
-              </div>
+              {/* A decided request is opened to read it (and to fix an opt-out
+                  date) — not to re-review it, so the note becomes a record of
+                  what was said. Revoke from the row to reopen the decision. */}
+              {reviewTarget.status === 'pending' ? (
+                <div>
+                  <label className="text-[11px] font-semibold uppercase tracking-wide text-zinc-400 dark:text-zinc-500">
+                    Review Notes (optional)
+                  </label>
+                  <textarea
+                    value={reviewNotes}
+                    onChange={(e) => setReviewNotes(e.target.value)}
+                    rows={3}
+                    placeholder="Add a note for the employee..."
+                    className="mt-1 w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 placeholder-zinc-400 focus:border-teal-500 focus:outline-none focus:ring-2 focus:ring-teal-500/20 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
+                  />
+                </div>
+              ) : (
+                <>
+                  <InfoRow
+                    label={reviewTarget.status === 'approved' ? 'Approved by' : 'Denied by'}
+                    value={reviewTarget.reviewed_by ?? '—'}
+                  />
+                  {reviewTarget.review_notes && (
+                    <div>
+                      <p className="text-[11px] font-semibold uppercase tracking-wide text-zinc-400 dark:text-zinc-500">Review Notes</p>
+                      <p className="mt-1 text-sm leading-relaxed text-zinc-700 dark:text-zinc-300">{reviewTarget.review_notes}</p>
+                    </div>
+                  )}
+                </>
+              )}
             </div>
             <div className="flex shrink-0 items-center justify-end gap-2 border-t border-zinc-200 px-5 py-4 dark:border-zinc-800">
               <Button
@@ -1088,31 +1247,35 @@ export default function AccountingMesa() {
                 variant="outline"
                 size="sm"
                 onClick={() => setReviewTarget(null)}
-                disabled={reviewing}
+                disabled={reviewing || savingEffective}
               >
-                Cancel
+                {reviewTarget.status === 'pending' ? 'Cancel' : 'Close'}
               </Button>
-              <Button
-                type="button"
-                size="sm"
-                disabled={reviewing}
-                onClick={() => submitReview('denied')}
-                className="border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100 dark:border-rose-700/50 dark:bg-rose-950/30 dark:text-rose-300 dark:hover:bg-rose-950/60"
-                variant="outline"
-              >
-                <XCircle className="mr-1.5 h-3.5 w-3.5" />
-                Deny
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                disabled={reviewing}
-                onClick={() => submitReview('approved')}
-                className="bg-teal-600 text-white hover:bg-teal-700 dark:bg-teal-600 dark:hover:bg-teal-500"
-              >
-                <CheckCircle2 className="mr-1.5 h-3.5 w-3.5" />
-                Approve
-              </Button>
+              {reviewTarget.status === 'pending' && (
+                <>
+                  <Button
+                    type="button"
+                    size="sm"
+                    disabled={reviewing || savingEffective}
+                    onClick={() => submitReview('denied')}
+                    className="border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100 dark:border-rose-700/50 dark:bg-rose-950/30 dark:text-rose-300 dark:hover:bg-rose-950/60"
+                    variant="outline"
+                  >
+                    <XCircle className="mr-1.5 h-3.5 w-3.5" />
+                    Deny
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    disabled={reviewing || savingEffective}
+                    onClick={() => submitReview('approved')}
+                    className="bg-teal-600 text-white hover:bg-teal-700 dark:bg-teal-600 dark:hover:bg-teal-500"
+                  >
+                    <CheckCircle2 className="mr-1.5 h-3.5 w-3.5" />
+                    Approve
+                  </Button>
+                </>
+              )}
             </div>
           </div>
         </div>
@@ -1205,6 +1368,210 @@ function InfoRow({ label, value }: { label: string; value: string }) {
     <div>
       <p className="text-[11px] font-semibold uppercase tracking-wide text-zinc-400 dark:text-zinc-500">{label}</p>
       <p className="mt-0.5 text-sm text-zinc-800 dark:text-zinc-200">{value}</p>
+    </div>
+  );
+}
+
+// ── Receipts ─────────────────────────────────────────────────────────────────
+//
+// Members attach up to three receipt files to a disbursement request (Employee →
+// MESA → Request → Past requests → Receipt). This is the "was it legitimate"
+// evidence: MESA has always required receipts within 14 days showing the
+// merchant's name, but until there was somewhere to put them the request under
+// review carried no proof of anything.
+
+/** How long after the request the receipt landed — the program allows 14 days. */
+function receiptLagDays(submittedAt: string, uploadedAt: string): number | null {
+  const from = new Date(submittedAt).getTime();
+  const to = new Date(uploadedAt).getTime();
+  if (Number.isNaN(from) || Number.isNaN(to)) return null;
+  return Math.floor((to - from) / 86_400_000);
+}
+
+/**
+ * Row-level receipt signal, under the reason in the Details cell. Present so a
+ * reviewer can see which of thirty rows are substantiated without opening each
+ * one. Silent (renders nothing) when the count is unknown — a list served before
+ * the receipts migration ran shouldn't accuse every request of missing proof.
+ */
+function ReceiptRowChip({ request, onOpen }: { request: MesaRequest; onOpen: () => void }) {
+  const count = request.receipt_count;
+  if (count == null) return null;
+
+  if (count === 0) {
+    return (
+      <span
+        title="No receipt attached yet"
+        className="mt-1 inline-flex items-center gap-1 text-[10.5px] font-medium text-zinc-400 dark:text-zinc-500"
+      >
+        <FileWarning aria-hidden className="h-3 w-3" />
+        No receipt
+      </span>
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      title={`${count} receipt${count === 1 ? '' : 's'} attached — open the request to view`}
+      className="mt-1 inline-flex items-center gap-1 rounded-md border border-teal-200 bg-teal-50 px-1.5 py-0.5 text-[10.5px] font-semibold text-teal-800 transition-colors hover:bg-teal-100 dark:border-teal-500/40 dark:bg-teal-500/15 dark:text-teal-100 dark:hover:bg-teal-500/25"
+    >
+      <ReceiptText aria-hidden className="h-3 w-3" />
+      {count} receipt{count === 1 ? '' : 's'}
+    </button>
+  );
+}
+
+/**
+ * The receipt files themselves, inside the review modal. Read-only for
+ * Accounting on purpose: this is the evidence the decision rests on, so the
+ * reviewer opens it, they don't edit it. Thumbnails come from short-lived signed
+ * URLs (the bucket is private), and each file opens in a new tab.
+ */
+function MesaReceiptsPanel({
+  requestId,
+  submittedAt,
+}: {
+  requestId: string;
+  /** The request's created_at, so "attached 3 days later" can be stated. */
+  submittedAt: string;
+}) {
+  const [rows, setRows] = useState<MesaReceiptWithUrl[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [broken, setBroken] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    let cancelled = false;
+    setRows(null);
+    setError(null);
+    fetch(`/api/mesa-requests/${requestId}/receipts`, { cache: 'no-store' })
+      .then(async (r) => {
+        const json = (await r.json().catch(() => ({}))) as {
+          rows?: MesaReceiptWithUrl[];
+          error?: string;
+        };
+        if (!r.ok) throw new Error(json.error ?? `HTTP ${r.status}`);
+        return json.rows ?? [];
+      })
+      .then((data) => { if (!cancelled) setRows(data); })
+      .catch((e: unknown) => {
+        if (!cancelled) setError(e instanceof Error ? e.message : 'Could not load receipts');
+      });
+    return () => { cancelled = true; };
+  }, [requestId]);
+
+  return (
+    <div>
+      <div className="flex items-baseline justify-between gap-2">
+        <p className="text-[11px] font-semibold uppercase tracking-wide text-zinc-400 dark:text-zinc-500">
+          Receipts
+        </p>
+        {rows && rows.length > 0 && (
+          <span className="text-[10.5px] tabular-nums text-zinc-400 dark:text-zinc-500">
+            {rows.length} attached
+          </span>
+        )}
+      </div>
+
+      {rows === null && !error && (
+        <div className="mt-1.5 space-y-1.5">
+          {[0, 1].map((i) => (
+            <div
+              key={i}
+              className="h-12 animate-pulse rounded-lg bg-zinc-100 dark:bg-zinc-800/60"
+              style={{ animationDelay: `${i * 90}ms` }}
+            />
+          ))}
+        </div>
+      )}
+
+      {error && (
+        <p className="mt-1.5 rounded-lg border border-amber-200 bg-amber-50 p-2.5 text-[11.5px] leading-relaxed text-amber-900 dark:border-amber-500/40 dark:bg-amber-950/30 dark:text-amber-100">
+          {error}
+        </p>
+      )}
+
+      {rows !== null && rows.length === 0 && (
+        <p className="mt-1.5 flex items-start gap-2 rounded-lg border border-zinc-200 bg-zinc-50/70 p-2.5 text-[11.5px] leading-relaxed text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900/40 dark:text-zinc-400">
+          <FileWarning aria-hidden className="mt-px h-3.5 w-3.5 shrink-0 text-zinc-400 dark:text-zinc-500" />
+          <span>
+            No receipt attached. The member can add one from{' '}
+            <strong className="font-semibold text-zinc-700 dark:text-zinc-300">
+              MESA → Request → Past requests
+            </strong>{' '}
+            — the program allows 14 days.
+          </span>
+        </p>
+      )}
+
+      {rows !== null && rows.length > 0 && (
+        <ul className="mt-1.5 space-y-1.5">
+          {rows.map((r) => {
+            const lag = receiptLagDays(submittedAt, r.uploaded_at);
+            const late = lag != null && lag > 14;
+            const isPdf = (r.mime_type ?? '') === 'application/pdf';
+            const showThumb = isMesaReceiptImage(r.mime_type) && !!r.url && !broken.has(r.id);
+            return (
+              <li key={r.id}>
+                <a
+                  href={r.url ?? undefined}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className={cn(
+                    'group flex items-center gap-2.5 rounded-lg border p-2 transition-colors',
+                    'border-zinc-200 bg-white hover:border-teal-300 hover:bg-teal-50/50 dark:border-zinc-800 dark:bg-zinc-900/50 dark:hover:border-teal-700/60 dark:hover:bg-teal-950/25',
+                    !r.url && 'pointer-events-none opacity-60',
+                  )}
+                >
+                  <span
+                    className={cn(
+                      'flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-md ring-1',
+                      isPdf
+                        ? 'bg-rose-50 text-rose-600 ring-rose-100 dark:bg-rose-950/30 dark:text-rose-300 dark:ring-rose-900/50'
+                        : 'bg-zinc-100 text-zinc-400 ring-zinc-200 dark:bg-zinc-800/70 dark:text-zinc-500 dark:ring-zinc-700/70',
+                    )}
+                  >
+                    {showThumb ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={r.url as string}
+                        alt=""
+                        loading="lazy"
+                        onError={() => setBroken((p) => (p.has(r.id) ? p : new Set(p).add(r.id)))}
+                        className="h-full w-full object-cover"
+                      />
+                    ) : isPdf ? (
+                      <FileText aria-hidden className="h-4 w-4" />
+                    ) : (
+                      <ImageIcon aria-hidden className="h-4 w-4" />
+                    )}
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-[12.5px] font-medium text-zinc-900 dark:text-zinc-100">
+                      {r.file_name || `Receipt ${r.slot}`}
+                    </span>
+                    <span className="mt-0.5 block truncate text-[10.5px] text-zinc-500 dark:text-zinc-500">
+                      {formatReceiptSize(r.file_size)} · {formatDateOnly(r.uploaded_at)}
+                      {lag != null && (
+                        <span className={cn(late && 'font-semibold text-amber-700 dark:text-amber-300')}>
+                          {' · '}
+                          {lag <= 0 ? 'same day' : `${lag}d after request`}
+                          {late ? ' (past 14 days)' : ''}
+                        </span>
+                      )}
+                    </span>
+                  </span>
+                  <ExternalLink
+                    aria-hidden
+                    className="h-3.5 w-3.5 shrink-0 text-zinc-300 transition-colors group-hover:text-teal-600 dark:text-zinc-600 dark:group-hover:text-teal-400"
+                  />
+                </a>
+              </li>
+            );
+          })}
+        </ul>
+      )}
     </div>
   );
 }
@@ -2051,10 +2418,7 @@ function MesaActiveMembers() {
     await load(false);
   };
 
-  const fmtSince = (d: string | null) =>
-    d
-      ? (parseDateOnlyLocal(d) ?? new Date(d)).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
-      : '—';
+  const fmtSince = formatDateOnly;
 
   // Export of the members currently in view. Money figures are recomputed over
   // the filtered set so the stat band always matches the exported rows. The
@@ -2465,10 +2829,7 @@ function MesaMemberDetail({
     }
   };
 
-  const fmtDate = (d: string | null) =>
-    d
-      ? (parseDateOnlyLocal(d) ?? new Date(d)).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
-      : '—';
+  const fmtDate = formatDateOnly;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-[2px] animate-in fade-in duration-200 ease-out motion-reduce:animate-none">

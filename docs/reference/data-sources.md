@@ -328,7 +328,7 @@ Single `app_settings` key (`auth.force_logout_map`) holding a JSON map of `{ "em
 
 ### 10. `mesa_requests` *(added 2026-06-01)*
 
-Employee-submitted MESA program requests. Run `references/sql/create/add_mesa_requests.sql` to create this table; `references/sql/alter/add_mesa_dispatched_at.sql` adds the `dispatched_at` column + the urgent-queue index. See the paired ledger table §15 and the feature doc [mesa.md](../features/mesa.md).
+Employee-submitted MESA program requests. Run `references/sql/create/add_mesa_requests.sql` to create this table; `references/sql/alter/add_mesa_dispatched_at.sql` adds the `dispatched_at` column + the urgent-queue index, and `references/sql/alter/2026-07-29_add_mesa_effective_date.sql` adds `effective_date`. See the paired ledger table §15 and the feature doc [mesa.md](../features/mesa.md).
 
 **Columns:**
 
@@ -340,6 +340,7 @@ Employee-submitted MESA program requests. Run `references/sql/create/add_mesa_re
 | `department` | text NOT NULL | Department at time of submission |
 | `request_type` | text NOT NULL | `opt_in` \| `opt_out` \| `disbursement` \| `return` |
 | `fpu_date` | text | Opt-in only — free-text date FPU was completed |
+| `effective_date` *(2026-07-29)* | date | Opt-out only — the day participation ends (weekly deduction + match stop). Required by `POST /api/mesa-requests` for an `opt_out` (strict `YYYY-MM-DD`), forced null for every other type |
 | `disbursement_reason` | text | Disbursement only — Medical Emergency / Natural Disaster / Computer Repair / Other |
 | `explanation` | text | Disbursement explanation or return notes (max 250 chars enforced by UI) |
 | `amount_needed` | numeric(12,2) | Disbursement only — PHP amount requested |
@@ -363,7 +364,7 @@ Employee-submitted MESA program requests. Run `references/sql/create/add_mesa_re
 
 **Who writes it:**
 - `POST /api/mesa-requests` — employee submission (writes an `mesa.request.<type>` audit log)
-- `PATCH /api/mesa-requests/[id]` — approve / deny / revoke-to-pending (`requireFeatureEditAnyView('mesa')`; stamps `reviewed_by`, `reviewed_at`, `review_notes`; blocks reverting a dispatched disbursement with 409)
+- `PATCH /api/mesa-requests/[id]` — approve / deny / revoke-to-pending (`requireFeatureEditAnyView('mesa')`; stamps `reviewed_by`, `reviewed_at`, `review_notes`; blocks reverting a dispatched disbursement with 409). Also accepts `effective_date` on its own (or alongside a decision) so Accounting can correct an **opt-out's** date at any status — 400 on a non-`opt_out` row or a non-`YYYY-MM-DD` value, audited as `mesa.request.effective_date_updated` with both the old and new value
 - `DELETE /api/mesa-requests/[id]` — permanent delete (blocked once `dispatched_at` is set)
 - `POST /api/mesa-requests/[id]/dispatch` — pays out an approved disbursement and stamps `dispatched_at` (see [urgent-payments.md](../features/urgent-payments.md))
 
