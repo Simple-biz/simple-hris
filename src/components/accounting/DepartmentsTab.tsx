@@ -292,40 +292,51 @@ export default function DepartmentsTab({
           title="From the master list sync"
           subtitle="Built-in payroll departments, populated by the Google Sheet sync."
         />
-        <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950">
-          {DEPARTMENTS.map((d, i) => {
+        <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))' }}>
+          {DEPARTMENTS.map((d) => {
             const rate = deptRate(d.key);
             const label = managerLabelForBuiltin(d.key);
+            const people = memberCountForBuiltin(d.key);
             return (
               <div
                 key={d.key}
-                className={`flex flex-wrap items-center gap-x-4 gap-y-1 px-4 py-2.5 ${
-                  i > 0 ? 'border-t border-zinc-100 dark:border-zinc-900' : ''
-                }`}
+                className="group rounded-xl border border-zinc-200 bg-white p-4 transition-shadow hover:shadow-md dark:border-zinc-800 dark:bg-zinc-950"
               >
-                <span className="min-w-0 flex-1 truncate text-sm font-medium text-zinc-800 dark:text-zinc-200">
-                  {d.name}
-                </span>
-                <span className="w-24 shrink-0 text-xs tabular-nums text-zinc-500 dark:text-zinc-400">
-                  {memberCountForBuiltin(d.key)} people
-                </span>
-                <span className="hidden w-40 shrink-0 truncate text-xs text-zinc-500 sm:block dark:text-zinc-400" title={label ?? undefined}>
-                  {label ?? 'No manager assigned'}
-                </span>
-                <span className="w-28 shrink-0 text-right text-xs font-semibold tabular-nums text-emerald-600 dark:text-emerald-400">
-                  {rate ? formatRate(rate.regularRate, rate.currency) : (
-                    <span className="font-medium text-zinc-400 dark:text-zinc-500">No rate</span>
-                  )}
-                </span>
-                <button
-                  type="button"
-                  onClick={() => onOpenPayStructure(d.key)}
-                  className="shrink-0 rounded-md p-1 text-zinc-400 transition-colors hover:bg-orange-50 hover:text-orange-600 dark:hover:bg-blue-950/40 dark:hover:text-blue-300"
-                  title={`Open ${d.name} in Pay Structure`}
-                  aria-label={`Open ${d.name} in Pay Structure`}
-                >
-                  <ChevronRight className="h-4 w-4" />
-                </button>
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <h3 className="truncate text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+                      {d.name}
+                    </h3>
+                    <p className="mt-0.5 truncate text-[11px] text-zinc-500 dark:text-zinc-400" title={label ?? undefined}>
+                      {people} {people === 1 ? 'person' : 'people'}
+                      {label ? ` · Manager: ${label}` : ' · No manager assigned'}
+                    </p>
+                  </div>
+                  <span className="shrink-0 rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] font-semibold text-zinc-600 dark:bg-zinc-900 dark:text-zinc-300">
+                    Master list
+                  </span>
+                </div>
+
+                <div className="mt-3 flex items-center justify-between border-t border-zinc-100 pt-2.5 dark:border-zinc-900">
+                  <span className="text-xs font-semibold tabular-nums text-emerald-600 dark:text-emerald-400">
+                    {rate ? formatRate(rate.regularRate, rate.currency) : (
+                      <span className="font-medium text-zinc-400 dark:text-zinc-500">No rate set</span>
+                    )}
+                    {overrideCount(d.key) > 0 && (
+                      <span className="ml-1.5 font-medium text-zinc-400">
+                        +{overrideCount(d.key)} individual
+                      </span>
+                    )}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => onOpenPayStructure(d.key)}
+                    className="inline-flex items-center gap-0.5 rounded-md px-1.5 py-1 text-[11px] font-semibold text-orange-600 transition-colors hover:bg-orange-50 dark:text-blue-300 dark:hover:bg-blue-950/40"
+                  >
+                    Pay structure
+                    <ChevronRight className="h-3.5 w-3.5" />
+                  </button>
+                </div>
               </div>
             );
           })}
