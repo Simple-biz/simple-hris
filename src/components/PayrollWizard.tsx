@@ -184,6 +184,13 @@ import {
 } from '@/lib/departments/registry';
 import { isFinalPayrollWeekOfMonth } from '@/lib/payroll/bonus-cadence';
 import {
+  buildSharedEmailOwners,
+  attributeKpiRows,
+  roundedKpiTotals,
+  summarizeSharedEmail,
+  type AppliedKpiRow,
+} from '@/lib/payroll/manager-bonus-attribution';
+import {
   findRateConsistencyIssues,
   totalRateShortfallPhp,
   type RateConsistencyIssue,
@@ -1749,6 +1756,11 @@ export default function PayrollWizard({
    * in the Additions "KPI Sub." column; the accountant can still override per row.
    */
   const [managerBonusRaw, setManagerBonusRaw] = useState<Record<string, number>>({});
+  // Per stored email, the individual applied rows (dept + name snapshot +
+  // amount). Only consulted when an email is claimed by two differently-named
+  // master rows — then each claimant is paid just the rows carrying their own
+  // name instead of the merged per-email sum (see manager-bonus-attribution).
+  const [managerBonusRowsRaw, setManagerBonusRowsRaw] = useState<Record<string, AppliedKpiRow[]>>({});
   // Per-employee KPI amount BROKEN DOWN by source department, so the KPI Sub.
   // column can show on hover where each part came from — important for people
   // who were transferred mid-cycle and earned a KPI in two departments.
@@ -1792,6 +1804,7 @@ export default function PayrollWizard({
         const meta: Record<string, { period_start: string; status: string }> = {};
         const raw: Record<string, number> = {};
         const byDept: Record<string, Record<string, number>> = {};
+        const rowsByEmail: Record<string, AppliedKpiRow[]> = {};
         await Promise.all(
           Array.from(chosen.entries()).map(async ([dept, info]) => {
             meta[dept] = info;
@@ -1804,7 +1817,12 @@ export default function PayrollWizard({
               { cache: 'no-store' },
             );
             const json = (await res.json()) as {
-              rows?: { employee_email: string; amount: number | string | null; cadence?: 'weekly' | 'monthly' | null }[];
+              rows?: {
+                employee_email: string;
+                employee_name?: string | null;
+                amount: number | string | null;
+                cadence?: 'weekly' | 'monthly' | null;
+              }[];
             };
             // Monthly bonuses pay once per month, on the LAST payroll week of the
             // month (mirrors PAB). Only sum them into that final week's paycheck —
@@ -1819,12 +1837,18 @@ export default function PayrollWizard({
               raw[em] = Math.round((raw[em] ?? 0) + amt);
               const bucket = (byDept[em] ??= {});
               bucket[dept] = Math.round((bucket[dept] ?? 0) + amt);
+              (rowsByEmail[em] ??= []).push({
+                dept,
+                name: (r.employee_name ?? '').trim() || null,
+                amount: amt,
+              });
             }
           }),
         );
         if (cancelled) return;
         setManagerBonusMeta(meta);
         setManagerBonusRaw(raw);
+        setManagerBonusRowsRaw(rowsByEmail);
         setManagerBonusByDeptRaw(byDept);
       } catch {
         // Silent — no manager submissions surface; depts fall back to local entry.
@@ -3127,6 +3151,14 @@ export default function PayrollWizard({
     }
     return { byWorkEmail, byPersonalEmail, byNameTokens };
   }, [masterEmployees]);
+
+  // Emails claimed by 2+ differently-named master rows — two humans behind one
+  // address (a data error, but one that must not merge their KPI bonuses).
+  // Duplicate rows for the SAME person tokenize identically and are not flagged.
+  const sharedKpiEmailOwners = useMemo(
+    () => buildSharedEmailOwners(masterEmployees),
+    [masterEmployees],
+  );
 
   const hubstaffByEmail = useMemo(() => {
     type H = typeof hubstaffData[number];
@@ -5793,56 +5825,70 @@ export default function PayrollWizard({
    * so we bridge via `masterIndex` (work email → personal email → name tokens),
    * mirroring how rates are resolved.
    */
-  const resolvedManagerBonus = useMemo(() => {
-    const out: Record<string, number> = {};
-    if (Object.keys(managerBonusRaw).length === 0) return out;
+  const { resolvedManagerBonus, resolvedManagerBonusByDept } = useMemo(() => {
+    const amounts: Record<string, number> = {};
+    const byDept: Record<string, Record<string, number>> = {};
+    if (Object.keys(managerBonusRaw).length === 0) {
+      return { resolvedManagerBonus: amounts, resolvedManagerBonusByDept: byDept };
+    }
     for (const row of effectiveCalcResults) {
       const e = normEmail(row.email);
-      let amt = e ? managerBonusRaw[e] : undefined;
-      if (amt === undefined) {
-        let master = e ? masterIndex.byWorkEmail.get(e) : undefined;
-        if (!master && e) master = masterIndex.byPersonalEmail.get(e);
-        if (!master && row.name) {
-          const toks = normalizeNameTokens(row.name);
-          if (toks) master = masterIndex.byNameTokens.get(toks);
-        }
-        if (master) {
-          const pe = normEmail(master.personal_email);
-          const we = normEmail(master.work_email);
-          amt = (pe ? managerBonusRaw[pe] : undefined) ?? (we ? managerBonusRaw[we] : undefined);
-        }
+      // Resolve the master row up front — the shared-email split below needs the
+      // person's canonical name even when the raw map hits their Hubstaff email.
+      let master = e ? masterIndex.byWorkEmail.get(e) : undefined;
+      if (!master && e) master = masterIndex.byPersonalEmail.get(e);
+      if (!master && row.name) {
+        const toks = normalizeNameTokens(row.name);
+        if (toks) master = masterIndex.byNameTokens.get(toks);
       }
-      if (amt !== undefined) out[row.email] = amt;
+      const pe = master ? normEmail(master.personal_email) : null;
+      const we = master ? normEmail(master.work_email) : null;
+      // Same precedence as ever: direct Hubstaff-email hit, then the master
+      // row's personal address, then its work address.
+      const hitEmail =
+        e && managerBonusRaw[e] !== undefined
+          ? e
+          : pe && managerBonusRaw[pe] !== undefined
+            ? pe
+            : we && managerBonusRaw[we] !== undefined
+              ? we
+              : null;
+      if (!hitEmail) continue;
+      const owners = sharedKpiEmailOwners.get(hitEmail);
+      if (!owners) {
+        // The email belongs to one person — the loader's per-email sums are theirs.
+        amounts[row.email] = managerBonusRaw[hitEmail];
+        const bd = managerBonusByDeptRaw[hitEmail];
+        if (bd !== undefined) byDept[row.email] = bd;
+        continue;
+      }
+      // Two people behind one email: pay this person only the rows snapshotted
+      // under their own name. Rows naming the other owner stay with the other
+      // owner; rows naming neither are paid to NOBODY (surfaced in the
+      // Additions banner) rather than guessed at.
+      const rows = managerBonusRowsRaw[hitEmail] ?? [];
+      const { mine } = attributeKpiRows(rows, owners, master?.name ?? row.name ?? null);
+      if (mine.length === 0) continue; // none of it is theirs → no submission for them
+      const totals = roundedKpiTotals(mine);
+      amounts[row.email] = totals.total;
+      byDept[row.email] = totals.byDept;
     }
-    return out;
-  }, [managerBonusRaw, effectiveCalcResults, masterIndex]);
+    return { resolvedManagerBonus: amounts, resolvedManagerBonusByDept: byDept };
+  }, [managerBonusRaw, managerBonusByDeptRaw, managerBonusRowsRaw, effectiveCalcResults, masterIndex, sharedKpiEmailOwners]);
 
-  /** Same identity resolution as {@link resolvedManagerBonus}, but the per-source-
-   *  department breakdown so the KPI Sub. cell can show where each KPI came from
-   *  (e.g. a transferred person with a Leadgen AND a Callback KPI). */
-  const resolvedManagerBonusByDept = useMemo(() => {
-    const out: Record<string, Record<string, number>> = {};
-    if (Object.keys(managerBonusByDeptRaw).length === 0) return out;
-    for (const row of effectiveCalcResults) {
-      const e = normEmail(row.email);
-      let bd = e ? managerBonusByDeptRaw[e] : undefined;
-      if (bd === undefined) {
-        let master = e ? masterIndex.byWorkEmail.get(e) : undefined;
-        if (!master && e) master = masterIndex.byPersonalEmail.get(e);
-        if (!master && row.name) {
-          const toks = normalizeNameTokens(row.name);
-          if (toks) master = masterIndex.byNameTokens.get(toks);
-        }
-        if (master) {
-          const pe = normEmail(master.personal_email);
-          const we = normEmail(master.work_email);
-          bd = (pe ? managerBonusByDeptRaw[pe] : undefined) ?? (we ? managerBonusByDeptRaw[we] : undefined);
-        }
-      }
-      if (bd !== undefined) out[row.email] = bd;
+  /** Shared emails that actually carry KPI rows this week — each is a master-
+   *  list data error (one address on two people) whose amounts were split by
+   *  name. Rendered as a warning on the Additions step so accounting fixes the
+   *  master list instead of discovering a merged payout on a paystub. */
+  const kpiSharedEmailWarnings = useMemo(() => {
+    const out: { email: string; summary: ReturnType<typeof summarizeSharedEmail> }[] = [];
+    for (const [email, rows] of Object.entries(managerBonusRowsRaw)) {
+      const owners = sharedKpiEmailOwners.get(email);
+      if (!owners || rows.length === 0) continue;
+      out.push({ email, summary: summarizeSharedEmail(rows, owners) });
     }
     return out;
-  }, [managerBonusByDeptRaw, effectiveCalcResults, masterIndex]);
+  }, [managerBonusRowsRaw, sharedKpiEmailOwners]);
 
   /**
    * Weekly HSL KPI amounts resolved to each wizard row's identity. `hslKpiAmounts`
@@ -11674,6 +11720,39 @@ export default function PayrollWizard({
                         <span className="opacity-80">
                           From the KPI Calculator · week of {managerBonusMeta[activeDeptTab]!.period_start} · {managerBonusMeta[activeDeptTab]!.status}. Amounts appear in the KPI Sub. column — use Adj. to override the total.
                         </span>
+                      </div>
+                    )}
+
+                    {/* One email on two master rows = two people's KPI rows under a
+                        single key. The amounts above were split by each row's name
+                        snapshot; this stays visible until the master list is fixed. */}
+                    {kpiSharedEmailWarnings.length > 0 && (
+                      <div className="space-y-1 rounded-lg border border-amber-300/70 bg-amber-50 px-3 py-2 text-[11px] text-amber-800 dark:border-amber-800/60 dark:bg-amber-950/40 dark:text-amber-200">
+                        <div className="flex items-center gap-2 font-semibold">
+                          <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                          KPI amounts split — one email is on more than one master-list row
+                        </div>
+                        {kpiSharedEmailWarnings.map(({ email, summary }) => (
+                          <div key={email} className="pl-5">
+                            <span className="font-mono">{email}</span>
+                            {' — '}
+                            {summary.perOwner.map((o, i) => (
+                              <span key={o.tokens}>
+                                {i > 0 && ' · '}
+                                {o.displayName}: {formatPHP(o.total)}
+                              </span>
+                            ))}
+                            {summary.unattributed.length > 0 && (
+                              <span className="font-semibold">
+                                {' · '}
+                                {summary.unattributed.length} row{summary.unattributed.length === 1 ? '' : 's'} (
+                                {formatPHP(Math.round(summary.unattributed.reduce((s, r) => s + r.amount, 0)))}) match neither
+                                person and are NOT being paid
+                              </span>
+                            )}
+                            <span className="opacity-80"> — fix the Personal/Work Email on the master list.</span>
+                          </div>
+                        ))}
                       </div>
                     )}
 
