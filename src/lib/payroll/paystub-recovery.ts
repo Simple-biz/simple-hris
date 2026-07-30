@@ -31,6 +31,11 @@ import type { ProrationBlockRaw } from "@/lib/payroll/paystub-view";
 
 /** One employee's exact figures from `payroll.wizard.final_pay.<sourceFile>`. */
 export interface WizardFinalPayEntry {
+  /** Canonical identity (lowercased work email; added 2026-07-30). The finals
+   *  map keys the SAME entry under work AND personal email, and two different
+   *  people's entries can be byte-identical — aggregate readers dedupe by this.
+   *  Older snapshots omit it → undefined. */
+  workEmail?: string | null;
   /** The exact net pay the wizard computed = what Payment Dispatch paid out. */
   final: number;
   regularPay: number | null;
