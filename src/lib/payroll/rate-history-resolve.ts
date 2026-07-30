@@ -60,6 +60,53 @@ export function resolveRateFromMap(
   return resolveRateAsOfDate(byEmail.get(em), date);
 }
 
+/** An employee-scope Payment Catalog rate in its NATIVE currency, for the
+ *  consistency check below (never FX-converted — a PHP history row can only
+ *  vouch for a PHP structure). */
+export interface CatalogNativeRate {
+  currency: string;
+  regular: number;
+  ot: number | null;
+}
+
+/** Rates are money; compare to the centavo. */
+const CATALOG_RATE_EPSILON = 0.005;
+
+/**
+ * Is the dated rate history CATALOG-CONSISTENT as of `asOf` — i.e. does the
+ * history row in effect on that date state the same rate the employee's
+ * Payment Catalog structure decrees?
+ *
+ * This is the shared gate that lets BOTH pay engines (the wizard's
+ * `proratePayForMidPeriodChange` and Dispatch's `computeProratedRowPay`)
+ * prorate a catalog-managed person through their dated history instead of
+ * flattening the whole period at the catalog rate. A match proves the history
+ * is catalog-authored (the pay-structures route writes a dated row on every
+ * save), so resolving per-day from it can only replay the catalog's own
+ * timeline. ANY disagreement — a stale structure, a stale history row, a
+ * non-PHP structure whose PHP-equivalent floats with FX — fails closed to the
+ * flat-at-catalog behavior, so this can never resurrect a superseded rate.
+ */
+export function historyMatchesCatalogAsOf(
+  rows: RateHistoryRow[] | undefined,
+  catalog: CatalogNativeRate,
+  asOf: Date,
+): boolean {
+  if (catalog.currency !== 'PHP') return false;
+  if (!Number.isFinite(catalog.regular)) return false;
+  const r = resolveRateAsOfDate(rows, asOf);
+  if (!r || r.regularRate == null) return false;
+  if (Math.abs(r.regularRate - catalog.regular) > CATALOG_RATE_EPSILON) return false;
+  if (
+    r.otRate != null &&
+    catalog.ot != null &&
+    Math.abs(r.otRate - catalog.ot) > CATALOG_RATE_EPSILON
+  ) {
+    return false;
+  }
+  return true;
+}
+
 /**
  * Build the per-email, effective-from-DESC index from raw
  * `employee_rate_history` rows (as returned by the API). Client-safe.

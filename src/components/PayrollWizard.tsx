@@ -5112,9 +5112,11 @@ export default function PayrollWizard({
    * Total hours rounded to 2dp (Hubstaff-style) before split; pay uses whole seconds + centavo rounding.
    * HSL employees receive an additional +15 PHP/h for Saturday and Sunday hours.
    */
-  // Catalog index used ONLY to detect individual (employee-scoped) rates during
-  // proration: an individual catalog rate is flat for the whole period (it bypasses
-  // per-day history in dispatch), so such employees never get a mid-week split.
+  // Catalog index used ONLY to resolve individual (employee-scoped) rates during
+  // proration. Since 2026-07-30 an individual catalog rate no longer flattens the
+  // week outright: the engine prorates through the person's dated history when it
+  // is catalog-CONSISTENT (the history is catalog-authored), and keeps the flat
+  // path on any disagreement — matching Dispatch's computeProratedRowPay rule.
   // Null during replay (catalog overlay is skipped then) so historical periods
   // prorate purely from the dated rate history.
   const catalogIndexForProration = useMemo(
@@ -5201,17 +5203,23 @@ export default function PayrollWizard({
       let proratedWeekend: { regularHours: number; otHours: number; regularPay: number; otPay: number } | null = null;
       const payDay = em ? payDaysByEmail.get(em) : undefined;
       if (payDay && payDay.days.length > 0) {
-        // candidate emails for history lookup + individual detection
+        // candidate emails for history lookup + individual-catalog detection
         const candidates = [em, normEmail(rateRow?.work_email ?? ''), normEmail(rateRow?.personal_email ?? '')]
           .filter((x): x is string => !!x);
-        const isIndividual =
-          catalogIndexForProration != null &&
-          !!resolveEmployeeCatalogRate(catalogIndexForProration, candidates, fxRates);
-        if (!isIndividual) {
+        // An employee-scope catalog rate no longer skips proration outright: the
+        // engine prorates through history when the history is CATALOG-CONSISTENT
+        // (terminal rate == structure, PHP only — the history is then
+        // catalog-authored) and keeps the flat path on any disagreement. Same
+        // rule as Dispatch's computeProratedRowPay, so the engines stay paired.
+        const catalogForProration =
+          catalogIndexForProration != null
+            ? resolveEmployeeCatalogRate(catalogIndexForProration, candidates, fxRates)
+            : null;
+        {
           // Key history on the Hubstaff email ONLY — the exact key Payment
           // Dispatch (computeProratedRowPay) uses — so the two engines can never
           // resolve a different history row (the broadened candidate set is used
-          // only for the individual-catalog skip above, mirroring Dispatch's
+          // only for the individual-catalog lookup above, mirroring Dispatch's
           // alias-bridged catalog lookup).
           const histEmail = em && rateHistoryByEmail.has(em) ? em : null;
           const prorated = proratePayForMidPeriodChange({
@@ -5221,6 +5229,13 @@ export default function PayrollWizard({
             histEmail,
             fallbackReg: regularRate,
             fallbackOt: otRate,
+            catalogRate: catalogForProration
+              ? {
+                  currency: catalogForProration.currency,
+                  regular: catalogForProration.regNative,
+                  ot: catalogForProration.otNative,
+                }
+              : null,
           });
           if (prorated) {
             regularPay = prorated.regularPay;

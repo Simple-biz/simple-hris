@@ -61,7 +61,13 @@ import {
   resolveHslWeekModelWithDefault,
   type HslWeekModel,
 } from "@/lib/payroll/hsl-week-model";
-import { fetchAllRateHistory, resolveRateAsOfDate, type RateHistoryByEmail } from "@/lib/payroll/rate-history";
+import {
+  fetchAllRateHistory,
+  resolveRateAsOfDate,
+  historyMatchesCatalogAsOf,
+  type RateHistoryByEmail,
+  type CatalogNativeRate,
+} from "@/lib/payroll/rate-history";
 import { listPayStructures } from "@/lib/supabase/pay-structures-db";
 import { listSystemBonuses } from "@/lib/supabase/system-bonuses-db";
 import { resolveSystemBonuses, isDeptEligible, systemBonusAmountForDept } from "@/lib/payment-catalog/system-bonus";
@@ -427,6 +433,14 @@ export function computeProratedRowPay(
    *  source of truth: every day is paid at this rate, bypassing the per-day rate
    *  history. Absent → resolve per-day from history with `fallbackRate`. */
   rateOverride?: { reg: number | null; ot: number | null } | null,
+  /** The same catalog rate in its NATIVE currency. When the person's dated
+   *  history is catalog-CONSISTENT as of their last worked day
+   *  (`historyMatchesCatalogAsOf` — the history is then catalog-authored), the
+   *  override stands down and the week prorates per day through history, so a
+   *  mid-week transfer / dated raise pays (and itemizes) each side at its real
+   *  rate. Any disagreement keeps the flat override — stale history can never
+   *  resurrect. Same rule as the wizard's `proratePayForMidPeriodChange`. */
+  catalogNative?: CatalogNativeRate | null,
 ): {
   regularPayPHP: number | null;
   otPayPHP: number | null;
@@ -460,6 +474,17 @@ export function computeProratedRowPay(
 
   const empHist = history.get(email);
 
+  // Catalog-consistent history prorates instead of flattening: the override
+  // only stands when the history CANNOT vouch for the catalog rate (absent,
+  // stale, or non-PHP) — then the catalog wins flat, exactly as before.
+  const overrideActive =
+    rateOverride != null &&
+    !(
+      catalogNative &&
+      // days is sec>0-filtered and sorted ASC — the last entry is the last worked day.
+      historyMatchesCatalogAsOf(empHist, catalogNative, days[days.length - 1].date)
+    );
+
   let usedRegSec = 0;
   let regularPayPHP = 0;
   let otPayPHP = 0;
@@ -472,7 +497,7 @@ export function computeProratedRowPay(
   for (const d of days) {
     let reg: number | null;
     let ot: number | null;
-    if (rateOverride) {
+    if (overrideActive && rateOverride) {
       // Payment Catalog wins over the per-day history rate.
       reg = rateOverride.reg;
       ot = rateOverride.ot;
@@ -937,6 +962,9 @@ export async function computeCurrentPay(
       isHslEmp,
       payWindow,
       catalogOverride,
+      // Native-currency twin of the override: lets catalog-consistent dated
+      // history prorate a mid-week change instead of flattening the week.
+      empCat ? { currency: empCat.currency, regular: empCat.regNative, ot: empCat.otNative } : null,
     );
 
     // Hours: when per-day ISO columns exist, report the pay-week-clamped totals

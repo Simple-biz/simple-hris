@@ -1,5 +1,5 @@
-import type { RateHistoryByEmail } from './rate-history-resolve';
-import { resolveRateAsOfDate } from './rate-history-resolve';
+import type { CatalogNativeRate, RateHistoryByEmail } from './rate-history-resolve';
+import { historyMatchesCatalogAsOf, resolveRateAsOfDate } from './rate-history-resolve';
 
 /**
  * Client-safe per-day proration across a MID-PERIOD rate change (a department
@@ -111,10 +111,32 @@ export function proratePayForMidPeriodChange(params: {
   histEmail: string | null;
   fallbackReg: number | null;
   fallbackOt: number | null;
+  /**
+   * The employee's INDIVIDUAL Payment Catalog rate in its native currency, when
+   * one exists. A catalog-managed person prorates ONLY when their dated history
+   * is catalog-consistent as of the last worked day (see
+   * `historyMatchesCatalogAsOf`) — the history is then catalog-authored and
+   * resolving per-day from it merely replays the catalog's own timeline. Any
+   * disagreement (stale structure, stale history, non-PHP currency) returns
+   * null so the caller keeps the flat-at-catalog path, exactly matching
+   * Dispatch's `computeProratedRowPay` rateOverride behavior. Omit/null for
+   * people without an individual structure — history prorates as always.
+   */
+  catalogRate?: CatalogNativeRate | null;
 }): MidPeriodProrationResult | null {
-  const { days, isHsl, history, histEmail, fallbackReg, fallbackOt } = params;
+  const { days, isHsl, history, histEmail, fallbackReg, fallbackOt, catalogRate } = params;
   const empHist = history && histEmail ? history.get(histEmail) : undefined;
   if (!empHist || empHist.length === 0 || days.length === 0) return null;
+
+  if (catalogRate) {
+    // Last day money actually moved — the week's terminal rate must be the one
+    // the catalog decrees, or the sources disagree and the flat path stands.
+    const lastWorked = days.reduce<Date | null>(
+      (acc, d) => (d.seconds > 0 && (!acc || d.date.getTime() > acc.getTime()) ? d.date : acc),
+      null,
+    );
+    if (!lastWorked || !historyMatchesCatalogAsOf(empHist, catalogRate, lastWorked)) return null;
+  }
   const regularRatesUsed: number[] = [];
   const otRatesUsed: number[] = [];
   const noteRate = (into: number[], v: number | null) => {

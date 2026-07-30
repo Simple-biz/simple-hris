@@ -233,7 +233,10 @@ employees are skipped, matching Dispatch.
 earnings line keeps its exact row and gains an amber **"Prorated" chip**, a **`₱old → ₱new`**
 Hours × Rate cell, and a per-rate hour basis (`16.25h @ ₱175.00 · 23.75h @ ₱225.00 — effective
 Jul 22`) — on the shared `PayStubStatement`, the wizard's Paystubs preview, and the n8n email
-alike. See `docs/features/paystub-dispatch.md#mid-week-proration--2026-07-30`.
+alike. **Individual Payment Catalog rates no longer flatten the week outright**: both engines
+prorate through dated history when it is catalog-consistent (terminal history rate == structure),
+and keep the flat week on any disagreement. See
+`docs/features/paystub-dispatch.md#mid-week-proration--2026-07-30`.
 
 ---
 

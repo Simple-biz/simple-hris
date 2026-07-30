@@ -8,8 +8,10 @@ export {
   resolveRateAsOfDate,
   resolveRateFromMap,
   buildRateHistoryByEmail,
+  historyMatchesCatalogAsOf,
   type RateHistoryRow,
   type RateHistoryByEmail,
+  type CatalogNativeRate,
 } from "./rate-history-resolve";
 import { buildRateHistoryByEmail, type RateHistoryByEmail } from "./rate-history-resolve";
 

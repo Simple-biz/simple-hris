@@ -1159,6 +1159,9 @@ export async function seedMissingDisbursementRecords(opts: {
         isHslEmp,
         payWindow,
         catalogOverride,
+        // Native-currency twin of the override — same catalog-consistent
+        // proration rule as live dispatch, so seeded estimates can't diverge.
+        empCat ? { currency: empCat.currency, regular: empCat.regNative, ot: empCat.otNative } : null,
       );
 
       let totalHours: number;

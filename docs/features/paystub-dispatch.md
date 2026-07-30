@@ -411,6 +411,20 @@ byte-identical. Derivation lives in `paystub-view.ts` (`parseProrationBlock` →
 (full segments minus the weekend carve-out, per rate) and the weekend lines' basis rates are
 premium-inclusive, mirroring the row structure exactly.
 
+**Individual Payment Catalog rates and the catalog-consistency rule (2026-07-30).** An
+employee-scope catalog structure used to flatten the whole period (both engines bypassed per-day
+history entirely), which silenced proration for nearly everyone once the catalog became the rate
+source of truth. New rule, identical in BOTH engines (`historyMatchesCatalogAsOf` in
+`rate-history-resolve.ts`, applied by the wizard's `proratePayForMidPeriodChange` and Dispatch's
+`computeProratedRowPay` + the disbursement-reports seeding path): a catalog-managed person
+prorates through their dated history **when the history is catalog-consistent** — the history rate
+resolved as of their last worked day equals the structure (PHP structures only; the pay-structures
+route writes a dated history row on every save, so a match proves the history is catalog-authored).
+Any disagreement — stale structure, stale history, non-PHP currency — fails closed to the
+flat-at-catalog week, so a superseded rate can never resurrect. Audit who splits vs. who conflicts
+for a given week with `scripts/audit-catalog-history-conflicts.mjs`; conflicts need Accounting to
+align the structure (or delete the bogus history row), after which the week prorates on re-lock.
+
 Where it shows (all via `PayStubView.proration`): the shared **`PayStubStatement`** (chip + detail
 components exported for reuse), the **wizard Paystubs preview** (same components, same derivation),
 and the **employee route's snapshot fast path** (`buildView`). Freshness plumbing mirrors the

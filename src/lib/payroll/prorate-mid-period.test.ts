@@ -1,7 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { proratePayForMidPeriodChange } from './prorate-mid-period';
-import type { RateHistoryByEmail, RateHistoryRow } from './rate-history-resolve';
+import {
+  historyMatchesCatalogAsOf,
+  type RateHistoryByEmail,
+  type RateHistoryRow,
+} from './rate-history-resolve';
 
 // ── Scenario: the approved prorated-paystub mock (department transfer) ───────
 // Pay week Sun Jul 19 – Sat Jul 25 2026, non-HSL. Transfer effective Wed Jul 22
@@ -143,6 +147,154 @@ test('a zero-second day never mints a segment', () => {
     { ratePhp: 175, hours: 8, payPhp: 1400 },
     { ratePhp: 225, hours: 8, payPhp: 1800 },
   ]);
+});
+
+// ── The individual-catalog gate (2026-07-30) ────────────────────────────────
+// An employee-scope Payment Catalog rate used to skip proration entirely (flat
+// all period, matching Dispatch's rateOverride). That gate blocked every
+// catalog-managed person — which is nearly everyone since the catalog became
+// the rate source of truth. New rule, identical in both engines: when the
+// person's dated history is CATALOG-CONSISTENT (the history rate resolved as
+// of the last worked day equals the structure, PHP only), prorate through
+// history — it was catalog-authored. Any disagreement keeps today's flat path,
+// so stale history can never resurrect.
+
+const sec = (hms: string) => {
+  const [h, m, s] = hms.split(':').map(Number);
+  return h * 3600 + m * 60 + s;
+};
+
+/** Capillo's real Jul 19–25 week: Lead Gen → Sales Assistant eff Jul 21, with a
+ *  correction the next day — THREE dated rates: 175 → 210 (Jul 21) → 225 (Jul 22). */
+const CAPILLO_HISTORY = historyMap([
+  { email: EMAIL, regularRate: 175, otRate: 262.5, effectiveFrom: new Date(2026, 4, 31) },
+  { email: EMAIL, regularRate: 210, otRate: 315, effectiveFrom: new Date(2026, 6, 21) },
+  { email: EMAIL, regularRate: 225, otRate: 337.5, effectiveFrom: new Date(2026, 6, 22) },
+]);
+const CAPILLO_DAYS = [
+  { date: new Date(2026, 6, 20), seconds: sec('7:56:07') },
+  { date: new Date(2026, 6, 21), seconds: sec('10:51:08') },
+  { date: new Date(2026, 6, 22), seconds: sec('10:25:07') },
+  { date: new Date(2026, 6, 23), seconds: sec('10:11:57') },
+  { date: new Date(2026, 6, 24), seconds: sec('10:00:22') },
+];
+
+test('a catalog-consistent individual rate prorates through its own history', () => {
+  const r = proratePayForMidPeriodChange({
+    days: CAPILLO_DAYS,
+    isHsl: false,
+    history: CAPILLO_HISTORY,
+    histEmail: EMAIL,
+    fallbackReg: 210,
+    fallbackOt: 315,
+    catalogRate: { currency: 'PHP', regular: 225, ot: 337.5 },
+  });
+  assert.ok(r, 'consistent catalog must not block the split');
+  assert.equal(r.regularPay, 8440.45);
+  assert.equal(r.otPay, 3176.34);
+  assert.deepEqual(r.segments.regular, [
+    { ratePhp: 175, hours: 7.94, payPhp: 1388.67 },
+    { ratePhp: 210, hours: 10.85, payPhp: 2278.97 },
+    { ratePhp: 225, hours: 21.21, payPhp: 4772.81 },
+  ]);
+  assert.deepEqual(r.segments.ot, [{ ratePhp: 337.5, hours: 9.41, payPhp: 3176.34 }]);
+  assert.equal(r.change?.effectiveDate, '2026-07-21');
+});
+
+test('an INCONSISTENT catalog rate keeps the flat path (stale sources never blend)', () => {
+  // Capillo today: the structure still says 210 while history moved on to 225.
+  const r = proratePayForMidPeriodChange({
+    days: CAPILLO_DAYS,
+    isHsl: false,
+    history: CAPILLO_HISTORY,
+    histEmail: EMAIL,
+    fallbackReg: 210,
+    fallbackOt: 315,
+    catalogRate: { currency: 'PHP', regular: 210, ot: 315 },
+  });
+  assert.equal(r, null);
+});
+
+test('a non-PHP catalog rate keeps the flat path (FX-blended splits are meaningless)', () => {
+  const r = proratePayForMidPeriodChange({
+    days: CAPILLO_DAYS,
+    isHsl: false,
+    history: CAPILLO_HISTORY,
+    histEmail: EMAIL,
+    fallbackReg: 210,
+    fallbackOt: 315,
+    catalogRate: { currency: 'USD', regular: 4, ot: 6 },
+  });
+  assert.equal(r, null);
+});
+
+test('no catalog rate at all behaves exactly as before (transfer scenario pin)', () => {
+  const withParam = proratePayForMidPeriodChange({
+    days: TRANSFER_DAYS,
+    isHsl: false,
+    history: TRANSFER_HISTORY,
+    histEmail: EMAIL,
+    fallbackReg: 225,
+    fallbackOt: 281.25,
+    catalogRate: null,
+  });
+  assert.deepEqual(withParam, transferResult());
+});
+
+// ── historyMatchesCatalogAsOf (the shared consistency rule) ─────────────────
+
+const asRows = (m: RateHistoryByEmail) => m.get(EMAIL);
+
+test('consistency: the terminal history rate matching the structure passes', () => {
+  assert.equal(
+    historyMatchesCatalogAsOf(asRows(CAPILLO_HISTORY), { currency: 'PHP', regular: 225, ot: 337.5 }, new Date(2026, 6, 24)),
+    true,
+  );
+});
+
+test('consistency: a structure the history has moved past fails', () => {
+  assert.equal(
+    historyMatchesCatalogAsOf(asRows(CAPILLO_HISTORY), { currency: 'PHP', regular: 210, ot: 315 }, new Date(2026, 6, 24)),
+    false,
+  );
+});
+
+test('consistency: non-PHP structures always fail', () => {
+  assert.equal(
+    historyMatchesCatalogAsOf(asRows(CAPILLO_HISTORY), { currency: 'USD', regular: 225, ot: 337.5 }, new Date(2026, 6, 24)),
+    false,
+  );
+});
+
+test('consistency: no history row covering asOf fails (nothing to vouch for the rate)', () => {
+  const onlyFuture = historyMap([
+    { email: EMAIL, regularRate: 225, otRate: 337.5, effectiveFrom: new Date(2026, 6, 22) },
+  ]);
+  assert.equal(
+    historyMatchesCatalogAsOf(asRows(onlyFuture), { currency: 'PHP', regular: 225, ot: 337.5 }, new Date(2026, 6, 19)),
+    false,
+  );
+  assert.equal(
+    historyMatchesCatalogAsOf(undefined, { currency: 'PHP', regular: 225, ot: 337.5 }, new Date(2026, 6, 24)),
+    false,
+  );
+});
+
+test('consistency: a null history OT is lenient, a different OT is not', () => {
+  const noOt = historyMap([
+    { email: EMAIL, regularRate: 225, otRate: null, effectiveFrom: new Date(2026, 6, 22) },
+  ]);
+  assert.equal(
+    historyMatchesCatalogAsOf(asRows(noOt), { currency: 'PHP', regular: 225, ot: 337.5 }, new Date(2026, 6, 24)),
+    true,
+  );
+  const wrongOt = historyMap([
+    { email: EMAIL, regularRate: 225, otRate: 300, effectiveFrom: new Date(2026, 6, 22) },
+  ]);
+  assert.equal(
+    historyMatchesCatalogAsOf(asRows(wrongOt), { currency: 'PHP', regular: 225, ot: 337.5 }, new Date(2026, 6, 24)),
+    false,
+  );
 });
 
 // ── HSL: the weekend premium rides inside the segment that paid it ──────────
