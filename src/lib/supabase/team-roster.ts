@@ -3,6 +3,7 @@ import { normEmail } from '../email/norm-email';
 import { applyDeptOverrideToRawRow } from '@/lib/departments/dept-email-overrides';
 import { listManagersByDepartment } from './department-managers';
 import { listSkillSetsForEmails } from './employee-skill-sets';
+import { selectAllPaged } from '@/lib/supabase/select-all-paged';
 
 export interface TeamRosterProfile {
   id: string;
@@ -63,23 +64,29 @@ export async function getTeamRoster(
 
   const deptNorm = department?.trim().toLowerCase() || null;
 
+  // Paged: the roster passed 1,000 people (1,296 as of Jul 2026) and PostgREST
+  // silently caps even an explicit .range(0, 9999) at 1,000 — the single-shot
+  // read dropped ~300 people from every manager Team page.
   const [empsRes, mgrEmails] = await Promise.all([
-    supabase
-      .from('active_employees')
-      .select('id, "Name", "Work Email", "Personal Email", "Department"')
-      .range(0, 9999),
+    selectAllPaged<Record<string, unknown>>((from, to) =>
+      supabase
+        .from('active_employees')
+        .select('id, "Name", "Work Email", "Personal Email", "Department"')
+        .order('Name', { ascending: true })
+        .range(from, to),
+    ),
     deptNorm ? listManagersByDepartment(department ?? '') : Promise.resolve([] as string[]),
   ]);
 
   if (empsRes.error) {
-    return { profiles: [], skillSets: {}, lastSeen: {}, error: empsRes.error.message };
+    return { profiles: [], skillSets: {}, lastSeen: {}, error: empsRes.error };
   }
 
   const managerSet = new Set<string>(mgrEmails);
   // Effective departments: the Sales/Sales-Assistant email override applies
   // here too, so a PH assistant lands on the Sales Assistant team roster (and
   // the dept-match filter below compares against the effective label).
-  const rows = ((empsRes.data ?? []) as ActiveEmployeeRow[]).map(applyDeptOverrideToRawRow);
+  const rows = (empsRes.rows as unknown as ActiveEmployeeRow[]).map(applyDeptOverrideToRawRow);
 
   const profiles: TeamRosterProfile[] = [];
   // Managers we've already surfaced from active_employees — used to figure out

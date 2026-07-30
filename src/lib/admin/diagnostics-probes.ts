@@ -15,6 +15,7 @@ import {
   createSupabaseServiceRoleClient,
 } from '@/lib/supabase/server';
 import { normEmail } from '@/lib/email/norm-email';
+import { selectAllPaged } from '@/lib/supabase/select-all-paged';
 
 export type ProbeStatus = 'healthy' | 'warning' | 'critical' | 'unknown';
 
@@ -323,25 +324,29 @@ export async function computeHrisAdoption(): Promise<{ onboarded: number; total:
   const supabase = createSupabaseServiceRoleClient() ?? createSupabaseServerClient();
   if (!supabase) return null;
   try {
+    // Both paged: PostgREST silently caps reads at 1,000 rows (even explicit
+    // ranges) and the roster is 1,296 — the KPI denominator froze at 1,000.
     const [rosterRes, presenceRes] = await Promise.all([
-      supabase
-        .from('active_employees')
-        .select('"Work Email", "Personal Email"')
-        .range(0, 99999),
-      supabase.from('user_presence').select('email'),
+      selectAllPaged<{ 'Work Email'?: string | null; 'Personal Email'?: string | null }>((from, to) =>
+        supabase
+          .from('active_employees')
+          .select('"Work Email", "Personal Email"')
+          .order('Work Email', { ascending: true })
+          .range(from, to),
+      ),
+      selectAllPaged<{ email: string | null }>((from, to) =>
+        supabase.from('user_presence').select('email').order('email', { ascending: true }).range(from, to),
+      ),
     ]);
     if (rosterRes.error || presenceRes.error) return null;
 
     const seen = new Set<string>();
-    for (const r of (presenceRes.data ?? []) as Array<{ email: string | null }>) {
+    for (const r of presenceRes.rows) {
       const e = normEmail(r.email);
       if (e) seen.add(e);
     }
 
-    const rows = (rosterRes.data ?? []) as Array<{
-      'Work Email'?: string | null;
-      'Personal Email'?: string | null;
-    }>;
+    const rows = rosterRes.rows;
     let onboarded = 0;
     for (const r of rows) {
       const w = normEmail(r['Work Email']);

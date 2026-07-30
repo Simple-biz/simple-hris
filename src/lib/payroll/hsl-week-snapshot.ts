@@ -20,6 +20,7 @@ import { listHubstaffUploads } from "@/lib/supabase/hubstaff-hours-db";
 import { createSupabaseServiceRoleClient } from "@/lib/supabase/server";
 import { getAppSettings } from "@/lib/supabase/app-settings";
 import { normEmail } from "@/lib/email/norm-email";
+import { selectAllPaged } from "@/lib/supabase/select-all-paged";
 import {
   getPabMonthRange,
   payWeekFromUploadStart,
@@ -62,15 +63,22 @@ function pabMonthFromMonday(weekMonday: Date): { year: number; month: number } {
  * received Mon→Sun pay windowing, so the snapshot captures the same people.
  */
 export async function fetchHslEmailSet(supabase: ServiceClient): Promise<Set<string>> {
-  const { data, error } = await supabase
-    .from("active_employees")
-    .select('"Work Email", "Personal Email", "Department"');
+  // Paged: the roster passed 1,000 people and the dept filter runs in JS AFTER
+  // the fetch, so PostgREST's silent 1,000-row cap dropped HSL people whose
+  // rows sorted past it from the snapshot population.
+  const { rows: data, error } = await selectAllPaged<Record<string, unknown>>((from, to) =>
+    supabase
+      .from("active_employees")
+      .select('"Work Email", "Personal Email", "Department"')
+      .order("Work Email", { ascending: true })
+      .range(from, to),
+  );
   const set = new Set<string>();
-  if (error || !data) {
-    console.warn("[hsl-week-snapshot] fetchHslEmailSet failed:", error?.message);
+  if (error) {
+    console.warn("[hsl-week-snapshot] fetchHslEmailSet failed:", error);
     return set;
   }
-  for (const r of data as Array<Record<string, unknown>>) {
+  for (const r of data) {
     const dept = typeof r["Department"] === "string" ? (r["Department"] as string).trim().toLowerCase() : "";
     if (dept !== "hsl") continue;
     const we = normEmail(typeof r["Work Email"] === "string" ? (r["Work Email"] as string) : null);

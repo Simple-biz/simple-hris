@@ -1,6 +1,7 @@
 import { createSupabaseServiceRoleClient } from './server';
 import { applyDeptOverrideToRawRow } from '@/lib/departments/dept-email-overrides';
 import { listManagersByDepartment } from './department-managers';
+import { selectAllPaged } from '@/lib/supabase/select-all-paged';
 
 export type LeaveRequestStatus = 'pending' | 'approved' | 'rejected' | 'cancelled';
 
@@ -104,13 +105,18 @@ async function enrichRowsWithMissingNames(rows: LeaveRequestRow[]): Promise<void
   if (missing.length === 0) return;
   const supabase = createSupabaseServiceRoleClient();
   if (!supabase) return;
-  const { data, error } = await supabase
-    .from('active_employees')
-    .select('"Name","Work Email","Personal Email","Department"')
-    .range(0, 9999);
+  // Paged: the roster passed 1,000 people and PostgREST caps even an explicit
+  // .range(0, 9999) at 1,000 — tail-of-roster requesters kept blank names.
+  const { rows: data, error } = await selectAllPaged<Record<string, unknown>>((from, to) =>
+    supabase
+      .from('active_employees')
+      .select('"Name","Work Email","Personal Email","Department"')
+      .order('Work Email', { ascending: true })
+      .range(from, to),
+  );
   if (error) return;
   const byEmail = new Map<string, { name: string | null; department: string | null }>();
-  for (const raw of (data ?? []) as Array<Record<string, unknown>>) {
+  for (const raw of data) {
     // Effective department (Sales/Sales-Assistant email override) so a PH
     // assistant's leave request routes to the Sales Assistant manager.
     const row = applyDeptOverrideToRawRow(raw);
@@ -395,14 +401,19 @@ export async function listManagersForDepartment(
   const explicitGated = explicit.filter((e) => activeManagerEmails.has(e));
   if (explicitGated.length > 0) return explicitGated;
 
-  const empsRes = await supabase
-    .from('active_employees')
-    .select('"Work Email","Personal Email","Department"')
-    .range(0, 9999);
+  // Paged: a manager whose roster row sorted past the silent 1,000-row cap
+  // would vanish from this fallback and their team's requests went unrouted.
+  const empsRes = await selectAllPaged<Record<string, unknown>>((from, to) =>
+    supabase
+      .from('active_employees')
+      .select('"Work Email","Personal Email","Department"')
+      .order('Work Email', { ascending: true })
+      .range(from, to),
+  );
   if (rolesRes.error || empsRes.error) return [];
 
   const out = new Set<string>();
-  for (const raw of (empsRes.data ?? []) as Array<Record<string, unknown>>) {
+  for (const raw of empsRes.rows) {
     const row = applyDeptOverrideToRawRow(raw); // effective dept (sales split)
     const rowDept = String(row['Department'] ?? '').trim().toLowerCase();
     if (!rowDept || rowDept !== dept) continue;
@@ -429,13 +440,18 @@ export async function lookupEmployeeNameAndDepartment(
   const supabase = createSupabaseServiceRoleClient();
   if (!supabase) return { name: null, department: null };
 
-  const { data, error } = await supabase
-    .from('active_employees')
-    .select('"Name","Work Email","Personal Email","Department"')
-    .range(0, 9999);
+  // Paged for the same silent 1,000-row cap as the readers above — a single
+  // person lookup must still see the whole roster to find a tail row.
+  const { rows: data, error } = await selectAllPaged<Record<string, unknown>>((from, to) =>
+    supabase
+      .from('active_employees')
+      .select('"Name","Work Email","Personal Email","Department"')
+      .order('Work Email', { ascending: true })
+      .range(from, to),
+  );
   if (error) return { name: null, department: null };
 
-  for (const raw of (data ?? []) as Array<Record<string, unknown>>) {
+  for (const raw of data) {
     const row = applyDeptOverrideToRawRow(raw); // effective dept (sales split)
     const we = String(row['Work Email'] ?? '').trim().toLowerCase();
     const pe = String(row['Personal Email'] ?? '').trim().toLowerCase();

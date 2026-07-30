@@ -102,14 +102,25 @@ export async function upsertPaystubDispatchQueue(params: {
   // rather than a NOT-IN over ~all employees — a big NOT-IN list would be sent
   // in the request URL and can blow the URL-length limit on a full run.
   const keep = new Set(rows.map((r) => r.recipient_email));
-  const { data: existing, error: exErr } = await supabase
-    .from("paystub_dispatch_queue")
-    .select("recipient_email")
-    .eq("cycle_source_file", params.sourceFile)
-    .is("sent_at", null);
-  if (exErr) return { staged: rows.length, error: exErr.message };
-  const stale = (existing ?? [])
-    .map((r) => (r as { recipient_email: string }).recipient_email)
+  // Paged: a full cycle passed 1,000 people in Jul 2026 and PostgREST silently
+  // caps un-ranged selects there — an un-paged diff would miss the tail rows
+  // and leave stale entries alive after a re-stage.
+  const existing: Array<{ recipient_email: string }> = [];
+  const PRUNE_PAGE = 1000;
+  for (let from = 0; ; from += PRUNE_PAGE) {
+    const { data, error: exErr } = await supabase
+      .from("paystub_dispatch_queue")
+      .select("recipient_email")
+      .eq("cycle_source_file", params.sourceFile)
+      .is("sent_at", null)
+      .order("recipient_email", { ascending: true })
+      .range(from, from + PRUNE_PAGE - 1);
+    if (exErr) return { staged: rows.length, error: exErr.message };
+    existing.push(...((data ?? []) as Array<{ recipient_email: string }>));
+    if (!data || data.length < PRUNE_PAGE) break;
+  }
+  const stale = existing
+    .map((r) => r.recipient_email)
     .filter((e) => !keep.has(e));
   // Chunk the delete: an `.in(...)` list rides in the request URL, so a big
   // stale set (bulk re-stage / recovery) could overflow the URL-length cap.
@@ -257,20 +268,30 @@ export async function listPaystubPayloadsForEmployee(
   return { rows, error: null };
 }
 
-/** Lightweight list for a cycle — drives the queue's Excluded-bucket routing. */
+/** Lightweight list for a cycle — drives the queue's Excluded-bucket routing.
+ *  Paged: the Jul 19–25 2026 cycle staged 1,020 people and PostgREST silently
+ *  caps un-ranged selects at 1,000 — the un-paged read dropped the tail 20
+ *  people from Payment Dispatch's routing with no error. */
 export async function listPaystubDispatchQueue(
   sourceFile: string,
 ): Promise<{ rows: PaystubQueueListItem[]; error: string | null }> {
   const supabase = createSupabaseServiceRoleClient() ?? createSupabaseServerClient();
   if (!supabase) return { rows: [], error: "Supabase client unavailable" };
 
-  const { data, error } = await supabase
-    .from("paystub_dispatch_queue")
-    .select(LIST_COLUMNS)
-    .eq("cycle_source_file", sourceFile);
-
-  if (error) return { rows: [], error: error.message };
-  return { rows: (data ?? []) as PaystubQueueListItem[], error: null };
+  const PAGE = 1000;
+  const rows: PaystubQueueListItem[] = [];
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await supabase
+      .from("paystub_dispatch_queue")
+      .select(LIST_COLUMNS)
+      .eq("cycle_source_file", sourceFile)
+      .order("recipient_email", { ascending: true })
+      .range(from, from + PAGE - 1);
+    if (error) return { rows: [], error: error.message };
+    rows.push(...((data ?? []) as PaystubQueueListItem[]));
+    if (!data || data.length < PAGE) break;
+  }
+  return { rows, error: null };
 }
 
 /** One unpaid held cycle in an employee's arrears ledger. */

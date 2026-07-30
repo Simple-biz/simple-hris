@@ -34,6 +34,7 @@ import { requireFeatureEdit } from "@/lib/auth/authorize-feature";
 import { authorizeEmailAccess, deniedResponse } from "@/lib/auth/authorize-email";
 import { NextRequest, NextResponse } from "next/server";
 import { cleanErrorMessage } from "@/lib/clean-error-message";
+import { selectAllPaged } from "@/lib/supabase/select-all-paged";
 
 // Columns on the hubstaff_hours row that may carry an employee's email.
 // Mirrors `HUBSTAFF_EMAIL_KEYS` + the case-insensitive aliases used client-side
@@ -72,10 +73,17 @@ async function expandEmailAliases(norm: string): Promise<Set<string>> {
   try {
     const supabase = createSupabaseServiceRoleClient() ?? createSupabaseServerClient();
     if (!supabase) return set;
-    const { data } = await supabase
-      .from("active_employees")
-      .select('"Work Email","Personal Email","Alternate Work Email","Alternate Work Email 2"');
-    for (const raw of (data ?? []) as Array<Record<string, unknown>>) {
+    // Paged: the roster passed 1,000 people and PostgREST silently caps
+    // un-ranged selects there — a person whose row sorted past the cap got no
+    // alias expansion, so their My Hours view missed alias-keyed rows.
+    const { rows } = await selectAllPaged<Record<string, unknown>>((from, to) =>
+      supabase
+        .from("active_employees")
+        .select('"Work Email","Personal Email","Alternate Work Email","Alternate Work Email 2"')
+        .order("Work Email", { ascending: true })
+        .range(from, to),
+    );
+    for (const raw of rows) {
       const emails = [
         raw["Work Email"],
         raw["Personal Email"],

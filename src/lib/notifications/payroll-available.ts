@@ -1,6 +1,7 @@
 import { createSupabaseServiceRoleClient } from "@/lib/supabase/server";
 import { normEmail } from "@/lib/email/norm-email";
 import { formatWeekHuman } from "@/lib/payroll/paystub-view";
+import { selectAllPaged } from "@/lib/supabase/select-all-paged";
 
 /**
  * Fires the "salary ready to view" employee notification for a freshly uploaded
@@ -73,10 +74,18 @@ export async function notifyPayrollAvailable(opts: {
   // other address on the row points at it so an alias resolves home.
   const aliasToLogin = new Map<string, string>();
   {
-    const { data } = await supabase
-      .from("active_employees")
-      .select('"Work Email","Personal Email","Alternate Work Email","Alternate Work Email 2"');
-    for (const raw of (data ?? []) as Array<Record<string, unknown>>) {
+    // Paged: the roster passed 1,000 people (1,296 as of Jul 2026) and
+    // PostgREST silently caps un-ranged selects there — the un-paged read
+    // dropped ~300 people from this map, so they never received the
+    // "Salary Ready to View" notification, counted only as `skipped`.
+    const { rows } = await selectAllPaged<Record<string, unknown>>((from, to) =>
+      supabase
+        .from("active_employees")
+        .select('"Work Email","Personal Email","Alternate Work Email","Alternate Work Email 2"')
+        .order("Work Email", { ascending: true })
+        .range(from, to),
+    );
+    for (const raw of rows) {
       const work = normEmail(typeof raw["Work Email"] === "string" ? (raw["Work Email"] as string) : null);
       const personal = normEmail(
         typeof raw["Personal Email"] === "string" ? (raw["Personal Email"] as string) : null,

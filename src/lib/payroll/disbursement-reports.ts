@@ -28,6 +28,8 @@ import {
   resolveDeptCatalogRate,
 } from "@/lib/payroll/resolve-rate";
 import { fetchAllRateHistory } from "@/lib/payroll/rate-history";
+import { getEmployeeHourlyRatesRows } from "@/lib/supabase/employee-hourly-rates";
+import { selectAllPaged } from "@/lib/supabase/select-all-paged";
 import { computeProratedRowPay } from "@/lib/payroll/current-pay";
 import { resolveHslWeekScope } from "@/lib/payroll/hsl-week-model";
 import { fetchHslTransferEffectiveByEmail } from "@/lib/payroll/hsl-transfer-effective";
@@ -373,25 +375,21 @@ async function safeListHubstaffUploads(): Promise<UploadRowShape[]> {
  * UPDATE rather than the Mark Paid flow).
  */
 async function loadProcessorByEmail(): Promise<Map<string, string>> {
-  const supabase = createSupabaseServiceRoleClient() ?? createSupabaseServerClient();
   const out = new Map<string, string>();
-  if (!supabase) return out;
-  const { data, error } = await supabase
-    .from("employee_hourly_rates")
-    .select('"Work Email", "Personal Email", "Bank Preferred"');
+  // Hardened reader (dedup current-upload view + paginated fallback): the old
+  // raw select on employee_hourly_rates returned 1,000 of 22,091 per-upload
+  // rows — oldest uploads first — so the By-Processor breakdown attributed
+  // most direct-UPDATE-paid recipients to no/stale processors.
+  const { rows, error } = await getEmployeeHourlyRatesRows();
   if (error) {
     console.warn("[disbursement-reports] loadProcessorByEmail failed:", error);
     return out;
   }
-  for (const r of (data ?? []) as Array<{
-    "Work Email": string | null;
-    "Personal Email": string | null;
-    "Bank Preferred": string | null;
-  }>) {
-    const proc = processorIdFromBankPreferred(r["Bank Preferred"]);
+  for (const r of rows) {
+    const proc = processorIdFromBankPreferred(r.bank_preferred);
     if (!proc) continue;
-    const we = r["Work Email"]?.trim().toLowerCase();
-    const pe = r["Personal Email"]?.trim().toLowerCase();
+    const we = r.work_email?.trim().toLowerCase();
+    const pe = r.personal_email?.trim().toLowerCase();
     if (we) out.set(we, proc);
     if (pe && !out.has(pe)) out.set(pe, proc);
   }
@@ -966,12 +964,32 @@ export async function seedMissingDisbursementRecords(opts: {
   //  - Payment Catalog pay structures (individual + department) for the rate overlay,
   //  - the full employee_rate_history for mid-cycle per-day prorating,
   //  - the master list (active_employees) for HSL membership (weekend premium).
-  const [payStructuresResult, rateHistory, masterRes, hslTransferEffective] = await Promise.all([
+  // Paged roster read: the active roster passed 1,000 people in Jul 2026 and
+  // PostgREST silently caps un-ranged selects there — an un-paged read dropped
+  // the tail of the roster from HSL classification with no error.
+  const fetchRosterPaged = async () => {
+    const PAGE = 1000;
+    const rows: Array<{
+      "Work Email": string | null;
+      "Personal Email": string | null;
+      "Department": string | null;
+    }> = [];
+    for (let from = 0; ; from += PAGE) {
+      const { data } = await supabase
+        .from("active_employees")
+        .select('"Work Email", "Personal Email", "Department"')
+        .order("Work Email", { ascending: true })
+        .range(from, from + PAGE - 1);
+      rows.push(...((data ?? []) as typeof rows));
+      if (!data || data.length < PAGE) break;
+    }
+    return rows;
+  };
+
+  const [payStructuresResult, rateHistory, masterRows, hslTransferEffective] = await Promise.all([
     listPayStructures(),
     fetchAllRateHistory(),
-    supabase
-      .from("active_employees")
-      .select('"Work Email", "Personal Email", "Department"'),
+    fetchRosterPaged(),
     // Into-HSL transfer effective dates — day-scopes the weekend premium in a
     // transfer week (resolveHslWeekScope), matching current-pay.ts.
     fetchHslTransferEffectiveByEmail(),
@@ -982,11 +1000,7 @@ export async function seedMissingDisbursementRecords(opts: {
   // normalized dept match so 'HSL', 'hsl:*' sub-teams and 'Hogan Smith Law'
   // all count. Keyed on work + personal email.
   const hslEmails = new Set<string>();
-  for (const m of (masterRes.data ?? []) as Array<{
-    "Work Email": string | null;
-    "Personal Email": string | null;
-    "Department": string | null;
-  }>) {
+  for (const m of masterRows) {
     if (normalizeDeptToKey(m["Department"] ?? "") !== "hogan_smith_law") continue;
     const we = normEmail(m["Work Email"]);
     const pe = normEmail(m["Personal Email"]);
@@ -997,27 +1011,25 @@ export async function seedMissingDisbursementRecords(opts: {
   // Sheet rates + department, indexed by email (work + personal). Empty cells
   // resolve to null (not 0) so the catalog/department fallback can take over —
   // same null semantics as current-pay.ts's parseRateText.
-  const { data: ratesData } = await supabase
-    .from("employee_hourly_rates")
-    .select("*");
+  //
+  // Read through getEmployeeHourlyRatesRows — the hardened reader current-pay
+  // uses (dedup `employee_hourly_rates_current` view + paginated fallback). The
+  // old raw `.select("*")` here hit PostgREST's silent 1,000-row cap against a
+  // 22,000-row per-upload history table, building the seeding rate map from an
+  // arbitrary slice spanning stale uploads.
+  const { rows: ratesRows } = await getEmployeeHourlyRatesRows();
   const rateByEmail = new Map<string, { reg: number | null; ot: number | null }>();
   const deptByEmail = new Map<string, string>();
-  for (const r of (ratesData ?? []) as Array<{
-    "Work Email": string | null;
-    "Personal Email": string | null;
-    "Department": string | null;
-    "Regular Rate": string | number | null;
-    "OT Rate": string | number | null;
-  }>) {
-    const we = normEmail(r["Work Email"]);
-    const pe = normEmail(r["Personal Email"]);
+  for (const r of ratesRows) {
+    const we = normEmail(r.work_email);
+    const pe = normEmail(r.personal_email);
     const entry = {
-      reg: parseSeedRate(r["Regular Rate"]),
-      ot: parseSeedRate(r["OT Rate"]),
+      reg: parseSeedRate(r.regular_rate),
+      ot: parseSeedRate(r.ot_rate),
     };
     if (we) rateByEmail.set(we, entry);
     if (pe && !rateByEmail.has(pe)) rateByEmail.set(pe, entry);
-    const dept = r["Department"];
+    const dept = r.department;
     if (dept) {
       if (we && !deptByEmail.has(we)) deptByEmail.set(we, dept);
       if (pe && !deptByEmail.has(pe)) deptByEmail.set(pe, dept);
@@ -1032,32 +1044,55 @@ export async function seedMissingDisbursementRecords(opts: {
   // contractor dispatch row can exist yet either.
   const DISPATCH_COLS =
     "id, recipient_email, cycle_source_file, status, amount_usd, sent_date, bank_used, transaction_id";
+  // Paged: a single cycle pays 1,000+ people now, and this fetch spans EVERY
+  // unseeded cycle at once — the un-paged read hit PostgREST's silent 1,000-row
+  // cap, so tail dispatches never stamped their disbursement records paid.
   let dispatchData: unknown[] | null = null;
   {
-    const withPayee = await supabase
+    // Probe with the first page only, so the missing-column fallback decision
+    // is made before draining every page.
+    const firstPage = await supabase
       .from("payment_dispatches")
       .select(`${DISPATCH_COLS}, payee_type`)
       .in("cycle_source_file", unseededFiles)
-      .order("created_at", { ascending: false });
-    if (withPayee.error) {
+      .order("created_at", { ascending: false })
+      .order("id", { ascending: false })
+      .range(0, 999);
+    if (firstPage.error) {
       // ONLY a missing column may fall back. Falling back on any error (a network
       // blip, a timeout) would silently drop the payee filter and re-open the
       // clobber this guard exists to prevent — an invoice payment stamped onto an
       // employee's salary record.
       const isMissingColumn =
-        withPayee.error.code === "42703" ||
-        withPayee.error.code === "PGRST204" ||
-        /payee_type/.test(withPayee.error.message ?? "");
-      if (!isMissingColumn) throw new Error(withPayee.error.message);
-      const fallback = await supabase
-        .from("payment_dispatches")
-        .select(DISPATCH_COLS)
-        .in("cycle_source_file", unseededFiles)
-        .order("created_at", { ascending: false });
-      if (fallback.error) throw new Error(fallback.error.message);
-      dispatchData = fallback.data ?? null;
+        firstPage.error.code === "42703" ||
+        firstPage.error.code === "PGRST204" ||
+        /payee_type/.test(firstPage.error.message ?? "");
+      if (!isMissingColumn) throw new Error(firstPage.error.message);
+      const fallback = await selectAllPaged<Record<string, unknown>>((from, to) =>
+        supabase
+          .from("payment_dispatches")
+          .select(DISPATCH_COLS)
+          .in("cycle_source_file", unseededFiles)
+          .order("created_at", { ascending: false })
+          .order("id", { ascending: false })
+          .range(from, to),
+      );
+      if (fallback.error) throw new Error(fallback.error);
+      dispatchData = fallback.rows;
+    } else if ((firstPage.data ?? []).length < 1000) {
+      dispatchData = firstPage.data ?? null;
     } else {
-      dispatchData = withPayee.data ?? null;
+      const rest = await selectAllPaged<Record<string, unknown>>((from, to) =>
+        supabase
+          .from("payment_dispatches")
+          .select(`${DISPATCH_COLS}, payee_type`)
+          .in("cycle_source_file", unseededFiles)
+          .order("created_at", { ascending: false })
+          .order("id", { ascending: false })
+          .range(from, to),
+      );
+      if (rest.error) throw new Error(rest.error);
+      dispatchData = rest.rows;
     }
   }
   const dispatchMap = new Map<
@@ -1295,32 +1330,42 @@ export async function getDisbursementReportDetail(
     };
   }
 
-  // Fetch dispatches + outstanding records in parallel.
-  const [{ data: dispatchData, error: dErr }, { data: outstandingData, error: oErr }] =
-    await Promise.all([
+  // Fetch dispatches + outstanding records in parallel. BOTH must page: a
+  // cycle pays 1,000+ people now, so the un-ranged dispatch read hit
+  // PostgREST's silent 1,000-row cap, and the outstanding read's .limit(500)
+  // dropped ~470 pending recipients from live cycles' outstanding totals.
+  const [dispatchRes, outstandingRes] = await Promise.all([
+    selectAllPaged<PaymentDispatchRow>((from, to) =>
       supabase
         .from("payment_dispatches")
         .select("*")
         .eq("cycle_source_file", summary.sourceFile)
-        .order("created_at", { ascending: false }),
+        .order("created_at", { ascending: false })
+        .order("id", { ascending: false })
+        .range(from, to),
+    ),
+    selectAllPaged<{
+      recipient_email: string;
+      amount_usd: number | string | null;
+      amount_php: number | string | null;
+      status: string | null;
+    }>((from, to) =>
       supabase
         .from("disbursement_records")
         .select("recipient_email, amount_usd, amount_php, status")
         .eq("source_file", summary.sourceFile)
         .eq("status", "pending")
         .order("amount_usd", { ascending: false, nullsFirst: false })
-        .limit(500),
-    ]);
+        .order("recipient_email", { ascending: true })
+        .range(from, to),
+    ),
+  ]);
 
-  if (dErr) return { report: null, error: dErr.message };
-  if (oErr) return { report: null, error: oErr.message };
+  if (dispatchRes.error) return { report: null, error: dispatchRes.error };
+  if (outstandingRes.error) return { report: null, error: outstandingRes.error };
 
-  const dispatches = (dispatchData ?? []) as PaymentDispatchRow[];
-  const outstanding = ((outstandingData ?? []) as Array<{
-    recipient_email: string;
-    amount_usd: number | string | null;
-    amount_php: number | string | null;
-  }>).map((r) => ({
+  const dispatches = dispatchRes.rows;
+  const outstanding = outstandingRes.rows.map((r) => ({
     email: r.recipient_email,
     amountUSD: r.amount_usd == null ? null : num(r.amount_usd),
     amountPHP: r.amount_php == null ? null : num(r.amount_php),

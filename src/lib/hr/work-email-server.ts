@@ -2,6 +2,7 @@ import {
   createSupabaseServerClient,
   createSupabaseServiceRoleClient,
 } from "@/lib/supabase/server";
+import { selectAllPaged } from "@/lib/supabase/select-all-paged";
 
 /**
  * The set of work addresses that are NOT available to mint (lower-cased full
@@ -41,13 +42,20 @@ export async function loadTakenWorkEmails(): Promise<Set<string>> {
   const activeEmails = new Set<string>();
   const offboardedEmails = new Set<string>();
 
-  // 1. Global master list (payroll roster)
-  const { data: gml, error: gmlErr } = await sb
-    .from("global_master_list")
-    .select('"Work Email", "Alternate Work Email", "Alternate Work Email 2", off_boarded_at')
-    .range(0, 99999);
-  if (gmlErr) throw new Error(`global_master_list: ${gmlErr.message}`);
-  for (const r of (gml ?? []) as Array<Record<string, unknown>>) {
+  // 1. Global master list (payroll roster). Paged: PostgREST silently caps
+  // even an explicit .range(0, 99999) at 1,000 rows, and the master list
+  // (actives + retained off-boarded rows) is well past that — a truncated
+  // "taken" set could re-mint an @simple.biz address that already belongs to
+  // someone.
+  const { rows: gml, error: gmlErr } = await selectAllPaged<Record<string, unknown>>((from, to) =>
+    sb
+      .from("global_master_list")
+      .select('"Work Email", "Alternate Work Email", "Alternate Work Email 2", off_boarded_at')
+      .order("Work Email", { ascending: true })
+      .range(from, to),
+  );
+  if (gmlErr) throw new Error(`global_master_list: ${gmlErr}`);
+  for (const r of gml) {
     const emails = [r["Work Email"], r["Alternate Work Email"], r["Alternate Work Email 2"]]
       .map(norm)
       .filter(Boolean);

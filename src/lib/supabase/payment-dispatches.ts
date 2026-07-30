@@ -133,23 +133,34 @@ export async function listPaymentDispatches(params: {
   const supabase = createSupabaseServiceRoleClient() ?? createSupabaseServerClient();
   if (!supabase) return { rows: [], error: "Supabase client unavailable" };
 
-  let q = supabase
-    .from("payment_dispatches")
-    .select("*")
-    .order("created_at", { ascending: false });
+  // Paged: PostgREST silently caps un-ranged selects at 1,000 rows. The table
+  // passed 3,700 rows in Jul 2026 (a single cycle can pay 1,000+ people), so an
+  // un-paged read returns only the newest slice with no error.
+  const PAGE = 1000;
+  const rows: PaymentDispatchRow[] = [];
+  for (let from = 0; ; from += PAGE) {
+    let q = supabase
+      .from("payment_dispatches")
+      .select("*")
+      .order("created_at", { ascending: false })
+      .order("id", { ascending: false })
+      .range(from, from + PAGE - 1);
 
-  if (params.cycleId !== undefined) {
-    if (params.cycleId === null) q = q.is("cycle_id", null);
-    else q = q.eq("cycle_id", params.cycleId);
+    if (params.cycleId !== undefined) {
+      if (params.cycleId === null) q = q.is("cycle_id", null);
+      else q = q.eq("cycle_id", params.cycleId);
+    }
+
+    if (params.recipientEmail) {
+      q = q.eq("recipient_email", params.recipientEmail.trim().toLowerCase());
+    }
+
+    const { data, error } = await q;
+    if (error) return { rows: [], error: error.message };
+    rows.push(...((data ?? []) as PaymentDispatchRow[]));
+    if (!data || data.length < PAGE) break;
   }
-
-  if (params.recipientEmail) {
-    q = q.eq("recipient_email", params.recipientEmail.trim().toLowerCase());
-  }
-
-  const { data, error } = await q;
-  if (error) return { rows: [], error: error.message };
-  return { rows: (data ?? []) as PaymentDispatchRow[], error: null };
+  return { rows, error: null };
 }
 
 /**

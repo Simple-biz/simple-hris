@@ -1,4 +1,5 @@
 import { createSupabaseServiceRoleClient } from './server';
+import { selectAllPaged } from "@/lib/supabase/select-all-paged";
 
 export type AnnouncementScope = 'general' | 'department';
 
@@ -51,13 +52,19 @@ async function getEmailToAuthorMetaMap(): Promise<Map<string, AuthorMeta>> {
 
   // active_employees is a `SELECT *` view over the master list; columns are
   // quoted PascalCase. Manual upload wins over the Google SSO photo, matching
-  // getProfilePhotoUrlForEmail().
-  const { data, error } = await sb
-    .from('active_employees')
-    .select('"Name", "Work Email", "Personal Email", "Profile Photo URL", google_photo_url');
-  if (error || !data) return map;
+  // getProfilePhotoUrlForEmail(). Paged: the roster passed 1,000 people and
+  // PostgREST silently caps un-ranged selects there — tail-of-roster authors
+  // rendered as bare emails with no avatar.
+  const { rows: data, error } = await selectAllPaged<Record<string, unknown>>((from, to) =>
+    sb
+      .from('active_employees')
+      .select('"Name", "Work Email", "Personal Email", "Profile Photo URL", google_photo_url')
+      .order('Work Email', { ascending: true })
+      .range(from, to),
+  );
+  if (error) return map;
 
-  for (const row of data as Array<Record<string, unknown>>) {
+  for (const row of data) {
     const name = String(row['Name'] ?? '').trim() || null;
     const uploaded = String(row['Profile Photo URL'] ?? '').trim();
     const google = String(row['google_photo_url'] ?? '').trim();

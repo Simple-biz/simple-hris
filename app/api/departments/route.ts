@@ -3,6 +3,7 @@ import { createSupabaseServiceRoleClient } from '@/lib/supabase/server';
 import { requireElevatedSession, deniedResponse } from '@/lib/auth/authorize-email';
 import { getDepartmentRegistry } from '@/lib/departments/registry-db';
 import { applyDeptOverrideToRawRow } from '@/lib/departments/dept-email-overrides';
+import { selectAllPaged } from '@/lib/supabase/select-all-paged';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -31,11 +32,17 @@ export async function GET() {
   // each row's EFFECTIVE department — with it, both "Sales" (US) and
   // "Sales Assistant" (PH override cohort) surface as selectable labels even
   // though the sheet labels every one of those rows "Sales".
-  const { data, error } = await supabase
-    .from('active_employees')
-    .select('"Department", "Work Email", "Personal Email"')
-    .range(0, 9999);
-  if (error) return NextResponse.json({ departments: [], error: error.message }, { status: 500 });
+  // Paged: the roster passed 1,000 people and PostgREST silently caps even an
+  // explicit .range(0, 9999) at 1,000 — a department whose only members sort
+  // past the cap would vanish from the pickers.
+  const { rows: data, error } = await selectAllPaged<Record<string, unknown>>((from, to) =>
+    supabase
+      .from('active_employees')
+      .select('"Department", "Work Email", "Personal Email"')
+      .order('Work Email', { ascending: true })
+      .range(from, to),
+  );
+  if (error) return NextResponse.json({ departments: [], error }, { status: 500 });
 
   const set = new Set<string>();
   const seen = new Set<string>(); // case-insensitive dedupe key
@@ -47,7 +54,7 @@ export async function GET() {
     seen.add(k);
     set.add(d);
   };
-  for (const row of (data ?? []) as Array<Record<string, unknown>>) {
+  for (const row of data) {
     add(String(applyDeptOverrideToRawRow(row)['Department'] ?? ''));
   }
   // In-app departments (best-effort: a registry read failure must not take

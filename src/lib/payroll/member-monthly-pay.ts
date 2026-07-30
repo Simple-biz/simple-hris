@@ -68,6 +68,7 @@ import {
 } from '@/lib/payroll/resolve-rate';
 import { buildFxRates, USD_TO_COP_SETTINGS_KEY } from '@/lib/fx/currency-fx';
 import type { PayCurrency } from '@/lib/payment-catalog/pay-structure';
+import { selectAllPaged } from '@/lib/supabase/select-all-paged';
 
 const NON_DATE_COLS = new Set([
   'id',
@@ -295,12 +296,20 @@ async function fetchMasterRowsForEmail(
   const supabase = createSupabaseServiceRoleClient() ?? createSupabaseServerClient();
   const allHsl = new Set<string>();
   if (!supabase) return { row: null, allHsl };
-  const { data } = await supabase
-    .from('active_employees')
-    .select('"Work Email", "Personal Email", "Start Date", "Department", "Alternate Work Email", "Alternate Work Email 2"');
-  if (!data) return { row: null, allHsl };
+  // Paged: the roster passed 1,000 people (1,296 as of Jul 2026; 126 of 448
+  // HSL people sorted past PostgREST's silent 1,000-row cap) — the un-paged
+  // read could null out the viewed member's row AND window HSL people on the
+  // wrong week model.
+  const { rows: data } = await selectAllPaged<Record<string, unknown>>((from, to) =>
+    supabase
+      .from('active_employees')
+      .select('"Work Email", "Personal Email", "Start Date", "Department", "Alternate Work Email", "Alternate Work Email 2"')
+      .order('Work Email', { ascending: true })
+      .range(from, to),
+  );
+  if (!data.length) return { row: null, allHsl };
   let myRow: MasterMin | null = null;
-  for (const rawRow of data as Array<Record<string, unknown>>) {
+  for (const rawRow of data) {
     // Effective department (Sales/Sales-Assistant email split) — keeps a PH
     // assistant's PAB/Tech eligibility keyed on sales_assistant.
     const raw = applyDeptOverrideToRawRow(rawRow);
