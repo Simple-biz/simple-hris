@@ -1007,7 +1007,7 @@ function OffboardReasonsCard({
   );
 }
 
-// ─── Active Roster table ─────────────────────────────────────────────────────
+// ─── Global Master List table ────────────────────────────────────────────────
 
 function RosterCard({ loading, roster }: { loading: boolean; roster: EmployeeRow[] }) {
   const [search, setSearch] = useState('');
@@ -1035,7 +1035,7 @@ function RosterCard({ loading, roster }: { loading: boolean; roster: EmployeeRow
       <CardHeader className="border-b border-zinc-100 px-4 py-3 dark:border-zinc-800">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
           <div>
-            <CardTitle className="text-sm font-semibold">Active roster</CardTitle>
+            <CardTitle className="text-sm font-semibold">Global Master List</CardTitle>
             <p className="mt-0.5 text-[11px] text-muted-foreground">
               {loading ? 'Loading…' : `${filtered.length} of ${roster.length}`}
             </p>
