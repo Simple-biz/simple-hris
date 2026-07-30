@@ -1,0 +1,206 @@
+{
+  "name": "Payment Cycle 100% → Celebrate Accounting",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "payment-cycle-complete",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "c2000000-0000-4000-8000-000000000001",
+      "name": "Cycle Complete Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        240,
+        300
+      ],
+      "webhookId": "payment-cycle-complete"
+    },
+    {
+      "parameters": {
+        "jsCode": "// n8n Code node — \"Build Celebration Emails\"\n// Turns the HRIS \"Payment Dispatch reached 100%\" event into ONE item per\n// Accounting-team member, each carrying a ready-to-send confetti-and-balloons\n// congratulations email for the completed payment cycle.\n//\n// Fired by the HRIS route POST /api/payment-dispatches/cycle-complete, which\n// claims a per-cycle marker BEFORE calling — so one pay cycle can never land\n// here twice, no matter how many clerks watch the progress strip hit 100%.\n//\n// Payload (n8n may nest the POST body under `.body`):\n//   {\n//     event: 'payment_cycle.completed',\n//     cycle: { source_file, cycle_id, label, period_start, period_end,\n//              completed_at, completed_by },\n//     stats: { paid_count, total_count, total_paid_usd, total_paid_php },\n//     recipients: [ { email, name } ]   // everyone holding the `accounting` role\n//   }\n//\n// Subject + body are FIXED and code-owned here — the caller chooses WHO is\n// emailed and which cycle facts are shown, never arbitrary content.\n\n// --- OPTIONAL shared-secret gate ---\n// Leave '' to accept any caller (matches the other Simple HRIS webhooks). To\n// lock it down: put a long random string here AND set the same value in the\n// HRIS env var N8N_PAYMENT_CYCLE_COMPLETE_SECRET so the server sends it as the\n// 'x-webhook-secret' header. When set, any request without a matching secret\n// is rejected.\nconst REQUIRED_SECRET = '';\n\nconst LOGO = 'https://simple-hris.vercel.app/simple-logo.png';\nconst EMAIL_RE = /^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/;\n// Accounting is a small team — a giant list means the caller sent the wrong\n// audience, so refuse rather than mass-mail.\nconst MAX = 300;\n\nconst root = (items[0] && items[0].json) || {};\nconst body = (root && typeof root.body === 'object' && root.body) ? root.body : root;\nconst headers = (root && typeof root.headers === 'object' && root.headers) ? root.headers : {};\n\nconst providedSecret = headers['x-webhook-secret'] || headers['X-Webhook-Secret'] || body.secret || '';\nif (REQUIRED_SECRET && providedSecret !== REQUIRED_SECRET) {\n  throw new Error('Unauthorized: missing or invalid webhook secret.');\n}\n\nfunction esc(v) {\n  if (v == null) return '';\n  return String(v)\n    .replace(/&/g, '&amp;')\n    .replace(/</g, '&lt;')\n    .replace(/>/g, '&gt;')\n    .replace(/\"/g, '&quot;');\n}\nfunction firstName(name) {\n  const n = (name == null ? '' : String(name)).trim();\n  if (!n) return '';\n  return n.split(/\\s+/)[0];\n}\nfunction num(v) {\n  if (v == null || v === '') return null;\n  const n = Number(v);\n  return Number.isFinite(n) ? n : null;\n}\nfunction fmtInt(n) {\n  return n.toLocaleString('en-US', { maximumFractionDigits: 0 });\n}\nfunction fmtMoney(n) {\n  return n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });\n}\nconst MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];\n// 'YYYY-MM-DD...' → 'Jul 20' (manual parse — a date-only string must never\n// drift a day through a timezone).\nfunction fmtDay(iso) {\n  const m = /^(\\d{4})-(\\d{2})-(\\d{2})/.exec(String(iso == null ? '' : iso));\n  if (!m) return '';\n  const mi = Number(m[2]) - 1;\n  if (mi < 0 || mi > 11) return '';\n  return MONTHS[mi] + ' ' + Number(m[3]);\n}\n\n// --- cycle facts (all optional — the email degrades gracefully) ---\nconst cycle = (body.cycle && typeof body.cycle === 'object') ? body.cycle : {};\nconst stats = (body.stats && typeof body.stats === 'object') ? body.stats : {};\n\nconst label = String(cycle.label || body.label || '').trim();\nconst periodStart = fmtDay(cycle.period_start || body.period_start);\nconst periodEnd = fmtDay(cycle.period_end || body.period_end);\nconst periodLine = (periodStart && periodEnd) ? (periodStart + ' – ' + periodEnd) : '';\nconst cycleName = label || (periodLine ? (periodLine + ' payroll') : \"this week's payroll\");\n\nconst paidCount = num(stats.paid_count != null ? stats.paid_count : body.paid_count);\nconst totalUsd = num(stats.total_paid_usd != null ? stats.total_paid_usd : body.total_paid_usd);\nconst totalPhp = num(stats.total_paid_php != null ? stats.total_paid_php : body.total_paid_php);\nconst completedBy = String(cycle.completed_by || body.completed_by || '').trim();\n\nlet completedAt = '';\nconst completedAtRaw = cycle.completed_at || body.completed_at || '';\nif (completedAtRaw) {\n  const d = new Date(completedAtRaw);\n  if (!isNaN(d.getTime())) {\n    try {\n      completedAt = d.toLocaleString('en-US', { timeZone: 'Asia/Manila', month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' }) + ' PH time';\n    } catch (e) {\n      completedAt = '';\n    }\n  }\n}\n\n// --- collect recipients ---\nconst collected = [];\nif (Array.isArray(body.recipients)) {\n  for (const r of body.recipients) {\n    if (!r) continue;\n    collected.push({ email: r.email || r.work_email || r.to, name: r.name || '' });\n  }\n}\nif (Array.isArray(body.emails)) {\n  for (const e of body.emails) collected.push({ email: e, name: '' });\n}\nif (body.to) collected.push({ email: body.to, name: body.name || '' });\n\n// normalise + validate + dedupe (keep the first non-empty name per address)\nconst seen = new Map();\nfor (const c of collected) {\n  const email = (c.email == null ? '' : String(c.email)).trim().toLowerCase();\n  if (!email || !EMAIL_RE.test(email)) continue;\n  const name = (c.name == null ? '' : String(c.name)).trim();\n  if (!seen.has(email)) seen.set(email, name);\n  else if (!seen.get(email) && name) seen.set(email, name);\n}\nif (seen.size === 0) {\n  throw new Error('No valid recipient email(s) in payload — expected recipients: [{ email, name }] (the HRIS sends every accounting-role holder). Note: the Admin -> Webhooks Test button sends none, so a failing Test still proves the URL reaches this workflow.');\n}\nif (seen.size > MAX) {\n  throw new Error('Too many recipients (' + seen.size + '; max ' + MAX + '). This email goes to the Accounting team only — a list this big means the wrong audience was sent.');\n}\n\n// --- festive bits -----------------------------------------------------------\n// The confetti garland is a row of INLINE-BLOCK dots and the balloons are\n// inline-block emoji — that is deliberately the only trick used. Clients that\n// support CSS animations (Apple Mail, iOS Mail, Outlook macOS, most webmail)\n// get drifting confetti + bobbing balloons; clients that strip animations\n// (Outlook Windows, some Gmail states) still show a tidy static multicolour\n// garland. Nothing relies on position:absolute, which Gmail strips in ways\n// that wreck layouts.\nconst CONFETTI = ['#f97316', '#fbbf24', '#34d399', '#38bdf8', '#a78bfa', '#fb7185'];\nfunction garland(count, seedOffset) {\n  let out = '<div aria-hidden=\"true\" style=\"line-height:1;font-size:0\">';\n  for (let i = 0; i < count; i++) {\n    const color = CONFETTI[(i + seedOffset) % CONFETTI.length];\n    const tall = (i + seedOffset) % 3 === 0;\n    const w = tall ? 5 : 8;\n    const h = tall ? 12 : 8;\n    const radius = tall ? '2px' : '50%';\n    const rot = ((i * 37 + seedOffset * 53) % 56) - 28;\n    const delay = ((i * 13 + seedOffset * 7) % 22) / 10;\n    out += '<span class=\"hris-cf\" style=\"display:inline-block;width:' + w + 'px;height:' + h + 'px;margin:0 5px;background:' + color + ';border-radius:' + radius + ';transform:rotate(' + rot + 'deg);animation-delay:' + delay + 's\"></span>';\n  }\n  out += '</div>';\n  return out;\n}\nfunction balloons() {\n  return '' +\n    '<div aria-hidden=\"true\" style=\"line-height:1;margin:14px 0 12px\">' +\n      '<span class=\"hris-b hris-b1\" style=\"display:inline-block;font-size:30px;margin:0 6px\">🎈</span>' +\n      '<span class=\"hris-b hris-b2\" style=\"display:inline-block;font-size:24px;margin:0 4px\">🎊</span>' +\n      '<span class=\"hris-b hris-b3\" style=\"display:inline-block;font-size:38px;margin:0 8px\">🎈</span>' +\n      '<span class=\"hris-b hris-b4\" style=\"display:inline-block;font-size:24px;margin:0 4px\">🎉</span>' +\n      '<span class=\"hris-b hris-b5\" style=\"display:inline-block;font-size:30px;margin:0 6px\">🎈</span>' +\n    '</div>';\n}\n\n// Stat tiles — only render facts that actually arrived.\nconst tiles = [];\nif (paidCount != null && paidCount > 0) {\n  tiles.push({ big: fmtInt(paidCount), small: paidCount === 1 ? 'payment sent' : 'payments sent' });\n}\nif (totalUsd != null && totalUsd > 0) tiles.push({ big: '$' + fmtMoney(totalUsd), small: 'dispatched (USD)' });\nif (totalPhp != null && totalPhp > 0) tiles.push({ big: '&#8369;' + fmtMoney(totalPhp), small: 'dispatched (PHP)' });\nfunction tilesRow() {\n  if (tiles.length === 0) return '';\n  let cells = '';\n  for (let i = 0; i < tiles.length; i++) {\n    if (i > 0) cells += '<td style=\"width:10px;font-size:0;line-height:0\">&nbsp;</td>';\n    cells += '<td align=\"center\" width=\"' + Math.floor(100 / tiles.length) + '%\" style=\"background:#fff7ed;border:1px solid #fed7aa;border-radius:12px;padding:14px 8px\">' +\n      '<div style=\"font-size:20px;font-weight:bold;color:#c2410c;line-height:1.2\">' + tiles[i].big + '</div>' +\n      '<div style=\"margin-top:3px;font-size:11px;letter-spacing:.4px;text-transform:uppercase;color:#9a3412\">' + tiles[i].small + '</div>' +\n    '</td>';\n  }\n  return '<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"margin:6px 0 16px\"><tr>' + cells + '</tr></table>';\n}\n\nconst wrapBits = [];\nif (completedAt) wrapBits.push('Final payment logged ' + esc(completedAt));\nif (completedBy) wrapBits.push('wrapped up by ' + esc(completedBy));\n\nfunction renderHtml(name) {\n  const fn = esc(firstName(name));\n  const greeting = fn ? ('Hi ' + fn + ',') : 'Hi team,';\n  return '' +\n    '<!DOCTYPE html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>Payment cycle complete</title>' +\n    '<style>' +\n      '.hris-b{animation:hrisFloat 3.4s ease-in-out infinite;transform-origin:50% 100%}' +\n      '.hris-b2{animation-duration:4.2s;animation-delay:.4s}' +\n      '.hris-b3{animation-duration:3.7s;animation-delay:.8s}' +\n      '.hris-b4{animation-duration:4.5s;animation-delay:.2s}' +\n      '.hris-b5{animation-duration:3.9s;animation-delay:1.1s}' +\n      '.hris-cf{animation:hrisDrift 2.8s ease-in-out infinite alternate}' +\n      '@keyframes hrisFloat{0%,100%{transform:translateY(0) rotate(-4deg)}50%{transform:translateY(-9px) rotate(5deg)}}' +\n      '@keyframes hrisDrift{0%{transform:translateY(-5px) rotate(-16deg)}100%{transform:translateY(7px) rotate(18deg)}}' +\n      '@media (prefers-reduced-motion:reduce){.hris-b,.hris-cf{animation:none!important}}' +\n    '</style></head>' +\n    '<body style=\"margin:0;background:#f4f4f5;padding:24px 12px;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#18181b\">' +\n      // hidden preheader — controls the inbox preview snippet\n      '<div style=\"display:none;max-height:0;overflow:hidden;opacity:0;color:transparent;font-size:1px;line-height:1px\">100% paid — every payment in ' + esc(cycleName) + ' has been dispatched. Take a bow, team 🎉</div>' +\n      '<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:#f4f4f5\"><tr><td align=\"center\">' +\n        '<table role=\"presentation\" width=\"600\" cellpadding=\"0\" cellspacing=\"0\" style=\"width:100%;max-width:600px;background:#ffffff;border:1px solid #e4e4e7;border-radius:16px;overflow:hidden;box-shadow:0 8px 28px rgba(249,115,22,0.12)\">' +\n          '<tr><td style=\"padding:18px 28px 12px\"><img src=\"' + LOGO + '\" alt=\"Simple\" width=\"88\" height=\"30\" style=\"display:block;border:0;height:30px;width:88px\"></td></tr>' +\n          '<tr><td align=\"center\" bgcolor=\"#0a0a0b\" style=\"background:#0a0a0b;padding:26px 24px 28px;border-bottom:4px solid #f97316\">' +\n            garland(14, 0) +\n            balloons() +\n            '<span style=\"display:inline-block;background:#f97316;color:#ffffff;font-size:11px;font-weight:bold;letter-spacing:2px;text-transform:uppercase;padding:6px 14px;border-radius:999px\">&#127881; Payment cycle complete</span>' +\n            '<div style=\"margin-top:14px;font-size:44px;line-height:1.1;color:#ffffff;font-weight:800\">100% <span style=\"color:#4ade80\">PAID</span></div>' +\n            '<div style=\"margin-top:8px;font-size:14px;color:#d4d4d8\">' + (label || periodLine ? esc(label || periodLine) + ' &middot; ' : '') + 'every single payment sent</div>' +\n            '<div style=\"margin-top:18px\">' + garland(14, 3) + '</div>' +\n          '</td></tr>' +\n          '<tr><td style=\"padding:24px 28px 6px\">' +\n            '<p style=\"margin:0 0 12px;font-size:15px;color:#18181b\">' + greeting + '</p>' +\n            '<p style=\"margin:0 0 16px;font-size:14px;line-height:1.65;color:#3f3f46\">Confetti cannons, please 🎊 — <strong>every payment in ' + esc(cycleName) + ' has been dispatched through the HRIS.</strong> Nothing pending, nothing blocked: a fully successful payment cycle.</p>' +\n            tilesRow() +\n            (wrapBits.length ? '<p style=\"margin:0 0 16px;font-size:12px;color:#71717a\">' + wrapBits.join(' &middot; ') + '</p>' : '') +\n            '<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"margin:0 0 18px\"><tr><td style=\"background-color:#fff7ed;background-image:linear-gradient(135deg,#fff7ed,#ffedd5);border:1px solid #fed7aa;border-radius:12px;padding:16px 18px\">' +\n              '<div style=\"font-size:14px;font-weight:bold;color:#9a3412\">Take a bow, Accounting team 🥳</div>' +\n              '<div style=\"margin-top:6px;font-size:13px;line-height:1.65;color:#7c2d12\">Behind every on-time salary is your checking, chasing and double-checking. Payday doesn&rsquo;t happen by itself — it happens because of you. Thank you for the hard work; this cycle is officially in the books.</div>' +\n            '</td></tr></table>' +\n            '<p style=\"margin:0 0 8px;font-size:14px;line-height:1.6;color:#3f3f46\">Enjoy the moment — you earned it. 🎈🎈🎈</p>' +\n          '</td></tr>' +\n          '<tr><td style=\"padding:16px 28px 20px;border-top:1px solid #f4f4f5\"><table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\"><tr><td style=\"font-size:12px;color:#52525b;font-weight:bold\">Simple &middot; Payroll</td><td align=\"right\" style=\"font-size:11px;color:#71717a\">Automated celebration from Simple HRIS &middot; Payment Dispatch</td></tr></table></td></tr>' +\n        '</table>' +\n        '<div style=\"max-width:600px;margin:12px auto 0;font-size:11px;color:#71717a;text-align:center;line-height:1.5\">You are receiving this because you are part of the Accounting team in Simple HRIS.</div>' +\n      '</td></tr></table>' +\n    '</body></html>';\n}\n\nconst SUBJECT = '🎉 100% paid — ' + cycleName + ' cycle is complete!';\n\nconst out = [];\nfor (const [email, name] of seen) {\n  out.push({\n    json: {\n      to: email,\n      name: name || '',\n      subject: SUBJECT,\n      html: renderHtml(name),\n    },\n  });\n}\nreturn out;\n"
+      },
+      "id": "c2000000-0000-4000-8000-000000000002",
+      "name": "Build Celebration Emails",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        460,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { status: 'ok', notified: $items('Build Celebration Emails').length } }}",
+        "options": {}
+      },
+      "id": "c2000000-0000-4000-8000-000000000003",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        680,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "batchSize": 10,
+        "options": {}
+      },
+      "id": "c2000000-0000-4000-8000-000000000004",
+      "name": "Loop Over Recipients",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        900,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "send",
+        "sendTo": "={{ $json.to }}",
+        "subject": "={{ $json.subject }}",
+        "emailType": "html",
+        "message": "={{ $json.html }}",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "id": "c2000000-0000-4000-8000-000000000005",
+      "name": "Send Celebration (Gmail)",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        1140,
+        400
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "amount": 1,
+        "unit": "seconds"
+      },
+      "id": "c2000000-0000-4000-8000-000000000006",
+      "name": "Throttle",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1,
+      "position": [
+        1360,
+        400
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "c2000000-0000-4000-8000-000000000007",
+      "name": "All Sent",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        1140,
+        220
+      ]
+    }
+  ],
+  "connections": {
+    "Cycle Complete Webhook": {
+      "main": [
+        [
+          {
+            "node": "Build Celebration Emails",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Celebration Emails": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Respond to Webhook": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Recipients",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Recipients": {
+      "main": [
+        [
+          {
+            "node": "All Sent",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Celebration (Gmail)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Celebration (Gmail)": {
+      "main": [
+        [
+          {
+            "node": "Throttle",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Throttle": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Recipients",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "pinData": {},
+  "tags": [
+    {
+      "name": "hris"
+    },
+    {
+      "name": "payroll"
+    },
+    {
+      "name": "celebration"
+    }
+  ],
+  "meta": {
+    "description": "Fired ONCE per pay cycle by the HRIS (POST /api/payment-dispatches/cycle-complete) when Payment Dispatch reaches 100% paid — no pending, no blocked payments. The HRIS claims a per-cycle marker before calling, so re-hitting 100% (or several clerks watching at once) never double-sends. Payload carries { cycle, stats, recipients } where recipients = everyone holding the `accounting` role; this flow acks immediately, then emails each person a confetti-and-balloons congratulations (throttled batches of 10, 1s apart; one bad address doesn't stop the rest). Subject/body are fixed in Build Celebration Emails — callers choose only WHO is emailed and which cycle facts show. Import, attach a Gmail OAuth2 credential to the send node, activate, then paste the production webhook URL into Admin → Webhooks under slug `payment_cycle_complete`. Optionally set REQUIRED_SECRET in Build Celebration Emails + N8N_PAYMENT_CYCLE_COMPLETE_SECRET in the HRIS to lock the endpoint."
+  }
+}

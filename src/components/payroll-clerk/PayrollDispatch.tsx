@@ -475,6 +475,72 @@ export default function PayrollDispatch() {
   // The week's full dollar bill = what already went out + what's still owed.
   const totalWeekUSD = totalPaidUSD + totalPendingUSD;
 
+  // ── 100% paid → celebrate the Accounting team ───────────────────────────────
+  // When the strip genuinely reaches 100% (nothing pending, nobody blocked, ≥1
+  // paid), report it so the server can email every accounting-role holder a
+  // confetti congratulations via the `payment_cycle_complete` n8n webhook. The
+  // SERVER owns the once-per-cycle guarantee (an atomic app_settings claim), so
+  // any number of browsers/reloads can report the same completion and the team
+  // still gets exactly one email. Client-side we only keep the noise down: one
+  // attempt per source file per mount, and a PAST week celebrates only when this
+  // session actually watched its queue finish — opening an old fully-paid CSV
+  // must not toast it.
+  const celebrateAttemptedRef = useRef<Set<string>>(new Set());
+  const sawIncompleteRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    const sourceFile = period.sourceFile;
+    if (!sourceFile || loading || !hydrated || !wizardReady || error || contractorError) return;
+    if (pending.length > 0 || blockedCount > 0) {
+      sawIncompleteRef.current.add(sourceFile);
+      return;
+    }
+    if (distinctPaidCount === 0 || startedCount === 0) return;
+    if (viewingPastWeek && !sawIncompleteRef.current.has(sourceFile)) return;
+    if (celebrateAttemptedRef.current.has(sourceFile)) return;
+    celebrateAttemptedRef.current.add(sourceFile);
+    const totalPaidPHP = paidRows.reduce((sum, r) => sum + (r.amount_php ?? 0), 0);
+    void fetch('/api/payment-dispatches/cycle-complete', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        source_file: sourceFile,
+        cycle_id: period.cycleId,
+        label: formatCycleLabelFromFile(sourceFile),
+        period_start: period.start,
+        period_end: period.end,
+        paid_count: distinctPaidCount,
+        total_count: startedCount,
+        total_paid_usd: totalPaidUSD,
+        total_paid_php: totalPaidPHP,
+      }),
+    })
+      .then((res) => {
+        // Auth/validation failures won't heal on retry; only transient server
+        // trouble (5xx) earns another attempt on the next state change.
+        if (!res.ok && res.status >= 500) celebrateAttemptedRef.current.delete(sourceFile);
+      })
+      .catch(() => {
+        celebrateAttemptedRef.current.delete(sourceFile);
+      });
+  }, [
+    period.sourceFile,
+    period.cycleId,
+    period.start,
+    period.end,
+    viewingPastWeek,
+    loading,
+    hydrated,
+    wizardReady,
+    error,
+    contractorError,
+    pending.length,
+    blockedCount,
+    distinctPaidCount,
+    startedCount,
+    totalPaidUSD,
+    paidRows,
+  ]);
+
   const visibleRows = useMemo(() => {
     if (activeTab === 'all') return phpPending;
     if (PROCESSORS.some((p) => p.id === activeTab)) {

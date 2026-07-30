@@ -1154,3 +1154,52 @@ disappeared on the deployed site" scare (the real culprit was a stale browser
 bundle, not the code). Starting processing now changes nothing about the layout —
 buckets and stats stay full-size. The Start-Processing flow instead shows a
 themed "Preparing Dispatch…" confirm modal.
+
+### 12.7 100% paid → confetti email to the Accounting team (2026-07-30)
+
+When the Dispatch Progress strip genuinely reaches **100%** — `pending.length
+=== 0 && blockedCount === 0 && distinctPaidCount > 0`, same math as the strip —
+the screen POSTs `/api/payment-dispatches/cycle-complete` and the server emails
+**everyone holding the `accounting` role** a confetti-and-balloons
+congratulations for the completed payment cycle, via a new n8n webhook.
+
+- **Trigger (client)** — an effect in `PayrollDispatch.tsx` right after the
+  `paidPct` computation. Gated on `hydrated && !loading && wizardReady &&
+  !error && !contractorError` so a half-loaded or errored queue can never
+  read as "everyone paid". A **past** week (CSV selector) celebrates only if
+  this session actually watched its queue finish — opening an old fully-paid
+  file stays silent.
+- **Once per cycle, ever (server)** — the route INSERTs (never upserts) an
+  `app_settings` marker `dispatch.cycle_complete_notified.<source_file>`.
+  `key` is unique, so N browsers all seeing 100% at once produce exactly one
+  email; undo → re-pay later the same week finds the marker and stays silent.
+  The marker is released only if the n8n delivery itself fails, so a transient
+  outage can be retried by reopening the screen. Pre-checks (webhook
+  configured? any accounting recipients?) run BEFORE the claim so an unwired
+  environment doesn't burn the cycle's one shot.
+- **Audience (server)** — `employee_roles` where `role='accounting'` and
+  `revoked_at IS NULL`; names resolved from `employee_ids` via a targeted
+  `.in()` (1000-row-cap safe). Same audience as `/api/ceo/accounting-team`.
+- **Payload** — `{ event: 'payment_cycle.completed', cycle: { source_file,
+  cycle_id, label, period_start, period_end, completed_at, completed_by },
+  stats: { paid_count, total_count, total_paid_usd, total_paid_php },
+  recipients: [{ email, name }] }`. `completed_by` = display name of whoever's
+  browser reported 100% (best-effort from `employee_ids`, else email local
+  part). Audit log action: `payment_cycle.completed`.
+- **n8n side** — import
+  [payment-cycle-complete-celebration.workflow.json](../../references/n8n/payment-cycle-complete-celebration.workflow.json),
+  attach a Gmail OAuth2 credential to **Send Celebration (Gmail)**, activate,
+  then paste the production webhook URL into **Admin → Webhooks** under slug
+  `payment_cycle_complete` (env fallback
+  `N8N_PAYMENT_CYCLE_COMPLETE_WEBHOOK_URL`). The email (subject + body) is
+  fixed inside the workflow's **Build Celebration Emails** node — callers only
+  choose who gets it. Confetti garland + bobbing balloons are inline-block
+  spans + CSS keyframes only (no `position:absolute`), so animation-stripping
+  clients still render a tidy static garland. Optional lockdown: set
+  `REQUIRED_SECRET` in that node + `N8N_PAYMENT_CYCLE_COMPLETE_SECRET` in the
+  HRIS env (sent as `x-webhook-secret`).
+- **Files** — `src/lib/payroll/cycle-complete-notify.ts` (audience + POST),
+  `app/api/payment-dispatches/cycle-complete/route.ts` (auth + claim + audit),
+  trigger effect in `src/components/payroll-clerk/PayrollDispatch.tsx`,
+  `payment_cycle_complete` entry in `AdminWebhooks.tsx` `KNOWN_SLUGS`.
+  No DDL — the marker rides the existing `app_settings` table.

@@ -125,6 +125,12 @@ const KNOWN_SLUGS: Array<{ slug: string; label: string; description: string }> =
     description:
       'Fired when a ticket gets a (new) assignee. POSTs the ticket + assignee email (send_to); the n8n flow emails them the full ask. Pairs with the in-app assignment notification.',
   },
+  {
+    slug: 'payment_cycle_complete',
+    label: 'Payment Cycle 100% → Celebrate Accounting (n8n)',
+    description:
+      'Fired ONCE per pay cycle when Payment Dispatch reaches 100% paid (nothing pending, nobody blocked). POSTs { cycle, stats, recipients } where recipients = everyone holding the accounting role; the n8n flow emails each of them a confetti-and-balloons congratulations on the completed payment cycle. The server claims a per-cycle marker before sending, so re-hitting 100% never double-mails.',
+  },
 ];
 
 function uid() {
