@@ -832,7 +832,7 @@ export default function BonusCatalog({ initialData }: { initialData?: InitialAcc
   );
 
   const tabs = [
-    { id: 'overview', label: 'Overview', icon: LayoutDashboard, count: 0 },
+    { id: 'overview', label: 'Summary', icon: LayoutDashboard, count: 0 },
     { id: 'search', label: 'Search', icon: Search, count: 0 },
     { id: 'departments', label: 'Department', icon: FolderTree, count: deptRegistry.length },
     { id: 'pay-structure', label: 'Pay Structure', icon: Wallet, count: payStructures.length },
@@ -1116,7 +1116,7 @@ function SystemBonusesTab({
         <span className="font-medium">US - Manager Bonus</span>) is never paid that bonus. The
         timing is fixed: PAB pays on the final week of the PAB period; the Technology Bonus pays
         on the 3rd-week salary date. Changes apply across the Payroll Wizard, Payment Dispatch,
-        Overview, and every employee dashboard.
+        Summary, and every employee dashboard.
       </div>
       <SystemBonusCard
         code="pab"

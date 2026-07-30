@@ -1,6 +1,6 @@
 'use client';
 
-// Payment Catalog -- Overview tab.
+// Payment Catalog -- Summary tab (internal tab id / file name stay "overview").
 //
 // Redesigned (2026-07-30) from the auto-rotating "Live Standings" board into a
 // static compensation dashboard:
@@ -761,7 +761,7 @@ export default function PaymentCatalogOverview({
       {/* Masthead */}
       <div className="mb-4 flex items-center justify-between gap-3 border-b border-zinc-200/70 pb-3 dark:border-zinc-800">
         <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-zinc-400">
-          Payment Catalog · Overview
+          Payment Catalog · Summary
         </span>
         <span className="hidden items-center gap-2 text-[11px] tabular-nums text-zinc-400 sm:inline-flex">
           $1 = {money(fx.usdToPhp, 'PHP')} · {money(fx.usdToCop, 'COP')}
