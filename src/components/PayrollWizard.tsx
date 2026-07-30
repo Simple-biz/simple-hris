@@ -49,6 +49,9 @@ import {
   UserX,
   Settings2,
   Mail,
+  Landmark,
+  Wallet,
+  Columns3,
 } from 'lucide-react';
 import { useDispatchLock } from '@/hooks/useDispatchLock';
 import { useWizardDispatchLock } from '@/hooks/useWizardDispatchLock';
@@ -127,7 +130,13 @@ import {
   type ProrationBlockRaw,
 } from '@/lib/payroll/paystub-view';
 import { ProratedChip, ProratedRateDetail } from '@/components/paystub/PayStubStatement';
-import type { PayStructure } from '@/lib/payment-catalog/pay-structure';
+import {
+  CURRENCY_SYMBOL,
+  formatRate,
+  isAutoOtRate,
+  type PayStructure,
+  type PayCurrency,
+} from '@/lib/payment-catalog/pay-structure';
 import { resolveSystemBonuses, isDeptEligible, systemBonusAmountForDept } from '@/lib/payment-catalog/system-bonus';
 import { normEmail } from '@/lib/email/norm-email';
 import { TIME_ADJUSTMENT_REASONS, type TimeAdjustmentRow } from '@/lib/supabase/time-adjustments';
@@ -675,6 +684,454 @@ function prorationBlockFromCalcRow(r: CalcRow): ProrationBlockRaw | null {
       weekend_ot: r.prorationSegments.weekendOt.map(raw),
     },
   };
+}
+
+/* ── Preview Emails · rate-source snapshot panels ────────────────────────────
+ * The Dispatch step's "Rate snapshots" toggle (beside the Lock In button)
+ * floats two live source cards beside each Preview Emails paystub: the People
+ * tab's Banking-Info view (resolved People rate + masked payout details) and
+ * the Payment Catalog structure covering that person. Purely informational —
+ * the stub always shows the rate that actually paid it; these panels show what
+ * the SOURCES currently say, so a disagreement is visible at a glance.
+ */
+
+/** localStorage key for the Dispatch-step "Rate snapshots" toggle. */
+const COMPARE_RATE_SOURCES_LS_KEY = 'payroll.wizard.compareRateSources';
+
+/** Masked payout details returned by GET /api/people/[email] (People → Banking). */
+type PreviewPeopleBanking = {
+  preferred_processor: string | null;
+  preferred_bank_slot: string | null;
+  bank_name: string | null;
+  account_holder_name: string | null;
+  account_number: string | null;
+  routing_number: string | null;
+  swift_code: string | null;
+  full_address: string | null;
+  alt_bank_name: string | null;
+  alt_account_holder_name: string | null;
+  alt_account_number: string | null;
+  alt_routing_number: string | null;
+  hurupay_email: string | null;
+  wepay_email: string | null;
+  higlobe_email: string | null;
+  higlobe_account_name: string | null;
+  wise_email: string | null;
+  wise_tag: string | null;
+  phone_number: string | null;
+  masked: boolean;
+};
+
+type PreviewBankingState = {
+  status: 'loading' | 'loaded' | 'error';
+  banking: PreviewPeopleBanking | null;
+  error?: string;
+};
+
+/** People-tab effective rate, resolved client-side with the exact precedence the
+ *  People roster uses (catalog individual → sheet → department base). */
+type PeopleRateSnapshot = {
+  regular: number | null;
+  ot: number | null;
+  currency: PayCurrency;
+  source: 'employee' | 'sheet' | 'department' | null;
+  /** PHP-equivalents, for comparing against the stub's rates_php. */
+  regPhp: number | null;
+  otPhp: number | null;
+};
+
+type CatalogRateSnapshot =
+  | {
+      kind: 'employee';
+      structure: PayStructure;
+      regNative: number;
+      otNative: number;
+      regPhp: number;
+      otPhp: number;
+      currency: PayCurrency;
+      otIsAuto: boolean;
+    }
+  | {
+      kind: 'department';
+      deptLabel: string;
+      regNative: number;
+      otNative: number;
+      regPhp: number;
+      otPhp: number;
+      currency: PayCurrency;
+    }
+  | { kind: 'none' };
+
+type RateSourceSnapshot = { people: PeopleRateSnapshot; catalog: CatalogRateSnapshot };
+
+/** people-roster.ts parseRate twin — "₱1,234.50" → 1234.5 (null when unparseable). */
+function parsePreviewRate(v: string | null | undefined): number | null {
+  if (v == null || v === '') return null;
+  const n = parseFloat(String(v).replace(/[^\d.-]/g, ''));
+  return Number.isFinite(n) ? n : null;
+}
+
+/** Cent-tolerant PHP-equivalent comparison of a source rate vs the stub's paying rate. */
+function rateSourceVerdict(
+  regPhp: number | null,
+  otPhp: number | null,
+  stubReg: number | null,
+  stubOt: number | null,
+): 'match' | 'differs' | 'unknown' {
+  if (regPhp == null || stubReg == null) return 'unknown';
+  const close = (a: number, b: number) => Math.abs(a - b) <= 0.01;
+  if (!close(regPhp, stubReg)) return 'differs';
+  if (otPhp != null && stubOt != null && !close(otPhp, stubOt)) return 'differs';
+  return 'match';
+}
+
+const fmtPhpRate = (n: number | null) =>
+  n == null
+    ? '—'
+    : '₱' + n.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+function RateVerdictChip({
+  verdict,
+  prorated,
+}: {
+  verdict: ReturnType<typeof rateSourceVerdict>;
+  prorated: boolean;
+}) {
+  if (verdict === 'unknown') {
+    return (
+      <span className="inline-flex items-center gap-1 rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] font-semibold text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
+        No rate to compare
+      </span>
+    );
+  }
+  if (verdict === 'match') {
+    return (
+      <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300">
+        <Check className="h-3 w-3 shrink-0" /> Matches the paystub rate
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-700 dark:bg-amber-950/60 dark:text-amber-300">
+      <AlertTriangle className="h-3 w-3 shrink-0" />
+      {prorated ? 'Differs — stub prorates a mid-week change' : 'Differs from the paystub rate'}
+    </span>
+  );
+}
+
+/** One label/value row inside a snapshot card. */
+function SnapshotRow({ label, value, mono }: { label: string; value: string | null | undefined; mono?: boolean }) {
+  const shown = value?.trim() ? value : '—';
+  return (
+    <div className="flex items-baseline justify-between gap-3 py-[3px]">
+      <span className="shrink-0 text-[10px] font-semibold uppercase tracking-wide text-zinc-400 dark:text-zinc-500">
+        {label}
+      </span>
+      <span
+        className={cn(
+          'min-w-0 truncate text-right text-[12px] text-zinc-800 dark:text-zinc-200',
+          mono && 'font-mono text-[11.5px]',
+        )}
+        title={shown === '—' ? undefined : shown}
+      >
+        {shown}
+      </span>
+    </div>
+  );
+}
+
+/** Shared chrome for the two floating snapshot cards. */
+function RateSnapshotShell({
+  icon,
+  iconBg,
+  title,
+  subtitle,
+  stubReg,
+  stubOt,
+  children,
+}: {
+  icon: React.ReactNode;
+  iconBg: string;
+  title: string;
+  subtitle: string;
+  stubReg: number | null;
+  stubOt: number | null;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="w-full overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-[0_18px_50px_-12px_rgba(16,32,52,0.35)] dark:border-zinc-800 dark:bg-zinc-950 dark:shadow-[0_18px_50px_-12px_rgba(0,0,0,0.7)]">
+      <div className="flex items-center gap-2.5 border-b border-zinc-200 bg-zinc-50/80 px-4 py-3 dark:border-zinc-800 dark:bg-zinc-900/50">
+        <span
+          className={cn(
+            'flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-white shadow-sm',
+            iconBg,
+          )}
+        >
+          {icon}
+        </span>
+        <div className="min-w-0">
+          <div className="truncate text-[13px] font-bold text-zinc-900 dark:text-white">{title}</div>
+          <div className="truncate text-[10px] font-medium uppercase tracking-wider text-zinc-400 dark:text-zinc-500">
+            {subtitle}
+          </div>
+        </div>
+      </div>
+      <div className="px-4 py-3">{children}</div>
+      <div className="border-t border-zinc-200 bg-zinc-50/70 px-4 py-2 text-[10.5px] text-zinc-500 tabular-nums dark:border-zinc-800 dark:bg-zinc-900/40 dark:text-zinc-400">
+        Paystub pays <span className="font-semibold text-zinc-700 dark:text-zinc-200">{fmtPhpRate(stubReg)}/hr</span>
+        {stubOt != null && (
+          <>
+            {' '}· OT <span className="font-semibold text-zinc-700 dark:text-zinc-200">{fmtPhpRate(stubOt)}/hr</span>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** Left float: the People tab's Banking-Info snapshot (resolved rate + masked payout details). */
+function PeoplePreviewSnapshotCard({
+  rate,
+  banking,
+  stubReg,
+  stubOt,
+  prorated,
+  onRetry,
+}: {
+  rate: PeopleRateSnapshot;
+  banking: PreviewBankingState;
+  stubReg: number | null;
+  stubOt: number | null;
+  prorated: boolean;
+  onRetry: () => void;
+}) {
+  const sym = CURRENCY_SYMBOL[rate.currency] ?? '';
+  const fmtNative = (n: number | null) =>
+    n == null
+      ? '—'
+      : `${sym}${n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const sourceLabel =
+    rate.source === 'employee'
+      ? 'Catalog · individual'
+      : rate.source === 'sheet'
+        ? 'Rates sheet'
+        : rate.source === 'department'
+          ? 'Catalog · dept base'
+          : 'No rate on file';
+  const b = banking.banking;
+  // Mirrors the People tab's Banking view exactly: only the CHOSEN processor's
+  // rail is shown; wires/jeeves/wise (or no processor with a bank on file)
+  // surface the preferred bank slot's fields.
+  const prefAlt = b?.preferred_bank_slot === 'alternative';
+  const prefBank = {
+    name: (prefAlt ? b?.alt_bank_name : b?.bank_name) ?? null,
+    holder: (prefAlt ? b?.alt_account_holder_name : b?.account_holder_name) ?? null,
+    account: (prefAlt ? b?.alt_account_number : b?.account_number) ?? null,
+    routing: (prefAlt ? b?.alt_routing_number : b?.routing_number) ?? null,
+    swift: (prefAlt ? null : b?.swift_code) ?? null,
+    address: (prefAlt ? null : b?.full_address) ?? null,
+  };
+  const proc = (b?.preferred_processor ?? '').trim().toLowerCase();
+  const showBank = proc === 'wires' || proc === 'jeeves' || proc === 'wise' || (!proc && !!prefBank.name);
+  return (
+    <RateSnapshotShell
+      icon={<Landmark className="h-4 w-4" />}
+      iconBg="bg-gradient-to-br from-emerald-500 to-teal-600"
+      title="People Tab"
+      subtitle="Live · Banking Info"
+      stubReg={stubReg}
+      stubOt={stubOt}
+    >
+      <div className="rounded-xl border border-zinc-200 bg-zinc-50/70 px-3 py-2.5 dark:border-zinc-800 dark:bg-zinc-900/40">
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-[10px] font-semibold uppercase tracking-wide text-zinc-400 dark:text-zinc-500">
+            Pay rate
+          </span>
+          <span className="rounded bg-emerald-600/10 px-1.5 py-0.5 text-[9.5px] font-bold uppercase tracking-wide text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300">
+            {sourceLabel}
+          </span>
+        </div>
+        <div className="mt-0.5 text-[19px] font-extrabold tracking-tight text-zinc-900 tabular-nums dark:text-white">
+          {rate.regular != null ? (
+            <>
+              {fmtNative(rate.regular)}
+              <span className="text-[11px] font-semibold text-zinc-400">/hr</span>
+            </>
+          ) : (
+            'Not set'
+          )}
+        </div>
+        <div className="text-[11px] text-zinc-500 tabular-nums dark:text-zinc-400">
+          {rate.ot != null ? `OT ${fmtNative(rate.ot)}/hr` : 'No OT rate'}
+          {rate.currency !== 'PHP' && rate.regPhp != null && <> · ≈ {fmtPhpRate(rate.regPhp)}/hr</>}
+        </div>
+        <div className="mt-1.5">
+          <RateVerdictChip
+            verdict={rateSourceVerdict(rate.regPhp, rate.otPhp, stubReg, stubOt)}
+            prorated={prorated}
+          />
+        </div>
+      </div>
+
+      <div className="mt-3">
+        <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-zinc-400 dark:text-zinc-500">
+          Banking &amp; payout
+        </div>
+        {banking.status === 'loading' ? (
+          <div className="space-y-2 py-1">
+            {[24, 40, 32].map((w, i) => (
+              <div key={i} className="flex items-center justify-between gap-3">
+                <div className="h-2.5 w-14 animate-pulse rounded bg-zinc-200/80 dark:bg-zinc-800" />
+                <div className="h-3 animate-pulse rounded bg-zinc-200/80 dark:bg-zinc-800" style={{ width: `${w * 2}px` }} />
+              </div>
+            ))}
+          </div>
+        ) : banking.status === 'error' ? (
+          <div className="flex items-center justify-between gap-2 rounded-lg border border-rose-200 bg-rose-50/70 px-2.5 py-2 dark:border-rose-900/50 dark:bg-rose-950/20">
+            <span className="min-w-0 truncate text-[11px] text-rose-700 dark:text-rose-300" title={banking.error}>
+              {banking.error || 'Could not load banking info'}
+            </span>
+            <Button variant="outline" size="sm" className="h-6 shrink-0 px-2 text-[10.5px]" onClick={onRetry}>
+              Retry
+            </Button>
+          </div>
+        ) : !b ? (
+          <p className="py-1 text-[11.5px] text-zinc-400">
+            No payout details on file — nothing saved on People → Banking yet.
+          </p>
+        ) : (
+          <div className="divide-y divide-zinc-100 dark:divide-zinc-900">
+            <SnapshotRow
+              label="Processor"
+              value={
+                b.preferred_processor
+                  ? b.preferred_processor.charAt(0).toUpperCase() + b.preferred_processor.slice(1)
+                  : 'Not set'
+              }
+            />
+            {showBank && (
+              <>
+                <SnapshotRow label={prefAlt ? 'Bank (alt)' : 'Bank'} value={prefBank.name} />
+                <SnapshotRow label="Account holder" value={prefBank.holder} />
+                <SnapshotRow label="Account no." value={prefBank.account} mono />
+                <SnapshotRow label="Routing" value={prefBank.routing} mono />
+                <SnapshotRow label="SWIFT" value={prefBank.swift} mono />
+                <SnapshotRow label="Address" value={prefBank.address} />
+              </>
+            )}
+            {proc === 'hurupay' && <SnapshotRow label="Hurupay email" value={b.hurupay_email} mono />}
+            {proc === 'wepay' && <SnapshotRow label="WePay email" value={b.wepay_email} mono />}
+            {proc === 'higlobe' && (
+              <>
+                <SnapshotRow label="HiGlobe email" value={b.higlobe_email} mono />
+                <SnapshotRow label="HiGlobe account" value={b.higlobe_account_name} />
+              </>
+            )}
+            {proc === 'jeeves' && <SnapshotRow label="Phone" value={b.phone_number} mono />}
+            {b.masked && (
+              <p className="pt-1.5 text-[10px] text-zinc-400">
+                Sensitive fields masked — exactly as People → Banking shows them.
+              </p>
+            )}
+          </div>
+        )}
+      </div>
+    </RateSnapshotShell>
+  );
+}
+
+/** Right float: the Payment Catalog structure covering this person. */
+function CatalogPreviewSnapshotCard({
+  snap,
+  appliedByEngine,
+  stubReg,
+  stubOt,
+  prorated,
+}: {
+  snap: CatalogRateSnapshot;
+  /** For a dept-base structure: true when the engine actually pays this person
+   *  from it (no individual/sheet rate outranks it), so a verdict is meaningful. */
+  appliedByEngine: boolean;
+  stubReg: number | null;
+  stubOt: number | null;
+  prorated: boolean;
+}) {
+  const updatedStamp = (s: PayStructure): string | null => {
+    const iso = s.updatedAt ?? s.createdAt;
+    if (!iso) return null;
+    const d = new Date(iso);
+    const when = isNaN(d.getTime())
+      ? null
+      : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    const by = s.updatedBy ?? s.createdBy;
+    return when ? `${when}${by ? ` · ${by}` : ''}` : by ?? null;
+  };
+  return (
+    <RateSnapshotShell
+      icon={<Wallet className="h-4 w-4" />}
+      iconBg="bg-gradient-to-br from-violet-500 to-indigo-600"
+      title="Payment Catalog"
+      subtitle="Live · Pay structure"
+      stubReg={stubReg}
+      stubOt={stubOt}
+    >
+      {snap.kind === 'none' ? (
+        <div className="rounded-xl border border-dashed border-zinc-300 bg-zinc-50/60 px-3 py-4 text-center dark:border-zinc-700 dark:bg-zinc-900/40">
+          <p className="text-[12px] font-medium text-zinc-500 dark:text-zinc-400">Not in the catalog</p>
+          <p className="mt-0.5 text-[10.5px] text-zinc-400 dark:text-zinc-500">
+            No individual structure or department base — this person&apos;s rate comes from the rates sheet.
+          </p>
+        </div>
+      ) : (
+        <div className="rounded-xl border border-zinc-200 bg-zinc-50/70 px-3 py-2.5 dark:border-zinc-800 dark:bg-zinc-900/40">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-[10px] font-semibold uppercase tracking-wide text-zinc-400 dark:text-zinc-500">
+              {snap.kind === 'employee' ? 'Individual structure' : 'Department base'}
+            </span>
+            <span className="rounded bg-violet-600/10 px-1.5 py-0.5 text-[9.5px] font-bold uppercase tracking-wide text-violet-700 dark:bg-violet-500/15 dark:text-violet-300">
+              {snap.currency}
+            </span>
+          </div>
+          <div className="mt-0.5 text-[19px] font-extrabold tracking-tight text-zinc-900 tabular-nums dark:text-white">
+            {formatRate(snap.regNative, snap.currency)}
+          </div>
+          <div className="text-[11px] text-zinc-500 tabular-nums dark:text-zinc-400">
+            OT {formatRate(snap.otNative, snap.currency)}
+            {snap.kind === 'employee' && snap.otIsAuto && ' · auto 1.5×'}
+            {snap.currency !== 'PHP' && <> · ≈ {fmtPhpRate(snap.regPhp)}/hr</>}
+          </div>
+          <div className="mt-1.5">
+            {snap.kind === 'employee' || appliedByEngine ? (
+              <RateVerdictChip
+                verdict={rateSourceVerdict(snap.regPhp, snap.otPhp, stubReg, stubOt)}
+                prorated={prorated}
+              />
+            ) : (
+              <span className="inline-flex items-center gap-1 rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] font-semibold text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
+                Fallback only — a higher-precedence rate covers this person
+              </span>
+            )}
+          </div>
+        </div>
+      )}
+      {snap.kind === 'employee' && (
+        <div className="mt-3 divide-y divide-zinc-100 dark:divide-zinc-900">
+          <SnapshotRow
+            label="Assigned to"
+            value={snap.structure.employeeName || snap.structure.employeeEmail}
+          />
+          <SnapshotRow label="Email" value={snap.structure.employeeEmail} mono />
+          <SnapshotRow label="Department" value={snap.structure.departmentKey} />
+          <SnapshotRow label="Updated" value={updatedStamp(snap.structure)} />
+        </div>
+      )}
+      {snap.kind === 'department' && (
+        <p className="mt-2 text-[10.5px] text-zinc-400 dark:text-zinc-500">
+          No individual structure — {snap.deptLabel}&apos;s base rate is the catalog&apos;s answer for this person.
+        </p>
+      )}
+    </RateSnapshotShell>
+  );
 }
 
 /**
@@ -1254,6 +1711,70 @@ export default function PayrollWizard({
   useEffect(() => {
     setPreviewPage(1);
   }, [previewTab, previewSearch, previewDept]);
+  /**
+   * Dispatch-step "Rate snapshots" toggle (sits beside the Lock In button).
+   * ON → viewing a paystub from Preview Emails floats two live source cards
+   * beside the statement: the People tab's Banking-Info snapshot (resolved
+   * People rate + masked payout details) and the person's Payment Catalog
+   * structure — so the stub's paying rate can be compared in place.
+   * Persisted per browser, like the other wizard view preferences.
+   */
+  const [compareRateSources, setCompareRateSources] = useState(false);
+  useEffect(() => {
+    try {
+      if (localStorage.getItem(COMPARE_RATE_SOURCES_LS_KEY) === '1') setCompareRateSources(true);
+    } catch {
+      /* storage unavailable (private mode) — session-only toggle */
+    }
+  }, []);
+  const setCompareRateSourcesPersist = useCallback((on: boolean) => {
+    setCompareRateSources(on);
+    try {
+      localStorage.setItem(COMPARE_RATE_SOURCES_LS_KEY, on ? '1' : '0');
+    } catch {
+      /* ignore */
+    }
+  }, []);
+  /** Masked People→Banking payload per previewed person (keyed by lower work email). */
+  const [previewBankingByEmail, setPreviewBankingByEmail] = useState<Record<string, PreviewBankingState>>({});
+  useEffect(() => {
+    if (!previewPaystubsOpen || !compareRateSources || !previewSelectedEmail) return;
+    const key = normEmail(previewSelectedEmail) ?? previewSelectedEmail.trim().toLowerCase();
+    if (!key || previewBankingByEmail[key]) return;
+    let cancelled = false;
+    setPreviewBankingByEmail((prev) => ({ ...prev, [key]: { status: 'loading', banking: null } }));
+    (async () => {
+      try {
+        const res = await fetch(`/api/people/${encodeURIComponent(key)}`, { cache: 'no-store' });
+        const json = (await res.json().catch(() => null)) as {
+          banking?: PreviewPeopleBanking | null;
+          error?: string | null;
+        } | null;
+        if (cancelled) return;
+        if (!res.ok || (!json?.banking && json?.error)) {
+          setPreviewBankingByEmail((prev) => ({
+            ...prev,
+            [key]: { status: 'error', banking: null, error: json?.error ?? `HTTP ${res.status}` },
+          }));
+          return;
+        }
+        setPreviewBankingByEmail((prev) => ({
+          ...prev,
+          [key]: { status: 'loaded', banking: json?.banking ?? null },
+        }));
+      } catch (e) {
+        if (!cancelled) {
+          setPreviewBankingByEmail((prev) => ({
+            ...prev,
+            [key]: { status: 'error', banking: null, error: e instanceof Error ? e.message : String(e) },
+          }));
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [previewPaystubsOpen, compareRateSources, previewSelectedEmail, previewBankingByEmail]);
   const [isDispatching, setIsDispatching] = useState(false);
   /**
    * Work emails (lowercased) accounting flagged "do not pay" in the Validation
@@ -3100,6 +3621,130 @@ export default function PayrollWizard({
     }
     return { byWorkEmail, byPersonalEmail, byNameTokens };
   }, [masterEmployees]);
+
+  /** Raw sheet rates keyed by email — PRE catalog overlay (the People tab's 'sheet' layer). */
+  const rawSheetRateIndex = useMemo(() => indexHourlyRatesByEmail(hourlyRateRows), [hourlyRateRows]);
+  /** Live catalog index for the Preview rate-snapshot panels. Unlike ratesByEmail
+   *  this is built even during replay — the panels always show CURRENT sources. */
+  const previewCatalogIndex = useMemo(() => buildCatalogRateIndex(payStructures), [payStructures]);
+
+  /**
+   * Rate-source snapshot for one Preview Emails person: the People-tab effective
+   * rate (identical precedence walk to people-roster.ts resolvePeopleRate —
+   * catalog individual → sheet → department base, native currency + PHP-equiv)
+   * plus the Payment Catalog structure that covers them (individual, else their
+   * department's base, else none).
+   */
+  const buildRateSourceSnapshot = useCallback(
+    (person: {
+      email: string;
+      personal_email: string | null;
+      department_name: string | null;
+      department_key: string | null;
+    }): RateSourceSnapshot => {
+      const workKey = normEmail(person.email ?? '');
+      const personalKey = normEmail(person.personal_email ?? '');
+      const master =
+        (workKey ? masterIndex.byWorkEmail.get(workKey) : undefined) ??
+        (personalKey ? masterIndex.byPersonalEmail.get(personalKey) : undefined) ??
+        null;
+      const aliases = Array.from(
+        new Set(
+          [
+            master?.work_email,
+            master?.personal_email,
+            master?.alternate_work_email,
+            master?.alternate_work_email_2,
+            person.email,
+            person.personal_email,
+          ]
+            .map((x) => normEmail(x ?? ''))
+            .filter((x): x is string => !!x),
+        ),
+      );
+      const department = master?.department ?? person.department_name ?? person.department_key;
+
+      const empCat = resolveEmployeeCatalogRate(previewCatalogIndex, aliases, fxRates);
+      const deptCat = resolveDeptCatalogRate(previewCatalogIndex, department, fxRates);
+
+      let people: PeopleRateSnapshot;
+      if (empCat) {
+        people = {
+          regular: empCat.regNative,
+          ot: empCat.otNative,
+          currency: empCat.currency,
+          source: 'employee',
+          regPhp: empCat.regPhp,
+          otPhp: empCat.otPhp,
+        };
+      } else {
+        let sheet: { reg: number | null; ot: number | null } | null = null;
+        for (const em of aliases) {
+          const row = rawSheetRateIndex.get(em);
+          if (!row) continue;
+          const reg = parsePreviewRate(row.regular_rate);
+          const ot = parsePreviewRate(row.ot_rate);
+          if (reg != null || ot != null) {
+            sheet = { reg, ot };
+            break;
+          }
+        }
+        if (sheet) {
+          people = { regular: sheet.reg, ot: sheet.ot, currency: 'PHP', source: 'sheet', regPhp: sheet.reg, otPhp: sheet.ot };
+        } else if (deptCat) {
+          people = {
+            regular: deptCat.regNative,
+            ot: deptCat.otNative,
+            currency: deptCat.currency,
+            source: 'department',
+            regPhp: deptCat.regPhp,
+            otPhp: deptCat.otPhp,
+          };
+        } else {
+          people = { regular: null, ot: null, currency: 'PHP', source: null, regPhp: null, otPhp: null };
+        }
+      }
+
+      // The catalog panel wants the STRUCTURE itself (for the assigned-to /
+      // updated-by footer). Same byEmail map resolveEmployeeCatalogRate walks,
+      // so `structure` and `empCat` are non-null together by construction.
+      let structure: PayStructure | null = null;
+      for (const em of aliases) {
+        const s = previewCatalogIndex.byEmail.get(em);
+        if (s) {
+          structure = s;
+          break;
+        }
+      }
+      let catalog: CatalogRateSnapshot;
+      if (structure && empCat) {
+        catalog = {
+          kind: 'employee',
+          structure,
+          regNative: empCat.regNative,
+          otNative: empCat.otNative,
+          regPhp: empCat.regPhp,
+          otPhp: empCat.otPhp,
+          currency: empCat.currency,
+          otIsAuto: structure.otRate == null || isAutoOtRate(structure.regularRate, structure.otRate),
+        };
+      } else if (deptCat) {
+        catalog = {
+          kind: 'department',
+          deptLabel: person.department_name ?? department ?? '—',
+          regNative: deptCat.regNative,
+          otNative: deptCat.otNative,
+          regPhp: deptCat.regPhp,
+          otPhp: deptCat.otPhp,
+          currency: deptCat.currency,
+        };
+      } else {
+        catalog = { kind: 'none' };
+      }
+      return { people, catalog };
+    },
+    [masterIndex, previewCatalogIndex, rawSheetRateIndex, fxRates],
+  );
 
   // Emails claimed by 2+ differently-named master rows — two humans behind one
   // address (a data error, but one that must not merge their KPI bonuses).
@@ -14404,7 +15049,7 @@ export default function PayrollWizard({
               )
             )}
 
-            <div className="flex gap-4">
+            <div className="flex flex-wrap items-center justify-center gap-4">
               <Button
                 variant="outline"
                 className="border-zinc-200 px-8 text-zinc-600 hover:text-zinc-900 dark:border-zinc-800 dark:text-zinc-400 dark:hover:text-white"
@@ -14546,6 +15191,41 @@ export default function PayrollWizard({
               >
                 {isDispatching ? 'Sending to Dispatch…' : isReplay ? 'View-only (past period)' : 'Lock in Values & Send to Payment Dispatch'}
               </Button>
+              {/* Rate snapshots toggle — ON floats live People-tab Banking Info +
+                  Payment Catalog cards beside each Preview Emails paystub so the
+                  stub's paying rate can be compared against both sources. */}
+              <div
+                className={cn(
+                  'flex items-center gap-2.5 rounded-full border py-2 pl-4 pr-3.5 transition-colors',
+                  compareRateSources
+                    ? 'border-indigo-300/80 bg-indigo-50/80 dark:border-indigo-700/60 dark:bg-indigo-950/30'
+                    : 'border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900/50',
+                )}
+                title="When on, viewing a paystub from Preview Emails floats live People-tab Banking Info and Payment Catalog rate snapshots beside the statement for comparison"
+              >
+                <Columns3
+                  className={cn(
+                    'h-3.5 w-3.5 shrink-0',
+                    compareRateSources ? 'text-indigo-600 dark:text-indigo-400' : 'text-zinc-400',
+                  )}
+                />
+                <Label
+                  htmlFor="compare-rate-sources"
+                  className={cn(
+                    'cursor-pointer whitespace-nowrap text-xs font-medium',
+                    compareRateSources
+                      ? 'text-indigo-700 dark:text-indigo-300'
+                      : 'text-zinc-600 dark:text-zinc-400',
+                  )}
+                >
+                  Rate snapshots
+                </Label>
+                <Switch
+                  id="compare-rate-sources"
+                  checked={compareRateSources}
+                  onCheckedChange={(v: boolean) => setCompareRateSourcesPersist(v)}
+                />
+              </div>
             </div>
           </div>
         );
@@ -15212,7 +15892,7 @@ export default function PayrollWizard({
       >
         <DialogContent
           className={cn(
-            'overflow-hidden rounded-2xl border-zinc-200 bg-white p-0 dark:border-zinc-800 dark:bg-zinc-950',
+            'rounded-2xl border-zinc-200 bg-white p-0 dark:border-zinc-800 dark:bg-zinc-950',
             // Animate the width morph so switching between the recipient list and
             // the single-email preview glides instead of snapping. Only max-width
             // transitions (the open/close keyframes drive transform + opacity).
@@ -15222,6 +15902,11 @@ export default function PayrollWizard({
             previewSelectedEmail
               ? 'w-[95vw] sm:max-w-[510px]'
               : 'w-[95vw] sm:max-w-3xl',
+            // The floating rate-source snapshots hang OUTSIDE the dialog box (as
+            // absolutely-positioned popup children, so clicking/scrolling them
+            // never dismisses it) — they must not be clipped. The preview wrapper
+            // clips + rounds itself, so visible overflow is safe while they're up.
+            previewSelectedEmail && compareRateSources ? 'overflow-visible' : 'overflow-hidden',
           )}
         >
           {(() => {
@@ -15279,7 +15964,7 @@ export default function PayrollWizard({
                     <DialogTitle>Paystub Preview · {selected.name}</DialogTitle>
                     <DialogDescription>{selected.personal_email}</DialogDescription>
                   </DialogHeader>
-                  <div className="relative flex max-h-[90vh] flex-col overflow-hidden bg-[#f4f7fb] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] animate-in fade-in-0 zoom-in-95">
+                  <div className="relative flex max-h-[90vh] flex-col overflow-hidden rounded-2xl bg-[#f4f7fb] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] animate-in fade-in-0 zoom-in-95">
                     <div className="flex shrink-0 items-center justify-between border-b border-zinc-200 bg-white/90 px-4 py-2.5 backdrop-blur">
                       <Button
                         variant="ghost"
@@ -15290,6 +15975,11 @@ export default function PayrollWizard({
                         <ChevronLeft className="h-4 w-4" />
                         Back
                       </Button>
+                      {compareRateSources && (
+                        <span className="hidden truncate px-2 text-[10px] font-medium text-zinc-400 max-[1179px]:inline">
+                          Rate snapshots need a wider window
+                        </span>
+                      )}
                       <span className="pr-8 text-[10px] font-semibold uppercase tracking-[0.14em] text-orange-600">
                         Preview · Not yet sent
                       </span>
@@ -15517,6 +16207,64 @@ export default function PayrollWizard({
                       </div>
                     </div>
                   </div>
+                  {/* Floating rate-source snapshots ("Rate snapshots" toggle, ON):
+                      People tab's Banking Info to the LEFT, Payment Catalog to the
+                      RIGHT. Rendered as children of the dialog popup (interacting
+                      with them can never dismiss it) but absolutely positioned
+                      OUTSIDE its box; each side glides out from behind the
+                      statement. Wide viewports only — below 1180px the header bar
+                      shows a hint instead. */}
+                  {compareRateSources &&
+                    (() => {
+                      const snapshot = buildRateSourceSnapshot(selected);
+                      const bankingKey = normEmail(selected.email) ?? selected.email.trim().toLowerCase();
+                      const bankingState =
+                        previewBankingByEmail[bankingKey] ?? { status: 'loading' as const, banking: null };
+                      const prorated = !!selected.proration;
+                      return (
+                        <>
+                          <div className="pointer-events-none absolute inset-y-0 right-full mr-4 hidden w-[300px] items-center min-[1180px]:flex">
+                            <motion.div
+                              initial={{ opacity: 0, x: 36, scale: 0.95 }}
+                              animate={{ opacity: 1, x: 0, scale: 1 }}
+                              transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1], delay: 0.1 }}
+                              className="pointer-events-auto max-h-full w-full overflow-y-auto py-2"
+                            >
+                              <PeoplePreviewSnapshotCard
+                                rate={snapshot.people}
+                                banking={bankingState}
+                                stubReg={selected.rates_php.regular}
+                                stubOt={selected.rates_php.ot}
+                                prorated={prorated}
+                                onRetry={() =>
+                                  setPreviewBankingByEmail((prev) => {
+                                    const next = { ...prev };
+                                    delete next[bankingKey];
+                                    return next;
+                                  })
+                                }
+                              />
+                            </motion.div>
+                          </div>
+                          <div className="pointer-events-none absolute inset-y-0 left-full ml-4 hidden w-[300px] items-center min-[1180px]:flex">
+                            <motion.div
+                              initial={{ opacity: 0, x: -36, scale: 0.95 }}
+                              animate={{ opacity: 1, x: 0, scale: 1 }}
+                              transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1], delay: 0.18 }}
+                              className="pointer-events-auto max-h-full w-full overflow-y-auto py-2"
+                            >
+                              <CatalogPreviewSnapshotCard
+                                snap={snapshot.catalog}
+                                appliedByEngine={snapshot.people.source === 'department'}
+                                stubReg={selected.rates_php.regular}
+                                stubOt={selected.rates_php.ot}
+                                prorated={prorated}
+                              />
+                            </motion.div>
+                          </div>
+                        </>
+                      );
+                    })()}
                 </>
               );
             }
