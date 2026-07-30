@@ -33,6 +33,19 @@ function rowPrimaryNull(row: QueueRow): boolean {
   return row.payCurrency === 'COP' ? row.amountCOP == null : row.amountUSD == null;
 }
 
+/** Secondary line under the primary amount: normally the PHP equivalent, but a
+ *  COP-country payee (Colombian staff riding the PHP rails) shows their native
+ *  COP figure instead — the number actually sent to their bank. */
+function rowSecondaryIsCop(row: QueueRow): boolean {
+  return row.payCurrency !== 'COP' && row.countryCurrency === 'COP' && row.amountCOP != null;
+}
+function rowSecondaryAmount(row: QueueRow): string {
+  return rowSecondaryIsCop(row) ? formatCOP(row.amountCOP) : formatPHP(row.amountPHP);
+}
+function rowSecondaryNull(row: QueueRow): boolean {
+  return !rowSecondaryIsCop(row) && row.amountPHP == null;
+}
+
 /** Under-₱7k predicate for the queue's instant filter chip — PHP-paid rows
  *  strictly under ₱7,000, the same boundary as the wires → Wise reroute
  *  (₱7,000.00 exactly is out; null/zero amounts are out). */
@@ -715,10 +728,10 @@ const QueueRowItem = React.memo(function QueueRowItem({
               <div
                 className={cn(
                   'font-mono text-[10.5px] tabular-nums',
-                  row.amountPHP == null ? 'text-zinc-400' : 'text-zinc-500 dark:text-zinc-400',
+                  rowSecondaryNull(row) ? 'text-zinc-400' : 'text-zinc-500 dark:text-zinc-400',
                 )}
               >
-                {formatPHP(row.amountPHP)}
+                {rowSecondaryAmount(row)}
               </div>
               {row.bonusTotalPHP > 0 && (
                 <div className="mt-1 flex justify-end">
@@ -854,10 +867,10 @@ const QueueRowItem = React.memo(function QueueRowItem({
           <div
             className={cn(
               'font-mono text-[11px] tabular-nums',
-              row.amountPHP == null ? 'text-zinc-400' : 'text-zinc-500 dark:text-zinc-400',
+              rowSecondaryNull(row) ? 'text-zinc-400' : 'text-zinc-500 dark:text-zinc-400',
             )}
           >
-            {formatPHP(row.amountPHP)}
+            {rowSecondaryAmount(row)}
           </div>
           {row.bonusTotalPHP > 0 && (
             <div className="mt-1 flex justify-end">

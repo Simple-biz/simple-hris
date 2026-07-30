@@ -67,6 +67,7 @@ import { listSystemBonuses } from "@/lib/supabase/system-bonuses-db";
 import { resolveSystemBonuses, isDeptEligible, systemBonusAmountForDept } from "@/lib/payment-catalog/system-bonus";
 import { normalizeDeptToKey } from "@/lib/payroll/normalize-dept-key";
 import { DEPARTMENTS } from "@/lib/payroll/department-bonus";
+import { currencyForCountry } from "@/lib/onboarding/countries";
 import type { PayCurrency } from "@/lib/payment-catalog/pay-structure";
 import {
   buildCatalogRateIndex,
@@ -128,6 +129,15 @@ export interface CurrentPayEntry {
    * (totalPayPHP is the FX-equivalent in both cases).
    */
   payCurrency: PayCurrency;
+  /**
+   * Currency of the payee's RECEIVING country, from their onboarding paperwork
+   * (Colombia → COP, United States → USD, Philippines → PHP). Distinct from
+   * `payCurrency` (the rate's denomination): Colombian staff ride PHP-denominated
+   * sheet rates through the normal processor tabs, but their bank settles in COP
+   * — Payment Dispatch uses this to surface the native COP figure on their rows.
+   * Null when the person has no onboarding submission or an unmapped country.
+   */
+  countryCurrency: PayCurrency | null;
   /**
    * Payroll department for this payee, resolved from the best available source
    * (Global Master List first, then the rates-row "Department"). `departmentKey`
@@ -318,6 +328,48 @@ async function fetchMasterMin(
   }));
 }
 
+interface OnboardingCountryRow {
+  /** Email the hire submitted the paperwork under (usually their personal one). */
+  email: string | null;
+  /** HR's invite address for the same human — a second alias, never a country source. */
+  invite_personal_email: string | null;
+  /** Country the hire selected on the paperwork. Deliberately the ONLY country
+   *  source: HR's `invite_country` pick has real misclicks on never-submitted
+   *  invites (e.g. a Filipino hire invited under "Colombia"), and a wrong COP
+   *  marker would swap the peso line off their payment rows. */
+  country: string | null;
+}
+
+/**
+ * Country rows from the onboarding paperwork — the only place the org records
+ * which country a hire is paid INTO. `currencyForCountry` turns these into the
+ * per-payee `countryCurrency` marker (Colombia → COP) that Payment Dispatch
+ * uses to show Colombian staff their native COP figure. Best-effort: on error
+ * returns what was read, and payees simply carry a null marker.
+ */
+async function fetchOnboardingCountries(
+  supabase: NonNullable<ReturnType<typeof createSupabaseServiceRoleClient>>,
+): Promise<OnboardingCountryRow[]> {
+  const PAGE = 1000;
+  const out: OnboardingCountryRow[] = [];
+  let from = 0;
+  while (true) {
+    const { data, error } = await supabase
+      .from("hr_onboarding_submissions")
+      .select("email, invite_personal_email, country")
+      .range(from, from + PAGE - 1);
+    if (error) {
+      console.warn("[current-pay] fetchOnboardingCountries failed:", error.message);
+      break;
+    }
+    const page = (data ?? []) as OnboardingCountryRow[];
+    out.push(...page);
+    if (page.length < PAGE) break;
+    from += PAGE;
+  }
+  return out;
+}
+
 /** Parse a YYYY-MM-DD or longer ISO string to a local Date, null on failure. */
 // 40 hours/week regular cap, in seconds, mirroring member-monthly-pay.ts.
 const REGULAR_WEEK_CAP_SEC = 40 * 3600;
@@ -496,6 +548,7 @@ export async function computeCurrentPay(
     approvedDisputeDates,
     payStructuresResult,
     systemBonusesResult,
+    onboardingCountryRows,
   ] = await Promise.all([
     hubstaffPromise,
     getEmployeeHourlyRatesRows(),
@@ -517,6 +570,7 @@ export async function computeCurrentPay(
       : Promise.resolve(new Map<string, Map<string, number | null>>()),
     listPayStructures(),
     listSystemBonuses(),
+    supabase ? fetchOnboardingCountries(supabase) : Promise.resolve<OnboardingCountryRow[]>([]),
   ]);
 
   // Deferred: the full-table Hubstaff scan (every row, every upload) is ONLY
@@ -726,6 +780,34 @@ export async function computeCurrentPay(
         if (a && !startDateByEmail.has(a)) startDateByEmail.set(a, sd);
       }
     }
+  }
+
+  // Receiving-country currency per email (onboarding paperwork → Colombia = COP).
+  // Submissions are filed under the hire's personal email, but pay entries key on
+  // the Hubstaff (work) email — bridge through the master alias map so every
+  // address of that human carries the marker.
+  const countryCurrencyByEmail = new Map<string, PayCurrency>();
+  for (const o of onboardingCountryRows) {
+    const cur = currencyForCountry(o.country);
+    if (!cur) continue;
+    for (const rawEmail of [o.email, o.invite_personal_email]) {
+      const e = normEmail(rawEmail);
+      if (!e) continue;
+      for (const alias of aliasesByEmail.get(e) ?? [e]) {
+        if (!countryCurrencyByEmail.has(alias)) countryCurrencyByEmail.set(alias, cur);
+      }
+    }
+  }
+  // Second bridge through the rates rows (work ↔ personal pairs of one human),
+  // for people whose master row is missing or carries a different personal email.
+  for (const r of rates.rows) {
+    const we = normEmail(r.work_email);
+    const pe = normEmail(r.personal_email);
+    if (!we || !pe) continue;
+    const cur = countryCurrencyByEmail.get(we) ?? countryCurrencyByEmail.get(pe);
+    if (!cur) continue;
+    if (!countryCurrencyByEmail.has(we)) countryCurrencyByEmail.set(we, cur);
+    if (!countryCurrencyByEmail.has(pe)) countryCurrencyByEmail.set(pe, cur);
   }
 
   // Build the US-holiday set for PAB forgiveness (same source the wizard uses).
@@ -959,6 +1041,7 @@ export async function computeCurrentPay(
       totalPayCOP,
       hasRate: reg != null,
       payCurrency,
+      countryCurrency: countryCurrencyByEmail.get(em) ?? null,
       departmentKey: empDeptKey,
       departmentName: empDeptName,
     };

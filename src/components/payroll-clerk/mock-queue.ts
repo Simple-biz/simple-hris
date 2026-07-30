@@ -243,8 +243,10 @@ export interface QueueRow {
   amountUSD: number | null;
   /** PHP equivalent of amountUSD. */
   amountPHP: number | null;
-  /** Native COP amount (whole pesos), derived from the USD anchor. Only
-   *  meaningful when `payCurrency === 'COP'`; null otherwise. */
+  /** Native COP amount (whole pesos), derived from the USD anchor. Populated
+   *  whenever the pay layer could derive it; the number a clerk actually keys
+   *  in when `payCurrency === 'COP'` (COP tab) or `countryCurrency === 'COP'`
+   *  (Colombian staff riding the PHP rails). */
   amountCOP: number | null;
   /**
    * Currency this employee is actually PAID in (from their effective Payment
@@ -253,6 +255,14 @@ export interface QueueRow {
    * the processor tabs. Defaults to 'PHP' for legacy/unknown rows.
    */
   payCurrency: PayCurrency;
+  /**
+   * Currency of the payee's receiving COUNTRY (onboarding paperwork), distinct
+   * from `payCurrency`: Colombian staff carry PHP-denominated rates through the
+   * normal processor tabs, but their bank settles in COP — 'COP' here swaps the
+   * row's secondary amount (and the Mark Paid dialog's copyable sub-line) to the
+   * native COP figure. Optional: contractor rows and legacy payloads omit it.
+   */
+  countryCurrency?: PayCurrency | null;
   /** Regular + OT only (no bonuses). For the breakdown tooltip / chip. */
   initialPayUSD: number | null;
   initialPayPHP: number | null;
@@ -591,6 +601,7 @@ export function buildQueueFromRates(
       amountPHP: pay?.totalPayPHP ?? pay?.initialPayPHP ?? null,
       amountCOP: pay?.totalPayCOP ?? null,
       payCurrency: pay?.payCurrency ?? 'PHP',
+      countryCurrency: pay?.countryCurrency ?? null,
       initialPayUSD: pay?.initialPayUSD ?? null,
       initialPayPHP: pay?.initialPayPHP ?? null,
       pabBonusPHP: pay?.pabBonusPHP ?? 0,
@@ -676,8 +687,11 @@ export function buildStagedOnlyPlacement(params: {
   const amountPHP = staged.amount_php ?? pay?.totalPayPHP ?? null;
   const amountUSD = staged.amount_usd ?? pay?.totalPayUSD ?? null;
   const payCurrency: PayCurrency = pay?.payCurrency ?? 'PHP';
-  // Native COP is only meaningful for COP-paid people; mirrors QueueRow's contract.
-  const amountCOP = payCurrency === 'COP' ? (pay?.totalPayCOP ?? null) : null;
+  const countryCurrency = pay?.countryCurrency ?? null;
+  // Native COP rides along for anyone COP-relevant: COP-paid (COP tab) or a
+  // COP-country payee on the PHP rails (secondary-line swap).
+  const amountCOP =
+    payCurrency === 'COP' || countryCurrency === 'COP' ? (pay?.totalPayCOP ?? null) : null;
   // Mirrors contractor-dispatch-queue: non-rates payees carry their employee_ids
   // routing pick here, so the Excluded tab's bank label never reads "No bank" for
   // someone who has one.
@@ -693,6 +707,7 @@ export function buildStagedOnlyPlacement(params: {
         amountPHP,
         amountCOP,
         payCurrency,
+        countryCurrency,
         initialPayUSD: pay?.initialPayUSD ?? null,
         initialPayPHP: pay?.initialPayPHP ?? null,
         pabBonusPHP: pay?.pabBonusPHP ?? 0,

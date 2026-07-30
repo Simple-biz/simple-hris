@@ -86,6 +86,7 @@ function payEntry(over: Partial<CurrentPayEntry> = {}): CurrentPayEntry {
     totalPayCOP: null,
     hasRate: true,
     payCurrency: 'PHP',
+    countryCurrency: null,
     departmentKey: 'edit',
     departmentName: 'Edit Team',
     ...over,
@@ -219,6 +220,20 @@ test('COP-paid staged-only payee keeps a native COP amount; PHP payees do not', 
   assert.equal(php.kind, 'pending');
   if (php.kind !== 'pending') return;
   assert.equal(php.row.amountCOP, null);
+});
+
+test('COP-COUNTRY staged-only payee (Colombian on the PHP rails) keeps the marker + native COP amount', () => {
+  const co = buildStagedOnlyPlacement({
+    staged: staged(),
+    idsRow: idsRow(),
+    // PHP-denominated pay (normal processor tabs), Colombian receiving bank.
+    pay: payEntry({ countryCurrency: 'COP', totalPayCOP: 592300 }),
+  });
+  assert.equal(co.kind, 'pending');
+  if (co.kind !== 'pending') return;
+  assert.equal(co.row.payCurrency, 'PHP', 'stays on the PHP rails — not moved to the COP tab');
+  assert.equal(co.row.countryCurrency, 'COP', 'marker rides the row for the COP secondary-line swap');
+  assert.equal(co.row.amountCOP, 592300, 'native COP figure available to copy in the dialog');
 });
 
 // ── Regression guards on the untouched rates-driven path ────────────────────

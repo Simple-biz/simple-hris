@@ -368,11 +368,31 @@ export default function MarkPaidDialog({
   const formatHero =
     heroCurrency === 'COP' ? formatCOP : heroCurrency === 'USD' ? formatUSD : formatPHP;
   // Secondary line: the other side of the pair. A local-currency hero shows the
-  // USD anchor beneath; a USD hero shows the PHP equivalent. Both are copyable,
-  // because which one the clerk needs depends on the rail they're keying into.
-  const subCurrency: 'USD' | 'PHP' = heroCurrency === 'USD' ? 'PHP' : 'USD';
-  const subValue = (subCurrency === 'PHP' ? row?.amountPHP : row?.amountUSD) ?? null;
-  const subAmount = subCurrency === 'PHP' ? formatPHP(subValue) : formatUSD(subValue);
+  // USD anchor beneath; a USD hero shows the PHP equivalent — EXCEPT for a
+  // COP-country payee (Colombian staff riding the PHP rails), whose bank settles
+  // in Colombian pesos: their secondary line is the native COP figure, not the
+  // PHP equivalent. Falls back to PHP when the row carries no COP figure (e.g.
+  // arrears rollups). Every variant is copyable, because which number the clerk
+  // needs depends on the rail they're keying into.
+  const copCountrySub =
+    heroCurrency !== 'COP' && row?.countryCurrency === 'COP' && row?.amountCOP != null;
+  const subCurrency: 'USD' | 'PHP' | 'COP' = copCountrySub
+    ? 'COP'
+    : heroCurrency === 'USD'
+      ? 'PHP'
+      : 'USD';
+  const subValue =
+    (subCurrency === 'COP'
+      ? row?.amountCOP
+      : subCurrency === 'PHP'
+        ? row?.amountPHP
+        : row?.amountUSD) ?? null;
+  const subAmount =
+    subCurrency === 'COP'
+      ? formatCOP(subValue)
+      : subCurrency === 'PHP'
+        ? formatPHP(subValue)
+        : formatUSD(subValue);
 
   const copyAmount = useCallback(() => {
     if (heroAmount == null) return;
