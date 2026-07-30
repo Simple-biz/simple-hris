@@ -126,7 +126,9 @@ export default function HrTransfers() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch('/api/department-transfers', { cache: 'no-store' });
+      // scope=all = the full company-wide trail. The unscoped default is the
+      // caller's own outbox, which for HR is empty — see list-scope.test.ts.
+      const res = await fetch('/api/department-transfers?scope=all', { cache: 'no-store' });
       const json = (await res.json()) as { rows?: DepartmentTransferRequestRow[]; error?: string };
       if (!res.ok || json.error) throw new Error(json.error || `Request failed (${res.status})`);
       setRows(json.rows ?? []);

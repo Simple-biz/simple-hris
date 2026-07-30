@@ -12,14 +12,17 @@ import {
 import { departmentMatchesManagedAssignments } from '@/lib/managed-department-scope';
 import {
   insertTransferRequest,
+  listAllTransferRequests,
   listTransferRequestsByRequester,
   listIncomingTransfersForDepartments,
   listResolvedTransfersForDepartments,
   listPendingTransfers,
   listAllResolvedTransfers,
   hasPendingTransferForEmployee,
+  type DepartmentTransferRequestRow,
 } from '@/lib/supabase/department-transfer-requests';
 import { loadActiveDeptsByEmail, partitionStaleTransfers } from '@/lib/transfers/stale-transfers';
+import { resolveTransferListQuery } from '@/lib/transfers/list-scope';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -72,73 +75,68 @@ async function attachPendingWith(
 }
 
 /**
- * GET — list transfer requests.
- *   HR (hr_coordinator) / admin        -> every request (read-only history).
- *   manager, scope=incoming            -> release requests for depts they manage
- *                                          (their consent queue).
- *   manager, default (scope=outgoing)  -> requests they raised (their outbox).
+ * Hide release requests for people who've already been transferred OUT of
+ * the source department by another path (a co-manager releasing them, the
+ * master-list Sheet sync, a direct roster edit, a re-hire). The source
+ * manager shouldn't be asked to release someone who's no longer on their
+ * team — releasing it is a no-op that just errors. The daily transfer cron
+ * then cancels these stale rows for good. Fail-open: if the roster read
+ * hiccups we return the unfiltered queue rather than hiding legit requests.
+ */
+async function hideStalePending(
+  rows: DepartmentTransferRequestRow[],
+): Promise<DepartmentTransferRequestRow[]> {
+  if (rows.length === 0) return rows;
+  const { index, error } = await loadActiveDeptsByEmail();
+  if (error) return rows;
+  return partitionStaleTransfers(rows, index).live;
+}
+
+/**
+ * GET — list transfer requests. The (roles, scope) → list contract lives in
+ * resolveTransferListQuery (tested in src/lib/transfers/list-scope.test.ts):
+ *   HR/admin, scope=all       -> every request, every status (read-only history).
+ *   HR/admin, scope=incoming  -> only PENDING, all teams (action queue).
+ *   HR/admin, scope=done      -> only RESOLVED, all teams.
+ *   manager,  scope=incoming  -> pending releases for depts they manage.
+ *   manager,  scope=done      -> resolved rows for depts they manage.
+ *   default (any role)        -> requests the caller raised (their outbox).
  */
 export async function GET(request: Request) {
   const session = await getServerSession(authOptions);
   const sessionEmail = normEmail(session?.user?.email ?? '') ?? '';
   if (!sessionEmail) return NextResponse.json({ rows: [], error: 'Not signed in' }, { status: 401 });
 
-  const roles = rolesOf(session);
-  const isHr = roles.includes('hr_coordinator') || roles.includes('admin');
-  const isManager = roles.includes('manager');
+  const scope = new URL(request.url).searchParams.get('scope');
+  const query = resolveTransferListQuery(rolesOf(session), scope);
 
-  // Admin / HR see EVERY team's requests (not just ones they manage), but the
-  // three tabs must still split by status the same way a manager's do — otherwise
-  // every resolved (applied/approved/declined/cancelled) request lands in the
-  // Release-requests action queue wearing live Release/Decline buttons. Honor the
-  // same `scope` contract as the manager path, just without the per-department
-  // narrowing:
-  //   incoming -> only PENDING (things actually awaiting a decision), all teams
-  //   done     -> only RESOLVED, all teams
-  //   default  -> requests THIS admin raised (their own outbox)
-  if (isHr) {
-    const scope = new URL(request.url).searchParams.get('scope');
-    if (scope === 'incoming') {
+  switch (query) {
+    case 'all-requests': {
+      // The HR Transfers tab — the full trail across all teams and statuses.
+      // No stale-hide: it's a record, and stale pending rows show their true
+      // state once the daily cron cancels them.
+      const { rows, error } = await listAllTransferRequests();
+      if (error) return NextResponse.json({ rows: [], error }, { status: 500 });
+      return NextResponse.json({ rows, error: null });
+    }
+    case 'all-pending': {
       const { rows, error } = await listPendingTransfers();
       if (error) return NextResponse.json({ rows: [], error }, { status: 500 });
-      // Same stale-hide as the manager queue: drop pending rows whose employee has
-      // already been moved out by another path. Fail-open on a roster read error.
-      if (rows.length === 0) return NextResponse.json({ rows, error: null });
-      const { index, error: idxErr } = await loadActiveDeptsByEmail();
-      if (idxErr) return NextResponse.json({ rows, error: null });
-      const { live } = partitionStaleTransfers(rows, index);
-      return NextResponse.json({ rows: live, error: null });
+      return NextResponse.json({ rows: await hideStalePending(rows), error: null });
     }
-    if (scope === 'done') {
+    case 'all-resolved': {
       const { rows, error } = await listAllResolvedTransfers();
       if (error) return NextResponse.json({ rows: [], error }, { status: 500 });
       return NextResponse.json({ rows, error: null });
     }
-    const { rows, error } = await listTransferRequestsByRequester(sessionEmail);
-    if (error) return NextResponse.json({ rows: [], error }, { status: 500 });
-    return NextResponse.json({ rows: await attachPendingWith(rows, sessionEmail), error: null });
-  }
-  if (isManager) {
-    const scope = new URL(request.url).searchParams.get('scope');
-    if (scope === 'incoming') {
+    case 'dept-incoming': {
       const { rows: depts } = await listDepartmentsForManager(sessionEmail);
       const departments = depts.map((d) => d.department).filter(Boolean);
       const { rows, error } = await listIncomingTransfersForDepartments(departments);
       if (error) return NextResponse.json({ rows: [], error }, { status: 500 });
-      // Hide release requests for people who've already been transferred OUT of
-      // the source department by another path (a co-manager releasing them, the
-      // master-list Sheet sync, a direct roster edit, a re-hire). The source
-      // manager shouldn't be asked to release someone who's no longer on their
-      // team — releasing it is a no-op that just errors. The daily transfer cron
-      // then cancels these stale rows for good. Fail-open: if the roster read
-      // hiccups we return the unfiltered queue rather than hiding legit requests.
-      if (rows.length === 0) return NextResponse.json({ rows, error: null });
-      const { index, error: idxErr } = await loadActiveDeptsByEmail();
-      if (idxErr) return NextResponse.json({ rows, error: null });
-      const { live } = partitionStaleTransfers(rows, index);
-      return NextResponse.json({ rows: live, error: null });
+      return NextResponse.json({ rows: await hideStalePending(rows), error: null });
     }
-    if (scope === 'done') {
+    case 'dept-resolved': {
       // Resolved release requests on the manager's team — released/declined/
       // applied/cancelled. Once a manager acts, the row leaves the pending
       // `incoming` queue and lands here so there's still a record of it.
@@ -148,11 +146,14 @@ export async function GET(request: Request) {
       if (error) return NextResponse.json({ rows: [], error }, { status: 500 });
       return NextResponse.json({ rows, error: null });
     }
-    const { rows, error } = await listTransferRequestsByRequester(sessionEmail);
-    if (error) return NextResponse.json({ rows: [], error }, { status: 500 });
-    return NextResponse.json({ rows: await attachPendingWith(rows, sessionEmail), error: null });
+    case 'own-outbox': {
+      const { rows, error } = await listTransferRequestsByRequester(sessionEmail);
+      if (error) return NextResponse.json({ rows: [], error }, { status: 500 });
+      return NextResponse.json({ rows: await attachPendingWith(rows, sessionEmail), error: null });
+    }
+    case 'forbidden':
+      return NextResponse.json({ rows: [], error: 'Manager, HR, or admin role required' }, { status: 403 });
   }
-  return NextResponse.json({ rows: [], error: 'Manager, HR, or admin role required' }, { status: 403 });
 }
 
 /**
