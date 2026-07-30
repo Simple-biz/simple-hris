@@ -408,8 +408,11 @@ async function loadProcessorByEmail(): Promise<Map<string, string>> {
  *     are excluded.
  * Both `buildUrgentWeeklyReports` (summary) and `getDisbursementReportDetail`
  * (table) consume this, so summary totals and the detail table never diverge.
+ * Exported for /api/urgent-payments/dispatches, which shows the current week's
+ * slice of the same rows inside the Payment Dispatch Urgent bucket — one loader
+ * so the bucket's Paid/Not paid views can never disagree with the weekly report.
  */
-async function loadUrgentDispatchRows(): Promise<PaymentDispatchRow[]> {
+export async function loadUrgentDispatchRows(): Promise<PaymentDispatchRow[]> {
   const supabase = createSupabaseServiceRoleClient() ?? createSupabaseServerClient();
   if (!supabase) return [];
 

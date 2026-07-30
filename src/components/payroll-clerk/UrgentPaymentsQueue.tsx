@@ -30,6 +30,7 @@ import MarkPaidDialog, { type MarkPaidPayload } from './MarkPaidDialog';
 import OrphanageMarkPaidDialog, { type OrphanageMarkPaidPayload } from './OrphanageMarkPaidDialog';
 import { PROCESSORS, DISPATCH_PROCESSORS, type ProcessorId, type QueueRow } from './mock-queue';
 import type { OrphanagePendingItem } from '@/lib/supabase/orphanage-dispatches';
+import type { PaymentDispatchRow, PaymentDispatchStatus } from '@/lib/supabase/payment-dispatches';
 
 export interface UrgentPaymentRow {
   id: string;
@@ -71,6 +72,92 @@ export interface UrgentOneOffRow {
 interface Props {
   /** Called whenever the count of pending urgent items changes (MESA + one-off + budget). */
   onCountChange?: (n: number) => void;
+  /**
+   * Called whenever the count of urgent payouts ALREADY dispatched this Sun→Sat
+   * week changes (paid / not paid / threshold / problem). The parent keeps the
+   * Urgent card visible while either count is non-zero, so paying the last
+   * pending item no longer makes the whole bucket vanish.
+   */
+  onDispatchedCountChange?: (n: number) => void;
+}
+
+/**
+ * Sub-views of the Urgent bucket. 'pending' is the live payable queue (MESA +
+ * one-off + orphanage budget requests); the rest are this week's dispatch-log
+ * views, one per recorded outcome — the same rail every processor bucket has,
+ * so a paid urgent stays inspectable here instead of only in weekly Reports.
+ */
+type UrgentView = 'pending' | PaymentDispatchStatus;
+
+const URGENT_VIEW_ORDER: UrgentView[] = ['pending', 'paid', 'not_paid', 'threshold', 'problem'];
+
+/** Labels + active colors for the view rail — mirrors ProcessorQueue's strip so
+ *  a clerk reads the same color for "problem" everywhere. */
+const URGENT_VIEW_STYLES: Record<
+  UrgentView,
+  { label: string; activeText: string; activePill: string }
+> = {
+  pending: {
+    label: 'Pending',
+    activeText: 'bg-white text-amber-700 shadow-sm dark:bg-zinc-800 dark:text-amber-300',
+    activePill: 'bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-300',
+  },
+  paid: {
+    label: 'Paid',
+    activeText: 'bg-white text-emerald-700 shadow-sm dark:bg-zinc-800 dark:text-emerald-300',
+    activePill: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300',
+  },
+  not_paid: {
+    label: 'Not paid',
+    activeText: 'bg-white text-zinc-700 shadow-sm dark:bg-zinc-800 dark:text-zinc-200',
+    activePill: 'bg-zinc-200 text-zinc-700 dark:bg-zinc-600/40 dark:text-zinc-200',
+  },
+  threshold: {
+    label: 'Threshold',
+    activeText: 'bg-white text-amber-700 shadow-sm dark:bg-zinc-800 dark:text-amber-300',
+    activePill: 'bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-300',
+  },
+  problem: {
+    label: 'Problem',
+    activeText: 'bg-white text-rose-700 shadow-sm dark:bg-zinc-800 dark:text-rose-300',
+    activePill: 'bg-rose-100 text-rose-700 dark:bg-rose-500/20 dark:text-rose-300',
+  },
+};
+
+/** Status pill on a dispatched card, matching the rail's color per outcome. */
+const DISPATCH_STATUS_BADGE: Record<PaymentDispatchStatus, { label: string; className: string }> = {
+  paid: {
+    label: 'Paid',
+    className:
+      'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-700/40 dark:bg-emerald-950/30 dark:text-emerald-300',
+  },
+  not_paid: {
+    label: 'Not paid',
+    className:
+      'border-zinc-200 bg-zinc-100 text-zinc-600 dark:border-zinc-700 dark:bg-zinc-800/60 dark:text-zinc-300',
+  },
+  threshold: {
+    label: 'Threshold',
+    className:
+      'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-700/40 dark:bg-amber-950/30 dark:text-amber-300',
+  },
+  problem: {
+    label: 'Problem',
+    className:
+      'border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-700/40 dark:bg-rose-950/30 dark:text-rose-300',
+  },
+};
+
+/** Render a date-only string (YYYY-MM-DD…) without timezone drift. */
+function formatDateOnly(iso: string | null | undefined): string | null {
+  const m = iso ? /^(\d{4})-(\d{2})-(\d{2})/.exec(iso) : null;
+  if (!m) return null;
+  return new Date(Date.UTC(+m[1], +m[2] - 1, +m[3])).toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    timeZone: 'UTC',
+  });
 }
 
 /**
@@ -159,13 +246,20 @@ function toQueueRowOneOff(r: UrgentOneOffRow, processor: ProcessorId): QueueRow 
   };
 }
 
-export default function UrgentPaymentsQueue({ onCountChange }: Props) {
+export default function UrgentPaymentsQueue({ onCountChange, onDispatchedCountChange }: Props) {
   const { data: session } = useSession();
   const userEmail = session?.user?.email ?? null;
 
   const [rows, setRows] = useState<UrgentPaymentRow[]>([]);
   const [oneOffRows, setOneOffRows] = useState<UrgentOneOffRow[]>([]);
   const [budgetItems, setBudgetItems] = useState<OrphanagePendingItem[]>([]);
+  // Which sub-view is showing: the live pending queue or one of this week's
+  // dispatch-log views (paid / not paid / threshold / problem).
+  const [view, setView] = useState<UrgentView>('pending');
+  // Urgent payouts already dispatched this Sun→Sat week, straight from the
+  // weekly report's loader so the two can never disagree.
+  const [dispatchedRows, setDispatchedRows] = useState<PaymentDispatchRow[]>([]);
+  const [weekRange, setWeekRange] = useState<{ start: string; end: string } | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [markRow, setMarkRow] = useState<UrgentPaymentRow | null>(null);
@@ -185,10 +279,11 @@ export default function UrgentPaymentsQueue({ onCountChange }: Props) {
   const load = useCallback(async (silent = false) => {
     if (!silent) setLoading(true); else setRefreshing(true);
     try {
-      const [mesaRes, oneOffRes, orphRes] = await Promise.all([
+      const [mesaRes, oneOffRes, orphRes, dispatchedRes] = await Promise.all([
         fetch('/api/urgent-payments', { cache: 'no-store' }),
         fetch('/api/urgent-payments/requests', { cache: 'no-store' }),
         fetch('/api/orphanage-dispatches?pending=1', { cache: 'no-store' }),
+        fetch('/api/urgent-payments/dispatches', { cache: 'no-store' }),
       ]);
       if (!mesaRes.ok) throw new Error(`HTTP ${mesaRes.status}`);
       const mesaJson = (await mesaRes.json()) as { rows?: UrgentPaymentRow[]; error?: string };
@@ -220,13 +315,32 @@ export default function UrgentPaymentsQueue({ onCountChange }: Props) {
       }
       setBudgetItems(budget);
       onCountChange?.(mesa.length + oneOff.length + budget.length);
+
+      // This week's dispatch log — best-effort: a failure here must not break
+      // the pending queue. On failure we keep the previous rows rather than
+      // blanking the Paid/Not paid views.
+      try {
+        const dispatchedJson = (await dispatchedRes.json()) as {
+          rows?: PaymentDispatchRow[];
+          week?: { start: string; end: string } | null;
+          error?: string;
+        };
+        if (dispatchedRes.ok && !dispatchedJson.error) {
+          const dispatched = dispatchedJson.rows ?? [];
+          setDispatchedRows(dispatched);
+          setWeekRange(dispatchedJson.week ?? null);
+          onDispatchedCountChange?.(dispatched.length);
+        }
+      } catch {
+        /* ignore — dispatch-log views silently keep their last data */
+      }
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Failed to load urgent payments');
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [onCountChange]);
+  }, [onCountChange, onDispatchedCountChange]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -454,6 +568,26 @@ export default function UrgentPaymentsQueue({ onCountChange }: Props) {
   };
 
   const hasAny = rows.length > 0 || oneOffRows.length > 0 || budgetItems.length > 0;
+  const pendingCount = rows.length + oneOffRows.length + budgetItems.length;
+
+  // Per-outcome counts for the view rail, from this week's dispatch log.
+  const statusCounts = useMemo(() => {
+    const c: Record<PaymentDispatchStatus, number> = { paid: 0, not_paid: 0, threshold: 0, problem: 0 };
+    for (const r of dispatchedRows) c[r.status] = (c[r.status] ?? 0) + 1;
+    return c;
+  }, [dispatchedRows]);
+
+  const dispatchedVisible = useMemo(
+    () => (view === 'pending' ? [] : dispatchedRows.filter((r) => r.status === view)),
+    [dispatchedRows, view],
+  );
+
+  const weekLabel = useMemo(() => {
+    if (!weekRange) return null;
+    const start = formatDateOnly(weekRange.start);
+    const end = formatDateOnly(weekRange.end);
+    return start && end ? `${start} – ${end}` : null;
+  }, [weekRange]);
 
   // Memoize the QueueRow handed to each MarkPaidDialog. toQueueRow* build a fresh
   // object literal every call, and MarkPaidDialog resets the clerk's typed
@@ -490,6 +624,7 @@ export default function UrgentPaymentsQueue({ onCountChange }: Props) {
               <p className="mt-1 max-w-xl text-sm leading-relaxed text-zinc-600 dark:text-zinc-400">
                 MESA disbursements, one-off payments, and approved orphanage budget requests awaiting
                 immediate payout. These bypass the weekly payroll cycle and reconcile in the weekly report.
+                Payouts already dispatched stay under Paid / Not paid until the week rolls over.
               </p>
             </div>
           </div>
@@ -506,9 +641,73 @@ export default function UrgentPaymentsQueue({ onCountChange }: Props) {
           </Button>
         </div>
 
+        {/* View rail — live pending queue vs this week's dispatch-log views.
+            Always rendered once loaded (even at 0 everywhere), so the bucket
+            reads like every other processor bucket instead of vanishing. */}
+        {!loading && (
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div
+              role="tablist"
+              aria-label="Urgent payments view"
+              className="inline-flex flex-wrap items-center gap-0.5 rounded-lg border border-amber-100 bg-amber-50/40 p-0.5 dark:border-zinc-800 dark:bg-zinc-900/60"
+            >
+              {URGENT_VIEW_ORDER.map((id) => {
+                const active = view === id;
+                const s = URGENT_VIEW_STYLES[id];
+                const count = id === 'pending' ? pendingCount : statusCounts[id];
+                return (
+                  <button
+                    key={id}
+                    type="button"
+                    role="tab"
+                    aria-selected={active}
+                    onClick={() => setView(id)}
+                    className={cn(
+                      'inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[11px] font-semibold transition-colors',
+                      active
+                        ? s.activeText
+                        : 'text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200',
+                    )}
+                  >
+                    {s.label}
+                    <span
+                      className={cn(
+                        'rounded-full px-1.5 py-0.5 text-[10px] font-bold tabular-nums',
+                        active
+                          ? s.activePill
+                          : 'bg-zinc-200/70 text-zinc-500 dark:bg-zinc-700/60 dark:text-zinc-400',
+                      )}
+                    >
+                      {count}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+            {weekLabel && view !== 'pending' && (
+              <span className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400">
+                This week · {weekLabel}
+              </span>
+            )}
+          </div>
+        )}
+
         {/* Body */}
         {loading ? (
           <SkeletonRows />
+        ) : view !== 'pending' ? (
+          dispatchedVisible.length === 0 ? (
+            <div className="rounded-2xl border border-amber-100 bg-white px-6 py-12 text-center text-sm text-zinc-500 shadow-sm dark:border-amber-900/30 dark:bg-zinc-900/40 dark:text-zinc-400">
+              No urgent payments logged as {URGENT_VIEW_STYLES[view].label.toLowerCase()} this week
+              {weekLabel ? ` (${weekLabel})` : ''}. Past weeks live in Reports.
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {dispatchedVisible.map((r) => (
+                <DispatchedCard key={r.id} row={r} />
+              ))}
+            </div>
+          )
         ) : !hasAny ? (
           <div className="flex flex-col items-center justify-center gap-3 rounded-2xl border border-amber-100 bg-white px-6 py-16 text-center shadow-sm dark:border-amber-900/30 dark:bg-zinc-900/40">
             <div className="flex h-12 w-12 items-center justify-center rounded-full bg-emerald-50 text-emerald-500 dark:bg-emerald-950/30 dark:text-emerald-400">
@@ -1007,6 +1206,81 @@ function BudgetCard({
           <Send className="h-3.5 w-3.5" />
           Pay wire
         </Button>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Read-only card for an urgent payout already dispatched this week (paid /
+ * not paid / threshold / problem). Undo and edits stay in the weekly Reports
+ * detail — this view exists so the bucket keeps showing what happened after
+ * the pending queue empties.
+ */
+function DispatchedCard({ row }: { row: PaymentDispatchRow }) {
+  const badge = DISPATCH_STATUS_BADGE[row.status];
+  const sentDate = formatDateOnly(row.sent_date);
+  const arrivalDate = formatDateOnly(row.arrival_date);
+  const processorLabel = PROCESSOR_LABEL[row.processor as ProcessorId] ?? row.processor;
+
+  return (
+    <div className="flex flex-col gap-3 rounded-2xl border border-amber-200/70 bg-white p-4 shadow-sm transition-shadow hover:shadow-md sm:flex-row sm:items-center sm:gap-4 dark:border-amber-800/30 dark:bg-zinc-900/60">
+      {/* Icon */}
+      <div
+        className={cn(
+          'flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ring-1',
+          row.status === 'paid'
+            ? 'bg-emerald-50 text-emerald-600 ring-emerald-100 dark:bg-emerald-950/30 dark:text-emerald-300 dark:ring-emerald-900/40'
+            : row.status === 'problem'
+              ? 'bg-rose-50 text-rose-600 ring-rose-100 dark:bg-rose-950/30 dark:text-rose-300 dark:ring-rose-900/40'
+              : 'bg-amber-50 text-amber-600 ring-amber-100 dark:bg-amber-950/30 dark:text-amber-300 dark:ring-amber-900/40',
+        )}
+      >
+        <CheckCircle2 className="h-5 w-5" />
+      </div>
+
+      {/* Info */}
+      <div className="min-w-0 flex-1 space-y-0.5">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="font-semibold text-zinc-900 dark:text-zinc-100">
+            {row.recipient_name ?? row.recipient_email}
+          </span>
+          <Badge variant="outline" className={cn('text-[10px] font-bold uppercase tracking-wider', badge.className)}>
+            {badge.label}
+          </Badge>
+        </div>
+        <div className="font-mono text-[11px] text-zinc-500 dark:text-zinc-500">{row.recipient_email}</div>
+        {row.note && (
+          <p className="line-clamp-1 pt-1 text-[11px] text-zinc-500 dark:text-zinc-400">{row.note}</p>
+        )}
+        <div className="flex flex-wrap gap-3 pt-1">
+          {sentDate && (
+            <span className="flex items-center gap-1 text-[11px] text-zinc-400 dark:text-zinc-500">
+              <Clock className="h-3 w-3" />
+              Sent {sentDate}
+              {arrivalDate && <span className="text-zinc-400 dark:text-zinc-500">· arrives {arrivalDate}</span>}
+            </span>
+          )}
+          {row.bank_used && (
+            <span className="flex items-center gap-1 text-[11px] text-zinc-400 dark:text-zinc-500">
+              <Building2 className="h-3 w-3" />
+              {row.bank_used}
+            </span>
+          )}
+          {row.transaction_id && (
+            <span className="font-mono text-[11px] text-zinc-400 dark:text-zinc-500">
+              #{row.transaction_id}
+            </span>
+          )}
+        </div>
+      </div>
+
+      {/* Amount + processor */}
+      <div className="flex items-center gap-3 sm:flex-col sm:items-end sm:gap-2">
+        <AmountBlock php={row.amount_php} usd={row.amount_usd} />
+        <span className="inline-flex items-center rounded-full border border-amber-200 bg-amber-50/60 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-amber-800 dark:border-amber-800/40 dark:bg-amber-950/20 dark:text-amber-200">
+          {processorLabel}
+        </span>
       </div>
     </div>
   );

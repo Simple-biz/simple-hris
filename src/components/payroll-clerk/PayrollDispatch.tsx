@@ -246,6 +246,11 @@ export default function PayrollDispatch() {
   // empty, even before the tab is ever opened. `UrgentPaymentsQueue` keeps this
   // fresh via `onCountChange` once it mounts.
   const [urgentCount, setUrgentCount] = useState<number | null>(null);
+  // Urgent payouts ALREADY dispatched this Sun→Sat week (paid / not paid /
+  // threshold / problem). Keeps the Urgent card visible after the last pending
+  // item is paid — the bucket persists for the week like every other bucket,
+  // it just reads 0 pending. `null` = not yet known.
+  const [urgentDispatchedCount, setUrgentDispatchedCount] = useState<number | null>(null);
   // Which employee's pay statement is open in the read-only viewer modal (accounting
   // can open any payee's stub without downloading). null = closed.
   const [viewPaystub, setViewPaystub] = useState<{ sourceFile: string; email: string } | null>(null);
@@ -285,9 +290,10 @@ export default function PayrollDispatch() {
     let cancelled = false;
     void (async () => {
       try {
-        const [mesaRes, orphRes] = await Promise.all([
+        const [mesaRes, orphRes, dispatchedRes] = await Promise.all([
           fetch('/api/urgent-payments', { cache: 'no-store' }),
           fetch('/api/orphanage-dispatches?pending=1', { cache: 'no-store' }),
+          fetch('/api/urgent-payments/dispatches', { cache: 'no-store' }),
         ]);
         if (!mesaRes.ok) throw new Error(`HTTP ${mesaRes.status}`);
         const mesaJson = (await mesaRes.json()) as { rows?: unknown[]; error?: string };
@@ -307,6 +313,17 @@ export default function PayrollDispatch() {
           /* ignore — budget section silently omitted, matches UrgentPaymentsQueue */
         }
         if (!cancelled) setUrgentCount(mesaCount + budgetCount);
+
+        // This week's already-dispatched urgents — best-effort, same contract:
+        // on failure the count stays unknown and the card stays visible.
+        try {
+          const dispatchedJson = (await dispatchedRes.json()) as { rows?: unknown[]; error?: string };
+          if (dispatchedRes.ok && !dispatchedJson.error && !cancelled) {
+            setUrgentDispatchedCount(dispatchedJson.rows?.length ?? 0);
+          }
+        } catch {
+          /* leave dispatched count unknown */
+        }
       } catch {
         /* leave count unknown so the card stays visible */
       }
@@ -316,16 +333,26 @@ export default function PayrollDispatch() {
     };
   }, []);
 
-  // Whether to show the Urgent card at all. Shown while the count is still
-  // unknown (initial load) to avoid a flash, and whenever there's ≥1 pending.
-  const showUrgentCard = urgentCount == null || urgentCount > 0;
+  // Whether to show the Urgent card at all. Shown while either count is still
+  // unknown (initial load) to avoid a flash, whenever there's ≥1 pending, AND
+  // whenever this week already saw urgent dispatches — paying the last pending
+  // item must not make the bucket disappear; it persists for the week (with its
+  // Paid / Not paid views) like every other bucket, just reading 0 pending.
+  const showUrgentCard =
+    urgentCount == null ||
+    urgentCount > 0 ||
+    urgentDispatchedCount == null ||
+    urgentDispatchedCount > 0;
 
-  // If the count drops to zero while the Urgent tab is open (e.g. the clerk just
-  // paid the last one), bounce back to "All pending" so we don't strand them on
-  // a now-hidden tab.
+  // Only bounce off the Urgent tab when the bucket is truly empty for the week
+  // (no pending AND nothing dispatched) — i.e. when the card itself is about to
+  // hide, so we don't strand the clerk on a hidden tab. A freshly paid queue
+  // keeps the tab open on its dispatch-log views.
   useEffect(() => {
-    if (activeTab === 'urgent' && urgentCount === 0) setActiveTab('all');
-  }, [activeTab, urgentCount]);
+    if (activeTab === 'urgent' && urgentCount === 0 && urgentDispatchedCount === 0) {
+      setActiveTab('all');
+    }
+  }, [activeTab, urgentCount, urgentDispatchedCount]);
 
   // Non-PHP people (US Managers in USD, Colombian staff in COP, etc.) are carved
   // OUT of the PHP processor tabs and paid separately in their own currency tab
@@ -733,7 +760,14 @@ export default function PayrollDispatch() {
     if (activeTab === 'reports') return <DispatchReports />;
     if (activeTab === 'notifications') return <NotificationsPanel viewerEmail={session?.user?.email} accent="zinc" view="accounting" />;
     if (activeTab === 'orphanage') return <OrphanageQueue />;
-    if (activeTab === 'urgent') return <UrgentPaymentsQueue onCountChange={setUrgentCount} />;
+    if (activeTab === 'urgent') {
+      return (
+        <UrgentPaymentsQueue
+          onCountChange={setUrgentCount}
+          onDispatchedCountChange={setUrgentDispatchedCount}
+        />
+      );
+    }
     if (error) return <ErrorState message={error} />;
     if (loading || !hydrated) return <DispatchLoader />;
     if (!cycleReady) return <NoCycleState />;
