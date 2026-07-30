@@ -140,11 +140,12 @@ export default function CarlaSongToast() {
           </button>
         </div>
 
-        {/* 30-second progress line along the bottom edge of the pill. */}
+        {/* 30-second progress line along the bottom edge of the pill.
+            scaleX (not width) so the 4×/sec updates stay compositor-only. */}
         <div className="absolute inset-x-0 bottom-0 h-[3px] bg-zinc-200/50 dark:bg-zinc-700/50" aria-hidden>
           <div
-            className="h-full bg-gradient-to-r from-orange-400 to-orange-500 transition-[width] duration-300 ease-linear"
-            style={{ width: `${progressPct}%` }}
+            className="h-full w-full origin-left bg-gradient-to-r from-orange-400 to-orange-500 transition-transform duration-300 ease-linear"
+            style={{ transform: `scaleX(${progressPct / 100})` }}
           />
         </div>
       </div>
@@ -156,11 +157,15 @@ export default function CarlaSongToast() {
           gap: 2px;
           height: 10px;
         }
+        /* Meter bars keep a fixed height and oscillate via scaleY from the
+           baseline — compositor-only, no layout work per frame. */
         .carla-eq span {
           width: 2.5px;
-          height: 3px;
+          height: 10px;
           border-radius: 1px;
           background: linear-gradient(180deg, #fb923c, #f97316);
+          transform: scaleY(0.3);
+          transform-origin: bottom;
         }
         .carla-eq[data-paused='true'] span {
           opacity: 0.35;
@@ -170,7 +175,7 @@ export default function CarlaSongToast() {
             animation: carla-toast-in 0.42s cubic-bezier(0.22, 1, 0.36, 1);
           }
           .carla-eq[data-paused='false'] span {
-            animation: carla-eq-bounce 0.9s ease-in-out infinite;
+            animation: carla-eq-play 0.9s ease-in-out infinite;
           }
           .carla-eq span:nth-child(2) {
             animation-delay: 0.18s;
@@ -189,13 +194,13 @@ export default function CarlaSongToast() {
             transform: translateY(0);
           }
         }
-        @keyframes carla-eq-bounce {
+        @keyframes carla-eq-play {
           0%,
           100% {
-            height: 3px;
+            transform: scaleY(0.3);
           }
           50% {
-            height: 10px;
+            transform: scaleY(1);
           }
         }
       `}</style>
