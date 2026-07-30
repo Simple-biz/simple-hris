@@ -128,15 +128,28 @@ if (WEEK) {
       const d = String(h.effective_from).slice(0, 10);
       return d > WEEK && d <= weekEnd;
     });
+    // Individual-catalog skip re-checked by EMAIL (the name ilike above misses
+    // comma-first master names like `Matias, Uriel`), across every alias we know.
+    const aliasList = [...new Set([hubEmail, ...emails])].join(",");
+    const { data: catByEmail } = await sb
+      .from("payment_catalog_pay_structures")
+      .select("employee_email, regular_rate, ot_rate, currency")
+      .eq("scope", "employee")
+      .in("employee_email", aliasList.split(","));
     console.log(`\n── verdict for Hubstaff email ${hubEmail}:`);
     console.log(`  history rows on this exact email: ${hist?.length ?? 0}`);
     console.log(`  history rows landing INSIDE ${WEEK}..${weekEnd} (after day 1): ${inWeek.length}`);
-    if (!hist?.length) {
+    console.log(`  employee-scope catalog structure on any alias: ${catByEmail?.length ? JSON.stringify(catByEmail) : "none"}`);
+    if (catByEmail?.length) {
+      console.log("  → INDIVIDUAL CATALOG RATE = the engine skips proration entirely (flat all period,");
+      console.log("    matching Payment Dispatch). No chip regardless of history. This is the gate that");
+      console.log("    blocks nearly everyone now that rates live in the Payment Catalog.");
+    } else if (!hist?.length) {
       console.log("  → NO history on the Hubstaff email = the engine can never prorate this person.");
     } else if (!inWeek.length) {
       console.log("  → history exists but no change lands inside the week = single-rate week, nothing to split.");
     } else {
-      console.log("  → a mid-week change EXISTS; if no chip shows, check the individual-catalog skip above or daily columns.");
+      console.log("  → a mid-week change EXISTS and no gate blocks it — the stub WILL show the Prorated treatment.");
     }
   }
 }
