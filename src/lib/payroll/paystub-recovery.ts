@@ -27,6 +27,7 @@
  * (`publishFinalPaySnapshot` / `saveAdditionsProgress`).
  */
 import { getAppSetting, getAppSettings } from "@/lib/supabase/app-settings";
+import type { ProrationBlockRaw } from "@/lib/payroll/paystub-view";
 
 /** One employee's exact figures from `payroll.wizard.final_pay.<sourceFile>`. */
 export interface WizardFinalPayEntry {
@@ -69,6 +70,12 @@ export interface WizardFinalPayEntry {
   weekendOtHours?: number | null;
   weekendRegularPay?: number | null;
   weekendOtPay?: number | null;
+  /** Mid-week rate-change proration block (added 2026-07-30), payload-shaped —
+   *  the per-rate segments the statement's "Prorated" chip + basis line render
+   *  from. Travels with the figures it explains: null = the row has no
+   *  mid-period change; undefined (older snapshots) = the merge keeps whatever
+   *  block the staged payload already carries. */
+  proration?: ProrationBlockRaw | null;
 }
 
 /** The discretionary overlay recovered for one employee + week. */

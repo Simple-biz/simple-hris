@@ -336,3 +336,167 @@ test('identical weekend fields alone do not force a refresh', () => {
   const r = mergeSnapshotIntoStaged(staged, snapValue(entry), SNAP_NEWER, CLAIM_225);
   assert.equal(r.refreshed, false);
 });
+
+// ── Mid-week proration block through the merge (2026-07-30) ─────────────────
+// Same contract as the weekend block: the snapshot's figures overwrite the
+// staged ones, so the proration block that explains them must travel in the
+// same write — fresh totals over a stale (or missing) basis would put a
+// "Prorated ₱175→₱225" explanation under money computed some other way.
+
+/** The approved mock staged: transfer eff. Jul 22, 16.25h@175 + 23.75h@225. */
+function stagedProrationBlock(): Record<string, unknown> {
+  return {
+    effective_date: '2026-07-22',
+    old_rates_php: { regular: 175, ot: 218.75 },
+    new_rates_php: { regular: 225, ot: 281.25 },
+    segments: {
+      regular: [
+        { rate_php: 175, hours: 16.25, pay_php: 2843.75 },
+        { rate_php: 225, hours: 23.75, pay_php: 5343.75 },
+      ],
+      ot: [{ rate_php: 281.25, hours: 2.5, pay_php: 703.13 }],
+      weekend_regular: [],
+      weekend_ot: [],
+    },
+  };
+}
+
+/** Fully itemized prorated staged row (an abbreviated pay_php would flag
+ *  `undefined` vs 0 as a change and mask the proration-specific behavior). */
+function proratedStagedRow(): StagedPaystubLike {
+  return {
+    recipient_email: 'nathanr@simple.biz',
+    payload: {
+      email: 'nathanr@simple.biz',
+      hours: { total: 42.5, regular: 40, ot: 2.5 },
+      rates_php: { regular: 225, ot: 281.25 },
+      pay_php: {
+        regular: 8187.5,
+        ot: 703.13,
+        initial: 8890.63,
+        bonuses_total: 0,
+        perfect_attendance_bonus: 0,
+        tech_bonus: 0,
+        other_bonuses: 0,
+        adjustment: 0,
+        mesa_deduction: 100,
+        mesa_disbursement: 0,
+        orphanage_pay: 0,
+        final: 8790.63,
+      },
+      proration: stagedProrationBlock(),
+      pay_period: { fx_rate: 56 },
+    },
+    pay_period: { fx_rate: 56 },
+    locked_at: LOCKED_AT,
+    excluded: false,
+  };
+}
+
+/** Snapshot overrides matching proratedStagedRow figure-for-figure. */
+function proratedSnapOverrides(): Record<string, unknown> {
+  return {
+    final: 8790.63,
+    regularPay: 8187.5,
+    otPay: 703.13,
+    regularHours: 40,
+    otHours: 2.5,
+    totalHours: 42.5,
+    initial: 8890.63,
+    mesaDeduction: 100,
+    regularRate: 225,
+    otRate: 281.25,
+  };
+}
+
+const proration = (p: unknown) =>
+  (p as Record<string, unknown>).proration as Record<string, unknown> | null;
+
+test('a snapshot carrying a proration block replaces the staged one', () => {
+  const staged = proratedStagedRow();
+  // Post-lock recompute moved an hour across the change (16.25→15.25 / 23.75→24.75).
+  const nextBlock = stagedProrationBlock();
+  (nextBlock.segments as Record<string, unknown>).regular = [
+    { rate_php: 175, hours: 15.25, pay_php: 2668.75 },
+    { rate_php: 225, hours: 24.75, pay_php: 5568.75 },
+  ];
+  const entry = snapEntry({
+    ...proratedSnapOverrides(),
+    regularPay: 8237.5,
+    initial: 8940.63,
+    final: 8840.63,
+    proration: nextBlock,
+  });
+  const r = mergeSnapshotIntoStaged(staged, snapValue(entry), SNAP_NEWER);
+  assert.equal(r.refreshed, true);
+  assert.deepEqual(proration(r.payload), nextBlock);
+});
+
+test('a proration-only change is a change (refresh fires)', () => {
+  const staged = proratedStagedRow();
+  const nextBlock = stagedProrationBlock();
+  nextBlock.effective_date = '2026-07-23'; // the transfer date was corrected
+  const entry = snapEntry({ ...proratedSnapOverrides(), proration: nextBlock });
+  const r = mergeSnapshotIntoStaged(staged, snapValue(entry), SNAP_NEWER);
+  assert.equal(r.refreshed, true);
+  assert.equal(proration(r.payload)?.effective_date, '2026-07-23');
+});
+
+test('an OLD-shape snapshot (no proration field) leaves the staged block untouched', () => {
+  const staged = proratedStagedRow();
+  const entry = snapEntry({
+    ...proratedSnapOverrides(),
+    regularPay: 8300, // changed figure so the merge fires
+    initial: 9003.13,
+    final: 8903.13,
+  }); // note: NO proration key at all
+  const r = mergeSnapshotIntoStaged(staged, snapValue(entry), SNAP_NEWER);
+  assert.equal(r.refreshed, true);
+  assert.deepEqual(proration(r.payload), stagedProrationBlock());
+});
+
+test('proration: null clears a stale staged block (the change no longer exists)', () => {
+  const staged = proratedStagedRow();
+  const entry = snapEntry({ ...proratedSnapOverrides(), proration: null });
+  const r = mergeSnapshotIntoStaged(staged, snapValue(entry), SNAP_NEWER);
+  assert.equal(r.refreshed, true);
+  assert.equal(proration(r.payload), null);
+});
+
+test('an identical proration block alone does not force a refresh', () => {
+  const staged = proratedStagedRow();
+  // jsonb round-trips reorder object keys — the comparison must not care.
+  const scrambled = {
+    segments: {
+      weekend_ot: [],
+      ot: [{ pay_php: 703.13, hours: 2.5, rate_php: 281.25 }],
+      weekend_regular: [],
+      regular: [
+        { pay_php: 2843.75, rate_php: 175, hours: 16.25 },
+        { hours: 23.75, rate_php: 225, pay_php: 5343.75 },
+      ],
+    },
+    new_rates_php: { ot: 281.25, regular: 225 },
+    old_rates_php: { ot: 218.75, regular: 175 },
+    effective_date: '2026-07-22',
+  };
+  const entry = snapEntry({ ...proratedSnapOverrides(), proration: scrambled });
+  const r = mergeSnapshotIntoStaged(staged, snapValue(entry), SNAP_NEWER);
+  assert.equal(r.refreshed, false);
+});
+
+test('an old-shape snapshot over a payload WITHOUT a proration block never invents the key', () => {
+  const staged = stagedRow(); // no proration key at all
+  const entry = snapEntry({
+    regularRate: 225,
+    otRate: 337.5,
+    regularPay: 9000,
+    otPay: 1398.38,
+    final: 10398.38,
+    initial: 10398.38,
+    mesaDeduction: 0,
+  });
+  const r = mergeSnapshotIntoStaged(staged, snapValue(entry), SNAP_NEWER, CLAIM_225);
+  assert.equal(r.refreshed, true);
+  assert.equal('proration' in (r.payload as Record<string, unknown>), false);
+});

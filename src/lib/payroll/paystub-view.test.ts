@@ -4,6 +4,8 @@ import {
   mapPayloadToPayStub,
   deriveWeekendFields,
   parseWeekendBlock,
+  parseProrationBlock,
+  deriveProrationFields,
   WEEKEND_PREMIUM_PHP_PER_HOUR,
 } from './paystub-view';
 
@@ -243,4 +245,262 @@ test('deriveWeekendFields: a custom premium moves the weekend rates', () => {
   assert.equal(d.weekendRate, 220);
   assert.equal(d.weekendOtRate, 320);
   assert.equal(d.weekdayPay, 7600);
+});
+
+// ── Mid-week transfer proration (2026-07-30) ─────────────────────────────────
+// A transfer effective mid-week pays a line at two rates. The payload's
+// `proration` block carries the per-rate segments the wizard's engine computed;
+// the view exposes, PER LINE, the previous→current rate pair + the hour basis —
+// only for lines whose money genuinely spanned two rates (single-rate lines
+// keep the classic render, no chip). No extra earnings rows, ever.
+
+/** The approved mock: Juan Dela Cruz, Sales Assistant → PM Team eff. Wed Jul 22.
+ *  Regular 40h = 16.25h @175 + 23.75h @225 = ₱8,187.50 · OT 2.5h all @281.25. */
+function proratedPayload(): Record<string, unknown> {
+  return {
+    name: 'Juan Dela Cruz',
+    email: 'juan@simple.biz',
+    department_name: 'PM Team',
+    hours: { total: 42.5, regular: 40, ot: 2.5 },
+    weekend: null,
+    rates_php: { regular: 225, ot: 281.25 },
+    pay_php: {
+      regular: 8187.5,
+      ot: 703.13,
+      initial: 8890.63,
+      bonuses_total: 0,
+      perfect_attendance_bonus: 0,
+      tech_bonus: 0,
+      other_bonuses: 0,
+      adjustment: 0,
+      mesa_deduction: 100,
+      mesa_disbursement: 0,
+      orphanage_pay: 0,
+      final: 8790.63,
+    },
+    proration: {
+      effective_date: '2026-07-22',
+      old_rates_php: { regular: 175, ot: 218.75 },
+      new_rates_php: { regular: 225, ot: 281.25 },
+      segments: {
+        regular: [
+          { rate_php: 175, hours: 16.25, pay_php: 2843.75 },
+          { rate_php: 225, hours: 23.75, pay_php: 5343.75 },
+        ],
+        ot: [{ rate_php: 281.25, hours: 2.5, pay_php: 703.13 }],
+        weekend_regular: [],
+        weekend_ot: [],
+      },
+    },
+    pay_period: {
+      week: { start: '2026-07-19', end: '2026-07-25' },
+      fx_rate: 58,
+    },
+  };
+}
+
+test('prorated payload: the two-rate line carries previous→current + hour basis', () => {
+  const v = mapPayloadToPayStub(proratedPayload());
+  assert.ok(v.proration, 'proration view must exist');
+  assert.equal(v.proration.effectiveDate, '2026-07-22');
+  assert.equal(v.proration.effectiveHuman, 'Jul 22');
+  assert.deepEqual(v.proration.regular, {
+    previousRate: 175,
+    currentRate: 225,
+    segments: [
+      { ratePhp: 175, hours: 16.25 },
+      { ratePhp: 225, hours: 23.75 },
+    ],
+  });
+});
+
+test('prorated payload: a line paid at ONE rate renders classic (no chip)', () => {
+  const v = mapPayloadToPayStub(proratedPayload());
+  assert.equal(v.proration?.ot, null);
+  assert.equal(v.proration?.weekendRegular, null);
+  assert.equal(v.proration?.weekendOt, null);
+});
+
+test('payload without a proration block (or null) has no proration view', () => {
+  const p = proratedPayload();
+  delete p.proration;
+  assert.equal(mapPayloadToPayStub(p).proration, null);
+  const p2 = proratedPayload();
+  p2.proration = null;
+  assert.equal(mapPayloadToPayStub(p2).proration, null);
+});
+
+test('a block whose lines are ALL single-rate yields no proration view at all', () => {
+  const p = proratedPayload();
+  (p.proration as Record<string, unknown>).segments = {
+    regular: [{ rate_php: 225, hours: 40, pay_php: 9000 }],
+    ot: [{ rate_php: 281.25, hours: 2.5, pay_php: 703.13 }],
+    weekend_regular: [],
+    weekend_ot: [],
+  };
+  assert.equal(mapPayloadToPayStub(p).proration, null);
+});
+
+test('classic fields are byte-identical with and without the proration block', () => {
+  const withBlock = mapPayloadToPayStub(proratedPayload());
+  const p = proratedPayload();
+  delete p.proration;
+  const withoutBlock = mapPayloadToPayStub(p);
+  for (const k of [
+    'name', 'department', 'weekStart', 'weekEnd', 'weekHuman', 'salaryDate',
+    'mfHours', 'mfOtHours', 'mfRate', 'otRate', 'mfPay', 'otPay',
+    'hasWeekend', 'weekdayHours', 'weekdayOtHours', 'weekdayPay', 'weekdayOtPay',
+    'techBonus', 'attendanceBonus', 'performanceBonus', 'adjustment',
+    'orphanagePay', 'mesaDisbursement', 'mesaDeduction',
+    'totalPayPhp', 'fxRate', 'totalPayUsd',
+  ] as const) {
+    assert.deepEqual(withBlock[k], withoutBlock[k], `field ${k} drifted`);
+  }
+});
+
+test('jsonb string round-trip: proration numbers coerce like every other field', () => {
+  const p = proratedPayload();
+  (p.proration as Record<string, unknown>).segments = {
+    regular: [
+      { rate_php: '175', hours: '16.25', pay_php: '2843.75' },
+      { rate_php: '225', hours: '23.75', pay_php: '5343.75' },
+    ],
+    ot: [],
+    weekend_regular: [],
+    weekend_ot: [],
+  };
+  const v = mapPayloadToPayStub(p);
+  assert.deepEqual(v.proration?.regular?.segments, [
+    { ratePhp: 175, hours: 16.25 },
+    { ratePhp: 225, hours: 23.75 },
+  ]);
+});
+
+// HSL: the statement's Regular/Overtime rows show the WEEKDAY portion, so the
+// basis must be weekday-scoped too — full segments minus the weekend carve-out,
+// per rate. Weekend lines get their own basis at (rate + premium).
+
+test('HSL prorated week: regular basis is weekday-scoped (full minus weekend, per rate)', () => {
+  const p = proratedPayload();
+  p.weekend = {
+    hours: { regular: 4, ot: 0 },
+    pay_php: { regular: 960, ot: 0 },
+    premium_php_per_hour: 15,
+  };
+  (p.proration as Record<string, unknown>).segments = {
+    // Mon 8h @175 · Wed 8h @225 · Sat 4h @225(+15): full 225-segment holds 12h.
+    regular: [
+      { rate_php: 175, hours: 8, pay_php: 1400 },
+      { rate_php: 225, hours: 12, pay_php: 2760 },
+    ],
+    ot: [],
+    weekend_regular: [{ rate_php: 225, hours: 4, pay_php: 960 }],
+    weekend_ot: [],
+  };
+  const v = mapPayloadToPayStub(p);
+  assert.deepEqual(v.proration?.regular, {
+    previousRate: 175,
+    currentRate: 225,
+    segments: [
+      { ratePhp: 175, hours: 8 },
+      { ratePhp: 225, hours: 8 },
+    ],
+  });
+  // Weekend line paid at one rate → classic weekend row, no chip.
+  assert.equal(v.proration?.weekendRegular, null);
+});
+
+test('HSL weekday remainder at a single rate renders that line classic', () => {
+  const p = proratedPayload();
+  p.weekend = {
+    hours: { regular: 4, ot: 0 },
+    pay_php: { regular: 960, ot: 0 },
+    premium_php_per_hour: 15,
+  };
+  (p.proration as Record<string, unknown>).segments = {
+    // The entire new-rate portion sat on the weekend → weekday is old-rate only.
+    regular: [
+      { rate_php: 175, hours: 8, pay_php: 1400 },
+      { rate_php: 225, hours: 4, pay_php: 960 },
+    ],
+    ot: [],
+    weekend_regular: [{ rate_php: 225, hours: 4, pay_php: 960 }],
+    weekend_ot: [],
+  };
+  // Weekday remainder is old-rate only and the weekend line is new-rate only —
+  // every DISPLAYED row reconciles at a single rate, so nothing chips: the
+  // all-null lines collapse the whole view to null (classic statement).
+  assert.equal(mapPayloadToPayStub(p).proration, null);
+});
+
+test('HSL weekend line split across the change shows premium-inclusive rates', () => {
+  const p = proratedPayload();
+  p.weekend = {
+    hours: { regular: 8, ot: 0 },
+    pay_php: { regular: 1720, ot: 0 },
+    premium_php_per_hour: 15,
+  };
+  (p.proration as Record<string, unknown>).segments = {
+    regular: [
+      { rate_php: 175, hours: 4, pay_php: 760 },
+      { rate_php: 225, hours: 4, pay_php: 960 },
+    ],
+    ot: [],
+    weekend_regular: [
+      { rate_php: 175, hours: 4, pay_php: 760 },
+      { rate_php: 225, hours: 4, pay_php: 960 },
+    ],
+    weekend_ot: [],
+  };
+  const v = mapPayloadToPayStub(p);
+  // Sat+Sun spanned the change: weekend basis at (rate + ₱15) each side.
+  assert.deepEqual(v.proration?.weekendRegular, {
+    previousRate: 190,
+    currentRate: 240,
+    segments: [
+      { ratePhp: 190, hours: 4 },
+      { ratePhp: 240, hours: 4 },
+    ],
+  });
+  // The weekday remainder is empty on both rates → classic regular row.
+  assert.equal(v.proration?.regular, null);
+});
+
+// ── The shared proration helpers directly ───────────────────────────────────
+
+test('parseProrationBlock: absent / null / non-object all mean "no block"', () => {
+  assert.equal(parseProrationBlock({}), null);
+  assert.equal(parseProrationBlock({ proration: null }), null);
+  assert.equal(parseProrationBlock({ proration: 'yes' }), null);
+  assert.equal(parseProrationBlock(null), null);
+  assert.equal(parseProrationBlock(undefined), null);
+});
+
+test('parseProrationBlock: normalizes a full block, dropping malformed segments', () => {
+  const b = parseProrationBlock({
+    proration: {
+      effective_date: '2026-07-22',
+      old_rates_php: { regular: 175, ot: 218.75 },
+      new_rates_php: { regular: 225, ot: 281.25 },
+      segments: {
+        regular: [
+          { rate_php: 175, hours: 16.25, pay_php: 2843.75 },
+          { rate_php: 'oops', hours: 1, pay_php: 1 }, // malformed → dropped
+        ],
+        ot: 'nope', // malformed list → empty
+        weekend_regular: [],
+        weekend_ot: [],
+      },
+    },
+  });
+  assert.ok(b);
+  assert.equal(b.effectiveDate, '2026-07-22');
+  assert.deepEqual(b.oldRates, { regular: 175, ot: 218.75 });
+  assert.deepEqual(b.newRates, { regular: 225, ot: 281.25 });
+  assert.deepEqual(b.segments.regular, [{ ratePhp: 175, hours: 16.25, payPhp: 2843.75 }]);
+  assert.deepEqual(b.segments.ot, []);
+});
+
+test('deriveProrationFields: null block → null view', () => {
+  assert.equal(deriveProrationFields(null, null), null);
 });

@@ -13,7 +13,14 @@ import {
   getCatalogRateClaimsByEmail,
   catalogClaimForEmails,
 } from "@/lib/payroll/paystub-fresh";
-import { mapPayloadToPayStub, formatWeekHuman, type PayStubView } from "@/lib/payroll/paystub-view";
+import {
+  mapPayloadToPayStub,
+  formatWeekHuman,
+  parseProrationBlock,
+  deriveProrationFields,
+  type PayStubView,
+  type ProrationBlockRaw,
+} from "@/lib/payroll/paystub-view";
 import {
   computeCurrentPay,
   type CurrentPayEntry,
@@ -150,6 +157,10 @@ function buildView(p: {
     regularPay: number;
     otPay: number;
   } | null;
+  /** Mid-week proration block (snapshots since 2026-07-30) — drives the
+   *  statement's "Prorated" chip + `₱old → ₱new` + hour basis on the affected
+   *  lines. Omit/null → classic single-rate lines. */
+  proration?: ProrationBlockRaw | null;
   pab: number;
   tech: number;
   performanceBonus: number;
@@ -217,6 +228,20 @@ function buildView(p: {
     totalPayPhp: p.totalPayPhp,
     fxRate: p.fxRate,
     totalPayUsd: p.fxRate > 0 ? round2(p.totalPayPhp / p.fxRate) : 0,
+    // Same derivation the payload path uses (parse → per-line views), so the
+    // fast-path stub shows the identical chip/basis a staged payload would.
+    proration: deriveProrationFields(
+      parseProrationBlock({ proration: p.proration ?? null }),
+      wknd
+        ? {
+            hours: wknd.regularHours,
+            otHours: wknd.otHours,
+            pay: wknd.regularPay,
+            otPay: wknd.otPay,
+            premiumPerHour: 15,
+          }
+        : null,
+    ),
   };
 }
 
@@ -285,6 +310,8 @@ async function reconstructStubForWeek(params: {
               otPay: round2(fp.weekendOtPay ?? 0),
             }
           : null,
+      // Mid-week proration — snapshots since 2026-07-30; older ones render classic.
+      proration: fp.proration ?? null,
       pab: round2(fp.perfectAttendanceBonus as number),
       tech: round2(fp.techBonus as number),
       performanceBonus: round2(fp.otherBonuses as number),

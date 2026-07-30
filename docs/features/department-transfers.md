@@ -228,6 +228,13 @@ resolving each day's rate through the **client-safe** `rate-history-resolve.ts`
 the cache, so it's byte-identical except on a genuine change; individual-catalog (flat-rate)
 employees are skipped, matching Dispatch.
 
+**Since 2026-07-30 the paystub itself explains the split** (engine extracted to
+`src/lib/payroll/prorate-mid-period.ts`, which now also reports per-rate segments): the affected
+earnings line keeps its exact row and gains an amber **"Prorated" chip**, a **`₱old → ₱new`**
+Hours × Rate cell, and a per-rate hour basis (`16.25h @ ₱175.00 · 23.75h @ ₱225.00 — effective
+Jul 22`) — on the shared `PayStubStatement`, the wizard's Paystubs preview, and the n8n email
+alike. See `docs/features/paystub-dispatch.md#mid-week-proration--2026-07-30`.
+
 ---
 
 ## 5 · Data model & registration

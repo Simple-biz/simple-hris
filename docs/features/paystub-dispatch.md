@@ -288,6 +288,22 @@ Built in `dispatchData` (a `useMemo` in `PayrollWizard.tsx`) and posted as:
         "pay_php": { "regular": 530, "ot": 0 },
         "premium_php_per_hour": 15
       },
+      // Mid-week rate change only (a transfer / dated raise landing INSIDE the pay
+      // week) — see "Mid-week proration". Null for single-rate weeks.
+      "proration": {
+        "effective_date": "2026-04-08",
+        "old_rates_php": { "regular": 175, "ot": 262.5 },
+        "new_rates_php": { "regular": 250, "ot": 375 },
+        "segments": {
+          "regular": [
+            { "rate_php": 175, "hours": 16, "pay_php": 2800 },
+            { "rate_php": 250, "hours": 24, "pay_php": 6000 }
+          ],
+          "ot": [{ "rate_php": 375, "hours": 2.5, "pay_php": 937.5 }],
+          "weekend_regular": [],
+          "weekend_ot": []
+        }
+      },
       "rates_php": { "regular": 250, "ot": 375 },
       "pay_php": {
         "regular": 10000,
@@ -372,6 +388,42 @@ Regular/Overtime rows now read the `weekday_*` vars and embed
 instance must be re-imported from this reference (or those two node edits repeated by hand)
 before HSL weekend lines appear in emails** — until then emails keep rendering the classic two
 lines from the same payload, which still reconciles.
+
+## Mid-week proration — 2026-07-30
+
+A department transfer (or any dated rate change) landing INSIDE the pay week pays a line at two
+rates. The wizard's Step-2 calc already prorated the money per day (`proratePayForMidPeriodChange`,
+extracted to `src/lib/payroll/prorate-mid-period.ts` and unit-tested); paystubs now EXPLAIN it. The
+payload's `proration` block carries the effective date, both rate pairs, and per-rate **segments**
+(hours + money each distinct rate actually paid — full-week `regular`/`ot`, plus the Sat+Sun
+carve-out per rate for HSL). Affected lines keep their exact row — **never an extra row**:
+
+- an amber **"Prorated" chip** joins the line label (same amber as the wizard's Step-2 badge);
+- the Hours × Rate cell shows **`₱old → ₱new`** (previous rate muted, current emphasized — no
+  strikethrough, both rates genuinely paid part of the week);
+- a per-rate basis line follows in the same cell — `16.25h @ ₱175.00 · 23.75h @ ₱225.00 —
+  effective Jul 22` — so the amount stays explicable arithmetic.
+
+A line paid at ONE rate renders classic (e.g. OT that accrued entirely past the change date), as
+does every payload with `proration: null`/absent — statements staged before the block existed are
+byte-identical. Derivation lives in `paystub-view.ts` (`parseProrationBlock` →
+`deriveProrationFields`): with an HSL weekend block the Regular/Overtime basis is weekday-scoped
+(full segments minus the weekend carve-out, per rate) and the weekend lines' basis rates are
+premium-inclusive, mirroring the row structure exactly.
+
+Where it shows (all via `PayStubView.proration`): the shared **`PayStubStatement`** (chip + detail
+components exported for reuse), the **wizard Paystubs preview** (same components, same derivation),
+and the **employee route's snapshot fast path** (`buildView`). Freshness plumbing mirrors the
+weekend block: `publishFinalPaySnapshot` writes `proration` per employee (null = no change),
+`mergeSnapshotIntoStaged` moves the block WITH the figures it explains (old-shape snapshot → staged
+block kept; `null` → stale block cleared; jsonb key reordering ignored by the field-wise compare).
+
+**n8n**: `pay_vars` gained `prorated_chip_regular_html` / `prorated_chip_ot_html` (the chip, empty
+for single-rate weeks) and `regular_detail_html` / `ot_detail_html` (the complete detail cell —
+classic string or dual-rate + basis); `weekend_rows_html` is now proration-aware (chip + basis at
+premium-inclusive rates). The Gmail template's Regular/Overtime label + detail cells read these
+vars. **Re-import the live n8n instance from the reference** (same pending re-import as the weekend
+feature) — until then emails render the classic single-rate cells from the same payload.
 
 ## Gating summary (dispatch-time)
 

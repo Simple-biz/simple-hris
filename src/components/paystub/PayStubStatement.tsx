@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import type { PayStubView } from '@/lib/payroll/paystub-view';
+import type { PayStubView, ProratedLineView } from '@/lib/payroll/paystub-view';
 
 /**
  * The pay statement itself — a faithful React port of the emailed paystub
@@ -105,14 +105,73 @@ function RateDetail({ hours, rate }: { hours: number; rate: number }) {
   );
 }
 
+/**
+ * Amber "Prorated" tag beside a line label whose money genuinely spanned two
+ * rates (a mid-week transfer / dated rate change). Same amber family as the
+ * wizard's Step-2 mid-week badge. Exported so the wizard's Paystubs preview
+ * renders the identical element — preview == dispatch == email.
+ */
+export function ProratedChip() {
+  return (
+    <span className="ml-[7px] inline-flex items-center whitespace-nowrap rounded-full bg-[#fffbeb] px-[7px] pb-[2px] pt-px align-[2px] text-[9.5px] font-extrabold uppercase leading-[13px] tracking-[0.07em] text-[#b45309] ring-1 ring-inset ring-[#f2ce74]">
+      Prorated
+    </span>
+  );
+}
+
+/**
+ * Detail cell for a prorated line: `40.00h × ₱175.00 → ₱225.00` (previous rate
+ * muted, current rate carrying the weight — no strikethrough, both rates
+ * genuinely paid part of the week), then the per-rate basis on its own line so
+ * the amount stays explicable arithmetic: `16.25h @ ₱175.00 · 23.75h @ ₱225.00
+ * — effective Jul 22`. Replaces `RateDetail` on that line only; single-rate
+ * lines keep the classic render. Exported for the wizard preview.
+ */
+export function ProratedRateDetail({
+  hours,
+  line,
+  effectiveHuman,
+}: {
+  hours: number;
+  line: ProratedLineView;
+  effectiveHuman: string;
+}) {
+  return (
+    <>
+      <span className="whitespace-nowrap">{hrs(hours)}h</span>
+      {' × '}
+      <span className="whitespace-nowrap">{php(line.previousRate)}</span>
+      <span aria-hidden="true" className="px-px font-semibold text-[#d97706]">
+        →
+      </span>
+      <span className="sr-only"> changed to </span>
+      <span className="whitespace-nowrap font-semibold text-[#26384d]">{php(line.currentRate)}</span>
+      <span className="mt-[3px] block text-[11px] leading-[14px] text-[#7c8798]">
+        {line.segments.map((s, i) => (
+          <React.Fragment key={`${s.ratePhp}-${i}`}>
+            {i > 0 && ' · '}
+            <span className="whitespace-nowrap">
+              <span className="font-semibold text-[#556377]">{hrs(s.hours)}h</span> @ {php(s.ratePhp)}
+            </span>
+          </React.Fragment>
+        ))}
+        {effectiveHuman ? ` — effective ${effectiveHuman}` : ''}
+      </span>
+    </>
+  );
+}
+
 function EarningRow({
   label,
+  badge,
   detail,
   amount,
   amountClass,
   last,
 }: {
   label: string;
+  /** Inline tag after the label (the "Prorated" chip) — never a new row. */
+  badge?: React.ReactNode;
   detail: React.ReactNode;
   amount: string;
   amountClass?: string;
@@ -126,6 +185,7 @@ function EarningRow({
         className={`break-words py-1.5 pr-2 text-left align-top text-[13px] font-normal leading-[15px] text-[#26384d] ${border}`}
       >
         {label}
+        {badge}
         {/* The detail column is hidden below sm — carry the detail under the
             label so no line ever loses the basis for its amount. */}
         <div className="mt-[3px] break-words text-[11px] font-normal leading-[14px] text-[#556377] sm:hidden">
@@ -239,27 +299,76 @@ export function PayStubStatement({
                 lines exist. The four lines sum exactly to the old two.
                 Non-HSL (and pre-split) stubs: weekday === full totals and the
                 weekend rows don't render, so nothing changes. */}
+            {/* A mid-week transfer / dated rate change prorates a line across two
+                rates. Affected lines keep their EXACT row — the "Prorated" chip
+                joins the label and the detail cell shows `₱old → ₱new` plus the
+                per-rate hour basis. Lines paid at one rate (view.proration null
+                or that line's entry null) render classic, byte-identical. */}
             <EarningRow
               label="Regular Hours"
-              detail={<RateDetail hours={view.weekdayHours ?? view.mfHours} rate={view.mfRate} />}
+              badge={view.proration?.regular ? <ProratedChip /> : null}
+              detail={
+                view.proration?.regular ? (
+                  <ProratedRateDetail
+                    hours={view.weekdayHours ?? view.mfHours}
+                    line={view.proration.regular}
+                    effectiveHuman={view.proration.effectiveHuman}
+                  />
+                ) : (
+                  <RateDetail hours={view.weekdayHours ?? view.mfHours} rate={view.mfRate} />
+                )
+              }
               amount={php(view.weekdayPay ?? view.mfPay)}
             />
             <EarningRow
               label="Overtime"
-              detail={<RateDetail hours={view.weekdayOtHours ?? view.mfOtHours} rate={view.otRate} />}
+              badge={view.proration?.ot ? <ProratedChip /> : null}
+              detail={
+                view.proration?.ot ? (
+                  <ProratedRateDetail
+                    hours={view.weekdayOtHours ?? view.mfOtHours}
+                    line={view.proration.ot}
+                    effectiveHuman={view.proration.effectiveHuman}
+                  />
+                ) : (
+                  <RateDetail hours={view.weekdayOtHours ?? view.mfOtHours} rate={view.otRate} />
+                )
+              }
               amount={php(view.weekdayOtPay ?? view.otPay)}
             />
             {view.hasWeekend && (
               <EarningRow
                 label="Weekend Hours"
-                detail={<RateDetail hours={view.weekendHours} rate={view.weekendRate} />}
+                badge={view.proration?.weekendRegular ? <ProratedChip /> : null}
+                detail={
+                  view.proration?.weekendRegular ? (
+                    <ProratedRateDetail
+                      hours={view.weekendHours}
+                      line={view.proration.weekendRegular}
+                      effectiveHuman={view.proration.effectiveHuman}
+                    />
+                  ) : (
+                    <RateDetail hours={view.weekendHours} rate={view.weekendRate} />
+                  )
+                }
                 amount={php(view.weekendPay)}
               />
             )}
             {view.hasWeekend && (
               <EarningRow
                 label="Weekend Overtime"
-                detail={<RateDetail hours={view.weekendOtHours} rate={view.weekendOtRate} />}
+                badge={view.proration?.weekendOt ? <ProratedChip /> : null}
+                detail={
+                  view.proration?.weekendOt ? (
+                    <ProratedRateDetail
+                      hours={view.weekendOtHours}
+                      line={view.proration.weekendOt}
+                      effectiveHuman={view.proration.effectiveHuman}
+                    />
+                  ) : (
+                    <RateDetail hours={view.weekendOtHours} rate={view.weekendOtRate} />
+                  )
+                }
                 amount={php(view.weekendOtPay)}
               />
             )}

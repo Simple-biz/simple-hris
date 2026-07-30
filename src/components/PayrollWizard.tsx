@@ -112,10 +112,20 @@ import {
   resolveDeptCatalogRate,
 } from '@/lib/payroll/resolve-rate';
 import {
-  resolveRateAsOfDate,
   buildRateHistoryByEmail,
   type RateHistoryByEmail,
 } from '@/lib/payroll/rate-history-resolve';
+import {
+  proratePayForMidPeriodChange,
+  type MidPeriodProrationResult,
+} from '@/lib/payroll/prorate-mid-period';
+import {
+  parseProrationBlock,
+  parseWeekendBlock,
+  deriveProrationFields,
+  type ProrationBlockRaw,
+} from '@/lib/payroll/paystub-view';
+import { ProratedChip, ProratedRateDetail } from '@/components/paystub/PayStubStatement';
 import type { PayStructure } from '@/lib/payment-catalog/pay-structure';
 import { resolveSystemBonuses, isDeptEligible, systemBonusAmountForDept } from '@/lib/payment-catalog/system-bonus';
 import { normEmail } from '@/lib/email/norm-email';
@@ -527,6 +537,14 @@ type CalcRow = {
    */
   ratesPaid?: { regular: number[]; ot: number[] } | null;
   /**
+   * Per-rate itemization from the proration engine (hours + money each distinct
+   * rate paid, full-week + weekend carve-out) — the statement's "Prorated"
+   * chip + `₱old → ₱new` + hour-basis render from this. Only set alongside a
+   * genuine `rateChange`; the payload build turns it into the `proration`
+   * block. Null/undefined for single-rate weeks.
+   */
+  prorationSegments?: MidPeriodProrationResult['segments'] | null;
+  /**
    * Set when the rate that PAID this week differs from the sheet/catalog rate.
    * `regularRate`/`otRate` above always show the rate actually paid, so the stub's
    * arithmetic is correct either way — but a disagreement can still mean the
@@ -544,157 +562,9 @@ type CalcRow = {
   } | null;
 };
 
-const REG_WEEK_CAP_SEC = 40 * 3600;
-
-function fmtLocalIsoDate(d: Date): string {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-}
-
-/**
- * Per-day prorated pay across a MID-PERIOD rate change, mirroring the server
- * dispatch compute (`computeProratedRowPay` in current-pay.ts) EXACTLY: chronological
- * 40h/week regular cap, HSL weekend +15/h folded per day, raw per-day accumulation
- * rounded once at the end. Returns null when the resolved per-day (reg,ot) rate is
- * CONSTANT across the period — so the caller keeps its existing single-rate result
- * and unchanged employees stay byte-identical to today. Only a genuine mid-period
- * change (a transfer / dated rate change) produces a prorated override + segments.
- */
-function proratePayForMidPeriodChange(params: {
-  days: Array<{ date: Date; seconds: number }>;
-  isHsl: boolean;
-  history: RateHistoryByEmail | undefined;
-  histEmail: string | null;
-  fallbackReg: number | null;
-  fallbackOt: number | null;
-}): {
-  regularPay: number | null;
-  otPay: number | null;
-  change: {
-    oldRegular: number | null;
-    newRegular: number | null;
-    oldOt: number | null;
-    newOt: number | null;
-    effectiveDate: string;
-  } | null;
-  /**
-   * The distinct per-day rates this function actually PAID at, in first-use order
-   * (excluding the HSL weekend premium, which is a per-day addition, not a rate).
-   *
-   * Reported because the caller displays `regularRate`/`otRate` from the rates
-   * CACHE while taking its pay from here — from dated history. When the two
-   * disagree the statement advertises a rate it never paid, which is how a
-   * ₱2,309.62 shortfall shipped looking perfectly reconciled. Handing the real
-   * rates back lets `paystub-rate-consistency.ts` catch that exactly instead of
-   * inferring it from the arithmetic.
-   */
-  regularRatesUsed: number[];
-  otRatesUsed: number[];
-  /** HSL weekend (Sat+Sun) portion of the pay above, accumulated per day at the
-   *  exact same (rate + ₱15) each day paid at — so the paystub's weekend lines
-   *  stay true across a mid-week rate change. All zeros for non-HSL. */
-  weekend: { regularHours: number; otHours: number; regularPay: number; otPay: number };
-} | null {
-  const { days, isHsl, history, histEmail, fallbackReg, fallbackOt } = params;
-  const empHist = history && histEmail ? history.get(histEmail) : undefined;
-  if (!empHist || empHist.length === 0 || days.length === 0) return null;
-  const regularRatesUsed: number[] = [];
-  const otRatesUsed: number[] = [];
-  const noteRate = (into: number[], v: number | null) => {
-    if (v != null && Number.isFinite(v) && !into.includes(v)) into.push(v);
-  };
-
-  let usedRegSec = 0;
-  let regularPayPHP = 0;
-  let otPayPHP = 0;
-  let wkndRegSec = 0;
-  let wkndOtSec = 0;
-  let wkndRegPayPHP = 0;
-  let wkndOtPayPHP = 0;
-  let anyReg = false;
-  let anyOt = false;
-  let firstReg: number | null | undefined;
-  let firstOt: number | null | undefined;
-  let change: {
-    oldRegular: number | null;
-    newRegular: number | null;
-    oldOt: number | null;
-    newOt: number | null;
-    effectiveDate: string;
-  } | null = null;
-
-  for (const d of days) {
-    const resolved = resolveRateAsOfDate(empHist, d.date);
-    const reg = resolved?.regularRate ?? fallbackReg;
-    const ot = resolved?.otRate ?? fallbackOt;
-
-    if (firstReg === undefined) {
-      firstReg = reg;
-      firstOt = ot;
-    } else if (change === null && (reg !== firstReg || ot !== firstOt)) {
-      change = {
-        oldRegular: firstReg ?? null,
-        newRegular: reg,
-        oldOt: firstOt ?? null,
-        newOt: ot,
-        effectiveDate: fmtLocalIsoDate(d.date),
-      };
-    }
-
-    const remaining = Math.max(0, REG_WEEK_CAP_SEC - usedRegSec);
-    const dayRegSec = Math.min(d.seconds, remaining);
-    const dayOtSec = d.seconds - dayRegSec;
-    usedRegSec += dayRegSec;
-
-    const dow = d.date.getDay();
-    const isWeekendDay = isHsl && (dow === 0 || dow === 6);
-    const weekendBonus = isWeekendDay ? 15 : 0;
-    if (reg != null) {
-      const dayRegPay = (dayRegSec / 3600) * (reg + weekendBonus);
-      regularPayPHP += dayRegPay;
-      if (isWeekendDay) {
-        wkndRegSec += dayRegSec;
-        wkndRegPayPHP += dayRegPay;
-      }
-      anyReg = true;
-      // Only count a rate as "paid at" when it actually moved money on this day —
-      // a zero-second day would otherwise smuggle in a rate nobody was paid.
-      if (dayRegSec > 0) noteRate(regularRatesUsed, reg);
-    }
-    if (ot != null) {
-      const dayOtPay = (dayOtSec / 3600) * (ot + weekendBonus);
-      otPayPHP += dayOtPay;
-      if (isWeekendDay) {
-        wkndOtSec += dayOtSec;
-        wkndOtPayPHP += dayOtPay;
-      }
-      anyOt = true;
-      if (dayOtSec > 0) noteRate(otRatesUsed, ot);
-    }
-  }
-
-  // Constant rate across the week: keep the caller's single-rate result ONLY when
-  // that constant rate equals the fallback (the cache/catalog rate the caller
-  // already used) — that path is byte-identical (incl. HSL premium rounding). If
-  // the constant history rate DIFFERS from the cache (e.g. the cache lags a
-  // future-dated change that only landed in employee_rate_history), override with
-  // the history-resolved pay so the wizard matches Payment Dispatch, which always
-  // reads history. No mid-week badge then (the rate didn't change WITHIN the week).
-  if (!change && firstReg === fallbackReg && firstOt === fallbackOt) return null;
-
-  return {
-    regularPay: anyReg ? Math.round(regularPayPHP * 100) / 100 : null,
-    otPay: anyOt ? Math.round(otPayPHP * 100) / 100 : null,
-    change,
-    regularRatesUsed,
-    otRatesUsed,
-    weekend: {
-      regularHours: wkndRegSec / 3600,
-      otHours: wkndOtSec / 3600,
-      regularPay: Math.round(wkndRegPayPHP * 100) / 100,
-      otPay: Math.round(wkndOtPayPHP * 100) / 100,
-    },
-  };
-}
+// Per-day mid-period rate-change proration lives in
+// `@/lib/payroll/prorate-mid-period` (extracted 2026-07-30 so the paystub's
+// "Prorated" basis segments are unit-tested); imported above.
 
 /** A pasted Orphanage row resolved to an Additions-table employee + PHP amount. */
 type OrphanagePasteOk = {
@@ -753,6 +623,17 @@ type DispatchEmployee = {
     pay_php: { regular: number | null; ot: number | null };
     premium_php_per_hour: number;
   } | null;
+  /**
+   * Mid-week rate-change proration (a transfer / dated raise landing INSIDE the
+   * pay week): the effective date, both rate pairs, and the per-rate segments
+   * (hours + money each rate actually paid, full-week + weekend carve-out).
+   * Renderers (PayStubStatement, the wizard preview, the n8n email) use it to
+   * show the "Prorated" chip + `₱old → ₱new` + hour basis ON the existing
+   * earnings lines — never as extra rows. Null for single-rate weeks and for
+   * payloads staged before the block existed; consumers must render the classic
+   * lines then. See `parseProrationBlock` / `deriveProrationFields`.
+   */
+  proration: ProrationBlockRaw | null;
   rates_php: { regular: number | null; ot: number | null };
   pay_php: {
     regular: number | null;
@@ -772,6 +653,28 @@ type DispatchEmployee = {
   /** Free-text reason for the accounting Adj. delta (the Adj. column note), or null. */
   adjustment_note: string | null;
 };
+
+/** CalcRow proration → the payload-shaped `proration` block. Only a genuine
+ *  mid-week change (rateChange + segments both set) stages one. */
+function prorationBlockFromCalcRow(r: CalcRow): ProrationBlockRaw | null {
+  if (!r.rateChange || !r.prorationSegments) return null;
+  const raw = (s: { ratePhp: number; hours: number; payPhp: number }) => ({
+    rate_php: s.ratePhp,
+    hours: s.hours,
+    pay_php: s.payPhp,
+  });
+  return {
+    effective_date: r.rateChange.effectiveDate,
+    old_rates_php: { regular: r.rateChange.oldRegular, ot: r.rateChange.oldOt },
+    new_rates_php: { regular: r.rateChange.newRegular, ot: r.rateChange.newOt },
+    segments: {
+      regular: r.prorationSegments.regular.map(raw),
+      ot: r.prorationSegments.ot.map(raw),
+      weekend_regular: r.prorationSegments.weekendRegular.map(raw),
+      weekend_ot: r.prorationSegments.weekendOt.map(raw),
+    },
+  };
+}
 
 /**
  * An employee accounting flagged "do not pay" in the Validation step. Staged to
@@ -5294,6 +5197,7 @@ export default function PayrollWizard({
       let rateChange: CalcRow['rateChange'] = null;
       let ratesPaid: CalcRow['ratesPaid'] = null;
       let rateDisagreement: CalcRow['rateDisagreement'] = null;
+      let prorationSegments: CalcRow['prorationSegments'] = null;
       let proratedWeekend: { regularHours: number; otHours: number; regularPay: number; otPay: number } | null = null;
       const payDay = em ? payDaysByEmail.get(em) : undefined;
       if (payDay && payDay.days.length > 0) {
@@ -5323,6 +5227,9 @@ export default function PayrollWizard({
             // Respect the existing "no OT hours → 0, not null" convention.
             otPay = otSec > 0 ? prorated.otPay : 0;
             rateChange = prorated.change;
+            // The per-rate basis behind the money — only meaningful alongside a
+            // genuine mid-week change (single-rate overrides display one rate).
+            prorationSegments = prorated.change ? prorated.segments : null;
             // Pay moved onto per-day history rates — the weekend split must ride
             // along, or the stub's weekend lines would advertise cache-rate money.
             proratedWeekend = prorated.weekend;
@@ -5420,6 +5327,7 @@ export default function PayrollWizard({
         otPay,
         initialPay,
         rateChange,
+        prorationSegments,
         rateDisagreement,
         // No per-day override ⇒ pay came straight from the cache rate, so that IS
         // the rate paid. Recording it (rather than leaving it null) keeps the
@@ -5536,6 +5444,10 @@ export default function PayrollWizard({
           // OT is not paid this week, so the weekend OT carve-out must vanish
           // with it — the stub may never itemize money that isn't in otPay.
           weekend: row.weekend ? { ...row.weekend, otHours: 0, otPay: 0 } : row.weekend,
+          // Same rule for the proration basis: no OT money ⇒ no OT segments.
+          prorationSegments: row.prorationSegments
+            ? { ...row.prorationSegments, ot: [], weekendOt: [] }
+            : row.prorationSegments,
         };
       }
 
@@ -6613,6 +6525,7 @@ export default function PayrollWizard({
               premium_php_per_hour: 15,
             }
           : null,
+        proration: prorationBlockFromCalcRow(r),
         rates_php: { regular: r.regularRate, ot: r.otRate },
         pay_php: {
           regular: r.regularPay,
@@ -6763,6 +6676,11 @@ export default function PayrollWizard({
       weekendOtHours: number | null;
       weekendRegularPay: number | null;
       weekendOtPay: number | null;
+      // Mid-week proration block (payload-shaped) so the freshness merge can
+      // move the "Prorated" basis WITH the figures it explains (paystub-fresh).
+      // Null = no mid-period change; older snapshots omit the field entirely
+      // and the merge keeps the staged payload's block untouched.
+      proration: ProrationBlockRaw | null;
     }> = {};
     for (const r of dispatchData.rows) {
       const entry = {
@@ -6791,6 +6709,7 @@ export default function PayrollWizard({
         weekendOtHours: r.weekend ? r.weekend.hours.ot : null,
         weekendRegularPay: r.weekend ? r.weekend.pay_php.regular : null,
         weekendOtPay: r.weekend ? r.weekend.pay_php.ot : null,
+        proration: r.proration,
       };
       const we = r.email?.trim().toLowerCase();
       const pe = r.personal_email?.trim().toLowerCase();
@@ -15250,6 +15169,13 @@ export default function PayrollWizard({
                 selected.rates_php.regular == null ? null : r2(selected.rates_php.regular + wkPremium);
               const wkOtRate =
                 selected.rates_php.ot == null ? null : r2(selected.rates_php.ot + wkPremium);
+              // Mid-week proration — the SAME derivation + elements the shared
+              // PayStubStatement uses (chip + ₱old→₱new + hour basis on the
+              // affected lines only), so preview == dispatch == email.
+              const prorView = deriveProrationFields(
+                parseProrationBlock(selected),
+                parseWeekendBlock(selected),
+              );
               const weekHuman = (() => {
                 const w = selected.pay_period.week;
                 if (!w) return '—';
@@ -15377,26 +15303,50 @@ export default function PayrollWizard({
                                   <td className="border-b border-[#cbd5e1] bg-[#f1f5f9] py-1 text-right text-[10px] font-bold uppercase leading-3 tracking-[0.06em] text-[#334155]">Amount</td>
                                 </tr>
                                 <tr>
-                                  <td className="border-b border-[#edf2f7] py-1.5 text-[13px] leading-[15px] text-[#26384d]">Regular Hours</td>
-                                  <td className="border-b border-[#edf2f7] px-2 py-1.5 text-[12px] leading-[15px] text-[#556377]">{weekdayRegHours.toFixed(2)}h × ₱{fmtRate(selected.rates_php.regular)}</td>
+                                  <td className="border-b border-[#edf2f7] py-1.5 text-[13px] leading-[15px] text-[#26384d]">Regular Hours{prorView?.regular ? <ProratedChip /> : null}</td>
+                                  <td className="border-b border-[#edf2f7] px-2 py-1.5 text-[12px] leading-[15px] text-[#556377]">
+                                    {prorView?.regular ? (
+                                      <ProratedRateDetail hours={weekdayRegHours} line={prorView.regular} effectiveHuman={prorView.effectiveHuman} />
+                                    ) : (
+                                      <>{weekdayRegHours.toFixed(2)}h × ₱{fmtRate(selected.rates_php.regular)}</>
+                                    )}
+                                  </td>
                                   <td className="whitespace-nowrap border-b border-[#edf2f7] py-1.5 text-right text-[13px] font-bold leading-[15px] text-[#102034]">{fmt(weekdayRegPay)}</td>
                                 </tr>
                                 <tr>
-                                  <td className="border-b border-[#edf2f7] py-1.5 text-[13px] leading-[15px] text-[#26384d]">Overtime</td>
-                                  <td className="border-b border-[#edf2f7] px-2 py-1.5 text-[12px] leading-[15px] text-[#556377]">{weekdayOtHours.toFixed(2)}h × ₱{fmtRate(selected.rates_php.ot)}</td>
+                                  <td className="border-b border-[#edf2f7] py-1.5 text-[13px] leading-[15px] text-[#26384d]">Overtime{prorView?.ot ? <ProratedChip /> : null}</td>
+                                  <td className="border-b border-[#edf2f7] px-2 py-1.5 text-[12px] leading-[15px] text-[#556377]">
+                                    {prorView?.ot ? (
+                                      <ProratedRateDetail hours={weekdayOtHours} line={prorView.ot} effectiveHuman={prorView.effectiveHuman} />
+                                    ) : (
+                                      <>{weekdayOtHours.toFixed(2)}h × ₱{fmtRate(selected.rates_php.ot)}</>
+                                    )}
+                                  </td>
                                   <td className="whitespace-nowrap border-b border-[#edf2f7] py-1.5 text-right text-[13px] font-bold leading-[15px] text-[#102034]">{fmt(weekdayOtPay)}</td>
                                 </tr>
                                 {wknd && (
                                   <tr>
-                                    <td className="border-b border-[#edf2f7] py-1.5 text-[13px] leading-[15px] text-[#26384d]">Weekend Hours</td>
-                                    <td className="border-b border-[#edf2f7] px-2 py-1.5 text-[12px] leading-[15px] text-[#556377]">{wkRegHours.toFixed(2)}h × ₱{fmtRate(wkRegRate)}</td>
+                                    <td className="border-b border-[#edf2f7] py-1.5 text-[13px] leading-[15px] text-[#26384d]">Weekend Hours{prorView?.weekendRegular ? <ProratedChip /> : null}</td>
+                                    <td className="border-b border-[#edf2f7] px-2 py-1.5 text-[12px] leading-[15px] text-[#556377]">
+                                      {prorView?.weekendRegular ? (
+                                        <ProratedRateDetail hours={wkRegHours} line={prorView.weekendRegular} effectiveHuman={prorView.effectiveHuman} />
+                                      ) : (
+                                        <>{wkRegHours.toFixed(2)}h × ₱{fmtRate(wkRegRate)}</>
+                                      )}
+                                    </td>
                                     <td className="whitespace-nowrap border-b border-[#edf2f7] py-1.5 text-right text-[13px] font-bold leading-[15px] text-[#102034]">{fmt(wkRegPay)}</td>
                                   </tr>
                                 )}
                                 {wknd && (
                                   <tr>
-                                    <td className="border-b border-[#edf2f7] py-1.5 text-[13px] leading-[15px] text-[#26384d]">Weekend Overtime</td>
-                                    <td className="border-b border-[#edf2f7] px-2 py-1.5 text-[12px] leading-[15px] text-[#556377]">{wkOtHours.toFixed(2)}h × ₱{fmtRate(wkOtRate)}</td>
+                                    <td className="border-b border-[#edf2f7] py-1.5 text-[13px] leading-[15px] text-[#26384d]">Weekend Overtime{prorView?.weekendOt ? <ProratedChip /> : null}</td>
+                                    <td className="border-b border-[#edf2f7] px-2 py-1.5 text-[12px] leading-[15px] text-[#556377]">
+                                      {prorView?.weekendOt ? (
+                                        <ProratedRateDetail hours={wkOtHours} line={prorView.weekendOt} effectiveHuman={prorView.effectiveHuman} />
+                                      ) : (
+                                        <>{wkOtHours.toFixed(2)}h × ₱{fmtRate(wkOtRate)}</>
+                                      )}
+                                    </td>
                                     <td className="whitespace-nowrap border-b border-[#edf2f7] py-1.5 text-right text-[13px] font-bold leading-[15px] text-[#102034]">{fmt(wkOtPay)}</td>
                                   </tr>
                                 )}

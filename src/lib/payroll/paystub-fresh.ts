@@ -123,6 +123,55 @@ function sameAmount(a: unknown, b: unknown): boolean {
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
 /**
+ * Field-wise equality for two payload-shaped `proration` blocks (either side
+ * may be a jsonb round-trip, so key ORDER must not matter and numbers compare
+ * with the same sub-centavo tolerance as every other figure here).
+ */
+function sameProrationBlock(a: unknown, b: unknown): boolean {
+  const ao = a && typeof a === "object" ? (a as Record<string, unknown>) : null;
+  const bo = b && typeof b === "object" ? (b as Record<string, unknown>) : null;
+  if (!ao || !bo) return ao === bo || (!ao && !bo);
+
+  const dateOf = (o: Record<string, unknown>) =>
+    typeof o.effective_date === "string" && o.effective_date ? o.effective_date : null;
+  if (dateOf(ao) !== dateOf(bo)) return false;
+
+  const sameRates = (x: unknown, y: unknown) => {
+    const xo = obj(x);
+    const yo = obj(y);
+    return sameAmount(xo.regular, yo.regular) && sameAmount(xo.ot, yo.ot);
+  };
+  if (!sameRates(ao.old_rates_php, bo.old_rates_php)) return false;
+  if (!sameRates(ao.new_rates_php, bo.new_rates_php)) return false;
+
+  const sameSegs = (x: unknown, y: unknown) => {
+    const xs = Array.isArray(x) ? x : [];
+    const ys = Array.isArray(y) ? y : [];
+    if (xs.length !== ys.length) return false;
+    for (let i = 0; i < xs.length; i++) {
+      const xi = obj(xs[i]);
+      const yi = obj(ys[i]);
+      if (
+        !sameAmount(xi.rate_php, yi.rate_php) ||
+        !sameAmount(xi.hours, yi.hours) ||
+        !sameAmount(xi.pay_php, yi.pay_php)
+      ) {
+        return false;
+      }
+    }
+    return true;
+  };
+  const aSegs = obj(ao.segments);
+  const bSegs = obj(bo.segments);
+  return (
+    sameSegs(aSegs.regular, bSegs.regular) &&
+    sameSegs(aSegs.ot, bSegs.ot) &&
+    sameSegs(aSegs.weekend_regular, bSegs.weekend_regular) &&
+    sameSegs(aSegs.weekend_ot, bSegs.weekend_ot)
+  );
+}
+
+/**
  * Snapshot finals are keyed by lowercased work AND personal email — but we match
  * on the WORK email only (the queue's `recipient_email` and the payload's own
  * `email`). A personal-email fallback is deliberately NOT attempted: personal
@@ -318,6 +367,17 @@ export function mergeSnapshotIntoStaged(
     );
   })();
 
+  // ── Mid-week proration block (snapshots since 2026-07-30) ──
+  // Same contract as the weekend block: the block EXPLAINS the regular/OT
+  // figures (per-rate basis for the "Prorated" chip), so it must travel in the
+  // same write as the figures themselves. Older snapshots (field undefined)
+  // can't speak for it and the staged block is kept; `null` means the row has
+  // no mid-period change and clears a stale block.
+  const oldProration = p.proration && typeof p.proration === "object" ? (p.proration as Record<string, unknown>) : null;
+  const hasProrationField = entry.proration !== undefined;
+  const nextProration = !hasProrationField ? oldProration : (entry.proration ?? null);
+  const prorationChanged = hasProrationField && !sameProrationBlock(oldProration, entry.proration ?? null);
+
   // Field-by-field change detection (NOT JSON.stringify — jsonb round-trips
   // reorder keys, which would flag every merge as a change). fx_rate is part of
   // the statement too (the USD line), so an fx-only snapshot update must merge.
@@ -326,6 +386,7 @@ export function mergeSnapshotIntoStaged(
     (Object.keys(nextHours) as Array<keyof typeof nextHours>).some((k) => !sameAmount(oldHours[k], nextHours[k])) ||
     (Object.keys(nextRates) as Array<keyof typeof nextRates>).some((k) => !sameAmount(oldRates[k], nextRates[k])) ||
     weekendChanged ||
+    prorationChanged ||
     (snapFx > 0 && !sameAmount(oldPeriod.fx_rate, snapFx)) ||
     (nextNote ?? null) !== ((typeof p.adjustment_note === "string" ? p.adjustment_note : null) ?? null);
   if (!changed) return base;
@@ -337,6 +398,8 @@ export function mergeSnapshotIntoStaged(
     // fields — an old-shape snapshot must not stamp `weekend: null` onto a
     // payload that never had (or already has) a block.
     ...(hasWeekendFields ? { weekend: nextWeekend } : {}),
+    // Same rule for the proration block (see above).
+    ...(hasProrationField ? { proration: nextProration } : {}),
     rates_php: nextRates,
     pay_php: nextPay,
     adjustment_note: nextNote,

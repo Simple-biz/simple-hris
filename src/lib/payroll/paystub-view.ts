@@ -60,6 +60,17 @@ export interface PayStubView {
   fxRate: number;
   /** `total_pay_php / fx_rate`, already rounded to 2dp like the email. */
   totalPayUsd: number;
+  /**
+   * Mid-week rate-change proration (a department transfer, a dated raise) —
+   * per-LINE previous→current rates + the per-rate hour basis, derived from the
+   * payload's `proration` block. Null for the overwhelming majority of stubs
+   * (no block, or every line paid at a single rate): those render the classic
+   * lines untouched. When a line's entry is non-null the statement shows the
+   * "Prorated" chip + `₱old → ₱new` + the basis in that line's EXISTING cells —
+   * never an extra row. Weekend line rates are premium-inclusive, like
+   * `weekendRate`. See `deriveProrationFields`.
+   */
+  proration: ProrationView | null;
 }
 
 type Json = Record<string, unknown> | null | undefined;
@@ -171,6 +182,188 @@ export function deriveWeekendFields(
 }
 
 /**
+ * Raw payload-shaped `proration` block (snake_case), exactly as the wizard
+ * stages it / the snapshot stores it. `parseProrationBlock` is the tolerant
+ * reader; this type is for writers (the wizard's payload + snapshot build,
+ * the freshness merge) so every producer emits the same shape.
+ */
+export interface ProrationBlockRaw {
+  effective_date: string | null;
+  old_rates_php: { regular: number | null; ot: number | null };
+  new_rates_php: { regular: number | null; ot: number | null };
+  segments: {
+    regular: Array<{ rate_php: number; hours: number; pay_php: number }>;
+    ot: Array<{ rate_php: number; hours: number; pay_php: number }>;
+    weekend_regular: Array<{ rate_php: number; hours: number; pay_php: number }>;
+    weekend_ot: Array<{ rate_php: number; hours: number; pay_php: number }>;
+  };
+}
+
+/** One rate's share of a prorated line, as staged on the payload. */
+export interface ProrationSegmentFig {
+  ratePhp: number;
+  hours: number;
+  payPhp: number;
+}
+
+/** Normalized `proration` block as staged on a payload / snapshot. */
+export interface ProrationFigures {
+  /** First mid-period change date (YYYY-MM-DD), null when the block omits it. */
+  effectiveDate: string | null;
+  oldRates: { regular: number | null; ot: number | null };
+  newRates: { regular: number | null; ot: number | null };
+  /** Per-rate itemization in pay order. `regular`/`ot` are FULL-week; the
+   *  `weekend*` pairs carve the Sat+Sun portion out per rate (HSL only). */
+  segments: {
+    regular: ProrationSegmentFig[];
+    ot: ProrationSegmentFig[];
+    weekendRegular: ProrationSegmentFig[];
+    weekendOt: ProrationSegmentFig[];
+  };
+}
+
+/** A statement line that genuinely paid at 2+ rates: what its cells display. */
+export interface ProratedLineView {
+  previousRate: number;
+  currentRate: number;
+  /** The hour basis, in pay order — "16.25h @ ₱175.00 · 23.75h @ ₱225.00". */
+  segments: Array<{ ratePhp: number; hours: number }>;
+}
+
+/** Per-line proration display data; a null line renders classic (no chip). */
+export interface ProrationView {
+  effectiveDate: string | null;
+  /** "Jul 22" — for the basis line's "effective …" suffix; '' when undated. */
+  effectiveHuman: string;
+  regular: ProratedLineView | null;
+  ot: ProratedLineView | null;
+  weekendRegular: ProratedLineView | null;
+  weekendOt: ProratedLineView | null;
+}
+
+function numOrNull(v: unknown): number | null {
+  if (v === null || v === undefined || v === '') return null;
+  const n = typeof v === 'string' ? Number(v) : (v as number);
+  return typeof n === 'number' && Number.isFinite(n) ? n : null;
+}
+
+function parseSegmentList(v: unknown): ProrationSegmentFig[] {
+  if (!Array.isArray(v)) return [];
+  const out: ProrationSegmentFig[] = [];
+  for (const raw of v) {
+    const s = obj(raw);
+    const ratePhp = numOrNull(s.rate_php);
+    const hours = numOrNull(s.hours);
+    const payPhp = numOrNull(s.pay_php);
+    // A segment missing any leg can't state a basis — drop it rather than
+    // rendering a claim the arithmetic can't back.
+    if (ratePhp == null || hours == null || payPhp == null) continue;
+    out.push({ ratePhp, hours, payPhp });
+  }
+  return out;
+}
+
+/**
+ * Parse a payload's `proration` block (mid-week transfers / dated rate changes
+ * — see `DispatchEmployee` in PayrollWizard). Absent/null → null: payloads
+ * staged before the block existed render exactly as before.
+ */
+export function parseProrationBlock(payload: Json): ProrationFigures | null {
+  const p = obj(payload);
+  if (!p.proration || typeof p.proration !== 'object') return null;
+  const pr = obj(p.proration);
+  const oldRates = obj(pr.old_rates_php);
+  const newRates = obj(pr.new_rates_php);
+  const segs = obj(pr.segments);
+  return {
+    effectiveDate: typeof pr.effective_date === 'string' && pr.effective_date ? pr.effective_date : null,
+    oldRates: { regular: numOrNull(oldRates.regular), ot: numOrNull(oldRates.ot) },
+    newRates: { regular: numOrNull(newRates.regular), ot: numOrNull(newRates.ot) },
+    segments: {
+      regular: parseSegmentList(segs.regular),
+      ot: parseSegmentList(segs.ot),
+      weekendRegular: parseSegmentList(segs.weekend_regular),
+      weekendOt: parseSegmentList(segs.weekend_ot),
+    },
+  };
+}
+
+/** Hours below this are rounding dust, not a payable share of a line. */
+const PRORATION_HOURS_EPSILON = 0.005;
+
+const round2 = (n: number) => Math.round(n * 100) / 100;
+
+/** "2026-07-22" → "Jul 22" (statement-style, no year — the header carries it). */
+function formatEffectiveHuman(iso: string | null): string {
+  const d = parseYmd(iso);
+  return d ? `${MONTHS[d.m - 1] ?? ''} ${d.d}` : '';
+}
+
+/** ≥2 real segments → a prorated line view; otherwise null (classic render). */
+function toLineView(
+  segs: Array<{ ratePhp: number; hours: number }>,
+): ProratedLineView | null {
+  const real = segs.filter((s) => s.hours > PRORATION_HOURS_EPSILON);
+  if (real.length < 2) return null;
+  return {
+    previousRate: real[0].ratePhp,
+    currentRate: real[real.length - 1].ratePhp,
+    segments: real.map((s) => ({ ratePhp: s.ratePhp, hours: round2(s.hours) })),
+  };
+}
+
+/**
+ * Derive the per-line proration display from the staged block. Mirrors the
+ * statement's line structure exactly:
+ *  - with a weekend carve-out, Regular/Overtime show the WEEKDAY portion, so
+ *    their basis is weekday-scoped too — full segments minus the weekend
+ *    segments, matched per rate;
+ *  - the weekend lines display premium-inclusive rates (`weekendRate`), so
+ *    their basis rates carry the premium as well.
+ * Null when no line paid at 2+ rates — the whole statement renders classic.
+ */
+export function deriveProrationFields(
+  pror: ProrationFigures | null,
+  weekend: WeekendFigures | null,
+): ProrationView | null {
+  if (!pror) return null;
+
+  const minusWeekend = (
+    full: ProrationSegmentFig[],
+    wknd: ProrationSegmentFig[],
+  ): Array<{ ratePhp: number; hours: number }> =>
+    full.map((s) => ({
+      ratePhp: s.ratePhp,
+      hours: s.hours - (wknd.find((w) => w.ratePhp === s.ratePhp)?.hours ?? 0),
+    }));
+
+  const premium = weekend ? weekend.premiumPerHour : WEEKEND_PREMIUM_PHP_PER_HOUR;
+  const plusPremium = (segs: ProrationSegmentFig[]) =>
+    segs.map((s) => ({ ratePhp: round2(s.ratePhp + premium), hours: s.hours }));
+
+  // Without a weekend block the statement's Regular/Overtime rows are the full
+  // week, so the full segments ARE the basis; with one they show weekday-only.
+  const regular = toLineView(
+    weekend ? minusWeekend(pror.segments.regular, pror.segments.weekendRegular) : pror.segments.regular,
+  );
+  const ot = toLineView(
+    weekend ? minusWeekend(pror.segments.ot, pror.segments.weekendOt) : pror.segments.ot,
+  );
+  const weekendRegular = toLineView(plusPremium(pror.segments.weekendRegular));
+  const weekendOt = toLineView(plusPremium(pror.segments.weekendOt));
+
+  if (!regular && !ot && !weekendRegular && !weekendOt) return null;
+  return {
+    effectiveDate: pror.effectiveDate,
+    effectiveHuman: formatEffectiveHuman(pror.effectiveDate),
+    regular,
+    ot,
+    weekendRegular,
+    weekendOt,
+  };
+}
+
+/**
  * Parse a payload's `weekend` block (HSL rows only — see `DispatchEmployee` in
  * PayrollWizard). Absent/null → null, which renders the classic two-line
  * earnings section, so payloads staged before this field existed are untouched.
@@ -220,6 +413,8 @@ export function mapPayloadToPayStub(payload: Json, payPeriod?: Json): PayStubVie
     otPay: num(pay.ot),
   };
 
+  const weekendFigures = parseWeekendBlock(payload);
+
   return {
     name: str(p.name),
     department: str(p.department_name) || '—',
@@ -228,7 +423,8 @@ export function mapPayloadToPayStub(payload: Json, payPeriod?: Json): PayStubVie
     weekHuman: formatWeekHuman(weekStart, weekEnd),
     salaryDate: period.salary_date ? str(period.salary_date) : null,
     ...baseFigures,
-    ...deriveWeekendFields(baseFigures, parseWeekendBlock(payload)),
+    ...deriveWeekendFields(baseFigures, weekendFigures),
+    proration: deriveProrationFields(parseProrationBlock(payload), weekendFigures),
     techBonus: num(pay.tech_bonus),
     attendanceBonus: num(pay.perfect_attendance_bonus),
     performanceBonus: num(pay.other_bonuses),
