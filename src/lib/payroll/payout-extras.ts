@@ -13,8 +13,14 @@
  *     live `payroll.wizard.final_pay.<file>` snapshot when that snapshot is
  *     newer than the row's lock AND carries the itemized bonus fields
  *     (snapshots written before 2026-07-18 don't);
- *   - before any lock exists, the snapshot alone (its `finals` map is keyed by
- *     BOTH work and personal email, so entries are deduped by content);
+ *   - excluded (do-not-pay) rows count ONLY once a paid employee dispatch
+ *     exists for them this cycle (the Excluded tab's "Pay now" settles them
+ *     from their staged amounts — mirroring listExcludedArrears), and are
+ *     never snapshot-merged;
+ *   - before any lock exists, the snapshot alone (entries deduped by their
+ *     `workEmail` identity — the finals map keys the SAME entry under work AND
+ *     personal email; content-signature fallback for pre-2026-07-30 snapshots
+ *     that lack the field);
  *   - neither → all zeros with provenance 'none', and the hero shows plain
  *     salary exactly as it did before this module existed.
  *
@@ -22,10 +28,15 @@
  * PAB itself (pabMetrics) once the period closes, and the staged PAB is only
  * nonzero on the final PAB week — adding both would double-count it. The
  * staged PAB sum is still reported in `components.pabPhp` for transparency.
+ *
+ * A snapshot READ FAILURE throws (strict read) instead of degrading to "no
+ * snapshot": pre-lock, that degradation would zero the bonuses and the caller
+ * would publish the deflated total to the CEO board. The route turns the throw
+ * into a 500 and the Overview keeps its last known extras.
  */
 import { createSupabaseServiceRoleClient } from '@/lib/supabase/server';
 import { selectAllPaged } from '@/lib/supabase/select-all-paged';
-import { getAppSettingWithMeta } from '@/lib/supabase/app-settings';
+import { getAppSettingWithMetaStrict } from '@/lib/supabase/app-settings';
 
 export interface PayoutExtrasComponents {
   /** Staged/live Perfect Attendance total — informational only, NOT in `extrasTotalPhp`. */
@@ -63,6 +74,11 @@ export interface PayoutExtras {
 const round2 = (n: number) => Math.round(n * 100) / 100;
 const num = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
 
+/** What selectAllPaged expects a page builder to resolve to. The `payload->pay_php`
+ *  projection and the dynamic payee_type select string defeat supabase-js's
+ *  select-string type parser, so those builders are cast to this explicitly. */
+type PageOf<T> = PromiseLike<{ data: T[] | null; error: { message: string } | null }>;
+
 const ZERO: PayoutExtrasComponents = {
   pabPhp: 0,
   techPhp: 0,
@@ -77,12 +93,15 @@ type StagedRow = {
   recipient_email: string | null;
   excluded: boolean | null;
   locked_at: string | null;
-  payload: Record<string, unknown> | null;
+  /** `payload->pay_php` projected server-side — the full payload is multi-KB per
+   *  row (pay_period, weekend, proration, notes) and this module only reads the
+   *  seven money fields, so shipping ~1,000 whole payloads per call would be
+   *  10–50× the necessary transfer (cf. LIST_COLUMNS in paystub-dispatch-queue.ts). */
+  pay_php: Record<string, unknown> | null;
 };
 
-/** Component slice of a staged payload's `pay_php` block. */
-function fromPayload(payload: Record<string, unknown> | null): PayoutExtrasComponents {
-  const p = (payload?.['pay_php'] ?? null) as Record<string, unknown> | null;
+/** Component slice of a staged row's projected `pay_php` block. */
+function fromPayPhp(p: Record<string, unknown> | null): PayoutExtrasComponents {
   if (!p) return ZERO;
   return {
     pabPhp: num(p['perfect_attendance_bonus']),
@@ -150,7 +169,20 @@ export function urgentBucketForCycle(sourceFile: string): string | null {
   return `urgent_${iso(sun)}_to_${iso(sat)}`;
 }
 
+/**
+ * Short in-memory TTL cache. The Overview refetches on every live-refresh nonce
+ * bump (Realtime bursts on the hot `app_settings` table + 30s poll + focus),
+ * and the wizard republishes its snapshot at most every 1.5s — recomputing a
+ * whole cycle's queue scan per viewer per bump is pure waste. 15s of staleness
+ * is invisible next to the client's own 30s poll floor.
+ */
+const CACHE_TTL_MS = 15_000;
+const extrasCache = new Map<string, { at: number; extras: PayoutExtras }>();
+
 export async function computePayoutExtras(sourceFile: string): Promise<PayoutExtras> {
+  const cached = extrasCache.get(sourceFile);
+  if (cached && Date.now() - cached.at < CACHE_TTL_MS) return cached.extras;
+
   const supabase = createSupabaseServiceRoleClient();
   const total: PayoutExtrasComponents = { ...ZERO };
   let provenance: PayoutExtras['provenance'] = 'none';
@@ -162,18 +194,20 @@ export async function computePayoutExtras(sourceFile: string): Promise<PayoutExt
     return { sourceFile, provenance, asOf, components: total, urgentWeek, urgentPaidPhp, extrasTotalPhp: 0 };
   }
 
-  const stagedRes = await selectAllPaged<StagedRow>((from, to) =>
-    supabase
-      .from('paystub_dispatch_queue')
-      .select('recipient_email, excluded, locked_at, payload')
-      .eq('cycle_source_file', sourceFile)
-      .order('recipient_email', { ascending: true })
-      .range(from, to),
+  const stagedRes = await selectAllPaged<StagedRow>(
+    (from, to) =>
+      supabase
+        .from('paystub_dispatch_queue')
+        .select('recipient_email, excluded, locked_at, pay_php:payload->pay_php')
+        .eq('cycle_source_file', sourceFile)
+        .order('recipient_email', { ascending: true })
+        .range(from, to) as unknown as PageOf<StagedRow>,
   );
   if (stagedRes.error) throw new Error(`paystub_dispatch_queue read failed: ${stagedRes.error}`);
   const staged = stagedRes.rows.filter((r) => !r.excluded);
+  const stagedExcluded = stagedRes.rows.filter((r) => r.excluded);
 
-  const snapMeta = await getAppSettingWithMeta(`payroll.wizard.final_pay.${sourceFile}`);
+  const snapMeta = await getAppSettingWithMetaStrict(`payroll.wizard.final_pay.${sourceFile}`);
   let finals: Record<string, Record<string, unknown>> | null = null;
   if (snapMeta?.value) {
     try {
@@ -187,7 +221,7 @@ export async function computePayoutExtras(sourceFile: string): Promise<PayoutExt
   }
   const snapUpdatedMs = snapMeta?.updatedAt ? Date.parse(snapMeta.updatedAt) : NaN;
 
-  if (staged.length > 0) {
+  if (stagedRes.rows.length > 0) {
     provenance = 'staged';
     let usedSnapshot = false;
     let maxLockedMs = NaN;
@@ -205,8 +239,20 @@ export async function computePayoutExtras(sourceFile: string): Promise<PayoutExt
         snapshotEntryItemized(entry) &&
         Number.isFinite(snapUpdatedMs) &&
         (!Number.isFinite(lockedMs) || snapUpdatedMs > lockedMs);
-      accumulate(total, snapshotWins ? fromSnapshotEntry(entry) : fromPayload(row.payload));
+      accumulate(total, snapshotWins ? fromSnapshotEntry(entry) : fromPayPhp(row.pay_php));
       if (snapshotWins) usedSnapshot = true;
+    }
+    // Excluded (do-not-pay) rows: their money counts only once Accounting
+    // actually settles them (the Excluded tab's "Pay now" writes a paid
+    // employee dispatch under the regular cycle_source_file). Settled rows are
+    // priced from their STAGED amounts — never snapshot-merged — mirroring the
+    // arrears ledger's rule.
+    if (stagedExcluded.length > 0) {
+      const paidEmails = await paidEmployeeDispatchEmails(supabase, sourceFile);
+      for (const row of stagedExcluded) {
+        const em = row.recipient_email?.trim().toLowerCase() ?? '';
+        if (em && paidEmails.has(em)) accumulate(total, fromPayPhp(row.pay_php));
+      }
     }
     if (usedSnapshot) {
       provenance = 'wizard';
@@ -216,13 +262,16 @@ export async function computePayoutExtras(sourceFile: string): Promise<PayoutExt
     }
   } else if (finals) {
     // Pre-lock: snapshot only. The finals map holds the SAME entry under a
-    // person's work and personal email — dedupe by content signature.
+    // person's work and personal email — dedupe by the entry's `workEmail`
+    // identity (added 2026-07-30); content signature is the fallback for older
+    // snapshots, accepting that two people with byte-identical figures collapse.
     provenance = 'wizard';
     asOf = snapMeta?.updatedAt ?? null;
     const seen = new Set<string>();
     for (const entry of Object.values(finals)) {
       if (!entry || typeof entry !== 'object') continue;
-      const sig = JSON.stringify(entry);
+      const we = entry['workEmail'];
+      const sig = typeof we === 'string' && we ? `id:${we}` : JSON.stringify(entry);
       if (seen.has(sig)) continue;
       seen.add(sig);
       accumulate(total, fromSnapshotEntry(entry));
@@ -256,5 +305,39 @@ export async function computePayoutExtras(sourceFile: string): Promise<PayoutExt
       urgentPaidPhp,
   );
 
-  return { sourceFile, provenance, asOf, components: total, urgentWeek, urgentPaidPhp, extrasTotalPhp };
+  const extras: PayoutExtras = { sourceFile, provenance, asOf, components: total, urgentWeek, urgentPaidPhp, extrasTotalPhp };
+  extrasCache.set(sourceFile, { at: Date.now(), extras });
+  return extras;
+}
+
+/** Lowercased recipient emails with a PAID employee dispatch for the cycle.
+ *  `payee_type` postdates the table's DDL — environments without the column
+ *  get a re-query treating every row as an employee (same probe pattern the
+ *  dispatch readers use). */
+async function paidEmployeeDispatchEmails(
+  supabase: NonNullable<ReturnType<typeof createSupabaseServiceRoleClient>>,
+  sourceFile: string,
+): Promise<Set<string>> {
+  type PaidRow = { recipient_email: string | null; payee_type?: string | null };
+  const build = (withPayeeType: boolean) =>
+    selectAllPaged<PaidRow>(
+      (from, to) =>
+        supabase
+          .from('payment_dispatches')
+          .select(withPayeeType ? 'recipient_email, payee_type' : 'recipient_email')
+          .eq('cycle_source_file', sourceFile)
+          .eq('status', 'paid')
+          .order('id', { ascending: true })
+          .range(from, to) as unknown as PageOf<PaidRow>,
+    );
+  let res = await build(true);
+  if (res.error && /payee_type/i.test(res.error)) res = await build(false);
+  if (res.error) throw new Error(`payment_dispatches read failed: ${res.error}`);
+  const out = new Set<string>();
+  for (const r of res.rows) {
+    if ((r.payee_type ?? 'employee') !== 'employee') continue;
+    const em = r.recipient_email?.trim().toLowerCase();
+    if (em) out.add(em);
+  }
+  return out;
 }

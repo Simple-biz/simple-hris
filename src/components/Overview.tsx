@@ -599,25 +599,36 @@ function SimpleView({
     return t.getTime() > e.getTime();
   })();
   const pabBonusTotal = pabFinalizedForPayout ? pabMetrics.accruedPhp : 0;
-  const extrasTotal = payoutExtras?.extrasTotalPhp ?? 0;
+  // Extras are suppressed while the salary is (re)loading: on an uncached cycle
+  // switch `totalPayout` still holds the PREVIOUS cycle's salary until the fetch
+  // lands, and mixing it with the NEW cycle's extras would show a total that
+  // belongs to neither week (the reels are spinning, but the USD line isn't).
+  const extrasTotal = !payoutLoading && payoutExtras ? payoutExtras.extrasTotalPhp : 0;
   const displayTotalPayout = totalPayout != null ? totalPayout + pabBonusTotal + extrasTotal : null;
 
   const usdEquivalent = displayTotalPayout != null ? displayTotalPayout / PHP_USD_FX : null;
 
   // Itemized extras for the hero's breakdown line — only nonzero parts render.
-  const extrasParts: string[] = [];
-  if (payoutExtras && payoutExtras.provenance !== 'none') {
-    const c = payoutExtras.components;
-    const bonuses = c.techPhp + c.otherBonusesPhp;
-    if (bonuses !== 0) extrasParts.push(`${phpCompact(bonuses)} bonuses`);
-    if (c.adjustmentPhp !== 0) extrasParts.push(`${phpCompact(c.adjustmentPhp)} adjustments`);
-    if (c.orphanagePhp !== 0) extrasParts.push(`${phpCompact(c.orphanagePhp)} orphanage`);
-    if (c.mesaDeductionPhp !== 0) extrasParts.push(`${phpCompact(-c.mesaDeductionPhp)} MESA`);
-    if (c.mesaDisbursementPhp !== 0) extrasParts.push(`${phpCompact(c.mesaDisbursementPhp)} MESA aid`);
+  // Wizard-derived parts are tracked separately from the urgent part: only the
+  // former justify the "Full pay run" subtitle (an urgent-only cycle is still
+  // just initial pay + a one-off).
+  const wizardParts: string[] = [];
+  let urgentPart: string | null = null;
+  if (!payoutLoading && payoutExtras) {
+    if (payoutExtras.provenance !== 'none') {
+      const c = payoutExtras.components;
+      const bonuses = c.techPhp + c.otherBonusesPhp;
+      if (bonuses !== 0) wizardParts.push(`${phpCompact(bonuses)} bonuses`);
+      if (c.adjustmentPhp !== 0) wizardParts.push(`${phpCompact(c.adjustmentPhp)} adjustments`);
+      if (c.orphanagePhp !== 0) wizardParts.push(`${phpCompact(c.orphanagePhp)} orphanage`);
+      if (c.mesaDeductionPhp !== 0) wizardParts.push(`${phpCompact(-c.mesaDeductionPhp)} MESA`);
+      if (c.mesaDisbursementPhp !== 0) wizardParts.push(`${phpCompact(c.mesaDisbursementPhp)} MESA aid`);
+    }
+    if (payoutExtras.urgentPaidPhp !== 0) {
+      urgentPart = `${phpCompact(payoutExtras.urgentPaidPhp)} urgent`;
+    }
   }
-  if (payoutExtras && payoutExtras.urgentPaidPhp !== 0) {
-    extrasParts.push(`${phpCompact(payoutExtras.urgentPaidPhp)} urgent`);
-  }
+  const extrasParts = urgentPart ? [...wizardParts, urgentPart] : wizardParts;
 
   // ⌘K / Ctrl+K focuses the search input.
   const searchInputRef = React.useRef<HTMLInputElement | null>(null);
@@ -896,7 +907,7 @@ function SimpleView({
                 <span>
                   {payrollProcessing
                     ? 'Provisional — payroll is being processed now'
-                    : extrasParts.length > 0
+                    : wizardParts.length > 0
                       ? pabFinalizedForPayout
                         ? 'Full pay run — salary + bonuses + adjustments + PAB'
                         : 'Full pay run — salary + bonuses + adjustments'
@@ -910,9 +921,11 @@ function SimpleView({
                     <span
                       className="text-zinc-500 dark:text-zinc-500"
                       title={
-                        payoutExtras?.provenance === 'staged'
-                          ? 'From the locked payroll run (Payment Dispatch figures)'
-                          : 'Live from the Payroll Wizard'
+                        wizardParts.length === 0
+                          ? "Urgent one-off payments recorded in this cycle's dispatch week"
+                          : payoutExtras?.provenance === 'staged'
+                            ? 'From the locked payroll run (Payment Dispatch figures)'
+                            : 'Live from the Payroll Wizard'
                       }
                     >
                       incl. {extrasParts.join(' · ')}
@@ -2385,6 +2398,10 @@ type CachedPayout = {
   payrollIdentityByEmail: Record<string, { name: string | null; department: string | null }> | null;
   employeePayByEmail: Record<string, { hours: number; pay: number | null }>;
   activeSourceFile: string | null;
+  /** Optional: entries cached before 2026-07-30 predate the field. Seeding it
+   *  keeps the hero from settling twice (salary first, extras a beat later)
+   *  on every warm remount. */
+  payoutExtras?: import('@/lib/payroll/payout-extras').PayoutExtras | null;
 };
 
 type CachedPabMetrics = {
@@ -2523,8 +2540,11 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
   /** Wizard-sourced money the hours×rates sum can't see — KPI/catalog bonuses,
    *  Payroll Notes adjustments, orphanage pay, MESA, and the cycle's paid urgent
    *  one-offs (from /api/accounting/payout-extras). Added on top of the salary
-   *  sum so the hero reads as the FULL pay run. null until the first fetch. */
-  const [payoutExtras, setPayoutExtras] = useState<import('@/lib/payroll/payout-extras').PayoutExtras | null>(null);
+   *  sum so the hero reads as the FULL pay run. Seeded from the tab-cache so a
+   *  warm remount paints the full total at once; null until the first fetch. */
+  const [payoutExtras, setPayoutExtras] = useState<import('@/lib/payroll/payout-extras').PayoutExtras | null>(
+    payoutSeed?.payoutExtras ?? null,
+  );
   /** Extras guarded by cycle: a response for a previously-viewed file must never
    *  inflate the current one while its own fetch is in flight. '__all__' scope
    *  (activeSourceFile = null) intentionally gets no extras. */
@@ -3201,12 +3221,22 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
         const json = (await res.json()) as import('@/lib/payroll/payout-extras').PayoutExtras;
         if (!cancelled && json && typeof json.extrasTotalPhp === 'number' && Number.isFinite(json.extrasTotalPhp)) {
           setPayoutExtras(json);
+          // Fold into the payout tab-cache entry (when it's for the same file)
+          // so the next remount seeds the FULL hero total in one paint.
+          const key = payoutCacheKey(selectedSourceFile);
+          const cachedEntry = getTabCache<CachedPayout>(key);
+          if (cachedEntry && cachedEntry.activeSourceFile === file) {
+            setTabCache<CachedPayout>(key, { ...cachedEntry, payoutExtras: json });
+          }
         }
       } catch {
         /* keep the last known extras */
       }
     })();
     return () => { cancelled = true; };
+    // selectedSourceFile is only read to locate the cache entry — activeSourceFile
+    // (derived from it) already keys the fetch, so it's excluded from the deps.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeSourceFile, payoutRefreshNonce]);
 
   // Keep the Total Payout live. Watches the tables that feed the hero figure —
@@ -4035,6 +4065,13 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
     const file = selectedSourceFile;
     if (!file || file === '__all__' || file !== activeSourceFile) return;
     if (payoutLoading || pabMetrics.loading || heroTotalPhpForPublish == null) return;
+    // Like salary + PAB above, the extras are an async input to the hero total:
+    // publishing before their fetch settles would overwrite the CEO board's
+    // previously-correct snapshot with a salary-only number (extras read as 0).
+    // payoutExtrasForCycle is null until a successful response for THIS cycle —
+    // on persistent fetch failure we simply don't publish, and the CEO keeps
+    // the last good snapshot or falls back to its own compute.
+    if (payoutExtrasForCycle == null) return;
     let pabFinalized = false;
     if (pabMetrics.periodEnd) {
       const t = new Date();
@@ -4079,6 +4116,7 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
     payoutLoading,
     pabMetrics.loading,
     pabMetrics.periodEnd,
+    payoutExtrasForCycle,
     payrollWorkerCount,
     employees.length,
     bonusesKeyedIn,

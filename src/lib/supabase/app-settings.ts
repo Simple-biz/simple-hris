@@ -72,6 +72,28 @@ export async function getAppSettingWithMeta(
   return { value: row.value, updatedAt: row.updated_at ?? null };
 }
 
+/** Like {@link getAppSettingWithMeta} but THROWS on a failed read instead of
+ *  returning null — for callers that must distinguish "key genuinely absent"
+ *  from "the read failed" (same rationale as {@link getAppSettingStrict}).
+ *  payout-extras depends on this: treating a transient read failure as "no
+ *  wizard snapshot" would zero the hero's bonuses and publish the deflated
+ *  total to the CEO board. */
+export async function getAppSettingWithMetaStrict(
+  key: string,
+): Promise<{ value: string; updatedAt: string | null } | null> {
+  const supabase = createSupabaseServiceRoleClient();
+  if (!supabase) throw new Error('Supabase client unavailable');
+  const { data, error } = await supabase
+    .from('app_settings')
+    .select('value, updated_at')
+    .eq('key', key)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  if (!data) return null;
+  const row = data as { value: string; updated_at: string | null };
+  return { value: row.value, updatedAt: row.updated_at ?? null };
+}
+
 /** Bulk twin of {@link getAppSettingWithMeta} — one round-trip for many keys.
  *  Keys absent from the table are simply missing from the returned map. */
 export async function getAppSettingsWithMeta(
