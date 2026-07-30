@@ -23,6 +23,30 @@ export interface PayStubView {
   otRate: number;
   mfPay: number;
   otPay: number;
+  /**
+   * HSL weekend (Sat+Sun) itemization. `mfHours`/`mfPay` (and the OT pair) stay
+   * the FULL week totals — weekend included — exactly as staged/paid, so every
+   * total-summing consumer (lists, exports, the Net figure) is untouched. When
+   * `hasWeekend` is true the statement splits the earnings rows instead:
+   * Regular/Overtime render the weekday-only figures and two Weekend rows carry
+   * the Sat+Sun hours at the premium rate (base + ₱15/h). Weekend hours can sit
+   * in EITHER bucket — a weekend day past the 40h cap is weekend OT — which is
+   * why both a regular and an OT weekend line exist. Non-HSL payloads (and
+   * payloads staged before this field existed) have `hasWeekend: false` and all
+   * weekend fields zero; weekday === mf then.
+   */
+  hasWeekend: boolean;
+  weekendHours: number;
+  weekendOtHours: number;
+  /** Effective weekend rates = displayed base rate + the per-hour premium. */
+  weekendRate: number;
+  weekendOtRate: number;
+  weekendPay: number;
+  weekendOtPay: number;
+  weekdayHours: number;
+  weekdayOtHours: number;
+  weekdayPay: number;
+  weekdayOtPay: number;
   techBonus: number;
   attendanceBonus: number;
   performanceBonus: number;
@@ -80,6 +104,93 @@ export function formatWeekHuman(start: string | null, end: string | null): strin
   return '';
 }
 
+/** Default HSL weekend premium (₱/h) for payloads that predate carrying it. */
+export const WEEKEND_PREMIUM_PHP_PER_HOUR = 15;
+
+/** Normalized weekend figures as staged on a payload / snapshot. */
+export interface WeekendFigures {
+  hours: number;
+  otHours: number;
+  pay: number;
+  otPay: number;
+  premiumPerHour: number;
+}
+
+/**
+ * The weekday/weekend split every renderer shares. Weekend amounts are the
+ * staged truth; the weekday lines are derived by SUBTRACTION from the full
+ * totals, so the four earnings lines always sum back to exactly
+ * `mfPay + otPay` no matter how the two sides were rounded when staged.
+ */
+export function deriveWeekendFields(
+  base: { mfHours: number; mfOtHours: number; mfRate: number; otRate: number; mfPay: number; otPay: number },
+  weekend: WeekendFigures | null,
+): Pick<
+  PayStubView,
+  | 'hasWeekend'
+  | 'weekendHours'
+  | 'weekendOtHours'
+  | 'weekendRate'
+  | 'weekendOtRate'
+  | 'weekendPay'
+  | 'weekendOtPay'
+  | 'weekdayHours'
+  | 'weekdayOtHours'
+  | 'weekdayPay'
+  | 'weekdayOtPay'
+> {
+  if (!weekend) {
+    return {
+      hasWeekend: false,
+      weekendHours: 0,
+      weekendOtHours: 0,
+      weekendRate: 0,
+      weekendOtRate: 0,
+      weekendPay: 0,
+      weekendOtPay: 0,
+      weekdayHours: base.mfHours,
+      weekdayOtHours: base.mfOtHours,
+      weekdayPay: base.mfPay,
+      weekdayOtPay: base.otPay,
+    };
+  }
+  const round2 = (n: number) => Math.round(n * 100) / 100;
+  return {
+    hasWeekend: true,
+    weekendHours: weekend.hours,
+    weekendOtHours: weekend.otHours,
+    weekendRate: round2(base.mfRate + weekend.premiumPerHour),
+    weekendOtRate: round2(base.otRate + weekend.premiumPerHour),
+    weekendPay: weekend.pay,
+    weekendOtPay: weekend.otPay,
+    weekdayHours: Math.max(0, round2(base.mfHours - weekend.hours)),
+    weekdayOtHours: Math.max(0, round2(base.mfOtHours - weekend.otHours)),
+    weekdayPay: round2(base.mfPay - weekend.pay),
+    weekdayOtPay: round2(base.otPay - weekend.otPay),
+  };
+}
+
+/**
+ * Parse a payload's `weekend` block (HSL rows only — see `DispatchEmployee` in
+ * PayrollWizard). Absent/null → null, which renders the classic two-line
+ * earnings section, so payloads staged before this field existed are untouched.
+ */
+export function parseWeekendBlock(payload: Json): WeekendFigures | null {
+  const p = obj(payload);
+  if (!p.weekend || typeof p.weekend !== 'object') return null;
+  const w = obj(p.weekend);
+  const hours = obj(w.hours);
+  const pay = obj(w.pay_php);
+  const premium = num(w.premium_php_per_hour);
+  return {
+    hours: num(hours.regular),
+    otHours: num(hours.ot),
+    pay: num(pay.regular),
+    otPay: num(pay.ot),
+    premiumPerHour: premium > 0 ? premium : WEEKEND_PREMIUM_PHP_PER_HOUR,
+  };
+}
+
 /**
  * Build the paystub view from a staged payload. `payPeriod` is the queue row's
  * `pay_period` column; the payload also carries its own `pay_period`, so we fall
@@ -100,6 +211,15 @@ export function mapPayloadToPayStub(payload: Json, payPeriod?: Json): PayStubVie
   const fxRate = fxRateRaw > 0 ? fxRateRaw : 58;
   const totalPayPhp = num(pay.final);
 
+  const baseFigures = {
+    mfHours: num(hours.regular),
+    mfOtHours: num(hours.ot),
+    mfRate: num(rates.regular),
+    otRate: num(rates.ot),
+    mfPay: num(pay.regular),
+    otPay: num(pay.ot),
+  };
+
   return {
     name: str(p.name),
     department: str(p.department_name) || '—',
@@ -107,12 +227,8 @@ export function mapPayloadToPayStub(payload: Json, payPeriod?: Json): PayStubVie
     weekEnd,
     weekHuman: formatWeekHuman(weekStart, weekEnd),
     salaryDate: period.salary_date ? str(period.salary_date) : null,
-    mfHours: num(hours.regular),
-    mfOtHours: num(hours.ot),
-    mfRate: num(rates.regular),
-    otRate: num(rates.ot),
-    mfPay: num(pay.regular),
-    otPay: num(pay.ot),
+    ...baseFigures,
+    ...deriveWeekendFields(baseFigures, parseWeekendBlock(payload)),
     techBonus: num(pay.tech_bonus),
     attendanceBonus: num(pay.perfect_attendance_bonus),
     performanceBonus: num(pay.other_bonuses),

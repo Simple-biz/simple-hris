@@ -51,16 +51,33 @@ export interface PayStubExportOptions {
 
 /** Derived per-week figures shared by both exporters. Bonuses (tech / PAB /
  *  performance) are itemized as their own columns, so only the netted MESA line
- *  needs deriving here. */
+ *  and the weekday/weekend earnings split need deriving here. HSL weeks carry a
+ *  weekend carve-out (`hasWeekend`); the columns show the weekday portion in
+ *  Regular/Overtime and the Sat+Sun portion in the Weekend columns so a row
+ *  still sums exactly to Net. Non-HSL (and pre-split) weeks: weekday === full
+ *  and the weekend cells are zero. */
 function derive(w: PayStubWeek) {
   const v = w.view;
   const mesaNet = v.mesaDisbursement - v.mesaDeduction;
-  return { mesaNet };
+  const hasWeekend = v.hasWeekend === true;
+  return {
+    mesaNet,
+    weekdayHours: v.weekdayHours ?? v.mfHours,
+    weekdayOtHours: v.weekdayOtHours ?? v.mfOtHours,
+    weekdayPay: v.weekdayPay ?? v.mfPay,
+    weekdayOtPay: v.weekdayOtPay ?? v.otPay,
+    weekendHours: hasWeekend ? v.weekendHours : 0,
+    weekendOtHours: hasWeekend ? v.weekendOtHours : 0,
+    weekendPay: hasWeekend ? v.weekendPay : 0,
+    weekendOtPay: hasWeekend ? v.weekendOtPay : 0,
+  };
 }
 
 interface Totals {
   regular: number;
   ot: number;
+  weekendPay: number;
+  weekendOtPay: number;
   techBonus: number;
   attendanceBonus: number;
   performanceBonus: number;
@@ -74,15 +91,17 @@ interface Totals {
 function sumTotals(weeks: PayStubWeek[]): Totals {
   return weeks.reduce<Totals>(
     (t, w) => {
-      const { mesaNet } = derive(w);
-      t.regular += w.view.mfPay;
-      t.ot += w.view.otPay;
+      const d = derive(w);
+      t.regular += d.weekdayPay;
+      t.ot += d.weekdayOtPay;
+      t.weekendPay += d.weekendPay;
+      t.weekendOtPay += d.weekendOtPay;
       t.techBonus += w.view.techBonus;
       t.attendanceBonus += w.view.attendanceBonus;
       t.performanceBonus += w.view.performanceBonus;
       t.adjustment += w.view.adjustment;
       t.orphanagePay += w.view.orphanagePay;
-      t.mesaNet += mesaNet;
+      t.mesaNet += d.mesaNet;
       t.netPhp += w.view.totalPayPhp;
       t.netUsd += w.view.totalPayUsd;
       return t;
@@ -90,6 +109,8 @@ function sumTotals(weeks: PayStubWeek[]): Totals {
     {
       regular: 0,
       ot: 0,
+      weekendPay: 0,
+      weekendOtPay: 0,
       techBonus: 0,
       attendanceBonus: 0,
       performanceBonus: 0,
@@ -170,10 +191,15 @@ const XLSX_COLS: XlsxCol[] = [
   { header: 'Period Ending', width: 22, value: (w) => w.view.weekHuman || '-' },
   { header: 'Week Start', width: 13, value: (w) => w.view.weekStart ?? '' },
   { header: 'Week End', width: 13, value: (w) => w.view.weekEnd ?? '' },
-  { header: 'Regular Hours', width: 13, value: (w) => round2(w.view.mfHours) },
-  { header: 'OT Hours', width: 10, value: (w) => round2(w.view.mfOtHours) },
-  { header: 'Regular Pay', width: 14, value: (w) => round2(w.view.mfPay), total: (t) => round2(t.regular) },
-  { header: 'Overtime', width: 12, value: (w) => round2(w.view.otPay), total: (t) => round2(t.ot) },
+  { header: 'Regular Hours', width: 13, value: (w) => round2(derive(w).weekdayHours) },
+  { header: 'OT Hours', width: 10, value: (w) => round2(derive(w).weekdayOtHours) },
+  { header: 'Regular Pay', width: 14, value: (w) => round2(derive(w).weekdayPay), total: (t) => round2(t.regular) },
+  { header: 'Overtime', width: 12, value: (w) => round2(derive(w).weekdayOtPay), total: (t) => round2(t.ot) },
+  // HSL weekend carve-out (Sat+Sun at the premium rate) — zero for non-HSL weeks.
+  { header: 'Weekend Hours', width: 14, value: (w) => round2(derive(w).weekendHours) },
+  { header: 'Weekend OT Hours', width: 16, value: (w) => round2(derive(w).weekendOtHours) },
+  { header: 'Weekend Pay', width: 14, value: (w) => round2(derive(w).weekendPay), total: (t) => round2(t.weekendPay) },
+  { header: 'Weekend OT Pay', width: 15, value: (w) => round2(derive(w).weekendOtPay), total: (t) => round2(t.weekendOtPay) },
   { header: 'Tech Allowance', width: 14, value: (w) => round2(w.view.techBonus), total: (t) => round2(t.techBonus) },
   { header: 'Attendance', width: 12, value: (w) => round2(w.view.attendanceBonus), total: (t) => round2(t.attendanceBonus) },
   { header: 'Performance Bonus', width: 16, value: (w) => round2(w.view.performanceBonus), total: (t) => round2(t.performanceBonus) },
@@ -281,22 +307,27 @@ async function loadLogoBytes(url: string): Promise<ArrayBuffer | null> {
 
 type Col = { header: string; weight: number; align: 'left' | 'right' };
 
-/** Columns for the PDF summary (weights scaled to exactly fill CONTENT_W). */
+/** Columns for the PDF summary (weights scaled to exactly fill CONTENT_W).
+ *  "Wknd Hrs"/"Weekend" carry the HSL Sat+Sun carve-out (regular + OT combined
+ *  — the XLSX itemizes the two buckets); Regular/Overtime then hold the weekday
+ *  portion so a row still sums across to Net. Non-HSL weeks show "-". */
 const PDF_COLS: Col[] = [
-  { header: 'Period Ending', weight: 112, align: 'left' },
-  { header: 'Reg Hrs', weight: 46, align: 'right' },
-  { header: 'OT Hrs', weight: 42, align: 'right' },
-  { header: 'Regular', weight: 74, align: 'right' },
-  { header: 'Overtime', weight: 66, align: 'right' },
-  { header: 'Tech', weight: 50, align: 'right' },
-  { header: 'PAB', weight: 50, align: 'right' },
-  { header: 'Perf', weight: 50, align: 'right' },
-  { header: 'Adjustment', weight: 62, align: 'right' },
-  { header: 'Orphanage', weight: 58, align: 'right' },
-  { header: 'MESA', weight: 60, align: 'right' },
-  { header: 'Net (PHP)', weight: 82, align: 'right' },
-  { header: 'Net (USD)', weight: 56, align: 'right' },
-  { header: 'Paid', weight: 78, align: 'left' },
+  { header: 'Period Ending', weight: 104, align: 'left' },
+  { header: 'Reg Hrs', weight: 44, align: 'right' },
+  { header: 'OT Hrs', weight: 40, align: 'right' },
+  { header: 'Regular', weight: 70, align: 'right' },
+  { header: 'Overtime', weight: 62, align: 'right' },
+  { header: 'Wknd Hrs', weight: 48, align: 'right' },
+  { header: 'Weekend', weight: 62, align: 'right' },
+  { header: 'Tech', weight: 48, align: 'right' },
+  { header: 'PAB', weight: 48, align: 'right' },
+  { header: 'Perf', weight: 48, align: 'right' },
+  { header: 'Adjustment', weight: 58, align: 'right' },
+  { header: 'Orphanage', weight: 56, align: 'right' },
+  { header: 'MESA', weight: 56, align: 'right' },
+  { header: 'Net (PHP)', weight: 78, align: 'right' },
+  { header: 'Net (USD)', weight: 54, align: 'right' },
+  { header: 'Paid', weight: 72, align: 'left' },
 ];
 
 /** Build the branded all-weeks pay-stubs PDF. Returns the raw bytes. */
@@ -405,13 +436,18 @@ export async function generatePayStubsPdf(
   const rowH = LH + PAD_Y * 2;
   let alt = false;
   for (const w of weeks) {
-    const { mesaNet } = derive(w);
+    const d = derive(w);
+    const { mesaNet } = d;
+    const wkndHrs = d.weekendHours + d.weekendOtHours;
+    const wkndPay = d.weekendPay + d.weekendOtPay;
     const cells = [
       w.view.weekHuman || '-',
-      w.view.mfHours.toFixed(2),
-      w.view.mfOtHours.toFixed(2),
-      n2(w.view.mfPay),
-      n2(w.view.otPay),
+      d.weekdayHours.toFixed(2),
+      d.weekdayOtHours.toFixed(2),
+      n2(d.weekdayPay),
+      n2(d.weekdayOtPay),
+      wkndHrs > 0 ? wkndHrs.toFixed(2) : '-',
+      wkndPay !== 0 ? n2(wkndPay) : '-',
       w.view.techBonus > 0 ? n2(w.view.techBonus) : '-',
       w.view.attendanceBonus > 0 ? n2(w.view.attendanceBonus) : '-',
       w.view.performanceBonus > 0 ? n2(w.view.performanceBonus) : '-',
@@ -451,6 +487,8 @@ export async function generatePayStubsPdf(
       `Total (${weeks.length})`, '', '',
       n2(totals.regular),
       n2(totals.ot),
+      '',
+      totals.weekendPay + totals.weekendOtPay !== 0 ? n2(totals.weekendPay + totals.weekendOtPay) : '-',
       totals.techBonus > 0 ? n2(totals.techBonus) : '-',
       totals.attendanceBonus > 0 ? n2(totals.attendanceBonus) : '-',
       totals.performanceBonus > 0 ? n2(totals.performanceBonus) : '-',

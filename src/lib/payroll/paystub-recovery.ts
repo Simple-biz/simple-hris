@@ -60,6 +60,15 @@ export interface WizardFinalPayEntry {
   regularRate?: number | null;
   otRate?: number | null;
   adjustmentNote?: string | null;
+  /** HSL weekend (Sat+Sun) carve-out of regularPay/otPay (added 2026-07-30) so a
+   *  merge/recovery can rebuild the stub's Weekend earnings lines. All-null =
+   *  the row has no weekend block (non-HSL); hours are numbers whenever it does.
+   *  Older snapshots omit the fields → undefined, and the merge keeps whatever
+   *  weekend block the staged payload already carries. */
+  weekendRegularHours?: number | null;
+  weekendOtHours?: number | null;
+  weekendRegularPay?: number | null;
+  weekendOtPay?: number | null;
 }
 
 /** The discretionary overlay recovered for one employee + week. */

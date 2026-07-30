@@ -161,3 +161,178 @@ test('catalogClaimForEmails resolves through alias emails and misses cleanly', (
   assert.equal(catalogClaimForEmails(claims, ['someoneelse@simple.biz']), null);
   assert.equal(catalogClaimForEmails(new Map(), ['nathanr@simple.biz']), null);
 });
+
+// ── HSL weekend block through the merge (2026-07-30) ────────────────────────
+// The snapshot's regular/OT figures overwrite the staged ones, so the weekend
+// block that itemizes them must travel in the same write — otherwise the
+// Employee Dashboard modal would show fresh totals over a stale weekend split.
+
+/** An HSL staged row: 40h regular (2h on the weekend) + 2h OT (all weekend). */
+function hslStagedRow(): StagedPaystubLike {
+  return {
+    recipient_email: 'nathanr@simple.biz',
+    payload: {
+      email: 'nathanr@simple.biz',
+      hours: { total: 44, regular: 40, ot: 2 },
+      weekend: {
+        hours: { regular: 2, ot: 2 },
+        pay_php: { regular: 480, ot: 705 },
+        premium_php_per_hour: 15,
+      },
+      rates_php: { regular: 225, ot: 337.5 },
+      // Fully itemized, exactly as the wizard stages it — the change detector
+      // compares every key, so an abbreviated fixture would flag `undefined`
+      // vs 0 as a change and mask the weekend-specific behavior under test.
+      pay_php: {
+        regular: 9030,
+        ot: 705,
+        initial: 9735,
+        bonuses_total: 0,
+        perfect_attendance_bonus: 0,
+        tech_bonus: 0,
+        other_bonuses: 0,
+        adjustment: 0,
+        mesa_deduction: 100,
+        mesa_disbursement: 0,
+        orphanage_pay: 0,
+        final: 9635,
+      },
+      pay_period: { fx_rate: 56 },
+    },
+    pay_period: { fx_rate: 56 },
+    locked_at: LOCKED_AT,
+    excluded: false,
+  };
+}
+
+const weekend = (p: unknown) =>
+  (p as Record<string, unknown>).weekend as Record<string, Record<string, unknown>> | null;
+
+test('a snapshot carrying weekend fields rebuilds the staged weekend block', () => {
+  const staged = hslStagedRow();
+  // The wizard recomputed after lock: one weekend OT hour moved off the week.
+  const entry = snapEntry({
+    regularRate: 225,
+    otRate: 337.5,
+    regularPay: 9030,
+    otPay: 352.5,
+    initial: 9382.5,
+    final: 9282.5,
+    otHours: 1,
+    totalHours: 43,
+    weekendRegularHours: 2,
+    weekendOtHours: 1,
+    weekendRegularPay: 480,
+    weekendOtPay: 352.5,
+  });
+  const r = mergeSnapshotIntoStaged(staged, snapValue(entry), SNAP_NEWER, CLAIM_225);
+  assert.equal(r.refreshed, true);
+  const w = weekend(r.payload);
+  assert.ok(w);
+  assert.equal(w.hours.regular, 2);
+  assert.equal(w.hours.ot, 1);
+  assert.equal(w.pay_php.regular, 480);
+  assert.equal(w.pay_php.ot, 352.5);
+  // Premium carried over from the staged block.
+  assert.equal((w as Record<string, unknown>).premium_php_per_hour, 15);
+});
+
+test('a weekend-only change is a change (refresh fires)', () => {
+  const staged = hslStagedRow();
+  const entry = snapEntry({
+    regularRate: 225,
+    otRate: 337.5,
+    regularPay: 9030,
+    otPay: 705,
+    initial: 9735,
+    final: 9635,
+    otHours: 2,
+    totalHours: 44,
+    mesaDeduction: 100,
+    // Same totals, different carve-out (e.g. hours re-bucketed across the cap).
+    weekendRegularHours: 3,
+    weekendOtHours: 1,
+    weekendRegularPay: 720,
+    weekendOtPay: 352.5,
+  });
+  const r = mergeSnapshotIntoStaged(staged, snapValue(entry), SNAP_NEWER, CLAIM_225);
+  assert.equal(r.refreshed, true);
+  const w = weekend(r.payload);
+  assert.ok(w);
+  assert.equal(w.hours.regular, 3);
+  assert.equal(w.pay_php.regular, 720);
+});
+
+test('an OLD-shape snapshot (no weekend fields) leaves the staged weekend block untouched', () => {
+  const staged = hslStagedRow();
+  const entry = snapEntry({
+    regularRate: 225,
+    otRate: 337.5,
+    regularPay: 9500, // changed figure so the merge fires
+    otPay: 705,
+    initial: 10205,
+    final: 10105,
+  }); // note: NO weekend* keys at all
+  const r = mergeSnapshotIntoStaged(staged, snapValue(entry), SNAP_NEWER, CLAIM_225);
+  assert.equal(r.refreshed, true);
+  const w = weekend(r.payload);
+  assert.ok(w, 'staged weekend block must survive an old-shape snapshot');
+  assert.equal(w.hours.regular, 2);
+  assert.equal(w.pay_php.regular, 480);
+});
+
+test('all-null weekend fields (non-HSL row) null out a stale staged block', () => {
+  const staged = hslStagedRow();
+  const entry = snapEntry({
+    regularRate: 225,
+    otRate: 337.5,
+    regularPay: 9000,
+    otPay: 675,
+    initial: 9675,
+    final: 9575,
+    weekendRegularHours: null,
+    weekendOtHours: null,
+    weekendRegularPay: null,
+    weekendOtPay: null,
+  });
+  const r = mergeSnapshotIntoStaged(staged, snapValue(entry), SNAP_NEWER, CLAIM_225);
+  assert.equal(r.refreshed, true);
+  assert.equal(weekend(r.payload), null);
+});
+
+test('an old-shape snapshot over a payload WITHOUT a weekend block never invents the key', () => {
+  const staged = stagedRow(); // no weekend key at all
+  const entry = snapEntry({
+    regularRate: 225,
+    otRate: 337.5,
+    regularPay: 9000,
+    otPay: 1398.38,
+    final: 10398.38,
+    initial: 10398.38,
+    mesaDeduction: 0,
+  });
+  const r = mergeSnapshotIntoStaged(staged, snapValue(entry), SNAP_NEWER, CLAIM_225);
+  assert.equal(r.refreshed, true);
+  assert.equal('weekend' in (r.payload as Record<string, unknown>), false);
+});
+
+test('identical weekend fields alone do not force a refresh', () => {
+  const staged = hslStagedRow();
+  const entry = snapEntry({
+    regularRate: 225,
+    otRate: 337.5,
+    regularPay: 9030,
+    otPay: 705,
+    initial: 9735,
+    final: 9635,
+    otHours: 2,
+    totalHours: 44,
+    mesaDeduction: 100,
+    weekendRegularHours: 2,
+    weekendOtHours: 2,
+    weekendRegularPay: 480,
+    weekendOtPay: 705,
+  });
+  const r = mergeSnapshotIntoStaged(staged, snapValue(entry), SNAP_NEWER, CLAIM_225);
+  assert.equal(r.refreshed, false);
+});

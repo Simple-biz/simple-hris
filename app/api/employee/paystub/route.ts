@@ -141,6 +141,15 @@ function buildView(p: {
   otHours: number;
   mfPay: number;
   otPay: number;
+  /** HSL weekend carve-out of mfPay/otPay (snapshots since 2026-07-30). The
+   *  weekend hours/pay are already INSIDE the full figures — this only lets the
+   *  statement split its earnings lines. Omit/null → classic two-line stub. */
+  weekend?: {
+    regularHours: number;
+    otHours: number;
+    regularPay: number;
+    otPay: number;
+  } | null;
   pab: number;
   tech: number;
   performanceBonus: number;
@@ -152,6 +161,11 @@ function buildView(p: {
   totalPayPhp: number;
   fxRate: number;
 }): PayStubView {
+  const wknd = p.weekend ?? null;
+  const weekdayHours = wknd ? Math.max(0, round2(p.regularHours - wknd.regularHours)) : round2(p.regularHours);
+  const weekdayOtHours = wknd ? Math.max(0, round2(p.otHours - wknd.otHours)) : round2(p.otHours);
+  const weekdayPay = wknd ? round2(p.mfPay - wknd.regularPay) : p.mfPay;
+  const weekdayOtPay = wknd ? round2(p.otPay - wknd.otPay) : p.otPay;
   return {
     name: p.name || "—",
     department: p.department || "—",
@@ -162,10 +176,36 @@ function buildView(p: {
     mfHours: round2(p.regularHours),
     mfOtHours: round2(p.otHours),
     // Effective rate paid this week (pay ÷ hours) — matches the "h × rate" line.
-    mfRate: p.regularHours > 0 ? round2(p.mfPay / p.regularHours) : 0,
-    otRate: p.otHours > 0 ? round2(p.otPay / p.otHours) : 0,
+    // With a weekend split the Regular line shows the WEEKDAY figures, so its
+    // rate is derived from those; the weekend lines get their own effective
+    // rate (premium already inside the weekend pay).
+    mfRate: wknd
+      ? weekdayHours > 0
+        ? round2(weekdayPay / weekdayHours)
+        : 0
+      : p.regularHours > 0
+        ? round2(p.mfPay / p.regularHours)
+        : 0,
+    otRate: wknd
+      ? weekdayOtHours > 0
+        ? round2(weekdayOtPay / weekdayOtHours)
+        : 0
+      : p.otHours > 0
+        ? round2(p.otPay / p.otHours)
+        : 0,
     mfPay: p.mfPay,
     otPay: p.otPay,
+    hasWeekend: wknd != null,
+    weekendHours: wknd ? round2(wknd.regularHours) : 0,
+    weekendOtHours: wknd ? round2(wknd.otHours) : 0,
+    weekendRate: wknd && wknd.regularHours > 0 ? round2(wknd.regularPay / wknd.regularHours) : 0,
+    weekendOtRate: wknd && wknd.otHours > 0 ? round2(wknd.otPay / wknd.otHours) : 0,
+    weekendPay: wknd ? round2(wknd.regularPay) : 0,
+    weekendOtPay: wknd ? round2(wknd.otPay) : 0,
+    weekdayHours,
+    weekdayOtHours,
+    weekdayPay,
+    weekdayOtPay,
     techBonus: p.tech,
     attendanceBonus: p.pab,
     performanceBonus: p.performanceBonus,
@@ -234,6 +274,17 @@ async function reconstructStubForWeek(params: {
       otHours: fp.otHours,
       mfPay,
       otPay,
+      // HSL weekend carve-out — present on snapshots since 2026-07-30; older
+      // ones (and non-HSL rows) render the classic two-line stub.
+      weekend:
+        fp.weekendRegularHours != null
+          ? {
+              regularHours: fp.weekendRegularHours,
+              otHours: fp.weekendOtHours ?? 0,
+              regularPay: round2(fp.weekendRegularPay ?? 0),
+              otPay: round2(fp.weekendOtPay ?? 0),
+            }
+          : null,
       pab: round2(fp.perfectAttendanceBonus as number),
       tech: round2(fp.techBonus as number),
       performanceBonus: round2(fp.otherBonuses as number),

@@ -232,16 +232,37 @@ export function PayStubStatement({
         <div className={`${SEC_PAD} border-b border-[#e2e8f0] pb-[5px]`}>
           <div className={SEC_HEAD}>Earnings</div>
           <StatementTable caption="Earnings" detailHead="Hours × Rate">
+            {/* HSL weeks split the hours: Regular/Overtime carry the WEEKDAY
+                portion and two Weekend rows carry Sat+Sun at the premium rate
+                (base + ₱15/h). Weekend hours can sit in either bucket — a
+                weekend day past the 40h cap is weekend OT — so both weekend
+                lines exist. The four lines sum exactly to the old two.
+                Non-HSL (and pre-split) stubs: weekday === full totals and the
+                weekend rows don't render, so nothing changes. */}
             <EarningRow
               label="Regular Hours"
-              detail={<RateDetail hours={view.mfHours} rate={view.mfRate} />}
-              amount={php(view.mfPay)}
+              detail={<RateDetail hours={view.weekdayHours ?? view.mfHours} rate={view.mfRate} />}
+              amount={php(view.weekdayPay ?? view.mfPay)}
             />
             <EarningRow
               label="Overtime"
-              detail={<RateDetail hours={view.mfOtHours} rate={view.otRate} />}
-              amount={php(view.otPay)}
+              detail={<RateDetail hours={view.weekdayOtHours ?? view.mfOtHours} rate={view.otRate} />}
+              amount={php(view.weekdayOtPay ?? view.otPay)}
             />
+            {view.hasWeekend && (
+              <EarningRow
+                label="Weekend Hours"
+                detail={<RateDetail hours={view.weekendHours} rate={view.weekendRate} />}
+                amount={php(view.weekendPay)}
+              />
+            )}
+            {view.hasWeekend && (
+              <EarningRow
+                label="Weekend Overtime"
+                detail={<RateDetail hours={view.weekendOtHours} rate={view.weekendOtRate} />}
+                amount={php(view.weekendOtPay)}
+              />
+            )}
             <EarningRow label="Tech Allowance" detail="Bonus" amount={php(view.techBonus)} />
             <EarningRow
               label="Attendance Incentive"

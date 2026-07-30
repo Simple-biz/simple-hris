@@ -281,6 +281,13 @@ Built in `dispatchData` (a `useMemo` in `PayrollWizard.tsx`) and posted as:
       "department_key": "site_building",
       "department_name": "Site Building",
       "hours": { "total": 42.5, "regular": 40, "ot": 2.5 },
+      // HSL rows only — Sat+Sun carve-out of hours/pay_php (see "Weekend Hours (HSL)").
+      // Null for every other department and when the upload had no daily columns.
+      "weekend": {
+        "hours": { "regular": 2, "ot": 0 },
+        "pay_php": { "regular": 530, "ot": 0 },
+        "premium_php_per_hour": 15
+      },
       "rates_php": { "regular": 250, "ot": 375 },
       "pay_php": {
         "regular": 10000,
@@ -314,6 +321,57 @@ Built in `dispatchData` (a `useMemo` in `PayrollWizard.tsx`) and posted as:
 | `pay_php.other_bonuses` | `bonusTotals[email] − toggledPab − toggledTech`. Department-specific bonuses (collections tiers, per-ticket, etc.). |
 | `pay_php.bonuses_total` | Recomposed: `perfect_attendance_bonus + tech_bonus + other_bonuses`. |
 | `pay_php.final` | `initial + bonuses_total`. |
+
+## Weekend Hours (HSL) — 2026-07-30
+
+HSL (`hogan_smith_law`) works a 7-day week, so its paystubs itemize **Weekend Hours** under
+Earnings. The `weekend` payload block carves the Sat+Sun portion OUT of the existing figures —
+`hours.*` and `pay_php.regular/ot` stay the FULL week totals, so nothing that sums payloads
+changed. Weekend hours can sit in **either bucket**: the 40h regular cap is applied
+chronologically, so a weekend day past the cap is weekend **OT** — which is why the block (and
+every renderer) carries a regular and an OT pair. Weekend pay = weekend hours × (base rate +
+₱15/h premium); on a mid-week rate change the wizard's proration accumulates the weekend money
+per day at each day's real rate.
+
+Renderers split the earnings rows only when the block is present (`weekend: null`, or a payload
+staged before 2026-07-30, renders the classic two lines):
+
+| Line | Hours | Amount |
+|---|---|---|
+| Regular Hours | `hours.regular − weekend.hours.regular` | `pay_php.regular − weekend.pay_php.regular` |
+| Overtime | `hours.ot − weekend.hours.ot` | `pay_php.ot − weekend.pay_php.ot` |
+| Weekend Hours | `weekend.hours.regular` | `weekend.pay_php.regular` |
+| Weekend Overtime | `weekend.hours.ot` | `weekend.pay_php.ot` |
+
+Weekday lines are derived by **subtraction**, so the four lines always sum exactly back to the
+original two (rounding residue lands on the weekday line, never the total).
+
+Where it shows (all driven by `PayStubView`'s `hasWeekend`/`weekday*`/`weekend*` fields):
+
+- **Shared statement** (`PayStubStatement.tsx`) → Employee Dashboard modal, Employee Profile
+  Pay Stubs tab, Salary-Paid notification, and Payment Dispatch's Accounting stub viewer.
+- **Wizard Paystubs preview** (its own inline markup, same split).
+- **Employee exports** (`paystub-export.ts`): XLSX gains Weekend Hours / Weekend OT Hours /
+  Weekend Pay / Weekend OT Pay columns; the PDF gains combined `Wknd Hrs` / `Weekend` columns.
+  Regular/Overtime columns hold the weekday portion so a row still sums across to Net.
+- **n8n email** — see below.
+
+Freshness plumbing: `publishFinalPaySnapshot` writes `weekendRegularHours/OtHours/RegularPay/
+OtPay` per employee (all-null = no block); `mergeSnapshotIntoStaged` rebuilds the payload's
+`weekend` block from those fields whenever it merges newer figures, keeps the staged block
+untouched under an old-shape snapshot, and nulls a stale block when the snapshot says the row
+has none. The employee route's snapshot **fast path** rebuilds the split for never-locked weeks;
+the `computeCurrentPay` slow path doesn't attempt it (those weeks predate the feature).
+
+**n8n**: `references/n8n/Paystub Automation.json` is updated — `pay_vars` gained `has_weekend`,
+`weekend_hours`, `weekend_ot_hours`, `weekend_rate`, `weekend_ot_rate`, `weekend_pay`,
+`weekend_ot_pay`, `weekday_hours`, `weekday_ot_hours`, `weekday_pay`, `weekday_ot_pay`, and
+`weekend_rows_html` (the two ready-made `<tr>`s, empty string for non-HSL); the Gmail template's
+Regular/Overtime rows now read the `weekday_*` vars and embed
+`{{ $('pay_vars').item.json.weekend_rows_html }}` right after the Overtime row. **The live n8n
+instance must be re-imported from this reference (or those two node edits repeated by hand)
+before HSL weekend lines appear in emails** — until then emails keep rendering the classic two
+lines from the same payload, which still reconciles.
 
 ## Gating summary (dispatch-time)
 

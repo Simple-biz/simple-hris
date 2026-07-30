@@ -282,6 +282,42 @@ export function mergeSnapshotIntoStaged(
         ? p.adjustment_note
         : null;
 
+  // ── HSL weekend carve-out (snapshots since 2026-07-30) ──
+  // The snapshot's regular/OT figures are about to overwrite the staged ones, so
+  // the weekend block that itemizes them must move in the same write — a stale
+  // weekend block under fresh totals would advertise money the lines don't sum
+  // to. Older snapshots (fields undefined) can't speak for the block, so the
+  // staged one is kept exactly as-is. All-null fields = the row has no weekend
+  // block (non-HSL) → the merged payload's block is null too.
+  const oldWeekend = p.weekend && typeof p.weekend === "object" ? obj(p.weekend) : null;
+  const hasWeekendFields = entry.weekendRegularHours !== undefined;
+  const nextWeekend = !hasWeekendFields
+    ? (oldWeekend as Record<string, unknown> | null)
+    : entry.weekendRegularHours == null
+      ? null
+      : {
+          hours: { regular: num(entry.weekendRegularHours), ot: num(entry.weekendOtHours) },
+          pay_php: {
+            regular: numOrNull(entry.weekendRegularPay),
+            ot: numOrNull(entry.weekendOtPay),
+          },
+          premium_php_per_hour: oldWeekend ? num(oldWeekend.premium_php_per_hour) || 15 : 15,
+        };
+  const weekendChanged = (() => {
+    if (!hasWeekendFields) return false;
+    if (!oldWeekend !== !nextWeekend) return true;
+    if (!oldWeekend || !nextWeekend || !("hours" in nextWeekend)) return false;
+    const oh = obj(oldWeekend.hours);
+    const op = obj(oldWeekend.pay_php);
+    const nw = nextWeekend as { hours: { regular: number; ot: number }; pay_php: { regular: number | null; ot: number | null } };
+    return (
+      !sameAmount(oh.regular, nw.hours.regular) ||
+      !sameAmount(oh.ot, nw.hours.ot) ||
+      !sameAmount(op.regular, nw.pay_php.regular) ||
+      !sameAmount(op.ot, nw.pay_php.ot)
+    );
+  })();
+
   // Field-by-field change detection (NOT JSON.stringify — jsonb round-trips
   // reorder keys, which would flag every merge as a change). fx_rate is part of
   // the statement too (the USD line), so an fx-only snapshot update must merge.
@@ -289,6 +325,7 @@ export function mergeSnapshotIntoStaged(
     (Object.keys(nextPay) as Array<keyof typeof nextPay>).some((k) => !sameAmount(oldPay[k], nextPay[k])) ||
     (Object.keys(nextHours) as Array<keyof typeof nextHours>).some((k) => !sameAmount(oldHours[k], nextHours[k])) ||
     (Object.keys(nextRates) as Array<keyof typeof nextRates>).some((k) => !sameAmount(oldRates[k], nextRates[k])) ||
+    weekendChanged ||
     (snapFx > 0 && !sameAmount(oldPeriod.fx_rate, snapFx)) ||
     (nextNote ?? null) !== ((typeof p.adjustment_note === "string" ? p.adjustment_note : null) ?? null);
   if (!changed) return base;
@@ -296,6 +333,10 @@ export function mergeSnapshotIntoStaged(
   const merged = {
     ...p,
     hours: nextHours,
+    // Only rewrite the weekend key when the snapshot actually carries the
+    // fields — an old-shape snapshot must not stamp `weekend: null` onto a
+    // payload that never had (or already has) a block.
+    ...(hasWeekendFields ? { weekend: nextWeekend } : {}),
     rates_php: nextRates,
     pay_php: nextPay,
     adjustment_note: nextNote,

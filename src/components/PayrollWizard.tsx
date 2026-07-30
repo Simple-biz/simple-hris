@@ -485,6 +485,19 @@ type CalcRow = {
   regularPay: number | null;
   otPay: number | null;
   initialPay: number | null;
+  /**
+   * HSL-only weekend (Sat+Sun) itemization for the paystub. Hours are the
+   * weekend portion of each bucket (a weekend day past the 40h cap is weekend
+   * OT); pay is those hours at (rate + ₱15/h premium), already INCLUDED in
+   * `regularPay`/`otPay` — this is a breakdown, never an addition. Null for
+   * non-HSL rows and for rows with no per-day columns (weekend unknowable).
+   */
+  weekend?: {
+    regularHours: number;
+    otHours: number;
+    regularPay: number | null;
+    otPay: number | null;
+  } | null;
   /** Set when a pay-rate change took effect MID-PERIOD (e.g. a transfer): the
    *  reg/OT pay above is prorated per day (old rate before the effective date,
    *  new rate after), matching Payment Dispatch. Drives the Step-2 badge. */
@@ -569,6 +582,10 @@ function proratePayForMidPeriodChange(params: {
    */
   regularRatesUsed: number[];
   otRatesUsed: number[];
+  /** HSL weekend (Sat+Sun) portion of the pay above, accumulated per day at the
+   *  exact same (rate + ₱15) each day paid at — so the paystub's weekend lines
+   *  stay true across a mid-week rate change. All zeros for non-HSL. */
+  weekend: { regularHours: number; otHours: number; regularPay: number; otPay: number };
 } | null {
   const { days, isHsl, history, histEmail, fallbackReg, fallbackOt } = params;
   const empHist = history && histEmail ? history.get(histEmail) : undefined;
@@ -582,6 +599,10 @@ function proratePayForMidPeriodChange(params: {
   let usedRegSec = 0;
   let regularPayPHP = 0;
   let otPayPHP = 0;
+  let wkndRegSec = 0;
+  let wkndOtSec = 0;
+  let wkndRegPayPHP = 0;
+  let wkndOtPayPHP = 0;
   let anyReg = false;
   let anyOt = false;
   let firstReg: number | null | undefined;
@@ -618,16 +639,27 @@ function proratePayForMidPeriodChange(params: {
     usedRegSec += dayRegSec;
 
     const dow = d.date.getDay();
-    const weekendBonus = isHsl && (dow === 0 || dow === 6) ? 15 : 0;
+    const isWeekendDay = isHsl && (dow === 0 || dow === 6);
+    const weekendBonus = isWeekendDay ? 15 : 0;
     if (reg != null) {
-      regularPayPHP += (dayRegSec / 3600) * (reg + weekendBonus);
+      const dayRegPay = (dayRegSec / 3600) * (reg + weekendBonus);
+      regularPayPHP += dayRegPay;
+      if (isWeekendDay) {
+        wkndRegSec += dayRegSec;
+        wkndRegPayPHP += dayRegPay;
+      }
       anyReg = true;
       // Only count a rate as "paid at" when it actually moved money on this day —
       // a zero-second day would otherwise smuggle in a rate nobody was paid.
       if (dayRegSec > 0) noteRate(regularRatesUsed, reg);
     }
     if (ot != null) {
-      otPayPHP += (dayOtSec / 3600) * (ot + weekendBonus);
+      const dayOtPay = (dayOtSec / 3600) * (ot + weekendBonus);
+      otPayPHP += dayOtPay;
+      if (isWeekendDay) {
+        wkndOtSec += dayOtSec;
+        wkndOtPayPHP += dayOtPay;
+      }
       anyOt = true;
       if (dayOtSec > 0) noteRate(otRatesUsed, ot);
     }
@@ -648,6 +680,12 @@ function proratePayForMidPeriodChange(params: {
     change,
     regularRatesUsed,
     otRatesUsed,
+    weekend: {
+      regularHours: wkndRegSec / 3600,
+      otHours: wkndOtSec / 3600,
+      regularPay: Math.round(wkndRegPayPHP * 100) / 100,
+      otPay: Math.round(wkndOtPayPHP * 100) / 100,
+    },
   };
 }
 
@@ -693,6 +731,21 @@ type DispatchEmployee = {
   department_key: string | null;
   department_name: string | null;
   hours: { total: number; regular: number; ot: number };
+  /**
+   * HSL-only weekend (Sat+Sun) itemization for the paystub. `hours` above and
+   * `pay_php` below stay FULL-week totals (weekend included) — this block only
+   * carves the weekend portion out so statements (in-app + the n8n email) can
+   * render "Weekend Hours" / "Weekend Overtime" lines at the premium rate
+   * (base + ₱15/h). Weekend hours can sit in either bucket: a weekend day past
+   * the 40h cap is weekend OT. Null for non-HSL rows and for rows whose upload
+   * had no daily columns (weekend unknowable). Consumers must treat an absent/
+   * null block as "render the classic two-line earnings section".
+   */
+  weekend: {
+    hours: { regular: number; ot: number };
+    pay_php: { regular: number | null; ot: number | null };
+    premium_php_per_hour: number;
+  } | null;
   rates_php: { regular: number | null; ot: number | null };
   pay_php: {
     regular: number | null;
@@ -5087,9 +5140,13 @@ export default function PayrollWizard({
   /**
    * HSL weekend pay premium: +15 PHP/h for Saturday and Sunday hours within the
    * HSL (Mon→Sun) pay week, split between the regular and OT buckets chronologically.
+   * Also carries the weekend SECONDS per bucket so the paystub can itemize the
+   * weekend hours themselves (not just the premium). Entries exist only when
+   * weekend hours were actually logged — HSL rows without one stage a zeroed
+   * weekend block.
    */
-  const weekendPremiumByEmail = useMemo<Map<string, { regPremiumPHP: number; otPremiumPHP: number }>>(() => {
-    const map = new Map<string, { regPremiumPHP: number; otPremiumPHP: number }>();
+  const weekendPremiumByEmail = useMemo<Map<string, { regPremiumPHP: number; otPremiumPHP: number; regSec: number; otSec: number }>>(() => {
+    const map = new Map<string, { regPremiumPHP: number; otPremiumPHP: number; regSec: number; otSec: number }>();
     const REG_CAP_SEC = 40 * 3600;
     for (const [em, { isHsl, days }] of payDaysByEmail) {
       if (!isHsl) continue;
@@ -5108,7 +5165,7 @@ export default function PayrollWizard({
       const regPremiumPHP = phpHourlyPayFromSeconds(15, wkndRegSec);
       const otPremiumPHP = phpHourlyPayFromSeconds(15, wkndOtSec);
       if (regPremiumPHP !== 0 || otPremiumPHP !== 0) {
-        map.set(em, { regPremiumPHP, otPremiumPHP });
+        map.set(em, { regPremiumPHP, otPremiumPHP, regSec: wkndRegSec, otSec: wkndOtSec });
       }
     }
     return map;
@@ -5205,6 +5262,7 @@ export default function PayrollWizard({
       let rateChange: CalcRow['rateChange'] = null;
       let ratesPaid: CalcRow['ratesPaid'] = null;
       let rateDisagreement: CalcRow['rateDisagreement'] = null;
+      let proratedWeekend: { regularHours: number; otHours: number; regularPay: number; otPay: number } | null = null;
       const payDay = em ? payDaysByEmail.get(em) : undefined;
       if (payDay && payDay.days.length > 0) {
         // candidate emails for history lookup + individual detection
@@ -5233,6 +5291,9 @@ export default function PayrollWizard({
             // Respect the existing "no OT hours → 0, not null" convention.
             otPay = otSec > 0 ? prorated.otPay : 0;
             rateChange = prorated.change;
+            // Pay moved onto per-day history rates — the weekend split must ride
+            // along, or the stub's weekend lines would advertise cache-rate money.
+            proratedWeekend = prorated.weekend;
             // Carry the rates history actually paid at. When `change` is null this
             // override is otherwise SILENT — no badge, no signal — which is exactly
             // how a stub came to show ₱225/h over amounts computed at ₱175/h.
@@ -5273,6 +5334,40 @@ export default function PayrollWizard({
         }
       }
 
+      // ── Weekend (Sat+Sun) itemization for HSL paystubs ──
+      // The weekend hours/pay are already INSIDE regularPay/otPay (base rate ×
+      // hours + the ₱15/h premium) — this block only carves them out so the
+      // statement can show them as their own Earnings lines. Prorated weeks take
+      // the exact per-day figures; single-rate weeks price the weekend seconds at
+      // (rate + 15) directly. HSL rows with no daily columns can't know which
+      // hours fell on the weekend → null (statement falls back to two lines).
+      let weekend: CalcRow['weekend'] = null;
+      if (payDay?.isHsl) {
+        if (proratedWeekend) {
+          weekend = {
+            regularHours: proratedWeekend.regularHours,
+            otHours: proratedWeekend.otHours,
+            regularPay: regularPay != null ? proratedWeekend.regularPay : null,
+            otPay: otSec > 0 ? (otPay != null ? proratedWeekend.otPay : null) : 0,
+          };
+        } else {
+          const wkndRegSec = wknd?.regSec ?? 0;
+          const wkndOtSec = wknd?.otSec ?? 0;
+          weekend = {
+            regularHours: wkndRegSec / 3600,
+            otHours: wkndOtSec / 3600,
+            regularPay:
+              regularRate != null ? phpHourlyPayFromSeconds(regularRate + 15, wkndRegSec) : null,
+            otPay:
+              wkndOtSec > 0
+                ? otRate != null
+                  ? phpHourlyPayFromSeconds(otRate + 15, wkndOtSec)
+                  : null
+                : 0,
+          };
+        }
+      }
+
       const initialPay =
         regularPay != null && otPay != null
           ? Math.round((regularPay + otPay) * 100) / 100
@@ -5284,6 +5379,7 @@ export default function PayrollWizard({
         totalHours: totalH,
         regularHours,
         otHours,
+        weekend,
         // The rate actually applied — never the sheet cache when pay came from
         // elsewhere. This is what makes hours × rate reconcile on the statement.
         regularRate: displayRegularRate,
@@ -5405,6 +5501,9 @@ export default function PayrollWizard({
           otHours: 0,
           otPay: 0,
           initialPay: row.regularPay != null ? Math.round(row.regularPay * 100) / 100 : null,
+          // OT is not paid this week, so the weekend OT carve-out must vanish
+          // with it — the stub may never itemize money that isn't in otPay.
+          weekend: row.weekend ? { ...row.weekend, otHours: 0, otPay: 0 } : row.weekend,
         };
       }
 
@@ -6435,6 +6534,13 @@ export default function PayrollWizard({
         department_key: deptKey,
         department_name: deptName,
         hours: { total: r.totalHours, regular: r.regularHours, ot: r.otHours },
+        weekend: r.weekend
+          ? {
+              hours: { regular: r.weekend.regularHours, ot: r.weekend.otHours },
+              pay_php: { regular: r.weekend.regularPay, ot: r.weekend.otPay },
+              premium_php_per_hour: 15,
+            }
+          : null,
         rates_php: { regular: r.regularRate, ot: r.otRate },
         pay_php: {
           regular: r.regularPay,
@@ -6576,6 +6682,15 @@ export default function PayrollWizard({
       regularRate: number | null;
       otRate: number | null;
       adjustmentNote: string | null;
+      // HSL weekend (Sat+Sun) carve-out of the regular/OT figures above, so the
+      // freshness merge can rebuild the stub's Weekend lines (paystub-fresh.ts).
+      // All-null = no weekend block (non-HSL row); hours are numbers whenever the
+      // block exists. Older snapshots omit these fields entirely (undefined) and
+      // the merge keeps the staged payload's weekend block untouched.
+      weekendRegularHours: number | null;
+      weekendOtHours: number | null;
+      weekendRegularPay: number | null;
+      weekendOtPay: number | null;
     }> = {};
     for (const r of dispatchData.rows) {
       const entry = {
@@ -6600,6 +6715,10 @@ export default function PayrollWizard({
         regularRate: r.rates_php.regular,
         otRate: r.rates_php.ot,
         adjustmentNote: r.adjustment_note,
+        weekendRegularHours: r.weekend ? r.weekend.hours.regular : null,
+        weekendOtHours: r.weekend ? r.weekend.hours.ot : null,
+        weekendRegularPay: r.weekend ? r.weekend.pay_php.regular : null,
+        weekendOtPay: r.weekend ? r.weekend.pay_php.ot : null,
       };
       const we = r.email?.trim().toLowerCase();
       const pe = r.personal_email?.trim().toLowerCase();
@@ -15006,6 +15125,26 @@ export default function PayrollWizard({
                 n == null ? '—' : '₱' + n.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
               const fmtRate = (n: number | null) =>
                 n == null ? '—' : n.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+              // HSL weekend carve-out: Regular/Overtime rows show the WEEKDAY
+              // portion and two Weekend rows carry Sat+Sun at (rate + ₱15/h) —
+              // identical split to the shared PayStubStatement, so preview ==
+              // dispatch == email. Without a weekend block the subtractions are
+              // zero and the two classic rows render byte-identical to before.
+              const r2 = (n: number) => Math.round(n * 100) / 100;
+              const wknd = selected.weekend;
+              const wkRegHours = wknd?.hours.regular ?? 0;
+              const wkOtHours = wknd?.hours.ot ?? 0;
+              const wkRegPay = wknd ? wknd.pay_php.regular : null;
+              const wkOtPay = wknd ? wknd.pay_php.ot : null;
+              const weekdayRegHours = Math.max(0, r2(selected.hours.regular - wkRegHours));
+              const weekdayOtHours = Math.max(0, r2(selected.hours.ot - wkOtHours));
+              const weekdayRegPay = pp.regular == null ? null : r2(pp.regular - (wkRegPay ?? 0));
+              const weekdayOtPay = pp.ot == null ? null : r2(pp.ot - (wkOtPay ?? 0));
+              const wkPremium = wknd?.premium_php_per_hour ?? 15;
+              const wkRegRate =
+                selected.rates_php.regular == null ? null : r2(selected.rates_php.regular + wkPremium);
+              const wkOtRate =
+                selected.rates_php.ot == null ? null : r2(selected.rates_php.ot + wkPremium);
               const weekHuman = (() => {
                 const w = selected.pay_period.week;
                 if (!w) return '—';
@@ -15134,14 +15273,28 @@ export default function PayrollWizard({
                                 </tr>
                                 <tr>
                                   <td className="border-b border-[#edf2f7] py-1.5 text-[13px] leading-[15px] text-[#26384d]">Regular Hours</td>
-                                  <td className="border-b border-[#edf2f7] px-2 py-1.5 text-[12px] leading-[15px] text-[#556377]">{selected.hours.regular.toFixed(2)}h × ₱{fmtRate(selected.rates_php.regular)}</td>
-                                  <td className="whitespace-nowrap border-b border-[#edf2f7] py-1.5 text-right text-[13px] font-bold leading-[15px] text-[#102034]">{fmt(pp.regular)}</td>
+                                  <td className="border-b border-[#edf2f7] px-2 py-1.5 text-[12px] leading-[15px] text-[#556377]">{weekdayRegHours.toFixed(2)}h × ₱{fmtRate(selected.rates_php.regular)}</td>
+                                  <td className="whitespace-nowrap border-b border-[#edf2f7] py-1.5 text-right text-[13px] font-bold leading-[15px] text-[#102034]">{fmt(weekdayRegPay)}</td>
                                 </tr>
                                 <tr>
                                   <td className="border-b border-[#edf2f7] py-1.5 text-[13px] leading-[15px] text-[#26384d]">Overtime</td>
-                                  <td className="border-b border-[#edf2f7] px-2 py-1.5 text-[12px] leading-[15px] text-[#556377]">{selected.hours.ot.toFixed(2)}h × ₱{fmtRate(selected.rates_php.ot)}</td>
-                                  <td className="whitespace-nowrap border-b border-[#edf2f7] py-1.5 text-right text-[13px] font-bold leading-[15px] text-[#102034]">{fmt(pp.ot)}</td>
+                                  <td className="border-b border-[#edf2f7] px-2 py-1.5 text-[12px] leading-[15px] text-[#556377]">{weekdayOtHours.toFixed(2)}h × ₱{fmtRate(selected.rates_php.ot)}</td>
+                                  <td className="whitespace-nowrap border-b border-[#edf2f7] py-1.5 text-right text-[13px] font-bold leading-[15px] text-[#102034]">{fmt(weekdayOtPay)}</td>
                                 </tr>
+                                {wknd && (
+                                  <tr>
+                                    <td className="border-b border-[#edf2f7] py-1.5 text-[13px] leading-[15px] text-[#26384d]">Weekend Hours</td>
+                                    <td className="border-b border-[#edf2f7] px-2 py-1.5 text-[12px] leading-[15px] text-[#556377]">{wkRegHours.toFixed(2)}h × ₱{fmtRate(wkRegRate)}</td>
+                                    <td className="whitespace-nowrap border-b border-[#edf2f7] py-1.5 text-right text-[13px] font-bold leading-[15px] text-[#102034]">{fmt(wkRegPay)}</td>
+                                  </tr>
+                                )}
+                                {wknd && (
+                                  <tr>
+                                    <td className="border-b border-[#edf2f7] py-1.5 text-[13px] leading-[15px] text-[#26384d]">Weekend Overtime</td>
+                                    <td className="border-b border-[#edf2f7] px-2 py-1.5 text-[12px] leading-[15px] text-[#556377]">{wkOtHours.toFixed(2)}h × ₱{fmtRate(wkOtRate)}</td>
+                                    <td className="whitespace-nowrap border-b border-[#edf2f7] py-1.5 text-right text-[13px] font-bold leading-[15px] text-[#102034]">{fmt(wkOtPay)}</td>
+                                  </tr>
+                                )}
                                 <tr>
                                   <td className="border-b border-[#edf2f7] py-1.5 text-[13px] leading-[15px] text-[#26384d]">Tech Allowance</td>
                                   <td className="border-b border-[#edf2f7] px-2 py-1.5 text-[12px] leading-[15px] text-[#556377]">Bonus</td>
