@@ -59,8 +59,10 @@ import {
 import {
   HSL_WEEK_MODEL_CUTOVER_KEY,
   resolveHslWeekModelWithDefault,
+  resolveHslWeekScope,
   type HslWeekModel,
 } from "@/lib/payroll/hsl-week-model";
+import { fetchHslTransferEffectiveByEmail } from "@/lib/payroll/hsl-transfer-effective";
 import {
   fetchAllRateHistory,
   resolveRateAsOfDate,
@@ -441,6 +443,10 @@ export function computeProratedRowPay(
    *  rate. Any disagreement keeps the flat override — stale history can never
    *  resurrect. Same rule as the wizard's `proratePayForMidPeriodChange`. */
   catalogNative?: CatalogNativeRate | null,
+  /** Day-scoped HSL-ness for a mid-week transfer INTO HSL (resolveHslWeekScope):
+   *  weekend days BEFORE this date pay plain rate (no +15); on/after it the
+   *  premium applies. Null/omitted = HSL all week. Ignored when !isHsl. */
+  hslFromDate?: Date | null,
 ): {
   regularPayPHP: number | null;
   otPayPHP: number | null;
@@ -517,9 +523,16 @@ export function computeProratedRowPay(
     regularSec += dayRegSec;
     otSec += dayOtSec;
 
-    // HSL weekend premium: all hours on Saturday (6) or Sunday (0) earn +15 PHP/h
+    // HSL weekend premium: all hours on Saturday (6) or Sunday (0) earn +15 PHP/h.
+    // Day-scoped for a mid-week transfer INTO HSL — a weekend day worked before
+    // the transfer's effective date is an old-department day, plain rate.
     const dow = d.date.getDay();
-    const weekendBonus = isHsl && (dow === 0 || dow === 6) ? 15 : 0;
+    const weekendBonus =
+      isHsl &&
+      (dow === 0 || dow === 6) &&
+      (!hslFromDate || d.date.getTime() >= hslFromDate.getTime())
+        ? 15
+        : 0;
 
     if (reg != null) regularPayPHP += (dayRegSec / 3600) * (reg + weekendBonus);
     if (ot != null) otPayPHP += (dayOtSec / 3600) * (ot + weekendBonus);
@@ -574,6 +587,7 @@ export async function computeCurrentPay(
     payStructuresResult,
     systemBonusesResult,
     onboardingCountryRows,
+    hslTransferEffective,
   ] = await Promise.all([
     hubstaffPromise,
     getEmployeeHourlyRatesRows(),
@@ -596,6 +610,9 @@ export async function computeCurrentPay(
     listPayStructures(),
     listSystemBonuses(),
     supabase ? fetchOnboardingCountries(supabase) : Promise.resolve<OnboardingCountryRow[]>([]),
+    // Into-HSL transfer effective dates — day-scopes the Weekend Hours
+    // treatment in a transfer week (resolveHslWeekScope).
+    fetchHslTransferEffectiveByEmail(),
   ]);
 
   // Deferred: the full-table Hubstaff scan (every row, every upload) is ONLY
@@ -789,9 +806,14 @@ export async function computeCurrentPay(
         if (e && !masterDeptByEmail.has(e)) masterDeptByEmail.set(e, m.department);
       }
     }
-    if (m.department && m.department.trim().toLowerCase() === "hsl") {
-      if (we) hslEmails.add(we);
-      if (pe) hslEmails.add(pe);
+    // HSL membership via the SAME normalization the wizard uses — 'HSL',
+    // 'hsl:intake_specialist', 'Hogan Smith Law', 'Hogan' all count. The old
+    // exact-string 'hsl' match paid sub-team (hsl:*) people as non-HSL here
+    // while the wizard paid them WITH the weekend premium — a silent
+    // engine divergence of exactly 15 × weekend hours. Alternates included so
+    // a Hubstaff row keyed on an alias still classifies.
+    if (m.department && normalizeDeptToKey(m.department) === "hogan_smith_law") {
+      for (const e of [we, pe, altA, altB]) if (e) hslEmails.add(e);
     }
     const sd = parseLocalIso(m.start_date);
     if (sd) {
@@ -906,7 +928,22 @@ export async function computeCurrentPay(
     if (!em) continue;
 
     const sheetRate = rateByEmail.get(em);
-    const isHslEmp = hslEmails.has(em);
+    // Day-scoped HSL-ness: the dept label alone says WHERE they are now; the
+    // into-HSL transfer's effective date says SINCE WHEN. Effective inside the
+    // week → weekend treatment only from that day; effective after the week →
+    // not HSL this week at all (the label just moved early). Mirrors the
+    // wizard's payDaysByEmail exactly.
+    const deptIsHsl = hslEmails.has(em);
+    const hslEffIso =
+      hslTransferEffective.get(em) ??
+      (aliasesByEmail.get(em) ?? [])
+        .map((a) => hslTransferEffective.get(a))
+        .find((v): v is string => !!v) ??
+      null;
+    // Without a resolvable period window the scope can't be judged → plain flag.
+    const { isHsl: isHslEmp, hslFrom } = payWeekHsl
+      ? resolveHslWeekScope(deptIsHsl, hslEffIso, payWeekHsl.start, payWeekHsl.end)
+      : { isHsl: deptIsHsl, hslFrom: null };
     // Priority: individual (employee) catalog → sheet rate → department base.
     // PHP-equivalent (USD converted at fx). The individual catalog rate is the
     // only one that OVERRIDES the per-day history; the department rate is purely
@@ -965,6 +1002,8 @@ export async function computeCurrentPay(
       // Native-currency twin of the override: lets catalog-consistent dated
       // history prorate a mid-week change instead of flattening the week.
       empCat ? { currency: empCat.currency, regular: empCat.regNative, ot: empCat.otNative } : null,
+      // Mid-week transfer INTO HSL: premium only from the effective date on.
+      hslFrom,
     );
 
     // Hours: when per-day ISO columns exist, report the pay-week-clamped totals

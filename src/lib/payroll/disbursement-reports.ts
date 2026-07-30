@@ -29,6 +29,9 @@ import {
 } from "@/lib/payroll/resolve-rate";
 import { fetchAllRateHistory } from "@/lib/payroll/rate-history";
 import { computeProratedRowPay } from "@/lib/payroll/current-pay";
+import { resolveHslWeekScope } from "@/lib/payroll/hsl-week-model";
+import { fetchHslTransferEffectiveByEmail } from "@/lib/payroll/hsl-transfer-effective";
+import { normalizeDeptToKey } from "@/lib/payroll/normalize-dept-key";
 import {
   URGENT_SOURCE_FILE_PREFIX,
   isUrgentSourceFile,
@@ -963,24 +966,28 @@ export async function seedMissingDisbursementRecords(opts: {
   //  - Payment Catalog pay structures (individual + department) for the rate overlay,
   //  - the full employee_rate_history for mid-cycle per-day prorating,
   //  - the master list (active_employees) for HSL membership (weekend premium).
-  const [payStructuresResult, rateHistory, masterRes] = await Promise.all([
+  const [payStructuresResult, rateHistory, masterRes, hslTransferEffective] = await Promise.all([
     listPayStructures(),
     fetchAllRateHistory(),
     supabase
       .from("active_employees")
       .select('"Work Email", "Personal Email", "Department"'),
+    // Into-HSL transfer effective dates — day-scopes the weekend premium in a
+    // transfer week (resolveHslWeekScope), matching current-pay.ts.
+    fetchHslTransferEffectiveByEmail(),
   ]);
   const catalogIndex = buildCatalogRateIndex(payStructuresResult.structures);
 
-  // HSL email set (Department == 'hsl') — drives the +15₱/h weekend premium,
-  // matching current-pay.ts. Keyed on work + personal email.
+  // HSL email set — drives the +15₱/h weekend premium, matching current-pay.ts:
+  // normalized dept match so 'HSL', 'hsl:*' sub-teams and 'Hogan Smith Law'
+  // all count. Keyed on work + personal email.
   const hslEmails = new Set<string>();
   for (const m of (masterRes.data ?? []) as Array<{
     "Work Email": string | null;
     "Personal Email": string | null;
     "Department": string | null;
   }>) {
-    if ((m["Department"] ?? "").trim().toLowerCase() !== "hsl") continue;
+    if (normalizeDeptToKey(m["Department"] ?? "") !== "hogan_smith_law") continue;
     const we = normEmail(m["Work Email"]);
     const pe = normEmail(m["Personal Email"]);
     if (we) hslEmails.add(we);
@@ -1125,7 +1132,18 @@ export async function seedMissingDisbursementRecords(opts: {
       const email = normEmail(h["Email"] as string | null);
       if (!email) continue;
 
-      const isHslEmp = hslEmails.has(email);
+      // Day-scoped HSL-ness for a mid-week transfer INTO HSL — same rule as
+      // current-pay.ts: weekend treatment from the effective date, none at all
+      // when the label moved early (effective after this week). Without a
+      // resolvable period window the scope can't be judged → keep the plain flag.
+      const { isHsl: isHslEmp, hslFrom } = payWeekHsl
+        ? resolveHslWeekScope(
+            hslEmails.has(email),
+            hslTransferEffective.get(email) ?? null,
+            payWeekHsl.start,
+            payWeekHsl.end,
+          )
+        : { isHsl: hslEmails.has(email), hslFrom: null };
 
       // Rate resolution — identical priority to the live dispatch
       // (current-pay.ts): individual catalog → sheet → department base. Only the
@@ -1162,6 +1180,8 @@ export async function seedMissingDisbursementRecords(opts: {
         // Native-currency twin of the override — same catalog-consistent
         // proration rule as live dispatch, so seeded estimates can't diverge.
         empCat ? { currency: empCat.currency, regular: empCat.regNative, ot: empCat.otNative } : null,
+        // Mid-week transfer INTO HSL: premium only from the effective date on.
+        hslFrom,
       );
 
       let totalHours: number;

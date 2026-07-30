@@ -99,3 +99,41 @@ export function resolveHslWeekModelWithDefault(
     settingValue && settingValue.trim() ? settingValue : HSL_WEEK_MODEL_DEFAULT_CUTOVER;
   return resolveHslWeekModel(anchor, cutover);
 }
+
+/**
+ * Day-scoped HSL-ness for a pay week containing (or preceding) a department
+ * transfer INTO HSL (2026-07-30 rule). A transfer applies its department label
+ * immediately on release, but the Weekend Hours treatment — the +₱15/h Sat/Sun
+ * premium and the paystub's weekend itemization — must follow the transfer's
+ * EFFECTIVE date:
+ *
+ *  - dept isn't HSL                       → not HSL, no scope;
+ *  - no into-HSL transfer on record       → fully HSL (long-time member);
+ *  - effective on/before the week start   → fully HSL, no scoping needed;
+ *  - effective INSIDE the week            → HSL, with `hslFrom` = that date:
+ *      weekend days BEFORE it pay plain rate on the Regular line, weekend days
+ *      on/after it earn the premium + weekend lines — "transferred to HSL
+ *      within the week ⇒ that week they have Weekend Hours, from the transfer";
+ *  - effective AFTER the week ends        → NOT HSL this week (the label just
+ *      moved early; treatment starts in the effective week).
+ *
+ * A malformed effective date degrades to fully-HSL — never blocks pay. Shared
+ * by the Payroll Wizard and the dispatch compute so the engines cannot
+ * disagree on who earns the premium on which day.
+ */
+export function resolveHslWeekScope(
+  deptIsHsl: boolean,
+  transferEffectiveIso: string | null | undefined,
+  weekStart: Date,
+  weekEnd: Date,
+): { isHsl: boolean; hslFrom: Date | null } {
+  if (!deptIsHsl) return { isHsl: false, hslFrom: null };
+  const eff = parseLocalIso(transferEffectiveIso ?? null);
+  if (!eff) return { isHsl: true, hslFrom: null };
+  const lo = toLocalMidnight(weekStart).getTime();
+  const hi = toLocalMidnight(weekEnd).getTime();
+  const t = eff.getTime();
+  if (t <= lo) return { isHsl: true, hslFrom: null };
+  if (t > hi) return { isHsl: false, hslFrom: null };
+  return { isHsl: true, hslFrom: eff };
+}

@@ -362,6 +362,27 @@ staged before 2026-07-30, renders the classic two lines):
 Weekday lines are derived by **subtraction**, so the four lines always sum exactly back to the
 original two (rounding residue lands on the weekday line, never the total).
 
+**Mid-week transfer INTO HSL — day-scoped weekend treatment (2026-07-30).** A transfer applies its
+department label the moment it is released, but the Weekend Hours treatment follows the transfer's
+**effective date** (`resolveHslWeekScope` in `hsl-week-model.ts`, fed by
+`fetchHslTransferEffectiveByEmail` / `GET /api/payroll/hsl-transfers-bulk` over
+`department_transfer_requests`):
+
+- effective **inside** the pay week → that week already gets Weekend Hours, but only weekend days
+  **on/after** the effective date earn the +₱15/h premium and appear in the weekend carve-out; a
+  Sat/Sun worked before the transfer is an old-department day — plain rate, Regular line;
+- effective **after** the week ends (label moved early) → no weekend treatment that week at all;
+- effective on/before the week start, or no transfer on record → fully HSL, unchanged.
+
+The rule runs identically in the wizard (`payDaysByEmail` → `weekendPremiumByEmail` →
+`proratePayForMidPeriodChange`'s `hslFrom`), the dispatch compute (`computeProratedRowPay`'s
+`hslFromDate`), and the disbursement-reports seeding path. Two adjacent fixes shipped with it:
+the server engines now classify HSL via `normalizeDeptToKey` (previously an exact `"hsl"` string —
+`hsl:*` sub-teams and `Hogan Smith Law` labels were silently paid WITHOUT the premium server-side
+while the wizard paid it), and both `fetchAllRateHistory` and `/api/payroll/rate-history-bulk` now
+paginate (the un-paged reads silently truncated at PostgREST's 1000-row cap once
+`employee_rate_history` passed 9,000 rows, dropping old baseline rows from proration).
+
 Where it shows (all driven by `PayStubView`'s `hasWeekend`/`weekday*`/`weekend*` fields):
 
 - **Shared statement** (`PayStubStatement.tsx`) → Employee Dashboard modal, Employee Profile

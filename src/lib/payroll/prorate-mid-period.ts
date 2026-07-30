@@ -107,6 +107,14 @@ export interface MidPeriodProrationResult {
 export function proratePayForMidPeriodChange(params: {
   days: Array<{ date: Date; seconds: number }>;
   isHsl: boolean;
+  /**
+   * Day-scoped HSL-ness for a mid-week transfer INTO HSL (see
+   * `resolveHslWeekScope`): weekend days BEFORE this date pay plain rate on the
+   * Regular line (no +15, no weekend carve); on/after it the full weekend
+   * treatment applies. Null/omitted = HSL all week (unchanged behavior).
+   * Ignored when `isHsl` is false.
+   */
+  hslFrom?: Date | null;
   history: RateHistoryByEmail | undefined;
   histEmail: string | null;
   fallbackReg: number | null;
@@ -124,7 +132,7 @@ export function proratePayForMidPeriodChange(params: {
    */
   catalogRate?: CatalogNativeRate | null;
 }): MidPeriodProrationResult | null {
-  const { days, isHsl, history, histEmail, fallbackReg, fallbackOt, catalogRate } = params;
+  const { days, isHsl, hslFrom, history, histEmail, fallbackReg, fallbackOt, catalogRate } = params;
   const empHist = history && histEmail ? history.get(histEmail) : undefined;
   if (!empHist || empHist.length === 0 || days.length === 0) return null;
 
@@ -184,7 +192,10 @@ export function proratePayForMidPeriodChange(params: {
     usedRegSec += dayRegSec;
 
     const dow = d.date.getDay();
-    const isWeekendDay = isHsl && (dow === 0 || dow === 6);
+    // Day-scoped HSL-ness: a weekend day worked BEFORE a mid-week transfer into
+    // HSL is an old-department day — plain rate, no weekend carve.
+    const isWeekendDay =
+      isHsl && (dow === 0 || dow === 6) && (!hslFrom || d.date.getTime() >= hslFrom.getTime());
     const weekendBonus = isWeekendDay ? 15 : 0;
     if (reg != null) {
       const dayRegPay = (dayRegSec / 3600) * (reg + weekendBonus);

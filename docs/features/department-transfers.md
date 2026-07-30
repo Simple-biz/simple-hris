@@ -238,6 +238,12 @@ prorate through dated history when it is catalog-consistent (terminal history ra
 and keep the flat week on any disagreement. See
 `docs/features/paystub-dispatch.md#mid-week-proration--2026-07-30`.
 
+**Transfers INTO HSL also day-scope the Weekend Hours treatment** (2026-07-30): the +₱15/h Sat/Sun
+premium + weekend itemization start on the transfer's effective date — inside the transfer week the
+treatment covers only weekend days on/after that date, and a label that moved early (effective date
+after the week) earns nothing until its week arrives. Both engines read the effective dates from
+`department_transfer_requests` (`resolveHslWeekScope` / `fetchHslTransferEffectiveByEmail`).
+
 ---
 
 ## 5 · Data model & registration

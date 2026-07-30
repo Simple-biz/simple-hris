@@ -19,18 +19,32 @@ import { buildRateHistoryByEmail, type RateHistoryByEmail } from "./rate-history
  * Fetch the entire rate-history table once and index it by email. Caller is
  * responsible for caching this between requests if needed — for a single
  * payroll cycle compute, one fetch is fine.
+ *
+ * MUST paginate: PostgREST caps un-ranged selects at `db.max-rows` (1000) and
+ * the table passed 9,000 rows in Jul 2026 — an un-paged read silently returns
+ * only the newest 1,000 rows (ordered by effective_from DESC), dropping every
+ * old baseline (e.g. the 1970-dated backfills), which makes mid-week proration
+ * fall back to the cache rate for pre-change days.
  */
 export async function fetchAllRateHistory(): Promise<RateHistoryByEmail> {
   const supabase = createSupabaseServiceRoleClient() ?? createSupabaseServerClient();
   if (!supabase) return new Map();
 
-  const { data, error } = await supabase
-    .from('employee_rate_history')
-    .select('employee_email, regular_rate, ot_rate, effective_from')
-    .order('effective_from', { ascending: false });
-
-  if (error || !data) return new Map();
-  return buildRateHistoryByEmail(data as Array<Record<string, unknown>>);
+  const PAGE = 1000;
+  const all: Array<Record<string, unknown>> = [];
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await supabase
+      .from('employee_rate_history')
+      .select('employee_email, regular_rate, ot_rate, effective_from')
+      .order('effective_from', { ascending: false })
+      .order('id', { ascending: false })
+      .range(from, from + PAGE - 1);
+    if (error || !data) break;
+    all.push(...(data as Array<Record<string, unknown>>));
+    if (data.length < PAGE) break;
+  }
+  if (all.length === 0) return new Map();
+  return buildRateHistoryByEmail(all);
 }
 
 /** Insert a new history row. Email is lowercased server-side via trigger. */

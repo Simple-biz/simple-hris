@@ -241,3 +241,62 @@ test('sun_sat boundary: start-1 is NOT an empty range — callers must end befor
   assert.equal(empty.size, 0, 'anchor-1 is the true empty range');
   assert.equal(checkHslPabEligibility(start, beforeAnchor, new Map(), 'sun_sat'), true);
 });
+
+// ── Day-scoped HSL-ness for the transfer week (2026-07-30) ──────────────────
+// A department transfer INTO HSL applies its label immediately, but the
+// Weekend Hours treatment (+₱15/h Sat/Sun premium + weekend itemization) must
+// follow the EFFECTIVE date: scoped from that date within the transfer week,
+// absent entirely when the label moved early (effective date after the week),
+// and unrestricted once the effective date is behind the week. Shared by the
+// wizard and the dispatch compute so the two engines cannot disagree.
+
+import { resolveHslWeekScope } from './hsl-week-model';
+
+const SCOPE_WEEK_START = new Date(2026, 6, 19); // Sun Jul 19
+const SCOPE_WEEK_END = new Date(2026, 6, 25); // Sat Jul 25
+
+test('scope: non-HSL department is never HSL', () => {
+  assert.deepEqual(resolveHslWeekScope(false, '2026-07-22', SCOPE_WEEK_START, SCOPE_WEEK_END), {
+    isHsl: false,
+    hslFrom: null,
+  });
+});
+
+test('scope: HSL with no transfer on record is fully HSL (long-time member)', () => {
+  assert.deepEqual(resolveHslWeekScope(true, null, SCOPE_WEEK_START, SCOPE_WEEK_END), {
+    isHsl: true,
+    hslFrom: null,
+  });
+});
+
+test('scope: transfer effective before (or on) the week start = fully HSL', () => {
+  assert.deepEqual(resolveHslWeekScope(true, '2026-07-13', SCOPE_WEEK_START, SCOPE_WEEK_END), {
+    isHsl: true,
+    hslFrom: null,
+  });
+  assert.deepEqual(resolveHslWeekScope(true, '2026-07-19', SCOPE_WEEK_START, SCOPE_WEEK_END), {
+    isHsl: true,
+    hslFrom: null,
+  });
+});
+
+test('scope: transfer effective INSIDE the week = HSL scoped from that date', () => {
+  const r = resolveHslWeekScope(true, '2026-07-22', SCOPE_WEEK_START, SCOPE_WEEK_END);
+  assert.equal(r.isHsl, true);
+  assert.ok(r.hslFrom);
+  assert.equal(r.hslFrom.getTime(), new Date(2026, 6, 22).getTime());
+});
+
+test('scope: transfer effective AFTER the week (label moved early) = not HSL this week', () => {
+  assert.deepEqual(resolveHslWeekScope(true, '2026-07-27', SCOPE_WEEK_START, SCOPE_WEEK_END), {
+    isHsl: false,
+    hslFrom: null,
+  });
+});
+
+test('scope: malformed effective date degrades to fully HSL (never blocks pay)', () => {
+  assert.deepEqual(resolveHslWeekScope(true, 'not-a-date', SCOPE_WEEK_START, SCOPE_WEEK_END), {
+    isHsl: true,
+    hslFrom: null,
+  });
+});

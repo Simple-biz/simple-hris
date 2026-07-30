@@ -297,6 +297,62 @@ test('consistency: a null history OT is lenient, a different OT is not', () => {
   );
 });
 
+// ── Mid-week transfer INTO HSL: day-scoped weekend treatment ────────────────
+// Kane's rule (2026-07-30): a person transferred INTO HSL mid-week gets the
+// Weekend Hours treatment (+₱15/h Sat/Sun premium + weekend itemization) for
+// THAT week — but only for weekend days ON/AFTER the transfer's effective
+// date. A weekend day worked before the transfer (still in the old dept) pays
+// plain rate and stays on the Regular line. `hslFrom` carries the effective
+// date; null/omitted = HSL all week (unchanged behavior).
+
+test('hslFrom scopes the weekend premium: pre-transfer Sunday plain, post-transfer Saturday +15', () => {
+  // Sun Jul 19 4h (old dept, rate 175) · Wed Jul 22 8h (new rate 225) · Sat Jul 25 4h.
+  // Transfer + rate change effective Wed Jul 22.
+  const r = proratePayForMidPeriodChange({
+    days: [
+      { date: new Date(2026, 6, 19), seconds: 4 * 3600 },
+      { date: new Date(2026, 6, 22), seconds: 8 * 3600 },
+      { date: new Date(2026, 6, 25), seconds: 4 * 3600 },
+    ],
+    isHsl: true,
+    hslFrom: new Date(2026, 6, 22),
+    history: TRANSFER_HISTORY,
+    histEmail: EMAIL,
+    fallbackReg: 225,
+    fallbackOt: 281.25,
+  });
+  assert.ok(r);
+  // Sun 4×175 (NO premium) + Wed 8×225 + Sat 4×(225+15) = 700 + 1800 + 960 = 3,460
+  assert.equal(r.regularPay, 3460);
+  // Weekend rollup + carve segments cover ONLY the post-transfer Saturday.
+  assert.deepEqual(r.weekend, { regularHours: 4, otHours: 0, regularPay: 960, otPay: 0 });
+  assert.deepEqual(r.segments.weekendRegular, [{ ratePhp: 225, hours: 4, payPhp: 960 }]);
+  // The pre-transfer Sunday stays inside the plain regular segments.
+  assert.deepEqual(r.segments.regular, [
+    { ratePhp: 175, hours: 4, payPhp: 700 },
+    { ratePhp: 225, hours: 12, payPhp: 2760 },
+  ]);
+});
+
+test('hslFrom omitted keeps the whole-week premium (existing behavior pin)', () => {
+  const r = proratePayForMidPeriodChange({
+    days: [
+      { date: new Date(2026, 6, 19), seconds: 4 * 3600 },
+      { date: new Date(2026, 6, 22), seconds: 8 * 3600 },
+      { date: new Date(2026, 6, 25), seconds: 4 * 3600 },
+    ],
+    isHsl: true,
+    history: TRANSFER_HISTORY,
+    histEmail: EMAIL,
+    fallbackReg: 225,
+    fallbackOt: 281.25,
+  });
+  assert.ok(r);
+  // Sun 4×(175+15) + Wed 8×225 + Sat 4×(225+15) = 760 + 1800 + 960 = 3,520
+  assert.equal(r.regularPay, 3520);
+  assert.deepEqual(r.weekend, { regularHours: 8, otHours: 0, regularPay: 1720, otPay: 0 });
+});
+
 // ── HSL: the weekend premium rides inside the segment that paid it ──────────
 // Mon Jul 20 8h @175 · Wed Jul 22 8h @225 · Sat Jul 25 4h @225+15.
 // Full regular = 8×175 + 8×225 + 4×240 = ₱4,160; the 225-segment carries the

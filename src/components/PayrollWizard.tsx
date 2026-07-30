@@ -98,6 +98,7 @@ import {
 import {
   HSL_WEEK_MODEL_CUTOVER_KEY,
   resolveHslWeekModelWithDefault,
+  resolveHslWeekScope,
   type HslWeekModel,
 } from '@/lib/payroll/hsl-week-model';
 import type { EmployeeRow } from '@/lib/supabase/employees';
@@ -2588,6 +2589,51 @@ export default function PayrollWizard({
     void loadRateHistory();
   }, [loadRateHistory]);
 
+  // Into-HSL transfer effective dates — day-scopes the HSL Weekend Hours
+  // treatment in a transfer week (resolveHslWeekScope): the dept label moves
+  // the moment a transfer is released, but the +₱15/h Sat/Sun premium and the
+  // weekend itemization follow the transfer's EFFECTIVE date. Same data the
+  // server compute fetches directly (current-pay.ts), so the wizard and
+  // Payment Dispatch can never disagree on who earns the premium on which day.
+  const [hslTransferEffectiveRaw, setHslTransferEffectiveRaw] = useState<Record<string, string>>({});
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch('/api/payroll/hsl-transfers-bulk', { cache: 'no-store' });
+        const json = (await res.json()) as { effectiveByEmail?: Record<string, string> };
+        if (!cancelled) setHslTransferEffectiveRaw(json.effectiveByEmail ?? {});
+      } catch {
+        if (!cancelled) setHslTransferEffectiveRaw({});
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Bridge the transfer map (keyed on the transfer rows' employee/work emails)
+  // across every master-list alias, so a Hubstaff row keyed on ANY of a
+  // person's addresses still resolves their transfer date.
+  const hslTransferEffectiveByEmail = useMemo(() => {
+    const out = new Map<string, string>();
+    const later = (a: string | undefined, b: string) => (!a || b > a ? b : a);
+    for (const [k, v] of Object.entries(hslTransferEffectiveRaw)) out.set(k, later(out.get(k), v));
+    for (const e of masterEmployees) {
+      const aliases = [e.work_email, e.personal_email, e.alternate_work_email, e.alternate_work_email_2]
+        .map((x) => normEmail(x))
+        .filter((x): x is string => !!x);
+      const hit = aliases
+        .map((a) => hslTransferEffectiveRaw[a])
+        .filter((v): v is string => !!v)
+        .sort()
+        .pop();
+      if (!hit) continue;
+      for (const a of aliases) out.set(a, later(out.get(a), hit));
+    }
+    return out;
+  }, [hslTransferEffectiveRaw, masterEmployees]);
+
   // Step 2 needs the rates table. Skip the first call when initialData
   // already shipped it — manual re-load buttons inside step 2 still re-fetch.
   const skipInitialRatesFetchRef = useRef(Boolean(initialData?.hourlyRates?.length));
@@ -4986,8 +5032,13 @@ export default function PayrollWizard({
    * own week — the leading Sunday belongs to HSL's week, the trailing Sunday to the
    * next non-HSL week. Days are returned chronologically.
    */
-  const payDaysByEmail = useMemo<Map<string, { isHsl: boolean; days: Array<{ date: Date; seconds: number }> }>>(() => {
-    const map = new Map<string, { isHsl: boolean; days: Array<{ date: Date; seconds: number }> }>();
+  const payDaysByEmail = useMemo<
+    Map<string, { isHsl: boolean; hslFrom: Date | null; days: Array<{ date: Date; seconds: number }> }>
+  >(() => {
+    const map = new Map<
+      string,
+      { isHsl: boolean; hslFrom: Date | null; days: Array<{ date: Date; seconds: number }> }
+    >();
     // Prefer the cross-upload merged rows (one row per employee, every upload
     // resolved to its TRUE ISO dates via its own filename) so a pay week's
     // boundary Sunday is sourced from the adjacent upload — e.g. the non-HSL
@@ -5004,7 +5055,7 @@ export default function PayrollWizard({
       const em = normEmail(rawEmail) ?? rawEmail.toLowerCase();
       if (!em) continue;
       const deptKey = employeeDepts[rawEmail] ?? employeeDepts[rawEmail.toLowerCase()];
-      const isHsl = deptKey === 'hogan_smith_law';
+      const deptIsHsl = deptKey === 'hogan_smith_law';
 
       // Resolve canonical weekday columns (sunday/monday/…) onto the file's TRUE
       // ISO dates, then let the pay-week window below clamp to this employee's
@@ -5034,7 +5085,22 @@ export default function PayrollWizard({
       // upload start (mirrors current-pay.ts). No-op for non-HSL.
       const start = anchor ?? allDays.reduce((min, d) => (d.date < min ? d.date : min), allDays[0].date);
       const rowWeekModel = resolveHslWeekModelWithDefault(start, hslWeekModelCutover);
-      const week = payWeekFromUploadStart(start, isHsl, rowWeekModel);
+      let week = payWeekFromUploadStart(start, deptIsHsl, rowWeekModel);
+
+      // Day-scoped HSL-ness for a mid-week transfer INTO HSL: the dept label
+      // moved on release, but the Weekend Hours treatment follows the transfer's
+      // EFFECTIVE date — scoped from that day inside the transfer week, absent
+      // entirely when the label moved early (effective after this week). Same
+      // rule as current-pay.ts, so wizard == Payment Dispatch per day.
+      const { isHsl, hslFrom } = resolveHslWeekScope(
+        deptIsHsl,
+        hslTransferEffectiveByEmail.get(em) ?? null,
+        week.start,
+        week.end,
+      );
+      // Demoted (label moved early) → the week window is the non-HSL one.
+      if (deptIsHsl && !isHsl) week = payWeekFromUploadStart(start, false, rowWeekModel);
+
       const lo = week.start.getTime();
       const hi = week.end.getTime();
       const days = allDays
@@ -5043,10 +5109,10 @@ export default function PayrollWizard({
           return t >= lo && t <= hi;
         })
         .sort((a, b) => a.date.getTime() - b.date.getTime());
-      if (days.length > 0) map.set(em, { isHsl, days });
+      if (days.length > 0) map.set(em, { isHsl, hslFrom, days });
     }
     return map;
-  }, [hubstaffRowsForPab, hubstaffDisplayRows, calcSourceFile, employeeDepts, hslWeekModelCutover]);
+  }, [hubstaffRowsForPab, hubstaffDisplayRows, calcSourceFile, employeeDepts, hslWeekModelCutover, hslTransferEffectiveByEmail]);
 
   /**
    * Paid hours per employee = sum of their pay-week days, with the 40 h/week
@@ -5083,7 +5149,7 @@ export default function PayrollWizard({
   const weekendPremiumByEmail = useMemo<Map<string, { regPremiumPHP: number; otPremiumPHP: number; regSec: number; otSec: number }>>(() => {
     const map = new Map<string, { regPremiumPHP: number; otPremiumPHP: number; regSec: number; otSec: number }>();
     const REG_CAP_SEC = 40 * 3600;
-    for (const [em, { isHsl, days }] of payDaysByEmail) {
+    for (const [em, { isHsl, hslFrom, days }] of payDaysByEmail) {
       if (!isHsl) continue;
       let usedRegSec = 0, wkndRegSec = 0, wkndOtSec = 0;
       for (const d of days) {
@@ -5092,7 +5158,9 @@ export default function PayrollWizard({
         const dayOtSec = d.seconds - dayRegSec;
         usedRegSec += dayRegSec;
         const dow = d.date.getDay();
-        if (dow === 0 || dow === 6) {
+        // Day-scoped: a weekend day worked BEFORE a mid-week transfer into HSL
+        // is an old-department day — plain rate, no premium, no weekend line.
+        if ((dow === 0 || dow === 6) && (!hslFrom || d.date.getTime() >= hslFrom.getTime())) {
           wkndRegSec += dayRegSec;
           wkndOtSec += dayOtSec;
         }
@@ -5225,6 +5293,8 @@ export default function PayrollWizard({
           const prorated = proratePayForMidPeriodChange({
             days: payDay!.days,
             isHsl: payDay!.isHsl,
+            // Mid-week transfer INTO HSL: premium only from the effective date on.
+            hslFrom: payDay!.hslFrom,
             history: rateHistoryByEmail,
             histEmail,
             fallbackReg: regularRate,
