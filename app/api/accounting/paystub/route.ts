@@ -3,7 +3,9 @@ import { requireFeatureAccess } from "@/lib/auth/authorize-feature";
 import { deniedResponse } from "@/lib/auth/authorize-email";
 import { getFreshPaystubEntry } from "@/lib/payroll/paystub-fresh";
 import { listPaymentDispatches } from "@/lib/supabase/payment-dispatches";
-import { mapPayloadToPayStub } from "@/lib/payroll/paystub-view";
+import { mapPayloadToPayStub, applyCopEquivalent } from "@/lib/payroll/paystub-view";
+import { resolveCountryCurrencyForEmails, getUsdToCopRate } from "@/lib/payroll/cop-country";
+import { getEmployeeMasterRecord } from "@/lib/supabase/employees";
 import { resolveEmployeeProcessor, resolvePayDateIso } from "@/lib/payroll/pay-schedule";
 import { normEmail } from "@/lib/email/norm-email";
 
@@ -70,9 +72,33 @@ export async function GET(req: NextRequest) {
   }
 
   // Paid → the frozen as-paid record; unpaid → the freshest wizard figures.
-  const paystub = paidAt
+  let paystub = paidAt
     ? mapPayloadToPayStub(staged.payload, staged.pay_period)
     : mapPayloadToPayStub(fresh.payload, fresh.payPeriod);
+
+  // COP-country payee (Colombian staff riding the PHP rails) → stamp the native
+  // COP equivalent, the same USD-anchor figure Payment Dispatch pays. The
+  // submission is keyed by the hire's personal email, so resolve through the
+  // master record's aliases. Best-effort: on any failure the statement simply
+  // renders without the COP line.
+  try {
+    const { employee: master } = await getEmployeeMasterRecord(email);
+    const payloadEmail =
+      staged.payload && typeof staged.payload.email === "string" ? staged.payload.email : null;
+    const countryCurrency = await resolveCountryCurrencyForEmails([
+      email,
+      payloadEmail,
+      master?.work_email,
+      master?.personal_email,
+      master?.alternate_work_email,
+      master?.alternate_work_email_2,
+    ]);
+    if (countryCurrency === "COP") {
+      paystub = applyCopEquivalent(paystub, await getUsdToCopRate());
+    }
+  } catch {
+    /* best-effort — the statement still renders without the COP equivalent */
+  }
   // Display pay date: real disbursement date, else the scheduled Tue (HuruPay) /
   // Thu (wires) for this week + this employee's payout method.
   const processor = await resolveEmployeeProcessor([email]);

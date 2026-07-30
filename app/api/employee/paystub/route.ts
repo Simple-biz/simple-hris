@@ -18,9 +18,14 @@ import {
   formatWeekHuman,
   parseProrationBlock,
   deriveProrationFields,
+  applyCopEquivalent,
   type PayStubView,
   type ProrationBlockRaw,
 } from "@/lib/payroll/paystub-view";
+import {
+  resolveCountryCurrencyForEmails,
+  getUsdToCopRate,
+} from "@/lib/payroll/cop-country";
 import {
   computeCurrentPay,
   type CurrentPayEntry,
@@ -228,6 +233,8 @@ function buildView(p: {
     totalPayPhp: p.totalPayPhp,
     fxRate: p.fxRate,
     totalPayUsd: p.fxRate > 0 ? round2(p.totalPayPhp / p.fxRate) : 0,
+    // COP-country payees get this stamped by the caller (applyCopEquivalent).
+    totalPayCop: null,
     // Same derivation the payload path uses (parse → per-line views), so the
     // fast-path stub shows the identical chip/basis a staged payload would.
     proration: deriveProrationFields(
@@ -473,6 +480,21 @@ function callerEmails(
   return [...out];
 }
 
+/**
+ * For a COP-country payee (Colombian staff riding the PHP rails), returns a
+ * decorator stamping the native COP equivalent onto stub views — the same
+ * USD-anchor figure Payment Dispatch pays. Identity for everyone else, so the
+ * rate read only happens for the people who need it.
+ */
+async function copDecoratorForEmails(
+  emails: Array<string | null | undefined>,
+): Promise<(v: PayStubView) => PayStubView> {
+  const cur = await resolveCountryCurrencyForEmails(emails);
+  if (cur !== "COP") return (v) => v;
+  const rate = await getUsdToCopRate();
+  return (v) => applyCopEquivalent(v, rate);
+}
+
 /** Latest paid sent_date per cycle (a cycle can have >1 dispatch row). */
 function paidAtByFileFrom(
   dispatches: Array<{ status?: string | null; cycle_source_file?: string | null; sent_date?: string | null }>,
@@ -522,7 +544,10 @@ export async function GET(req: NextRequest) {
     const paidAt = paid?.sent_date ?? null;
     const { employee: master } = await getEmployeeMasterRecord(email);
     const emails = callerEmails(email, master);
-    const processor = await resolveEmployeeProcessor(emails);
+    const [processor, copDecorate] = await Promise.all([
+      resolveEmployeeProcessor(emails),
+      copDecoratorForEmails(emails),
+    ]);
 
     // 1) Prefer a locked/staged payload — byte-identical to the emailed stub.
     //    Paid → the frozen as-paid record (the mark-paid path persisted exactly
@@ -532,9 +557,11 @@ export async function GET(req: NextRequest) {
     const fresh = await getFreshPaystubEntry(sourceFile, email);
     const staged = fresh.staged;
     if (staged?.payload && (SHOW_UNPAID_STAGED_PAYSTUBS || paid)) {
-      const paystub = paid
-        ? mapPayloadToPayStub(staged.payload, staged.pay_period)
-        : mapPayloadToPayStub(fresh.payload, fresh.payPeriod);
+      const paystub = copDecorate(
+        paid
+          ? mapPayloadToPayStub(staged.payload, staged.pay_period)
+          : mapPayloadToPayStub(fresh.payload, fresh.payPeriod),
+      );
       return NextResponse.json({
         paystub,
         available: true,
@@ -557,7 +584,7 @@ export async function GET(req: NextRequest) {
       });
       if (recon) {
         return NextResponse.json({
-          paystub: recon.view,
+          paystub: copDecorate(recon.view),
           available: true,
           paidAt,
           payDate: recon.payDate,
@@ -722,7 +749,10 @@ export async function GET(req: NextRequest) {
       currentFxRate(),
     ]);
     const emails = callerEmails(email, master);
-    const processor = await resolveEmployeeProcessor(emails);
+    const [processor, copDecorate] = await Promise.all([
+      resolveEmployeeProcessor(emails),
+      copDecoratorForEmails(emails),
+    ]);
 
     // Same freshness rule as the summary list — unpaid rows merge in any newer
     // wizard-snapshot figures so the export matches the modal and the list.
@@ -760,9 +790,9 @@ export async function GET(req: NextRequest) {
       recoveredStubs = recovered.filter((s): s is EmployeePayStub => s !== null);
     }
 
-    const stubs = [...officialStubs, ...recoveredStubs].sort((a, b) =>
-      (b.view.weekEnd ?? "").localeCompare(a.view.weekEnd ?? ""),
-    );
+    const stubs = [...officialStubs, ...recoveredStubs]
+      .map((s) => ({ ...s, view: copDecorate(s.view) }))
+      .sort((a, b) => (b.view.weekEnd ?? "").localeCompare(a.view.weekEnd ?? ""));
     return NextResponse.json({ stubs });
   }
 

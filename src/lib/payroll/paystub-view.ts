@@ -61,6 +61,15 @@ export interface PayStubView {
   /** `total_pay_php / fx_rate`, already rounded to 2dp like the email. */
   totalPayUsd: number;
   /**
+   * Native COP equivalent for a COP-country payee (Colombian staff riding the
+   * PHP rails): `round(totalPayUsd × usd_to_cop_rate)` — whole pesos, the same
+   * derivation Payment Dispatch pays from, so statement and dispatch can never
+   * disagree. Null for everyone else (the statement renders no COP line).
+   * The payload doesn't carry this; the serving routes decorate it via
+   * {@link applyCopEquivalent} after resolving the payee's onboarding country.
+   */
+  totalPayCop: number | null;
+  /**
    * Mid-week rate-change proration (a department transfer, a dated raise) —
    * per-LINE previous→current rates + the per-rate hour basis, derived from the
    * payload's `proration` block. Null for the overwhelming majority of stubs
@@ -436,5 +445,18 @@ export function mapPayloadToPayStub(payload: Json, payPeriod?: Json): PayStubVie
     totalPayPhp,
     fxRate,
     totalPayUsd: Math.round((totalPayPhp / fxRate) * 100) / 100,
+    totalPayCop: null,
   };
+}
+
+/**
+ * Stamp the native COP equivalent onto a built view — for COP-country payees
+ * only (the caller resolves that from the onboarding paperwork). Whole pesos
+ * off the USD anchor, exactly like the dispatch queue's `amountCOP`
+ * (`Math.round(totalPayUSD × usdToCop)`). A non-positive rate leaves the view
+ * untouched rather than stamping a zero.
+ */
+export function applyCopEquivalent(view: PayStubView, usdToCop: number): PayStubView {
+  if (!(usdToCop > 0)) return view;
+  return { ...view, totalPayCop: Math.round(view.totalPayUsd * usdToCop) };
 }

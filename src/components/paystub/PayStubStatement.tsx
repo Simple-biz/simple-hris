@@ -33,6 +33,12 @@ function php(n: number): string {
 function usd(n: number): string {
   return `$${n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD`;
 }
+/** Native COP for Colombian payees — whole pesos, es-CO dot grouping, exactly the
+ *  rendering Payment Dispatch uses (`formatCOP`) so the same figure never appears
+ *  in two different shapes ("$COP526.686"). */
+function cop(n: number): string {
+  return `$COP${n.toLocaleString('es-CO', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
+}
 function hrs(n: number): string {
   return n.toFixed(2);
 }
@@ -261,6 +267,17 @@ export function PayStubStatement({
                   {usd(view.totalPayUsd)}
                 </span>
               </div>
+              {/* Colombian (COP-country) payees: the native figure their bank
+                  receives — same USD-anchor derivation Payment Dispatch pays.
+                  Absent for everyone else (totalPayCop stays null). */}
+              {view.totalPayCop != null && (
+                <div className="mt-1 flex items-center justify-between gap-3">
+                  <span className="text-[12px] leading-[17px] text-[#556377]">COP equivalent</span>
+                  <span className="whitespace-nowrap text-[12px] font-bold leading-[17px] text-[#26384d]">
+                    {cop(view.totalPayCop)}
+                  </span>
+                </div>
+              )}
             </div>
           </div>
         </div>
