@@ -10,6 +10,7 @@ import {
   getCarlaSongElapsedSeconds,
   getCarlaSongServerState,
   getCarlaSongState,
+  resumeCarlaSongIfPending,
   stopCarlaSong,
   subscribeCarlaSong,
   toggleCarlaSongMuted,
@@ -36,6 +37,13 @@ const THUMB_FALLBACK = '/carla-song-thumb.svg';
 export default function CarlaSongToast() {
   const state = useSyncExternalStore(subscribeCarlaSong, getCarlaSongState, getCarlaSongServerState);
   const active = state.status === 'playing' || state.status === 'blocked';
+
+  // A hard navigation mid-song lands on a fresh document with a fresh module —
+  // pick the persisted run back up at the right offset. Runs once per document
+  // load; a no-op whenever nothing (or a finished run) is stored.
+  useEffect(() => {
+    resumeCarlaSongIfPending();
+  }, []);
 
   // Keep the pill in the DOM briefly after the song ends so it can fade out
   // instead of popping away.

@@ -11,6 +11,15 @@
  * playing through client-side route changes — including dashboard switches,
  * which go through `router.push` and never reload the page.
  *
+ * Full-page-load resilience: the run is also persisted to sessionStorage
+ * (start time + mute state). If anything hard-navigates mid-song (e.g. the
+ * router's RSC fetch falls back to a browser navigation), the toast — which
+ * the root layout mounts on every document — calls
+ * `resumeCarlaSongIfPending()` and playback picks up at the correct offset,
+ * with the fade still landing at 26s and the stop at 30s from the ORIGINAL
+ * start. A resume on a fresh document has no user gesture yet, so a blocked
+ * play() there falls into the usual tap-anywhere recovery.
+ *
  * `CarlaSongToast` (mounted once in the root layout) subscribes to this
  * module to show the "Now playing" pill with a mute toggle.
  *
@@ -72,6 +81,45 @@ export function getCarlaSongServerState(): CarlaSongState {
   return SERVER_STATE;
 }
 
+/**
+ * The current run, persisted per-tab so a hard navigation can't kill the song.
+ * `t0` is the epoch ms the 30s window started; `muted` mirrors the toggle so a
+ * resume respects it.
+ */
+const RUN_KEY = 'carla_song_run_v1';
+interface StoredRun {
+  t0: number;
+  muted: boolean;
+}
+
+function readRun(): StoredRun | null {
+  try {
+    const raw = sessionStorage.getItem(RUN_KEY);
+    if (!raw) return null;
+    const j = JSON.parse(raw) as { t0?: unknown; muted?: unknown };
+    if (typeof j?.t0 !== 'number' || !Number.isFinite(j.t0)) return null;
+    return { t0: j.t0, muted: !!j.muted };
+  } catch {
+    return null;
+  }
+}
+
+function writeRun(run: StoredRun): void {
+  try {
+    sessionStorage.setItem(RUN_KEY, JSON.stringify(run));
+  } catch {
+    /* ignore */
+  }
+}
+
+function clearRun(): void {
+  try {
+    sessionStorage.removeItem(RUN_KEY);
+  } catch {
+    /* ignore */
+  }
+}
+
 /** Seconds into the clip, clamped to the 30s run — drives the toast progress bar. */
 export function getCarlaSongElapsedSeconds(): number {
   if (!el) return 0;
@@ -96,6 +144,7 @@ function clearTimers(): void {
 /** Stop playback and settle into 'done' (idempotent — ended/error/fade all land here). */
 function finish(): void {
   clearTimers();
+  clearRun();
   if (el) {
     try {
       el.pause();
@@ -108,15 +157,15 @@ function finish(): void {
   if (state.status !== 'done') setState({ status: 'done' });
 }
 
-/** Last FADE_SECONDS of the run: ramp volume to 0, then stop. */
-function beginFade(): void {
+/** Closing fade: ramp volume to 0 over `durationSeconds`, then stop. */
+function beginFade(durationSeconds: number = FADE_SECONDS): void {
   const a = el;
   if (!a) {
     finish();
     return;
   }
   const steps = 40;
-  const stepMs = (FADE_SECONDS * 1000) / steps;
+  const stepMs = Math.max(16, (durationSeconds * 1000) / steps);
   const startVol = a.volume;
   let i = 0;
   fadeInterval = setInterval(() => {
@@ -131,15 +180,26 @@ function beginFade(): void {
   }, stepMs);
 }
 
-function armTimeline(): void {
+/**
+ * Schedule the fade/stop relative to `offsetSeconds` into the 30s window, so a
+ * resumed run still fades at 26s and ends at 30s from the ORIGINAL start.
+ */
+function armTimeline(offsetSeconds: number = 0): void {
   clearTimers();
-  fadeStartTimer = setTimeout(beginFade, (CARLA_SONG_TOTAL_SECONDS - FADE_SECONDS) * 1000);
+  const untilFade = CARLA_SONG_TOTAL_SECONDS - FADE_SECONDS - offsetSeconds;
+  if (untilFade <= 0) {
+    // Resumed inside the fade tail — fade out over whatever window remains.
+    beginFade(Math.max(0.3, CARLA_SONG_TOTAL_SECONDS - offsetSeconds));
+    return;
+  }
+  fadeStartTimer = setTimeout(beginFade, untilFade * 1000);
 }
 
 /**
- * Autoplay was refused (only possible when the login page never got a real
- * gesture — normally the "Continue with Google" click satisfies the policy).
- * The very next tap/keypress anywhere restarts playback.
+ * Autoplay was refused — either the login page never got a real gesture, or a
+ * resumed run landed on a fresh document (a new page has no gesture yet). The
+ * very next tap/keypress anywhere restarts playback, resuming at the stored
+ * run's current offset so the 30s window stays anchored to the original start.
  */
 function installUnlock(): void {
   if (unlockInstalled || typeof window === 'undefined') return;
@@ -148,13 +208,28 @@ function installUnlock(): void {
     window.removeEventListener('pointerdown', unlock);
     window.removeEventListener('keydown', unlock);
     unlockInstalled = false;
-    if (state.status === 'blocked') start();
+    if (state.status !== 'blocked') return;
+    const run = readRun();
+    if (run) {
+      const elapsed = (Date.now() - run.t0) / 1000;
+      if (elapsed < CARLA_SONG_TOTAL_SECONDS) {
+        start(elapsed, run.t0, run.muted);
+        return;
+      }
+      finish();
+      return;
+    }
+    start();
   };
   window.addEventListener('pointerdown', unlock);
   window.addEventListener('keydown', unlock);
 }
 
-function start(): void {
+/**
+ * Begin (or resume) playback `offsetSeconds` into the 30s window. `t0Ms`
+ * anchors the persisted run; omitted for a fresh start.
+ */
+function start(offsetSeconds = 0, t0Ms?: number, muted = false): void {
   try {
     clearTimers();
     if (!el) {
@@ -164,14 +239,26 @@ function start(): void {
       // Missing/undecodable asset — stand down without ever showing the toast.
       el.addEventListener('error', finish);
     }
-    el.currentTime = 0;
+    // Persist BEFORE play resolves so a navigation racing the start still
+    // finds the run and resumes on the next document.
+    writeRun({ t0: t0Ms ?? Date.now() - offsetSeconds * 1000, muted });
     el.volume = VOLUME;
-    el.muted = false;
+    el.muted = muted;
     // Optimistic: flips to 'blocked' or 'done' below if play() rejects.
-    setState({ status: 'playing', muted: false });
+    setState({ status: 'playing', muted });
     void el
       .play()
-      .then(armTimeline)
+      .then(() => {
+        const a = el;
+        if (a && offsetSeconds > 0) {
+          try {
+            a.currentTime = offsetSeconds;
+          } catch {
+            /* seek is best-effort */
+          }
+        }
+        armTimeline(offsetSeconds);
+      })
       .catch((err: unknown) => {
         const name = (err as { name?: string } | null)?.name;
         if (name === 'NotAllowedError') {
@@ -188,7 +275,7 @@ function start(): void {
 }
 
 /**
- * The one public entry point — called by the login page right before it
+ * The one sign-in entry point — called by the login page right before it
  * navigates into the app. No-ops for everyone but Carla, and won't restart
  * a run that's already going (the hand-off effect can fire more than once).
  */
@@ -197,6 +284,30 @@ export function startCarlaSongIfEligible(email: string | null | undefined): void
   if ((email ?? '').trim().toLowerCase() !== CARLA_SONG_EMAIL) return;
   if (state.status === 'playing' || state.status === 'blocked') return;
   start();
+}
+
+/**
+ * Pick a persisted run back up after a full page load. Called by the toast on
+ * mount (the root layout mounts it on every document). No-ops when nothing is
+ * stored, the 30s window already elapsed, or a run is live in this module.
+ * Skipped on /login: a fresh document there mid-window is the sign-out case,
+ * and the song shouldn't haunt the sign-in screen.
+ */
+export function resumeCarlaSongIfPending(): void {
+  if (typeof window === 'undefined') return;
+  if (state.status === 'playing' || state.status === 'blocked') return;
+  const run = readRun();
+  if (!run) return;
+  if (window.location.pathname.startsWith('/login')) {
+    clearRun();
+    return;
+  }
+  const elapsed = (Date.now() - run.t0) / 1000;
+  if (elapsed >= CARLA_SONG_TOTAL_SECONDS) {
+    clearRun();
+    return;
+  }
+  start(elapsed, run.t0, run.muted);
 }
 
 /** Mute keeps the 30s timeline running — unmuting rejoins the song mid-play. */
@@ -208,6 +319,8 @@ export function setCarlaSongMuted(muted: boolean): void {
       /* ignore */
     }
   }
+  const run = readRun();
+  if (run) writeRun({ ...run, muted });
   setState({ muted });
 }
 
