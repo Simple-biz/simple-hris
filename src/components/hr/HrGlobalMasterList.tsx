@@ -1307,7 +1307,7 @@ export default function HrGlobalMasterList() {
         <CardHeader className="border-b border-zinc-100 px-4 py-3 dark:border-zinc-800">
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
             <div>
-              <CardTitle className="text-lg font-semibold text-zinc-900 dark:text-white">Active roster</CardTitle>
+              <CardTitle className="text-lg font-semibold text-zinc-900 dark:text-white">Global Master List</CardTitle>
               <p className="mt-0.5 text-sm text-zinc-600 dark:text-zinc-400">
                 {loading
                   ? 'Loading roster…'
