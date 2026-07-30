@@ -1,5 +1,6 @@
 'use client';
 
+import { createPortal } from 'react-dom';
 import { motion } from 'motion/react';
 import { Eye, Loader2, X } from 'lucide-react';
 import type { CobrowseStatus } from '@/hooks/useCobrowse';
@@ -32,7 +33,15 @@ export default function CobrowseSurface({
   /** Dashboard name shown in the "waiting" copy, e.g. "HR dashboard". */
   surfaceLabel?: string;
 }) {
-  return (
+  // Portaled to <body>: the mounting dashboards' <main> is `isolate` (so the
+  // collab rail can't float over body-portaled dialogs), which would trap this
+  // fixed z-[120] takeover inside main's stacking context — the sidebar
+  // (md:z-30, see CollapsibleSidebarShell) then paints over the mirror's left
+  // edge. At body level the mirror covers the whole app again, sidebar
+  // included. (Exit animations still work: AnimatePresence context crosses
+  // portals.)
+  if (typeof document === 'undefined') return null;
+  return createPortal(
     <motion.div
       className="rr-block fixed inset-0 z-[120] flex flex-col bg-zinc-950"
       initial={{ opacity: 0 }}
@@ -91,6 +100,7 @@ export default function CobrowseSurface({
           </div>
         )}
       </div>
-    </motion.div>
+    </motion.div>,
+    document.body,
   );
 }
