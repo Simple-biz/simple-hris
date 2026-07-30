@@ -102,6 +102,12 @@ const KNOWN_SLUGS: Array<{ slug: string; label: string; description: string }> =
       'Fired by the People tab (Accounting/CEO) "Missing bank info → Notify" button, on top of the in-app nudge. POSTs { recipients: [{ email, name }] } (single or batch); the n8n flow emails each person a red-alarm alert with a button to the /update-bank-info self-service page. Carries no account numbers.',
   },
   {
+    slug: 'urgent_payment_notify',
+    label: 'Urgent Payment Filed → Alert Accounting (n8n)',
+    description:
+      'Fired the moment a one-off Urgent Payment is filed from the People tab "Pay" button and lands in Payment Dispatch → Urgent. POSTs the request details (name, work email, amount, department, note, filed-by); the n8n flow emails carla@, claire@ and lennyt@simple.biz to check the HRIS. Recipients + copy are fixed inside the n8n workflow.',
+  },
+  {
     slug: 'ticket_created',
     label: 'Ticket Created → Email Admin (n8n)',
     description:

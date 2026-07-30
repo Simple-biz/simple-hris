@@ -1,0 +1,127 @@
+{
+  "name": "Urgent Payment Filed → Alert Accounting",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "urgent-payment-alert",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "c2000000-0000-4000-8000-000000000001",
+      "name": "Urgent Payment Filed",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        240,
+        300
+      ],
+      "webhookId": "urgent-payment-alert"
+    },
+    {
+      "parameters": {
+        "jsCode": "// n8n Code node — \"Build Alert Emails\"\n// Fired by Simple HRIS the moment a one-off Urgent Payment request is filed\n// from the People tab and lands in Payment Dispatch → Urgent. Fans out ONE\n// item per watcher, each carrying a ready-to-send red-alarm HTML email telling\n// them to open the HRIS and dispatch the payment.\n//\n// Recipients, subject and body are FIXED here (code-owned) — the caller can\n// only say WHAT was filed, never who gets emailed or what the email says, so\n// this endpoint can't be turned into an arbitrary-content mailer.\n//\n// Expected payload (n8n may nest the POST body under `.body`):\n//   {\n//     \"event\": \"urgent_payment.requested\",\n//     \"full_name\": \"Juan Dela Cruz\",\n//     \"work_email\": \"juan@simple.biz\",\n//     \"department\": \"sales\",            // optional\n//     \"amount_php\": 12345.67,            // optional in the email, shown if present\n//     \"note\": \"Advance for ...\",        // optional\n//     \"requested_by\": \"Kane R\"          // optional\n//   }\n\nconst RECIPIENTS = [\n  'carla@simple.biz',\n  'claire@simple.biz',\n  'lennyt@simple.biz',\n];\n\nconst HRIS_LINK = 'https://simple-hris.vercel.app/';\nconst LOGO = 'https://simple-hris.vercel.app/simple-logo.png';\n\n// --- OPTIONAL shared-secret gate (matches the other Simple HRIS webhooks) ---\n// Leave '' to accept any caller. To lock it down: put a long random string\n// here AND set the same value in the HRIS env var N8N_URGENT_PAYMENT_NOTIFY_SECRET,\n// so the server sends it as the 'x-webhook-secret' header.\nconst REQUIRED_SECRET = '';\n\nconst root = (items[0] && items[0].json) || {};\nconst body = (root && typeof root.body === 'object' && root.body) ? root.body : root;\nconst headers = (root && typeof root.headers === 'object' && root.headers) ? root.headers : {};\n\nconst providedSecret = headers['x-webhook-secret'] || headers['X-Webhook-Secret'] || body.secret || '';\nif (REQUIRED_SECRET && providedSecret !== REQUIRED_SECRET) {\n  throw new Error('Unauthorized: missing or invalid webhook secret.');\n}\n\nfunction esc(v) {\n  if (v == null) return '';\n  return String(v)\n    .replace(/&/g, '&amp;')\n    .replace(/</g, '&lt;')\n    .replace(/>/g, '&gt;')\n    .replace(/\"/g, '&quot;');\n}\nfunction money(v) {\n  const n = typeof v === 'string' ? parseFloat(v) : v;\n  if (n == null || !isFinite(n) || n <= 0) return '';\n  return '\\u20B1' + n.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });\n}\n\nconst fullName = esc(body.full_name || '').trim() || 'Someone';\nconst workEmail = esc(body.work_email || '');\nconst dept = esc(body.department || '');\nconst amount = esc(money(body.amount_php));\nconst note = esc(body.note || '');\nconst requestedBy = esc(body.requested_by || '');\n\nconst SUBJECT = '\\uD83D\\uDEA8 Urgent Payment filed \\u2014 someone needs paying, check the HRIS';\n\nfunction detailRow(label, value) {\n  if (!value) return '';\n  return '<tr>' +\n    '<td style=\"padding:8px 14px;font-size:12px;color:#71717a;white-space:nowrap;vertical-align:top;border-bottom:1px solid #f4f4f5\">' + label + '</td>' +\n    '<td style=\"padding:8px 14px;font-size:13px;color:#18181b;font-weight:bold;border-bottom:1px solid #f4f4f5\">' + value + '</td>' +\n  '</tr>';\n}\n\n// Bulletproof CTA button — VML roundrect for Outlook, padded inline-block <a>\n// for every other client.\nfunction ctaButton() {\n  return '' +\n    '<table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" style=\"margin:4px 0 6px\"><tr><td>' +\n      '<!--[if mso]><v:roundrect xmlns:v=\"urn:schemas-microsoft-com:vml\" xmlns:w=\"urn:schemas-microsoft-com:office:word\" href=\"' + HRIS_LINK + '\" style=\"height:48px;v-text-anchor:middle;width:280px;\" arcsize=\"21%\" strokecolor=\"#dc2626\" fillcolor=\"#dc2626\"><w:anchorlock/><center style=\"color:#ffffff;font-family:Arial,sans-serif;font-size:15px;font-weight:bold;\">Open HRIS &rarr; Payment Dispatch</center></v:roundrect><![endif]-->' +\n      '<!--[if !mso]><!-- --><a href=\"' + HRIS_LINK + '\" style=\"display:inline-block;background:#dc2626;color:#ffffff;font-size:15px;font-weight:bold;text-decoration:none;padding:14px 28px;border-radius:10px\">Open HRIS &rarr; Payment Dispatch</a><!--<![endif]-->' +\n    '</td></tr></table>';\n}\n\nfunction renderHtml() {\n  const details =\n    detailRow('Who to pay', fullName + (workEmail ? ' &middot; <span style=\"font-weight:normal;color:#52525b\">' + workEmail + '</span>' : '')) +\n    detailRow('Amount', amount) +\n    detailRow('Department', dept) +\n    detailRow('Note', note) +\n    detailRow('Filed by', requestedBy);\n  return '' +\n    '<!DOCTYPE html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>Urgent Payment filed</title></head>' +\n    '<body style=\"margin:0;background:#f4f4f5;padding:24px 12px;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#18181b\">' +\n      '<div style=\"display:none;max-height:0;overflow:hidden;opacity:0;color:transparent;font-size:1px;line-height:1px\">' + fullName + ' needs an urgent one-off payment &mdash; it is waiting in Payment Dispatch &rarr; Urgent.</div>' +\n      '<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:#f4f4f5\"><tr><td align=\"center\">' +\n        '<table role=\"presentation\" width=\"520\" cellpadding=\"0\" cellspacing=\"0\" style=\"width:100%;max-width:520px;background:#ffffff;border:1px solid #e4e4e7;border-radius:14px;overflow:hidden;box-shadow:0 6px 24px rgba(220,38,38,0.10)\">' +\n          '<tr><td style=\"padding:18px 26px 12px\"><img src=\"' + LOGO + '\" alt=\"Simple\" width=\"88\" height=\"30\" style=\"display:block;border:0;height:30px;width:88px\"></td></tr>' +\n          '<tr><td bgcolor=\"#0a0a0b\" style=\"background:#0a0a0b;padding:22px 26px;border-bottom:4px solid #dc2626\">' +\n            '<span style=\"display:inline-block;background:#dc2626;color:#ffffff;font-size:11px;font-weight:bold;letter-spacing:1.5px;text-transform:uppercase;padding:5px 12px;border-radius:999px\">&#128680; Urgent payment</span>' +\n            '<div style=\"margin-top:14px;font-size:22px;line-height:1.3;color:#ffffff;font-weight:bold\">Someone needs an urgent payment</div>' +\n            '<div style=\"margin-top:6px;font-size:13px;color:#d4d4d8\">A one-off payment request just landed in Payment Dispatch &rarr; Urgent.</div>' +\n          '</td></tr>' +\n          '<tr><td style=\"padding:22px 26px 4px\">' +\n            '<p style=\"margin:0 0 14px;font-size:15px;color:#18181b\">Hi,</p>' +\n            '<p style=\"margin:0 0 16px;font-size:14px;line-height:1.6;color:#3f3f46\">An <strong>Urgent Payment</strong> was just filed in the HRIS and is waiting to be dispatched. Please open <strong>Payment Dispatch &rarr; Urgent</strong> and send it as soon as you can.</p>' +\n            (details ? '<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:#fef2f2;border:1px solid #fecaca;border-radius:10px;margin:0 0 18px;overflow:hidden\">' + details + '</table>' : '') +\n            ctaButton() +\n            '<p style=\"margin:10px 0 18px;font-size:12px;color:#71717a;word-break:break-all\">Button not working? Copy and paste this link:<br><a href=\"' + HRIS_LINK + '\" style=\"color:#dc2626\">' + esc(HRIS_LINK) + '</a></p>' +\n          '</td></tr>' +\n          '<tr><td style=\"padding:16px 26px 20px;border-top:1px solid #f4f4f5\"><table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\"><tr><td style=\"font-size:12px;color:#52525b;font-weight:bold\">Simple &middot; Confidential</td><td align=\"right\" style=\"font-size:11px;color:#71717a\">Automated alert from Simple HRIS</td></tr></table></td></tr>' +\n        '</table>' +\n        '<div style=\"max-width:520px;margin:12px auto 0;font-size:11px;color:#71717a;text-align:center;line-height:1.5\">You are receiving this because you handle Payment Dispatch in the Simple HRIS.</div>' +\n      '</td></tr></table>' +\n    '</body></html>';\n}\n\nconst html = renderHtml();\nreturn RECIPIENTS.map(function (email) {\n  return { json: { to: email, subject: SUBJECT, html: html } };\n});\n"
+      },
+      "id": "c2000000-0000-4000-8000-000000000002",
+      "name": "Build Alert Emails",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        460,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { status: 'ok', notified: $items('Build Alert Emails').length } }}",
+        "options": {}
+      },
+      "id": "c2000000-0000-4000-8000-000000000003",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        680,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "send",
+        "sendTo": "={{ $json.to }}",
+        "subject": "={{ $json.subject }}",
+        "emailType": "html",
+        "message": "={{ $json.html }}",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "id": "c2000000-0000-4000-8000-000000000004",
+      "name": "Send Urgent Alert (Gmail)",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        900,
+        300
+      ],
+      "onError": "continueRegularOutput"
+    }
+  ],
+  "connections": {
+    "Urgent Payment Filed": {
+      "main": [
+        [
+          {
+            "node": "Build Alert Emails",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Alert Emails": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Respond to Webhook": {
+      "main": [
+        [
+          {
+            "node": "Send Urgent Alert (Gmail)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "pinData": {},
+  "tags": [
+    {
+      "name": "hris"
+    },
+    {
+      "name": "payment-dispatch"
+    },
+    {
+      "name": "payroll"
+    }
+  ],
+  "meta": {
+    "description": "Fired by the HRIS the moment a one-off Urgent Payment is filed from the People tab (POST /api/people/pay) and lands in Payment Dispatch → Urgent. Acks immediately, then emails carla@simple.biz, claire@simple.biz and lennyt@simple.biz a red-alarm alert (who / amount / dept / note / filed-by + a button to the HRIS) so they dispatch it. Recipients + copy are fixed inside Build Alert Emails — the caller only supplies the request details. Attach a Gmail OAuth2 credential to the send node before activating; register the production URL under Admin → Webhooks slug `urgent_payment_notify` (or env N8N_URGENT_PAYMENT_NOTIFY_WEBHOOK_URL); optionally set REQUIRED_SECRET here + N8N_URGENT_PAYMENT_NOTIFY_SECRET in the HRIS to lock the webhook."
+  }
+}

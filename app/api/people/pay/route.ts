@@ -3,6 +3,7 @@ import { createSupabaseServiceRoleClient, createSupabaseServerClient } from '@/l
 import { insertAuditLog } from '@/lib/supabase/audit-log';
 import { getSessionActor } from '@/lib/auth/session-actor';
 import { deniedResponse, requireRateVisibilitySession } from '@/lib/auth/authorize-email';
+import { sendUrgentPaymentAlert } from '@/lib/people/urgent-payment-notify';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -73,6 +74,17 @@ export async function POST(request: Request) {
       .single();
 
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+
+    // Best-effort email alert to Accounting (n8n owns recipients + copy) —
+    // fire-and-forget so a webhook hiccup never fails the payment request.
+    void sendUrgentPaymentAlert({
+      full_name,
+      work_email,
+      department: (body.department ?? '').trim() || null,
+      amount_php,
+      note: (body.note ?? '').trim() || null,
+      requested_by: requestedBy,
+    });
 
     void insertAuditLog({
       user_name: actor.user_name,
