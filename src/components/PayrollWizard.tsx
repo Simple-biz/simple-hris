@@ -7373,6 +7373,12 @@ export default function PayrollWizard({
     // reconcile exactly with the Estimated Take-Home. Keyed by BOTH work and personal
     // email (lowercased).
     const finals: Record<string, {
+      // Canonical identity of the person the entry belongs to (lowercased work
+      // email, null when the row only has a personal email). The finals map keys
+      // the SAME entry under both emails, and entries can be byte-identical
+      // across two different people (flat bonuses + zero hours) — aggregate
+      // readers (payout-extras.ts) dedupe by this field, not by content.
+      workEmail: string | null;
       final: number;
       regularPay: number | null;
       otPay: number | null;
@@ -7414,6 +7420,7 @@ export default function PayrollWizard({
     }> = {};
     for (const r of dispatchData.rows) {
       const entry = {
+        workEmail: r.email?.trim().toLowerCase() || null,
         final: r.pay_php.final,
         regularPay: r.pay_php.regular,
         otPay: r.pay_php.ot,
