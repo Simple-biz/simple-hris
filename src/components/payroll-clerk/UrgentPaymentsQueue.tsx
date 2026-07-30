@@ -10,6 +10,7 @@ import {
   HeartHandshake,
   Loader2,
   RefreshCw,
+  RotateCcw,
   Send,
   Trash2,
   Wallet,
@@ -275,6 +276,9 @@ export default function UrgentPaymentsQueue({ onCountChange, onDispatchedCountCh
   // Pending removal awaiting confirmation (null = dialog closed).
   const [removeTarget, setRemoveTarget] = useState<RemoveTarget | null>(null);
   const [removing, setRemoving] = useState(false);
+  // Dispatched payout awaiting Undo confirmation (null = dialog closed).
+  const [undoTarget, setUndoTarget] = useState<PaymentDispatchRow | null>(null);
+  const [undoing, setUndoing] = useState(false);
 
   const load = useCallback(async (silent = false) => {
     if (!silent) setLoading(true); else setRefreshing(true);
@@ -528,6 +532,38 @@ export default function UrgentPaymentsQueue({ onCountChange, onDispatchedCountCh
     }
   };
 
+  /**
+   * Undo a dispatched urgent payout: the server removes the money log and
+   * returns the source request to the pending queue (see
+   * /api/urgent-payments/dispatches/undo). Awaits the server before dropping
+   * the card — like Remove, a failed undo must leave the payment plainly
+   * still in the log view so it can be retried.
+   */
+  const handleUndo = async () => {
+    if (!undoTarget || undoing) return;
+    const target = undoTarget;
+    setUndoing(true);
+    try {
+      const res = await fetch('/api/urgent-payments/dispatches/undo', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: target.id }),
+      });
+      const json = (await res.json().catch(() => ({}))) as { warning?: string | null; error?: string };
+      if (!res.ok || json.error) throw new Error(json.error ?? 'Could not undo this payment');
+
+      setUndoTarget(null);
+      const name = target.recipient_name ?? target.recipient_email;
+      if (json.warning) toast.warning(`${name} — ${json.warning}`);
+      else toast.success(`Undone — ${name} is back in the pending queue.`);
+      void load(true);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not undo this payment');
+    } finally {
+      setUndoing(false);
+    }
+  };
+
   const handleConfirmBudget = async (item: OrphanagePendingItem, payload: OrphanageMarkPaidPayload) => {
     const res = await fetch('/api/orphanage-dispatches', {
       method: 'POST',
@@ -704,7 +740,7 @@ export default function UrgentPaymentsQueue({ onCountChange, onDispatchedCountCh
           ) : (
             <div className="space-y-3">
               {dispatchedVisible.map((r) => (
-                <DispatchedCard key={r.id} row={r} />
+                <DispatchedCard key={r.id} row={r} onUndo={() => setUndoTarget(r)} />
               ))}
             </div>
           )
@@ -880,6 +916,59 @@ export default function UrgentPaymentsQueue({ onCountChange, onDispatchedCountCh
             >
               {removing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
               Delete
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Undo confirmation — money-adjacent, so never a one-click action. */}
+      <Dialog
+        open={undoTarget != null}
+        onOpenChange={(o) => { if (!o && !undoing) setUndoTarget(null); }}
+      >
+        <DialogContent className="sm:max-w-[420px]">
+          <DialogTitle className="flex items-center gap-2 text-base">
+            <span className="flex h-8 w-8 items-center justify-center rounded-full bg-amber-50 text-amber-600 dark:bg-amber-950/40 dark:text-amber-400">
+              <RotateCcw className="h-4 w-4" />
+            </span>
+            Undo this payment?
+          </DialogTitle>
+          <DialogDescription className="text-[13px] leading-relaxed">
+            {undoTarget && (
+              <>
+                <span className="font-semibold text-zinc-900 dark:text-zinc-100">
+                  {undoTarget.recipient_name ?? undoTarget.recipient_email}
+                </span>
+                {undoTarget.amount_php != null && (
+                  <>
+                    {' — '}
+                    <span className="font-mono font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">
+                      {formatPHP(Number(undoTarget.amount_php))}
+                    </span>
+                  </>
+                )}
+                . This deletes the logged payment record and returns the request to the pending
+                queue so it can be sent again. It does not reverse any money already sent.
+              </>
+            )}
+          </DialogDescription>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={undoing}
+              onClick={() => setUndoTarget(null)}
+            >
+              Keep it
+            </Button>
+            <Button
+              type="button"
+              disabled={undoing}
+              onClick={() => void handleUndo()}
+              className="gap-1.5 bg-amber-500 text-white hover:bg-amber-600 dark:bg-amber-600 dark:hover:bg-amber-500"
+            >
+              {undoing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="h-3.5 w-3.5" />}
+              Undo payment
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -1212,12 +1301,11 @@ function BudgetCard({
 }
 
 /**
- * Read-only card for an urgent payout already dispatched this week (paid /
- * not paid / threshold / problem). Undo and edits stay in the weekly Reports
- * detail — this view exists so the bucket keeps showing what happened after
- * the pending queue empties.
+ * Card for an urgent payout already dispatched this week (paid / not paid /
+ * threshold / problem). Undo removes the money log and sends the request back
+ * to the pending queue; other edits stay in the weekly Reports detail.
  */
-function DispatchedCard({ row }: { row: PaymentDispatchRow }) {
+function DispatchedCard({ row, onUndo }: { row: PaymentDispatchRow; onUndo: () => void }) {
   const badge = DISPATCH_STATUS_BADGE[row.status];
   const sentDate = formatDateOnly(row.sent_date);
   const arrivalDate = formatDateOnly(row.arrival_date);
@@ -1275,12 +1363,25 @@ function DispatchedCard({ row }: { row: PaymentDispatchRow }) {
         </div>
       </div>
 
-      {/* Amount + processor */}
+      {/* Amount + processor + undo */}
       <div className="flex items-center gap-3 sm:flex-col sm:items-end sm:gap-2">
         <AmountBlock php={row.amount_php} usd={row.amount_usd} />
-        <span className="inline-flex items-center rounded-full border border-amber-200 bg-amber-50/60 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-amber-800 dark:border-amber-800/40 dark:bg-amber-950/20 dark:text-amber-200">
-          {processorLabel}
-        </span>
+        <div className="flex items-center gap-2">
+          <span className="inline-flex items-center rounded-full border border-amber-200 bg-amber-50/60 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-amber-800 dark:border-amber-800/40 dark:bg-amber-950/20 dark:text-amber-200">
+            {processorLabel}
+          </span>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={onUndo}
+            title="Undo — send back to the pending queue"
+            className="h-8 gap-1.5 border-zinc-200 px-2.5 text-xs text-zinc-600 transition-colors hover:border-amber-300 hover:bg-amber-50 hover:text-amber-700 dark:border-zinc-700 dark:text-zinc-300 dark:hover:border-amber-700/50 dark:hover:bg-amber-950/30 dark:hover:text-amber-300"
+          >
+            <RotateCcw className="h-3.5 w-3.5" />
+            Undo
+          </Button>
+        </div>
       </div>
     </div>
   );
