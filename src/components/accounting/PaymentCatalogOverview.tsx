@@ -459,7 +459,7 @@ function PayShareDonut({
   const hovered = hoveredKey ? slices.find((s) => s.key === hoveredKey) : null;
   return (
     <motion.div
-      className="relative mx-auto h-44 w-44 shrink-0"
+      className="relative mx-auto h-44 w-44 shrink-0 xl:h-52 xl:w-52 2xl:h-60 2xl:w-60"
       initial={reduced ? false : { opacity: 0, scale: 0.96 }}
       animate={{ opacity: 1, scale: 1 }}
       transition={{ duration: 0.45, ease: EASE }}
@@ -671,7 +671,7 @@ function DeptBarsCard({
             <motion.div
               key={r.key}
               title={`${r.name}: ${moneyWhole(r.hourlyPhp)}/hr estimated across ${r.covered} of ${r.headcount} people`}
-              className="grid grid-cols-[minmax(0,9.5rem)_1fr_auto] items-center gap-3 rounded-lg px-2 py-1.5 transition-colors hover:bg-zinc-50 dark:hover:bg-zinc-900/60"
+              className="grid grid-cols-[minmax(0,9.5rem)_1fr_auto] items-center gap-3 rounded-lg px-2 py-1.5 transition-colors hover:bg-zinc-50 xl:grid-cols-[minmax(0,13rem)_1fr_auto] dark:hover:bg-zinc-900/60"
               initial={reduced ? false : { opacity: 0, x: -8 }}
               animate={{ opacity: 1, x: 0 }}
               transition={{ duration: 0.3, delay, ease: EASE }}
@@ -877,7 +877,7 @@ export default function PaymentCatalogOverview({
   });
 
   return (
-    <div className="mx-auto w-full max-w-[1180px] px-4 py-5 sm:px-6 sm:py-6">
+    <div className="w-full px-4 py-5 sm:px-6 sm:py-6 xl:px-8">
       {/* Masthead */}
       <div className="mb-4 flex items-center justify-between gap-3 border-b border-zinc-200/70 pb-3 dark:border-zinc-800">
         <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-zinc-400">
@@ -933,7 +933,7 @@ export default function PaymentCatalogOverview({
       {spend.rows.length > 0 ? (
         <motion.div
           {...section(0.08)}
-          className="mt-4 grid items-stretch gap-4 lg:grid-cols-[minmax(0,24rem)_1fr]"
+          className="mt-4 grid items-stretch gap-4 lg:grid-cols-[minmax(0,26rem)_1fr] 2xl:grid-cols-[minmax(0,30rem)_1fr]"
           onMouseEnter={() => setChartsHovered(true)}
           onMouseLeave={() => setChartsHovered(false)}
         >
