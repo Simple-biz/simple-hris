@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import type { ReactNode } from "react";
 import { ThemeProvider } from "@/components/ThemeProvider";
 import NextAuthProvider from "@/components/auth/NextAuthProvider";
+import CarlaSongToast from "@/components/common/CarlaSongToast";
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/lib/auth/auth-options";
 import { Toaster } from "sonner";
@@ -41,6 +42,10 @@ export default async function RootLayout({
             disableTransitionOnChange
           >
             {children}
+            {/* Carla's sign-in song pill — root layout so it survives dashboard
+                switches (client-side navs never remount this layout). Renders
+                null for everyone else / when nothing is playing. */}
+            <CarlaSongToast />
             <Toaster position="top-right" richColors closeButton />
           </ThemeProvider>
         </NextAuthProvider>

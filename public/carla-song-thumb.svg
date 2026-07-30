@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" width="96" height="96">
+  <!-- Fallback cover for "I Can't Stop The Loneliness" — retro city-pop sunset.
+       Drop the real art at public/carla-song-thumb.jpg to replace this. -->
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#312e81"/>
+      <stop offset="0.45" stop-color="#7c3aed"/>
+      <stop offset="0.75" stop-color="#f472b6"/>
+      <stop offset="1" stop-color="#fb923c"/>
+    </linearGradient>
+    <linearGradient id="sun" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#fde047"/>
+      <stop offset="1" stop-color="#f97316"/>
+    </linearGradient>
+    <clipPath id="sunclip">
+      <circle cx="48" cy="58" r="22"/>
+    </clipPath>
+  </defs>
+  <rect width="96" height="96" fill="url(#sky)"/>
+  <g clip-path="url(#sunclip)">
+    <circle cx="48" cy="58" r="22" fill="url(#sun)"/>
+    <rect x="20" y="60" width="56" height="2.5" fill="#7c3aed" opacity="0.55"/>
+    <rect x="20" y="66" width="56" height="3.5" fill="#7c3aed" opacity="0.65"/>
+    <rect x="20" y="73" width="56" height="4.5" fill="#7c3aed" opacity="0.75"/>
+  </g>
+  <rect x="0" y="80" width="96" height="16" fill="#1e1b4b"/>
+  <path d="M0 80h10v-8h6v8h8v-13h7v13h9v-6h6v6h10v-10h7v10h9v-7h6v7h18v16H0z" fill="#1e1b4b"/>
+  <g fill="#fff">
+    <text x="8" y="16" font-family="Arial, Helvetica, sans-serif" font-size="11" font-weight="700" letter-spacing="2.5">ANRI</text>
+    <path d="M78 12.2l7-1.6v9.1a3.1 3.1 0 1 1-1.6-2.7v-4.4l-3.8 0.9v7.2a3.1 3.1 0 1 1-1.6-2.7z" opacity="0.9"/>
+  </g>
+</svg>

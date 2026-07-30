@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Toaster } from '@/components/ui/sonner';
 import { toast } from 'sonner';
+import { startCarlaSongIfEligible } from '@/lib/sound/carla-song';
 import {
   ACTIVE_VIEW_KEY,
   SESSION_EMAIL_KEY,
@@ -346,6 +347,9 @@ function LoginPageInner() {
         /* ignore */
       }
 
+      // The SA fast-path skips the intro video, so the serenade starts right at the
+      // hand-off instead. Also makes the feature testable by impersonating Carla.
+      startCarlaSongIfEligible(email);
       router.replace(`${VIEW_ROUTES[target]}?email=${encodeURIComponent(email)}`);
     } catch {
       setSaError('Sign-in failed. Please try again.');
@@ -419,6 +423,10 @@ function LoginPageInner() {
       } catch {
         /* ignore */
       }
+      // Carla's serenade — starts her 30s Anri clip exactly as the intro hands off to the app.
+      // Module-level audio, so it plays on through this client-side replace and any dashboard
+      // switches after it. No-ops for every other email.
+      startCarlaSongIfEligible(session?.user?.email);
       router.replace(destination);
       return;
     }
@@ -429,6 +437,7 @@ function LoginPageInner() {
       // (slow/hung /api/employee-roles, or it errored before setting one).
       // Never strand an authenticated user on the white veil — fall back to the
       // default employee landing; the in-app view switcher covers other roles.
+      startCarlaSongIfEligible(email);
       router.replace(`/employee?email=${encodeURIComponent(email)}`);
       return;
     }
