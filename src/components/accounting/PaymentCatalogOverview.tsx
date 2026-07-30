@@ -684,13 +684,17 @@ function SystemTile({ row, animate }: { row: SystemBonusRow; animate: boolean })
 
 function SystemScene({ o, reduced }: { o: CatalogOverview; reduced: boolean }) {
   const animate = !reduced;
-  const [pab, tech] = o.systemBonuses;
+  // Built-ins first (pab, tech), then any custom currency variants.
+  const [pab, tech, ...customRows] = o.systemBonuses;
   const { ot, currencyMix } = o;
   return (
     <div className="grid gap-4 lg:grid-cols-2">
       <div className="space-y-4">
         {pab && <SystemTile row={pab} animate={animate} />}
         {tech && <SystemTile row={tech} animate={animate} />}
+        {customRows.map((row) => (
+          <SystemTile key={row.code} row={row} animate={animate} />
+        ))}
       </div>
       <div className="space-y-4">
         <div className="rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-950">

@@ -95,7 +95,13 @@ import {
   resolvePabRangeForMonth,
 } from '@/lib/pab-period-settings';
 import { getTabCache, hasTabCache, setTabCache, TAB_CACHE_KEYS } from '@/lib/accounting/tab-cache';
-import { resolveSystemBonuses, isDeptEligible } from '@/lib/payment-catalog/system-bonus';
+import { resolveSystemBonuses, isDeptEligible, systemBonusAmountForDept } from '@/lib/payment-catalog/system-bonus';
+import {
+  effectiveUsdToCopRateFromStored,
+  officialFxRates,
+  type FxRates,
+} from '@/lib/fx/currency-fx';
+import { effectiveUsdToPhpRateFromStored } from '@/lib/fx/usd-php';
 import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
 import {
   US_HOLIDAYS_ENABLED_KEY,
@@ -385,6 +391,8 @@ interface SimpleViewProps {
     totalEmployees: number;
     eligible: number;
     notEligible: number;
+    /** Σ per-eligible-employee PAB amount (custom dept variants included). */
+    accruedPhp: number;
     monthLabel: string | null;
     periodEnd: Date | null;
     pabMonth: { year: number; month: number } | null;
@@ -576,7 +584,7 @@ function SimpleView({
     const e = new Date(pabMetrics.periodEnd); e.setHours(0, 0, 0, 0);
     return t.getTime() > e.getTime();
   })();
-  const pabBonusTotal = pabFinalizedForPayout ? pabMetrics.eligible * pabBonusPhp : 0;
+  const pabBonusTotal = pabFinalizedForPayout ? pabMetrics.accruedPhp : 0;
   const displayTotalPayout = totalPayout != null ? totalPayout + pabBonusTotal : null;
 
   const usdEquivalent = displayTotalPayout != null ? displayTotalPayout / PHP_USD_FX : null;
@@ -1156,7 +1164,7 @@ function SimpleView({
                       <p className="mt-3.5 text-[11.5px] leading-snug text-zinc-400 dark:text-zinc-500">
                         {inProgress
                           ? `Tracking ${pabTotal} workers — accrual locks once period closes.`
-                          : `Accrues ${formatPhp(pabMetrics.eligible * pabBonusPhp, 2)} if all eligible hold through month end.`}
+                          : `Accrues ${formatPhp(pabMetrics.accruedPhp, 2)} if all eligible hold through month end.`}
                       </p>
                     </div>
                   </>
@@ -2334,6 +2342,8 @@ type CachedPabMetrics = {
   totalEmployees: number;
   eligible: number;
   notEligible: number;
+  /** Optional: entries cached before 2026-07-30 predate the field. */
+  accruedPhp?: number;
   monthLabel: string | null;
   periodEnd: string | null; // ISO string; rehydrated to a Date on read
   pabMonth: { year: number; month: number } | null;
@@ -2364,11 +2374,34 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
   React.useEffect(() => {
     hasMountedOnce = true;
   }, []);
+  // USD-anchored FX (usdToPhp + usdToCop) — converts custom USD/COP system-
+  // bonus variants to PHP. Official reference rates until the fetch lands.
+  const [fx, setFx] = useState<FxRates>(officialFxRates());
+  React.useEffect(() => {
+    let cancelled = false;
+    fetch('/api/app-settings?keys=usd_to_php_rate,usd_to_cop_rate', { cache: 'no-store' })
+      .then((r) => r.json())
+      .then((json: { values?: Record<string, string | null> }) => {
+        if (cancelled) return;
+        const v = json.values ?? {};
+        setFx({
+          usdToPhp: effectiveUsdToPhpRateFromStored(v['usd_to_php_rate']),
+          usdToCop: effectiveUsdToCopRateFromStored(v['usd_to_cop_rate']),
+        });
+      })
+      .catch(() => {
+        /* keep the official fallback */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
   // PAB + Tech amounts + per-department allowlist (Payment Catalog System
-  // Bonuses, prefetched). Falls back to the legacy constants when unset.
+  // Bonuses, prefetched), incl. custom `pab:*`/`tech:*` currency variants.
+  // Falls back to the legacy constants when unset.
   const sysBonusCfg = useMemo(
-    () => resolveSystemBonuses(initialData?.systemBonuses ?? []),
-    [initialData],
+    () => resolveSystemBonuses(initialData?.systemBonuses ?? [], fx),
+    [initialData, fx],
   );
   const prefetchedRatesRef = React.useRef<import('@/lib/supabase/employee-hourly-rates').EmployeeHourlyRateRow[] | null>(
     initialData?.hourlyRates ?? null,
@@ -2733,6 +2766,8 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
     totalEmployees: number;
     eligible: number;
     notEligible: number;
+    /** Σ per-eligible-employee PAB amount (custom dept variants included). */
+    accruedPhp: number;
     monthLabel: string | null;
     periodEnd: Date | null;
     pabMonth: { year: number; month: number } | null;
@@ -2743,11 +2778,13 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
           totalEmployees: pabMetricsSeed.totalEmployees,
           eligible: pabMetricsSeed.eligible,
           notEligible: pabMetricsSeed.notEligible,
+          // Pre-field cache entries fall back to the flat base-amount product.
+          accruedPhp: pabMetricsSeed.accruedPhp ?? pabMetricsSeed.eligible * sysBonusCfg.pab.amountPHP,
           monthLabel: pabMetricsSeed.monthLabel,
           periodEnd: pabMetricsSeed.periodEnd ? new Date(pabMetricsSeed.periodEnd) : null,
           pabMonth: pabMetricsSeed.pabMonth,
         }
-      : { loading: true, totalEmployees: 0, eligible: 0, notEligible: 0, monthLabel: null, periodEnd: null, pabMonth: null },
+      : { loading: true, totalEmployees: 0, eligible: 0, notEligible: 0, accruedPhp: 0, monthLabel: null, periodEnd: null, pabMonth: null },
   );
 
   const [pabEligibilityByEmail, setPabEligibilityByEmail] = useState<Map<string, boolean>>(
@@ -2772,9 +2809,9 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
       e.setHours(0, 0, 0, 0);
       pabFinalized = t.getTime() > e.getTime();
     }
-    const pab = pabFinalized ? pabMetrics.eligible * sysBonusCfg.pab.amountPHP : 0;
+    const pab = pabFinalized ? pabMetrics.accruedPhp : 0;
     return totalPayout + pab;
-  }, [totalPayout, pabMetrics.loading, pabMetrics.periodEnd, pabMetrics.eligible, sysBonusCfg.pab.amountPHP]);
+  }, [totalPayout, pabMetrics.loading, pabMetrics.periodEnd, pabMetrics.accruedPhp]);
   // NOTE: the publish effect lives lower down (after emailsMatched / activePeriod
   // are defined) so it can send the FULL hero snapshot the CEO board replicates.
 
@@ -3133,6 +3170,7 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
         totalEmployees: cachedPab.totalEmployees,
         eligible: cachedPab.eligible,
         notEligible: cachedPab.notEligible,
+        accruedPhp: cachedPab.accruedPhp ?? cachedPab.eligible * sysBonusCfg.pab.amountPHP,
         monthLabel: cachedPab.monthLabel,
         periodEnd: cachedPab.periodEnd ? new Date(cachedPab.periodEnd) : null,
         pabMonth: cachedPab.pabMonth,
@@ -3407,6 +3445,7 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
         let eligible = 0;
         let notEligible = 0;
         let evaluated = 0;
+        let accruedPhp = 0;
         const eligMap = new Map<string, boolean>();
 
         // Iterate the ACTIVE MASTER LIST, not Hubstaff history. The previous
@@ -3416,15 +3455,18 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
         // work or personal email — if they have no Hubstaff row at all, the
         // empty `hoursByDateKey` naturally fails eligibility (no hours
         // tracked = not perfect attendance).
-        const masterEntries: { email: string; rowEmail: string; row: Record<string, unknown> }[] = [];
+        const masterEntries: { email: string; rowEmail: string; deptKey: string | null; row: Record<string, unknown> }[] = [];
         for (const e of employees) {
           const w = normEmail(e.work_email ?? null);
           const p = normEmail(e.personal_email ?? null);
           const key = w ?? p;
           if (!key) continue;
           // Skip departments excluded from the PAB allowlist (e.g. US managers)
-          // so they don't inflate the eligible count / accrual.
-          if (!isDeptEligible(sysBonusCfg.pab, normalizeDeptToKey(e.department ?? null))) continue;
+          // so they don't inflate the eligible count / accrual. The dept key is
+          // kept so the accrual can price each person at their department's
+          // amount (custom currency variants override the base).
+          const deptKey = normalizeDeptToKey(e.department ?? null);
+          if (!isDeptEligible(sysBonusCfg.pab, deptKey)) continue;
           const wRow = w ? rowsByEmail.get(w) : undefined;
           const pRow = p ? rowsByEmail.get(p) : undefined;
           const hubRow = wRow ?? pRow ?? {};
@@ -3434,12 +3476,12 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
           // row's Email; matching a wider alias set would paint an Eligible pill
           // for someone payroll dispatch does not actually pay.
           const rowEmail = wRow ? w! : pRow ? p! : key;
-          masterEntries.push({ email: key, rowEmail, row: hubRow as Record<string, unknown> });
+          masterEntries.push({ email: key, rowEmail, deptKey, row: hubRow as Record<string, unknown> });
         }
 
         const holidayIsoSet = usHolidayDates.size > 0 ? new Set(usHolidayDates.keys()) : undefined;
 
-        for (const { email, rowEmail, row: mergedRow } of masterEntries) {
+        for (const { email, rowEmail, deptKey, row: mergedRow } of masterEntries) {
           evaluated++;
           // Build date → seconds lookup
           const hoursByDateKey = new Map<string, number>();
@@ -3504,6 +3546,7 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
           eligMap.set(email, isEligible);
           if (isEligible) {
             eligible++;
+            accruedPhp += systemBonusAmountForDept(sysBonusCfg.pab, deptKey);
           } else {
             notEligible++;
           }
@@ -3516,6 +3559,7 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
             totalEmployees: evaluated,
             eligible,
             notEligible,
+            accruedPhp,
             monthLabel,
             periodEnd: end,
             pabMonth,
@@ -3524,6 +3568,7 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
             totalEmployees: evaluated,
             eligible,
             notEligible,
+            accruedPhp,
             monthLabel,
             periodEnd: end ? end.toISOString() : null,
             pabMonth,
@@ -3533,7 +3578,7 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
       } catch {
         // Preserve the cached metrics on a background-refresh failure.
         if (!cancelled && !hasTabCache(pabKey)) {
-          setPabMetrics({ loading: false, totalEmployees: 0, eligible: 0, notEligible: 0, monthLabel: null, periodEnd: null, pabMonth: null });
+          setPabMetrics({ loading: false, totalEmployees: 0, eligible: 0, notEligible: 0, accruedPhp: 0, monthLabel: null, periodEnd: null, pabMonth: null });
         }
       }
     })();
@@ -3847,7 +3892,7 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
     return t.getTime() > e.getTime();
   })();
   const totalPayoutWithPab = totalPayout != null && pabFinalizedForPayoutExpanded
-    ? totalPayout + pabMetrics.eligible * sysBonusCfg.pab.amountPHP
+    ? totalPayout + pabMetrics.accruedPhp
     : totalPayout;
 
   const stats = [

@@ -37,6 +37,7 @@ import type { EmployeeHourlyRateRow } from '@/lib/supabase/employee-hourly-rates
 import {
   resolveSystemBonuses,
   isDeptEligible,
+  systemBonusAmountForDept,
   type SystemBonus,
   type ResolvedSystemBonuses,
 } from '@/lib/payment-catalog/system-bonus';
@@ -46,6 +47,7 @@ import {
   OFFICIAL_USD_TO_PHP_RATE,
   effectiveUsdToPhpRateFromStored,
 } from '@/lib/fx/usd-php';
+import { effectiveUsdToCopRateFromStored } from '@/lib/fx/currency-fx';
 import {
   phpHourlyPayFromSeconds,
   roundWorkedHoursForPay,
@@ -771,7 +773,7 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
       try {
         const [ratesRes, fxRes, filesRes, holidaysRes, sysBonusRes] = await Promise.all([
           fetch(`/api/employee-hourly-rates?email=${encodeURIComponent(email)}`, { cache: 'no-store' }),
-          fetch('/api/app-settings?key=usd_to_php_rate', { cache: 'no-store' }),
+          fetch('/api/app-settings?keys=usd_to_php_rate,usd_to_cop_rate', { cache: 'no-store' }),
           fetch(`/api/hubstaff-hours?source_files=1&_=${Date.now()}`, { cache: 'no-store' }),
           fetch('/api/app-settings?keys=us_holidays_enabled,us_holidays_list', { cache: 'no-store' }),
           fetch('/api/payment-catalog/system-bonuses', { cache: 'no-store' }),
@@ -781,20 +783,25 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
           rows?: EmployeeHourlyRateRow[];
           error?: string | null;
         };
-        const fxJson = (await fxRes.json()) as { value: string | null };
+        const fxJson = (await fxRes.json()) as { values?: Record<string, string | null> };
         const filesJson = (await filesRes.json()) as { files?: string[]; error?: string | null };
         const holidaysJson = (await holidaysRes.json()) as { values: Record<string, string | null>; error?: string | null };
         const sysBonusJson = (await sysBonusRes.json().catch(() => ({ bonuses: [] }))) as { bonuses?: SystemBonus[] };
         if (cancelled) return;
 
-        setSysBonusCfg(resolveSystemBonuses(sysBonusJson.bonuses ?? []));
+        // USD-anchored FX — needed so a custom USD/COP system-bonus variant
+        // resolves to the same PHP amount the pay engine uses.
+        const fxVals = fxJson.values ?? {};
+        const usdToPhp = effectiveUsdToPhpRateFromStored(fxVals['usd_to_php_rate']);
+        const usdToCop = effectiveUsdToCopRateFromStored(fxVals['usd_to_cop_rate']);
+        setSysBonusCfg(resolveSystemBonuses(sysBonusJson.bonuses ?? [], { usdToPhp, usdToCop }));
 
         const hVals = holidaysJson.values;
         const holidayList = parseUsHolidaysList(hVals['us_holidays_list'] ?? null);
         const holidayEnabled = (hVals['us_holidays_enabled'] ?? 'false') === 'true';
         setUsHolidayDates(getEnabledHolidayMap(holidayList, holidayEnabled));
 
-        setUsdToPhpRate(effectiveUsdToPhpRateFromStored(fxJson.value));
+        setUsdToPhpRate(usdToPhp);
 
         if (ratesJson.error) {
           if (looksLikeHtmlError(String(ratesJson.error))) {
@@ -1723,9 +1730,11 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
   );
 
   // PAB + Tech amounts + this employee's dept eligibility (Payment Catalog).
+  // Per-dept amount: a custom currency variant covering my department
+  // overrides the built-in base amount (already PHP-converted).
   const myDeptKey = normalizeDeptToKey(profileForShipping.department ?? null);
-  const pabBonusPhpAmt = sysBonusCfg.pab.amountPHP;
-  const techBonusPhpAmt = sysBonusCfg.tech.amountPHP;
+  const pabBonusPhpAmt = systemBonusAmountForDept(sysBonusCfg.pab, myDeptKey);
+  const techBonusPhpAmt = systemBonusAmountForDept(sysBonusCfg.tech, myDeptKey);
   const pabDeptOk = isDeptEligible(sysBonusCfg.pab, myDeptKey);
   const techDeptOk = isDeptEligible(sysBonusCfg.tech, myDeptKey);
 

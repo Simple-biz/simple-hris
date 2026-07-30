@@ -117,7 +117,7 @@ import {
   type RateHistoryByEmail,
 } from '@/lib/payroll/rate-history-resolve';
 import type { PayStructure } from '@/lib/payment-catalog/pay-structure';
-import { resolveSystemBonuses, isDeptEligible } from '@/lib/payment-catalog/system-bonus';
+import { resolveSystemBonuses, isDeptEligible, systemBonusAmountForDept } from '@/lib/payment-catalog/system-bonus';
 import { normEmail } from '@/lib/email/norm-email';
 import { TIME_ADJUSTMENT_REASONS, type TimeAdjustmentRow } from '@/lib/supabase/time-adjustments';
 import { sortHubstaffColumnsForDisplay } from '@/lib/supabase/hubstaff-hours-db';
@@ -5884,12 +5884,16 @@ export default function PayrollWizard({
   }, [hslKpiAmounts, effectiveCalcResults, masterIndex]);
 
   // PAB + Tech amounts + per-department allowlist come from the Payment Catalog
-  // System Bonuses tab (prefetched into initialData). Falls back to the legacy
-  // constants + "applies to everyone" when no rows exist (pre-migration).
+  // System Bonuses tab (prefetched into initialData). Custom `pab:*`/`tech:*`
+  // currency variants are converted to PHP at the live FX rates. Falls back to
+  // the legacy constants + "applies to everyone" when no rows exist
+  // (pre-migration).
   const sysBonusCfg = useMemo(
-    () => resolveSystemBonuses(initialData?.systemBonuses ?? []),
-    [initialData],
+    () => resolveSystemBonuses(initialData?.systemBonuses ?? [], fxRates),
+    [initialData, fxRates],
   );
+  // Built-in (base) amounts — used for generic copy; per-employee math must go
+  // through the per-dept helpers below so custom variants override correctly.
   const pabAmountPhp = sysBonusCfg.pab.amountPHP;
   const techAmountPhp = sysBonusCfg.tech.amountPHP;
   // employeeDepts is keyed by the raw Hubstaff email; some rows match only the
@@ -5898,6 +5902,22 @@ export default function PayrollWizard({
     (email: string): string | null =>
       employeeDepts[email] ?? employeeDepts[(email ?? '').toLowerCase()] ?? null,
     [employeeDepts],
+  );
+  const pabAmountForDept = useCallback(
+    (deptKey: string | null | undefined) => systemBonusAmountForDept(sysBonusCfg.pab, deptKey),
+    [sysBonusCfg],
+  );
+  const techAmountForDept = useCallback(
+    (deptKey: string | null | undefined) => systemBonusAmountForDept(sysBonusCfg.tech, deptKey),
+    [sysBonusCfg],
+  );
+  const pabAmountForEmail = useCallback(
+    (email: string) => pabAmountForDept(deptKeyForEmail(email)),
+    [pabAmountForDept, deptKeyForEmail],
+  );
+  const techAmountForEmail = useCallback(
+    (email: string) => techAmountForDept(deptKeyForEmail(email)),
+    [techAmountForDept, deptKeyForEmail],
   );
   const isPabDeptEligible = useCallback(
     (email: string) => isDeptEligible(sysBonusCfg.pab, deptKeyForEmail(email)),
@@ -6192,10 +6212,10 @@ export default function PayrollWizard({
       const toggles = employeeBonuses[email] ?? {};
       let commonTotal = 0;
       if (toggles['perfect_attendance'] && isDeptEligible(sysBonusCfg.pab, deptKey)) {
-        commonTotal += pabAmountPhp;
+        commonTotal += pabAmountForDept(deptKey);
       }
       if (toggles['tech_bonus'] && isDeptEligible(sysBonusCfg.tech, deptKey)) {
-        commonTotal += techAmountPhp;
+        commonTotal += techAmountForDept(deptKey);
       }
       result[email] = (result[email] ?? 0) + commonTotal;
     }
@@ -6215,7 +6235,7 @@ export default function PayrollWizard({
     }
 
     return result;
-  }, [effectiveCalcResults, employeeDepts, employeeBonuses, employeeMetrics, deptMetrics, resolvedHslKpi, resolvedManagerBonus, sysBonusCfg, pabAmountPhp, techAmountPhp]);
+  }, [effectiveCalcResults, employeeDepts, employeeBonuses, employeeMetrics, deptMetrics, resolvedHslKpi, resolvedManagerBonus, sysBonusCfg, pabAmountForDept, techAmountForDept]);
 
   /**
    * Effective bonus per employee: the auto-computed subtotal (PAB + Tech + KPI +
@@ -6253,8 +6273,14 @@ export default function PayrollWizard({
       return normEmail(master?.personal_email) ?? null;
     };
 
-    const commonBonusPhp = (id: string) =>
-      id === 'perfect_attendance' ? pabAmountPhp : id === 'tech_bonus' ? techAmountPhp : 0;
+    // Per-employee: a custom currency variant covering the employee's dept
+    // overrides the built-in base amount (already PHP-converted).
+    const commonBonusPhp = (id: string, email: string) =>
+      id === 'perfect_attendance'
+        ? pabAmountForEmail(email)
+        : id === 'tech_bonus'
+          ? techAmountForEmail(email)
+          : 0;
 
     // Derive the latest weekly pay period: prefer parsed range from the source filename,
     // otherwise compute Mon–Sun around the latest parseable date column in the dataset.
@@ -6459,7 +6485,7 @@ export default function PayrollWizard({
       // Accountant exclusion forfeits PAB for this month — explicit guard so a
       // momentarily-stale perfect_attendance toggle can never leak the bonus.
       const pabBonus = hasRates && isFinalPabWeek && toggles.perfect_attendance && pabDeptOk && !isPabExcluded(r.email)
-        ? commonBonusPhp('perfect_attendance')
+        ? commonBonusPhp('perfect_attendance', r.email)
         : 0;
       // Tech Bonus: paid in the 3rd paycheck of the month, but only after the
       // employee has completed 30 days of service from their start_date.
@@ -6467,14 +6493,14 @@ export default function PayrollWizard({
       const hasThirtyDays = hasThirtyDaysByWeek(r.email);
       const techBonus =
         hasRates && hasThirtyDays && (isTechBonusWeek || toggles.tech_bonus) && techDeptOk
-          ? commonBonusPhp('tech_bonus')
+          ? commonBonusPhp('tech_bonus', r.email)
           : 0;
       const rawBonusTotal = hasRates ? (bonusTotals[r.email] ?? 0) : 0;
       // Strip out the month-wide PAB/tech amounts that `bonusTotals` may include,
       // then re-add the week-gated versions so weekly paystubs get the right total.
       // Mirror the dept-eligibility gate used in bonusTotals so the strip matches.
-      const toggledPab = toggles.perfect_attendance && pabDeptOk ? commonBonusPhp('perfect_attendance') : 0;
-      const toggledTech = toggles.tech_bonus && techDeptOk ? commonBonusPhp('tech_bonus') : 0;
+      const toggledPab = toggles.perfect_attendance && pabDeptOk ? commonBonusPhp('perfect_attendance', r.email) : 0;
+      const toggledTech = toggles.tech_bonus && techDeptOk ? commonBonusPhp('tech_bonus', r.email) : 0;
       const autoOtherBonuses = hasRates ? Math.max(0, rawBonusTotal - toggledPab - toggledTech) : 0;
       // Accounting Adj. is a signed delta added on top — it never replaces the auto
       // bonuses, so PAB/Tech/KPI/dept amounts remain. It's carried as its own
@@ -6626,8 +6652,8 @@ export default function PayrollWizard({
     // this dep the staged dispatch keeps gating PAB against the overrides that were
     // loaded when the memo last ran (e.g. the empty pre-fetch map).
     pabPeriodSettings.overrides,
-    pabAmountPhp,
-    techAmountPhp,
+    pabAmountForEmail,
+    techAmountForEmail,
     isPabDeptEligible,
     isTechDeptEligible,
     isPabExcluded,
@@ -11673,7 +11699,7 @@ export default function PayrollWizard({
                                 Tech<br />
                                 <span className="font-mono font-normal text-zinc-400">
                                   {techBonusWeekInfo.isTechBonusWeek ? 'week 3 - ' : ''}
-                                  {formatPHP(techAmountPhp)}
+                                  {formatPHP(techAmountForDept(activeDeptTab))}
                                 </span>
                               </TableHead>
                             )}
@@ -11842,7 +11868,7 @@ export default function PayrollWizard({
                                               : 'bg-indigo-100 text-indigo-700 ring-1 ring-indigo-400/40 hover:bg-indigo-200 focus:ring-indigo-400 dark:bg-indigo-900/40 dark:text-indigo-300 dark:ring-indigo-500/30 dark:hover:bg-indigo-900/60',
                                         )}
                                       >
-                                        <span>{status === 'eligible' ? (isPabDeptEligible(emp.email) ? `+${formatPHP(pabAmountPhp)}` : label) : label}</span>
+                                        <span>{status === 'eligible' ? (isPabDeptEligible(emp.email) ? `+${formatPHP(pabAmountForEmail(emp.email))}` : label) : label}</span>
                                       </button>
                                     </TableCell>
                                   );
@@ -11876,7 +11902,7 @@ export default function PayrollWizard({
                                             title={titleText}
                                             className="inline-flex items-center gap-1 rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-semibold leading-none text-sky-700 ring-1 ring-sky-400/40 dark:bg-sky-900/40 dark:text-sky-300 dark:ring-sky-500/30"
                                           >
-                                            +{formatPHP(techAmountPhp)}
+                                            +{formatPHP(techAmountForEmail(emp.email))}
                                           </span>
                                           <button
                                             type="button"
@@ -12650,7 +12676,7 @@ export default function PayrollWizard({
               </h2>
               <p className="text-xs text-zinc-600 dark:text-zinc-400">
                 HSL runs Mon&ndash;Sun weeks (&ge;5 days at &ge;7 h). KPI bonuses are pulled from the manager KPI Calculator.
-                PAB ({formatPHP(pabAmountPhp)}) and Tech Bonus ({formatPHP(techAmountPhp)}) are shown per-row and included in Total Pay.
+                PAB ({formatPHP(pabAmountForDept('hogan_smith_law'))}) and Tech Bonus ({formatPHP(techAmountForDept('hogan_smith_law'))}) are shown per-row and included in Total Pay.
                 Use the Adjustment column to adjust any employee&apos;s bonus before dispatch.
               </p>
               <div className="mt-3 flex flex-wrap items-center gap-3 text-xs">
@@ -12935,9 +12961,9 @@ export default function PayrollWizard({
                             const pabExcluded = isPabExcluded(r.email);
                             const pabDeptOk = isPabDeptEligible(r.email);
                             const techDeptOk = isTechDeptEligible(r.email);
-                            const pabAmt = paStatus === 'eligible' && pabDeptOk && !pabExcluded ? pabAmountPhp : 0;
+                            const pabAmt = paStatus === 'eligible' && pabDeptOk && !pabExcluded ? pabAmountForEmail(r.email) : 0;
                             const techOn = techBonusEligible.has(r.email) && techDeptOk;
-                            const techAmt = techOn ? techAmountPhp : 0;
+                            const techAmt = techOn ? techAmountForEmail(r.email) : 0;
                             // Orphanage pay — manual positive amount added on top of total pay.
                             const hasOrphanage = orphanageAmounts[r.email] !== undefined;
                             const orphanagePay = orphanageAmounts[r.email] ?? 0;
@@ -13027,7 +13053,7 @@ export default function PayrollWizard({
                                           : 'bg-indigo-100 text-indigo-700 ring-1 ring-indigo-400/40 hover:bg-indigo-200 focus:ring-indigo-400 dark:bg-indigo-900/40 dark:text-indigo-300 dark:ring-indigo-500/30 dark:hover:bg-indigo-900/60',
                                     )}
                                   >
-                                    {paStatus === 'eligible' ? (pabDeptOk ? `+${formatPHP(pabAmountPhp)}` : '✓ Eligible') : paStatus === 'ineligible' ? '✗ Ineligible' : '⏳ In Progress'}
+                                    {paStatus === 'eligible' ? (pabDeptOk ? `+${formatPHP(pabAmountForEmail(r.email))}` : '✓ Eligible') : paStatus === 'ineligible' ? '✗ Ineligible' : '⏳ In Progress'}
                                   </button>
                                   )}
                                 </td>
@@ -13040,7 +13066,7 @@ export default function PayrollWizard({
                                       title={techBonusManualGrants.has(r.email) ? 'Manually granted by Accounting this session.' : 'Auto-applied: salary date lands in the 3rd full Mon–Sun week.'}
                                       className="inline-flex items-center gap-1 rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-semibold leading-none text-sky-700 ring-1 ring-sky-400/40 dark:bg-sky-900/40 dark:text-sky-300 dark:ring-sky-500/30"
                                     >
-                                      +{formatPHP(techAmountPhp)}
+                                      +{formatPHP(techAmountForEmail(r.email))}
                                     </span>
                                   ) : (
                                     <span
@@ -13173,8 +13199,8 @@ export default function PayrollWizard({
                               totalAdj += bonusOverrides[overrideKeyFor(r.email)] ?? 0;
                               totalOrphanage += orphanageAmounts[r.email] ?? 0;
                               const st = effectivePabStatus.get(em) ?? 'in_progress';
-                              if (st === 'eligible' && isPabDeptEligible(r.email) && !isPabExcluded(r.email)) totalPab += pabAmountPhp;
-                              if (techBonusEligible.has(r.email) && isTechDeptEligible(r.email)) totalTech += techAmountPhp;
+                              if (st === 'eligible' && isPabDeptEligible(r.email) && !isPabExcluded(r.email)) totalPab += pabAmountForEmail(r.email);
+                              if (techBonusEligible.has(r.email) && isTechDeptEligible(r.email)) totalTech += techAmountForEmail(r.email);
                               const wp = weekendPremiumByEmail.get(em);
                               if (wp) totalWkndPremium += wp.regPremiumPHP + wp.otPremiumPHP;
                               const memail = normEmail(r.email) ?? '';

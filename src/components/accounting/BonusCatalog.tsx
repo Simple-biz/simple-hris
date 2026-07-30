@@ -96,7 +96,12 @@ import {
   SYSTEM_BONUS_DEFAULTS,
   resolveSystemBonuses,
   isDeptEligible,
+  isCustomSystemBonusCode,
+  makeCustomSystemBonusCode,
+  systemBonusBase,
+  variantForDept,
   type SystemBonus,
+  type SystemBonusBase,
   type SystemBonusCode,
 } from '@/lib/payment-catalog/system-bonus';
 import type { EmployeeHourlyRateRow } from '@/lib/supabase/employee-hourly-rates';
@@ -807,6 +812,25 @@ export default function BonusCatalog({ initialData }: { initialData?: InitialAcc
     [refetch],
   );
 
+  const deleteSystemBonus = useCallback(
+    async (code: string) => {
+      const removed = systemBonuses.find((b) => b.code === code);
+      setSystemBonuses((prev) => prev.filter((b) => b.code !== code));
+      try {
+        const res = await fetch(`/api/payment-catalog/system-bonuses?code=${encodeURIComponent(code)}`, {
+          method: 'DELETE',
+        });
+        const json = (await res.json()) as { error: string | null };
+        if (json.error) throw new Error(json.error);
+        toast.success(`${removed?.label ?? 'System bonus'} deleted`);
+      } catch (e) {
+        toast.error(`Could not delete bonus: ${failMsg(e)}`);
+        void refetch();
+      }
+    },
+    [systemBonuses, refetch],
+  );
+
   const tabs = [
     { id: 'overview', label: 'Overview', icon: LayoutDashboard, count: 0 },
     { id: 'search', label: 'Search', icon: Search, count: 0 },
@@ -932,6 +956,7 @@ export default function BonusCatalog({ initialData }: { initialData?: InitialAcc
                 bonuses={bonuses}
                 assignments={assignments}
                 systemBonuses={systemBonuses}
+                fx={fx}
                 roster={roster}
                 hourlyRates={initialData?.hourlyRates ?? []}
                 customDepartments={customDepartments}
@@ -1024,7 +1049,13 @@ export default function BonusCatalog({ initialData }: { initialData?: InitialAcc
               transition={{ duration: 0.24, ease: EASE }}
               className="h-full"
             >
-              <SystemBonusesTab bonuses={systemBonuses} onUpsert={upsertSystemBonus} />
+              <SystemBonusesTab
+                bonuses={systemBonuses}
+                fx={fx}
+                extraDepartments={customDepartments}
+                onUpsert={upsertSystemBonus}
+                onDelete={deleteSystemBonus}
+              />
             </motion.div>
           )}
         </AnimatePresence>
@@ -1034,23 +1065,53 @@ export default function BonusCatalog({ initialData }: { initialData?: InitialAcc
 }
 
 // ---------------------------------------------------------------------------
-// System Bonuses tab -- the two built-in bonuses (PAB + Technology). Editable
-// amount + a per-department allowlist; timing/eligibility stays in the payroll
-// engine. Drives every dashboard via payment_catalog_system_bonuses.
+// System Bonuses tab -- the two built-in bonuses (PAB + Technology) plus
+// custom currency variants (`pab:*` / `tech:*` codes). A variant keeps the
+// built-in engine timing but pays its own amount -- in PHP, USD, or COP -- to
+// the departments in its allowlist (overriding the built-in amount there).
+// Drives every dashboard via payment_catalog_system_bonuses.
 // ---------------------------------------------------------------------------
+
+const SYSTEM_BASE_TIMING: Record<SystemBonusBase, string> = {
+  pab: 'Pays like PAB — final week of the PAB period, perfect attendance required.',
+  tech: 'Pays like Tech — 3rd-week salary date, after 30 days of service.',
+};
 
 function SystemBonusesTab({
   bonuses,
+  fx,
+  extraDepartments,
   onUpsert,
+  onDelete,
 }: {
   bonuses: SystemBonus[];
+  fx: FxRates;
+  extraDepartments: { key: string; name: string }[];
   onUpsert: (b: SystemBonus) => void;
+  onDelete: (code: string) => void;
 }) {
   const byCode = (code: SystemBonusCode) => bonuses.find((b) => b.code === code) ?? null;
+  const customBonuses = useMemo(
+    () =>
+      bonuses
+        .filter((b) => isCustomSystemBonusCode(b.code))
+        .sort((a, b) => a.code.localeCompare(b.code)),
+    [bonuses],
+  );
+  // Built-in payroll departments + the Department-tab registry, de-duplicated.
+  const deptOptions = useMemo(() => {
+    const seen = new Set(DEPARTMENTS.map((d) => d.key));
+    return [
+      ...DEPARTMENTS.map((d) => ({ key: d.key, name: d.name })),
+      ...extraDepartments.filter((d) => !seen.has(d.key)),
+    ];
+  }, [extraDepartments]);
+  const [creating, setCreating] = useState(false);
+
   return (
     <div className="mx-auto max-w-3xl p-4 sm:p-6">
       <div className="mb-5 rounded-lg border border-orange-100 bg-orange-50/40 p-3 text-xs leading-relaxed text-zinc-600 dark:border-blue-950/60 dark:bg-blue-950/10 dark:text-zinc-400">
-        These two built-in bonuses pay automatically based on attendance and tenure. Set each
+        These built-in bonuses pay automatically based on attendance and tenure. Set each
         amount and choose which departments receive it — a department that is unticked (e.g.{' '}
         <span className="font-medium">US - Manager Bonus</span>) is never paid that bonus. The
         timing is fixed: PAB pays on the final week of the PAB period; the Technology Bonus pays
@@ -1069,7 +1130,448 @@ function SystemBonusesTab({
         onUpsert={onUpsert}
         subtitle="Paid on the 3rd-week salary date to employees past 30 days of service."
       />
+
+      {/* ---- Custom currency variants ---------------------------------- */}
+      <div className="mb-3 mt-8 flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <h3 className="text-sm font-semibold text-zinc-900 dark:text-white">
+            Custom system bonuses
+          </h3>
+          <p className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">
+            Same automatic timing as PAB / Tech, but with its own amount in PHP, USD, or COP.
+            For the departments picked here it <span className="font-medium">replaces</span> the
+            built-in amount; non-PHP amounts convert at the live FX rate at payout.
+          </p>
+        </div>
+        {!creating && (
+          <Button
+            type="button"
+            size="sm"
+            onClick={() => setCreating(true)}
+            className="bg-orange-500 text-white hover:bg-orange-600"
+          >
+            <Plus className="mr-1 h-3.5 w-3.5" /> Add system bonus
+          </Button>
+        )}
+      </div>
+
+      <Expand show={creating}>
+        <CustomSystemBonusForm
+          fx={fx}
+          deptOptions={deptOptions}
+          onCancel={() => setCreating(false)}
+          onCreate={(b) => {
+            onUpsert(b);
+            setCreating(false);
+          }}
+        />
+      </Expand>
+
+      {customBonuses.length === 0 && !creating && (
+        <div className="rounded-lg border border-dashed border-zinc-200 p-6 text-center text-xs text-zinc-400 dark:border-zinc-800">
+          No custom system bonuses yet. Add one to pay a PAB- or Tech-style bonus in dollars or
+          Colombian pesos to specific departments.
+        </div>
+      )}
+
+      {customBonuses.map((b) => (
+        <CustomSystemBonusCard
+          key={b.code}
+          row={b}
+          fx={fx}
+          deptOptions={deptOptions}
+          onUpsert={onUpsert}
+          onDelete={onDelete}
+        />
+      ))}
     </div>
+  );
+}
+
+/** Shared department-allowlist chip picker for custom system bonuses. */
+function SystemDeptPicker({
+  options,
+  selected,
+  onToggle,
+  onClear,
+}: {
+  options: { key: string; name: string }[];
+  selected: Set<string>;
+  onToggle: (key: string) => void;
+  onClear: () => void;
+}) {
+  return (
+    <div>
+      <div className="mb-1.5 flex flex-wrap items-center justify-between gap-2">
+        <span className="text-xs font-medium text-zinc-600 dark:text-zinc-400">
+          Paid to{' '}
+          <span className="font-semibold text-zinc-800 dark:text-zinc-200">{selected.size}</span>{' '}
+          department{selected.size === 1 ? '' : 's'}
+          {selected.size === 0 && (
+            <span className="ml-1.5 text-amber-600 dark:text-amber-400">— pick at least one</span>
+          )}
+        </span>
+        <button
+          type="button"
+          onClick={onClear}
+          className="rounded px-1.5 py-0.5 text-[11px] font-medium text-zinc-500 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+        >
+          Clear
+        </button>
+      </div>
+      <div className="flex flex-wrap gap-1.5">
+        {options.map((d) => {
+          const on = selected.has(d.key);
+          return (
+            <button
+              key={d.key}
+              type="button"
+              onClick={() => onToggle(d.key)}
+              className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium ring-1 transition-colors ${
+                on
+                  ? 'bg-emerald-100 text-emerald-700 ring-emerald-400/40 hover:bg-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:ring-emerald-500/30'
+                  : 'bg-white text-zinc-500 ring-zinc-200 hover:bg-zinc-50 dark:bg-zinc-900 dark:text-zinc-500 dark:ring-zinc-700'
+              }`}
+            >
+              {on && <Check className="h-3 w-3" />}
+              {d.name}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/** "≈ ₱X at the current rate" hint for a non-PHP amount. */
+function FxPreview({ amount, currency, fx }: { amount: number; currency: PayCurrency; fx: FxRates }) {
+  if (currency === 'PHP' || !Number.isFinite(amount) || amount <= 0) return null;
+  return (
+    <span className="text-[11px] text-sky-600 dark:text-sky-400">
+      ≈ {money(amount * phpPerUnit(currency, fx))} at the current rate
+    </span>
+  );
+}
+
+/** Create form for a new custom system bonus (variant of PAB / Tech timing). */
+function CustomSystemBonusForm({
+  fx,
+  deptOptions,
+  onCreate,
+  onCancel,
+}: {
+  fx: FxRates;
+  deptOptions: { key: string; name: string }[];
+  onCreate: (b: SystemBonus) => void;
+  onCancel: () => void;
+}) {
+  const [label, setLabel] = useState('');
+  const [base, setBase] = useState<SystemBonusBase>('tech');
+  const [amount, setAmount] = useState('');
+  const [currency, setCurrency] = useState<PayCurrency>('USD');
+  const [depts, setDepts] = useState<Set<string>>(() => new Set());
+
+  const amountNum = Number(amount);
+  const amountValid = amount.trim() !== '' && Number.isFinite(amountNum) && amountNum >= 0;
+  const canCreate = label.trim() !== '' && amountValid && depts.size > 0;
+
+  const create = () => {
+    if (!canCreate) return;
+    onCreate({
+      code: makeCustomSystemBonusCode(base, label.trim()),
+      label: label.trim(),
+      amount: amountNum,
+      currency,
+      enabled: true,
+      departmentKeys: [...depts],
+    });
+  };
+
+  return (
+    <Section icon={Plus} title="New custom system bonus" subtitle={SYSTEM_BASE_TIMING[base]}>
+      <div className="space-y-4">
+        <div className="flex flex-wrap items-end gap-4">
+          <Field label="Name">
+            <Input
+              value={label}
+              onChange={(e) => setLabel(e.target.value)}
+              placeholder="e.g. Technology Bonus (US)"
+              className="w-56"
+            />
+          </Field>
+          <div className="flex flex-col gap-1">
+            <span className="text-xs font-medium text-zinc-600 dark:text-zinc-400">Timing</span>
+            <div className="inline-flex rounded-md border border-zinc-200 p-0.5 dark:border-zinc-800">
+              {(
+                [
+                  { key: 'pab', label: 'PAB (attendance)' },
+                  { key: 'tech', label: 'Tech (tenure)' },
+                ] as const
+              ).map((o) => (
+                <button
+                  key={o.key}
+                  type="button"
+                  onClick={() => setBase(o.key)}
+                  className={`relative rounded px-2.5 py-1 text-xs font-semibold transition-colors ${
+                    base === o.key ? 'text-white' : 'text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200'
+                  }`}
+                >
+                  {base === o.key && (
+                    <motion.span
+                      layoutId="sysCustomBasePill"
+                      className="absolute inset-0 rounded bg-orange-500"
+                      transition={{ type: 'spring', stiffness: 500, damping: 34 }}
+                    />
+                  )}
+                  <span className="relative z-10">{o.label}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-end gap-4">
+          <Field label={`Amount (${CURRENCY_SYMBOL[currency]})`}>
+            <div className="flex items-center gap-1.5">
+              <span className="text-sm text-zinc-400">{CURRENCY_SYMBOL[currency]}</span>
+              <Input
+                type="number"
+                inputMode="decimal"
+                min="0"
+                step={currency === 'COP' ? '1' : '0.01'}
+                value={amount}
+                onChange={(e) => setAmount(e.target.value)}
+                placeholder={currency === 'COP' ? '0' : '0.00'}
+                className="w-32"
+              />
+            </div>
+          </Field>
+          <div className="flex flex-col gap-1">
+            <span className="text-xs font-medium text-zinc-600 dark:text-zinc-400">Currency</span>
+            <CurrencyToggle value={currency} onChange={setCurrency} idSuffix="sysCustomNew" />
+          </div>
+          {amountValid && <FxPreview amount={amountNum} currency={currency} fx={fx} />}
+        </div>
+
+        <SystemDeptPicker
+          options={deptOptions}
+          selected={depts}
+          onToggle={(key) =>
+            setDepts((prev) => {
+              const next = new Set(prev);
+              if (next.has(key)) next.delete(key);
+              else next.add(key);
+              return next;
+            })
+          }
+          onClear={() => setDepts(new Set())}
+        />
+        <p className="text-[11px] leading-relaxed text-zinc-400">
+          For the departments picked here this bonus replaces the built-in{' '}
+          {base === 'pab' ? 'Perfect Attendance Bonus' : 'Technology Bonus'} amount; every other
+          eligibility rule (attendance / tenure and timing) still applies.
+        </p>
+
+        <div className="flex items-center gap-2">
+          <Button
+            type="button"
+            size="sm"
+            disabled={!canCreate}
+            onClick={create}
+            className="bg-orange-500 text-white hover:bg-orange-600"
+          >
+            Create bonus
+          </Button>
+          <Button type="button" size="sm" variant="ghost" onClick={onCancel}>
+            Cancel
+          </Button>
+        </div>
+      </div>
+    </Section>
+  );
+}
+
+/** Editable card for an existing custom system bonus. */
+function CustomSystemBonusCard({
+  row,
+  fx,
+  deptOptions,
+  onUpsert,
+  onDelete,
+}: {
+  row: SystemBonus;
+  fx: FxRates;
+  deptOptions: { key: string; name: string }[];
+  onUpsert: (b: SystemBonus) => void;
+  onDelete: (code: string) => void;
+}) {
+  const base = systemBonusBase(row.code) ?? 'tech';
+  const savedDeptsArr = useMemo(() => [...(row.departmentKeys ?? [])].sort(), [row]);
+  const savedDeptsKey = savedDeptsArr.join(',');
+  const savedKey = `${row.label}|${row.amount}|${row.currency}|${row.enabled}|${savedDeptsKey}`;
+
+  const [label, setLabel] = useState(row.label);
+  const [amount, setAmount] = useState(String(row.amount));
+  const [currency, setCurrency] = useState<PayCurrency>(row.currency);
+  const [enabled, setEnabled] = useState(row.enabled);
+  const [depts, setDepts] = useState<Set<string>>(() => new Set(savedDeptsArr));
+  const [confirmDelete, setConfirmDelete] = useState(false);
+
+  useEffect(() => {
+    setLabel(row.label);
+    setAmount(String(row.amount));
+    setCurrency(row.currency);
+    setEnabled(row.enabled);
+    setDepts(new Set(savedDeptsArr));
+    setConfirmDelete(false);
+    // Reseed only when the persisted snapshot changes — not on every keystroke.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [savedKey]);
+
+  const amountNum = Number(amount);
+  const amountValid = amount.trim() !== '' && Number.isFinite(amountNum) && amountNum >= 0;
+  const deptsKey = [...depts].sort().join(',');
+  const dirty =
+    label !== row.label ||
+    amount !== String(row.amount) ||
+    currency !== row.currency ||
+    enabled !== row.enabled ||
+    deptsKey !== savedDeptsKey;
+  const canSave = amountValid && label.trim() !== '' && depts.size > 0 && dirty;
+
+  const save = () => {
+    if (!canSave) return;
+    onUpsert({
+      ...row,
+      label: label.trim(),
+      amount: amountNum,
+      currency,
+      enabled,
+      departmentKeys: [...depts],
+    });
+  };
+
+  return (
+    <Section
+      icon={Award}
+      title={row.label}
+      subtitle={SYSTEM_BASE_TIMING[base]}
+    >
+      <div className="space-y-4">
+        <div className="flex flex-wrap items-end gap-4">
+          <Field label="Name">
+            <Input value={label} onChange={(e) => setLabel(e.target.value)} className="w-56" />
+          </Field>
+          <Field label={`Amount (${CURRENCY_SYMBOL[currency]})`}>
+            <div className="flex items-center gap-1.5">
+              <span className="text-sm text-zinc-400">{CURRENCY_SYMBOL[currency]}</span>
+              <Input
+                type="number"
+                inputMode="decimal"
+                min="0"
+                step={currency === 'COP' ? '1' : '0.01'}
+                value={amount}
+                onChange={(e) => setAmount(e.target.value)}
+                className="w-32"
+              />
+            </div>
+          </Field>
+          <div className="flex flex-col gap-1">
+            <span className="text-xs font-medium text-zinc-600 dark:text-zinc-400">Currency</span>
+            <CurrencyToggle value={currency} onChange={setCurrency} idSuffix={`sysCustom-${row.code}`} />
+          </div>
+          <div className="flex flex-col gap-1">
+            <span className="text-xs font-medium text-zinc-600 dark:text-zinc-400">Status</span>
+            <div className="inline-flex rounded-md border border-zinc-200 p-0.5 dark:border-zinc-800">
+              {([
+                { on: true, label: 'Enabled' },
+                { on: false, label: 'Disabled' },
+              ] as const).map((o) => (
+                <button
+                  key={o.label}
+                  type="button"
+                  onClick={() => setEnabled(o.on)}
+                  className={`relative rounded px-2.5 py-1 text-xs font-semibold transition-colors ${
+                    enabled === o.on
+                      ? 'text-white'
+                      : 'text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200'
+                  }`}
+                >
+                  {enabled === o.on && (
+                    <motion.span
+                      layoutId={`sysEnabledPill-${row.code}`}
+                      className={`absolute inset-0 rounded ${o.on ? 'bg-emerald-500' : 'bg-zinc-400 dark:bg-zinc-600'}`}
+                      transition={{ type: 'spring', stiffness: 500, damping: 34 }}
+                    />
+                  )}
+                  <span className="relative z-10">{o.label}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+          {amountValid && <FxPreview amount={amountNum} currency={currency} fx={fx} />}
+        </div>
+
+        <SystemDeptPicker
+          options={deptOptions}
+          selected={depts}
+          onToggle={(key) =>
+            setDepts((prev) => {
+              const next = new Set(prev);
+              if (next.has(key)) next.delete(key);
+              else next.add(key);
+              return next;
+            })
+          }
+          onClear={() => setDepts(new Set())}
+        />
+
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            type="button"
+            size="sm"
+            disabled={!canSave}
+            onClick={save}
+            className="bg-orange-500 text-white hover:bg-orange-600"
+          >
+            Save changes
+          </Button>
+          {dirty && <span className="text-xs text-amber-600 dark:text-amber-400">Unsaved changes</span>}
+          {!dirty && (
+            <span className="inline-flex items-center gap-1 text-xs text-emerald-600 dark:text-emerald-400">
+              <CheckCircle2 className="h-3.5 w-3.5" /> Saved
+            </span>
+          )}
+          <span className="mx-1 flex-1" />
+          <ByLine who={row.createdBy} />
+          {confirmDelete ? (
+            <span className="inline-flex items-center gap-1.5">
+              <span className="text-xs text-red-500">Delete this bonus?</span>
+              <Button
+                type="button"
+                size="sm"
+                variant="destructive"
+                onClick={() => onDelete(row.code)}
+              >
+                Delete
+              </Button>
+              <Button type="button" size="sm" variant="ghost" onClick={() => setConfirmDelete(false)}>
+                Keep
+              </Button>
+            </span>
+          ) : (
+            <button
+              type="button"
+              title="Delete this custom system bonus"
+              onClick={() => setConfirmDelete(true)}
+              className="rounded p-1.5 text-zinc-400 transition-colors hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-950/40"
+            >
+              <Trash2 className="h-4 w-4" />
+            </button>
+          )}
+        </div>
+      </div>
+    </Section>
   );
 }
 
@@ -3655,7 +4157,7 @@ type PersonComp = {
   rateSource: 'individual' | 'sheet' | 'department' | 'none';
   employeeAssignments: BonusAssignment[];
   commonAssignments: { assignment: BonusAssignment; excluded: boolean }[];
-  systemRows: { code: SystemBonusCode; label: string; amount: number; currency: PayCurrency }[];
+  systemRows: { code: string; label: string; amount: number; currency: PayCurrency }[];
 };
 
 function computePersonComp(person: RosterEntry, idx: PersonCompIndexes): PersonComp {
@@ -3707,10 +4209,23 @@ function computePersonComp(person: RosterEntry, idx: PersonCompIndexes): PersonC
   }));
 
   // Engine semantics exactly: isDeptEligible fail-opens on unresolvable
-  // departments, and amounts always pay in PHP whatever the row's currency flag.
+  // departments; a custom `pab:*`/`tech:*` currency variant covering this
+  // person's department replaces the built-in amount (shown in its native
+  // currency — the engine converts to PHP at the live FX rate at payout).
   const systemRows = (['pab', 'tech'] as SystemBonusCode[]).flatMap((code) => {
     const cfg = idx.resolvedSystem[code];
     if (!isDeptEligible(cfg, deptKey)) return [];
+    const variant = variantForDept(cfg, deptKey);
+    if (variant) {
+      return [
+        {
+          code: variant.code,
+          label: variant.label,
+          amount: variant.amountNative,
+          currency: variant.currency,
+        },
+      ];
+    }
     const row = idx.systemBonuses.find((b) => b.code === code);
     return [
       {
@@ -3739,6 +4254,7 @@ function SearchTab({
   bonuses,
   assignments,
   systemBonuses,
+  fx,
   roster,
   hourlyRates,
   customDepartments,
@@ -3751,6 +4267,7 @@ function SearchTab({
   bonuses: BonusDef[];
   assignments: BonusAssignment[];
   systemBonuses: SystemBonus[];
+  fx: FxRates;
   roster: RosterEntry[];
   /** The rates-sheet table (employee_hourly_rates) -- the engine's middle rate layer. */
   hourlyRates: EmployeeHourlyRateRow[];
@@ -3788,12 +4305,12 @@ function SearchTab({
       structByEmail,
       deptStructByKey,
       sheetRateByEmail,
-      resolvedSystem: resolveSystemBonuses(systemBonuses),
+      resolvedSystem: resolveSystemBonuses(systemBonuses, fx),
       systemBonuses,
       assignments,
       customDepartments,
     };
-  }, [payStructures, hourlyRates, systemBonuses, assignments, customDepartments]);
+  }, [payStructures, hourlyRates, systemBonuses, fx, assignments, customDepartments]);
 
   // Departments that actually exist in the catalog universe (built-in payroll
   // depts + Department-tab registry). Bonus assignments filed outside this set

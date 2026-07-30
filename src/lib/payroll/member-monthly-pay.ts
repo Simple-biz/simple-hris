@@ -46,7 +46,7 @@ import {
   buildOrphanageHoursIndex,
   orphanageHoursByCoveredDate,
 } from '@/lib/payroll/orphanage-pab-coverage';
-import { resolveSystemBonuses, isDeptEligible } from '@/lib/payment-catalog/system-bonus';
+import { resolveSystemBonuses, isDeptEligible, systemBonusAmountForDept } from '@/lib/payment-catalog/system-bonus';
 import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
 import {
   buildPabCalendarWeeks,
@@ -482,8 +482,10 @@ export async function computeMemberMonthlyPay(args: {
   const fx = buildFxRates(fxValues);
 
   // PAB + Tech amounts + per-department allowlist (Payment Catalog System
-  // Bonuses). Must mirror current-pay.ts so the estimate matches dispatch.
-  const sysBonuses = resolveSystemBonuses(systemBonusesResult.bonuses);
+  // Bonuses); custom `pab:*`/`tech:*` variants carry a native USD/COP amount
+  // converted via `fx`. Must mirror current-pay.ts so the estimate matches
+  // dispatch.
+  const sysBonuses = resolveSystemBonuses(systemBonusesResult.bonuses, fx);
 
   const holidayEnabled =
     holidaySettings[US_HOLIDAYS_ENABLED_KEY] == null ? true : holidaySettings[US_HOLIDAYS_ENABLED_KEY] === 'true';
@@ -803,8 +805,10 @@ export async function computeMemberMonthlyPay(args: {
       isPabEligible: isPabElig,
       isTechBonusWeek: isTechWeek && techSalaryReached,
       hasThirtyDays: has30,
-      pabAmountPHP: sysBonuses.pab.amountPHP,
-      techAmountPHP: sysBonuses.tech.amountPHP,
+      // Per-department amount: a custom currency variant covering this dept
+      // overrides the built-in base amount (already PHP-converted).
+      pabAmountPHP: systemBonusAmountForDept(sysBonuses.pab, empDeptKey),
+      techAmountPHP: systemBonusAmountForDept(sysBonuses.tech, empDeptKey),
       pabDeptEligible,
       techDeptEligible,
     });
@@ -896,8 +900,8 @@ export async function computeMemberMonthlyPay(args: {
       rateCurrency: empCat?.currency ?? (hasSheet ? null : deptCat?.currency ?? null),
       startDate: masterRow?.start_date ?? null,
       department: masterRow?.department ?? null,
-      pabBonusAmountPHP: sysBonuses.pab.amountPHP,
-      techBonusAmountPHP: sysBonuses.tech.amountPHP,
+      pabBonusAmountPHP: systemBonusAmountForDept(sysBonuses.pab, empDeptKey),
+      techBonusAmountPHP: systemBonusAmountForDept(sysBonuses.tech, empDeptKey),
       pabDeptEligible,
       techDeptEligible,
       weeks,

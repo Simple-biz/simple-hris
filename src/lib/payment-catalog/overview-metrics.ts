@@ -23,6 +23,7 @@ import type { PayStructure, PayCurrency } from '@/lib/payment-catalog/pay-struct
 import type { BonusDef, BonusAssignment, BonusKind } from '@/lib/bonus-catalog/types';
 import {
   SYSTEM_BONUS_DEFAULTS,
+  isCustomSystemBonusCode,
   type SystemBonus,
   type SystemBonusCode,
 } from '@/lib/payment-catalog/system-bonus';
@@ -103,7 +104,8 @@ export interface CurrencyMixRow {
 }
 
 export interface SystemBonusRow {
-  code: SystemBonusCode;
+  /** 'pab' / 'tech' built-ins, or a custom variant code (`pab:*` / `tech:*`). */
+  code: string;
   label: string;
   amountNative: number;
   currency: PayCurrency;
@@ -278,7 +280,8 @@ export function computeCatalogOverview(input: OverviewInput, topN = 10): Catalog
     }))
     .filter((row) => row.count > 0);
 
-  // ---- System bonuses (always surface PAB + Tech, falling back to defaults)
+  // ---- System bonuses (always surface PAB + Tech, falling back to defaults;
+  // custom `pab:*`/`tech:*` currency variants follow, sorted by code)
   const systemBonusRows: SystemBonusRow[] = (['pab', 'tech'] as SystemBonusCode[]).map((code) => {
     const row = systemBonuses.find((b) => b.code === code);
     const def = SYSTEM_BONUS_DEFAULTS[code];
@@ -299,6 +302,22 @@ export function computeCatalogOverview(input: OverviewInput, topN = 10): Catalog
       appliesToAll: rawDeptKeys.length === 0,
     };
   });
+  for (const row of [...systemBonuses]
+    .filter((b) => isCustomSystemBonusCode(b.code))
+    .sort((a, b) => a.code.localeCompare(b.code))) {
+    const deptKeys = (row.departmentKeys ?? []).filter((k) => !EXCLUDED_DEPT_KEYS.has(k));
+    systemBonusRows.push({
+      code: row.code,
+      label: row.label,
+      amountNative: Number.isFinite(row.amount) ? row.amount : 0,
+      currency: row.currency ?? 'PHP',
+      enabled: row.enabled !== false,
+      deptKeys,
+      deptCount: deptKeys.length,
+      // A custom variant is never fail-open -- it pays only its allowlist.
+      appliesToAll: false,
+    });
+  }
 
   // ---- OT premium ---------------------------------------------------------
   const otPairs = payStructures.filter(

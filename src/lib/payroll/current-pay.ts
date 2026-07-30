@@ -64,7 +64,7 @@ import {
 import { fetchAllRateHistory, resolveRateAsOfDate, type RateHistoryByEmail } from "@/lib/payroll/rate-history";
 import { listPayStructures } from "@/lib/supabase/pay-structures-db";
 import { listSystemBonuses } from "@/lib/supabase/system-bonuses-db";
-import { resolveSystemBonuses, isDeptEligible } from "@/lib/payment-catalog/system-bonus";
+import { resolveSystemBonuses, isDeptEligible, systemBonusAmountForDept } from "@/lib/payment-catalog/system-bonus";
 import { normalizeDeptToKey } from "@/lib/payroll/normalize-dept-key";
 import { DEPARTMENTS } from "@/lib/payroll/department-bonus";
 import type { PayCurrency } from "@/lib/payment-catalog/pay-structure";
@@ -519,11 +519,6 @@ export async function computeCurrentPay(
     listSystemBonuses(),
   ]);
 
-  // PAB + Tech bonus amounts + per-department allowlist are configurable in the
-  // Payment Catalog (System Bonuses tab). Falls back to the legacy constants +
-  // "applies to everyone" when no rows exist (pre-migration).
-  const sysBonuses = resolveSystemBonuses(systemBonusesResult.bonuses);
-
   // Deferred: the full-table Hubstaff scan (every row, every upload) is ONLY
   // needed to compute PAB eligibility, which only matters on the final PAB
   // week. ~3 of every 4 loads are not the final PAB week, so fetching it here
@@ -545,6 +540,12 @@ export async function computeCurrentPay(
   // rate so a COP structure resolves and a native COP payout can be derived.
   const fx: FxRates = buildFxRates(appSettings);
   const fxRate = fx.usdToPhp;
+
+  // PAB + Tech bonus amounts + per-department allowlist are configurable in the
+  // Payment Catalog (System Bonuses tab); custom `pab:*`/`tech:*` variants carry
+  // a native USD/COP amount converted here via `fx`. Falls back to the legacy
+  // constants + "applies to everyone" when no rows exist (pre-migration).
+  const sysBonuses = resolveSystemBonuses(systemBonusesResult.bonuses, fx);
 
   // Index rates by both work_email and personal_email (lowercased) so a
   // hubstaff row keyed on either still resolves to a rate.
@@ -908,8 +909,10 @@ export async function computeCurrentPay(
       isPabEligible: pabEligible.has(em) && !pabExcludedEmails.has(em),
       isTechBonusWeek: weekIsTechBonus,
       hasThirtyDays: empHasThirtyDays,
-      pabAmountPHP: sysBonuses.pab.amountPHP,
-      techAmountPHP: sysBonuses.tech.amountPHP,
+      // Per-department amount: a custom currency variant covering this dept
+      // overrides the built-in base amount (already PHP-converted).
+      pabAmountPHP: systemBonusAmountForDept(sysBonuses.pab, empDeptKey),
+      techAmountPHP: systemBonusAmountForDept(sysBonuses.tech, empDeptKey),
       pabDeptEligible: isDeptEligible(sysBonuses.pab, empDeptKey),
       techDeptEligible: isDeptEligible(sysBonuses.tech, empDeptKey),
     });

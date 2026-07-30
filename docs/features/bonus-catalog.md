@@ -313,7 +313,7 @@ table directly and does not apply the overlay. This is intentional / left as-is
 
 ---
 
-## 6. System Bonuses (PAB + Technology Bonus)
+## 6. System Bonuses (PAB + Technology Bonus + custom currency variants)
 
 A fourth tab (**System Bonuses**, Award icon) makes the two built-in payroll
 bonuses configurable instead of hardcoded constants:
@@ -332,24 +332,66 @@ unchanged. **Timing/eligibility is NOT configurable** -- PAB still fires the
 final week of the PAB period (perfect-attendance check); Tech still fires the
 3rd-week salary date (30-day service check).
 
-- **Table:** `payment_catalog_system_bonuses` (codes `pab`/`tech` as PK, `amount`,
-  `currency`, `enabled`, `department_keys text[]`, audit + touch trigger, in
-  `supabase_realtime`). Migration `references/create_payment_catalog_system_bonuses.sql`.
+### 6.1 Custom system bonuses (COP / USD variants) *(added 2026-07-30)*
+
+The tab can also **add custom system bonuses**: currency-denominated variants
+of the two built-ins. A variant keeps the built-in **engine timing** (chosen at
+creation: "PAB (attendance)" or "Tech (tenure)") but carries its own **name,
+amount + currency (PHP / USD / COP), enabled flag, and department allowlist**.
+For the departments in its allowlist the variant **replaces** the built-in
+amount; every other eligibility rule (perfect attendance / 30-day tenure and
+the payout week) still applies. Typical use: a `$35` Technology Bonus for the
+US team, or a `COP$200,000` PAB for a Colombian department — groups that are
+excluded from the PHP built-ins.
+
+- **Storage:** the SAME `payment_catalog_system_bonuses` table — a variant's
+  PK is a prefixed code (`pab:<slug>-<rand>` / `tech:<slug>-<rand>`, minted by
+  `makeCustomSystemBonusCode`). **No schema change was needed**: `code` is a
+  text PK and `'COP'` was already allowed by `add_cop_currency.sql` (§1c).
+- **Resolution:** `resolveSystemBonuses(rows, fx)` now takes the USD-anchored
+  `FxRates`; each enabled variant resolves to `amountPHP = amount ×
+  phpPerUnit(currency, fx)` and hangs off its base as `variants[]`.
+  `systemBonusAmountForDept(cfg, deptKey)` returns the covering variant's PHP
+  amount, else the built-in amount — every per-employee math/display site calls
+  it. `isDeptEligible` treats a variant as an **explicit opt-in**: its
+  departments are eligible even when the built-in row is disabled or omits
+  them. A variant with an empty allowlist or `enabled=false` is ignored;
+  validation requires a name + ≥1 department.
+- **Delete:** custom variants only (`DELETE ?code=`, same feature gate); the
+  two built-ins are permanent — disable them instead.
+
+Each variant shows a live "≈ ₱X at the current rate" preview; the payout layer
+stays PHP-pivot exactly like non-PHP Pay Structures (a COP-paid person's stub
+round-trips to native COP in the Payment Dispatch COP tab via `amount_cop`).
+
+- **Table:** `payment_catalog_system_bonuses` (`code` text PK -- `pab`/`tech`
+  built-ins + `pab:*`/`tech:*` variants -- `amount`, `currency`, `enabled`,
+  `department_keys text[]`, audit + touch trigger, in `supabase_realtime`).
+  Migration `references/sql/create/create_payment_catalog_system_bonuses.sql`.
 - **Model + resolver:** `src/lib/payment-catalog/system-bonus.ts` --
-  `resolveSystemBonuses(rows)` → `{pab, tech}` config; `isDeptEligible(cfg, deptKey)`
-  is **fail-open** when the allowlist is empty (pre-migration) or the department
-  can't be normalized, so only deliberately-omitted departments are dropped.
+  `resolveSystemBonuses(rows, fx)` → `{pab, tech}` config (each with
+  `variants`); `systemBonusAmountForDept(cfg, deptKey)` is the per-employee
+  amount; `isDeptEligible(cfg, deptKey)` is **fail-open** when the built-in
+  allowlist is empty (pre-migration) or the department can't be normalized, so
+  only deliberately-omitted departments are dropped. Tests:
+  `src/lib/payment-catalog/system-bonus.test.ts`.
 - **DB-lib / API:** `src/lib/supabase/system-bonuses-db.ts` +
-  `app/api/payment-catalog/system-bonuses/route.ts` (GET any-authed; POST gated
-  by `requireFeatureEdit('accounting','bonus_catalog')`; no DELETE -- the set is fixed).
-- **Threaded everywhere:** `computeEmployeeBonus` (`dispatch-bonuses.ts`) now
+  `app/api/payment-catalog/system-bonuses/route.ts` (GET any-authed; POST/DELETE
+  gated by `requireFeatureEdit('accounting','bonus_catalog')`; DELETE is
+  custom-variants-only -- the built-in pair is fixed).
+- **Threaded everywhere:** `computeEmployeeBonus` (`dispatch-bonuses.ts`)
   accepts `pabAmountPHP`/`techAmountPHP`/`pabDeptEligible`/`techDeptEligible`
-  (defaults = legacy constants + applies-to-everyone). The two server math paths
-  (`current-pay.ts`, `member-monthly-pay.ts`) read `listSystemBonuses()` and pass
-  the resolved values; the Payroll Wizard + Overview read the prefetched
-  `initialData.systemBonuses`; the Employee Dashboard + My Hours fetch the GET
-  endpoint on mount (with the legacy constants as fallback). Pass-through surfaces
-  (Processor/Urgent queues, dispatch CSV) inherit the dynamic values automatically.
+  (defaults = legacy constants + applies-to-everyone); callers now pass the
+  **per-department** amounts from `systemBonusAmountForDept`. The two server
+  math paths (`current-pay.ts`, `member-monthly-pay.ts`) read
+  `listSystemBonuses()` and resolve with their `FxRates`; the Payroll Wizard +
+  Overview read the prefetched `initialData.systemBonuses` (wizard uses its
+  live `fxRates`; Overview fetches the two `app_settings` rates); the Employee
+  Dashboard + My Hours fetch the GET endpoint on mount (with the legacy
+  constants as fallback). Pass-through surfaces (Processor/Urgent queues,
+  dispatch CSV) inherit the dynamic values automatically. Overview's PAB
+  accrual figures sum a **per-eligible-employee** amount (`pabMetrics.accruedPhp`)
+  instead of `eligible × base`, so variant departments price correctly.
 
 > The standalone "Technology Bonus" Payroll Rule was removed from **System
 > Settings** -- it is managed here now.
