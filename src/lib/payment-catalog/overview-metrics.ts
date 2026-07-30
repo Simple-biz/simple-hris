@@ -18,6 +18,8 @@
 //     only so the UI can render a faint "~PHP" subscript for ranking honesty.
 
 import { DEPARTMENTS } from '@/lib/payroll/department-bonus';
+import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
+import { slugifyDeptKey } from '@/lib/departments/registry';
 import { phpPerUnit, type FxRates } from '@/lib/fx/currency-fx';
 import type { PayStructure, PayCurrency } from '@/lib/payment-catalog/pay-structure';
 import type { BonusDef, BonusAssignment, BonusKind } from '@/lib/bonus-catalog/types';
@@ -45,7 +47,9 @@ export interface OverviewInput {
   bonuses: BonusDef[];
   assignments: BonusAssignment[];
   systemBonuses: SystemBonus[];
-  roster: { email: string; name: string; department: string }[];
+  /** `aliases` (work + personal emails) lets individual structures match the
+   *  same way dispatch does; entries without it match on `email` alone. */
+  roster: { email: string; name: string; department: string; aliases?: string[] }[];
   fx: FxRates;
 }
 
@@ -116,6 +120,44 @@ export interface SystemBonusRow {
   appliesToAll: boolean;
 }
 
+/** One department's estimated hourly payroll, for the pay-mix donut + bars. */
+export interface DeptSpendRow {
+  key: string;
+  name: string;
+  /** Sum of resolved PHP-equivalent hourly rates across covered people. */
+  hourlyPhp: number;
+  /** Roster people grouped into this department. */
+  headcount: number;
+  /** ...of which have a resolvable rate (individual or department base). */
+  covered: number;
+  /** Share of the org-wide hourly total, 0..1. */
+  share: number;
+}
+
+export interface SpendSummary {
+  /** Every department with at least one roster person, sorted by spend desc. */
+  rows: DeptSpendRow[];
+  totalHourlyPhp: number;
+  /** People whose rate resolved (the Rate Spotlight pool size). */
+  peopleCovered: number;
+  /** People who grouped into a known department at all. */
+  peopleGrouped: number;
+  rosterTotal: number;
+}
+
+/** One roster person with a resolved rate -- the Rate Spotlight pool. */
+export interface SpotlightPerson {
+  email: string;
+  name: string;
+  deptKey: string;
+  deptName: string;
+  rateNative: number;
+  currency: PayCurrency;
+  ratePhp: number;
+  /** Where the rate came from. */
+  source: 'individual' | 'department';
+}
+
 export interface OtSummary {
   /** Average OT-to-regular multiplier across rows that set an explicit OT rate. */
   avgMultiplier: number | null;
@@ -143,6 +185,10 @@ export interface CatalogOverview {
   systemBonuses: SystemBonusRow[];
   ot: OtSummary;
   coverage: CatalogCoverage;
+  /** Estimated hourly payroll by department (roster x resolved rates). */
+  spend: SpendSummary;
+  /** Everyone with a resolvable rate -- pool for the Rate Spotlight card. */
+  spotlight: SpotlightPerson[];
   /** True when there is essentially nothing to show yet. */
   isEmpty: boolean;
 }
@@ -217,6 +263,87 @@ export function computeCatalogOverview(input: OverviewInput, topN = 10): Catalog
     }))
     .sort((a, b) => b.regularPhp - a.regularPhp)
     .slice(0, topN);
+
+  // ---- Estimated hourly payroll by department (roster-driven) --------------
+  // Every roster person resolves to an individual structure first (matched
+  // across email aliases, the same way dispatch resolves rates), then falls
+  // back to their department's base rate. People with neither still count
+  // toward headcount so the coverage caption stays honest -- they simply
+  // contribute no spend. Cross-currency sums use the PHP-equivalent.
+  const personStructByEmail = new Map<string, PayStructure>();
+  for (const s of personStructures) {
+    if (s.employeeEmail && Number.isFinite(s.regularRate)) {
+      const k = norm(s.employeeEmail);
+      if (!personStructByEmail.has(k)) personStructByEmail.set(k, s);
+    }
+  }
+  const deptBaseByKey = new Map<string, PayStructure>();
+  for (const s of deptStructures) {
+    if (Number.isFinite(s.regularRate) && !deptBaseByKey.has(s.departmentKey)) {
+      deptBaseByKey.set(s.departmentKey, s);
+    }
+  }
+  const structureKeys = new Set(payStructures.map((s) => s.departmentKey));
+
+  const spendAcc = new Map<string, { hourlyPhp: number; headcount: number; covered: number }>();
+  const spotlight: SpotlightPerson[] = [];
+  let peopleGrouped = 0;
+  for (const r of roster) {
+    const aliases = r.aliases && r.aliases.length > 0 ? r.aliases : [r.email];
+    let struct: PayStructure | undefined;
+    for (const a of aliases) {
+      struct = personStructByEmail.get(norm(a));
+      if (struct) break;
+    }
+    // Group under the structure's own department key when there is one (that
+    // is where the catalog says their pay lives), else resolve the roster
+    // label: built-in alias map first, then a custom-registry slug the
+    // catalog already has a structure for.
+    let key = struct?.departmentKey ?? normalizeDeptToKey(r.department);
+    if (!key) {
+      const slug = slugifyDeptKey(r.department ?? '');
+      key = slug && structureKeys.has(slug) ? slug : null;
+    }
+    if (!key || EXCLUDED_DEPT_KEYS.has(key)) continue;
+    peopleGrouped += 1;
+    const acc = spendAcc.get(key) ?? { hourlyPhp: 0, headcount: 0, covered: 0 };
+    acc.headcount += 1;
+    const rateRow = struct ?? deptBaseByKey.get(key);
+    if (rateRow) {
+      const ratePhp = php(rateRow.regularRate, rateRow.currency);
+      acc.covered += 1;
+      acc.hourlyPhp += ratePhp;
+      spotlight.push({
+        email: r.email,
+        name: r.name || r.email,
+        deptKey: key,
+        deptName: deptName(key),
+        rateNative: rateRow.regularRate,
+        currency: rateRow.currency,
+        ratePhp,
+        source: struct ? 'individual' : 'department',
+      });
+    }
+    spendAcc.set(key, acc);
+  }
+  const totalHourlyPhp = [...spendAcc.values()].reduce((s, a) => s + a.hourlyPhp, 0);
+  const spendRows: DeptSpendRow[] = [...spendAcc.entries()]
+    .map(([key, a]) => ({
+      key,
+      name: deptName(key),
+      hourlyPhp: a.hourlyPhp,
+      headcount: a.headcount,
+      covered: a.covered,
+      share: totalHourlyPhp > 0 ? a.hourlyPhp / totalHourlyPhp : 0,
+    }))
+    .sort((a, b) => b.hourlyPhp - a.hourlyPhp);
+  const spend: SpendSummary = {
+    rows: spendRows,
+    totalHourlyPhp,
+    peopleCovered: spotlight.length,
+    peopleGrouped,
+    rosterTotal: roster.length,
+  };
 
   // ---- Most valuable bonuses (flat only) ----------------------------------
   const topBonuses: BonusValueRow[] = bonuses
@@ -365,6 +492,8 @@ export function computeCatalogOverview(input: OverviewInput, topN = 10): Catalog
     systemBonuses: systemBonusRows,
     ot: { avgMultiplier, highest: highestOt },
     coverage,
+    spend,
+    spotlight,
     isEmpty,
   };
 }
