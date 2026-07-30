@@ -490,7 +490,7 @@ function PayShareDonut({
               fill="none"
               strokeWidth={hoveredKey === s.key ? 30 : 26}
               strokeLinecap="butt"
-              className={`${slot.stroke} cursor-pointer transition-[opacity,stroke-width] duration-200 ${dim ? 'opacity-30' : ''}`}
+              className={`${slot.stroke} cursor-pointer transition-[opacity,stroke-width] duration-300 ease-out ${dim ? 'opacity-30' : ''}`}
               strokeDasharray={`${len} ${C - len}`}
               strokeDashoffset={-(offset + gap / 2)}
               onMouseEnter={() => onHover(s.key)}
@@ -503,30 +503,42 @@ function PayShareDonut({
           return el;
         })}
       </svg>
-      {/* Center readout: the hovered slice, or the org total. */}
-      <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center px-8 text-center">
-        {hovered ? (
-          <>
-            <div className="w-full truncate text-[10px] font-semibold uppercase tracking-wide text-zinc-400">
-              {hovered.name}
-            </div>
-            <div className="text-lg font-semibold tracking-tight tabular-nums text-zinc-900 dark:text-white">
-              {moneyWhole(hovered.valuePhp)}
-            </div>
-            <div className="text-[10px] tabular-nums text-zinc-400">
-              {(hovered.share * 100).toFixed(1)}% of total
-            </div>
-          </>
-        ) : (
-          <>
-            <div className="text-lg font-semibold tracking-tight tabular-nums text-zinc-900 dark:text-white">
-              {moneyWhole(totalPhp)}
-            </div>
-            <div className="text-[10px] font-semibold uppercase tracking-wide text-zinc-400">
-              est. total / hr
-            </div>
-          </>
-        )}
+      {/* Center readout: the hovered slice, or the org total -- crossfades
+          between the two so the swap reads smooth rather than flickery. */}
+      <div className="pointer-events-none absolute inset-0 flex items-center justify-center px-8 text-center">
+        <AnimatePresence mode="wait" initial={false}>
+          <motion.div
+            key={hovered ? hovered.key : '__total__'}
+            className="flex w-full min-w-0 flex-col items-center"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.12 }}
+          >
+            {hovered ? (
+              <>
+                <div className="w-full truncate text-[10px] font-semibold uppercase tracking-wide text-zinc-400">
+                  {hovered.name}
+                </div>
+                <div className="text-lg font-semibold tracking-tight tabular-nums text-zinc-900 dark:text-white">
+                  {moneyWhole(hovered.valuePhp)}
+                </div>
+                <div className="text-[10px] tabular-nums text-zinc-400">
+                  {(hovered.share * 100).toFixed(1)}% of total
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="text-lg font-semibold tracking-tight tabular-nums text-zinc-900 dark:text-white">
+                  {moneyWhole(totalPhp)}
+                </div>
+                <div className="text-[10px] font-semibold uppercase tracking-wide text-zinc-400">
+                  est. total / hr
+                </div>
+              </>
+            )}
+          </motion.div>
+        </AnimatePresence>
       </div>
     </motion.div>
   );
@@ -552,7 +564,7 @@ function PayShareCard({
   const slices = useMemo(() => buildPageSlices(rows, page), [rows, page]);
   const [hoveredKey, setHoveredKey] = useState<string | null>(null);
   return (
-    <div className="flex h-full flex-col rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm dark:border-zinc-800 dark:bg-zinc-950">
+    <div className="flex h-full flex-col rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm transition-[border-color,box-shadow] duration-300 ease-out hover:border-zinc-300 hover:shadow-md dark:border-zinc-800 dark:bg-zinc-950 dark:hover:border-zinc-700">
       <div className="flex items-center justify-between gap-3">
         <div className="flex min-w-0 items-center gap-1.5">
           <PieChart className="h-3.5 w-3.5 shrink-0 text-zinc-400" />
@@ -588,8 +600,8 @@ function PayShareCard({
                   key={s.key}
                   onMouseEnter={() => setHoveredKey(s.key)}
                   onMouseLeave={() => setHoveredKey(null)}
-                  className={`flex cursor-default items-center gap-2 rounded-lg px-2 py-1 transition-colors ${
-                    active ? 'bg-zinc-50 dark:bg-zinc-900/70' : ''
+                  className={`flex cursor-default items-center gap-2 rounded-lg px-2 py-1 transition-[background-color,transform] duration-200 ease-out ${
+                    active ? 'translate-x-0.5 bg-zinc-50 dark:bg-zinc-900/70' : ''
                   }`}
                 >
                   <span className={`h-2.5 w-2.5 shrink-0 rounded-sm ${slot.swatch}`} />
@@ -640,7 +652,7 @@ function DeptBarsCard({
   const max = rows.length > 0 ? rows[0].hourlyPhp : 1;
   const pageRows = rows.slice(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE);
   return (
-    <div className="flex h-full flex-col rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm dark:border-zinc-800 dark:bg-zinc-950">
+    <div className="flex h-full flex-col rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm transition-[border-color,box-shadow] duration-300 ease-out hover:border-zinc-300 hover:shadow-md dark:border-zinc-800 dark:bg-zinc-950 dark:hover:border-zinc-700">
       <div className="flex items-center justify-between gap-3">
         <div className="flex min-w-0 items-center gap-1.5">
           <BarChart3 className="h-3.5 w-3.5 shrink-0 text-zinc-400" />
@@ -656,7 +668,7 @@ function DeptBarsCard({
       <AnimatePresence mode="wait" initial={false}>
         <motion.div
           key={page}
-          className="mt-4 space-y-0.5"
+          className="group/bars mt-4 space-y-0.5"
           initial={reduced ? { opacity: 0 } : { opacity: 0, x: 14 }}
           animate={{ opacity: 1, x: 0 }}
           exit={reduced ? { opacity: 0 } : { opacity: 0, x: -14 }}
@@ -670,34 +682,40 @@ function DeptBarsCard({
           return (
             <motion.div
               key={r.key}
-              title={`${r.name}: ${moneyWhole(r.hourlyPhp)}/hr estimated across ${r.covered} of ${r.headcount} people`}
-              className="grid grid-cols-[minmax(0,9.5rem)_1fr_auto] items-center gap-3 rounded-lg px-2 py-1.5 transition-colors hover:bg-zinc-50 xl:grid-cols-[minmax(0,13rem)_1fr_auto] dark:hover:bg-zinc-900/60"
               initial={reduced ? false : { opacity: 0, x: -8 }}
               animate={{ opacity: 1, x: 0 }}
               transition={{ duration: 0.3, delay, ease: EASE }}
             >
-              <div className="min-w-0">
-                <div className="truncate text-sm font-medium text-zinc-800 dark:text-zinc-100">{r.name}</div>
-                <div className="truncate text-[10px] text-zinc-400">
-                  {r.headcount} {r.headcount === 1 ? 'person' : 'people'}
-                  {missing > 0 ? ` · ${missing} no rate` : ''}
+              {/* Hover styling lives on this inner div: the motion wrapper
+                  keeps inline opacity after the entrance animation, which
+                  would override the group-hover dimming classes below. */}
+              <div
+                title={`${r.name}: ${moneyWhole(r.hourlyPhp)}/hr estimated across ${r.covered} of ${r.headcount} people`}
+                className="group/row grid grid-cols-[minmax(0,9.5rem)_1fr_auto] items-center gap-3 rounded-lg px-2 py-1.5 transition-[background-color,opacity,transform] duration-300 ease-out group-hover/bars:opacity-40 hover:translate-x-1 hover:bg-zinc-50 hover:!opacity-100 xl:grid-cols-[minmax(0,13rem)_1fr_auto] dark:hover:bg-zinc-900/60"
+              >
+                <div className="min-w-0">
+                  <div className="truncate text-sm font-medium text-zinc-800 dark:text-zinc-100">{r.name}</div>
+                  <div className="truncate text-[10px] text-zinc-400">
+                    {r.headcount} {r.headcount === 1 ? 'person' : 'people'}
+                    {missing > 0 ? ` · ${missing} no rate` : ''}
+                  </div>
                 </div>
-              </div>
-              <div className="h-2.5 w-full overflow-hidden rounded-full bg-zinc-100 dark:bg-zinc-800/80">
-                <motion.div
-                  className={`h-full rounded-full ${slot.swatch}`}
-                  style={{ transformOrigin: 'left' }}
-                  initial={reduced ? false : { scaleX: 0 }}
-                  animate={{ scaleX: frac }}
-                  transition={{ duration: 0.55, delay, ease: EASE }}
-                />
-              </div>
-              <div className="text-right">
-                <div className="tabular-nums text-sm font-semibold tracking-tight text-zinc-900 dark:text-white">
-                  {moneyWhole(r.hourlyPhp)}
-                  <span className="text-[10px] font-normal text-zinc-400">/hr</span>
+                <div className="h-2.5 w-full overflow-hidden rounded-full bg-zinc-100 transition-[height] duration-300 ease-out group-hover/row:h-3.5 dark:bg-zinc-800/80">
+                  <motion.div
+                    className={`h-full rounded-full ${slot.swatch}`}
+                    style={{ transformOrigin: 'left' }}
+                    initial={reduced ? false : { scaleX: 0 }}
+                    animate={{ scaleX: frac }}
+                    transition={{ duration: 0.55, delay, ease: EASE }}
+                  />
                 </div>
-                <div className="text-[10px] tabular-nums text-zinc-400">{(r.share * 100).toFixed(1)}%</div>
+                <div className="text-right">
+                  <div className="tabular-nums text-sm font-semibold tracking-tight text-zinc-900 dark:text-white">
+                    {moneyWhole(r.hourlyPhp)}
+                    <span className="text-[10px] font-normal text-zinc-400">/hr</span>
+                  </div>
+                  <div className="text-[10px] tabular-nums text-zinc-400">{(r.share * 100).toFixed(1)}%</div>
+                </div>
               </div>
             </motion.div>
           );
