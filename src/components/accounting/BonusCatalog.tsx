@@ -3833,7 +3833,7 @@ function SearchTab({
   };
 
   return (
-    <div className="mx-auto w-full max-w-3xl p-4 sm:p-6">
+    <div className="mx-auto flex min-h-full w-full max-w-3xl flex-col p-4 sm:p-6">
       <AnimatePresence mode="wait" initial={false}>
         {selected && selectedComp ? (
           <motion.div
@@ -3864,18 +3864,32 @@ function SearchTab({
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -10 }}
             transition={{ duration: 0.2, ease: EASE }}
+            className="flex w-full grow flex-col"
           >
-            {/* Google-style landing: the Simple wordmark over a centered bar
-                when idle; both dock compactly once a query is typed. The navy
+            {/* Google-style landing: the Simple wordmark over a vertically
+                centered bar when idle; both glide to the top once a query is
+                typed. Centering rides on the flex spacers around the hero.
+                Only the top spacer animates: a pair both easing to zero keeps
+                their ratio (and the hero) frozen until the very end. The navy
                 wordmark disappears on dark surfaces, so dark mode renders it
                 as a white silhouette (brightness-0 + invert). */}
-            <div className={`mx-auto max-w-xl transition-all duration-300 ${query.trim() ? 'mt-1' : 'mt-[8vh]'}`}>
-              <div className={`flex justify-center transition-all duration-300 ${query.trim() ? 'mb-4' : 'mb-7'}`}>
+            <div
+              aria-hidden
+              className={`shrink-0 transition-[flex-grow] duration-500 ease-out motion-reduce:transition-none ${
+                query.trim() ? 'grow-0' : 'grow-[0.85]'
+              }`}
+            />
+            <div className="mx-auto w-full max-w-xl">
+              <div
+                className={`flex justify-center transition-all duration-300 motion-reduce:transition-none ${
+                  query.trim() ? 'mb-4' : 'mb-7'
+                }`}
+              >
                 <img
                   src="/simple-logo.png"
                   alt="Simple"
                   draggable={false}
-                  className={`select-none object-contain transition-all duration-300 dark:brightness-0 dark:invert ${
+                  className={`select-none object-contain transition-all duration-300 motion-reduce:transition-none dark:brightness-0 dark:invert ${
                     query.trim() ? 'h-9' : 'h-16 sm:h-20'
                   }`}
                 />
@@ -3902,17 +3916,24 @@ function SearchTab({
                   </button>
                 )}
               </div>
-              {!query.trim() && (
-                <p className="mt-3 text-center text-xs text-zinc-400 dark:text-zinc-500">
+              {/* Fixed-height slot: the hint fades instead of unmounting, so
+                  nothing below it jumps mid-glide. */}
+              <div className="mt-3 h-4">
+                <p
+                  aria-hidden={!!query.trim()}
+                  className={`text-center text-xs text-zinc-400 transition-opacity duration-300 motion-reduce:transition-none dark:text-zinc-500 ${
+                    query.trim() ? 'opacity-0' : 'opacity-100'
+                  }`}
+                >
                   {roster.length.toLocaleString()} people on the roster &middot; view or edit anyone&apos;s
                   rates and bonuses
                 </p>
-              )}
+              </div>
             </div>
 
             {query.trim() &&
               (results.length === 0 ? (
-                <div className="mt-6">
+                <div className="mt-4">
                   <EmptyState
                     icon={Search}
                     title={`No one matches "${query.trim()}"`}
@@ -3920,7 +3941,7 @@ function SearchTab({
                   />
                 </div>
               ) : (
-                <div className="mt-5 space-y-2">
+                <div className="mt-2 space-y-2">
                   <AnimatePresence initial={false} mode="popLayout">
                     {results.map((r) => (
                       <motion.div
@@ -3942,6 +3963,8 @@ function SearchTab({
                   </AnimatePresence>
                 </div>
               ))}
+            {/* Fixed counterweight for the animated top spacer (see above). */}
+            <div aria-hidden className="grow" />
           </motion.div>
         )}
       </AnimatePresence>
