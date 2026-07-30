@@ -401,6 +401,10 @@ interface SimpleViewProps {
   /** Configurable PAB / Tech amounts (PHP) from the Payment Catalog. */
   pabBonusPhp: number;
   techBonusPhp: number;
+  /** Wizard-sourced money added on top of the salary sum (bonuses, adjustments,
+   *  orphanage, MESA, urgent) so the hero shows the FULL pay run. Null until
+   *  resolved / when the viewed scope has no wizard data. */
+  payoutExtras: import('@/lib/payroll/payout-extras').PayoutExtras | null;
   pageRows: OverviewEmployeeRow[];
   filteredTotal: number;
   totalPages: number;
@@ -468,6 +472,15 @@ function formatPhp(n: number | null | undefined, min = 0): string {
   return '₱' + n.toLocaleString('en-PH', { minimumFractionDigits: min, maximumFractionDigits: 2 });
 }
 
+/** Compact peso label for the hero's extras breakdown (₱1.62M / ₱152K / −₱22K). */
+function phpCompact(n: number): string {
+  const sign = n < 0 ? '−' : '';
+  const a = Math.abs(n);
+  if (a >= 1_000_000) return `${sign}₱${(a / 1_000_000).toLocaleString('en-PH', { maximumFractionDigits: 2 })}M`;
+  if (a >= 1_000) return `${sign}₱${Math.round(a / 1_000).toLocaleString('en-PH')}K`;
+  return `${sign}₱${a.toLocaleString('en-PH', { maximumFractionDigits: 0 })}`;
+}
+
 function SimpleView({
   totalPayout,
   payoutLoading,
@@ -489,6 +502,7 @@ function SimpleView({
   techBonusEligibility,
   pabBonusPhp,
   techBonusPhp,
+  payoutExtras,
   pageRows,
   filteredTotal,
   totalPages,
@@ -585,9 +599,25 @@ function SimpleView({
     return t.getTime() > e.getTime();
   })();
   const pabBonusTotal = pabFinalizedForPayout ? pabMetrics.accruedPhp : 0;
-  const displayTotalPayout = totalPayout != null ? totalPayout + pabBonusTotal : null;
+  const extrasTotal = payoutExtras?.extrasTotalPhp ?? 0;
+  const displayTotalPayout = totalPayout != null ? totalPayout + pabBonusTotal + extrasTotal : null;
 
   const usdEquivalent = displayTotalPayout != null ? displayTotalPayout / PHP_USD_FX : null;
+
+  // Itemized extras for the hero's breakdown line — only nonzero parts render.
+  const extrasParts: string[] = [];
+  if (payoutExtras && payoutExtras.provenance !== 'none') {
+    const c = payoutExtras.components;
+    const bonuses = c.techPhp + c.otherBonusesPhp;
+    if (bonuses !== 0) extrasParts.push(`${phpCompact(bonuses)} bonuses`);
+    if (c.adjustmentPhp !== 0) extrasParts.push(`${phpCompact(c.adjustmentPhp)} adjustments`);
+    if (c.orphanagePhp !== 0) extrasParts.push(`${phpCompact(c.orphanagePhp)} orphanage`);
+    if (c.mesaDeductionPhp !== 0) extrasParts.push(`${phpCompact(-c.mesaDeductionPhp)} MESA`);
+    if (c.mesaDisbursementPhp !== 0) extrasParts.push(`${phpCompact(c.mesaDisbursementPhp)} MESA aid`);
+  }
+  if (payoutExtras && payoutExtras.urgentPaidPhp !== 0) {
+    extrasParts.push(`${phpCompact(payoutExtras.urgentPaidPhp)} urgent`);
+  }
 
   // ⌘K / Ctrl+K focuses the search input.
   const searchInputRef = React.useRef<HTMLInputElement | null>(null);
@@ -866,10 +896,29 @@ function SimpleView({
                 <span>
                   {payrollProcessing
                     ? 'Provisional — payroll is being processed now'
-                    : pabFinalizedForPayout
-                      ? 'Initial pay + PAB · other bonuses applied at payroll'
-                      : 'Initial pay · bonuses applied at payroll'}
+                    : extrasParts.length > 0
+                      ? pabFinalizedForPayout
+                        ? 'Full pay run — salary + bonuses + adjustments + PAB'
+                        : 'Full pay run — salary + bonuses + adjustments'
+                      : pabFinalizedForPayout
+                        ? 'Initial pay + PAB · other bonuses applied at payroll'
+                        : 'Initial pay · bonuses applied at payroll'}
                 </span>
+                {extrasParts.length > 0 && (
+                  <>
+                    <span className="text-zinc-300 dark:text-zinc-700">·</span>
+                    <span
+                      className="text-zinc-500 dark:text-zinc-500"
+                      title={
+                        payoutExtras?.provenance === 'staged'
+                          ? 'From the locked payroll run (Payment Dispatch figures)'
+                          : 'Live from the Payroll Wizard'
+                      }
+                    >
+                      incl. {extrasParts.join(' · ')}
+                    </span>
+                  </>
+                )}
               </p>
             </motion.div>
 
@@ -2471,6 +2520,17 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
   );
   /** The actual file being displayed (resolved from selection). */
   const [activeSourceFile, setActiveSourceFile] = useState<string | null>(payoutSeed?.activeSourceFile ?? null);
+  /** Wizard-sourced money the hours×rates sum can't see — KPI/catalog bonuses,
+   *  Payroll Notes adjustments, orphanage pay, MESA, and the cycle's paid urgent
+   *  one-offs (from /api/accounting/payout-extras). Added on top of the salary
+   *  sum so the hero reads as the FULL pay run. null until the first fetch. */
+  const [payoutExtras, setPayoutExtras] = useState<import('@/lib/payroll/payout-extras').PayoutExtras | null>(null);
+  /** Extras guarded by cycle: a response for a previously-viewed file must never
+   *  inflate the current one while its own fetch is in flight. '__all__' scope
+   *  (activeSourceFile = null) intentionally gets no extras. */
+  const payoutExtrasForCycle =
+    payoutExtras && activeSourceFile && payoutExtras.sourceFile === activeSourceFile ? payoutExtras : null;
+  const payoutExtrasPhp = payoutExtrasForCycle?.extrasTotalPhp ?? 0;
   /** Name / department from Hubstaff rows for the selected payroll scope (for employees not on master list). */
   const [payrollIdentityByEmail, setPayrollIdentityByEmail] = useState<Record<
     string,
@@ -2798,7 +2858,8 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
   // pay) that drifts below this hero once PAB is added at period close (the
   // 10M vs 8M gap). We publish the exact number shown here, per cycle, so the CEO
   // reads Accounting's own total. Mirrors the displayTotalPayout math in
-  // AccountingHero: initial pay + (PAB once today is past the period end).
+  // AccountingHero: initial pay + (PAB once today is past the period end) +
+  // the wizard extras (bonuses / adjustments / orphanage / MESA / urgent).
   const heroTotalPhpForPublish = useMemo(() => {
     if (totalPayout == null) return null;
     let pabFinalized = false;
@@ -2810,8 +2871,8 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
       pabFinalized = t.getTime() > e.getTime();
     }
     const pab = pabFinalized ? pabMetrics.accruedPhp : 0;
-    return totalPayout + pab;
-  }, [totalPayout, pabMetrics.loading, pabMetrics.periodEnd, pabMetrics.accruedPhp]);
+    return totalPayout + pab + payoutExtrasPhp;
+  }, [totalPayout, pabMetrics.loading, pabMetrics.periodEnd, pabMetrics.accruedPhp, payoutExtrasPhp]);
   // NOTE: the publish effect lives lower down (after emailsMatched / activePeriod
   // are defined) so it can send the FULL hero snapshot the CEO board replicates.
 
@@ -3120,6 +3181,33 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
     // (Realtime / poll / focus), so the hero re-settles without a manual reload.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedSourceFile, sourceFiles, payoutRefreshNonce]);
+
+  // Fetch the cycle's payout extras (bonuses / adjustments / orphanage / MESA /
+  // urgent) alongside the salary sum. Keyed on the same refresh nonce so the
+  // extras re-settle with every Realtime push, poll tick, and tab focus. On a
+  // transient failure the last known extras are kept — the sourceFile guard on
+  // payoutExtrasForCycle already prevents cross-cycle bleed.
+  useEffect(() => {
+    const file = activeSourceFile;
+    if (!file) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(
+          `/api/accounting/payout-extras?source_file=${encodeURIComponent(file)}`,
+          { cache: 'no-store' },
+        );
+        if (!res.ok) return;
+        const json = (await res.json()) as import('@/lib/payroll/payout-extras').PayoutExtras;
+        if (!cancelled && json && typeof json.extrasTotalPhp === 'number' && Number.isFinite(json.extrasTotalPhp)) {
+          setPayoutExtras(json);
+        }
+      } catch {
+        /* keep the last known extras */
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [activeSourceFile, payoutRefreshNonce]);
 
   // Keep the Total Payout live. Watches the tables that feed the hero figure —
   // hours (new/edited time), hourly rates, and the bonus/adjustment tables — and
@@ -3891,8 +3979,8 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
     const e = new Date(pabMetrics.periodEnd); e.setHours(0, 0, 0, 0);
     return t.getTime() > e.getTime();
   })();
-  const totalPayoutWithPab = totalPayout != null && pabFinalizedForPayoutExpanded
-    ? totalPayout + pabMetrics.accruedPhp
+  const totalPayoutWithPab = totalPayout != null
+    ? totalPayout + (pabFinalizedForPayoutExpanded ? pabMetrics.accruedPhp : 0) + payoutExtrasPhp
     : totalPayout;
 
   const stats = [
@@ -4240,6 +4328,7 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
               loading={loading}
               pabBonusPhp={sysBonusCfg.pab.amountPHP}
               techBonusPhp={sysBonusCfg.tech.amountPHP}
+              payoutExtras={payoutExtrasForCycle}
               pabEligibilityByEmail={pabEligibilityByEmail}
               pabFilter={pabFilter}
               setPabFilter={setPabFilter}

@@ -123,10 +123,12 @@ export async function pulsePaymentsLive(): Promise<void> {
 
 /**
  * Per-cycle key under which the Accounting Overview publishes its EXACT hero
- * "Total payout" (Σ initial pay + PAB once the period closes). The CEO System
+ * "Total payout" (Σ initial pay + PAB once the period closes + the wizard
+ * extras: KPI/catalog bonuses, Notes adjustments, orphanage, MESA, and paid
+ * urgent one-offs — see src/lib/payroll/payout-extras.ts). The CEO System
  * Overview board reads it so its headline mirrors Accounting instead of the base
- * figure it computes on its own (which drifts low by the PAB total). An absent
- * key → the CEO falls back to its own computation.
+ * figure it computes on its own (which drifts low by everything beyond salary).
+ * An absent key → the CEO falls back to its own computation.
  */
 export function accountingOverviewSnapshotKey(sourceFile: string): string {
   return `accounting.overview.snapshot.${sourceFile}`;
