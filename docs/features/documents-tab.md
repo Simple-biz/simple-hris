@@ -219,7 +219,9 @@ whichever tab is currently active.
 list view. At the top, a publish card renders in whichever state applies: a ready card
 (amber ring, slow pulse, gradient **Payment cycle complete** button) for the most recent
 publishable cycle; a muted, disabled card spelling out the still-outstanding counts when the
-newest cycle isn't finished yet ("Finish the queue in Payment Dispatch first"); an inline
+newest cycle isn't finished yet ("Finish the queue in Payment Dispatch first") — or, when the
+cycle's records were marked paid without any Mark Paid rows behind them, saying exactly that
+instead ("No payments logged in Payment Dispatch", condition 3 below); an inline
 error card if the eligibility check itself failed to load; or, once every completed cycle
 has been reported, a plain confirmation banner. Any *earlier* fully-paid-but-unpublished
 cycles get their own compact **"Also unpublished"** list, each with its own Publish button,
@@ -237,20 +239,54 @@ undos or re-marks won't change the published report."* — showing the cycle's l
 count, and total paid in both USD and PHP before the clerk commits.
 
 **The completeness rule** that decides when the button lights up (`cycleCompleteness` in
-[`pay-cycle-report-snapshot.ts`](../../src/lib/accounting/pay-cycle-report-snapshot.ts)) is
-Payment Dispatch's own 100%-paid rule, restated against report totals instead of the live
-queue:
+[`pay-cycle-report-snapshot.ts`](../../src/lib/accounting/pay-cycle-report-snapshot.ts)) reads
+**both** tables the feature touches, because each one is blind to something the other sees.
+All three conditions must hold:
 
-```
-totals.paidCount > 0
-  && totals.notPaidCount + totals.thresholdCount
-     + totals.problemCount + totals.outstandingCount === 0
-```
+1. **Every `disbursement_records` row for the cycle is paid** — Payment Dispatch's own
+   100%-paid rule, restated against report totals instead of the live queue:
 
-— at least one person paid, and zero people left not-paid, held under the payout threshold,
-never dispatched, or blocked on a Problem flag. **`urgent_*` cycles are excluded outright**
-(`isUrgentSourceFile`) — MESA and one-off People-tab payouts are not pay cycles, and never
-appear on this tab at all, publishable or not, not even in the muted not-ready state.
+   ```
+   totals.paidCount > 0
+     && totals.notPaidCount + totals.thresholdCount
+        + totals.problemCount + totals.outstandingCount === 0
+   ```
+
+   — at least one person paid, and zero people left not-paid, held under the payout
+   threshold, never dispatched, or blocked on a Problem flag. This is the condition that
+   catches an employee who is **owed** money and was never dispatched at all.
+
+2. **Every `payment_dispatches` row for the cycle is paid** — no `not_paid`, `threshold` or
+   `problem` row survives. This is the condition that catches an unpaid **contractor
+   invoice**: a contractor payment writes no `disbursement_records` row (the `payee_type`
+   guard in `sync_disbursement_from_dispatch`), so condition 1 literally cannot see one, and
+   without this the tab would show `100% paid` and a live Publish button while Payment
+   Dispatch itself sat at 97% withholding its confetti.
+
+3. **At least one *paid* `payment_dispatches` row exists.** A cycle whose disbursement
+   records were bulk-marked paid **without** going through Mark Paid — Payment Dispatch's own
+   **Mark all paid** does exactly that, a direct `UPDATE` that creates no dispatch rows — is
+   deliberately **not publishable**, and its muted card says so ("No payments logged in
+   Payment Dispatch"). There is no per-payee payment data to freeze for such a cycle, so
+   publishing it could only produce a permanent, unexportable report reading `0 payees ·
+   $0.00`. Synthesising payees from `disbursement_records` instead is *not* an option: it
+   would invent transaction IDs that never existed.
+
+**`urgent_*` cycles are excluded outright** (`isUrgentSourceFile`) — MESA and one-off
+People-tab payouts are not pay cycles, and never appear on this tab at all, publishable or
+not, not even in the muted not-ready state.
+
+Because the frozen payload is built from `payment_dispatches`, **the publish card's and
+confirm dialog's figures are computed from those same paid dispatch rows** — through the one
+shared `tallyPaidDispatches` helper that also produces the stored `totals`, using the same
+dedup rule (distinct employee emails + one per contractor invoice). The clerk therefore
+approves the numbers that actually get stored. `disbursement_records` is still what condition
+1 and the muted card's outstanding counts are read from, and nothing else.
+
+The rule is re-checked **server-side against freshly loaded data** at publish time, which is
+what stops a stale browser tab from publishing a cycle that has since had a payment undone,
+an invoice go unpaid, or its dispatch rows removed; failure returns `409` with the remaining
+counts so the card can re-render in its not-ready state.
 
 ### The snapshot — what's actually stored
 
@@ -274,9 +310,12 @@ live marker would drift the instant a dispatch was undone.
 every transaction ID stays individually traceable to the bank statement. The headline
 `totals.payeeCount`, however, is computed with Payment Dispatch's own distinct-count rule —
 distinct employee emails plus one per contractor invoice (mirrors `distinctPaidCount` in
-[`PayrollDispatch.tsx`](../../src/components/payroll-clerk/PayrollDispatch.tsx)) — precisely
-so the report's headline can never disagree with the number the dispatch screen showed when
-the clerk pressed the button. `totals.dispatchCount` carries the raw row count alongside it
+[`PayrollDispatch.tsx`](../../src/components/payroll-clerk/PayrollDispatch.tsx)) — so the two
+screens count "how many got paid" the same way. It is the *same* `tallyPaidDispatches` call
+that produced the figure on the publish card, over the *same* rows, so the stored headline is
+by construction the one the clerk approved in the confirm dialog. (It can still differ from
+Payment Dispatch's live number *later*, and that is the point: the snapshot is frozen and the
+live screen is not.) `totals.dispatchCount` carries the raw row count alongside it
 (≥ `payeeCount` whenever someone was paid more than once in the cycle) — the same
 distinction is why "Payees" and "Payments" are shown as two separate stats throughout the
 detail view and the PDF, rather than being collapsed into one. (Each payee row also carries
@@ -293,6 +332,15 @@ refresh. Both directions are audited (`pay_cycle_report.published` /
 `pay_cycle_report.unpublished`), and unpublish in the UI is a two-step arm-then-confirm,
 edit-gated action in the detail view's header.
 
+Because that one `app_settings` row is the **sole copy** of the frozen snapshot, the delete
+`RETURN`s it (`.delete().select('value')`) and the `pay_cycle_report.unpublished` audit event
+is written with the whole value in `details.snapshot_json` — plus `totals`, `payee_count`,
+`published_at` and `published_by` as first-class fields. That write is **awaited**, not
+fire-and-forget, for the same reason `payment.undone` is in
+[`payment-dispatches/undo`](../../app/api/payment-dispatches/undo/route.ts): it is the only
+surviving record of the deleted rows, so a mis-clicked unpublish is recoverable from the
+audit trail rather than merely regrettable. A delete that matched nothing writes no event.
+
 ### API routes
 
 All four routes live under `app/api/accounting/pay-cycle-reports/` and ride the existing
@@ -301,16 +349,21 @@ new permission was introduced: `view` reads, `edit` publishes or unpublishes.
 
 - [`GET /`](../../app/api/accounting/pay-cycle-reports/route.ts) (`view`) — returns
   `{ published, unreadable, publishable, incomplete, error }`; the published summaries omit
-  `payees[]` so the list payload stays small.
+  `payees[]` so the list payload stays small. The route loads the published list **once** and
+  hands it to `listCycleStatus(published)`: that prefix scan reads every snapshot's full
+  payee JSON, and this page's two tabs mount together, so it must not run twice per visit.
 - [`POST /`](../../app/api/accounting/pay-cycle-reports/route.ts) `{ source_file }` (`edit`)
-  — builds the snapshot **server-side** (never trusts client numbers), **re-checks
-  completeness against fresh totals**, then does a plain `INSERT`, never an upsert, so a
-  double-click or two clerks racing can't republish — the loser of the race gets
-  `{ already: true }` back instead of an error.
+  — builds the snapshot **server-side** (never trusts client numbers), **re-checks all three
+  publish conditions against freshly loaded records and dispatch rows**, then does a plain
+  `INSERT`, never an upsert, so a double-click or two clerks racing can't republish — the
+  loser of the race gets `{ already: true }` back instead of an error.
 - [`GET /[sourceFile]`](../../app/api/accounting/pay-cycle-reports/[sourceFile]/route.ts)
-  (`view`) — the full snapshot, including every `payees[]` row.
+  (`view`) — the full snapshot, including every `payees[]` row. `sourceFile` is used as Next
+  hands it over: Next already decodes dynamic params, so decoding again would break any
+  filename containing a literal `%`.
 - [`DELETE /[sourceFile]`](../../app/api/accounting/pay-cycle-reports/[sourceFile]/route.ts)
-  (`edit`) — unpublish: deletes the row.
+  (`edit`) — unpublish: deletes the row, returning its value so the audit event can carry the
+  snapshot it destroyed (see *Frozen means frozen* above).
 
 The completeness re-check on `POST` is what stops a stale browser tab from publishing a
 cycle that has since had a payment undone; failure returns `409` with the remaining counts
@@ -327,7 +380,11 @@ view's header next to **Unpublish**. Every export is built from whatever the cur
 name/email search has filtered the payee table down to, not the full `payees[]` — so a CSV
 pulled mid-search matches what's on screen — while the totals and per-processor figures
 printed alongside it always describe the *whole* published cycle, regardless of the filter.
-Exports are disabled with an explanatory title whenever there's nothing to export.
+Exports go dead (with an explanatory title) only when a **search** has filtered every row
+out, a state the clerk can clear. A report that is itself empty keeps all three buttons
+enabled — all three builders handle an empty payee list, and an empty cycle is still a
+legitimate artifact to hand someone — and its payee panel says *"No payments recorded in this
+report."* rather than quoting a search nobody typed.
 
 One column detail worth knowing if you compare a downloaded file to the screen: the CSV,
 XLSX and PDF all carry a dedicated **Type** column (Employee/Contractor); the on-screen "Who
