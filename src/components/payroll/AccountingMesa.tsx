@@ -951,6 +951,7 @@ export default function AccountingMesa() {
                       <th className="px-4 py-2.5">Department</th>
                       <th className="px-4 py-2.5">Type</th>
                       <th className="px-4 py-2.5">Details</th>
+                      <th className="px-4 py-2.5">Receipt</th>
                       <th className="px-4 py-2.5 text-right">Amount</th>
                       <th className="px-4 py-2.5 text-right">Status</th>
                       <th className="px-4 py-2.5 text-right">Submitted</th>
@@ -995,7 +996,6 @@ export default function AccountingMesa() {
                                   {r.explanation}
                                 </div>
                               )}
-                              <ReceiptRowChip request={r} onOpen={() => openReview(r)} />
                             </div>
                           )}
                           {r.request_type === 'return' && r.explanation && (
@@ -1014,6 +1014,9 @@ export default function AccountingMesa() {
                               <span className="text-zinc-400">—</span>
                             )
                           )}
+                        </td>
+                        <td className="px-4 py-3" data-label="Receipt">
+                          <ReceiptCell request={r} onOpen={() => openReview(r)} />
                         </td>
                         <td className="px-4 py-3 text-right tabular-nums text-zinc-700 dark:text-zinc-300" data-label="Amount">
                           {r.amount_needed != null
@@ -1388,37 +1391,109 @@ function receiptLagDays(submittedAt: string, uploadedAt: string): number | null 
   return Math.floor((to - from) / 86_400_000);
 }
 
-/**
- * Row-level receipt signal, under the reason in the Details cell. Present so a
- * reviewer can see which of thirty rows are substantiated without opening each
- * one. Silent (renders nothing) when the count is unknown — a list served before
- * the receipts migration ran shouldn't accuse every request of missing proof.
- */
-function ReceiptRowChip({ request, onOpen }: { request: MesaRequest; onOpen: () => void }) {
-  const count = request.receipt_count;
-  if (count == null) return null;
+/** "Jul 28" — the newest receipt's day, compact enough for a table cell. */
+const formatReceiptDay = (iso: string) => {
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime())
+    ? '—'
+    : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+};
 
-  if (count === 0) {
+/**
+ * The **Receipt** column (2026-07-31). This used to be a chip under the reason in
+ * the Details cell; it earns its own column because "which of these thirty draws
+ * is substantiated, and which is past the 14-day window" is a question the
+ * reviewer scans for down the table — not one they should have to read thirty
+ * Details cells to answer.
+ *
+ * Only a disbursement can carry a receipt, and an unknown count (a list served
+ * before the receipts migration ran) renders as a neutral dash rather than a
+ * "None" that would accuse every request of missing its proof.
+ */
+function ReceiptCell({ request, onOpen }: { request: MesaRequest; onOpen: () => void }) {
+  const count = request.receipt_count;
+
+  if (request.request_type !== 'disbursement' || count == null) {
     return (
       <span
-        title="No receipt attached yet"
-        className="mt-1 inline-flex items-center gap-1 text-[10.5px] font-medium text-zinc-400 dark:text-zinc-500"
+        title={
+          request.request_type === 'disbursement'
+            ? 'Receipt count unavailable'
+            : 'Receipts apply to disbursements only'
+        }
+        className="text-zinc-300 dark:text-zinc-600"
       >
-        <FileWarning aria-hidden className="h-3 w-3" />
-        No receipt
+        —
       </span>
     );
   }
+
+  if (count === 0) {
+    // A denied request never released money, so no receipt is owed — only a
+    // pending or approved draw can be overdue against the 14-day rule.
+    const age = request.status === 'denied' ? null : receiptLagDays(request.created_at, new Date().toISOString());
+    const overdue = age != null && age > 14;
+    return (
+      <span
+        title={
+          overdue
+            ? `No receipt after ${age} days — the program allows 14`
+            : 'No receipt attached yet — the program allows 14 days'
+        }
+        className={cn(
+          'inline-flex items-center gap-1 text-[10.5px] font-medium',
+          overdue
+            ? 'text-amber-700 dark:text-amber-300'
+            : 'text-zinc-400 dark:text-zinc-500',
+        )}
+      >
+        <FileWarning aria-hidden className="h-3 w-3 shrink-0" />
+        None
+        {overdue && <span className="tabular-nums">· {age}d</span>}
+      </span>
+    );
+  }
+
+  const uploadedAt = request.receipt_last_uploaded_at ?? null;
+  const lag = uploadedAt ? receiptLagDays(request.created_at, uploadedAt) : null;
+  const late = lag != null && lag > 14;
 
   return (
     <button
       type="button"
       onClick={onOpen}
-      title={`${count} receipt${count === 1 ? '' : 's'} attached — open the request to view`}
-      className="mt-1 inline-flex items-center gap-1 rounded-md border border-teal-200 bg-teal-50 px-1.5 py-0.5 text-[10.5px] font-semibold text-teal-800 transition-colors hover:bg-teal-100 dark:border-teal-500/40 dark:bg-teal-500/15 dark:text-teal-100 dark:hover:bg-teal-500/25"
+      title={[
+        `${count} receipt${count === 1 ? '' : 's'} attached — open the request to view`,
+        lag != null
+          ? `newest ${lag <= 0 ? 'the same day' : `${lag}d after the request`}${late ? ' (past 14 days)' : ''}`
+          : null,
+      ]
+        .filter(Boolean)
+        .join('; ')}
+      className="group inline-flex flex-col items-start gap-0.5 text-left"
     >
-      <ReceiptText aria-hidden className="h-3 w-3" />
-      {count} receipt{count === 1 ? '' : 's'}
+      <span
+        className={cn(
+          'inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[10.5px] font-semibold tabular-nums transition-colors',
+          late
+            ? 'border-amber-200 bg-amber-50 text-amber-800 group-hover:bg-amber-100 dark:border-amber-500/40 dark:bg-amber-500/15 dark:text-amber-100 dark:group-hover:bg-amber-500/25'
+            : 'border-teal-200 bg-teal-50 text-teal-800 group-hover:bg-teal-100 dark:border-teal-500/40 dark:bg-teal-500/15 dark:text-teal-100 dark:group-hover:bg-teal-500/25',
+        )}
+      >
+        <ReceiptText aria-hidden className="h-3 w-3 shrink-0" />
+        {count} file{count === 1 ? '' : 's'}
+      </span>
+      {uploadedAt && (
+        <span
+          className={cn(
+            'text-[10px] tabular-nums',
+            late ? 'font-semibold text-amber-700 dark:text-amber-300' : 'text-zinc-400 dark:text-zinc-500',
+          )}
+        >
+          {formatReceiptDay(uploadedAt)}
+          {late ? ' · late' : ''}
+        </span>
+      )}
     </button>
   );
 }
