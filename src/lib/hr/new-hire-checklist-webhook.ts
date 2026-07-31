@@ -71,13 +71,37 @@ function firstNameOf(name: string | null): string | null {
   return t.split(/\s+/)[0] ?? null;
 }
 
-function toCleanHire(row: HrNewHireChecklistRow): CleanHire {
+// Matches one plausible email address inside an arbitrary string. Deliberately
+// stricter than "anything@anything": requires a dotted TLD so a truncated cell
+// like "annalizaalgadepe420" or "juan@gmail" never reaches Gmail's To header.
+const EMAIL_IN_TEXT = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/;
+
+/**
+ * Best-effort cleanup of a checklist `personal_email` cell. HR sometimes pastes
+ * sourcing notes into the cell ("addr@gmail.com (Facebook)") — Gmail then 400s
+ * the whole n8n run with "Invalid To header" and every hire after that row gets
+ * no welcome email (the 2026-08-02 week died at item 40 exactly this way).
+ * Returns the first thing that looks like a real address, or null when the cell
+ * has none (`changed` = we salvaged it out of surrounding junk).
+ */
+export function sanitizePersonalEmail(raw: string | null): {
+  email: string | null;
+  changed: boolean;
+} {
+  const t = (raw ?? "").trim();
+  if (!t) return { email: null, changed: false };
+  const m = t.match(EMAIL_IN_TEXT);
+  if (!m) return { email: null, changed: false };
+  return { email: m[0], changed: m[0] !== t };
+}
+
+function toCleanHire(row: HrNewHireChecklistRow, email: string | null): CleanHire {
   return {
     id: row.id,
     position: row.position,
     name: row.name,
     first_name: firstNameOf(row.name),
-    personal_email: row.personal_email,
+    personal_email: email,
     location: row.location,
     phone_number: row.phone_number,
     date_of_interview: row.date_of_interview,
@@ -147,15 +171,24 @@ function resolveUrl(): Promise<string> {
   }).then((u) => u ?? DEFAULT_URL);
 }
 
+/** A hire left out of the payload because its email cell holds no usable address. */
+export type LockWebhookSkippedRow = {
+  id: string;
+  name: string | null;
+  personal_email: string | null;
+};
+
 export type NewHireChecklistLockWebhookResult = {
-  /** True once we attempted the POST (false = no hires / no URL). */
+  /** True once we attempted the POST (false = no sendable hires / no URL). */
   fired: boolean;
-  /** Hires included in the payload. */
+  /** Hires included in the payload (skipped rows excluded). */
   count: number;
   /** HTTP status of the POST (null if it threw / wasn't sent). */
   status: number | null;
   /** Failure message, if any (for surfacing / logging). */
   error: string | null;
+  /** Hires that got NO welcome email because their address was unusable. */
+  skipped: LockWebhookSkippedRow[];
 };
 
 /** POST a JSON body; best-effort, never throws. 25s timeout. */
@@ -187,28 +220,21 @@ async function postJson(
 }
 
 /**
- * Fires ONE webhook POST for the locked week, carrying every hire as a
- * self-contained row in `rows[]` (see the file header for the shape + n8n
- * Split Out flow). Never throws — the DB write is the source of truth, so the
- * webhook is a best-effort side-effect and a failure never blocks the lock.
+ * Pure payload assembly for the lock webhook: sanitizes every row's
+ * `personal_email` (see sanitizePersonalEmail) and leaves out rows with no
+ * usable address — one bad cell must never 400 the Gmail node and strand every
+ * hire queued behind it. Skipped rows come back separately so the lock UI can
+ * tell HR exactly who got nothing. `hire_index` stays the row's 1-based place
+ * in the FULL week (skips included) so a partial resend still lines up with
+ * n8n's item numbering from the original run.
  */
-export async function fireNewHireChecklistLockWebhook(args: {
+export function buildLockWebhookPayload(args: {
   period: HrChecklistPeriod | null;
   periodStart: string;
   periodEnd: string | null;
   rows: HrNewHireChecklistRow[];
   lockedBy: string | null;
-}): Promise<NewHireChecklistLockWebhookResult> {
-  const count = args.rows.length;
-  if (count === 0) return { fired: false, count: 0, status: null, error: null };
-
-  let url: string;
-  try {
-    url = await resolveUrl();
-  } catch (e) {
-    return { fired: false, count, status: null, error: e instanceof Error ? e.message : String(e) };
-  }
-
+}): { payload: Record<string, unknown>; skipped: LockWebhookSkippedRow[] } {
   // Hires start / orient the Monday of the Sun-anchored checklist week.
   const orientation = addDaysIso(args.periodStart, ORIENT_OFFSET_DAYS);
 
@@ -222,13 +248,22 @@ export async function fireNewHireChecklistLockWebhook(args: {
     zoom_link: ORIENTATION_ZOOM_LINK,               // {{ zoom_link }}
   };
 
-  // One self-contained item per hire: the hire's own fields + the shared
-  // email/week fields, so `body.rows` splits cleanly into ready-to-send items.
-  const rows = args.rows.map((row, i) => ({
-    ...toCleanHire(row),
-    ...emailFields,
-    hire_index: i + 1,
-  }));
+  // One self-contained item per sendable hire: the hire's own fields + the
+  // shared email/week fields, so `body.rows` splits into ready-to-send items.
+  const skipped: LockWebhookSkippedRow[] = [];
+  const rows: Record<string, unknown>[] = [];
+  args.rows.forEach((row, i) => {
+    const { email } = sanitizePersonalEmail(row.personal_email);
+    if (!email) {
+      skipped.push({ id: row.id, name: row.name, personal_email: row.personal_email });
+      return;
+    }
+    rows.push({
+      ...toCleanHire(row, email),
+      ...emailFields,
+      hire_index: i + 1,
+    });
+  });
 
   const payload = {
     event: "new_hire_checklist.locked",
@@ -237,11 +272,50 @@ export async function fireNewHireChecklistLockWebhook(args: {
     status: args.period?.status ?? "locked",
     locked_at: args.period?.locked_at ?? null,
     locked_by: args.period?.locked_by ?? args.lockedBy ?? null,
-    row_count: count,
+    row_count: rows.length,
     ...emailFields,
     rows,
   };
+  return { payload, skipped };
+}
+
+/**
+ * Fires ONE webhook POST for the locked week, carrying every sendable hire as
+ * a self-contained row in `rows[]` (see the file header for the shape + n8n
+ * Split Out flow). Rows without a usable email are excluded and reported via
+ * `skipped`. Never throws — the DB write is the source of truth, so the
+ * webhook is a best-effort side-effect and a failure never blocks the lock.
+ */
+export async function fireNewHireChecklistLockWebhook(args: {
+  period: HrChecklistPeriod | null;
+  periodStart: string;
+  periodEnd: string | null;
+  rows: HrNewHireChecklistRow[];
+  lockedBy: string | null;
+}): Promise<NewHireChecklistLockWebhookResult> {
+  if (args.rows.length === 0) {
+    return { fired: false, count: 0, status: null, error: null, skipped: [] };
+  }
+
+  const { payload, skipped } = buildLockWebhookPayload(args);
+  const count = (payload.rows as unknown[]).length;
+  if (skipped.length > 0) {
+    console.warn(
+      `[new-hire-checklist] ${skipped.length} hire(s) skipped for unusable email:`,
+      skipped.map((s) => `${s.name ?? s.id} <${s.personal_email ?? ""}>`).join("; "),
+    );
+  }
+  if (count === 0) {
+    return { fired: false, count: 0, status: null, error: null, skipped };
+  }
+
+  let url: string;
+  try {
+    url = await resolveUrl();
+  } catch (e) {
+    return { fired: false, count, status: null, error: e instanceof Error ? e.message : String(e), skipped };
+  }
 
   const res = await postJson(url, payload);
-  return { fired: true, count, status: res.status, error: res.error };
+  return { fired: true, count, status: res.status, error: res.error, skipped };
 }

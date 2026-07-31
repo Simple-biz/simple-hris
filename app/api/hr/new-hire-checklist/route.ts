@@ -310,6 +310,11 @@ export async function PUT(req: Request) {
       period,
       row_count: rows.length,
       webhook_fired: webhook ? webhook.fired && webhook.error == null : false,
+      webhook_sent_count: webhook?.count ?? 0,
+      webhook_skipped: (webhook?.skipped ?? []).map((s) => ({
+        name: s.name,
+        personal_email: s.personal_email,
+      })),
     },
   });
 

@@ -689,6 +689,12 @@ export default function HrNewHireChecklist({
       const json = (await res.json()) as {
         rows?: HrNewHireChecklistRow[];
         period?: { status?: string; locked_at?: string | null; locked_by?: string | null };
+        webhook?: {
+          fired: boolean;
+          count: number;
+          error: string | null;
+          skipped?: { name: string | null; personal_email: string | null }[];
+        };
         error?: string;
       };
       if (!res.ok || json.error) throw new Error(json.error || `Lock failed (${res.status})`);
@@ -701,6 +707,19 @@ export default function HrNewHireChecklist({
       broadcastChanged();
       void loadPeriods();
       toast.success(`Locked in ${fresh.length} ${fresh.length === 1 ? 'hire' : 'hires'} for ${formatWeekLabel(period)}`);
+      // Hires whose email cell holds no usable address were left out of the
+      // orientation send — tell HR exactly who, or they silently get nothing.
+      const skipped = json.webhook?.skipped ?? [];
+      if (skipped.length > 0) {
+        toast.warning(
+          `${skipped.length} ${skipped.length === 1 ? 'hire' : 'hires'} got NO orientation email (invalid address): ` +
+            skipped.map((s) => `${s.name ?? 'Unnamed'} (${s.personal_email || 'no email'})`).join(', ') +
+            '. Fix the email cell, then resend.',
+          { duration: Infinity, closeButton: true },
+        );
+      } else if (json.webhook && json.webhook.fired && json.webhook.error) {
+        toast.warning(`Week locked, but the orientation email automation failed: ${json.webhook.error}`);
+      }
       return true;
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Lock failed');
