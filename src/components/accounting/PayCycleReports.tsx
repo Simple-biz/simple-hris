@@ -189,7 +189,16 @@ export default function PayCycleReports({
     } catch (e) {
       if (signal?.aborted) return;
       if (e instanceof DOMException && e.name === 'AbortError') return;
+      // Network-level failure (fetch itself rejected, not an HTTP error
+      // status) — mirror the `!res.ok` branch above: clear the lists and
+      // zero the ready-count badge rather than leaving stale data (and a
+      // stale badge) with no visible error.
+      setPublished([]);
+      setUnreadable([]);
+      setPublishable([]);
+      setIncomplete(null);
       setError(e instanceof Error ? e.message : 'Could not load reports');
+      onReadyCountChangeRef.current?.(0);
     } finally {
       if (!signal?.aborted) setLoading(false);
     }
@@ -379,7 +388,17 @@ export default function PayCycleReports({
       </div>
 
       {/* ── Publish confirmation ─────────────────────────────────────────── */}
-      <Dialog open={!!publishTarget} onOpenChange={(o) => !o && setPublishTarget(null)}>
+      <Dialog
+        open={!!publishTarget}
+        onOpenChange={(o) => {
+          // While publishing, the clerk is committed — the POST is already in
+          // flight server-side and the report either exists or it doesn't.
+          // Block Escape/backdrop-click/X uniformly through this one prop so
+          // the dialog can't vanish out from under an in-flight request.
+          if (publishing) return;
+          if (!o) setPublishTarget(null);
+        }}
+      >
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>Has this payment cycle been completed?</DialogTitle>
@@ -403,7 +422,12 @@ export default function PayCycleReports({
             </div>
           )}
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => setPublishTarget(null)}>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={publishing}
+              onClick={() => setPublishTarget(null)}
+            >
               Cancel
             </Button>
             <Button
