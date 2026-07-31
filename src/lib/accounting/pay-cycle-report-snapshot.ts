@@ -67,12 +67,59 @@ export interface PayCycleReportSnapshot {
 export type PayCycleReportSummary = Omit<PayCycleReportSnapshot, 'payees'>;
 
 export interface CycleCompleteness {
+  /** All three publish conditions hold. Urgent-ness is checked separately
+   *  (isPublishableCycle) because it is an identity question, not a progress one. */
   complete: boolean;
+  /** Condition 1 — every `disbursement_records` row for the cycle is paid, and
+   *  at least one is. Catches employees who are owed but never dispatched. */
+  recordsComplete: boolean;
+  /** Condition 2 — no `payment_dispatches` row is left not_paid / threshold /
+   *  problem. This is what an unpaid CONTRACTOR INVOICE trips: invoices create
+   *  no disbursement_records row at all, so condition 1 cannot see them. */
+  dispatchesComplete: boolean;
+  /** Condition 3 — at least one PAID dispatch row exists, i.e. there is
+   *  actually something to freeze. A cycle whose records were bulk-marked paid
+   *  by Payment Dispatch's "Mark all paid" (a direct UPDATE that creates no
+   *  dispatch rows) fails here: it holds no per-payee payment data. */
+  hasPaidDispatches: boolean;
   paidCount: number;
   /** Still owed and still payable: not_paid + threshold + never-dispatched. */
   pendingCount: number;
   /** Flagged Problem — out of the queue, money still stuck. */
   blockedCount: number;
+  /** Paid `payment_dispatches` rows found for the cycle. */
+  paidDispatchCount: number;
+  /** Dispatch rows for the cycle that are NOT paid. */
+  unpaidDispatchCount: number;
+}
+
+/**
+ * The columns the gate and the tally read from a `payment_dispatches` row.
+ * Deliberately structural and all-optional so BOTH a full `PaymentDispatchRow`
+ * and the gate's narrow six-column projection satisfy it — the gate has no
+ * business selecting `*` over the whole table.
+ */
+export interface PayCycleDispatchLike {
+  status?: string | null;
+  payee_type?: string | null;
+  recipient_email?: string | null;
+  amount_usd?: number | string | null;
+  amount_php?: number | string | null;
+}
+
+/** The figures a cycle's paid dispatch rows add up to. */
+export interface PayCycleDispatchTally {
+  /** Distinct employee emails + one per contractor invoice — Payment Dispatch's
+   *  own headline rule (distinctPaidCount in PayrollDispatch.tsx). */
+  payeeCount: number;
+  employeeCount: number;
+  contractorCount: number;
+  /** Raw paid row count (≥ payeeCount when someone was paid twice). */
+  dispatchCount: number;
+  paidUSD: number;
+  paidPHP: number;
+  /** Rows whose status is not 'paid' — not_paid, threshold or problem. */
+  unpaidCount: number;
 }
 
 function num(v: number | string | null | undefined): number {
@@ -88,20 +135,85 @@ function trimOrNull(v: string | null | undefined): string | null {
 }
 
 /**
- * Payment Dispatch's 100% rule, expressed against report totals: nothing
- * pending, nobody blocked, at least one person paid. Working from totals rather
- * than the live queue means the Reports tab needs no wizard/queue hydration to
- * decide whether the button lights up.
+ * THE single tally. Both the publish gate (via cycleCompleteness) and the frozen
+ * snapshot's `totals` call this one function over the same rows, so the number
+ * the clerk approves in the confirm dialog is by construction the number that
+ * gets stored. Reimplementing it anywhere else re-opens that gap.
  */
-export function cycleCompleteness(totals: DisbursementReportTotals): CycleCompleteness {
+export function tallyPaidDispatches(
+  rows: readonly PayCycleDispatchLike[],
+): PayCycleDispatchTally {
+  const employeeEmails = new Set<string>();
+  let contractorCount = 0;
+  let dispatchCount = 0;
+  let unpaidCount = 0;
+  let paidUSD = 0;
+  let paidPHP = 0;
+
+  for (const d of rows) {
+    if (d.status !== 'paid') {
+      unpaidCount += 1;
+      continue;
+    }
+    dispatchCount += 1;
+    if ((d.payee_type ?? 'employee') === 'contractor') contractorCount += 1;
+    else employeeEmails.add((d.recipient_email ?? '').trim().toLowerCase());
+    paidUSD += num(d.amount_usd);
+    paidPHP += num(d.amount_php);
+  }
+
+  return {
+    payeeCount: employeeEmails.size + contractorCount,
+    employeeCount: employeeEmails.size,
+    contractorCount,
+    dispatchCount,
+    paidUSD,
+    paidPHP,
+    unpaidCount,
+  };
+}
+
+/**
+ * The publish gate — three conditions, read from BOTH tables the feature
+ * touches, because each catches something the other cannot see:
+ *
+ *   1. every `disbursement_records` row is paid (Payment Dispatch's own 100%
+ *      rule, restated against report totals so no queue hydration is needed) —
+ *      catches an employee who is owed money and was never dispatched;
+ *   2. every `payment_dispatches` row is paid — catches an unpaid CONTRACTOR
+ *      INVOICE, which produces no disbursement_records row at all and is
+ *      therefore invisible to (1);
+ *   3. at least one PAID dispatch row exists — refuses a cycle whose records
+ *      were bulk-marked paid without dispatch rows, because there is no
+ *      per-payee payment data to freeze and the report would be a permanent
+ *      $0.00 with an empty payee table.
+ *
+ * `dispatches` MUST be every dispatch row for the cycle, not just the paid
+ * ones, or condition 2 can never fail.
+ */
+export function cycleCompleteness(
+  totals: DisbursementReportTotals,
+  dispatches: readonly PayCycleDispatchLike[],
+): CycleCompleteness {
   const pendingCount =
     totals.notPaidCount + totals.thresholdCount + totals.outstandingCount;
   const blockedCount = totals.problemCount;
+  const tally = tallyPaidDispatches(dispatches);
+
+  const recordsComplete = totals.paidCount > 0 && pendingCount === 0 && blockedCount === 0;
+  const dispatchesComplete = tally.unpaidCount === 0;
+  const hasPaidDispatches = tally.dispatchCount > 0;
+
   return {
-    complete: totals.paidCount > 0 && pendingCount === 0 && blockedCount === 0,
+    complete: recordsComplete && dispatchesComplete && hasPaidDispatches,
+    recordsComplete,
+    dispatchesComplete,
+    hasPaidDispatches,
     paidCount: totals.paidCount,
     pendingCount,
     blockedCount,
+    paidDispatchCount: tally.dispatchCount,
+    unpaidDispatchCount: tally.unpaidCount,
   };
 }
 
@@ -109,10 +221,11 @@ export function cycleCompleteness(totals: DisbursementReportTotals): CycleComple
  *  they are payouts, not cycles, and are reported in Payment Dispatch only. */
 export function isPublishableCycle(
   summary: Pick<DisbursementReportSummary, 'sourceFile' | 'totals'>,
+  dispatches: readonly PayCycleDispatchLike[],
 ): boolean {
   if (!summary.sourceFile) return false;
   if (isUrgentSourceFile(summary.sourceFile)) return false;
-  return cycleCompleteness(summary.totals).complete;
+  return cycleCompleteness(summary.totals, dispatches).complete;
 }
 
 /**
@@ -120,6 +233,10 @@ export function isPublishableCycle(
  * answers "who got paid", so a not_paid/threshold/problem row has no place in
  * it (and by the time we publish, `isPublishableCycle` guarantees there are
  * none anyway).
+ *
+ * `totals` comes from `tallyPaidDispatches` — the SAME function the gate and the
+ * pre-publish card figures use — so the stored numbers cannot drift from the
+ * ones the clerk was shown.
  */
 export function buildPayCycleReportSnapshot(input: {
   summary: DisbursementReportSummary;
@@ -153,17 +270,12 @@ export function buildPayCycleReportSnapshot(input: {
     return byName !== 0 ? byName : a.email.localeCompare(b.email);
   });
 
-  const employeeEmails = new Set<string>();
-  let contractorCount = 0;
-  let paidUSD = 0;
-  let paidPHP = 0;
-  const byProcessor: Record<string, { count: number; usd: number; php: number }> = {};
+  // Counts and money: the shared tally, over the raw rows. byProcessor stays
+  // local — the gate has no use for it, so there is nothing to drift from.
+  const tally = tallyPaidDispatches(input.dispatches);
 
+  const byProcessor: Record<string, { count: number; usd: number; php: number }> = {};
   for (const p of payees) {
-    if (p.payeeType === 'contractor') contractorCount += 1;
-    else employeeEmails.add(p.email.toLowerCase());
-    paidUSD += p.amountUSD;
-    paidPHP += p.amountPHP;
     const acc = byProcessor[p.processor] ?? { count: 0, usd: 0, php: 0 };
     acc.count += 1;
     acc.usd += p.amountUSD;
@@ -182,12 +294,13 @@ export function buildPayCycleReportSnapshot(input: {
     period_start: input.summary.periodStart,
     period_end: input.summary.periodEnd,
     totals: {
-      payeeCount: employeeEmails.size + contractorCount,
-      employeeCount: employeeEmails.size,
-      contractorCount,
-      dispatchCount: payees.length,
-      paidUSD,
-      paidPHP,
+      payeeCount: tally.payeeCount,
+      employeeCount: tally.employeeCount,
+      contractorCount: tally.contractorCount,
+      // === payees.length by construction: both count the paid rows.
+      dispatchCount: tally.dispatchCount,
+      paidUSD: tally.paidUSD,
+      paidPHP: tally.paidPHP,
     },
     byProcessor,
     payees,

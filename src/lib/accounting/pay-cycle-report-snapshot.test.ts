@@ -5,6 +5,7 @@ import {
   buildPayCycleReportSnapshot,
   cycleCompleteness,
   isPublishableCycle,
+  tallyPaidDispatches,
   toPayCycleReportSummary,
 } from './pay-cycle-report-snapshot';
 import type { DisbursementReportSummary, DisbursementReportTotals } from '@/lib/payroll/disbursement-reports';
@@ -58,46 +59,182 @@ function dispatch(over: Partial<PaymentDispatchRow> = {}): PaymentDispatchRow {
   } as PaymentDispatchRow;
 }
 
+describe('tallyPaidDispatches', () => {
+  test('THE shared tally: one employee paid twice collapses, two invoices do not', () => {
+    // The dedup rule the confirm dialog, the publish gate and the frozen totals
+    // all share. Juan's two payments are one payee; Claire's two invoices are two
+    // settlements (paying 4 of 7 invoices must not read as "1 paid").
+    const t = tallyPaidDispatches([
+      dispatch({ recipient_email: 'Juan@simple.biz', amount_usd: 60, amount_php: 3360 }),
+      dispatch({ recipient_email: 'juan@simple.biz ', amount_usd: 40, amount_php: 2240 }),
+      dispatch({ recipient_email: 'claire@agency.com', payee_type: 'contractor', amount_usd: 500, amount_php: 0 }),
+      dispatch({ recipient_email: 'claire@agency.com', payee_type: 'contractor', amount_usd: 700, amount_php: 0 }),
+    ]);
+    assert.equal(t.payeeCount, 3);
+    assert.equal(t.employeeCount, 1);
+    assert.equal(t.contractorCount, 2);
+    assert.equal(t.dispatchCount, 4);
+    assert.equal(t.paidUSD, 1300);
+    assert.equal(t.paidPHP, 5600);
+    assert.equal(t.unpaidCount, 0);
+  });
+
+  test('non-paid rows are counted as unpaid and contribute no money', () => {
+    const t = tallyPaidDispatches([
+      dispatch({ amount_usd: 100 }),
+      dispatch({ status: 'not_paid', amount_usd: 999, recipient_email: 'b@simple.biz' }),
+      dispatch({ status: 'threshold', amount_usd: 999, recipient_email: 'c@simple.biz' }),
+      dispatch({ status: 'problem', amount_usd: 999, recipient_email: 'd@simple.biz' }),
+    ]);
+    assert.equal(t.dispatchCount, 1);
+    assert.equal(t.unpaidCount, 3);
+    assert.equal(t.payeeCount, 1);
+    assert.equal(t.paidUSD, 100);
+  });
+
+  test('an empty cycle tallies to zero of everything', () => {
+    assert.deepEqual(tallyPaidDispatches([]), {
+      payeeCount: 0, employeeCount: 0, contractorCount: 0,
+      dispatchCount: 0, paidUSD: 0, paidPHP: 0, unpaidCount: 0,
+    });
+  });
+
+  test('the figures the clerk approves ARE the figures stored', () => {
+    // The whole point of the shared helper: what listCycleStatus puts on the
+    // publish card / confirm dialog is what buildPayCycleReportSnapshot freezes.
+    const dispatches = [
+      dispatch({ id: 'a', recipient_email: 'juan@simple.biz', amount_usd: 60, amount_php: 3360 }),
+      dispatch({ id: 'b', recipient_email: 'juan@simple.biz', amount_usd: 40, amount_php: 2240 }),
+      dispatch({ id: 'c', recipient_email: 'claire@agency.com', payee_type: 'contractor', amount_usd: 500, amount_php: 0 }),
+      dispatch({ id: 'd', status: 'not_paid', recipient_email: 'x@simple.biz', amount_usd: 999 }),
+    ];
+    const t = tallyPaidDispatches(dispatches);
+    const snap = buildPayCycleReportSnapshot({
+      summary: summary(),
+      dispatches,
+      publishedBy: 'Carla',
+      publishedByEmail: 'carla@simple.biz',
+      publishedAt: '2026-08-02T01:00:00.000Z',
+    });
+    assert.equal(snap.totals.payeeCount, t.payeeCount);
+    assert.equal(snap.totals.employeeCount, t.employeeCount);
+    assert.equal(snap.totals.contractorCount, t.contractorCount);
+    assert.equal(snap.totals.dispatchCount, t.dispatchCount);
+    assert.equal(snap.totals.paidUSD, t.paidUSD);
+    assert.equal(snap.totals.paidPHP, t.paidPHP);
+    // …and dispatchCount still equals the number of frozen payee rows.
+    assert.equal(snap.payees.length, snap.totals.dispatchCount);
+  });
+});
+
 describe('cycleCompleteness', () => {
-  test('a fully paid cycle is complete', () => {
-    const c = cycleCompleteness(totals());
+  const paidDispatches = [dispatch()];
+
+  test('a fully paid cycle with logged payments is complete', () => {
+    const c = cycleCompleteness(totals(), paidDispatches);
     assert.equal(c.complete, true);
+    assert.equal(c.recordsComplete, true);
+    assert.equal(c.dispatchesComplete, true);
+    assert.equal(c.hasPaidDispatches, true);
     assert.equal(c.paidCount, 10);
     assert.equal(c.pendingCount, 0);
     assert.equal(c.blockedCount, 0);
+    assert.equal(c.paidDispatchCount, 1);
+    assert.equal(c.unpaidDispatchCount, 0);
   });
 
   test('each blocking bucket alone keeps it incomplete', () => {
     for (const key of ['notPaidCount', 'thresholdCount', 'outstandingCount'] as const) {
-      const c = cycleCompleteness(totals({ [key]: 3 }));
+      const c = cycleCompleteness(totals({ [key]: 3 }), paidDispatches);
       assert.equal(c.complete, false, `${key} should block completion`);
+      assert.equal(c.recordsComplete, false, `${key} breaks the records condition`);
       assert.equal(c.pendingCount, 3, `${key} counts as pending`);
     }
   });
 
   test('problem rows count as blocked, not pending', () => {
-    const c = cycleCompleteness(totals({ problemCount: 2 }));
+    const c = cycleCompleteness(totals({ problemCount: 2 }), paidDispatches);
     assert.equal(c.complete, false);
     assert.equal(c.blockedCount, 2);
     assert.equal(c.pendingCount, 0);
   });
 
   test('a cycle with nothing paid is never complete', () => {
-    assert.equal(cycleCompleteness(totals({ paidCount: 0, sentCount: 0 })).complete, false);
+    assert.equal(
+      cycleCompleteness(totals({ paidCount: 0, sentCount: 0 }), paidDispatches).complete,
+      false,
+    );
+  });
+
+  // ── The two conditions the records table cannot see on its own ──────────────
+
+  test('records all paid but ZERO dispatch rows is NOT complete', () => {
+    // Regression test for the empty-snapshot catastrophe: "Mark all paid" bulk-
+    // UPDATEs disbursement_records without creating any dispatch row, so the
+    // records side reads a glowing 100% while there is literally nothing to
+    // freeze. Publishing produced a permanent $0.00 report with no payees.
+    const c = cycleCompleteness(totals(), []);
+    assert.equal(c.complete, false);
+    assert.equal(c.recordsComplete, true, 'the records side genuinely looks done');
+    assert.equal(c.dispatchesComplete, true, 'no unpaid rows either — the table is simply empty');
+    assert.equal(c.hasPaidDispatches, false, 'and THAT is what must block it');
+    assert.equal(c.paidDispatchCount, 0);
+  });
+
+  test('an unpaid CONTRACTOR INVOICE blocks the gate', () => {
+    // A contractor invoice creates no disbursement_records row at all (the
+    // payee_type guard in sync_disbursement_from_dispatch), so condition 1 is
+    // blind to it: records read 100% paid. Only the dispatch-side condition can
+    // stop the cycle publishing while that invoice is still owed.
+    const c = cycleCompleteness(totals(), [
+      dispatch(),
+      dispatch({
+        id: 'inv',
+        status: 'not_paid',
+        payee_type: 'contractor',
+        recipient_email: 'claire@agency.com',
+        amount_usd: 8200,
+      }),
+    ]);
+    assert.equal(c.complete, false);
+    assert.equal(c.recordsComplete, true, 'records cannot see the invoice');
+    assert.equal(c.dispatchesComplete, false);
+    assert.equal(c.unpaidDispatchCount, 1);
+    assert.equal(c.hasPaidDispatches, true);
+  });
+
+  test('a threshold-held or flagged dispatch row blocks the gate too', () => {
+    for (const status of ['threshold', 'problem'] as const) {
+      const c = cycleCompleteness(totals(), [
+        dispatch(),
+        dispatch({ id: 'x', status, recipient_email: 'x@simple.biz' }),
+      ]);
+      assert.equal(c.complete, false, `${status} dispatch should block completion`);
+      assert.equal(c.dispatchesComplete, false);
+    }
   });
 });
 
 describe('isPublishableCycle', () => {
-  test('a complete regular cycle is publishable', () => {
-    assert.equal(isPublishableCycle(summary()), true);
+  const paidDispatches = [dispatch()];
+
+  test('a complete regular cycle with logged payments is publishable', () => {
+    assert.equal(isPublishableCycle(summary(), paidDispatches), true);
   });
 
   test('urgent cycles are never publishable', () => {
-    assert.equal(isPublishableCycle(summary({ sourceFile: 'urgent_2026-07-26' })), false);
+    assert.equal(
+      isPublishableCycle(summary({ sourceFile: 'urgent_2026-07-26' }), paidDispatches),
+      false,
+    );
   });
 
   test('a cycle with no source file is never publishable', () => {
-    assert.equal(isPublishableCycle(summary({ sourceFile: null })), false);
+    assert.equal(isPublishableCycle(summary({ sourceFile: null }), paidDispatches), false);
+  });
+
+  test('a records-complete cycle with no dispatch rows is not publishable', () => {
+    assert.equal(isPublishableCycle(summary(), []), false);
   });
 });
 

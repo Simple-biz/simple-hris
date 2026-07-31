@@ -25,10 +25,16 @@ export async function GET() {
   const authz = await requireFeatureAccess('accounting', 'documents', 'view');
   if (!authz.ok) return deniedResponse(authz);
 
-  const [reportsRes, statusRes] = await Promise.all([listPayCycleReports(), listCycleStatus()]);
+  // Sequential on purpose: listCycleStatus needs the published list to know what
+  // is already reported, and it used to call listPayCycleReports() itself — so
+  // every Documents page load ran that prefix scan TWICE, each time pulling every
+  // snapshot's full payee JSON only to strip it to summaries. Handing the loaded
+  // list down costs one round trip of latency and saves the whole second read.
+  const reportsRes = await listPayCycleReports();
   if (reportsRes.error) {
     return NextResponse.json({ error: reportsRes.error }, { status: 500 });
   }
+  const statusRes = await listCycleStatus(reportsRes.published);
   // A failed eligibility read must not hide reports that were already
   // published — degrade to "nothing publishable" and surface the reason.
   return NextResponse.json({
