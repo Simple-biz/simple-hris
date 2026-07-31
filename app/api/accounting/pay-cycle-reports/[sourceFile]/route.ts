@@ -17,8 +17,11 @@ export const runtime = 'nodejs';
  *            permanent, and unpublish→republish is the only way to refresh a
  *            snapshot that no longer matches reality. Both are audited.
  *
- * `sourceFile` arrives URL-encoded (Hubstaff filenames contain dots and
- * underscores, and MAY contain characters that need escaping) — always decode.
+ * The client `encodeURIComponent`s the source file when building the URL, and
+ * Next.js DECODES dynamic route params for us — so `params.sourceFile` is already
+ * the plain filename. Do not decode it again: a second pass turns a literal `%`
+ * (`100%.csv`) into a URIError and a 500, and would mangle any legitimately
+ * encoded sequence.
  */
 export async function GET(
   _req: NextRequest,
@@ -28,7 +31,7 @@ export async function GET(
   if (!authz.ok) return deniedResponse(authz);
 
   const { sourceFile: raw } = await params;
-  const sourceFile = decodeURIComponent(raw ?? '').trim();
+  const sourceFile = (raw ?? '').trim();
   if (!sourceFile) return NextResponse.json({ error: 'Missing sourceFile' }, { status: 400 });
 
   const { report, error } = await getPayCycleReport(sourceFile);
@@ -45,21 +48,54 @@ export async function DELETE(
   if (!authz.ok) return deniedResponse(authz);
 
   const { sourceFile: raw } = await params;
-  const sourceFile = decodeURIComponent(raw ?? '').trim();
+  const sourceFile = (raw ?? '').trim();
   if (!sourceFile) return NextResponse.json({ error: 'Missing sourceFile' }, { status: 400 });
 
-  const { deleted, error } = await unpublishPayCycleReport(sourceFile);
+  const { deleted, snapshot, rawValue, error } = await unpublishPayCycleReport(sourceFile);
   if (error) return NextResponse.json({ error }, { status: 500 });
 
-  const actor = await getSessionActor();
-  void insertAuditLog({
-    user_name: actor.user_name,
-    user_role: actor.user_role,
-    action: 'pay_cycle_report.unpublished',
-    resource: 'app_settings',
-    resource_id: sourceFile,
-    details: { source_file: sourceFile },
-  });
+  // AWAITED, unlike the usual fire-and-forget audit writes: the deleted row was
+  // the SOLE copy of the frozen snapshot, so this event is the only surviving
+  // record of it — the response must not return (and on serverless, the function
+  // must not freeze) before it lands. Same precedent as
+  // app/api/payment-dispatches/undo/route.ts's `payment.undone` events.
+  //
+  // `snapshot` carries the whole frozen value, payees included, so a mis-clicked
+  // unpublish is genuinely recoverable rather than merely regrettable. Skipped
+  // entirely when nothing was deleted — a no-op delete must not log a deletion.
+  if (deleted) {
+    const actor = await getSessionActor();
+    const { error: auditErr } = await insertAuditLog({
+      user_name: actor.user_name,
+      user_role: actor.user_role,
+      action: 'pay_cycle_report.unpublished',
+      resource: 'app_settings',
+      resource_id: sourceFile,
+      details: {
+        source_file: sourceFile,
+        cycle_id: snapshot?.cycle_id ?? null,
+        label: snapshot?.label ?? null,
+        period_start: snapshot?.period_start ?? null,
+        period_end: snapshot?.period_end ?? null,
+        payee_count: snapshot?.totals.payeeCount ?? null,
+        dispatch_count: snapshot?.totals.dispatchCount ?? null,
+        totals: snapshot?.totals ?? null,
+        published_at: snapshot?.published_at ?? null,
+        published_by: snapshot?.published_by ?? null,
+        published_by_email: snapshot?.published_by_email ?? null,
+        // Verbatim stored JSON — the recovery artifact. Kept even when the row
+        // was unreadable (snapshot === null), which is exactly the case where
+        // nothing else in this event can describe what was lost.
+        snapshot_json: rawValue,
+      },
+    });
+    if (auditErr) {
+      console.error('[pay-cycle-reports] unpublish audit write failed', {
+        sourceFile,
+        auditErr,
+      });
+    }
+  }
 
   return NextResponse.json({ deleted, error: null });
 }
