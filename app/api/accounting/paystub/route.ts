@@ -3,6 +3,11 @@ import { requireFeatureAccess } from "@/lib/auth/authorize-feature";
 import { deniedResponse } from "@/lib/auth/authorize-email";
 import { getFreshPaystubEntry } from "@/lib/payroll/paystub-fresh";
 import { listPaymentDispatches } from "@/lib/supabase/payment-dispatches";
+import {
+  buildPaystubDispatchLog,
+  paidSentDateFromLog,
+  type PayStubDispatchEntry,
+} from "@/lib/payroll/paystub-dispatch-log";
 import { mapPayloadToPayStub, applyCopEquivalent } from "@/lib/payroll/paystub-view";
 import { resolveCountryCurrencyForEmails, getUsdToCopRate } from "@/lib/payroll/cop-country";
 import { getEmployeeMasterRecord } from "@/lib/supabase/employees";
@@ -30,8 +35,15 @@ export const runtime = "nodejs";
  * read, so opening stubs across the ~1000-row queue stays cheap. A week that was
  * never staged for this employee returns `available: false`.
  *
- * Response shape matches the modal's expectation (same as the employee route):
- *   { paystub: PayStubView | null, available: boolean, paidAt: string | null, status }
+ * Response shape matches the modal's expectation (same as the employee route),
+ * plus the accounting-only dispatch log:
+ *   { paystub: PayStubView | null, available: boolean, paidAt: string | null, status,
+ *     dispatches: PayStubDispatchEntry[] }
+ *
+ * `dispatches` is every attempt logged against this week — paid, Not paid,
+ * Threshold, Problem — carrying the clerk's free-text note. It answers "why
+ * hasn't this gone out?" at the point accounting asks it. Internal by design: the
+ * employee route never returns it.
  */
 export async function GET(req: NextRequest) {
   const authz = await requireFeatureAccess("accounting", "payment_dispatch", "view");
@@ -54,21 +66,33 @@ export async function GET(req: NextRequest) {
       { status: 500 },
     );
   }
-  const staged = fresh.staged;
-  if (!staged?.payload) {
-    return NextResponse.json({ paystub: null, available: false, paidAt: null });
-  }
-
-  // Real paid date for this (cycle, employee), when Payment Dispatch has marked it.
+  // Every dispatch logged for this (cycle, employee) — paid AND the non-paid
+  // outcomes (Not paid / Threshold / Problem) with the clerk's note on each. The
+  // paid date falls out of the same read.
+  //
+  // Read BEFORE the no-staged-payload bail-out: someone can be marked Threshold /
+  // Problem in a week that was never staged for them (a catalog-paid person with
+  // no rates row reaches the queue through buildStagedOnlyPlacement). Returning
+  // the log there too means "View" still explains itself instead of showing a
+  // bare "no statement available".
+  let dispatchLog: PayStubDispatchEntry[] = [];
   let paidAt: string | null = null;
   try {
     const { rows: dispatches } = await listPaymentDispatches({ recipientEmail: email });
-    const paid = dispatches.find(
-      (r) => r.status === "paid" && r.cycle_source_file === sourceFile,
-    );
-    paidAt = paid?.sent_date ?? null;
+    dispatchLog = buildPaystubDispatchLog(dispatches, sourceFile);
+    paidAt = paidSentDateFromLog(dispatchLog);
   } catch {
-    /* best-effort — the statement still renders without a paid date */
+    /* best-effort — the statement still renders without a paid date or log */
+  }
+
+  const staged = fresh.staged;
+  if (!staged?.payload) {
+    return NextResponse.json({
+      paystub: null,
+      available: false,
+      paidAt: null,
+      dispatches: dispatchLog,
+    });
   }
 
   // Paid → the frozen as-paid record; unpaid → the freshest wizard figures.
@@ -108,5 +132,9 @@ export async function GET(req: NextRequest) {
     paidAt,
     payDate: resolvePayDateIso(paidAt, paystub.weekEnd, processor),
     status: paidAt ? "paid" : "issued",
+    // Accounting-only: the clerk's dispatch notes for this week. The employee
+    // route omits this field entirely, so the modal renders the panel for
+    // accounting and stays exactly as it was for the self-serve view.
+    dispatches: dispatchLog,
   });
 }

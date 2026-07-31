@@ -78,13 +78,13 @@ interface TxnRef {
 /**
  * Latest logged transaction reference per recipient, keyed by lowercased email.
  *
- * A row in the PENDING queue can legitimately own one: `not_paid` and
- * `threshold` dispatches mean "not sent yet", so they leave the person payable
- * (see `lockedEmails` in useDispatchQueue) while still carrying whatever
- * reference the clerk logged on that attempt. `paid` / `problem` rows are locked
- * out of pending altogether, so anything surfaced here belongs to money that is
- * still owed. Rows with a blank reference are skipped, leaving the column empty
- * until a dispatch is actually logged.
+ * A row in the PENDING queue can legitimately own one: a `not_paid` dispatch
+ * means "not sent yet", so it leaves the person payable (see `lockedEmails` in
+ * useDispatchQueue) while still carrying whatever reference the clerk logged on
+ * that attempt. `paid` / `threshold` / `problem` rows are locked out of pending
+ * altogether, so anything surfaced here belongs to money that is still owed.
+ * Rows with a blank reference are skipped, leaving the column empty until a
+ * dispatch is actually logged.
  */
 function buildTxnIndex(records: PaymentDispatchRow[] | undefined): Map<string, TxnRef> {
   const out = new Map<string, TxnRef>();
@@ -102,7 +102,7 @@ function buildTxnIndex(records: PaymentDispatchRow[] | undefined): Map<string, T
 const TXN_STATUS_HINT: Record<PaymentDispatchStatus, string> = {
   paid: 'logged as paid',
   not_paid: 'logged as not paid — still payable',
-  threshold: 'held below the payout threshold — still payable',
+  threshold: 'held below the payout threshold — out of pending until cleared',
   problem: 'flagged with a problem',
 };
 
@@ -368,8 +368,8 @@ function RecipientBankCell({
  * TXN ID — the reference logged against this recipient this cycle. Empty for a row
  * that has never been dispatched (the normal case in a pending queue: the id is
  * keyed in when it's marked paid). When it IS populated the row was logged Not
- * paid / Threshold, which leaves the person payable, so the reference from that
- * attempt travels with them. Click copies.
+ * paid, which leaves the person payable, so the reference from that attempt
+ * travels with them. Click copies.
  */
 function TxnCell({ txn }: { txn?: TxnRef | null }) {
   if (!txn) {
@@ -583,7 +583,7 @@ function ProcessorQueue({ processor, rows, onMarkPaid, onViewPaystub, periodStar
                 : view === 'not_paid'
                   ? 'Dispatches logged as not paid this cycle — these people are still payable in the pending queue.'
                   : view === 'threshold'
-                    ? 'Dispatches held below the payout threshold — still payable once cleared.'
+                    ? 'Dispatches held below the payout threshold — pulled out of the pending queue. Clear one to send it back.'
                     : view === 'problem'
                       ? 'Dispatches flagged with a problem — pulled out of the pending queue. Clear one to send it back.'
                       : processor
@@ -729,7 +729,9 @@ function ProcessorQueue({ processor, rows, onMarkPaid, onViewPaystub, periodStar
             periodStart={periodStart}
             periodEnd={periodEnd}
             onRefresh={onRefresh ?? (() => {})}
-            showProcessorColumn={false}
+            // "All pending" spans every rail, so its log views need to say which
+            // bank each dispatch left from; a processor tab is already one rail.
+            showFromBankColumn={isAllView}
             csvPrefix="paid"
             csvProcessor={processor ?? undefined}
             emptyTitle={

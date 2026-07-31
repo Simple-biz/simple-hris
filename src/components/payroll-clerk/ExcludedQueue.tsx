@@ -2,11 +2,13 @@
 
 import React, { useEffect, useMemo, useState } from 'react';
 import { motion } from 'motion/react';
-import { AlertTriangle, Ban, Banknote, Building2, CheckCircle2, ChevronDown, Clock, DollarSign, Hourglass, Layers, Search, SearchX, Send, ShieldOff, X } from 'lucide-react';
+import { AlertTriangle, Ban, Banknote, Building2, CheckCircle2, ChevronDown, Clock, DollarSign, Hourglass, Layers, Receipt, Search, SearchX, Send, ShieldOff, X } from 'lucide-react';
+import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { Input } from '@/components/ui/input';
 import { useDebouncedValue } from '@/hooks/useDebouncedValue';
 import {
+  formatCOP,
   formatPHP,
   formatUSD,
   PROCESSORS,
@@ -18,6 +20,8 @@ import {
   type ProcessorId,
   type QueueRow,
 } from './mock-queue';
+import { resolveMarkPaidDefaults } from '@/lib/payroll/mark-paid-defaults';
+import type { PaymentDispatchRow } from '@/lib/supabase/payment-dispatches';
 import QueuePagination from './QueuePagination';
 import ContractorChip, { showsContractorBadge } from './ContractorChip';
 
@@ -42,6 +46,46 @@ function bankLabel(row: ExcludedRow): string {
   return raw || 'No bank';
 }
 
+function copyText(value: string) {
+  void navigator.clipboard
+    .writeText(value)
+    .then(() => toast.success('Copied'))
+    .catch(() => toast.error('Could not copy'));
+}
+
+/**
+ * Receiving end for an excluded row — the same "To Recipient Bank" the pending
+ * worksheet and the dispatch log show, resolved through the shared Mark Paid
+ * resolver. Only available on a row carrying `payable`: the receiving details live
+ * on the QueueRow (processor + payout `details`), and a row without one is excluded
+ * precisely because that routing is missing (no_bank / no_rate). Returns null when
+ * there's nothing real to show, so the caller can omit the chip entirely rather
+ * than print an empty label.
+ */
+function recipientBankFor(row: ExcludedRow): { label: string; account: string } | null {
+  if (!row.payable) return null;
+  const d = resolveMarkPaidDefaults(row.payable);
+  const label = d.preferredBank.trim();
+  const account = d.accountNumber.trim();
+  if (!label && !account) return null;
+  return { label, account };
+}
+
+/**
+ * Latest dispatch reference logged against this person this cycle, keyed by email.
+ * Worth surfacing here for the `claim_stuck` rows above all — a payment that got
+ * stuck mid-dispatch is exactly the one whose reference accounting needs to chase.
+ */
+function txnIndexOf(records: PaymentDispatchRow[] | undefined): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const r of records ?? []) {
+    const id = (r.transaction_id ?? '').trim();
+    if (!id) continue;
+    out.set(r.recipient_email.trim().toLowerCase(), id);
+  }
+  return out;
+}
+
 type BankFilter = 'all' | ProcessorId | 'other';
 
 /** Department filter key: 'all', a real department key, or '__none__' (no dept). */
@@ -57,6 +101,10 @@ interface ExcludedQueueProps {
    * per unpaid held cycle).
    */
   onMarkPaid?: (row: QueueRow, arrears?: ArrearsInfo) => void;
+  /** Open this person's pay stub for the operative week (same modal as Pending). */
+  onViewPaystub?: (row: ExcludedRow) => void;
+  /** Cycle dispatch log — fills the TXN reference chip. */
+  txnRecords?: PaymentDispatchRow[];
 }
 
 const REASON_META: Record<
@@ -155,12 +203,14 @@ function ReasonChip({ reason }: { reason: ExclusionReason }) {
 
 type ReasonFilter = 'all' | ExclusionReason;
 
-export default function ExcludedQueue({ rows, onMarkPaid }: ExcludedQueueProps) {
+export default function ExcludedQueue({ rows, onMarkPaid, onViewPaystub, txnRecords }: ExcludedQueueProps) {
   const [query, setQuery] = useState('');
   const [reasonFilter, setReasonFilter] = useState<ReasonFilter>('all');
   const [bankFilter, setBankFilter] = useState<BankFilter>('all');
   const [deptFilter, setDeptFilter] = useState<DeptFilter>('all');
   const debounced = useDebouncedValue(query, 250);
+
+  const txnByEmail = useMemo(() => txnIndexOf(txnRecords), [txnRecords]);
 
   // Aggregate counts per reason for the header summary chips.
   const counts = useMemo(() => {
@@ -506,13 +556,53 @@ export default function ExcludedQueue({ rows, onMarkPaid }: ExcludedQueueProps) 
                     </div>
                     <div className="mt-1 flex flex-wrap items-center gap-1">
                       {showsContractorBadge(row) && <ContractorChip invoiceNumber={row.invoiceNumber} />}
+                      {/* From Bank → To Recipient Bank → TXN, the same trio the
+                          Pending worksheet and the dispatch log carry. Rendered as
+                          chips so the Excluded card keeps its shape. */}
                       <span
                         className="inline-flex items-center gap-1 rounded-full border border-zinc-200 bg-zinc-50 px-1.5 py-0.5 text-[10px] font-semibold text-zinc-600 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300"
-                        title="Preferred bank / processor"
+                        title="From Bank — the send-from rail this person routes through (Bank Preferred)"
                       >
                         <Banknote className="h-2.5 w-2.5" />
                         {bankLabel(row)}
                       </span>
+                      {(() => {
+                        const to = recipientBankFor(row);
+                        if (!to) return null;
+                        return (
+                          <button
+                            type="button"
+                            onClick={() => to.account && copyText(to.account)}
+                            title={
+                              to.account
+                                ? `To Recipient Bank: ${to.label} · ${to.account} — click to copy the account`
+                                : `To Recipient Bank: ${to.label}`
+                            }
+                            className="inline-flex max-w-[15rem] items-center gap-1 truncate rounded-full border border-zinc-200 bg-white px-1.5 py-0.5 text-[10px] font-medium text-zinc-500 transition-colors hover:border-orange-300 hover:text-orange-700 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-400 dark:hover:text-orange-300"
+                          >
+                            <span className="font-semibold uppercase tracking-[0.1em] text-zinc-400">to</span>
+                            <span className="truncate">{to.label}</span>
+                            {to.account && (
+                              <span className="truncate font-mono text-[9.5px] opacity-80">{to.account}</span>
+                            )}
+                          </button>
+                        );
+                      })()}
+                      {(() => {
+                        const txn = txnByEmail.get(row.email.trim().toLowerCase());
+                        if (!txn) return null;
+                        return (
+                          <button
+                            type="button"
+                            onClick={() => copyText(txn)}
+                            title={`TXN ${txn} — reference logged against this person this cycle. Click to copy.`}
+                            className="inline-flex max-w-[11rem] items-center gap-1 truncate rounded-full border border-zinc-200 bg-white px-1.5 py-0.5 font-mono text-[9.5px] text-zinc-500 transition-colors hover:border-orange-300 hover:text-orange-700 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-400 dark:hover:text-orange-300"
+                          >
+                            <span className="font-sans font-semibold uppercase tracking-[0.1em] text-zinc-400">txn</span>
+                            <span className="truncate">{txn}</span>
+                          </button>
+                        );
+                      })()}
                       {row.reasons.map((r) => (
                         <ReasonChip key={r} reason={r} />
                       ))}
@@ -552,6 +642,14 @@ export default function ExcludedQueue({ rows, onMarkPaid }: ExcludedQueueProps) 
                     >
                       {formatPHP(row.amountPHP)}
                     </div>
+                    {/* COP only where COP is real money (COP-paid people and
+                        COP-country payees) — omitted entirely for everyone else
+                        rather than printing a dash on every row. */}
+                    {row.amountCOP != null && (
+                      <div className="font-mono text-[10.5px] tabular-nums text-zinc-500 dark:text-zinc-500">
+                        {formatCOP(row.amountCOP)}
+                      </div>
+                    )}
                     <div
                       className={cn(
                         'font-mono text-[10.5px] tabular-nums',
@@ -561,36 +659,56 @@ export default function ExcludedQueue({ rows, onMarkPaid }: ExcludedQueueProps) 
                       {row.totalHours != null ? `${row.totalHours.toFixed(2)} hrs` : '— hrs'}
                     </div>
                   </div>
-                  {/* Reconcile action — only wizard-excluded people who are
-                      otherwise dispatchable can be paid straight from here. */}
-                  {row.payable && onMarkPaid && (
-                    <div className="flex shrink-0 flex-col items-end gap-1">
-                      <button
-                        type="button"
-                        onClick={() => onMarkPaid(row.payable!, row.arrears ?? undefined)}
-                        className="inline-flex items-center gap-1.5 rounded-lg bg-gradient-to-br from-emerald-500 to-teal-600 px-3 py-1.5 text-[11px] font-semibold text-white shadow-sm shadow-emerald-500/20 transition-transform hover:from-emerald-600 hover:to-teal-700 active:scale-[0.97]"
-                      >
-                        <Send className="h-3 w-3" />
-                        {row.arrears && row.arrears.cycles.length > 1 ? `Settle ${formatPHP(row.arrears.totalPHP)}` : 'Pay now'}
-                      </button>
-                      {row.paystubSentAt && (
-                        <span className="inline-flex items-center gap-1 text-[9.5px] font-medium text-emerald-600 dark:text-emerald-400">
-                          <CheckCircle2 className="h-2.5 w-2.5" />
-                          Paystub sent
-                        </span>
+                  <div className="flex shrink-0 items-center gap-1.5">
+                    {/* View → the pay stub, same action as the Pending worksheet.
+                        Offered only where a staged statement can exist: a payable
+                        row, one whose stub already went out, or an arrears row. A
+                        no_hours / no_pay row has nothing staged, and a contractor
+                        settles an invoice rather than a stub. */}
+                    {onViewPaystub &&
+                      row.payeeKind !== 'contractor' &&
+                      (row.payable != null || row.paystubSentAt != null || row.arrears != null) && (
+                        <button
+                          type="button"
+                          onClick={() => onViewPaystub(row)}
+                          title="View this week's pay stub"
+                          className="inline-flex h-7 items-center gap-1.5 rounded-md border border-zinc-200 bg-white px-2.5 text-[11px] font-medium text-zinc-600 transition-colors hover:border-orange-300 hover:bg-orange-50 hover:text-orange-700 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-300 dark:hover:bg-zinc-800 dark:hover:text-orange-300"
+                        >
+                          <Receipt className="h-3 w-3" />
+                          View
+                        </button>
                       )}
-                    </div>
-                  )}
-                  {/* Owed but not payable from here (no bank / not on rates this
-                      cycle) — explain instead of silently dropping the action. */}
-                  {!row.payable && row.arrears && (
-                    <span
-                      title="No bank details for this person this cycle — pay them once they're back in a payroll cycle."
-                      className="shrink-0 rounded-md border border-zinc-200 bg-zinc-50 px-2 py-1 text-[9.5px] font-medium text-zinc-400 dark:border-zinc-700 dark:bg-zinc-900/60 dark:text-zinc-500"
-                    >
-                      Can&apos;t pay here
-                    </span>
-                  )}
+                    {/* Reconcile action — only wizard-excluded people who are
+                        otherwise dispatchable can be paid straight from here. */}
+                    {row.payable && onMarkPaid && (
+                      <div className="flex flex-col items-end gap-1">
+                        <button
+                          type="button"
+                          onClick={() => onMarkPaid(row.payable!, row.arrears ?? undefined)}
+                          className="inline-flex items-center gap-1.5 rounded-lg bg-gradient-to-br from-emerald-500 to-teal-600 px-3 py-1.5 text-[11px] font-semibold text-white shadow-sm shadow-emerald-500/20 transition-transform hover:from-emerald-600 hover:to-teal-700 active:scale-[0.97]"
+                        >
+                          <Send className="h-3 w-3" />
+                          {row.arrears && row.arrears.cycles.length > 1 ? `Settle ${formatPHP(row.arrears.totalPHP)}` : 'Pay now'}
+                        </button>
+                        {row.paystubSentAt && (
+                          <span className="inline-flex items-center gap-1 text-[9.5px] font-medium text-emerald-600 dark:text-emerald-400">
+                            <CheckCircle2 className="h-2.5 w-2.5" />
+                            Paystub sent
+                          </span>
+                        )}
+                      </div>
+                    )}
+                    {/* Owed but not payable from here (no bank / not on rates this
+                        cycle) — explain instead of silently dropping the action. */}
+                    {!row.payable && row.arrears && (
+                      <span
+                        title="No bank details for this person this cycle — pay them once they're back in a payroll cycle."
+                        className="rounded-md border border-zinc-200 bg-zinc-50 px-2 py-1 text-[9.5px] font-medium text-zinc-400 dark:border-zinc-700 dark:bg-zinc-900/60 dark:text-zinc-500"
+                      >
+                        Can&apos;t pay here
+                      </span>
+                    )}
+                  </div>
                 </div>
                 {/* Per-cycle arrears breakdown — what we owe, week by week. */}
                 {row.arrears && row.arrears.cycles.length > 1 && expanded.has(row.id) && (

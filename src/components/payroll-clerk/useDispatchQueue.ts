@@ -447,14 +447,16 @@ async function loadAll(
       ? { ...r, contractorRole: true }
       : r;
 
-  // Two outcomes END a recipient's turn in the pending queue: `paid` (money
-  // moved) and `problem` (flagged blocked — they belong in the Problem tab, not
-  // back in pending where the next clerk would just try to send again). Not Paid
-  // and Threshold still leave the person available for retry: those mean "not
+  // Three outcomes END a recipient's turn in the pending queue: `paid` (money
+  // moved), `problem` (flagged blocked — they belong in the Problem tab, not back
+  // in pending where the next clerk would just try to send again) and `threshold`
+  // (deliberately held under the payout minimum this week — the decision is made,
+  // so re-offering them in pending just invites the same call again).
+  // Only Not Paid leaves the person available for retry: that alone means "not
   // sent yet", not "don't send".
-  // Nothing is stranded by the Problem lock-out — clearing the row from the
-  // Problem tab (PaidRecordsPanel "Clear" → /api/payment-dispatches/undo) deletes
-  // it and the person is back in pending on the next refresh.
+  // Nothing is stranded by the Problem / Threshold lock-out — clearing the row
+  // from that tab (PaidRecordsPanel "Clear" → /api/payment-dispatches/undo)
+  // deletes it and the person is back in pending on the next refresh.
   // Contractor settlements are excluded: this set is keyed by EMAIL and is applied
   // to the employee rows below, so a settled invoice would delete that person's
   // hourly salary row from pending, from Excluded and from the staged safety net —
@@ -469,7 +471,9 @@ async function loadAll(
   const lockedEmails = new Set(
     paid
       .filter(
-        (p) => (p.status === 'paid' || p.status === 'problem') && p.payee_type !== 'contractor',
+        (p) =>
+          (p.status === 'paid' || p.status === 'problem' || p.status === 'threshold') &&
+          p.payee_type !== 'contractor',
       )
       .map((p) => p.recipient_email.trim().toLowerCase()),
   );

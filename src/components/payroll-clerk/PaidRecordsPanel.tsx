@@ -9,6 +9,7 @@ import {
   Download,
   Gauge,
   Loader2,
+  Receipt,
   Search,
   Undo2,
   UserRound,
@@ -19,6 +20,7 @@ import { cn } from '@/lib/utils';
 import { formatPHP, formatUSD, formatCOP, PROCESSORS } from './mock-queue';
 import QueuePagination from './QueuePagination';
 import ContractorChip from './ContractorChip';
+import { PayStubModal } from '@/components/paystub/PayStubModal';
 import type { PaymentDispatchRow, PaymentDispatchStatus } from '@/lib/supabase/payment-dispatches';
 import {
   buildSentRows,
@@ -32,10 +34,10 @@ import {
  * "already sent" view; the other three are the non-paid dispatch outcomes —
  * logged, but no money actually moved.
  *
- * Not Paid / Threshold leave the person in the pending queue for a retry.
- * `problem` does NOT: a flagged person is pulled out of pending (see
- * useDispatchQueue) and only comes back when the row is cleared from here.
- * Colors mirror the status pills in the Mark Paid dialog.
+ * Not Paid leaves the person in the pending queue for a retry. `threshold` and
+ * `problem` do NOT: a held or flagged person is pulled out of pending (see
+ * `lockedEmails` in useDispatchQueue) and only comes back when the row is cleared
+ * from here. Colors mirror the status pills in the Mark Paid dialog.
  */
 const STATUS_UI: Record<
   PaymentDispatchStatus,
@@ -86,8 +88,12 @@ interface PaidRecordsPanelProps {
   periodEnd?: string | null;
   /** Silent re-pull after a send-back, to reconcile the pending queue. */
   onRefresh: () => void | Promise<void>;
-  /** Hide the Processor column (true inside a single-processor "Paid" view). */
-  showProcessorColumn?: boolean;
+  /**
+   * Show the "From Bank" column — the send-from rail this dispatch went out on.
+   * False inside a single-processor sub-view, where every row shares one rail and
+   * the column would just repeat the tab you're standing in.
+   */
+  showFromBankColumn?: boolean;
   /** CSV filename prefix (default 'paid'). */
   csvPrefix?: 'paid' | 'done' | 'sent' | 'pending';
   /** Processor id baked into the CSV filename when scoped to one processor. */
@@ -95,6 +101,58 @@ interface PaidRecordsPanelProps {
   /** Empty-state copy when there are no paid records at all. */
   emptyTitle?: string;
   emptyHint?: string;
+}
+
+function copyText(value: string) {
+  void navigator.clipboard
+    .writeText(value)
+    .then(() => toast.success('Copied'))
+    .catch(() => toast.error('Could not copy'));
+}
+
+/**
+ * "To Recipient Bank" for a logged dispatch — read from the SNAPSHOT the mark-paid
+ * path froze onto the row (`recipient_*`), never re-resolved from the employee's
+ * current profile, so a historical record keeps showing where the money actually
+ * went even after they change banks. Mirrors the pending queue's column of the same
+ * name; rows written before those columns existed simply have nothing to show.
+ */
+function RecordRecipientBank({ rec }: { rec: PaymentDispatchRow }) {
+  const label = (rec.recipient_preferred_bank ?? '').trim();
+  const account = (rec.recipient_account_number ?? '').trim();
+  const holder = (rec.recipient_account_holder ?? '').trim();
+  const swift = (rec.recipient_swift_code ?? '').trim();
+  if (!label && !account) {
+    return (
+      <span className="text-[11px] text-[#71717a] dark:text-zinc-500" title="No receiving details were recorded on this dispatch">
+        Not recorded
+      </span>
+    );
+  }
+  const showHolder =
+    holder !== '' && holder.toLowerCase() !== (rec.recipient_name ?? '').trim().toLowerCase();
+  return (
+    <div className="flex min-w-0 flex-col items-start gap-0.5">
+      <span className="max-w-full truncate font-medium text-zinc-700 dark:text-zinc-300" title={swift ? `${label} · SWIFT ${swift}` : label}>
+        {label || '—'}
+      </span>
+      {account && (
+        <button
+          type="button"
+          onClick={() => copyText(account)}
+          title={`${account} — click to copy`}
+          className="max-w-full truncate text-left font-mono text-[10px] text-[#71717a] transition-colors hover:text-orange-700 dark:text-zinc-500 dark:hover:text-orange-300"
+        >
+          {account}
+        </button>
+      )}
+      {showHolder && (
+        <span className="max-w-full truncate text-[10px] text-zinc-400 dark:text-zinc-500" title={`Account holder: ${holder}`}>
+          {holder}
+        </span>
+      )}
+    </div>
+  );
 }
 
 function formatTimestamp(iso: string | null): string {
@@ -127,7 +185,7 @@ export default function PaidRecordsPanel({
   periodStart,
   periodEnd,
   onRefresh,
-  showProcessorColumn = true,
+  showFromBankColumn = true,
   csvPrefix = 'paid',
   csvProcessor,
   emptyTitle = 'No payments marked paid yet',
@@ -137,8 +195,8 @@ export default function PaidRecordsPanel({
   const isPaidView = statusFilter === 'paid';
   // Rows for this view = dispatches logged with the selected status. For 'paid'
   // that's money actually sent; the other three are markers where money never
-  // moved — Not Paid / Threshold keep the person payable in the pending queue,
-  // 'problem' holds them out of it until the row is cleared.
+  // moved — Not Paid keeps the person payable in the pending queue, 'threshold'
+  // and 'problem' hold them out of it until the row is cleared.
   const paid = useMemo(
     () => records.filter((r) => r.status === statusFilter),
     [records, statusFilter],
@@ -155,6 +213,12 @@ export default function PaidRecordsPanel({
   // True while a bulk "Undo selected" POST is in flight.
   const [bulkBusy, setBulkBusy] = useState(false);
   const [page, setPage] = useState(1);
+  // "View" → the pay stub for the week this dispatch settled. Scoped to the
+  // record's OWN cycle_source_file (not the tab's current week) so an old record
+  // opens the statement it actually paid. The stub's header pill follows the
+  // dispatch status: green "Paid" here in the Paid view, orange "Pending" for a
+  // Not paid / Threshold / Problem row, where no money moved.
+  const [viewStub, setViewStub] = useState<{ sourceFile: string; email: string } | null>(null);
 
   // A fresh snapshot reconciles the optimistic state: drop hidden flags and
   // prune the selection down to rows that still exist (undone rows are gone).
@@ -430,7 +494,7 @@ export default function PaidRecordsPanel({
         ) : (
           <div className="overflow-x-auto rounded-lg border border-[#ececec] bg-white dark:border-zinc-800 dark:bg-zinc-950">
             <table
-              className={cn('w-full text-xs', showProcessorColumn ? 'min-w-[1000px]' : 'min-w-[900px]')}
+              className={cn('w-full text-xs', showFromBankColumn ? 'min-w-[1520px]' : 'min-w-[1380px]')}
             >
               <thead className="bg-[#fafaf8] text-[10px] uppercase tracking-wide text-[#71717a] dark:bg-zinc-900 dark:text-zinc-400">
                 <tr>
@@ -444,13 +508,17 @@ export default function PaidRecordsPanel({
                       className="h-3.5 w-3.5 cursor-pointer accent-emerald-600"
                     />
                   </th>
+                  {/* Same order as the Pending queue's worksheet: Recipient → the
+                      three currencies → From/To bank → TXN ID → the rest. */}
                   <th className="px-4 py-2.5 text-left font-medium">Recipient</th>
-                  {showProcessorColumn && (
-                    <th className="px-4 py-2.5 text-left font-medium">Processor</th>
+                  <th className="px-4 py-2.5 text-right font-medium">USD Value</th>
+                  <th className="px-4 py-2.5 text-right font-medium">PHP Value</th>
+                  <th className="px-4 py-2.5 text-right font-medium">COP Value</th>
+                  {showFromBankColumn && (
+                    <th className="px-4 py-2.5 text-left font-medium">From Bank</th>
                   )}
-                  <th className="px-4 py-2.5 text-right font-medium">USD</th>
-                  <th className="px-4 py-2.5 text-right font-medium">PHP</th>
-                  <th className="px-4 py-2.5 text-left font-medium">Txn ID</th>
+                  <th className="px-4 py-2.5 text-left font-medium">To Recipient Bank</th>
+                  <th className="px-4 py-2.5 text-left font-medium">TXN ID</th>
                   <th className="px-4 py-2.5 text-left font-medium">Sent</th>
                   <th className="px-4 py-2.5 text-left font-medium">Marked paid</th>
                   <th className="px-4 py-2.5 text-right font-medium">Action</th>
@@ -491,19 +559,69 @@ export default function PaidRecordsPanel({
                           {rec.recipient_email}
                         </div>
                       </td>
-                      {showProcessorColumn && (
-                        <td className="px-4 py-2.5 text-zinc-700 dark:text-zinc-300">
-                          {meta?.label ?? rec.processor}
-                        </td>
-                      )}
-                      <td className="px-4 py-2.5 text-right font-mono font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">
-                        {rec.amount_cop != null ? formatCOP(rec.amount_cop) : formatUSD(rec.amount_usd)}
+                      {/* One column per currency, matching the Pending worksheet. The
+                          USD anchor is the strong figure on every row; a COP-only
+                          record (no USD recorded) promotes COP instead, so exactly one
+                          number per row reads as the headline. */}
+                      <td
+                        className={cn(
+                          'px-4 py-2.5 text-right font-mono tabular-nums',
+                          rec.amount_usd == null
+                            ? 'text-zinc-400'
+                            : 'font-semibold text-zinc-900 dark:text-zinc-100',
+                        )}
+                      >
+                        {formatUSD(rec.amount_usd)}
                       </td>
-                      <td className="px-4 py-2.5 text-right font-mono tabular-nums text-zinc-600 dark:text-zinc-400">
+                      <td
+                        className={cn(
+                          'px-4 py-2.5 text-right font-mono tabular-nums',
+                          rec.amount_php == null ? 'text-zinc-400' : 'text-zinc-600 dark:text-zinc-400',
+                        )}
+                      >
                         {formatPHP(rec.amount_php)}
                       </td>
-                      <td className="px-4 py-2.5 font-mono text-[11px] text-zinc-700 dark:text-zinc-300">
-                        {rec.transaction_id?.trim() || '—'}
+                      <td
+                        className={cn(
+                          'px-4 py-2.5 text-right font-mono tabular-nums',
+                          rec.amount_cop == null
+                            ? 'text-zinc-400'
+                            : rec.amount_usd == null
+                              ? 'font-semibold text-zinc-900 dark:text-zinc-100'
+                              : 'text-zinc-600 dark:text-zinc-400',
+                        )}
+                      >
+                        {formatCOP(rec.amount_cop)}
+                      </td>
+                      {showFromBankColumn && (
+                        <td className="px-4 py-2.5">
+                          <div className="font-medium text-zinc-700 dark:text-zinc-300">
+                            {meta?.label ?? rec.processor}
+                          </div>
+                          {/* The account the money actually left, as keyed at Mark Paid. */}
+                          {rec.bank_used?.trim() && (
+                            <div className="mt-0.5 truncate font-mono text-[10px] text-[#71717a] dark:text-zinc-500" title={`Sent from: ${rec.bank_used}`}>
+                              {rec.bank_used}
+                            </div>
+                          )}
+                        </td>
+                      )}
+                      <td className="max-w-[190px] px-4 py-2.5">
+                        <RecordRecipientBank rec={rec} />
+                      </td>
+                      <td className="px-4 py-2.5">
+                        {rec.transaction_id?.trim() ? (
+                          <button
+                            type="button"
+                            onClick={() => copyText(rec.transaction_id.trim())}
+                            title={`${rec.transaction_id.trim()} — click to copy`}
+                            className="max-w-[150px] truncate text-left font-mono text-[11px] text-zinc-700 transition-colors hover:text-orange-700 dark:text-zinc-300 dark:hover:text-orange-300"
+                          >
+                            {rec.transaction_id.trim()}
+                          </button>
+                        ) : (
+                          <span className="font-mono text-[11px] text-zinc-400">—</span>
+                        )}
                       </td>
                       <td className="px-4 py-2.5 text-zinc-700 dark:text-zinc-300">
                         {rec.sent_date}
@@ -521,26 +639,48 @@ export default function PaidRecordsPanel({
                         )}
                       </td>
                       <td className="px-4 py-2.5 text-right">
-                        <button
-                          type="button"
-                          onClick={() => sendBackOne(rec)}
-                          disabled={busy || bulkBusy}
-                          title={
-                            isPaidView
-                              ? 'Undo this payment and send it back to the pay processor'
-                              : statusFilter === 'problem'
-                                ? 'Clear this problem — the person goes back into the pending queue'
-                                : 'Clear this record — the person stays payable in the pending queue'
-                          }
-                          className="inline-flex h-7 items-center gap-1.5 rounded-md border border-amber-200 bg-white px-2.5 text-[11px] font-medium text-amber-700 transition-colors hover:border-amber-300 hover:bg-amber-50 disabled:opacity-50 dark:border-amber-500/30 dark:bg-zinc-950 dark:text-amber-300 dark:hover:bg-amber-500/10"
-                        >
-                          {busy ? (
-                            <Loader2 className="h-3 w-3 animate-spin" />
-                          ) : (
-                            <Undo2 className="h-3 w-3" />
+                        <div className="flex items-center justify-end gap-1.5">
+                          {/* Contractor settlements pay an invoice, not a pay stub —
+                              they have no rates row and no staged statement, so the
+                              viewer could only ever say "not available". Same rule as
+                              the pending queue's View. */}
+                          {rec.payee_type !== 'contractor' && rec.cycle_source_file && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setViewStub({
+                                  sourceFile: rec.cycle_source_file as string,
+                                  email: rec.recipient_email,
+                                })
+                              }
+                              title="View the pay stub this dispatch settled"
+                              className="inline-flex h-7 items-center gap-1.5 rounded-md border border-zinc-200 bg-white px-2.5 text-[11px] font-medium text-zinc-600 transition-colors hover:border-orange-300 hover:bg-orange-50 hover:text-orange-700 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-300 dark:hover:bg-zinc-800 dark:hover:text-orange-300"
+                            >
+                              <Receipt className="h-3 w-3" />
+                              View
+                            </button>
                           )}
-                          {isPaidView ? 'Undo' : 'Clear'}
-                        </button>
+                          <button
+                            type="button"
+                            onClick={() => sendBackOne(rec)}
+                            disabled={busy || bulkBusy}
+                            title={
+                              isPaidView
+                                ? 'Undo this payment and send it back to the pay processor'
+                                : statusFilter === 'problem'
+                                  ? 'Clear this problem — the person goes back into the pending queue'
+                                  : 'Clear this record — the person stays payable in the pending queue'
+                            }
+                            className="inline-flex h-7 items-center gap-1.5 rounded-md border border-amber-200 bg-white px-2.5 text-[11px] font-medium text-amber-700 transition-colors hover:border-amber-300 hover:bg-amber-50 disabled:opacity-50 dark:border-amber-500/30 dark:bg-zinc-950 dark:text-amber-300 dark:hover:bg-amber-500/10"
+                          >
+                            {busy ? (
+                              <Loader2 className="h-3 w-3 animate-spin" />
+                            ) : (
+                              <Undo2 className="h-3 w-3" />
+                            )}
+                            {isPaidView ? 'Undo' : 'Clear'}
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   );
@@ -558,6 +698,13 @@ export default function PaidRecordsPanel({
           </div>
         )}
       </div>
+
+      <PayStubModal
+        open={viewStub != null}
+        sourceFile={viewStub?.sourceFile ?? null}
+        email={viewStub?.email ?? null}
+        onClose={() => setViewStub(null)}
+      />
     </div>
   );
 }

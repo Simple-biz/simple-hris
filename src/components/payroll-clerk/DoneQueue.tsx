@@ -41,7 +41,7 @@ export default function DoneQueue({
           periodStart={periodStart}
           periodEnd={periodEnd}
           onRefresh={onRefresh}
-          showProcessorColumn
+          showFromBankColumn
           csvPrefix="done"
         />
       </div>

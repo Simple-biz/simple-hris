@@ -97,6 +97,18 @@ Sticky column header on desktop (`hidden md:grid`); on mobile each row collapses
 
 "View" opens `PayStubModal` on this week's `source_file` for that row's email (`/api/accounting/paystub`), i.e. the same statement the employee gets. Because the row is still pending, the statement's header pill must NOT claim payment: the API returns `status: 'issued'` and `payDate` = the *scheduled* Tue/Thu, so `PayStubStatement` keys the pill off `status` (not off the date) and renders an orange-dot **Pending** pill; only `status === 'paid'` gets the green `Paid <date>` pill. The PDF export follows the same rule — its Paid column reads "Pending" for a stub that hasn't been sent.
 
+Contractor rows have no View: a contractor settles an invoice, not a pay stub (no rates row, no staged statement), so `payeeKind === 'contractor'` opens the invoice instead — see `handleViewPaystub` in `PayrollDispatch.tsx`.
+
+##### 3.4.2 The log views (Paid / Not paid / Threshold / Problem)
+
+Same arrangement, one table: `PaidRecordsPanel.tsx` backs all four sub-views of the in-table tab strip **and** the global Done tab, so the columns match the Pending worksheet — Recipient, USD Value, PHP Value, COP Value, From Bank, To Recipient Bank, TXN ID, then Sent / Marked paid / Action. Differences are only what a *record* can know that a pending row can't, and vice versa:
+
+- **USD / PHP / COP** — one column each, read straight off `amount_usd` / `amount_php` / `amount_cop`. USD is the strong figure on every row; a COP-only record (no USD recorded) promotes COP instead, so exactly one number per row reads as the headline. Previously COP *replaced* USD in a single column.
+- **From Bank** — processor label plus `bank_used`, the account the money actually left, as keyed at Mark Paid. Gated by `showFromBankColumn` (renamed from `showProcessorColumn`): on for the All tab's log views and Done, which span every rail; off inside a single-processor sub-view where it would repeat the tab you're standing in.
+- **To Recipient Bank** — the frozen `recipient_*` snapshot (bank, account number, holder, SWIFT in the tooltip), never re-resolved from the employee's current profile, so a historical record keeps showing where the money actually went. Rows written before those columns existed read "Not recorded".
+- **TXN ID** — click to copy, same as pending.
+- **Action** — "View" (the pay stub this dispatch settled, scoped to the record's own `cycle_source_file` rather than the tab's current week) alongside the existing Undo / Clear. The panel owns its own `PayStubModal` instance. Contractor records get no View, for the reason in §3.4.1.
+
 Click the row to expand the processor-specific contact details (Hurupay email, Higlobe email + account name, phone, full address, city, province/state) with copy buttons on each.
 
 #### Search
@@ -181,6 +193,13 @@ Header shows an **"Owed ₱X (US$Y)"** pill (sum across the filtered list) + a p
 
 - Single cycle → **"Pay now"**.
 - Multiple held cycles → **"Settle ₱X"** — `handleConfirmPaid` in `PayrollDispatch.tsx` loops the unpaid cycles, POSTing `/api/payment-dispatches` once per cycle. It is **failure-tolerant**: each successful POST already moved money + emailed a paystub, so it records per-cycle outcomes (`paidCycles` / `failedCycles` / `sent` / `failedSend` / `notStaged`) and never aborts mid-loop. Failed cycles stay in arrears for a safe retry; the toast summarizes "`paidCycles`/`N` cycles settled". Owed-but-not-payable rows (no bank this cycle) show a muted "Can't pay here" tag instead.
+
+**Row data mirrors the Pending worksheet** (§3.4), adapted to the card layout rather than restructured into columns:
+
+- **Amounts** — USD / PHP as before, plus a **COP** line where COP is real money (COP-paid people and COP-country payees); omitted entirely otherwise, so no dash appears on the ~99% of rows for which COP is meaningless.
+- **From Bank → To Recipient Bank** — the existing bank chip is the send-from rail; beside it a `TO` chip carries the receiving end, resolved through the shared `resolveMarkPaidDefaults`. Only present on a row with `payable`: the receiving details live on the QueueRow, and a row without one is excluded precisely because that routing is missing (`no_bank` / `no_rate`). Click copies the account.
+- **TXN** chip — the reference logged against this person this cycle (from `txnRecords`, click to copy). Most valuable on a `claim_stuck` row: a payment that died mid-dispatch is exactly the one whose reference needs chasing.
+- **View** — opens the pay stub in the same modal as Pending (`handleViewExcludedPaystub`), which shows the orange **Pending** pill since none of these people have been paid. Offered only where a staged statement can exist — `payable`, `paystubSentAt`, or an arrears row — so a `no_hours` / `no_pay` row (nothing staged) doesn't get a button that opens an empty state. Contractor rows are excluded: they settle an invoice, not a stub.
 
 **Filters.** A single-select **reason** rail and a single-select **bank** rail (emerald pills, one per processor present + a "No bank" / `other` pill), plus a 250 ms debounced search over name / email / bank label / raw `Bank Preferred`. Both rails reset pagination (`PAGE_SIZE = 25`).
 

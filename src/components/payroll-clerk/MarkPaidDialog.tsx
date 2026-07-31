@@ -53,6 +53,13 @@ interface StatusCfg {
   btnBg: string;        // hex gradient start for confirm button
   btnHover: string;     // hex gradient end
   confirmLabel: string;
+  /**
+   * What this outcome does to the pending queue, shown under the pills. Three of
+   * the four end the person's turn this cycle (see `lockedEmails` in
+   * useDispatchQueue) — worth saying out loud, because "log a dispatch" reads
+   * like a note when it's actually a queue decision.
+   */
+  queueEffect: string;
 }
 
 const CFG: Record<DispatchStatus, StatusCfg> = {
@@ -68,6 +75,7 @@ const CFG: Record<DispatchStatus, StatusCfg> = {
     btnBg: '#059669',
     btnHover: '#047857',
     confirmLabel: 'Confirm sent',
+    queueEffect: 'Money sent — they leave the pending queue and land in Done.',
   },
   not_paid: {
     label: 'Not Paid',
@@ -81,6 +89,7 @@ const CFG: Record<DispatchStatus, StatusCfg> = {
     btnBg: '#3f3f46',
     btnHover: '#27272a',
     confirmLabel: 'Log dispatch',
+    queueEffect: 'Logged only — they stay in the pending queue for a retry.',
   },
   threshold: {
     label: 'Threshold',
@@ -94,6 +103,8 @@ const CFG: Record<DispatchStatus, StatusCfg> = {
     btnBg: '#d97706',
     btnHover: '#b45309',
     confirmLabel: 'Log dispatch',
+    queueEffect:
+      'Held under the payout minimum — they leave the pending queue. Clear the row from the Threshold tab to send them back.',
   },
   problem: {
     label: 'Problem',
@@ -107,6 +118,8 @@ const CFG: Record<DispatchStatus, StatusCfg> = {
     btnBg: '#e11d48',
     btnHover: '#be123c',
     confirmLabel: 'Log problem',
+    queueEffect:
+      'Flagged blocked — they leave the pending queue. Clear the row from the Problem tab to send them back.',
   },
 };
 
@@ -765,6 +778,11 @@ export default function MarkPaidDialog({
               </motion.button>
             );
           })}
+          {/* What the picked outcome does to the queue — the consequence of the
+              pill above, stated before the clerk commits to it. */}
+          <p className="w-full pt-0.5 text-[10.5px] leading-[15px] text-zinc-500 dark:text-zinc-400">
+            {cfg.queueEffect}
+          </p>
         </div>
 
         {/* ── Form fields ───────────────────────────────────────────── */}

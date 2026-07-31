@@ -46,7 +46,7 @@ import LockToggleConfirmDialog, { deriveFirstName } from '@/components/payroll/L
 import ProcessorCard from './ProcessorCard';
 import AnimatedNumber from './AnimatedNumber';
 import DispatchLoader from './DispatchLoader';
-import { PROCESSORS, DISPATCH_PROCESSORS, parseCyclePeriodFromFile, formatCycleLabelFromFile, type ArrearsInfo, type ProcessorId, type QueueRow } from './mock-queue';
+import { PROCESSORS, DISPATCH_PROCESSORS, parseCyclePeriodFromFile, formatCycleLabelFromFile, type ArrearsInfo, type ExcludedRow, type ProcessorId, type QueueRow } from './mock-queue';
 import type { PaymentDispatchRow } from '@/lib/supabase/payment-dispatches';
 import { useDispatchQueue } from './useDispatchQueue';
 import NotificationsPanel from '@/components/notifications/NotificationsPanel';
@@ -411,39 +411,54 @@ export default function PayrollDispatch() {
     }
     return employeeEmails.size + contractorSettlements;
   }, [paidRows]);
-  // People flagged Problem this cycle. They're OUT of the pending queue (see
-  // useDispatchQueue's lockedEmails) yet nobody has been paid, so they stay in
-  // the progress DENOMINATOR — otherwise flagging the last few stuck payments
-  // would flip the strip to "everyone paid" with the money still stuck.
-  const blockedCount = useMemo(() => {
-    // Someone flagged and then paid anyway (problem row left in place) is
+  /**
+   * People who left the pending queue WITHOUT being paid, counted per outcome.
+   *
+   * Both statuses are locked out of pending (see useDispatchQueue's
+   * `lockedEmails`) while nobody has been paid, so they stay in the progress
+   * DENOMINATOR — otherwise marking the last few stuck or held payments would
+   * flip the strip to "everyone paid" with the money still owed.
+   *
+   * `blocked` = Problem (stuck, needs fixing). `held` = Threshold (deliberately
+   * under the payout minimum this week). They're separate because the strip names
+   * them differently — "flagged problem" is wrong copy for a deliberate hold —
+   * and because they're the two reasons a week can't read 100%.
+   */
+  const { blockedCount, heldCount } = useMemo(() => {
+    // Someone flagged/held and then paid anyway (the marker row left in place) is
     // already counted as paid — never count them twice.
     const settled = new Set(
       paidRows
         .filter((p) => (p.payee_type ?? 'employee') !== 'contractor')
         .map((p) => p.recipient_email.trim().toLowerCase()),
     );
-    const emails = new Set<string>();
+    const blocked = new Set<string>();
+    const held = new Set<string>();
     for (const p of paid) {
-      if (p.status !== 'problem') continue;
-      // A contractor problem marker leaves its invoice payable (the API only
-      // claims an invoice on 'paid'), so that row is STILL in `pending` — adding
-      // it here would count the same money in the denominator twice.
+      if (p.status !== 'problem' && p.status !== 'threshold') continue;
+      // A contractor problem/threshold marker leaves its invoice payable (the API
+      // only claims an invoice on 'paid'), so that row is STILL in `pending` —
+      // adding it here would count the same money in the denominator twice.
       if ((p.payee_type ?? 'employee') === 'contractor') continue;
       const email = p.recipient_email.trim().toLowerCase();
-      if (!settled.has(email)) emails.add(email);
+      if (settled.has(email)) continue;
+      if (p.status === 'problem') blocked.add(email);
+      else held.add(email);
     }
-    return emails.size;
+    // A person carrying both markers is one head in the denominator: Problem wins,
+    // since it's the outcome that still needs work.
+    for (const email of blocked) held.delete(email);
+    return { blockedCount: blocked.size, heldCount: held.size };
   }, [paid, paidRows]);
   usePaymentsLivePublisher({
     enabled:
       !viewingPastWeek && wizardReady && hydrated && !loading && Boolean(period.sourceFile),
     sourceFile: period.sourceFile,
     label: period.sourceFile ? formatCycleLabelFromFile(period.sourceFile) : 'Current pay week',
-    // Problem-flagged people count in `total` (still owed, just blocked) but not
-    // in `remaining` (they're no longer in the queue Lenny can send from), so the
-    // CEO tile and this screen share one denominator.
-    total: pending.length + distinctPaidCount + blockedCount,
+    // Problem-flagged and Threshold-held people count in `total` (still owed, just
+    // out of the queue) but not in `remaining` (they're no longer in the queue
+    // Lenny can send from), so the CEO tile and this screen share one denominator.
+    total: pending.length + distinctPaidCount + blockedCount + heldCount,
     paid: distinctPaidCount,
     remaining: pending.length,
   });
@@ -473,18 +488,18 @@ export default function PayrollDispatch() {
     [pending],
   );
   // One universe for the progress strip + the KPI fractions: people still to
-  // pay (ALL currencies) + people already paid + people blocked on a problem —
-  // the same numbers broadcast to the CEO live card above, so every surface
-  // tells one story. "Started" is what the week began with; it shrinks/grows
-  // only if the queue itself does.
-  const startedCount = pending.length + distinctPaidCount + blockedCount;
+  // pay (ALL currencies) + people already paid + people blocked on a problem +
+  // people held under the payout threshold — the same numbers broadcast to the
+  // CEO live card above, so every surface tells one story. "Started" is what the
+  // week began with; it shrinks/grows only if the queue itself does.
+  const startedCount = pending.length + distinctPaidCount + blockedCount + heldCount;
   const paidPct = startedCount > 0 ? Math.round((distinctPaidCount / startedCount) * 100) : 0;
   // The week's full dollar bill = what already went out + what's still owed.
   const totalWeekUSD = totalPaidUSD + totalPendingUSD;
 
   // ── 100% paid → celebrate the Accounting team ───────────────────────────────
-  // When the strip genuinely reaches 100% (nothing pending, nobody blocked, ≥1
-  // paid), report it so the server can email every accounting-role holder a
+  // When the strip genuinely reaches 100% (nothing pending, nobody blocked or
+  // held, ≥1 paid), report it so the server can email every accounting-role holder a
   // confetti congratulations via the `payment_cycle_complete` n8n webhook. The
   // SERVER owns the once-per-cycle guarantee (an atomic app_settings claim), so
   // any number of browsers/reloads can report the same completion and the team
@@ -497,7 +512,9 @@ export default function PayrollDispatch() {
   useEffect(() => {
     const sourceFile = period.sourceFile;
     if (!sourceFile || loading || !hydrated || !wizardReady || error || contractorError) return;
-    if (pending.length > 0 || blockedCount > 0) {
+    // Threshold holds count here too: money is still owed on those people, so a
+    // week carrying one hasn't finished paying — the confetti would be a lie.
+    if (pending.length > 0 || blockedCount > 0 || heldCount > 0) {
       sawIncompleteRef.current.add(sourceFile);
       return;
     }
@@ -542,6 +559,7 @@ export default function PayrollDispatch() {
     contractorError,
     pending.length,
     blockedCount,
+    heldCount,
     distinctPaidCount,
     startedCount,
     totalPaidUSD,
@@ -609,6 +627,25 @@ export default function PayrollDispatch() {
         });
         return;
       }
+      if (!period.sourceFile) {
+        toast.error('No pay week selected', {
+          description: 'Pick a locked pay week first, then open a statement.',
+        });
+        return;
+      }
+      setViewPaystub({ sourceFile: period.sourceFile, email: row.email });
+    },
+    [period.sourceFile],
+  );
+  /**
+   * Excluded-tab "View" → the same pay statement the Pending worksheet opens.
+   * Takes an ExcludedRow rather than a QueueRow because a non-payable row (no
+   * bank / no rate) has no `payable` QueueRow to hand over — only the email, which
+   * is all the statement reader needs. Contractor rows are filtered out at the
+   * button, so this path is always an employee statement.
+   */
+  const handleViewExcludedPaystub = useCallback(
+    (row: ExcludedRow) => {
       if (!period.sourceFile) {
         toast.error('No pay week selected', {
           description: 'Pick a locked pay week first, then open a statement.',
@@ -886,7 +923,14 @@ export default function PayrollDispatch() {
       );
     }
     if (activeTab === 'excluded') {
-      return <ExcludedQueue rows={excluded} onMarkPaid={handleOpenExcludedMarkPaid} />;
+      return (
+        <ExcludedQueue
+          rows={excluded}
+          onMarkPaid={handleOpenExcludedMarkPaid}
+          onViewPaystub={handleViewExcludedPaystub}
+          txnRecords={paid}
+        />
+      );
     }
     if (activeTab === 'usd') {
       return (
@@ -1091,6 +1135,7 @@ export default function PayrollDispatch() {
             started={startedCount}
             remaining={pending.length}
             blocked={blockedCount}
+            held={heldCount}
             pct={paidPct}
           />
           <div className="grid grid-cols-3 gap-2 sm:gap-4">
@@ -1500,23 +1545,33 @@ function DispatchProgress({
   started,
   remaining,
   blocked,
+  held,
   pct,
 }: {
   /** Distinct people already paid this week. */
   paid: number;
-  /** People the week started with (pending + paid + blocked on a problem). */
+  /** People the week started with (pending + paid + blocked + held). */
   started: number;
   /** People still waiting on a payment (all currencies). */
   remaining: number;
   /** People flagged Problem — out of the queue, still unpaid. */
   blocked: number;
+  /** People marked Threshold — held under the payout minimum, out of the queue. */
+  held: number;
   /** Whole-number % paid, precomputed against the same universe. */
   pct: number;
 }) {
-  // A flagged person is out of the queue but NOT paid, so the week isn't done
-  // while any problem is still open.
-  const complete = started > 0 && remaining === 0 && blocked === 0;
+  // A flagged or held person is out of the queue but NOT paid, so the week isn't
+  // done while any problem or threshold hold is still open.
+  const complete = started > 0 && remaining === 0 && blocked === 0 && held === 0;
   const fmt = (n: number) => Math.round(n).toLocaleString('en-US');
+  // "12 flagged problem · 3 held" — only the reasons that actually apply.
+  const stalled = [
+    blocked > 0 ? `${fmt(blocked)} flagged problem` : null,
+    held > 0 ? `${fmt(held)} held` : null,
+  ]
+    .filter(Boolean)
+    .join(' · ');
   return (
     <motion.div
       variants={itemPop}
@@ -1559,10 +1614,8 @@ function DispatchProgress({
                 : complete
                   ? 'everyone paid'
                   : remaining === 0
-                    ? `${fmt(blocked)} flagged problem`
-                    : `${fmt(remaining)} left to pay${
-                        blocked > 0 ? ` · ${fmt(blocked)} flagged problem` : ''
-                      }`}
+                    ? stalled
+                    : `${fmt(remaining)} left to pay${stalled ? ` · ${stalled}` : ''}`}
             </span>
           </div>
           <div className="flex flex-shrink-0 items-baseline gap-1.5 font-mono text-[10px] text-zinc-500 dark:text-zinc-400">
