@@ -389,8 +389,12 @@ export default function AccountingDocuments({
         </div>
       </div>
 
-      {tab === 'queue' ? (
-      <div className="min-h-0 flex-1 overflow-y-auto bg-[#fafaf8] px-3 py-4 sm:px-6 sm:py-6 dark:bg-[#0d1117]">
+      <div
+        className={cn(
+          'min-h-0 flex-1 overflow-y-auto bg-[#fafaf8] px-3 py-4 sm:px-6 sm:py-6 dark:bg-[#0d1117]',
+          tab === 'queue' ? '' : 'hidden',
+        )}
+      >
         <div className="mx-auto w-full max-w-6xl space-y-5">
           {/* ── Signature manager ─────────────────────────────────────────── */}
           <section className="rounded-2xl border border-orange-100/80 bg-white p-4 sm:p-5 dark:border-orange-950/40 dark:bg-zinc-950">
@@ -674,13 +678,14 @@ export default function AccountingDocuments({
           </section>
         </div>
       </div>
-      ) : (
+
+      <div className={cn('min-h-0 flex-1', tab === 'reports' ? '' : 'hidden')}>
         <PayCycleReports
           canEdit={canEdit}
           onReadyCountChange={setReadyCount}
           refreshKey={reportsRefreshKey}
         />
-      )}
+      </div>
 
       {/* ── Delete confirmation ─────────────────────────────────────────────── */}
       <Dialog open={!!deleteTarget} onOpenChange={(o) => !o && setDeleteTarget(null)}>
