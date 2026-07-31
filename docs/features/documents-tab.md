@@ -24,6 +24,9 @@ reference id), so the document can be verified as real.
    - Queue of all requests (Pending / Signed / Rejected filters), live via Realtime + poll.
    - Preview the submitted PDF (inline signed URL), then **Approve & sign** or **Reject** (a
      reason is required and is sent to the employee).
+   - **Also has a Reports tab** — a frozen, publishable record of who got paid each
+     completed pay cycle. See [§ Reports (Pay Cycle Reports)](#reports-pay-cycle-reports)
+     below.
 3. **Signing** ([sign-pdf.ts](../../src/lib/documents/sign-pdf.ts))
    - Appends a **certification page** to the original PDF (never redraws the submitted pages):
      Simple masthead, employee + document details, **Requested on** / **Signed on** (Manila
@@ -186,6 +189,163 @@ cells are plain `n2()` numbers with no currency symbol, so switching it would wi
 inside 16 fixed-width ~30pt columns for no `₱` benefit. Only its one `Total Net Pay: PHP …`
 summary line would change. Left as-is pending a visual check.
 
+## Reports (Pay Cycle Reports)
+
+*Added 2026-07-31.* Payment Dispatch → Reports already gives Accounting a live, derived
+rollup of every Hubstaff cycle automatically — it recomputes from `disbursement_records` /
+`payment_dispatches` on every read, so it moves the moment a payment is undone or re-marked,
+and it has no concept of Accounting *declaring* a week closed. This feature adds that
+missing act: a manual **Publish** button Accounting presses once every payment in a cycle
+has gone out, which freezes the cycle exactly as it stood and stores it as a permanent,
+exportable record — independent of whatever happens in Payment Dispatch afterward.
+
+*Design spec:* [docs/superpowers/specs/2026-07-31-pay-cycle-reports-tab-design.md](../superpowers/specs/2026-07-31-pay-cycle-reports-tab-design.md).
+
+### Two tabs, one page
+
+[`AccountingDocuments.tsx`](../../src/components/accounting/AccountingDocuments.tsx) now
+renders an inner tab bar under the page header: **Signing queue** (the flow described above
+— default, today's behaviour) and **Reports**. The choice is remembered per-browser in
+`localStorage` under `accounting-documents-tab`. Both tabs actually mount together — the
+inactive one is only hidden with a CSS class, never unmounted — so the Reports tab's own
+data loads on page open no matter which tab is showing, which is how its tab pill can carry
+an amber, slow-pulsing count badge (cycles ready to publish) that stays visible even while
+looking at the signing queue. The header's **Refresh** button and subtitle both follow
+whichever tab is currently active.
+
+### Publishing a cycle
+
+[`PayCycleReports.tsx`](../../src/components/accounting/PayCycleReports.tsx) is the tab's
+list view. At the top, a publish card renders in whichever state applies: a ready card
+(amber ring, slow pulse, gradient **Payment cycle complete** button) for the most recent
+publishable cycle; a muted, disabled card spelling out the still-outstanding counts when the
+newest cycle isn't finished yet ("Finish the queue in Payment Dispatch first"); an inline
+error card if the eligibility check itself failed to load; or, once every completed cycle
+has been reported, a plain confirmation banner. Any *earlier* fully-paid-but-unpublished
+cycles get their own compact **"Also unpublished"** list, each with its own Publish button,
+so a week that slipped by can still be reported later. Below that sits the **published
+reports** grid (newest period first, one card shape throughout, no cards/table toggle);
+opening a card swaps in
+[`PayCycleReportDetail.tsx`](../../src/components/accounting/PayCycleReportDetail.tsx) in
+place — a `← Back` button, not a modal, the same navigation shape
+[`DispatchReports.tsx`](../../src/components/payroll-clerk/DispatchReports.tsx) uses for
+Payment Dispatch → Reports.
+
+Pressing **Payment cycle complete** opens a confirm dialog — *"Has this payment cycle been
+completed? … This freezes the cycle exactly as it stands now and posts it to Reports. Later
+undos or re-marks won't change the published report."* — showing the cycle's label, payee
+count, and total paid in both USD and PHP before the clerk commits.
+
+**The completeness rule** that decides when the button lights up (`cycleCompleteness` in
+[`pay-cycle-report-snapshot.ts`](../../src/lib/accounting/pay-cycle-report-snapshot.ts)) is
+Payment Dispatch's own 100%-paid rule, restated against report totals instead of the live
+queue:
+
+```
+totals.paidCount > 0
+  && totals.notPaidCount + totals.thresholdCount
+     + totals.problemCount + totals.outstandingCount === 0
+```
+
+— at least one person paid, and zero people left not-paid, held under the payout threshold,
+never dispatched, or blocked on a Problem flag. **`urgent_*` cycles are excluded outright**
+(`isUrgentSourceFile`) — MESA and one-off People-tab payouts are not pay cycles, and never
+appear on this tab at all, publishable or not, not even in the muted not-ready state.
+
+### The snapshot — what's actually stored
+
+A published report is **one `app_settings` row per cycle** — key
+`documents.pay_cycle_report.<source_file>` (`payCycleReportKey()` /
+`PAY_CYCLE_REPORT_PREFIX` in
+[`pay-cycle-reports.ts`](../../src/lib/accounting/pay-cycle-reports.ts)), value the frozen
+`PayCycleReportSnapshot` JSON (shape defined in
+[`pay-cycle-report-snapshot.ts`](../../src/lib/accounting/pay-cycle-report-snapshot.ts)):
+`version`, `published_at` / `published_by` / `published_by_email`, `source_file` /
+`cycle_id`, `label` / `period_start` / `period_end`, `totals`, `byProcessor`, and `payees[]`.
+
+**No dedicated table, and therefore no migration, and therefore no deploy step at all.**
+Every field the report needs is derivable from `disbursement_records` /
+`payment_dispatches` at read time — the only fact that doesn't already exist somewhere is
+the publication itself, plus the numbers as they stood at that moment. That's also the
+reason `app_settings` beats a live-derived marker: a real table would need a migration; a
+live marker would drift the instant a dispatch was undone.
+
+`payees[]` holds **one row per paid `payment_dispatches` row** — not one per person — so
+every transaction ID stays individually traceable to the bank statement. The headline
+`totals.payeeCount`, however, is computed with Payment Dispatch's own distinct-count rule —
+distinct employee emails plus one per contractor invoice (mirrors `distinctPaidCount` in
+[`PayrollDispatch.tsx`](../../src/components/payroll-clerk/PayrollDispatch.tsx)) — precisely
+so the report's headline can never disagree with the number the dispatch screen showed when
+the clerk pressed the button. `totals.dispatchCount` carries the raw row count alongside it
+(≥ `payeeCount` whenever someone was paid more than once in the cycle) — the same
+distinction is why "Payees" and "Payments" are shown as two separate stats throughout the
+detail view and the PDF, rather than being collapsed into one. (Each payee row also carries
+an `arrivalDate`, captured from the dispatch at publish time but not currently rendered
+anywhere — not the list, not the detail view, not any export.)
+
+### Frozen means frozen
+
+Once published, a report does not change on its own. If Accounting later undoes a payment
+or re-marks something in Payment Dispatch, the live dispatch screen — and Payment Dispatch →
+Reports — move; the published snapshot does not. **The only way to bring a stale report back
+in line with reality is to unpublish it and publish it again** — there is no in-place
+refresh. Both directions are audited (`pay_cycle_report.published` /
+`pay_cycle_report.unpublished`), and unpublish in the UI is a two-step arm-then-confirm,
+edit-gated action in the detail view's header.
+
+### API routes
+
+All four routes live under `app/api/accounting/pay-cycle-reports/` and ride the existing
+accounting **`documents`** feature grant — the same one that gates the signing queue — so no
+new permission was introduced: `view` reads, `edit` publishes or unpublishes.
+
+- [`GET /`](../../app/api/accounting/pay-cycle-reports/route.ts) (`view`) — returns
+  `{ published, unreadable, publishable, incomplete, error }`; the published summaries omit
+  `payees[]` so the list payload stays small.
+- [`POST /`](../../app/api/accounting/pay-cycle-reports/route.ts) `{ source_file }` (`edit`)
+  — builds the snapshot **server-side** (never trusts client numbers), **re-checks
+  completeness against fresh totals**, then does a plain `INSERT`, never an upsert, so a
+  double-click or two clerks racing can't republish — the loser of the race gets
+  `{ already: true }` back instead of an error.
+- [`GET /[sourceFile]`](../../app/api/accounting/pay-cycle-reports/[sourceFile]/route.ts)
+  (`view`) — the full snapshot, including every `payees[]` row.
+- [`DELETE /[sourceFile]`](../../app/api/accounting/pay-cycle-reports/[sourceFile]/route.ts)
+  (`edit`) — unpublish: deletes the row.
+
+The completeness re-check on `POST` is what stops a stale browser tab from publishing a
+cycle that has since had a payment undone; failure returns `409` with the remaining counts
+so the dialog can explain itself and reload instead of failing silently.
+
+### Exports
+
+[`pay-cycle-report-export.ts`](../../src/lib/accounting/pay-cycle-report-export.ts) renders
+CSV, XLSX and PDF all **client-side**, straight from the frozen snapshot already sitting in
+the browser tab — no server round trip, no stored files — the same technique
+[`transfers-export.ts`](../../src/lib/transfers/transfers-export.ts) uses, reskinned in
+Accounting's orange→rose. `Export CSV` / `Export XLSX` / `Export PDF` live in the detail
+view's header next to **Unpublish**. Every export is built from whatever the current
+name/email search has filtered the payee table down to, not the full `payees[]` — so a CSV
+pulled mid-search matches what's on screen — while the totals and per-processor figures
+printed alongside it always describe the *whole* published cycle, regardless of the filter.
+Exports are disabled with an explanatory title whenever there's nothing to export.
+
+One column detail worth knowing if you compare a downloaded file to the screen: the CSV,
+XLSX and PDF all carry a dedicated **Type** column (Employee/Contractor); the on-screen "Who
+got paid" table has no separate Type column at all — it shows the same fact as a small
+contractor chip inline next to the payee's name instead.
+
+### What this isn't
+
+- **Not Payment Dispatch → Reports.** That tab is unrelated and unchanged by this feature —
+  a live, derived rollup that already exists for every cycle automatically and moves the
+  moment a payment is undone or re-marked. This feature is the opposite on purpose: a
+  deliberate, manual, one-way freeze Accounting triggers only once a cycle is actually done.
+- **Not the `payment_cycle_complete` confetti webhook**
+  ([`cycle-complete-notify.ts`](../../src/lib/payroll/cycle-complete-notify.ts)), which fires
+  automatically the moment the Payment Dispatch progress strip itself reaches 100%.
+  **Publishing a report sends no email or notification of any kind** — it's the
+  record-keeping act, not a second announcement.
+
 ## The signature (Carla's)
 
 [signatures.ts](../../src/lib/documents/signatures.ts) + the signature card in the Documents tab:
@@ -284,3 +444,12 @@ One new dependency: `@pdf-lib/fontkit` (font embedding). Whoever signs COEs need
 signature row — their printed **name and title** appear on the certificate, so granting
 Accounting → Documents to Payroll makes it read `Alissa Re · Payroll Coordinator` with no
 hardcoding.
+
+## Deploy notes for Reports
+
+No DDL, no bucket, no new table, no new grant. A published report is a single `app_settings`
+row (see [§ Reports (Pay Cycle Reports)](#reports-pay-cycle-reports) above); the
+persistence, the eligibility check and all three export formats are pure application code.
+There is nothing to run in the Supabase SQL editor — whoever already has Accounting →
+Documents access can see it (and, with `edit`, publish or unpublish) the moment this code
+deploys.
