@@ -4,7 +4,6 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { motion } from 'motion/react';
 import {
   AlertTriangle,
-  ArrowLeft,
   CheckCircle2,
   Clock,
   Coins,
@@ -28,6 +27,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { formatPHP, formatUSD } from '@/components/payroll-clerk/mock-queue';
+import PayCycleReportDetail from '@/components/accounting/PayCycleReportDetail';
 import type {
   CycleCompleteness,
   PayCycleReportSnapshot,
@@ -304,18 +304,18 @@ export default function PayCycleReports({
   }, [load]);
 
   // ── Detail in-place swap — mirrors DispatchReports.tsx:315. ────────────────
-  // TEMPORARY: PayCycleReportDetailStub (below) is a Task-5 placeholder. Task 6
-  // replaces this whole branch with the real <PayCycleReportDetail> component.
   if (selected || selectedLoading || selectedError) {
     return (
-      <PayCycleReportDetailStub
+      <PayCycleReportDetail
         report={selected}
         loading={selectedLoading}
         error={selectedError}
+        canEdit={canEdit}
         onBack={() => {
           setSelected(null);
           setSelectedError(null);
         }}
+        onUnpublish={unpublish}
       />
     );
   }
@@ -794,65 +794,6 @@ function FullPageError({ message }: { message: string }) {
       </div>
       <h2 className="text-base font-semibold text-zinc-900 dark:text-white">Couldn&apos;t load reports</h2>
       <p className="max-w-md text-xs text-zinc-500 dark:text-zinc-400">{message}</p>
-    </div>
-  );
-}
-
-// ─── Detail view stub ─────────────────────────────────────────────────────────
-//
-// TEMPORARY. Task 6 creates the real detail component — a new file,
-// src/components/accounting/PayCycleReportDetail.tsx — with the full payee
-// table, per-processor breakdown, export and unpublish actions. Until then
-// this local stub keeps the in-place swap above (search "Detail in-place
-// swap") compileable and independently testable. Task 6 should delete this
-// function and the call site above, replacing them with an import of, and a
-// call to, the real `PayCycleReportDetail`.
-function PayCycleReportDetailStub({
-  report,
-  loading,
-  error,
-  onBack,
-}: {
-  report: PayCycleReportSnapshot | null;
-  loading: boolean;
-  error: string | null;
-  onBack: () => void;
-}) {
-  return (
-    <div className="flex h-full min-h-0 flex-col">
-      <div className="shrink-0 border-b border-orange-100/80 bg-white px-4 py-3 sm:px-6 sm:py-4 dark:border-orange-950/40 dark:bg-[#0d1117]">
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          onClick={onBack}
-          className="-ml-2 h-7 gap-1.5 px-2 text-[11px]"
-        >
-          <ArrowLeft className="h-3.5 w-3.5" />
-          Back
-        </Button>
-      </div>
-      <div className="flex min-h-0 flex-1 items-center justify-center bg-[#fafaf8] px-6 text-center dark:bg-[#0d1117]">
-        {loading ? (
-          <div className="flex flex-col items-center gap-3">
-            <Loader2 className="h-6 w-6 animate-spin text-orange-500" />
-            <p className="text-xs text-zinc-500 dark:text-zinc-500">Loading report…</p>
-          </div>
-        ) : error || !report ? (
-          <div className="flex flex-col items-center gap-3">
-            <AlertTriangle className="h-6 w-6 text-rose-500" />
-            <p className="max-w-md text-xs text-zinc-500 dark:text-zinc-400">
-              {error ?? 'Report not found'}
-            </p>
-          </div>
-        ) : (
-          <div>
-            <FileCheck2 className="mx-auto h-6 w-6 text-orange-500" />
-            <h2 className="mt-2 text-sm font-semibold text-zinc-900 dark:text-white">{report.label}</h2>
-            <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-500">Detail view coming in Task 6.</p>
-          </div>
-        )}
-      </div>
     </div>
   );
 }
