@@ -209,8 +209,12 @@ function ReportDetailBody({
     }
   };
 
-  const exportDisabled = filtered.length === 0;
-  const exportTitle = exportDisabled ? 'Nothing to export' : undefined;
+  // A report with no payees at all is still a legitimate artifact worth
+  // exporting — the CSV/XLSX/PDF builders all handle an empty row list — so the
+  // buttons only go dead when a SEARCH filtered everything out, which is a state
+  // the clerk can clear.
+  const exportDisabled = report.payees.length > 0 && filtered.length === 0;
+  const exportTitle = exportDisabled ? 'No rows match this search' : undefined;
   const exportButtonClass =
     'h-8 gap-1.5 border-orange-200 bg-white px-3 text-[11px] font-medium text-orange-700 hover:border-orange-300 hover:bg-orange-50 disabled:opacity-50 dark:border-orange-900/40 dark:bg-zinc-950 dark:text-orange-300 dark:hover:bg-orange-500/10';
 
@@ -533,6 +537,7 @@ function PayeesPanel({
             value={query}
             onChange={(e) => onQueryChange(e.target.value)}
             placeholder="Search by name or email…"
+            aria-label="Search payees by name or email"
             className="w-full rounded-lg border border-orange-200/80 bg-white/90 py-1.5 pl-7 pr-8 text-[12px] placeholder:text-zinc-400 focus:outline-none focus:ring-1 focus:ring-orange-400/60 dark:border-orange-900/40 dark:bg-zinc-900/60 dark:placeholder:text-zinc-600 dark:focus:ring-orange-500/40"
           />
           {query && (
@@ -550,7 +555,12 @@ function PayeesPanel({
 
       {filtered.length === 0 ? (
         <p className="px-4 py-8 text-center text-[11px] text-zinc-500 dark:text-zinc-500">
-          No results for &ldquo;{query}&rdquo;
+          {/* An empty REPORT and an empty SEARCH RESULT are different dead ends:
+              quoting the query when there is no query at all read as
+              `No results for ""`. */}
+          {totalCount === 0
+            ? 'No payments recorded in this report.'
+            : `No results for “${query}”`}
         </p>
       ) : (
         <div className="mt-3 overflow-x-auto">
@@ -619,6 +629,7 @@ function PayeesPanel({
               type="button"
               onClick={() => onPageChange(Math.max(0, safePage - 1))}
               disabled={safePage === 0}
+              aria-label="Previous page of payees"
               className="flex h-6 w-6 items-center justify-center rounded-md border border-orange-200/70 bg-white text-zinc-600 transition-colors hover:bg-orange-50 disabled:pointer-events-none disabled:opacity-40 dark:border-orange-900/40 dark:bg-zinc-950 dark:text-zinc-400 dark:hover:bg-orange-500/10"
             >
               <ChevronLeft className="h-3.5 w-3.5" />
@@ -630,6 +641,7 @@ function PayeesPanel({
               type="button"
               onClick={() => onPageChange(Math.min(pageCount - 1, safePage + 1))}
               disabled={safePage >= pageCount - 1}
+              aria-label="Next page of payees"
               className="flex h-6 w-6 items-center justify-center rounded-md border border-orange-200/70 bg-white text-zinc-600 transition-colors hover:bg-orange-50 disabled:pointer-events-none disabled:opacity-40 dark:border-orange-900/40 dark:bg-zinc-950 dark:text-zinc-400 dark:hover:bg-orange-500/10"
             >
               <ChevronRight className="h-3.5 w-3.5" />

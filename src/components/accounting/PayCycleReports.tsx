@@ -74,6 +74,12 @@ interface IncompleteCycle {
   blockedCount: number;
   totalCount: number;
   paidPct: number;
+  /** Logged payments left not_paid / threshold / problem — includes unpaid
+   *  contractor invoices, which disbursement_records cannot see. */
+  unpaidDispatchCount: number;
+  /** Records read fully paid but Payment Dispatch holds no paid row: there is no
+   *  per-payee payment data to freeze, so this is NOT a "still pending" week. */
+  noDispatchData: boolean;
 }
 
 /** Mirrors PAY_CYCLE_REPORT_PREFIX in pay-cycle-reports.ts (also server-only
@@ -232,26 +238,51 @@ export default function PayCycleReports({
     void load();
   }, [refreshKey, load]);
 
+  // Abort-controlled like load(), and for the same reason plus one more: Back is
+  // rendered by the detail view, which the `selected || selectedLoading ||
+  // selectedError` return below keeps mounted for as long as the fetch is in
+  // flight. Without this, pressing Back mid-fetch left you on "Loading report…"
+  // and then forced you INTO the report you had just backed out of.
+  const detailAbortRef = useRef<AbortController | null>(null);
+
   const openReport = useCallback(async (sourceFile: string) => {
+    detailAbortRef.current?.abort();
+    const controller = new AbortController();
+    detailAbortRef.current = controller;
+    const { signal } = controller;
     setSelectedLoading(true);
     setSelectedError(null);
     setSelected(null);
     try {
       const res = await fetch(
         `/api/accounting/pay-cycle-reports/${encodeURIComponent(sourceFile)}`,
-        { cache: 'no-store' },
+        { cache: 'no-store', signal },
       );
       const json = (await res.json()) as { report?: PayCycleReportSnapshot; error?: string | null };
+      if (signal.aborted) return;
       if (!res.ok || json.error || !json.report) {
         setSelectedError(json.error || 'Could not load report');
         return;
       }
       setSelected(json.report);
     } catch (e) {
+      if (signal.aborted) return;
+      if (e instanceof DOMException && e.name === 'AbortError') return;
       setSelectedError(e instanceof Error ? e.message : 'Could not load report');
     } finally {
-      setSelectedLoading(false);
+      if (!signal.aborted) setSelectedLoading(false);
     }
+  }, []);
+
+  /** Leave the detail view. Clears all THREE detail slots — leaving
+   *  `selectedLoading` set was what pinned an interrupted open on its spinner —
+   *  and aborts any in-flight fetch so a late payload can't drag you back in. */
+  const closeDetail = useCallback(() => {
+    detailAbortRef.current?.abort();
+    detailAbortRef.current = null;
+    setSelected(null);
+    setSelectedLoading(false);
+    setSelectedError(null);
   }, []);
 
   const publish = useCallback(async () => {
@@ -316,14 +347,17 @@ export default function PayCycleReports({
         toast.error(json.error || 'Could not unpublish this report');
         return;
       }
-      setSelected(null);
+      // closeDetail, not setSelected(null): the report we were looking at is gone,
+      // so every detail slot must clear — a stale spinner or error would keep the
+      // detail shell mounted over a report that no longer exists.
+      closeDetail();
       await load();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Could not unpublish this report');
     } finally {
       setUnpublishing(null);
     }
-  }, [load]);
+  }, [load, closeDetail]);
 
   // ── Detail in-place swap — mirrors DispatchReports.tsx:315. ────────────────
   if (selected || selectedLoading || selectedError) {
@@ -333,10 +367,7 @@ export default function PayCycleReports({
         loading={selectedLoading}
         error={selectedError}
         canEdit={canEdit}
-        onBack={() => {
-          setSelected(null);
-          setSelectedError(null);
-        }}
+        onBack={closeDetail}
         onUnpublish={unpublish}
       />
     );
@@ -534,17 +565,27 @@ function PublishCard({
                 {incomplete.label}
               </h2>
               <p className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-500">
-                {incomplete.paidPct}% paid
-                {' · '}
-                {[
-                  incomplete.pendingCount > 0 ? `${incomplete.pendingCount} still pending` : null,
-                  incomplete.blockedCount > 0 ? `${incomplete.blockedCount} blocked` : null,
-                ]
-                  .filter(Boolean)
-                  .join(' · ')}
+                {incomplete.noDispatchData
+                  ? 'No payments logged in Payment Dispatch'
+                  : [
+                      `${incomplete.paidPct}% paid`,
+                      incomplete.pendingCount > 0
+                        ? `${incomplete.pendingCount} still pending`
+                        : null,
+                      incomplete.blockedCount > 0 ? `${incomplete.blockedCount} blocked` : null,
+                      incomplete.unpaidDispatchCount > 0
+                        ? `${incomplete.unpaidDispatchCount} logged payment${
+                            incomplete.unpaidDispatchCount === 1 ? '' : 's'
+                          } not paid`
+                        : null,
+                    ]
+                      .filter(Boolean)
+                      .join(' · ')}
               </p>
               <p className="mt-1 text-[11px] italic text-zinc-400 dark:text-zinc-600">
-                Finish the queue in Payment Dispatch first.
+                {incomplete.noDispatchData
+                  ? 'This cycle’s records were marked paid without going through Mark Paid, so there is no per-payee payment data to freeze.'
+                  : 'Finish the queue in Payment Dispatch first.'}
               </p>
             </div>
             <Button
@@ -727,10 +768,14 @@ function ReportCard({ report, onOpen }: { report: PayCycleReportSummary; onOpen:
         </div>
 
         <div className="grid grid-cols-3 gap-2">
+          {/* `sky`, matching the same metric's card in PayCycleReportDetail:
+              Payees is a headcount, so it stays out of the orange→rose money
+              palette without reaching for a violet/fuchsia accent this surface
+              has no other use for. */}
           <MiniStat
             label="Payees"
             value={totals.payeeCount.toLocaleString('en-US')}
-            tone="violet"
+            tone="sky"
             Icon={Users}
           />
           <MiniStat
@@ -764,12 +809,14 @@ function MiniStat({
 }: {
   label: string;
   value: string;
-  tone: 'emerald' | 'violet' | 'amber';
+  tone: 'emerald' | 'sky' | 'amber';
   Icon: React.ComponentType<{ className?: string }>;
 }) {
+  // `violet` is deliberately absent from both the union and the map, so the tone
+  // this surface removed cannot creep back in via a future call site.
   const palette = {
     emerald: 'text-emerald-700 bg-emerald-50 dark:text-emerald-300 dark:bg-emerald-500/10',
-    violet: 'text-violet-700 bg-violet-50 dark:text-violet-300 dark:bg-violet-500/10',
+    sky: 'text-sky-700 bg-sky-50 dark:text-sky-300 dark:bg-sky-500/10',
     amber: 'text-amber-700 bg-amber-50 dark:text-amber-300 dark:bg-amber-500/10',
   }[tone];
   return (
