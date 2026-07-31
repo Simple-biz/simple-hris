@@ -298,12 +298,16 @@ function ReportDetailBody({
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto bg-[#fafaf8] px-3 py-4 sm:px-6 sm:py-6 dark:bg-[#0d1117]">
+        {/* Two counts (Payees, Payments) and two money figures (Total paid, In
+            pesos) below. Payees is toned `sky` — it marks the headcount metric
+            as NOT a money figure while staying out of the orange→rose money
+            palette used by the other three. */}
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 sm:gap-3">
           <DetailStat
             label="Payees"
             value={totals.payeeCount.toLocaleString('en-US')}
             sub={`${totals.employeeCount.toLocaleString('en-US')} employees · ${totals.contractorCount.toLocaleString('en-US')} contractor invoices`}
-            tone="violet"
+            tone="sky"
             Icon={Users}
           />
           <DetailStat
@@ -356,7 +360,7 @@ function DetailStat({
   label: string;
   value: string;
   sub: string;
-  tone: 'emerald' | 'violet' | 'amber' | 'orange';
+  tone: 'emerald' | 'sky' | 'amber' | 'orange';
   Icon: React.ComponentType<{ className?: string }>;
 }) {
   const palette = {
@@ -365,10 +369,10 @@ function DetailStat({
       icon: 'from-emerald-500 to-teal-500',
       text: 'text-emerald-700 dark:text-emerald-300',
     },
-    violet: {
-      ring: 'from-violet-200/40 to-fuchsia-200/40 dark:from-violet-900/30 dark:to-fuchsia-900/30',
-      icon: 'from-violet-500 to-fuchsia-500',
-      text: 'text-violet-700 dark:text-violet-300',
+    sky: {
+      ring: 'from-sky-200/40 to-blue-200/40 dark:from-sky-900/30 dark:to-blue-900/30',
+      icon: 'from-sky-500 to-blue-500',
+      text: 'text-sky-700 dark:text-sky-300',
     },
     amber: {
       ring: 'from-amber-200/40 to-orange-200/40 dark:from-amber-900/30 dark:to-orange-900/30',
