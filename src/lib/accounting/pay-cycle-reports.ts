@@ -260,9 +260,14 @@ export async function publishPayCycleReport(input: {
   if (insertErr) {
     if (insertErr.code === '23505') {
       // Someone else won the race — the report exists, which is the outcome
-      // the clerk wanted. Hand back the stored one.
-      const { report } = await getPayCycleReport(input.sourceFile);
-      return { report, already: true, notComplete: null, error: null };
+      // the clerk wanted, so `already: true` stands regardless of what happens
+      // next. But the read-back can still fail (transient blip, or the winning
+      // row itself is unreadable — the exact case listPayCycleReports's
+      // `unreadable` bucket exists for), so its `error` must be propagated, not
+      // swallowed — that's the only way a caller can tell "already published,
+      // here it is" apart from "already published, but I couldn't read it back".
+      const { report, error: readErr } = await getPayCycleReport(input.sourceFile);
+      return { report, already: true, notComplete: null, error: readErr };
     }
     return fail(insertErr.message);
   }
