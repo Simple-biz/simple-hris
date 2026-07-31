@@ -73,12 +73,40 @@ test('signing draws into the certificate and appends nothing on its own', async 
   });
   const draftPages = (await PDFDocument.load(draft)).getPageCount();
   const signedPages = (await PDFDocument.load(signed)).getPageCount();
-  assert.equal(
-    signedPages,
-    draftPages,
-    'the signature fills the existing block; the certification page is appended later by requests.ts',
-  );
+  // A certificate that runs to two pages looks like a mistake to whoever
+  // receives it, and the signed block is the tallest thing on the page — so
+  // pin BOTH states at exactly one page. The signature fills the existing
+  // block; the certification page is appended later by requests.ts.
+  assert.equal(draftPages, 1, 'the draft must be a single page');
+  assert.equal(signedPages, 1, 'the signed copy must be a single page');
   assert.notEqual(draft.byteLength, signed.byteLength, 'the two states differ');
+});
+
+test('a realistic worst case still fits one page', async () => {
+  // Long compound name, long team, two standard bonuses with qualifiers and
+  // three performance bonuses is about as full as a real certificate gets.
+  const bytes = await renderCoeDocument({
+    facts: {
+      ...FACTS,
+      workerName: 'Maria Cristina Villanueva-Santos',
+      team: 'Healthcare Solutions — Dental Billing',
+      performanceBonuses: [
+        { label: 'Sales Closer Bonus', amount: '₱2,500' },
+        { label: 'Quarterly KPI Bonus', amount: null },
+        { label: 'Attestation Bonus', amount: '₱50,000' },
+      ],
+    },
+    requestId: REQUEST_ID,
+    generatedAtIso: GENERATED_AT,
+    signature: {
+      dataUrl: PNG_1PX,
+      name: 'Alissa Re',
+      title: 'Payroll Coordinator',
+      email: 'payroll@simple.biz',
+      signedAtIso: GENERATED_AT,
+    },
+  });
+  assert.equal((await PDFDocument.load(bytes)).getPageCount(), 1);
 });
 
 test('a corrupt signature is rejected rather than silently producing an unsigned copy', async () => {

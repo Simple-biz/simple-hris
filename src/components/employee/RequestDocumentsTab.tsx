@@ -20,6 +20,14 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { SmoothSelect } from '@/components/ui/smooth-select';
 import { cn } from '@/lib/utils';
 import { generatePayStubsPdf, type PayStubWeek } from '@/lib/payroll/paystub-export';
@@ -113,6 +121,8 @@ export default function RequestDocumentsTab({
   const [requestsLoading, setRequestsLoading] = React.useState(true);
   const [cancellingId, setCancellingId] = React.useState<string | null>(null);
   const [downloadingKey, setDownloadingKey] = React.useState<string | null>(null);
+  /** Row awaiting confirmation before its files are destroyed. */
+  const [removeTarget, setRemoveTarget] = React.useState<DocumentRequestRow | null>(null);
 
   // Certificate of Engagement: the HRIS writes it, so instead of a file input we
   // show what it will say. `coeBlocked` carries the server's reason when the
@@ -293,16 +303,20 @@ export default function RequestDocumentsTab({
     }
   };
 
-  const cancelRequest = async (row: DocumentRequestRow) => {
+  /** Cancelling a pending request and deleting a decided one hit the same
+   *  endpoint; only the wording differs. Deleting a signed document removes the
+   *  only copy, so it always goes through the confirm dialog. */
+  const removeRequest = async (row: DocumentRequestRow) => {
     setCancellingId(row.id);
     try {
       const res = await fetch(`/api/employee/documents/${row.id}`, { method: 'DELETE' });
       const json = (await res.json()) as { error?: string };
-      if (!res.ok) throw new Error(json.error || 'Cancel failed');
-      toast.success('Request cancelled');
+      if (!res.ok) throw new Error(json.error || 'Could not remove it');
+      toast.success(row.status === 'pending' ? 'Request cancelled' : 'Document deleted');
+      setRemoveTarget(null);
       await refreshRequests();
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Could not cancel the request');
+      toast.error(e instanceof Error ? e.message : 'Could not remove the request');
     } finally {
       setCancellingId(null);
     }
@@ -640,21 +654,24 @@ export default function RequestDocumentsTab({
                           ? (r.status === 'signed' ? 'Unsigned draft' : 'Preview draft')
                           : 'Submitted file'}
                       </Button>
-                      {r.status === 'pending' && (
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          onClick={() => void cancelRequest(r)}
-                          disabled={cancellingId === r.id}
-                          className="h-8 gap-1.5 border-rose-200 text-xs text-rose-600 hover:bg-rose-50 dark:border-rose-900/50 dark:text-rose-400"
-                        >
-                          {cancellingId === r.id
-                            ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                            : <Trash2 className="h-3.5 w-3.5" />}
-                          Cancel
-                        </Button>
-                      )}
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setRemoveTarget(r)}
+                        disabled={cancellingId === r.id}
+                        aria-label={
+                          r.status === 'pending'
+                            ? `Cancel ${documentTypeLabel(r.document_type)} request`
+                            : `Delete ${documentTypeLabel(r.document_type)}`
+                        }
+                        className="h-8 gap-1.5 border-rose-200 text-xs text-rose-600 hover:bg-rose-50 hover:text-rose-700 dark:border-rose-900/50 dark:text-rose-400 dark:hover:bg-rose-500/10"
+                      >
+                        {cancellingId === r.id
+                          ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          : <Trash2 className="h-3.5 w-3.5" />}
+                        {r.status === 'pending' ? 'Cancel' : 'Delete'}
+                      </Button>
                     </div>
                   </li>
                 );
@@ -663,6 +680,51 @@ export default function RequestDocumentsTab({
           )}
         </Section>
       </div>
+
+      <Dialog open={!!removeTarget} onOpenChange={(open) => !open && setRemoveTarget(null)}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>
+              {removeTarget?.status === 'pending' ? 'Cancel this request?' : 'Delete this document?'}
+            </DialogTitle>
+            <DialogDescription>
+              {removeTarget?.status === 'pending' ? (
+                <>
+                  Accounting will no longer see your{' '}
+                  {documentTypeLabel(removeTarget?.document_type)} request. You can request it again
+                  at any time.
+                </>
+              ) : (
+                <>
+                  This permanently removes your{' '}
+                  {documentTypeLabel(removeTarget?.document_type)}
+                  {removeTarget?.status === 'signed' ? ', including the signed copy' : ''}. It cannot
+                  be undone, though you can submit a new request.
+                </>
+              )}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setRemoveTarget(null)}
+              disabled={!!cancellingId}
+            >
+              Keep it
+            </Button>
+            <Button
+              type="button"
+              onClick={() => removeTarget && void removeRequest(removeTarget)}
+              disabled={!!cancellingId}
+              className="gap-1.5 bg-rose-600 text-white hover:bg-rose-700"
+            >
+              {cancellingId ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+              {removeTarget?.status === 'pending' ? 'Cancel request' : 'Delete document'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }

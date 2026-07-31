@@ -115,6 +115,25 @@ the certificate's **own signature block** (name, email, title, `MM.DD.YYYY` Mani
 shared certification page is appended behind it for the Reference ID and both dates. The
 Reference ID also prints in the page-1 footer so page 1 stands alone if separated.
 
+### Layout
+
+Typeset as formal correspondence, not decorated as a certificate: the app's navy with one orange
+accent, hairline rules for structure, no seals or borders-as-ornament. Three things pdf-lib does not
+give you are built in [coe-document.ts](../../src/lib/documents/coe-document.ts):
+
+- **Tracked caps** (`tracked()`) — pdf-lib has no letter-spacing, so the title is drawn glyph by
+  glyph with the width computed by hand. Used for the title and the one section label only.
+- **Inline emphasis** (`richParagraph()`) — the figures a bank scans for (name, start date, team,
+  both rates) are bold inside otherwise plain prose, which needs per-word measurement rather than
+  per-line. Spans carry their own font and colour and wrap correctly across lines.
+- **Dot leaders** (`leaderRow()`) — the bonus schedule runs label-left / amount-right with a dotted
+  fill, inset from both sides. Far more readable than a comma-run of "Label: amount" pairs.
+
+**One page is a hard constraint** and a test pins it for the draft, the signed copy and a realistic
+worst case (long compound name, long team, three performance bonuses). The signed block is the
+tallest element, so it is what pushes a second page; `BOTTOM_LIMIT` and the inter-block gaps are
+tuned against it. If you add a block, re-run those tests rather than eyeballing it.
+
 ### The peso sign
 
 pdf-lib's Helvetica is WinAnsi and has no `₱`, which is why the older exports print `PHP 225.00`.
@@ -127,6 +146,15 @@ Noto was chosen over DejaVu on **metrics**: DejaVu runs 9–15% wider than Helve
 overflow the pay-stub table's fixed columns; Noto is within −3%..+7%. Embedding is best-effort —
 if it fails, callers get a Helvetica set whose `sanitize()` falls back to `"PHP "`, so a broken
 font can never stop an employee downloading a pay stub.
+
+**The subset must include the f-ligatures** (`ﬀ ﬁ ﬂ ﬃ ﬄ`), even though no caller ever passes one.
+pdf-lib draws custom fonts through fontkit's `layout()`, which applies the `liga` GSUB feature: the
+letters `f` + `i` are *substituted* with the single ﬁ glyph. The first subset was built from code
+points only, so U+FB01 was pruned while `liga` stayed in GSUB — the substitution resolved to a blank
+outline that still carried the ligature's full 602-unit advance, and the shipped certificate read
+**"Certifi cate of Engagement"** and "identifi cation". No sanitiser test can catch this because the
+input text is correct; `fonts.test.ts` now lays the real strings out and asserts every glyph has an
+outline.
 
 The certification page ([sign-pdf.ts](../../src/lib/documents/sign-pdf.ts)) now uses this set too.
 **[paystub-export.ts](../../src/lib/payroll/paystub-export.ts) deliberately does not**: its table
@@ -147,6 +175,23 @@ summary line would change. Left as-is pending a visual check.
   blocked server-side (`412`) and the UI steers into the capture dialog instead.
 - Approvals always stamp the **approver's own** row — nobody can sign with someone else's
   signature.
+
+## Deleting a request
+
+Both sides can remove a request outright; one server function
+(`deleteDocumentRequest`) backs both, dropping the row **and** the stored PDFs.
+
+- **Employee** (Profile → Request Documents) — their own rows only. The button reads **Cancel**
+  while pending and **Delete** once decided, since they are the same destructive operation with
+  different wording. `DELETE /api/employee/documents/[id]`.
+- **Accounting** (Documents queue) — any row, needs `edit`. Deleting also clears it from the
+  employee's profile, so the dialog says that plainly and warns separately when the document was
+  already signed. `DELETE /api/accounting/documents/[id]`.
+
+Both go through a confirm dialog; neither is recoverable. That is deliberate — a signed certificate
+carries live pay figures, so "delete" should mean gone. The `audit_log` entry
+(`documents.request_deleted`, recording the status, the signer and `signed_at` the row carried) is
+what survives. A pending row still logs `documents.request_cancelled`, as before.
 
 ## Storage
 

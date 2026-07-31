@@ -43,6 +43,76 @@ test('embedPdfFonts returns a working Unicode set and both weights differ', asyn
   assert.notEqual(w, wBold, 'regular and bold are distinct faces');
 });
 
+// REGRESSION: "Certificate of Engagement" shipped rendering as "Certifi cate".
+//
+// pdf-lib draws custom fonts through fontkit's layout(), which applies the
+// `liga` GSUB feature — the letters "f" + "i" are SUBSTITUTED with the single ﬁ
+// glyph. The first subset was built from code points only, so U+FB01 was pruned
+// while `liga` stayed in GSUB: the substitution resolved to a blank outline that
+// still carried the ligature's full advance width, leaving a hole mid-word.
+//
+// Nothing about the input text is wrong, so no sanitiser test can catch this.
+// The only reliable check is to lay the real strings out and assert every
+// resulting glyph has an actual outline.
+test('no string the PDFs draw lays out to a blank glyph', async () => {
+  const fontkit = (await import('@pdf-lib/fontkit')).default as unknown as {
+    create(b: Uint8Array): {
+      layout(s: string): {
+        glyphs: { id: number; codePoints: number[]; path: { commands: unknown[] } }[];
+        positions: { xAdvance: number }[];
+      };
+    };
+  };
+  const { NOTO_SANS_REGULAR_BASE64 } = await import('./fonts/noto-sans-regular');
+  const { NOTO_SANS_BOLD_BASE64 } = await import('./fonts/noto-sans-bold');
+  const bytes = (b64: string) => new Uint8Array(Buffer.from(b64, 'base64'));
+
+  const SAMPLES = [
+    'Certificate of Engagement',
+    'In accordance with company privacy and security policies, personal identification numbers',
+    'This is to certify that Juan Dela Cruz has been contracted with Simple since March 4, 2024',
+    // Ligature-forming pairs the `liga` feature acts on: ff fi fl ffi ffl.
+    'office official affix fluffy difficult classification staffing fifty effective baffle',
+    'Perfect Attendance Bonus: ₱5,000 · Technology Bonus: ₱1,850 · $COP 320.000',
+    'José María Peña-Cruz · Employee ID SP-1042 · payroll@simple.biz',
+    'UNSIGNED DRAFT',
+    'Payroll Coordinator',
+  ];
+
+  for (const [label, b64] of [
+    ['regular', NOTO_SANS_REGULAR_BASE64],
+    ['bold', NOTO_SANS_BOLD_BASE64],
+  ] as const) {
+    const font = fontkit.create(bytes(b64));
+    for (const sample of SAMPLES) {
+      const run = font.layout(sample);
+      run.glyphs.forEach((g, i) => {
+        const chars = (g.codePoints ?? []).map((c) => String.fromCodePoint(c)).join('');
+        if (chars.trim() === '') return; // whitespace legitimately has no outline
+        assert.ok(
+          g.path && g.path.commands.length > 0,
+          `${label}: glyph ${g.id} for "${chars}" (advance ${run.positions[i].xAdvance}) has no outline — ` +
+            `it would render as a blank gap inside "${sample.slice(0, 40)}"`,
+        );
+      });
+    }
+  }
+});
+
+test('the ﬁ ligature substitution resolves to a real glyph', async () => {
+  const fontkit = (await import('@pdf-lib/fontkit')).default as unknown as {
+    create(b: Uint8Array): {
+      layout(s: string): { glyphs: { id: number; path: { commands: unknown[] } }[] };
+    };
+  };
+  const { NOTO_SANS_BOLD_BASE64 } = await import('./fonts/noto-sans-bold');
+  const font = fontkit.create(new Uint8Array(Buffer.from(NOTO_SANS_BOLD_BASE64, 'base64')));
+  const run = font.layout('Certificate');
+  // 11 letters collapse to 10 glyphs because f+i become one.
+  assert.equal(run.glyphs.length, 10, 'the liga feature is expected to fire');
+  assert.ok(run.glyphs[5].path.commands.length > 0, 'the ﬁ glyph must carry an outline');
+});
+
 test('drawing every covered code point does not throw', async () => {
   const doc = await PDFDocument.create();
   const fonts = await embedPdfFonts(doc);

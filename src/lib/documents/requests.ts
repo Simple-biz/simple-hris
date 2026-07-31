@@ -246,23 +246,34 @@ export async function createCoeDocumentRequest(params: {
   return { row, blocked: null, error: null };
 }
 
-/** Employee cancel — own request, while still pending. Removes the objects too. */
-export async function cancelDocumentRequest(
+/**
+ * Remove a request outright — row plus both storage objects.
+ *
+ * Two callers, one path:
+ *   • the employee, on their OWN request (`requireOwner`), from Profile →
+ *     Request Documents. Cancelling a pending request and deleting a decided one
+ *     are the same destructive operation; only the audit verb differs.
+ *   • Accounting, on any request, from the Documents queue (route-level
+ *     `requireFeatureEdit` is the caller's job).
+ *
+ * Deliberately unrecoverable: a signed certificate carries live pay figures, so
+ * when someone asks for it to be gone it should actually be gone. The audit_log
+ * entry is the record that it existed.
+ */
+export async function deleteDocumentRequest(
   id: string,
-  requesterEmail: string,
+  actorEmail: string,
+  opts: { requireOwner: boolean; defaultRole?: string },
 ): Promise<{ error: string | null }> {
   const supabase = createSupabaseServiceRoleClient();
   if (!supabase) return { error: 'Supabase not configured' };
 
-  const email = normEmail(requesterEmail) ?? requesterEmail.trim().toLowerCase();
+  const email = normEmail(actorEmail) ?? actorEmail.trim().toLowerCase();
   const { row, error: fetchErr } = await getDocumentRequestById(id);
   if (fetchErr) return { error: fetchErr };
   if (!row) return { error: 'Request not found' };
-  if (row.employee_email.trim().toLowerCase() !== email) {
-    return { error: 'Not authorized — you can only cancel your own requests' };
-  }
-  if (row.status !== 'pending') {
-    return { error: 'Only pending requests can be cancelled' };
+  if (opts.requireOwner && row.employee_email.trim().toLowerCase() !== email) {
+    return { error: 'Not authorized — you can only remove your own requests' };
   }
 
   const { error } = await supabase.from(TABLE).delete().eq('id', id);
@@ -274,14 +285,22 @@ export async function cancelDocumentRequest(
   }
 
   void (async () => {
-    const role = await resolveUserRole(email, 'Employee');
+    const role = await resolveUserRole(email, opts.defaultRole ?? 'Employee');
     await insertAuditLog({
       user_name: email,
       user_role: role,
-      action: 'documents.request_cancelled',
+      action: row.status === 'pending' ? 'documents.request_cancelled' : 'documents.request_deleted',
       resource: TABLE,
       resource_id: id,
-      details: { document_type: row.document_type },
+      details: {
+        document_type: row.document_type,
+        status: row.status,
+        employee: row.employee_email,
+        // Worth recording precisely because the file is gone.
+        was_signed_by: row.signed_by_name ?? null,
+        signed_at: row.signed_at ?? null,
+        deleted_by_owner: opts.requireOwner,
+      },
     });
   })();
 

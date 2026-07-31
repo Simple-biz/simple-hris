@@ -12,6 +12,7 @@ import {
   PenLine,
   RefreshCw,
   ShieldCheck,
+  Trash2,
   XCircle,
 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -82,6 +83,8 @@ export default function AccountingDocuments({
   const [signTarget, setSignTarget] = useState<DocumentRequestRow | null>(null);
   const [rejectTarget, setRejectTarget] = useState<DocumentRequestRow | null>(null);
   const [rejectNote, setRejectNote] = useState('');
+  /** Row awaiting confirmation before it and its PDFs are destroyed. */
+  const [deleteTarget, setDeleteTarget] = useState<DocumentRequestRow | null>(null);
   const [actingId, setActingId] = useState<string | null>(null);
   const [previewingId, setPreviewingId] = useState<string | null>(null);
 
@@ -213,6 +216,26 @@ export default function AccountingDocuments({
       toast.error(e instanceof Error ? e.message : 'Could not open the file');
     } finally {
       setPreviewingId(null);
+    }
+  };
+
+  /** Remove a request and both PDFs. This also clears it from the employee's own
+   *  list, so the dialog says so plainly before it happens. */
+  const removeRow = async (row: DocumentRequestRow) => {
+    setActingId(row.id);
+    try {
+      const res = await fetch(`/api/accounting/documents/${row.id}`, { method: 'DELETE' });
+      const json = (await res.json()) as { error?: string };
+      if (!res.ok) throw new Error(json.error || 'Delete failed');
+      setDeleteTarget(null);
+      toast.success('Request deleted', {
+        description: `${row.employee_name || row.employee_email}'s ${documentTypeLabel(row.document_type)} and its files are gone.`,
+      });
+      await fetchRows({ silent: true });
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not delete the request');
+    } finally {
+      setActingId(null);
     }
   };
 
@@ -547,6 +570,24 @@ export default function AccountingDocuments({
                                   </Button>
                                 </>
                               )}
+                              {canEdit && (
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => setDeleteTarget(r)}
+                                  disabled={acting}
+                                  aria-label={`Delete ${documentTypeLabel(r.document_type)} for ${r.employee_name || r.employee_email}`}
+                                  title="Delete this request and its files"
+                                  // Readable at rest (zinc-600 ≈ 7:1) and rose only on
+                                  // hover/focus — subordinate to Approve/Reject without
+                                  // being an unreadable gray on a destructive action.
+                                  className="h-7 gap-1 px-2 text-xs text-zinc-600 hover:bg-rose-50 hover:text-rose-700 focus-visible:bg-rose-50 focus-visible:text-rose-700 dark:text-zinc-300 dark:hover:bg-rose-500/10 dark:hover:text-rose-300 dark:focus-visible:bg-rose-500/10 dark:focus-visible:text-rose-300"
+                                >
+                                  <Trash2 className="h-3 w-3" />
+                                  Delete
+                                </Button>
+                              )}
                             </div>
                           </td>
                         </tr>
@@ -559,6 +600,55 @@ export default function AccountingDocuments({
           </section>
         </div>
       </div>
+
+      {/* ── Delete confirmation ─────────────────────────────────────────────── */}
+      <Dialog open={!!deleteTarget} onOpenChange={(o) => !o && setDeleteTarget(null)}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Delete this request?</DialogTitle>
+            <DialogDescription>
+              {deleteTarget && (
+                <>
+                  This removes {deleteTarget.employee_name || deleteTarget.employee_email}&rsquo;s{' '}
+                  {documentTypeLabel(deleteTarget.document_type)}
+                  {deleteTarget.status === 'signed'
+                    ? ', including the signed copy they downloaded from'
+                    : ' from'}{' '}
+                  their profile, along with the stored files. It cannot be undone — only the audit
+                  log will show it existed.
+                </>
+              )}
+            </DialogDescription>
+          </DialogHeader>
+          {deleteTarget?.status === 'signed' && (
+            <p className="flex items-start gap-2 rounded-lg bg-rose-50 px-3 py-2.5 text-[12.5px] leading-relaxed text-rose-700 dark:bg-rose-500/10 dark:text-rose-300">
+              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+              This one was already signed
+              {deleteTarget.signed_by_name ? ` by ${deleteTarget.signed_by_name}` : ''}. If the
+              employee still needs it, they will have to request it again.
+            </p>
+          )}
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setDeleteTarget(null)}
+              disabled={!!actingId}
+            >
+              Keep it
+            </Button>
+            <Button
+              type="button"
+              onClick={() => deleteTarget && void removeRow(deleteTarget)}
+              disabled={!!actingId}
+              className="gap-1.5 bg-rose-600 text-white hover:bg-rose-700"
+            >
+              {actingId ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+              Delete request
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* ── Approve & sign confirmation ─────────────────────────────────────── */}
       <Dialog open={!!signTarget} onOpenChange={(o) => !o && setSignTarget(null)}>

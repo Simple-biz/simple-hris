@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireFeatureAccess, requireFeatureEdit } from '@/lib/auth/authorize-feature';
 import { deniedResponse } from '@/lib/auth/authorize-email';
 import {
+  deleteDocumentRequest,
   getDocumentRequestById,
   rejectDocumentRequest,
   signDocumentRequest,
@@ -14,8 +15,9 @@ export const runtime = 'nodejs';
 /**
  * One document request, from the Accounting → Documents tab.
  *
- *   GET   ?which=original|signed        → { url } preview/download URL (view).
- *   PATCH { action: 'sign' | 'reject', note? } → decide (edit).
+ *   GET    ?which=original|signed        → { url } preview/download URL (view).
+ *   PATCH  { action: 'sign' | 'reject', note? } → decide (edit).
+ *   DELETE                               → remove the request and its files (edit).
  *
  * Signing stamps the CALLER's own saved signature (document_signatures row,
  * which must be enabled) into the PDF and notifies the employee.
@@ -77,4 +79,30 @@ export async function PATCH(
     const msg = e instanceof Error ? e.message : String(e);
     return NextResponse.json({ error: msg }, { status: 500 });
   }
+}
+
+/**
+ * Remove a request entirely — the row plus the original and signed PDFs. This
+ * also takes it out of the employee's own list, so it needs `edit`, not `view`.
+ * The audit_log entry (documents.request_deleted, with the signer and signed_at
+ * it carried) is what survives.
+ */
+export async function DELETE(
+  _req: NextRequest,
+  context: { params: Promise<{ id: string }> },
+) {
+  const authz = await requireFeatureEdit('accounting', 'documents');
+  if (!authz.ok) return deniedResponse(authz);
+
+  const { id } = await context.params;
+  if (!id) return NextResponse.json({ error: 'Missing id' }, { status: 400 });
+
+  const { error } = await deleteDocumentRequest(id, authz.sessionEmail, {
+    requireOwner: false,
+    defaultRole: 'Accounting',
+  });
+  if (error) {
+    return NextResponse.json({ error }, { status: error === 'Request not found' ? 404 : 500 });
+  }
+  return NextResponse.json({ success: true });
 }

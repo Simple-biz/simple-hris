@@ -42,6 +42,19 @@ function buildCharset() {
   for (let c = 0x20; c <= 0x7e; c++) chars.add(String.fromCodePoint(c)); // ASCII
   for (let c = 0xa0; c <= 0xff; c++) chars.add(String.fromCodePoint(c)); // Latin-1 (accented names)
   for (const ch of '₱–—‘’“”…•·') chars.add(ch); // peso + smart punctuation
+  // F-LIGATURES — REQUIRED, and not because any caller passes them.
+  //
+  // pdf-lib draws custom fonts via fontkit's layout(), which applies the `liga`
+  // GSUB feature: the plain letters "f" + "i" are SUBSTITUTED with the single ﬁ
+  // glyph. Subsetting by code point alone pruned that glyph while leaving `liga`
+  // in GSUB, so the substitution resolved to a blank outline with the ligature's
+  // full 602-unit advance — "Certificate" rendered as "Certifi cate", and
+  // "identification" as "identifi cation", on a legal document.
+  //
+  // Keeping these makes the substitution land on a real glyph (and is better
+  // typography than suppressing it). See the layout regression test in
+  // src/lib/pdf/fonts.test.ts.
+  for (const ch of 'ﬀﬁﬂﬃﬄ') chars.add(ch);
   return [...chars].join('');
 }
 
