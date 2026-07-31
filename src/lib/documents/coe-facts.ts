@@ -35,7 +35,40 @@ import {
   type PayStructure,
 } from '@/lib/payment-catalog/pay-structure';
 import { flatAmount } from '@/lib/bonus-catalog/types';
+import { mapEmployeeHourlyRateRow } from '@/lib/supabase/employee-hourly-rates';
+import { parseNameParts } from '@/lib/name/name-parts';
 import { normEmail } from '@/lib/email/norm-email';
+
+/** Identity columns on `employee_hourly_rates` — quoted and capitalised because
+ *  the table is a sheet import. Verified against the live schema. */
+const RATES_EMAIL_COLUMNS = ['Work Email', 'Personal Email'] as const;
+
+/**
+ * The worker's name in natural reading order, for the certificate's prose.
+ *
+ * `global_master_list."Name"` is stored surname-first with the go-by nickname in
+ * quotes (`Zabala, Christian "Chris"`), which would read as
+ * *"This is to certify that Zabala, Christian "Chris" has been contracted…"*.
+ * parseNameParts unpicks that (compound surnames, middle-name markers,
+ * generational suffixes) and we re-join as First Middle Last + suffix. The
+ * nickname is dropped — a certificate states the legal name.
+ *
+ * Returns null when the composed name is still malformed, which happens for a
+ * handful of master rows whose nickname leaked in FRONT of the surname
+ * (`"Ro", Noquera, Rodelyn "Rodelyn"`) or that carry a doubled comma. Those need
+ * a master-list fix; printing `, Jeannel Peduhan` on a legal document is worse
+ * than declining to issue it.
+ */
+export function coeWorkerName(rawName: string | null | undefined): string | null {
+  const raw = (rawName ?? '').trim();
+  if (!raw) return null;
+  const p = parseNameParts(raw);
+  const core = [p.first, p.middle, p.last].filter(Boolean).join(' ').trim();
+  const composed = (core && p.extension ? `${core} ${p.extension}` : core).replace(/\s+/g, ' ').trim();
+  // A well-formed name never keeps a comma or a quote after composing.
+  if (!composed || /[,"“”]/.test(composed)) return null;
+  return composed;
+}
 
 /** Contracted hours per week, as the certificate template states them. */
 export const COE_WEEKLY_HOURS = 40;
@@ -75,6 +108,7 @@ export interface CoeFacts {
 /** Why a COE cannot be issued. Surfaced verbatim to the employee. */
 export type CoeBlockedReason =
   | { code: 'no_master'; message: string }
+  | { code: 'bad_name'; message: string }
   | { code: 'no_start_date'; message: string }
   | { code: 'no_department'; message: string }
   | { code: 'no_rate'; message: string };
@@ -126,8 +160,16 @@ export function formatCoeStartDate(raw: string): string | null {
   return d.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
 }
 
-/** The rates-sheet row for one person only — a targeted query, so this never
- *  meets the PostgREST 1000-row cap the full-table readers have to page around. */
+/**
+ * The rates-sheet rows for one person only — a targeted query, so this never
+ * meets the PostgREST 1000-row cap the full-table readers have to page around.
+ *
+ * `employee_hourly_rates` is a CSV/sheet import, so its columns are quoted and
+ * capitalised — "Work Email", "Regular Rate" — NOT snake_case. Rather than name
+ * them in a projection (where a rename silently 400s the whole certificate),
+ * select * and normalise through mapEmployeeHourlyRateRow, the same mapper every
+ * other rates reader uses; it already tolerates every column-name variant.
+ */
 async function fetchSheetRateFor(
   emails: string[],
 ): Promise<{ byEmail: Map<string, SheetRate>; error: string | null }> {
@@ -140,27 +182,28 @@ async function fetchSheetRateFor(
   const list = emails.filter(Boolean);
   if (list.length === 0) return { byEmail, error: null };
 
-  const orFilter = list
-    .flatMap((e) => [`work_email.ilike.${e}`, `personal_email.ilike.${e}`])
-    .join(',');
-  const { data, error } = await supabase
-    .from(table)
-    .select('work_email, personal_email, regular_rate, ot_rate')
-    .or(orFilter);
-  if (error) return { byEmail, error: error.message };
+  // One ilike per (column, email), exactly like fetchRowsByEmails in
+  // employee-rate-profiles.ts — a PostgREST .or() filter cannot reference a
+  // column whose name contains a space.
+  const results = await Promise.all(
+    RATES_EMAIL_COLUMNS.flatMap((column) =>
+      list.map((email) => supabase.from(table).select('*').ilike(column, email).limit(50)),
+    ),
+  );
 
-  for (const row of (data ?? []) as Array<{
-    work_email: string | null;
-    personal_email: string | null;
-    regular_rate: string | null;
-    ot_rate: string | null;
-  }>) {
-    const rate: SheetRate = {
-      reg: parseRateText(row.regular_rate),
-      ot: parseRateText(row.ot_rate),
-    };
-    for (const e of [normEmail(row.work_email), normEmail(row.personal_email)]) {
-      if (e) byEmail.set(e, rate);
+  for (const { data, error } of results) {
+    if (error) return { byEmail, error: error.message };
+    for (const raw of data ?? []) {
+      const row = mapEmployeeHourlyRateRow(raw as Parameters<typeof mapEmployeeHourlyRateRow>[0]);
+      const rate: SheetRate = {
+        reg: parseRateText(row.regular_rate),
+        ot: parseRateText(row.ot_rate),
+      };
+      // Work email first so it wins on a personal-email collision, matching the
+      // engine's work-then-personal index order.
+      for (const e of [normEmail(row.work_email), normEmail(row.personal_email)]) {
+        if (e && !byEmail.has(e)) byEmail.set(e, rate);
+      }
     }
   }
   return { byEmail, error: null };
@@ -188,11 +231,22 @@ export async function resolveCoeFacts(email: string): Promise<CoeFactsResult> {
     };
   }
 
-  const workerName = master.name?.trim() || null;
+  const workerName = coeWorkerName(master.name);
   const startDateRaw = master.start_date?.trim() || '';
   const startDateLabel = startDateRaw ? formatCoeStartDate(startDateRaw) : null;
   const team = master.department?.trim() || '';
 
+  if (!workerName) {
+    return {
+      facts: null,
+      blocked: {
+        code: 'bad_name',
+        message:
+          'Your name is not recorded in a usable form on the master list, and the certificate has to state it exactly. Please ask Accounting to correct it, then request again.',
+      },
+      error: null,
+    };
+  }
   if (!startDateRaw || !startDateLabel) {
     return {
       facts: null,
@@ -263,13 +317,18 @@ export async function resolveCoeFacts(email: string): Promise<CoeFactsResult> {
 
   const comp = computePersonComp({ email: norm, aliases, department: team }, indexes);
   const rate = winningRate(comp);
-  if (!rate) {
+  // A zero rate is not a rate. US/externally-paid people carry a 0 (or blank)
+  // rates-sheet row — business-logic.md calls this "paid externally" — and
+  // computePersonComp faithfully mirrors the engine by treating 0 as present.
+  // The certificate must not state "an hourly rate of ₱0.00", so the
+  // certificate layer, not the shared resolver, applies the stricter rule.
+  if (!rate || !(rate.regular > 0)) {
     return {
       facts: null,
       blocked: {
         code: 'no_rate',
         message:
-          'Your hourly rate is not on file yet, and a Certificate of Engagement has to state it. Please ask Accounting to set your rate in the Payment Catalog, then request again.',
+          'Your hourly rate is not on file yet, and a Certificate of Engagement has to state it. If you are paid outside the Philippine payroll, Accounting will need to issue this certificate manually — otherwise ask them to set your rate in the Payment Catalog, then request again.',
       },
       error: null,
     };
@@ -313,7 +372,7 @@ export async function resolveCoeFacts(email: string): Promise<CoeFactsResult> {
 
   return {
     facts: {
-      workerName: workerName || norm,
+      workerName,
       employeeEmail: norm,
       employeeId: master.employee_id?.trim() || null,
       startDateLabel,

@@ -102,6 +102,20 @@ test('no rate anywhere yields null — the COE must refuse rather than print a b
   assert.equal(winningRate(comp), null);
 });
 
+test('a zero sheet rate is reported as present, mirroring the engine', () => {
+  // US / externally-paid people carry a 0 rates-sheet row. computePersonComp
+  // must keep matching the engine here (0 is a value, not an absence); the
+  // Certificate of Engagement applies the stricter "> 0" rule itself so it never
+  // prints "an hourly rate of PHP 0.00". Pinning this stops someone "fixing" it
+  // in the shared resolver and silently changing payroll behaviour.
+  const comp = computePersonComp(
+    SUBJECT,
+    indexes({ sheetRateByEmail: new Map([['juan@simple.biz', { reg: 0, ot: 0 }]]) }),
+  );
+  assert.equal(comp.rateSource, 'sheet');
+  assert.equal(winningRate(comp)?.regular, 0);
+});
+
 test('a structure keyed on the personal-email alias is still found', () => {
   const comp = computePersonComp(
     SUBJECT,

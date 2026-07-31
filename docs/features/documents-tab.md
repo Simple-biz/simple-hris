@@ -71,10 +71,36 @@ engine won't pay.
 
 ### Refusals
 
-A COE with a blank start date or rate looks forged and is useless at a bank, so
+A COE with a blank start date or a bogus rate looks forged and is useless at a bank, so
 `resolveCoeFacts` returns a `blocked` reason instead of printing dashes. The preview endpoint and
-the POST both answer **422** with a message written for the employee (no master row / no start
-date / no department / no rate on file). Signing re-checks and refuses too.
+the POST both answer **422** with a message written for the employee; signing re-checks and
+refuses too. Codes: `no_master`, `bad_name`, `no_start_date`, `no_department`, `no_rate`.
+
+Two of those are less obvious:
+
+- **`no_rate` also covers a rate of zero.** US / externally-paid people carry a `0` (or blank)
+  rates-sheet row — `business-logic.md` calls this "paid externally" — and `computePersonComp`
+  faithfully mirrors the engine by treating `0` as a value that is present. The certificate applies
+  the stricter `> 0` rule in `resolveCoeFacts`, *not* in the shared resolver, so payroll behaviour
+  is untouched. Their message points them at Accounting for a manual certificate.
+- **`bad_name`.** `global_master_list."Name"` is surname-first with the go-by in quotes
+  (`Zabala, Christian "Chris"`), so `coeWorkerName` runs it through `parseNameParts` and re-joins as
+  *First Middle Last + suffix*, dropping the nickname. A handful of master rows are mangled — the
+  nickname leaked in front of the surname (`"Ro", Noquera, Rodelyn "Rodelyn"`) or a comma is doubled
+  (`Peduhan,, Jeannel "Jean"`) — and compose to something still carrying a comma. Those are refused
+  rather than printing `, Jeannel Peduhan` on a legal document; they need a master-list fix.
+
+Measured against 150 active people: **139 issue cleanly** (135 PHP, 4 USD), 7 `no_rate`, 4
+`bad_name`, zero zero-rate certificates.
+
+### Reading the rates table
+
+`employee_hourly_rates` is a CSV/sheet import, so its columns are **quoted and capitalised** —
+`"Work Email"`, `"Personal Email"`, `"Regular Rate"`, `"OT Rate"` — not snake_case. Never name them
+in a PostgREST projection or `.or()` filter (`.or()` cannot reference a column containing a space at
+all). `fetchSheetRateFor` does `select('*')` plus one `.ilike` per (column, email) and normalises
+through `mapEmployeeHourlyRateRow`, the mapper every other rates reader shares, which already
+tolerates the naming variants.
 
 ### Draft vs signed
 

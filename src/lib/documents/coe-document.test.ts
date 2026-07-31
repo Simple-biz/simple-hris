@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { PDFDocument } from 'pdf-lib';
 import { renderCoeDocument, __coeInternals } from './coe-document';
-import { formatCoeMoney, formatCoeStartDate, type CoeFacts } from './coe-facts';
+import { coeWorkerName, formatCoeMoney, formatCoeStartDate, type CoeFacts } from './coe-facts';
 
 // A 1x1 transparent PNG — enough for pdf-lib to embed as a "signature".
 const PNG_1PX =
@@ -180,6 +180,32 @@ test('formatCoeStartDate does not shift a date-only value across the dateline', 
   assert.equal(formatCoeStartDate('2024-01-01'), 'January 1, 2024');
   assert.equal(formatCoeStartDate('nonsense'), null);
   assert.equal(formatCoeStartDate(''), null);
+});
+
+// The master list stores names surname-first with the go-by in quotes. All of
+// these are real shapes taken from global_master_list.
+test('the worker name reads naturally, nickname dropped', () => {
+  assert.equal(coeWorkerName('Zabala, Christian "Chris"'), 'Christian Zabala');
+  assert.equal(coeWorkerName('Telen, James Theos "James"'), 'James Theos Telen');
+  assert.equal(coeWorkerName('Pang-itan, Genelyn "Gen"'), 'Genelyn Pang-itan');
+  assert.equal(coeWorkerName('Wagai, Kentshin De Guzman "Kentshin "'), 'Kentshin De Guzman Wagai');
+  assert.equal(coeWorkerName('Vergara, Earl Joseph T. "Joseph"'), 'Earl Joseph T. Vergara');
+  assert.equal(coeWorkerName('Lepley, Teal'), 'Teal Lepley');
+  // Curly quotes appear in sheet round-trips too.
+  assert.equal(coeWorkerName('Caraga, Siegmond Lois “Siegmond”'), 'Siegmond Lois Caraga');
+});
+
+test('a name mangled in the master list is refused, not printed', () => {
+  // These rows have the nickname or a fragment in FRONT of the surname, or a
+  // doubled comma. Composing them leaves a comma behind — printing
+  // ", Jeannel Peduhan" on a legal document is worse than declining.
+  assert.equal(coeWorkerName('"Ro", Noquera, Rodelyn "Rodelyn"'), null);
+  assert.equal(coeWorkerName('Peduhan,, Jeannel "Jean"'), null);
+  assert.equal(coeWorkerName('Anthony, Rondolos, Marc "Marc"'), null);
+  assert.equal(coeWorkerName('J., Montebon, Roberto Antonio "Antonio"'), null);
+  assert.equal(coeWorkerName(''), null);
+  assert.equal(coeWorkerName(null), null);
+  assert.equal(coeWorkerName('   '), null);
 });
 
 test('money renders in each currency the way the business writes it', () => {
