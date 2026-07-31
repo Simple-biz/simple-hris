@@ -543,7 +543,12 @@ export default function AccountingMesa() {
         // list served before the receipts migration ran (count undefined) so the
         // export never reports a 0 it can't actually vouch for.
         r.request_type === 'disbursement' && r.receipt_count != null ? String(r.receipt_count) : '-',
-        r.status.charAt(0).toUpperCase() + r.status.slice(1),
+        // Mirrors the Status column: an approved row stamped by Payment Dispatch
+        // is already paid, and an export that just says "Approved" is what gets
+        // a payment chased (or made) a second time.
+        r.status === 'approved' && r.dispatched_at
+          ? 'Approved/Paid'
+          : r.status.charAt(0).toUpperCase() + r.status.slice(1),
         new Date(r.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
         r.reviewed_by ?? '-',
       ]),
@@ -1028,7 +1033,7 @@ export default function AccountingMesa() {
                             : '—'}
                         </td>
                         <td className="px-4 py-3 text-right" data-label="Status">
-                          <StatusBadge status={r.status} />
+                          <StatusBadge status={r.status} paidAt={r.dispatched_at} />
                         </td>
                         <td className="px-4 py-3 text-right text-zinc-500 dark:text-zinc-500" data-label="Submitted">
                           {new Date(r.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
@@ -1347,8 +1352,23 @@ export default function AccountingMesa() {
   );
 }
 
-function StatusBadge({ status }: { status: string }) {
+function StatusBadge({ status, paidAt }: { status: string; paidAt?: string | null }) {
   if (status === 'approved') {
+    // `dispatched_at` is stamped by one thing only: Send in Payment Dispatch →
+    // Urgent Payments. So an approved disbursement carrying it is money already
+    // out of the fund, and saying just "Approved" reads as still owed — which is
+    // the difference between chasing a payment and paying it twice.
+    if (paidAt) {
+      return (
+        <Badge
+          variant="outline"
+          title={`Approved, and paid out ${formatDateOnly(paidAt)} via Payment Dispatch`}
+          className="border-emerald-300 bg-emerald-50 text-[10.5px] font-semibold uppercase tracking-wide text-emerald-700 dark:border-emerald-500/50 dark:bg-emerald-500/15 dark:text-emerald-200"
+        >
+          <Wallet className="mr-1 h-3 w-3" />Approved/Paid
+        </Badge>
+      );
+    }
     return (
       <Badge variant="outline" className="border-teal-200 bg-teal-50 text-[10.5px] font-semibold uppercase tracking-wide text-teal-700 dark:border-teal-500/40 dark:bg-teal-500/15 dark:text-teal-200">
         <CheckCircle2 className="mr-1 h-3 w-3" />Approved
@@ -3369,7 +3389,7 @@ function MesaMemberDetail({
                           <Badge variant="outline" className={cn('text-[10.5px] font-semibold uppercase tracking-wide', TYPE_COLORS[r.request_type])}>
                             {TYPE_LABELS[r.request_type]}
                           </Badge>
-                          <StatusBadge status={r.status} />
+                          <StatusBadge status={r.status} paidAt={r.dispatched_at} />
                         </div>
                         <span className="text-[11px] text-zinc-400">
                           {new Date(r.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
