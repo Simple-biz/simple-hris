@@ -33,12 +33,19 @@ export interface PayStubWeek {
   /** Display pay date: real disbursement date, else the scheduled Tue (HuruPay) /
    *  Thu (wires) for this week. Preferred over `paidAt` for the Paid column. */
   payDate?: string | null;
+  /** Dispatch status from the paystub API ('paid' | 'issued'). Present on a stub
+   *  exported before it was sent — `payDate` is the SCHEDULED date then, so the
+   *  Paid column must not present it as a disbursement. Omitted → legacy
+   *  behaviour: any date means paid. */
+  status?: string | null;
   view: PayStubView;
 }
 
 /** The date to show in the "Paid" column: the resolved pay date (real or
- *  scheduled), falling back to the raw paid date. */
+ *  scheduled), falling back to the raw paid date. A week the dispatch queue
+ *  hasn't sent yet reads "Pending" rather than dating a payment that never left. */
 function paidColumn(w: PayStubWeek): string {
+  if (w.status && w.status !== 'paid') return 'Pending';
   const d = w.payDate ?? w.paidAt;
   return d ? formatDate(d) : 'Paid';
 }

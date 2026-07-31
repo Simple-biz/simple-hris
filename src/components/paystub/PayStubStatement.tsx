@@ -215,11 +215,23 @@ function EarningRow({
 export function PayStubStatement({
   view,
   paidAt,
+  status,
 }: {
   view: PayStubView;
   paidAt?: string | null;
+  /**
+   * Dispatch status from the paystub API — 'paid' once Payment Dispatch marked it,
+   * else 'issued'. It exists because `paidAt` alone can't decide the header pill:
+   * callers pass the resolved PAY DATE (real disbursement date, else the scheduled
+   * Tue/Thu), which is non-null for a payment that hasn't gone out yet — so an
+   * unpaid stub used to claim "Paid <scheduled date>". With a status in hand an
+   * unpaid stub reads Pending instead. Omitted (undefined) → legacy behaviour: any
+   * date means paid.
+   */
+  status?: string | null;
 }) {
   const paidLabel = formatPaidAt(paidAt);
+  const isPaid = status ? status === 'paid' : Boolean(paidLabel);
   return (
     <div
       className="w-full max-w-[560px] overflow-hidden rounded-[17px] bg-[#f97316] p-[3px] shadow-[0_20px_48px_rgba(16,32,52,0.16),0_2px_6px_rgba(16,32,52,0.07)]"
@@ -243,10 +255,15 @@ export function PayStubStatement({
             Period ending{' '}
             <span className="font-bold text-[#334155]">{view.weekHuman || '—'}</span>
           </div>
-          {paidLabel ? (
+          {isPaid ? (
             <div className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-2.5 py-1 text-[11px] font-semibold text-emerald-700 ring-1 ring-emerald-200">
               <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-              Paid {paidLabel}
+              {paidLabel ? `Paid ${paidLabel}` : 'Paid'}
+            </div>
+          ) : status ? (
+            <div className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-orange-50 px-2.5 py-1 text-[11px] font-semibold text-orange-700 ring-1 ring-orange-200">
+              <span className="h-1.5 w-1.5 rounded-full bg-orange-500" />
+              Pending
             </div>
           ) : (
             <div className="mt-[5px] text-[11px] leading-4 text-[#556377]">Confidential pay record</div>

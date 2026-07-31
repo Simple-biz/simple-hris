@@ -2,7 +2,7 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
-import { ChevronDown, Copy, Download, Eye, Receipt, RefreshCw, Search, SearchX, Send, Sparkles, X } from 'lucide-react';
+import { ChevronDown, Copy, Download, Eye, FileText, Receipt, RefreshCw, Search, SearchX, Send, Sparkles, X } from 'lucide-react';
 import QueuePagination from './QueuePagination';
 import ContractorChip, { showsContractorBadge } from './ContractorChip';
 import { cn } from '@/lib/utils';
@@ -12,6 +12,7 @@ import { toast } from 'sonner';
 import { useDebouncedValue } from '@/hooks/useDebouncedValue';
 import { SmoothSelect } from '@/components/ui/smooth-select';
 import { PROCESSORS, formatPHP, formatUSD, formatCOP, isSmallWiresAmountPHP, type ProcessorId, type QueueRow } from './mock-queue';
+import { resolveMarkPaidDefaults } from '@/lib/payroll/mark-paid-defaults';
 import type { PayCurrency } from '@/lib/payment-catalog/pay-structure';
 import type { PaymentDispatchRow, PaymentDispatchStatus } from '@/lib/supabase/payment-dispatches';
 import PaidRecordsPanel from './PaidRecordsPanel';
@@ -52,6 +53,59 @@ function rowSecondaryNull(row: QueueRow): boolean {
 function isUnderSevenK(r: QueueRow): boolean {
   return r.payCurrency === 'PHP' && isSmallWiresAmountPHP(r.amountPHP);
 }
+
+/**
+ * TRUE for the row's headline currency column — the USD anchor for everyone, or
+ * the native COP figure for a COP-paid row. That one column renders strong and the
+ * other two stay muted, which preserves exactly the weighting the single stacked
+ * "Current pay" cell had (primary = USD / native COP, secondary = the rest) before
+ * it was split into USD / PHP / COP columns. A COP-country payee riding the PHP
+ * rails keeps USD as their headline, same as today; their COP figure no longer has
+ * to displace the peso line to be visible — it has its own column now.
+ */
+function isNativeColumn(row: QueueRow, col: 'USD' | 'PHP' | 'COP'): boolean {
+  return col === (row.payCurrency === 'COP' ? 'COP' : 'USD');
+}
+
+/** A dispatch reference already logged against a pending recipient this cycle. */
+interface TxnRef {
+  id: string;
+  status: PaymentDispatchStatus;
+  /** Sort key used to keep the most recently logged reference. */
+  when: string;
+}
+
+/**
+ * Latest logged transaction reference per recipient, keyed by lowercased email.
+ *
+ * A row in the PENDING queue can legitimately own one: `not_paid` and
+ * `threshold` dispatches mean "not sent yet", so they leave the person payable
+ * (see `lockedEmails` in useDispatchQueue) while still carrying whatever
+ * reference the clerk logged on that attempt. `paid` / `problem` rows are locked
+ * out of pending altogether, so anything surfaced here belongs to money that is
+ * still owed. Rows with a blank reference are skipped, leaving the column empty
+ * until a dispatch is actually logged.
+ */
+function buildTxnIndex(records: PaymentDispatchRow[] | undefined): Map<string, TxnRef> {
+  const out = new Map<string, TxnRef>();
+  for (const r of records ?? []) {
+    const id = (r.transaction_id ?? '').trim();
+    if (!id) continue;
+    const key = r.recipient_email.trim().toLowerCase();
+    const when = r.created_at ?? r.sent_date ?? '';
+    const prev = out.get(key);
+    if (!prev || when > prev.when) out.set(key, { id, status: r.status, when });
+  }
+  return out;
+}
+
+const TXN_STATUS_HINT: Record<PaymentDispatchStatus, string> = {
+  paid: 'logged as paid',
+  not_paid: 'logged as not paid — still payable',
+  threshold: 'held below the payout threshold — still payable',
+  problem: 'flagged with a problem',
+};
+
 import {
   buildPendingRows,
   dispatchClientFilename,
@@ -100,6 +154,13 @@ interface ProcessorQueueProps {
    * covers everything paid.
    */
   paidRecords?: PaymentDispatchRow[];
+  /**
+   * Dispatch log used ONLY to fill the "All pending" TXN ID column, for tabs that
+   * deliberately hide the Pending/Paid tab strip (the USD + COP currency tabs).
+   * The "All" tab already gets the same log through `paidRecords` and needs
+   * nothing here. Never drives the tab strip — that stays keyed on `paidRecords`.
+   */
+  txnRecords?: PaymentDispatchRow[];
 }
 
 /** Sentinel filter value for rows with no known department (real names can't
@@ -212,6 +273,127 @@ function BankCell({
   );
 }
 
+/**
+ * One currency column of the All-pending worksheet. `strong` marks the figure the
+ * clerk actually sends (see {@link isNativeColumn}); the other two currencies read
+ * as muted reference lines, preserving the weighting the old single "Current pay"
+ * cell had. Null (pay not calculated for this currency) renders an em dash.
+ */
+function AmountCell({
+  value,
+  formatted,
+  strong,
+}: {
+  value: number | null;
+  formatted: string;
+  strong: boolean;
+}) {
+  return (
+    <div
+      className={cn(
+        'text-right font-mono tabular-nums',
+        value == null
+          ? 'text-[12px] text-zinc-400'
+          : strong
+            ? 'text-sm font-semibold text-zinc-900 dark:text-zinc-100'
+            : 'text-[12px] text-zinc-500 dark:text-zinc-400',
+      )}
+    >
+      {value == null ? '—' : formatted}
+    </div>
+  );
+}
+
+/**
+ * "To Recipient Bank" — the RECEIVING end, i.e. where the money lands. Distinct
+ * from {@link BankCell} ("From Bank"), which is the send-from rail Bank Preferred
+ * picked. Values come from {@link resolveMarkPaidDefaults} so this column and the
+ * Mark Paid dialog always agree. The account line copies on click.
+ */
+function RecipientBankCell({
+  name,
+  bank,
+}: {
+  name: string;
+  bank: { preferredBank: string; accountNumber: string; accountHolder: string };
+}) {
+  const account = bank.accountNumber.trim();
+  const label = bank.preferredBank.trim();
+  if (!account && !label) {
+    return (
+      <span
+        className="text-[11px] text-amber-600 dark:text-amber-400"
+        title="No receiving account on file — add one in the employee's payout details before sending."
+      >
+        Not on file
+      </span>
+    );
+  }
+  // Only worth showing when it differs from the payee — a mismatch is exactly what
+  // accounting needs to catch before wiring.
+  const holder = bank.accountHolder.trim();
+  const showHolder = holder !== '' && holder.toLowerCase() !== name.trim().toLowerCase();
+  return (
+    <div className="flex min-w-0 flex-col items-start gap-0.5">
+      <span className="max-w-full truncate text-[11px] font-semibold text-zinc-700 dark:text-zinc-300" title={label}>
+        {label || '—'}
+      </span>
+      {account ? (
+        <button
+          type="button"
+          onClick={() => copy(account)}
+          title={`${account} — click to copy`}
+          className="max-w-full truncate text-left font-mono text-[10.5px] text-zinc-500 transition-colors hover:text-orange-700 dark:text-zinc-400 dark:hover:text-orange-300"
+        >
+          {account}
+        </button>
+      ) : (
+        <span className="text-[10.5px] text-amber-600 dark:text-amber-400" title="No account number on file">
+          No account
+        </span>
+      )}
+      {showHolder && (
+        <span
+          className="max-w-full truncate text-[10px] text-zinc-400 dark:text-zinc-500"
+          title={`Account holder: ${holder}`}
+        >
+          {holder}
+        </span>
+      )}
+    </div>
+  );
+}
+
+/**
+ * TXN ID — the reference logged against this recipient this cycle. Empty for a row
+ * that has never been dispatched (the normal case in a pending queue: the id is
+ * keyed in when it's marked paid). When it IS populated the row was logged Not
+ * paid / Threshold, which leaves the person payable, so the reference from that
+ * attempt travels with them. Click copies.
+ */
+function TxnCell({ txn }: { txn?: TxnRef | null }) {
+  if (!txn) {
+    return (
+      <span
+        className="text-[11px] text-zinc-300 dark:text-zinc-600"
+        title="No reference yet — the transaction ID is recorded when this payment is marked paid."
+      >
+        —
+      </span>
+    );
+  }
+  return (
+    <button
+      type="button"
+      onClick={() => copy(txn.id)}
+      title={`${txn.id} — ${TXN_STATUS_HINT[txn.status]}. Click to copy.`}
+      className="min-w-0 max-w-full truncate rounded text-left font-mono text-[11px] text-zinc-600 transition-colors hover:text-orange-700 dark:text-zinc-300 dark:hover:text-orange-300"
+    >
+      {txn.id}
+    </button>
+  );
+}
+
 function avatarColors(seed: string) {
   // Deterministic gradient picker based on the row id so a row keeps its colour.
   const palettes = [
@@ -234,7 +416,7 @@ function initials(name: string) {
   return (parts[0]?.[0] || '?').toUpperCase();
 }
 
-function ProcessorQueue({ processor, rows, onMarkPaid, onViewPaystub, periodStart, periodEnd, onRefresh, allLabel, nativeCurrency, paidRecords }: ProcessorQueueProps) {
+function ProcessorQueue({ processor, rows, onMarkPaid, onViewPaystub, periodStart, periodEnd, onRefresh, allLabel, nativeCurrency, paidRecords, txnRecords }: ProcessorQueueProps) {
   const [query, setQuery] = useState('');
   const debouncedQuery = useDebouncedValue(query, 250);
   // '' = all departments; NO_DEPT = rows without a department; else exact name.
@@ -255,6 +437,13 @@ function ProcessorQueue({ processor, rows, onMarkPaid, onViewPaystub, periodStar
   // The queue-log views (everything except the live pending queue). The active
   // one is rendered by PaidRecordsPanel with the matching status filter.
   const logStatus = view === 'pending' ? null : view;
+  // TXN ID column source. Stable across renders (memoized on the record array), so
+  // the per-row lookup below hands QueueRowItem the SAME object reference every
+  // render and React.memo keeps skipping the ~1000 untouched rows.
+  const txnByEmail = useMemo(
+    () => buildTxnIndex(txnRecords ?? paidRecords),
+    [txnRecords, paidRecords],
+  );
 
   const handleRefresh = useCallback(async () => {
     if (!onRefresh || refreshing) return;
@@ -276,11 +465,18 @@ function ProcessorQueue({ processor, rows, onMarkPaid, onViewPaystub, periodStar
 
   const meta = processor ? PROCESSORS.find((p) => p.id === processor) ?? null : null;
   const isAllView = processor === null;
-  // Seven columns when "All pending" (Bank gets its own column); six otherwise.
-  // Order: avatar / identity / department / [bank] / pay (USD+PHP) / hours (total + OT) / action
+  // "All pending" (also the USD + COP currency tabs) is the dispatch worksheet, so
+  // it runs the full eleven-column set in the order accounting reads it:
+  //   avatar / Recipient / USD / PHP / COP / From Bank / To Recipient Bank /
+  //   TXN ID / Department / Hours / Action
+  // Per-processor tabs keep the compact six: they're already filtered to one rail,
+  // so From/To bank and the currency split would be repetition.
+  // Both carry a min-width — eleven columns don't fit a laptop viewport, so the
+  // list scrolls horizontally (see `overflow-x-auto` on the scroller below) rather
+  // than crushing the amounts. Header + rows share this class so they stay aligned.
   const rowGrid = isAllView
-    ? 'grid-cols-[auto_minmax(0,1.2fr)_minmax(0,130px)_140px_140px_120px_auto]'
-    : 'grid-cols-[auto_minmax(0,1fr)_minmax(0,130px)_140px_120px_auto]';
+    ? 'min-w-[1420px] grid-cols-[auto_minmax(160px,1.1fr)_84px_92px_92px_120px_minmax(0,140px)_96px_minmax(0,104px)_76px_15.25rem]'
+    : 'min-w-[880px] grid-cols-[auto_minmax(0,1fr)_minmax(0,130px)_140px_120px_15.25rem]';
 
   // Distinct departments present in THIS queue, for the filter dropdown. A
   // "No department" bucket appears only when some rows actually lack one.
@@ -551,7 +747,10 @@ function ProcessorQueue({ processor, rows, onMarkPaid, onViewPaystub, periodStar
       ) : (
       <>
       {/* List */}
-      <div className="min-h-0 flex-1 overflow-y-auto bg-gradient-to-b from-white via-orange-50/10 to-white dark:from-[#0d1117] dark:via-[#0d1117] dark:to-[#0d1117]">
+      {/* Horizontal scroll lives on the SAME element as the vertical scroll so the
+          sticky column header travels with the rows when the worksheet is scrolled
+          sideways. */}
+      <div className="min-h-0 flex-1 overflow-y-auto overflow-x-auto bg-gradient-to-b from-white via-orange-50/10 to-white dark:from-[#0d1117] dark:via-[#0d1117] dark:to-[#0d1117]">
         {filtered.length > 0 && (
           <div
             className={cn(
@@ -560,12 +759,25 @@ function ProcessorQueue({ processor, rows, onMarkPaid, onViewPaystub, periodStar
             )}
           >
             <span className="w-9" aria-hidden />
-            <span>Person</span>
-            <span>Department</span>
-            {isAllView && <span>Bank Preferred</span>}
-            <span className="text-right">Current pay</span>
+            <span>{isAllView ? 'Recipient' : 'Person'}</span>
+            {isAllView ? (
+              <>
+                <span className="text-right">USD Value</span>
+                <span className="text-right">PHP Value</span>
+                <span className="text-right">COP Value</span>
+                <span>From Bank</span>
+                <span>To Recipient Bank</span>
+                <span>TXN ID</span>
+                <span>Department</span>
+              </>
+            ) : (
+              <>
+                <span>Department</span>
+                <span className="text-right">Current pay</span>
+              </>
+            )}
             <span className="text-right">Hours</span>
-            <span className="w-[9.875rem] text-right">Action</span>
+            <span className="w-[15.25rem] text-right">Action</span>
           </div>
         )}
 
@@ -605,6 +817,11 @@ function ProcessorQueue({ processor, rows, onMarkPaid, onViewPaystub, periodStar
                     isOpen={expanded === row.id}
                     isAllView={isAllView}
                     rowGrid={rowGrid}
+                    txn={
+                      txnByEmail.get(row.id.trim().toLowerCase()) ??
+                      txnByEmail.get(row.email.trim().toLowerCase()) ??
+                      null
+                    }
                     onToggleExpand={handleToggleExpand}
                     onMarkPaid={handleOpenRow}
                     onViewPaystub={onViewPaystub}
@@ -640,6 +857,8 @@ interface QueueRowItemProps {
   isOpen: boolean;
   isAllView: boolean;
   rowGrid: string;
+  /** Reference already logged against this recipient this cycle, if any. */
+  txn?: TxnRef | null;
   onToggleExpand: (id: string) => void;
   onMarkPaid: (row: QueueRow) => void;
   onViewPaystub?: (row: QueueRow) => void;
@@ -650,12 +869,28 @@ const QueueRowItem = React.memo(function QueueRowItem({
   isOpen,
   isAllView,
   rowGrid,
+  txn,
   onToggleExpand,
   onMarkPaid,
   onViewPaystub,
 }: QueueRowItemProps) {
   const detailFields =
     PROCESSORS.find((p) => p.id === row.processor)?.detailFields ?? ['email'];
+  // Receiving end — the SAME resolver the Mark Paid dialog pre-fills from, so the
+  // "To Recipient Bank" column can never disagree with the dialog the clerk pays
+  // out of (wallet email for Hurupay/Wepay/HiGlobe/Wise-wallet, bank account for
+  // wires/Jeeves/Wise-into-bank).
+  const recipientBank = useMemo(() => resolveMarkPaidDefaults(row), [row]);
+  // A contractor row settles an approved invoice rather than paying hours, so its
+  // document is that invoice — the parent routes it (see handleViewPaystub) and the
+  // button says so, otherwise "View" promises a pay stub contractors never have.
+  // `payeeKind` (settlement), NOT showsContractorBadge: the badge also rides
+  // hourly-payroll rows for contractor-role holders, which DO have a pay stub.
+  const settlesInvoice = row.payeeKind === 'contractor';
+  const viewLabel = settlesInvoice ? 'Invoice' : 'View';
+  const viewTitle = settlesInvoice
+    ? `View the invoice this payment settles${row.invoiceNumber ? ` (${row.invoiceNumber})` : ''}`
+    : "View this week's pay stub";
 
   return (
     <motion.li
@@ -733,6 +968,15 @@ const QueueRowItem = React.memo(function QueueRowItem({
               >
                 {rowSecondaryAmount(row)}
               </div>
+              {/* A COP-country payee's secondary line is their COP figure, which on the
+                  card would otherwise hide the peso amount entirely. All-pending now
+                  owns a column per currency, so the card carries the third line too.
+                  Every other row already shows both of its currencies above. */}
+              {isAllView && rowSecondaryIsCop(row) && row.amountPHP != null && (
+                <div className="font-mono text-[10.5px] tabular-nums text-zinc-500 dark:text-zinc-400">
+                  {formatPHP(row.amountPHP)}
+                </div>
+              )}
               {row.bonusTotalPHP > 0 && (
                 <div className="mt-1 flex justify-end">
                   <BonusChip row={row} />
@@ -741,6 +985,23 @@ const QueueRowItem = React.memo(function QueueRowItem({
             </div>
           </button>
         </div>
+
+        {/* From → To banks + the logged reference, all-pending only (a processor tab
+            is already scoped to one rail). */}
+        {isAllView && (
+          <div className="flex flex-wrap items-start gap-x-3 gap-y-1 pl-[2.875rem] text-[11px]">
+            <div className="min-w-0">
+              <div className="text-[9.5px] font-semibold uppercase tracking-wide text-zinc-400">To recipient bank</div>
+              <RecipientBankCell name={row.name} bank={recipientBank} />
+            </div>
+            {txn && (
+              <div className="min-w-0">
+                <div className="text-[9.5px] font-semibold uppercase tracking-wide text-zinc-400">TXN ID</div>
+                <TxnCell txn={txn} />
+              </div>
+            )}
+          </div>
+        )}
 
         <div className="flex flex-wrap items-center justify-between gap-2 pl-[2.875rem]">
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px]">
@@ -771,11 +1032,11 @@ const QueueRowItem = React.memo(function QueueRowItem({
               <button
                 type="button"
                 onClick={() => onViewPaystub(row)}
-                title="View pay statement"
-                aria-label="View pay statement"
-                className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-zinc-200 bg-white text-zinc-500 shadow-sm transition-colors hover:border-orange-300 hover:bg-orange-50 hover:text-orange-700 active:scale-95 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-orange-300"
+                title={viewTitle}
+                className="inline-flex h-8 items-center gap-1.5 rounded-md border border-zinc-200 bg-white px-2.5 text-[11px] font-semibold text-zinc-600 shadow-sm transition-colors hover:border-orange-300 hover:bg-orange-50 hover:text-orange-700 active:scale-95 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800 dark:hover:text-orange-300"
               >
-                <Receipt className="h-3.5 w-3.5" />
+                {settlesInvoice ? <FileText className="h-3.5 w-3.5" /> : <Receipt className="h-3.5 w-3.5" />}
+                {viewLabel}
               </button>
             )}
             <button
@@ -799,7 +1060,7 @@ const QueueRowItem = React.memo(function QueueRowItem({
         </div>
       </div>
 
-      {/* Desktop: 5/6-column grid */}
+      {/* Desktop: 11-column worksheet on All pending, 6 columns on a processor tab */}
       <div className={cn('hidden items-center gap-3 px-6 py-3 md:grid', rowGrid)}>
         <div
           className={cn(
@@ -834,50 +1095,95 @@ const QueueRowItem = React.memo(function QueueRowItem({
           </div>
         </button>
 
-        <div className="flex min-w-0 flex-wrap items-center gap-1">
-          {showsContractorBadge(row) && <ContractorChip invoiceNumber={row.invoiceNumber} />}
-          {row.departmentName ? (
-            <DeptChip name={row.departmentName} />
-          ) : (
-            !showsContractorBadge(row) && (
-              <span className="text-[11px] text-zinc-300 dark:text-zinc-600">—</span>
-            )
-          )}
-        </div>
-
-        {isAllView && (
-          <div className="min-w-0">
-            <BankCell
-              processor={row.processor}
-              bankPreferredRaw={row.bankPreferredRaw}
-              smallWiresViaWise={row.smallWiresViaWise}
+        {/* All-pending worksheet: the three currencies, then the two banks, then the
+            logged reference, then department. Per-processor tabs keep department →
+            single stacked pay cell. */}
+        {isAllView ? (
+          <>
+            <AmountCell
+              value={row.amountUSD}
+              formatted={formatUSD(row.amountUSD)}
+              strong={isNativeColumn(row, 'USD')}
             />
-          </div>
-        )}
-
-        <div className="text-right">
-          <div
-            className={cn(
-              'font-mono text-sm font-semibold tabular-nums',
-              rowPrimaryNull(row) ? 'text-zinc-400' : 'text-zinc-900 dark:text-zinc-100',
-            )}
-          >
-            {rowPrimaryAmount(row)}
-          </div>
-          <div
-            className={cn(
-              'font-mono text-[11px] tabular-nums',
-              rowSecondaryNull(row) ? 'text-zinc-400' : 'text-zinc-500 dark:text-zinc-400',
-            )}
-          >
-            {rowSecondaryAmount(row)}
-          </div>
-          {row.bonusTotalPHP > 0 && (
-            <div className="mt-1 flex justify-end">
-              <BonusChip row={row} />
+            <div className="text-right">
+              <AmountCell
+                value={row.amountPHP}
+                formatted={formatPHP(row.amountPHP)}
+                strong={isNativeColumn(row, 'PHP')}
+              />
+              {row.bonusTotalPHP > 0 && (
+                <div className="mt-1 flex justify-end">
+                  <BonusChip row={row} />
+                </div>
+              )}
             </div>
-          )}
-        </div>
+            <AmountCell
+              value={row.amountCOP}
+              formatted={formatCOP(row.amountCOP)}
+              strong={isNativeColumn(row, 'COP')}
+            />
+
+            <div className="min-w-0">
+              <BankCell
+                processor={row.processor}
+                bankPreferredRaw={row.bankPreferredRaw}
+                smallWiresViaWise={row.smallWiresViaWise}
+              />
+            </div>
+
+            <RecipientBankCell name={row.name} bank={recipientBank} />
+
+            <TxnCell txn={txn} />
+
+            <div className="flex min-w-0 flex-wrap items-center gap-1">
+              {showsContractorBadge(row) && <ContractorChip invoiceNumber={row.invoiceNumber} />}
+              {row.departmentName ? (
+                <DeptChip name={row.departmentName} />
+              ) : (
+                !showsContractorBadge(row) && (
+                  <span className="text-[11px] text-zinc-300 dark:text-zinc-600">—</span>
+                )
+              )}
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="flex min-w-0 flex-wrap items-center gap-1">
+              {showsContractorBadge(row) && <ContractorChip invoiceNumber={row.invoiceNumber} />}
+              {row.departmentName ? (
+                <DeptChip name={row.departmentName} />
+              ) : (
+                !showsContractorBadge(row) && (
+                  <span className="text-[11px] text-zinc-300 dark:text-zinc-600">—</span>
+                )
+              )}
+            </div>
+
+            <div className="text-right">
+              <div
+                className={cn(
+                  'font-mono text-sm font-semibold tabular-nums',
+                  rowPrimaryNull(row) ? 'text-zinc-400' : 'text-zinc-900 dark:text-zinc-100',
+                )}
+              >
+                {rowPrimaryAmount(row)}
+              </div>
+              <div
+                className={cn(
+                  'font-mono text-[11px] tabular-nums',
+                  rowSecondaryNull(row) ? 'text-zinc-400' : 'text-zinc-500 dark:text-zinc-400',
+                )}
+              >
+                {rowSecondaryAmount(row)}
+              </div>
+              {row.bonusTotalPHP > 0 && (
+                <div className="mt-1 flex justify-end">
+                  <BonusChip row={row} />
+                </div>
+              )}
+            </div>
+          </>
+        )}
 
         <div className="text-right">
           <div
@@ -908,11 +1214,11 @@ const QueueRowItem = React.memo(function QueueRowItem({
             <button
               type="button"
               onClick={() => onViewPaystub(row)}
-              title="View pay statement"
-              aria-label="View pay statement"
-              className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-zinc-200 bg-white text-zinc-500 shadow-sm transition-colors hover:border-orange-300 hover:bg-orange-50 hover:text-orange-700 active:scale-95 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-orange-300"
+              title={viewTitle}
+              className="inline-flex h-8 items-center gap-1.5 rounded-md border border-zinc-200 bg-white px-2.5 text-[11px] font-semibold text-zinc-600 shadow-sm transition-colors hover:border-orange-300 hover:bg-orange-50 hover:text-orange-700 active:scale-95 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800 dark:hover:text-orange-300"
             >
-              <Receipt className="h-3.5 w-3.5" />
+              {settlesInvoice ? <FileText className="h-3.5 w-3.5" /> : <Receipt className="h-3.5 w-3.5" />}
+              {viewLabel}
             </button>
           )}
           <button

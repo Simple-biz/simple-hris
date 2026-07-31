@@ -59,6 +59,7 @@ import { useWizardFollow } from '@/hooks/useWizardFollow';
 import { cn } from '@/lib/utils';
 import { formatMoney, normalizeCurrency, sumByCurrency, CONTRACTOR_CURRENCIES } from '@/lib/contractor-currency';
 import { InvoiceViewDialog, type SavedInvoice } from '@/components/contractor/InvoiceReceiptDialog';
+import { isInvoiceInPeriod } from '@/lib/contractor/invoice-period';
 import { KPI_BONUS_ID, DEPARTMENTS, FORMULA_DEPT_KEYS, MANAGER_BONUS_DEPT_KEYS, ACCOUNTING_WEEKDAY_METRICS, calcLeadGenBonus, isDevsDelivery, isDevsChecking, isJeromeRosero, isTeal } from '@/lib/payroll/department-bonus';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -2446,11 +2447,9 @@ export default function PayrollWizard({
   const contractorInvoicesInPeriod = useMemo(() => {
     if (!activeBatchDateRange) return contractorInvoices;
     const { startKey, endKey } = activeBatchDateRange;
-    return contractorInvoices.filter((inv) => {
-      const key = (inv.invoice_date || inv.created_at || '').slice(0, 10);
-      if (!key) return false;
-      return key >= startKey && key <= endKey;
-    });
+    // Shared with Payment Dispatch's contractor queue, which applies the SAME
+    // window to decide which invoices belong to a payroll run at all.
+    return contractorInvoices.filter((inv) => isInvoiceInPeriod(inv, startKey, endKey));
   }, [contractorInvoices, activeBatchDateRange]);
 
   /** {year, month} actually in effect: the file's month when one is selected, else the picker's. */

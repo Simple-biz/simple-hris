@@ -41,6 +41,7 @@ import OrphanageQueue from './OrphanageQueue';
 import UrgentPaymentsQueue from './UrgentPaymentsQueue';
 import MarkPaidDialog, { type MarkPaidPayload } from './MarkPaidDialog';
 import { PayStubModal } from '@/components/paystub/PayStubModal';
+import ContractorInvoiceDialog from './ContractorInvoiceDialog';
 import LockToggleConfirmDialog, { deriveFirstName } from '@/components/payroll/LockToggleConfirmDialog';
 import ProcessorCard from './ProcessorCard';
 import AnimatedNumber from './AnimatedNumber';
@@ -254,6 +255,12 @@ export default function PayrollDispatch() {
   // Which employee's pay statement is open in the read-only viewer modal (accounting
   // can open any payee's stub without downloading). null = closed.
   const [viewPaystub, setViewPaystub] = useState<{ sourceFile: string; email: string } | null>(null);
+  // Contractor rows open their INVOICE instead — see `handleViewPaystub`. null = closed.
+  const [viewInvoice, setViewInvoice] = useState<{
+    invoiceId: string;
+    name: string;
+    invoiceNumber: string | null;
+  } | null>(null);
   const [confirmingLockToggle, setConfirmingLockToggle] = useState(false);
   const [togglingLock, setTogglingLock] = useState(false);
   // When the Start/Prepare modal closes, fade out the "stage prepped" sound so
@@ -571,8 +578,37 @@ export default function PayrollDispatch() {
   }, []);
   // Open an employee's staged pay statement in the modal (read-only). Both the
   // row's work email and the operative week's source_file are in scope here.
+  /**
+   * "View" on a queue row → the document that payment is made against.
+   *
+   * A CONTRACTOR row settles an approved invoice, so it opens that invoice, not a
+   * pay statement: contractors have no rates row and no staged paystub, so the
+   * paystub viewer could only ever tell the clerk "no pay statement available".
+   * Keyed off `payeeKind` — the settlement signal — and never off the fuchsia
+   * Contractor badge, which also rides hourly-payroll rows belonging to
+   * contractor-role holders (see ContractorChip). Those rows genuinely do have a
+   * paystub and keep it.
+   *
+   * Both documents are pay-period scoped: the statement by `period.sourceFile`,
+   * the invoice by being the one THIS row settles (and the contractor queue only
+   * carries invoices billed inside the period — see loadContractorDispatchRows).
+   */
   const handleViewPaystub = useCallback(
     (row: QueueRow) => {
+      if (row.payeeKind === 'contractor') {
+        if (!row.contractorInvoiceId) {
+          toast.error('No invoice on this row', {
+            description: 'This contractor payment has no linked invoice to open.',
+          });
+          return;
+        }
+        setViewInvoice({
+          invoiceId: row.contractorInvoiceId,
+          name: row.name,
+          invoiceNumber: row.invoiceNumber ?? null,
+        });
+        return;
+      }
       if (!period.sourceFile) {
         toast.error('No pay week selected', {
           description: 'Pick a locked pay week first, then open a statement.',
@@ -863,6 +899,10 @@ export default function PayrollDispatch() {
           periodEnd={period.end}
           onRefresh={refresh}
           nativeCurrency="USD"
+          // TXN ID column only — the currency tabs deliberately skip the
+          // Pending/Paid tab strip (Done covers everything paid), so the log comes
+          // in through `txnRecords` rather than `paidRecords`.
+          txnRecords={paid}
           allLabel={{
             title: 'USD payments',
             subtitle: 'People paid in US dollars — handled separately from the peso payroll. Mark each paid as it goes out.',
@@ -881,6 +921,7 @@ export default function PayrollDispatch() {
           periodEnd={period.end}
           onRefresh={refresh}
           nativeCurrency="COP"
+          txnRecords={paid}
           allLabel={{
             title: 'COP payments',
             subtitle: 'People paid in Colombian pesos — handled separately from the peso payroll. Mark each paid as it goes out.',
@@ -1308,6 +1349,13 @@ export default function PayrollDispatch() {
         sourceFile={viewPaystub?.sourceFile ?? null}
         email={viewPaystub?.email ?? null}
         onClose={() => setViewPaystub(null)}
+      />
+      {/* Contractor rows settle an invoice, so their "View" opens the invoice. */}
+      <ContractorInvoiceDialog
+        invoiceId={viewInvoice?.invoiceId ?? null}
+        name={viewInvoice?.name}
+        invoiceNumber={viewInvoice?.invoiceNumber}
+        onClose={() => setViewInvoice(null)}
       />
       <LockToggleConfirmDialog
         open={confirmingLockToggle}

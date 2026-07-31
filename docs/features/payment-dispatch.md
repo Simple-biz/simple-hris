@@ -75,20 +75,27 @@ To add a real brand logo: drop the SVG into `public/processors/` named after the
 
 ### 3.4 The table
 
-Inside `ProcessorQueue.tsx`. **All Pending** view has 6 columns (avatar, person, bank, current pay, hours, action). Per-processor views have 5 (no bank — already filtered).
+Inside `ProcessorQueue.tsx`. **All Pending** (and the USD / COP currency tabs, which are the same `processor === null` view) is the full dispatch worksheet: 11 columns in the order accounting reads them — avatar, Recipient, USD Value, PHP Value, COP Value, From Bank, To Recipient Bank, TXN ID, Department, Hours, Action. Per-processor views keep the compact 6 (avatar, person, department, current pay, hours, action): they're already scoped to one rail, so the bank pair and the currency split would just repeat.
 
-Sticky column header on desktop (`hidden md:grid`); on mobile each row collapses into a stacked card layout (`md:hidden`).
+Sticky column header on desktop (`hidden md:grid`); on mobile each row collapses into a stacked card layout (`md:hidden`). Eleven columns don't fit a laptop viewport, so both grids carry a `min-w-*` and the list scroller is `overflow-x-auto` — header and rows share the same grid class, so they scroll sideways together and stay aligned.
 
 #### Per-row content
 
 | Column | Content |
 |---|---|
 | Avatar | Gradient initials circle (deterministic palette per row id) |
-| Person | Name (bold), work email (mono), expand chevron |
-| Bank Preferred | Pill with processor accent dot + label; `x1xxx` wire suffix surfaces in mono-amber if relevant |
-| Current pay | USD on top (`$412.55`), PHP underneath (`₱24,140`), muted |
+| Recipient | Name (bold), work email (mono), expand chevron |
+| USD / PHP / COP Value | One column each. The row's headline currency (USD, or native COP on the COP tab) renders strong; the others are muted reference lines — the same weighting the old stacked "Current pay" cell had. `—` where that currency doesn't apply: `amountCOP` is only populated for COP-paid people and COP-country payees, so the COP column stays empty for everyone else. The bonus chip (`incl. ₱x bonus`) hangs under PHP. |
+| From Bank | SEND-FROM rail (Bank Preferred): pill with processor accent dot + label, the `Wires → Wise · under ₱7k` reroute note, and the `x1xxx` wire suffix in mono-amber when present |
+| To Recipient Bank | RECEIVING end, from `resolveMarkPaidDefaults(row)` — the same resolver the Mark Paid dialog pre-fills, so the column can never disagree with the dialog. Bank/wallet label, account number or wallet email/tag (click to copy), plus the account holder when it differs from the payee. Amber "Not on file" / "No account" when there's nothing to send to. |
+| TXN ID | Reference logged against this recipient this cycle (click to copy), else `—`. Normally empty in a pending queue — the id is keyed in at Mark Paid — but a `not_paid` / `threshold` dispatch leaves the person payable, so that attempt's reference travels with them. Sourced from `paidRecords` on the All tab and the `txnRecords` prop on the USD/COP tabs (which deliberately hide the Pending/Paid tab strip). |
+| Department | Contractor chip + department pill |
 | Hours | Total hrs on top, OT hours underneath (amber when > 0) |
-| Action | "Mark paid" gradient button (emerald → teal, fixed width for column alignment) |
+| Action | "View" (opens the pay stub — see §3.4.1), an eye icon for payment details, then the "Mark paid" gradient button (emerald → teal, fixed-width column for alignment) |
+
+##### 3.4.1 View → pay stub
+
+"View" opens `PayStubModal` on this week's `source_file` for that row's email (`/api/accounting/paystub`), i.e. the same statement the employee gets. Because the row is still pending, the statement's header pill must NOT claim payment: the API returns `status: 'issued'` and `payDate` = the *scheduled* Tue/Thu, so `PayStubStatement` keys the pill off `status` (not off the date) and renders an orange-dot **Pending** pill; only `status === 'paid'` gets the green `Paid <date>` pill. The PDF export follows the same rule — its Paid column reads "Pending" for a stub that hasn't been sent.
 
 Click the row to expand the processor-specific contact details (Hurupay email, Higlobe email + account name, phone, full address, city, province/state) with copy buttons on each.
 

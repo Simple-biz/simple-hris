@@ -1,7 +1,8 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { ExcludedRow, ExclusionReason, ProcessorId, QueueRow } from '@/components/payroll-clerk/mock-queue';
-import { processorIdFromBankPreferred } from '@/components/payroll-clerk/mock-queue';
+import { parseCyclePeriodFromFile, processorIdFromBankPreferred } from '@/components/payroll-clerk/mock-queue';
 import { buildPayoutDetails, isKnownProcessor, type IdsRow } from '@/lib/payroll/urgent-payout-details';
+import { isInvoiceInPeriod } from '@/lib/contractor/invoice-period';
 import { normalizeCurrency } from '@/lib/contractor-currency';
 import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
 import { DEPARTMENTS } from '@/lib/payroll/department-bonus';
@@ -21,6 +22,14 @@ import { DEPARTMENTS } from '@/lib/payroll/department-bonus';
  *   would make it impossible to settle one of Claire's seven approved invoices
  *   without hiding the other six, because the existing already-paid filter is
  *   keyed per (recipient_email, cycle).
+ * - SCOPED TO THE PAY PERIOD. Only invoices whose billing date falls inside the
+ *   cycle's Sun–Sat window reach this queue at all — see the window filter in
+ *   {@link loadContractorDispatchRows}. Approval carries no pay-week, so without
+ *   it every still-unsettled approved invoice ever filed showed up as payable in
+ *   the current week (Claire's back catalogue, ~US$8.2k dated May–June, sat in
+ *   the USD tab). Those invoices do not belong to this run and are not shown here
+ *   in any form; the Payroll Wizard's Contractors step remains the place where
+ *   every invoice, in-period or not, is listed and reviewable.
  * - APPROVED = PAYABLE, and only while unsettled (`dispatch_id` NULL). A pending
  *   invoice is money Accounting has not authorized, so it is read but surfaced
  *   only as an unpayable `pending_approval` row in Excluded — the clerk sees the
@@ -250,7 +259,9 @@ function resolveContractorProcessor(
  * Returns empty rows (but still the role set, for badging) when `sourceFile` is
  * not the current cycle: approval carries no pay-week, so showing today's
  * approved invoices while the clerk reviews a closed week would misrepresent
- * them as owed in that week.
+ * them as owed in that week. Within the current cycle, invoices are further
+ * narrowed to those billed inside its Sun–Sat window — see the window filter
+ * below and the module header.
  */
 export async function loadContractorDispatchRows(
   supabase: SupabaseClient,
@@ -315,13 +326,28 @@ export async function loadContractorDispatchRows(
   // (paying it could double-pay if a row was in fact written), but it must not be
   // INVISIBLE either — that is how an owed invoice quietly disappears. Surfaced as
   // an unpayable Excluded row instead.
-  const strandedIds = new Set(
-    invoices.filter((i) => !!i.dispatch_claimed_at).map((i) => i.id),
-  );
+  const isStranded = (i: InvoiceRow) => !!i.dispatch_claimed_at;
+
+  // ── Pay-period window ─────────────────────────────────────────────────────
+  // Only invoices billed inside this cycle's Sun–Sat window belong to this
+  // payroll run; everything else is dropped outright (not moved to Excluded —
+  // an invoice from another period has no business on this screen). A filename
+  // with no parseable range yields nulls, and `isInvoiceInPeriod` then admits
+  // everything: a window we could not derive must never become a filter.
+  //
+  // The ONE exception is a stranded claim: that invoice records a Mark Paid
+  // that half-failed, so it is an integrity alarm rather than a payable row,
+  // and losing it because of its date is exactly how a double-payment gets
+  // discovered by accident later.
+  const cycleWindow = parseCyclePeriodFromFile(currentSourceFile);
+  invoices = invoices.filter((i) => isInvoiceInPeriod(i, cycleWindow.start, cycleWindow.end) || isStranded(i));
+  if (invoices.length === 0) return { active: [], excluded: [], contractorEmails };
+
+  const strandedIds = new Set(invoices.filter(isStranded).map((i) => i.id));
 
   // Awaiting Accounting approval — visible in Excluded, never payable.
   const pendingApprovalIds = new Set(
-    invoices.filter((i) => i.status === 'pending' && !i.dispatch_claimed_at).map((i) => i.id),
+    invoices.filter((i) => i.status === 'pending' && !isStranded(i)).map((i) => i.id),
   );
 
   const emails = [...new Set(invoices.map((i) => norm(i.contractor_email)))];

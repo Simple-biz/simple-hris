@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { insertAuditLog } from '@/lib/supabase/audit-log';
 import { getSessionActor } from '@/lib/auth/session-actor';
-import { requireFeatureEdit } from '@/lib/auth/authorize-feature';
+import { requireFeatureAccess, requireFeatureEdit } from '@/lib/auth/authorize-feature';
 import { deniedResponse } from '@/lib/auth/authorize-email';
 
 function errMsg(err: unknown): string {
@@ -18,6 +18,43 @@ function getServiceClient() {
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim();
   if (!url || !key) throw new Error('Missing Supabase env vars');
   return createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } });
+}
+
+/**
+ * GET /api/contractor/invoices/[id] → ONE invoice, whole document.
+ *
+ * Backs Payment Dispatch's contractor "Invoice" button: a contractor row settles
+ * a specific invoice, so the document opened is fetched by that row's own
+ * `contractor_invoices.id`. Deliberately by-id and never by-email — the
+ * collection route (`?email=`) returns a contractor's entire history, and
+ * Accounting looking at one week's payment must not be handed an all-time list.
+ *
+ * Gated `view` on (accounting, payment_dispatch), the same read gate as
+ * /api/accounting/paystub: this is the invoice standing in for that screen's pay
+ * statement, so the two documents share one permission.
+ */
+export async function GET(
+  _req: NextRequest,
+  context: { params: Promise<{ id: string }> },
+) {
+  const authz = await requireFeatureAccess('accounting', 'payment_dispatch', 'view');
+  if (!authz.ok) return deniedResponse(authz);
+
+  const { id } = await context.params;
+  if (!id) return NextResponse.json({ error: 'Missing id' }, { status: 400 });
+  try {
+    const supabase = getServiceClient();
+    const { data, error } = await supabase
+      .from('contractor_invoices')
+      .select('*')
+      .eq('id', id)
+      .maybeSingle();
+    if (error) throw error;
+    if (!data) return NextResponse.json({ error: 'Invoice not found.' }, { status: 404 });
+    return NextResponse.json({ invoice: data });
+  } catch (err) {
+    return NextResponse.json({ error: errMsg(err) }, { status: 500 });
+  }
 }
 
 // PATCH /api/contractor/invoices/[id]  { status: 'approved' | 'rejected' | 'pending' }
