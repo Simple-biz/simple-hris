@@ -460,6 +460,49 @@ premium-inclusive rates). The Gmail template's Regular/Overtime label + detail c
 vars. **Re-import the live n8n instance from the reference** (same pending re-import as the weekend
 feature) — until then emails render the classic single-rate cells from the same payload.
 
+## Native COP line for Colombian payees — 2026-07-30
+
+Colombian staff ride the **PHP** rails (no COP Pay Structure exists for them), so their
+statements used to show only pesos. The paystub readers now resolve a display-only
+`countryCurrency` marker from the hire's **submitted** onboarding `country` —
+`resolveCountryCurrencyForEmails` + `getUsdToCopRate` in
+[`src/lib/payroll/cop-country.ts`](../../src/lib/payroll/cop-country.ts) — and
+`paystub-view.ts` derives a native-COP equivalent from the PHP figures at the *same* rate
+`buildFxRates` gives the dispatch queue. The PHP arithmetic on the stub is untouched, so
+every line still reconciles. Never trust `invite_country` for this (documented misclicks).
+Full rule: [cop-country-payees.md](./cop-country-payees.md).
+
+## Rate snapshots toggle (Dispatch step) — 2026-07-30
+
+A pill with a switch labeled **Rate snapshots** sits beside the *Lock in Values & Send to
+Payment Dispatch* button. It persists per browser (`localStorage`), so it survives payroll
+runs. With it on, opening any paystub from **Preview Emails → View** slides two floating
+comparison cards out from behind the statement (staggered, 0.5s, the wizard's own
+cubic-bezier):
+
+| Card | Shows |
+|---|---|
+| **Left — "People Tab · Banking Info"** | the person's rate resolved with the **exact precedence the People tab uses** (catalog individual → rates sheet → dept base) in native currency with a source chip, plus their masked payout details fetched live from the same `/api/people/[email]` endpoint the People drawer uses — processor, and **only the chosen rail's fields** (bank/holder/account/routing/SWIFT for wires/jeeves/wise; the processor-specific fields otherwise), including alternative-slot handling |
+| **Right — "Payment Catalog"** | the structure covering that person — individual structure with assigned-to/email/department/last-updated metadata, or the department base (labeled **"Fallback only"** when a higher-precedence rate actually pays them), or a "Not in the catalog" empty state |
+
+Both cards carry a **verdict chip** comparing the source's PHP-equivalent against the rate
+the stub actually pays — green *"Matches the paystub rate"* / amber *"Differs"* — plus a
+footer stating what the stub pays. A **prorated** week says *"stub prorates a mid-week
+change"* instead of raising a false alarm; non-PHP rates show their ≈₱ equivalent.
+
+> **Two implementation constraints that will break if changed:**
+>
+> 1. The cards are rendered as **children of the dialog popup, positioned outside its box** —
+>    *not* portals. Base UI's dismiss boundary plus the app's stacking contexts mean a
+>    portaled card is either dismissed on click or trapped under other chrome; as popup
+>    children they stay scrollable and clickable without ever closing the paystub.
+> 2. They render only at viewports **≥1180px**. Narrower windows show a
+>    *"Rate snapshots need a wider window"* hint in the preview header instead.
+>
+> The People-tab rate is mirrored **client-side from the RAW sheet index**, not from the
+> catalog-overlaid `ratesByEmail` — otherwise both cards would show the catalog number and
+> the comparison would be vacuous.
+
 ## Gating summary (dispatch-time)
 
 - **Final PAB week**: `week.end >= pabMonthRange.end` where `pabMonthRange` is **derived from the dispatch week's own Monday** (not from merged uploads' mode month).

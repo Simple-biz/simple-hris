@@ -204,6 +204,37 @@ carve-outs; every mutating control stays blocked.
 
 ---
 
+### Summary tab — pay-mix dashboard *(renamed from "Overview" 2026-07-30)*
+
+The catalog's first tab was renamed **Overview → Summary** (`9fd132c`) and rebuilt from a
+rotating board into a static dashboard (`fee8f00` → `8764d67`).
+**File:** `src/components/accounting/PaymentCatalogOverview.tsx`; metrics in
+`src/lib/payment-catalog/overview-metrics.ts`.
+
+| Element | What it shows |
+|---|---|
+| **Pay share by department** (donut) | share of catalog spend per department; hovered slice thickens, siblings dim, and the center readout crossfades between the org total and the hovered department |
+| **Hourly pay by department** (bars) | per-department hourly rate; hovering a row keeps it at full strength while others fade to 40% |
+| **Four gradient KPI cards** + a secondary band | headline catalog figures |
+| **Rate Spotlight** | one person's rate, surfaced as a card |
+
+- **Both charts paginate 10 departments per page and auto-advance every 10s in lockstep**
+  (`dd2fed5`). **Hovering pauses the rotation**, so nothing moves under the cursor.
+- The tab is **full-width** (`e997c0e`) — the old 1180px centered cap was removed; the donut
+  column and its diameter step up at `lg`/`xl`/`2xl` and the bar chart's name column widens at
+  `xl` so long names like "Hogan Smith Law" stop truncating.
+- **Spend is a catalog-only hourly estimate.** It does **not** read the rates sheet and does
+  **not** multiply by hours — so it is a pay-*mix* picture, not an actual payout. Use the
+  Accounting Overview hero for real money
+  ([accounting-total-payout.md](./accounting-total-payout.md)).
+- Each custom System Bonus variant gets its own tile here (see §6.1).
+
+> **Implementation gotcha:** the bar rows animate in with Framer Motion, which leaves an
+> **inline opacity** that silently defeats CSS hover-dimming. The hover classes therefore live
+> on an **inner wrapper div**, not the `motion.div`. Keep them there when adding rows.
+
+> The previous rotating-board implementation is at commit `c4663e8` if it needs recovering.
+
 ## 4. API (`app/api/bonus-catalog/route.ts`)
 
 | Method | Action |

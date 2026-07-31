@@ -528,24 +528,60 @@ Beyond `auth.force_logout_map` (§9), the wizard/dispatch flow stores two per-pa
 
 ---
 
-## Data-integrity gotcha: PostgREST 1000-row default cap *(discovered 2026-07-09)*
+## Data-integrity gotcha: PostgREST 1000-row default cap *(discovered 2026-07-09; systemic sweep 2026-07-30)*
 
 PostgREST silently enforces a default `db.max-rows` ceiling of **1000** on every read. A single un-paginated query — even `.range(0, 9999)`, which *looks* like it asks for 10,000 rows — returns **at most 1000 rows with NO error**: the response is a clean 200 with a quietly truncated body. Nothing in the client surfaces the truncation.
 
-The active roster is **1075**, so this bit the master-list readers first. `listActiveMasterListPeople` / `listActiveMasterListNames` (in [global-master-list-db.ts](src/lib/supabase/global-master-list-db.ts)) each did one `.range(0, 9999)` read of `active_employees` and silently dropped ~75 people — `jamesc@simple.biz` among them — off the **Department Transfers "Request transfer in" person picker** and the **New Hire Checklist "Referred By" picker**. The person simply wasn't in the list; no error hinted why.
+> ### Read this before writing any full-table read
+>
+> **Use `selectAllPaged` from [select-all-paged.ts](src/lib/supabase/select-all-paged.ts).** It is the project's one paging helper, added by the 2026-07-30 sweep:
+>
+> ```ts
+> const { rows, error } = await selectAllPaged<RowType>((from, to) =>
+>   supabase.from("active_employees").select('"Work Email", "Department"')
+>     .order("Work Email", { ascending: true })   // stable order: pages can't shear
+>     .range(from, to),                            // you MUST apply the handed range
+> );
+> ```
+>
+> The query is built **inside the closure** because PostgREST builders are single-use — one fresh builder per page. Add a stable `.order()` or concurrent writes can shear the page boundaries.
+>
+> **A per-cycle / per-week / per-department filter is NOT a bound.** One live pay cycle stages **1,020+** rows; one week of `employee_rate_history` sits inside a 22,000-row table. "It's filtered so it's small" is how every one of the sixteen 2026-07-30 bugs got written.
+
+### The 2026-07-30 sweep — sixteen readers, with live damage
+
+The roster crossed 1,000 during July (**1,296** on Jul 30) and several tables are far past it, so a 22-agent audit swept every roster/pay read. Sixteen were silently dropping their tail; these were doing real damage in production:
+
+| Symptom found in live data | Reader |
+|---|---|
+| **Payment Dispatch queue routing was missing 20 people** — the cycle stages 1,020 rows, the routing read returned exactly 1,000 | `src/lib/supabase/payment-dispatches.ts`, `paystub-dispatch-queue.ts` |
+| **Outstanding-pay totals missing ~470 recipients** — the Reports detail capped pending rows at 500 while live cycles have 972 / 935 | `src/lib/payroll/disbursement-reports.ts` |
+| **~296 people never received "Salary Ready to View" notifications** | `src/lib/notifications/payroll-available.ts` |
+| **126 of 448 HSL people windowed on the wrong week model** | `src/lib/payroll/hsl-week-snapshot.ts`, `member-monthly-pay.ts` |
+| **~296 people missing from manager Team pages** | `src/lib/supabase/team-roster.ts` |
+| **By-Processor report built from 1,000 of 22,091 rate rows** | `src/lib/payroll/disbursement-reports.ts` |
+| **The work-email suggester could mint a duplicate `@simple.biz` address** — its "taken" set was truncated | `src/lib/hr/work-email-server.ts` |
+| Truncated proration baselines (old rate rows dropped) | `fetchAllRateHistory`, `app/api/payroll/rate-history-bulk` |
+| Others swept the same day | `app/api/departments`, `app/api/hubstaff-hours`, `src/lib/admin/diagnostics-probes.ts`, `src/lib/supabase/announcements.ts`, `leave-requests.ts` |
+
+All sixteen now drain pages through `selectAllPaged` (commit `2829a6d`).
+
+### Original 2026-07-09 discovery
+
+The active roster was **1075** then, so this bit the master-list readers first. `listActiveMasterListPeople` / `listActiveMasterListNames` (in [global-master-list-db.ts](src/lib/supabase/global-master-list-db.ts)) each did one `.range(0, 9999)` read of `active_employees` and silently dropped ~75 people — `jamesc@simple.biz` among them — off the **Department Transfers "Request transfer in" person picker** and the **New Hire Checklist "Referred By" picker**. The person simply wasn't in the list; no error hinted why.
 
 **Fix:** `fetchAllActiveEmployeeRows` (same file) loops `.range(from, from + 1000 - 1)` in 1000-row pages until a short page returns, with a `from > 200000` safety valve. Both pickers now read through it. `fetchActiveEmployees` in [employees.ts](src/lib/supabase/employees.ts) (which feeds `masterEmployees` — the Payroll Wizard's department source-of-truth + rate-match bridge) paginates the same way via its inner `queryView` loop, as do the pre-existing paginated readers in this doc (`fetchAllMasterRowsForReconcile`, `applyOffboardedFromSheetRows`, `listOffboardedSheetRows`, `fetchHubstaffRowsOrdered`, the `mesa_ledger` reader).
 
 **The rule:** any read of a table that can exceed 1000 rows *after filtering* MUST paginate. `.range(0, 9999)` is not pagination — it is a 1000-row cap with a misleading number.
 
-**Audit fallout (2026-07-09):** an audit found ~44 more un-paginated `.range(0, 9999)` reads across the data layer. The ones confirmed to run against tables that already exceed (or can exceed) 1000 rows still need the same pagination fix:
+**Audit fallout (2026-07-09):** an audit found ~44 more un-paginated `.range(0, 9999)` reads across the data layer. These were the confirmed-live candidates — **`loadTakenWorkEmails` and `getTeamRoster` were fixed by the 2026-07-30 sweep above; the other two still need the fix:**
 
 | Call site | File | What it reads |
 |---|---|---|
-| `loadTakenWorkEmails` | [work-email-server.ts](src/lib/hr/work-email-server.ts) | Work-email minting — the set of already-taken work emails; a truncated set can re-mint a colliding address |
-| Rates CSV sync existing-row lookup | [rates-upload-db.ts](src/lib/supabase/rates-upload-db.ts) | The full-table `employee_hourly_rates` read folded case-insensitively in memory (the 2026-05-07 "single full-table SELECT" fix) |
-| `fetchMasterMin` | [current-pay.ts](src/lib/payroll/current-pay.ts) | The current-pay / dispatch-queue master-min read that builds the Tech Bonus `startDateByEmail` map |
-| `getTeamRoster` | [team-roster.ts](src/lib/supabase/team-roster.ts) | Manager team-roster membership |
+| ~~`loadTakenWorkEmails`~~ | [work-email-server.ts](src/lib/hr/work-email-server.ts) | **FIXED 2026-07-30** — work-email minting; a truncated "taken" set could re-mint a colliding address |
+| Rates CSV sync existing-row lookup | [rates-upload-db.ts](src/lib/supabase/rates-upload-db.ts) | **STILL OPEN** — the full-table `employee_hourly_rates` read folded case-insensitively in memory (the 2026-05-07 "single full-table SELECT" fix) |
+| `fetchMasterMin` | [current-pay.ts](src/lib/payroll/current-pay.ts) | **STILL OPEN** — the current-pay / dispatch-queue master-min read that builds the Tech Bonus `startDateByEmail` map |
+| ~~`getTeamRoster`~~ | [team-roster.ts](src/lib/supabase/team-roster.ts) | **FIXED 2026-07-30** — manager team-roster membership (~296 people were missing) |
 
 > These are the *confirmed-live* candidates flagged by the audit; the remaining `.range(0, 9999)` hits are on tables comfortably under 1000 rows today (e.g. HSL agents, departments, leave requests) and are latent — they become bugs the moment their table crosses the ceiling.
 >

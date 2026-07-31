@@ -95,6 +95,79 @@ Orphanage budget requests have **no** remove button: they are approved records o
 
 ---
 
+## The Urgent bucket persists all week *(2026-07-30, `5c82064`)*
+
+Previously the URGENT card and its queue **disappeared the moment the last pending item
+was paid** — so a week's urgent history was only reachable from Reports. The bucket now
+behaves like every other processor bucket: it stays for the whole week and offers the same
+views.
+
+| View | Contents |
+|---|---|
+| **Pending** | the three pending sections above (MESA, orphanage budgets, one-offs) |
+| **Paid** | dispatched cards for this week |
+| **Not paid** | dispatched-but-unsettled cards |
+| **Threshold** / **Problem** | the same status splits the other buckets use |
+
+The log views are built from `GET /api/urgent-payments/dispatches`, which reads this week's
+`urgent_<sun>_to_<sat>` bucket (see **The urgent marker** above) plus the synthesized
+orphanage rows, through the same `loadUrgentDispatchRows` normalization the reports use — so
+the bucket and the weekly report can never disagree.
+
+### Undo on a dispatch-log card *(2026-07-30, `b2ff805`)*
+
+Every dispatched card in Paid / Not paid / Threshold / Problem carries an **Undo** button.
+It opens a confirm dialog (money-adjacent, never one-click) naming the person and amount and
+stating plainly that it **deletes the logged payment and returns the request to pending** —
+and does **not** reverse money already sent. On confirm the card leaves the log view and the
+request reappears under Pending, ready to Send again.
+
+**Why this needed its own route** (`POST /api/urgent-payments/dispatches/undo`): the regular
+processor-queue undo just deletes the `payment_dispatches` row, because its pending queue is
+*recomputed* from hours. Urgent pending items live in **source request tables**, so deleting
+the dispatch row alone would leave the request stamped "dispatched" forever — not pending,
+not paid, invisible. Per source:
+
+| Source | How the request is recovered |
+|---|---|
+| **One-off payment** | links back via `urgent_payment_requests.dispatch_id` — flip the request to `pending`, then delete the dispatch row |
+| **MESA disbursement** | **no link column exists** (Send only stamps `dispatched_at`), so the request is found from the `mesa.disbursement.dispatched` **audit event** written at Send time, with a fallback to an exact email + amount + dispatched match accepted **only when unambiguous**. If neither finds it (a legacy row) the money log is still removed but the clerk gets an explicit warning toast that nothing was restored |
+| **Orphanage budget** | only the `orphanage_dispatches` row is deleted — pending is derived as "approved request with no dispatch row", so it revives itself |
+
+Two safety choices worth preserving:
+
+- **Revive before delete**, and the revive is a **no-op on retry** — so if the delete fails,
+  the card stays visible and clicking Undo again just retries, instead of stranding an
+  invisible payment.
+- Every undo writes an **awaited** `payment.undone` audit event carrying the deleted row's
+  full payload (same contract as the core undo route), so the record of who was paid what
+  never silently disappears.
+
+---
+
+## Urgent filed → email alert to Accounting *(2026-07-30, `3f4240b`)*
+
+Urgent payment requests are **only ever created by the People tab's "Pay" button**
+(`POST /api/people/pay`), so that route now fires an n8n webhook best-effort right after
+the request row is inserted — a webhook hiccup can never fail the payment itself
+([`src/lib/people/urgent-payment-notify.ts`](../../src/lib/people/urgent-payment-notify.ts)).
+
+The workflow emails **carla@**, **claire@** and **lennyt@simple.biz** a red-alarm alert with
+who to pay, the ₱ amount, department, note, and who filed it, plus a button linking into
+HRIS → Payment Dispatch → Urgent. Recipients and copy are **fixed inside the workflow's Code
+node** (same pattern as `bank_info_notify`), so the endpoint can't be abused as a general
+mailer.
+
+**To go live:** import
+[`references/n8n/urgent-payment-alert.workflow.json`](../../references/n8n/urgent-payment-alert.workflow.json),
+attach a Gmail OAuth2 credential to *Send Urgent Alert (Gmail)*, activate, then register the
+production webhook URL in **Admin → Webhooks** under slug **`urgent_payment_notify`** (env
+fallback `N8N_URGENT_PAYMENT_NOTIFY_WEBHOOK_URL`). Optional lockdown: `REQUIRED_SECRET` in
+the Code node + `N8N_URGENT_PAYMENT_NOTIFY_SECRET` in the HRIS env. **Until the URL is
+registered the app-side fire silently no-ops**, so nothing breaks in the meantime.
+
+---
+
 ## The dispatch route (MESA)
 
 **File:** `app/api/mesa-requests/[id]/dispatch/route.ts` (elevated session only)

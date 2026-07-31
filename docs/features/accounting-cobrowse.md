@@ -102,6 +102,33 @@ Key files:
 - [AdminGlobalMasterList.tsx](src/components/admin/AdminGlobalMasterList.tsx) — the GML surface: the Observe/watch button, the **Refresh** button, and the 15s telemetry tick.
 - [PresenceProvider.tsx](src/components/presence/PresenceProvider.tsx) — `usePresenceRefresh` / `PresenceRefreshContext` (force-recompute the live presence roster).
 
+### Stacking rule: the mirror MUST portal to `<body>` *(2026-07-30, `3bb0efa`)*
+
+`CobrowseSurface` (`fixed inset-0 z-[120]`) renders **inside `<main>`**. When `isolate` was
+added to `<main>` the previous day (`f3d2213`, to stop the collab avatar rail floating over
+modal scrims), it trapped the mirror in main's stacking context — and the desktop sidebar
+(`md:z-30` via `CollapsibleSidebarShell`, for its pull-tab) started painting **on top of** the
+full-screen mirror's left edge.
+
+The fix is inside `CobrowseSurface` itself: it **portals to `document.body`**, putting the
+full-screen takeover back in the root stacking context. Doing it in the component covers all
+three mounts at once — the Accounting/HR collab layers, the CEO live-payroll mirror, and the
+admin watch-screen. Exit animations still work (AnimatePresence context crosses portals) and
+the `rr-block` no-mirror-of-a-mirror guard still applies at body level.
+
+> **The rule `isolate` establishes:** anything rendered **inside `<main>`** stays **under**
+> body-level chrome (sidebar, dialogs) unless it **portals out**. Any new full-screen or
+> floating surface mounted in `<main>` that must beat the sidebar or a modal needs the same
+> treatment.
+>
+> An older note claimed portaling `CobrowseSurface` was "a refuted no-op". That was true for
+> **sizing** (nothing was clipping it) — the `isolate` change is what made it matter for
+> **stacking**. Don't conflate the two.
+>
+> Separate, still open: an **unlayered `*, *::before, *::after` transition rule** in
+> `src/index.css` kills Tailwind transition utilities app-wide, and remote-cursor scroll drift
+> in the mirror is unfixed.
+
 ### The chat — live-only, silent-watch-preserving
 
 - **Docked window, admin side.** When the admin observes someone, `CobrowseProvider`

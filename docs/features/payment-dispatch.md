@@ -1203,3 +1203,35 @@ congratulations for the completed payment cycle, via a new n8n webhook.
   trigger effect in `src/components/payroll-clerk/PayrollDispatch.tsx`,
   `payment_cycle_complete` entry in `AdminWebhooks.tsx` `KNOWN_SLUGS`.
   No DDL — the marker rides the existing `app_settings` table.
+
+### 12.8 COP-country payees show/copy native COP (2026-07-30)
+
+Colombian staff have **no COP Pay Structure** — they ride the ordinary PHP rails, so the
+COP tab never sees them and their secondary line used to show a peso figure they never
+receive. A display-only `countryCurrency` marker (derived from the hire's **submitted**
+onboarding `country`, never HR's `invite_country`) makes queue rows and the Mark Paid
+dialog show `$COP…` as the small number, with the copy button pasting a **bare integer**
+for the bank field. `payCurrency`, routing, amounts and dispatch records are untouched.
+Full rule + the trust caveat: [cop-country-payees.md](./cop-country-payees.md).
+
+### 12.9 Triage — why a person isn't in Payment Dispatch
+
+Asked often enough to be worth writing down. In plain terms, someone is missing from the
+queue entirely because:
+
+1. Accounting hasn't finished and **locked** that week's payroll yet — the page shows
+   nothing for anyone until they do.
+2. They had **no recorded hours** that week, so no pay was prepared.
+3. They **weren't included** when the week's payroll was finalized (nothing staged).
+4. They've **already been paid** — they moved into the paid records.
+5. They were flagged with a **payment problem** — they sit in the problem list.
+6. They're **no longer on the active employee list** and weren't part of that pay run.
+7. You're **viewing a different week** than the one they were paid in.
+8. Their record is filed under a **different email or name** than the one searched.
+9. **Contractors only:** the invoice isn't approved yet, or was already paid off.
+10. The **contractor side failed to load** (the page shows a warning when this happens).
+
+**Missing bank details or a missing pay rate do NOT hide anyone** — those people still
+appear, under the **Excluded** tab rather than the pending list. (Catalog-paid people with
+no rates row used to be an exception: they showed as "No bank / No rate" and were
+unpayable until `buildStagedOnlyPlacement` landed.)

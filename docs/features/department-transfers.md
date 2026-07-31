@@ -187,6 +187,26 @@ In progress / Completed / Declined-cancelled), then **In progress** (pending) an
 (everything else), showing who was moved, both manager decisions (`requested_by` /
 `approver_email`), the effective date, and a Sheet-synced / not-synced badge.
 
+> **The tab must fetch `?scope=all`** — fixed 2026-07-30 (`19e504b`).
+>
+> HR's tab was **silently empty** because of a regression in `7c8e314`. It used to fetch
+> `/api/department-transfers` with **no** `scope`, and that unscoped HR/admin default
+> originally returned *every* transfer. When the admin action-queue tabs were fixed, the
+> default was repurposed to return only requests **the caller raised themselves** — and
+> since HR coordinators never raise transfers, the "read-only full trail" became a
+> permanently empty outbox.
+>
+> The route now has an explicit **`scope=all`** (HR/admin only) that returns the complete
+> trail via the previously-orphaned `listAllTransferRequests()`. Every other scope is
+> unchanged: `incoming`/`done` for the action queues, **unscoped stays the personal
+> outbox**, manager scopes still narrow to their departments.
+>
+> The (roles, scope) → list dispatch had lived only in route comments, which is why the bug
+> survived. It is now the pure function **`resolveTransferListQuery`**
+> ([`src/lib/transfers/list-scope.ts`](../../src/lib/transfers/list-scope.ts)) with 10 tests
+> pinning every pairing — so the HR history can't be hollowed out again, and nobody can
+> "fix" it by changing the default and breaking the admin outbox instead.
+
 ### Accounting → Transfers tab (`AccountingTransfers.tsx`)
 
 Rate-visible only — `GET /api/accounting/transfers` is gated by `requireRateVisibilitySession`
@@ -284,6 +304,60 @@ manager/accounting users. Migration + seeds are tracked as **pending SQL #107**.
   stays applied.
 - **Sheet failure is silent-but-tracked.** The transfer still applies; watch the Accounting tab's
   "Retry" badge to reconcile the Google Sheet.
+- **A stale Sheet paste silently reverts applied transfers.** See below — this bit 13 people
+  on 2026-07-30.
+
+---
+
+## 6 · Playbook: a stale Sheet paste reverted applied transfers *(2026-07-30 incident)*
+
+**Symptom.** A transferred person **vanishes from the HR Global Master List** (or shows their
+old department) even though the transfer record says `applied` and its original Sheet
+write-back succeeded.
+
+**Cause.** The master Google Sheet is the sync's source of truth for `(Work Email,
+Department)`. If someone restores or pastes a chunk of the Sheet from an **older snapshot**,
+every department change written since that snapshot is wiped — and the next sync either mints
+a **duplicate row in the old department** or strands the new-department row as not-last-seen
+(invisible). The transfer record still reads `applied`, so nothing in the app looks wrong.
+
+**What happened.** Curing a set of dropped-off rows on Jul 30 pasted pre-Jul-24 data. An audit
+of all **117 applied transfers** found **11 people** silently reverted this way — plus Krizia
+(the reported case) and Glaiza, **13 restored in total**:
+
+| Requested by | People | Move |
+|---|---|---|
+| carla@ (Jul 30 batch) | Cantoria Gerald, Redoble Fernan, Guevarra Charissa, Bahan Judith, Cinco Yousef | Lead Gen → HSL |
+| jackie@ (Jul 24–30) | Bucayani Eriksson, Capati Lourdino, Chua Lauren, Cacho Glenda, Cestina Jose | HSL → Lead Gen |
+| carla@ (Jul 24) | Rosero Jerome | QC → Callback Team |
+
+**Fix, per person** (back up the rows to the run log first):
+
+1. Flip the **Sheet cell** back to the transfer's target department.
+2. **Restamp the DB row visible** (`last_seen_upload_id` → the current master-list upload).
+3. **Delete any sync-minted duplicate**, leaving exactly **one active row**.
+
+**Two detection lessons:**
+
+- **A transfer-record audit is not sufficient.** Glaiza Garcia had **no transfer record at
+  all** — her Lead Gen → HSL move was made by editing the Sheet directly in early June and
+  captured by a sync. Sheet-only moves are invisible to a transfers audit.
+- **Therefore the real check is a full Sheet-vs-DB consistency sweep**: match every Sheet row
+  against every DB row by **both** emails and compare departments. The Jul 30 sweep (1,326
+  Sheet rows × 2,311 DB rows) came back with **zero** department mismatches, zero unknown Sheet
+  identities and zero active people missing from the Sheet — which is what proved there were no
+  further hidden cases.
+
+**Cases to escalate rather than silently re-apply:**
+
+- A revert that is **weeks old and has survived payroll cycles** (Gopez Stephen / Quijano RJ —
+  transferred Jul 13, back in Client VA for 2+ cycles). Confirm with the requesting manager
+  whether the move-back was intentional.
+- **Two rows where the sync-current one is offboarded but the Sheet says Active** (Medilo Hanna
+  Grace) — the person is invisible; confirm their real status before picking a direction.
+
+**Prevention:** whoever re-adds Sheet rows must paste **current** department values. See the
+related "Sheet re-add with an old dept clobbers an applied transfer" rule.
 
 ## Related
 

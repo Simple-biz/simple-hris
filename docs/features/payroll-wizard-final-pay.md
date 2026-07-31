@@ -185,6 +185,44 @@ auto-computed orphanage-visit wages shown in the Orphanage step (id 4).
 
 ---
 
+## 3a. Shared-email KPI bonuses — attribution by name snapshot *(2026-07-30, `5cd515c`)*
+
+**The bug.** `bonus_catalog_applied` rows are keyed by the email the manager KPI Calculator's
+roster shows for a member (**personal-first**). The wizard paid by **summing rows per email** —
+which silently merges **two people** whenever one address sits on more than one master row.
+Live incident: Rhocel Bencito's master row carried John Marc Corpuz's gmail, so **both**
+paystubs staged her ₱2,500 `pm_team` KPI **plus** his ₱8,666.67 HR split as one **₱11,167**
+sum. The KPI Calculator itself showed the correct ₱2,500.
+
+**The rule now** — [`src/lib/payroll/manager-bonus-attribution.ts`](../../src/lib/payroll/manager-bonus-attribution.ts):
+
+- Stored keys are **left exactly as they are**. The KPI Calculator, QC, and all history data
+  are untouched — no re-keying, no migration. Disambiguation happens at **resolution time**.
+- `buildSharedEmailOwners(master)` finds emails claimed by **2+ master rows whose names
+  tokenize differently** (`normalizeNameTokens`) — i.e. genuinely different humans. **Duplicate
+  rows for the same human** ("Lee, Seungyong" vs "Seungyong, Lee") tokenize identically and are
+  deliberately **not** flagged, because for one human the per-email sum is correct.
+- Only for a flagged email: each claimant is paid **only the rows snapshotted under their own
+  `employee_name`** (the calculator stamps one on every applied row).
+- Rows naming **neither** claimant are paid to **nobody** and surfaced — never guessed at.
+- **Unshared emails (99.9% of people) resolve byte-for-byte identically to before** — the
+  loader's per-email sums are used untouched, so the regression surface is zero.
+- The **Additions step shows an amber banner** naming the shared email, the per-person split,
+  and telling Accounting to fix the master list — so this class of data error can never again
+  land silently on a paystub.
+
+**Verify against live data:** `npx tsx scripts/verify-kpi-shared-email-split.mts` runs the real
+production module. On the incident cycle the merged 11,167 splits to **Bencito 2,500 (pm_team) /
+Corpuz 8,667 (hr)** — exactly the calculator's numbers — and that email was the **only** genuine
+collision across all 1,307 master rows. Rerun it any week.
+
+> **Two follow-ups this does NOT fix:** the master list is still factually wrong (Rhocel's
+> Personal Email is John's gmail — the banner nags until corrected), and rows already staged
+> **before** the fix still hold the merged figure. Reload the wizard tabs and **re-lock** the
+> cycle to restage.
+
+---
+
 ## 4. Pay week & hours sourcing
 
 Hours come from `payDaysByEmail` → `payHoursByEmail` (40h/week regular cap applied
