@@ -33,6 +33,7 @@ import {
 } from "@/lib/payroll/current-pay";
 import { loadWeekDiscretionary, loadFinalPayForWeeks } from "@/lib/payroll/paystub-recovery";
 import { resolveEmployeeProcessor, resolvePayDateIso } from "@/lib/payroll/pay-schedule";
+import { dedupeOneRowPerWeek } from "@/lib/payroll/paystub-week-dedupe";
 import { getEmployeeMasterRecord } from "@/lib/supabase/employees";
 import { getAppSetting, getAppSettingsWithMeta } from "@/lib/supabase/app-settings";
 import { listHubstaffUploads, getUploadedSourceFiles } from "@/lib/supabase/hubstaff-hours-db";
@@ -728,14 +729,26 @@ export async function GET(req: NextRequest) {
     }
 
     rows.sort((a, b) => (b.weekEnd ?? "").localeCompare(a.weekEnd ?? ""));
-    return NextResponse.json({ stubs: rows });
+    // Same one-row-per-week guardrail as the all-weeks export, so the list the
+    // employee sees and the PDF/XLSX they download agree on the week set.
+    const uploadRank = new Map(allFiles.map((f, i) => [f, i] as const));
+    const dedupedRows = dedupeOneRowPerWeek(rows, (r) => ({
+      weekStart: r.weekStart,
+      weekEnd: r.weekEnd,
+      paid: r.paidAt != null,
+      paidAt: r.paidAt,
+      staged: stagedFiles.has(r.sourceFile),
+      rank: uploadRank.get(r.sourceFile),
+    }));
+    return NextResponse.json({ stubs: dedupedRows });
   }
 
   // ── All-weeks mode: full statements for every week (drives the export) ─────
   if (wantAll) {
-    const [{ rows: dispatches }, { rows: payloads }] = await Promise.all([
+    const [{ rows: dispatches }, { rows: payloads }, allFiles] = await Promise.all([
       listPaymentDispatches({ recipientEmail: email }),
       listPaystubPayloadsForEmployee(email),
+      listAllSourceFiles(),
     ]);
     const paidAtByFile = paidAtByFileFrom(dispatches);
 
@@ -774,7 +787,6 @@ export async function GET(req: NextRequest) {
 
     let recoveredStubs: EmployeePayStub[] = [];
     if (SHOW_UNPAID_STAGED_PAYSTUBS) {
-      const allFiles = await listAllSourceFiles();
       const toRecover = allFiles.filter((f) => !stagedFiles.has(f));
       const recovered = await mapWithConcurrency(toRecover, 6, (file) =>
         reconstructStubForWeek({
@@ -790,9 +802,26 @@ export async function GET(req: NextRequest) {
       recoveredStubs = recovered.filter((s): s is EmployeePayStub => s !== null);
     }
 
-    const stubs = [...officialStubs, ...recoveredStubs]
-      .map((s) => ({ ...s, view: copDecorate(s.view) }))
-      .sort((a, b) => (b.view.weekEnd ?? "").localeCompare(a.view.weekEnd ?? ""));
+    // GUARDRAIL — exactly one statement per pay week. The same week can arrive
+    // under several source files (api_sync + daily_report both staged, a
+    // backfill re-upload with shifted filename dates, a multi-week
+    // time-activity export); each used to render as its own row and
+    // double-count the week in the export totals. Collapse them: paid row
+    // wins, then staged-over-recovered, then the newest upload.
+    const uploadRank = new Map(allFiles.map((f, i) => [f, i] as const));
+    const stubs = dedupeOneRowPerWeek(
+      [...officialStubs, ...recoveredStubs]
+        .map((s) => ({ ...s, view: copDecorate(s.view) }))
+        .sort((a, b) => (b.view.weekEnd ?? "").localeCompare(a.view.weekEnd ?? "")),
+      (s) => ({
+        weekStart: s.view.weekStart,
+        weekEnd: s.view.weekEnd,
+        paid: s.paidAt != null,
+        paidAt: s.paidAt,
+        staged: stagedFiles.has(s.sourceFile),
+        rank: uploadRank.get(s.sourceFile),
+      }),
+    );
     return NextResponse.json({ stubs });
   }
 

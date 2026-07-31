@@ -55,6 +55,7 @@ import {
   isFinalPabWeek as gateIsFinalPabWeek,
   isTechBonusWeek as gateIsTechBonusWeek,
   pabMonthFromWeekStart,
+  parseMasterStartDate,
 } from "@/lib/payroll/dispatch-bonuses";
 import {
   HSL_WEEK_MODEL_CUTOVER_KEY,
@@ -815,7 +816,11 @@ export async function computeCurrentPay(
     if (m.department && normalizeDeptToKey(m.department) === "hogan_smith_law") {
       for (const e of [we, pe, altA, altB]) if (e) hslEmails.add(e);
     }
-    const sd = parseLocalIso(m.start_date);
+    // Tolerant parse: the master sheet stores US-format dates ("11/10/25"), so
+    // an ISO-only parse dropped every start date → hasThirtyDays failed → the
+    // engine paid ₱0 Tech on every week it reconstructs while the wizard (whose
+    // lenient Date parse read the same cell fine) paid it. See parseMasterStartDate.
+    const sd = parseMasterStartDate(m.start_date);
     if (sd) {
       if (we) startDateByEmail.set(we, sd);
       if (pe && !startDateByEmail.has(pe)) startDateByEmail.set(pe, sd);

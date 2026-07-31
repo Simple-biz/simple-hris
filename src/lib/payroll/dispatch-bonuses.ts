@@ -425,6 +425,37 @@ export function isTechBonusWeekSunSat(weekSunday: Date): boolean {
 }
 
 /**
+ * Master-list "Start Date" parser for the 30-day Tech gate. The Global Master
+ * List stores US-format short dates (`11/10/25`, sometimes `11/10/2025`), NOT
+ * ISO — an ISO-only parse returns null, the employee silently fails
+ * `hasThirtyDaysFromStart`, and the engine strips the Tech Bonus from every
+ * week it reconstructs (the wizard's lenient `new Date()` parse still granted
+ * it, so staged weeks had Tech while engine-recovered weeks didn't). Accepts
+ * ISO first, then M/D/YY and M/D/YYYY; two-digit years are 20xx (the roster
+ * has no 19xx service dates). Local-midnight dates, no TZ drift.
+ */
+export function parseMasterStartDate(raw: string | null | undefined): Date | null {
+  const s = raw?.trim();
+  if (!s) return null;
+  const isoM = /^(\d{4})-(\d{1,2})-(\d{1,2})/.exec(s);
+  const usM = isoM ? null : /^(\d{1,2})\/(\d{1,2})\/(\d{2}|\d{4})$/.exec(s);
+  let y: number, mo: number, d: number;
+  if (isoM) {
+    y = +isoM[1]; mo = +isoM[2]; d = +isoM[3];
+  } else if (usM) {
+    mo = +usM[1]; d = +usM[2];
+    y = +usM[3];
+    if (y < 100) y += 2000;
+  } else {
+    return null;
+  }
+  const date = new Date(y, mo - 1, d);
+  // Round-trip check rejects out-of-range parts (13/45/25 etc.).
+  if (date.getFullYear() !== y || date.getMonth() !== mo - 1 || date.getDate() !== d) return null;
+  return date;
+}
+
+/**
  * Wizard rule: 30-day service is checked against the *period's Monday*,
  * not the salary date. eligibleFrom = startDate + 30d, then the period
  * Monday must be on or after that date.

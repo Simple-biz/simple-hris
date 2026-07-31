@@ -39,6 +39,7 @@ import {
   isFinalPabWeek as gateIsFinalPabWeek,
   isTechBonusWeek as gateIsTechBonusWeek,
   pabMonthFromWeekStart,
+  parseMasterStartDate,
 } from '@/lib/payroll/dispatch-bonuses';
 import { listSystemBonuses } from '@/lib/supabase/system-bonuses-db';
 import { listAllOrphanagePayHours } from '@/lib/supabase/orphanage-pay-db';
@@ -505,7 +506,9 @@ export async function computeMemberMonthlyPay(args: {
 
   const masterRow = masterMin.row;
   const hslEmails = masterMin.allHsl;
-  const startDate = parseLocalIso(masterRow?.start_date ?? null);
+  // Tolerant parse — the master sheet stores US-format dates ("11/10/25");
+  // ISO-only parsing dropped them all and silently failed the 30-day Tech gate.
+  const startDate = parseMasterStartDate(masterRow?.start_date ?? null);
 
   // Build the alias set: this employee's emails (work + personal + gsuite
   // alternate work emails). Alternates matter because Hubstaff/rates rows are

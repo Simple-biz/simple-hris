@@ -21,6 +21,7 @@
 import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFImage } from 'pdf-lib';
 import * as XLSX from 'xlsx';
 import type { PayStubView } from './paystub-view';
+import { dedupeOneRowPerWeek } from './paystub-week-dedupe';
 
 // ---------------------------------------------------------------------------
 // Model
@@ -54,6 +55,25 @@ export interface PayStubExportOptions {
   employeeName: string;
   department?: string | null;
   logoUrl?: string;
+}
+
+/**
+ * GUARDRAIL — at most ONE statement row per pay week, applied inside both
+ * exporters so no caller can ever produce a doubled week (the route dedupes
+ * too; this is the last line of defense on the legal record itself). Same
+ * pay week under two source files (api_sync + daily_report staged twins, a
+ * backfill re-upload with shifted filename dates): the paid row wins, then
+ * the earlier list position (the route orders rows best-first).
+ */
+function dedupeWeeks(weeks: PayStubWeek[]): PayStubWeek[] {
+  return dedupeOneRowPerWeek(weeks, (w) => ({
+    weekStart: w.view.weekStart,
+    weekEnd: w.view.weekEnd,
+    // With a status present, only 'paid' counts; legacy rows (no status) keep
+    // the old "any paid date means paid" reading.
+    paid: w.status ? w.status === 'paid' : w.paidAt != null,
+    paidAt: w.paidAt,
+  }));
 }
 
 /** Derived per-week figures shared by both exporters. Bonuses (tech / PAB /
@@ -225,10 +245,11 @@ function round2(n: number): number {
 
 /** Build the workbook: a titled sheet, one row per week, a totals row. */
 export function buildPayStubsWorkbook(
-  weeks: PayStubWeek[],
+  rawWeeks: PayStubWeek[],
   opts: PayStubExportOptions,
   generatedAt: Date,
 ): XLSX.WorkBook {
+  const weeks = dedupeWeeks(rawWeeks);
   const totals = sumTotals(weeks);
   const wb = XLSX.utils.book_new();
 
@@ -312,37 +333,126 @@ async function loadLogoBytes(url: string): Promise<ArrayBuffer | null> {
   }
 }
 
-type Col = { header: string; weight: number; align: 'left' | 'right' };
+/** "Jul 19 - 25, 2026" (same month) / "Jun 28 - Jul 4, 2026" — the PDF's
+ *  compact period label. Shorter than `weekHuman` so the column never crowds
+ *  its neighbours; falls back to `weekHuman` when the dates don't parse. */
+function compactPeriod(v: PayStubView): string {
+  const re = /^(\d{4})-(\d{2})-(\d{2})/;
+  const s = v.weekStart ? re.exec(v.weekStart.trim()) : null;
+  const e = v.weekEnd ? re.exec(v.weekEnd.trim()) : null;
+  if (!s || !e) return v.weekHuman || '-';
+  const sm = MONTHS[Number(s[2]) - 1] ?? '';
+  const em = MONTHS[Number(e[2]) - 1] ?? '';
+  return s[1] === e[1] && s[2] === e[2]
+    ? `${sm} ${Number(s[3])} - ${Number(e[3])}, ${e[1]}`
+    : `${sm} ${Number(s[3])} - ${em} ${Number(e[3])}, ${e[1]}`;
+}
 
-/** Columns for the PDF summary (weights scaled to exactly fill CONTENT_W).
- *  "Wknd Hrs"/"Weekend" carry the HSL Sat+Sun carve-out (regular + OT combined
- *  — the XLSX itemizes the two buckets); Regular/Overtime then hold the weekday
- *  portion so a row still sums across to Net. Non-HSL weeks show "-". */
-const PDF_COLS: Col[] = [
-  { header: 'Period Ending', weight: 104, align: 'left' },
-  { header: 'Reg Hrs', weight: 44, align: 'right' },
-  { header: 'OT Hrs', weight: 40, align: 'right' },
-  { header: 'Regular', weight: 70, align: 'right' },
-  { header: 'Overtime', weight: 62, align: 'right' },
-  { header: 'Wknd Hrs', weight: 48, align: 'right' },
-  { header: 'Weekend', weight: 62, align: 'right' },
-  { header: 'Tech', weight: 48, align: 'right' },
-  { header: 'PAB', weight: 48, align: 'right' },
-  { header: 'Perf', weight: 48, align: 'right' },
-  { header: 'Adjustment', weight: 58, align: 'right' },
-  { header: 'Orphanage', weight: 56, align: 'right' },
-  { header: 'MESA', weight: 56, align: 'right' },
-  { header: 'Net (PHP)', weight: 78, align: 'right' },
-  { header: 'Net (USD)', weight: 54, align: 'right' },
-  { header: 'Paid', weight: 72, align: 'left' },
+interface PdfColDef {
+  header: string;
+  align: 'left' | 'right';
+  /** Optional columns are HIDDEN when every row renders '-' for them — a
+   *  non-HSL employee gets no Weekend columns, someone with no adjustments no
+   *  Adjustment column. Fewer columns = real breathing room; the XLSX export
+   *  keeps the full fixed column set for ledger use. */
+  optional?: boolean;
+  cell: (w: PayStubWeek) => string;
+  /** Totals-row text for this column ('' renders nothing). */
+  total?: (t: Totals, weekCount: number) => string;
+}
+
+/** Column catalogue for the PDF summary. "Wknd Hrs"/"Weekend" carry the HSL
+ *  Sat+Sun carve-out (regular + OT combined — the XLSX itemizes the two
+ *  buckets); Regular/Overtime then hold the weekday portion so a row still
+ *  sums across to Net. */
+const PDF_COL_DEFS: PdfColDef[] = [
+  {
+    header: 'Period Ending', align: 'left',
+    cell: (w) => compactPeriod(w.view),
+    total: (_t, n) => `Total (${n})`,
+  },
+  { header: 'Reg Hrs', align: 'right', cell: (w) => derive(w).weekdayHours.toFixed(2) },
+  { header: 'OT Hrs', align: 'right', cell: (w) => derive(w).weekdayOtHours.toFixed(2) },
+  {
+    header: 'Regular', align: 'right',
+    cell: (w) => n2(derive(w).weekdayPay),
+    total: (t) => n2(t.regular),
+  },
+  {
+    header: 'Overtime', align: 'right',
+    cell: (w) => n2(derive(w).weekdayOtPay),
+    total: (t) => n2(t.ot),
+  },
+  {
+    header: 'Wknd Hrs', align: 'right', optional: true,
+    cell: (w) => {
+      const d = derive(w);
+      const hrs = d.weekendHours + d.weekendOtHours;
+      return hrs > 0 ? hrs.toFixed(2) : '-';
+    },
+  },
+  {
+    header: 'Weekend', align: 'right', optional: true,
+    cell: (w) => {
+      const d = derive(w);
+      const pay = d.weekendPay + d.weekendOtPay;
+      return pay !== 0 ? n2(pay) : '-';
+    },
+    total: (t) => {
+      const pay = t.weekendPay + t.weekendOtPay;
+      return pay !== 0 ? n2(pay) : '-';
+    },
+  },
+  {
+    header: 'Tech', align: 'right', optional: true,
+    cell: (w) => (w.view.techBonus > 0 ? n2(w.view.techBonus) : '-'),
+    total: (t) => (t.techBonus > 0 ? n2(t.techBonus) : '-'),
+  },
+  {
+    header: 'PAB', align: 'right', optional: true,
+    cell: (w) => (w.view.attendanceBonus > 0 ? n2(w.view.attendanceBonus) : '-'),
+    total: (t) => (t.attendanceBonus > 0 ? n2(t.attendanceBonus) : '-'),
+  },
+  {
+    header: 'Perf', align: 'right', optional: true,
+    cell: (w) => (w.view.performanceBonus > 0 ? n2(w.view.performanceBonus) : '-'),
+    total: (t) => (t.performanceBonus > 0 ? n2(t.performanceBonus) : '-'),
+  },
+  {
+    header: 'Adjustment', align: 'right', optional: true,
+    cell: (w) => n2Signed(w.view.adjustment),
+    total: (t) => n2Signed(t.adjustment),
+  },
+  {
+    header: 'Orphanage', align: 'right', optional: true,
+    cell: (w) => (w.view.orphanagePay > 0 ? n2(w.view.orphanagePay) : '-'),
+    total: (t) => (t.orphanagePay > 0 ? n2(t.orphanagePay) : '-'),
+  },
+  {
+    header: 'MESA', align: 'right', optional: true,
+    cell: (w) => n2Signed(derive(w).mesaNet),
+    total: (t) => n2Signed(t.mesaNet),
+  },
+  {
+    header: 'Net (PHP)', align: 'right',
+    cell: (w) => n2(w.view.totalPayPhp),
+    total: (t) => n2(t.netPhp),
+  },
+  {
+    header: 'Net (USD)', align: 'right',
+    cell: (w) => n2(w.view.totalPayUsd),
+    total: (t) => n2(t.netUsd),
+  },
+  { header: 'Paid', align: 'left', cell: (w) => paidColumn(w) },
 ];
 
 /** Build the branded all-weeks pay-stubs PDF. Returns the raw bytes. */
 export async function generatePayStubsPdf(
-  weeks: PayStubWeek[],
+  rawWeeks: PayStubWeek[],
   opts: PayStubExportOptions,
   generatedAt: Date,
 ): Promise<Uint8Array> {
+  const weeks = dedupeWeeks(rawWeeks);
   const doc = await PDFDocument.create();
   const font = await doc.embedFont(StandardFonts.Helvetica);
   const bold = await doc.embedFont(StandardFonts.HelveticaBold);
@@ -411,16 +521,63 @@ export async function generatePayStubsPdf(
   }
 
   // ── Table ────────────────────────────────────────────────────────────────
-  const BODY = 8.5;
-  const LH = 11;
-  const PAD_X = 6;
+  // Layout is MEASURED, never assumed: every visible column is as wide as its
+  // widest content (header / cell / totals text) at the chosen font size, so
+  // text can never run into the next column — the defect the fixed-weight
+  // layout had. Empty optional columns are dropped entirely, then the largest
+  // font size (9.5pt down to 6.5pt) whose measured table fits CONTENT_W wins.
+  const PAD_X = 5;
   const PAD_Y = 5;
 
-  const totalWeight = PDF_COLS.reduce((s, c) => s + c.weight, 0);
-  const cols = PDF_COLS.map((c) => ({ ...c, width: (c.weight / totalWeight) * CONTENT_W }));
+  // 1. Render every cell once (also used for measuring).
+  const visibleDefs = PDF_COL_DEFS.filter(
+    (def) => !def.optional || weeks.some((w) => def.cell(w) !== '-'),
+  );
+  const rowsCells = weeks.map((w) => visibleDefs.map((def) => sanitize(def.cell(w))));
+  const totalCells = visibleDefs.map((def) => sanitize(def.total?.(totals, weeks.length) ?? ''));
+  const headerCells = visibleDefs.map((def) => sanitize(def.header));
 
-  const drawText1 = (raw: string, x: number, y: number, w: number, align: 'left' | 'right', f: PDFFont, color = TEXT) => {
-    const s = sanitize(raw);
+  // 2. Largest font size whose widest-content column widths fit the page.
+  const SIZES = [9.5, 9, 8.5, 8, 7.5, 7, 6.5];
+  let BODY = SIZES[SIZES.length - 1];
+  let widths: number[] = [];
+  for (const size of SIZES) {
+    const measured = visibleDefs.map((_def, i) => {
+      let w = bold.widthOfTextAtSize(headerCells[i], size);
+      for (const cells of rowsCells) w = Math.max(w, font.widthOfTextAtSize(cells[i], size));
+      if (totalCells[i]) w = Math.max(w, bold.widthOfTextAtSize(totalCells[i], size));
+      return w + PAD_X * 2;
+    });
+    const total = measured.reduce((s, w) => s + w, 0);
+    if (total <= CONTENT_W || size === SIZES[SIZES.length - 1]) {
+      BODY = size;
+      widths = measured;
+      // Overflow at the floor size (never with realistic column sets): squeeze
+      // proportionally — cells are ellipsized at draw time, still no overlap.
+      if (total > CONTENT_W) {
+        widths = measured.map((w) => (w / total) * CONTENT_W);
+      } else {
+        // Distribute the slack evenly so the table fills the content width.
+        const extra = (CONTENT_W - total) / measured.length;
+        widths = measured.map((w) => w + extra);
+      }
+      break;
+    }
+  }
+  const cols = visibleDefs.map((def, i) => ({ align: def.align, width: widths[i] }));
+  const LH = BODY + 2.5;
+
+  /** Ellipsize to the column's inner width — the no-overlap guarantee even for
+   *  content that appears only after measuring (defensive; measured cells fit). */
+  const fitText = (s: string, f: PDFFont, maxW: number): string => {
+    if (f.widthOfTextAtSize(s, BODY) <= maxW) return s;
+    let t = s;
+    while (t.length > 1 && f.widthOfTextAtSize(`${t}...`, BODY) > maxW) t = t.slice(0, -1);
+    return `${t}...`;
+  };
+
+  const drawCell = (raw: string, x: number, y: number, w: number, align: 'left' | 'right', f: PDFFont, color = TEXT) => {
+    const s = fitText(raw, f, w - PAD_X * 2);
     const tw = f.widthOfTextAtSize(s, BODY);
     const tx = align === 'right' ? x + w - PAD_X - tw : x + PAD_X;
     state.page.drawText(s, { x: tx, y, size: BODY, font: f, color });
@@ -430,9 +587,9 @@ export async function generatePayStubsPdf(
   const drawHeader = () => {
     state.page.drawRectangle({ x: MARGIN, y: state.y - headerH, width: CONTENT_W, height: headerH, color: NAVY });
     let x = MARGIN;
-    for (const c of cols) {
-      drawText1(c.header, x, state.y - PAD_Y - BODY, c.width, c.align, bold, WHITE);
-      x += c.width;
+    for (let i = 0; i < cols.length; i++) {
+      drawCell(headerCells[i], x, state.y - PAD_Y - BODY, cols[i].width, cols[i].align, bold, WHITE);
+      x += cols[i].width;
     }
     state.y -= headerH;
   };
@@ -442,29 +599,7 @@ export async function generatePayStubsPdf(
 
   const rowH = LH + PAD_Y * 2;
   let alt = false;
-  for (const w of weeks) {
-    const d = derive(w);
-    const { mesaNet } = d;
-    const wkndHrs = d.weekendHours + d.weekendOtHours;
-    const wkndPay = d.weekendPay + d.weekendOtPay;
-    const cells = [
-      w.view.weekHuman || '-',
-      d.weekdayHours.toFixed(2),
-      d.weekdayOtHours.toFixed(2),
-      n2(d.weekdayPay),
-      n2(d.weekdayOtPay),
-      wkndHrs > 0 ? wkndHrs.toFixed(2) : '-',
-      wkndPay !== 0 ? n2(wkndPay) : '-',
-      w.view.techBonus > 0 ? n2(w.view.techBonus) : '-',
-      w.view.attendanceBonus > 0 ? n2(w.view.attendanceBonus) : '-',
-      w.view.performanceBonus > 0 ? n2(w.view.performanceBonus) : '-',
-      n2Signed(w.view.adjustment),
-      w.view.orphanagePay > 0 ? n2(w.view.orphanagePay) : '-',
-      n2Signed(mesaNet),
-      n2(w.view.totalPayPhp),
-      n2(w.view.totalPayUsd),
-      paidColumn(w),
-    ];
+  for (const cells of rowsCells) {
     if (state.y - rowH < BOTTOM) {
       newPage();
       drawHeader();
@@ -475,7 +610,7 @@ export async function generatePayStubsPdf(
     }
     let x = MARGIN;
     for (let i = 0; i < cols.length; i++) {
-      drawText1(cells[i] ?? '', x, state.y - PAD_Y - BODY, cols[i].width, cols[i].align, font);
+      drawCell(cells[i] ?? '', x, state.y - PAD_Y - BODY, cols[i].width, cols[i].align, font);
       x += cols[i].width;
     }
     state.page.drawLine({
@@ -487,28 +622,12 @@ export async function generatePayStubsPdf(
   }
 
   // Totals footer row.
-  {
+  if (weeks.length > 0) {
     if (state.y - rowH < BOTTOM) { newPage(); drawHeader(); }
     state.page.drawRectangle({ x: MARGIN, y: state.y - rowH, width: CONTENT_W, height: rowH, color: TOTAL_BG });
-    const footer = [
-      `Total (${weeks.length})`, '', '',
-      n2(totals.regular),
-      n2(totals.ot),
-      '',
-      totals.weekendPay + totals.weekendOtPay !== 0 ? n2(totals.weekendPay + totals.weekendOtPay) : '-',
-      totals.techBonus > 0 ? n2(totals.techBonus) : '-',
-      totals.attendanceBonus > 0 ? n2(totals.attendanceBonus) : '-',
-      totals.performanceBonus > 0 ? n2(totals.performanceBonus) : '-',
-      n2Signed(totals.adjustment),
-      totals.orphanagePay > 0 ? n2(totals.orphanagePay) : '-',
-      n2Signed(totals.mesaNet),
-      n2(totals.netPhp),
-      n2(totals.netUsd),
-      '',
-    ];
     let x = MARGIN;
     for (let i = 0; i < cols.length; i++) {
-      if (footer[i]) drawText1(footer[i], x, state.y - PAD_Y - BODY, cols[i].width, cols[i].align, bold, NAVY);
+      if (totalCells[i]) drawCell(totalCells[i], x, state.y - PAD_Y - BODY, cols[i].width, cols[i].align, bold, NAVY);
       x += cols[i].width;
     }
     state.y -= rowH;
