@@ -14,6 +14,7 @@
 
 import { PDFDocument, rgb, type PDFFont, type PDFImage, type PDFPage } from 'pdf-lib';
 import { embedPdfFonts } from '@/lib/pdf/fonts';
+import { embedSimpleLogo, simpleLogoWidthForHeight } from '@/lib/pdf/logo';
 
 const NAVY = rgb(0.13, 0.15, 0.33);
 const ORANGE = rgb(0.95, 0.45, 0.12);
@@ -135,8 +136,21 @@ export async function stampSignedDocument(params: StampSignedDocumentParams): Pr
     page.drawText(s, { x, y, size, font: f, color: opts.color ?? TEXT });
   };
 
-  // Masthead
-  text('Simple', { size: 22, font: bold, color: NAVY });
+  // Masthead — the real wordmark, falling back to type if it can't embed. Same
+  // treatment as the Certificate of Engagement so a signed COE reads as one
+  // document across both pages.
+  const logo = await embedSimpleLogo(doc);
+  if (logo) {
+    const h = 29;
+    page.drawImage(logo, {
+      x: margin,
+      y: y - 7,
+      width: simpleLogoWidthForHeight(h),
+      height: h,
+    });
+  } else {
+    text('Simple', { size: 22, font: bold, color: NAVY });
+  }
   text('Pulled from Simple-HRIS System', { size: 9, font: bold, color: NAVY, rightAlign: true });
   y -= 13;
   text('Documents - Certification of Signing', { size: 8.5, color: MUTED, rightAlign: true });

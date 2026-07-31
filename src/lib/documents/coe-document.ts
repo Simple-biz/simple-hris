@@ -27,6 +27,7 @@
 
 import { PDFDocument, degrees, rgb, type PDFFont, type PDFImage, type PDFPage } from 'pdf-lib';
 import { embedPdfFonts, type PdfFontSet } from '@/lib/pdf/fonts';
+import { embedSimpleLogo, simpleLogoWidthForHeight } from '@/lib/pdf/logo';
 import type { CoeFacts } from './coe-facts';
 
 type Color = ReturnType<typeof rgb>;
@@ -330,8 +331,19 @@ export async function renderCoeDocument(params: CoeRenderParams): Promise<Uint8A
   };
 
   // ── Letterhead ────────────────────────────────────────────────────────────
+  // The real wordmark, heart included. If the PNG can't be embedded the wordmark
+  // is set as type instead — a missing letterhead must never cost an employee
+  // their certificate.
+  const logo = await embedSimpleLogo(doc);
   y -= 14;
-  text('Simple', { size: 21, font: bold, color: NAVY });
+  if (logo) {
+    const h = 29;
+    // Sit the artwork so the wordmark's baseline lands on the current text
+    // baseline; the heart occupies the top of the box, hence the offset.
+    page.drawImage(logo, { x: MARGIN, y: y - 7, width: simpleLogoWidthForHeight(h), height: h });
+  } else {
+    text('Simple', { size: 21, font: bold, color: NAVY });
+  }
   text('Pulled from Simple-HRIS System', { size: 8.5, font: bold, color: NAVY, align: 'right' });
   y -= 12;
   text('Payroll Department  ·  payroll@simple.biz', { size: 8, color: MUTED, align: 'right' });
