@@ -66,6 +66,11 @@ export type MasterProfileFields = {
   work_email: string | null;
   personal_email: string | null;
   alternate_work_emails: string[];
+  /** The two alternate-email SLOTS as stored. `alternate_work_emails` above is
+   *  the de-duplicated display list, so it cannot answer "which slot changed" —
+   *  these keep the per-slot values an audit diff needs. */
+  alternate_work_email: string | null;
+  alternate_work_email_2: string | null;
   start_date: string | null;
   phone_number: string | null;
   location: string | null;
@@ -77,7 +82,14 @@ export type MasterProfileFields = {
 };
 
 export type UpdateMasterProfileResult =
-  | { ok: true; master: MasterProfileFields }
+  | {
+      ok: true;
+      master: MasterProfileFields;
+      /** The row as it was BEFORE this write, so callers can audit real
+       *  before→after values. The master list keeps no version history, so an
+       *  unaudited rename is otherwise unrecoverable. */
+      previous: MasterProfileFields;
+    }
   | { ok: false; error: string; code: 'not_found' | 'collision' | 'db' | 'config' | 'invalid' };
 
 const SELECT_COLS =
@@ -125,6 +137,8 @@ function mapMaster(row: Record<string, unknown>): MasterProfileFields {
     work_email: work,
     personal_email: str(row['Personal Email']),
     alternate_work_emails: alternates,
+    alternate_work_email: alt1,
+    alternate_work_email_2: alt2,
     start_date: str(row['Start Date']),
     phone_number: str(row['Phone Number']),
     location: str(row['Location']),
@@ -146,15 +160,18 @@ export async function updateMasterListProfile(
 
   // 1. Load the current identity so we can (a) confirm the row exists & is
   //    active and (b) tell whether the edit actually changes the unique key.
+  //    Select every editable column (not just the unique-key ones) so the
+  //    caller can audit what each field changed FROM.
   const { data: current, error: curErr } = await supabase
     .from(table)
-    .select('id,"Work Email","Department",off_boarded_at')
+    .select(`${SELECT_COLS},off_boarded_at`)
     .eq('id', id)
     .maybeSingle();
   if (curErr) return { ok: false, error: curErr.message, code: 'db' };
   if (!current || (current as { off_boarded_at?: string | null }).off_boarded_at) {
     return { ok: false, error: 'Employee record not found (or off-boarded).', code: 'not_found' };
   }
+  const previous = mapMaster(current as unknown as Record<string, unknown>);
 
   const curWork = str((current as Record<string, unknown>)['Work Email']);
   const curDept = str((current as Record<string, unknown>)['Department']);
@@ -229,7 +246,7 @@ export async function updateMasterListProfile(
     // Nothing to change — return the current row so the caller is a no-op.
     const { data: row, error } = await supabase.from(table).select(SELECT_COLS).eq('id', id).maybeSingle();
     if (error || !row) return { ok: false, error: error?.message ?? 'not found', code: 'db' };
-    return { ok: true, master: mapMaster(row as unknown as Record<string, unknown>) };
+    return { ok: true, master: mapMaster(row as unknown as Record<string, unknown>), previous };
   }
 
   const { data: updated, error: updErr } = await supabase
@@ -253,5 +270,5 @@ export async function updateMasterListProfile(
   }
   if (!updated) return { ok: false, error: 'Employee record not found (or off-boarded).', code: 'not_found' };
 
-  return { ok: true, master: mapMaster(updated as unknown as Record<string, unknown>) };
+  return { ok: true, master: mapMaster(updated as unknown as Record<string, unknown>), previous };
 }

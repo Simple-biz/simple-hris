@@ -5,6 +5,7 @@ import { getSessionActor } from '@/lib/auth/session-actor';
 import { insertAuditLog } from '@/lib/supabase/audit-log';
 import {
   updateMasterListProfile,
+  type MasterProfileFields,
   type MasterProfilePatch,
 } from '@/lib/supabase/master-list-profile';
 import { updateMasterSheetRow } from '@/lib/google-sheets/update-master-sheet-row';
@@ -13,7 +14,13 @@ export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
 /** snake_case patch keys the client may send → written to global_master_list. */
-const ALLOWED_KEYS: (keyof MasterProfilePatch)[] = [
+/** Every editable key must also exist on the returned row, or the audit diff
+ *  below would silently record `before: null, after: null` for it. This alias
+ *  fails the build the moment someone adds an editable field without a matching
+ *  field on MasterProfileFields. */
+type EditableKey = keyof MasterProfilePatch & keyof MasterProfileFields;
+
+const ALLOWED_KEYS: EditableKey[] = [
   'name',
   'department',
   'work_email',
@@ -119,6 +126,16 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ email
   }
   const master = result.master;
 
+  // Before→after for exactly the fields this request touched. The master list
+  // has no version history, so without this the audit trail can only say THAT a
+  // name or work email changed, never what it changed from — which is the one
+  // thing an identity investigation actually needs.
+  const changes = Object.keys(patch).map((key) => {
+    const before = (result.previous as unknown as Record<string, unknown>)[key] ?? null;
+    const after = (master as unknown as Record<string, unknown>)[key] ?? null;
+    return { field: key, before, after, changed: before !== after };
+  });
+
   // 2. Best-effort Google Sheet write for the columns the sheet actually has.
   //    Name uses the DB's canonicalized value so the round-trip is idempotent.
   const cells: Record<string, string | null> = {};
@@ -159,8 +176,12 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ email
     details: {
       email,
       work_email: master.work_email,
+      // The email the row was keyed by BEFORE the edit — without it, an audit
+      // search for the old address can never find the rename that retired it.
+      previous_work_email: result.previous.work_email,
       department: master.department,
       fields: Object.keys(patch),
+      changes,
       sheet_updated: sheet.updated,
       sheet_reason: sheet.reason ?? null,
     },
