@@ -111,6 +111,25 @@ export function mesaReceiptExt(mime: string, fileName?: string | null): string {
   }
 }
 
+/**
+ * The same signed URL, but as a download rather than an inline view.
+ *
+ * `<a download>` is ignored cross-origin, and a receipt is served from the
+ * Supabase storage host — so the attachment has to be asked for server-side.
+ * Storage honours a `download` query param on a signed URL (it is exactly what
+ * the SDK's own `{ download }` option appends) and its value becomes the saved
+ * file name, so Accounting gets `receipt-jan.jpg` instead of a signed blob.
+ */
+export function mesaReceiptDownloadUrl(
+  url: string | null | undefined,
+  fileName?: string | null,
+): string | null {
+  if (!url) return null;
+  const name = (fileName ?? '').trim();
+  const sep = url.includes('?') ? '&' : '?';
+  return `${url}${sep}download${name ? `=${encodeURIComponent(name)}` : ''}`;
+}
+
 /** "1.4 MB" — compact, one decimal below 10 units, for the file list. */
 export function formatReceiptSize(bytes: number | null | undefined): string {
   const n = bytes ?? 0;

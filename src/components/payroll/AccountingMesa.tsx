@@ -38,7 +38,9 @@ import {
   ExternalLink,
   ImageIcon,
   FileWarning,
+  Maximize2,
 } from 'lucide-react';
+import { createPortal } from 'react-dom';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -61,6 +63,8 @@ import type { MesaLedgerEvent, MesaMemberSummary } from '@/lib/mesa/ledger';
 import {
   formatReceiptSize,
   isMesaReceiptImage,
+  mesaReceiptDownloadUrl,
+  MAX_MESA_RECEIPTS,
   type MesaReceiptWithUrl,
 } from '@/lib/mesa/receipt-types';
 import type { EmployeeRow } from '@/lib/supabase/employees';
@@ -1130,8 +1134,14 @@ export default function AccountingMesa() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-[2px] p-4 animate-in fade-in duration-200 ease-out motion-reduce:animate-none">
           {/* Column layout with a scrolling body: the balance panel + a long
               explanation can outgrow a short viewport, and the decision buttons
-              must stay reachable. */}
-          <div className="flex max-h-[88vh] w-full max-w-md flex-col overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-2xl dark:border-zinc-800 dark:bg-zinc-950 animate-in fade-in zoom-in-95 slide-in-from-bottom-2 duration-200 ease-out motion-reduce:animate-none">
+              must stay reachable. A disbursement widens on desktop to seat the
+              receipt gallery beside the details it substantiates. */}
+          <div
+            className={cn(
+              'flex max-h-[88vh] w-full max-w-md flex-col overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-2xl dark:border-zinc-800 dark:bg-zinc-950 animate-in fade-in zoom-in-95 slide-in-from-bottom-2 duration-200 ease-out motion-reduce:animate-none',
+              reviewTarget.request_type === 'disbursement' && 'lg:max-w-4xl',
+            )}
+          >
             <div className="flex shrink-0 items-center justify-between border-b border-zinc-200 px-5 py-4 dark:border-zinc-800">
               <div>
                 <p className="text-[11px] font-semibold uppercase tracking-wide text-teal-600 dark:text-teal-400">
@@ -1150,99 +1160,107 @@ export default function AccountingMesa() {
                 <X className="h-4 w-4" />
               </button>
             </div>
-            <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-5 py-4">
-              <InfoRow label="Email" value={reviewTarget.work_email} />
-              <InfoRow label="Department" value={reviewTarget.department} />
-              {reviewTarget.fpu_date && <InfoRow label="FPU Completed" value={reviewTarget.fpu_date} />}
-              {reviewTarget.request_type === 'opt_out' && (
-                <div>
-                  <div className="flex items-baseline justify-between gap-2">
-                    <label
-                      htmlFor="mesa-review-effective"
-                      className="text-[11px] font-semibold uppercase tracking-wide text-zinc-400 dark:text-zinc-500"
-                    >
-                      Effective Date
-                    </label>
-                    <span className="text-[10.5px] text-zinc-400 dark:text-zinc-500">
-                      {savingEffective ? 'Saving…' : 'Editable — saves on pick'}
-                    </span>
-                  </div>
-                  <DatePicker
-                    id="mesa-review-effective"
-                    value={reviewTarget.effective_date ?? ''}
-                    onChange={saveEffectiveDate}
-                    disabled={savingEffective}
-                    required
-                    placeholder="Not set — pick a date"
-                    className="mt-1 dark:bg-zinc-900"
-                  />
-                  {/* Approving unenrolls immediately — there's no scheduler that
-                      holds a future-dated opt-out, so say so rather than let the
-                      date imply one. */}
-                  {reviewTarget.effective_date && reviewTarget.effective_date > toIso(new Date()) && (
-                    <p className="mt-2 flex items-start gap-1.5 rounded-md border border-amber-200 bg-amber-50 p-2.5 text-[11.5px] leading-relaxed text-amber-900 dark:border-amber-500/40 dark:bg-amber-950/30 dark:text-amber-100">
-                      <AlertTriangle className="mt-px h-3.5 w-3.5 shrink-0" />
-                      <span>
-                        Requested for a future date. Approving now unenrolls them right away — hold
-                        the decision until {formatDateOnly(reviewTarget.effective_date)} if the
-                        deduction should keep running until then.
+            {/* Details, and — for a disbursement — the receipt gallery beside
+                them. Mobile scrolls the pair as one column; from lg each pane
+                scrolls on its own so the evidence stays put while the details
+                are read. */}
+            <div className="flex min-h-0 flex-1 flex-col overflow-y-auto lg:flex-row lg:overflow-hidden">
+              <div className="space-y-3 px-5 py-4 lg:min-h-0 lg:flex-1 lg:overflow-y-auto">
+                <InfoRow label="Email" value={reviewTarget.work_email} />
+                <InfoRow label="Department" value={reviewTarget.department} />
+                {reviewTarget.fpu_date && <InfoRow label="FPU Completed" value={reviewTarget.fpu_date} />}
+                {reviewTarget.request_type === 'opt_out' && (
+                  <div>
+                    <div className="flex items-baseline justify-between gap-2">
+                      <label
+                        htmlFor="mesa-review-effective"
+                        className="text-[11px] font-semibold uppercase tracking-wide text-zinc-400 dark:text-zinc-500"
+                      >
+                        Effective Date
+                      </label>
+                      <span className="text-[10.5px] text-zinc-400 dark:text-zinc-500">
+                        {savingEffective ? 'Saving…' : 'Editable — saves on pick'}
                       </span>
-                    </p>
-                  )}
-                </div>
-              )}
-              {reviewTarget.disbursement_reason && <InfoRow label="Reason" value={reviewTarget.disbursement_reason} />}
-              {reviewTarget.explanation && (
-                <div>
-                  <p className="text-[11px] font-semibold uppercase tracking-wide text-zinc-400 dark:text-zinc-500">Explanation</p>
-                  <p className="mt-1 text-sm leading-relaxed text-zinc-700 dark:text-zinc-300">{reviewTarget.explanation}</p>
-                </div>
-              )}
-              {/* The member's evidence, above the balance panel: whether the claim
-                  is substantiated should be read BEFORE whether the fund can
-                  cover it. */}
-              {reviewTarget.request_type === 'disbursement' && (
-                <MesaReceiptsPanel
+                    </div>
+                    <DatePicker
+                      id="mesa-review-effective"
+                      value={reviewTarget.effective_date ?? ''}
+                      onChange={saveEffectiveDate}
+                      disabled={savingEffective}
+                      required
+                      placeholder="Not set — pick a date"
+                      className="mt-1 dark:bg-zinc-900"
+                    />
+                    {/* Approving unenrolls immediately — there's no scheduler that
+                        holds a future-dated opt-out, so say so rather than let the
+                        date imply one. */}
+                    {reviewTarget.effective_date && reviewTarget.effective_date > toIso(new Date()) && (
+                      <p className="mt-2 flex items-start gap-1.5 rounded-md border border-amber-200 bg-amber-50 p-2.5 text-[11.5px] leading-relaxed text-amber-900 dark:border-amber-500/40 dark:bg-amber-950/30 dark:text-amber-100">
+                        <AlertTriangle className="mt-px h-3.5 w-3.5 shrink-0" />
+                        <span>
+                          Requested for a future date. Approving now unenrolls them right away — hold
+                          the decision until {formatDateOnly(reviewTarget.effective_date)} if the
+                          deduction should keep running until then.
+                        </span>
+                      </p>
+                    )}
+                  </div>
+                )}
+                {reviewTarget.disbursement_reason && <InfoRow label="Reason" value={reviewTarget.disbursement_reason} />}
+                {reviewTarget.explanation && (
+                  <div>
+                    <p className="text-[11px] font-semibold uppercase tracking-wide text-zinc-400 dark:text-zinc-500">Explanation</p>
+                    <p className="mt-1 text-sm leading-relaxed text-zinc-700 dark:text-zinc-300">{reviewTarget.explanation}</p>
+                  </div>
+                )}
+                <MesaBalanceImpact
+                  request={reviewTarget}
+                  ledger={reviewLedger}
+                  state={reviewLedgerState}
+                  otherOpen={otherOpenDraws}
+                />
+                {/* A decided request is opened to read it (and to fix an opt-out
+                    date) — not to re-review it, so the note becomes a record of
+                    what was said. Revoke from the row to reopen the decision. */}
+                {reviewTarget.status === 'pending' ? (
+                  <div>
+                    <label className="text-[11px] font-semibold uppercase tracking-wide text-zinc-400 dark:text-zinc-500">
+                      Review Notes (optional)
+                    </label>
+                    <textarea
+                      value={reviewNotes}
+                      onChange={(e) => setReviewNotes(e.target.value)}
+                      rows={3}
+                      placeholder="Add a note for the employee..."
+                      className="mt-1 w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 placeholder-zinc-400 focus:border-teal-500 focus:outline-none focus:ring-2 focus:ring-teal-500/20 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
+                    />
+                  </div>
+                ) : (
+                  <>
+                    <InfoRow
+                      label={reviewTarget.status === 'approved' ? 'Approved by' : 'Denied by'}
+                      value={reviewTarget.reviewed_by ?? '—'}
+                    />
+                    {reviewTarget.review_notes && (
+                      <div>
+                        <p className="text-[11px] font-semibold uppercase tracking-wide text-zinc-400 dark:text-zinc-500">Review Notes</p>
+                        <p className="mt-1 text-sm leading-relaxed text-zinc-700 dark:text-zinc-300">{reviewTarget.review_notes}</p>
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
+            {/* The member's evidence, in its own pane: whether the claim is
+                substantiated should be readable at a glance, not one file-row
+                click at a time. */}
+            {reviewTarget.request_type === 'disbursement' && (
+              <div className="border-t border-zinc-200 bg-zinc-50/70 lg:min-h-0 lg:w-[25rem] lg:shrink-0 lg:overflow-hidden lg:border-l lg:border-t-0 dark:border-zinc-800 dark:bg-zinc-900/40">
+                <MesaReceiptGallery
                   requestId={reviewTarget.id}
                   submittedAt={reviewTarget.created_at}
                 />
-              )}
-              <MesaBalanceImpact
-                request={reviewTarget}
-                ledger={reviewLedger}
-                state={reviewLedgerState}
-                otherOpen={otherOpenDraws}
-              />
-              {/* A decided request is opened to read it (and to fix an opt-out
-                  date) — not to re-review it, so the note becomes a record of
-                  what was said. Revoke from the row to reopen the decision. */}
-              {reviewTarget.status === 'pending' ? (
-                <div>
-                  <label className="text-[11px] font-semibold uppercase tracking-wide text-zinc-400 dark:text-zinc-500">
-                    Review Notes (optional)
-                  </label>
-                  <textarea
-                    value={reviewNotes}
-                    onChange={(e) => setReviewNotes(e.target.value)}
-                    rows={3}
-                    placeholder="Add a note for the employee..."
-                    className="mt-1 w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 placeholder-zinc-400 focus:border-teal-500 focus:outline-none focus:ring-2 focus:ring-teal-500/20 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
-                  />
-                </div>
-              ) : (
-                <>
-                  <InfoRow
-                    label={reviewTarget.status === 'approved' ? 'Approved by' : 'Denied by'}
-                    value={reviewTarget.reviewed_by ?? '—'}
-                  />
-                  {reviewTarget.review_notes && (
-                    <div>
-                      <p className="text-[11px] font-semibold uppercase tracking-wide text-zinc-400 dark:text-zinc-500">Review Notes</p>
-                      <p className="mt-1 text-sm leading-relaxed text-zinc-700 dark:text-zinc-300">{reviewTarget.review_notes}</p>
-                    </div>
-                  )}
-                </>
-              )}
+              </div>
+            )}
             </div>
             <div className="flex shrink-0 items-center justify-end gap-2 border-t border-zinc-200 px-5 py-4 dark:border-zinc-800">
               <Button
@@ -1498,13 +1516,89 @@ function ReceiptCell({ request, onOpen }: { request: MesaRequest; onOpen: () => 
   );
 }
 
+/** The stored file name, or a slot label when the upload carried none. */
+const receiptLabel = (r: MesaReceiptWithUrl) => r.file_name || `Receipt ${r.slot}`;
+
+const isPdfReceipt = (r: MesaReceiptWithUrl) => (r.mime_type ?? '') === 'application/pdf';
+
+/** Maximize / new tab / download, all three the same size under the preview. */
+const RECEIPT_ACTION_CLASS =
+  'inline-flex h-7 items-center justify-center gap-1 rounded-lg border border-zinc-200 bg-white text-[10.5px] font-semibold text-zinc-600 transition-colors hover:border-teal-300 hover:bg-teal-50 hover:text-teal-700 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:border-teal-700/60 dark:hover:bg-teal-950/40 dark:hover:text-teal-300';
+
+/** Size/date/lag line, shared by the gallery caption and the lightbox bar. */
+function ReceiptMetaLine({
+  receipt,
+  submittedAt,
+  className,
+  lateClassName,
+}: {
+  receipt: MesaReceiptWithUrl;
+  submittedAt: string;
+  className?: string;
+  /** Amber treatment differs on white vs. the lightbox's black. */
+  lateClassName: string;
+}) {
+  const lag = receiptLagDays(submittedAt, receipt.uploaded_at);
+  const late = lag != null && lag > 14;
+  return (
+    <span className={className}>
+      {formatReceiptSize(receipt.file_size)} · {formatDateOnly(receipt.uploaded_at)}
+      {lag != null && (
+        <span className={cn(late && lateClassName)}>
+          {' · '}
+          {lag <= 0 ? 'same day' : `${lag}d after request`}
+          {late ? ' (past 14 days)' : ''}
+        </span>
+      )}
+    </span>
+  );
+}
+
+/** Strip thumbnail: the image itself, or a type icon when it isn't one (or the
+ *  signed URL failed to load). */
+function ReceiptThumb({
+  receipt,
+  broken,
+  onBroken,
+}: {
+  receipt: MesaReceiptWithUrl;
+  broken: boolean;
+  onBroken: () => void;
+}) {
+  if (isMesaReceiptImage(receipt.mime_type) && receipt.url && !broken) {
+    return (
+      // eslint-disable-next-line @next/next/no-img-element
+      <img
+        src={receipt.url}
+        alt=""
+        loading="lazy"
+        onError={onBroken}
+        className="h-full w-full object-cover"
+      />
+    );
+  }
+  return (
+    <span className="flex h-full w-full items-center justify-center">
+      {isPdfReceipt(receipt) ? (
+        <FileText aria-hidden className="h-4 w-4 text-rose-500 dark:text-rose-300" />
+      ) : (
+        <ImageIcon aria-hidden className="h-4 w-4 text-zinc-400 dark:text-zinc-500" />
+      )}
+    </span>
+  );
+}
+
 /**
- * The receipt files themselves, inside the review modal. Read-only for
- * Accounting on purpose: this is the evidence the decision rests on, so the
- * reviewer opens it, they don't edit it. Thumbnails come from short-lived signed
- * URLs (the bucket is private), and each file opens in a new tab.
+ * The receipt gallery — the review modal's right-hand pane (2026-07-31).
+ *
+ * Receipts used to be a stack of 40px file rows sharing the details' scroller,
+ * which meant the evidence was actually read by opening every file in a new tab.
+ * Now the active receipt is displayed large beside the request it substantiates,
+ * the others are one click away in the strip, and Maximize / new tab / download
+ * sit under the preview. Still read-only for Accounting on purpose: this is what
+ * the decision rests on, so the reviewer views it, they don't edit it.
  */
-function MesaReceiptsPanel({
+function MesaReceiptGallery({
   requestId,
   submittedAt,
 }: {
@@ -1515,11 +1609,16 @@ function MesaReceiptsPanel({
   const [rows, setRows] = useState<MesaReceiptWithUrl[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [broken, setBroken] = useState<Set<string>>(new Set());
+  const [activeIdx, setActiveIdx] = useState(0);
+  /** Index being viewed full-screen, or null when the lightbox is closed. */
+  const [zoomIdx, setZoomIdx] = useState<number | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     setRows(null);
     setError(null);
+    setActiveIdx(0);
+    setZoomIdx(null);
     fetch(`/api/mesa-requests/${requestId}/receipts`, { cache: 'no-store' })
       .then(async (r) => {
         const json = (await r.json().catch(() => ({}))) as {
@@ -1536,118 +1635,334 @@ function MesaReceiptsPanel({
     return () => { cancelled = true; };
   }, [requestId]);
 
+  const files = rows ?? [];
+  // Clamped rather than trusted: a slow response can land after a click.
+  const safeIdx = files.length === 0 ? 0 : Math.min(activeIdx, files.length - 1);
+  const active = files[safeIdx] ?? null;
+  const markBroken = (id: string) =>
+    setBroken((p) => (p.has(id) ? p : new Set(p).add(id)));
+
+  const activeUrl = active?.url ?? null;
+  const activeIsPdf = active ? isPdfReceipt(active) : false;
+  const showActiveImage =
+    !!active && isMesaReceiptImage(active.mime_type) && !!activeUrl && !broken.has(active.id);
+
   return (
-    <div>
-      <div className="flex items-baseline justify-between gap-2">
-        <p className="text-[11px] font-semibold uppercase tracking-wide text-zinc-400 dark:text-zinc-500">
+    <div className="flex h-full min-h-0 flex-col">
+      <header className="flex shrink-0 items-baseline justify-between gap-2 border-b border-zinc-200/80 px-4 py-2.5 dark:border-zinc-800">
+        <p className="inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+          <ReceiptText aria-hidden className="h-3.5 w-3.5 text-teal-600 dark:text-teal-400" />
           Receipts
         </p>
-        {rows && rows.length > 0 && (
+        {rows !== null && (
           <span className="text-[10.5px] tabular-nums text-zinc-400 dark:text-zinc-500">
-            {rows.length} attached
+            {rows.length} of {MAX_MESA_RECEIPTS}
           </span>
+        )}
+      </header>
+
+      <div className="min-h-0 flex-1 space-y-2.5 overflow-y-auto p-4">
+        {rows === null && !error && (
+          <>
+            <div className="aspect-[4/3] w-full animate-pulse rounded-xl bg-zinc-200/70 dark:bg-zinc-800/60" />
+            <div className="h-3 w-2/3 animate-pulse rounded bg-zinc-200/70 dark:bg-zinc-800/60" />
+          </>
+        )}
+
+        {error && (
+          <p className="rounded-lg border border-amber-200 bg-amber-50 p-2.5 text-[11.5px] leading-relaxed text-amber-900 dark:border-amber-500/40 dark:bg-amber-950/30 dark:text-amber-100">
+            {error}
+          </p>
+        )}
+
+        {rows !== null && rows.length === 0 && (
+          <p className="flex items-start gap-2 rounded-lg border border-zinc-200 bg-white p-2.5 text-[11.5px] leading-relaxed text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900/60 dark:text-zinc-400">
+            <FileWarning aria-hidden className="mt-px h-3.5 w-3.5 shrink-0 text-zinc-400 dark:text-zinc-500" />
+            <span>
+              No receipt attached. The member can add one from{' '}
+              <strong className="font-semibold text-zinc-700 dark:text-zinc-300">
+                MESA → Request → Past requests
+              </strong>{' '}
+              — the program allows 14 days.
+            </span>
+          </p>
+        )}
+
+        {active && (
+          <>
+            {/* Hero preview. The whole tile maximizes — the reviewer's instinct
+                on a receipt too small to read is to click it. */}
+            <button
+              type="button"
+              onClick={() => setZoomIdx(safeIdx)}
+              disabled={!activeUrl}
+              title={activeUrl ? 'Maximize' : 'Preview unavailable — the signed link expired'}
+              className="group relative block w-full overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-sm transition-colors hover:border-teal-300 disabled:cursor-default dark:border-zinc-800 dark:bg-zinc-950/60 dark:hover:border-teal-700/60"
+            >
+              <span className="flex aspect-[4/3] items-center justify-center bg-zinc-100 p-1.5 dark:bg-zinc-900">
+                {showActiveImage ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={activeUrl as string}
+                    alt={receiptLabel(active)}
+                    onError={() => markBroken(active.id)}
+                    className="max-h-full max-w-full rounded-md object-contain"
+                  />
+                ) : (
+                  <span className="flex flex-col items-center gap-1.5 px-4 text-center">
+                    {activeIsPdf ? (
+                      <FileText aria-hidden className="h-9 w-9 text-rose-500 dark:text-rose-300" />
+                    ) : (
+                      <ImageIcon aria-hidden className="h-9 w-9 text-zinc-400 dark:text-zinc-500" />
+                    )}
+                    <span className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+                      {activeIsPdf ? 'PDF' : 'No preview'}
+                    </span>
+                    <span className="text-[10.5px] text-zinc-400 dark:text-zinc-500">
+                      {activeIsPdf
+                        ? 'Maximize to read it here'
+                        : activeUrl
+                          ? 'Open it in a new tab'
+                          : 'The signed link expired — reopen the request'}
+                    </span>
+                  </span>
+                )}
+              </span>
+              {activeUrl && (
+                <span className="pointer-events-none absolute right-2 top-2 inline-flex items-center gap-1 rounded-md bg-black/55 px-1.5 py-1 text-[10px] font-semibold text-white opacity-0 backdrop-blur-sm transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100">
+                  <Maximize2 aria-hidden className="h-3 w-3" />
+                  Maximize
+                </span>
+              )}
+              {files.length > 1 && (
+                <span className="pointer-events-none absolute bottom-2 left-2 rounded-md bg-black/50 px-1.5 py-0.5 text-[10px] font-semibold tabular-nums text-white backdrop-blur-sm">
+                  {safeIdx + 1} / {files.length}
+                </span>
+              )}
+            </button>
+
+            <div className="min-w-0">
+              <p className="truncate text-[12.5px] font-semibold text-zinc-900 dark:text-zinc-100">
+                {receiptLabel(active)}
+              </p>
+              <ReceiptMetaLine
+                receipt={active}
+                submittedAt={submittedAt}
+                className="mt-0.5 block truncate text-[10.5px] text-zinc-500 dark:text-zinc-500"
+                lateClassName="font-semibold text-amber-700 dark:text-amber-300"
+              />
+            </div>
+
+            <div className="grid grid-cols-3 gap-1.5">
+              <button
+                type="button"
+                onClick={() => setZoomIdx(safeIdx)}
+                disabled={!activeUrl}
+                className={cn(RECEIPT_ACTION_CLASS, !activeUrl && 'pointer-events-none opacity-50')}
+              >
+                <Maximize2 aria-hidden className="h-3 w-3" />
+                Maximize
+              </button>
+              <a
+                href={activeUrl ?? undefined}
+                target="_blank"
+                rel="noopener noreferrer"
+                title="Open in a new tab"
+                className={cn(RECEIPT_ACTION_CLASS, !activeUrl && 'pointer-events-none opacity-50')}
+              >
+                <ExternalLink aria-hidden className="h-3 w-3" />
+                New tab
+              </a>
+              <a
+                href={mesaReceiptDownloadUrl(activeUrl, active.file_name) ?? undefined}
+                title={`Download ${receiptLabel(active)}`}
+                className={cn(RECEIPT_ACTION_CLASS, !activeUrl && 'pointer-events-none opacity-50')}
+              >
+                <Download aria-hidden className="h-3 w-3" />
+                Download
+              </a>
+            </div>
+
+            {files.length > 1 && (
+              <div className="flex gap-2 pt-0.5">
+                {files.map((f, i) => (
+                  <button
+                    key={f.id}
+                    type="button"
+                    onClick={() => setActiveIdx(i)}
+                    title={receiptLabel(f)}
+                    aria-label={`Show ${receiptLabel(f)}`}
+                    aria-current={i === safeIdx}
+                    className={cn(
+                      'h-14 w-14 shrink-0 overflow-hidden rounded-lg border-2 bg-zinc-100 transition-colors dark:bg-zinc-800/70',
+                      i === safeIdx
+                        ? 'border-teal-500 dark:border-teal-400'
+                        : 'border-transparent ring-1 ring-zinc-200 hover:border-teal-300 dark:ring-zinc-700 dark:hover:border-teal-700',
+                    )}
+                  >
+                    <ReceiptThumb receipt={f} broken={broken.has(f.id)} onBroken={() => markBroken(f.id)} />
+                  </button>
+                ))}
+              </div>
+            )}
+          </>
         )}
       </div>
 
-      {rows === null && !error && (
-        <div className="mt-1.5 space-y-1.5">
-          {[0, 1].map((i) => (
-            <div
-              key={i}
-              className="h-12 animate-pulse rounded-lg bg-zinc-100 dark:bg-zinc-800/60"
-              style={{ animationDelay: `${i * 90}ms` }}
-            />
-          ))}
-        </div>
-      )}
-
-      {error && (
-        <p className="mt-1.5 rounded-lg border border-amber-200 bg-amber-50 p-2.5 text-[11.5px] leading-relaxed text-amber-900 dark:border-amber-500/40 dark:bg-amber-950/30 dark:text-amber-100">
-          {error}
-        </p>
-      )}
-
-      {rows !== null && rows.length === 0 && (
-        <p className="mt-1.5 flex items-start gap-2 rounded-lg border border-zinc-200 bg-zinc-50/70 p-2.5 text-[11.5px] leading-relaxed text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900/40 dark:text-zinc-400">
-          <FileWarning aria-hidden className="mt-px h-3.5 w-3.5 shrink-0 text-zinc-400 dark:text-zinc-500" />
-          <span>
-            No receipt attached. The member can add one from{' '}
-            <strong className="font-semibold text-zinc-700 dark:text-zinc-300">
-              MESA → Request → Past requests
-            </strong>{' '}
-            — the program allows 14 days.
-          </span>
-        </p>
-      )}
-
-      {rows !== null && rows.length > 0 && (
-        <ul className="mt-1.5 space-y-1.5">
-          {rows.map((r) => {
-            const lag = receiptLagDays(submittedAt, r.uploaded_at);
-            const late = lag != null && lag > 14;
-            const isPdf = (r.mime_type ?? '') === 'application/pdf';
-            const showThumb = isMesaReceiptImage(r.mime_type) && !!r.url && !broken.has(r.id);
-            return (
-              <li key={r.id}>
-                <a
-                  href={r.url ?? undefined}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className={cn(
-                    'group flex items-center gap-2.5 rounded-lg border p-2 transition-colors',
-                    'border-zinc-200 bg-white hover:border-teal-300 hover:bg-teal-50/50 dark:border-zinc-800 dark:bg-zinc-900/50 dark:hover:border-teal-700/60 dark:hover:bg-teal-950/25',
-                    !r.url && 'pointer-events-none opacity-60',
-                  )}
-                >
-                  <span
-                    className={cn(
-                      'flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-md ring-1',
-                      isPdf
-                        ? 'bg-rose-50 text-rose-600 ring-rose-100 dark:bg-rose-950/30 dark:text-rose-300 dark:ring-rose-900/50'
-                        : 'bg-zinc-100 text-zinc-400 ring-zinc-200 dark:bg-zinc-800/70 dark:text-zinc-500 dark:ring-zinc-700/70',
-                    )}
-                  >
-                    {showThumb ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img
-                        src={r.url as string}
-                        alt=""
-                        loading="lazy"
-                        onError={() => setBroken((p) => (p.has(r.id) ? p : new Set(p).add(r.id)))}
-                        className="h-full w-full object-cover"
-                      />
-                    ) : isPdf ? (
-                      <FileText aria-hidden className="h-4 w-4" />
-                    ) : (
-                      <ImageIcon aria-hidden className="h-4 w-4" />
-                    )}
-                  </span>
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate text-[12.5px] font-medium text-zinc-900 dark:text-zinc-100">
-                      {r.file_name || `Receipt ${r.slot}`}
-                    </span>
-                    <span className="mt-0.5 block truncate text-[10.5px] text-zinc-500 dark:text-zinc-500">
-                      {formatReceiptSize(r.file_size)} · {formatDateOnly(r.uploaded_at)}
-                      {lag != null && (
-                        <span className={cn(late && 'font-semibold text-amber-700 dark:text-amber-300')}>
-                          {' · '}
-                          {lag <= 0 ? 'same day' : `${lag}d after request`}
-                          {late ? ' (past 14 days)' : ''}
-                        </span>
-                      )}
-                    </span>
-                  </span>
-                  <ExternalLink
-                    aria-hidden
-                    className="h-3.5 w-3.5 shrink-0 text-zinc-300 transition-colors group-hover:text-teal-600 dark:text-zinc-600 dark:group-hover:text-teal-400"
-                  />
-                </a>
-              </li>
-            );
-          })}
-        </ul>
-      )}
+      {/* Portaled: this modal is itself fixed and the app shell isolates its
+          stacking context, so an in-place overlay would render underneath one of
+          them. AnimatePresence stays mounted so the exit animation can run. */}
+      {typeof document !== 'undefined' &&
+        createPortal(
+          <AnimatePresence>
+            {zoomIdx != null && files[zoomIdx] && (
+              <MesaReceiptLightbox
+                key="mesa-receipt-lightbox"
+                files={files}
+                index={zoomIdx}
+                submittedAt={submittedAt}
+                onIndex={(i) => { setZoomIdx(i); setActiveIdx(i); }}
+                onClose={() => setZoomIdx(null)}
+              />
+            )}
+          </AnimatePresence>,
+          document.body,
+        )}
     </div>
+  );
+}
+
+/**
+ * Full-screen receipt viewer. A photographed receipt is unreadable at gallery
+ * size, so this is where the reviewer actually reads the merchant's name and
+ * the amount: the image fills the viewport, a PDF is embedded rather than
+ * bounced to a new tab, Escape closes, ←/→ walk the (at most three) files, and
+ * new tab + download stay in the bar.
+ */
+function MesaReceiptLightbox({
+  files,
+  index,
+  submittedAt,
+  onIndex,
+  onClose,
+}: {
+  files: MesaReceiptWithUrl[];
+  index: number;
+  submittedAt: string;
+  onIndex: (i: number) => void;
+  onClose: () => void;
+}) {
+  const reduceMotion = useReducedMotion();
+  const count = files.length;
+  const file = files[index] ?? null;
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        onClose();
+        return;
+      }
+      if (count < 2) return;
+      if (e.key === 'ArrowRight') onIndex((index + 1) % count);
+      if (e.key === 'ArrowLeft') onIndex((index - 1 + count) % count);
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [index, count, onClose, onIndex]);
+
+  if (!file) return null;
+
+  const isPdf = isPdfReceipt(file);
+  const stop = (e: React.MouseEvent) => e.stopPropagation();
+  const navClass =
+    'flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white/10 text-white ring-1 ring-white/20 backdrop-blur-md transition hover:bg-white/20';
+  const barClass =
+    'inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg bg-white/10 px-2.5 text-[11px] font-semibold text-white ring-1 ring-white/20 backdrop-blur-md transition hover:bg-white/20';
+
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      transition={{ duration: reduceMotion ? 0 : 0.18, ease: 'easeOut' }}
+      onClick={onClose}
+      role="dialog"
+      aria-modal="true"
+      aria-label={`Receipt ${index + 1} of ${count}`}
+      className="fixed inset-0 z-[9999] flex flex-col gap-3 bg-black/85 p-3 backdrop-blur-sm sm:p-6"
+    >
+      <div className="flex shrink-0 items-center gap-2" onClick={stop}>
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-[12.5px] font-semibold text-white">{receiptLabel(file)}</p>
+          <p className="mt-0.5 truncate text-[10.5px] text-white/60">
+            <ReceiptMetaLine
+              receipt={file}
+              submittedAt={submittedAt}
+              lateClassName="font-semibold text-amber-300"
+            />
+            {count > 1 && <span className="tabular-nums">{` · ${index + 1} of ${count}`}</span>}
+          </p>
+        </div>
+        <a href={file.url ?? undefined} target="_blank" rel="noopener noreferrer" className={barClass}>
+          <ExternalLink aria-hidden className="h-3.5 w-3.5" />
+          <span className="hidden sm:inline">New tab</span>
+        </a>
+        <a
+          href={mesaReceiptDownloadUrl(file.url, file.file_name) ?? undefined}
+          className={barClass}
+        >
+          <Download aria-hidden className="h-3.5 w-3.5" />
+          <span className="hidden sm:inline">Download</span>
+        </a>
+        <button type="button" onClick={onClose} className={barClass} aria-label="Close">
+          <X aria-hidden className="h-3.5 w-3.5" />
+        </button>
+      </div>
+
+      <div className="flex min-h-0 flex-1 items-center justify-center gap-2 sm:gap-4">
+        {count > 1 && (
+          <button
+            type="button"
+            onClick={(e) => { stop(e); onIndex((index - 1 + count) % count); }}
+            className={navClass}
+            aria-label="Previous receipt"
+          >
+            <ChevronLeft aria-hidden className="h-5 w-5" />
+          </button>
+        )}
+
+        {isPdf ? (
+          <iframe
+            src={file.url ?? undefined}
+            title={receiptLabel(file)}
+            onClick={stop}
+            className="h-full w-full max-w-4xl rounded-xl bg-white shadow-2xl"
+          />
+        ) : (
+          <motion.img
+            key={file.id}
+            initial={{ opacity: 0, scale: reduceMotion ? 1 : 0.94, y: reduceMotion ? 0 : 10 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            transition={{ duration: reduceMotion ? 0 : 0.22, ease: [0.22, 1, 0.36, 1] }}
+            src={file.url ?? undefined}
+            alt={receiptLabel(file)}
+            onClick={stop}
+            className="max-h-full max-w-full rounded-xl object-contain shadow-2xl"
+          />
+        )}
+
+        {count > 1 && (
+          <button
+            type="button"
+            onClick={(e) => { stop(e); onIndex((index + 1) % count); }}
+            className={navClass}
+            aria-label="Next receipt"
+          >
+            <ChevronRight aria-hidden className="h-5 w-5" />
+          </button>
+        )}
+      </div>
+    </motion.div>
   );
 }
 
