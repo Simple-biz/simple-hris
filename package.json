@@ -22,6 +22,7 @@
     "@emoji-mart/data": "^1.2.1",
     "@fontsource-variable/geist": "^5.2.8",
     "@google/genai": "^1.29.0",
+    "@pdf-lib/fontkit": "^1.1.1",
     "@supabase/supabase-js": "^2.101.1",
     "@xyflow/react": "^12.10.2",
     "class-variance-authority": "^0.7.1",

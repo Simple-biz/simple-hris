@@ -1,5 +1,5 @@
 import { createSupabaseServiceRoleClient } from './server';
-import type { PayStructure, PayCurrency } from '@/lib/payment-catalog/pay-structure';
+import { PAY_CURRENCIES, type PayStructure, type PayCurrency } from '@/lib/payment-catalog/pay-structure';
 
 // Persistence for Payment Catalog pay structures
 // (see references/create_payment_catalog_pay_structures.sql). One row per
@@ -32,7 +32,13 @@ function mapRow(r: PayRow): PayStructure {
     employeeName: r.employee_name ?? undefined,
     regularRate: Number(r.regular_rate),
     otRate: r.ot_rate == null ? undefined : Number(r.ot_rate),
-    currency: (r.currency === 'USD' ? 'USD' : 'PHP') as PayCurrency,
+    // Read every supported currency, not just USD/PHP: COP structures exist
+    // (add_cop_currency.sql) and hardcoding the pair silently re-denominated a
+    // Colombian rate as pesos — which a Certificate of Engagement would then
+    // print as ₱18,500/hr instead of COP 18,500.
+    currency: ((PAY_CURRENCIES as readonly string[]).includes(r.currency)
+      ? r.currency
+      : 'PHP') as PayCurrency,
     createdBy: r.created_by,
     createdAt: r.created_at,
     updatedBy: r.updated_by,

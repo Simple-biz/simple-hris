@@ -18,6 +18,8 @@ import { resolveUserRole } from '@/lib/supabase/pab-day-disputes';
 import { normEmail } from '@/lib/email/norm-email';
 import { stampSignedDocument } from './sign-pdf';
 import { getDocumentSignature } from './signatures';
+import { renderCoeDocument } from './coe-document';
+import { coeSummaryLabel, resolveCoeFacts } from './coe-facts';
 import {
   DOCUMENT_REQUESTS_BUCKET,
   MAX_DOCUMENT_BYTES,
@@ -146,6 +148,104 @@ export async function createDocumentRequest(params: {
   return { row, error: null };
 }
 
+/**
+ * Employee submit for a **Certificate of Engagement** — the one document type
+ * the worker does NOT supply. Nothing is uploaded: the HRIS resolves the facts
+ * from the master list and the Payment Catalog, renders the certificate, and
+ * files it as the request's "original" so Accounting reviews the real document
+ * rather than an attachment.
+ *
+ * The stored copy is the WATERMARKED draft. Approving re-renders from live data
+ * and draws the approver's signature into the certificate's own signature block
+ * (see signDocumentRequest).
+ *
+ * Returns `blocked` when the certificate cannot honestly be issued — no start
+ * date, no department, no rate on file. The message is written for the employee.
+ */
+export async function createCoeDocumentRequest(params: {
+  employee_email: string;
+  note?: string | null;
+}): Promise<{ row: DocumentRequestRow | null; blocked: string | null; error: string | null }> {
+  const supabase = createSupabaseServiceRoleClient();
+  if (!supabase) return { row: null, blocked: null, error: 'Supabase not configured' };
+
+  const email = normEmail(params.employee_email) ?? params.employee_email.trim().toLowerCase();
+  if (!email) return { row: null, blocked: null, error: 'Missing employee email' };
+
+  const { facts, blocked, error: factsErr } = await resolveCoeFacts(email);
+  if (factsErr) return { row: null, blocked: null, error: factsErr };
+  if (blocked) return { row: null, blocked: blocked.message, error: null };
+  if (!facts) return { row: null, blocked: null, error: 'Could not resolve certificate details' };
+
+  const id = randomUUID();
+  const generatedAtIso = new Date().toISOString();
+
+  let bytes: Uint8Array;
+  try {
+    bytes = await renderCoeDocument({ facts, requestId: id, generatedAtIso });
+  } catch (e) {
+    return {
+      row: null,
+      blocked: null,
+      error: e instanceof Error ? e.message : 'Could not generate the certificate',
+    };
+  }
+
+  const filePath = `${emailPathSegment(email)}/${id}/original.pdf`;
+  const { error: upErr } = await supabase.storage
+    .from(DOCUMENT_REQUESTS_BUCKET)
+    .upload(filePath, bytes, { contentType: 'application/pdf', upsert: false });
+  if (upErr) return { row: null, blocked: null, error: upErr.message };
+
+  const { data, error } = await supabase
+    .from(TABLE)
+    .insert({
+      id,
+      employee_email: email,
+      employee_name: facts.workerName,
+      document_type: 'coe' as const,
+      // Rides the existing column so the queue chip shows what was certified
+      // without opening the PDF — no schema change needed.
+      period_label: coeSummaryLabel(facts),
+      note: params.note?.trim() || null,
+      file_path: filePath,
+      file_name: 'certificate-of-engagement.pdf',
+      file_size: bytes.byteLength,
+      status: 'pending' as const,
+    })
+    .select('*')
+    .single();
+  if (error) {
+    await supabase.storage.from(DOCUMENT_REQUESTS_BUCKET).remove([filePath]).catch(() => {});
+    return { row: null, blocked: null, error: error.message };
+  }
+  const row = data as DocumentRequestRow;
+
+  void (async () => {
+    const role = await resolveUserRole(email, 'Employee');
+    await insertAuditLog({
+      user_name: email,
+      user_role: role,
+      action: 'documents.request_submitted',
+      resource: TABLE,
+      resource_id: row.id,
+      details: {
+        document_type: 'coe',
+        generated: true,
+        start_date: facts.startDateRaw,
+        team: facts.team,
+        hourly_rate: facts.hourlyRate,
+        overtime_rate: facts.overtimeRate,
+        currency: facts.currency,
+        rate_source: facts.rateSource,
+      },
+    });
+  })();
+  void notifyAccountingOfRequest(row);
+
+  return { row, blocked: null, error: null };
+}
+
 /** Employee cancel — own request, while still pending. Removes the objects too. */
 export async function cancelDocumentRequest(
   id: string,
@@ -216,21 +316,60 @@ export async function signDocumentRequest(
     return { row: null, error: 'Your signature is switched off — turn it back on to sign documents' };
   }
 
-  const { data: original, error: dlErr } = await supabase.storage
-    .from(DOCUMENT_REQUESTS_BUCKET)
-    .download(row.file_path);
-  if (dlErr || !original) {
-    return { row: null, error: `Could not load the submitted PDF: ${dlErr?.message ?? 'not found'}` };
-  }
-
   const signedAtIso = new Date().toISOString();
   const signerName = signature.owner_name?.trim() || approver;
   const signerTitle = signature.title?.trim() || 'Accounting Head';
 
+  // A Certificate of Engagement is generated by us, so the signed copy is
+  // RE-RENDERED from live data rather than stamped over the stored draft: a
+  // certificate asserts current engagement terms, and signing a draft written
+  // days earlier could attest a rate that has since changed. The signature goes
+  // into the certificate's own signature block, and the shared certification
+  // page is appended behind it for the Reference ID and both dates.
+  let baseBytes: Uint8Array | ArrayBuffer;
+  if (row.document_type === 'coe') {
+    const { facts, blocked, error: factsErr } = await resolveCoeFacts(row.employee_email);
+    if (factsErr) return { row: null, error: `Could not re-check the certificate details: ${factsErr}` };
+    if (blocked) {
+      return {
+        row: null,
+        error: `This certificate can no longer be issued as written — ${blocked.message}`,
+      };
+    }
+    if (!facts) return { row: null, error: 'Could not resolve certificate details' };
+    try {
+      baseBytes = await renderCoeDocument({
+        facts,
+        requestId: row.id,
+        generatedAtIso: signedAtIso,
+        signature: {
+          dataUrl: signature.image_data_url,
+          name: signerName,
+          title: signerTitle,
+          email: approver,
+          signedAtIso,
+        },
+      });
+    } catch (e) {
+      return {
+        row: null,
+        error: e instanceof Error ? e.message : 'Could not generate the signed certificate',
+      };
+    }
+  } else {
+    const { data: original, error: dlErr } = await supabase.storage
+      .from(DOCUMENT_REQUESTS_BUCKET)
+      .download(row.file_path);
+    if (dlErr || !original) {
+      return { row: null, error: `Could not load the submitted PDF: ${dlErr?.message ?? 'not found'}` };
+    }
+    baseBytes = await original.arrayBuffer();
+  }
+
   let signedBytes: Uint8Array;
   try {
     signedBytes = await stampSignedDocument({
-      originalBytes: await original.arrayBuffer(),
+      originalBytes: baseBytes,
       signatureDataUrl: signature.image_data_url,
       signerName,
       signerTitle,

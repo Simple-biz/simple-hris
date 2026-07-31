@@ -3,6 +3,7 @@ import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth/auth-options';
 import { getEmployeeMasterRecord } from '@/lib/supabase/employees';
 import {
+  createCoeDocumentRequest,
   createDocumentRequest,
   listDocumentRequests,
 } from '@/lib/documents/requests';
@@ -17,8 +18,12 @@ export const runtime = 'nodejs';
  * /api/employee/paystub.
  *
  *   GET  → { rows } the caller's own requests, newest first.
- *   POST → multipart { file, document_type, period_label?, note? } — submit a
- *          PDF for Accounting to sign. Lands `pending` in Accounting → Documents.
+ *   POST → multipart { document_type, note?, file?, period_label? }.
+ *          document_type 'coe' takes NO file: a Certificate of Engagement is
+ *          issued by Simple, so the server resolves the facts from the master
+ *          list + Payment Catalog and renders the PDF itself. Every other type
+ *          is employee-supplied and still requires `file`.
+ *          Either way the request lands `pending` in Accounting → Documents.
  */
 
 async function sessionEmail(): Promise<string | null> {
@@ -49,15 +54,29 @@ export async function POST(req: NextRequest) {
     const periodLabel = String(form.get('period_label') ?? '').trim() || null;
     const note = String(form.get('note') ?? '').trim() || null;
 
-    if (!file) return NextResponse.json({ error: 'Attach a PDF to submit' }, { status: 400 });
     if (!isDocumentRequestType(documentType)) {
       return NextResponse.json({ error: 'Choose a document type' }, { status: 400 });
     }
-    if (file.size > MAX_DOCUMENT_BYTES) {
-      return NextResponse.json({ error: 'Max 10 MB per document' }, { status: 400 });
-    }
     if (note && note.length > 2000) {
       return NextResponse.json({ error: 'Note is too long (max 2000 characters)' }, { status: 400 });
+    }
+
+    // Certificate of Engagement: nothing to attach — we write it.
+    if (documentType === 'coe') {
+      const { row, blocked, error } = await createCoeDocumentRequest({
+        employee_email: email,
+        note,
+      });
+      // 422 (not 400): the request was well-formed, the employee's record isn't
+      // ready. The client shows `blocked` verbatim.
+      if (blocked) return NextResponse.json({ error: blocked, blocked }, { status: 422 });
+      if (error || !row) return NextResponse.json({ error: error ?? 'Submit failed' }, { status: 400 });
+      return NextResponse.json({ row });
+    }
+
+    if (!file) return NextResponse.json({ error: 'Attach a PDF to submit' }, { status: 400 });
+    if (file.size > MAX_DOCUMENT_BYTES) {
+      return NextResponse.json({ error: 'Max 10 MB per document' }, { status: 400 });
     }
 
     // Display name from the master list — never trusted from the client.

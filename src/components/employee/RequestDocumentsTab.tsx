@@ -29,6 +29,8 @@ import {
   documentTypeLabel,
   formatDocumentDate,
   formatFileSize,
+  isSystemGeneratedType,
+  type CoePreviewFacts,
   type DocumentRequestRow,
   type DocumentRequestStatus,
   type DocumentRequestType,
@@ -112,6 +114,15 @@ export default function RequestDocumentsTab({
   const [cancellingId, setCancellingId] = React.useState<string | null>(null);
   const [downloadingKey, setDownloadingKey] = React.useState<string | null>(null);
 
+  // Certificate of Engagement: the HRIS writes it, so instead of a file input we
+  // show what it will say. `coeBlocked` carries the server's reason when the
+  // certificate can't honestly be issued (no start date / department / rate).
+  const [coeFacts, setCoeFacts] = React.useState<CoePreviewFacts | null>(null);
+  const [coeBlocked, setCoeBlocked] = React.useState<string | null>(null);
+  const [coeLoading, setCoeLoading] = React.useState(false);
+
+  const generated = isSystemGeneratedType(docType);
+
   const refreshRequests = React.useCallback(async () => {
     try {
       const res = await fetch('/api/employee/documents', { cache: 'no-store' });
@@ -135,9 +146,41 @@ export default function RequestDocumentsTab({
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
+  /** Load the facts the certificate will state, so a wrong start date or a stale
+   *  rate is caught here rather than after Accounting signs it. */
+  const loadCoePreview = React.useCallback(async () => {
+    setCoeLoading(true);
+    setCoeFacts(null);
+    setCoeBlocked(null);
+    try {
+      const res = await fetch('/api/employee/documents/coe-preview', { cache: 'no-store' });
+      const json = (await res.json()) as {
+        facts?: CoePreviewFacts;
+        blocked?: string;
+        error?: string;
+      };
+      if (res.status === 422 && json.blocked) {
+        setCoeBlocked(json.blocked);
+        return;
+      }
+      if (!res.ok || !json.facts) throw new Error(json.error || 'Could not load your details');
+      setCoeFacts(json.facts);
+    } catch (e) {
+      setCoeBlocked(
+        e instanceof Error ? e.message : 'Could not load your details — please try again.',
+      );
+    } finally {
+      setCoeLoading(false);
+    }
+  }, []);
+
   const onTypeChange = (v: string) => {
-    setDocType(v as '' | DocumentRequestType);
+    const next = v as '' | DocumentRequestType;
+    setDocType(next);
     clearAttachment();
+    setCoeFacts(null);
+    setCoeBlocked(null);
+    if (isSystemGeneratedType(next)) void loadCoePreview();
   };
 
   /** Build the same all-weeks Pay Stubs PDF the Pay Stubs tab exports, scoped
@@ -203,28 +246,45 @@ export default function RequestDocumentsTab({
       toast.error('Choose a document type');
       return;
     }
-    if (!file) {
+    // Generated types carry no attachment — the server builds the document.
+    if (!generated && !file) {
       toast.error(docType === 'paystub' ? 'Generate your Pay Stubs PDF first' : 'Attach the PDF to sign');
       return;
     }
     setSubmitting(true);
     try {
       const form = new FormData();
-      form.set('file', file, file.name);
+      if (!generated && file) form.set('file', file, file.name);
       form.set('document_type', docType);
-      if (periodLabel) form.set('period_label', periodLabel);
+      if (!generated && periodLabel) form.set('period_label', periodLabel);
       if (note.trim()) form.set('note', note.trim());
 
       const res = await fetch('/api/employee/documents', { method: 'POST', body: form });
-      const json = (await res.json()) as { row?: DocumentRequestRow; error?: string };
+      const json = (await res.json()) as {
+        row?: DocumentRequestRow;
+        blocked?: string;
+        error?: string;
+      };
+      if (res.status === 422 && json.blocked) {
+        setCoeBlocked(json.blocked);
+        toast.error('Certificate cannot be issued yet', { description: json.blocked });
+        return;
+      }
       if (!res.ok || json.error) throw new Error(json.error || 'Submit failed');
 
-      toast.success('Request submitted to Accounting', {
-        description: 'You will be notified when the signed document is returned.',
-      });
+      toast.success(
+        generated ? 'Certificate requested' : 'Request submitted to Accounting',
+        {
+          description: generated
+            ? 'Accounting will review and sign it — you will be notified when it is ready.'
+            : 'You will be notified when the signed document is returned.',
+        },
+      );
       setDocType('');
       setNote('');
       clearAttachment();
+      setCoeFacts(null);
+      setCoeBlocked(null);
       await refreshRequests();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Could not submit the request');
@@ -266,7 +326,7 @@ export default function RequestDocumentsTab({
     <>
       <Section
         title="Request a document"
-        description="Submit a PDF for Accounting's official signature — pay stubs for banks, taxes or immigration, plus COEs and awards. The signed copy comes back here with the requested and signed dates stamped in."
+        description="Get paperwork signed by Accounting for banks, taxes or immigration. A Certificate of Engagement is written for you from your records — nothing to attach. For pay stubs and awards, attach the PDF. The signed copy comes back here with the requested and signed dates stamped in."
       >
         <div className="space-y-5 py-4">
           <label className="block">
@@ -322,7 +382,106 @@ export default function RequestDocumentsTab({
             </div>
           )}
 
-          {docType && docType !== 'paystub' && (
+          {generated && (
+            <div className="rounded-xl border border-zinc-200/80 bg-zinc-50/60 px-4 py-3.5 dark:border-zinc-800/80 dark:bg-zinc-900/40">
+              {coeLoading ? (
+                <div className="flex items-center gap-2 py-2 text-[12.5px] text-zinc-500 dark:text-zinc-400">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  Loading your details…
+                </div>
+              ) : coeBlocked ? (
+                <div className="flex items-start gap-2.5">
+                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
+                  <div className="min-w-0 flex-1">
+                    <p className="text-[12.5px] font-medium text-zinc-800 dark:text-zinc-200">
+                      This certificate can&rsquo;t be issued yet
+                    </p>
+                    <p className="mt-0.5 text-[12px] leading-relaxed text-zinc-500 dark:text-zinc-400">
+                      {coeBlocked}
+                    </p>
+                  </div>
+                </div>
+              ) : coeFacts ? (
+                <>
+                  <div className="flex items-start gap-2.5">
+                    <FileCheck2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-500" />
+                    <div className="min-w-0 flex-1">
+                      <p className="text-[12.5px] font-medium text-zinc-800 dark:text-zinc-200">
+                        Nothing to attach — we generate this for you
+                      </p>
+                      <p className="mt-0.5 text-[12px] leading-relaxed text-zinc-500 dark:text-zinc-400">
+                        Taken from your records. Check it over, then submit — Accounting reviews and
+                        signs it.
+                      </p>
+                    </div>
+                  </div>
+                  <dl className="mt-3 grid grid-cols-1 gap-x-6 gap-y-2 border-t border-zinc-200/70 pt-3 dark:border-zinc-800/70 sm:grid-cols-[auto_1fr]">
+                    {[
+                      [
+                        'Worker',
+                        coeFacts.employeeId
+                          ? `${coeFacts.workerName} · ${coeFacts.employeeId}`
+                          : coeFacts.workerName,
+                      ],
+                      ['Engaged since', coeFacts.startDateLabel],
+                      ['Team', coeFacts.team],
+                      [
+                        'Hourly / OT',
+                        `${coeFacts.hourlyRate} · ${coeFacts.overtimeRate} per hour`,
+                      ],
+                      ['Schedule', `${coeFacts.weeklyHours} hours per week`],
+                    ].map(([label, value]) => (
+                      <React.Fragment key={label}>
+                        <dt className="text-[11.5px] font-medium uppercase tracking-wide text-zinc-400 dark:text-zinc-500">
+                          {label}
+                        </dt>
+                        <dd className="mb-1 text-[12.5px] text-zinc-800 dark:text-zinc-200 sm:mb-0">
+                          {value}
+                        </dd>
+                      </React.Fragment>
+                    ))}
+                    <dt className="text-[11.5px] font-medium uppercase tracking-wide text-zinc-400 dark:text-zinc-500">
+                      Bonuses
+                    </dt>
+                    <dd className="text-[12.5px] leading-relaxed text-zinc-800 dark:text-zinc-200">
+                      {coeFacts.standardBonuses.length === 0 &&
+                      coeFacts.performanceBonuses.length === 0 ? (
+                        <span className="text-zinc-400 dark:text-zinc-500">
+                          None you currently qualify for
+                        </span>
+                      ) : (
+                        <>
+                          {coeFacts.standardBonuses.map((b) => (
+                            <div key={b.label}>
+                              {b.label}: {b.amount}
+                            </div>
+                          ))}
+                          <div>
+                            Performance:{' '}
+                            {coeFacts.performanceBonuses.length > 0 ? (
+                              coeFacts.performanceBonuses
+                                .map((b) => (b.amount ? `${b.label} (${b.amount})` : b.label))
+                                .join(', ')
+                            ) : (
+                              <span className="text-zinc-400 dark:text-zinc-500">
+                                none assigned
+                              </span>
+                            )}
+                          </div>
+                        </>
+                      )}
+                    </dd>
+                  </dl>
+                  <p className="mt-3 border-t border-zinc-200/70 pt-2.5 text-[11px] leading-relaxed text-zinc-400 dark:border-zinc-800/70 dark:text-zinc-500">
+                    Something wrong here? Contact Accounting before submitting — the signed
+                    certificate states these figures.
+                  </p>
+                </>
+              ) : null}
+            </div>
+          )}
+
+          {docType && docType !== 'paystub' && !generated && (
             <label className="block">
               <div className="mb-1.5 flex items-center gap-1.5 text-[12px] font-medium text-zinc-700 dark:text-zinc-200">
                 <Paperclip className="h-3.5 w-3.5 text-zinc-400" />
@@ -382,11 +541,15 @@ export default function RequestDocumentsTab({
             <Button
               type="button"
               onClick={() => void submit()}
-              disabled={submitting || !docType || !file}
+              disabled={
+                submitting ||
+                !docType ||
+                (generated ? coeLoading || !!coeBlocked || !coeFacts : !file)
+              }
               className="h-11 w-full gap-2 rounded-xl bg-orange-500 text-sm font-semibold text-white shadow-sm shadow-orange-500/20 transition-colors hover:bg-orange-600 disabled:opacity-50 dark:bg-orange-500 dark:hover:bg-orange-400 sm:w-auto"
             >
               {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-              Submit request
+              {generated ? 'Request certificate' : 'Submit request'}
             </Button>
           </div>
         </div>
@@ -473,7 +636,9 @@ export default function RequestDocumentsTab({
                         {downloadingKey === `${r.id}:original`
                           ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
                           : <Eye className="h-3.5 w-3.5" />}
-                        Submitted file
+                        {isSystemGeneratedType(r.document_type)
+                          ? (r.status === 'signed' ? 'Unsigned draft' : 'Preview draft')
+                          : 'Submitted file'}
                       </Button>
                       {r.status === 'pending' && (
                         <Button

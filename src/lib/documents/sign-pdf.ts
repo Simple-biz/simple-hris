@@ -12,7 +12,8 @@
 // Built with pdf-lib (same as the pay-stubs export) so it runs on Vercel's
 // Node runtime with no native deps or template files.
 
-import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFImage, type PDFPage } from 'pdf-lib';
+import { PDFDocument, rgb, type PDFFont, type PDFImage, type PDFPage } from 'pdf-lib';
+import { embedPdfFonts } from '@/lib/pdf/fonts';
 
 const NAVY = rgb(0.13, 0.15, 0.33);
 const ORANGE = rgb(0.95, 0.45, 0.12);
@@ -20,22 +21,6 @@ const TEXT = rgb(0.12, 0.12, 0.15);
 const MUTED = rgb(0.42, 0.42, 0.48);
 const BORDER = rgb(0.86, 0.86, 0.9);
 const PANEL = rgb(0.97, 0.97, 0.99);
-
-/** WinAnsi-safe text (pdf-lib's standard Helvetica can't encode arbitrary Unicode). */
-function sanitize(text: string): string {
-  let out = '';
-  for (const ch of text) {
-    const code = ch.codePointAt(0) ?? 63;
-    if ((code >= 32 && code <= 126) || (code >= 160 && code <= 255)) out += ch;
-    else if (ch === '₱') out += 'PHP ';
-    else if (ch === '–' || ch === '—' || ch === '−') out += '-';
-    else if (ch === '’' || ch === '‘') out += "'";
-    else if (ch === '“' || ch === '”') out += '"';
-    else if (ch === '…') out += '...';
-    else out += '?';
-  }
-  return out;
-}
 
 /** "July 18, 2026, 3:41 PM (GMT+8)" — Manila wall-clock, the company timezone. */
 function formatManila(iso: string): string {
@@ -93,8 +78,10 @@ export interface StampSignedDocumentParams {
  */
 export async function stampSignedDocument(params: StampSignedDocumentParams): Promise<Uint8Array> {
   const doc = await PDFDocument.load(params.originalBytes, { ignoreEncryption: true });
-  const font = await doc.embedFont(StandardFonts.Helvetica);
-  const bold = await doc.embedFont(StandardFonts.HelveticaBold);
+  // Shared Unicode font set so a period label or document name carrying ₱ prints
+  // the peso sign instead of the old "PHP " substitution. Layout here is wrapped
+  // and measured (never fixed columns), so the slightly different metrics adapt.
+  const { regular: font, bold, sanitize } = await embedPdfFonts(doc);
 
   const sig = dataUrlToBytes(params.signatureDataUrl);
   if (!sig) throw new Error('Saved signature is not a valid data URL');

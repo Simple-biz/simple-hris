@@ -19,12 +19,40 @@ export const DOCUMENT_REQUEST_TYPES: readonly DocumentRequestType[] = [
   'other',
 ];
 
+/** "Engagement", not "Employment": the certificate's own body states the worker
+ *  is a contractor rather than an employee, so the title has to match. The
+ *  stored `coe` value is unchanged — existing rows keep working. */
 export const DOCUMENT_TYPE_LABELS: Record<DocumentRequestType, string> = {
   paystub: 'Pay Stubs',
-  coe: 'Certificate of Employment (COE)',
+  coe: 'Certificate of Engagement (COE)',
   award: 'Award / Certificate',
   other: 'Other document',
 };
+
+/** Types the HRIS generates itself — the employee attaches nothing. */
+export const SYSTEM_GENERATED_TYPES: readonly DocumentRequestType[] = ['coe'];
+
+export function isSystemGeneratedType(type: string | null | undefined): boolean {
+  return !!type && (SYSTEM_GENERATED_TYPES as readonly string[]).includes(type);
+}
+
+/** Shape of GET /api/employee/documents/coe-preview → { facts }. Mirrors
+ *  CoeFacts in src/lib/documents/coe-facts.ts (server-only, hence the copy). */
+export interface CoePreviewFacts {
+  workerName: string;
+  employeeEmail: string;
+  employeeId: string | null;
+  startDateLabel: string;
+  startDateRaw: string;
+  team: string;
+  weeklyHours: number;
+  hourlyRate: string;
+  overtimeRate: string;
+  currency: 'PHP' | 'USD' | 'COP';
+  rateSource: 'individual' | 'sheet' | 'department';
+  standardBonuses: { label: string; amount: string | null; qualifier?: string }[];
+  performanceBonuses: { label: string; amount: string | null }[];
+}
 
 export function isDocumentRequestType(v: string): v is DocumentRequestType {
   return (DOCUMENT_REQUEST_TYPES as readonly string[]).includes(v);
