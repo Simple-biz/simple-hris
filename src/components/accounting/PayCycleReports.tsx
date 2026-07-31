@@ -119,9 +119,17 @@ function formatTimestamp(iso: string): string {
 export default function PayCycleReports({
   canEdit,
   onReadyCountChange,
+  refreshKey,
 }: {
   canEdit: boolean;
   onReadyCountChange?: (n: number) => void;
+  /** Bumped by the parent tab shell (AccountingDocuments' shared Refresh
+   *  button, Task 7) to request a reload while this tab is active.
+   *  `undefined` means "never asked yet" — the effect below skips that case
+   *  so it doesn't duplicate the mount effect's own initial load(); every
+   *  defined value after that (the parent always increments) triggers a
+   *  fresh load(). */
+  refreshKey?: number;
 }): React.JSX.Element {
   const [published, setPublished] = useState<PayCycleReportSummary[]>([]);
   const [publishable, setPublishable] = useState<PublishableCycle[]>([]);
@@ -209,6 +217,20 @@ export default function PayCycleReports({
     void load(controller.signal);
     return () => controller.abort();
   }, [load]);
+
+  // Task 7 — the Documents header's shared Refresh button bumps `refreshKey`
+  // while this tab is active. Deliberately a second, independent effect
+  // rather than a dependency added to the mount effect above: `load`'s
+  // identity is pinned by useCallback(..., []) (see the ref comment above),
+  // so neither effect ever refires the other, and the undefined guard below
+  // means mount only ever runs the effect above — this one stays inert until
+  // the parent's counter actually moves. No loop is possible because load()
+  // never writes back to `refreshKey`; only the parent's onClick does that,
+  // once per click.
+  useEffect(() => {
+    if (refreshKey == null) return;
+    void load();
+  }, [refreshKey, load]);
 
   const openReport = useCallback(async (sourceFile: string) => {
     setSelectedLoading(true);
