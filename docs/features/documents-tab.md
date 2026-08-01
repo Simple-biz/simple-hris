@@ -256,12 +256,25 @@ All three conditions must hold:
    threshold, never dispatched, or blocked on a Problem flag. This is the condition that
    catches an employee who is **owed** money and was never dispatched at all.
 
-2. **Every `payment_dispatches` row for the cycle is paid** — no `not_paid`, `threshold` or
-   `problem` row survives. This is the condition that catches an unpaid **contractor
-   invoice**: a contractor payment writes no `disbursement_records` row (the `payee_type`
+2. **Every `payment_dispatches` row for the cycle is paid — or superseded.** This is the
+   condition that catches a **contractor invoice logged `not_paid` / `threshold` /
+   `problem`**: a contractor payment writes no `disbursement_records` row (the `payee_type`
    guard in `sync_disbursement_from_dispatch`), so condition 1 literally cannot see one, and
-   without this the tab would show `100% paid` and a live Publish button while Payment
-   Dispatch itself sat at 97% withholding its confetti.
+   without this the tab would show `100% paid` and a live Publish button over money that is
+   still owed.
+
+   Two limits worth stating plainly. **It does not cover an approved invoice nobody ever
+   dispatched** — that has no row in *either* table, so it exists only in Payment Dispatch's
+   own pending queue, which this gate deliberately does not hydrate; if PD sits at 97% for
+   that reason, Reports cannot know. And **"paid or superseded" is not "paid"**: Payment
+   Dispatch leaves the old marker row in place when a payment is retried (mark Not Paid after
+   a bank glitch, retry, Mark Paid → the cycle now holds both rows forever), so a row counts
+   as still-owed only when no **paid** row of the same payee kind exists for the same email.
+   That mirrors PD's own `settled` rule in
+   [`PayrollDispatch.tsx`](../../src/components/payroll-clerk/PayrollDispatch.tsx); without
+   it, one retried payment would make a cycle permanently unpublishable while PD read 100%
+   and fired its confetti. Payee kind is part of the key because contractors like Claire also
+   hold an employee identity — a paid salary must not silence a flagged invoice.
 
 3. **At least one *paid* `payment_dispatches` row exists.** A cycle whose disbursement
    records were bulk-marked paid **without** going through Mark Paid — Payment Dispatch's own

@@ -63,6 +63,7 @@ export async function DELETE(
   // `snapshot` carries the whole frozen value, payees included, so a mis-clicked
   // unpublish is genuinely recoverable rather than merely regrettable. Skipped
   // entirely when nothing was deleted — a no-op delete must not log a deletion.
+  let auditError: string | null = null;
   if (deleted) {
     const actor = await getSessionActor();
     const { error: auditErr } = await insertAuditLog({
@@ -90,12 +91,25 @@ export async function DELETE(
       },
     });
     if (auditErr) {
-      console.error('[pay-cycle-reports] unpublish audit write failed', {
-        sourceFile,
-        auditErr,
-      });
+      auditError = auditErr;
+      // The row is ALREADY deleted by this point, so if the audit insert failed
+      // the snapshot exists nowhere but this function's memory. Log the verbatim
+      // value, not just the key: the whole reason the delete RETURNs its row is
+      // to survive exactly this failure, and a log line naming only the source
+      // file would lose the artifact it was meant to preserve.
+      console.error(
+        '[pay-cycle-reports] unpublish audit write FAILED — the deleted snapshot survives only in this log entry',
+        { sourceFile, auditErr, snapshot_json: rawValue },
+      );
     }
   }
 
-  return NextResponse.json({ deleted, error: null });
+  // On an audit failure the value rides back in the response too, so the caller
+  // holds a second copy. Only then — a 300 KB body on every successful unpublish
+  // would be waste, and on success the audit row already has it.
+  return NextResponse.json(
+    auditError
+      ? { deleted, error: null, auditError, snapshot_json: rawValue }
+      : { deleted, error: null },
+  );
 }
