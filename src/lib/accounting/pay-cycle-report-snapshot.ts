@@ -73,9 +73,12 @@ export interface CycleCompleteness {
   /** Condition 1 — every `disbursement_records` row for the cycle is paid, and
    *  at least one is. Catches employees who are owed but never dispatched. */
   recordsComplete: boolean;
-  /** Condition 2 — no `payment_dispatches` row is left not_paid / threshold /
-   *  problem. This is what an unpaid CONTRACTOR INVOICE trips: invoices create
-   *  no disbursement_records row at all, so condition 1 cannot see them. */
+  /** Condition 2 — every `payment_dispatches` row is either paid or superseded
+   *  by a later payment to the same payee. This is what an invoice LOGGED
+   *  Not Paid / Threshold / Problem trips: contractor payments create no
+   *  disbursement_records row at all, so condition 1 cannot see them. An
+   *  approved invoice that was never dispatched creates no row here either and
+   *  so remains outside this gate — it is visible only in PD's pending queue. */
   dispatchesComplete: boolean;
   /** Condition 3 — at least one PAID dispatch row exists, i.e. there is
    *  actually something to freeze. A cycle whose records were bulk-marked paid
@@ -89,8 +92,9 @@ export interface CycleCompleteness {
   blockedCount: number;
   /** Paid `payment_dispatches` rows found for the cycle. */
   paidDispatchCount: number;
-  /** Dispatch rows for the cycle that are NOT paid. */
-  unpaidDispatchCount: number;
+  /** Dispatch rows left unpaid AND not superseded by a later payment to the
+   *  same payee — i.e. money genuinely still owed on a logged payment. */
+  unsettledDispatchCount: number;
 }
 
 /**
@@ -118,8 +122,13 @@ export interface PayCycleDispatchTally {
   dispatchCount: number;
   paidUSD: number;
   paidPHP: number;
-  /** Rows whose status is not 'paid' — not_paid, threshold or problem. */
-  unpaidCount: number;
+  /**
+   * Non-paid rows (not_paid / threshold / problem) that were NOT superseded by a
+   * later payment to the same payee. Payment Dispatch leaves a marker row in
+   * place when a payment is retried, so a raw "status !== paid" count would
+   * treat a settled retry as money still owed — see `tallyPaidDispatches`.
+   */
+  unsettledCount: number;
 }
 
 function num(v: number | string | null | undefined): number {
@@ -134,42 +143,87 @@ function trimOrNull(v: string | null | undefined): string | null {
   return s ? s : null;
 }
 
+function isContractorRow(d: PayCycleDispatchLike): boolean {
+  return (d.payee_type ?? 'employee') === 'contractor';
+}
+
+function emailKey(d: PayCycleDispatchLike): string {
+  return (d.recipient_email ?? '').trim().toLowerCase();
+}
+
 /**
  * THE single tally. Both the publish gate (via cycleCompleteness) and the frozen
  * snapshot's `totals` call this one function over the same rows, so the number
  * the clerk approves in the confirm dialog is by construction the number that
  * gets stored. Reimplementing it anywhere else re-opens that gap.
+ *
+ * ── Superseded marker rows ──────────────────────────────────────────────────
+ * A non-paid row does NOT always mean money is still owed. Payment Dispatch
+ * leaves the marker in place when a payment is retried: mark Not Paid (bank
+ * glitch), retry, Mark Paid, and the cycle now holds BOTH rows forever. Counting
+ * the marker would make that cycle permanently unpublishable while Payment
+ * Dispatch itself reads 100% and fires its confetti.
+ *
+ * So a non-paid row counts toward `unsettledCount` only when no PAID row of the
+ * SAME payee kind exists for the same email — mirroring PD's own `settled` rule
+ * (PayrollDispatch.tsx: `paidRows.filter(payee_type !== 'contractor')`), which
+ * likewise skips a flagged-then-paid person.
+ *
+ * Payee kind is part of the key on purpose. Contractors like Claire also hold an
+ * employee identity, so one shared email set would let a paid salary silence a
+ * flagged invoice (or the reverse). Contractor rows are per-INVOICE, but a
+ * non-paid contractor marker deliberately carries no `contractor_invoice_id` —
+ * the API only claims the invoice on 'paid' — so email is the only key the two
+ * rows share, and it is what we use. PD sidesteps this by ignoring contractor
+ * markers entirely and letting the still-payable invoice sit in `pending`; this
+ * gate cannot see `pending`, so email-keying is strictly better here: it still
+ * blocks a flagged-and-never-paid invoice, which PD's rule alone would not.
+ * Its one blind spot — Claire flagged on invoice X while invoice Y is paid — is
+ * the same already-documented hole as an approved-but-never-dispatched invoice:
+ * outside this gate, visible only in PD's pending queue.
  */
 export function tallyPaidDispatches(
   rows: readonly PayCycleDispatchLike[],
 ): PayCycleDispatchTally {
-  const employeeEmails = new Set<string>();
+  // Pass 1 — who has actually been paid, keyed by (payee kind, email).
+  const paidEmployeeEmails = new Set<string>();
+  const paidContractorEmails = new Set<string>();
+  for (const d of rows) {
+    if (d.status !== 'paid') continue;
+    if (isContractorRow(d)) paidContractorEmails.add(emailKey(d));
+    else paidEmployeeEmails.add(emailKey(d));
+  }
+
+  // Pass 2 — tally, skipping markers that pass 1 proved were settled.
   let contractorCount = 0;
   let dispatchCount = 0;
-  let unpaidCount = 0;
+  let unsettledCount = 0;
   let paidUSD = 0;
   let paidPHP = 0;
 
   for (const d of rows) {
+    const contractor = isContractorRow(d);
     if (d.status !== 'paid') {
-      unpaidCount += 1;
+      const settled = contractor
+        ? paidContractorEmails.has(emailKey(d))
+        : paidEmployeeEmails.has(emailKey(d));
+      if (!settled) unsettledCount += 1;
       continue;
     }
     dispatchCount += 1;
-    if ((d.payee_type ?? 'employee') === 'contractor') contractorCount += 1;
-    else employeeEmails.add((d.recipient_email ?? '').trim().toLowerCase());
+    if (contractor) contractorCount += 1;
     paidUSD += num(d.amount_usd);
     paidPHP += num(d.amount_php);
   }
 
   return {
-    payeeCount: employeeEmails.size + contractorCount,
-    employeeCount: employeeEmails.size,
+    payeeCount: paidEmployeeEmails.size + contractorCount,
+    employeeCount: paidEmployeeEmails.size,
     contractorCount,
     dispatchCount,
     paidUSD,
     paidPHP,
-    unpaidCount,
+    unsettledCount,
   };
 }
 
@@ -180,16 +234,20 @@ export function tallyPaidDispatches(
  *   1. every `disbursement_records` row is paid (Payment Dispatch's own 100%
  *      rule, restated against report totals so no queue hydration is needed) —
  *      catches an employee who is owed money and was never dispatched;
- *   2. every `payment_dispatches` row is paid — catches an unpaid CONTRACTOR
- *      INVOICE, which produces no disbursement_records row at all and is
- *      therefore invisible to (1);
+ *   2. every `payment_dispatches` row is paid or superseded — catches a
+ *      CONTRACTOR INVOICE logged Not Paid / Threshold / Problem, which produces
+ *      no disbursement_records row at all and is therefore invisible to (1).
+ *      NOT covered: an approved invoice nobody ever dispatched. It has no row in
+ *      either table, so it can only be seen in PD's pending queue, which this
+ *      gate deliberately does not hydrate;
  *   3. at least one PAID dispatch row exists — refuses a cycle whose records
  *      were bulk-marked paid without dispatch rows, because there is no
  *      per-payee payment data to freeze and the report would be a permanent
  *      $0.00 with an empty payee table.
  *
  * `dispatches` MUST be every dispatch row for the cycle, not just the paid
- * ones, or condition 2 can never fail.
+ * ones, or condition 2 can never fail — and not just the non-paid ones, or the
+ * superseded-marker rule in `tallyPaidDispatches` has nothing to match against.
  */
 export function cycleCompleteness(
   totals: DisbursementReportTotals,
@@ -201,7 +259,7 @@ export function cycleCompleteness(
   const tally = tallyPaidDispatches(dispatches);
 
   const recordsComplete = totals.paidCount > 0 && pendingCount === 0 && blockedCount === 0;
-  const dispatchesComplete = tally.unpaidCount === 0;
+  const dispatchesComplete = tally.unsettledCount === 0;
   const hasPaidDispatches = tally.dispatchCount > 0;
 
   return {
@@ -213,7 +271,7 @@ export function cycleCompleteness(
     pendingCount,
     blockedCount,
     paidDispatchCount: tally.dispatchCount,
-    unpaidDispatchCount: tally.unpaidCount,
+    unsettledDispatchCount: tally.unsettledCount,
   };
 }
 

@@ -76,10 +76,10 @@ describe('tallyPaidDispatches', () => {
     assert.equal(t.dispatchCount, 4);
     assert.equal(t.paidUSD, 1300);
     assert.equal(t.paidPHP, 5600);
-    assert.equal(t.unpaidCount, 0);
+    assert.equal(t.unsettledCount, 0);
   });
 
-  test('non-paid rows are counted as unpaid and contribute no money', () => {
+  test('non-paid rows are counted as unsettled and contribute no money', () => {
     const t = tallyPaidDispatches([
       dispatch({ amount_usd: 100 }),
       dispatch({ status: 'not_paid', amount_usd: 999, recipient_email: 'b@simple.biz' }),
@@ -87,7 +87,7 @@ describe('tallyPaidDispatches', () => {
       dispatch({ status: 'problem', amount_usd: 999, recipient_email: 'd@simple.biz' }),
     ]);
     assert.equal(t.dispatchCount, 1);
-    assert.equal(t.unpaidCount, 3);
+    assert.equal(t.unsettledCount, 3);
     assert.equal(t.payeeCount, 1);
     assert.equal(t.paidUSD, 100);
   });
@@ -95,8 +95,38 @@ describe('tallyPaidDispatches', () => {
   test('an empty cycle tallies to zero of everything', () => {
     assert.deepEqual(tallyPaidDispatches([]), {
       payeeCount: 0, employeeCount: 0, contractorCount: 0,
-      dispatchCount: 0, paidUSD: 0, paidPHP: 0, unpaidCount: 0,
+      dispatchCount: 0, paidUSD: 0, paidPHP: 0, unsettledCount: 0,
     });
+  });
+
+  test('a marker row superseded by a retry is not unsettled', () => {
+    // Mark Not Paid (bank glitch) → retry → Mark Paid leaves BOTH rows in place.
+    // Payment Dispatch reads that person as paid (its own `settled` rule), so the
+    // tally must too — otherwise the cycle is unpublishable forever.
+    const t = tallyPaidDispatches([
+      dispatch({ id: 'marker', status: 'not_paid', amount_usd: 0 }),
+      dispatch({ id: 'retry', amount_usd: 100 }),
+    ]);
+    assert.equal(t.unsettledCount, 0);
+    assert.equal(t.dispatchCount, 1, 'only the paid row is a payment');
+    assert.equal(t.payeeCount, 1);
+    assert.equal(t.paidUSD, 100, 'the marker contributes no money');
+  });
+
+  test('supersession is keyed by payee KIND, not email alone', () => {
+    // Claire holds both identities. Her paid SALARY must not silence a flagged
+    // INVOICE, and her paid invoice must not silence a flagged salary.
+    const salaryPaidInvoiceFlagged = tallyPaidDispatches([
+      dispatch({ id: 'sal', recipient_email: 'claire@simple.biz' }),
+      dispatch({ id: 'inv', status: 'problem', payee_type: 'contractor', recipient_email: 'claire@simple.biz' }),
+    ]);
+    assert.equal(salaryPaidInvoiceFlagged.unsettledCount, 1);
+
+    const invoicePaidSalaryFlagged = tallyPaidDispatches([
+      dispatch({ id: 'inv', payee_type: 'contractor', recipient_email: 'claire@simple.biz' }),
+      dispatch({ id: 'sal', status: 'not_paid', recipient_email: 'claire@simple.biz' }),
+    ]);
+    assert.equal(invoicePaidSalaryFlagged.unsettledCount, 1);
   });
 
   test('the figures the clerk approves ARE the figures stored', () => {
@@ -140,7 +170,7 @@ describe('cycleCompleteness', () => {
     assert.equal(c.pendingCount, 0);
     assert.equal(c.blockedCount, 0);
     assert.equal(c.paidDispatchCount, 1);
-    assert.equal(c.unpaidDispatchCount, 0);
+    assert.equal(c.unsettledDispatchCount, 0);
   });
 
   test('each blocking bucket alone keeps it incomplete', () => {
@@ -199,7 +229,7 @@ describe('cycleCompleteness', () => {
     assert.equal(c.complete, false);
     assert.equal(c.recordsComplete, true, 'records cannot see the invoice');
     assert.equal(c.dispatchesComplete, false);
-    assert.equal(c.unpaidDispatchCount, 1);
+    assert.equal(c.unsettledDispatchCount, 1);
     assert.equal(c.hasPaidDispatches, true);
   });
 
@@ -212,6 +242,57 @@ describe('cycleCompleteness', () => {
       assert.equal(c.complete, false, `${status} dispatch should block completion`);
       assert.equal(c.dispatchesComplete, false);
     }
+  });
+
+  // ── Superseded markers must NOT block: PD leaves the old row in place ────────
+
+  test('an employee marked Not Paid and then PAID does not block the cycle', () => {
+    // Not Paid never locks the person out of `pending` (useDispatchQueue), so the
+    // clerk retries and Marks Paid; the sync trigger's last write makes the
+    // disbursement record paid and PD fires its 100% confetti. Reports must agree
+    // instead of refusing forever against a queue that is finished.
+    const c = cycleCompleteness(totals(), [
+      dispatch({ id: 'marker', status: 'not_paid' }),
+      dispatch({ id: 'retry' }),
+    ]);
+    assert.equal(c.complete, true);
+    assert.equal(c.dispatchesComplete, true);
+    assert.equal(c.unsettledDispatchCount, 0);
+    assert.equal(c.paidDispatchCount, 1);
+  });
+
+  test('a Not Paid row with NO matching payment still blocks', () => {
+    const c = cycleCompleteness(totals(), [
+      dispatch(),
+      dispatch({ id: 'stuck', status: 'not_paid', recipient_email: 'stuck@simple.biz' }),
+    ]);
+    assert.equal(c.complete, false);
+    assert.equal(c.unsettledDispatchCount, 1);
+  });
+
+  test('a contractor invoice flagged and then settled does not block the cycle', () => {
+    // A contractor problem/threshold marker leaves the invoice payable by design
+    // and carries no contractor_invoice_id, so email is the only key its
+    // settlement shares with it. PD skips contractor markers outright here.
+    for (const status of ['problem', 'threshold', 'not_paid'] as const) {
+      const c = cycleCompleteness(totals(), [
+        dispatch(),
+        dispatch({ id: 'mark', status, payee_type: 'contractor', recipient_email: 'claire@agency.com' }),
+        dispatch({ id: 'settle', payee_type: 'contractor', recipient_email: 'claire@agency.com', amount_usd: 8200 }),
+      ]);
+      assert.equal(c.complete, true, `a settled ${status} invoice must not block`);
+      assert.equal(c.unsettledDispatchCount, 0);
+      assert.equal(c.paidDispatchCount, 2);
+    }
+  });
+
+  test('a paid SALARY does not silence that person’s flagged INVOICE', () => {
+    const c = cycleCompleteness(totals(), [
+      dispatch({ id: 'sal', recipient_email: 'claire@simple.biz' }),
+      dispatch({ id: 'inv', status: 'problem', payee_type: 'contractor', recipient_email: 'claire@simple.biz' }),
+    ]);
+    assert.equal(c.complete, false);
+    assert.equal(c.unsettledDispatchCount, 1);
   });
 });
 

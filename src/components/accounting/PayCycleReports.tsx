@@ -74,9 +74,10 @@ interface IncompleteCycle {
   blockedCount: number;
   totalCount: number;
   paidPct: number;
-  /** Logged payments left not_paid / threshold / problem — includes unpaid
-   *  contractor invoices, which disbursement_records cannot see. */
-  unpaidDispatchCount: number;
+  /** Logged payments left not_paid / threshold / problem and never superseded by
+   *  a retry — includes unpaid contractor invoices, which disbursement_records
+   *  cannot see. */
+  unsettledDispatchCount: number;
   /** Records read fully paid but Payment Dispatch holds no paid row: there is no
    *  per-payee payment data to freeze, so this is NOT a "still pending" week. */
   noDispatchData: boolean;
@@ -573,9 +574,9 @@ function PublishCard({
                         ? `${incomplete.pendingCount} still pending`
                         : null,
                       incomplete.blockedCount > 0 ? `${incomplete.blockedCount} blocked` : null,
-                      incomplete.unpaidDispatchCount > 0
-                        ? `${incomplete.unpaidDispatchCount} logged payment${
-                            incomplete.unpaidDispatchCount === 1 ? '' : 's'
+                      incomplete.unsettledDispatchCount > 0
+                        ? `${incomplete.unsettledDispatchCount} logged payment${
+                            incomplete.unsettledDispatchCount === 1 ? '' : 's'
                           } not paid`
                         : null,
                     ]

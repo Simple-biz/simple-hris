@@ -62,10 +62,10 @@ export interface IncompleteCycle {
   blockedCount: number;
   totalCount: number;
   paidPct: number;
-  /** Dispatch rows for the cycle left not_paid / threshold / problem — the
-   *  bucket an unpaid contractor invoice lands in, which disbursement_records
-   *  cannot see. */
-  unpaidDispatchCount: number;
+  /** Dispatch rows left not_paid / threshold / problem and NOT superseded by a
+   *  later payment to the same payee — the bucket a logged-but-unpaid contractor
+   *  invoice lands in, which disbursement_records cannot see. */
+  unsettledDispatchCount: number;
   /** True when the cycle's records all read paid but Payment Dispatch holds NO
    *  paid row for it (typically a "Mark all paid" bulk UPDATE). There is
    *  nothing per-payee to freeze, so the muted card must say that rather than
@@ -118,13 +118,21 @@ function parseSnapshot(value: string): PayCycleReportSnapshot | null {
 }
 
 /**
- * Every dispatch row that matters to the gate, bucketed by cycle — ONE paged
- * read (six columns, ~3,800 rows today) instead of a per-cycle round trip.
+ * Every dispatch row that matters to the gate, bucketed by cycle — five/six
+ * columns, SCOPED to the cycles we are actually going to evaluate, instead of a
+ * per-cycle round trip at one extreme or the whole table at the other. Task 7
+ * mounts this tab eagerly, so this runs on every visit to Accounting →
+ * Documents, including visits that only touch the signing queue: an unscoped
+ * read grew by ~1,000 rows every pay week for nothing.
  *
- * MUST be paged: PostgREST silently caps un-ranged selects at 1,000 rows, and a
- * truncated read here would hand the gate a cycle with "no dispatches" and
+ * MUST still be paged: PostgREST silently caps un-ranged selects at 1,000 rows,
+ * and a truncated read here would hand the gate a cycle with "no dispatches" and
  * suppress a publishable week (or, worse, hide an unpaid row and let a
  * half-finished cycle through).
+ *
+ * `sourceFiles` is chunked because supabase-js puts `.in()` in the request URL
+ * and these are ~55-character filenames — the same URL-length ceiling
+ * deletePaymentDispatches chunks for. Each chunk is drained independently.
  *
  * `payee_type` postdates the table's DDL, so a missing-column error re-queries
  * without it — correct in that case, since no contractor dispatch row can exist
@@ -133,15 +141,22 @@ function parseSnapshot(value: string): PayCycleReportSnapshot | null {
  */
 type CycleDispatchRow = PayCycleDispatchLike & { cycle_source_file?: string | null };
 
+const DISPATCH_SOURCE_FILE_CHUNK = 50;
+
 async function loadDispatchRowsByCycle(
   supabase: NonNullable<ReturnType<typeof createSupabaseServiceRoleClient>>,
+  sourceFiles: string[],
 ): Promise<{ byCycle: Map<string, CycleDispatchRow[]>; error: string | null }> {
+  const byCycle = new Map<string, CycleDispatchRow[]>();
+  if (sourceFiles.length === 0) return { byCycle, error: null };
+
   const COLS = 'cycle_source_file, status, recipient_email, amount_usd, amount_php';
-  const read = (withPayeeType: boolean) =>
+  const read = (batch: string[], withPayeeType: boolean) =>
     selectAllPaged<CycleDispatchRow>((from, to) =>
       supabase
         .from('payment_dispatches')
         .select(withPayeeType ? `${COLS}, payee_type` : COLS)
+        .in('cycle_source_file', batch)
         .order('id', { ascending: true })
         .range(from, to) as unknown as PromiseLike<{
         data: CycleDispatchRow[] | null;
@@ -149,17 +164,19 @@ async function loadDispatchRowsByCycle(
       }>,
     );
 
-  let res = await read(true);
-  if (res.error && /payee_type/i.test(res.error)) res = await read(false);
-  if (res.error) return { byCycle: new Map(), error: res.error };
+  for (let i = 0; i < sourceFiles.length; i += DISPATCH_SOURCE_FILE_CHUNK) {
+    const batch = sourceFiles.slice(i, i + DISPATCH_SOURCE_FILE_CHUNK);
+    let res = await read(batch, true);
+    if (res.error && /payee_type/i.test(res.error)) res = await read(batch, false);
+    if (res.error) return { byCycle: new Map(), error: res.error };
 
-  const byCycle = new Map<string, CycleDispatchRow[]>();
-  for (const row of res.rows) {
-    const key = row.cycle_source_file;
-    if (!key) continue;
-    const bucket = byCycle.get(key);
-    if (bucket) bucket.push(row);
-    else byCycle.set(key, [row]);
+    for (const row of res.rows) {
+      const key = row.cycle_source_file;
+      if (!key) continue;
+      const bucket = byCycle.get(key);
+      if (bucket) bucket.push(row);
+      else byCycle.set(key, [row]);
+    }
   }
   return { byCycle, error: null };
 }
@@ -263,15 +280,23 @@ export async function listCycleStatus(published?: PayCycleReportSummary[]): Prom
   const supabase = createSupabaseServiceRoleClient();
   if (!supabase) return empty('Supabase client unavailable');
 
-  const [{ reports, error }, publishedRes, dispatchRes] = await Promise.all([
+  const [{ reports, error }, publishedRes] = await Promise.all([
     listDisbursementReports(),
     published
       ? Promise.resolve({ published, error: null as string | null })
       : listPayCycleReports(),
-    loadDispatchRowsByCycle(supabase),
   ]);
   if (error) return empty(error);
   if (publishedRes.error) return empty(publishedRes.error);
+
+  // Scoped to exactly the cycles the loop below evaluates. NOT further narrowed
+  // to unpublished ones: the loop tests completeness BEFORE `alreadyPublished`,
+  // so starving a published cycle of its rows would make it fail the gate and
+  // hijack the muted "not ready" card.
+  const gatedSourceFiles = reports
+    .map((r) => r.sourceFile)
+    .filter((f): f is string => !!f && !isUrgentSourceFile(f));
+  const dispatchRes = await loadDispatchRowsByCycle(supabase, gatedSourceFiles);
   if (dispatchRes.error) return empty(dispatchRes.error);
 
   const publishedSources = publishedRes.published.map((p) => p.source_file);
@@ -299,7 +324,7 @@ export async function listCycleStatus(published?: PayCycleReportSummary[]): Prom
           blockedCount: c.blockedCount,
           totalCount,
           paidPct: totalCount > 0 ? Math.round((c.paidCount / totalCount) * 100) : 0,
-          unpaidDispatchCount: c.unpaidDispatchCount,
+          unsettledDispatchCount: c.unsettledDispatchCount,
           // Records say done, Payment Dispatch has nothing paid to show for it.
           noDispatchData: c.recordsComplete && c.dispatchesComplete && !c.hasPaidDispatches,
         };
