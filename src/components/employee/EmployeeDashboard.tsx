@@ -1739,13 +1739,19 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
   const techDeptOk = isDeptEligible(sysBonusCfg.tech, myDeptKey);
 
   const pabBonusAmount = useMemo(() => {
+    // A published wizard snapshot is authoritative — it's what accounting actually
+    // reviewed and dispatched, and its own PAB gate can diverge from this client-side
+    // re-derivation (manual toggle, dispute resolution, data the wizard saw that this
+    // Hubstaff-only estimate can't). Mirrors how hours/regularPay/otPay and the MESA
+    // fields above already prefer the snapshot over the local estimate.
+    if (wizardSnap && wizardSnap.perfectAttendanceBonus != null) return wizardSnap.perfectAttendanceBonus;
     if (!hasRates) return 0;
     if (!isPAEligible) return 0;
     if (!pabDeptOk) return 0;
     if (isAllTime) return pabEligibleCount * pabBonusPhpAmt;
     if (selectedFileWeek) return isFinalPabWeekForSelected ? pabBonusPhpAmt : 0;
     return 0;
-  }, [hasRates, isPAEligible, pabDeptOk, pabBonusPhpAmt, isAllTime, selectedFileWeek, isFinalPabWeekForSelected, pabEligibleCount]);
+  }, [wizardSnap, hasRates, isPAEligible, pabDeptOk, pabBonusPhpAmt, isAllTime, selectedFileWeek, isFinalPabWeekForSelected, pabEligibleCount]);
 
   /**
    * Tech Bonus rules:
@@ -1804,7 +1810,11 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
     return t >= thirdWeekMon.getTime() && t < fourthWeekMon.getTime();
   }, [employeeStartDate, selectedFileWeek]);
 
-  const technologyBonusAmount = isTechnologyBonusActive && hasRates && techDeptOk ? techBonusPhpAmt : 0;
+  // Same reasoning as pabBonusAmount above: prefer the wizard-confirmed figure once
+  // one is published, instead of always re-deriving from the client-side week gate.
+  const technologyBonusAmount = wizardSnap && wizardSnap.techBonus != null
+    ? wizardSnap.techBonus
+    : (isTechnologyBonusActive && hasRates && techDeptOk ? techBonusPhpAmt : 0);
 
   const MESA_DEDUCTION_PHP = 100;
   const isMesaMember = !!rate?.mesa_member;
