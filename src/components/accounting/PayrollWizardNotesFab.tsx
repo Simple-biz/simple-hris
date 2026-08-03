@@ -322,6 +322,15 @@ export default function PayrollWizardNotesFab({
     if (fabScoreWasOpenRef.current && !open && fabScoreReady) fetchFabScore();
     fabScoreWasOpenRef.current = open;
   }, [open, fabScoreReady, fetchFabScore]);
+  // The closed FAB's center content alternates between the StickyNote icon and
+  // the live percentage every 15s, so the number is visible without a hover —
+  // runs regardless of `fabScore`; the render below just falls back to the
+  // icon while there's nothing to show yet.
+  const [fabShowPct, setFabShowPct] = useState(false);
+  useEffect(() => {
+    const id = window.setInterval(() => setFabShowPct((v) => !v), 15_000);
+    return () => window.clearInterval(id);
+  }, []);
   // Period selector: which pay period (Sunday–Saturday) the board is showing.
   // Defaults to — and follows — the live period, i.e. the just-completed week
   // being paid now (payroll runs a week in arrears); past weeks are read-back
@@ -859,7 +868,31 @@ export default function PayrollWizardNotesFab({
           title={fabScore ? `Readiness: ${Math.round(fabPct)}% (${GRADE_LABEL[fabScore.grade]})` : undefined}
           className="notes-fab-pulse absolute inset-0 m-auto flex h-13 w-13 items-center justify-center rounded-full bg-gradient-to-br from-orange-500 to-amber-500 text-white shadow-lg shadow-orange-500/30 transition-[filter] hover:brightness-110 focus-visible:ring-3 focus-visible:ring-orange-400/60 focus-visible:outline-none dark:from-orange-600 dark:to-amber-600"
         >
-          <StickyNote className="h-6 w-6" />
+          <AnimatePresence mode="wait" initial={false}>
+            {fabScore && fabShowPct ? (
+              <motion.span
+                key="pct"
+                initial={{ opacity: reduceMotion ? 1 : 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: reduceMotion ? 1 : 0 }}
+                transition={{ duration: reduceMotion ? 0 : 0.2 }}
+                className="text-base font-extrabold tabular-nums"
+              >
+                {Math.round(fabPct)}%
+              </motion.span>
+            ) : (
+              <motion.span
+                key="icon"
+                initial={{ opacity: reduceMotion ? 1 : 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: reduceMotion ? 1 : 0 }}
+                transition={{ duration: reduceMotion ? 0 : 0.2 }}
+                className="flex"
+              >
+                <StickyNote className="h-6 w-6" />
+              </motion.span>
+            )}
+          </AnimatePresence>
           {openCount > 0 && (
             <span className="absolute -top-1 -right-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-blue-600 px-1 text-[11px] font-bold text-white ring-2 ring-white dark:ring-[#0d1117]">
               {openCount > 99 ? "99+" : openCount}
