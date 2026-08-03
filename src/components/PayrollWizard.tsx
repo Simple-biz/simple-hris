@@ -2729,10 +2729,20 @@ export default function PayrollWizard({
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ email: norm, monthKey: editMonthKey, excluded }),
         });
-        const json = (await res.json()) as { error: string | null };
+        const json = (await res.json()) as {
+          error: string | null;
+          wasExcluded?: boolean;
+          notified?: boolean;
+        };
         if (!res.ok || json.error) throw new Error(json.error || `HTTP ${res.status}`);
         await pabPeriodSettings.refresh();
         setPabSaveState('saved');
+        const stateChanged = json.wasExcluded !== undefined && json.wasExcluded !== excluded;
+        if (stateChanged && json.notified === false) {
+          toast.warning('Saved, but the employee was not notified', {
+            description: 'They could not be matched to an active roster email — let them know about this change directly.',
+          });
+        }
         setTimeout(() => setPabSaveState('idle'), 1500);
       } catch (e) {
         setPabSaveState('error');
