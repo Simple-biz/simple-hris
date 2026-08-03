@@ -98,6 +98,7 @@ import {
   type WizardCycleDetail,
 } from "@/lib/payroll/adjustment-bridge";
 import { READINESS_SOURCE } from "@/lib/payroll/readiness-audit";
+import { readinessRingColor } from "@/lib/payroll/readiness-ring-color";
 
 /**
  * The Payroll Wizard's floating "Notes" checklist — carry-over items for the
@@ -213,6 +214,15 @@ const PANE_VARIANTS = {
   exit: (dir: number) => ({ opacity: 0, x: dir >= 0 ? -24 : 24 }),
 };
 
+const RING_R = 30;
+const RING_C = 2 * Math.PI * RING_R;
+const GRADE_LABEL: Record<ReadinessScore["grade"], string> = {
+  ready: "Ready",
+  almost: "Almost",
+  at_risk: "At risk",
+  blocked: "Blocked",
+};
+
 export default function PayrollWizardNotesFab({
   sessionEmail,
   canEdit,
@@ -275,6 +285,43 @@ export default function PayrollWizardNotesFab({
     }, 400);
     return () => window.clearInterval(timer);
   }, [open, heardWizard]);
+  // Readiness score for the closed FAB's progress ring — a lightweight,
+  // independent read of the same endpoint the Readiness tab uses (score only;
+  // the detail lists are irrelevant to a badge). Held for heardWizard-or-grace
+  // so it never briefly shows the wrong week's score, mirroring
+  // PayrollReadinessGlance's own hold. Decorative: any failure just leaves the
+  // ring absent, never a toast.
+  const [fabScore, setFabScore] = useState<ReadinessScore | null>(null);
+  const [fabScoreGrace, setFabScoreGrace] = useState(false);
+  useEffect(() => {
+    const t = window.setTimeout(() => setFabScoreGrace(true), 1500);
+    return () => window.clearTimeout(t);
+  }, []);
+  const fabScoreReady = heardWizard || fabScoreGrace;
+  const fetchFabScore = useCallback(() => {
+    const qs = wizardSourceFile ? `?source_file=${encodeURIComponent(wizardSourceFile)}` : "";
+    fetch(`/api/payroll-wizard/readiness${qs}`, { cache: "no-store" })
+      .then(async (res) => {
+        const json = (await res.json()) as { readiness?: PayrollReadiness };
+        if (!res.ok || !json.readiness) return;
+        setFabScore(json.readiness.score);
+      })
+      .catch(() => {
+        /* decorative only — the FAB just keeps its plain color */
+      });
+  }, [wizardSourceFile]);
+  // Mount + whenever the wizard's week settles or changes.
+  useEffect(() => {
+    if (!fabScoreReady) return;
+    fetchFabScore();
+  }, [fabScoreReady, fetchFabScore]);
+  // Re-check when the Notes modal closes — a Readiness-tab inline fix
+  // ("Set rate" / "Set bank") may have just changed the score.
+  const fabScoreWasOpenRef = useRef(false);
+  useEffect(() => {
+    if (fabScoreWasOpenRef.current && !open && fabScoreReady) fetchFabScore();
+    fabScoreWasOpenRef.current = open;
+  }, [open, fabScoreReady, fetchFabScore]);
   // Period selector: which pay period (Sunday–Saturday) the board is showing.
   // Defaults to — and follows — the live period, i.e. the just-completed week
   // being paid now (payroll runs a week in arrears); past weeks are read-back
@@ -767,21 +814,59 @@ export default function PayrollWizardNotesFab({
     g.rows.some((r) => (r.created_by ?? "").trim().toLowerCase() === selfEmail);
   const hasOwnGroup = groups.some(isOwnGroup);
 
+  // FAB readiness ring geometry — clamped once so the mount/animate/hover
+  // states below all agree on the same fill fraction.
+  const fabPct = fabScore ? Math.max(0, Math.min(100, fabScore.value)) : 0;
+  const fabDash = (fabPct / 100) * RING_C;
+
   return (
     <>
-      <button
-        type="button"
-        onClick={() => setOpen(true)}
-        aria-label={`Open payroll notes and readiness${openCount > 0 ? ` (${openCount} open)` : ""}`}
-        className="notes-fab-pulse fixed right-5 bottom-5 z-40 flex h-13 w-13 items-center justify-center rounded-full bg-gradient-to-br from-orange-500 to-amber-500 text-white shadow-lg shadow-orange-500/30 transition-[filter] hover:brightness-110 focus-visible:ring-3 focus-visible:ring-orange-400/60 focus-visible:outline-none dark:from-orange-600 dark:to-amber-600"
-      >
-        <StickyNote className="h-6 w-6" />
-        {openCount > 0 && (
-          <span className="absolute -top-1 -right-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-blue-600 px-1 text-[11px] font-bold text-white ring-2 ring-white dark:ring-[#0d1117]">
-            {openCount > 99 ? "99+" : openCount}
-          </span>
+      <div className="fixed right-5 bottom-5 z-40 h-16 w-16">
+        {fabScore && (
+          <svg
+            viewBox="0 0 64 64"
+            className="pointer-events-none absolute inset-0 h-full w-full -rotate-90"
+            aria-hidden="true"
+          >
+            <circle
+              cx="32"
+              cy="32"
+              r={RING_R}
+              fill="none"
+              strokeWidth="3"
+              className="text-black/10 dark:text-white/10"
+              stroke="currentColor"
+            />
+            <motion.circle
+              cx="32"
+              cy="32"
+              r={RING_R}
+              fill="none"
+              strokeWidth="3"
+              strokeLinecap="round"
+              stroke={readinessRingColor(fabScore.value)}
+              strokeDasharray={RING_C}
+              initial={{ strokeDashoffset: reduceMotion ? RING_C - fabDash : RING_C }}
+              animate={{ strokeDashoffset: RING_C - fabDash }}
+              transition={{ duration: reduceMotion ? 0 : 0.9, ease: EASE }}
+            />
+          </svg>
         )}
-      </button>
+        <button
+          type="button"
+          onClick={() => setOpen(true)}
+          aria-label={`Open payroll notes and readiness${openCount > 0 ? ` (${openCount} open)` : ""}${fabScore ? `, readiness ${Math.round(fabPct)}% — ${GRADE_LABEL[fabScore.grade]}` : ""}`}
+          title={fabScore ? `Readiness: ${Math.round(fabPct)}% (${GRADE_LABEL[fabScore.grade]})` : undefined}
+          className="notes-fab-pulse absolute inset-0 m-auto flex h-13 w-13 items-center justify-center rounded-full bg-gradient-to-br from-orange-500 to-amber-500 text-white shadow-lg shadow-orange-500/30 transition-[filter] hover:brightness-110 focus-visible:ring-3 focus-visible:ring-orange-400/60 focus-visible:outline-none dark:from-orange-600 dark:to-amber-600"
+        >
+          <StickyNote className="h-6 w-6" />
+          {openCount > 0 && (
+            <span className="absolute -top-1 -right-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-blue-600 px-1 text-[11px] font-bold text-white ring-2 ring-white dark:ring-[#0d1117]">
+              {openCount > 99 ? "99+" : openCount}
+            </span>
+          )}
+        </button>
+      </div>
 
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="max-w-[min(96vw,84rem)] sm:max-w-[min(96vw,84rem)]">
