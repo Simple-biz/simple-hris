@@ -15,6 +15,7 @@ import {
   CircleHelp,
   Sparkles,
   Receipt,
+  Download,
 } from 'lucide-react';
 import { motion } from 'motion/react';
 import ProfileCompletionCard from './ProfileCompletionCard';
@@ -42,6 +43,7 @@ import {
   type ResolvedSystemBonuses,
 } from '@/lib/payment-catalog/system-bonus';
 import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
+import { downloadPaySnapshotPdf, type PaySnapshotPdfRow } from '@/lib/payroll/pay-snapshot-pdf';
 import { isFinalPabWeek as gateIsFinalPabWeek } from '@/lib/payroll/dispatch-bonuses';
 import {
   OFFICIAL_USD_TO_PHP_RATE,
@@ -654,6 +656,73 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
   const [holidayModal, setHolidayModal] = useState<{ name: string; date: string } | null>(null);
   /** Mobile: PAB rules, bonus status, and pay numbers live in this sheet (charts stay on the main view). */
   const [mobileHelpOpen, setMobileHelpOpen] = useState(false);
+  /** True while the Pay snapshot PDF is being generated (Details popup download button). */
+  const [snapshotDownloading, setSnapshotDownloading] = useState(false);
+
+  /** Build this week's Pay Summary PDF from the exact same figures/branches the
+   *  Pay snapshot grid below renders, then trigger a browser download. */
+  const handleDownloadSnapshot = async () => {
+    if (!row) return;
+    setSnapshotDownloading(true);
+    try {
+      const rows: PaySnapshotPdfRow[] = [
+        { label: 'Total hours', value: `${totalHours.toFixed(2)}h` },
+        { label: 'Regular pay', value: regularPay != null ? formatPHP(regularPay) : '—' },
+        {
+          label: 'OT pay',
+          value: otPay != null ? formatPHP(otPay) : otHours > 0 ? '—' : formatPHP(0),
+        },
+        {
+          label: 'PAB',
+          value:
+            perfectAttendanceBonusStatus === 'pending'
+              ? '—'
+              : pabBonusAmount > 0
+                ? `+${formatPHP(pabBonusAmount)}`
+                : formatPHP(0),
+        },
+        {
+          label: 'Tech bonus',
+          value: technologyBonusAmount > 0 ? `+${formatPHP(technologyBonusAmount)}` : formatPHP(0),
+        },
+      ];
+      if (mesaDeductionPhp > 0) {
+        rows.push({ label: 'MESA contribution', value: `−${formatPHP(mesaDeductionPhp)}` });
+      }
+
+      await downloadPaySnapshotPdf({
+        employeeName: profileForShipping.name || 'Employee',
+        department: profileForShipping.department,
+        weekLabel:
+          selectedFile === null || selectedFile === '__all__'
+            ? 'All time · combined'
+            : formatSourceFileLabel(selectedFile),
+        rows,
+        totalLabel: mesaDisbursementPhp > 0 ? 'Take-home' : 'Total',
+        totalValue: takeHomePhp != null ? formatPHP(takeHomePhp) : '—',
+        usdEquivalent:
+          takeHomePhp != null
+            ? `≈ ${(takeHomePhp / usdToPhpRate).toLocaleString('en-US', {
+                minimumFractionDigits: 2,
+                maximumFractionDigits: 2,
+              })} USD`
+            : null,
+        extraPayout:
+          mesaDisbursementPhp > 0
+            ? { label: 'MESA emergency payout', value: `+${formatPHP(mesaDisbursementPhp)}` }
+            : null,
+        grandTotal:
+          mesaDisbursementPhp > 0
+            ? {
+                label: 'Total deposited',
+                value: totalDepositedPhp != null ? formatPHP(totalDepositedPhp) : '—',
+              }
+            : null,
+      });
+    } finally {
+      setSnapshotDownloading(false);
+    }
+  };
   /** Master-list profile fields used to prefill the gift-shipping form. */
   const [profileForShipping, setProfileForShipping] = useState<{
     name: string | null;
@@ -3611,50 +3680,83 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
 
             {row && (
               <section className="space-y-2 rounded-xl border border-orange-100/70 bg-white/80 p-3 dark:border-blue-950/50 dark:bg-blue-950/20">
-                <p className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-500">
-                  Pay snapshot
-                </p>
+                <div className="flex items-center justify-between">
+                  <p className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-500">
+                    Pay snapshot
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => void handleDownloadSnapshot()}
+                    disabled={snapshotDownloading}
+                    aria-label="Download pay summary PDF"
+                    title="Download this week's pay summary as a PDF"
+                    className="inline-flex items-center gap-1 rounded-full border border-zinc-200 bg-white px-2 py-0.5 text-[10px] font-medium text-zinc-600 shadow-sm transition hover:border-orange-300 hover:text-orange-700 disabled:cursor-not-allowed disabled:opacity-60 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:border-orange-800 dark:hover:text-orange-300"
+                  >
+                    {snapshotDownloading ? (
+                      <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
+                    ) : (
+                      <Download className="h-3 w-3" aria-hidden />
+                    )}
+                    {snapshotDownloading ? 'Preparing…' : 'PDF'}
+                  </button>
+                </div>
                 <div className="space-y-2 text-xs">
-                  <div className="flex justify-between gap-2">
-                    <span className="text-zinc-500 dark:text-zinc-400">Total hours</span>
-                    <span className="font-medium tabular-nums text-zinc-900 dark:text-zinc-100">{totalHours.toFixed(2)}h</span>
-                  </div>
-                  <div className="flex justify-between gap-2">
-                    <span className="text-zinc-500 dark:text-zinc-400">Regular pay</span>
-                    <span className="tabular-nums text-zinc-800 dark:text-zinc-200">
-                      {regularPay != null ? formatPHP(regularPay) : '—'}
-                    </span>
-                  </div>
-                  <div className="flex justify-between gap-2">
-                    <span className="text-zinc-500 dark:text-zinc-400">OT pay</span>
-                    <span className="tabular-nums text-zinc-800 dark:text-zinc-200">
-                      {otPay != null ? formatPHP(otPay) : otHours > 0 ? '—' : formatPHP(0)}
-                    </span>
-                  </div>
-                  <div className="flex justify-between gap-2">
-                    <span className="text-zinc-500 dark:text-zinc-400">PAB</span>
-                    <span className="tabular-nums text-zinc-800 dark:text-zinc-200">
-                      {perfectAttendanceBonusStatus === 'pending'
-                        ? '—'
-                        : pabBonusAmount > 0
-                          ? `+${formatPHP(pabBonusAmount)}`
-                          : formatPHP(0)}
-                    </span>
-                  </div>
-                  <div className="flex justify-between gap-2">
-                    <span className="text-zinc-500 dark:text-zinc-400">Tech bonus</span>
-                    <span className="tabular-nums text-zinc-800 dark:text-zinc-200">
-                      {technologyBonusAmount > 0 ? `+${formatPHP(technologyBonusAmount)}` : formatPHP(0)}
-                    </span>
-                  </div>
-                  {mesaDeductionPhp > 0 && (
-                    <div className="flex justify-between gap-2">
-                      <span className="text-teal-600 dark:text-teal-400">MESA contribution</span>
-                      <span className="tabular-nums text-teal-700 dark:text-teal-300">
-                        −{formatPHP(mesaDeductionPhp)}
-                      </span>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="rounded-lg border border-zinc-200/80 bg-white/70 px-2.5 py-2 dark:border-zinc-800 dark:bg-zinc-900/40">
+                      <div className="text-[9px] font-semibold uppercase tracking-wide text-zinc-400 dark:text-zinc-500">
+                        Total hours
+                      </div>
+                      <div className="mt-0.5 font-medium tabular-nums text-zinc-900 dark:text-zinc-100">
+                        {totalHours.toFixed(2)}h
+                      </div>
                     </div>
-                  )}
+                    <div className="rounded-lg border border-zinc-200/80 bg-white/70 px-2.5 py-2 dark:border-zinc-800 dark:bg-zinc-900/40">
+                      <div className="text-[9px] font-semibold uppercase tracking-wide text-zinc-400 dark:text-zinc-500">
+                        Regular pay
+                      </div>
+                      <div className="mt-0.5 tabular-nums text-zinc-800 dark:text-zinc-200">
+                        {regularPay != null ? formatPHP(regularPay) : '—'}
+                      </div>
+                    </div>
+                    <div className="rounded-lg border border-zinc-200/80 bg-white/70 px-2.5 py-2 dark:border-zinc-800 dark:bg-zinc-900/40">
+                      <div className="text-[9px] font-semibold uppercase tracking-wide text-zinc-400 dark:text-zinc-500">
+                        OT pay
+                      </div>
+                      <div className="mt-0.5 tabular-nums text-zinc-800 dark:text-zinc-200">
+                        {otPay != null ? formatPHP(otPay) : otHours > 0 ? '—' : formatPHP(0)}
+                      </div>
+                    </div>
+                    <div className="rounded-lg border border-indigo-200/70 bg-indigo-50/50 px-2.5 py-2 dark:border-indigo-900/40 dark:bg-indigo-950/20">
+                      <div className="text-[9px] font-semibold uppercase tracking-wide text-indigo-600/80 dark:text-indigo-400/80">
+                        PAB
+                      </div>
+                      <div className="mt-0.5 tabular-nums text-indigo-800 dark:text-indigo-300">
+                        {perfectAttendanceBonusStatus === 'pending'
+                          ? '—'
+                          : pabBonusAmount > 0
+                            ? `+${formatPHP(pabBonusAmount)}`
+                            : formatPHP(0)}
+                      </div>
+                    </div>
+                    <div className="rounded-lg border border-sky-200/70 bg-sky-50/50 px-2.5 py-2 dark:border-sky-900/40 dark:bg-sky-950/20">
+                      <div className="text-[9px] font-semibold uppercase tracking-wide text-sky-600/80 dark:text-sky-400/80">
+                        Tech bonus
+                      </div>
+                      <div className="mt-0.5 tabular-nums text-sky-800 dark:text-sky-300">
+                        {technologyBonusAmount > 0 ? `+${formatPHP(technologyBonusAmount)}` : formatPHP(0)}
+                      </div>
+                    </div>
+                    {mesaDeductionPhp > 0 && (
+                      <div className="rounded-lg border border-teal-200/70 bg-teal-50/50 px-2.5 py-2 dark:border-teal-900/40 dark:bg-teal-950/20">
+                        <div className="text-[9px] font-semibold uppercase tracking-wide text-teal-600/80 dark:text-teal-400/80">
+                          MESA contribution
+                        </div>
+                        <div className="mt-0.5 tabular-nums text-teal-700 dark:text-teal-300">
+                          −{formatPHP(mesaDeductionPhp)}
+                        </div>
+                      </div>
+                    )}
+                  </div>
                   <div className="my-1 h-px bg-zinc-200 dark:bg-zinc-800" />
                   <div className="flex justify-between gap-2">
                     <span className="font-medium text-zinc-900 dark:text-white">
