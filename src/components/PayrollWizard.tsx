@@ -217,7 +217,7 @@ import {
   type RateConsistencyIssue,
 } from '@/lib/payroll/paystub-rate-consistency';
 import { isFinalPabWeek as gateIsFinalPabWeek } from '@/lib/payroll/dispatch-bonuses';
-import { parseLocalDateFromIso, resolvePabRangeForMonth, yearMonthKey, PAB_PERIOD_EXCLUSIONS_KEY } from '@/lib/pab-period-settings';
+import { parseLocalDateFromIso, resolvePabRangeForMonth, yearMonthKey } from '@/lib/pab-period-settings';
 import {
   US_HOLIDAYS_ENABLED_KEY,
   US_HOLIDAYS_LIST_KEY,
@@ -2711,39 +2711,26 @@ export default function PayrollWizard({
   }, [writeOverridesBlob, pabPeriodSettings, editMonthKey, isReplay]);
 
   /**
-   * Serialize the exclusions map back to the JSON shape stored in app_settings,
-   * patching a single month's email list. Empty lists are dropped so the blob
-   * stays compact.
-   */
-  const writeExclusionsBlob = React.useCallback(
-    async (patchKey: string, emails: Set<string>) => {
-      const next: Record<string, string[]> = {};
-      for (const [k, set] of pabPeriodSettings.exclusions.entries()) {
-        if (k === patchKey) continue;
-        if (set.size > 0) next[k] = Array.from(set);
-      }
-      if (emails.size > 0) next[patchKey] = Array.from(emails);
-      await savePabSetting(PAB_PERIOD_EXCLUSIONS_KEY, JSON.stringify(next));
-    },
-    [pabPeriodSettings.exclusions, savePabSetting],
-  );
-
-  /**
    * Toggle a single person's PAB exclusion for the month the modal is editing.
    * Excluded employees earn ₱0 PAB for that period regardless of attendance —
-   * the dispatch path (`current-pay.ts`) honors the same list.
+   * the dispatch path (`current-pay.ts`) honors the same list. The API route
+   * owns the read-patch-write AND fires the employee's pab.excluded /
+   * pab.restored notification, so the client only calls it and refreshes.
    */
   const togglePabExclusion = React.useCallback(
     async (email: string, excluded: boolean) => {
       if (isReplay) { toast.error('Replaying a past period is view-only'); return; }
       const norm = normEmail(email) ?? email.toLowerCase();
       if (!norm) return;
-      const set = new Set(pabPeriodSettings.exclusions.get(editMonthKey) ?? []);
-      if (excluded) set.add(norm);
-      else set.delete(norm);
       setPabSaveState('saving');
       try {
-        await writeExclusionsBlob(editMonthKey, set);
+        const res = await fetch('/api/pab-exclusions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: norm, monthKey: editMonthKey, excluded }),
+        });
+        const json = (await res.json()) as { error: string | null };
+        if (!res.ok || json.error) throw new Error(json.error || `HTTP ${res.status}`);
         await pabPeriodSettings.refresh();
         setPabSaveState('saved');
         setTimeout(() => setPabSaveState('idle'), 1500);
@@ -2753,7 +2740,7 @@ export default function PayrollWizard({
         setTimeout(() => setPabSaveState('idle'), 3000);
       }
     },
-    [pabPeriodSettings, writeExclusionsBlob, editMonthKey, isReplay],
+    [pabPeriodSettings, editMonthKey, isReplay],
   );
 
   /** Switch which month the Additions tab evaluates. */
