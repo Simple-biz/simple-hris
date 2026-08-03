@@ -25,8 +25,11 @@ Decisions locked with Kane (2026-08-03):
    confirm marker. Real rows always outrank the marker.
 5. Step-1 modal "Ignore" silences it **for that pay week on that browser**
    (localStorage keyed by week); it auto-disappears the moment the CSV lands.
-6. Checklist placement: a section in the Readiness tab **below the hero, above the stat
-   tiles**.
+6. Checklist placement — **amended by Kane 2026-08-03 during implementation**: the
+   checklist is its **own tab in the Readiness pane's inner tab strip, FIRST — before
+   KPI Submissions** (order: Wizard Setup · KPI Submissions · No Pay Rate · Bank Info ·
+   Exceptions), and it is the default selected tab. Its strip badge counts open
+   (not-done) steps. The original "section below the hero" placement is superseded.
 7. Checks are computed **server-side by extending the readiness API** (no second
    endpoint, no client-side RLS pitfalls).
 8. **Readiness only reads its own week**: someone not yet hired during the week in
@@ -157,22 +160,27 @@ start date stays; past-week view excludes a person hired after that week.
 - Markers are per-week; nothing is ever cleaned up or migrated (dead keys for past weeks
   are inert, matching `payroll.wizard.additions.<file>` precedent).
 
-## UI: WizardSetupSection (Readiness pane)
+## UI: Wizard Setup tab (Readiness pane) — amended 2026-08-03
 
-In `src/components/accounting/PayrollWizardNotesFab.tsx`, between `ReadinessHero` and
-the stat-tile grid (`PayrollReadinessGlance`, section renders around `:3068`):
+In `src/components/accounting/PayrollWizardNotesFab.tsx`, the checklist is the FIRST
+tab of the Readiness pane's inner tab strip (`ReadinessTab` gains `"setup"` ahead of
+`kpi`/`rate`/`bank`/`exc`) and the default selected tab:
 
-- `PaneBody`-styled card. Header: **"Wizard setup · Jul 26 – Aug 1"** + `N/7` done
-  count + collapse chevron. Defaults **open** while anything is unfinished, **collapsed**
-  once all seven are done (no persistence).
+- Strip entry: label **"Wizard Setup"**, count badge = open (not-done) steps — amber
+  while open, emerald at 0 (standard strip badge rules; not `neutral`, no static
+  `blocker` flag).
+- Pane body: slim header line (week label + `N/7 done`) above the 7 rows, inside the
+  standard `PaneBody` shell like the other panes.
 - Row = step-number chip (`1`, `2`, `3`, `4–5`, `5`, `6`, `8`) + label + status pill +
   truncating detail text. Tones follow the pane's palette: emerald done, amber
   attention, rose blocked (CSV only), sky pending/neutral.
+- The stat-tile row stays 4 tiles (score dimensions + exceptions) — setup has no tile
+  and no score percent.
 - **Read-only** — no write-actions in rows; detail text names the wizard step to fix on.
 - Live refresh: add `hubstaff_uploads`, `orphanage_pay`, `payroll_wizard_notes`, and the
   contractor-invoice table to `useLiveRefresh({ tables })` (`PayrollWizardNotesFab.tsx:2836`).
-- `ReadinessSkeleton` gains a matching shimmer block. The FAB ring keeps its score-only
-  fetch — unaffected.
+- `ReadinessSkeleton`'s tab-strip placeholder gains "Wizard Setup" first. The FAB ring
+  keeps its score-only fetch — unaffected.
 
 ## Wizard Step 1: CSV warning modal
 

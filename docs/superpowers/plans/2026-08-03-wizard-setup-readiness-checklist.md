@@ -1059,6 +1059,17 @@ git commit -m "feat(readiness): wizardSetup block - per-week wizard-step checkli
 
 ### Task 5: WizardSetupSection UI in the Readiness pane
 
+> **AMENDED by Kane 2026-08-03 (mid-execution):** the checklist is NOT a section below
+> the hero — it is its **own tab, FIRST in the inner Readiness tab strip, before KPI
+> Submissions**, and the default selected tab. `ReadinessTab` gains `"setup"` at the
+> head of the order; the strip badge counts open steps (amber while open, emerald at 0,
+> no `neutral`/`blocker` flag); the pane shows a slim week/N-of-7 header + the 7 rows;
+> the stat-tile row stays 4 tiles; the below-hero section and its collapse behavior are
+> removed; the skeleton's tab labels gain "Wizard Setup" first (no extra hero-adjacent
+> shimmer block). The steps below describe the superseded section variant — the row
+> rendering (SETUP_STATUS_PILL / SETUP_STEP_ICON / row layout) carries over into the
+> pane unchanged.
+
 **Files:**
 - Modify: `src/components/accounting/PayrollWizardNotesFab.tsx` (type import ~:80-88, lucide import ~:8-35, new component near `PaneBody` ~:1608, render insert ~:3064-3068, `useLiveRefresh` ~:2836-2848, `ReadinessSkeleton` ~:3632)
 
