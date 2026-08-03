@@ -195,12 +195,13 @@ function mergeRowPreservingDrafts(
 /** localStorage key base for the per-user "show everyone's notes" preference. */
 const SHOW_OTHERS_KEY = "payroll-wizard-notes:show-others";
 
-/** The three modal panes. `checklist` is the original carry-over adjustments
- *  board (label reads "Adjustments and Notes"); `readiness` is the payroll-ready
- *  dashboard; `rates` is the Payment-Catalog glance. Kept left→right in this
+/** The three modal panes. `readiness` is the payroll-ready dashboard — leads
+ *  the strip so it's the first thing an accountant sees; `checklist` is the
+ *  original carry-over adjustments board (label reads "Adjustments and
+ *  Notes"); `rates` is the Payment-Catalog glance. Kept left→right in this
  *  order so the directional slide reads naturally. */
-type ModalTab = "checklist" | "readiness" | "rates";
-const TAB_ORDER: ModalTab[] = ["checklist", "readiness", "rates"];
+type ModalTab = "readiness" | "checklist" | "rates";
+const TAB_ORDER: ModalTab[] = ["readiness", "checklist", "rates"];
 
 /** Shared easing — matches the app's tab transition (App.tsx / BonusCatalog). */
 const EASE = [0.22, 1, 0.36, 1] as const;
@@ -231,7 +232,7 @@ export default function PayrollWizardNotesFab({
   canEdit: boolean;
 }) {
   const [open, setOpen] = useState(false);
-  const [modalTab, setModalTab] = useState<ModalTab>("checklist");
+  const [modalTab, setModalTab] = useState<ModalTab>("readiness");
   const reduceMotion = useReducedMotion();
   // Which way the pane slide travels: +1 when moving toward a later tab,
   // −1 toward an earlier one, so a 3-tab switch reads like turning pages.
@@ -935,8 +936,8 @@ export default function PayrollWizardNotesFab({
           <div className="flex items-center gap-1 border-b border-orange-100 dark:border-blue-950/60">
             {(
               [
-                { id: "checklist", label: "Adjustments and Notes", icon: ListChecks },
                 { id: "readiness", label: "Readiness", icon: ShieldCheck },
+                { id: "checklist", label: "Adjustments and Notes", icon: ListChecks },
                 { id: "rates", label: "Rates", icon: Wallet },
               ] as const
             ).map((t) => (
