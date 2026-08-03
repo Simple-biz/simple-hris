@@ -59,6 +59,15 @@ for (const c of r.score.components) {
   );
 }
 
+const ws = r.wizardSetup;
+console.log(
+  `\nWizard setup: ${ws.doneCount}/${ws.totalCount} · week=${ws.expectedWeekStart} (${ws.weekLabel})` +
+    `${ws.mismatch ? " · MISMATCH — pane shows another week" : ""}${ws.matchedSourceFile ? ` · file=${ws.matchedSourceFile}` : " · no matching upload"}`,
+);
+for (const s of ws.steps) {
+  console.log(`  [${s.status.padEnd(9)}] ${s.stepNo.padEnd(3)} ${s.label.padEnd(20)} ${s.detail}`);
+}
+
 const newHires = r.missingRates.filter((m) => m.recentlyOnboarded);
 console.log(
   `\nNo-rate rows (${r.missingRates.length}) — ${newHires.length} recently onboarded (this pay week or the one before):`,

@@ -76,24 +76,42 @@ import {
   slugifyDeptKey,
   type DepartmentRegistryEntry,
 } from '@/lib/departments/registry';
-import { getAppSetting } from '@/lib/supabase/app-settings';
+import { getAppSetting, getAppSettings } from '@/lib/supabase/app-settings';
 import {
   deptPayPausedSettingKey,
   parsePausedDeptKeys,
 } from '@/lib/payroll/dept-pay-config';
 import { HSL_DEPTS, HSL_DEPT_KEYS, type HslDeptKey } from '@/lib/hsl-bonus/schema';
-import { weekRangeLabel } from '@/lib/payroll/manila-week';
+import { weekRangeLabel, payrollNotesWeekStart, weekEndFromStart } from '@/lib/payroll/manila-week';
 import { isFutureHireForWeek, startsAfterWeek } from '@/lib/payroll/readiness-week-scope';
 import {
   computeReadinessScore,
   type ReadinessScore,
   type ReadinessScoreComponent,
 } from '@/lib/payroll/readiness-score';
+import { listOrphanagePay } from '@/lib/supabase/orphanage-pay-db';
+import { listPayrollWizardNotes } from '@/lib/supabase/payroll-wizard-notes';
+import { parseAdjustmentAmount } from '@/lib/payroll/adjustment-bridge';
+import { isInvoiceInPeriod } from '@/lib/contractor/invoice-period';
+import {
+  deriveWizardSetupSteps,
+  fxConfirmedSettingKey,
+  orphanageConfirmedSettingKey,
+  parseDispatchLockValue,
+  parseFxConfirmedMarker,
+  parseOrphanageNoneMarker,
+  type WizardSetup,
+  type WizardSetupStepKey,
+} from '@/lib/payroll/wizard-setup-steps';
 
 // Re-export the score types so existing importers of this module keep working
 // (the scorer itself lives in the framework-free readiness-score.ts).
 export type { ReadinessScore, ReadinessScoreComponent };
 export { computeReadinessScore };
+// Re-export the Wizard setup checklist types for the UI (same precedent as the
+// readiness-score re-exports above — the checklist itself lives in the
+// framework-free wizard-setup-steps.ts).
+export type { WizardSetup, WizardSetupStep } from '@/lib/payroll/wizard-setup-steps';
 
 // ── Types (the client payload) ────────────────────────────────────────────────
 
@@ -218,6 +236,11 @@ export interface PayrollReadiness {
    *  UI shows these as a warning, and the grade can never read 'ready' (a
    *  broken read must never paint the dashboard green). Empty on a clean load. */
   degraded: string[];
+  /** The per-week Wizard setup checklist — evaluated against the EXPECTED pay
+   *  week (payrollNotesWeekStart, or the selected file's week when the caller
+   *  is on an older upload), NOT the pane's resolved data week. See
+   *  wizard-setup-steps.ts. */
+  wizardSetup: WizardSetup;
   /** The blocker-weighted readiness score (0–100) + its breakdown. */
   score: ReadinessScore;
 }
@@ -1315,6 +1338,184 @@ async function buildExceptions(
   return { rows: out, identities, degraded: [] };
 }
 
+// ── Wizard setup checklist ────────────────────────────────────────────────────
+
+/** Count `pending` (awaiting Accounting approval), non-stranded contractor
+ *  invoices that would ride the week's cycle — the same status/stranded/window
+ *  rules the dispatch queue uses (contractor-dispatch-queue.ts:297-346), reread
+ *  here with a paged loop (PostgREST caps every read at 1000 rows). */
+async function countPendingContractorInvoices(weekStart: string): Promise<number> {
+  const supabase = createSupabaseServiceRoleClient();
+  if (!supabase) throw new Error('Supabase unavailable');
+  type Row = {
+    id: string;
+    invoice_date: string | null;
+    due_date: string | null;
+    created_at: string | null;
+    dispatch_claimed_at: string | null;
+  };
+  const rows: Row[] = [];
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await supabase
+      .from('contractor_invoices')
+      .select('id, invoice_date, due_date, created_at, dispatch_claimed_at')
+      .eq('status', 'pending')
+      .is('dispatch_id', null)
+      .range(from, from + 999);
+    if (error) throw new Error(error.message);
+    rows.push(...((data ?? []) as Row[]));
+    if (!data || data.length < 1000) break;
+  }
+  // isInvoiceInPeriod compares YYYY-MM-DD strings directly (invoice-period.ts) —
+  // weekStart/weekEnd already ARE those strings, so no Date parsing belongs here.
+  const weekEnd = weekEndFromStart(weekStart);
+  return rows.filter((i) => !i.dispatch_claimed_at && isInvoiceInPeriod(i, weekStart, weekEnd)).length;
+}
+
+/**
+ * Assemble the Wizard setup checklist for the EXPECTED pay week.
+ *
+ * Expected week rule (the load-bearing part): when the caller is on the live
+ * current upload (or there is none), the checklist anchors to
+ * `payrollNotesWeekStart()` — the calendar pay week — NOT the upload's week.
+ * That is what lets a missing new-week CSV read `blocked` instead of the pane
+ * silently showing last week's file as all-green. Only an explicitly selected
+ * OLDER upload (readiness week selector / wizard replay) re-anchors the
+ * checklist to that file's own week, as a historical view.
+ */
+async function buildWizardSetup(
+  resolvedFile: string | null,
+  paneWeekStart: string,
+  kpi: ReadinessKpiDept[],
+): Promise<{ setup: WizardSetup; degraded: string[] }> {
+  const degraded: string[] = [];
+  const degradedKeys = new Set<WizardSetupStepKey>();
+
+  let uploads: Awaited<ReturnType<typeof listHubstaffUploads>> | null = null;
+  try {
+    uploads = await listHubstaffUploads();
+  } catch {
+    degradedKeys.add('csv');
+    degraded.push("The Hubstaff upload list couldn't be read — the setup checklist's CSV row is unknown.");
+  }
+
+  const currentFile = uploads
+    ? pickCurrentSourceFile(
+        uploads.map((u) => ({ source_file: u.source_file, is_current: u.is_current })),
+        undefined,
+      )
+    : null;
+  const viewingOlderFile = Boolean(resolvedFile && currentFile && resolvedFile !== currentFile);
+  const expectedWeekStart = viewingOlderFile
+    ? (weekKeyFromSourceFile(resolvedFile!) ?? payrollNotesWeekStart())
+    : payrollNotesWeekStart();
+
+  // The upload whose filename week matches the expected week. Prefer the
+  // is_current batch, else the newest (the list is already newest-first).
+  const matching = (uploads ?? []).filter(
+    (u) => u.source_file && weekKeyFromSourceFile(u.source_file) === expectedWeekStart,
+  );
+  const matched = matching.find((u) => u.is_current) ?? matching[0] ?? null;
+  const newestUploadUnparseable = Boolean(currentFile && weekKeyFromSourceFile(currentFile) === null);
+
+  const [settings, orphanageRows, notesRes, additionsRaw, contractorsPending] = await Promise.all([
+    getAppSettings([
+      fxConfirmedSettingKey(expectedWeekStart),
+      orphanageConfirmedSettingKey(expectedWeekStart),
+      ...(matched?.source_file ? [`payroll.dispatch_lock.${matched.source_file}`] : []),
+    ]).catch(() => null),
+    matched?.source_file
+      ? listOrphanagePay(matched.source_file).catch(() => null)
+      : Promise.resolve([] as Record<string, unknown>[]),
+    listPayrollWizardNotes().catch(() => ({ rows: null, error: 'unreachable' })),
+    matched?.source_file
+      ? getAppSetting(`payroll.wizard.additions.${matched.source_file}`).catch(() => undefined)
+      : Promise.resolve(null),
+    countPendingContractorInvoices(expectedWeekStart).catch(() => null),
+  ]);
+
+  if (settings === null) {
+    degradedKeys.add('fx');
+    degradedKeys.add('orphanage');
+    degradedKeys.add('dispatch');
+    degraded.push("app_settings couldn't be read — the setup checklist's confirmations are unknown.");
+  }
+  if (orphanageRows === null) {
+    degradedKeys.add('orphanage');
+    degraded.push("Orphanage records couldn't be read — the setup checklist's orphanage row is unknown.");
+  }
+  // listPayrollWizardNotes reports Supabase errors as { rows: [], error } WITHOUT
+  // throwing — check the error field, or a broken read silently reads "None this week".
+  if (notesRes.rows === null || notesRes.error) {
+    degradedKeys.add('notes');
+    degraded.push("The notes board couldn't be read — the setup checklist's adjustments row is unknown.");
+  }
+  if (additionsRaw === undefined) {
+    degradedKeys.add('notes');
+    degraded.push("The cycle's additions blob couldn't be read — applied adjustments are unknown.");
+  }
+  if (contractorsPending === null) {
+    degradedKeys.add('contractors');
+    degraded.push("Contractor invoices couldn't be read — the setup checklist's invoice row is unknown.");
+  }
+
+  // Notes: strict-parseable Adjustment rows for the expected week, judged
+  // "applied" when the worker's normalized email has a finite Adj. override in
+  // the cycle's additions blob. Existence-based on purpose: the bridge has no
+  // per-note applied column, and hand-tweaked overrides after a pull are
+  // legitimate — this catches the real failure (a week of notes never pulled)
+  // without false ambers. bonusOverrides is keyed by RAW calc-result casing, so
+  // normalize both sides for the comparison only.
+  const overrideEmails = new Set<string>();
+  if (typeof additionsRaw === 'string' && additionsRaw) {
+    try {
+      const blob = JSON.parse(additionsRaw) as { bonusOverrides?: Record<string, unknown> };
+      for (const [email, v] of Object.entries(blob.bonusOverrides ?? {})) {
+        if (typeof v === 'number' && Number.isFinite(v)) overrideEmails.add(email.trim().toLowerCase());
+      }
+    } catch {
+      /* malformed blob — treated as no overrides */
+    }
+  }
+  const weekNotes = (notesRes.rows ?? []).filter(
+    (r) => r.week_start === expectedWeekStart && parseAdjustmentAmount(r.adjustment) !== null,
+  );
+  const appliedNotes = weekNotes.filter((r) =>
+    overrideEmails.has((r.worker_email ?? '').trim().toLowerCase()),
+  );
+
+  const kpiDueRows = kpi.filter((d) => d.status !== 'na' && d.status !== 'excluded');
+  const kpiSubmittedRows = kpiDueRows.filter(
+    (d) => d.status === 'ready' || d.status === 'locked' || d.status === 'no_bonus',
+  );
+  const pendingDepts = kpiDueRows
+    .filter((d) => d.status !== 'ready' && d.status !== 'locked' && d.status !== 'no_bonus')
+    .map((d) => d.name);
+
+  const setup = deriveWizardSetupSteps({
+    expectedWeekStart,
+    weekLabel: weekRangeLabel(expectedWeekStart),
+    paneWeekStart,
+    paneWeekLabel: weekRangeLabel(paneWeekStart),
+    csvUpload: matched?.source_file
+      ? { sourceFile: matched.source_file, uploadedAt: matched.uploaded_at, rowCount: matched.row_count }
+      : null,
+    newestUploadUnparseable,
+    fxMarker: parseFxConfirmedMarker(settings?.[fxConfirmedSettingKey(expectedWeekStart)] ?? null),
+    orphanageRowCount: (orphanageRows ?? []).length,
+    orphanageNoneMarker:
+      parseOrphanageNoneMarker(settings?.[orphanageConfirmedSettingKey(expectedWeekStart)] ?? null) !== null,
+    kpi: { due: kpiDueRows.length, submitted: kpiSubmittedRows.length, pendingDepts },
+    notes: { total: weekNotes.length, applied: appliedNotes.length },
+    contractorsPending: contractorsPending ?? 0,
+    dispatchLock: parseDispatchLockValue(
+      matched?.source_file ? (settings?.[`payroll.dispatch_lock.${matched.source_file}`] ?? null) : null,
+    ),
+    degradedKeys,
+  });
+  return { setup, degraded };
+}
+
 // ── Public entry point ────────────────────────────────────────────────────────
 
 /**
@@ -1450,6 +1651,12 @@ export async function getPayrollReadiness(
     (d) => d.status === 'ready' || d.status === 'locked' || d.status === 'no_bonus',
   ).length;
 
+  // The Wizard setup checklist sits BESIDE the score (never inside it — see
+  // wizard-setup-steps.ts), but its degraded notes still gate the ready→at_risk
+  // override below, so it must run before computeReadinessScore.
+  const wizardSetupRes = await buildWizardSetup(resolvedFile, weekStart, kpi);
+  degraded.push(...wizardSetupRes.degraded);
+
   // The score judges ONLY the people we need to pay THIS WEEK. Rates and KPI
   // are already payroll-scoped (this week's Hubstaff workers; due departments).
   // Bank joins them here: the numerator is the missing-bank people ON this
@@ -1489,6 +1696,7 @@ export async function getPayrollReadiness(
     bankOnPayrollCount,
     missingBankOnPayroll,
     degraded,
+    wizardSetup: wizardSetupRes.setup,
     score,
   };
 }
