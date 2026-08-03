@@ -3644,7 +3644,7 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
 
       <Dialog open={mobileHelpOpen} onOpenChange={setMobileHelpOpen}>
         <DialogContent
-          className="max-h-[min(90vh,760px)] w-[calc(100vw-1.25rem)] max-w-xl gap-0 overflow-y-auto border-orange-100/70 bg-gradient-to-br from-white via-orange-50/35 to-blue-50/25 p-0 sm:max-w-xl dark:border-blue-950/50 dark:from-[#0d1117] dark:via-[#0f1729] dark:to-[#0a1628]"
+          className="max-h-[min(90vh,760px)] w-[calc(100vw-1.25rem)] max-w-3xl gap-0 overflow-y-auto border-orange-100/70 bg-gradient-to-br from-white via-orange-50/35 to-blue-50/25 p-0 sm:max-w-3xl dark:border-blue-950/50 dark:from-[#0d1117] dark:via-[#0f1729] dark:to-[#0a1628]"
           showCloseButton
         >
           <DialogHeader className="border-b border-orange-100/60 px-4 py-3 dark:border-blue-950/50">
@@ -3701,7 +3701,7 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
                   </button>
                 </div>
                 <div className="space-y-2 text-xs">
-                  <div className="grid grid-cols-2 gap-2">
+                  <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
                     <div className="rounded-lg border border-zinc-200/80 bg-white/70 px-2.5 py-2 dark:border-zinc-800 dark:bg-zinc-900/40">
                       <div className="text-[9px] font-semibold uppercase tracking-wide text-zinc-400 dark:text-zinc-500">
                         Total hours
