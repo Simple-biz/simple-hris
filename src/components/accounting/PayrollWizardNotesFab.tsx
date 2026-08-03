@@ -16,6 +16,9 @@ import {
   ChevronRight,
   ClipboardList,
   Clock,
+  DollarSign,
+  FileText,
+  Heart,
   ListChecks,
   Loader2,
   Lock,
@@ -23,10 +26,12 @@ import {
   Plus,
   PowerOff,
   Search,
+  Send,
   ShieldCheck,
   Sparkles,
   StickyNote,
   Trash2,
+  Upload,
   User,
   UserPlus,
   Wallet,
@@ -85,6 +90,8 @@ import type {
   KpiDeptStatus,
   ExceptionKind,
   ReadinessScore,
+  WizardSetup,
+  WizardSetupStep,
 } from "@/lib/payroll/payroll-readiness";
 import { celebrationStep, type ReadyWatchState } from "@/lib/payroll/readiness-celebration";
 import {
@@ -1613,6 +1620,119 @@ function PaneBody({ children }: { children: React.ReactNode }) {
   );
 }
 
+/** Status pill + row meta for the Wizard setup checklist. Read-only by design —
+ *  fixes happen on the wizard steps themselves; the detail names which one. */
+const SETUP_STATUS_PILL: Record<
+  WizardSetupStep["status"],
+  { label: string; cls: string; Icon: typeof CheckCircle2 }
+> = {
+  done: {
+    label: "Done",
+    cls: "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-300",
+    Icon: CheckCircle2,
+  },
+  attention: {
+    label: "Attention",
+    cls: "border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300",
+    Icon: AlertTriangle,
+  },
+  blocked: {
+    label: "Blocked",
+    cls: "border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-300",
+    Icon: AlertTriangle,
+  },
+  pending: {
+    label: "Pending",
+    cls: "border-sky-200 bg-sky-50 text-sky-700 dark:border-sky-500/30 dark:bg-sky-500/10 dark:text-sky-300",
+    Icon: Clock,
+  },
+};
+
+const SETUP_STEP_ICON: Record<WizardSetupStep["key"], typeof CheckCircle2> = {
+  csv: Upload,
+  fx: DollarSign,
+  orphanage: Heart,
+  kpi: Sparkles,
+  notes: StickyNote,
+  contractors: FileText,
+  dispatch: Send,
+};
+
+/** The per-week "Wizard setup" checklist card: 7 wizard prerequisites, one row
+ *  each. Defaults open while anything is unfinished; collapsed once all seven
+ *  are done (a manual toggle overrides either way, not persisted). */
+function WizardSetupSection({ setup, reduceMotion }: { setup: WizardSetup; reduceMotion: boolean }) {
+  const [manualOpen, setManualOpen] = useState<boolean | null>(null);
+  const allDone = setup.doneCount >= setup.totalCount;
+  const open = manualOpen ?? !allDone;
+  return (
+    <section className="rounded-xl border border-orange-100 bg-white/60 dark:border-blue-950/60 dark:bg-blue-950/10">
+      <button
+        type="button"
+        aria-expanded={open}
+        onClick={() => setManualOpen(!open)}
+        className="flex w-full items-center gap-2 px-3 py-2 text-left"
+      >
+        <ClipboardList className="h-4 w-4 shrink-0 text-orange-600 dark:text-orange-400" />
+        <span className="text-xs font-semibold text-zinc-800 dark:text-zinc-200">Wizard setup</span>
+        <span className="text-[11px] text-zinc-500 dark:text-zinc-400">· {setup.weekLabel}</span>
+        <span
+          className={`ml-auto rounded-full border px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide ${
+            allDone
+              ? "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-300"
+              : "border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300"
+          }`}
+        >
+          {setup.doneCount}/{setup.totalCount}
+        </span>
+        <ChevronDown
+          className={`h-3.5 w-3.5 shrink-0 text-zinc-400 transition-transform ${open ? "rotate-180" : ""}`}
+        />
+      </button>
+      <AnimatePresence initial={false}>
+        {open && (
+          <motion.div
+            key="setup-rows"
+            initial={reduceMotion ? false : { height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={reduceMotion ? undefined : { height: 0, opacity: 0 }}
+            transition={{ duration: reduceMotion ? 0 : 0.22, ease: EASE }}
+            className="overflow-hidden"
+          >
+            <ul className="space-y-0.5 px-2 pb-2">
+              {setup.steps.map((s) => {
+                const pill = SETUP_STATUS_PILL[s.status];
+                const StepIcon = SETUP_STEP_ICON[s.key];
+                return (
+                  <li
+                    key={s.key}
+                    className="flex items-center gap-2 rounded-lg px-1.5 py-1 hover:bg-orange-50/60 dark:hover:bg-blue-950/30"
+                  >
+                    <span className="w-7 shrink-0 text-center font-mono text-[10px] font-semibold text-zinc-400 dark:text-zinc-500">
+                      {s.stepNo}
+                    </span>
+                    <StepIcon className="h-3.5 w-3.5 shrink-0 text-zinc-400 dark:text-zinc-500" />
+                    <span className="shrink-0 text-xs font-medium text-zinc-800 dark:text-zinc-200">{s.label}</span>
+                    <span
+                      className={`inline-flex shrink-0 items-center gap-1 rounded-full border px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide ${pill.cls}`}
+                    >
+                      <pill.Icon className="h-2.5 w-2.5" />
+                      {pill.label}
+                    </span>
+                    <span className="min-w-0 flex-1 truncate text-right text-[11px] text-zinc-500 dark:text-zinc-400" title={s.detail}>
+                      {s.detail}
+                    </span>
+                  </li>
+                );
+              })}
+            </ul>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </section>
+  );
+}
+
 /** Empty "all clear" line for a settled section (§12.1, compact). */
 function AllClear({ text }: { text: string }) {
   return (
@@ -2842,6 +2962,11 @@ function PayrollReadinessGlance({
       "payment_catalog_pay_structures",
       "employee_ids",
       "hr_pending_employees",
+      "hubstaff_uploads",
+      "orphanage_pay",
+      "payroll_wizard_notes",
+      "contractor_invoices",
+      "app_settings",
     ],
     channel: "payroll-readiness",
     onRefresh: () => void load(),
@@ -3061,6 +3186,10 @@ function PayrollReadinessGlance({
             ))}
           </ul>
         </div>
+      )}
+
+      {data.wizardSetup && (
+        <WizardSetupSection setup={data.wizardSetup} reduceMotion={reduceMotion} />
       )}
 
       {/* Stat tiles — a read-only at-a-glance summary of the four dimensions.
@@ -3647,6 +3776,13 @@ function ReadinessSkeleton({ reduceMotion = false }: { reduceMotion?: boolean })
           <div className={`${bar} h-3 w-56`} />
         </div>
         <div className={`${bar} hidden h-[70px] w-[70px] shrink-0 rounded-full sm:block`} />
+      </div>
+
+      {/* Wizard setup checklist placeholder. */}
+      <div className="flex items-center gap-3 rounded-xl border border-zinc-200/70 bg-white/60 px-3 py-2 dark:border-zinc-800 dark:bg-zinc-900/40">
+        <div className={`${bar} h-4 w-4 rounded`} />
+        <div className={`${bar} h-3 w-32`} />
+        <div className={`${bar} ml-auto h-3 w-10 rounded-full`} />
       </div>
 
       {/* Stat tiles — read-only summary row. */}
