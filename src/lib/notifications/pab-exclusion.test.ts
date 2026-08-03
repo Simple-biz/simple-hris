@@ -68,3 +68,19 @@ test("applyPabExclusionPatch: other months are preserved untouched", () => {
     "2026-08": ["jane@example.com", "mark@example.com"],
   });
 });
+
+test("applyPabExclusionPatch: un-excluding an email that isn't excluded is a no-op state change", () => {
+  const current = new Map([["2026-08", new Set(["jane@example.com"])]]);
+  const result = applyPabExclusionPatch(current, "2026-08", "mark@example.com", false);
+  assert.equal(result.wasExcluded, false);
+  assert.equal(result.changed, false);
+  assert.deepEqual(result.nextExclusions, { "2026-08": ["jane@example.com"] });
+});
+
+test("applyPabExclusionPatch: removing one email from a month with several preserves the rest", () => {
+  const current = new Map([["2026-08", new Set(["jane@example.com", "mark@example.com", "sam@example.com"])]]);
+  const result = applyPabExclusionPatch(current, "2026-08", "mark@example.com", false);
+  assert.equal(result.wasExcluded, true);
+  assert.equal(result.changed, true);
+  assert.deepEqual(result.nextExclusions, { "2026-08": ["jane@example.com", "sam@example.com"] });
+});

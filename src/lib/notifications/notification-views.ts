@@ -51,6 +51,11 @@ export const NOTIFICATION_TYPE_TO_VIEWS: Record<string, AppView[]> = {
   // sync): the employee's salary for that week is ready to view. Same
   // "Open Pay Stub" button as payroll.paid. Employee-only, ungated.
   'payroll.available': ['employee'],
+  // Accounting excluded (or restored) this employee from a month's Perfect
+  // Attendance Bonus in the Payroll Wizard's PAB settings modal. Informational
+  // card only, no click-through action. Employee-only, ungated.
+  'pab.excluded': ['employee'],
+  'pab.restored': ['employee'],
   // Someone replied on the recipient's HRIS-updates ticket. Lives in the
   // Employee dashboard's notification panel (everyone who can file a ticket
   // has one), which is also where it's marked read.
