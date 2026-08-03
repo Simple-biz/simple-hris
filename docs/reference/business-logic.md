@@ -4,9 +4,9 @@ This document captures all business rules encoded in the application — payroll
 
 ---
 
-## The Friday Path
+## The Weekly Payroll Cycle
 
-The weekly payroll cycle. Runs Tue–Mon (standard) or Mon–Sun (Hogan cycle). The wizard's five steps enforce a strict processing order:
+Runs Tue–Mon (standard) or Mon–Sun (Hogan cycle). The wizard's five steps enforce a strict processing order:
 
 ```
 Upload CSV → Initial Calc → Apply Bonuses → Validate → Dispatch

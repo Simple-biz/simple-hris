@@ -228,7 +228,7 @@ export async function GET() {
     },
     {
       id: 'payroll-wizard',
-      label: 'Payroll Wizard / Friday Path',
+      label: 'Payroll Wizard',
       category: 'payroll',
       status: payrollStatus === 'healthy' ? 'warning' : payrollStatus,
       // Keep the warning floor — even when probes look good, CSV mismatches are subtle.

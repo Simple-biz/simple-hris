@@ -302,9 +302,76 @@ function isRowEmptyOrWhitespace(row: EmployeeRow): boolean {
   return parts.every((p) => p === "");
 }
 
+/** Result of a roster read. `error` means the read FAILED and `employees` is empty.
+ *  `warning` means it SUCCEEDED but had to self-heal around a broken
+ *  `active_employees` view — rows are good, the view is not. Kept as separate
+ *  fields on purpose: callers branch on `error` to bail out. */
+export type RosterResult = {
+  employees: EmployeeRow[];
+  error: string | null;
+  warning?: string | null;
+};
+
+/**
+ * Reconstructs the active roster straight from `global_master_list`, bypassing the
+ * `active_employees` view entirely.
+ *
+ * Used only as a self-heal when the view returns an empty set while the base table
+ * clearly holds active people (see the guard in {@link fetchActiveEmployees}). The
+ * view's own filter — `last_seen_upload_id = (the is_current row of
+ * master_list_uploads)` — is unusable here precisely because the caller may not be
+ * able to read `master_list_uploads` at all; that is the failure being worked
+ * around. Instead we take the `last_seen_upload_id` shared by the most
+ * not-off-boarded rows: a master-list sync stamps the entire active roster with one
+ * upload id, so the modal id IS the current upload. Verified against production on
+ * 2026-08-03 — the modal id returned 1345 rows, exactly matching the view's own
+ * service-role count.
+ *
+ * Returns null when the base table has no active rows (a genuinely empty roster,
+ * not a broken view).
+ */
+async function fetchActiveFromMasterTable(
+  supabase: NonNullable<ReturnType<typeof createSupabaseServerClient>>,
+  select: string,
+): Promise<RawRow[] | null> {
+  const PAGE = 1000;
+  const rows: Array<RawRow & { last_seen_upload_id?: string | null }> = [];
+  let from = 0;
+  for (;;) {
+    const { data, error } = await supabase
+      .from("global_master_list")
+      .select(`${select},last_seen_upload_id`)
+      .is("off_boarded_at", null)
+      .range(from, from + PAGE - 1);
+    if (error) return null;
+    const page = (data ?? []) as unknown as Array<RawRow & { last_seen_upload_id?: string | null }>;
+    rows.push(...page);
+    if (page.length < PAGE) break;
+    from += PAGE;
+  }
+  if (rows.length === 0) return null;
+
+  const tally = new Map<string, number>();
+  for (const r of rows) {
+    const key = r.last_seen_upload_id ?? "";
+    if (!key) continue;
+    tally.set(key, (tally.get(key) ?? 0) + 1);
+  }
+  if (tally.size === 0) return rows;
+  let liveId = "";
+  let best = -1;
+  for (const [id, n] of tally) {
+    if (n > best) {
+      best = n;
+      liveId = id;
+    }
+  }
+  return rows.filter((r) => (r.last_seen_upload_id ?? "") === liveId);
+}
+
 async function fetchActiveEmployees(
   supabase: NonNullable<ReturnType<typeof createSupabaseServerClient>>,
-): Promise<{ employees: EmployeeRow[]; error: string | null }> {
+): Promise<RosterResult> {
   // Try the full select first (includes address columns added 2026-05-02). If the
   // active_employees view hasn't been refreshed since the ALTER TABLE, PostgREST
   // returns "column does not exist" — fall back to the base select so the dashboard
@@ -355,7 +422,35 @@ async function fetchActiveEmployees(
     return { employees: [], error: res.error.message };
   }
 
-  const raw = ((res.data ?? []) as unknown as RawRow[]).slice();
+  // ── Impossible-state guard: an empty view over a non-empty master list ──
+  // `active_employees` can return zero rows with HTTP 200 and NO error when the
+  // caller cannot see `master_list_uploads` (the view's upload filter sub-selects
+  // it). That happened for real on 2026-08-03 when the view was switched to
+  // `security_invoker = true` — see the note on getEmployees(). An empty roster is
+  // indistinguishable from a working one at the call site, so it propagated
+  // silently into payroll: the Payroll Wizard re-labelled 422 people
+  // "Unassigned" because its department source of truth had vanished.
+  //
+  // "Nobody is active" is only believable if the base table agrees. If it does
+  // not, rebuild from `global_master_list` and return a NON-NULL error so the
+  // surface can shout instead of quietly paying people out of the wrong cohort.
+  let viewWarning: string | null = null;
+  let rawSource = (res.data ?? []) as unknown as RawRow[];
+  if (rawSource.length === 0) {
+    const healed = await fetchActiveFromMasterTable(supabase, select);
+    if (healed && healed.length > 0) {
+      rawSource = healed;
+      viewWarning =
+        `active_employees returned 0 rows but global_master_list holds ${healed.length} ` +
+        `active people — the view is not readable by this client (it sub-selects ` +
+        `master_list_uploads; check security_invoker/grants). Served from ` +
+        `global_master_list instead. Departments and pay cohorts derived from this ` +
+        `roster should be re-verified.`;
+      console.error(`[employees] ${viewWarning}`);
+    }
+  }
+
+  const raw = rawSource.slice();
 
   // UNION in every US-prefixed employee from global_master_list. They were
   // seeded manually (migration #18) and aren't part of the Google Sheet master
@@ -418,7 +513,12 @@ async function fetchActiveEmployees(
   });
 
   generateEmployeeIds(employees);
-  return { employees, error: null };
+  // Deliberately a SEPARATE field, not `error`. This is degraded SUCCESS —
+  // `employees` is fully populated (rebuilt from global_master_list). Several
+  // callers treat a non-null `error` as fatal and discard the rows
+  // (people-roster.ts, ceo-tools.ts), so reusing `error` would convert a
+  // self-healed read back into the empty result we are trying to prevent.
+  return { employees, error: null, warning: viewWarning };
 }
 
 /**
@@ -504,11 +604,27 @@ export async function getEmployeeMasterRecord(
   return { employee: row, error: null };
 }
 
-export async function getEmployees(): Promise<{
-  employees: EmployeeRow[];
-  error: string | null;
-}> {
-  const supabase = createSupabaseServerClient();
+/**
+ * The active roster. Reads with the service role when configured, falling back to
+ * the anon client.
+ *
+ * Service-role-FIRST is deliberate and load-bearing. `active_employees` filters
+ * `global_master_list` by the `is_current` row in `master_list_uploads`, and anon
+ * is RLS-blocked on that registry. So the moment the view stopped running with
+ * owner privileges — Supabase Advisor's "Security Definer View" quick-fix set
+ * `security_invoker = true` on 2026-08-03 — the sub-select resolved to zero
+ * uploads for anon and the view returned an EMPTY SET with HTTP 200 and no
+ * error. Every anon caller silently saw a roster of nobody.
+ *
+ * That blanked the Payroll Wizard's department source of truth (this feeds
+ * `masterEmployees` via lib/accounting/prefetch.ts): 422 of 1045 people fell
+ * through to "Unassigned", and the ones who didn't were rescued only by the
+ * weaker rates-sheet / Hubstaff "Job type" tiers — i.e. pay-affecting cohorts
+ * (dept pay-pause, OT toggles, HSL grouping) were being decided off a phantom
+ * roster. A roster read this important must not depend on anon grants.
+ */
+export async function getEmployees(): Promise<RosterResult> {
+  const supabase = createSupabaseServiceRoleClient() ?? createSupabaseServerClient();
   if (!supabase) {
     return {
       employees: [],
@@ -521,21 +637,10 @@ export async function getEmployees(): Promise<{
 
 /**
  * Reads `active_employees` with the service role when configured so API routes used by
- * managers see the full roster even when RLS blocks the anon key. Falls back to the anon
- * client (same as {@link getEmployees}) if the service key is missing.
+ * managers see the full roster even when RLS blocks the anon key. Retained as a named
+ * entry point for authorized server routes; {@link getEmployees} now uses the same
+ * service-role-first client selection, so both share one code path.
  */
-export async function getEmployeesForAuthorizedServerRoute(): Promise<{
-  employees: EmployeeRow[];
-  error: string | null;
-}> {
-  const sr = createSupabaseServiceRoleClient();
-  const supabase = sr ?? createSupabaseServerClient();
-  if (!supabase) {
-    return {
-      employees: [],
-      error:
-        "Add NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY to your .env file.",
-    };
-  }
-  return fetchActiveEmployees(supabase);
+export async function getEmployeesForAuthorizedServerRoute(): Promise<RosterResult> {
+  return getEmployees();
 }

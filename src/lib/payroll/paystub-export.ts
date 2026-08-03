@@ -361,18 +361,17 @@ interface PdfColDef {
   total?: (t: Totals, weekCount: number) => string;
 }
 
-/** Column catalogue for the PDF summary. "Wknd Hrs"/"Weekend" carry the HSL
- *  Sat+Sun carve-out (regular + OT combined — the XLSX itemizes the two
- *  buckets); Regular/Overtime then hold the weekday portion so a row still
- *  sums across to Net. */
+/** Column catalogue for the PDF summary. "Weekend" carries the HSL Sat+Sun
+ *  carve-out (regular + OT combined — the XLSX itemizes the two buckets);
+ *  Regular/Overtime then hold the weekday portion so a row still sums across
+ *  to Net. Hours columns (Reg/OT/Weekend) are XLSX-only — the PDF summary
+ *  shows pay amounts only. */
 const PDF_COL_DEFS: PdfColDef[] = [
   {
     header: 'Period Ending', align: 'left',
     cell: (w) => compactPeriod(w.view),
     total: (_t, n) => `Total (${n})`,
   },
-  { header: 'Reg Hrs', align: 'right', cell: (w) => derive(w).weekdayHours.toFixed(2) },
-  { header: 'OT Hrs', align: 'right', cell: (w) => derive(w).weekdayOtHours.toFixed(2) },
   {
     header: 'Regular', align: 'right',
     cell: (w) => n2(derive(w).weekdayPay),
@@ -382,14 +381,6 @@ const PDF_COL_DEFS: PdfColDef[] = [
     header: 'Overtime', align: 'right',
     cell: (w) => n2(derive(w).weekdayOtPay),
     total: (t) => n2(t.ot),
-  },
-  {
-    header: 'Wknd Hrs', align: 'right', optional: true,
-    cell: (w) => {
-      const d = derive(w);
-      const hrs = d.weekendHours + d.weekendOtHours;
-      return hrs > 0 ? hrs.toFixed(2) : '-';
-    },
   },
   {
     header: 'Weekend', align: 'right', optional: true,

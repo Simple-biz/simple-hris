@@ -2,7 +2,7 @@
 
 ## Overview
 
-Simple HRIS is a payroll-focused Human Resource Information System built for a Philippines-based outsourcing company. Its primary job is the **"Friday Path"** — the weekly payroll processing cycle that takes a Hubstaff hours export, applies per-department bonus rules, validates against a master employee list, and produces a final payout ledger.
+Simple HRIS is a payroll-focused Human Resource Information System built for a Philippines-based outsourcing company. Its primary job is the weekly payroll processing cycle that takes a Hubstaff hours export, applies per-department bonus rules, validates against a master employee list, and produces a final payout ledger.
 
 The stack is a **Next.js App Router shell** that hosts a client-side SPA inside `src/`. Next.js is used for its API routes only — all UI logic is `"use client"` React.
 

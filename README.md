@@ -4,7 +4,7 @@
 
 # Simple HRIS
 
-A payroll-focused Human Resource Information System for a Philippines-based outsourcing company. Its primary job is the **"Friday Path"** -- the weekly payroll cycle that takes a Hubstaff hours export, applies per-department bonus rules, validates against a master employee list, and produces a final payout ledger.
+A payroll-focused Human Resource Information System for a Philippines-based outsourcing company. Its primary job is the weekly payroll cycle that takes a Hubstaff hours export, applies per-department bonus rules, validates against a master employee list, and produces a final payout ledger.
 
 Full architecture, data flow, and design decisions live in [`docs/reference/system-architecture.md`](docs/reference/system-architecture.md).
 

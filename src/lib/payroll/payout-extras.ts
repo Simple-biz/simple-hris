@@ -265,8 +265,15 @@ export async function computePayoutExtras(sourceFile: string): Promise<PayoutExt
     // person's work and personal email — dedupe by the entry's `workEmail`
     // identity (added 2026-07-30); content signature is the fallback for older
     // snapshots, accepting that two people with byte-identical figures collapse.
-    provenance = 'wizard';
-    asOf = snapMeta?.updatedAt ?? null;
+    //
+    // Unlike the staged-row branch above, there's no `pay_php` fallback here —
+    // a snapshot written before 2026-07-18 has none of the itemized fields, so
+    // every component would silently coerce to 0 via `num()` while still
+    // reading as a trustworthy 'wizard' figure with a real timestamp. Only
+    // claim 'wizard' provenance once at least one entry actually carries the
+    // itemized fields; otherwise report 'none' so the caller (and the
+    // Overview UI) can tell "genuinely zero" apart from "can't answer."
+    let usedItemized = false;
     const seen = new Set<string>();
     for (const entry of Object.values(finals)) {
       if (!entry || typeof entry !== 'object') continue;
@@ -274,7 +281,13 @@ export async function computePayoutExtras(sourceFile: string): Promise<PayoutExt
       const sig = typeof we === 'string' && we ? `id:${we}` : JSON.stringify(entry);
       if (seen.has(sig)) continue;
       seen.add(sig);
+      if (!snapshotEntryItemized(entry)) continue;
+      usedItemized = true;
       accumulate(total, fromSnapshotEntry(entry));
+    }
+    if (usedItemized) {
+      provenance = 'wizard';
+      asOf = snapMeta?.updatedAt ?? null;
     }
   }
 

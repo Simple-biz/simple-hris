@@ -26,9 +26,11 @@ import {
   HSL_DEPTS,
   KpiData,
   SubTeamName,
+  TeamPoolRule,
   TeamSplitRule,
   TieredRule,
   calcBonus,
+  calcTeamPoolShare,
   calcTeamSplitShare,
   formatPeso,
 } from '@/lib/hsl-bonus/schema';
@@ -154,8 +156,12 @@ export default function HslBonusEditModal({
     const st = subTeams[subTeam];
     const pct = parseFloat(st.pct) || 0;
     const records = parseInt(st.records, 10) || 0;
-    const rule = dept.rules[0] as TeamSplitRule;
-    return calcTeamSplitShare(pct, records, memberCount, rule);
+    const rfc = parseInt(st.rfc, 10) || 0;
+    const splitRule = dept.rules.find((r): r is TeamSplitRule => r.type === 'team_split')!;
+    const poolRule = dept.rules.find((r): r is TeamPoolRule => r.type === 'team_pool');
+    const splitShare = calcTeamSplitShare(pct, records, memberCount, splitRule);
+    const poolShare = poolRule ? calcTeamPoolShare(rfc, memberCount, poolRule) : 0;
+    return splitShare + poolShare;
   };
 
   const handleKpiChange = (email: string, kpiKey: string, val: number | boolean) => {
@@ -192,7 +198,7 @@ export default function HslBonusEditModal({
 
   const handleSubTeamChange = (
     subTeam: SubTeamName,
-    field: 'pct' | 'records',
+    field: 'pct' | 'records' | 'rfc',
     val: string,
   ) => {
     setSubTeams((prev) => {
@@ -375,8 +381,9 @@ export default function HslBonusEditModal({
           {isTeamSplit && (
             <p className="mt-1 rounded-md bg-amber-50/70 px-2 py-1 text-[11px] leading-snug text-amber-800 dark:bg-amber-950/30 dark:text-amber-300">
               <AlertCircle className="mr-1 inline-block h-3 w-3" />
-              Re-enter Accuracy % and Records for each sub-team — they aren&rsquo;t
-              persisted between sessions. Per-employee shares will recompute as you type.
+              Re-enter Accuracy %, Records, and RFC for each sub-team — they
+              aren&rsquo;t persisted between sessions. Per-employee shares will
+              recompute as you type.
             </p>
           )}
         </header>

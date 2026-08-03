@@ -63,7 +63,18 @@ export interface TeamSplitRule {
   subTeams: SubTeamName[];
 }
 
-export type BonusRule = PerUnitRule | TieredRule | FlatRule | ManualRule | TeamSplitRule;
+/** A flat per-record rate pooled across a sub-team and split evenly across its
+ *  members — no accuracy tiering (unlike TeamSplitRule). e.g. RFC: team logs N
+ *  RFCs this period, pool = N × ratePerRecord, each member gets pool / headcount. */
+export interface TeamPoolRule {
+  type: 'team_pool';
+  key: string;
+  label: string;
+  ratePerRecord: number;  // PHP
+  subTeams: SubTeamName[];
+}
+
+export type BonusRule = PerUnitRule | TieredRule | FlatRule | ManualRule | TeamSplitRule | TeamPoolRule;
 
 // ── Department config ────────────────────────────────────────────────────────
 
@@ -144,6 +155,13 @@ export const HSL_DEPTS: Record<HslDeptKey, DeptConfig> = {
           { minPct: 90,  maxPct: 94.99, ratePerRecord: 250 },
           { minPct: 95,  maxPct: null,  ratePerRecord: 350 },
         ],
+        subTeams: ['BLUE', 'GREEN', 'YELLOW', 'ORANGE', 'PURPLE', 'RED'],
+      },
+      {
+        type: 'team_pool',
+        key: 'rfc_pool',
+        label: 'RFC',
+        ratePerRecord: 250,
         subTeams: ['BLUE', 'GREEN', 'YELLOW', 'ORANGE', 'PURPLE', 'RED'],
       },
     ],
@@ -372,7 +390,7 @@ export function calcBonus(
       if (rule.managerOnly && !isManager) continue;
       total += Number(kpiData[rule.key] ?? 0);
     }
-    // team_split is calculated at the sub-team level, not per-employee here
+    // team_split / team_pool are calculated at the sub-team level, not per-employee here
   }
   if (dept.monthlyMax !== undefined) total = Math.min(total, dept.monthlyMax);
   return total;
@@ -390,6 +408,15 @@ export function calcTeamSplitShare(
   );
   if (!threshold || threshold.ratePerRecord === 0) return 0;
   return (records * threshold.ratePerRecord) / memberCount;
+}
+
+export function calcTeamPoolShare(
+  records: number,
+  memberCount: number,
+  rule: TeamPoolRule,
+): number {
+  if (memberCount <= 0) return 0;
+  return (records * rule.ratePerRecord) / memberCount;
 }
 
 export function formatPeso(amount: number, currency: 'PHP' | 'USD' = 'PHP'): string {

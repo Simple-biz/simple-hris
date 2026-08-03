@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createSupabaseServiceRoleClient } from '@/lib/supabase/server';
+import { selectAllPaged } from '@/lib/supabase/select-all-paged';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -42,33 +43,6 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'Supabase not configured' }, { status: 500 });
   }
 
-  const [statusRes, entriesRes] = await Promise.all([
-    supabase
-      .from('hsl_bonus_period_status')
-      .select(
-        'department, period_type, period_start, period_end, status, updated_at, locked_by, locked_at',
-      )
-      .in('department', depts),
-    supabase
-      .from('hsl_bonus_entries')
-      .select('department, period_type, period_start, period_end, calculated_bonus')
-      .in('department', depts),
-  ]);
-
-  if (statusRes.error) {
-    return NextResponse.json({ error: statusRes.error.message }, { status: 500 });
-  }
-  if (entriesRes.error) {
-    return NextResponse.json({ error: entriesRes.error.message }, { status: 500 });
-  }
-
-  type EntryRow = {
-    department: string;
-    period_type: string | null;
-    period_start: string;
-    period_end: string | null;
-    calculated_bonus: number | null;
-  };
   type StatusRow = {
     department: string;
     period_type: string;
@@ -79,6 +53,47 @@ export async function GET(req: NextRequest) {
     locked_by: string | null;
     locked_at: string | null;
   };
+  type EntryRow = {
+    department: string;
+    period_type: string | null;
+    period_start: string;
+    period_end: string | null;
+    calculated_bonus: number | null;
+  };
+
+  // Both tables now comfortably exceed PostgREST's db.max-rows=1000 cap for the
+  // full HSL dept set (hsl_bonus_entries alone was at 1,476 rows as of
+  // 2026-08), so an un-paged .select() silently drops rows off the end with no
+  // error — selectAllPaged drains every page.
+  const [statusRes, entriesRes] = await Promise.all([
+    selectAllPaged<StatusRow>((from, to) =>
+      supabase
+        .from('hsl_bonus_period_status')
+        .select(
+          'department, period_type, period_start, period_end, status, updated_at, locked_by, locked_at',
+        )
+        .in('department', depts)
+        .order('period_start', { ascending: true })
+        .order('department', { ascending: true })
+        .range(from, to),
+    ),
+    selectAllPaged<EntryRow>((from, to) =>
+      supabase
+        .from('hsl_bonus_entries')
+        .select('department, period_type, period_start, period_end, calculated_bonus')
+        .in('department', depts)
+        .order('period_start', { ascending: true })
+        .order('department', { ascending: true })
+        .range(from, to),
+    ),
+  ]);
+
+  if (statusRes.error) {
+    return NextResponse.json({ error: statusRes.error }, { status: 500 });
+  }
+  if (entriesRes.error) {
+    return NextResponse.json({ error: entriesRes.error }, { status: 500 });
+  }
 
   // Aggregate entries per (dept, period_start). Track period_type/end here too
   // so periods with entries-only (no status row) still produce a complete
@@ -93,7 +108,7 @@ export async function GET(req: NextRequest) {
     scored: number;
   }
   const aggMap = new Map<string, Agg>();
-  for (const e of (entriesRes.data ?? []) as EntryRow[]) {
+  for (const e of entriesRes.rows) {
     const key = `${e.department}::${e.period_start}`;
     const a =
       aggMap.get(key) ??
@@ -114,7 +129,7 @@ export async function GET(req: NextRequest) {
   }
 
   const statusByKey = new Map<string, StatusRow>();
-  for (const s of (statusRes.data ?? []) as StatusRow[]) {
+  for (const s of statusRes.rows) {
     statusByKey.set(`${s.department}::${s.period_start}`, s);
   }
 

@@ -4,6 +4,8 @@ import CollabLayer, {
   type CollabLayerProps,
   type CollabAccent,
 } from '@/components/collab/CollabLayer';
+import { useCollabEnabled } from '@/hooks/useCollabEnabled';
+import { COLLAB_HR_ENABLED_KEY } from '@/lib/collab/collab-settings';
 
 /**
  * HR dashboard collaboration layer — live presence rail, section-scoped
@@ -12,6 +14,9 @@ import CollabLayer, {
  * Accounting collab layer, scoped to its OWN Realtime room (`hr-collab` /
  * `hr-cobrowse`) so HR collaborators never mix with Accounting collaborators,
  * and themed in HR's emerald palette.
+ *
+ * Admin can also kill the whole layer via System Settings (`collab.hr.
+ * enabled`) — when off, CollabLayer never mounts, so it opens zero channels.
  */
 
 // Section id -> label, mirroring the HR sidebar's tab names so a peer's
@@ -45,6 +50,8 @@ const HR_ACCENT: CollabAccent = {
 type Props = Pick<CollabLayerProps, 'selfEmail' | 'section' | 'containerRef' | 'scrollSurface'>;
 
 export default function HrCollabLayer(props: Props) {
+  const enabled = useCollabEnabled(COLLAB_HR_ENABLED_KEY);
+  if (!enabled) return null;
   return (
     <CollabLayer
       {...props}

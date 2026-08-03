@@ -16,12 +16,20 @@ import {
   Copy as CopyIcon,
   Search,
   X,
+  Eye,
 } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
+import { WEBHOOK_SAMPLE_PAYLOADS, genericTestPayload } from '@/lib/webhooks/sample-payloads';
 
 const SETTINGS_KEY = 'webhooks.config';
 
@@ -190,6 +198,7 @@ export default function AdminWebhooks() {
   const [testing, setTesting] = useState<string | null>(null);
   const [togglingId, setTogglingId] = useState<string | null>(null);
   const [query, setQuery] = useState('');
+  const [viewingId, setViewingId] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -255,6 +264,13 @@ export default function AdminWebhooks() {
     navigator.clipboard?.writeText(url);
     toast.success('URL copied');
   };
+
+  const copyText = (text: string, label: string) => {
+    navigator.clipboard?.writeText(text);
+    toast.success(`${label} copied`);
+  };
+
+  const viewingEntry = entries.find((e) => e.id === viewingId) ?? null;
 
   const activeCount = entries.filter((e) => entryStatus(e) === 'active').length;
 
@@ -469,6 +485,16 @@ export default function AdminWebhooks() {
                       <Button
                         variant="outline"
                         size="sm"
+                        onClick={() => setViewingId(entry.id)}
+                        className="gap-1.5"
+                      >
+                        <Eye className="h-3.5 w-3.5" />
+                        View
+                      </Button>
+
+                      <Button
+                        variant="outline"
+                        size="sm"
                         disabled={!entry.url || testing === entry.id}
                         onClick={() => sendTest(entry)}
                         className="gap-1.5"
@@ -620,6 +646,110 @@ export default function AdminWebhooks() {
           </p>
         </div>
       </div>
+
+      <Dialog open={!!viewingEntry} onOpenChange={(o) => !o && setViewingId(null)}>
+        <DialogContent className="overflow-hidden p-0 sm:max-w-2xl">
+          {viewingEntry && (
+            <ViewWebhookModal entry={viewingEntry} onCopy={copyText} />
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
+  );
+}
+
+function ViewWebhookModal({
+  entry,
+  onCopy,
+}: {
+  entry: WebhookEntry;
+  onCopy: (text: string, label: string) => void;
+}) {
+  const status = entryStatus(entry);
+  const meta = STATUS_META[status];
+  const sample = WEBHOOK_SAMPLE_PAYLOADS[entry.slug] ?? genericTestPayload(entry.slug);
+  const isDocumented = entry.slug in WEBHOOK_SAMPLE_PAYLOADS;
+  const payloadText = JSON.stringify(sample, null, 2);
+
+  return (
+    <>
+      <DialogHeader className="border-b border-zinc-100 px-6 pt-6 pb-4 dark:border-zinc-800">
+        <div className="flex items-center gap-2">
+          <DialogTitle className="text-base">{entry.label || entry.slug || 'New webhook'}</DialogTitle>
+          <span
+            className={cn(
+              'shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide',
+              meta.pill,
+            )}
+          >
+            {meta.label}
+          </span>
+        </div>
+        <span className="font-mono text-[11px] text-zinc-500 dark:text-zinc-400">
+          {entry.slug || 'no-slug'}
+        </span>
+      </DialogHeader>
+
+      <div className="max-h-[70vh] space-y-4 overflow-y-auto px-6 py-4">
+        <div className="space-y-1">
+          <span className="text-xs font-medium text-zinc-600 dark:text-zinc-400">Endpoint URL</span>
+          <div className="flex items-center gap-2">
+            <code className="flex-1 truncate rounded bg-zinc-100 px-2 py-1.5 font-mono text-xs text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
+              {entry.url || '—'}
+            </code>
+            {entry.url && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => onCopy(entry.url, 'URL')}
+                className="shrink-0 gap-1.5"
+              >
+                <CopyIcon className="h-3.5 w-3.5" />
+              </Button>
+            )}
+          </div>
+        </div>
+
+        {entry.description && (
+          <div className="space-y-1">
+            <span className="text-xs font-medium text-zinc-600 dark:text-zinc-400">Description</span>
+            <p className="text-sm text-zinc-700 dark:text-zinc-300">{entry.description}</p>
+          </div>
+        )}
+
+        {entry.updated_at && (
+          <div className="space-y-1">
+            <span className="text-xs font-medium text-zinc-600 dark:text-zinc-400">Last updated</span>
+            <p className="text-sm text-zinc-700 dark:text-zinc-300">
+              {new Date(entry.updated_at).toLocaleString()}
+            </p>
+          </div>
+        )}
+
+        <div className="space-y-1.5">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-medium text-zinc-600 dark:text-zinc-400">
+              Sample JSON payload
+              {!isDocumented && (
+                <span className="ml-1.5 font-normal text-zinc-400 dark:text-zinc-500">
+                  (no documented sample yet &mdash; matches what Test sends)
+                </span>
+              )}
+            </span>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => onCopy(payloadText, 'Payload')}
+              className="gap-1.5"
+            >
+              <CopyIcon className="h-3.5 w-3.5" /> Copy
+            </Button>
+          </div>
+          <pre className="max-h-80 overflow-auto rounded-lg border border-zinc-200 bg-zinc-50 p-3 font-mono text-xs text-zinc-800 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-200">
+            {payloadText}
+          </pre>
+        </div>
+      </div>
+    </>
   );
 }

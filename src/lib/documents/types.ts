@@ -23,7 +23,7 @@ export const DOCUMENT_REQUEST_TYPES: readonly DocumentRequestType[] = [
  *  is a contractor rather than an employee, so the title has to match. The
  *  stored `coe` value is unchanged — existing rows keep working. */
 export const DOCUMENT_TYPE_LABELS: Record<DocumentRequestType, string> = {
-  paystub: 'Pay Stubs',
+  paystub: 'Pay Summary / Pay Slips',
   coe: 'Certificate of Engagement (COE)',
   award: 'Award / Certificate',
   other: 'Other document',

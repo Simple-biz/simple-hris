@@ -58,7 +58,9 @@ import {
   downloadMesaXlsx,
   type MesaExportSpec,
 } from '@/lib/accounting/mesa-export';
-import { fetchRosterEmailSet, isOnRoster } from '@/lib/roster/roster-emails';
+import { fetchRosterStatusMap } from '@/lib/roster/roster-emails';
+import { normEmail } from '@/lib/email/norm-email';
+import { offboardReasonLabel } from '@/lib/hr/offboard-reasons';
 import type { MesaLedgerEvent, MesaMemberSummary } from '@/lib/mesa/ledger';
 import {
   formatReceiptSize,
@@ -112,6 +114,14 @@ interface MesaRequest {
   /** Newest receipt's upload time. The program requires receipts within 14 days,
    *  so this — not created_at — is what that rule is measured against. */
   receipt_last_uploaded_at?: string | null;
+  /** Client-computed: true when work_email has no active row anywhere on the
+   *  Global Master List. The request still shows (it reappears in the roster
+   *  or the requester left after filing), just flagged so it isn't mistaken
+   *  for a normal in-roster request. */
+  off_roster?: boolean;
+  /** Human-readable reason, set only when off_roster is true — either the HR
+   *  offboard reason + date, or a note that the email was never on the GML. */
+  off_roster_reason?: string;
 }
 
 interface MesaNote {
@@ -387,8 +397,8 @@ export default function AccountingMesa() {
   );
   const [loading, setLoading] = useState(!hasTabCache(TAB_CACHE_KEYS.mesaRequests));
   const [refreshing, setRefreshing] = useState(false);
-  /** Requests dropped by the roster gate on the last successful load. */
-  const [hiddenCount, setHiddenCount] = useState(0);
+  /** Requests flagged off-roster on the last successful load (still shown, just badged). */
+  const [offRosterCount, setOffRosterCount] = useState(0);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [filterStatus, setFilterStatus] = useState<MesaRequestStatus | ''>('');
@@ -414,23 +424,32 @@ export default function AccountingMesa() {
       // Opt-in requests are routed to HR.
       const params = new URLSearchParams();
       ['opt_out', 'disbursement', 'return'].forEach((t) => params.append('request_type', t));
-      const [res, rosterEmails] = await Promise.all([
+      const [res, statusMap] = await Promise.all([
         fetch(`/api/mesa-requests?${params}`, { cache: 'no-store' }),
-        fetchRosterEmailSet(),
+        fetchRosterStatusMap(),
       ]);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const json = (await res.json()) as { rows?: MesaRequest[] };
-      // The Global Master List is the source of truth for MESA — requests from
-      // people no longer on the active roster are hidden (the request row
-      // itself is kept; it reappears if they're restored to the roster). The
-      // hidden count is surfaced above the table so a drop never goes unseen —
-      // e.g. an approved-but-unpaid disbursement, or a sync race transiently
-      // shrinking the roster (memory/master-list-sync-race.md).
+      // The Global Master List is the source of truth for who's active, but a
+      // request from someone no longer on the roster still needs Accounting's
+      // eyes — e.g. an approved-but-unpaid disbursement, or a sync race
+      // transiently shrinking the roster (memory/master-list-sync-race.md).
+      // So every row stays visible; off-roster ones are flagged, not dropped.
       const accountingRows = (json.rows ?? []).filter(
         (r) => r.request_type === 'opt_out' || r.request_type === 'disbursement' || r.request_type === 'return',
       );
-      const data = accountingRows.filter((r) => isOnRoster(rosterEmails, r.work_email));
-      setHiddenCount(accountingRows.length - data.length);
+      const data = accountingRows.map((r) => {
+        const norm = normEmail(r.work_email);
+        const status = norm ? statusMap.get(norm) : undefined;
+        const off_roster = !status?.active;
+        const off_roster_reason = off_roster
+          ? status
+            ? `Offboarded — ${offboardReasonLabel(status.offBoardedReason)}${status.offBoardedAt ? ` (${formatDateOnly(status.offBoardedAt)})` : ''}`
+            : 'Not found on the Global Master List'
+          : undefined;
+        return { ...r, off_roster, off_roster_reason };
+      });
+      setOffRosterCount(data.filter((r) => r.off_roster).length);
       setLoadError(null);
       setTabCache(TAB_CACHE_KEYS.mesaRequests, data);
       setRows(data);
@@ -917,9 +936,9 @@ export default function AccountingMesa() {
             <CardTitle className="text-sm font-semibold text-zinc-900 dark:text-white">
               {loading ? 'Loading...' : `${filtered.length} request${filtered.length === 1 ? '' : 's'}`}
             </CardTitle>
-            {!loading && hiddenCount > 0 && (
+            {!loading && offRosterCount > 0 && (
               <p className="text-[11px] font-medium text-amber-700 dark:text-amber-400">
-                {hiddenCount} request{hiddenCount === 1 ? '' : 's'} hidden — requester not on the Global Master List
+                {offRosterCount} request{offRosterCount === 1 ? '' : 's'} flagged below — requester not on the Global Master List
               </p>
             )}
           </CardHeader>
@@ -977,10 +996,27 @@ export default function AccountingMesa() {
                           <SelectCheckbox checked={sel.selectedKeys.has(r.id)} onChange={() => sel.toggle(r.id)} ariaLabel={`Select ${r.full_name}`} />
                         </td>
                         <td className="px-4 py-3" data-label="Employee">
-                          <div className="font-medium text-zinc-900 dark:text-zinc-100">{r.full_name}</div>
+                          <div className="flex items-center gap-1.5">
+                            <span className="font-medium text-zinc-900 dark:text-zinc-100">{r.full_name}</span>
+                            {r.off_roster && (
+                              <Badge
+                                variant="outline"
+                                title={r.off_roster_reason ?? 'Requester is not on the Global Master List'}
+                                className="gap-1 border-amber-200 bg-amber-50 text-[10px] font-semibold uppercase tracking-wide text-amber-700 dark:border-amber-500/40 dark:bg-amber-500/15 dark:text-amber-200"
+                              >
+                                <AlertTriangle className="h-3 w-3" />
+                                Off GML
+                              </Badge>
+                            )}
+                          </div>
                           <div className="mt-0.5 font-mono text-[11px] text-zinc-500 dark:text-zinc-500">
                             {r.work_email}
                           </div>
+                          {r.off_roster && r.off_roster_reason && (
+                            <div className="mt-0.5 text-[10.5px] text-amber-700 dark:text-amber-400">
+                              {r.off_roster_reason}
+                            </div>
+                          )}
                         </td>
                         <td className="px-4 py-3 text-zinc-600 dark:text-zinc-400" data-label="Department">
                           {r.department}

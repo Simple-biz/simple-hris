@@ -83,6 +83,7 @@ import {
 } from '@/lib/payroll/dept-pay-config';
 import { HSL_DEPTS, HSL_DEPT_KEYS, type HslDeptKey } from '@/lib/hsl-bonus/schema';
 import { weekRangeLabel } from '@/lib/payroll/manila-week';
+import { isFutureHireForWeek, startsAfterWeek } from '@/lib/payroll/readiness-week-scope';
 import {
   computeReadinessScore,
   type ReadinessScore,
@@ -1142,6 +1143,8 @@ async function buildMissingBank(
 
     const onPayroll = [w, p].some((em) => !!em && payrollEmails.has(em));
 
+    const startedIso = normalizeStartDate(e.start_date);
+
     // Off-boarded people age off this check once their FINAL pay is out. HR
     // keeps a leaver on the master sheet (⇒ the active roster) through their
     // last pay, so the roster alone would list them for weeks after the money
@@ -1160,7 +1163,7 @@ async function buildMissingBank(
         .filter((d): d is string => Boolean(d));
       if (dates.length === 0) return null;
       const latest = dates.sort()[dates.length - 1];
-      const started = normalizeStartDate(e.start_date);
+      const started = startedIso;
       return started && latest > started ? latest : null;
     })();
     if (offAt && offAt < weekStart && !onPayroll) continue;
@@ -1169,6 +1172,12 @@ async function buildMissingBank(
     // record for a person who's clearly still working (re-hire whose master
     // start date never moved) — they stay listed as a normal row, unlabeled.
     const offBoardedAt = offAt && offAt >= weekStart ? offAt : null;
+
+    // Readiness only reads its own week: someone whose Start Date is after the
+    // week in view hadn't been hired yet — they leave the list AND both
+    // denominators (eligibleCount / onPayrollEligibleCount), for the current
+    // week and for past weeks via the selector alike.
+    if (isFutureHireForWeek(startedIso, weekStart, onPayroll)) continue;
 
     eligibleCount += 1;
     if (onPayroll) onPayrollEligibleCount += 1;
@@ -1251,32 +1260,45 @@ async function buildExceptions(
     const name = r.display_name || r.name || r.work_email || r.personal_email || '—';
     const email = r.work_email || r.personal_email || null;
     const department = r.department ?? null;
+    // The pipeline's best-known start (same precedence as the promoted branch):
+    // orientation date → staged start_date → promoted_at.
+    const startIso =
+      (r.orientation_attended_at ? r.orientation_attended_at.slice(0, 10) : null) ??
+      r.start_date ??
+      (r.promoted_at ? r.promoted_at.slice(0, 10) : null);
+    // Readiness only reads its own week: a hire that starts AFTER the week in
+    // view doesn't belong in that week's exception list. Their identities are
+    // still remembered below — an onboarding hire must never cost points on
+    // the rate/bank dimensions whichever week is in view. Dateless rows stay
+    // visible (can't place them in time; exceptions are never scored).
+    const hiddenForWeek = startsAfterWeek(startIso, weekStart);
 
     if (r.status === 'no_show') {
-      out.push({ name, email, department, kind: 'no_show', detail: 'Marked no-show — not paid' });
+      if (!hiddenForWeek) {
+        out.push({ name, email, department, kind: 'no_show', detail: 'Marked no-show — not paid' });
+      }
       remember(r);
       continue;
     }
     if (r.status === 'pending_work_email' || r.status === 'ready' || r.status === 'failed_to_promote') {
       const awaiting = !r.orientation_attended_at;
-      out.push({
-        name,
-        email,
-        department,
-        kind: awaiting ? 'awaiting_orientation' : 'onboarding',
-        detail: awaiting ? 'Awaiting orientation confirmation' : 'Still onboarding — not on payroll yet',
-      });
+      if (!hiddenForWeek) {
+        out.push({
+          name,
+          email,
+          department,
+          kind: awaiting ? 'awaiting_orientation' : 'onboarding',
+          detail: awaiting ? 'Awaiting orientation confirmation' : 'Still onboarding — not on payroll yet',
+        });
+      }
       remember(r);
       continue;
     }
     if (r.status === 'promoted') {
       // Started this week ⇒ first pay period hasn't closed. The real start date
       // is the orientation date (promote stamps master Start Date from it);
-      // fall back to the staged start_date / promoted_at.
-      const startIso =
-        (r.orientation_attended_at ? r.orientation_attended_at.slice(0, 10) : null) ??
-        r.start_date ??
-        (r.promoted_at ? r.promoted_at.slice(0, 10) : null);
+      // fall back to the staged start_date / promoted_at. (startIso lifted
+      // above — identical expression, shared with the no_show/onboarding guard.)
       if (startIso && startIso >= weekStart && (!weekEnd || startIso <= weekEnd)) {
         out.push({
           name,

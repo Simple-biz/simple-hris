@@ -16,8 +16,8 @@ import { normEmail } from '@/lib/email/norm-email';
 import {
   BonusStatus, DeptConfig, HslDeptKey, HSL_DEPTS, HSL_DEPT_KEYS,
   HSL_MANAGERS, HSL_MANAGERS_BY_EMAIL, KpiData, ManagerComponent,
-  SubTeamName, TeamSplitRule, TieredRule,
-  calcBonus, calcManagerBonus, calcTeamSplitShare, canAccessHslDept, formatPeso,
+  SubTeamName, TeamPoolRule, TeamSplitRule, TieredRule,
+  calcBonus, calcManagerBonus, calcTeamPoolShare, calcTeamSplitShare, canAccessHslDept, formatPeso,
 } from '@/lib/hsl-bonus/schema';
 import { parseDateRangeFromFilename } from '@/lib/hubstaff/calendar-column-dedupe';
 import {
@@ -53,6 +53,9 @@ export interface EntryRow {
 export interface SubTeamState {
   pct: string;
   records: string;
+  /** RFC count for the team_pool rule — pooled at ratePerRecord and split evenly
+   *  across the sub-team's headcount, independent of the accuracy % tiering. */
+  rfc: string;
 }
 
 interface DeptState {
@@ -70,12 +73,12 @@ interface DeptState {
 type AllDeptState = Record<HslDeptKey, DeptState>;
 
 export const DEFAULT_SUB_TEAMS: Record<SubTeamName, SubTeamState> = {
-  BLUE: { pct: '', records: '' },
-  GREEN: { pct: '', records: '' },
-  YELLOW: { pct: '', records: '' },
-  ORANGE: { pct: '', records: '' },
-  PURPLE: { pct: '', records: '' },
-  RED: { pct: '', records: '' },
+  BLUE: { pct: '', records: '', rfc: '' },
+  GREEN: { pct: '', records: '', rfc: '' },
+  YELLOW: { pct: '', records: '', rfc: '' },
+  ORANGE: { pct: '', records: '', rfc: '' },
+  PURPLE: { pct: '', records: '', rfc: '' },
+  RED: { pct: '', records: '', rfc: '' },
 };
 
 export interface SubTeamPalette {
@@ -177,12 +180,13 @@ function periodEnd(dept: DeptConfig, start: string): string {
 }
 
 /**
- * Per-employee bonus recompute for SSD Medical Records (team_split rule).
- * `calcBonus` skips team_split rules because the share depends on team-level
- * pct/records held in `subTeams` state, not on `kpi_data`. This computes the
- * share and writes it into each entry's `calculated_bonus` so dept totals,
- * the View modal, and persisted `hsl_bonus_entries.calculated_bonus` (read by
- * PayrollWizard) all reflect reality.
+ * Per-employee bonus recompute for SSD Medical Records (team_split + team_pool
+ * rules). `calcBonus` skips both rule types because their shares depend on
+ * team-level pct/records/rfc held in `subTeams` state, not on `kpi_data`. This
+ * computes the combined share and writes it into each entry's
+ * `calculated_bonus` so dept totals, the View modal, and persisted
+ * `hsl_bonus_entries.calculated_bonus` (read by PayrollWizard) all reflect
+ * reality.
  *
  * Returns a new entries array; pass-through if not SSD.
  */
@@ -192,7 +196,12 @@ export function recomputeSsdEntries(
   subTeams: Record<SubTeamName, SubTeamState>,
 ): EntryRow[] {
   if (deptKey !== 'ssd_medical_records') return entries;
-  const rule = HSL_DEPTS.ssd_medical_records.rules[0] as TeamSplitRule;
+  const splitRule = HSL_DEPTS.ssd_medical_records.rules.find(
+    (r): r is TeamSplitRule => r.type === 'team_split',
+  );
+  const poolRule = HSL_DEPTS.ssd_medical_records.rules.find(
+    (r): r is TeamPoolRule => r.type === 'team_pool',
+  );
   const memberCounts: Record<string, number> = {};
   for (const e of entries) {
     const st = String(e.kpi_data.sub_team ?? '');
@@ -202,9 +211,13 @@ export function recomputeSsdEntries(
     const st = String(e.kpi_data.sub_team ?? '') as SubTeamName | '';
     if (!st) return e.calculated_bonus === 0 ? e : { ...e, calculated_bonus: 0 };
     const sub = subTeams[st];
+    const memberCount = memberCounts[st] ?? 0;
     const pct = parseFloat(sub.pct) || 0;
     const records = parseInt(sub.records, 10) || 0;
-    const share = calcTeamSplitShare(pct, records, memberCounts[st] ?? 0, rule);
+    const rfc = parseInt(sub.rfc, 10) || 0;
+    const splitShare = splitRule ? calcTeamSplitShare(pct, records, memberCount, splitRule) : 0;
+    const poolShare = poolRule ? calcTeamPoolShare(rfc, memberCount, poolRule) : 0;
+    const share = splitShare + poolShare;
     return e.calculated_bonus === share ? e : { ...e, calculated_bonus: share };
   });
 }
@@ -911,8 +924,16 @@ export default function HslBonusCalculator({
     const st = d.subTeams[subTeam];
     const pct = parseFloat(st.pct) || 0;
     const records = parseInt(st.records, 10) || 0;
-    const rule = HSL_DEPTS.ssd_medical_records.rules[0] as TeamSplitRule;
-    return calcTeamSplitShare(pct, records, memberCount, rule);
+    const rfc = parseInt(st.rfc, 10) || 0;
+    const splitRule = HSL_DEPTS.ssd_medical_records.rules.find(
+      (r): r is TeamSplitRule => r.type === 'team_split',
+    )!;
+    const poolRule = HSL_DEPTS.ssd_medical_records.rules.find(
+      (r): r is TeamPoolRule => r.type === 'team_pool',
+    );
+    const splitShare = calcTeamSplitShare(pct, records, memberCount, splitRule);
+    const poolShare = poolRule ? calcTeamPoolShare(rfc, memberCount, poolRule) : 0;
+    return splitShare + poolShare;
   }
 
   function exportCsv() {
@@ -1369,7 +1390,7 @@ interface DeptBlockProps {
   onMarkReady: () => void;
   onMarkUnready: () => void;
   onView: () => void;
-  onSubTeamChange: (subTeam: SubTeamName, field: 'pct' | 'records', val: string) => void;
+  onSubTeamChange: (subTeam: SubTeamName, field: 'pct' | 'records' | 'rfc', val: string) => void;
   ssdShareForTeam?: (subTeam: SubTeamName, memberCount: number) => number;
   payrollLocked: boolean;
   markUnreadySubmitting: boolean;
@@ -2133,7 +2154,7 @@ export function HslManagersTable({
 interface SsdSubTeamGridProps {
   subTeams: Record<SubTeamName, SubTeamState>;
   isLocked: boolean;
-  onSubTeamChange: (subTeam: SubTeamName, field: 'pct' | 'records', val: string) => void;
+  onSubTeamChange: (subTeam: SubTeamName, field: 'pct' | 'records' | 'rfc', val: string) => void;
   ssdShareForTeam: (subTeam: SubTeamName, memberCount: number) => number;
   subTeamMemberCount: (subTeam: SubTeamName) => number;
   /** Currently-active roster filter (shared with the employee table). */
@@ -2242,6 +2263,23 @@ export function SsdSubTeamGrid({
                     onChange={(e) => onSubTeamChange(name, 'records', e.target.value)}
                   />
                 </div>
+              </div>
+
+              {/* RFC — pooled at a flat ₱250/record and split evenly across the
+                  team's headcount, independent of the accuracy tier above. */}
+              <div className="mt-2">
+                <label className="mb-1 block font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-zinc-500 dark:text-zinc-400">
+                  RFC · ₱250/record, pooled
+                </label>
+                <input
+                  type="number" min={0}
+                  className="h-9 w-full rounded-md border border-zinc-300 bg-white px-2 font-mono text-sm font-medium text-zinc-900 shadow-inner outline-none transition-colors focus:border-blue-400 focus:ring-2 focus:ring-blue-200 disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:focus:border-zinc-500 dark:focus:ring-zinc-700"
+                  value={st.rfc}
+                  disabled={isLocked}
+                  placeholder="0"
+                  onFocus={(e) => e.currentTarget.select()}
+                  onChange={(e) => onSubTeamChange(name, 'rfc', e.target.value)}
+                />
               </div>
 
               {/* Tier indicator + share */}

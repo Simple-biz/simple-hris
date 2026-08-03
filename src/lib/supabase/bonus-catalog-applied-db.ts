@@ -1,4 +1,5 @@
 import { createSupabaseServiceRoleClient } from './server';
+import { selectAllPaged } from './select-all-paged';
 
 // Persistence for APPLIED catalog bonuses (see references/create_bonus_catalog_applied.sql).
 // One row per (period_start, department, employee_email, bonus_id): a catalog
@@ -59,13 +60,21 @@ export async function listApplied(opts: {
 }): Promise<AppliedDbRow[]> {
   const supabase = createSupabaseServiceRoleClient();
   if (!supabase) return [];
-  let query = supabase.from(TABLE).select('*').order('employee_name', { ascending: true });
-  if (opts.dept) query = query.eq('department', opts.dept);
-  if (opts.depts && opts.depts.length > 0) query = query.in('department', opts.depts);
-  if (opts.periodStart) query = query.eq('period_start', opts.periodStart);
-  const { data, error } = await query;
-  if (error || !data) return [];
-  return data as AppliedDbRow[];
+  // Un-paged, this silently drops rows past PostgREST's db.max-rows=1000 cap —
+  // already hit for busy weeks (1,021 rows for one period_start as of 2026-08).
+  const { rows, error } = await selectAllPaged<AppliedDbRow>((from, to) => {
+    let query = supabase
+      .from(TABLE)
+      .select('*')
+      .order('employee_name', { ascending: true })
+      .order('id', { ascending: true });
+    if (opts.dept) query = query.eq('department', opts.dept);
+    if (opts.depts && opts.depts.length > 0) query = query.in('department', opts.depts);
+    if (opts.periodStart) query = query.eq('period_start', opts.periodStart);
+    return query.range(from, to);
+  });
+  if (error) return [];
+  return rows;
 }
 
 /**

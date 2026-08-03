@@ -14,6 +14,7 @@ import AdminWorkspace from '@/components/admin/AdminWorkspace';
 import AdminApiKeys from '@/components/admin/AdminApiKeys';
 import AdminPages from '@/components/admin/AdminPages';
 import AdminDesignSpecs from '@/components/admin/AdminDesignSpecs';
+import AdminSystemSettings from '@/components/admin/AdminSystemSettings';
 import AuditLogPanel from '@/components/audit/AuditLogPanel';
 import SystemDiagnostics from '@/components/SystemDiagnostics';
 import BizAiTab from '@/components/ceo/BizAiTab';
@@ -237,7 +238,9 @@ function AdminPageInner() {
         return <NotificationsPanel viewerEmail={adminEmail} accent="zinc" view="admin" />;
       case 'settings':
         return (
-          <Placeholder title="System settings" hint="Global app settings live in the main HRIS Settings tab for now." />
+          <div className="flex min-h-0 flex-1 flex-col overflow-auto">
+            <AdminSystemSettings viewerEmail={adminEmail} />
+          </div>
         );
       default:
         return <AdminOverview userEmail={adminEmail} onNavigate={setActiveTab} />;

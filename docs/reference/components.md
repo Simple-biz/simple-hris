@@ -10,7 +10,7 @@ The app is no longer a single-operator tool. It is **eight role dashboards** tha
 
 | Dashboard | Route | Top component | Primary roles | What it does |
 |---|---|---|---|---|
-| Accounting | `/` -> `/accounting` | `src/App.tsx` | `payroll_coordinator`, `payroll_manager`, `finance`, `hr_coordinator`, `viewer` | The "Friday Path": Rates, Payroll Wizard, Payment Dispatch, Disputes, **MESA**, Settings |
+| Accounting | `/` -> `/accounting` | `src/App.tsx` | `payroll_coordinator`, `payroll_manager`, `finance`, `hr_coordinator`, `viewer` | The weekly payroll cycle: Rates, Payroll Wizard, Payment Dispatch, Disputes, **MESA**, Settings |
 | Admin | `/admin` | `app/admin/page.tsx` | `admin` | RBAC + feature permissions, Global Master List (live presence / ping / watch-screen / force-logout), Google Workspace, webhooks, Pages (per-tab visibility), diagnostics, audit |
 | Employee | `/employee` | `EmployeeApp` | everyone except pure contractors | Self-service: hours, pay, PAB, disputes, leaves, profile, MESA/FPU, gifts, team |
 | Manager | `/manager` | `ManagerApp` | `manager` | Department roster, leave approvals, KPI/HSL bonus calculators, medals, transfers |
@@ -374,7 +374,7 @@ Triggered by trash icon. Shows the employee name + email. On confirm: calls `DEL
 
 ## `src/components/PayrollWizard.tsx`
 
-The core feature. A multi-step wizard for the weekly payroll cycle, called the **"Friday Path"**. Steps: Upload & Preview → Initial Calculation → Additions → Validation → HSL Payroll → Contractors → Dispatch.
+The core feature. A multi-step wizard for the weekly payroll cycle. Steps: Upload & Preview → Initial Calculation → Additions → Validation → HSL Payroll → Contractors → Dispatch.
 
 **Step navigation**: Left sidebar shows numbered steps with a `layoutId="active-indicator"` animated pill (Framer Motion) that slides between steps. Forward/back buttons in each step. Steps are rendered as `<motion.div>` wrappers inside `<AnimatePresence>` — entering steps slide in from the right (+x), exiting steps slide out to the left (-x), and the direction reverses when going back.
 
@@ -1178,7 +1178,7 @@ The HSL (Hogan Smith Law) per-department KPI bonus calculator; the primary half 
 
 Per-dept `loadDept` fetches in parallel: `GET /api/hsl-bonus/entries?dept=&period_start=` (existing scored rows win over roster), `GET /api/hsl-bonus/period-status` (`draft`/`ready`/`locked`), `GET /api/hsl-bonus/team-members?dept=` (roster from `hsl_team_members`). Save via `POST /api/hsl-bonus/entries`; status flips via `POST /api/hsl-bonus/period-status`. CSV export (elevated only).
 
-**Bonus formulas** (engine `lib/hsl-bonus/schema.ts`, `calcBonus`): rule types `per_unit` (n x rate), `tiered` (band by count, then n x band.rate), `flat` (fixed, optional `managerOnly`), `team_split` (SSD-only). `dept.monthlyMax` caps the total. USD-denominated flats exist (Chelzy's Assistant $10). **SSD Medical Records (team_split)** is the special case: `calcBonus` skips it, so per-employee bonus is derived by `recomputeSsdEntries`/`calcTeamSplitShare`. Each colored sub-team (BLUE/GREEN/YELLOW/ORANGE/PURPLE/RED) has manager-entered Accuracy % + Records; threshold -> rate/record (`<90% -> 0`, `90-94.99% -> 250`, `>=95% -> 350`); **share per member = (records x ratePerRecord) / memberCount**. **Gotcha:** SSD sub-team pct/records are in-memory only (not persisted), so editing a past SSD week requires re-entry; future fix = `kpi_meta JSONB` on `hsl_bonus_period_status`.
+**Bonus formulas** (engine `lib/hsl-bonus/schema.ts`, `calcBonus`): rule types `per_unit` (n x rate), `tiered` (band by count, then n x band.rate), `flat` (fixed, optional `managerOnly`), `team_split` + `team_pool` (both SSD-only). `dept.monthlyMax` caps the total. USD-denominated flats exist (Chelzy's Assistant $10). **SSD Medical Records (team_split + team_pool)** is the special case: `calcBonus` skips both rule types, so per-employee bonus is derived by `recomputeSsdEntries` (sums `calcTeamSplitShare` + `calcTeamPoolShare`). Each colored sub-team (BLUE/GREEN/YELLOW/ORANGE/PURPLE/RED) has manager-entered Accuracy % + Records + RFC. Accuracy tiering (`team_split`): threshold -> rate/record (`<90% -> 0`, `90-94.99% -> 250`, `>=95% -> 350`); **share per member = (records x ratePerRecord) / memberCount**. RFC pool (`team_pool`, added 2026-08-03): flat ₱250/RFC, no accuracy tiering; **share per member = (rfc x 250) / memberCount**, added on top of the accuracy share. **Gotcha:** SSD sub-team pct/records/rfc are in-memory only (not persisted), so editing a past SSD week requires re-entry; future fix = `kpi_meta JSONB` on `hsl_bonus_period_status`.
 
 ### `src/components/manager/HslBonusReadyPreview.tsx`
 
@@ -1186,7 +1186,7 @@ Read-only modal showing a ready/locked HSL period's scored entries; opened from 
 
 ### `src/components/manager/HslBonusEditModal.tsx`
 
-Full editor for any HSL period (reuses the calculator's table primitives); lets a manager re-score and re-submit a past/ready/locked week. On open, `GET /api/hsl-bonus/entries`. SSD sub-team pct/records reset to empty (not persisted) with an amber re-enter warning. Actions: **Save (back to draft)** (`POST /api/hsl-bonus/entries` then flip to `draft` so accounting never sees mid-edit state), **Save & Mark Ready**, **Delete week** (`DELETE /api/hsl-bonus/period`). `isLocked` is hardcoded `false`.
+Full editor for any HSL period (reuses the calculator's table primitives); lets a manager re-score and re-submit a past/ready/locked week. On open, `GET /api/hsl-bonus/entries`. SSD sub-team pct/records/rfc reset to empty (not persisted) with an amber re-enter warning. Actions: **Save (back to draft)** (`POST /api/hsl-bonus/entries` then flip to `draft` so accounting never sees mid-edit state), **Save & Mark Ready**, **Delete week** (`DELETE /api/hsl-bonus/period`). `isLocked` is hardcoded `false`.
 
 ### `src/components/manager/ManagerBonusHistory.tsx`
 

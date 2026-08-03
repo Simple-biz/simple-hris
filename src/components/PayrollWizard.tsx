@@ -5858,26 +5858,26 @@ export default function PayrollWizard({
       const regularHours = regularSec / 3600;
       const otHours = otSec / 3600;
 
+      // Match this Hubstaff row to its master-list record — by work/personal
+      // email, then by normalized name tokens. Used below both as the rate
+      // fallback (when the direct email lookup into ratesByEmail misses) and to
+      // prefer the master list's canonical (nickname-quoted) name over the
+      // plain Hubstaff CSV name — see the `name:` field on the returned row.
+      let master = em ? masterIndex.byWorkEmail.get(em) : undefined;
+      if (!master && em) master = masterIndex.byPersonalEmail.get(em);
+      if (!master && row.name) {
+        const hubstaffTokens = normalizeNameTokens(row.name);
+        if (hubstaffTokens) master = masterIndex.byNameTokens.get(hubstaffTokens);
+      }
+
       let rateRow = em ? ratesByEmail.get(em) : undefined;
 
-      // Fallback: match via masterIndex when direct email lookup fails.
-      // Hubstaff email → master (by work_email OR personal_email) → other email → ratesByEmail,
-      // or Hubstaff name → master (by name) → personal_email / work_email → ratesByEmail.
-      if (!rateRow) {
-        // Try work email, then personal email, then normalized name.
-        let master = em ? masterIndex.byWorkEmail.get(em) : undefined;
-        if (!master && em) master = masterIndex.byPersonalEmail.get(em);
-        if (!master && row.name) {
-          const hubstaffTokens = normalizeNameTokens(row.name);
-          if (hubstaffTokens) master = masterIndex.byNameTokens.get(hubstaffTokens);
-        }
-
-        if (master) {
-          const pe = normEmail(master.personal_email);
-          const we = normEmail(master.work_email);
-          rateRow = (pe ? ratesByEmail.get(pe) : undefined)
-                 ?? (we ? ratesByEmail.get(we) : undefined);
-        }
+      // Fallback: use the master match above when direct email lookup fails.
+      if (!rateRow && master) {
+        const pe = normEmail(master.personal_email);
+        const we = normEmail(master.work_email);
+        rateRow = (pe ? ratesByEmail.get(pe) : undefined)
+               ?? (we ? ratesByEmail.get(we) : undefined);
       }
 
       // Rates stored in PHP; compute pay in PHP then derive USD equivalent.
@@ -6043,7 +6043,12 @@ export default function PayrollWizard({
 
       return {
         email: row.email,
-        name: row.name,
+        // Prefer the master list's canonical name (nickname in quotes, e.g.
+        // `Reroma, Jan Kane "Kane"`) over the plain Hubstaff CSV name — this is
+        // the ONE place every wizard step's employee name is set, so a person
+        // with a master-list record shows the same name everywhere downstream
+        // (Additions, Validation, dispatch, paystub preview, every bonus modal).
+        name: master?.name || row.name,
         totalHours: totalH,
         regularHours,
         otHours,
@@ -8115,8 +8120,28 @@ export default function PayrollWizard({
    *    history — today's master list must not re-label an old week); blanks
    *    still fill so pre-feature replays keep rendering dept tabs.
    */
+  /**
+   * True when the master roster failed to load. An EMPTY roster is not the same
+   * claim as "these people have no department" — it means tier 1 is unavailable,
+   * so nothing below it may be trusted to cohort anyone.
+   *
+   * 2026-08-03: `active_employees` began returning an empty set (HTTP 200, no
+   * error) to the anon key after Supabase Advisor set `security_invoker = true`
+   * on it — the view sub-selects `master_list_uploads`, which anon cannot read.
+   * The roster silently became nobody, tier 1 resolved to null for all 1045
+   * rows, and tiers 2/3 back-filled 623 of them off the stale rates sheet and
+   * the Hubstaff "Job type" cell while 422 landed in the Unassigned pile. Those
+   * departments drive real money — dept pay-pause, the OT toggles, HSL
+   * grouping — so deriving them from a phantom roster is worse than deriving
+   * nothing. Bail out and let the banner below tell the clerk.
+   */
+  const masterRosterUnavailable = masterEmployees.length === 0;
+
   useEffect(() => {
     if (calcResults.length === 0) return;
+    // Never re-cohort anyone off a roster that isn't there. Existing assignments
+    // (from the additions blob) stand; the weaker tiers stay out of it.
+    if (masterRosterUnavailable) return;
 
     setEmployeeDepts(prev => {
       const next = { ...prev };
@@ -8197,7 +8222,7 @@ export default function PayrollWizard({
 
       return changed ? next : prev;
     });
-  }, [calcResults, masterIndex, ratesByEmail, hubstaffByEmail, customDepartments, employeeDeptsManual, isReplay]);
+  }, [calcResults, masterIndex, ratesByEmail, hubstaffByEmail, customDepartments, employeeDeptsManual, isReplay, masterRosterUnavailable]);
 
   const payrollComparison = useMemo(
     () => comparePayrollToMaster(masterEmployees, hubstaffData),
@@ -14113,21 +14138,15 @@ export default function PayrollWizard({
           }
         };
 
-        // PENDING is deliberately NOT window-scoped. An invoice can only be paid
-        // once Accounting approves it (Payment Dispatch pays approved invoices),
-        // so hiding an invoice whose date falls outside the batch window strands
-        // it forever — nobody can approve what nobody can see. Approved/rejected
-        // stay window-scoped: that's this run's history.
-        const pendingInvoices  = contractorInvoices.filter((i) => i.status === 'pending');
+        // Every status is window-scoped to the active batch period — this tab
+        // is this run's invoices only. Out-of-window pending invoices are
+        // still counted in the Step 8 readiness checklist so stranded arrears
+        // money isn't silently forgotten, but they don't clutter this list.
+        const pendingInvoices  = contractorInvoicesInPeriod.filter((i) => i.status === 'pending');
         const approvedInvoices = contractorInvoicesInPeriod.filter((i) => i.status === 'approved');
         const rejectedInvoices = contractorInvoicesInPeriod.filter((i) => i.status === 'rejected');
         const approvedByCurrency = sumByCurrency(approvedInvoices);
-        // What the table renders: every pending invoice (so it can be actioned) +
-        // this period's approved/rejected history.
-        const inPeriodIds = new Set(contractorInvoicesInPeriod.map((i) => i.id));
-        const visibleInvoices = contractorInvoices.filter(
-          (i) => i.status === 'pending' || inPeriodIds.has(i.id),
-        );
+        const visibleInvoices = contractorInvoicesInPeriod;
 
         const monthLabelContractors = pabMonthRange
           ? `${pabMonthRange.monthName} ${pabMonthRange.year}`
@@ -16574,7 +16593,7 @@ export default function PayrollWizard({
             </span>
             Payroll Wizard
           </h2>
-          <p className="hidden text-xs text-zinc-600 sm:block sm:text-sm dark:text-zinc-500">The &quot;Friday Path&quot; Automated Workflow</p>
+          <p className="hidden text-xs text-zinc-600 sm:block sm:text-sm dark:text-zinc-500">Automated Weekly Payroll Workflow</p>
           <p className="text-[10px] text-zinc-500 sm:hidden dark:text-zinc-500">
             Step {currentStep} of {steps.length} · {steps.find((s) => s.id === currentStep)?.label}
           </p>
@@ -16753,6 +16772,34 @@ export default function PayrollWizard({
               </div>
             );
           })()}
+
+          {/* Master roster failed to load — every department on every step is
+              untrustworthy until it does. Pinned above the step content so it is
+              visible no matter which step the clerk is on. See
+              `masterRosterUnavailable` for the 2026-08-03 incident this guards. */}
+          {masterRosterUnavailable && (
+            <div className="border-b border-rose-300 bg-rose-50 px-4 py-3 sm:px-6 dark:border-rose-900/60 dark:bg-rose-950/30">
+              <div className="flex items-start gap-2.5">
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-rose-600 dark:text-rose-400" />
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold text-rose-800 dark:text-rose-200">
+                    Global Master List did not load — departments are not trustworthy
+                  </p>
+                  <p className="mt-0.5 text-[12px] leading-relaxed text-rose-700 dark:text-rose-300">
+                    The roster came back empty, so the department source of truth is
+                    unavailable and auto-assignment is paused. Anyone showing
+                    &ldquo;Unassigned&rdquo; may in fact belong to a department &mdash; and
+                    dept-level pay pauses, OT toggles and HSL grouping all read from it.
+                    Reload the page; if it persists, run{' '}
+                    <span className="font-mono text-[11px]">
+                      node scripts/verify-active-employees-roster.mjs
+                    </span>{' '}
+                    before dispatching anything.
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
 
           <ScrollArea className="flex-1 p-3 sm:p-4 md:p-8 min-h-0">
             <AnimatePresence mode="wait">

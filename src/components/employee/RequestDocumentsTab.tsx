@@ -30,6 +30,7 @@ import {
 } from '@/components/ui/dialog';
 import { SmoothSelect } from '@/components/ui/smooth-select';
 import { cn } from '@/lib/utils';
+import { DocumentPreviewPanel } from '@/components/employee/DocumentPreviewPanel';
 import { generatePayStubsPdf, type PayStubWeek } from '@/lib/payroll/paystub-export';
 import {
   DOCUMENT_STATUS_LABELS,
@@ -343,195 +344,107 @@ export default function RequestDocumentsTab({
         description="Get paperwork signed by Accounting for banks, taxes or immigration. A Certificate of Engagement is written for you from your records — nothing to attach. For pay stubs and awards, attach the PDF. The signed copy comes back here with the requested and signed dates stamped in."
       >
         <div className="space-y-5 py-4">
-          <label className="block">
-            <div className="mb-1.5 flex items-center gap-1.5 text-[12px] font-medium text-zinc-700 dark:text-zinc-200">
-              <FileCheck2 className="h-3.5 w-3.5 text-zinc-400" />
-              Document type
-            </div>
-            <SmoothSelect
-              aria-label="Document type"
-              value={docType}
-              onChange={onTypeChange}
-              triggerClassName="w-full"
-              options={[
-                { value: '', label: 'Select a document…' },
-                ...Object.entries(DOCUMENT_TYPE_LABELS).map(([value, label]) => ({ value, label })),
-              ]}
-            />
-          </label>
+          <div className="grid grid-cols-1 gap-6 lg:grid-cols-2 lg:items-start">
+            <div className="space-y-5">
+              <label className="block">
+                <div className="mb-1.5 flex items-center gap-1.5 text-[12px] font-medium text-zinc-700 dark:text-zinc-200">
+                  <FileCheck2 className="h-3.5 w-3.5 text-zinc-400" />
+                  Document type
+                </div>
+                <SmoothSelect
+                  aria-label="Document type"
+                  value={docType}
+                  onChange={onTypeChange}
+                  triggerClassName="w-full"
+                  options={[
+                    { value: '', label: 'Select a document…' },
+                    ...Object.entries(DOCUMENT_TYPE_LABELS).map(([value, label]) => ({ value, label })),
+                  ]}
+                />
+              </label>
 
-          {docType === 'paystub' && (
-            <div className="rounded-xl border border-orange-200/70 bg-orange-50/50 px-4 py-3.5 dark:border-orange-500/25 dark:bg-orange-500/5">
-              <div className="flex items-start gap-2.5">
-                <Wand2 className="mt-0.5 h-4 w-4 shrink-0 text-orange-500" />
-                <div className="min-w-0 flex-1">
-                  <p className="text-[12.5px] font-medium text-zinc-800 dark:text-zinc-200">
-                    Auto-generate from your pay stubs
-                  </p>
-                  <p className="mt-0.5 text-[12px] leading-relaxed text-zinc-500 dark:text-zinc-400">
-                    Builds the same statement PDF as your Pay Stubs tab, covering the period you
-                    pick, and attaches it to this request.
-                  </p>
-                  <div className="mt-2.5 flex flex-col gap-2 sm:flex-row sm:items-center">
-                    <SmoothSelect
-                      aria-label="Pay stub period"
-                      value={paystubPeriod}
-                      onChange={setPaystubPeriod}
-                      triggerClassName="w-full sm:w-56"
-                      options={PAYSTUB_PERIODS.map((p) => ({ value: p.value, label: p.label }))}
-                    />
-                    <Button
-                      type="button"
-                      variant="outline"
-                      onClick={() => void generatePaystubPdf()}
-                      disabled={generating}
-                      className="h-9 gap-1.5 border-orange-300 text-[12.5px] font-semibold text-orange-700 hover:bg-orange-100/60 dark:border-orange-700 dark:text-orange-300"
-                    >
-                      {generating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FileText className="h-3.5 w-3.5" />}
-                      {file && periodLabel ? 'Regenerate PDF' : 'Generate & attach PDF'}
-                    </Button>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {generated && (
-            <div className="rounded-xl border border-zinc-200/80 bg-zinc-50/60 px-4 py-3.5 dark:border-zinc-800/80 dark:bg-zinc-900/40">
-              {coeLoading ? (
-                <div className="flex items-center gap-2 py-2 text-[12.5px] text-zinc-500 dark:text-zinc-400">
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  Loading your details…
-                </div>
-              ) : coeBlocked ? (
-                <div className="flex items-start gap-2.5">
-                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
-                  <div className="min-w-0 flex-1">
-                    <p className="text-[12.5px] font-medium text-zinc-800 dark:text-zinc-200">
-                      This certificate can&rsquo;t be issued yet
-                    </p>
-                    <p className="mt-0.5 text-[12px] leading-relaxed text-zinc-500 dark:text-zinc-400">
-                      {coeBlocked}
-                    </p>
-                  </div>
-                </div>
-              ) : coeFacts ? (
-                <>
+              {docType === 'paystub' && (
+                <div className="rounded-xl border border-orange-200/70 bg-orange-50/50 px-4 py-3.5 dark:border-orange-500/25 dark:bg-orange-500/5">
                   <div className="flex items-start gap-2.5">
-                    <FileCheck2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-500" />
+                    <Wand2 className="mt-0.5 h-4 w-4 shrink-0 text-orange-500" />
                     <div className="min-w-0 flex-1">
                       <p className="text-[12.5px] font-medium text-zinc-800 dark:text-zinc-200">
-                        Nothing to attach — we generate this for you
+                        Auto-generate from your pay stubs
                       </p>
                       <p className="mt-0.5 text-[12px] leading-relaxed text-zinc-500 dark:text-zinc-400">
-                        Taken from your records. Check it over, then submit — Accounting reviews and
-                        signs it.
+                        Builds the same statement PDF as your Pay Stubs tab, covering the period you
+                        pick, and attaches it to this request.
                       </p>
+                      <div className="mt-2.5 flex flex-col gap-2 sm:flex-row sm:items-center">
+                        <SmoothSelect
+                          aria-label="Pay stub period"
+                          value={paystubPeriod}
+                          onChange={setPaystubPeriod}
+                          triggerClassName="w-full sm:w-56"
+                          options={PAYSTUB_PERIODS.map((p) => ({ value: p.value, label: p.label }))}
+                        />
+                        <Button
+                          type="button"
+                          variant="outline"
+                          onClick={() => void generatePaystubPdf()}
+                          disabled={generating}
+                          className="h-9 gap-1.5 border-orange-300 text-[12.5px] font-semibold text-orange-700 hover:bg-orange-100/60 dark:border-orange-700 dark:text-orange-300"
+                        >
+                          {generating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FileText className="h-3.5 w-3.5" />}
+                          {file && periodLabel ? 'Regenerate PDF' : 'Generate & attach PDF'}
+                        </Button>
+                      </div>
                     </div>
                   </div>
-                  <dl className="mt-3 grid grid-cols-1 gap-x-6 gap-y-2 border-t border-zinc-200/70 pt-3 dark:border-zinc-800/70 sm:grid-cols-[auto_1fr]">
-                    {[
-                      [
-                        'Worker',
-                        coeFacts.employeeId
-                          ? `${coeFacts.workerName} · ${coeFacts.employeeId}`
-                          : coeFacts.workerName,
-                      ],
-                      ['Engaged since', coeFacts.startDateLabel],
-                      ['Team', coeFacts.team],
-                      [
-                        'Hourly / OT',
-                        `${coeFacts.hourlyRate} · ${coeFacts.overtimeRate} per hour`,
-                      ],
-                      ['Schedule', `${coeFacts.weeklyHours} hours per week`],
-                    ].map(([label, value]) => (
-                      <React.Fragment key={label}>
-                        <dt className="text-[11.5px] font-medium uppercase tracking-wide text-zinc-400 dark:text-zinc-500">
-                          {label}
-                        </dt>
-                        <dd className="mb-1 text-[12.5px] text-zinc-800 dark:text-zinc-200 sm:mb-0">
-                          {value}
-                        </dd>
-                      </React.Fragment>
-                    ))}
-                    <dt className="text-[11.5px] font-medium uppercase tracking-wide text-zinc-400 dark:text-zinc-500">
-                      Bonuses
-                    </dt>
-                    <dd className="text-[12.5px] leading-relaxed text-zinc-800 dark:text-zinc-200">
-                      {coeFacts.standardBonuses.length === 0 &&
-                      coeFacts.performanceBonuses.length === 0 ? (
-                        <span className="text-zinc-400 dark:text-zinc-500">
-                          None you currently qualify for
-                        </span>
-                      ) : (
-                        <>
-                          {coeFacts.standardBonuses.map((b) => (
-                            <div key={b.label}>
-                              {b.label}: {b.amount}
-                            </div>
-                          ))}
-                          <div>
-                            Performance:{' '}
-                            {coeFacts.performanceBonuses.length > 0 ? (
-                              coeFacts.performanceBonuses
-                                .map((b) => (b.amount ? `${b.label} (${b.amount})` : b.label))
-                                .join(', ')
-                            ) : (
-                              <span className="text-zinc-400 dark:text-zinc-500">
-                                none assigned
-                              </span>
-                            )}
-                          </div>
-                        </>
-                      )}
-                    </dd>
-                  </dl>
-                  <p className="mt-3 border-t border-zinc-200/70 pt-2.5 text-[11px] leading-relaxed text-zinc-400 dark:border-zinc-800/70 dark:text-zinc-500">
-                    Something wrong here? Contact Accounting before submitting — the signed
-                    certificate states these figures.
-                  </p>
-                </>
-              ) : null}
-            </div>
-          )}
+                </div>
+              )}
 
-          {docType && docType !== 'paystub' && !generated && (
-            <label className="block">
-              <div className="mb-1.5 flex items-center gap-1.5 text-[12px] font-medium text-zinc-700 dark:text-zinc-200">
-                <Paperclip className="h-3.5 w-3.5 text-zinc-400" />
-                Attach the PDF to be signed
-              </div>
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept="application/pdf,.pdf"
-                onChange={onPickFile}
-                className="block w-full cursor-pointer rounded-lg border border-zinc-200 bg-white text-[12.5px] text-zinc-600 file:mr-3 file:cursor-pointer file:rounded-l-lg file:border-0 file:bg-zinc-100 file:px-3.5 file:py-2.5 file:text-[12px] file:font-semibold file:text-zinc-700 hover:file:bg-zinc-200 dark:border-zinc-800 dark:bg-zinc-950/60 dark:text-zinc-300 dark:file:bg-zinc-800 dark:file:text-zinc-200"
-              />
-              <p className="mt-1 text-[11px] text-zinc-400 dark:text-zinc-500">PDF only, up to 4 MB.</p>
-            </label>
-          )}
+              {docType && docType !== 'paystub' && !generated && (
+                <label className="block">
+                  <div className="mb-1.5 flex items-center gap-1.5 text-[12px] font-medium text-zinc-700 dark:text-zinc-200">
+                    <Paperclip className="h-3.5 w-3.5 text-zinc-400" />
+                    Attach the PDF to be signed
+                  </div>
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="application/pdf,.pdf"
+                    onChange={onPickFile}
+                    className="block w-full cursor-pointer rounded-lg border border-zinc-200 bg-white text-[12.5px] text-zinc-600 file:mr-3 file:cursor-pointer file:rounded-l-lg file:border-0 file:bg-zinc-100 file:px-3.5 file:py-2.5 file:text-[12px] file:font-semibold file:text-zinc-700 hover:file:bg-zinc-200 dark:border-zinc-800 dark:bg-zinc-950/60 dark:text-zinc-300 dark:file:bg-zinc-800 dark:file:text-zinc-200"
+                  />
+                  <p className="mt-1 text-[11px] text-zinc-400 dark:text-zinc-500">PDF only, up to 4 MB.</p>
+                </label>
+              )}
 
-          {file && (
-            <div className="flex items-center gap-2.5 rounded-xl border border-emerald-200 bg-emerald-50/70 px-3.5 py-2.5 dark:border-emerald-500/30 dark:bg-emerald-500/10">
-              <FileText className="h-4 w-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
-              <div className="min-w-0 flex-1 text-[12.5px]">
-                <span className="font-medium text-emerald-900 dark:text-emerald-200">{file.name}</span>
-                <span className="ml-1.5 text-emerald-700/70 dark:text-emerald-300/60">
-                  {formatFileSize(file.size)}
-                  {periodLabel ? ` · ${periodLabel}` : ''}
-                </span>
-              </div>
-              <button
-                type="button"
-                onClick={clearAttachment}
-                aria-label="Remove attachment"
-                className="shrink-0 rounded-md p-1 text-emerald-700/60 transition-colors hover:bg-emerald-100 hover:text-emerald-800 dark:text-emerald-300/60 dark:hover:bg-emerald-500/20"
-              >
-                <X className="h-3.5 w-3.5" />
-              </button>
+              {file && (
+                <div className="flex items-center gap-2.5 rounded-xl border border-emerald-200 bg-emerald-50/70 px-3.5 py-2.5 dark:border-emerald-500/30 dark:bg-emerald-500/10">
+                  <FileText className="h-4 w-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
+                  <div className="min-w-0 flex-1 text-[12.5px]">
+                    <span className="font-medium text-emerald-900 dark:text-emerald-200">{file.name}</span>
+                    <span className="ml-1.5 text-emerald-700/70 dark:text-emerald-300/60">
+                      {formatFileSize(file.size)}
+                      {periodLabel ? ` · ${periodLabel}` : ''}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={clearAttachment}
+                    aria-label="Remove attachment"
+                    className="shrink-0 rounded-md p-1 text-emerald-700/60 transition-colors hover:bg-emerald-100 hover:text-emerald-800 dark:text-emerald-300/60 dark:hover:bg-emerald-500/20"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              )}
             </div>
-          )}
+
+            <DocumentPreviewPanel
+              docType={docType}
+              coeLoading={coeLoading}
+              coeBlocked={coeBlocked}
+              coeFacts={coeFacts}
+            />
+          </div>
 
           <label className="block">
             <div className="mb-1.5 text-[12px] font-medium text-zinc-700 dark:text-zinc-200">

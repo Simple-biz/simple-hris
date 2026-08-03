@@ -19,6 +19,7 @@ import PabDisputeQueue from './components/payroll/PabDisputeQueue';
 import { BankPreferredApprovals } from './components/payroll/BankPreferredApprovals';
 import PayrollDispatch from './components/payroll-clerk/PayrollDispatch';
 import { normEmail } from '@/lib/email/norm-email';
+import { cn } from '@/lib/utils';
 import { SESSION_EMAIL_KEY } from '@/lib/rbac/views';
 import { usePublishPresenceTab } from '@/components/presence/PresenceProvider';
 import { humanizeTabId } from '@/lib/presence/page-label';
@@ -196,6 +197,14 @@ export default function App({ initialData }: { initialData?: InitialAccountingDa
   const tabDirRef = useRef<1 | -1>(1);
   const mainRef = useRef<HTMLElement | null>(null);
 
+  // Mount the Payroll Wizard on first visit, then keep it mounted (hidden,
+  // outside the animated tab-switch tree below) so leaving for another tab
+  // and coming back never re-mounts it / re-fetches its data or resets its step.
+  const [wizardVisited, setWizardVisited] = useState(false);
+  useEffect(() => {
+    if (activeTab === 'payroll-wizard') setWizardVisited(true);
+  }, [activeTab]);
+
   const navigate = (tab: string) => {
     // Only gate once roles + feature-perms have loaded. Before then everything
     // looks disallowed (empty perms) and `allowedTabs` is empty too, so gating
@@ -251,12 +260,14 @@ export default function App({ initialData }: { initialData?: InitialAccountingDa
     if (visibilityOf('accounting', activeTab) !== 'visible') {
       return <UnderConstruction title={pageLabel('accounting', activeTab)} />;
     }
+    if (activeTab === 'payroll-wizard') {
+      // Rendered persistently below (outside this animated, remount-on-switch
+      // tree) — see the `wizardVisited` block further down.
+      return null;
+    }
     const readOnly = permsLoaded && !canEditAccountingTab(activeTab as typeof ACCOUNTING_TAB_IDS[number], roles, featurePerms);
-    // The Payroll Wizard is a processing surface, not a browse surface: a
-    // view-only user must not touch its step / department navigation, so lock it
-    // strictly (no tab/pagination carve-out) rather than the usual browseable read-only.
     return (
-      <ReadOnlyTab readOnly={readOnly} strict={activeTab === 'payroll-wizard'}>
+      <ReadOnlyTab readOnly={readOnly}>
         {renderTabContent()}
       </ReadOnlyTab>
     );
@@ -275,8 +286,6 @@ export default function App({ initialData }: { initialData?: InitialAccountingDa
             canPay={canEditAccountingTab('people', roles, featurePerms) || roles.includes('ceo')}
           />
         );
-      case 'payroll-wizard':
-        return <PayrollWizard sessionEmail={sessionEmail} sessionRole={roles[0] ?? null} initialData={initialData} />;
       case 'bonus-catalog':
         return <BonusCatalog initialData={initialData} />;
       case 'payment-dispatch':
@@ -378,14 +387,48 @@ export default function App({ initialData }: { initialData?: InitialAccountingDa
               animate="center"
               exit="exit"
               transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
-              className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
+              className={cn(
+                'flex min-h-0 min-w-0 flex-col overflow-hidden',
+                // renderContent() returns null for the payroll-wizard tab (it's
+                // rendered persistently below instead) — without this, an empty
+                // flex-1 box still claims half the column, squeezing the real
+                // wizard content into the remaining space.
+                activeTab === 'payroll-wizard' ? '' : 'flex-1',
+              )}
             >
-              {isAdmin && rawVisibilityOf('accounting', activeTab) === 'construction' && (
+              {isAdmin && activeTab !== 'payroll-wizard' && rawVisibilityOf('accounting', activeTab) === 'construction' && (
                 <ConstructionBanner title={pageLabel('accounting', activeTab)} />
               )}
               {renderContent()}
             </motion.div>
           </AnimatePresence>
+          {/* Mounted once on first visit and kept alive (hidden, not unmounted)
+              behind the animated tab-switch above — the Payroll Wizard has its
+              own multi-step flow and dozens of data fetches, so tearing it down
+              every time the user peeks at another tab and comes back reset its
+              step and re-fetched everything from scratch. */}
+          {wizardVisited && visibilityOf('accounting', 'payroll-wizard') === 'visible' && (
+            <div
+              className={cn(
+                'flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden',
+                activeTab === 'payroll-wizard' ? '' : 'hidden',
+              )}
+            >
+              {isAdmin && rawVisibilityOf('accounting', 'payroll-wizard') === 'construction' && (
+                <ConstructionBanner title={pageLabel('accounting', 'payroll-wizard')} />
+              )}
+              {/* The Payroll Wizard is a processing surface, not a browse surface: a
+                  view-only user must not touch its step / department navigation, so
+                  lock it strictly (no tab/pagination carve-out) rather than the usual
+                  browseable read-only. */}
+              <ReadOnlyTab
+                readOnly={permsLoaded && !canEditAccountingTab('payroll-wizard', roles, featurePerms)}
+                strict
+              >
+                <PayrollWizard sessionEmail={sessionEmail} sessionRole={roles[0] ?? null} initialData={initialData} />
+              </ReadOnlyTab>
+            </div>
+          )}
         </div>
         <AppFooter />
         <AccountingCollabLayer

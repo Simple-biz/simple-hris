@@ -1,6 +1,8 @@
 'use client';
 
 import CollabLayer, { type CollabLayerProps } from '@/components/collab/CollabLayer';
+import { useCollabEnabled } from '@/hooks/useCollabEnabled';
+import { COLLAB_ACCOUNTING_ENABLED_KEY } from '@/lib/collab/collab-settings';
 
 /**
  * Accounting dashboard collaboration layer.
@@ -15,9 +17,14 @@ import CollabLayer, { type CollabLayerProps } from '@/components/collab/CollabLa
  * Accounting is where payroll processing happens, so this dashboard retracts
  * the collab chrome (peer cursors + avatar rail) while the dispatch lock is on
  * — same trigger as the sidebar auto-collapse — to keep the operator focused.
+ *
+ * Admin can also kill the whole layer via System Settings (`collab.accounting.
+ * enabled`) — when off, CollabLayer never mounts, so it opens zero channels.
  */
 type Props = Pick<CollabLayerProps, 'selfEmail' | 'section' | 'containerRef'>;
 
 export default function AccountingCollabLayer(props: Props) {
+  const enabled = useCollabEnabled(COLLAB_ACCOUNTING_ENABLED_KEY);
+  if (!enabled) return null;
   return <CollabLayer {...props} retractWhileProcessing />;
 }

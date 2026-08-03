@@ -311,7 +311,7 @@ function buildMockDiagnostics(now = new Date()): DiagnosticsHealthResponse {
     },
     {
       id: 'payroll-wizard',
-      label: 'Payroll Wizard / Friday Path',
+      label: 'Payroll Wizard',
       category: 'payroll',
       status: 'warning',
       summary: 'Payroll workflow should be checked for CSV/date-column mismatches.',

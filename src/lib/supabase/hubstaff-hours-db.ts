@@ -72,29 +72,36 @@ const tableColumnsFromSpecCache = new Map<string, Promise<string[]>>();
  * which is used as a fallback when the table is empty.
  */
 async function getTableColumnsFromSpec(table: string): Promise<string[]> {
-  let cached = tableColumnsFromSpecCache.get(table);
-  if (!cached) {
-    cached = (async () => {
-      const url = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim();
-      const key = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim();
-      if (!url || !key) return [];
-      try {
-        const res = await fetch(`${url}/rest/v1/?apikey=${key}`, {
-          headers: { Authorization: `Bearer ${key}` },
-        });
-        if (!res.ok) return [];
-        const spec = (await res.json()) as {
-          definitions?: Record<string, { properties?: Record<string, unknown> }>;
-        };
-        const props = spec.definitions?.[table]?.properties;
-        return props ? Object.keys(props) : [];
-      } catch {
-        return [];
-      }
-    })();
-    tableColumnsFromSpecCache.set(table, cached);
+  const cached = tableColumnsFromSpecCache.get(table);
+  if (cached) return cached;
+
+  // Only a successful, non-empty lookup gets cached. A transient failure (spec
+  // endpoint hiccup, cold connection) must NOT poison this forever — on a
+  // long-lived process (local `next dev`) that never restarts, a single bad
+  // response used to wedge every hubstaff_hours read behind an empty column
+  // list for the rest of the process's life, since every call site below
+  // treats "columns missing source_file" as "nothing to read." Vercel's
+  // serverless functions recycle often enough that the same failure there
+  // self-heals on the next invocation, which is why this only ever showed up
+  // on localhost.
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim();
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim();
+  if (!url || !key) return [];
+  try {
+    const res = await fetch(`${url}/rest/v1/?apikey=${key}`, {
+      headers: { Authorization: `Bearer ${key}` },
+    });
+    if (!res.ok) return [];
+    const spec = (await res.json()) as {
+      definitions?: Record<string, { properties?: Record<string, unknown> }>;
+    };
+    const props = spec.definitions?.[table]?.properties;
+    const cols = props ? Object.keys(props) : [];
+    if (cols.length > 0) tableColumnsFromSpecCache.set(table, Promise.resolve(cols));
+    return cols;
+  } catch {
+    return [];
   }
-  return cached;
 }
 
 /** A row is considered empty only if every single column value is null/undefined/blank. */

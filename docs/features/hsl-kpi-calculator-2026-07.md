@@ -31,6 +31,13 @@ Notes:
 - **Medical Records vs SSD Medical Records.** The existing `ssd_medical_records`
   (team-accuracy split: 90 % → ₱250 / 95 % → ₱350 per record) is untouched. The
   new `medical_records` is a plain per-unit dept and lives alongside it.
+- **SSD Medical Records RFC pool (added 2026-08-03).** `ssd_medical_records`
+  gained a second rule, `team_pool` (`TeamPoolRule`/`calcTeamPoolShare` in
+  `schema.ts`): the team's RFC count × ₱250 is pooled and split evenly across
+  the sub-team's headcount — no accuracy tiering, unlike the existing
+  `team_split` rule it sits alongside. Both shares are summed per employee in
+  `recomputeSsdEntries`. e.g. Orange team logs 13 RFCs across 10 agents →
+  13 × ₱250 ÷ 10 = ₱325/agent, added on top of their accuracy-split share.
 - **Callback Team vs the sheet.** The pay-plan sheet attaches "Medicare Signups ×250"
   to the Care/Healthcare team, and `care_team` in `schema.ts` is still modeled as
   the older "Church Attendees × ₱50". That drift was left as-is by request — the
