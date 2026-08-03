@@ -29,6 +29,9 @@ Decisions locked with Kane (2026-08-03):
    tiles**.
 7. Checks are computed **server-side by extending the readiness API** (no second
    endpoint, no client-side RLS pitfalls).
+8. **Readiness only reads its own week**: someone not yet hired during the week in
+   view (master Start Date after the week's end) must not exist anywhere in that
+   week's readiness — lists or denominators (added on approval, 2026-08-03).
 
 ## Week anchoring (load-bearing)
 
@@ -101,6 +104,43 @@ When `matchedSourceFile` is null (CSV not uploaded yet): `orphanage` can only be
 via the confirm-none marker, `notes` compares against no blob (all noted workers count
 as not-applied), `contractors` still evaluates (window-based), `dispatch` is `pending`.
 
+## Week-scoped roster (existing readiness dimensions)
+
+Rule: every readiness dimension evaluates only people who were on board during the week
+in view. A hire whose master Start Date is **after the week's end** (weekStart + 6 days)
+must not appear in that week's readiness period — current week or a past week via the
+selector.
+
+Per dimension:
+
+- **Rate check** (`buildMissingRates`, `payroll-readiness.ts:751`) — already
+  week-scoped: its population is the week's Hubstaff file roster; a future hire has no
+  hours in it. **No change.**
+- **Bank check** (`buildMissingBank`, `payroll-readiness.ts:1058`) — the leak. Its
+  population is the current active-roster snapshot with an off-board aging rule
+  (`:1166`) but no future-hire filter. **Add:** skip a person when their normalized
+  start date (`normalizeStartDate`, `:540` — already handles the US-format master
+  Start Date landmine) is strictly after the week's end **and** they are not
+  `onPayroll`. Hours in the week's file always win (a stale/wrong start date must never
+  hide someone actually being paid — same fail-safe shape as the off-board guard).
+  Missing/unparseable start dates stay listed (fail toward over-flagging, the
+  dimension's existing direction). The skip removes them from the list **and** from
+  `eligibleCount` / `onPayrollEligibleCount`, so `bankEligibleCount`,
+  `bankOnPayrollCount`, and `missingBankOnPayroll` all shrink consistently.
+- **Exceptions** (`buildExceptions`, `payroll-readiness.ts:1214`) — pipeline rows
+  (`onboarding` / `awaiting_orientation` / `no_show`) with a **known** staged start
+  date after the week's end leave that week's visible list. Their `identities` still
+  feed the rate/bank exclusion sets unconditionally (an onboarding hire must never cost
+  points on any dimension, whichever week is in view). Dateless pipeline rows stay
+  visible (can't place them in time; exceptions are informational and never scored).
+  `started_this_week` is already window-scoped — no change.
+- **Score:** the formula, weights, and pins are untouched — only its *inputs* shrink to
+  the week-true population, which is the point.
+
+Tests must cover: future-start person excluded from bank list + both denominators;
+future-start person WITH hours in the week's file stays (onPayroll wins); unparseable
+start date stays; past-week view excludes a person hired after that week.
+
 ## Weekly confirm markers (app_settings, audited)
 
 | Key | Value | Written by |
@@ -164,7 +204,8 @@ the stat-tile grid (`PayrollReadinessGlance`, section renders around `:3068`):
 
 ## Non-goals
 
-- No changes to score math, weights, pins, grades, or the FAB ring.
+- No changes to score math, weights, pins, grades, or the FAB ring. (The week-scoped
+  roster rule changes the score's *inputs* — who counts — never the formula.)
 - No new hard gates on Payment Dispatch — its existing soft warnings and locks stand.
 - No write-actions inside checklist rows (fixes live in the wizard steps).
 - No notifications, schedulers, or n8n work.
