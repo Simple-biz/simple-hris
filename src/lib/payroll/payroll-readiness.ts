@@ -299,7 +299,7 @@ function parseLocalIso(iso: string): Date | null {
  * The week key is the upload's filename date-range START (see
  * `weekKeyFromSourceFile`), matching the wizard + manager calculators exactly.
  */
-async function resolveCurrentWeek(
+export async function resolveCurrentWeek(
   preferredSourceFile?: string | null,
 ): Promise<{ weekStart: string; sourceFile: string | null; degraded: string[] }> {
   let sourceFile: string | null = (preferredSourceFile ?? '').trim() || null;
