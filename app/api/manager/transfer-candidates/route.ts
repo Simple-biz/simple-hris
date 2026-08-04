@@ -50,9 +50,13 @@ export async function GET(request: Request) {
   // active people. No dept exclusion here: these people have left their dept
   // by definition, and managers add them precisely to score their own team's
   // final week.
+  // `off_boarded_reason` is deliberately STRIPPED before returning: raw HR
+  // termination reasons (performance, ncns, time_manipulation, …) are
+  // payroll-only and must never reach a manager's browser.
   if (new URL(request.url).searchParams.get('offboarded') === '1') {
-    const { people: offboarded, hoursWeekFloor, error: offErr } = await listRecentlyOffboardedPeople();
+    const { people: offboardedRaw, hoursWeekFloor, error: offErr } = await listRecentlyOffboardedPeople();
     if (offErr) return NextResponse.json({ offboarded: [], error: offErr }, { status: 500 });
+    const offboarded = offboardedRaw.map(({ off_boarded_reason: _reason, ...rest }) => rest);
     return NextResponse.json({ offboarded, hours_week_floor: hoursWeekFloor, error: null });
   }
 

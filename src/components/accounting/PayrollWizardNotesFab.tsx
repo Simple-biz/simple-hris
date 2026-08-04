@@ -92,6 +92,7 @@ import type {
   ReadinessScore,
   WizardSetupStep,
 } from "@/lib/payroll/payroll-readiness";
+import type { OffboardedPayrollCandidate } from "@/lib/payroll/offboarded-payroll-candidates";
 import { celebrationStep, type ReadyWatchState } from "@/lib/payroll/readiness-celebration";
 import {
   APPLY_NOTE_ADJUSTMENTS_EVENT,
@@ -209,13 +210,14 @@ function mergeRowPreservingDrafts(
 /** localStorage key base for the per-user "show everyone's notes" preference. */
 const SHOW_OTHERS_KEY = "payroll-wizard-notes:show-others";
 
-/** The three modal panes. `readiness` is the payroll-ready dashboard — leads
+/** The four modal panes. `readiness` is the payroll-ready dashboard — leads
  *  the strip so it's the first thing an accountant sees; `checklist` is the
  *  original carry-over adjustments board (label reads "Adjustments and
- *  Notes"); `rates` is the Payment-Catalog glance. Kept left→right in this
- *  order so the directional slide reads naturally. */
-type ModalTab = "readiness" | "checklist" | "rates";
-const TAB_ORDER: ModalTab[] = ["readiness", "checklist", "rates"];
+ *  Notes"); `rates` is the Payment-Catalog glance; `offboarded` is recently
+ *  offboarded people who may still need their final pay's rate/bank set.
+ *  Kept left→right in this order so the directional slide reads naturally. */
+type ModalTab = "readiness" | "checklist" | "rates" | "offboarded";
+const TAB_ORDER: ModalTab[] = ["readiness", "checklist", "rates", "offboarded"];
 
 /** Shared easing — matches the app's tab transition (App.tsx / BonusCatalog). */
 const EASE = [0.22, 1, 0.36, 1] as const;
@@ -1053,6 +1055,12 @@ export default function PayrollWizardNotesFab({
                   and who&apos;s a known exception. Green all the way down means you&apos;re{" "}
                   <span className="font-medium">Payroll Ready</span>.
                 </>
+              ) : modalTab === "offboarded" ? (
+                <>
+                  Recently offboarded people who may still need their final paycheck&apos;s pay
+                  rate or bank details set. They drop off this list automatically once their final
+                  pay has gone out.
+                </>
               ) : (
                 <>
                   The rates set in the Payment Catalog, at a glance. Hover a department card to
@@ -1068,6 +1076,7 @@ export default function PayrollWizardNotesFab({
                 { id: "readiness", label: "Readiness", icon: ShieldCheck },
                 { id: "checklist", label: "Adjustments and Notes", icon: ListChecks },
                 { id: "rates", label: "Rates", icon: Wallet },
+                { id: "offboarded", label: "Offboarded", icon: PowerOff },
               ] as const
             ).map((t) => (
               <button
@@ -1129,6 +1138,18 @@ export default function PayrollWizardNotesFab({
                 canEdit={canEdit}
                 viewerEmail={sessionEmail}
               />
+            </motion.div>
+          ) : modalTab === "offboarded" ? (
+            <motion.div
+              key="offboarded"
+              custom={tabDir}
+              variants={PANE_VARIANTS}
+              initial="enter"
+              animate="center"
+              exit="exit"
+              transition={{ duration: reduceMotion ? 0 : 0.24, ease: EASE }}
+            >
+              <OffboardedGlance wizardSourceFile={wizardSourceFile} canEdit={canEdit} />
             </motion.div>
           ) : (
             <motion.div
@@ -2460,21 +2481,41 @@ function SetRateDialog({
  */
 function SetBankDialog({
   person,
+  prefill,
   onClose,
   onSaved,
 }: {
   person: ReadinessMissingBank;
+  /** Seeds the form from a known-but-not-yet-saved source (e.g. an offboard
+   *  snapshot) instead of starting blank. The clerk can still edit every
+   *  field before saving — this only changes the initial values. */
+  prefill?: {
+    /** Pre-SELECTS the picker without locking it. A prefilled processor comes
+     *  from a source that isn't on the live employee_ids row yet (an offboard
+     *  snapshot), so `locked` must stay false — otherwise `save` skips writing
+     *  `preferred_processor` and the person stays unpayable after a "successful"
+     *  save. Only `person.processor` (live-resolved) locks the picker.
+     *  Nullable so an `OffboardedBankPrefill` (whose `processor` is
+     *  `string | null`) can be handed straight through. */
+    processor?: string | null;
+    walletEmail?: string;
+    walletName?: string;
+    bankName?: string;
+    accountHolder?: string;
+    accountNumber?: string;
+    swiftCode?: string;
+  };
   onClose: () => void;
   onSaved: () => void;
 }) {
   const lockedProcessor = (person.processor ?? "") as ProcessorId | "";
-  const [processor, setProcessor] = useState<string>(lockedProcessor);
-  const [walletEmail, setWalletEmail] = useState("");
-  const [walletName, setWalletName] = useState("");
-  const [bankName, setBankName] = useState("");
-  const [accountHolder, setAccountHolder] = useState("");
-  const [accountNumber, setAccountNumber] = useState("");
-  const [swiftCode, setSwiftCode] = useState("");
+  const [processor, setProcessor] = useState<string>(lockedProcessor || (prefill?.processor ?? ""));
+  const [walletEmail, setWalletEmail] = useState(prefill?.walletEmail ?? "");
+  const [walletName, setWalletName] = useState(prefill?.walletName ?? "");
+  const [bankName, setBankName] = useState(prefill?.bankName ?? "");
+  const [accountHolder, setAccountHolder] = useState(prefill?.accountHolder ?? "");
+  const [accountNumber, setAccountNumber] = useState(prefill?.accountNumber ?? "");
+  const [swiftCode, setSwiftCode] = useState(prefill?.swiftCode ?? "");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -3776,6 +3817,207 @@ function PayrollReadinessGlance({
           key={celebration}
           origins={confettiOrigins}
           onDone={() => setCelebration(0)}
+        />
+      )}
+    </div>
+  );
+}
+
+/**
+ * "Offboarded" tab — recently offboarded people who may still need their
+ * final paycheck's rate/bank set. Built on `listOffboardedPayrollCandidates`,
+ * which is itself built on the same `listRecentlyOffboardedPeople` union the
+ * KPI bonus calculators use, scoped to the wizard's current pay week so a
+ * leaver drops off once their final pay has actually gone out. Deliberately
+ * light on machinery (no cache, no celebration, no pagination) — this list
+ * is expected to be short; RatesGlance is the closer model for this pane's
+ * complexity, not PayrollReadinessGlance.
+ */
+function OffboardedGlance({
+  wizardSourceFile,
+  canEdit,
+}: {
+  wizardSourceFile: string | null;
+  canEdit: boolean;
+}) {
+  const [people, setPeople] = useState<OffboardedPayrollCandidate[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  // Sources the server couldn't read this load (e.g. employee_ids or the
+  // legacy rates sheet) — bank status below is judged against whatever DID
+  // come back, so this must be said out loud rather than read as a genuine
+  // "no bank on file". Mirrors PayrollReadinessGlance's own degraded banner.
+  const [degraded, setDegraded] = useState<string[]>([]);
+  // The pay week this list is scoped to. Shown in-pane like every sibling here:
+  // when the wizard replays an older period the week-relevance filter can quietly
+  // widen to an unfiltered 90-day list, and nothing else on screen would say so.
+  const [weekLabel, setWeekLabel] = useState<string | null>(null);
+  const [ratePerson, setRatePerson] = useState<ReadinessMissingRate | null>(null);
+  const [bankPerson, setBankPerson] = useState<ReadinessMissingBank | null>(null);
+  const [bankPrefill, setBankPrefill] = useState<OffboardedPayrollCandidate["bankPrefill"]>(null);
+
+  const load = useCallback(() => {
+    const qs = wizardSourceFile ? `?source_file=${encodeURIComponent(wizardSourceFile)}` : "";
+    return fetch(`/api/payroll-wizard/offboarded${qs}`, { cache: "no-store" })
+      .then(async (res) => {
+        const json = (await res.json()) as {
+          people?: OffboardedPayrollCandidate[];
+          weekLabel?: string;
+          degraded?: string[];
+          error?: string | null;
+        };
+        if (!res.ok || json.error) throw new Error(json.error || `Load failed (${res.status})`);
+        setPeople(json.people ?? []);
+        setWeekLabel(json.weekLabel ?? null);
+        setDegraded(json.degraded ?? []);
+        setError(null);
+      })
+      .catch((e) => {
+        setError(e instanceof Error ? e.message : "Could not load recently offboarded people");
+      });
+  }, [wizardSourceFile]);
+
+  useEffect(() => {
+    setPeople(null);
+    void load();
+  }, [load]);
+
+  if (error) {
+    return (
+      <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-300">
+        {error}
+      </p>
+    );
+  }
+  if (people === null) {
+    return (
+      <div className="flex h-[70vh] items-center justify-center text-sm text-zinc-400">
+        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+        Loading recently offboarded people…
+      </div>
+    );
+  }
+  if (people.length === 0) {
+    return (
+      <div className="flex h-[70vh] items-center justify-center text-sm text-zinc-400">
+        No one&apos;s recently left — nothing needs final-pay setup.
+      </div>
+    );
+  }
+
+  const badgeCls = (ok: boolean) =>
+    ok
+      ? "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-300"
+      : "border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300";
+
+  return (
+    <div className="h-[70vh] overflow-y-auto rounded-lg border border-orange-100 p-1 dark:border-blue-950/60">
+      {/* Partial-data warning — same treatment as PayrollReadinessGlance's:
+          a read that failed reshapes bank status quietly (toward "missing"),
+          so it must be said out loud rather than read as a real gap. */}
+      {degraded.length > 0 && (
+        <div
+          role="alert"
+          className="mb-2 rounded-xl border border-amber-300/70 bg-amber-50/80 px-3 py-2 dark:border-amber-500/30 dark:bg-amber-950/30"
+        >
+          <div className="flex items-center gap-1.5 text-[11px] font-semibold text-amber-800 dark:text-amber-200">
+            <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+            Partial data this load — these checks couldn&apos;t run fully
+          </div>
+          <ul className="mt-1 list-disc space-y-0.5 pl-5 text-[10.5px] text-amber-700/90 dark:text-amber-300/80">
+            {degraded.map((d) => (
+              <li key={d}>{d}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {/* Slim header line — which pay week these leavers are scoped to. Same
+          treatment as the Wizard Setup pane's own week line; the tab strip
+          already owns the "Offboarded" label, so this isn't a second title. */}
+      {weekLabel && (
+        <div className="mb-1.5 px-1 text-[11px] text-zinc-500 dark:text-zinc-400">
+          Final pay for payroll week {weekLabel}
+        </div>
+      )}
+      <div className="space-y-0.5">
+        {people.map((r) => (
+          <PersonLine
+            key={r.workEmail ?? r.personalEmail ?? r.name}
+            name={r.name}
+            email={r.workEmail ?? r.personalEmail}
+            department={r.department}
+            right={
+              <div className="flex shrink-0 items-center gap-1.5">
+                {r.offBoardedAt && (
+                  <span
+                    className="shrink-0 rounded-full border border-zinc-200 bg-zinc-50 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-zinc-500 dark:border-zinc-700 dark:bg-zinc-800/60 dark:text-zinc-400"
+                    title={r.offBoardedReasonLabel ?? undefined}
+                  >
+                    Left {formatStartDate(r.offBoardedAt)}
+                    {r.offBoardedReasonLabel ? ` · ${r.offBoardedReasonLabel}` : ""}
+                  </span>
+                )}
+                <span className={`shrink-0 rounded-full border px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide ${badgeCls(r.rateStatus === "ok")}`}>
+                  {r.rateStatus === "ok" ? "Rate OK" : "No rate"}
+                </span>
+                <span className={`shrink-0 rounded-full border px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide ${badgeCls(r.bankStatus === "ok")}`}>
+                  {r.bankStatus === "ok"
+                    ? "Bank OK"
+                    : r.bankStatus === "missing_has_snapshot"
+                      ? "Prior bank on file"
+                      : "No bank"}
+                </span>
+                {canEdit && (
+                  <>
+                    <RowFixButton
+                      label="Set rate"
+                      disabled={!r.workEmail && !r.personalEmail}
+                      onClick={() =>
+                        setRatePerson({
+                          name: r.name,
+                          email: r.workEmail ?? r.personalEmail,
+                          department: r.department,
+                          startDate: null,
+                          recentlyOnboarded: false,
+                          offBoardedAt: r.offBoardedAt,
+                        })
+                      }
+                    />
+                    <RowFixButton
+                      label="Set bank"
+                      disabled={!r.workEmail && !r.personalEmail}
+                      onClick={() => {
+                        setBankPrefill(r.bankPrefill);
+                        setBankPerson({
+                          name: r.name,
+                          email: r.workEmail ?? r.personalEmail,
+                          department: r.department,
+                          processor: r.bankProcessor,
+                          workEmail: r.workEmail,
+                          personalEmail: r.personalEmail,
+                          onPayroll: false,
+                          offBoardedAt: r.offBoardedAt,
+                        });
+                      }}
+                    />
+                  </>
+                )}
+              </div>
+            }
+          />
+        ))}
+      </div>
+      {ratePerson && (
+        <SetRateDialog person={ratePerson} onClose={() => setRatePerson(null)} onSaved={() => void load()} />
+      )}
+      {bankPerson && (
+        <SetBankDialog
+          person={bankPerson}
+          prefill={bankPrefill ?? undefined}
+          onClose={() => {
+            setBankPerson(null);
+            setBankPrefill(null);
+          }}
+          onSaved={() => void load()}
         />
       )}
     </div>
