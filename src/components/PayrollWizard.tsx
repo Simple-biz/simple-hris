@@ -7671,12 +7671,14 @@ export default function PayrollWizard({
         `payroll.wizard.final_pay.${calcSourceFile}`,
         // fx_rate is stored once per week so the Employee Pay Stubs tab can show the
         // USD equivalent without re-running computeCurrentPay (the slow path).
-        JSON.stringify({ source_file: calcSourceFile, fx_rate: usdToPhpRate, finals }),
+        // Cycle rate once set; the global effective rate while the cycle is
+        // still at 0 — staged employee-facing paystubs must never divide by 0.
+        JSON.stringify({ source_file: calcSourceFile, fx_rate: usdToPhpRate > 0 ? usdToPhpRate : globalPhpRate, finals }),
       );
     } catch (e) {
       console.warn('[publishFinalPaySnapshot]', e);
     }
-  }, [calcSourceFile, dispatchData, savePabSetting, isReplay, usdToPhpRate, additionsHydratedFor]);
+  }, [calcSourceFile, dispatchData, savePabSetting, isReplay, usdToPhpRate, globalPhpRate, additionsHydratedFor]);
 
   /**
    * Lock in the parsed Orphanage paste: write each resolved amount into the per-employee
@@ -10869,9 +10871,11 @@ export default function PayrollWizard({
                                 <span className="font-mono text-xs font-semibold text-emerald-700 dark:text-emerald-400">
                                   {formatPHP(row.initialPay)}
                                 </span>
-                                <span className="font-mono text-[10px] text-blue-500 dark:text-blue-400">
-                                  ≈&nbsp;${(row.initialPay / usdToPhpRate).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                                </span>
+                                {usdToPhpRate > 0 && (
+                                  <span className="font-mono text-[10px] text-blue-500 dark:text-blue-400">
+                                    ≈&nbsp;${(row.initialPay / usdToPhpRate).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                  </span>
+                                )}
                               </div>
                             ) : (
                               <span className="text-[10px] font-medium text-amber-600 dark:text-amber-400">Missing rate</span>
@@ -15153,6 +15157,12 @@ export default function PayrollWizard({
                 {[
                   { label: 'Hubstaff Hours Uploaded', pass: hubstaffData.length > 0 },
                   { label: 'Initial Calculations Complete', pass: effectiveCalcResults.some(r => r.initialPay != null) },
+                  {
+                    label: usdToPhpRate > 0 && usdToCopRate > 0
+                      ? 'Cycle FX Rates Set (USD→PHP & USD→COP)'
+                      : `Cycle FX Rates at 0 — set on Step 2 (dispatch is blocked)`,
+                    pass: usdToPhpRate > 0 && usdToCopRate > 0,
+                  },
                   { label: 'All Employees Dept-Assigned', pass: unassignedCount === 0 },
                   {
                     label: pausedHiddenPayableRows.length === 0
@@ -15399,6 +15409,12 @@ export default function PayrollWizard({
                     toast.error('No pay-period file selected');
                     return;
                   }
+                  if (usdToPhpRate <= 0 || usdToCopRate <= 0) {
+                    toast.error('Cycle FX rates not set', {
+                      description: "Set this cycle's USD → PHP and USD → COP rates on Step 2 first.",
+                    });
+                    return;
+                  }
                   const { rows: employees, excludedRows, missing, payPeriodPayload, rateIssues } =
                     dispatchData;
                   if (employees.length === 0 && excludedRows.length === 0) {
@@ -15508,9 +15524,9 @@ export default function PayrollWizard({
                     setIsDispatching(false);
                   }
                 }}
-                disabled={isDispatching || isReplay}
+                disabled={isDispatching || isReplay || usdToPhpRate <= 0 || usdToCopRate <= 0}
               >
-                {isDispatching ? 'Sending to Dispatch…' : isReplay ? 'View-only (past period)' : 'Lock in Values & Send to Payment Dispatch'}
+                {isDispatching ? 'Sending to Dispatch…' : isReplay ? 'View-only (past period)' : (usdToPhpRate <= 0 || usdToCopRate <= 0) ? 'Set Step 2 rates first' : 'Lock in Values & Send to Payment Dispatch'}
               </Button>
               {/* Rate snapshots toggle — ON floats live People-tab Banking Info +
                   Payment Catalog cards beside each Preview Emails paystub so the
@@ -15548,6 +15564,11 @@ export default function PayrollWizard({
                 />
               </div>
             </div>
+            {!isReplay && (usdToPhpRate <= 0 || usdToCopRate <= 0) && (
+              <p className="text-center text-sm font-medium text-amber-700 dark:text-amber-400">
+                Set this cycle&apos;s USD → PHP and USD → COP rates on Step 2 first — dispatch is blocked while either is 0.
+              </p>
+            )}
           </div>
         );
       case 9: {
