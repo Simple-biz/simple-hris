@@ -173,19 +173,94 @@ readiness) and that row alone reads `pending` with a "couldn't read…" detail
 | # | Row | Done when | Otherwise |
 | - | --- | --- | --- |
 | 1 | Hubstaff CSV | an upload's filename parses to the checklist's expected week (see Week resolution, above) | **`blocked`** (rose — the only row that can read blocked); an unparseable newest-upload filename reads `attention` instead ("can't tell") |
-| 2 | USD rate confirmed | `payroll.wizard.fx_confirmed.<weekStart>` exists | `attention` — "Confirm on Step 2" |
+| 2 | USD rate confirmed | this cycle's per-upload FX record (`payroll.wizard.fx.<sourceFile>`, keyed to the MATCHED upload) has both `php` and `cop` non-zero | `attention` in every other case: record absent or both legs 0 → "Rates at 0 — set on Step 2"; exactly one leg 0 → "PHP still 0 — Step 2" / "COP still 0 — Step 2"; no upload has matched the expected week yet → "Waiting for this week's CSV" (not a zero complaint) |
 | 3 | Orphanage hours | `orphanage_pay` rows exist for the matched upload, OR `payroll.wizard.orphanage_confirmed.<weekStart>` exists | `attention` — "Paste hours or confirm none on Step 3". Real rows always outrank the confirm-none marker |
 | 4–5 | KPI bonuses | every due department — reusing the KPI rows already computed above, no duplicate queries — is ready/locked/no_bonus | `attention` listing up to 3 pending depts; `pending` (neutral) when no department is due this week |
 | 5 | Notes adjustments | zero strict-parseable Adjustment rows for the week, OR every noted worker's normalized email has a finite Adj. override in the cycle's `payroll.wizard.additions.<sourceFile>` blob | `attention` — "N of M not yet in wizard". Existence-based, not equality-based: the bridge has no per-note "applied" column, and hand-tweaked overrides after a pull are legitimate |
 | 6 | Contractor invoices | zero pending (non-stranded) invoices riding this cycle (reuses the dispatch queue's window/stranded rules) | `attention` — "N awaiting approval" |
 | 8 | Sent to dispatch | `payroll.dispatch_lock.<matchedSourceFile>` is locked | `pending` (sky/neutral) — it's the end state, not a warning |
 
-**Weekly confirm markers** (rows 2 and 3) are `app_settings` keys, audited like
-the existing `usd_to_php_rate` save:
+### USD rate — per-cycle zero-placeholder record (2026-08-03, same-day follow-up)
+
+Row 2 was redesigned the same day it shipped — the weekly `fx_confirmed`
+marker it originally read (the shape rows 2 and 3 used to share, below) is
+retired. Full rationale:
+[2026-08-03-per-cycle-fx-zero-placeholder-design.md](../superpowers/specs/2026-08-03-per-cycle-fx-zero-placeholder-design.md).
+Kane: "the placeholders for these rates should be zero, then when it's
+changed we know it was fixed." Both Step-2 rates (USD→PHP and USD→COP) now
+start at **0 for every new pay cycle**, and typing the real rate IS the
+weekly confirmation:
+
+- **Key**: `payroll.wizard.fx.<sourceFile>` (`cycleFxSettingKey` /
+  `CYCLE_FX_SETTING_PREFIX` in `wizard-setup-steps.ts` — same keying family
+  as `payroll.wizard.additions.<sourceFile>`), value `{ php: number, cop:
+  number, by: string | null, at: string | null }`. Server-side
+  (`buildWizardSetup` in `payroll-readiness.ts`) only looks this key up once
+  a CSV upload has matched the expected week — no matched upload means
+  there's no cycle yet to have rates on, hence the distinct "Waiting for
+  this week's CSV" state above rather than a zero complaint.
+- **Absent key ⇒ `php = 0, cop = 0`** — the placeholder. A new Hubstaff
+  upload mints a new `sourceFile`, so the reset happens by construction; no
+  scheduled job zeroes anything. Re-ingesting the SAME filename (duplicate
+  batch / re-sync) keeps whatever was already saved for it.
+- **Partial saves merge**: saving one leg writes that leg plus `by`/`at` and
+  preserves the other. `parseCycleFxRecord` (pure, unit-tested in
+  `wizard-setup-steps.test.ts`) treats malformed JSON as absent (`null`) and
+  any missing/negative/non-finite leg as `0` — a broken leg must always read
+  UNSET, never a garbage "set" number.
+- **Write-through, from all four Step-2 save paths** (PHP Enter / PHP Apply &
+  Save / COP Enter / COP Apply & Save — `saveCycleFxRecord` in
+  `PayrollWizard.tsx`): each validates `> 0`, then writes BOTH this cycle
+  record AND the matching global `usd_to_php_rate` / `usd_to_cop_rate` key,
+  merging the untouched leg from the last known-persisted record for that
+  file (`cycleFxRef`, kept in sync by every hydration apply and every save —
+  never from live component state, which can be stale across a file switch
+  or the save's own post-save re-fetch racing behind it; a write-sequence
+  guard plus a last-writer-wins timestamp on the ref keep a slow-arriving
+  fetch from rolling a fresh save back). The globals are never written a
+  `0`: every other consumer of the global keys (via
+  `effectiveUsdToPhpRateFromStored` / `effectiveUsdToCopRateFromStored`,
+  which replace a missing/invalid stored value with the official fallback —
+  see the design doc for the full consumer list) keeps seeing the freshest
+  real rate, exactly as before this feature.
+- **Replay is read-only**: the "Edit rate" button itself doesn't render
+  while `isReplay` (a gap this feature closed — the cards used to let you
+  edit the globals even from a replay). A replayed cycle from before this
+  feature shipped (no record was ever written for that file) falls back to
+  displaying the GLOBAL effective rate instead of 0, still read-only, so an
+  old historical view doesn't show a nonsensical unset rate.
+- **`payroll.wizard.fx_confirmed.<weekStart>` is retired.** Its key,
+  `fxConfirmedSettingKey` / `parseFxConfirmedMarker` /
+  `FX_CONFIRMED_SETTING_PREFIX`, the standalone "Confirm for this week"
+  button, and their tests are all removed from the code. Rows already
+  written under that key stay in `app_settings` as inert orphans — nothing
+  reads them any more (same precedent as every other retired per-week key in
+  this codebase).
+
+**Dispatch hard gate (Step 7 / Step 8).** A deliberate, explicit exception to
+this checklist's own "never a new gate, never affects the score" design (row
+2 above still only ever reads `attention`, never `blocked`) — Kane's call,
+because a zero cycle rate makes every USD/COP figure in the dispatch payload
+garbage. Independent of both row 2 and the dispatch-LOCK row 8: Step 8's
+"Lock in Values & Send to Payment Dispatch" button is `disabled` whenever
+`usdToPhpRate <= 0 || usdToCopRate <= 0`, its label swaps to "Set Step 2
+rates first", a defensive check inside the click handler re-toasts "Cycle FX
+rates not set" (belt and braces), and a line under the button reads "Set
+this cycle's USD → PHP and USD → COP rates on Step 2 first — dispatch is
+blocked while either is 0." Step 7's Validation Checks panel renders the
+same condition one step earlier, as a "Cycle FX Rates Set (USD→PHP &
+USD→COP)" / "Cycle FX Rates at 0 — set on Step 2 (dispatch is blocked)"
+pass/warn line. Separately, `publishFinalPaySnapshot` falls back to the
+global effective rate for the staged `fx_rate` whenever the cycle rate is
+still 0, so a staged employee-facing paystub snapshot never carries a zero —
+it can be written before the gate above ever clears.
+
+**Weekly confirm marker** (row 3 only — row 2 moved to the per-cycle record
+above) is an `app_settings` key, audited like the existing `usd_to_php_rate`
+save:
 
 | Key | Value | Written by |
 | --- | --- | --- |
-| `payroll.wizard.fx_confirmed.<weekStart>` | `{ rate, by, at }` | Step 2's Apply & Save handlers, or a standalone **"Confirm for this week"** button for no-change weeks |
 | `payroll.wizard.orphanage_confirmed.<weekStart>` | `{ none: true, by, at }` | Step 3's **"No orphanage hours this week"** button (rendered only while the cycle has zero `orphanage_pay` rows) |
 
 `<weekStart>` is **the calendar pay week** (`payrollNotesWeekStart()`) — *not*
