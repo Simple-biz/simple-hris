@@ -57,7 +57,9 @@ export interface WizardSetupInput {
   csvUpload: { sourceFile: string; uploadedAt: string; rowCount: number | null } | null;
   /** The live current upload's filename carries no parseable week range. */
   newestUploadUnparseable: boolean;
-  fxMarker: { rate: number; by: string | null; at: string | null } | null;
+  /** The cycle's per-upload FX record (see CYCLE_FX_SETTING_PREFIX). Null when
+   *  no record exists for the matched upload — which reads as rates-at-zero. */
+  fx: CycleFxRecord | null;
   orphanageRowCount: number;
   orphanageNoneMarker: boolean;
   kpi: { due: number; submitted: number; pendingDepts: string[] };
@@ -109,6 +111,44 @@ export function parseOrphanageNoneMarker(
     const o = JSON.parse(value) as { none?: unknown; by?: unknown; at?: unknown };
     if (o.none !== true) return null;
     return {
+      by: typeof o.by === 'string' ? o.by : null,
+      at: typeof o.at === 'string' ? o.at : null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+// ── Per-cycle FX record (Step 2 zero placeholders) ───────────────────────────
+
+/** The cycle's USD-anchored rates. Kept per Hubstaff upload so every NEW cycle
+ *  starts at 0 — typing the real rates IS the weekly confirmation (Kane,
+ *  2026-08-03; supersedes the fx_confirmed week marker). Absent key ⇒ both 0.
+ *  The wizard writes this AND the global usd_to_*_rate keys (write-through);
+ *  the globals never hold 0 — their effective* readers erase zeros. */
+export const CYCLE_FX_SETTING_PREFIX = 'payroll.wizard.fx.';
+
+export function cycleFxSettingKey(sourceFile: string): string {
+  return `${CYCLE_FX_SETTING_PREFIX}${sourceFile}`;
+}
+
+export interface CycleFxRecord {
+  php: number;
+  cop: number;
+  by: string | null;
+  at: string | null;
+}
+
+/** Malformed/null ⇒ null (treated as absent). Invalid/negative legs read 0 —
+ *  a broken leg must look UNSET, never set. */
+export function parseCycleFxRecord(value: string | null): CycleFxRecord | null {
+  if (!value) return null;
+  try {
+    const o = JSON.parse(value) as { php?: unknown; cop?: unknown; by?: unknown; at?: unknown };
+    const leg = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : 0);
+    return {
+      php: leg(o.php),
+      cop: leg(o.cop),
       by: typeof o.by === 'string' ? o.by : null,
       at: typeof o.at === 'string' ? o.at : null,
     };
@@ -188,20 +228,31 @@ export function deriveWizardSetupSteps(input: WizardSetupInput): WizardSetup {
     });
   }
 
-  // 2 · USD → PHP rate confirmed for the week.
+  // 2 · USD rates set for the cycle — zero is the placeholder; both legs must
+  // be non-zero. No matched CSV means there is no cycle to set rates on yet.
   if (degraded('fx')) {
-    steps.push({ key: 'fx', stepNo: '2', label: 'USD rate confirmed', status: 'pending', detail: "Couldn't read the weekly confirmation" });
-  } else if (input.fxMarker) {
-    const stamp = manilaStampLabel(input.fxMarker.at);
-    steps.push({
-      key: 'fx',
-      stepNo: '2',
-      label: 'USD rate confirmed',
-      status: 'done',
-      detail: `₱${input.fxMarker.rate} / $1${input.fxMarker.by ? ` · ${input.fxMarker.by}` : ''}${stamp ? ` · ${stamp}` : ''}`,
-    });
+    steps.push({ key: 'fx', stepNo: '2', label: 'USD rate confirmed', status: 'pending', detail: "Couldn't read the cycle rates" });
+  } else if (!input.csvUpload) {
+    steps.push({ key: 'fx', stepNo: '2', label: 'USD rate confirmed', status: 'attention', detail: "Waiting for this week's CSV" });
   } else {
-    steps.push({ key: 'fx', stepNo: '2', label: 'USD rate confirmed', status: 'attention', detail: 'Not confirmed — Confirm on Step 2' });
+    const php = input.fx?.php ?? 0;
+    const cop = input.fx?.cop ?? 0;
+    if (php > 0 && cop > 0) {
+      const stamp = manilaStampLabel(input.fx?.at ?? null);
+      steps.push({
+        key: 'fx',
+        stepNo: '2',
+        label: 'USD rate confirmed',
+        status: 'done',
+        detail: `₱${php} · COP ${new Intl.NumberFormat('en-US').format(cop)} / $1${input.fx?.by ? ` · ${input.fx.by}` : ''}${stamp ? ` · ${stamp}` : ''}`,
+      });
+    } else if (php <= 0 && cop <= 0) {
+      steps.push({ key: 'fx', stepNo: '2', label: 'USD rate confirmed', status: 'attention', detail: 'Rates at 0 — set on Step 2' });
+    } else if (php <= 0) {
+      steps.push({ key: 'fx', stepNo: '2', label: 'USD rate confirmed', status: 'attention', detail: 'PHP still 0 — Step 2' });
+    } else {
+      steps.push({ key: 'fx', stepNo: '2', label: 'USD rate confirmed', status: 'attention', detail: 'COP still 0 — Step 2' });
+    }
   }
 
   // 3 · Orphanage hours — real rows always outrank the confirm-none marker.

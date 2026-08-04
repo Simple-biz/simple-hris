@@ -94,11 +94,11 @@ import { listPayrollWizardNotes } from '@/lib/supabase/payroll-wizard-notes';
 import { parseAdjustmentAmount } from '@/lib/payroll/adjustment-bridge';
 import { isInvoiceInPeriod } from '@/lib/contractor/invoice-period';
 import {
+  cycleFxSettingKey,
   deriveWizardSetupSteps,
-  fxConfirmedSettingKey,
   orphanageConfirmedSettingKey,
+  parseCycleFxRecord,
   parseDispatchLockValue,
-  parseFxConfirmedMarker,
   parseOrphanageNoneMarker,
   type WizardSetup,
   type WizardSetupStepKey,
@@ -1420,7 +1420,7 @@ async function buildWizardSetup(
 
   const [settings, orphanageRows, notesRes, additionsRaw, contractorsPending] = await Promise.all([
     getAppSettings([
-      fxConfirmedSettingKey(expectedWeekStart),
+      ...(matched?.source_file ? [cycleFxSettingKey(matched.source_file)] : []),
       orphanageConfirmedSettingKey(expectedWeekStart),
       ...(matched?.source_file ? [`payroll.dispatch_lock.${matched.source_file}`] : []),
     ]).catch(() => null),
@@ -1501,7 +1501,9 @@ async function buildWizardSetup(
       ? { sourceFile: matched.source_file, uploadedAt: matched.uploaded_at, rowCount: matched.row_count }
       : null,
     newestUploadUnparseable,
-    fxMarker: parseFxConfirmedMarker(settings?.[fxConfirmedSettingKey(expectedWeekStart)] ?? null),
+    fx: matched?.source_file
+      ? parseCycleFxRecord(settings?.[cycleFxSettingKey(matched.source_file)] ?? null)
+      : null,
     orphanageRowCount: (orphanageRows ?? []).length,
     orphanageNoneMarker:
       parseOrphanageNoneMarker(settings?.[orphanageConfirmedSettingKey(expectedWeekStart)] ?? null) !== null,

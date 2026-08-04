@@ -2,9 +2,11 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  cycleFxSettingKey,
   deriveWizardSetupSteps,
   fxConfirmedSettingKey,
   orphanageConfirmedSettingKey,
+  parseCycleFxRecord,
   parseDispatchLockValue,
   parseFxConfirmedMarker,
   parseOrphanageNoneMarker,
@@ -19,7 +21,7 @@ const ALL_DONE: WizardSetupInput = {
   paneWeekLabel: 'Jul 26 – Aug 1',
   csvUpload: { sourceFile: 'simple-biz_daily_report_2026-07-26_to_2026-08-01.csv', uploadedAt: '2026-08-02T05:10:00Z', rowCount: 412 },
   newestUploadUnparseable: false,
-  fxMarker: { rate: 58.9, by: 'lenny@simple.biz', at: '2026-08-02T06:00:00Z' },
+  fx: { php: 58.9, cop: 4050, by: 'lenny@simple.biz', at: '2026-08-02T06:00:00Z' },
   orphanageRowCount: 4,
   orphanageNoneMarker: false,
   kpi: { due: 9, submitted: 9, pendingDepts: [] },
@@ -63,11 +65,60 @@ test('missing CSV with unparseable newest upload → attention, not blocked', ()
   assert.equal(step(setup, 'csv').status, 'attention');
 });
 
-test('fx unconfirmed → attention pointing at Step 2', () => {
-  const setup = deriveWizardSetupSteps({ ...ALL_DONE, fxMarker: null });
-  const fx = step(setup, 'fx');
-  assert.equal(fx.status, 'attention');
-  assert.match(fx.detail, /Step 2/);
+test('fx: absent record or both zero → "Rates at 0"; single zero names the missing leg; both set → done', () => {
+  const absent = step(deriveWizardSetupSteps({ ...ALL_DONE, fx: null }), 'fx');
+  assert.equal(absent.status, 'attention');
+  assert.match(absent.detail, /Rates at 0/);
+  const bothZero = step(
+    deriveWizardSetupSteps({ ...ALL_DONE, fx: { php: 0, cop: 0, by: null, at: null } }),
+    'fx',
+  );
+  assert.equal(bothZero.status, 'attention');
+  assert.match(bothZero.detail, /Rates at 0/);
+  const phpZero = step(
+    deriveWizardSetupSteps({ ...ALL_DONE, fx: { php: 0, cop: 4050, by: null, at: null } }),
+    'fx',
+  );
+  assert.equal(phpZero.status, 'attention');
+  assert.match(phpZero.detail, /PHP still 0/);
+  const copZero = step(
+    deriveWizardSetupSteps({ ...ALL_DONE, fx: { php: 58.9, cop: 0, by: null, at: null } }),
+    'fx',
+  );
+  assert.equal(copZero.status, 'attention');
+  assert.match(copZero.detail, /COP still 0/);
+  const done = step(deriveWizardSetupSteps(ALL_DONE), 'fx');
+  assert.equal(done.status, 'done');
+  assert.match(done.detail, /58\.9/);
+  assert.match(done.detail, /4,050/);
+});
+
+test('fx: no matched CSV → waiting for the CSV (not a zero complaint)', () => {
+  const s = step(
+    deriveWizardSetupSteps({
+      ...ALL_DONE,
+      csvUpload: null,
+      paneWeekStart: '2026-07-19',
+      paneWeekLabel: 'Jul 19 – Jul 25',
+      fx: null,
+    }),
+    'fx',
+  );
+  assert.equal(s.status, 'attention');
+  assert.match(s.detail, /CSV/);
+});
+
+test('cycleFxSettingKey + parseCycleFxRecord', () => {
+  assert.equal(cycleFxSettingKey('a.csv'), 'payroll.wizard.fx.a.csv');
+  assert.deepEqual(
+    parseCycleFxRecord('{"php":58.9,"cop":4050,"by":"a@b.c","at":"2026-08-09T02:11:00Z"}'),
+    { php: 58.9, cop: 4050, by: 'a@b.c', at: '2026-08-09T02:11:00Z' },
+  );
+  // partial / sloppy records normalize: missing or invalid legs read 0, extra fields drop
+  assert.deepEqual(parseCycleFxRecord('{"php":58.9}'), { php: 58.9, cop: 0, by: null, at: null });
+  assert.deepEqual(parseCycleFxRecord('{"php":-1,"cop":"x"}'), { php: 0, cop: 0, by: null, at: null });
+  assert.equal(parseCycleFxRecord('not json'), null);
+  assert.equal(parseCycleFxRecord(null), null);
 });
 
 test('orphanage: rows outrank the none-marker; none-marker alone is done; neither is attention', () => {
@@ -116,7 +167,7 @@ test('contractors pending → attention; dispatch unlocked → pending (neutral 
 });
 
 test('a degraded read → pending "couldn\'t read", never done or blocked', () => {
-  const setup = deriveWizardSetupSteps({ ...ALL_DONE, fxMarker: null, degradedKeys: new Set(['fx']) });
+  const setup = deriveWizardSetupSteps({ ...ALL_DONE, fx: null, degradedKeys: new Set(['fx']) });
   const fx = step(setup, 'fx');
   assert.equal(fx.status, 'pending');
   assert.match(fx.detail, /read/i);
