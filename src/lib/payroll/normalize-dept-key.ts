@@ -1,3 +1,5 @@
+import { matchHslSubDeptKey } from '@/lib/hsl-bonus/schema';
+
 /**
  * Maps a raw Supabase `Department` string to payroll department keys (Payroll Wizard tabs).
  * Case-insensitive; trims whitespace.
@@ -6,9 +8,11 @@ export function normalizeDeptToKey(raw: string | null | undefined): string | nul
   if (!raw) return null;
   const s = raw.trim().toLowerCase();
   // Department transfers into an HSL sub-team write the namespaced access key
-  // (e.g. "hsl:intake_specialist") into the master list's Department column.
-  // Whatever the sub-team, those people belong to Hogan Smith Law.
-  if (s.startsWith('hsl:')) return 'hogan_smith_law';
+  // (e.g. "hsl:intake_specialist") into the master list's Department column;
+  // HR Pipeline intake or a direct profile edit may instead use the branch's
+  // plain display name (e.g. "Intake Specialist"). Either way, whatever the
+  // sub-team, those people belong to Hogan Smith Law.
+  if (matchHslSubDeptKey(raw)) return 'hogan_smith_law';
   const map: Record<string, string> = {
     accounting: 'accounting',
     'accounting team': 'accounting',

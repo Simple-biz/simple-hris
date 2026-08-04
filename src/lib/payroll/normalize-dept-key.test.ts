@@ -28,6 +28,15 @@ test('long-standing folds still hold', () => {
   assert.equal(normalizeDeptToKey('Unknown Dept'), null);
 });
 
+test('plain HSL branch display names resolve to hogan_smith_law too', () => {
+  assert.equal(normalizeDeptToKey('Case Managers'), 'hogan_smith_law');
+  assert.equal(normalizeDeptToKey('case managers'), 'hogan_smith_law');
+  assert.equal(normalizeDeptToKey('SSD Medical Records'), 'hogan_smith_law');
+  // Regression: the namespaced form and the generic tag must still resolve.
+  assert.equal(normalizeDeptToKey('hsl:intake_specialist'), 'hogan_smith_law');
+  assert.equal(normalizeDeptToKey('HSL'), 'hogan_smith_law');
+});
+
 // ── the PH email override list ───────────────────────────────────────────────
 
 test('override rewrites the ambiguous "Sales" label for PH cohort emails', () => {
