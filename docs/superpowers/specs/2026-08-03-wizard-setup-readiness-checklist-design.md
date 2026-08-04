@@ -146,6 +146,10 @@ start date stays; past-week view excludes a person hired after that week.
 
 ## Weekly confirm markers (app_settings, audited)
 
+> **SUPERSEDED for fx (2026-08-03, same day):** the fx confirm marker below was
+> replaced by per-cycle zero-placeholder rates — see
+> `2026-08-03-per-cycle-fx-zero-placeholder-design.md`. The orphanage marker stands.
+
 | Key | Value | Written by |
 |-----|-------|-----------|
 | `payroll.wizard.fx_confirmed.<weekStart>` | `{ rate, by, at }` | Step 2's existing Apply & Save handlers (`PayrollWizard.tsx:9995` Enter, `:10049` button), plus a new lightweight **"Confirm for this week"** button on the rate card for no-change weeks |
