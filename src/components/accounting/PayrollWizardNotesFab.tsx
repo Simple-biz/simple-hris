@@ -3834,6 +3834,11 @@ function OffboardedGlance({
 }) {
   const [people, setPeople] = useState<OffboardedPayrollCandidate[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Sources the server couldn't read this load (e.g. employee_ids or the
+  // legacy rates sheet) — bank status below is judged against whatever DID
+  // come back, so this must be said out loud rather than read as a genuine
+  // "no bank on file". Mirrors PayrollReadinessGlance's own degraded banner.
+  const [degraded, setDegraded] = useState<string[]>([]);
   const [ratePerson, setRatePerson] = useState<ReadinessMissingRate | null>(null);
   const [bankPerson, setBankPerson] = useState<ReadinessMissingBank | null>(null);
   const [bankPrefill, setBankPrefill] = useState<OffboardedPayrollCandidate["bankPrefill"]>(null);
@@ -3842,9 +3847,14 @@ function OffboardedGlance({
     const qs = wizardSourceFile ? `?source_file=${encodeURIComponent(wizardSourceFile)}` : "";
     return fetch(`/api/payroll-wizard/offboarded${qs}`, { cache: "no-store" })
       .then(async (res) => {
-        const json = (await res.json()) as { people?: OffboardedPayrollCandidate[]; error?: string | null };
+        const json = (await res.json()) as {
+          people?: OffboardedPayrollCandidate[];
+          degraded?: string[];
+          error?: string | null;
+        };
         if (!res.ok || json.error) throw new Error(json.error || `Load failed (${res.status})`);
         setPeople(json.people ?? []);
+        setDegraded(json.degraded ?? []);
         setError(null);
       })
       .catch((e) => {
@@ -3887,6 +3897,25 @@ function OffboardedGlance({
 
   return (
     <div className="h-[70vh] overflow-y-auto rounded-lg border border-orange-100 p-1 dark:border-blue-950/60">
+      {/* Partial-data warning — same treatment as PayrollReadinessGlance's:
+          a read that failed reshapes bank status quietly (toward "missing"),
+          so it must be said out loud rather than read as a real gap. */}
+      {degraded.length > 0 && (
+        <div
+          role="alert"
+          className="mb-2 rounded-xl border border-amber-300/70 bg-amber-50/80 px-3 py-2 dark:border-amber-500/30 dark:bg-amber-950/30"
+        >
+          <div className="flex items-center gap-1.5 text-[11px] font-semibold text-amber-800 dark:text-amber-200">
+            <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+            Partial data this load — these checks couldn&apos;t run fully
+          </div>
+          <ul className="mt-1 list-disc space-y-0.5 pl-5 text-[10.5px] text-amber-700/90 dark:text-amber-300/80">
+            {degraded.map((d) => (
+              <li key={d}>{d}</li>
+            ))}
+          </ul>
+        </div>
+      )}
       <div className="space-y-0.5">
         {people.map((r) => (
           <PersonLine
