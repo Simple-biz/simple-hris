@@ -447,6 +447,17 @@ export function formatActionLabel(action: string, details: Record<string, unknow
       const src = String(pick(details, 'source_label', 'source') ?? '');
       return `KPI ${verb}: ${dept} for ${period}${src ? ` (via ${src})` : ''}`;
     }
+    case 'payroll.bank.exempted': {
+      const who = String(pick(details, 'person', 'work_email', 'personal_email') ?? '?');
+      const week = String(details?.week_start ?? '?');
+      const why = details?.reason ? ` — ${String(details.reason)}` : '';
+      return `Bank info temporarily exempted: ${who} for the week of ${week}${why}`;
+    }
+    case 'payroll.bank.exemption_undone': {
+      const who = String(pick(details, 'person', 'work_email') ?? '?');
+      const week = String(details?.week_start ?? '?');
+      return `Bank info exemption UNDONE: ${who} for the week of ${week}`;
+    }
 
     // ── Employee rates / auth ───────────────────────────────────────────
     case 'employee.rates.revoke': {

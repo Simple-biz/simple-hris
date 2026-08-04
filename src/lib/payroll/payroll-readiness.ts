@@ -24,10 +24,15 @@ import 'server-only';
  *                           Off-boarded people stay only while their final pay is
  *                           pending (hours in the week in view, or left during/
  *                           after it) — once the week being paid starts after
- *                           their off-board date they age off the list.
+ *                           their off-board date they age off the list. Anyone
+ *                           Accounting granted a per-week "Temporary Exemption"
+ *                           moves out of this family and into the exceptions
+ *                           below for that week only.
  *   4. Exceptions         — HR onboarding-pipeline hires who naturally won't be
  *                           paid this week (still onboarding, no-show, or started
- *                           this week so their first period hasn't closed).
+ *                           this week so their first period hasn't closed), plus
+ *                           bank-info Temporary Exemptions (see
+ *                           payroll-bank-exemptions.ts).
  *
  * Everything is derived from the same primitives payroll itself uses, so the
  * checklist stays honest:
@@ -90,6 +95,10 @@ import {
   type ReadinessScoreComponent,
 } from '@/lib/payroll/readiness-score';
 import { listOrphanagePay } from '@/lib/supabase/orphanage-pay-db';
+import {
+  listActiveBankExemptions,
+  type PayrollBankExemptionRow,
+} from '@/lib/supabase/payroll-bank-exemptions';
 import { listPayrollWizardNotes } from '@/lib/supabase/payroll-wizard-notes';
 import { parseAdjustmentAmount } from '@/lib/payroll/adjustment-bridge';
 import { isInvoiceInPeriod } from '@/lib/contractor/invoice-period';
@@ -190,12 +199,38 @@ export interface ReadinessMissingBank {
   offBoardedAt: string | null;
 }
 
+/**
+ * A person still missing payout details whom Accounting granted a per-week
+ * "Temporary Exemption" — acknowledged for the week in view, so they leave the
+ * Bank Info list and the score's bank dimension and show up as an exception
+ * instead. Week-scoped: they reappear on the Bank Info list next week if their
+ * details are still missing (see payroll-bank-exemptions.ts).
+ */
+export interface ReadinessBankExemption {
+  name: string;
+  email: string | null;
+  department: string | null;
+  /** The processor picked but left incomplete, if any — same as the bank list's. */
+  processor: string | null;
+  /** True when this person has hours in the week-in-view's Hubstaff upload.
+   *  Kept for context: it's WHY the exemption mattered (they'd otherwise be a
+   *  hard score blocker), even though an exemption zeroes that either way. */
+  onPayroll: boolean;
+  /** `payroll_bank_exemptions.id` — the key the Undo action posts back. */
+  exemptionId: string;
+  /** Optional one-liner Accounting typed in the confirm dialog. */
+  reason: string | null;
+  /** Who granted it (actor email), when known. */
+  exemptedBy: string | null;
+}
+
 /** Why a person is expected NOT to be paid this week (an onboarding exception). */
 export type ExceptionKind =
   | 'onboarding' // still mid-onboarding (not yet promoted)
   | 'awaiting_orientation' // ready but manager hasn't confirmed orientation
   | 'no_show' // marked no-show — will not be paid
-  | 'started_this_week'; // promoted, but started in the current pay week
+  | 'started_this_week' // promoted, but started in the current pay week
+  | 'bank_exempt'; // no bank info, temporarily exempted for THIS week only
 
 export interface ReadinessException {
   name: string;
@@ -204,6 +239,9 @@ export interface ReadinessException {
   kind: ExceptionKind;
   /** Human sub-label, e.g. a start date. */
   detail: string | null;
+  /** Set on `bank_exempt` rows only: `payroll_bank_exemptions.id`, so the row
+   *  can offer an Undo. Null on every HR-pipeline exception. */
+  exemptionId?: string | null;
 }
 
 export interface PayrollReadiness {
@@ -1079,6 +1117,51 @@ async function loadOffboardDatesByEmail(): Promise<Map<string, string>> {
   return byEmail;
 }
 
+/**
+ * The week's active bank-info Temporary Exemptions, indexed by the identity keys
+ * the bank list matches on.
+ *
+ * Email keys are preferred and the `name:` fallback is used ONLY when the
+ * exemption carries no email at all — unlike the HR-exception set, which always
+ * adds a name key. That matters here: the master list is full of namesakes and
+ * duplicate person rows, so a blanket name key would silently exempt someone
+ * who was never exempted (hiding a real payday blocker), whereas an
+ * email-keyed exemption can only ever match the person it was filed against.
+ *
+ * Best-effort by design, like {@link loadContractorEmails}: a failed read just
+ * leaves everyone on the Bank Info list (the pre-exemption behaviour). That
+ * over-flags and makes the score read WORSE, never better, so it doesn't join
+ * `degraded` — the whole point of that array is catching failures that flatter
+ * the dashboard.
+ */
+async function loadBankExemptions(
+  weekStart: string,
+): Promise<Map<string, PayrollBankExemptionRow>> {
+  const byIdentity = new Map<string, PayrollBankExemptionRow>();
+  try {
+    const { rows, error } = await listActiveBankExemptions(weekStart);
+    if (error) return byIdentity;
+    for (const r of rows) {
+      const emails = [normEmail(r.work_email ?? ''), normEmail(r.personal_email ?? '')].filter(
+        (e): e is string => Boolean(e),
+      );
+      const keys =
+        emails.length > 0
+          ? emails
+          : (r.name ?? '').trim()
+            ? [`name:${r.name.trim().toLowerCase()}`]
+            : [];
+      // First-wins: the list is ordered oldest-first, so if two rows somehow
+      // share a key the original exemption is the one that's honoured (and the
+      // one an Undo will clear).
+      for (const k of keys) if (!byIdentity.has(k)) byIdentity.set(k, r);
+    }
+  } catch {
+    // best-effort — see the doc comment above.
+  }
+  return byIdentity;
+}
+
 async function buildMissingBank(
   /** See {@link buildMissingRates} — the shared roster snapshot. */
   employees: EmployeeRow[],
@@ -1096,12 +1179,22 @@ async function buildMissingBank(
   payrollEmails: Set<string>,
   /** See {@link loadOffboardDatesByEmail}. */
   offboardDateByEmail: Map<string, string>,
+  /** See {@link loadBankExemptions} — the week's Temporary Exemptions, keyed by
+   *  identity. An exempted person leaves BOTH this list and BOTH denominators
+   *  (the same treatment paused departments and onboarding exceptions get) and
+   *  is returned under `exemptRows` instead, for the Exceptions list. */
+  exemptByIdentity: Map<string, PayrollBankExemptionRow>,
 ): Promise<{
   rows: ReadinessMissingBank[];
   eligibleCount: number;
   /** Of `eligibleCount`, how many are on this week's payroll (any alias with
    *  hours in the week's Hubstaff file) — the score's bank denominator. */
   onPayrollEligibleCount: number;
+  /** The exempted people who ARE still missing payout details. Judged with the
+   *  same `isPayoutComplete` call as everyone else, so an exemption that has
+   *  since been made moot (someone set their bank afterwards) quietly drops off
+   *  instead of lingering as a stale "exempt" row. */
+  exemptRows: ReadinessBankExemption[];
   degraded: string[];
 }> {
   const [idsRes, ratesRes] = await Promise.all([
@@ -1145,6 +1238,7 @@ async function buildMissingBank(
   // or not; `out` is only the ones missing payout details.
   const seen = new Set<string>();
   const out: ReadinessMissingBank[] = [];
+  const exemptRows: ReadinessBankExemption[] = [];
   let eligibleCount = 0;
   let onPayrollEligibleCount = 0;
   for (const e of employees) {
@@ -1202,9 +1296,6 @@ async function buildMissingBank(
     // week and for past weeks via the selector alike.
     if (isFutureHireForWeek(startedIso, weekStart, onPayroll)) continue;
 
-    eligibleCount += 1;
-    if (onPayroll) onPayrollEligibleCount += 1;
-
     const idRow = (w && idRowByEmail.get(w)) || (p && idRowByEmail.get(p)) || null;
     const rates = (w && ratesByEmail.get(w)) || (p && ratesByEmail.get(p)) || null;
     const extras: PayoutLegacyExtras | undefined = rates
@@ -1215,7 +1306,37 @@ async function buildMissingBank(
           higlobeAccountName: rates.higlobe_account_name,
         }
       : undefined;
-    if (isPayoutComplete(idRow, extras)) continue;
+    const payable = isPayoutComplete(idRow, extras);
+
+    // Temporary Exemption for THIS week (Readiness → Bank Info): Accounting has
+    // acknowledged the gap, so the person is an expected non-payment — out of
+    // the list and out of BOTH denominators, exactly like a paused department or
+    // an onboarding exception, and onto the Exceptions list instead. Judged
+    // AFTER payability so an exemption someone has since made moot (their bank
+    // got set) simply stops rendering rather than lingering as a stale row —
+    // and so an exempted-but-payable person still counts as normal coverage.
+    const exemption =
+      [w, p].map((em) => (em ? exemptByIdentity.get(em) : undefined)).find(Boolean) ??
+      (n ? exemptByIdentity.get(`name:${n}`) : undefined) ??
+      null;
+    if (exemption && !payable) {
+      exemptRows.push({
+        name: e.name ?? w ?? p ?? '—',
+        email: e.work_email ?? e.personal_email ?? null,
+        department: e.department ?? null,
+        processor: resolveEffectivePayoutProcessor(idRow, extras),
+        onPayroll,
+        exemptionId: exemption.id,
+        reason: exemption.reason,
+        exemptedBy: exemption.created_by,
+      });
+      continue;
+    }
+
+    eligibleCount += 1;
+    if (onPayroll) onPayrollEligibleCount += 1;
+
+    if (payable) continue;
     out.push({
       name: e.name ?? w ?? p ?? '—',
       email: e.work_email ?? e.personal_email ?? null,
@@ -1232,7 +1353,8 @@ async function buildMissingBank(
   // Blockers surface first so the list starts with the people whose payday is
   // actually at stake this week; names stay alphabetical within groups.
   out.sort((a, b) => Number(b.onPayroll) - Number(a.onPayroll) || a.name.localeCompare(b.name));
-  return { rows: out, eligibleCount, onPayrollEligibleCount, degraded };
+  exemptRows.sort((a, b) => a.name.localeCompare(b.name));
+  return { rows: out, eligibleCount, onPayrollEligibleCount, exemptRows, degraded };
 }
 
 // ── Onboarding exceptions ─────────────────────────────────────────────────────
@@ -1549,20 +1671,28 @@ export async function getPayrollReadiness(
   // The active master roster is fetched ONCE here and shared by the KPI
   // (department universe), rate (aliases), and bank (population) checks — one
   // consistent snapshot instead of three racing reads.
-  const [pausedRaw, registry, rosterRes, exceptionsRes, offboardDateByEmail, contractorEmails] =
-    await Promise.all([
-      resolvedFile
-        ? getAppSetting(deptPayPausedSettingKey(resolvedFile)).catch(() => undefined)
-        : Promise.resolve(null),
-      getDepartmentRegistry().catch(() => null),
-      getEmployeesForAuthorizedServerRoute().catch(() => ({
-        employees: [] as EmployeeRow[],
-        error: 'unreachable',
-      })),
-      buildExceptions(weekStart),
-      loadOffboardDatesByEmail(),
-      loadContractorEmails(),
-    ]);
+  const [
+    pausedRaw,
+    registry,
+    rosterRes,
+    exceptionsRes,
+    offboardDateByEmail,
+    contractorEmails,
+    bankExemptByIdentity,
+  ] = await Promise.all([
+    resolvedFile
+      ? getAppSetting(deptPayPausedSettingKey(resolvedFile)).catch(() => undefined)
+      : Promise.resolve(null),
+    getDepartmentRegistry().catch(() => null),
+    getEmployeesForAuthorizedServerRoute().catch(() => ({
+      employees: [] as EmployeeRow[],
+      error: 'unreachable',
+    })),
+    buildExceptions(weekStart),
+    loadOffboardDatesByEmail(),
+    loadContractorEmails(),
+    loadBankExemptions(weekStart),
+  ]);
 
   const degraded: string[] = [...weekDegraded, ...exceptionsRes.degraded];
   if (pausedRaw === undefined) {
@@ -1605,7 +1735,9 @@ export async function getPayrollReadiness(
   const { identities: exceptionIdentities } = exceptionsRes;
   // Pay-paused departments' hires are expected non-payments of a different
   // kind — the whole department is off — so they don't clutter the list.
-  const exceptions = exceptionsRes.rows.filter((r) => !isPausedDept(r.department));
+  // Bank-info Temporary Exemptions join this list further down, once the bank
+  // check has decided which of them are still genuinely missing details.
+  const hrExceptions = exceptionsRes.rows.filter((r) => !isPausedDept(r.department));
 
   const [kpi, ratesRes] = await Promise.all([
     buildKpiReadiness(weekStart, isMonthlyPayWeek, registrySafe, pausedDeptKeys, masterDeptLabels),
@@ -1630,11 +1762,28 @@ export async function getPayrollReadiness(
     weekStart,
     ratesRes.payrollEmails,
     offboardDateByEmail,
+    bankExemptByIdentity,
   );
   degraded.push(...ratesRes.degraded, ...bankRes.degraded);
 
   const missingBank = bankRes.rows;
   const missingBankOnPayroll = missingBank.reduce((n, r) => n + (r.onPayroll ? 1 : 0), 0);
+
+  // Temporarily-exempted people join the exceptions list — the same "expected
+  // non-payment" shelf as onboarding hires and no-shows, which is exactly what
+  // an exemption declares them to be for this week. They carry their exemption
+  // id so the row can offer an Undo.
+  const exceptions: ReadinessException[] = [
+    ...hrExceptions,
+    ...bankRes.exemptRows.map((r) => ({
+      name: r.name,
+      email: r.email,
+      department: r.department,
+      kind: 'bank_exempt' as const,
+      detail: r.reason,
+      exemptionId: r.exemptionId,
+    })),
+  ];
 
   // The score's bank denominator: eligible roster people who are actually being
   // PAID this week (any alias with hours in the week's Hubstaff file). The full

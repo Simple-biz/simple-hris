@@ -116,9 +116,10 @@ No migration — everything reads existing tables.
    selector), unless they have hours in the week's file (`onPayroll` always
    wins over a stale/wrong start date — same fail-safe shape as the off-board
    guard). A missing or unparseable start date fails safe and stays listed.
-4. **Exceptions** — HR onboarding-pipeline people expected NOT to be paid this
-   week: `onboarding`, `awaiting_orientation`, `no_show`, `started_this_week`
-   (first pay period hasn't closed). **Excluded from the score entirely** —
+4. **Exceptions** — people expected NOT to be paid this week: the HR
+   onboarding-pipeline kinds `onboarding`, `awaiting_orientation`, `no_show`,
+   `started_this_week` (first pay period hasn't closed), plus `bank_exempt`
+   (a hand-granted Temporary Exemption — see below). **Excluded from the score entirely** —
    their identities (all email aliases + a name fallback) are also subtracted
    from the rate/bank lists AND denominators, so an expected non-payment never
    costs points anywhere. Week-scoped (2026-08-03): a row also leaves that
@@ -135,6 +136,67 @@ Configuration") but leave every dimension — numerators and denominators — so
 the score describes only the departments actually being paid. The exclusion is
 keyed per Hubstaff source file, so a new week snaps everything back. Pausing
 Hogan Smith Law pauses every HSL sub-dept with it.
+
+### Bank Info "Temporary Exemption" (2026-08-04)
+
+A **"Temporary Exemption"** button sits beside "Set bank" on every Bank Info row
+(`canEdit`-gated). It is the *acknowledge* action next to the *fix* action: when
+Accounting knows a person's payout details won't land this week, they excuse the
+gap for **one pay week** instead of leaving a permanent-looking blocker on the
+board.
+
+Effect, on save (a confirm dialog with an optional one-line reason):
+
+- the person leaves the **Bank Info list** and **both bank denominators**
+  (`eligibleCount` / `bankOnPayrollCount`) — the same treatment paused
+  departments and onboarding exceptions get, so the score re-curves over the
+  people actually still owed attention;
+- they appear immediately under **Exceptions** as `bank_exempt`, badged
+  "Temp exempt" (violet — the one exception a human granted by hand), with the
+  reason in the badge tooltip and an **Undo** action on the row;
+- the score's "Never counted against the score" list in the details modal gains
+  a line for them, split out from the HR-pipeline exception count.
+
+**Week-scoped, no expiry job.** A record is only honoured for the `week_start`
+it was filed against (the readiness week in view — the Hubstaff filename's
+date-range start), so the person **reappears on next week's Bank Info list
+automatically** if their details are still missing. Nothing schedules or sweeps.
+
+**Readiness-only by design.** `payroll-readiness.ts` is the sole reader —
+Payment Dispatch never sees these records, so an exemption changes nothing about
+payability. Someone with no payout rail still can't be paid, and the dialog says
+so outright when the person has hours that week.
+
+Two behaviours worth knowing:
+
+- The exemption is judged **after** `isPayoutComplete`, so an exemption someone
+  has since made moot (their bank got set) simply stops rendering rather than
+  lingering as a stale "exempt" row — and an exempted-but-payable person counts
+  as normal coverage again.
+- Identity matching prefers **email keys**; the `name:` fallback is used only
+  when the exemption carries no email at all (unlike the HR-exception set, which
+  always adds a name key). The master list is full of namesakes and duplicate
+  person rows, so a blanket name key could silently exempt someone who was
+  never exempted — i.e. hide a real payday blocker.
+
+Storage: `payroll_bank_exemptions`
+(`references/sql/create/create_payroll_bank_exemptions.sql` — **run this
+migration before the feature works**), accessed via
+`src/lib/supabase/payroll-bank-exemptions.ts`, mutated through
+`app/api/payroll-wizard/bank-exemptions/route.ts` (`view` to read, `edit` to
+file/undo — the same grant behind the inline fixers). Undo is a **soft delete**
+(`revoked_at`/`revoked_by`, mirroring `employee_roles`) so who exempted whom and
+who reversed it both stay on record; a partial-unique index over the active
+slice makes a double-click a no-op that returns the existing row rather than
+stacking duplicates. Audited as `payroll.bank.exempted` /
+`payroll.bank.exemption_undone`.
+
+The read is **best-effort and deliberately not in `degraded[]`**: a failed read
+leaves everyone on the Bank Info list (the pre-exemption behaviour), which
+over-flags and makes the score read *worse*, never better — and `degraded[]`
+exists to catch failures that flatter the dashboard. Verified against the live
+DB before the migration ran: readiness composed clean (`degraded: none`) with
+identical numbers, exercising exactly that path.
 
 ### Auto-Ready (`no_bonus`)
 

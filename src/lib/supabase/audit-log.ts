@@ -19,6 +19,10 @@ export type AuditAction =
   | 'payroll.kpi.marked_ready'
   | 'payroll.kpi.locked'
   | 'payroll.kpi.reopened'
+  // Bank Info "Temporary Exemption" — a per-week acknowledgement that moves
+  // someone off the missing-bank list (and out of the score) onto Exceptions.
+  | 'payroll.bank.exempted'
+  | 'payroll.bank.exemption_undone'
   // Contractor decisions
   | 'contractor.decided'
   | 'contractor.retracted'

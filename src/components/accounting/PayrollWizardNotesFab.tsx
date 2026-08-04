@@ -1597,6 +1597,14 @@ const EXCEPTION_META: Record<ExceptionKind, { label: string; cls: string; Icon: 
     cls: "border-sky-200 bg-sky-50 text-sky-700 dark:border-sky-500/30 dark:bg-sky-500/10 dark:text-sky-300",
     Icon: UserPlus,
   },
+  // Missing bank info that Accounting excused for THIS week from the Bank Info
+  // tab. Violet keeps it visually distinct from the HR-pipeline kinds: it's the
+  // one exception a human granted by hand, and the only one with an Undo.
+  bank_exempt: {
+    label: "Temp exempt",
+    cls: "border-violet-200 bg-violet-50 text-violet-700 dark:border-violet-500/30 dark:bg-violet-500/10 dark:text-violet-300",
+    Icon: Clock,
+  },
 };
 
 /** The Readiness pane's five inner tabs — Wizard Setup (a per-week prerequisite
@@ -2243,11 +2251,16 @@ function RowFixButton({
   onClick,
   disabled,
   title,
+  Icon = Pencil,
 }: {
   label: string;
   onClick: () => void;
   disabled?: boolean;
   title?: string;
+  /** Leading glyph — defaults to the pencil the edit actions share. Actions that
+   *  aren't edits (e.g. a per-week exemption) pass their own so two buttons on
+   *  the same row don't read as the same kind of thing. */
+  Icon?: typeof Pencil;
 }) {
   return (
     <button
@@ -2257,7 +2270,7 @@ function RowFixButton({
       title={title}
       className="inline-flex shrink-0 items-center gap-1 rounded-md border border-orange-200/80 bg-white px-2 py-1 text-[10px] font-semibold whitespace-nowrap text-orange-700 transition-colors hover:bg-orange-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-blue-900/60 dark:bg-blue-950/30 dark:text-orange-300 dark:hover:bg-blue-950/50"
     >
-      <Pencil className="h-3 w-3" />
+      <Icon className="h-3 w-3" />
       {label}
     </button>
   );
@@ -2751,6 +2764,133 @@ function SetBankDialog({
 }
 
 /**
+ * "Temporary Exemption" confirm for a Bank Info row — files a per-week record
+ * (POST /api/payroll-wizard/bank-exemptions) that moves the person off the Bank
+ * Info list and out of the readiness score's bank dimension, onto the Exceptions
+ * list, for the week in view ONLY.
+ *
+ * Deliberately a confirm rather than a one-click action: the optional reason is
+ * the only context whoever reads the Exceptions row later will have, and an
+ * accidental click on a row full of near-identical names is easy.
+ *
+ * It changes NOTHING about payability — Payment Dispatch never reads these
+ * records — so the copy says so outright rather than letting an accountant think
+ * the exemption got the person paid.
+ */
+function ExemptBankDialog({
+  person,
+  weekLabel,
+  weekStart,
+  onClose,
+  onSaved,
+}: {
+  person: ReadinessMissingBank;
+  /** "Jul 27 – Aug 2" — the week the exemption will apply to. */
+  weekLabel: string;
+  weekStart: string;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [reason, setReason] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const save = async () => {
+    setSaving(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/payroll-wizard/bank-exemptions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          weekStart,
+          name: person.name,
+          workEmail: person.workEmail,
+          personalEmail: person.personalEmail,
+          department: person.department,
+          reason: reason.trim() || null,
+        }),
+      });
+      const json = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok || json.error) throw new Error(json.error || `Save failed (${res.status})`);
+      toast.success(`${person.name} exempted for this week`, {
+        description: `Moved to Exceptions for ${weekLabel}. They return to Bank Info next week if details are still missing.`,
+      });
+      onSaved();
+      onClose();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not file the exemption");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Clock className="h-4 w-4 text-orange-500" />
+            Temporary exemption
+          </DialogTitle>
+          <DialogDescription>
+            {person.name}
+            {person.email ? ` · ${person.email}` : ""} — excuses their missing bank info
+            for {weekLabel} only.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="grid gap-3">
+          <div className="rounded-lg border border-sky-200 bg-sky-50/70 px-3 py-2 text-[11px] leading-relaxed text-sky-800 dark:border-sky-500/30 dark:bg-sky-500/10 dark:text-sky-200">
+            They move to <span className="font-semibold">Exceptions</span> straight away and
+            stop counting against the readiness score. They come back on the Bank Info list
+            <span className="font-semibold"> next week</span> if their details are still
+            missing.
+            {person.onPayroll && (
+              <>
+                {" "}
+                This person has hours this week — the exemption clears the readiness flag,
+                but it does <span className="font-semibold">not</span> make them payable.
+                Payment Dispatch still can’t send money without payout details.
+              </>
+            )}
+          </div>
+          <div className="grid gap-1">
+            <label className={EDITOR_LABEL_CLS} htmlFor="readiness-exempt-reason">
+              Reason <span className="font-normal normal-case">(optional)</span>
+            </label>
+            <Input
+              id="readiness-exempt-reason"
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              maxLength={300}
+              placeholder="e.g. waiting on her Wise handle"
+              className="h-8 text-xs"
+            />
+            <p className="text-[10px] text-zinc-400 dark:text-zinc-500">
+              Shows on the Exceptions row so whoever looks next knows why.
+            </p>
+          </div>
+          {error && (
+            <p className="text-xs text-rose-600 dark:text-rose-400" role="alert">
+              {error}
+            </p>
+          )}
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" size="sm" onClick={onClose} disabled={saving}>
+              Cancel
+            </Button>
+            <Button size="sm" onClick={() => void save()} disabled={saving}>
+              {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+              Exempt this week
+            </Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/**
  * KPI Calculator modal for a clicked Readiness department — the SAME calculator
  * the manager uses, mounted elevated so accounting can score, save, and Mark
  * Ready without leaving the wizard. General depts get DeptBonusCalculator with
@@ -2924,6 +3064,13 @@ function PayrollReadinessGlance({
   // payout details to employee_ids.
   const [ratePerson, setRatePerson] = useState<ReadinessMissingRate | null>(null);
   const [bankPerson, setBankPerson] = useState<ReadinessMissingBank | null>(null);
+  // Person being granted a per-week Bank Info "Temporary Exemption" (null = the
+  // confirm dialog is closed). Its own slot, so the two bank editors can never
+  // fight over one piece of state.
+  const [exemptPerson, setExemptPerson] = useState<ReadinessMissingBank | null>(null);
+  // Exemption ids with an Undo request in flight, so a row's button can't be
+  // double-fired while the POST is out.
+  const [undoingExemptions, setUndoingExemptions] = useState<Set<string>>(new Set());
   // Dept whose KPI Calculator modal is open (null = closed).
   const [kpiDept, setKpiDept] = useState<ReadinessKpiDept | null>(null);
   // "Why this score?" breakdown modal — opened by clicking the score dial.
@@ -3116,6 +3263,38 @@ function PayrollReadinessGlance({
       }
     },
     [currentSourceFile, wizardSourceFile, effectiveSourceFile],
+  );
+
+  /** Undo a Bank Info Temporary Exemption from its Exceptions row — the person
+   *  goes straight back onto the Bank Info list (and the score). Soft-deleted
+   *  server-side, so who granted it and who reversed it both stay on record. */
+  const undoExemption = useCallback(
+    async (exemptionId: string, name: string) => {
+      setUndoingExemptions((prev) => new Set(prev).add(exemptionId));
+      try {
+        const res = await fetch("/api/payroll-wizard/bank-exemptions", {
+          method: "DELETE",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id: exemptionId }),
+        });
+        const json = (await res.json().catch(() => ({}))) as { error?: string };
+        if (!res.ok || json.error) throw new Error(json.error || `Undo failed (${res.status})`);
+        toast.success(`Exemption removed for ${name}`, {
+          description: "They're back on the Bank Info list.",
+        });
+        await load();
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : "Could not undo the exemption");
+      } finally {
+        // Always released, even on failure — the row must stay retry-able.
+        setUndoingExemptions((prev) => {
+          const next = new Set(prev);
+          next.delete(exemptionId);
+          return next;
+        });
+      }
+    },
+    [load],
   );
 
   // Live: reflect a manager marking their KPI ready, a rate/bank fix, or a new
@@ -3700,6 +3879,18 @@ function PayrollReadinessGlance({
                                       }
                                     />
                                   )}
+                                  {/* Acknowledge the gap for THIS week instead of
+                                      fixing it: the row moves to Exceptions and
+                                      stops scoring, and comes back next week if
+                                      the details are still missing. */}
+                                  {canEdit && (
+                                    <RowFixButton
+                                      label="Temporary Exemption"
+                                      Icon={Clock}
+                                      onClick={() => setExemptPerson(r)}
+                                      title={`Excuse this person's missing bank info for ${data.weekLabel} only — they move to Exceptions now and return to this list next week if it's still missing. Does not make them payable.`}
+                                    />
+                                  )}
                                 </div>
                               }
                             />
@@ -3721,7 +3912,7 @@ function PayrollReadinessGlance({
             ) : (
               <PaneBody>
                 {data.exceptions.length === 0 ? (
-                  <AllClear text="No onboarding exceptions this week." />
+                  <AllClear text="No exceptions this week." />
                 ) : (
                   <>
                     <ReadinessSearch
@@ -3738,17 +3929,54 @@ function PayrollReadinessGlance({
                         <div className="space-y-0.5">
                           {excPage.pageItems.map((r, i) => {
                             const meta = EXCEPTION_META[r.kind];
+                            const undoing = r.exemptionId
+                              ? undoingExemptions.has(r.exemptionId)
+                              : false;
                             return (
                               <PersonLine
                                 key={`${r.email ?? r.name}:${i}`}
                                 name={r.name}
                                 email={r.email}
-                                department={r.detail ?? r.department}
+                                // Temp-exempt rows keep the DEPARTMENT on the
+                                // sub-line (their `detail` is a free-text reason
+                                // that reads as a sentence, not a label) and
+                                // carry the reason in the badge's tooltip.
+                                department={
+                                  r.kind === "bank_exempt" ? r.department : (r.detail ?? r.department)
+                                }
                                 right={
-                                  <span className={`inline-flex shrink-0 items-center gap-1 rounded-full border px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide ${meta.cls}`}>
-                                    <meta.Icon className="h-2.5 w-2.5" />
-                                    {meta.label}
-                                  </span>
+                                  <div className="flex shrink-0 items-center gap-1.5">
+                                    <span
+                                      title={
+                                        r.kind === "bank_exempt"
+                                          ? `No bank info — exempted for ${data.weekLabel}${r.detail ? `: ${r.detail}` : ""}. Returns to the Bank Info list next week if it's still missing.`
+                                          : (r.detail ?? undefined)
+                                      }
+                                      className={`inline-flex shrink-0 items-center gap-1 rounded-full border px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide ${meta.cls}`}
+                                    >
+                                      <meta.Icon className="h-2.5 w-2.5" />
+                                      {meta.label}
+                                    </span>
+                                    {/* Only a hand-granted exemption is reversible —
+                                        the HR-pipeline kinds are facts about the
+                                        person, not decisions made here. */}
+                                    {canEdit && r.kind === "bank_exempt" && r.exemptionId && (
+                                      <button
+                                        type="button"
+                                        onClick={() => void undoExemption(r.exemptionId!, r.name)}
+                                        disabled={undoing}
+                                        title="Remove the exemption — this person goes back on the Bank Info list now"
+                                        className="inline-flex shrink-0 items-center gap-1 rounded-md border border-orange-200/80 bg-white px-2 py-1 text-[10px] font-semibold whitespace-nowrap text-orange-700 transition-colors hover:bg-orange-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-blue-900/60 dark:bg-blue-950/30 dark:text-orange-300 dark:hover:bg-blue-950/50"
+                                      >
+                                        {undoing ? (
+                                          <Loader2 className="h-3 w-3 animate-spin" />
+                                        ) : (
+                                          <X className="h-3 w-3" />
+                                        )}
+                                        Undo
+                                      </button>
+                                    )}
+                                  </div>
                                 }
                               />
                             );
@@ -3793,6 +4021,15 @@ function PayrollReadinessGlance({
         <SetBankDialog
           person={bankPerson}
           onClose={() => setBankPerson(null)}
+          onSaved={() => void load()}
+        />
+      )}
+      {exemptPerson && (
+        <ExemptBankDialog
+          person={exemptPerson}
+          weekLabel={data.weekLabel}
+          weekStart={data.weekStart}
+          onClose={() => setExemptPerson(null)}
           onSaved={() => void load()}
         />
       )}
@@ -4522,6 +4759,11 @@ function ScoreDetailsDialog({
   const kpiExcluded = data.kpi.filter((d) => d.status === "excluded").length;
   const kpiNotDue = data.kpi.filter((d) => d.status === "na").length;
   const bankHygiene = data.missingBank.length - data.missingBankOnPayroll;
+  // The exceptions list holds two different things — HR-pipeline hires and
+  // hand-granted bank exemptions — so the "never counted" bullets split them
+  // rather than quoting one total against two different explanations.
+  const bankExemptCount = data.exceptions.filter((e) => e.kind === "bank_exempt").length;
+  const hrExceptionCount = data.exceptions.length - bankExemptCount;
   const plural = (n: number) => (n === 1 ? "" : "s");
 
   // One explainer row per score component: who was counted, what's open, and
@@ -4663,12 +4905,17 @@ function ScoreDetailsDialog({
               </li>
               <li>
                 Onboarding exceptions — still onboarding, no-shows, or started this week
-                {data.exceptions.length > 0 ? ` (${data.exceptions.length} this week)` : ""}.
+                {hrExceptionCount > 0 ? ` (${hrExceptionCount} this week)` : ""}.
               </li>
               <li>
                 People missing bank info who have no hours this week
                 {bankHygiene > 0 ? ` (${bankHygiene} right now)` : ""} — roster data debt, not a
                 payday problem.
+              </li>
+              <li>
+                Temporary Exemptions granted on the Bank Info tab
+                {bankExemptCount > 0 ? ` (${bankExemptCount} this week)` : ""} — acknowledged for
+                this week only; they return to Bank Info next week.
               </li>
               <li>US Employees (USEE) — paid off-channel, outside this pipeline.</li>
               <li>
