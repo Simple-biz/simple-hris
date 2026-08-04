@@ -743,7 +743,7 @@ async function enrichMissingRatesFromMaster(missing: ReadinessMissingRate[]): Pr
  * (the pre-exclusion behavior) — it over-flags but never hides a real
  * employee's gap, so it doesn't join `degraded`.
  */
-async function loadContractorEmails(): Promise<Set<string>> {
+export async function loadContractorEmails(): Promise<Set<string>> {
   const out = new Set<string>();
   const supabase = createSupabaseServiceRoleClient();
   if (!supabase) return out;
@@ -947,7 +947,7 @@ async function buildMissingRates(
 /** Departments paid off-channel — never flagged for missing bank info. Mirrors
  *  the People tab's `department !== 'USEE'` guard (US Employees are paid via a
  *  separate channel). */
-function isOffChannelDept(dept: string | null | undefined): boolean {
+export function isOffChannelDept(dept: string | null | undefined): boolean {
   const d = (dept ?? '').trim().toLowerCase();
   return d === 'usee' || d === 'us employees' || d === 'us employee';
 }

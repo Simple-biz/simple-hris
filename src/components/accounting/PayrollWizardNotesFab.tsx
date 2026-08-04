@@ -2490,6 +2490,14 @@ function SetBankDialog({
    *  snapshot) instead of starting blank. The clerk can still edit every
    *  field before saving — this only changes the initial values. */
   prefill?: {
+    /** Pre-SELECTS the picker without locking it. A prefilled processor comes
+     *  from a source that isn't on the live employee_ids row yet (an offboard
+     *  snapshot), so `locked` must stay false — otherwise `save` skips writing
+     *  `preferred_processor` and the person stays unpayable after a "successful"
+     *  save. Only `person.processor` (live-resolved) locks the picker.
+     *  Nullable so an `OffboardedBankPrefill` (whose `processor` is
+     *  `string | null`) can be handed straight through. */
+    processor?: string | null;
     walletEmail?: string;
     walletName?: string;
     bankName?: string;
@@ -2501,7 +2509,7 @@ function SetBankDialog({
   onSaved: () => void;
 }) {
   const lockedProcessor = (person.processor ?? "") as ProcessorId | "";
-  const [processor, setProcessor] = useState<string>(lockedProcessor);
+  const [processor, setProcessor] = useState<string>(lockedProcessor || (prefill?.processor ?? ""));
   const [walletEmail, setWalletEmail] = useState(prefill?.walletEmail ?? "");
   const [walletName, setWalletName] = useState(prefill?.walletName ?? "");
   const [bankName, setBankName] = useState(prefill?.bankName ?? "");
@@ -3839,6 +3847,10 @@ function OffboardedGlance({
   // come back, so this must be said out loud rather than read as a genuine
   // "no bank on file". Mirrors PayrollReadinessGlance's own degraded banner.
   const [degraded, setDegraded] = useState<string[]>([]);
+  // The pay week this list is scoped to. Shown in-pane like every sibling here:
+  // when the wizard replays an older period the week-relevance filter can quietly
+  // widen to an unfiltered 90-day list, and nothing else on screen would say so.
+  const [weekLabel, setWeekLabel] = useState<string | null>(null);
   const [ratePerson, setRatePerson] = useState<ReadinessMissingRate | null>(null);
   const [bankPerson, setBankPerson] = useState<ReadinessMissingBank | null>(null);
   const [bankPrefill, setBankPrefill] = useState<OffboardedPayrollCandidate["bankPrefill"]>(null);
@@ -3849,11 +3861,13 @@ function OffboardedGlance({
       .then(async (res) => {
         const json = (await res.json()) as {
           people?: OffboardedPayrollCandidate[];
+          weekLabel?: string;
           degraded?: string[];
           error?: string | null;
         };
         if (!res.ok || json.error) throw new Error(json.error || `Load failed (${res.status})`);
         setPeople(json.people ?? []);
+        setWeekLabel(json.weekLabel ?? null);
         setDegraded(json.degraded ?? []);
         setError(null);
       })
@@ -3914,6 +3928,14 @@ function OffboardedGlance({
               <li key={d}>{d}</li>
             ))}
           </ul>
+        </div>
+      )}
+      {/* Slim header line — which pay week these leavers are scoped to. Same
+          treatment as the Wizard Setup pane's own week line; the tab strip
+          already owns the "Offboarded" label, so this isn't a second title. */}
+      {weekLabel && (
+        <div className="mb-1.5 px-1 text-[11px] text-zinc-500 dark:text-zinc-400">
+          Final pay for payroll week {weekLabel}
         </div>
       )}
       <div className="space-y-0.5">

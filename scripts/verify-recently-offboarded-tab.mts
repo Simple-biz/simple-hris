@@ -4,7 +4,7 @@
  * (GET /api/payroll-wizard/offboarded) — from the command line.
  *
  * Usage:
- *   node --import tsx scripts/verify-recently-offboarded-tab.mts [--source-file=<name>]
+ *   $env:TSX_TSCONFIG_PATH="tsconfig.readiness-verify.json"; node --import tsx scripts/verify-recently-offboarded-tab.mts [--source-file=<name>]
  *
  * Prints every person the tab would show, their rate/bank status, and flags
  * (as an error exit) any `temporary_pause` leakage — that reason must never
