@@ -2631,15 +2631,27 @@ export default function PayrollWizard({
   }, []);
 
   /** Persist the cycle's FX record (Step 2 zero-placeholder model). Merges the
-   *  other leg from current state; fire-and-forget from the save paths — the
-   *  global write already succeeded, and a failed cycle write only leaves the
-   *  checklist amber + dispatch gated until the next save retries it. */
+   *  other leg from {@link cycleFxRef} (the last KNOWN-persisted record for
+   *  THIS file) — never from live usdToPhp/CopRate state, which can be stale
+   *  across a file switch or the post-save re-hydration (see the hydration
+   *  effect below). Fire-and-forget from the save paths — the global write
+   *  already succeeded, and a failed cycle write only leaves the checklist
+   *  amber + dispatch gated until the next save retries it. */
   const saveCycleFxRecord = React.useCallback(
     (leg: 'php' | 'cop', value: number) => {
       if (!calcSourceFile) return;
+      const known = cycleFxRef.current?.file === calcSourceFile ? cycleFxRef.current : null;
+      const php = leg === 'php' ? value : (known?.php ?? 0);
+      const cop = leg === 'cop' ? value : (known?.cop ?? 0);
+      // Bump BEFORE the network call so any hydration response already in
+      // flight is recognized as stale when it lands, and snapshot the ref
+      // synchronously so an immediately-following save of the OTHER card
+      // merges this fresh value even though React state hasn't committed yet.
+      cycleFxWriteSeqRef.current += 1;
+      cycleFxRef.current = { file: calcSourceFile, php, cop };
       const record = {
-        php: leg === 'php' ? value : usdToPhpRate,
-        cop: leg === 'cop' ? value : usdToCopRate,
+        php,
+        cop,
         by: sessionEmail ?? null,
         at: new Date().toISOString(),
       };
@@ -2647,7 +2659,7 @@ export default function PayrollWizard({
         toast.error('Rate saved globally, but the cycle record failed — save again to confirm the cycle.');
       });
     },
-    [calcSourceFile, usdToPhpRate, usdToCopRate, sessionEmail, savePabSetting],
+    [calcSourceFile, sessionEmail, savePabSetting],
   );
 
   const loadAdditionsProgress = React.useCallback(async (sourceFile: string) => {
@@ -3056,26 +3068,58 @@ export default function PayrollWizard({
     };
   }, []);
 
+  /** Last KNOWN-persisted cycle record, keyed by file — the merge source for
+   *  saveCycleFxRecord (live state can be stale across a file switch or the
+   *  post-save re-fetch). Updated by hydration applies and by every save. */
+  const cycleFxRef = React.useRef<{ file: string; php: number; cop: number } | null>(null);
+  /** Bumped on every cycle-record save; hydration responses started before the
+   *  bump are discarded (they can carry the pre-save stored value). */
+  const cycleFxWriteSeqRef = React.useRef(0);
+  /** The file the hydration effect last ran for — lets it tell a genuine file
+   *  switch apart from a re-run triggered only by the editing flags flipping. */
+  const cycleFxPrevFileRef = React.useRef<string | null>(null);
+
   // Hydrate THIS CYCLE's rates from payroll.wizard.fx.<file> — raw, never via
   // the effective* fallbacks (they'd erase the zero placeholder). Absent record
   // ⇒ 0/0 for a live cycle; a replayed pre-record cycle displays the globals
   // instead (read-only there — see the cards) so historical USD views stay sane.
   // Skipped while either card is mid-edit so a slow response can't clobber typing.
   useEffect(() => {
+    const fileChanged = cycleFxPrevFileRef.current !== calcSourceFile;
+    cycleFxPrevFileRef.current = calcSourceFile;
     if (!calcSourceFile) {
       setUsdToPhpRate(0);
       setUsdToPhpInput('0');
       setUsdToCopRate(0);
       setUsdToCopInput('0');
+      cycleFxRef.current = null;
       return;
+    }
+    // A genuine file switch must never keep showing the OLD file's rates
+    // against the NEW file — zero immediately, before the fetch, so a save
+    // that lands in the gap merges 0 for the untouched leg, not a stale
+    // value carried over from the file just left. NOT done when this run was
+    // triggered only by the editing flags flipping (fileChanged is false
+    // then) — that would wipe a value the user just saved.
+    if (fileChanged) {
+      setUsdToPhpRate(0);
+      setUsdToPhpInput('0');
+      setUsdToCopRate(0);
+      setUsdToCopInput('0');
+      cycleFxRef.current = null;
     }
     if (usdToPhpEditing || usdToCopEditing) return;
     let cancelled = false;
+    // Snapshot the write sequence so a save that happens while this fetch is
+    // in flight (including the post-save re-run this same effect triggers by
+    // flipping the editing flags) can be recognized as having raced ahead of
+    // this response, which may carry the pre-save stored value.
+    const seq = cycleFxWriteSeqRef.current;
     const key = cycleFxSettingKey(calcSourceFile);
     fetch(`/api/app-settings?keys=${encodeURIComponent(key)}`, { cache: 'no-store' })
       .then((res) => (res.ok ? res.json() : { values: {} }))
       .then((json: { values?: Record<string, string | null> }) => {
-        if (cancelled) return;
+        if (cancelled || seq !== cycleFxWriteSeqRef.current) return;
         const rec = parseCycleFxRecord(json.values?.[key] ?? null);
         const php = rec?.php ?? (isReplay ? globalPhpRate : 0);
         const cop = rec?.cop ?? (isReplay ? globalCopRate : 0);
@@ -3083,6 +3127,7 @@ export default function PayrollWizard({
         setUsdToPhpInput(String(php));
         setUsdToCopRate(cop);
         setUsdToCopInput(String(cop));
+        cycleFxRef.current = { file: calcSourceFile, php, cop };
       })
       .catch(() => {
         /* keep current values — a failed read must not zero a set cycle */
