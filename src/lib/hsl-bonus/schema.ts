@@ -175,7 +175,7 @@ export const HSL_DEPTS: Record<HslDeptKey, DeptConfig> = {
     headerBg: 'bg-cyan-950/40',
     badgeCls: 'bg-cyan-900/60 text-cyan-300',
     rules: [
-      { type: 'per_unit', key: 'portal_login', label: 'Patient Portal Log Ins', rate: 250 },
+      { type: 'per_unit', key: 'portal_login', label: 'Patient Portal Log Ins', rate: 100 },
       { type: 'manual',   key: 'rfc_form',     label: 'RFC' },
     ],
   },
