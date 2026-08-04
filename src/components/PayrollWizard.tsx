@@ -240,9 +240,9 @@ import LockToggleConfirmDialog, { deriveFirstName } from '@/components/payroll/L
 import { playStagePrepped, stopStagePrepped } from '@/lib/sound/ping-chime';
 import { payrollNotesWeekStart, weekRangeLabel } from '@/lib/payroll/manila-week';
 import {
-  fxConfirmedSettingKey,
+  cycleFxSettingKey,
   orphanageConfirmedSettingKey,
-  parseFxConfirmedMarker,
+  parseCycleFxRecord,
   parseOrphanageNoneMarker,
 } from '@/lib/payroll/wizard-setup-steps';
 
@@ -2001,25 +2001,35 @@ export default function PayrollWizard({
   // Invoice whose receipt is open in the Preview Emails → Contractors tab.
   const [previewSelectedInvoiceId, setPreviewSelectedInvoiceId] = useState<string | null>(null);
 
-  /** USD → PHP (PHP per $1). Saved in app_settings `usd_to_php_rate`; default is the official ₱100,000 ÷ 10⁵ rate. */
-  const [usdToPhpRate, setUsdToPhpRate] = useState<number>(OFFICIAL_USD_TO_PHP_RATE);
-  const [usdToPhpInput, setUsdToPhpInput] = useState<string>(String(OFFICIAL_USD_TO_PHP_RATE));
+  /** USD → PHP (PHP per $1) FOR THIS CYCLE. 0 until set for the cycle — the
+   *  zero placeholder is the point (Kane 2026-08-03): a new Hubstaff upload
+   *  starts at 0 and typing the real rate is the weekly confirmation. Saves
+   *  write payroll.wizard.fx.<file> AND the global usd_to_php_rate. */
+  const [usdToPhpRate, setUsdToPhpRate] = useState<number>(0);
+  const [usdToPhpInput, setUsdToPhpInput] = useState<string>('0');
   const [usdToPhpSaving, setUsdToPhpSaving] = useState(false);
   const [usdToPhpEditing, setUsdToPhpEditing] = useState(false);
-  /** Weekly confirm markers (Wizard Setup checklist, steps 2/3) — read-only
-   *  mirrors of the app_settings stamp, so these buttons can render "already
+  /** Weekly confirm marker (Wizard Setup checklist, step 3) — read-only mirror
+   *  of the app_settings stamp so the Step-3 button can render "already
    *  confirmed" without re-deriving from the Readiness pane. */
-  const [fxConfirmedAt, setFxConfirmedAt] = useState<string | null>(null);
-  const [fxConfirming, setFxConfirming] = useState(false);
   const [orphanageNoneConfirmed, setOrphanageNoneConfirmed] = useState(false);
   const [orphanageNoneConfirming, setOrphanageNoneConfirming] = useState(false);
 
-  /** USD → COP (COP per $1). Saved in app_settings `usd_to_cop_rate`. The USD-
-   *  anchored second rate; PHP↔COP is derived from this + usdToPhpRate. */
-  const [usdToCopRate, setUsdToCopRate] = useState<number>(OFFICIAL_USD_TO_COP_RATE);
-  const [usdToCopInput, setUsdToCopInput] = useState<string>(String(OFFICIAL_USD_TO_COP_RATE));
+  /** USD → COP (COP per $1) FOR THIS CYCLE. 0 until set for the cycle — the
+   *  zero placeholder is the point (Kane 2026-08-03): a new Hubstaff upload
+   *  starts at 0 and typing the real rate is the weekly confirmation. The USD-
+   *  anchored second rate; PHP↔COP is derived from this + usdToPhpRate. Saves
+   *  write payroll.wizard.fx.<file> AND the global usd_to_cop_rate. */
+  const [usdToCopRate, setUsdToCopRate] = useState<number>(0);
+  const [usdToCopInput, setUsdToCopInput] = useState<string>('0');
   const [usdToCopSaving, setUsdToCopSaving] = useState(false);
   const [usdToCopEditing, setUsdToCopEditing] = useState(false);
+  /** The GLOBAL rates (usd_to_php_rate / usd_to_cop_rate) — what the rest of
+   *  the app converts with. Shown as a reference under each Step-2 card and
+   *  used as the final-pay snapshot's fx fallback while the cycle is unset.
+   *  Never 0: the effective* readers replace invalid values with OFFICIAL_*. */
+  const [globalPhpRate, setGlobalPhpRate] = useState<number>(OFFICIAL_USD_TO_PHP_RATE);
+  const [globalCopRate, setGlobalCopRate] = useState<number>(OFFICIAL_USD_TO_COP_RATE);
   /** The two USD-anchored rates bundled for resolve-rate.ts. */
   const fxRates = useMemo<FxRates>(
     () => ({ usdToPhp: usdToPhpRate, usdToCop: usdToCopRate }),
@@ -2182,20 +2192,17 @@ export default function PayrollWizard({
     ? (hubstaffWeekStart ?? payrollNotesWeekStart())
     : payrollNotesWeekStart();
 
-  // The weekly confirm markers (fx + orphanage-none) for the cycle in view —
-  // read-only mirrors of what the Readiness checklist shows, so the Step 2/3
-  // buttons can render "already confirmed". Shape mirrors the fx-settings
-  // loader below (`{ values: Record<string, string|null> }`), not `{ settings }`.
+  // The step-3 confirm-none marker for the cycle in view — read-only mirror of
+  // what the Readiness checklist shows. Shape mirrors the fx-settings loader
+  // (`{ values: Record<string, string|null> }`).
   useEffect(() => {
     let cancelled = false;
-    const keys = [fxConfirmedSettingKey(markerWeekStart), orphanageConfirmedSettingKey(markerWeekStart)];
-    fetch(`/api/app-settings?keys=${encodeURIComponent(keys.join(','))}`, { cache: 'no-store' })
+    const key = orphanageConfirmedSettingKey(markerWeekStart);
+    fetch(`/api/app-settings?keys=${encodeURIComponent(key)}`, { cache: 'no-store' })
       .then((res) => (res.ok ? res.json() : { values: {} }))
       .then((json: { values?: Record<string, string | null> }) => {
         if (cancelled) return;
-        const fx = parseFxConfirmedMarker(json.values?.[keys[0]!] ?? null);
-        setFxConfirmedAt(fx?.at ?? (fx ? '' : null));
-        setOrphanageNoneConfirmed(parseOrphanageNoneMarker(json.values?.[keys[1]!] ?? null) !== null);
+        setOrphanageNoneConfirmed(parseOrphanageNoneMarker(json.values?.[key] ?? null) !== null);
       })
       .catch(() => {
         /* marker display is best-effort; stamping still works */
@@ -2623,6 +2630,26 @@ export default function PayrollWizard({
     if (json.error) throw new Error(json.error);
   }, []);
 
+  /** Persist the cycle's FX record (Step 2 zero-placeholder model). Merges the
+   *  other leg from current state; fire-and-forget from the save paths — the
+   *  global write already succeeded, and a failed cycle write only leaves the
+   *  checklist amber + dispatch gated until the next save retries it. */
+  const saveCycleFxRecord = React.useCallback(
+    (leg: 'php' | 'cop', value: number) => {
+      if (!calcSourceFile) return;
+      const record = {
+        php: leg === 'php' ? value : usdToPhpRate,
+        cop: leg === 'cop' ? value : usdToCopRate,
+        by: sessionEmail ?? null,
+        at: new Date().toISOString(),
+      };
+      savePabSetting(cycleFxSettingKey(calcSourceFile), JSON.stringify(record)).catch(() => {
+        toast.error('Rate saved globally, but the cycle record failed — save again to confirm the cycle.');
+      });
+    },
+    [calcSourceFile, usdToPhpRate, usdToCopRate, sessionEmail, savePabSetting],
+  );
+
   const loadAdditionsProgress = React.useCallback(async (sourceFile: string) => {
     // Gate the snapshot publisher while this file's additions are in flight —
     // a publish mid-load would write zeroed adjustments/orphanage over the
@@ -3017,11 +3044,9 @@ export default function PayrollWizard({
         if (cancelled) return;
         const values = json.values ?? {};
         const phpRate = effectiveUsdToPhpRateFromStored(values['usd_to_php_rate']);
-        setUsdToPhpRate(phpRate);
-        setUsdToPhpInput(String(phpRate));
+        setGlobalPhpRate(phpRate);
         const copRate = effectiveUsdToCopRateFromStored(values['usd_to_cop_rate']);
-        setUsdToCopRate(copRate);
-        setUsdToCopInput(String(copRate));
+        setGlobalCopRate(copRate);
       } catch {
         // keep defaults
       }
@@ -3030,6 +3055,42 @@ export default function PayrollWizard({
       cancelled = true;
     };
   }, []);
+
+  // Hydrate THIS CYCLE's rates from payroll.wizard.fx.<file> — raw, never via
+  // the effective* fallbacks (they'd erase the zero placeholder). Absent record
+  // ⇒ 0/0 for a live cycle; a replayed pre-record cycle displays the globals
+  // instead (read-only there — see the cards) so historical USD views stay sane.
+  // Skipped while either card is mid-edit so a slow response can't clobber typing.
+  useEffect(() => {
+    if (!calcSourceFile) {
+      setUsdToPhpRate(0);
+      setUsdToPhpInput('0');
+      setUsdToCopRate(0);
+      setUsdToCopInput('0');
+      return;
+    }
+    if (usdToPhpEditing || usdToCopEditing) return;
+    let cancelled = false;
+    const key = cycleFxSettingKey(calcSourceFile);
+    fetch(`/api/app-settings?keys=${encodeURIComponent(key)}`, { cache: 'no-store' })
+      .then((res) => (res.ok ? res.json() : { values: {} }))
+      .then((json: { values?: Record<string, string | null> }) => {
+        if (cancelled) return;
+        const rec = parseCycleFxRecord(json.values?.[key] ?? null);
+        const php = rec?.php ?? (isReplay ? globalPhpRate : 0);
+        const cop = rec?.cop ?? (isReplay ? globalCopRate : 0);
+        setUsdToPhpRate(php);
+        setUsdToPhpInput(String(php));
+        setUsdToCopRate(cop);
+        setUsdToCopInput(String(cop));
+      })
+      .catch(() => {
+        /* keep current values — a failed read must not zero a set cycle */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [calcSourceFile, isReplay, globalPhpRate, globalCopRate, usdToPhpEditing, usdToCopEditing]);
 
   // ── Audit: derive the current cycle context attached to every wizard event.
   // Includes the active Hubstaff source file (cycle key), the period parsed
@@ -3059,34 +3120,6 @@ export default function PayrollWizard({
       fx_rate: usdToPhpRate,
     };
   }, [calcSourceFile, usdToPhpRate]);
-
-  /** Stamp the weekly fx confirmation (spec: saving the rate confirms it; the
-   *  standalone button covers no-change weeks). Never throws — a failed stamp
-   *  must not break the rate save it rides on. Declared after `auditCycle`
-   *  (not near savePabSetting) since it closes over it. */
-  const stampFxConfirmed = React.useCallback(
-    async (rate: number) => {
-      const at = new Date().toISOString();
-      try {
-        await savePabSetting(
-          fxConfirmedSettingKey(markerWeekStart),
-          JSON.stringify({ rate, by: sessionEmail ?? null, at }),
-        );
-        setFxConfirmedAt(at);
-        void logAudit({
-          user_name: sessionEmail ?? 'anonymous',
-          user_role: sessionRole ?? 'user',
-          action: 'wizard.fx_week_confirmed',
-          resource: fxConfirmedSettingKey(markerWeekStart),
-          cycle: auditCycle,
-          details: { rate, week_start: markerWeekStart },
-        });
-      } catch {
-        toast.error('Rate saved, but the weekly confirmation stamp failed — use "Confirm for this week".');
-      }
-    },
-    [markerWeekStart, savePabSetting, sessionEmail, sessionRole, auditCycle],
-  );
 
   // ── Audit: fire wizard.opened exactly once when the wizard hydrates.
   // Waits until the wizard knows its operator (sessionEmail) or has at least
@@ -10087,6 +10120,10 @@ export default function PayrollWizard({
                     onChange={(e) => setUsdToPhpInput(e.target.value)}
                     onKeyDown={(e) => {
                       if (e.key === 'Enter' && usdToPhpEditing) {
+                        if (isReplay) {
+                          toast.error('Replaying a past period is view-only');
+                          return;
+                        }
                         const parsed = parseFloat(usdToPhpInput);
                         if (Number.isFinite(parsed) && parsed > 0) {
                           const prevRate = usdToPhpRate;
@@ -10109,7 +10146,7 @@ export default function PayrollWizard({
                               const json = (await res.json()) as { error: string | null };
                               if (!res.ok || json.error) throw new Error(json.error ?? 'Save failed');
                               toast.success(`Rate saved: ₱${parsed.toFixed(2)} / USD`);
-                              void stampFxConfirmed(parsed);
+                              saveCycleFxRecord('php', parsed);
                               cursorOverlayRef.current?.broadcastSave();
                               setUsdToPhpEditing(false);
                             })
@@ -10124,32 +10161,7 @@ export default function PayrollWizard({
                   />
                 </div>
                 {!usdToPhpEditing ? (
-                  <>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      disabled={fxConfirming}
-                      className={`h-8 px-3 text-xs font-semibold ${
-                        fxConfirmedAt !== null
-                          ? 'border-emerald-300 text-emerald-700 dark:border-emerald-700 dark:text-emerald-300'
-                          : 'border-blue-300 text-blue-700 dark:border-blue-700 dark:text-blue-300'
-                      }`}
-                      onClick={() => {
-                        setFxConfirming(true);
-                        void stampFxConfirmed(usdToPhpRate).finally(() => setFxConfirming(false));
-                      }}
-                    >
-                      {fxConfirming ? (
-                        <Loader2 className="h-3 w-3 animate-spin" />
-                      ) : fxConfirmedAt !== null ? (
-                        <>
-                          <CheckCircle2 className="mr-1 h-3 w-3" /> Confirmed this week
-                        </>
-                      ) : (
-                        'Confirm for this week'
-                      )}
-                    </Button>
+                  !isReplay && (
                     <Button
                       type="button"
                       size="sm"
@@ -10158,7 +10170,7 @@ export default function PayrollWizard({
                     >
                       Edit rate
                     </Button>
-                  </>
+                  )
                 ) : (
                   <Button
                     type="button"
@@ -10166,6 +10178,10 @@ export default function PayrollWizard({
                     disabled={usdToPhpSaving}
                     className="h-8 bg-green-600 px-3 text-xs font-semibold text-white hover:bg-green-700 dark:bg-green-500 dark:hover:bg-green-400 dark:text-white"
                     onClick={() => {
+                      if (isReplay) {
+                        toast.error('Replaying a past period is view-only');
+                        return;
+                      }
                       const parsed = parseFloat(usdToPhpInput);
                       if (!Number.isFinite(parsed) || parsed <= 0) {
                         toast.error('Enter a valid positive rate');
@@ -10191,7 +10207,7 @@ export default function PayrollWizard({
                           const json = (await res.json()) as { error: string | null };
                           if (!res.ok || json.error) throw new Error(json.error ?? 'Save failed');
                           toast.success(`Rate saved: ₱${parsed.toFixed(2)} / USD`);
-                          void stampFxConfirmed(parsed);
+                          saveCycleFxRecord('php', parsed);
                           setUsdToPhpEditing(false);
                         })
                         .catch((err: unknown) =>
@@ -10205,6 +10221,12 @@ export default function PayrollWizard({
                 )}
               </div>
               <p className="w-full text-xs text-blue-700/60 dark:text-blue-400/60">
+                {usdToPhpRate <= 0 ? (
+                  <span className="font-semibold text-amber-700 dark:text-amber-400">
+                    Not set for this cycle — enter this week&apos;s rate.{' '}
+                  </span>
+                ) : null}
+                <span className="text-zinc-500 dark:text-zinc-500">Global: ₱{globalPhpRate.toFixed(2)} / $1.</span>{' '}
                 Divides PHP Initial Pay by this rate for the USD column. Default official rate: ₱
                 {OFFICIAL_USD_TO_PHP_RATE.toFixed(USD_TO_PHP_DECIMAL_SHIFT)} per $1 (₱
                 {PHILIPPINE_PESO_OFFICIAL.toLocaleString('en-PH')} ÷ 10^{USD_TO_PHP_DECIMAL_SHIFT}). Current:{' '}
@@ -10243,6 +10265,10 @@ export default function PayrollWizard({
                     onChange={(e) => setUsdToCopInput(e.target.value)}
                     onKeyDown={(e) => {
                       if (e.key === 'Enter' && usdToCopEditing) {
+                        if (isReplay) {
+                          toast.error('Replaying a past period is view-only');
+                          return;
+                        }
                         const parsed = parseFloat(usdToCopInput);
                         if (Number.isFinite(parsed) && parsed > 0) {
                           const prevRate = usdToCopRate;
@@ -10265,6 +10291,7 @@ export default function PayrollWizard({
                               const json = (await res.json()) as { error: string | null };
                               if (!res.ok || json.error) throw new Error(json.error ?? 'Save failed');
                               toast.success(`Rate saved: $COP${parsed.toLocaleString('es-CO')} / USD`);
+                              saveCycleFxRecord('cop', parsed);
                               cursorOverlayRef.current?.broadcastSave();
                               setUsdToCopEditing(false);
                             })
@@ -10279,14 +10306,16 @@ export default function PayrollWizard({
                   />
                 </div>
                 {!usdToCopEditing ? (
-                  <Button
-                    type="button"
-                    size="sm"
-                    className="h-8 bg-amber-600 px-3 text-xs font-semibold text-white hover:bg-amber-700 dark:bg-amber-500 dark:hover:bg-amber-400 dark:text-white"
-                    onClick={() => setUsdToCopEditing(true)}
-                  >
-                    Edit rate
-                  </Button>
+                  !isReplay && (
+                    <Button
+                      type="button"
+                      size="sm"
+                      className="h-8 bg-amber-600 px-3 text-xs font-semibold text-white hover:bg-amber-700 dark:bg-amber-500 dark:hover:bg-amber-400 dark:text-white"
+                      onClick={() => setUsdToCopEditing(true)}
+                    >
+                      Edit rate
+                    </Button>
+                  )
                 ) : (
                   <Button
                     type="button"
@@ -10294,6 +10323,10 @@ export default function PayrollWizard({
                     disabled={usdToCopSaving}
                     className="h-8 bg-green-600 px-3 text-xs font-semibold text-white hover:bg-green-700 dark:bg-green-500 dark:hover:bg-green-400 dark:text-white"
                     onClick={() => {
+                      if (isReplay) {
+                        toast.error('Replaying a past period is view-only');
+                        return;
+                      }
                       const parsed = parseFloat(usdToCopInput);
                       if (!Number.isFinite(parsed) || parsed <= 0) {
                         toast.error('Enter a valid positive rate');
@@ -10319,6 +10352,7 @@ export default function PayrollWizard({
                           const json = (await res.json()) as { error: string | null };
                           if (!res.ok || json.error) throw new Error(json.error ?? 'Save failed');
                           toast.success(`Rate saved: $COP${parsed.toLocaleString('es-CO')} / USD`);
+                          saveCycleFxRecord('cop', parsed);
                           setUsdToCopEditing(false);
                         })
                         .catch((err: unknown) =>
@@ -10332,6 +10366,12 @@ export default function PayrollWizard({
                 )}
               </div>
               <p className="w-full text-xs text-amber-700/60 dark:text-amber-400/60">
+                {usdToCopRate <= 0 ? (
+                  <span className="font-semibold text-amber-700 dark:text-amber-400">
+                    Not set for this cycle — enter this week&apos;s rate.{' '}
+                  </span>
+                ) : null}
+                <span className="text-zinc-500 dark:text-zinc-500">Global: $COP{globalCopRate.toLocaleString('es-CO')} / $1.</span>{' '}
                 Colombian-paid people are converted from USD at this rate for the COP dispatch tab.
                 Current: <span className="font-mono font-semibold">$COP{usdToCopRate.toLocaleString('es-CO')}</span> = $1 USD.{' '}
                 Derived PHP ↔ COP:{' '}
