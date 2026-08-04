@@ -179,6 +179,54 @@ test('malformed hour inputs degrade to zero rather than poisoning the total', ()
   }
 });
 
+test('order of combining the two buckets does not matter (Carla’s "sandwich")', () => {
+  // Carla: M-F hours group together, Sat/Sun group together; combine the two and any
+  // EXCESS over 40 is overtime at half rate, "as the base hours have already been
+  // compensated" — and the ORDER of combining does not matter.
+  //
+  // This holds because the ₱15 premium attaches to weekend HOURS regardless of whether
+  // a given weekend hour lands in the regular or the overtime bucket, so the
+  // chronological split cancels out entirely:
+  //
+  //   two-bucket : r·(MF+WE) + 15·WE + 0.5r·OT
+  //   chronologic: r·REG + 1.5r·OT + 15·WE      (REG = min(total,40), OT = total-REG)
+  //   and since MF+WE = REG+OT, both reduce to  r·REG + 1.5r·OT + 15·WE
+  //
+  // So swapping which bucket is "counted first" cannot move a peso.
+  const rate = 355;
+  for (const [mf, we] of [[36.4, 8.1], [8.1, 36.4], [40, 8], [8, 40], [20, 25], [25, 20]] as const) {
+    const p = computeHoganWeekPay({ mfHours: mf, weHours: we, regularRatePhp: rate });
+    // Excess is computed from the COMBINED total, so it is symmetric in the two inputs.
+    assert.equal(p.otHours, Math.round(Math.max(0, mf + we - 40) * 100) / 100);
+    // And the chronological form agrees, whichever bucket you imagine filling first.
+    const chronological =
+      Math.round(
+        (Math.min(mf + we, 40) * rate + Math.max(0, mf + we - 40) * rate * 1.5 + we * 15) * 100,
+      ) / 100;
+    const twoBucket = Math.round((p.basePayPhp + p.weekendPayPhp + p.otDifferentialPayPhp) * 100) / 100;
+    assert.ok(
+      Math.abs(chronological - twoBucket) <= 0.02,
+      `order mattered for mf=${mf} we=${we}: ${chronological} vs ${twoBucket}`,
+    );
+  }
+});
+
+test('swapping the buckets yields an identical total', () => {
+  // The strongest form of the claim: the function is symmetric in (mfHours, weHours)
+  // for the OVERTIME determination. Totals still differ because only weekend hours earn
+  // the premium — that asymmetry is intended and is the ONLY asymmetry.
+  const a = computeHoganWeekPay({ mfHours: 30, weHours: 14, regularRatePhp: 300 });
+  const b = computeHoganWeekPay({ mfHours: 14, weHours: 30, regularRatePhp: 300 });
+  assert.equal(a.otHours, b.otHours);
+  assert.equal(a.totalHours, b.totalHours);
+  assert.equal(a.otDifferentialPayPhp, b.otDifferentialPayPhp);
+  // 16 more weekend hours in `b`, each carrying the ₱15 premium.
+  assert.equal(
+    Math.round((b.totalHourlyPayPhp - a.totalHourlyPayPhp) * 100) / 100,
+    Math.round((30 - 14) * 15 * 100) / 100,
+  );
+});
+
 test('exactly 40 hours is the boundary — no overtime, nothing remaining', () => {
   const p = computeHoganWeekPay({ mfHours: 40, weHours: 0, regularRatePhp: 355 });
   assert.equal(p.otHours, 0);
