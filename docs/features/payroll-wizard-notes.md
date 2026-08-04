@@ -93,6 +93,36 @@ and weekly period selector (Jul 17, `f1f930d2`).
   degraded case).
 - `updated_at` is maintained by the `payroll_wizard_notes_touch()` trigger.
 
+## No reload on the way back (caching, 2026-08-03)
+
+The FAB is mounted only while the Payroll Wizard tab is active, and the modal's
+three panes unmount on every inner tab switch — so each visit used to re-pull
+everything from scratch, skeletons and all. All of it now goes through the shared
+Accounting tab cache (`src/lib/accounting/tab-cache.ts`: in-memory + `sessionStorage`,
+so it also survives a reload of the same browser tab):
+
+| Dataset | Behaviour on a return visit |
+| --- | --- |
+| Notes rows (`/notes`) | Painted from cache; refreshed in the background on mount + on open. `Loading notes…` only ever shows on the session's first pull. |
+| Readiness snapshot (`/readiness`) | Painted from the cached snapshot **for that week**. Younger than 30s (the pane's own poll) → no refetch at all; older → silent revalidate behind the visible numbers; older than 6h → treated as a cold load. |
+| Worker suggestions, Hubstaff upload list | Fetched once per page session. |
+| Rates glance (pay structures) | Painted from cache, then silently revalidated. |
+
+Notes:
+
+- The FAB's score ring and the Readiness pane share **one** readiness cache
+  entry per week, so whichever reads first spares the other the query (it used
+  to be fetched twice over). The ring still force-refetches when the modal
+  closes — an inline "Set rate"/"Set bank" fix may have just moved the score.
+- Row-cache writes are driven off the saved-server-copy map, never off
+  keystroke state, so a half-typed draft can't be what a later mount seeds from.
+- A cache-seeded snapshot never counts as a live payload for the 100% confetti —
+  otherwise a week that turned ready while you were on another tab would
+  celebrate on arrival.
+- Background refreshes (cache revalidate, Realtime, poll, refocus) no longer
+  replace visible readiness numbers with an error card when a request blips;
+  foreground loads (first pull, week switch, Retry) still report failures.
+
 ## Deploy note
 
 The Jul 17 columns require running

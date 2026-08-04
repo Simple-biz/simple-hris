@@ -100,4 +100,15 @@ export const TAB_CACHE_KEYS = {
   overviewPabMetrics: 'overview:pab-metrics',
   peopleRoster: 'people:list',
   transfers: 'transfers:list',
+  // Payroll Notes / Readiness FAB (PayrollWizardNotesFab). The FAB unmounts
+  // whenever you leave the Payroll Wizard tab, and its three panes unmount on
+  // every inner tab switch — without these it re-pulled every dataset (incl.
+  // the heavy readiness snapshot, twice: ring + pane) each time.
+  payrollNotesRows: 'payroll-notes:rows',
+  payrollNotesWorkers: 'payroll-notes:workers',
+  payrollNotesRates: 'payroll-notes:pay-structures',
+  payrollNotesUploads: 'payroll-notes:hubstaff-uploads',
+  /** Readiness snapshots are cached per week; '' = the server's default week.
+   *  Read by BOTH the FAB's score ring and the Readiness pane. */
+  payrollReadiness: (sourceFile: string | null) => `payroll-notes:readiness:${sourceFile ?? ''}`,
 } as const;

@@ -105,6 +105,14 @@ import {
 } from "@/lib/payroll/adjustment-bridge";
 import { READINESS_SOURCE } from "@/lib/payroll/readiness-audit";
 import { readinessRingColor } from "@/lib/payroll/readiness-ring-color";
+import {
+  getTabCache,
+  setTabCache,
+  clearTabCache,
+  hasFetchedThisSession,
+  markFetchedThisSession,
+  TAB_CACHE_KEYS,
+} from "@/lib/accounting/tab-cache";
 
 /**
  * The Payroll Wizard's floating "Notes" checklist — carry-over items for the
@@ -221,6 +229,63 @@ const PANE_VARIANTS = {
   exit: (dir: number) => ({ opacity: 0, x: dir >= 0 ? -24 : 24 }),
 };
 
+/**
+ * ── Why this board caches ──────────────────────────────────────────────────
+ * The FAB is mounted by App.tsx only while the Payroll Wizard tab is active, so
+ * every trip to another tab unmounts it; the modal's three panes also unmount on
+ * each inner tab switch (AnimatePresence mode="wait"). Every dataset was
+ * therefore re-pulled from scratch on the way back — the notes board, the worker
+ * list, the Payment Catalog rates, the upload list, and the (expensive)
+ * readiness snapshot, which was fetched TWICE over: once for the FAB's ring and
+ * once for the pane.
+ *
+ * Each of them now seeds from the shared Accounting tab cache (in-memory +
+ * sessionStorage, so it also survives a reload of this browser tab) and follows
+ * stale-while-revalidate: paint what we already had instantly, then refresh
+ * quietly behind it. Nothing goes stale silently — Realtime, the 30s poll, and
+ * the focus refresh all still run, and they write back through the same cache.
+ */
+
+/** A readiness snapshot plus when it was pulled, so a remount can tell "seconds
+ *  ago" (reuse as-is) from "a while ago" (paint it, then revalidate). */
+type StampedReadiness = { readiness: PayrollReadiness; at: number };
+
+/** Inside this window a remount reuses the cached snapshot with NO refetch — it
+ *  matches the pane's own live poll, so a tab bounce can't be staler than
+ *  sitting on the tab already was. */
+const READINESS_FRESH_MS = 30_000;
+
+/** Past this, a cached snapshot is too old to show even briefly (e.g. the tab
+ *  sat open overnight) — such a load starts from the skeleton instead. */
+const READINESS_MAX_AGE_MS = 6 * 60 * 60 * 1000;
+
+function readCachedReadiness(sourceFile: string | null): StampedReadiness | null {
+  const hit = getTabCache<StampedReadiness>(TAB_CACHE_KEYS.payrollReadiness(sourceFile));
+  if (!hit?.readiness || typeof hit.at !== "number") return null;
+  return Date.now() - hit.at > READINESS_MAX_AGE_MS ? null : hit;
+}
+
+/** Week keys cached this session, oldest first. A readiness snapshot is a
+ *  sizeable payload, so paging back through a quarter of weeks would otherwise
+ *  fill sessionStorage with snapshots nobody will look at again — only the most
+ *  recent handful are kept. */
+const cachedReadinessKeys: string[] = [];
+const READINESS_CACHE_MAX_WEEKS = 4;
+
+/** Share a freshly-pulled snapshot with every other reader of the same week —
+ *  the FAB's ring and the Readiness pane hit the same endpoint, so whichever
+ *  fetches first spares the other one the query. */
+function writeCachedReadiness(sourceFile: string | null, readiness: PayrollReadiness): void {
+  const key = TAB_CACHE_KEYS.payrollReadiness(sourceFile);
+  setTabCache<StampedReadiness>(key, { readiness, at: Date.now() });
+  const seen = cachedReadinessKeys.indexOf(key);
+  if (seen >= 0) cachedReadinessKeys.splice(seen, 1);
+  cachedReadinessKeys.push(key);
+  while (cachedReadinessKeys.length > READINESS_CACHE_MAX_WEEKS) {
+    clearTabCache(cachedReadinessKeys.shift()!);
+  }
+}
+
 const RING_R = 30;
 const RING_C = 2 * Math.PI * RING_R;
 const GRADE_LABEL: Record<ReadinessScore["grade"], string> = {
@@ -298,6 +363,11 @@ export default function PayrollWizardNotesFab({
   // so it never briefly shows the wrong week's score, mirroring
   // PayrollReadinessGlance's own hold. Decorative: any failure just leaves the
   // ring absent, never a toast.
+  //
+  // On a remount the ring is drawn from the cached snapshot for the wizard's
+  // week as soon as the wizard says which week that is — no fetch, and still no
+  // risk of flashing another week's number (which is why this isn't seeded
+  // before `heardWizard`).
   const [fabScore, setFabScore] = useState<ReadinessScore | null>(null);
   const [fabScoreGrace, setFabScoreGrace] = useState(false);
   useEffect(() => {
@@ -305,28 +375,46 @@ export default function PayrollWizardNotesFab({
     return () => window.clearTimeout(t);
   }, []);
   const fabScoreReady = heardWizard || fabScoreGrace;
-  const fetchFabScore = useCallback(() => {
-    const qs = wizardSourceFile ? `?source_file=${encodeURIComponent(wizardSourceFile)}` : "";
-    fetch(`/api/payroll-wizard/readiness${qs}`, { cache: "no-store" })
-      .then(async (res) => {
-        const json = (await res.json()) as { readiness?: PayrollReadiness };
-        if (!res.ok || !json.readiness) return;
-        setFabScore(json.readiness.score);
-      })
-      .catch(() => {
-        /* decorative only — the FAB just keeps its plain color */
-      });
-  }, [wizardSourceFile]);
+  /** `force` skips the cache — used after the modal closes, where the point is
+   *  to catch a score change an inline fix just made. */
+  const fetchFabScore = useCallback(
+    (opts?: { force?: boolean }) => {
+      if (!opts?.force) {
+        // A snapshot the Readiness pane (or an earlier ring fetch) pulled seconds
+        // ago answers this without a second trip to the endpoint.
+        const cached = readCachedReadiness(wizardSourceFile);
+        if (cached) {
+          setFabScore(cached.readiness.score);
+          if (Date.now() - cached.at < READINESS_FRESH_MS) return;
+        }
+      }
+      const qs = wizardSourceFile ? `?source_file=${encodeURIComponent(wizardSourceFile)}` : "";
+      fetch(`/api/payroll-wizard/readiness${qs}`, { cache: "no-store" })
+        .then(async (res) => {
+          const json = (await res.json()) as { readiness?: PayrollReadiness };
+          if (!res.ok || !json.readiness) return;
+          setFabScore(json.readiness.score);
+          // Hand the whole snapshot to the Readiness pane too — opening the
+          // modal now paints from this instead of re-running the query.
+          writeCachedReadiness(wizardSourceFile, json.readiness);
+        })
+        .catch(() => {
+          /* decorative only — the FAB just keeps its plain color */
+        });
+    },
+    [wizardSourceFile],
+  );
   // Mount + whenever the wizard's week settles or changes.
   useEffect(() => {
     if (!fabScoreReady) return;
     fetchFabScore();
   }, [fabScoreReady, fetchFabScore]);
   // Re-check when the Notes modal closes — a Readiness-tab inline fix
-  // ("Set rate" / "Set bank") may have just changed the score.
+  // ("Set rate" / "Set bank") may have just changed the score, so this one
+  // deliberately ignores the cache.
   const fabScoreWasOpenRef = useRef(false);
   useEffect(() => {
-    if (fabScoreWasOpenRef.current && !open && fabScoreReady) fetchFabScore();
+    if (fabScoreWasOpenRef.current && !open && fabScoreReady) fetchFabScore({ force: true });
     fabScoreWasOpenRef.current = open;
   }, [open, fabScoreReady, fetchFabScore]);
   // The closed FAB's center content alternates between the StickyNote icon and
@@ -354,12 +442,35 @@ export default function PayrollWizardNotesFab({
   const { data: authSession } = useSession();
   const clerkName =
     authSession?.user?.name?.trim() || (sessionEmail ?? "").split("@")[0] || "";
-  const [rows, setRows] = useState<PayrollWizardNoteRow[]>([]);
-  const [loading, setLoading] = useState(true);
+  // Seeded from the cache so a return trip to the wizard shows the board
+  // immediately; `loading` (the "Loading notes…" row) only appears on the first
+  // pull of the session, never again on a remount.
+  const [rows, setRows] = useState<PayrollWizardNoteRow[]>(
+    () => getTabCache<PayrollWizardNoteRow[]>(TAB_CACHE_KEYS.payrollNotesRows) ?? [],
+  );
+  const [loading, setLoading] = useState(
+    () => !hasFetchedThisSession(TAB_CACHE_KEYS.payrollNotesRows),
+  );
   const [adding, setAdding] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // Last-saved snapshot per row, so a blur only PATCHes cells that changed.
-  const savedRef = useRef<Map<string, PayrollWizardNoteRow>>(new Map());
+  // Seeded from the same cached rows, so editing a cell right after a remount
+  // still compares against the real saved value rather than an empty baseline.
+  const savedRef = useRef<Map<string, PayrollWizardNoteRow>>(
+    new Map(
+      (getTabCache<PayrollWizardNoteRow[]>(TAB_CACHE_KEYS.payrollNotesRows) ?? []).map((r) => [
+        r.id,
+        r,
+      ]),
+    ),
+  );
+  /** Mirror the SERVER-side truth into the cache. Driven off savedRef (which
+   *  holds server copies and preserves row order), so a half-typed draft is
+   *  never what a later mount seeds from — and so this runs on saves, not on
+   *  keystrokes. */
+  const cacheRows = useCallback(() => {
+    setTabCache(TAB_CACHE_KEYS.payrollNotesRows, [...savedRef.current.values()]);
+  }, []);
   // True while a cell has focus — a live refresh must never clobber a draft.
   const editingRef = useRef(false);
   // "Show everyone's notes" — defaults ON (it's a shared board); remembered
@@ -389,6 +500,7 @@ export default function PayrollWizardNotesFab({
     // fresh copies and every local draft would look "unchanged".
     const baseline = savedRef.current;
     savedRef.current = new Map(next.map((r) => [r.id, r]));
+    cacheRows();
     setRows((prev) => {
       const localById = new Map(prev.map((r) => [r.id, r]));
       // Keep locally-edited cells (in-flight saves, mid-typing drafts) even
@@ -398,7 +510,7 @@ export default function PayrollWizardNotesFab({
         return local ? mergeRowPreservingDrafts(local, baseline.get(fresh.id), fresh) : fresh;
       });
     });
-  }, []);
+  }, [cacheRows]);
 
   const load = useCallback(async () => {
     try {
@@ -406,6 +518,7 @@ export default function PayrollWizardNotesFab({
       const json = (await res.json()) as { rows?: PayrollWizardNoteRow[]; error?: string };
       if (!res.ok) throw new Error(json.error || `Load failed (${res.status})`);
       applyRows(json.rows ?? []);
+      markFetchedThisSession(TAB_CACHE_KEYS.payrollNotesRows);
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not load notes");
@@ -426,16 +539,23 @@ export default function PayrollWizardNotesFab({
   // Worker-cell suggestions: the people in the current Hubstaff timesheet CSV
   // — the same list the Payroll Wizard's Initial Calculation step shows, keyed
   // on the Hubstaff email so a picked worker links to the wizard's Adj. column.
-  // Fetched once per session on first open; free text keeps working if the
-  // fetch fails or while it's in flight.
-  const [workers, setWorkers] = useState<PayrollWorkerOption[]>([]);
+  // Fetched once per page session on first open — cached, so a remount reuses
+  // the list instead of re-pulling it; free text keeps working if the fetch
+  // fails or while it's in flight.
+  const [workers, setWorkers] = useState<PayrollWorkerOption[]>(
+    () => getTabCache<PayrollWorkerOption[]>(TAB_CACHE_KEYS.payrollNotesWorkers) ?? [],
+  );
   useEffect(() => {
     if (!open || !canEdit || workers.length > 0) return;
+    if (hasFetchedThisSession(TAB_CACHE_KEYS.payrollNotesWorkers)) return;
     let alive = true;
     fetch("/api/payroll-wizard/notes/workers", { cache: "no-store" })
       .then(async (res) => (await res.json()) as { workers?: PayrollWorkerOption[] })
       .then((j) => {
-        if (alive) setWorkers(j.workers ?? []);
+        if (!alive) return;
+        setWorkers(j.workers ?? []);
+        setTabCache(TAB_CACHE_KEYS.payrollNotesWorkers, j.workers ?? []);
+        markFetchedThisSession(TAB_CACHE_KEYS.payrollNotesWorkers);
       })
       .catch(() => {
         /* suggestions are an enhancement — typing stays free-form */
@@ -470,6 +590,7 @@ export default function PayrollWizardNotesFab({
         const fresh = json.row;
         const baseline = savedRef.current.get(id);
         savedRef.current.set(id, fresh);
+        cacheRows();
         // Merge, never swap: by the time this PATCH resolves the user is often
         // already typing in the row's NEXT cell (cells save on blur) — a
         // whole-row replace deleted that draft mid-keystroke.
@@ -496,7 +617,7 @@ export default function PayrollWizardNotesFab({
         }
       }
     },
-    [],
+    [cacheRows],
   );
 
   const onCellChange = (id: string, field: PayrollWizardNoteField, value: string) => {
@@ -737,6 +858,7 @@ export default function PayrollWizardNotesFab({
       if (!res.ok || !json.row) throw new Error(json.error || `Add failed (${res.status})`);
       const fresh = json.row;
       savedRef.current.set(fresh.id, fresh);
+      cacheRows();
       setRows((prev) => [...prev, fresh]);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Could not add a row");
@@ -758,6 +880,7 @@ export default function PayrollWizardNotesFab({
       const json = (await res.json()) as { deleted?: number; error?: string };
       if (!res.ok) throw new Error(json.error || `Delete failed (${res.status})`);
       savedRef.current.delete(id);
+      cacheRows();
       // A deleted note takes its applied adjustment with it (match-checked
       // wizard-side, so only an override this row produced is cleared — and
       // when the worker has other rows this week, only THIS row's share).
@@ -1232,8 +1355,17 @@ export default function PayrollWizardNotesFab({
  * Payment Catalog tab.
  */
 function RatesGlance({ wizardSourceFile }: { wizardSourceFile: string | null }) {
-  const [structures, setStructures] = useState<PayStructure[] | null>(null);
+  // Cached: this pane unmounts every time you switch to another modal tab, and
+  // re-flashing "Loading rates…" on the way back is pure noise. Seeded from the
+  // last pull, then quietly revalidated below so a Payment Catalog edit still
+  // shows up.
+  const [structures, setStructures] = useState<PayStructure[] | null>(
+    () => getTabCache<PayStructure[]>(TAB_CACHE_KEYS.payrollNotesRates) ?? null,
+  );
   const [error, setError] = useState<string | null>(null);
+  /** Whether this mount started with cards already on screen — a background
+   *  revalidate must not replace them with an error card if it fails. */
+  const structuresCacheWasWarm = useRef(structures !== null);
   /** Departments excluded from the wizard's CURRENT pay week (step 1 →
    *  Configuration; the setting is per-week, keyed on the wizard's source
    *  file). Their rate cards are discounted from this glance. Best-effort: no
@@ -1242,18 +1374,25 @@ function RatesGlance({ wizardSourceFile }: { wizardSourceFile: string | null }) 
 
   useEffect(() => {
     let alive = true;
+    // Revalidating over a warm cache is invisible: the cards stay up, and a
+    // failure keeps them up too (no error card over data we already have).
+    const warm = structuresCacheWasWarm.current;
     fetch("/api/payment-catalog/pay-structures", { cache: "no-store" })
       .then(async (res) => {
         const json = (await res.json()) as { structures?: PayStructure[]; error?: string };
         if (!res.ok) throw new Error(json.error || `Load failed (${res.status})`);
-        if (alive) setStructures(json.structures ?? []);
+        if (!alive) return;
+        setStructures(json.structures ?? []);
+        setTabCache(TAB_CACHE_KEYS.payrollNotesRates, json.structures ?? []);
       })
       .catch((e) => {
-        if (alive) setError(e instanceof Error ? e.message : "Could not load rates");
+        if (alive && !warm) setError(e instanceof Error ? e.message : "Could not load rates");
       });
     return () => {
       alive = false;
     };
+    // Once per mount. `structures` is read through a ref above precisely so it
+    // isn't a dependency — this effect is what sets it.
   }, []);
 
   useEffect(() => {
@@ -2703,9 +2842,20 @@ function PayrollReadinessGlance({
   viewerEmail: string | null;
 }) {
   const reduceMotion = useReducedMotion() ?? false;
-  const [data, setData] = useState<PayrollReadiness | null>(null);
+  // Seeded from the cached snapshot for the week the wizard is on (see
+  // readCachedReadiness): switching modal tabs — or leaving the wizard entirely
+  // and coming back — unmounts this pane, and re-running the readiness query
+  // behind a full "Gathering data…" skeleton each time is the reload this cache
+  // exists to kill. `hasPicked` is false at mount, so the wizard's week IS the
+  // effective week here.
+  const [data, setData] = useState<PayrollReadiness | null>(
+    () => readCachedReadiness(wizardSourceFile)?.readiness ?? null,
+  );
   const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(() => readCachedReadiness(wizardSourceFile) === null);
+  // Mirrors `data` for the fetch path, which needs to know whether there's a
+  // snapshot on screen without taking `data` as a dependency.
+  const dataRef = useRef<PayrollReadiness | null>(data);
   // One shared search box per section, filtering that list live.
   const [kpiQuery, setKpiQuery] = useState("");
   const [rateQuery, setRateQuery] = useState("");
@@ -2750,8 +2900,15 @@ function PayrollReadinessGlance({
   const [confettiOrigins, setConfettiOrigins] = useState<{ x: number; y: number }[] | undefined>();
   const heroRef = useRef<HTMLDivElement | null>(null);
   const readyStateRef = useRef<ReadyWatchState | null>(null);
+  // The cache-seeded snapshot (if this mount had one). It is a repaint of what
+  // was already on screen, not something that happened in front of the
+  // accountant, so it never enters the celebration watch — the first payload
+  // that actually comes back from the server is still "the first of the mount",
+  // which celebrationStep deliberately never celebrates. Without this, arriving
+  // on a week that turned ready WHILE YOU WERE AWAY would fire confetti.
+  const seededDataRef = useRef<PayrollReadiness | null>(data);
   useEffect(() => {
-    if (!data) return;
+    if (!data || data === seededDataRef.current) return;
     // celebrationStep owns the rule (unit-tested in readiness-celebration):
     // fully-ready is the dial's own "100 · Ready" — never a degraded load.
     const { celebrate, next } = celebrationStep(
@@ -2797,15 +2954,23 @@ function PayrollReadinessGlance({
   const ready = heardWizard || grace;
 
   // The Hubstaff uploads (newest first) that the in-tab week selector offers —
-  // the SAME list the Payroll Wizard's period dropdown shows. Fetched once; the
-  // selector degrades gracefully (hidden) if this fails or is empty.
-  const [uploads, setUploads] = useState<string[]>([]);
+  // the SAME list the Payroll Wizard's period dropdown shows. Fetched once per
+  // page session and cached, so the dropdown is populated the instant the pane
+  // comes back; it degrades gracefully (hidden) if this fails or is empty.
+  const [uploads, setUploads] = useState<string[]>(
+    () => getTabCache<string[]>(TAB_CACHE_KEYS.payrollNotesUploads) ?? [],
+  );
   useEffect(() => {
+    if (hasFetchedThisSession(TAB_CACHE_KEYS.payrollNotesUploads)) return;
     let alive = true;
     fetch("/api/hubstaff-hours?source_files=1", { cache: "no-store" })
       .then(async (res) => (await res.json()) as { files?: string[] })
       .then((j) => {
-        if (alive) setUploads((j.files ?? []).filter((f) => typeof f === "string" && f.trim() !== ""));
+        const files = (j.files ?? []).filter((f) => typeof f === "string" && f.trim() !== "");
+        if (!alive) return;
+        setUploads(files);
+        setTabCache(TAB_CACHE_KEYS.payrollNotesUploads, files);
+        markFetchedThisSession(TAB_CACHE_KEYS.payrollNotesUploads);
       })
       .catch(() => {
         /* the selector is an enhancement — falls back to the wizard's week */
@@ -2835,31 +3000,59 @@ function PayrollReadinessGlance({
   // is allowed to write state, so a slow fetch for a week we've since left can
   // never clobber the week now in view.
   const loadSeqRef = useRef(0);
-  const load = useCallback(async () => {
-    const seq = ++loadSeqRef.current;
-    try {
-      const qs = effectiveSourceFile ? `?source_file=${encodeURIComponent(effectiveSourceFile)}` : "";
-      const res = await fetch(`/api/payroll-wizard/readiness${qs}`, { cache: "no-store" });
-      const json = (await res.json()) as { readiness?: PayrollReadiness; error?: string };
-      if (seq !== loadSeqRef.current) return; // superseded — a newer load is in charge
-      if (!res.ok || !json.readiness) throw new Error(json.error || `Load failed (${res.status})`);
-      setData(json.readiness);
-      setError(null);
-    } catch (e) {
-      if (seq !== loadSeqRef.current) return; // superseded — don't surface a stale error
-      setError(e instanceof Error ? e.message : "Could not load readiness");
-    } finally {
-      if (seq === loadSeqRef.current) setLoading(false);
-    }
-  }, [effectiveSourceFile]);
+  /** `background` = a refresh nobody asked for (the cache revalidate, Realtime,
+   *  the poll, a tab refocus). Those must never replace a snapshot that's on
+   *  screen with an error card over a blip — the last good numbers plus a quiet
+   *  retry beat a red box. A foreground load (first pull, week switch, Retry)
+   *  still reports its failure. */
+  const load = useCallback(
+    async (opts?: { background?: boolean }) => {
+      const seq = ++loadSeqRef.current;
+      try {
+        const qs = effectiveSourceFile ? `?source_file=${encodeURIComponent(effectiveSourceFile)}` : "";
+        const res = await fetch(`/api/payroll-wizard/readiness${qs}`, { cache: "no-store" });
+        const json = (await res.json()) as { readiness?: PayrollReadiness; error?: string };
+        if (seq !== loadSeqRef.current) return; // superseded — a newer load is in charge
+        if (!res.ok || !json.readiness) throw new Error(json.error || `Load failed (${res.status})`);
+        setData(json.readiness);
+        dataRef.current = json.readiness;
+        // Warm the shared cache: a modal-tab switch, a trip out of the wizard,
+        // or the FAB's own ring read all reuse this instead of re-querying.
+        writeCachedReadiness(effectiveSourceFile, json.readiness);
+        setError(null);
+      } catch (e) {
+        if (seq !== loadSeqRef.current) return; // superseded — don't surface a stale error
+        if (opts?.background && dataRef.current) return;
+        setError(e instanceof Error ? e.message : "Could not load readiness");
+      } finally {
+        if (seq === loadSeqRef.current) setLoading(false);
+      }
+    },
+    [effectiveSourceFile],
+  );
 
   // Hold the fetch until we know the wizard's week (or the grace period lapses),
   // then refetch whenever the effective week changes — the wizard switching its
   // CSV (while we're following it) or the accountant picking a week here.
+  //
+  // A cached snapshot for the week short-circuits the wait: paint it at once,
+  // and only go back to the endpoint if it's older than the pane's own live poll
+  // (READINESS_FRESH_MS) — a quick trip to another tab and back then costs no
+  // query at all, and a longer one revalidates behind the visible numbers.
   useEffect(() => {
     if (!ready) return;
+    const cached = readCachedReadiness(effectiveSourceFile);
+    if (cached) {
+      setData(cached.readiness);
+      dataRef.current = cached.readiness;
+      setError(null);
+      setLoading(false);
+      if (Date.now() - cached.at < READINESS_FRESH_MS) return;
+      void load({ background: true });
+      return;
+    }
     void load();
-  }, [ready, load]);
+  }, [ready, load, effectiveSourceFile]);
 
   /** Pick a week from the in-tab selector. Selecting the current upload clears
    *  the override so Readiness resumes following the wizard; any other week
@@ -2902,7 +3095,9 @@ function PayrollReadinessGlance({
       "app_settings",
     ],
     channel: "payroll-readiness",
-    onRefresh: () => void load(),
+    // Background: a dropped request on the poll must not blank the pane the
+    // accountant is reading (it also keeps the cache warm for the next mount).
+    onRefresh: () => void load({ background: true }),
   });
 
   // Filter the three people lists live (name / email / dept / status). Computed
