@@ -6,9 +6,20 @@
  *   1. Every real hsl:<key>-tagged global_master_list row resolves via
  *      matchHslSubDeptKey (sanity: the namespaced form Department Transfers
  *      write is actually recognized).
- *   2. mergeHslRoster, given the real active roster + real hsl_team_members
- *      rows, produces no duplicate emails and never regresses an
- *      already-classified hsl_team_members dept_key to null.
+ *   2. mergeHslRoster, given the SAME active-roster reader the production
+ *      route (`/api/hsl-bonus/team-members`) actually calls —
+ *      listActiveMasterListPeople(), not a raw global_master_list query,
+ *      which would skip its active-roster filter, dept-label overrides, and
+ *      dedup logic — plus the real hsl_team_members rows, produces no
+ *      duplicate emails and never regresses an already-classified
+ *      hsl_team_members dept_key to null. Also prints a per-branch breakdown
+ *      of GML-derived-only rows for every HSL_DEPT_KEYS branch: this is the
+ *      check that would have caught the 2026-08-03 "Callback Team" collision
+ *      finding (matchHslSubDeptKey resolving a branch whose plain display
+ *      name is ALSO claimed by an unrelated, pre-existing top-level
+ *      department) — the earlier version of this script only printed
+ *      aggregate counts, which showed nothing wrong even with 14 real people
+ *      misfiled onto that branch.
  *   3. Whether dangieg@simple.biz resolves to a branch today (expected: no,
  *      until her Department is set to a specific branch — this script
  *      documents that; it does not fix her data).
@@ -22,9 +33,17 @@ import dotenv from 'dotenv';
 dotenv.config({ path: '.env.local' });
 dotenv.config();
 
-const { matchHslSubDeptKey } = await import('../src/lib/hsl-bonus/schema');
+const { matchHslSubDeptKey, HSL_DEPT_KEYS } = await import('../src/lib/hsl-bonus/schema');
 const { mergeHslRoster } = await import('../src/lib/hsl-bonus/roster-merge');
 const { selectAllPaged } = await import('../src/lib/supabase/select-all-paged');
+// NOTE: global-master-list-db.ts is imported lazily inside section 2 below,
+// NOT hoisted up here with the others. It's a large module (1200+ lines,
+// with its own transitive imports) — empirically, compiling it via tsx
+// before section 1's very first network call made that call intermittently
+// fail with "fetch failed" (reproduced 3/3 runs with the import hoisted vs.
+// 0/4 without it, in this environment) even though the query itself is
+// fine in isolation. Deferring the import until section 2 (after section
+// 1's request has already completed) avoids the timing interaction.
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim();
 const key = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim();
@@ -76,28 +95,23 @@ console.log('\n=== 2. mergeHslRoster sanity over live data (no dept filter) ==='
         .range(from, to),
     );
 
-    const { rows: gmlRows, error: gmlErr } = await selectAllPaged<Record<string, string | null>>((from, to) =>
-      supabase
-        .from('global_master_list')
-        .select('"Name", "Department", "Work Email"')
-        .order('id', { ascending: true })
-        .range(from, to),
-    );
+    // Use the SAME active-roster reader the production route calls — NOT a
+    // raw global_master_list query, which would skip listActiveMasterListPeople's
+    // active-roster filter, dept-label overrides, and dedup logic. Reading
+    // raw is exactly the gap that let the "Callback Team" collision (Finding
+    // 1, 2026-08-03) go undetected by an earlier version of this script.
+    const { listActiveMasterListPeople } = await import('../src/lib/supabase/global-master-list-db');
+    const { people: gmlPeople, error: gmlErr } = await listActiveMasterListPeople();
 
     if (hslErr || gmlErr) {
       console.error('ERROR', hslErr ?? gmlErr);
       failed = true;
     } else {
-      const gmlPeople = gmlRows.map((r) => ({
-        name: r['Name'] ?? '',
-        department: r['Department'],
-        work_email: r['Work Email'],
-      }));
       const merged = mergeHslRoster(hslRows as never, gmlPeople, null);
       const emails = merged.map((m) => m.email);
       const dupes = emails.filter((e, i) => emails.indexOf(e) !== i);
       console.log(`hsl_team_members rows: ${hslRows.length}`);
-      console.log(`global_master_list rows scanned: ${gmlRows.length}`);
+      console.log(`active global_master_list people scanned: ${gmlPeople.length}`);
       console.log(`merged roster size: ${merged.length}`);
 
       // NOTE: The two checks below are regression guards, not independent correctness proofs.
@@ -124,6 +138,24 @@ console.log('\n=== 2. mergeHslRoster sanity over live data (no dept filter) ==='
           : `FAIL: ${regressed.length} rows had their dept_key changed: ${JSON.stringify(regressed)}`,
       );
       if (regressed.length > 0) failed = true;
+
+      // Per-branch breakdown: for each HSL branch, how many merged rows are
+      // GML-derived-only (i.e. resolved via GML and NOT already present in
+      // the raw hsl_team_members read, by email). A real collision like
+      // Finding 1 ("Callback Team" colliding with the unrelated top-level
+      // 'callback' department) would show up here as a nonzero count against
+      // a branch hsl_team_members has zero rows for today — exactly the
+      // signal the old aggregate-counts-only output never surfaced.
+      console.log('\nPer-branch breakdown (GML-derived-only = resolved via GML, not present in the raw hsl_team_members read):');
+      const hslEmailSet = new Set(
+        (hslRows as { email: string }[]).map((r) => (r.email ?? '').trim().toLowerCase()),
+      );
+      for (const key of HSL_DEPT_KEYS) {
+        const gmlDerivedOnlyCount = merged.filter(
+          (row) => row.dept_key === key && !hslEmailSet.has(row.email),
+        ).length;
+        console.log(`  ${key}: ${gmlDerivedOnlyCount} GML-derived-only`);
+      }
     }
   } catch (err) {
     console.error('ERROR', (err as Error).message);
