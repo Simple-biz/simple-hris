@@ -28,3 +28,11 @@ references/backups/
 
 # Local git worktrees for isolated feature work.
 .worktrees/
+
+# ── Payroll sheet exports — real names, addresses, bank details and salaries ──
+# Exported from the Google Sheets payroll dashboards to verify our engine against the
+# authority Accounting pays from (scripts/verify-hogan-formula.mts reads one of these).
+# Useful locally, must never enter git history.
+*Payroll Dashboard*.csv
+*Payroll Dashboard*.xlsx
+NEW Payroll Dashboard*.csv
