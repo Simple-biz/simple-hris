@@ -238,6 +238,13 @@ import { HSL_DEPT_KEYS, HSL_DEPTS, calcManagerBonus } from '@/lib/hsl-bonus/sche
 import WizardCursorOverlay, { type WizardCursorOverlayHandle } from '@/components/payroll/WizardCursorOverlay';
 import LockToggleConfirmDialog, { deriveFirstName } from '@/components/payroll/LockToggleConfirmDialog';
 import { playStagePrepped, stopStagePrepped } from '@/lib/sound/ping-chime';
+import { payrollNotesWeekStart } from '@/lib/payroll/manila-week';
+import {
+  fxConfirmedSettingKey,
+  orphanageConfirmedSettingKey,
+  parseFxConfirmedMarker,
+  parseOrphanageNoneMarker,
+} from '@/lib/payroll/wizard-setup-steps';
 
 function findHeaderColumn(header: string[], ...labels: string[]): number {
   const norm = header.map((h) => h.trim().toLowerCase());
@@ -1994,6 +2001,13 @@ export default function PayrollWizard({
   const [usdToPhpInput, setUsdToPhpInput] = useState<string>(String(OFFICIAL_USD_TO_PHP_RATE));
   const [usdToPhpSaving, setUsdToPhpSaving] = useState(false);
   const [usdToPhpEditing, setUsdToPhpEditing] = useState(false);
+  /** Weekly confirm markers (Wizard Setup checklist, steps 2/3) — read-only
+   *  mirrors of the app_settings stamp, so these buttons can render "already
+   *  confirmed" without re-deriving from the Readiness pane. */
+  const [fxConfirmedAt, setFxConfirmedAt] = useState<string | null>(null);
+  const [fxConfirming, setFxConfirming] = useState(false);
+  const [orphanageNoneConfirmed, setOrphanageNoneConfirmed] = useState(false);
+  const [orphanageNoneConfirming, setOrphanageNoneConfirming] = useState(false);
 
   /** USD → COP (COP per $1). Saved in app_settings `usd_to_cop_rate`. The USD-
    *  anchored second rate; PHP↔COP is derived from this + usdToPhpRate. */
@@ -2152,6 +2166,34 @@ export default function PayrollWizard({
     const d = r.start;
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   }, [calcSourceFile]);
+
+  /** Sunday ISO the weekly confirm markers key on: the cycle being worked
+   *  (its filename week) — falling back to the calendar pay week before a
+   *  file is selected. Must match what buildWizardSetup reads. */
+  const markerWeekStart = hubstaffWeekStart ?? payrollNotesWeekStart();
+
+  // The weekly confirm markers (fx + orphanage-none) for the cycle in view —
+  // read-only mirrors of what the Readiness checklist shows, so the Step 2/3
+  // buttons can render "already confirmed". Shape mirrors the fx-settings
+  // loader below (`{ values: Record<string, string|null> }`), not `{ settings }`.
+  useEffect(() => {
+    let cancelled = false;
+    const keys = [fxConfirmedSettingKey(markerWeekStart), orphanageConfirmedSettingKey(markerWeekStart)];
+    fetch(`/api/app-settings?keys=${encodeURIComponent(keys.join(','))}`, { cache: 'no-store' })
+      .then((res) => (res.ok ? res.json() : { values: {} }))
+      .then((json: { values?: Record<string, string | null> }) => {
+        if (cancelled) return;
+        const fx = parseFxConfirmedMarker(json.values?.[keys[0]!] ?? null);
+        setFxConfirmedAt(fx?.at ?? (fx ? '' : null));
+        setOrphanageNoneConfirmed(parseOrphanageNoneMarker(json.values?.[keys[1]!] ?? null) !== null);
+      })
+      .catch(() => {
+        /* marker display is best-effort; stamping still works */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [markerWeekStart]);
 
   // Broadcast the wizard's current pay period (its `calcSourceFile`, which may
   // be a replayed past week) so the floating Readiness board follows the SAME
@@ -2973,6 +3015,34 @@ export default function PayrollWizard({
       fx_rate: usdToPhpRate,
     };
   }, [calcSourceFile, usdToPhpRate]);
+
+  /** Stamp the weekly fx confirmation (spec: saving the rate confirms it; the
+   *  standalone button covers no-change weeks). Never throws — a failed stamp
+   *  must not break the rate save it rides on. Declared after `auditCycle`
+   *  (not near savePabSetting) since it closes over it. */
+  const stampFxConfirmed = React.useCallback(
+    async (rate: number) => {
+      const at = new Date().toISOString();
+      try {
+        await savePabSetting(
+          fxConfirmedSettingKey(markerWeekStart),
+          JSON.stringify({ rate, by: sessionEmail ?? null, at }),
+        );
+        setFxConfirmedAt(at);
+        void logAudit({
+          user_name: sessionEmail ?? 'anonymous',
+          user_role: sessionRole ?? 'user',
+          action: 'wizard.fx_week_confirmed',
+          resource: fxConfirmedSettingKey(markerWeekStart),
+          cycle: auditCycle,
+          details: { rate, week_start: markerWeekStart },
+        });
+      } catch {
+        toast.error('Rate saved, but the weekly confirmation stamp failed — use "Confirm for this week".');
+      }
+    },
+    [markerWeekStart, savePabSetting, sessionEmail, sessionRole, auditCycle],
+  );
 
   // ── Audit: fire wizard.opened exactly once when the wizard hydrates.
   // Waits until the wizard knows its operator (sessionEmail) or has at least
@@ -9995,6 +10065,7 @@ export default function PayrollWizard({
                               const json = (await res.json()) as { error: string | null };
                               if (!res.ok || json.error) throw new Error(json.error ?? 'Save failed');
                               toast.success(`Rate saved: ₱${parsed.toFixed(2)} / USD`);
+                              void stampFxConfirmed(parsed);
                               cursorOverlayRef.current?.broadcastSave();
                               setUsdToPhpEditing(false);
                             })
@@ -10009,14 +10080,41 @@ export default function PayrollWizard({
                   />
                 </div>
                 {!usdToPhpEditing ? (
-                  <Button
-                    type="button"
-                    size="sm"
-                    className="h-8 bg-blue-600 px-3 text-xs font-semibold text-white hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-400 dark:text-white"
-                    onClick={() => setUsdToPhpEditing(true)}
-                  >
-                    Edit rate
-                  </Button>
+                  <>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      disabled={fxConfirming}
+                      className={`h-8 px-3 text-xs font-semibold ${
+                        fxConfirmedAt !== null
+                          ? 'border-emerald-300 text-emerald-700 dark:border-emerald-700 dark:text-emerald-300'
+                          : 'border-blue-300 text-blue-700 dark:border-blue-700 dark:text-blue-300'
+                      }`}
+                      onClick={() => {
+                        setFxConfirming(true);
+                        void stampFxConfirmed(usdToPhpRate).finally(() => setFxConfirming(false));
+                      }}
+                    >
+                      {fxConfirming ? (
+                        <Loader2 className="h-3 w-3 animate-spin" />
+                      ) : fxConfirmedAt !== null ? (
+                        <>
+                          <CheckCircle2 className="mr-1 h-3 w-3" /> Confirmed this week
+                        </>
+                      ) : (
+                        'Confirm for this week'
+                      )}
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      className="h-8 bg-blue-600 px-3 text-xs font-semibold text-white hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-400 dark:text-white"
+                      onClick={() => setUsdToPhpEditing(true)}
+                    >
+                      Edit rate
+                    </Button>
+                  </>
                 ) : (
                   <Button
                     type="button"
@@ -10049,6 +10147,7 @@ export default function PayrollWizard({
                           const json = (await res.json()) as { error: string | null };
                           if (!res.ok || json.error) throw new Error(json.error ?? 'Save failed');
                           toast.success(`Rate saved: ₱${parsed.toFixed(2)} / USD`);
+                          void stampFxConfirmed(parsed);
                           setUsdToPhpEditing(false);
                         })
                         .catch((err: unknown) =>
@@ -13110,6 +13209,57 @@ export default function PayrollWizard({
                 </span>
                 <span className="text-zinc-500 dark:text-zinc-500">The pay-week column is informational — every matched row is applied to this period.</span>
               </div>
+
+              {!isReplay && orphLocked.length === 0 && (
+                <div className="mt-2">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    disabled={orphanageNoneConfirming}
+                    className={`h-8 px-3 text-xs font-semibold ${
+                      orphanageNoneConfirmed
+                        ? 'border-emerald-300 text-emerald-700 dark:border-emerald-700 dark:text-emerald-300'
+                        : 'border-rose-300 text-rose-700 dark:border-rose-700 dark:text-rose-300'
+                    }`}
+                    onClick={() => {
+                      setOrphanageNoneConfirming(true);
+                      void savePabSetting(
+                        orphanageConfirmedSettingKey(markerWeekStart),
+                        JSON.stringify({ none: true, by: sessionEmail ?? null, at: new Date().toISOString() }),
+                      )
+                        .then(() => {
+                          setOrphanageNoneConfirmed(true);
+                          toast.success('Confirmed: no orphanage hours this week');
+                          void logAudit({
+                            user_name: sessionEmail ?? 'anonymous',
+                            user_role: sessionRole ?? 'user',
+                            action: 'wizard.orphanage_none_confirmed',
+                            resource: orphanageConfirmedSettingKey(markerWeekStart),
+                            cycle: auditCycle,
+                            details: { week_start: markerWeekStart },
+                          });
+                        })
+                        .catch((err: unknown) =>
+                          toast.error(
+                            `Could not confirm: ${err instanceof Error ? err.message : 'Unknown error'}`,
+                          ),
+                        )
+                        .finally(() => setOrphanageNoneConfirming(false));
+                    }}
+                  >
+                    {orphanageNoneConfirming ? (
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                    ) : orphanageNoneConfirmed ? (
+                      <>
+                        <CheckCircle2 className="mr-1 h-3 w-3" /> Confirmed — none this week
+                      </>
+                    ) : (
+                      'No orphanage hours this week'
+                    )}
+                  </Button>
+                </div>
+              )}
             </div>
 
             {isReplay && (
