@@ -1127,12 +1127,14 @@ function SystemBonusesTab({
       <SystemBonusCard
         code="pab"
         row={byCode('pab')}
+        deptOptions={deptOptions}
         onUpsert={onUpsert}
         subtitle="Paid on the final week of the PAB period to employees who pass perfect attendance."
       />
       <SystemBonusCard
         code="tech"
         row={byCode('tech')}
+        deptOptions={deptOptions}
         onUpsert={onUpsert}
         subtitle="Paid on the 3rd-week salary date to employees past 30 days of service."
       />
@@ -1584,11 +1586,13 @@ function CustomSystemBonusCard({
 function SystemBonusCard({
   code,
   row,
+  deptOptions,
   onUpsert,
   subtitle,
 }: {
   code: SystemBonusCode;
   row: SystemBonus | null;
+  deptOptions: { key: string; name: string }[];
   onUpsert: (b: SystemBonus) => void;
   subtitle: string;
 }) {
@@ -1696,12 +1700,12 @@ function SystemBonusCard({
               <span className="font-semibold text-zinc-800 dark:text-zinc-200">
                 {depts.size}
               </span>{' '}
-              of {DEPARTMENTS.length} departments
+              of {deptOptions.length} departments
             </span>
             <div className="flex items-center gap-1.5">
               <button
                 type="button"
-                onClick={() => setDepts(new Set(DEPARTMENTS.map((d) => d.key)))}
+                onClick={() => setDepts(new Set(deptOptions.map((d) => d.key)))}
                 className="rounded px-1.5 py-0.5 text-[11px] font-medium text-orange-600 hover:bg-orange-50 dark:text-orange-400 dark:hover:bg-blue-950/30"
               >
                 Select all
@@ -1716,7 +1720,7 @@ function SystemBonusCard({
             </div>
           </div>
           <div className="flex flex-wrap gap-1.5">
-            {DEPARTMENTS.map((d) => {
+            {deptOptions.map((d) => {
               const on = depts.has(d.key);
               return (
                 <button

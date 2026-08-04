@@ -18,8 +18,11 @@
  *      SUNDAY start, so a session that fetch fails in silently reads and writes a
  *      week key nothing else uses.
  *
- * Cadence matters when judging a period key: weekly depts key on the upload's
- * Sunday, monthly depts key on the 1st of the month. Both are checked as such.
+ * Both cadences key on the SAME upload Sunday (2026-08-04 fix — monthly HSL
+ * depts used to key on the 1st of the month, which Payroll Readiness never
+ * reads; that's a THIRD way period-key drift happened, and is why Collections /
+ * Healthcare Team Lead / SSD Medical Records could be marked ready forever and
+ * never clear in Readiness. See HslBonusCalculator.tsx `periodStart`.
  *
  * SAFE BY DEFAULT — dry-run prints what it would do and changes nothing.
  *   npx tsx scripts/audit-kpi-key-drift.mts             # audit only
@@ -304,7 +307,7 @@ for (const spec of TABLES) {
       const [dept, ps] = k.split('|') as [string, string];
       const g = byKey.get(k)!;
       const cadence = monthlyKeys.has(dept) ? 'monthly' : 'weekly';
-      const suggest = cadence === 'weekly' ? containingWeek(ps) : `${ps.slice(0, 7)}-01`;
+      const suggest = containingWeek(ps);
       weekDriftCount += g.ids.length;
       console.log(
         `      ${dept} @ ${ps} (${dayName(ps)}, ${cadence})  rows=${g.ids.length} people=${g.people.size}` +
@@ -316,13 +319,14 @@ for (const spec of TABLES) {
   }
 }
 
-/** A period key is readable iff the calculator would ever ask for it: the upload
- *  filename's Sunday for a weekly dept, the 1st of the month for a monthly one. */
+/** A period key is readable iff the calculator (and Payroll Readiness) would
+ *  ever ask for it — the upload filename's Sunday, same for both cadences
+ *  since the 2026-08-04 fix. A bare month-first key ("YYYY-MM-01") is still
+ *  tolerated so the pre-fix orphans this audit already knows about (see
+ *  `references/backups/hsl-monthly-period-key-fix-*.json`) don't re-flag on
+ *  every run; a NEW month-first row would mean the bug regressed. */
 function isPeriodReadable(dept: string, periodStart: string): boolean {
   if (!periodStart) return false;
-  if (monthlyKeys.has(dept)) return /^\d{4}-\d{2}-01$/.test(periodStart);
-  // Weekly: must match an actual upload. Month-firsts are left alone — a dept
-  // whose cadence changed would otherwise read as drift.
   return weekKeys.has(periodStart) || /^\d{4}-\d{2}-01$/.test(periodStart);
 }
 

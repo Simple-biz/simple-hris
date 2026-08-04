@@ -101,13 +101,11 @@ export const HSL_DEPT_KEYS = [
   'medical_records',
   'care_team',
   'callback_team',
-  'simple_texting',
   'filing_specialist',
   'intake_specialist',
   'post_hearing_prep',
   'collections',
   'healthcare_team_lead',
-  'collections_tl',
   'attestation',
   'case_managers',
   'hsl_managers',
@@ -205,19 +203,6 @@ export const HSL_DEPTS: Record<HslDeptKey, DeptConfig> = {
     ],
   },
 
-  simple_texting: {
-    key: 'simple_texting',
-    name: 'Simple Texting',
-    cadence: 'weekly',
-    color: '#d946ef',
-    headerBg: 'bg-fuchsia-950/40',
-    badgeCls: 'bg-fuchsia-900/60 text-fuchsia-300',
-    rules: [
-      { type: 'per_unit', key: 'transferred_calls', label: 'Successfully Transferred Calls', rate: 50 },
-      { type: 'per_unit', key: 'sign_ups',          label: 'Sign Ups',                       rate: 250 },
-    ],
-  },
-
   filing_specialist: {
     key: 'filing_specialist',
     name: 'Filing Specialist',
@@ -292,18 +277,6 @@ export const HSL_DEPTS: Record<HslDeptKey, DeptConfig> = {
     badgeCls: 'bg-rose-900/60 text-rose-300',
     rules: [
       { type: 'per_unit', key: 'aca_signups', label: 'ACA Signups', rate: 250 },
-    ],
-  },
-
-  collections_tl: {
-    key: 'collections_tl',
-    name: 'Collections Team Leader',
-    cadence: 'monthly',
-    color: '#d97706',
-    headerBg: 'bg-amber-950/30',
-    badgeCls: 'bg-amber-900/50 text-amber-200',
-    rules: [
-      { type: 'flat', key: 'monthly_flat', label: 'Monthly Flat Bonus', amount: 2500 },
     ],
   },
 

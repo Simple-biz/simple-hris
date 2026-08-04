@@ -160,23 +160,17 @@ function isoWeekStart(d: Date): string {
   return `${yyyy}-${mm}-${dd}`;
 }
 
-function isoMonthStart(d: Date): string {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`;
-}
-
 function isoWeekEnd(start: string): string {
   const d = new Date(start);
   d.setDate(d.getDate() + 6);
   return d.toISOString().slice(0, 10);
 }
 
-function isoMonthEnd(start: string): string {
-  const [y, m] = start.split('-').map(Number);
-  return new Date(y!, m!, 0).toISOString().slice(0, 10);
-}
-
-function periodEnd(dept: DeptConfig, start: string): string {
-  return dept.cadence === 'weekly' ? isoWeekEnd(start) : isoMonthEnd(start);
+/** Both cadences now key off the same Hubstaff-resolved payroll week (see
+ *  `periodStart`) — a monthly dept's period_end is just that week's Saturday,
+ *  same as weekly. */
+function periodEnd(_dept: DeptConfig, start: string): string {
+  return isoWeekEnd(start);
 }
 
 /**
@@ -411,7 +405,6 @@ export default function HslBonusCalculator({
 }: HslBonusCalculatorProps) {
   const today = new Date();
   const [weekStart, setWeekStart] = useState(() => isoWeekStart(today));
-  const [monthStart] = useState(() => isoMonthStart(today));
   /**
    * Whether `weekStart` is the REAL payroll week (the Hubstaff upload's Sun–Sat
    * range start) rather than the local-clock guess it's seeded with.
@@ -422,7 +415,10 @@ export default function HslBonusCalculator({
    * dept-week and writes rows nobody — no other manager, not Payroll Readiness,
    * not payroll — will ever read back. That has already happened: see
    * `npx tsx scripts/audit-kpi-key-drift.mts` for the stranded Monday-keyed
-   * weeks. So weekly branches stay gated until this flips true.
+   * weeks. Both cadences stay gated until this flips true (monthly branches used
+   * to key off the calendar month's 1st instead, which never matched what
+   * Payroll Readiness reads and left Mark-Ready invisible there forever — see
+   * `periodStart` below).
    */
   const [weekResolved, setWeekResolved] = useState(false);
   /** Resolution failed outright (after retries) — say so instead of silently
@@ -521,8 +517,18 @@ export default function HslBonusCalculator({
     return m;
   }, [offboardedForWeek]);
 
-  function periodStart(dept: DeptConfig): string {
-    return dept.cadence === 'weekly' ? weekStart : monthStart;
+  /** Both cadences key on the SAME Hubstaff-resolved payroll week — the exact
+   *  key Payroll Readiness's `hsl_bonus_period_status` / `hsl_bonus_entries`
+   *  reads (`weekKeyFromSourceFile` in payroll-readiness.ts). Monthly-cadence
+   *  depts used to key on the calendar month's 1st (`isoMonthStart(today)`)
+   *  instead — a different, never-matching address space, so Mark Ready on
+   *  Collections / Healthcare Team Lead / SSD Medical Records could never clear
+   *  in Readiness no matter how many times a manager submitted. `isMonthly` /
+   *  `isFinalPayrollWeekOfMonth` already scope monthly depts to the one week a
+   *  month, so a single shared key per cadence is correct here, not a
+   *  regression. */
+  function periodStart(_dept: DeptConfig): string {
+    return weekStart;
   }
 
   function setDept(key: HslDeptKey, patch: Partial<DeptState>) {
@@ -609,11 +615,11 @@ export default function HslBonusCalculator({
 
   const loadDept = useCallback(async (key: HslDeptKey) => {
     const dept = HSL_DEPTS[key];
-    // A weekly branch's period key is the Hubstaff upload's week — reading before
-    // that resolves queries a key nothing was ever saved under, which is what made
-    // one manager's scores look empty on another account. Monthly branches key on
-    // the 1st of the month, which the local clock already knows.
-    if (dept.cadence === 'weekly' && !weekResolved) return;
+    // A branch's period key is the Hubstaff upload's week — reading before that
+    // resolves queries a key nothing was ever saved under, which is what made
+    // one manager's scores look empty on another account. Applies to monthly
+    // branches too now (see `periodStart`).
+    if (!weekResolved) return;
     const start = periodStart(dept);
     setLoadingDepts((prev) => new Set([...prev, key]));
     try {
@@ -711,7 +717,7 @@ export default function HslBonusCalculator({
         return next;
       });
     }
-  }, [weekStart, monthStart, weekResolved]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [weekStart, weekResolved]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // First-load gate: show a loading screen until every visible dept's initial
   // fetch has settled, so switching to the tab doesn't flash an empty calculator.
@@ -812,7 +818,7 @@ export default function HslBonusCalculator({
     // Refuse rather than strand the work: an unresolved week would write this
     // dept-week under a key no reader asks for (invisible scores, and a duplicate
     // if it's re-scored later under the right key).
-    if (dept.cadence === 'weekly' && !weekResolved) {
+    if (!weekResolved) {
       toast.error('Payroll week not confirmed', {
         description: 'Reload the page before saving — scores saved now would not be visible to anyone else.',
       });
@@ -857,7 +863,7 @@ export default function HslBonusCalculator({
     const dept = HSL_DEPTS[key];
     // Same reason as saveDept: a status row on an unresolved week is a dept-week
     // Readiness will never see, so the branch would read "Pending" forever.
-    if (dept.cadence === 'weekly' && !weekResolved) {
+    if (!weekResolved) {
       toast.error('Payroll week not confirmed', {
         description: 'Reload the page and try again — this submission would not reach Accounting.',
       });
@@ -1103,14 +1109,14 @@ export default function HslBonusCalculator({
         </div>
 
         {/* The payroll week couldn't be confirmed from the Hubstaff upload, so
-            weekly branches are held back rather than scored against a guessed
+            every branch is held back rather than scored against a guessed
             week key (which is invisible to everyone else — see `weekResolved`). */}
         {weekError && (
           <div
             role="alert"
             className="rounded-lg border border-rose-300 bg-rose-50 px-3 py-2 text-xs text-rose-800 dark:border-rose-500/40 dark:bg-rose-950/30 dark:text-rose-200"
           >
-            <span className="font-semibold">Couldn&apos;t confirm the payroll week.</span> Weekly
+            <span className="font-semibold">Couldn&apos;t confirm the payroll week.</span> All
             branches are paused — anything scored now would be saved under the wrong week and
             wouldn&apos;t be visible to Accounting or the other managers. Reload the page to try
             again.

@@ -2155,10 +2155,10 @@ export default function PayrollWizard({
    * Powers the Hogan Smith Law tab's KPI Bonus column.
    */
   // Authoritative HSL KPI bonus for DISPATCH: sums calculated_bonus across all
-  // WEEKLY HSL sub-departments (SSD, Medical Records, Callback, Simple Texting,
+  // WEEKLY HSL sub-departments (SSD, Medical Records, Callback,
   // Care, Filing, Intake, Pre/Post-Hearing, Managers Weekly) for the processed
-  // Hubstaff week, pinned. Monthly-cadence HSL depts (Collections, Healthcare TL,
-  // Collections TL) are intentionally excluded — they remain on the manual
+  // Hubstaff week, pinned. Monthly-cadence HSL depts (Collections, Healthcare TL)
+  // are intentionally excluded — they remain on the manual
   // Adjustment path, exactly as before. Feeds the Additions "KPI Bonus" toggle
   // and the step-4 review totals so what accounting sees is what dispatches.
   const [hslKpiAmounts, setHslKpiAmounts] = useState<Record<string, number>>({});
