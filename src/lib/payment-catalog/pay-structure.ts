@@ -108,3 +108,56 @@ export function newPayId(prefix = 'pay'): string {
   const rand = Math.random().toString(36).slice(2, 10);
   return `${prefix}_${Date.now().toString(36)}${rand}`;
 }
+
+/** The identifying fields of a pay structure — everything needed to decide which
+ *  DB row a save belongs in, without carrying the rate figures around. */
+export type PayStructureSlot = Pick<
+  PayStructure,
+  'id' | 'scope' | 'departmentKey' | 'employeeEmail'
+>;
+
+/** Normalized natural-key slot for a structure, or null when it occupies none.
+ *  Mirrors the DB's unique indexes exactly:
+ *    department scope → (department_key)                    [dept_uniq]
+ *    employee scope   → (department_key, lower(email))      [emp_uniq]
+ *  An employee row without an email falls outside `emp_uniq`'s partial
+ *  predicate, so it has no slot (and `validatePayStructure` rejects it anyway). */
+function slotKey(s: PayStructureSlot): string | null {
+  const dept = (s.departmentKey ?? '').trim().toLowerCase();
+  if (!dept) return null;
+  if (s.scope === 'department') return `dept:${dept}`;
+  const email = (s.employeeEmail ?? '').trim().toLowerCase();
+  return email ? `emp:${dept}:${email}` : null;
+}
+
+/**
+ * The id a save must actually write to: the row already occupying this
+ * structure's NATURAL key slot, or the caller's own id when the slot is free.
+ *
+ * WHY THIS EXISTS (2026-08-04 bug): `id` is only a surrogate — the DB's real
+ * uniqueness is the natural key (see `slotKey`). The Payroll Wizard's inline
+ * "Set rate" editor (Readiness → No Pay Rate, and the Offboarded tab) has no
+ * structures list in hand, so it mints a FRESH `newPayId()` every time it
+ * opens. Upserting on `id` alone then degraded to a plain INSERT for anyone who
+ * already had a structure and surfaced the raw Postgres text
+ * "duplicate key value violates unique constraint
+ * ...pay_structures_emp_uniq" in the dialog — for any of the ~714 people who
+ * already had one. Resolving the slot here makes "set this person's rate" mean
+ * the same thing from every surface, whether or not the caller happens to know
+ * the existing id.
+ *
+ * (The Payment Catalog tab never hit this because it passes
+ * `existing?.id ?? newPayId()` — it has the list. Callers that DO know the id
+ * are unaffected: their id already owns the slot, so it's returned unchanged.)
+ */
+export function resolvePayStructureWriteTargetId(
+  incoming: PayStructureSlot,
+  occupants: readonly PayStructureSlot[],
+): string {
+  const want = slotKey(incoming);
+  if (!want) return incoming.id;
+  // First match wins so the choice is deterministic even if the unique index
+  // were ever missing and real duplicates existed.
+  const holder = occupants.find((o) => slotKey(o) === want);
+  return holder ? holder.id : incoming.id;
+}

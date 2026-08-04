@@ -1,5 +1,11 @@
 import { createSupabaseServiceRoleClient } from './server';
-import { PAY_CURRENCIES, type PayStructure, type PayCurrency } from '@/lib/payment-catalog/pay-structure';
+import {
+  PAY_CURRENCIES,
+  resolvePayStructureWriteTargetId,
+  type PayStructure,
+  type PayStructureSlot,
+  type PayCurrency,
+} from '@/lib/payment-catalog/pay-structure';
 
 // Persistence for Payment Catalog pay structures
 // (see references/create_payment_catalog_pay_structures.sql). One row per
@@ -71,16 +77,70 @@ export async function listPayStructures(): Promise<{ structures: PayStructure[];
   return { structures: rows.map(mapRow), error: null };
 }
 
+/**
+ * Every structure already sharing this one's DEPARTMENT, reduced to the fields
+ * that identify a natural-key slot. Scoped to the department (an indexed column
+ * — `payment_catalog_pay_structures_dept_idx`) because that's the leading column
+ * of both unique indexes, so it's the smallest set that can possibly contain a
+ * collision.
+ *
+ * Emails are compared in JS rather than with `.ilike()` on purpose: `_` and `%`
+ * are LIKE wildcards, so an address like `a_b@x.com` would match `aXb@x.com` and
+ * we could overwrite the WRONG person's pay rate. Paged because PostgREST caps
+ * every read at 1000 rows (a big department could reach it).
+ */
+async function loadDeptSlots(
+  supabase: NonNullable<ReturnType<typeof createSupabaseServiceRoleClient>>,
+  departmentKey: string,
+): Promise<{ slots: PayStructureSlot[]; error: string | null }> {
+  const slots: PayStructureSlot[] = [];
+  const SIZE = 1000;
+  for (let from = 0; ; from += SIZE) {
+    const { data, error } = await supabase
+      .from(TABLE)
+      .select('id, scope, department_key, employee_email')
+      .eq('department_key', departmentKey)
+      .order('created_at', { ascending: true })
+      .order('id', { ascending: true })
+      .range(from, from + SIZE - 1);
+    if (error) return { slots: [], error: error.message };
+    const rows = (data ?? []) as Pick<PayRow, 'id' | 'scope' | 'department_key' | 'employee_email'>[];
+    for (const r of rows) {
+      slots.push({
+        id: r.id,
+        scope: r.scope,
+        departmentKey: r.department_key,
+        employeeEmail: r.employee_email ?? undefined,
+      });
+    }
+    if (rows.length < SIZE) break;
+  }
+  return { slots, error: null };
+}
+
 export async function upsertPayStructure(
   s: PayStructure,
   actor: string,
 ): Promise<{ row: PayStructure | null; error: string | null }> {
   const supabase = createSupabaseServiceRoleClient();
   if (!supabase) return { row: null, error: 'Supabase client unavailable' };
+
+  // `id` is only a surrogate — the DB's real uniqueness is the natural key
+  // (one department-scoped structure per department; one per department+email).
+  // Callers without the structures list mint a fresh id every save (the Payroll
+  // Wizard's "Set rate" fixer does), which made this "upsert" a plain INSERT and
+  // raised a raw duplicate-key error for anyone who already had a structure.
+  // Resolve the slot's current occupant first so the write UPDATES it instead.
+  const { slots, error: slotErr } = await loadDeptSlots(supabase, s.departmentKey);
+  // A failed lookup must NOT silently fall through to an insert that trips the
+  // unique index with an unreadable Postgres message — report it plainly.
+  if (slotErr) return { row: null, error: `Could not check existing pay structures: ${slotErr}` };
+  const targetId = resolvePayStructureWriteTargetId(s, slots);
+
   // created_by/created_at are preserved on UPDATE by the touch trigger, so it's
   // safe to send `actor` as both creator and updater here.
   const payload = {
-    id: s.id,
+    id: targetId,
     scope: s.scope,
     department_key: s.departmentKey,
     employee_email: s.scope === 'employee' ? (s.employeeEmail ?? null) : null,
