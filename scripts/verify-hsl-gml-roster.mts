@@ -24,6 +24,7 @@ dotenv.config();
 
 const { matchHslSubDeptKey } = await import('../src/lib/hsl-bonus/schema');
 const { mergeHslRoster } = await import('../src/lib/hsl-bonus/roster-merge');
+const { selectAllPaged } = await import('../src/lib/supabase/select-all-paged');
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim();
 const key = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim();
@@ -34,30 +35,6 @@ if (!url || !key) {
 const supabase = createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } });
 
 let failed = false;
-
-/**
- * Paginated SELECT to work around PostgREST 1000-row cap.
- * Accumulates all rows across pages until a page comes back shorter than PAGE_SIZE.
- */
-async function selectAllPaged<T>(table: string, select: string): Promise<T[]> {
-  const PAGE_SIZE = 1000;
-  const all: T[] = [];
-  let from = 0;
-  while (true) {
-    const { data, error } = await supabase
-      .from(table)
-      .select(select)
-      .range(from, from + PAGE_SIZE - 1);
-    if (error) {
-      throw new Error(`${table}: ${error.message}`);
-    }
-    const page = (data ?? []) as T[];
-    all.push(...page);
-    if (page.length < PAGE_SIZE) break;
-    from += PAGE_SIZE;
-  }
-  return all;
-}
 
 console.log('=== 1. Real hsl:<key> Department tags resolve ===');
 {
@@ -83,7 +60,7 @@ console.log('=== 1. Real hsl:<key> Department tags resolve ===');
 console.log('\n=== 2. mergeHslRoster sanity over live data (no dept filter) ===');
 {
   try {
-    const hslRows = await selectAllPaged<{
+    const { rows: hslRows, error: hslErr } = await selectAllPaged<{
       email: string;
       full_name: string;
       hsl_name: string;
@@ -91,38 +68,63 @@ console.log('\n=== 2. mergeHslRoster sanity over live data (no dept filter) ==='
       dept_key: string | null;
       sub_team: string;
       is_manager: boolean;
-    }>('hsl_team_members', 'email, full_name, hsl_name, role_raw, dept_key, sub_team, is_manager');
-
-    const gmlRows = await selectAllPaged<Record<string, string | null>>(
-      'global_master_list',
-      '"Name", "Department", "Work Email"',
+    }>((from, to) =>
+      supabase
+        .from('hsl_team_members')
+        .select('email, full_name, hsl_name, role_raw, dept_key, sub_team, is_manager')
+        .order('email', { ascending: true })
+        .range(from, to),
     );
 
-    const gmlPeople = gmlRows.map((r) => ({
-      name: r['Name'] ?? '',
-      department: r['Department'],
-      work_email: r['Work Email'],
-    }));
-    const merged = mergeHslRoster((hslRows ?? []) as never, gmlPeople, null);
-    const emails = merged.map((m) => m.email);
-    const dupes = emails.filter((e, i) => emails.indexOf(e) !== i);
-    console.log(`hsl_team_members rows: ${hslRows.length}`);
-    console.log(`global_master_list rows scanned: ${gmlRows.length}`);
-    console.log(`merged roster size: ${merged.length}`);
-    console.log(dupes.length === 0 ? 'OK: no duplicate emails in merged roster' : `FAIL: ${dupes.length} duplicate emails`);
-    if (dupes.length > 0) failed = true;
-
-    const regressed = (hslRows as { email: string; dept_key: string | null }[]).filter((r) => {
-      if (!r.dept_key) return false;
-      const m = merged.find((x) => x.email === r.email.toLowerCase());
-      return m && m.dept_key !== r.dept_key;
-    });
-    console.log(
-      regressed.length === 0
-        ? 'OK: no classified hsl_team_members dept_key was overwritten'
-        : `FAIL: ${regressed.length} rows had their dept_key changed: ${JSON.stringify(regressed)}`,
+    const { rows: gmlRows, error: gmlErr } = await selectAllPaged<Record<string, string | null>>((from, to) =>
+      supabase
+        .from('global_master_list')
+        .select('"Name", "Department", "Work Email"')
+        .order('id', { ascending: true })
+        .range(from, to),
     );
-    if (regressed.length > 0) failed = true;
+
+    if (hslErr || gmlErr) {
+      console.error('ERROR', hslErr ?? gmlErr);
+      failed = true;
+    } else {
+      const gmlPeople = gmlRows.map((r) => ({
+        name: r['Name'] ?? '',
+        department: r['Department'],
+        work_email: r['Work Email'],
+      }));
+      const merged = mergeHslRoster(hslRows as never, gmlPeople, null);
+      const emails = merged.map((m) => m.email);
+      const dupes = emails.filter((e, i) => emails.indexOf(e) !== i);
+      console.log(`hsl_team_members rows: ${hslRows.length}`);
+      console.log(`global_master_list rows scanned: ${gmlRows.length}`);
+      console.log(`merged roster size: ${merged.length}`);
+
+      // NOTE: The two checks below are regression guards, not independent correctness proofs.
+      // mergeHslRoster uses a Map<string, HslRosterRow> keyed by lowercased email, so:
+      // (1) duplicate emails are impossible — a Map cannot hold two values under one key.
+      // (2) dept_key regressions are impossible for rows with truthy dept_key — the merge
+      //     uses `dept_key: r.dept_key ?? existing?.dept_key ?? null`, so `??` short-circuits
+      //     to `r.dept_key` itself.
+      // These checks confirm the current implementation's Map-based invariants hold (useful
+      // as a regression guard if mergeHslRoster is ever refactored away from this approach).
+      // The real correctness tests for the merge precedence rules live in
+      // src/lib/hsl-bonus/roster-merge.test.ts (hand-constructed conflicting fixtures).
+      console.log(dupes.length === 0 ? 'OK: no duplicate emails in merged roster' : `FAIL: ${dupes.length} duplicate emails`);
+      if (dupes.length > 0) failed = true;
+
+      const regressed = (hslRows as { email: string; dept_key: string | null }[]).filter((r) => {
+        if (!r.dept_key) return false;
+        const m = merged.find((x) => x.email === r.email.toLowerCase());
+        return m && m.dept_key !== r.dept_key;
+      });
+      console.log(
+        regressed.length === 0
+          ? 'OK: no classified hsl_team_members dept_key was overwritten'
+          : `FAIL: ${regressed.length} rows had their dept_key changed: ${JSON.stringify(regressed)}`,
+      );
+      if (regressed.length > 0) failed = true;
+    }
   } catch (err) {
     console.error('ERROR', (err as Error).message);
     failed = true;
