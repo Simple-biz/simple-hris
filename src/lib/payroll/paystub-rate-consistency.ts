@@ -35,8 +35,19 @@
  * let a human resolve the source data.
  */
 
-/** Pay lines that carry an hours × rate basis. Bonuses/adjustments have none. */
-export type RateLine = 'regular' | 'ot';
+/**
+ * Pay lines that carry an hours × rate basis. Bonuses/adjustments have none.
+ *
+ * The two `weekend-*` lines were added 2026-08-04 after a preview stub printed
+ *
+ *     Weekend Hours    8.10h × ₱370.00      ₱1,944.60
+ *
+ * and passed this guard untouched. 8.10 × 370 is ₱2,997.00; ₱1,944.60 is 8.10 × ₱240
+ * (a stale ₱225 base + the ₱15 premium) — a ₱1,053.33 shortfall on a stub that was
+ * about to be sent. It slipped because the guard only ever inspected `regular` and
+ * `ot`, while the weekend carve-out renders its own hours × rate line.
+ */
+export type RateLine = 'regular' | 'ot' | 'weekend-regular' | 'weekend-ot';
 
 export interface RateConsistencyIssue {
   line: RateLine;
@@ -88,6 +99,21 @@ export interface RateConsistencyInput {
    * an inferred mismatch to a warning; an exact `ratesPaid` conflict still errors.
    */
   hasMidPeriodChange?: boolean;
+  /**
+   * The HSL weekend carve-out block, when the statement renders one. Its lines show
+   * their OWN hours × rate, at `base rate + premium`, so they need checking too —
+   * that is the hole the 2026-08-04 ₱1,053.33 stub walked through.
+   *
+   * Only `hours` and `payPhp` are supplied: the displayed weekend rate is DERIVED here
+   * exactly as the statement derives it (`ratesPhp.* + premiumPhpPerHour`), so a caller
+   * cannot accidentally hand us a rate the stub never showed.
+   */
+  weekend?: {
+    hours?: { regular?: number | null; ot?: number | null } | null;
+    payPhp?: { regular?: number | null; ot?: number | null } | null;
+    /** Defaults to the ₱15 HSL rule when omitted. */
+    premiumPhpPerHour?: number | null;
+  } | null;
 }
 
 /** Rounding slack. Per-day accumulation rounds once at the end, so allow a cent or two. */
@@ -114,13 +140,30 @@ function includesRate(rates: number[], rate: number): boolean {
   return rates.some((r) => Math.abs(r - rate) <= RATE_EPSILON);
 }
 
+const LINE_LABELS: Record<RateLine, string> = {
+  regular: 'Regular Hours',
+  ot: 'Overtime',
+  'weekend-regular': 'Weekend Hours',
+  'weekend-ot': 'Weekend Overtime',
+};
+
 function checkLine(
   line: RateLine,
   hoursRaw: unknown,
   rateRaw: unknown,
   payRaw: unknown,
   ratesPaidRaw: number[] | null | undefined,
-  isHsl: boolean,
+  /**
+   * Whether pay is allowed to EXCEED hours × rate by up to ₱15/h.
+   *
+   * True for the `regular`/`ot` lines of an HSL employee, where the weekend premium is
+   * folded into the line's pay but not into its displayed rate.
+   *
+   * FALSE for the `weekend-*` lines even on HSL, because their displayed rate ALREADY
+   * includes the premium. Granting headroom there would re-open the exact hole this
+   * check was extended to close.
+   */
+  allowPremiumHeadroom: boolean,
   hasMidPeriodChange: boolean,
 ): RateConsistencyIssue | null {
   const hours = finite(hoursRaw);
@@ -140,7 +183,7 @@ function checkLine(
   const impliedRate = round(pay / hours, 4);
   const ratesPaid = (ratesPaidRaw ?? []).filter((r): r is number => finite(r) != null);
 
-  const label = line === 'regular' ? 'Regular Hours' : 'Overtime';
+  const label = LINE_LABELS[line];
 
   // ── Exact path: we know the rates the engine applied. ──
   if (ratesPaid.length > 0) {
@@ -170,7 +213,8 @@ function checkLine(
   // Overpayment side is widened by the HSL weekend premium, which can lift every
   // hour in the line by up to ₱15.
   const overHeadroom =
-    ROUNDING_TOLERANCE_PHP + (isHsl ? HSL_WEEKEND_PREMIUM_PHP_PER_HOUR * hours : 0);
+    ROUNDING_TOLERANCE_PHP +
+    (allowPremiumHeadroom ? HSL_WEEKEND_PREMIUM_PHP_PER_HOUR * hours : 0);
 
   const underpaid = deltaPhp > ROUNDING_TOLERANCE_PHP;
   const overpaid = -deltaPhp > overHeadroom;
@@ -208,7 +252,7 @@ function checkLine(
 export function findRateConsistencyIssues(
   input: RateConsistencyInput,
 ): RateConsistencyIssue[] {
-  const { hours, ratesPhp, payPhp, ratesPaid, isHsl, hasMidPeriodChange } = input ?? {};
+  const { hours, ratesPhp, payPhp, ratesPaid, isHsl, hasMidPeriodChange, weekend } = input ?? {};
   const out: RateConsistencyIssue[] = [];
   const reg = checkLine(
     'regular',
@@ -230,6 +274,45 @@ export function findRateConsistencyIssues(
     !!hasMidPeriodChange,
   );
   if (ot) out.push(ot);
+
+  // ── Weekend carve-out lines ──
+  // These render their own hours × rate at `base + premium`. The displayed rate is
+  // derived here the same way the statement derives it, so the check tests the number
+  // the employee actually sees. `allowPremiumHeadroom` is FALSE: the premium is already
+  // inside the displayed rate, so pay must reproduce hours × rate on BOTH sides.
+  if (weekend) {
+    const premium = finite(weekend.premiumPhpPerHour) ?? HSL_WEEKEND_PREMIUM_PHP_PER_HOUR;
+    const baseReg = finite(ratesPhp?.regular);
+    const baseOt = finite(ratesPhp?.ot);
+    // `ratesPaid` is deliberately NOT forwarded here. On the regular/ot lines it is the
+    // authoritative signal — but it clears a line whenever the DISPLAYED rate appears
+    // anywhere among the rates used, even if only some of the hours were paid at it.
+    // That is precisely the erjiee case: rates paid were [355, 225] (weekdays at 355,
+    // the stranded Sunday at 225), so the weekend equivalents [370, 240] would "contain"
+    // the displayed 370 and clear a ₱1,053.33 shortfall. The weekend line renders ONE
+    // rate against ONE amount, so plain arithmetic is both sufficient and stricter.
+    // A genuine mid-week rate change still downgrades this to a warning below.
+    const wReg = checkLine(
+      'weekend-regular',
+      weekend.hours?.regular,
+      baseReg == null ? null : round(baseReg + premium, 2),
+      weekend.payPhp?.regular,
+      null,
+      false,
+      !!hasMidPeriodChange,
+    );
+    if (wReg) out.push(wReg);
+    const wOt = checkLine(
+      'weekend-ot',
+      weekend.hours?.ot,
+      baseOt == null ? null : round(baseOt + premium, 2),
+      weekend.payPhp?.ot,
+      null,
+      false,
+      !!hasMidPeriodChange,
+    );
+    if (wOt) out.push(wOt);
+  }
   return out;
 }
 

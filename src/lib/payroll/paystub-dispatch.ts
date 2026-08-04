@@ -38,10 +38,29 @@ function findUnderpaidLines(employees: unknown[]): string[] {
   for (const e of employees) {
     if (!e || typeof e !== "object") continue;
     const emp = e as Record<string, unknown>;
+    // The staged payload's weekend carve-out (snake_case on the wire) mapped onto the
+    // checker's shape. Without this the weekend line — which renders its own
+    // hours × rate — is never validated, which is how a ₱1,053.33 shortfall reached a
+    // preview stub with the guard reporting nothing.
+    const wknd = emp.weekend as
+      | {
+          hours?: { regular?: number | null; ot?: number | null } | null;
+          pay_php?: { regular?: number | null; ot?: number | null } | null;
+          premium_php_per_hour?: number | null;
+        }
+      | null
+      | undefined;
     const issues = findRateConsistencyIssues({
       hours: emp.hours as { regular?: number | null; ot?: number | null } | null,
       ratesPhp: emp.rates_php as { regular?: number | null; ot?: number | null } | null,
       payPhp: emp.pay_php as { regular?: number | null; ot?: number | null } | null,
+      weekend: wknd
+        ? {
+            hours: wknd.hours ?? null,
+            payPhp: wknd.pay_php ?? null,
+            premiumPhpPerHour: wknd.premium_php_per_hour ?? null,
+          }
+        : null,
     }).filter((i) => i.deltaPhp > 0);
     if (issues.length === 0) continue;
     const who =

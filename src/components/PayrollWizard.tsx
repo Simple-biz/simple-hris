@@ -7498,6 +7498,17 @@ export default function PayrollWizard({
         payPhp: emp.pay_php,
         ratesPaid: r.ratesPaid,
         hasMidPeriodChange: !!r.rateChange,
+        // The weekend carve-out renders its OWN hours × rate line, so it needs checking
+        // too. Omitting it let a stub print "8.10h × ₱370.00  ₱1,944.60" — money computed
+        // at ₱240 (a stale ₱225 base + premium) under a freshly-refreshed ₱370 label, a
+        // ₱1,053.33 shortfall this guard was supposed to make impossible.
+        weekend: r.weekend
+          ? {
+              hours: { regular: r.weekend.regularHours, ot: r.weekend.otHours },
+              payPhp: { regular: r.weekend.regularPay, ot: r.weekend.otPay },
+              premiumPhpPerHour: 15,
+            }
+          : null,
       });
       // (2) The rate SOURCES disagreeing. The stub is correct either way, but the
       //     employee may still be owed the difference, so it must stay visible.

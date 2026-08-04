@@ -236,3 +236,205 @@ test('a real shortfall just past the rounding tolerance IS flagged', () => {
 function round2(n: number): number {
   return Math.round(n * 100) / 100;
 }
+
+// ── The weekend-line hole (2026-08-04) ───────────────────────────────────────
+// A preview stub for the Jul 26 – Aug 1 2026 week read:
+//
+//     Regular Hours   31.90h × ₱355.00     ₱11,323.61
+//     Overtime         4.50h × ₱532.50      ₱2,395.07
+//     Weekend Hours    8.10h × ₱370.00      ₱1,944.60   <-- 8.10 × 370 = ₱2,997.00
+//
+// ₱1,944.60 is 8.1025 × ₱240 — a stale ₱225 base plus the ₱15 premium — while the
+// label had refreshed to ₱370 (the corrected ₱355 base + ₱15). A ₱1,053.33 shortfall
+// on a stub about to be sent, and this guard passed it, because it only inspected the
+// `regular` and `ot` lines. The weekend carve-out renders its own hours × rate.
+
+test('erjiee regression: the weekend line that shipped a ₱1,053.33 shortfall is flagged', () => {
+  // These are the PAYLOAD values, not the rendered ones: `hours.regular` is the full
+  // 40h cap and `pay_php.regular` already contains the weekend money. The stub's
+  // "31.90h" line is derived later, by subtraction, in paystub-view.ts.
+  //
+  // Note `ratesPaid.regular = [355, 225]` — 355 for the weekdays, 225 for the Sunday
+  // stranded on a stale rate. The regular line is CLEARED by the exact path because 355
+  // genuinely was used; only the weekend line exposes the 225.
+  const issues = findRateConsistencyIssues({
+    hours: { regular: 40, ot: 4.497777777777777 },
+    ratesPhp: { regular: 355, ot: 532.5 },
+    payPhp: { regular: 13268.21, ot: 2395.07 },
+    ratesPaid: { regular: [355, 225], ot: [532.5] },
+    isHsl: true,
+    weekend: {
+      hours: { regular: 8.1025, ot: 0 },
+      payPhp: { regular: 1944.6, ot: 0 },
+      premiumPhpPerHour: 15,
+    },
+  });
+  const wk = issues.find((i) => i.line === 'weekend-regular');
+  assert.ok(wk, 'the weekend line must be flagged');
+  assert.equal(wk.displayedRate, 370); // derived as 355 + 15, exactly what the stub shows
+  assert.ok(
+    Math.abs(wk.deltaPhp - 1053.33) < 0.02,
+    `expected ≈₱1,053.33 shortfall, got ${wk.deltaPhp}`,
+  );
+  assert.equal(wk.severity, 'error');
+  assert.equal(hasBlockingRateIssue(issues), true, 'this must BLOCK dispatch');
+  // Regular and OT pass on their own terms — the weekend line is the only tell.
+  assert.equal(issues.filter((i) => i.line === 'regular' || i.line === 'ot').length, 0);
+});
+
+test('the weekend check is NOT cleared by ratesPaid containing the displayed rate', () => {
+  // The subtle hole: on the regular line, `ratesPaid` clears a mismatch whenever the
+  // displayed rate appears among the rates used — even if only SOME hours used it. If
+  // that logic were applied to the weekend line, [355,225] -> [370,240] would "contain"
+  // the displayed 370 and silently clear the shortfall. It must not.
+  const issues = findRateConsistencyIssues({
+    hours: { regular: 40, ot: 0 },
+    ratesPhp: { regular: 355, ot: 532.5 },
+    payPhp: { regular: 13268.21, ot: 0 },
+    ratesPaid: { regular: [355, 225], ot: [] },
+    isHsl: true,
+    weekend: { hours: { regular: 8.1025 }, payPhp: { regular: 1944.6 }, premiumPhpPerHour: 15 },
+  });
+  assert.ok(
+    issues.some((i) => i.line === 'weekend-regular'),
+    'ratesPaid must not be able to clear the weekend line',
+  );
+});
+
+test('a correct weekend line passes', () => {
+  // The same week paid properly: every day at ₱355, so the weekend hours earn ₱370.
+  // pay_php.regular = 40h × 355 + 8.1025h × ₱15 premium = 14,200 + 121.54.
+  const issues = findRateConsistencyIssues({
+    hours: { regular: 40, ot: 4.497777777777777 },
+    ratesPhp: { regular: 355, ot: 532.5 },
+    payPhp: { regular: 14321.54, ot: 2395.07 },
+    ratesPaid: { regular: [355], ot: [532.5] },
+    isHsl: true,
+    weekend: {
+      hours: { regular: 8.1025, ot: 0 },
+      payPhp: { regular: 2997.93, ot: 0 }, // 8.1025 × 370
+      premiumPhpPerHour: 15,
+    },
+  });
+  assert.deepEqual(issues, []);
+});
+
+test('the weekend line gets NO ₱15/h overpayment headroom — the premium is already in its rate', () => {
+  // On the regular line an HSL employee may legitimately be paid up to ₱15/h ABOVE
+  // hours × rate. On the weekend line that same slack would hide the very bug above,
+  // so it must not apply: pay ₱15/h over the weekend rate is a surplus, and flagged.
+  const issues = findRateConsistencyIssues({
+    hours: { regular: 0, ot: 0 },
+    ratesPhp: { regular: 355, ot: 532.5 },
+    payPhp: { regular: 0, ot: 0 },
+    isHsl: true,
+    weekend: {
+      hours: { regular: 10, ot: 0 },
+      payPhp: { regular: 10 * (370 + 15) }, // paid a SECOND premium on top
+      premiumPhpPerHour: 15,
+    },
+  });
+  const wk = issues.find((i) => i.line === 'weekend-regular');
+  assert.ok(wk, 'double-counted premium must be flagged, not absorbed as headroom');
+  assert.equal(round2(wk.deltaPhp), -150);
+});
+
+test('weekend overtime is checked too, at otRate + premium', () => {
+  const issues = findRateConsistencyIssues({
+    hours: { regular: 40, ot: 6 },
+    ratesPhp: { regular: 355, ot: 532.5 },
+    payPhp: { regular: 14200, ot: 3195 },
+    isHsl: true,
+    weekend: {
+      hours: { regular: 0, ot: 6 },
+      payPhp: { regular: 0, ot: 6 * 400 }, // should be 6 × 547.50
+      premiumPhpPerHour: 15,
+    },
+  });
+  const wk = issues.find((i) => i.line === 'weekend-ot');
+  assert.ok(wk);
+  assert.equal(wk.displayedRate, 547.5); // 532.50 + 15 — matches the stub's label
+  assert.equal(round2(wk.deltaPhp), round2(6 * 547.5 - 6 * 400));
+});
+
+test('omitting the weekend block leaves behaviour exactly as before', () => {
+  const base = {
+    hours: { regular: 40, ot: 0 },
+    ratesPhp: { regular: 225, ot: 337.5 },
+    payPhp: { regular: 7000, ot: 0 },
+  };
+  const withoutWeekend = findRateConsistencyIssues(base);
+  const withNullWeekend = findRateConsistencyIssues({ ...base, weekend: null });
+  assert.equal(withoutWeekend.length, 1);
+  assert.deepEqual(withNullWeekend, withoutWeekend);
+});
+
+test('a weekend block with no hours is not a mismatch', () => {
+  const issues = findRateConsistencyIssues({
+    hours: { regular: 40, ot: 0 },
+    ratesPhp: { regular: 355, ot: 532.5 },
+    payPhp: { regular: 14200, ot: 0 },
+    isHsl: true,
+    weekend: { hours: { regular: 0, ot: 0 }, payPhp: { regular: 0, ot: 0 } },
+  });
+  assert.deepEqual(issues, []);
+});
+
+test('the weekend premium defaults to ₱15 when the payload omits it', () => {
+  // Underpay the line so it flags, then read back the rate the guard derived: ₱305 base
+  // + the default ₱15 = ₱320, which is what the statement would print.
+  const issues = findRateConsistencyIssues({
+    hours: { regular: 0, ot: 0 },
+    ratesPhp: { regular: 305, ot: 457.5 },
+    payPhp: { regular: 0, ot: 0 },
+    isHsl: true,
+    weekend: { hours: { regular: 4, ot: 0 }, payPhp: { regular: 4 * 300 } }, // should be 4 × 320
+  });
+  const wk = issues.find((i) => i.line === 'weekend-regular');
+  assert.ok(wk, 'an underpaid weekend line must flag');
+  assert.equal(wk.displayedRate, 320); // 305 + 15 by default — premium omitted from payload
+  assert.equal(round2(wk.deltaPhp), 80); // 4 × (320 − 300)
+});
+
+test('a correct weekend line passes with the premium omitted too', () => {
+  const issues = findRateConsistencyIssues({
+    hours: { regular: 0, ot: 0 },
+    ratesPhp: { regular: 305, ot: 457.5 },
+    payPhp: { regular: 0, ot: 0 },
+    isHsl: true,
+    weekend: { hours: { regular: 4, ot: 0 }, payPhp: { regular: 4 * 320 } },
+  });
+  assert.deepEqual(issues, []);
+});
+
+test('the total shortfall includes the weekend line', () => {
+  const issues = findRateConsistencyIssues({
+    hours: { regular: 40, ot: 4.497777777777777 },
+    ratesPhp: { regular: 355, ot: 532.5 },
+    payPhp: { regular: 13268.21, ot: 2395.07 },
+    ratesPaid: { regular: [355, 225], ot: [532.5] },
+    isHsl: true,
+    weekend: { hours: { regular: 8.1025 }, payPhp: { regular: 1944.6 }, premiumPhpPerHour: 15 },
+  });
+  assert.ok(
+    Math.abs(totalRateShortfallPhp(issues) - 1053.33) < 0.02,
+    `expected ≈₱1,053.33, got ${totalRateShortfallPhp(issues)}`,
+  );
+});
+
+test('a mid-week rate change downgrades a weekend mismatch to a warning', () => {
+  // A genuine dated change inside the week blends two rates, so one displayed weekend
+  // rate legitimately may not reproduce the pay. Still surfaced — but not a blocker.
+  const issues = findRateConsistencyIssues({
+    hours: { regular: 40, ot: 0 },
+    ratesPhp: { regular: 355, ot: 532.5 },
+    payPhp: { regular: 13268.21, ot: 0 },
+    isHsl: true,
+    hasMidPeriodChange: true,
+    weekend: { hours: { regular: 8.1025 }, payPhp: { regular: 1944.6 }, premiumPhpPerHour: 15 },
+  });
+  const wk = issues.find((i) => i.line === 'weekend-regular');
+  assert.ok(wk);
+  assert.equal(wk.severity, 'warning');
+  assert.equal(hasBlockingRateIssue(issues.filter((i) => i.line === 'weekend-regular')), false);
+});
