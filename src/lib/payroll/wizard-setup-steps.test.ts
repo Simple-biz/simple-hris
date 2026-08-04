@@ -4,11 +4,9 @@ import assert from 'node:assert/strict';
 import {
   cycleFxSettingKey,
   deriveWizardSetupSteps,
-  fxConfirmedSettingKey,
   orphanageConfirmedSettingKey,
   parseCycleFxRecord,
   parseDispatchLockValue,
-  parseFxConfirmedMarker,
   parseOrphanageNoneMarker,
   type WizardSetupInput,
 } from './wizard-setup-steps';
@@ -174,15 +172,7 @@ test('a degraded read → pending "couldn\'t read", never done or blocked', () =
 });
 
 test('setting keys + marker/lock parsers', () => {
-  assert.equal(fxConfirmedSettingKey('2026-07-26'), 'payroll.wizard.fx_confirmed.2026-07-26');
   assert.equal(orphanageConfirmedSettingKey('2026-07-26'), 'payroll.wizard.orphanage_confirmed.2026-07-26');
-  assert.deepEqual(parseFxConfirmedMarker('{"rate":58.9,"by":"a@b.c","at":"2026-08-02T06:00:00Z"}'), {
-    rate: 58.9,
-    by: 'a@b.c',
-    at: '2026-08-02T06:00:00Z',
-  });
-  assert.equal(parseFxConfirmedMarker('not json'), null);
-  assert.equal(parseFxConfirmedMarker(null), null);
   assert.deepEqual(parseOrphanageNoneMarker('{"none":true,"by":"a@b.c","at":"x"}'), { by: 'a@b.c', at: 'x' });
   assert.equal(parseOrphanageNoneMarker('{"none":false}'), null);
   assert.deepEqual(parseDispatchLockValue('{"locked":true,"lockedAt":"t","lockedBy":"a@b.c"}'), {

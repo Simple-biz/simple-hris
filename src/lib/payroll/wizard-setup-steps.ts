@@ -75,32 +75,10 @@ export interface WizardSetupInput {
 
 // ── app_settings keys (written by the wizard, read by buildWizardSetup) ──────
 
-export const FX_CONFIRMED_SETTING_PREFIX = 'payroll.wizard.fx_confirmed.';
 export const ORPHANAGE_CONFIRMED_SETTING_PREFIX = 'payroll.wizard.orphanage_confirmed.';
-
-export function fxConfirmedSettingKey(weekStart: string): string {
-  return `${FX_CONFIRMED_SETTING_PREFIX}${weekStart}`;
-}
 
 export function orphanageConfirmedSettingKey(weekStart: string): string {
   return `${ORPHANAGE_CONFIRMED_SETTING_PREFIX}${weekStart}`;
-}
-
-export function parseFxConfirmedMarker(
-  value: string | null,
-): { rate: number; by: string | null; at: string | null } | null {
-  if (!value) return null;
-  try {
-    const o = JSON.parse(value) as { rate?: unknown; by?: unknown; at?: unknown };
-    if (typeof o.rate !== 'number' || !Number.isFinite(o.rate)) return null;
-    return {
-      rate: o.rate,
-      by: typeof o.by === 'string' ? o.by : null,
-      at: typeof o.at === 'string' ? o.at : null,
-    };
-  } catch {
-    return null;
-  }
 }
 
 export function parseOrphanageNoneMarker(
