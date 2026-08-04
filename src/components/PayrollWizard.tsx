@@ -2167,10 +2167,15 @@ export default function PayrollWizard({
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   }, [calcSourceFile]);
 
-  /** Sunday ISO the weekly confirm markers key on: the cycle being worked
-   *  (its filename week) — falling back to the calendar pay week before a
-   *  file is selected. Must match what buildWizardSetup reads. */
-  const markerWeekStart = hubstaffWeekStart ?? payrollNotesWeekStart();
+  /** Sunday ISO the weekly confirm markers key on. Must match what the
+   *  readiness reader (buildWizardSetup) resolves: the calendar pay week
+   *  (payrollNotesWeekStart) unless the wizard is explicitly REPLAYING an
+   *  older upload — then that file's own week. Anchoring to the loaded file
+   *  outside replay would stamp LAST week's key whenever the new week's CSV
+   *  isn't uploaded yet, and the checklist row would never light up. */
+  const markerWeekStart = isReplay
+    ? (hubstaffWeekStart ?? payrollNotesWeekStart())
+    : payrollNotesWeekStart();
 
   // The weekly confirm markers (fx + orphanage-none) for the cycle in view —
   // read-only mirrors of what the Readiness checklist shows, so the Step 2/3
