@@ -55,6 +55,10 @@ export interface RecentlyOffboardedPerson {
    *  doc. Null when they have no hours in those files (their final pay is
    *  already out, or they never tracked). */
   hubstaff_email: string | null;
+  /** Raw `off_boarded_reason` from the stamped global_master_list row, when
+   *  known. Null for flavor-4 (fell off the sheet unstamped) or when no
+   *  contributing source carried a reason. */
+  off_boarded_reason: string | null;
   /** Week-start day (`YYYY-MM-DD`, the file's Sunday) of the NEWEST timesheet
    *  their hours appear in — i.e. the last week they actually worked, as far
    *  as the two-file window can see. Dates the undated fell-off-the-sheet
@@ -95,6 +99,8 @@ interface Cand {
   personal_email: string | null;
   /** Latest known off date (day string), null for flavor-4 rows. */
   off: string | null;
+  /** Latest known off_boarded_reason, null for flavor-4/queue/sheet rows. */
+  off_boarded_reason: string | null;
 }
 
 const str = (v: unknown): string | null => {
@@ -162,7 +168,7 @@ export async function listRecentlyOffboardedPeople(days = 90): Promise<{
       supabase
         .from('global_master_list')
         .select(
-          '"Name","Work Email","Personal Email","Alternate Work Email","Alternate Work Email 2","Department",off_boarded_at,last_seen_upload_id',
+          '"Name","Work Email","Personal Email","Alternate Work Email","Alternate Work Email 2","Department",off_boarded_at,off_boarded_reason,last_seen_upload_id',
         )
         .range(from, to),
     ).then(
@@ -328,7 +334,16 @@ export async function listRecentlyOffboardedPeople(days = 90): Promise<{
     const off = toDay(str(r['off_boarded_at']));
     if (off) {
       // Flavor 1/3: stamped row.
-      if (off >= cutoff) cands.push({ name, department: str(r['Department']), work_email: w, personal_email: p, off });
+      if (off >= cutoff) {
+        cands.push({
+          name,
+          department: str(r['Department']),
+          work_email: w,
+          personal_email: p,
+          off,
+          off_boarded_reason: str(r['off_boarded_reason']),
+        });
+      }
     } else if (str(r['last_seen_upload_id']) !== currentUploadId) {
       // Flavor 4: fell off the sheet unstamped. Only counts as "offboarded"
       // when they were logging hours in the last two timesheets — that both
@@ -345,7 +360,16 @@ export async function listRecentlyOffboardedPeople(days = 90): Promise<{
           toks.size >= 2 &&
           hubRows.some((h) => !activeEmails.has(h.email) && h.tokens.size >= 2 && isSubset(h.tokens, toks));
       }
-      if (onHub) cands.push({ name, department: str(r['Department']), work_email: w, personal_email: p, off: null });
+      if (onHub) {
+        cands.push({
+          name,
+          department: str(r['Department']),
+          work_email: w,
+          personal_email: p,
+          off: null,
+          off_boarded_reason: null,
+        });
+      }
     }
   }
 
@@ -354,7 +378,7 @@ export async function listRecentlyOffboardedPeople(days = 90): Promise<{
     const w = str(r['employee_work_email']);
     const p = str(r['employee_personal_email']) ?? str(r['employee_email']);
     if (!name || (!w && !p)) continue;
-    cands.push({ name, department: str(r['department']), work_email: w, personal_email: p, off: toDay(str(r['decided_at'])) });
+    cands.push({ name, department: str(r['department']), work_email: w, personal_email: p, off: toDay(str(r['decided_at'])), off_boarded_reason: null });
   }
 
   for (const r of sheetRows) {
@@ -362,7 +386,7 @@ export async function listRecentlyOffboardedPeople(days = 90): Promise<{
     const w = str(r['work_email']);
     const p = str(r['personal_email']);
     if (!name || (!w && !p)) continue;
-    cands.push({ name, department: str(r['department']), work_email: w, personal_email: p, off: toDay(str(r['off_boarded_at'])) });
+    cands.push({ name, department: str(r['department']), work_email: w, personal_email: p, off: toDay(str(r['off_boarded_at'])), off_boarded_reason: null });
   }
 
   // ── Merge duplicates (same person recorded by several sources / dupe rows) ─
@@ -382,6 +406,7 @@ export async function listRecentlyOffboardedPeople(days = 90): Promise<{
       g.department = g.department ?? c.department;
       g.work_email = g.work_email ?? c.work_email;
       g.personal_email = g.personal_email ?? c.personal_email;
+      g.off_boarded_reason = g.off_boarded_reason ?? c.off_boarded_reason;
       // Latest known departure wins (a dated record beats an undated one).
       if (c.off && (!g.off || c.off > g.off)) g.off = c.off;
     }
@@ -459,6 +484,7 @@ export async function listRecentlyOffboardedPeople(days = 90): Promise<{
       work_email: g.work_email,
       personal_email: g.personal_email,
       off_boarded_at: g.off,
+      off_boarded_reason: g.off_boarded_reason,
       hubstaff_email,
       last_hours_week_start: hubstaff_email ? hubWeekByEmail.get(hubstaff_email) ?? null : null,
     });
