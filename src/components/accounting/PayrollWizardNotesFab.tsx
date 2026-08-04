@@ -90,7 +90,6 @@ import type {
   KpiDeptStatus,
   ExceptionKind,
   ReadinessScore,
-  WizardSetup,
   WizardSetupStep,
 } from "@/lib/payroll/payroll-readiness";
 import { celebrationStep, type ReadyWatchState } from "@/lib/payroll/readiness-celebration";
@@ -1440,10 +1439,12 @@ const EXCEPTION_META: Record<ExceptionKind, { label: string; cls: string; Icon: 
   },
 };
 
-/** The Readiness pane's four inner tabs — one per detail list. Left→right order
- *  matches the stat-tile row, so the directional slide reads naturally. */
-type ReadinessTab = "kpi" | "rate" | "bank" | "exc";
-const READINESS_TAB_ORDER: ReadinessTab[] = ["kpi", "rate", "bank", "exc"];
+/** The Readiness pane's five inner tabs — Wizard Setup (a per-week prerequisite
+ *  checklist, no matching stat tile) plus one per detail list. Left→right order
+ *  matches the stat-tile row for the latter four, so the directional slide
+ *  reads naturally. */
+type ReadinessTab = "setup" | "kpi" | "rate" | "bank" | "exc";
+const READINESS_TAB_ORDER: ReadinessTab[] = ["setup", "kpi", "rate", "bank", "exc"];
 
 /** A single readiness stat tile (§6.3) — a read-only summary count. `tone` picks
  *  the palette. When `percent` is given (the dimension's 0–100 score from the
@@ -1529,12 +1530,13 @@ function ReadinessStat({
   );
 }
 
-/** Explicit tab strip for the Readiness pane — one labeled tab per detail list,
- *  each with icon, name, and a live count badge, plus a sliding `layoutId`
- *  underline under the active tab (matching the modal's top-level tabs). This is
- *  the control the user reaches for to switch between KPI Submissions, No Pay
- *  Rate, Bank Info, and Exceptions. Horizontally scrollable on narrow widths so
- *  all four stay reachable. */
+/** Explicit tab strip for the Readiness pane — one labeled tab per detail list
+ *  plus the Wizard Setup checklist, each with icon, name, and a live count
+ *  badge, plus a sliding `layoutId` underline under the active tab (matching
+ *  the modal's top-level tabs). This is the control the user reaches for to
+ *  switch between Wizard Setup, KPI Submissions, No Pay Rate, Bank Info, and
+ *  Exceptions. Horizontally scrollable on narrow widths so all five stay
+ *  reachable. */
 function ReadinessTabStrip({
   active,
   onPick,
@@ -1551,6 +1553,7 @@ function ReadinessTabStrip({
   // non-payments, so their count must NOT read as a warning to clear (mirrors
   // the sky stat tile + the hero excluding exceptions from the verdict).
   const TABS: { id: ReadinessTab; label: string; Icon: typeof CheckCircle2; blocker?: boolean; neutral?: boolean }[] = [
+    { id: "setup", label: "Wizard Setup", Icon: ListChecks },
     { id: "kpi", label: "KPI Submissions", Icon: ClipboardList },
     { id: "rate", label: "No Pay Rate", Icon: Wallet, blocker: true },
     { id: "bank", label: "Bank Info", Icon: Banknote },
@@ -1657,81 +1660,6 @@ const SETUP_STEP_ICON: Record<WizardSetupStep["key"], typeof CheckCircle2> = {
   contractors: FileText,
   dispatch: Send,
 };
-
-/** The per-week "Wizard setup" checklist card: 7 wizard prerequisites, one row
- *  each. Defaults open while anything is unfinished; collapsed once all seven
- *  are done (a manual toggle overrides either way, not persisted). */
-function WizardSetupSection({ setup, reduceMotion }: { setup: WizardSetup; reduceMotion: boolean }) {
-  const [manualOpen, setManualOpen] = useState<boolean | null>(null);
-  const allDone = setup.doneCount >= setup.totalCount;
-  const open = manualOpen ?? !allDone;
-  return (
-    <section className="rounded-xl border border-orange-100 bg-white/60 dark:border-blue-950/60 dark:bg-blue-950/10">
-      <button
-        type="button"
-        aria-expanded={open}
-        onClick={() => setManualOpen(!open)}
-        className="flex w-full items-center gap-2 px-3 py-2 text-left"
-      >
-        <ClipboardList className="h-4 w-4 shrink-0 text-orange-600 dark:text-orange-400" />
-        <span className="text-xs font-semibold text-zinc-800 dark:text-zinc-200">Wizard setup</span>
-        <span className="text-[11px] text-zinc-500 dark:text-zinc-400">· {setup.weekLabel}</span>
-        <span
-          className={`ml-auto rounded-full border px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide ${
-            allDone
-              ? "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-300"
-              : "border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300"
-          }`}
-        >
-          {setup.doneCount}/{setup.totalCount}
-        </span>
-        <ChevronDown
-          className={`h-3.5 w-3.5 shrink-0 text-zinc-400 transition-transform ${open ? "rotate-180" : ""}`}
-        />
-      </button>
-      <AnimatePresence initial={false}>
-        {open && (
-          <motion.div
-            key="setup-rows"
-            initial={reduceMotion ? false : { height: 0, opacity: 0 }}
-            animate={{ height: "auto", opacity: 1 }}
-            exit={reduceMotion ? undefined : { height: 0, opacity: 0 }}
-            transition={{ duration: reduceMotion ? 0 : 0.22, ease: EASE }}
-            className="overflow-hidden"
-          >
-            <ul className="space-y-0.5 px-2 pb-2">
-              {setup.steps.map((s) => {
-                const pill = SETUP_STATUS_PILL[s.status];
-                const StepIcon = SETUP_STEP_ICON[s.key];
-                return (
-                  <li
-                    key={s.key}
-                    className="flex items-center gap-2 rounded-lg px-1.5 py-1 hover:bg-orange-50/60 dark:hover:bg-blue-950/30"
-                  >
-                    <span className="w-7 shrink-0 text-center font-mono text-[10px] font-semibold text-zinc-400 dark:text-zinc-500">
-                      {s.stepNo}
-                    </span>
-                    <StepIcon className="h-3.5 w-3.5 shrink-0 text-zinc-400 dark:text-zinc-500" />
-                    <span className="shrink-0 text-xs font-medium text-zinc-800 dark:text-zinc-200">{s.label}</span>
-                    <span
-                      className={`inline-flex shrink-0 items-center gap-1 rounded-full border px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide ${pill.cls}`}
-                    >
-                      <pill.Icon className="h-2.5 w-2.5" />
-                      {pill.label}
-                    </span>
-                    <span className="min-w-0 flex-1 truncate text-right text-[11px] text-zinc-500 dark:text-zinc-400" title={s.detail}>
-                      {s.detail}
-                    </span>
-                  </li>
-                );
-              })}
-            </ul>
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </section>
-  );
-}
 
 /** Empty "all clear" line for a settled section (§12.1, compact). */
 function AllClear({ text }: { text: string }) {
@@ -2746,9 +2674,11 @@ function KpiCalculatorDialog({
 
 /**
  * "Readiness" tab — the payroll-ready dashboard. A hero banner that flips green
- * when everything's settled, a 4-up stat-tile row, then four sections: KPI
- * submission (per dept, with a "how much is left" bar), no-rate workers, no-bank
- * employees, and onboarding exceptions. Read-only; fetched from
+ * when everything's settled, a 4-up stat-tile row, then five tabbed sections:
+ * Wizard Setup (the per-week 7-step prerequisite checklist, shown first and
+ * selected by default — no matching stat tile, not part of the score), KPI
+ * submission (per dept, with a "how much is left" bar), no-rate workers,
+ * no-bank employees, and onboarding exceptions. Read-only; fetched from
  * GET /api/payroll-wizard/readiness and kept live via useLiveRefresh. Same
  * h-[70vh] scroller as the other panes so the modal height never jumps.
  */
@@ -2789,11 +2719,14 @@ function PayrollReadinessGlance({
   // "Paying this week" filter for the Bank Info list — when on, only people
   // with hours in the week-in-view's Hubstaff file (the hard blockers) show.
   const [bankOnPayrollOnly, setBankOnPayrollOnly] = useState(false);
-  // Which of the four detail lists is showing. The stat tiles double as the tab
-  // strip; only the selected list renders below them, swapped with a directional
-  // slide. `readinessDir` carries the slide direction (+1 later tab / −1 earlier)
-  // so switching left↔right reads like turning pages, matching the outer tabs.
-  const [readinessTab, setReadinessTab] = useState<ReadinessTab>("kpi");
+  // Which of the five tabs is showing (Wizard Setup + the four detail lists).
+  // The explicit ReadinessTabStrip below the stat tiles is what switches it;
+  // only the selected pane renders, swapped with a directional slide.
+  // `readinessDir` carries the slide direction (+1 later tab / −1 earlier) so
+  // switching left↔right reads like turning pages, matching the outer tabs.
+  // Defaults to "setup" — the wizard-setup checklist is the first thing an
+  // accountant should clear before the per-list details matter.
+  const [readinessTab, setReadinessTab] = useState<ReadinessTab>("setup");
   const [readinessDir, setReadinessDir] = useState(0);
   // Person currently being fixed inline (null = no editor open). One at a time:
   // the rate editor files a Payment Catalog structure, the bank editor writes
@@ -3068,10 +3001,11 @@ function PayrollReadinessGlance({
   // Loading takes precedence over a lingering error: when a fresh load is in
   // flight (e.g. Retry, or a week switch after a failure), show the skeleton
   // rather than the stale error card until this load settles. The skeleton
-  // mirrors the real layout (hero + 4 stat tiles + the four sections) so the
-  // shape is stable; over it sits the "Gathering data…" card (a foreground box
-  // that walks through the four checks) so the wait reads as active progress,
-  // not a stalled spinner.
+  // mirrors the real layout (hero + 4 stat tiles + the five tabbed sections) so
+  // the shape is stable; over it sits the "Gathering data…" card (a foreground
+  // box that walks through the four score-dimension checks — Wizard Setup
+  // isn't part of the score, so it has no step there) so the wait reads as
+  // active progress, not a stalled spinner.
   if (loading || !data) {
     return (
       <div className="flex h-[70vh] flex-col">
@@ -3188,10 +3122,6 @@ function PayrollReadinessGlance({
         </div>
       )}
 
-      {data.wizardSetup && (
-        <WizardSetupSection setup={data.wizardSetup} reduceMotion={reduceMotion} />
-      )}
-
       {/* Stat tiles — a read-only at-a-glance summary of the four dimensions.
           (Switching between the detail lists is the tab strip's job, below.) */}
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
@@ -3240,12 +3170,14 @@ function PayrollReadinessGlance({
         />
       </div>
 
-      {/* Tab strip — the explicit control for switching between the four detail
-          lists (KPI Submissions / No Pay Rate / Bank Info / Exceptions). */}
+      {/* Tab strip — the explicit control for switching between Wizard Setup and
+          the four detail lists (KPI Submissions / No Pay Rate / Bank Info /
+          Exceptions). */}
       <ReadinessTabStrip
         active={readinessTab}
         onPick={pickReadinessTab}
         counts={{
+          setup: data.wizardSetup ? data.wizardSetup.totalCount - data.wizardSetup.doneCount : 0,
           kpi: kpiPending.length,
           rate: data.missingRates.length,
           bank: data.missingBank.length,
@@ -3274,7 +3206,58 @@ function PayrollReadinessGlance({
             transition={{ duration: reduceMotion ? 0 : 0.22, ease: EASE }}
             className="min-h-[16rem]"
           >
-            {readinessTab === "kpi" ? (
+            {readinessTab === "setup" ? (
+              <PaneBody>
+                {!data.wizardSetup ? (
+                  // Stale in-flight response from an older API shape — the
+                  // fetch already resolved (we're past the loading/!data
+                  // guard), it just doesn't carry this field yet.
+                  <div className="px-3 py-4 text-center text-xs text-zinc-400">
+                    Setup status unavailable — refresh.
+                  </div>
+                ) : (
+                  <>
+                    {/* Slim header line — just the week + done count. The tab
+                        strip above already owns the "Wizard Setup" label and
+                        the live count badge, so this isn't a second title. */}
+                    <div className="mb-1.5 flex items-center gap-1 text-[11px] text-zinc-500 dark:text-zinc-400">
+                      <span>{data.wizardSetup.weekLabel}</span>
+                      <span>·</span>
+                      <span>
+                        {data.wizardSetup.doneCount}/{data.wizardSetup.totalCount} done
+                      </span>
+                    </div>
+                    <ul className="space-y-0.5">
+                      {data.wizardSetup.steps.map((s) => {
+                        const pill = SETUP_STATUS_PILL[s.status];
+                        const StepIcon = SETUP_STEP_ICON[s.key];
+                        return (
+                          <li
+                            key={s.key}
+                            className="flex items-center gap-2 rounded-lg px-1.5 py-1 hover:bg-orange-50/60 dark:hover:bg-blue-950/30"
+                          >
+                            <span className="w-7 shrink-0 text-center font-mono text-[10px] font-semibold text-zinc-400 dark:text-zinc-500">
+                              {s.stepNo}
+                            </span>
+                            <StepIcon className="h-3.5 w-3.5 shrink-0 text-zinc-400 dark:text-zinc-500" />
+                            <span className="shrink-0 text-xs font-medium text-zinc-800 dark:text-zinc-200">{s.label}</span>
+                            <span
+                              className={`inline-flex shrink-0 items-center gap-1 rounded-full border px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide ${pill.cls}`}
+                            >
+                              <pill.Icon className="h-2.5 w-2.5" />
+                              {pill.label}
+                            </span>
+                            <span className="min-w-0 flex-1 truncate text-right text-[11px] text-zinc-500 dark:text-zinc-400" title={s.detail}>
+                              {s.detail}
+                            </span>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  </>
+                )}
+              </PaneBody>
+            ) : readinessTab === "kpi" ? (
               <PaneBody>
                 <ReadinessSearch
                   value={kpiQuery}
@@ -3752,18 +3735,19 @@ function ReadinessLoadingCard({ reduceMotion }: { reduceMotion: boolean }) {
 
 /**
  * Loading placeholder for the Readiness pane — mirrors the real layout (hero
- * banner + 4 stat tiles + the KPI section and the three people-list sections)
- * with pulsing bars, and NAMES each of the four sections so the accountant sees
- * exactly what's being checked (KPIs, No pay rate, Bank info, Exceptions) rather
- * than a bare spinner. Keeping the shape identical means no layout jump when the
+ * banner + 4 stat tiles + the tab strip + one pane shell) with pulsing bars,
+ * and NAMES each of the five tabs so the accountant sees exactly what's being
+ * checked (Wizard Setup, KPIs, No pay rate, Bank info, Exceptions) rather than
+ * a bare spinner. Keeping the shape identical means no layout jump when the
  * real data lands.
  */
 function ReadinessSkeleton({ reduceMotion = false }: { reduceMotion?: boolean }) {
   // Pulse is gated on reduced motion so the backdrop honors it too (the card on
   // top already does) — under reduced motion the bars are static grey blocks.
   const bar = `rounded bg-zinc-200/80 dark:bg-zinc-800/80${reduceMotion ? "" : " animate-pulse"}`;
-  // The tab strip's four labels; the first is drawn as the active tab (bottom
-  // bar) to match the pane defaulting to KPI submission.
+  // Stat-tile labels — unchanged at four; Wizard Setup has no matching tile (no
+  // percent / score dimension), so it isn't in this row (see the tab strip
+  // labels below for its placeholder).
   const TILES = ["KPIs submitted", "No pay rate", "No bank info", "Exceptions"];
 
   return (
@@ -3776,13 +3760,6 @@ function ReadinessSkeleton({ reduceMotion = false }: { reduceMotion?: boolean })
           <div className={`${bar} h-3 w-56`} />
         </div>
         <div className={`${bar} hidden h-[70px] w-[70px] shrink-0 rounded-full sm:block`} />
-      </div>
-
-      {/* Wizard setup checklist placeholder. */}
-      <div className="flex items-center gap-3 rounded-xl border border-zinc-200/70 bg-white/60 px-3 py-2 dark:border-zinc-800 dark:bg-zinc-900/40">
-        <div className={`${bar} h-4 w-4 rounded`} />
-        <div className={`${bar} h-3 w-32`} />
-        <div className={`${bar} ml-auto h-3 w-10 rounded-full`} />
       </div>
 
       {/* Stat tiles — read-only summary row. */}
@@ -3801,9 +3778,10 @@ function ReadinessSkeleton({ reduceMotion = false }: { reduceMotion?: boolean })
         ))}
       </div>
 
-      {/* Tab strip — four labeled tabs, the first drawn as active (underline). */}
+      {/* Tab strip — five labeled tabs, Wizard Setup first and drawn as active
+          (underline), matching the pane's default tab. */}
       <div className="flex items-center gap-1 border-b border-orange-100 pb-px dark:border-blue-950/60">
-        {["KPI Submissions", "No Pay Rate", "Bank Info", "Exceptions"].map((label, i) => (
+        {["Wizard Setup", "KPI Submissions", "No Pay Rate", "Bank Info", "Exceptions"].map((label, i) => (
           <div
             key={label}
             className={`relative -mb-px flex items-center gap-1.5 px-3 py-2 text-xs font-semibold whitespace-nowrap ${
@@ -3819,12 +3797,12 @@ function ReadinessSkeleton({ reduceMotion = false }: { reduceMotion?: boolean })
         ))}
       </div>
 
-      {/* Active pane — one section shell (the default KPI list). */}
+      {/* Active pane — one section shell (the default Wizard Setup list). */}
       <section className="min-h-[16rem] rounded-xl border border-orange-100 bg-white/60 dark:border-blue-950/60 dark:bg-blue-950/10">
         <div className="flex items-center justify-between gap-2 border-b border-orange-100/70 px-3 py-2 dark:border-blue-950/50">
           <span className="flex items-center gap-1.5 text-xs font-semibold text-zinc-700 dark:text-zinc-200">
-            <ClipboardList className="h-3.5 w-3.5 text-orange-400/70" />
-            KPI submission
+            <ListChecks className="h-3.5 w-3.5 text-orange-400/70" />
+            Wizard setup
           </span>
           <span className={`${bar} h-4 w-8 rounded-full`} />
         </div>
