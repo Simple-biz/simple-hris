@@ -37,6 +37,17 @@ test('plain HSL branch display names resolve to hogan_smith_law too', () => {
   assert.equal(normalizeDeptToKey('HSL'), 'hogan_smith_law');
 });
 
+test('an HSL branch name that collides with an existing top-level department label keeps its ORIGINAL mapping', () => {
+  // "Callback Team" is both HSL_DEPTS.callback_team.name AND a pre-existing
+  // top-level department in the generic map — the map must keep winning.
+  assert.equal(normalizeDeptToKey('Callback Team'), 'callback');
+  assert.equal(normalizeDeptToKey('callback team'), 'callback');
+});
+
+test('a stale/unrecognized hsl:<key> tag still buckets as hogan_smith_law', () => {
+  assert.equal(normalizeDeptToKey('hsl:not_a_real_key'), 'hogan_smith_law');
+});
+
 // ── the PH email override list ───────────────────────────────────────────────
 
 test('override rewrites the ambiguous "Sales" label for PH cohort emails', () => {

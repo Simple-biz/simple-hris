@@ -8,11 +8,11 @@ export function normalizeDeptToKey(raw: string | null | undefined): string | nul
   if (!raw) return null;
   const s = raw.trim().toLowerCase();
   // Department transfers into an HSL sub-team write the namespaced access key
-  // (e.g. "hsl:intake_specialist") into the master list's Department column;
-  // HR Pipeline intake or a direct profile edit may instead use the branch's
-  // plain display name (e.g. "Intake Specialist"). Either way, whatever the
-  // sub-team, those people belong to Hogan Smith Law.
-  if (matchHslSubDeptKey(raw)) return 'hogan_smith_law';
+  // (e.g. "hsl:intake_specialist") into the master list's Department column.
+  // The prefix alone is enough here (unlike matchHslSubDeptKey's stricter
+  // validation, meant for roster lookups) — a stale/renamed hsl:<oldkey> tag
+  // should still bucket as Hogan Smith Law for payroll purposes.
+  if (s.startsWith('hsl:')) return 'hogan_smith_law';
   const map: Record<string, string> = {
     accounting: 'accounting',
     'accounting team': 'accounting',
@@ -77,5 +77,12 @@ export function normalizeDeptToKey(raw: string | null | undefined): string | nul
     'client-va': 'client_va',
     'site building': 'site_building',
   };
-  return map[s] ?? null;
+  if (map[s]) return map[s];
+  // Plain HSL branch display names (e.g. "Case Managers") not already in the
+  // map above. Checked LAST so any existing, deliberately-curated top-level
+  // department label (e.g. "Callback Team", which the map already routes to
+  // the unrelated top-level 'callback' department) keeps winning —
+  // matchHslSubDeptKey is only a fallback for strings the map doesn't claim.
+  if (matchHslSubDeptKey(raw)) return 'hogan_smith_law';
+  return null;
 }
