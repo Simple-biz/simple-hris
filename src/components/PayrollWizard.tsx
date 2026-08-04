@@ -2643,17 +2643,22 @@ export default function PayrollWizard({
       const known = cycleFxRef.current?.file === calcSourceFile ? cycleFxRef.current : null;
       const php = leg === 'php' ? value : (known?.php ?? 0);
       const cop = leg === 'cop' ? value : (known?.cop ?? 0);
+      const at = new Date().toISOString();
       // Bump BEFORE the network call so any hydration response already in
       // flight is recognized as stale when it lands, and snapshot the ref
-      // synchronously so an immediately-following save of the OTHER card
-      // merges this fresh value even though React state hasn't committed yet.
+      // synchronously (with THIS write's timestamp) so an immediately-
+      // following save of the OTHER card merges the fresh value even though
+      // React state hasn't committed yet, and so the hydration effect's
+      // last-writer-wins guard can never roll this write back — including
+      // when its OWN re-fetch (post-save, editing flags flipping) races the
+      // still-in-flight POST below and returns the pre-save stored record.
       cycleFxWriteSeqRef.current += 1;
-      cycleFxRef.current = { file: calcSourceFile, php, cop };
+      cycleFxRef.current = { file: calcSourceFile, php, cop, at };
       const record = {
         php,
         cop,
         by: sessionEmail ?? null,
-        at: new Date().toISOString(),
+        at,
       };
       savePabSetting(cycleFxSettingKey(calcSourceFile), JSON.stringify(record)).catch(() => {
         toast.error('Rate saved globally, but the cycle record failed — save again to confirm the cycle.');
@@ -3070,8 +3075,13 @@ export default function PayrollWizard({
 
   /** Last KNOWN-persisted cycle record, keyed by file — the merge source for
    *  saveCycleFxRecord (live state can be stale across a file switch or the
-   *  post-save re-fetch). Updated by hydration applies and by every save. */
-  const cycleFxRef = React.useRef<{ file: string; php: number; cop: number } | null>(null);
+   *  post-save re-fetch), AND the last-writer-wins clock the hydration effect
+   *  checks before applying a same-file fetch. `at` is the wizard-written ISO
+   *  stamp — null when the ref only reflects "no record"/replay-fallback, so
+   *  it never blocks a fetch unless a local write actually needs protecting.
+   *  Updated by hydration applies (fetched `at`) and by every save (its own
+   *  fresh `at`, always newer than whatever a racing fetch could return). */
+  const cycleFxRef = React.useRef<{ file: string; php: number; cop: number; at: string | null } | null>(null);
   /** Bumped on every cycle-record save; hydration responses started before the
    *  bump are discarded (they can carry the pre-save stored value). */
   const cycleFxWriteSeqRef = React.useRef(0);
@@ -3121,13 +3131,23 @@ export default function PayrollWizard({
       .then((json: { values?: Record<string, string | null> }) => {
         if (cancelled || seq !== cycleFxWriteSeqRef.current) return;
         const rec = parseCycleFxRecord(json.values?.[key] ?? null);
+        // Last-writer-wins: never roll state back past a write we KNOW we made.
+        // A fetch can overtake our still-in-flight POST (the GET is auth-lighter),
+        // returning the pre-save record — or null if the key never existed yet.
+        // Catches this same fetch whether it was kicked off by the post-save
+        // editing-flag flip or by any other unrelated re-run of this effect.
+        const known = cycleFxRef.current;
+        if (known && known.file === calcSourceFile && known.at) {
+          const fetchedAt = rec?.at ?? null;
+          if (!fetchedAt || fetchedAt < known.at) return; // stale read — keep local truth
+        }
         const php = rec?.php ?? (isReplay ? globalPhpRate : 0);
         const cop = rec?.cop ?? (isReplay ? globalCopRate : 0);
         setUsdToPhpRate(php);
         setUsdToPhpInput(String(php));
         setUsdToCopRate(cop);
         setUsdToCopInput(String(cop));
-        cycleFxRef.current = { file: calcSourceFile, php, cop };
+        cycleFxRef.current = { file: calcSourceFile, php, cop, at: rec?.at ?? null };
       })
       .catch(() => {
         /* keep current values — a failed read must not zero a set cycle */
