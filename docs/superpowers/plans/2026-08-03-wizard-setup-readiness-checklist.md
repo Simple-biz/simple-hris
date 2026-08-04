@@ -1252,6 +1252,11 @@ git commit -m "feat(readiness): Wizard setup checklist section under the readine
 
 ### Task 6: Wizard confirm markers — fx stamp + Confirm button (Step 2), confirm-none button (Step 3)
 
+> **CORRECTED in review (fix round 1):** Step 1's `markerWeekStart` formula below is
+> wrong — `hubstaffWeekStart ?? payrollNotesWeekStart()` stamps LAST week's key in the
+> new-week-no-CSV window. The shipped rule mirrors the reader:
+> `const markerWeekStart = isReplay ? (hubstaffWeekStart ?? payrollNotesWeekStart()) : payrollNotesWeekStart();`
+
 **Files:**
 - Modify: `src/components/PayrollWizard.tsx` (imports ~:55-230, state ~:1996, marker-load effect near the fx-settings load ~:2949, fx card ~:9958-10083, orphanage step ~:13097-13150)
 

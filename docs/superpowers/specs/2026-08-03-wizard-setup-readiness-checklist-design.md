@@ -151,10 +151,13 @@ start date stays; past-week view excludes a person hired after that week.
 | `payroll.wizard.fx_confirmed.<weekStart>` | `{ rate, by, at }` | Step 2's existing Apply & Save handlers (`PayrollWizard.tsx:9995` Enter, `:10049` button), plus a new lightweight **"Confirm for this week"** button on the rate card for no-change weeks |
 | `payroll.wizard.orphanage_confirmed.<weekStart>` | `{ none: true, by, at }` | new small **"No orphanage hours this week"** button on Step 3, rendered only while the cycle has zero `orphanage_pay` rows |
 
-- `<weekStart>` = the filename Sunday of `calcSourceFile`
-  (`hubstaffWeekStart`, `PayrollWizard.tsx:2148`), falling back to
-  `payrollNotesWeekStart()` when no file is selected — so writers and the readiness
-  reader agree on the key.
+- `<weekStart>` — **corrected during implementation (Task 6 review)**: the calendar pay
+  week (`payrollNotesWeekStart()`) unless the wizard is explicitly REPLAYING an older
+  upload, in which case that file's filename Sunday (`hubstaffWeekStart`). This mirrors
+  `buildWizardSetup`'s expected-week rule exactly. The original "filename Sunday of
+  `calcSourceFile`, falling back to the calendar week" formula stamped LAST week's key
+  whenever the new week's CSV wasn't uploaded yet — precisely the window where the
+  checklist matters — and the readiness row would never light up.
 - Writes go through the existing `POST /api/app-settings` path (permission-gated,
   audit-logged like the current `usd_to_php_rate` save).
 - Markers are per-week; nothing is ever cleaned up or migrated (dead keys for past weeks
