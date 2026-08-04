@@ -90,6 +90,49 @@ test('an unclassified hsl_team_members row (dept_key null) keeps the GML-resolve
   assert.equal(merged[0]!.dept_key, 'filing_specialist');
 });
 
+test('a dept-filtered request includes an unclassified hsl_team_members row that GML resolves, with sheet metadata intact (Finding 2 fix)', () => {
+  // Previously, the route's SQL query pre-filtered hsl_team_members via
+  // `.eq('dept_key', dept)`, which never returns a `dept_key: null` row for a
+  // dept-scoped request — so mergeHslRoster never even saw this row, and the
+  // person appeared (if at all) only via the GML-synthesized default (losing
+  // is_manager/sub_team/hsl_name/role_raw from the sheet). Now that the route
+  // always passes the full hsl_team_members table, and filtering happens here
+  // AFTER the dept_key-null-fallback merge, this row must be included with
+  // its real sheet metadata.
+  const merged = mergeHslRoster(
+    [hslRow({
+      email: 'both@simple.biz',
+      dept_key: null,
+      is_manager: true,
+      sub_team: 'GREEN' as never,
+      hsl_name: 'Sheety Name',
+      role_raw: 'Filer',
+    })],
+    [gmlPerson({ work_email: 'both@simple.biz', department: 'hsl:filing_specialist' })],
+    'filing_specialist',
+  );
+  assert.equal(merged.length, 1);
+  assert.equal(merged[0]!.dept_key, 'filing_specialist');
+  assert.equal(merged[0]!.is_manager, true);
+  assert.equal(merged[0]!.sub_team, 'GREEN');
+  assert.equal(merged[0]!.hsl_name, 'Sheety Name');
+  assert.equal(merged[0]!.role_raw, 'Filer');
+});
+
+test('an hsl_team_members-only row not matching deptFilter is excluded under post-merge filtering', () => {
+  // With the route no longer pre-scoping hsl_team_members by dept via SQL,
+  // mergeHslRoster itself is now the only thing standing between a dept-scoped
+  // request and getting every department's sheet rows back. This confirms an
+  // hsl-sourced row (no GML involvement at all) with a non-matching dept_key
+  // is still correctly excluded.
+  const merged = mergeHslRoster(
+    [hslRow({ email: 'sheet@simple.biz', dept_key: 'case_managers' })],
+    [],
+    'attestation',
+  );
+  assert.equal(merged.length, 0);
+});
+
 test('email de-dup is case-insensitive', () => {
   const merged = mergeHslRoster(
     [hslRow({ email: 'foo@simple.biz' })],

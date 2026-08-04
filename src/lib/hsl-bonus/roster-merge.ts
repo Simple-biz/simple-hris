@@ -44,9 +44,17 @@ export interface GmlRosterCandidate {
  * `normalizeDeptToKey` treats a bare `hsl:` prefix as an unconditional match
  * that wins before its hand-curated `map` is even consulted.
  *
- * `deptFilter` mirrors the API's `?dept=` param: when set, only GML people
- * whose resolved key matches are included (the caller is expected to have
- * already filtered `hslTeamMembers` the same way, e.g. via `.eq('dept_key', ...)`).
+ * `deptFilter` mirrors the API's `?dept=` param. It is applied to the FINAL
+ * merged result, after both loops (and the dept_key-null-fallback rule above)
+ * have run — NOT as a mid-loop skip on the GML candidates, and callers should
+ * NOT pre-filter `hslTeamMembers` by dept before calling this function. This
+ * ordering matters: an `hsl_team_members` row that is unclassified
+ * (`dept_key: null`) but whose email also resolves a branch via GML must
+ * still be merged (picking up the GML-resolved `dept_key` via the fallback
+ * rule) BEFORE the dept filter is checked — otherwise a per-branch request
+ * would incorrectly drop that person, or include them without their sheet
+ * metadata (`is_manager`/`sub_team`/`hsl_name`/`role_raw`), even though the
+ * dept-less (unfiltered) request correctly shows them with that metadata.
  */
 export function mergeHslRoster(
   hslTeamMembers: HslRosterRow[],
@@ -63,7 +71,6 @@ export function mergeHslRoster(
     // department (see doc comment above). Only proceed if normalizeDeptToKey
     // independently agrees this person is Hogan Smith Law.
     if (normalizeDeptToKey(p.department) !== 'hogan_smith_law') continue;
-    if (deptFilter && key !== deptFilter) continue;
     const email = (p.work_email ?? '').trim().toLowerCase();
     if (!email) continue;
     byEmail.set(email, {
@@ -88,7 +95,7 @@ export function mergeHslRoster(
     });
   }
 
-  return Array.from(byEmail.values()).sort((a, b) =>
-    (a.full_name ?? '').localeCompare(b.full_name ?? ''),
-  );
+  const merged = Array.from(byEmail.values());
+  const result = deptFilter ? merged.filter((row) => row.dept_key === deptFilter) : merged;
+  return result.sort((a, b) => (a.full_name ?? '').localeCompare(b.full_name ?? ''));
 }
