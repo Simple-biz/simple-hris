@@ -2460,21 +2460,33 @@ function SetRateDialog({
  */
 function SetBankDialog({
   person,
+  prefill,
   onClose,
   onSaved,
 }: {
   person: ReadinessMissingBank;
+  /** Seeds the form from a known-but-not-yet-saved source (e.g. an offboard
+   *  snapshot) instead of starting blank. The clerk can still edit every
+   *  field before saving — this only changes the initial values. */
+  prefill?: {
+    walletEmail?: string;
+    walletName?: string;
+    bankName?: string;
+    accountHolder?: string;
+    accountNumber?: string;
+    swiftCode?: string;
+  };
   onClose: () => void;
   onSaved: () => void;
 }) {
   const lockedProcessor = (person.processor ?? "") as ProcessorId | "";
   const [processor, setProcessor] = useState<string>(lockedProcessor);
-  const [walletEmail, setWalletEmail] = useState("");
-  const [walletName, setWalletName] = useState("");
-  const [bankName, setBankName] = useState("");
-  const [accountHolder, setAccountHolder] = useState("");
-  const [accountNumber, setAccountNumber] = useState("");
-  const [swiftCode, setSwiftCode] = useState("");
+  const [walletEmail, setWalletEmail] = useState(prefill?.walletEmail ?? "");
+  const [walletName, setWalletName] = useState(prefill?.walletName ?? "");
+  const [bankName, setBankName] = useState(prefill?.bankName ?? "");
+  const [accountHolder, setAccountHolder] = useState(prefill?.accountHolder ?? "");
+  const [accountNumber, setAccountNumber] = useState(prefill?.accountNumber ?? "");
+  const [swiftCode, setSwiftCode] = useState(prefill?.swiftCode ?? "");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
