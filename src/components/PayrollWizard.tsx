@@ -7581,6 +7581,13 @@ export default function PayrollWizard({
     // dispatchData would still carry zeroed adjustments/orphanage/bonus toggles,
     // and Payment Dispatch prices (and the paystub merge trusts) this snapshot.
     if (additionsHydratedFor !== calcSourceFile) return;
+    // Never publish while this cycle's FX legs are still the 0 placeholders —
+    // USD/COP-denominated comp resolves through fx 0 to ₱0 "present" rates, and
+    // the Employee Dashboard reads this snapshot live. A new file has no prior
+    // snapshot, so holding back shows "no data yet" instead of a false ₱0; the
+    // rate-save re-publish lands seconds after Step 2 is filled in. (The
+    // dispatch-time publish can't hit this — Step 8 is hard-gated on both legs.)
+    if (usdToPhpRate <= 0 || usdToCopRate <= 0) return;
     // email -> the wizard's authoritative figures. Includes the Regular/OT split +
     // hours (not just `final`) so the Employee Dashboard's Regular + Overtime stats
     // reconcile exactly with the Estimated Take-Home. Keyed by BOTH work and personal
@@ -7678,7 +7685,7 @@ export default function PayrollWizard({
     } catch (e) {
       console.warn('[publishFinalPaySnapshot]', e);
     }
-  }, [calcSourceFile, dispatchData, savePabSetting, isReplay, usdToPhpRate, globalPhpRate, additionsHydratedFor]);
+  }, [calcSourceFile, dispatchData, savePabSetting, isReplay, usdToPhpRate, usdToCopRate, globalPhpRate, additionsHydratedFor]);
 
   /**
    * Lock in the parsed Orphanage paste: write each resolved amount into the per-employee
