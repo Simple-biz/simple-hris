@@ -238,7 +238,7 @@ import { HSL_DEPT_KEYS, HSL_DEPTS, calcManagerBonus } from '@/lib/hsl-bonus/sche
 import WizardCursorOverlay, { type WizardCursorOverlayHandle } from '@/components/payroll/WizardCursorOverlay';
 import LockToggleConfirmDialog, { deriveFirstName } from '@/components/payroll/LockToggleConfirmDialog';
 import { playStagePrepped, stopStagePrepped } from '@/lib/sound/ping-chime';
-import { payrollNotesWeekStart } from '@/lib/payroll/manila-week';
+import { payrollNotesWeekStart, weekRangeLabel } from '@/lib/payroll/manila-week';
 import {
   fxConfirmedSettingKey,
   orphanageConfirmedSettingKey,
@@ -705,6 +705,9 @@ function prorationBlockFromCalcRow(r: CalcRow): ProrationBlockRaw | null {
 
 /** localStorage key for the Dispatch-step "Rate snapshots" toggle. */
 const COMPARE_RATE_SOURCES_LS_KEY = 'payroll.wizard.compareRateSources';
+
+/** localStorage prefix for the Step-1 "CSV not uploaded" warning's per-week ignore. */
+const CSV_WARN_IGNORED_LS_PREFIX = 'payroll.wizard.csvWarnIgnored.';
 
 /** Masked payout details returned by GET /api/people/[email] (People → Banking). */
 type PreviewPeopleBanking = {
@@ -1707,6 +1710,8 @@ export default function PayrollWizard({
   const [hslKpiColShown, setHslKpiColShown] = useState(false);
   const HSL_PAGE_SIZE = 50;
   const [approveUploadDialogOpen, setApproveUploadDialogOpen] = useState(false);
+  /** Step-1 "this week's Hubstaff CSV isn't uploaded yet" warning. */
+  const [csvWarnOpen, setCsvWarnOpen] = useState(false);
   const [previewPaystubsOpen, setPreviewPaystubsOpen] = useState(false);
   const [previewSelectedEmail, setPreviewSelectedEmail] = useState<string | null>(null);
   const [previewSearch, setPreviewSearch] = useState('');
@@ -2199,6 +2204,40 @@ export default function PayrollWizard({
       cancelled = true;
     };
   }, [markerWeekStart]);
+
+  /** The calendar pay week (Sun, one week in arrears) and whether ANY upload's
+   *  filename covers it. Drives the Step-1 "CSV not uploaded yet" warning. */
+  const expectedPayWeekStart = useMemo(() => payrollNotesWeekStart(), []);
+  const hasExpectedWeekUpload = useMemo(
+    () =>
+      hubstaffUploads.some((u) => {
+        if (!u.source_file) return false;
+        const r = parseDateRangeFromFilename(u.source_file);
+        if (!r) return false;
+        const d = r.start;
+        const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+        return iso === expectedPayWeekStart;
+      }),
+    [hubstaffUploads, expectedPayWeekStart],
+  );
+
+  // Warn once per pay week per browser when the week's CSV is missing. The
+  // effect re-runs when uploads land, so the dialog silently disappears the
+  // moment the file arrives (Ignore writes the per-week localStorage key).
+  useEffect(() => {
+    if (sourceFilesLoading) return;
+    if (currentStep !== 1) return;
+    if (hasExpectedWeekUpload) {
+      setCsvWarnOpen(false);
+      return;
+    }
+    try {
+      if (localStorage.getItem(`${CSV_WARN_IGNORED_LS_PREFIX}${expectedPayWeekStart}`) === '1') return;
+    } catch {
+      /* storage unavailable — warn anyway, session-only */
+    }
+    setCsvWarnOpen(true);
+  }, [sourceFilesLoading, currentStep, hasExpectedWeekUpload, expectedPayWeekStart]);
 
   // Broadcast the wizard's current pay period (its `calcSourceFile`, which may
   // be a replayed past week) so the floating Readiness board follows the SAME
@@ -16049,6 +16088,56 @@ export default function PayrollWizard({
                 <Lock className="h-4 w-4" />
               )}
               Approve & upload
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={csvWarnOpen} onOpenChange={setCsvWarnOpen}>
+        <DialogContent className="border-zinc-200 bg-white sm:max-w-md dark:border-zinc-800 dark:bg-zinc-950">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-zinc-900 dark:text-white">
+              <AlertTriangle className="h-5 w-5 shrink-0 text-amber-500" />
+              This week&apos;s Hubstaff CSV isn&apos;t uploaded yet
+            </DialogTitle>
+            <DialogDescription className="text-zinc-600 dark:text-zinc-400">
+              The pay week <span className="font-semibold">{weekRangeLabel(expectedPayWeekStart)}</span> has no
+              Hubstaff report uploaded. Rates, hours, and every later step run on last week&apos;s file until it lands.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 dark:border-amber-500/40 dark:bg-amber-950/30">
+            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-600 dark:text-amber-400" />
+            <p className="text-[11px] leading-snug text-amber-700 dark:text-amber-300">
+              Newest upload: {newestSourceFile ? <span className="font-mono">{newestSourceFile}</span> : 'none yet'}.
+              The weekly auto-sync normally lands it Sunday afternoon — upload manually if it hasn&apos;t.
+            </p>
+          </div>
+          <div className="flex justify-end gap-2 pt-2">
+            <Button
+              type="button"
+              variant="outline"
+              className="border-zinc-200 dark:border-zinc-800"
+              onClick={() => {
+                try {
+                  localStorage.setItem(`${CSV_WARN_IGNORED_LS_PREFIX}${expectedPayWeekStart}`, '1');
+                } catch {
+                  /* ignore */
+                }
+                setCsvWarnOpen(false);
+              }}
+            >
+              Ignore for this week
+            </Button>
+            <Button
+              type="button"
+              className="gap-2 bg-indigo-600 text-white hover:bg-indigo-700"
+              onClick={() => {
+                setCsvWarnOpen(false);
+                setHubstaffActiveTab('upload');
+              }}
+            >
+              <Upload className="h-4 w-4" />
+              Upload now
             </Button>
           </div>
         </DialogContent>
