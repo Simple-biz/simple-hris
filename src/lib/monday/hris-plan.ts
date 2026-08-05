@@ -51,7 +51,7 @@ export const TASK_COLS = {
   priority: 'color_mm4m2j0z', // 0 Critical · 1 High · 2 Medium · 3 Low
   estimatedSp: 'numeric_mm4mpgqk',
   actualSp: 'numeric_mm4mevqb',
-  sprint: 'color_mm4mw08e', // 0 Sprint 24 · 1 Sprint 25 · 2 Backlog
+  sprint: 'color_mm4mw08e', // 0 Sprint 24 · 1 Sprint 25 · 2 Backlog · 13 Sprint 26
   project: 'board_relation_mm4mrsvm',
   epic: 'board_relation_mm4mp3yb',
 } as const;
@@ -83,7 +83,7 @@ export const TASK_TYPE_INDEX: Record<TaskType, number> = {
   Chore: 5,
   Spike: 6,
 };
-export const TASK_SPRINT_INDEX: Record<TaskSprint, number> = { S24: 0, S25: 1, BL: 2 };
+export const TASK_SPRINT_INDEX: Record<TaskSprint, number> = { S24: 0, S25: 1, S26: 13, BL: 2 };
 export const TASK_PRIORITY_INDEX: Record<Exclude<TaskPriority, null>, number> = {
   Critical: 0,
   High: 1,
@@ -158,6 +158,10 @@ export const PLAN_EPICS: PlanEpic[] = [
   { code: 'HRIS-30', title: 'HSL KPI 2026-07 Overhaul & Week-Model Cutover', sp: 19, quarter: 'Q3', status: 'Shipped' },
   { code: 'HRIS-31', title: 'S-WALL Social Wall & Announcements', sp: 11, quarter: 'Q2', status: 'Shipped' },
   { code: 'HRIS-32', title: 'Gifts & Milestones Tracker', sp: 12, quarter: 'Q2', status: 'Shipped' },
+  // Sprint 26 reconciliation (2026-08-05 audit of Jul 29 – Aug 5, 171 commits).
+  // Pay Cycle Reports rolls up to 13 SP — over the 8-point line, so it is an epic
+  // with three sprint tasks rather than one oversized task.
+  { code: 'HRIS-33', title: 'Pay Cycle Reports & Publication', sp: 13, quarter: 'Q3', status: 'Shipped' },
 ];
 
 // ─── Sprint tasks ─────────────────────────────────────────────────────────────
@@ -242,4 +246,54 @@ export const PLAN_TASKS: PlanTask[] = [
   { epic: 'HRIS-15', name: 'Run outstanding Supabase migrations + re-import n8n workflows (12+ pending SQL files)', type: 'Chore', sp: 3, done: false, sprint: 'S25', priority: 'Critical' },
   { epic: 'HRIS-19', name: 'Legacy rates-sheet cell can route null-preferred → hurupay: decision + guard', type: 'Spike', sp: 2, done: false, sprint: 'S25', priority: 'High' },
   { epic: 'HRIS-24', name: 'Referred-by column + Referrals week section (email-tier matching)', type: 'Feature', sp: 3, done: true, sprint: 'S24' },
+  // ── Sprint 26 reconciliation — shipped Jul 29 – Aug 5 2026 ─────────────────
+  // Grouped from 171 commits by feature, not by commit. SP scored against the
+  // live Sprint 26 items (1–5, avg 3.49); anything that rolled up to 8+ became
+  // an epic instead (HRIS-33). Commit SHAs live in each board item's update.
+  { epic: 'HRIS-01a', name: 'Manager Suspend + Reactivation (temp-pause) riding the offboarding-deactivate flow', type: 'Feature', sp: 5, done: true, sprint: 'S26' },
+  { epic: 'HRIS-02a', name: 'Per-cycle FX zero placeholders — dispatch hard-blocked until both legs are set', type: 'Feature', sp: 5, done: true, sprint: 'S26' },
+  { epic: 'HRIS-02a', name: 'Rate snapshots toggle on Dispatch — floating People/Catalog cards', type: 'Feature', sp: 2, done: true, sprint: 'S26' },
+  { epic: 'HRIS-02b', name: 'Mid-week rate-change proration on the statement — catalog-consistent history, both engines', type: 'Feature', sp: 5, done: true, sprint: 'S26' },
+  { epic: 'HRIS-02b', name: 'Rate-history effective_from snapped to the pay-week start', type: 'Bug', sp: 3, done: true, sprint: 'S26' },
+  { epic: 'HRIS-02b', name: 'HSL OT-rate arrears audit + remediation — weekend premium sat in the OT column', type: 'Chore', sp: 5, done: true, sprint: 'S26' },
+  { epic: 'HRIS-02b', name: 'PAB exclusion → employee notification (route + DDL + wizard toggle)', type: 'Feature', sp: 3, done: true, sprint: 'S26' },
+  { epic: 'HRIS-03a', name: 'Sub-₱7k PHP wires reroute to Wise + Under ₱7k dispatch filter chip', type: 'Feature', sp: 3, done: true, sprint: 'S26' },
+  { epic: 'HRIS-03a', name: 'Urgent payments: week-long bucket (Pending/Paid/Not Paid) + Undo + n8n alert', type: 'Feature', sp: 5, done: true, sprint: 'S26' },
+  { epic: 'HRIS-03a', name: 'Colombian payees show/copy their native COP amount', type: 'Feature', sp: 3, done: true, sprint: 'S26' },
+  { epic: 'HRIS-03a', name: 'Payment cycle 100% paid → completion email to Accounting', type: 'Integration', sp: 2, done: true, sprint: 'S26' },
+  { epic: 'HRIS-03a', name: 'Staged-only dispatch placement guard', type: 'Bug', sp: 3, done: true, sprint: 'S26' },
+  { epic: 'HRIS-03b', name: 'HSL Weekend Hours itemized under Earnings + transfer-week day scoping', type: 'Feature', sp: 5, done: true, sprint: 'S26' },
+  { epic: 'HRIS-03b', name: 'Accounting-only dispatch log panel on the Pay Stub modal + Excluded/Paid Records rework', type: 'Feature', sp: 5, done: true, sprint: 'S26' },
+  { epic: 'HRIS-03b', name: 'Tech bonus on recovered weeks + one paystub row per week', type: 'Bug', sp: 3, done: true, sprint: 'S26' },
+  { epic: 'HRIS-03b', name: 'Paystub rate-consistency guard — Payment Catalog is the source of truth', type: 'Bug', sp: 3, done: true, sprint: 'S26' },
+  { epic: 'HRIS-05', name: 'security_invoker on active_employees blanked the wizard dept source — restore + verifier', type: 'Bug', sp: 3, done: true, sprint: 'S26' },
+  { epic: 'HRIS-05', name: 'Roster bulk check hit an RLS-blocked view — direct GML read via /api/roster/gml-status', type: 'Bug', sp: 3, done: true, sprint: 'S26' },
+  { epic: 'HRIS-06', name: 'Payment Catalog Overview → Summary pay-mix dashboard', type: 'Feature', sp: 5, done: true, sprint: 'S26' },
+  { epic: 'HRIS-06', name: 'Payment Catalog Department cards + Search hero dock-to-top glide', type: 'Feature', sp: 2, done: true, sprint: 'S26' },
+  { epic: 'HRIS-06', name: "Shared master-list email merged two people's KPI bonuses", type: 'Bug', sp: 3, done: true, sprint: 'S26' },
+  { epic: 'HRIS-06', name: '“Set rate” updates the existing pay structure instead of dying on a duplicate key', type: 'Bug', sp: 2, done: true, sprint: 'S26' },
+  { epic: 'HRIS-07', name: 'MESA disbursement receipts — Receipt column, gallery, Approved/Paid from dispatch', type: 'Feature', sp: 3, done: true, sprint: 'S26' },
+  { epic: 'HRIS-08', name: 'Custom System Bonuses in COP/USD (PAB & Tech currency variants)', type: 'Feature', sp: 5, done: true, sprint: 'S26' },
+  { epic: 'HRIS-09', name: 'Employee Pay snapshot grid + one-page Pay Summary PDF', type: 'Feature', sp: 3, done: true, sprint: 'S26' },
+  { epic: 'HRIS-10', name: 'My Team: MESA-style table + card parity with row actions', type: 'Feature', sp: 3, done: true, sprint: 'S26' },
+  { epic: 'HRIS-11', name: 'Overview Total Payout hero counts the full pay run (payout extras)', type: 'Feature', sp: 3, done: true, sprint: 'S26' },
+  { epic: 'HRIS-13', name: 'Collab on/off as an admin system setting', type: 'Feature', sp: 3, done: true, sprint: 'S26' },
+  { epic: 'HRIS-13', name: 'Observe mirror portaled to the document body so the sidebar cannot overlap it', type: 'Bug', sp: 1, done: true, sprint: 'S26' },
+  { epic: 'HRIS-15', name: "Page every roster/pay read past PostgREST's silent 1000-row cap", type: 'Bug', sp: 3, done: true, sprint: 'S26' },
+  { epic: 'HRIS-15', name: 'Webhooks admin: sample payloads for every configured slug', type: 'Feature', sp: 2, done: true, sprint: 'S26' },
+  { epic: 'HRIS-18', name: 'HRIS generates the Certificate of Engagement — no upload', type: 'Feature', sp: 5, done: true, sprint: 'S26' },
+  { epic: 'HRIS-18', name: 'Employee document preview panel', type: 'Feature', sp: 3, done: true, sprint: 'S26' },
+  { epic: 'HRIS-20', name: 'Wizard Setup readiness checklist as its own first tab + week-scoped roster + step-1 CSV modal', type: 'Feature', sp: 5, done: true, sprint: 'S26' },
+  { epic: 'HRIS-20', name: 'Bank Info per-week Temporary Exemption', type: 'Feature', sp: 3, done: true, sprint: 'S26' },
+  { epic: 'HRIS-20', name: 'Payroll Notes FAB readiness ring + Readiness leads the tab strip', type: 'Feature', sp: 3, done: true, sprint: 'S26' },
+  { epic: 'HRIS-21', name: 'Payroll Notes Offboarded tab — final-pay rate/bank for leavers', type: 'Feature', sp: 5, done: true, sprint: 'S26' },
+  { epic: 'HRIS-21', name: 'Payroll Notes tab cache — board, readiness + rates no longer re-pulled', type: 'Chore', sp: 2, done: true, sprint: 'S26' },
+  { epic: 'HRIS-24', name: 'Checklist lock webhook sanitizes emails so one bad cell cannot strand the week', type: 'Bug', sp: 2, done: true, sprint: 'S26' },
+  { epic: 'HRIS-26', name: 'HR Transfers tab shows the full transfer trail again', type: 'Bug', sp: 2, done: true, sprint: 'S26' },
+  { epic: 'HRIS-27', name: 'Contractor invoices period-scoped to the pay cycle; dispatch rows open the invoice', type: 'Feature', sp: 5, done: true, sprint: 'S26' },
+  { epic: 'HRIS-28', name: 'Penny AI: full audit-log visibility (timeline, notes history, action catalogue)', type: 'Feature', sp: 3, done: true, sprint: 'S26' },
+  { epic: 'HRIS-30', name: 'Collections TL + Simple Texting removed from the HSL schema + DB purge', type: 'Feature', sp: 2, done: true, sprint: 'S26' },
+  { epic: 'HRIS-33', name: 'Pay-cycle report snapshot model + publish/list/unpublish API', type: 'Feature', sp: 5, done: true, sprint: 'S26' },
+  { epic: 'HRIS-33', name: 'Reports tab: list, detail view + CSV/XLSX/PDF export', type: 'Feature', sp: 5, done: true, sprint: 'S26' },
+  { epic: 'HRIS-33', name: 'Publish-gate + unpublish-audit hardening', type: 'Bug', sp: 3, done: true, sprint: 'S26' },
 ];
