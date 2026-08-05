@@ -37,7 +37,6 @@ import {
   X,
   Menu,
   Search,
-  UserRound,
   Users,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -3667,6 +3666,9 @@ function TeamPanelInner({ members, teamGate, viewerEmail, focusEmail, onFocusCon
                       const workingOn = formatCurrentProjects(ss?.current_projects, ss?.currently_working_on);
                       const seenIso = online ? null : lastSeenFor(m);
                       const resig = memberResignation(m);
+                      const k = memberKey(m);
+                      const suspended = suspendedKeys.has(k);
+                      const locked = isMemberLocked(m);
                       return (
                         <motion.div
                           key={`${m.work_email ?? m.personal_email ?? m.name}-${idx}`}
@@ -3755,6 +3757,37 @@ function TeamPanelInner({ members, teamGate, viewerEmail, focusEmail, onFocusCon
                                     No message left.
                                   </p>
                                 )}
+                                {/* Same Approve/Decline as the list view's resignation
+                                    sub-row. The panel sits inside the card's clickable
+                                    body, so stop propagation or the profile opens too. */}
+                                <div
+                                  className="mt-2 flex flex-wrap items-center gap-2"
+                                  role="presentation"
+                                  onClick={(e) => e.stopPropagation()}
+                                  onKeyDown={(e) => e.stopPropagation()}
+                                >
+                                  <Button
+                                    type="button"
+                                    size="sm"
+                                    onClick={() => openResignDecision(resig, 'approve')}
+                                    className="h-7 gap-1.5 bg-emerald-600 px-2.5 text-[11px] font-semibold text-white hover:bg-emerald-700"
+                                    title="Approve — queues this person for offboarding (reason: Resigned)"
+                                  >
+                                    <CheckCircle2 className="h-3.5 w-3.5" />
+                                    Approve
+                                  </Button>
+                                  <Button
+                                    type="button"
+                                    size="sm"
+                                    variant="outline"
+                                    onClick={() => openResignDecision(resig, 'reject')}
+                                    className="h-7 gap-1.5 border-rose-200 px-2.5 text-[11px] font-semibold text-rose-700 hover:bg-rose-50 dark:border-rose-700/50 dark:text-rose-300 dark:hover:bg-rose-950/40"
+                                    title="Decline this resignation"
+                                  >
+                                    <X className="h-3.5 w-3.5" />
+                                    Decline
+                                  </Button>
+                                </div>
                               </div>
                             ) : (
                               <div className="mt-3 rounded-lg border border-zinc-100 bg-zinc-50/70 px-3 py-2 dark:border-zinc-800/70 dark:bg-zinc-900/40">
@@ -3786,45 +3819,65 @@ function TeamPanelInner({ members, teamGate, viewerEmail, focusEmail, onFocusCon
                             </span>
                           </div>
 
-                          {/* Actions — a resigning member gets Approve/Decline in place
-                              of Transfer so the manager acts right from the card. */}
-                          <div className="flex items-center justify-end gap-1.5 border-t border-zinc-100 px-4 py-2.5 dark:border-zinc-800/60">
+                          {/* Actions — the SAME set as the list view's Actions column
+                              (a resigning member's Approve/Decline lives in the rose
+                              panel above, mirroring the list's sub-row). */}
+                          <div className="flex flex-wrap items-center justify-end gap-1.5 border-t border-zinc-100 px-4 py-2.5 dark:border-zinc-800/60">
                             <Button
                               type="button"
                               size="sm"
                               variant="outline"
                               onClick={() => setSelectedMember(m)}
-                              className="h-7 gap-1.5 border-blue-200 text-xs text-blue-700 hover:bg-blue-50 dark:border-blue-800 dark:text-blue-300 dark:hover:bg-blue-950/40"
+                              className="h-7 gap-1 border-blue-200 bg-blue-50/60 text-[11px] font-semibold text-blue-700 hover:bg-blue-100 dark:border-blue-700/50 dark:bg-blue-950/30 dark:text-blue-300 dark:hover:bg-blue-950/60"
                               title="View profile and recognition"
                             >
-                              <UserRound className="h-3.5 w-3.5" />
+                              <Eye className="h-3 w-3" />
                               View
                             </Button>
-                            {resig && (
-                              <>
-                                <Button
-                                  type="button"
-                                  size="sm"
-                                  variant="outline"
-                                  onClick={() => openResignDecision(resig, 'reject')}
-                                  className="h-7 gap-1.5 border-rose-200 text-xs text-rose-700 hover:bg-rose-50 dark:border-rose-700/50 dark:text-rose-300 dark:hover:bg-rose-950/40"
-                                  title="Decline this resignation"
-                                >
-                                  <X className="h-3.5 w-3.5" />
-                                  Decline
-                                </Button>
-                                <Button
-                                  type="button"
-                                  size="sm"
-                                  onClick={() => openResignDecision(resig, 'approve')}
-                                  className="h-7 gap-1.5 bg-emerald-600 text-xs text-white hover:bg-emerald-700"
-                                  title="Approve — queues this person for offboarding (reason: Resigned)"
-                                >
-                                  <CheckCircle2 className="h-3.5 w-3.5" />
-                                  Approve
-                                </Button>
-                              </>
-                            )}
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              disabled={suspended || !avatarEmail}
+                              onClick={() => setTempPauseTarget({ member: m, action: 'suspend' })}
+                              title={
+                                !avatarEmail
+                                  ? 'No email on file — cannot suspend'
+                                  : "Disable this person's Workspace account (temporary pause — nothing is deleted)"
+                              }
+                              className="h-7 gap-1 border-amber-200 bg-amber-50/60 text-[11px] font-semibold text-amber-700 hover:bg-amber-100 disabled:opacity-60 dark:border-amber-700/50 dark:bg-amber-950/30 dark:text-amber-300 dark:hover:bg-amber-950/60"
+                            >
+                              <CirclePause className="h-3 w-3" />
+                              {suspended ? 'Suspended' : 'Suspend'}
+                            </Button>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              disabled={!avatarEmail}
+                              onClick={() => setTempPauseTarget({ member: m, action: 'reactivate' })}
+                              title={
+                                !avatarEmail
+                                  ? 'No email on file — cannot reactivate'
+                                  : "Re-enable this person's Workspace account after a temporary pause"
+                              }
+                              className="h-7 gap-1 border-emerald-200 bg-emerald-50/60 text-[11px] font-semibold text-emerald-700 hover:bg-emerald-100 disabled:opacity-60 dark:border-emerald-700/50 dark:bg-emerald-950/30 dark:text-emerald-300 dark:hover:bg-emerald-950/60"
+                            >
+                              <CirclePlay className="h-3 w-3" />
+                              Reactivation
+                            </Button>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              disabled={locked}
+                              onClick={() => openOffboardFor(m)}
+                              title="Send to HR for offboarding — joins anyone already ticked in the multi-select"
+                              className="h-7 gap-1 border-rose-200 bg-rose-50/60 text-[11px] font-semibold text-rose-700 hover:bg-rose-100 disabled:opacity-60 dark:border-rose-700/50 dark:bg-rose-950/30 dark:text-rose-300 dark:hover:bg-rose-950/60"
+                            >
+                              <UserMinus className="h-3 w-3" />
+                              Offboard
+                            </Button>
                           </div>
                         </motion.div>
                       );
