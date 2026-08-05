@@ -101,6 +101,13 @@ BEGIN
       'description', 'Permanently deletes the Workspace account. Fired immediately for Lead Gen; fired by the scheduled-deletion cron 14 days after deactivation for other departments.'
     ),
     jsonb_build_object(
+      'slug', 'manager_suspend',
+      'label', 'Manager Suspend - Temp Pause (n8n)',
+      'url', 'https://simpledotbiz.app.n8n.cloud/webhook/reactivate-temp-pause',
+      'active', false,
+      'description', 'Fired by the Manager -> My Team list "Suspend" button. The temp-pause flow disables (suspends) the Workspace account only -- nothing is deleted and no offboard stamps are written.'
+    ),
+    jsonb_build_object(
       'slug', 'new_hire_checklist_lock',
       'label', 'New Hire Checklist - Lock in (n8n)',
       'url', 'https://simpledotbiz.app.n8n.cloud/webhook-test/609dd382-6214-41c7-8a16-ed94a0b84110',

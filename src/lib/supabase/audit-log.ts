@@ -80,6 +80,9 @@ export type AuditAction =
   | 'announcement.posted'
   | 'announcement.pin_toggled'
   | 'announcement.deleted'
+  // Manager -> My Team list "Suspend": Workspace account disabled via the n8n
+  // temp-pause webhook. Suspend-only — nothing is deleted, no offboard stamps.
+  | 'manager.suspended'
   // HRIS Updates — Kanban ticket board (/tickets)
   | 'ticket.created'
   | 'ticket.updated'

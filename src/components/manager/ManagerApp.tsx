@@ -9,6 +9,7 @@ import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import {
   AlertTriangle,
   Briefcase,
+  Building2,
   CalendarDays,
   Camera,
   Check,
@@ -16,6 +17,7 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  CirclePause,
   ClipboardCheck,
   Clock,
   DoorOpen,
@@ -2484,6 +2486,15 @@ function TeamPanelInner({ members, teamGate, viewerEmail, focusEmail, onFocusCon
   const [callToolsOverrides, setCallToolsOverrides] = useState<Record<string, string | null>>({});
   const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
   const [offboardOpen, setOffboardOpen] = useState(false);
+
+  // ── Suspend (list view, per-row) ──
+  // "Suspend" fires the n8n temp-pause webhook via /api/manager/suspend, which
+  // DISABLES the person's Workspace account — nothing is deleted and no
+  // offboard stamps are written, so there's no DB flag to read back. The
+  // session-only set below just flips the clicked row's button to "Suspended".
+  const [suspendTarget, setSuspendTarget] = useState<EmployeeRow | null>(null);
+  const [suspendSaving, setSuspendSaving] = useState(false);
+  const [suspendedKeys, setSuspendedKeys] = useState<Set<string>>(new Set());
   // The manager's own outbox → per-email offboarding status for the badges,
   // plus the HR note for a returned request (shown as a tooltip on the badge).
   const [offboardStatus, setOffboardStatus] = useState<Record<string, OffboardingQueueStatus>>({});
@@ -2617,6 +2628,33 @@ function TeamPanelInner({ members, teamGate, viewerEmail, focusEmail, onFocusCon
     }
   };
 
+  const submitSuspend = async () => {
+    if (!suspendTarget) return;
+    const email = suspendTarget.work_email ?? suspendTarget.personal_email;
+    if (!email) {
+      toast.error('No email on file for this person.');
+      return;
+    }
+    setSuspendSaving(true);
+    try {
+      const res = await fetch('/api/manager/suspend', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email }),
+      });
+      const json = (await res.json()) as { error?: string };
+      if (!res.ok) throw new Error(json.error || 'Failed to suspend');
+      const k = memberKey(suspendTarget);
+      setSuspendedKeys((prev) => new Set(prev).add(k));
+      toast.success(`${suspendTarget.name ?? email} suspended — account disabled, nothing deleted`);
+      setSuspendTarget(null);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to suspend');
+    } finally {
+      setSuspendSaving(false);
+    }
+  };
+
   const fmtEffective = (iso: string): string => {
     const d = new Date(iso);
     if (Number.isNaN(d.getTime())) return iso;
@@ -2645,6 +2683,22 @@ function TeamPanelInner({ members, teamGate, viewerEmail, focusEmail, onFocusCon
       else next.add(k);
       return next;
     });
+  };
+
+  // Row-level "Offboard" button — same flow as the multi-select: the person is
+  // added to the shared selection (their checkbox ticks) and the queue dialog
+  // opens over the whole selection, so ticked people + this row go out as one
+  // submission and onSubmitted/clearSelection behave exactly as before.
+  const openOffboardFor = (m: EmployeeRow) => {
+    if (isMemberLocked(m)) return;
+    const k = memberKey(m);
+    if (!k) return;
+    setSelectedKeys((prev) => {
+      const next = new Set(prev);
+      next.add(k);
+      return next;
+    });
+    setOffboardOpen(true);
   };
 
   // Skill sets (role / currently-working-on / manager notes) for the team —
@@ -3260,10 +3314,10 @@ function TeamPanelInner({ members, teamGate, viewerEmail, focusEmail, onFocusCon
                       className="overflow-x-auto"
                     >
                       <div>
-                        <table className="w-full text-left text-sm">
-                          <thead className="sticky top-0 z-[1] bg-gradient-to-r from-blue-50 via-white to-blue-50/80 text-xs text-zinc-600 dark:from-blue-950/50 dark:via-zinc-950 dark:to-blue-950/40 dark:text-zinc-400">
+                        <table className="w-full text-left text-xs">
+                          <thead className="border-b border-blue-100/80 bg-blue-50/40 text-[11px] font-semibold uppercase tracking-wide text-blue-700 dark:border-blue-900/40 dark:bg-blue-950/30 dark:text-blue-300">
                             <tr>
-                              <th className="w-10 px-3 py-2.5">
+                              <th className="w-8 px-3 py-2.5">
                                 <Checkbox
                                   aria-label="Select all on this page"
                                   checked={allPageSelected}
@@ -3272,16 +3326,17 @@ function TeamPanelInner({ members, teamGate, viewerEmail, focusEmail, onFocusCon
                                   disabled={selectablePage.length === 0}
                                 />
                               </th>
-                              <th className="px-3 py-2.5 font-semibold">Name</th>
-                              <th className="px-3 py-2.5 font-semibold">Department</th>
-                              <th className="hidden px-3 py-2.5 font-semibold sm:table-cell">Title</th>
+                              <th className="px-4 py-2.5">Name</th>
+                              <th className="px-4 py-2.5">Department</th>
+                              <th className="hidden px-4 py-2.5 sm:table-cell">Title</th>
                               {showCallToolsCol && (
-                                <th className="px-3 py-2.5 font-semibold">CallTools Username</th>
+                                <th className="px-4 py-2.5">CallTools Username</th>
                               )}
-                              <th className="px-3 py-2.5 text-right font-semibold">Status</th>
+                              <th className="px-4 py-2.5 text-right">Status</th>
+                              <th className="px-4 py-2.5 text-right">Actions</th>
                             </tr>
                           </thead>
-                          <tbody className="divide-y divide-blue-100/70 dark:divide-blue-950/40">
+                          <tbody className="divide-y divide-blue-100/60 dark:divide-blue-900/40">
                             {pageSlice.map((m, idx) => {
                               const k = memberKey(m);
                               const checked = selectedKeys.has(k);
@@ -3292,6 +3347,7 @@ function TeamPanelInner({ members, teamGate, viewerEmail, focusEmail, onFocusCon
                               const badge = offboardBadge(memberOffboardStatus(m));
                               const avatarEmail = m.work_email ?? m.personal_email ?? null;
                               const resig = memberResignation(m);
+                              const suspended = suspendedKeys.has(k);
                               return (
                                 <React.Fragment key={`${m.work_email ?? m.personal_email ?? m.name}-${idx}`}>
                                 <tr
@@ -3304,7 +3360,7 @@ function TeamPanelInner({ members, teamGate, viewerEmail, focusEmail, onFocusCon
                                         : 'hover:bg-blue-50/40 dark:hover:bg-blue-950/20',
                                   )}
                                 >
-                                  <td className="px-3 py-2.5">
+                                  <td className="px-3 py-3" data-label="Select">
                                     <Checkbox
                                       aria-label={`Select ${m.name ?? k}`}
                                       checked={checked}
@@ -3312,7 +3368,7 @@ function TeamPanelInner({ members, teamGate, viewerEmail, focusEmail, onFocusCon
                                       onCheckedChange={() => toggleSelected(m)}
                                     />
                                   </td>
-                                  <td data-label="Name" className="px-3 py-2.5">
+                                  <td data-label="Name" className="px-4 py-3">
                                     <button
                                       type="button"
                                       onClick={() => setSelectedMember(m)}
@@ -3333,26 +3389,27 @@ function TeamPanelInner({ members, teamGate, viewerEmail, focusEmail, onFocusCon
                                         <span className="block truncate font-medium text-zinc-900 dark:text-zinc-100">
                                           {m.name ?? '—'}
                                         </span>
-                                        <span className="block truncate font-mono text-[11px] text-zinc-400 dark:text-zinc-500">
+                                        <span className="mt-0.5 block truncate font-mono text-[11px] text-zinc-500 dark:text-zinc-500">
                                           {m.work_email ?? m.personal_email ?? '—'}
                                         </span>
                                       </span>
                                     </button>
                                   </td>
-                                  <td data-label="Department" className="px-3 py-2.5">
+                                  <td data-label="Department" className="px-4 py-3 text-zinc-600 dark:text-zinc-400">
                                     {m.department ? (
-                                      <span className="rounded-md border border-blue-200 bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium text-blue-700 dark:border-blue-500/30 dark:bg-blue-500/10 dark:text-blue-300">
+                                      <span className="inline-flex items-center gap-1">
+                                        <Building2 className="h-3 w-3 text-zinc-400" />
                                         {m.department}
                                       </span>
                                     ) : (
-                                      <span className="text-xs text-zinc-400">—</span>
+                                      <span className="text-zinc-400">—</span>
                                     )}
                                   </td>
-                                  <td data-label="Title" className="hidden px-3 py-2.5 text-xs text-zinc-600 dark:text-zinc-300 sm:table-cell">
+                                  <td data-label="Title" className="hidden px-4 py-3 text-zinc-600 dark:text-zinc-400 sm:table-cell">
                                     <span className="line-clamp-1" title={roleLine ?? undefined}>{roleLine ?? '—'}</span>
                                   </td>
                                   {showCallToolsCol && (
-                                    <td data-label="CallTools Username" className="px-3 py-2.5">
+                                    <td data-label="CallTools Username" className="px-4 py-3">
                                       {isLeadGenDepartment(m.department) ? (
                                         <CallToolsUsernameCell
                                           member={m}
@@ -3369,7 +3426,7 @@ function TeamPanelInner({ members, teamGate, viewerEmail, focusEmail, onFocusCon
                                       )}
                                     </td>
                                   )}
-                                  <td data-label="Status" className="px-3 py-2.5 text-right">
+                                  <td data-label="Status" className="px-4 py-3 text-right">
                                     {resig ? (
                                       <span className="inline-flex items-center gap-1 rounded-full bg-rose-100 px-2 py-0.5 text-[10px] font-semibold text-rose-700 dark:bg-rose-900/30 dark:text-rose-300">
                                         <DoorOpen className="h-3 w-3" />
@@ -3382,15 +3439,58 @@ function TeamPanelInner({ members, teamGate, viewerEmail, focusEmail, onFocusCon
                                       >
                                         {badge.label}
                                       </span>
+                                    ) : suspended ? (
+                                      <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-700 dark:bg-amber-900/30 dark:text-amber-300">
+                                        <CirclePause className="h-3 w-3" />
+                                        Suspended
+                                      </span>
                                     ) : (
                                       <span className="text-[11px] text-zinc-300 dark:text-zinc-600">—</span>
                                     )}
+                                  </td>
+                                  <td data-label="Actions" className="px-4 py-3 text-right">
+                                    <div className="flex items-center justify-end gap-1.5">
+                                      <Button
+                                        type="button"
+                                        size="sm"
+                                        variant="outline"
+                                        onClick={() => setSelectedMember(m)}
+                                        className="h-7 gap-1 border-blue-200 bg-blue-50/60 text-[11px] font-semibold text-blue-700 hover:bg-blue-100 dark:border-blue-700/50 dark:bg-blue-950/30 dark:text-blue-300 dark:hover:bg-blue-950/60"
+                                      >
+                                        <Eye className="h-3 w-3" />
+                                        View
+                                      </Button>
+                                      <Button
+                                        type="button"
+                                        size="sm"
+                                        variant="outline"
+                                        disabled={suspended}
+                                        onClick={() => setSuspendTarget(m)}
+                                        title="Disable this person's Workspace account (temporary pause — nothing is deleted)"
+                                        className="h-7 gap-1 border-amber-200 bg-amber-50/60 text-[11px] font-semibold text-amber-700 hover:bg-amber-100 disabled:opacity-60 dark:border-amber-700/50 dark:bg-amber-950/30 dark:text-amber-300 dark:hover:bg-amber-950/60"
+                                      >
+                                        <CirclePause className="h-3 w-3" />
+                                        {suspended ? 'Suspended' : 'Suspend'}
+                                      </Button>
+                                      <Button
+                                        type="button"
+                                        size="sm"
+                                        variant="outline"
+                                        disabled={locked}
+                                        onClick={() => openOffboardFor(m)}
+                                        title="Send to HR for offboarding — joins anyone already ticked in the multi-select"
+                                        className="h-7 gap-1 border-rose-200 bg-rose-50/60 text-[11px] font-semibold text-rose-700 hover:bg-rose-100 disabled:opacity-60 dark:border-rose-700/50 dark:bg-rose-950/30 dark:text-rose-300 dark:hover:bg-rose-950/60"
+                                      >
+                                        <UserMinus className="h-3 w-3" />
+                                        Offboard
+                                      </Button>
+                                    </div>
                                   </td>
                                 </tr>
                                 {resig && (
                                   <tr className="bg-rose-50/40 dark:bg-rose-950/10">
                                     <td />
-                                    <td colSpan={showCallToolsCol ? 5 : 4} className="px-3 pb-3 pt-0">
+                                    <td colSpan={showCallToolsCol ? 6 : 5} className="px-4 pb-3 pt-0">
                                       <div className="rounded-lg border border-rose-200/80 bg-white/70 p-3 dark:border-rose-900/40 dark:bg-zinc-950/40">
                                         <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] font-semibold uppercase tracking-wide text-rose-700 dark:text-rose-300">
                                           <DoorOpen className="h-3.5 w-3.5" />
@@ -3441,7 +3541,7 @@ function TeamPanelInner({ members, teamGate, viewerEmail, focusEmail, onFocusCon
                           </tbody>
                         </table>
                       </div>
-                      <div data-readonly-allow className="flex flex-col items-center justify-between gap-2 border-t border-blue-100/70 bg-white/60 px-4 py-2.5 text-[11px] text-zinc-500 dark:border-blue-950/50 dark:bg-zinc-950/40 dark:text-zinc-400 sm:flex-row">
+                      <div data-readonly-allow className="flex flex-col items-center justify-between gap-2 border-t border-blue-100/80 bg-white/60 px-4 py-2.5 text-[11px] text-zinc-500 dark:border-blue-900/40 dark:bg-zinc-950/40 dark:text-zinc-400 sm:flex-row">
                         <span className="tabular-nums">
                           Showing{' '}
                           <span className="font-medium text-zinc-700 dark:text-zinc-300">{pageStart + 1}–{pageEnd}</span>{' '}
@@ -3787,6 +3887,80 @@ function TeamPanelInner({ members, teamGate, viewerEmail, focusEmail, onFocusCon
           loadOffboardOutbox();
         }}
       />
+
+      {/* Suspend confirmation — fires the n8n temp-pause webhook (disable only,
+          never delete) via /api/manager/suspend. */}
+      {suspendTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-[2px]">
+          <div className="w-full max-w-md rounded-2xl border border-zinc-200 bg-white shadow-2xl dark:border-zinc-800 dark:bg-zinc-950">
+            <div className="flex items-start justify-between gap-2 border-b border-zinc-200 px-5 py-4 dark:border-zinc-800">
+              <div className="min-w-0">
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-amber-600 dark:text-amber-400">
+                  Suspend account
+                </p>
+                <h3 className="mt-0.5 truncate text-base font-bold text-zinc-900 dark:text-white">
+                  {suspendTarget.name ?? suspendTarget.work_email ?? suspendTarget.personal_email}
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSuspendTarget(null)}
+                className="rounded-md p-1.5 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-600 dark:hover:bg-zinc-800 dark:hover:text-zinc-300"
+                aria-label="Close"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="space-y-3 px-5 py-4">
+              <div className="flex items-center justify-between gap-4 text-[13px]">
+                <span className="text-zinc-500 dark:text-zinc-400">Email</span>
+                <span className="truncate font-mono text-xs font-medium text-zinc-900 dark:text-zinc-100">
+                  {suspendTarget.work_email ?? suspendTarget.personal_email ?? '—'}
+                </span>
+              </div>
+              <div className="flex items-center justify-between gap-4 text-[13px]">
+                <span className="text-zinc-500 dark:text-zinc-400">Department</span>
+                <span className="font-medium text-zinc-900 dark:text-zinc-100">
+                  {suspendTarget.department ?? '—'}
+                </span>
+              </div>
+              <div className="flex items-start gap-2 rounded-lg border border-amber-200/70 bg-amber-50/60 px-3 py-2 text-[12px] leading-relaxed text-amber-900 dark:border-amber-900/40 dark:bg-amber-950/20 dark:text-amber-200">
+                <CirclePause className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                <span>
+                  Suspending <strong>disables</strong> this person&apos;s Workspace account (sign-in
+                  blocked) via the temporary-pause automation. <strong>Nothing is deleted</strong> —
+                  no offboarding, no data loss — and the account can be re-enabled when they return.
+                </span>
+              </div>
+            </div>
+            <div className="flex items-center justify-end gap-2 border-t border-zinc-200 px-5 py-4 dark:border-zinc-800">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={suspendSaving}
+                onClick={() => setSuspendTarget(null)}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                disabled={suspendSaving}
+                onClick={submitSuspend}
+                className="gap-1.5 bg-amber-600 text-white hover:bg-amber-700"
+              >
+                {suspendSaving ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <CirclePause className="h-3.5 w-3.5" />
+                )}
+                Suspend account
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Resignation decision modal (approve → offboarding queue, or decline) */}
       {resignDecision && (

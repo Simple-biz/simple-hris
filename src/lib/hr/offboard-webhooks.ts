@@ -27,6 +27,10 @@ export const OFFBOARD_DELETE_SLUG = "offboarding_delete";
 /** Fired when a manager submits team members to the HR offboarding queue;
  *  the n8n flow emails alissar@simple.biz the count only (no names). */
 export const MANAGER_OFFBOARD_NOTIFY_SLUG = "manager_offboard_notify";
+/** Fired by the Manager -> My Team list "Suspend" button: the n8n temp-pause
+ *  flow disables (suspends) the person's Workspace account. Never deletes —
+ *  no offboard stamps, no scheduled deletion; re-enable happens in n8n. */
+export const MANAGER_SUSPEND_SLUG = "manager_suspend";
 
 const DEACTIVATE_DEFAULT_URL =
   "https://simpledotbiz.app.n8n.cloud/webhook/offboarding-deactivate";
@@ -34,6 +38,8 @@ const DELETE_DEFAULT_URL =
   "https://simpledotbiz.app.n8n.cloud/webhook/offboarding-delete";
 const MANAGER_OFFBOARD_NOTIFY_DEFAULT_URL =
   "https://simpledotbiz.app.n8n.cloud/webhook/manager-offboard-notify";
+const MANAGER_SUSPEND_DEFAULT_URL =
+  "https://simpledotbiz.app.n8n.cloud/webhook/reactivate-temp-pause";
 
 /** Days a non-Lead-Gen account stays deactivated before the cron deletes it. */
 export const DELETION_DELAY_DAYS = 14;
@@ -61,6 +67,9 @@ function resolveUrl(slug: string): Promise<string> {
   } else if (slug === MANAGER_OFFBOARD_NOTIFY_SLUG) {
     defaultUrl = MANAGER_OFFBOARD_NOTIFY_DEFAULT_URL;
     envVars = ["N8N_MANAGER_OFFBOARD_NOTIFY_WEBHOOK_URL"];
+  } else if (slug === MANAGER_SUSPEND_SLUG) {
+    defaultUrl = MANAGER_SUSPEND_DEFAULT_URL;
+    envVars = ["N8N_MANAGER_SUSPEND_WEBHOOK_URL"];
   } else {
     defaultUrl = DEACTIVATE_DEFAULT_URL;
     envVars = ["N8N_OFFBOARDING_DEACTIVATE_WEBHOOK_URL"];
