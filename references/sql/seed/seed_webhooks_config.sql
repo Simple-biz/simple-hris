@@ -103,9 +103,16 @@ BEGIN
     jsonb_build_object(
       'slug', 'manager_suspend',
       'label', 'Manager Suspend - Temp Pause (n8n)',
+      'url', 'https://simpledotbiz.app.n8n.cloud/webhook/offboarding-deactivate',
+      'active', false,
+      'description', 'Fired by the Manager -> My Team list "Suspend" button. Rides the offboarding-deactivate flow with the HR temporary_pause envelope (deletion_mode "none"): the Workspace account is disabled only -- nothing is deleted and no offboard stamps are written.'
+    ),
+    jsonb_build_object(
+      'slug', 'manager_reactivate',
+      'label', 'Manager Reactivation - Temp Pause (n8n)',
       'url', 'https://simpledotbiz.app.n8n.cloud/webhook/reactivate-temp-pause',
       'active', false,
-      'description', 'Fired by the Manager -> My Team list "Suspend" button. The temp-pause flow disables (suspends) the Workspace account only -- nothing is deleted and no offboard stamps are written.'
+      'description', 'Fired by the Manager -> My Team list "Reactivation" button. The reactivate-temp-pause flow re-enables a Workspace account that was disabled by a temporary pause / suspend.'
     ),
     jsonb_build_object(
       'slug', 'new_hire_checklist_lock',

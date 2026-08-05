@@ -18,6 +18,7 @@ import {
   ChevronLeft,
   ChevronRight,
   CirclePause,
+  CirclePlay,
   ClipboardCheck,
   Clock,
   DoorOpen,
@@ -2487,13 +2488,20 @@ function TeamPanelInner({ members, teamGate, viewerEmail, focusEmail, onFocusCon
   const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
   const [offboardOpen, setOffboardOpen] = useState(false);
 
-  // ── Suspend (list view, per-row) ──
-  // "Suspend" fires the n8n temp-pause webhook via /api/manager/suspend, which
-  // DISABLES the person's Workspace account — nothing is deleted and no
-  // offboard stamps are written, so there's no DB flag to read back. The
-  // session-only set below just flips the clicked row's button to "Suspended".
-  const [suspendTarget, setSuspendTarget] = useState<EmployeeRow | null>(null);
-  const [suspendSaving, setSuspendSaving] = useState(false);
+  // ── Suspend / Reactivation (list view, per-row) ──
+  // The manager-facing temporary-pause pair (the temp-pause reason is disabled
+  // in the offboard modal — these buttons replace it), via
+  // /api/manager/temp-pause: "Suspend" rides the offboarding-deactivate flow
+  // with the HR temp-pause envelope and DISABLES the Workspace account;
+  // "Reactivation" fires the reactivate-temp-pause flow to re-enable it.
+  // Nothing is deleted and no offboard stamps are written, so there's no DB
+  // flag to read back — the session-only set below just flips the clicked
+  // row's buttons.
+  const [tempPauseTarget, setTempPauseTarget] = useState<{
+    member: EmployeeRow;
+    action: 'suspend' | 'reactivate';
+  } | null>(null);
+  const [tempPauseSaving, setTempPauseSaving] = useState(false);
   const [suspendedKeys, setSuspendedKeys] = useState<Set<string>>(new Set());
   // The manager's own outbox → per-email offboarding status for the badges,
   // plus the HR note for a returned request (shown as a tooltip on the badge).
@@ -2628,30 +2636,40 @@ function TeamPanelInner({ members, teamGate, viewerEmail, focusEmail, onFocusCon
     }
   };
 
-  const submitSuspend = async () => {
-    if (!suspendTarget) return;
-    const email = suspendTarget.work_email ?? suspendTarget.personal_email;
+  const submitTempPause = async () => {
+    if (!tempPauseTarget || tempPauseSaving) return;
+    const { member, action } = tempPauseTarget;
+    const email = member.work_email ?? member.personal_email;
     if (!email) {
       toast.error('No email on file for this person.');
       return;
     }
-    setSuspendSaving(true);
+    setTempPauseSaving(true);
     try {
-      const res = await fetch('/api/manager/suspend', {
+      const res = await fetch('/api/manager/temp-pause', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email }),
+        body: JSON.stringify({ email, action }),
       });
       const json = (await res.json()) as { error?: string };
-      if (!res.ok) throw new Error(json.error || 'Failed to suspend');
-      const k = memberKey(suspendTarget);
-      setSuspendedKeys((prev) => new Set(prev).add(k));
-      toast.success(`${suspendTarget.name ?? email} suspended — account disabled, nothing deleted`);
-      setSuspendTarget(null);
+      if (!res.ok) throw new Error(json.error || `Failed to ${action}`);
+      const k = memberKey(member);
+      setSuspendedKeys((prev) => {
+        const next = new Set(prev);
+        if (action === 'suspend') next.add(k);
+        else next.delete(k);
+        return next;
+      });
+      toast.success(
+        action === 'suspend'
+          ? `${member.name ?? email} suspended — account disabled, nothing deleted`
+          : `${member.name ?? email} reactivated — account re-enabled`,
+      );
+      setTempPauseTarget(null);
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Failed to suspend');
+      toast.error(e instanceof Error ? e.message : `Failed to ${action}`);
     } finally {
-      setSuspendSaving(false);
+      setTempPauseSaving(false);
     }
   };
 
@@ -3464,13 +3482,33 @@ function TeamPanelInner({ members, teamGate, viewerEmail, focusEmail, onFocusCon
                                         type="button"
                                         size="sm"
                                         variant="outline"
-                                        disabled={suspended}
-                                        onClick={() => setSuspendTarget(m)}
-                                        title="Disable this person's Workspace account (temporary pause — nothing is deleted)"
+                                        disabled={suspended || !avatarEmail}
+                                        onClick={() => setTempPauseTarget({ member: m, action: 'suspend' })}
+                                        title={
+                                          !avatarEmail
+                                            ? 'No email on file — cannot suspend'
+                                            : "Disable this person's Workspace account (temporary pause — nothing is deleted)"
+                                        }
                                         className="h-7 gap-1 border-amber-200 bg-amber-50/60 text-[11px] font-semibold text-amber-700 hover:bg-amber-100 disabled:opacity-60 dark:border-amber-700/50 dark:bg-amber-950/30 dark:text-amber-300 dark:hover:bg-amber-950/60"
                                       >
                                         <CirclePause className="h-3 w-3" />
                                         {suspended ? 'Suspended' : 'Suspend'}
+                                      </Button>
+                                      <Button
+                                        type="button"
+                                        size="sm"
+                                        variant="outline"
+                                        disabled={!avatarEmail}
+                                        onClick={() => setTempPauseTarget({ member: m, action: 'reactivate' })}
+                                        title={
+                                          !avatarEmail
+                                            ? 'No email on file — cannot reactivate'
+                                            : "Re-enable this person's Workspace account after a temporary pause"
+                                        }
+                                        className="h-7 gap-1 border-emerald-200 bg-emerald-50/60 text-[11px] font-semibold text-emerald-700 hover:bg-emerald-100 disabled:opacity-60 dark:border-emerald-700/50 dark:bg-emerald-950/30 dark:text-emerald-300 dark:hover:bg-emerald-950/60"
+                                      >
+                                        <CirclePlay className="h-3 w-3" />
+                                        Reactivation
                                       </Button>
                                       <Button
                                         type="button"
@@ -3888,24 +3926,36 @@ function TeamPanelInner({ members, teamGate, viewerEmail, focusEmail, onFocusCon
         }}
       />
 
-      {/* Suspend confirmation — fires the n8n temp-pause webhook (disable only,
-          never delete) via /api/manager/suspend. */}
-      {suspendTarget && (
+      {/* Suspend / Reactivation confirmation — the temp-pause pair, via
+          /api/manager/temp-pause (suspend = disable only, never delete;
+          reactivate = re-enable). */}
+      {tempPauseTarget && (() => {
+        const { member, action } = tempPauseTarget;
+        const isSuspend = action === 'suspend';
+        return (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-[2px]">
           <div className="w-full max-w-md rounded-2xl border border-zinc-200 bg-white shadow-2xl dark:border-zinc-800 dark:bg-zinc-950">
             <div className="flex items-start justify-between gap-2 border-b border-zinc-200 px-5 py-4 dark:border-zinc-800">
               <div className="min-w-0">
-                <p className="text-[11px] font-semibold uppercase tracking-wide text-amber-600 dark:text-amber-400">
-                  Suspend account
+                <p
+                  className={cn(
+                    'text-[11px] font-semibold uppercase tracking-wide',
+                    isSuspend
+                      ? 'text-amber-600 dark:text-amber-400'
+                      : 'text-emerald-600 dark:text-emerald-400',
+                  )}
+                >
+                  {isSuspend ? 'Suspend account' : 'Reactivate account'}
                 </p>
                 <h3 className="mt-0.5 truncate text-base font-bold text-zinc-900 dark:text-white">
-                  {suspendTarget.name ?? suspendTarget.work_email ?? suspendTarget.personal_email}
+                  {member.name ?? member.work_email ?? member.personal_email}
                 </h3>
               </div>
               <button
                 type="button"
-                onClick={() => setSuspendTarget(null)}
-                className="rounded-md p-1.5 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-600 dark:hover:bg-zinc-800 dark:hover:text-zinc-300"
+                disabled={tempPauseSaving}
+                onClick={() => setTempPauseTarget(null)}
+                className="rounded-md p-1.5 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-600 disabled:opacity-50 dark:hover:bg-zinc-800 dark:hover:text-zinc-300"
                 aria-label="Close"
               >
                 <X className="h-4 w-4" />
@@ -3915,52 +3965,69 @@ function TeamPanelInner({ members, teamGate, viewerEmail, focusEmail, onFocusCon
               <div className="flex items-center justify-between gap-4 text-[13px]">
                 <span className="text-zinc-500 dark:text-zinc-400">Email</span>
                 <span className="truncate font-mono text-xs font-medium text-zinc-900 dark:text-zinc-100">
-                  {suspendTarget.work_email ?? suspendTarget.personal_email ?? '—'}
+                  {member.work_email ?? member.personal_email ?? '—'}
                 </span>
               </div>
               <div className="flex items-center justify-between gap-4 text-[13px]">
                 <span className="text-zinc-500 dark:text-zinc-400">Department</span>
                 <span className="font-medium text-zinc-900 dark:text-zinc-100">
-                  {suspendTarget.department ?? '—'}
+                  {member.department ?? '—'}
                 </span>
               </div>
-              <div className="flex items-start gap-2 rounded-lg border border-amber-200/70 bg-amber-50/60 px-3 py-2 text-[12px] leading-relaxed text-amber-900 dark:border-amber-900/40 dark:bg-amber-950/20 dark:text-amber-200">
-                <CirclePause className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                <span>
-                  Suspending <strong>disables</strong> this person&apos;s Workspace account (sign-in
-                  blocked) via the temporary-pause automation. <strong>Nothing is deleted</strong> —
-                  no offboarding, no data loss — and the account can be re-enabled when they return.
-                </span>
-              </div>
+              {isSuspend ? (
+                <div className="flex items-start gap-2 rounded-lg border border-amber-200/70 bg-amber-50/60 px-3 py-2 text-[12px] leading-relaxed text-amber-900 dark:border-amber-900/40 dark:bg-amber-950/20 dark:text-amber-200">
+                  <CirclePause className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                  <span>
+                    Suspending <strong>disables</strong> this person&apos;s Workspace account
+                    (sign-in blocked) via the temporary-pause automation — like the Temporary
+                    Pause offboarding reason, but without the HR queue. <strong>Nothing is
+                    deleted</strong>; use <strong>Reactivation</strong> when they return.
+                  </span>
+                </div>
+              ) : (
+                <div className="flex items-start gap-2 rounded-lg border border-emerald-200/70 bg-emerald-50/60 px-3 py-2 text-[12px] leading-relaxed text-emerald-900 dark:border-emerald-900/40 dark:bg-emerald-950/20 dark:text-emerald-200">
+                  <CirclePlay className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                  <span>
+                    Reactivation <strong>re-enables</strong> this person&apos;s Workspace account
+                    (sign-in restored) after a temporary pause, via the reactivation automation.
+                  </span>
+                </div>
+              )}
             </div>
             <div className="flex items-center justify-end gap-2 border-t border-zinc-200 px-5 py-4 dark:border-zinc-800">
               <Button
                 type="button"
                 variant="outline"
                 size="sm"
-                disabled={suspendSaving}
-                onClick={() => setSuspendTarget(null)}
+                disabled={tempPauseSaving}
+                onClick={() => setTempPauseTarget(null)}
               >
                 Cancel
               </Button>
               <Button
                 type="button"
                 size="sm"
-                disabled={suspendSaving}
-                onClick={submitSuspend}
-                className="gap-1.5 bg-amber-600 text-white hover:bg-amber-700"
-              >
-                {suspendSaving ? (
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                ) : (
-                  <CirclePause className="h-3.5 w-3.5" />
+                disabled={tempPauseSaving}
+                onClick={submitTempPause}
+                className={cn(
+                  'gap-1.5 text-white',
+                  isSuspend ? 'bg-amber-600 hover:bg-amber-700' : 'bg-emerald-600 hover:bg-emerald-700',
                 )}
-                Suspend account
+              >
+                {tempPauseSaving ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : isSuspend ? (
+                  <CirclePause className="h-3.5 w-3.5" />
+                ) : (
+                  <CirclePlay className="h-3.5 w-3.5" />
+                )}
+                {isSuspend ? 'Suspend account' : 'Reactivate account'}
               </Button>
             </div>
           </div>
         </div>
-      )}
+        );
+      })()}
 
       {/* Resignation decision modal (approve → offboarding queue, or decline) */}
       {resignDecision && (

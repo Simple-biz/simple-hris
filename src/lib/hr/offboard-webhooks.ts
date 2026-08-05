@@ -27,10 +27,15 @@ export const OFFBOARD_DELETE_SLUG = "offboarding_delete";
 /** Fired when a manager submits team members to the HR offboarding queue;
  *  the n8n flow emails alissar@simple.biz the count only (no names). */
 export const MANAGER_OFFBOARD_NOTIFY_SLUG = "manager_offboard_notify";
-/** Fired by the Manager -> My Team list "Suspend" button: the n8n temp-pause
- *  flow disables (suspends) the person's Workspace account. Never deletes —
- *  no offboard stamps, no scheduled deletion; re-enable happens in n8n. */
+/** Manager -> My Team list "Suspend" button. Defaults to the SAME
+ *  offboarding-deactivate flow HR temp pauses ride (the payload mirrors that
+ *  envelope: deletion_mode "none", reason temporary_pause) — suspend only,
+ *  never deletes, no offboard stamps. Own slug so the endpoint can be
+ *  repointed independently in Admin -> Webhooks. */
 export const MANAGER_SUSPEND_SLUG = "manager_suspend";
+/** Manager -> My Team list "Reactivation" button: the n8n reactivate-temp-pause
+ *  flow re-enables a previously suspended Workspace account. */
+export const MANAGER_REACTIVATE_SLUG = "manager_reactivate";
 
 const DEACTIVATE_DEFAULT_URL =
   "https://simpledotbiz.app.n8n.cloud/webhook/offboarding-deactivate";
@@ -38,7 +43,8 @@ const DELETE_DEFAULT_URL =
   "https://simpledotbiz.app.n8n.cloud/webhook/offboarding-delete";
 const MANAGER_OFFBOARD_NOTIFY_DEFAULT_URL =
   "https://simpledotbiz.app.n8n.cloud/webhook/manager-offboard-notify";
-const MANAGER_SUSPEND_DEFAULT_URL =
+const MANAGER_SUSPEND_DEFAULT_URL = DEACTIVATE_DEFAULT_URL;
+const MANAGER_REACTIVATE_DEFAULT_URL =
   "https://simpledotbiz.app.n8n.cloud/webhook/reactivate-temp-pause";
 
 /** Days a non-Lead-Gen account stays deactivated before the cron deletes it. */
@@ -70,6 +76,9 @@ function resolveUrl(slug: string): Promise<string> {
   } else if (slug === MANAGER_SUSPEND_SLUG) {
     defaultUrl = MANAGER_SUSPEND_DEFAULT_URL;
     envVars = ["N8N_MANAGER_SUSPEND_WEBHOOK_URL"];
+  } else if (slug === MANAGER_REACTIVATE_SLUG) {
+    defaultUrl = MANAGER_REACTIVATE_DEFAULT_URL;
+    envVars = ["N8N_MANAGER_REACTIVATE_WEBHOOK_URL"];
   } else {
     defaultUrl = DEACTIVATE_DEFAULT_URL;
     envVars = ["N8N_OFFBOARDING_DEACTIVATE_WEBHOOK_URL"];

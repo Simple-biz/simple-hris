@@ -86,6 +86,18 @@ const KNOWN_SLUGS: Array<{ slug: string; label: string; description: string }> =
       'Permanently deletes the Workspace account. Fired immediately for Lead Gen; fired by the scheduled-deletion cron 14 days after deactivation for other departments.',
   },
   {
+    slug: 'manager_suspend',
+    label: 'Manager Suspend — Temp Pause (n8n)',
+    description:
+      'Fired by the Manager → My Team list "Suspend" button (per-row, confirm dialog). Rides the offboarding-deactivate flow with the HR temporary_pause envelope (event employee.offboarded, deletion_mode "none", source manager_suspend): the Workspace account is disabled only — nothing is deleted and no offboard stamps are written. Audit-logged as manager.suspended.',
+  },
+  {
+    slug: 'manager_reactivate',
+    label: 'Manager Reactivation — Temp Pause (n8n)',
+    description:
+      'Fired by the Manager → My Team list "Reactivation" button. POSTs an employees[1] envelope (event employee.reactivated, action "reactivate") to the reactivate-temp-pause flow, which re-enables a Workspace account disabled by a temporary pause / suspend. Audit-logged as manager.reactivated.',
+  },
+  {
     slug: 'new_hire_checklist_lock',
     label: 'New Hire Checklist - Lock in (n8n)',
     description:

@@ -136,6 +136,60 @@ export const WEBHOOK_SAMPLE_PAYLOADS: Record<string, unknown> = {
     ],
   },
 
+  // Manager -> My Team "Suspend": the HR temporary_pause envelope, plus a
+  // `source` marker. Built by buildManagerSuspendPayload — keep in sync with
+  // src/lib/hr/manager-temp-pause-webhooks.ts.
+  manager_suspend: {
+    event: 'employee.offboarded',
+    phase: 'deactivate',
+    deletion_mode: 'none',
+    hubstaff_pay_rate: 0,
+    off_boarded_by: 'alex.rivera@simple.biz',
+    off_boarded_at: '2026-08-05T09:15:00.000Z',
+    source: 'manager_suspend',
+    count: 1,
+    employees: [
+      {
+        work_email: 'jordan.cr@simple.biz',
+        personal_email: 'jordan.cruz@gmail.com',
+        name: 'Jordan Cruz',
+        departments: ['Lead Gen - US'],
+        start_date: '2026-01-12',
+        reason: 'temporary_pause',
+        note: null,
+        off_boarded_by: 'alex.rivera@simple.biz',
+        off_boarded_at: '2026-08-05T09:15:00.000Z',
+        scheduled_deletion_at: null,
+      },
+    ],
+  },
+
+  // Manager -> My Team "Reactivation": re-enable after a temporary pause.
+  // Built by buildManagerReactivatePayload — keep in sync with
+  // src/lib/hr/manager-temp-pause-webhooks.ts.
+  manager_reactivate: {
+    event: 'employee.reactivated',
+    action: 'reactivate',
+    reason: 'temporary_pause',
+    triggered_by: 'alex.rivera@simple.biz',
+    triggered_at: '2026-08-05T10:00:00.000Z',
+    source: 'manager_reactivate',
+    count: 1,
+    employees: [
+      {
+        work_email: 'jordan.cr@simple.biz',
+        personal_email: 'jordan.cruz@gmail.com',
+        name: 'Jordan Cruz',
+        departments: ['Lead Gen - US'],
+        start_date: '2026-01-12',
+        action: 'reactivate',
+        reason: 'temporary_pause',
+        triggered_by: 'alex.rivera@simple.biz',
+        triggered_at: '2026-08-05T10:00:00.000Z',
+      },
+    ],
+  },
+
   new_hire_checklist_lock: {
     event: 'new_hire_checklist.locked',
     period_start: '2026-07-19',
