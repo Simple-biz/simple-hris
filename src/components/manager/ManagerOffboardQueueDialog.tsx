@@ -9,12 +9,23 @@ import {
   DialogContent,
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
-import { SmoothSelect } from '@/components/ui/smooth-select';
+import { SmoothSelect, type SmoothSelectOption } from '@/components/ui/smooth-select';
 import { cn } from '@/lib/utils';
 import {
   OFFBOARD_REASON_OPTIONS,
   type OffboardReason,
 } from '@/lib/hr/offboard-reasons';
+
+// Temporary Pause only suspends the account (no actual offboarding) — that
+// call belongs to HR, so managers see it greyed out here rather than in the queue.
+const REASON_OPTIONS: SmoothSelectOption<OffboardReason | ''>[] = [
+  { value: '', label: 'Select a reason' },
+  ...OFFBOARD_REASON_OPTIONS.map((r) => ({
+    value: r.value,
+    label: r.label,
+    disabled: r.value === 'temporary_pause',
+  })),
+];
 
 export interface OffboardCandidate {
   name: string | null;
@@ -170,9 +181,12 @@ export default function ManagerOffboardQueueDialog({ open, people, onOpenChange,
 
   return (
     <Dialog open={open} onOpenChange={(o) => !submitting && onOpenChange(o)}>
-      <DialogContent showCloseButton={false} className="overflow-hidden p-0 sm:max-w-[560px]">
+      <DialogContent
+        showCloseButton={false}
+        className="grid max-h-[88vh] grid-rows-[auto_1fr_auto] gap-0 p-0 sm:max-w-[560px]"
+      >
         {/* ── Header ── */}
-        <div className="relative overflow-hidden bg-[#1a0a0a] px-5 pb-4 pt-5">
+        <div className="relative overflow-hidden rounded-t-xl bg-[#1a0a0a] px-5 pb-4 pt-5">
           <div className="absolute inset-x-0 top-0 h-[2px] bg-gradient-to-r from-rose-700 via-rose-400 to-rose-700" />
           <div className="relative flex items-start gap-3.5">
             <div className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-rose-900/60 text-rose-200 ring-1 ring-rose-700/50">
@@ -194,7 +208,7 @@ export default function ManagerOffboardQueueDialog({ open, people, onOpenChange,
         </div>
 
         {/* ── Body ── */}
-        <div className="max-h-[62vh] space-y-4 overflow-y-auto bg-zinc-950/60 p-5">
+        <div className="min-h-0 space-y-4 overflow-y-auto bg-zinc-950/60 p-5">
           {/* Shared defaults */}
           <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-3.5">
             <p className="mb-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-zinc-500">
@@ -208,10 +222,8 @@ export default function ManagerOffboardQueueDialog({ open, people, onOpenChange,
                   value={defaultReason}
                   onChange={(v) => v && applyDefaultReason(v as OffboardReason)}
                   triggerClassName="w-full"
-                  options={[
-                    { value: '', label: 'Select a reason' },
-                    ...OFFBOARD_REASON_OPTIONS.map((r) => ({ value: r.value, label: r.label })),
-                  ]}
+                  portal
+                  options={REASON_OPTIONS}
                 />
               </div>
               <div className="space-y-1.5">
@@ -281,10 +293,8 @@ export default function ManagerOffboardQueueDialog({ open, people, onOpenChange,
                         value={rs.reason}
                         onChange={(v) => v && setRowReason(k, v as OffboardReason)}
                         triggerClassName="w-full"
-                        options={[
-                          { value: '', label: 'Select a reason' },
-                          ...OFFBOARD_REASON_OPTIONS.map((r) => ({ value: r.value, label: r.label })),
-                        ]}
+                        portal
+                        options={REASON_OPTIONS}
                       />
                       <input
                         value={rs.note}
@@ -306,7 +316,7 @@ export default function ManagerOffboardQueueDialog({ open, people, onOpenChange,
         </div>
 
         {/* ── Footer ── */}
-        <div className="flex items-center gap-2 border-t border-zinc-800 bg-zinc-950/80 p-4">
+        <div className="flex items-center gap-2 rounded-b-xl border-t border-zinc-800 bg-zinc-950/80 p-4">
           {invalid.length > 0 && (
             <span className="mr-auto inline-flex items-center gap-1.5 text-[11px] text-amber-400">
               <AlertTriangle className="h-3.5 w-3.5" />

@@ -2,12 +2,14 @@
 
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Check, ChevronDown, Search } from 'lucide-react';
+import { AlertTriangle, Check, ChevronDown, Search } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 export interface SmoothSelectOption<T extends string = string> {
   value: T;
   label: string;
+  /** Render greyed-out and unselectable, with a warning glyph next to the label. */
+  disabled?: boolean;
 }
 
 interface SmoothSelectProps<T extends string = string> {
@@ -157,7 +159,8 @@ export function SmoothSelect<T extends string = string>({
 
   const commit = (idx: number) => {
     const opt = filtered[idx];
-    if (opt) onChange(opt.value);
+    if (!opt || opt.disabled) return;
+    onChange(opt.value);
     setOpen(false);
   };
 
@@ -258,19 +261,27 @@ export function SmoothSelect<T extends string = string>({
                 role="option"
                 data-idx={idx}
                 aria-selected={isSelected}
+                aria-disabled={opt.disabled || undefined}
                 id={`${baseId}-opt-${idx}`}
                 onMouseEnter={() => setActive(idx)}
                 onClick={() => commit(idx)}
                 className={cn(
                   'flex w-full items-center justify-between gap-3 rounded-lg px-2.5 py-1.5 text-left text-xs font-medium transition-colors duration-100',
-                  isActive
-                    ? 'bg-teal-50 text-teal-800 dark:bg-teal-950/40 dark:text-teal-200'
-                    : 'text-zinc-700 dark:text-zinc-300',
-                  isSelected && 'font-semibold',
+                  opt.disabled
+                    ? 'cursor-not-allowed text-zinc-400 dark:text-zinc-600'
+                    : isActive
+                      ? 'bg-teal-50 text-teal-800 dark:bg-teal-950/40 dark:text-teal-200'
+                      : 'text-zinc-700 dark:text-zinc-300',
+                  isSelected && !opt.disabled && 'font-semibold',
                 )}
               >
-                <span className="truncate">{opt.label}</span>
-                {isSelected && (
+                <span className="flex items-center gap-1.5 truncate">
+                  <span className="truncate">{opt.label}</span>
+                  {opt.disabled && (
+                    <AlertTriangle className="h-3 w-3 shrink-0 text-amber-500" />
+                  )}
+                </span>
+                {isSelected && !opt.disabled && (
                   <Check className="h-3.5 w-3.5 shrink-0 text-teal-500 dark:text-teal-400" />
                 )}
               </button>
