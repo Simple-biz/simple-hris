@@ -638,7 +638,21 @@
       "Bash(cd \"c:\\\\Users\\\\Kane\\\\Desktop\\\\simple-hris\" && ls tmp_tsc_out.txt 2>/dev/null && echo \"IN_PROJECT\"; find / -maxdepth 1 -name \"tmp_tsc_out.txt\" 2>/dev/null)",
       "Read(//c//**)",
       "Bash(node verify-offboard-modal-1person.mjs)",
-      "Bash(taskkill //PID 36224 //F //T)"
+      "Bash(taskkill //PID 36224 //F //T)",
+      "Bash(node -e \"const p=require\\('./package.json'\\); console.log\\(JSON.stringify\\(p.scripts,null,1\\)\\); console.log\\('eslint dep:', \\(p.devDependencies&&p.devDependencies.eslint\\)||\\(p.dependencies&&p.dependencies.eslint\\)\\)\")",
+      "Bash(git -C /c/Users/Kane/Desktop/simple-hris status --short)",
+      "Bash(git -C /c/Users/Kane/Desktop/simple-hris diff --stat)",
+      "Bash(node \"C:\\\\Users\\\\Kane\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-Kane-Desktop-simple-hris\\\\4c0060ed-f947-443a-90e9-bb54cd4874b7\\\\scratchpad\\\\monday-week-report.mjs\" \"C:\\\\Users\\\\Kane\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-Kane-Desktop-simple-hris\\\\4c0060ed-f947-443a-90e9-bb54cd4874b7\\\\scratchpad\\\\monday-report.json\")",
+      "Bash(grep -v '^$')",
+      "Bash(node 01-inspect.mjs)",
+      "Bash(node 02-scan.mjs)",
+      "Bash(node 03-epics.mjs)",
+      "Bash(sed -E 's/^ *//')",
+      "Bash(node 04-validate.mjs)",
+      "Bash(node 05-write.mjs)",
+      "Bash(node 05-write.mjs --go)",
+      "Bash(node 06-resume.mjs)",
+      "Bash(node 07-verify.mjs)"
     ],
     "additionalDirectories": [
       "\\tmp",

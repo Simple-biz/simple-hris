@@ -41,6 +41,7 @@ export const EPIC_COLS = {
 export const TASK_GROUPS = {
   S24: 'group_mm4my9wx',
   S25: 'group_mm4m16sq',
+  S26: 'group_mm5s2dw1',
   BL: 'group_mm4m1eqp', // Backlog
 } as const;
 export const TASK_COLS = {
