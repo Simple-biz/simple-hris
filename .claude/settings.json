@@ -652,7 +652,8 @@
       "Bash(node 05-write.mjs)",
       "Bash(node 05-write.mjs --go)",
       "Bash(node 06-resume.mjs)",
-      "Bash(node 07-verify.mjs)"
+      "Bash(node 07-verify.mjs)",
+      "Bash(node 08-drift.mjs)"
     ],
     "additionalDirectories": [
       "\\tmp",
