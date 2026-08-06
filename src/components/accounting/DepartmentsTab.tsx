@@ -98,6 +98,27 @@ function firstNameOf(nameOrEmail: string): string {
   return base.trim().split(/\s+/)[0] ?? cleaned;
 }
 
+/** Card cover: Hogan Smith Law's own logo fills the banner; every other
+ *  department gets the Simple wordmark centered on a neutral strip. */
+function DeptCardCover({ deptKey }: { deptKey: string }) {
+  const isHsl = deptKey === 'hogan_smith_law';
+  return (
+    <div className="relative -mx-4 -mt-4 mb-3 h-16 overflow-hidden rounded-t-xl">
+      {isHsl ? (
+        // eslint-disable-next-line @next/next/no-img-element -- fixed static asset, no need for next/image sizing
+        <img src="/HSL.png" alt="Hogan Smith Law" className="h-full w-full object-cover" />
+      ) : (
+        <div className="flex h-full w-full items-center justify-center border-b border-zinc-200/70 bg-gradient-to-br from-zinc-50 to-zinc-100 dark:border-zinc-200/20">
+          {/* Kept on a light plate in both themes -- the wordmark is navy-on-transparent
+              with no light variant, so a dark backdrop would wash it out. */}
+          {/* eslint-disable-next-line @next/next/no-img-element -- fixed static asset, no need for next/image sizing */}
+          <img src="/simple-logo.png" alt="Simple" className="h-6 w-auto object-contain opacity-90" />
+        </div>
+      )}
+    </div>
+  );
+}
+
 function initialsOf(name: string): string {
   const parts = name
     .replace(/["'].*?["']/g, ' ')
@@ -234,6 +255,7 @@ export default function DepartmentsTab({
                   key={entry.key}
                   className="group rounded-xl border border-zinc-200 bg-white p-4 transition-shadow hover:shadow-md dark:border-zinc-800 dark:bg-zinc-950"
                 >
+                  <DeptCardCover deptKey={entry.key} />
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
                       <h3 className="truncate text-sm font-semibold text-zinc-900 dark:text-zinc-100">
@@ -327,6 +349,7 @@ export default function DepartmentsTab({
                 key={d.key}
                 className="group rounded-xl border border-zinc-200 bg-white p-4 transition-shadow hover:shadow-md dark:border-zinc-800 dark:bg-zinc-950"
               >
+                <DeptCardCover deptKey={d.key} />
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0">
                     <h3 className="truncate text-sm font-semibold text-zinc-900 dark:text-zinc-100">

@@ -739,6 +739,15 @@ export default function PayrollDispatch() {
     let failedCycles = 0;
     let lastSendError: string | null = null;
     let lastDispatchError: string | null = null;
+    // Payment Catalog system bonus (PAB / Tech) — `row` was priced for THIS
+    // period only, so the breakdown is only meaningful on the leg that matches
+    // it (mirrors the contractor_invoice_id gate below). Older arrears legs
+    // don't recompute their own historical bonus, so they carry none.
+    const systemBonusParts: string[] = [];
+    if (row.pabBonusPHP > 0) systemBonusParts.push(`PAB ₱${row.pabBonusPHP.toLocaleString('en-PH')}`);
+    if (row.techBonusPHP > 0) systemBonusParts.push(`Tech ₱${row.techBonusPHP.toLocaleString('en-PH')}`);
+    const systemBonusPhp = row.bonusTotalPHP > 0 ? row.bonusTotalPHP : null;
+    const systemBonusLabel = systemBonusParts.length > 0 ? systemBonusParts.join(' + ') : null;
     for (const c of cycles) {
       try {
         const res = await fetch('/api/payment-dispatches', {
@@ -771,6 +780,8 @@ export default function PayrollDispatch() {
             payee_type: isContractorRow ? 'contractor' : 'employee',
             contractor_invoice_id:
               isContractorRow && c.sourceFile === period.sourceFile ? row.contractorInvoiceId ?? null : null,
+            system_bonus_php: c.sourceFile === period.sourceFile ? systemBonusPhp : null,
+            system_bonus_label: c.sourceFile === period.sourceFile ? systemBonusLabel : null,
           }),
         });
         const json = (await res.json()) as {
@@ -1115,11 +1126,12 @@ export default function PayrollDispatch() {
           // retract the sidebar / shrink the KPI row smoothly.
           'lg:min-h-0 lg:flex-1 lg:grid lg:grid-rows-[auto_minmax(0,1fr)] lg:gap-4',
         )}
-        // Two-column grid at lg+ (processor rail 340px, content fills the rest).
+        // Two-column grid at lg+ (processor rail 255px — 75% of the original
+        // 340px, so the table gets the reclaimed width — content fills the rest).
         // The rail/buckets stay visible during processing — focus mode shrinks
         // the KPI stats + retracts the app sidebar, but NOT the buckets.
         initial={false}
-        animate={{ gridTemplateColumns: '340px minmax(0,1fr)' }}
+        animate={{ gridTemplateColumns: '255px minmax(0,1fr)' }}
         transition={FOCUS_TRANSITION}
       >
         {/* RIGHT TOP — Dispatch progress strip + hero stats. Order 1 on mobile

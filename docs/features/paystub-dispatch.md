@@ -32,9 +32,8 @@ Next.js → n8n webhook  (forwardPaystubDispatch, reads N8N_DISPATCH_WEBHOOK_URL
         ├─ Webhook node
         ├─ Split Out (fieldsToSplitOut: "employees")   ← 1-element array = single paystub
         ├─ Loop Over Items (batchSize: 1)
-        ├─ Set node "pay_vars" (maps webhook fields → template names)
-        ├─ Gmail / Resend Send Email node (renders HTML paystub)
-        └─ Respond to Webhook  { status, sent }
+        ├─ Gmail Send Email node — a PIPE: {{ $json.paystub_html }}
+        └─ Respond to Webhook  { total, succeeded, failed, failed_emails }
 ```
 
 The webhook URL is **kept server-side** in `N8N_DISPATCH_WEBHOOK_URL`. The browser never
@@ -400,15 +399,9 @@ untouched under an old-shape snapshot, and nulls a stale block when the snapshot
 has none. The employee route's snapshot **fast path** rebuilds the split for never-locked weeks;
 the `computeCurrentPay` slow path doesn't attempt it (those weeks predate the feature).
 
-**n8n**: `references/n8n/Paystub Automation.json` is updated — `pay_vars` gained `has_weekend`,
-`weekend_hours`, `weekend_ot_hours`, `weekend_rate`, `weekend_ot_rate`, `weekend_pay`,
-`weekend_ot_pay`, `weekday_hours`, `weekday_ot_hours`, `weekday_pay`, `weekday_ot_pay`, and
-`weekend_rows_html` (the two ready-made `<tr>`s, empty string for non-HSL); the Gmail template's
-Regular/Overtime rows now read the `weekday_*` vars and embed
-`{{ $('pay_vars').item.json.weekend_rows_html }}` right after the Overtime row. **The live n8n
-instance must be re-imported from this reference (or those two node edits repeated by hand)
-before HSL weekend lines appear in emails** — until then emails keep rendering the classic two
-lines from the same payload, which still reconciles.
+**n8n**: superseded — see [Statement rendering moved into the app](#statement-rendering-moved-into-the-app--2026-08-06).
+The weekend rows reach the email because the app renders the whole document; there are no
+`weekend_*` template vars to keep in sync any more.
 
 ## Mid-week proration — 2026-07-30
 
@@ -453,12 +446,8 @@ weekend block: `publishFinalPaySnapshot` writes `proration` per employee (null =
 `mergeSnapshotIntoStaged` moves the block WITH the figures it explains (old-shape snapshot → staged
 block kept; `null` → stale block cleared; jsonb key reordering ignored by the field-wise compare).
 
-**n8n**: `pay_vars` gained `prorated_chip_regular_html` / `prorated_chip_ot_html` (the chip, empty
-for single-rate weeks) and `regular_detail_html` / `ot_detail_html` (the complete detail cell —
-classic string or dual-rate + basis); `weekend_rows_html` is now proration-aware (chip + basis at
-premium-inclusive rates). The Gmail template's Regular/Overtime label + detail cells read these
-vars. **Re-import the live n8n instance from the reference** (same pending re-import as the weekend
-feature) — until then emails render the classic single-rate cells from the same payload.
+**n8n**: superseded — see [Statement rendering moved into the app](#statement-rendering-moved-into-the-app--2026-08-06).
+The chip and the dual-rate detail cell are emitted by `paystub-email-html.ts`; no template vars.
 
 ## Native COP line for Colombian payees — 2026-07-30
 
@@ -520,26 +509,87 @@ The Dispatch step's "Preview Paystubs" button opens a modal built from the same 
 
 State: `previewPaystubsOpen`, `previewSelectedEmail`, `previewSearch`. All reset on modal close.
 
+## Statement rendering moved into the app — 2026-08-06
+
+The emailed statement is now **rendered by the HRIS** and posted to n8n as a finished document.
+
+**Why.** The HTML used to live inside the n8n Gmail node, hand-written against a flat `pay_vars`
+Set node. Every statement change therefore needed a matching hand-edit in n8n, and twice it didn't
+happen: both the HSL **weekend rows** (2026-07-30) and the **proration chip** shipped with a
+"re-import the live n8n instance" note in this document that was never actioned. Employees were
+reading one breakdown in their Pay Stubs tab and a different one in their inbox — for the same
+payment. A pay document that contradicts itself is not a cosmetic bug, and no process fix was going
+to hold, because the failure mode was silent.
+
+**How it works now.**
+
+| Piece | Where |
+|---|---|
+| The view (one source of truth) | `mapPayloadToPayStub` → `PayStubView` in `src/lib/payroll/paystub-view.ts` |
+| In-app statement | `src/components/paystub/PayStubStatement.tsx` |
+| Wizard Step-8 preview | **renders `PayStubStatement`** — no longer a hand-copied duplicate |
+| Emailed statement | `src/lib/payroll/paystub-email-html.ts` (`renderPayStubEmailHtml`) |
+| n8n | pipes `{{ $json.paystub_html }}` into Gmail |
+
+`forwardPaystubDispatch` decorates every employee item with `paystub_subject` + `paystub_html`
+before posting. It does this in the shared helper rather than at each call site, so a future sender
+cannot forget to render the document. The mark-paid path passes its **reconciled** view (the one
+whose total matches the money the row just recorded, plus `amount_cop` for Colombian payees) via
+`views[]`; anything else is derived from the payload itself.
+
+**Line visibility** is decided once, in `paystub-view.ts`, and obeyed by all three surfaces:
+
+- **Weekend Hours / Weekend Overtime** — only when `hasWeekend` (HSL/Hogan weeks carrying a Sat+Sun
+  carve-out). Non-HSL statements have no weekend rows at all.
+- **Orphanage** — only when there is money on it (`showsOrphanageLine`). It used to print `₱0.00`
+  on everyone's statement.
+- **Everything else** — Regular, Overtime, Tech, Attendance, Performance, Adjustment and the MESA
+  pair — always renders, `₱0.00` included, so the breakdown reconciles to Net the same way on every
+  document.
+
+**Editing the statement.** Change `PayStubStatement.tsx` and `paystub-email-html.ts` together; the
+component is the reference and the renderer is its email-safe transcription (tables + inline styles,
+since email clients have no flexbox). `src/lib/payroll/paystub-email-html.test.ts` pins the parts
+that drifted before. **Do not paste HTML back into the n8n Gmail node** — that is the exact
+regression this replaced.
+
 ## n8n workflow
 
-Template JSON lives at `references/n8n_paystub_dispatch.json`. Key nodes:
+Import-ready JSON: `references/n8n/paystub-dispatch.workflow.json`. Nodes:
 
-- **Webhook** (`POST /confirm-dispatch`): receives the payload.
-- **Split Out** (`fieldsToSplitOut: employees`): fans out to one item per employee.
-- **Loop Over Items** (batchSize 1): iterates per employee.
-- **Set "pay_vars"** (replaces an older Google-Sheets-driven `prep sheet variables`): maps webhook fields to template-friendly names (e.g., `mf_hours`, `mf_rate`, `week_human`, `total_pay_php`).
-- **Send Email** (Gmail node in the current test workflow; swap to Resend/SES for production volume): renders the HTML paystub template.
+- **Webhook** (`POST /confirm-dispatch`): receives `{ pay_period, cycle, employees[] }`.
+- **Split Out** (`fieldsToSplitOut: body.employees`): one item per employee.
+- **Batch 100 Recipients** (`splitInBatches`, reset false): the send loop.
+- **If**: skips an item with no valid `personal_email`, no `pay_period.week`, **or no
+  `paystub_html`** — a payload from an older HRIS build is skipped, never mailed blank.
+- **Normalize Email** (`includeOtherFields: true`). The old `pay_vars` Set node is **gone** — it
+  existed only to feed the template.
 - **Wait 600ms**: throttles below Gmail's ~2 sends/sec per-user API cap.
-- **Respond to Webhook**: `{ status, sent }`.
+- **Send PayStub** (Gmail): `subject` = `{{ $json.paystub_subject }}`,
+  `message` = `{{ $json.paystub_html }}`. `onError: continueErrorOutput`.
+- **Aggregate → Build Summary Report → Respond to Webhook**:
+  `{ total, succeeded, failed, skipped, failed_emails }`. The HRIS reads `succeeded`, `failed` and
+  `failed_emails` — **keep all three field names**.
 
-### HTML template
+### Two traps in the summary node
 
-The paystub body lives in `docs/features/paystub.html` and uses inline-styled tables for
-email-client compatibility. The current design is a restrained light statement: logo + pay
-period header, net-pay-first summary, recipient metadata, scan-friendly earnings rows, and a
-compact confidentiality notice. All data comes from `$('pay_vars').item.json.*`, so the n8n
-field mapping stays unchanged. It fits a 560px desktop card and includes mobile fallbacks for
-narrow email clients.
+Both were live bugs; the reference JSON has them fixed, so don't hand-edit them back out.
+
+1. **Guard every cross-node reference with `.isExecuted`.** When all items are skipped,
+   `Send PayStub1` never runs, and a bare `$items('Send PayStub1')` aborts the whole response with
+   *"An expression references this node, but the node is unexecuted."* Week dates come straight off
+   the webhook body for the same reason — it is the one node guaranteed to have executed.
+2. **Skipped items count into `failed`.** Someone skipped did not get their paystub. The HRIS
+   derives `delivered` from the summary, and a run reporting `{succeeded: 0, failed: 0}` used to
+   score as delivered — stamping "paystub sent" on a row that was never emailed. `failed_emails`
+   carries `Skipped — <reason>`, which is what lands in the queue row's `last_error`.
+
+The app enforces the same rule independently (`/api/payment-dispatches`): a summary that reports a
+`succeeded` count must report **at least one** success, or the send is recorded as failed. A
+summary with no `succeeded` field at all (an older workflow) still falls back to HTTP-ok.
+
+`docs/features/paystub.html` is retained as a static design reference only; it is not the source of
+any sent email.
 
 ### Known limits
 

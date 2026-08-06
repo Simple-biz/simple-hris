@@ -1,5 +1,11 @@
 import { resolveWebhookUrl } from "@/lib/webhooks/resolve-webhook";
 import { findRateConsistencyIssues } from "@/lib/payroll/paystub-rate-consistency";
+import { mapPayloadToPayStub, type PayStubView } from "@/lib/payroll/paystub-view";
+import {
+  payStubEmailSubject,
+  renderPayStubEmailHtml,
+  type PayStubEmailOptions,
+} from "@/lib/payroll/paystub-email-html";
 
 /**
  * Forwards a paystub dispatch payload to the n8n paystub workflow webhook,
@@ -9,11 +15,57 @@ import { findRateConsistencyIssues } from "@/lib/payroll/paystub-rate-consistenc
  *
  * The n8n workflow does Split Out on `employees` + Loop (batchSize 1), so a
  * one-element `employees` array is the normal single-paystub case.
+ *
+ * Every employee item is decorated here with `paystub_html` + `paystub_subject`
+ * — the fully-rendered email, built from the SAME `PayStubView` the wizard
+ * preview and the in-app statement render. n8n only pipes it to Gmail. Doing it
+ * in this shared helper (rather than at each call site) is deliberate: it is the
+ * one place both dispatch paths pass through, so a new sender cannot forget to
+ * render the document and silently fall back to n8n's stale hand-written HTML.
  */
 export interface PaystubDispatchBody {
   pay_period?: Record<string, unknown> | null;
   employees: unknown[];
   cycle?: Record<string, unknown> | null;
+  /**
+   * Optional pre-resolved statement views, index-aligned with `employees`. The
+   * mark-paid path passes its reconciled view (the one whose total matches the
+   * money that actually moved, plus any COP decoration); anything left null is
+   * derived from the employee payload itself.
+   */
+  views?: Array<PayStubView | null> | null;
+  /** Paid pill state, applied to every statement in this send. */
+  emailOptions?: PayStubEmailOptions;
+}
+
+/**
+ * Attach the rendered statement to each employee item. Best-effort per person:
+ * if one payload is malformed enough to throw, that item simply goes out without
+ * `paystub_html` (n8n skips it and logs a failed send) rather than taking the
+ * whole batch — and the rest of the run still delivers.
+ */
+function withRenderedStatements(
+  employees: unknown[],
+  views: Array<PayStubView | null> | null | undefined,
+  emailOptions: PayStubEmailOptions | undefined,
+): unknown[] {
+  return employees.map((e, i) => {
+    if (!e || typeof e !== "object") return e;
+    try {
+      const view = views?.[i] ?? mapPayloadToPayStub(e as Record<string, unknown>);
+      return {
+        ...(e as Record<string, unknown>),
+        paystub_subject: payStubEmailSubject(view),
+        paystub_html: renderPayStubEmailHtml(view, emailOptions ?? {}),
+      };
+    } catch (err) {
+      console.error(
+        `[paystub-dispatch] could not render the statement for employee #${i}:`,
+        err instanceof Error ? err.message : String(err),
+      );
+      return e;
+    }
+  });
 }
 
 export interface ForwardResult {
@@ -103,7 +155,15 @@ export async function forwardPaystubDispatch(
     const res = await fetch(webhookUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
+      body: JSON.stringify({
+        pay_period: body.pay_period ?? null,
+        cycle: body.cycle ?? null,
+        employees: withRenderedStatements(
+          body.employees ?? [],
+          body.views,
+          body.emailOptions,
+        ),
+      }),
       signal: AbortSignal.timeout(25_000),
     });
     const text = await res.text();

@@ -203,27 +203,6 @@ const PROCESSOR_DOT: Record<ProcessorId, string> = {
   wires: 'bg-zinc-700 dark:bg-zinc-300',
 };
 
-/**
- * Inline breakdown chip for rows that include a PAB or Tech bonus on top of
- * regular + OT pay. Renders nothing when there's no bonus, so the queue stays
- * quiet on regular weeks. Tooltip exposes the per-bonus split.
- */
-function BonusChip({ row }: { row: QueueRow }) {
-  if (row.bonusTotalPHP <= 0) return null;
-  const parts: string[] = [];
-  if (row.pabBonusPHP > 0) parts.push(`PAB ₱${row.pabBonusPHP.toLocaleString('en-PH')}`);
-  if (row.techBonusPHP > 0) parts.push(`Tech ₱${row.techBonusPHP.toLocaleString('en-PH')}`);
-  return (
-    <span
-      className="inline-flex items-center gap-1 rounded-full bg-emerald-100/80 px-1.5 py-0.5 font-mono text-[10px] font-semibold tabular-nums text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300"
-      title={`Bonus already included in the total above (${parts.join(' + ')})`}
-    >
-      {`incl. ₱${row.bonusTotalPHP.toLocaleString('en-PH')}`}
-      <span className="text-[8px] uppercase tracking-[0.14em] opacity-80">bonus</span>
-    </span>
-  );
-}
-
 /** Small muted pill showing the payee's payroll department. Renders nothing
  *  when the row has no known department (e.g. MESA urgent payments). */
 function DeptChip({ name }: { name: string | null }) {
@@ -721,8 +700,19 @@ function ProcessorQueue({ processor, rows, onMarkPaid, onViewPaystub, periodStar
         )}
       </div>
 
+      {/* Cross-fade between the Pending worksheet and a Paid/log sub-view instead of
+          an instant DOM swap — the two panels have different heights, so a wait-mode
+          fade (never both mounted at once) avoids a layout jump mid-transition. */}
+      <AnimatePresence mode="wait" initial={false}>
       {logStatus ? (
-        <div className="min-h-0 flex-1">
+        <motion.div
+          key="log-view"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 0.15, ease: 'easeOut' }}
+          className="min-h-0 flex-1"
+        >
           <PaidRecordsPanel
             records={paidRecords ?? []}
             statusFilter={logStatus}
@@ -745,14 +735,18 @@ function ProcessorQueue({ processor, rows, onMarkPaid, onViewPaystub, periodStar
                 : 'Log a dispatch with this outcome from the Mark Paid dialog to see it here.'
             }
           />
-        </div>
+        </motion.div>
       ) : (
-      <>
-      {/* List */}
-      {/* Horizontal scroll lives on the SAME element as the vertical scroll so the
-          sticky column header travels with the rows when the worksheet is scrolled
-          sideways. */}
-      <div className="min-h-0 flex-1 overflow-y-auto overflow-x-auto bg-gradient-to-b from-white via-orange-50/10 to-white dark:from-[#0d1117] dark:via-[#0d1117] dark:to-[#0d1117]">
+      /* Horizontal scroll lives on the SAME element as the vertical scroll so the
+         sticky column header travels with the rows when the worksheet is scrolled
+         sideways. */
+      <motion.div
+        key="pending-view"
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+        transition={{ duration: 0.15, ease: 'easeOut' }}
+        className="min-h-0 flex-1 overflow-y-auto overflow-x-auto bg-gradient-to-b from-white via-orange-50/10 to-white dark:from-[#0d1117] dark:via-[#0d1117] dark:to-[#0d1117]">
         {filtered.length > 0 && (
           <div
             className={cn(
@@ -841,9 +835,9 @@ function ProcessorQueue({ processor, rows, onMarkPaid, onViewPaystub, periodStar
           onPageChange={setPage}
           label="people"
         />
-      </div>
-      </>
+      </motion.div>
       )}
+      </AnimatePresence>
     </div>
   );
 }
@@ -979,11 +973,6 @@ const QueueRowItem = React.memo(function QueueRowItem({
                   {formatPHP(row.amountPHP)}
                 </div>
               )}
-              {row.bonusTotalPHP > 0 && (
-                <div className="mt-1 flex justify-end">
-                  <BonusChip row={row} />
-                </div>
-              )}
             </div>
           </button>
         </div>
@@ -1107,18 +1096,11 @@ const QueueRowItem = React.memo(function QueueRowItem({
               formatted={formatUSD(row.amountUSD)}
               strong={isNativeColumn(row, 'USD')}
             />
-            <div className="text-right">
-              <AmountCell
-                value={row.amountPHP}
-                formatted={formatPHP(row.amountPHP)}
-                strong={isNativeColumn(row, 'PHP')}
-              />
-              {row.bonusTotalPHP > 0 && (
-                <div className="mt-1 flex justify-end">
-                  <BonusChip row={row} />
-                </div>
-              )}
-            </div>
+            <AmountCell
+              value={row.amountPHP}
+              formatted={formatPHP(row.amountPHP)}
+              strong={isNativeColumn(row, 'PHP')}
+            />
             <AmountCell
               value={row.amountCOP}
               formatted={formatCOP(row.amountCOP)}
@@ -1178,11 +1160,6 @@ const QueueRowItem = React.memo(function QueueRowItem({
               >
                 {rowSecondaryAmount(row)}
               </div>
-              {row.bonusTotalPHP > 0 && (
-                <div className="mt-1 flex justify-end">
-                  <BonusChip row={row} />
-                </div>
-              )}
             </div>
           </>
         )}
@@ -1344,6 +1321,11 @@ const VIEW_TAB_STYLES: Record<
 
 const VIEW_TAB_ORDER: QueueView[] = ['pending', 'paid', 'not_paid', 'threshold', 'problem'];
 
+/** Unique per-ProcessorQueue-instance id so the sliding pill's layout animation
+ *  never bleeds across sibling queues (All-pending + every processor tab each
+ *  mount their own QueueViewTabs at once). */
+let queueViewTabsInstance = 0;
+
 function QueueViewTabs({
   view,
   onChange,
@@ -1356,6 +1338,16 @@ function QueueViewTabs({
   statusCounts: Record<PaymentDispatchStatus, number>;
 }) {
   const countFor = (id: QueueView): number => (id === 'pending' ? pendingCount : statusCounts[id]);
+  // Stable across re-renders of the SAME mounted tab strip, unique per strip.
+  const layoutId = useRef(`queue-view-tab-${queueViewTabsInstance++}`).current;
+  // Text-color-only slice of `activeText` for the label span — the sliding pill
+  // behind it already carries the bg/shadow tokens, so re-applying those here
+  // would just be dead weight (and a stray "dark:" if stripped by naive regex).
+  const activeTextColor = (t: string) =>
+    t
+      .split(' ')
+      .filter((cls) => !cls.includes('bg-') && cls !== 'shadow-sm')
+      .join(' ');
   return (
     <div
       role="tablist"
@@ -1373,17 +1365,23 @@ function QueueViewTabs({
             role="tab"
             aria-selected={active}
             onClick={() => onChange(id)}
-            className={cn(
-              'inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[11px] font-semibold transition-colors',
-              active
-                ? s.activeText
-                : 'text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200',
-            )}
+            className="relative inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[11px] font-semibold text-zinc-500 transition-colors hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200"
           >
-            {s.label}
+            {/* Sliding active pill — one shared element glides between tabs instead
+                of each tab hard-cutting its own background in and out. */}
+            {active && (
+              <motion.span
+                layoutId={layoutId}
+                className={cn('absolute inset-0 rounded-md', s.activeText)}
+                transition={{ type: 'spring', stiffness: 500, damping: 35 }}
+              />
+            )}
+            <span className={cn('relative z-10', active && activeTextColor(s.activeText))}>
+              {s.label}
+            </span>
             <span
               className={cn(
-                'rounded-full px-1.5 py-0.5 text-[10px] font-bold tabular-nums',
+                'relative z-10 rounded-full px-1.5 py-0.5 text-[10px] font-bold tabular-nums transition-colors',
                 active ? s.activePill : 'bg-zinc-200/70 text-zinc-500 dark:bg-zinc-700/60 dark:text-zinc-400',
               )}
             >

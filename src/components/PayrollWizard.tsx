@@ -125,12 +125,10 @@ import {
   type MidPeriodProrationResult,
 } from '@/lib/payroll/prorate-mid-period';
 import {
-  parseProrationBlock,
-  parseWeekendBlock,
-  deriveProrationFields,
+  mapPayloadToPayStub,
   type ProrationBlockRaw,
 } from '@/lib/payroll/paystub-view';
-import { ProratedChip, ProratedRateDetail } from '@/components/paystub/PayStubStatement';
+import { PayStubStatement } from '@/components/paystub/PayStubStatement';
 import {
   CURRENCY_SYMBOL,
   formatRate,
@@ -16324,50 +16322,19 @@ export default function PayrollWizard({
               ? dispatchData.rows.find((e) => e.email === previewSelectedEmail)
               : null;
             if (selected) {
-              const pp = selected.pay_php;
-              const fmt = (n: number | null) =>
-                n == null ? '—' : '₱' + n.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-              const fmtRate = (n: number | null) =>
-                n == null ? '—' : n.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-              // HSL weekend carve-out: Regular/Overtime rows show the WEEKDAY
-              // portion and two Weekend rows carry Sat+Sun at (rate + ₱15/h) —
-              // identical split to the shared PayStubStatement, so preview ==
-              // dispatch == email. Without a weekend block the subtractions are
-              // zero and the two classic rows render byte-identical to before.
-              const r2 = (n: number) => Math.round(n * 100) / 100;
-              const wknd = selected.weekend;
-              const wkRegHours = wknd?.hours.regular ?? 0;
-              const wkOtHours = wknd?.hours.ot ?? 0;
-              const wkRegPay = wknd ? wknd.pay_php.regular : null;
-              const wkOtPay = wknd ? wknd.pay_php.ot : null;
-              const weekdayRegHours = Math.max(0, r2(selected.hours.regular - wkRegHours));
-              const weekdayOtHours = Math.max(0, r2(selected.hours.ot - wkOtHours));
-              const weekdayRegPay = pp.regular == null ? null : r2(pp.regular - (wkRegPay ?? 0));
-              const weekdayOtPay = pp.ot == null ? null : r2(pp.ot - (wkOtPay ?? 0));
-              const wkPremium = wknd?.premium_php_per_hour ?? 15;
-              const wkRegRate =
-                selected.rates_php.regular == null ? null : r2(selected.rates_php.regular + wkPremium);
-              const wkOtRate =
-                selected.rates_php.ot == null ? null : r2(selected.rates_php.ot + wkPremium);
-              // Mid-week proration — the SAME derivation + elements the shared
-              // PayStubStatement uses (chip + ₱old→₱new + hour basis on the
-              // affected lines only), so preview == dispatch == email.
-              const prorView = deriveProrationFields(
-                parseProrationBlock(selected),
-                parseWeekendBlock(selected),
+              // The preview renders the SHARED statement off the very payload
+              // this row stages — `DispatchEmployee` IS the paystub payload
+              // shape, so `mapPayloadToPayStub` gives the identical view the
+              // in-app Pay Stubs modal and the emailed HTML are built from.
+              //
+              // This used to be ~200 lines of hand-copied JSX duplicating that
+              // component, and it drifted: the copy formatted the week range its
+              // own way and had no COP line. Rendering the component itself is
+              // the only version of "preview == dispatch == email" that can't
+              // rot — every future statement change lands here for free.
+              const stubView = mapPayloadToPayStub(
+                selected as unknown as Record<string, unknown>,
               );
-              const weekHuman = (() => {
-                const w = selected.pay_period.week;
-                if (!w) return '—';
-                const s = new Date(w.start + 'T00:00:00');
-                const e = new Date(w.end + 'T00:00:00');
-                if (isNaN(s.getTime()) || isNaN(e.getTime())) return `${w.start} → ${w.end}`;
-                const mon = (d: Date) => d.toLocaleString('en-US', { month: 'short' });
-                const sameMonth = s.getMonth() === e.getMonth() && s.getFullYear() === e.getFullYear();
-                return sameMonth
-                  ? `${mon(s)} ${s.getDate()} – ${e.getDate()}, ${e.getFullYear()}`
-                  : `${mon(s)} ${s.getDate()} – ${mon(e)} ${e.getDate()}, ${e.getFullYear()}`;
-              })();
               return (
                 <>
                   <DialogHeader className="sr-only">
@@ -16394,226 +16361,15 @@ export default function PayrollWizard({
                         Preview · Not yet sent
                       </span>
                     </div>
-                    {/* Faithful in-app render of docs/features/paystub.html — the exact
-                        email the recipient receives (orange card, slate section bars,
-                        Total Net Pay hero, Earnings + MESA tables). */}
+                    {/* The SHARED PayStubStatement — the very component the
+                        employee sees in their Pay Stubs modal, driven by the
+                        same view the emailed HTML is rendered from. Full size
+                        (560px) scaled as a whole via CSS zoom — a true resize,
+                        not a per-element squash — so it fits the small dialog
+                        with no scrollbar on a normal viewport. */}
                     <div className="flex min-h-0 flex-1 justify-center overflow-y-auto px-4 py-4">
-                      {/* Full-size statement (matches paystub.html proportions exactly),
-                          scaled down as a whole via CSS zoom — a true resize, not a
-                          per-element squash — so it fits the small dialog with no
-                          scrollbar on a normal viewport. */}
-                      <div
-                        className="w-[560px] shrink-0 overflow-hidden rounded-[17px] bg-[#f97316] p-[3px]"
-                        style={{ zoom: 0.84, boxShadow: '0 20px 48px rgba(16,32,52,0.16), 0 2px 6px rgba(16,32,52,0.07)' }}
-                      >
-                        <div className="overflow-hidden rounded-[14px] bg-[#fbfcfe]">
-                          {/* Header */}
-                          <div className="border-b border-[#eef2f6] bg-white px-8 py-5 text-center">
-                            <img
-                              src="https://host.simple.biz/email/simplelogo.png"
-                              alt="Simple"
-                              className="mx-auto mb-2 block h-auto w-[112px]"
-                            />
-                            <div className="text-[26px] font-bold leading-8 tracking-tight text-[#102034]">
-                              Pay Statement
-                            </div>
-                            <div className="mt-1 text-[13px] leading-[19px] text-[#556377]">
-                              Period ending{' '}
-                              <span className="font-bold text-[#334155]">{weekHuman}</span>
-                            </div>
-                            <div className="mt-1.5 text-[11px] leading-4 text-[#556377]">
-                              Confidential pay record
-                            </div>
-                          </div>
-
-                          {/* Total Net Pay */}
-                          <div className="px-8 pb-3 pt-3">
-                            <div className="overflow-hidden rounded-[10px] border border-[#e2e8f0] bg-[#f8fafc]">
-                              <div className="bg-[#334155] px-5 py-[5px] text-[11px] font-extrabold uppercase leading-[13px] tracking-[0.11em] text-white">
-                                Total Net Pay
-                              </div>
-                              <div className="px-5 pb-2.5 pt-2">
-                                <div className="text-[34px] font-extrabold leading-10 tracking-tight text-[#102034] tabular-nums">
-                                  {fmt(pp.final)}
-                                </div>
-                                <div className="mt-1.5 flex items-center justify-between border-t border-[#e2e8f0] pt-1.5">
-                                  <span className="text-[12px] leading-[17px] text-[#556377]">USD equivalent</span>
-                                  <span className="text-[12px] font-bold leading-[17px] text-[#26384d] tabular-nums">
-                                    {pp.final != null && selected.pay_period.fx_rate > 0
-                                      ? `$${(pp.final / selected.pay_period.fx_rate).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD`
-                                      : '—'}
-                                  </span>
-                                </div>
-                              </div>
-                            </div>
-                          </div>
-
-                          {/* Employee */}
-                          <div className="px-8 pb-2.5">
-                            <div className="bg-[#334155] px-3 py-[5px] text-[11px] font-extrabold uppercase leading-[13px] tracking-[0.12em] text-white">
-                              Employee
-                            </div>
-                            <div className="flex items-start justify-between gap-4 border-b border-[#e2e8f0] py-2">
-                              <div>
-                                <div className="text-[10px] font-bold uppercase leading-[13px] tracking-[0.12em] text-[#556377]">Recipient</div>
-                                <div className="mt-0.5 text-[14px] font-bold leading-5 text-[#102034]">{selected.name}</div>
-                              </div>
-                              <div className="text-right">
-                                <div className="text-[10px] font-bold uppercase leading-[13px] tracking-[0.12em] text-[#556377]">Department</div>
-                                <div className="mt-0.5 text-[14px] font-bold leading-5 text-[#102034]">{selected.department_name ?? '—'}</div>
-                              </div>
-                            </div>
-                          </div>
-
-                          {/* Earnings */}
-                          <div className="px-8 pb-1">
-                            <div className="bg-[#334155] px-3 py-[5px] text-[11px] font-extrabold uppercase leading-[13px] tracking-[0.12em] text-white">
-                              Earnings
-                            </div>
-                            {/* align-top keeps the label + amount on the note's first
-                                line when a long adjustment_note wraps — same rule as
-                                the shared PayStubStatement, so preview == dispatch. */}
-                            <table className="table-keep w-full table-fixed border-collapse tabular-nums [&_td]:align-top [&_td]:break-words">
-                              {/* Fixed 44/28/28 like the emailed statement, so a long
-                                  note can never shift the columns or push Amount out. */}
-                              <colgroup>
-                                <col className="w-[44%]" />
-                                <col className="w-[28%]" />
-                                <col className="w-[28%]" />
-                              </colgroup>
-                              <tbody>
-                                <tr>
-                                  <td className="border-b border-[#cbd5e1] bg-[#f1f5f9] py-1 text-[10px] font-bold uppercase leading-3 tracking-[0.06em] text-[#334155]">Description</td>
-                                  <td className="border-b border-[#cbd5e1] bg-[#f1f5f9] px-2 py-1 text-[10px] font-bold uppercase leading-3 tracking-[0.06em] text-[#334155]">Hours × Rate</td>
-                                  <td className="border-b border-[#cbd5e1] bg-[#f1f5f9] py-1 text-right text-[10px] font-bold uppercase leading-3 tracking-[0.06em] text-[#334155]">Amount</td>
-                                </tr>
-                                <tr>
-                                  <td className="border-b border-[#edf2f7] py-1.5 text-[13px] leading-[15px] text-[#26384d]">Regular Hours{prorView?.regular ? <ProratedChip /> : null}</td>
-                                  <td className="border-b border-[#edf2f7] px-2 py-1.5 text-[12px] leading-[15px] text-[#556377]">
-                                    {prorView?.regular ? (
-                                      <ProratedRateDetail hours={weekdayRegHours} line={prorView.regular} effectiveHuman={prorView.effectiveHuman} />
-                                    ) : (
-                                      <>{weekdayRegHours.toFixed(2)}h × ₱{fmtRate(selected.rates_php.regular)}</>
-                                    )}
-                                  </td>
-                                  <td className="whitespace-nowrap border-b border-[#edf2f7] py-1.5 text-right text-[13px] font-bold leading-[15px] text-[#102034]">{fmt(weekdayRegPay)}</td>
-                                </tr>
-                                <tr>
-                                  <td className="border-b border-[#edf2f7] py-1.5 text-[13px] leading-[15px] text-[#26384d]">Overtime{prorView?.ot ? <ProratedChip /> : null}</td>
-                                  <td className="border-b border-[#edf2f7] px-2 py-1.5 text-[12px] leading-[15px] text-[#556377]">
-                                    {prorView?.ot ? (
-                                      <ProratedRateDetail hours={weekdayOtHours} line={prorView.ot} effectiveHuman={prorView.effectiveHuman} />
-                                    ) : (
-                                      <>{weekdayOtHours.toFixed(2)}h × ₱{fmtRate(selected.rates_php.ot)}</>
-                                    )}
-                                  </td>
-                                  <td className="whitespace-nowrap border-b border-[#edf2f7] py-1.5 text-right text-[13px] font-bold leading-[15px] text-[#102034]">{fmt(weekdayOtPay)}</td>
-                                </tr>
-                                {wknd && (
-                                  <tr>
-                                    <td className="border-b border-[#edf2f7] py-1.5 text-[13px] leading-[15px] text-[#26384d]">Weekend Hours{prorView?.weekendRegular ? <ProratedChip /> : null}</td>
-                                    <td className="border-b border-[#edf2f7] px-2 py-1.5 text-[12px] leading-[15px] text-[#556377]">
-                                      {prorView?.weekendRegular ? (
-                                        <ProratedRateDetail hours={wkRegHours} line={prorView.weekendRegular} effectiveHuman={prorView.effectiveHuman} />
-                                      ) : (
-                                        <>{wkRegHours.toFixed(2)}h × ₱{fmtRate(wkRegRate)}</>
-                                      )}
-                                    </td>
-                                    <td className="whitespace-nowrap border-b border-[#edf2f7] py-1.5 text-right text-[13px] font-bold leading-[15px] text-[#102034]">{fmt(wkRegPay)}</td>
-                                  </tr>
-                                )}
-                                {wknd && (
-                                  <tr>
-                                    <td className="border-b border-[#edf2f7] py-1.5 text-[13px] leading-[15px] text-[#26384d]">Weekend Overtime{prorView?.weekendOt ? <ProratedChip /> : null}</td>
-                                    <td className="border-b border-[#edf2f7] px-2 py-1.5 text-[12px] leading-[15px] text-[#556377]">
-                                      {prorView?.weekendOt ? (
-                                        <ProratedRateDetail hours={wkOtHours} line={prorView.weekendOt} effectiveHuman={prorView.effectiveHuman} />
-                                      ) : (
-                                        <>{wkOtHours.toFixed(2)}h × ₱{fmtRate(wkOtRate)}</>
-                                      )}
-                                    </td>
-                                    <td className="whitespace-nowrap border-b border-[#edf2f7] py-1.5 text-right text-[13px] font-bold leading-[15px] text-[#102034]">{fmt(wkOtPay)}</td>
-                                  </tr>
-                                )}
-                                <tr>
-                                  <td className="border-b border-[#edf2f7] py-1.5 text-[13px] leading-[15px] text-[#26384d]">Tech Allowance</td>
-                                  <td className="border-b border-[#edf2f7] px-2 py-1.5 text-[12px] leading-[15px] text-[#556377]">Bonus</td>
-                                  <td className="whitespace-nowrap border-b border-[#edf2f7] py-1.5 text-right text-[13px] font-bold leading-[15px] text-[#102034]">{fmt(pp.tech_bonus)}</td>
-                                </tr>
-                                <tr>
-                                  <td className="border-b border-[#edf2f7] py-1.5 text-[13px] leading-[15px] text-[#26384d]">Attendance Incentive</td>
-                                  <td className="border-b border-[#edf2f7] px-2 py-1.5 text-[12px] leading-[15px] text-[#556377]">Bonus</td>
-                                  <td className="whitespace-nowrap border-b border-[#edf2f7] py-1.5 text-right text-[13px] font-bold leading-[15px] text-[#102034]">{fmt(pp.perfect_attendance_bonus)}</td>
-                                </tr>
-                                <tr>
-                                  <td className="border-b border-[#edf2f7] py-1.5 text-[13px] leading-[15px] text-[#26384d]">Performance Bonus</td>
-                                  <td className="border-b border-[#edf2f7] px-2 py-1.5 text-[12px] leading-[15px] text-[#556377]">Bonus</td>
-                                  <td className="whitespace-nowrap border-b border-[#edf2f7] py-1.5 text-right text-[13px] font-bold leading-[15px] text-[#102034]">{fmt(pp.other_bonuses)}</td>
-                                </tr>
-                                <tr>
-                                  <td className="border-b border-[#edf2f7] py-1.5 text-[13px] leading-[15px] text-[#26384d]">Adjustment</td>
-                                  <td className="border-b border-[#edf2f7] px-2 py-1.5 text-[12px] leading-[15px] text-[#556377]">{selected.adjustment_note || 'Manual adjustment'}</td>
-                                  <td className="whitespace-nowrap border-b border-[#edf2f7] py-1.5 text-right text-[13px] font-bold leading-[15px] text-[#102034]">{fmt(pp.adjustment)}</td>
-                                </tr>
-                                {/* Orphanage — accounting extra added on top of pay; always shown (₱0.00 when unused). */}
-                                <tr>
-                                  <td className="py-1.5 text-[13px] leading-[15px] text-[#26384d]">Orphanage</td>
-                                  <td className="px-2 py-1.5 text-[12px] leading-[15px] text-[#556377]">Contribution</td>
-                                  <td className="whitespace-nowrap py-1.5 text-right text-[13px] font-bold leading-[15px] text-[#0f766e]">+{fmt(pp.orphanage_pay)}</td>
-                                </tr>
-                              </tbody>
-                            </table>
-                          </div>
-
-                          {/* MESA Adjustment */}
-                          <div className="px-8 pb-1 pt-2">
-                            <div className="bg-[#334155] px-3 py-[5px] text-[11px] font-extrabold uppercase leading-[13px] tracking-[0.12em] text-white">
-                              MESA Adjustment
-                            </div>
-                            {/* align-top keeps the label + amount on the note's first
-                                line when a long adjustment_note wraps — same rule as
-                                the shared PayStubStatement, so preview == dispatch. */}
-                            <table className="table-keep w-full table-fixed border-collapse tabular-nums [&_td]:align-top [&_td]:break-words">
-                              {/* Fixed 44/28/28 like the emailed statement, so a long
-                                  note can never shift the columns or push Amount out. */}
-                              <colgroup>
-                                <col className="w-[44%]" />
-                                <col className="w-[28%]" />
-                                <col className="w-[28%]" />
-                              </colgroup>
-                              <tbody>
-                                <tr>
-                                  <td className="border-b border-[#cbd5e1] bg-[#f1f5f9] py-1 text-[10px] font-bold uppercase leading-3 tracking-[0.06em] text-[#334155]">Description</td>
-                                  <td className="border-b border-[#cbd5e1] bg-[#f1f5f9] px-2 py-1 text-[10px] font-bold uppercase leading-3 tracking-[0.06em] text-[#334155]">Type</td>
-                                  <td className="border-b border-[#cbd5e1] bg-[#f1f5f9] py-1 text-right text-[10px] font-bold uppercase leading-3 tracking-[0.06em] text-[#334155]">Amount</td>
-                                </tr>
-                                <tr>
-                                  <td className="border-b border-[#edf2f7] py-1.5 text-[13px] leading-[15px] text-[#26384d]">MESA Reimbursement</td>
-                                  <td className="border-b border-[#edf2f7] px-2 py-1.5 text-[12px] leading-[15px] text-[#556377]">Payout</td>
-                                  <td className="whitespace-nowrap border-b border-[#edf2f7] py-1.5 text-right text-[13px] font-bold leading-[15px] text-[#0f766e]">+{fmt(pp.mesa_disbursement)}</td>
-                                </tr>
-                                <tr>
-                                  <td className="py-1.5 text-[13px] leading-[15px] text-[#26384d]">MESA Deduction</td>
-                                  <td className="px-2 py-1.5 text-[12px] leading-[15px] text-[#556377]">Contribution</td>
-                                  <td className="whitespace-nowrap py-1.5 text-right text-[13px] font-bold leading-[15px] text-[#b3261e]">-{fmt(pp.mesa_deduction)}</td>
-                                </tr>
-                              </tbody>
-                            </table>
-                          </div>
-
-                          {/* Confidential note */}
-                          <div className="px-8 pb-4 pt-3">
-                            <div className="rounded-[10px] border border-[#e2e8f0] bg-[#f8fafc] px-3.5 py-2 text-[11px] leading-4 text-[#556377]">
-                              <strong className="text-[#334155]">Confidential:</strong> This statement is intended only for the recipient named above. Contact your payroll representative if any hours or totals need review.
-                            </div>
-                          </div>
-
-                          {/* Footer */}
-                          <div className="flex items-center justify-between border-t border-[#eef2f6] bg-[#f8fafc] px-8 py-2.5">
-                            <span className="text-[11px] leading-4 text-[#556377]">Automated dispatch from Simple HRIS</span>
-                            <span className="whitespace-nowrap text-[11px] font-bold leading-4 text-[#334155]">Simple Payroll</span>
-                          </div>
-                        </div>
+                      <div className="w-[560px] shrink-0" style={{ zoom: 0.84 }}>
+                        <PayStubStatement view={stubView} />
                       </div>
                     </div>
                   </div>

@@ -1,0 +1,394 @@
+{
+  "name": "Paystub Automation",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "confirm-dispatch",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "5655b8b5-1b8f-432b-9630-90e3f547cd55",
+      "name": "Webhook: Confirm Dispatch",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [144, 672],
+      "webhookId": "confirm-dispatch-test",
+      "notes": "POST body: { pay_period, cycle, employees[] }. Each employee now carries a fully-rendered `paystub_html` + `paystub_subject`, built by the HRIS from the same PayStubView the Payroll Wizard preview and the in-app Pay Stubs modal render. This workflow does NOT build the statement — it pipes it."
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "body.employees",
+        "options": {}
+      },
+      "id": "2e9958a2-f84a-4aa5-993b-4fbbc438063e",
+      "name": "Split Out Employees1",
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [368, 672]
+    },
+    {
+      "parameters": {
+        "batchSize": 100,
+        "options": {
+          "reset": false
+        }
+      },
+      "id": "c5b39f3b-e2d9-4b16-a736-89b9121093c3",
+      "name": "Batch 100 Recipients1",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [544, 400]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "id-1",
+              "leftValue": "={{ $json.personal_email }}",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            },
+            {
+              "id": "id-2",
+              "leftValue": "={{ typeof $json.personal_email }}",
+              "rightValue": "string",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "id-3",
+              "leftValue": "={{ /^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test($json.personal_email) }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "id-4",
+              "leftValue": "={{ $json.personal_email.trim() }}",
+              "rightValue": "={{ $json.personal_email }}",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "id-5",
+              "leftValue": "={{ $json.pay_period.week }}",
+              "operator": {
+                "type": "object",
+                "operation": "exists"
+              }
+            },
+            {
+              "id": "id-6",
+              "leftValue": "={{ $json.paystub_html }}",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [816, 240],
+      "id": "d3391c45-4dd2-4a7a-b39c-5155ef607a2e",
+      "name": "If1",
+      "notes": "Condition 6 is the new one: an employee item with no rendered statement is SKIPPED, never sent. Without it a payload from an older HRIS build would mail an empty body."
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "id-1",
+              "name": "personal_email",
+              "value": "={{ $json.personal_email.trim().toLowerCase() }}",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "id": "fd3a4222-c001-4bd5-9d85-d31d9be2967c",
+      "name": "Normalize Email1",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [1040, 144]
+    },
+    {
+      "parameters": {
+        "amount": 0.6,
+        "unit": "seconds"
+      },
+      "id": "66909bfa-f6c0-45c8-8202-be97b494d934",
+      "name": "Throttle (600ms)1",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1,
+      "position": [1488, 144],
+      "webhookId": "3ed85571-c0b1-40fb-b782-6079ddb074b8"
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $json.personal_email }}",
+        "subject": "={{ $json.paystub_subject }}",
+        "message": "={{ $json.paystub_html }}",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "id": "a4a8a55f-d7d2-4077-819e-0d9129447714",
+      "name": "Send PayStub1",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [1712, 144],
+      "webhookId": "ef6e406f-d7a3-409a-a60c-9ffeb93bf639",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "p8yqPX6aclTGzx08",
+          "name": "HRIS Gmail"
+        }
+      },
+      "onError": "continueErrorOutput",
+      "notes": "A pipe, nothing more. The statement — weekend rows, orphanage line, proration chips, COP equivalent, paid pill — is decided in src/lib/payroll/paystub-email-html.ts. Do not paste HTML back in here: it would silently diverge from what the employee sees in the app, which is exactly the bug this replaced."
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "id-1",
+              "name": "personal_email",
+              "value": "={{ $json.personal_email }}",
+              "type": "string"
+            },
+            {
+              "id": "id-2",
+              "name": "name",
+              "value": "={{ $json.name }}",
+              "type": "string"
+            },
+            {
+              "id": "id-3",
+              "name": "itemIndex",
+              "value": "={{ $itemIndex }}",
+              "type": "number"
+            },
+            {
+              "id": "id-4",
+              "name": "error_message",
+              "value": "={{ $json.error.message }}",
+              "type": "string"
+            },
+            {
+              "id": "id-5",
+              "name": "error_description",
+              "value": "={{ $json.error.description }}",
+              "type": "string"
+            },
+            {
+              "id": "id-6",
+              "name": "timestamp",
+              "value": "={{ $now.toISO() }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "f0491c90-260e-4064-aa00-ec79efc222c7",
+      "name": "Log Failed Sends1",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [1936, 416]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "id-1",
+              "name": "skipped_reason",
+              "value": "={{ !$json.pay_period || !$json.pay_period.week ? 'missing week range' : (!$json.paystub_html ? 'no rendered paystub_html on the payload' : 'Invalid or missing personal_email') }}",
+              "type": "string"
+            },
+            {
+              "id": "id-2",
+              "name": "name",
+              "value": "={{ $json.name }}",
+              "type": "string"
+            },
+            {
+              "id": "id-3",
+              "name": "email",
+              "value": "={{ $json.email }}",
+              "type": "string"
+            },
+            {
+              "id": "id-4",
+              "name": "personal_email",
+              "value": "={{ $json.personal_email }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "17446343-e631-4703-ad23-670c32a1c769",
+      "name": "Log Skipped Items1",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [1040, 336]
+    },
+    {
+      "parameters": {
+        "aggregate": "aggregateAllItemData",
+        "options": {}
+      },
+      "id": "29c85b3f-1e9d-4390-844a-ad85577d1181",
+      "name": "Aggregate All Results1",
+      "type": "n8n-nodes-base.aggregate",
+      "typeVersion": 1,
+      "position": [816, 528]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "id-1",
+              "name": "total",
+              "value": "={{ $('Split Out Employees1').all().length }}",
+              "type": "number"
+            },
+            {
+              "id": "id-2",
+              "name": "succeeded",
+              "value": "={{ $('Send PayStub1').isExecuted ? $items('Send PayStub1').filter(i => !i.json.error).length : 0 }}",
+              "type": "number"
+            },
+            {
+              "id": "id-3",
+              "name": "failed",
+              "value": "={{ ($('Send PayStub1').isExecuted ? $items('Send PayStub1').filter(i => i.json.error).length : 0) + ($('Log Skipped Items1').isExecuted ? $items('Log Skipped Items1').length : 0) }}",
+              "type": "number"
+            },
+            {
+              "id": "id-7",
+              "name": "skipped",
+              "value": "={{ $('Log Skipped Items1').isExecuted ? $items('Log Skipped Items1').length : 0 }}",
+              "type": "number"
+            },
+            {
+              "id": "id-4",
+              "name": "failed_emails",
+              "value": "={{ JSON.stringify([].concat($('Send PayStub1').isExecuted ? $items('Send PayStub1').filter(i => i.json.error).map(i => ({ email: i.json.personal_email, name: i.json.name, error: i.json.error?.message || 'Unknown error', timestamp: $now.toISO() })) : [], $('Log Skipped Items1').isExecuted ? $items('Log Skipped Items1').map(i => ({ email: i.json.personal_email, name: i.json.name, error: 'Skipped — ' + i.json.skipped_reason, timestamp: $now.toISO() })) : [])) }}",
+              "type": "array"
+            },
+            {
+              "id": "id-5",
+              "name": "week_start",
+              "value": "={{ $('Webhook: Confirm Dispatch').first().json.body?.pay_period?.week?.start ?? $('Webhook: Confirm Dispatch').first().json.body?.cycle?.period_start ?? null }}",
+              "type": "string"
+            },
+            {
+              "id": "id-6",
+              "name": "week_end",
+              "value": "={{ $('Webhook: Confirm Dispatch').first().json.body?.pay_period?.week?.end ?? $('Webhook: Confirm Dispatch').first().json.body?.cycle?.period_end ?? null }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "ff845baa-798a-4fda-8725-f7a5d302cf2c",
+      "name": "Build Summary Report1",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [1040, 528],
+      "notes": "Every cross-node reference is guarded with `.isExecuted`. When EVERY item is skipped (an older HRIS build posting no paystub_html), Send PayStub1 never runs — an unguarded $items() on it aborts the whole response with \"node is unexecuted\", which is what happened on the first import.\n\nSKIPPED ITEMS COUNT AS FAILED, deliberately. Someone who was skipped did not get their paystub, and the HRIS decides `delivered` from `failed`; leaving them out meant a skipped send was recorded as a successful one. `failed_emails` carries the reason, which is what gets stamped on the queue row.\n\nThe HRIS reads `succeeded`, `failed` and `failed_emails` — keep all three field names.\n\nWeek dates come straight off the webhook body: it is the one node guaranteed to have executed."
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      },
+      "id": "5dd0f3c4-a6f2-4360-a9b8-bdd6ccd0449a",
+      "name": "Respond to Webhook1",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1264, 528]
+    }
+  ],
+  "connections": {
+    "Webhook: Confirm Dispatch": {
+      "main": [[{ "node": "Split Out Employees1", "type": "main", "index": 0 }]]
+    },
+    "Split Out Employees1": {
+      "main": [[{ "node": "Batch 100 Recipients1", "type": "main", "index": 0 }]]
+    },
+    "Batch 100 Recipients1": {
+      "main": [
+        [{ "node": "Aggregate All Results1", "type": "main", "index": 0 }],
+        [{ "node": "If1", "type": "main", "index": 0 }]
+      ]
+    },
+    "If1": {
+      "main": [
+        [{ "node": "Normalize Email1", "type": "main", "index": 0 }],
+        [{ "node": "Log Skipped Items1", "type": "main", "index": 0 }]
+      ]
+    },
+    "Normalize Email1": {
+      "main": [[{ "node": "Throttle (600ms)1", "type": "main", "index": 0 }]]
+    },
+    "Throttle (600ms)1": {
+      "main": [[{ "node": "Send PayStub1", "type": "main", "index": 0 }]]
+    },
+    "Send PayStub1": {
+      "main": [
+        [{ "node": "Batch 100 Recipients1", "type": "main", "index": 0 }],
+        [{ "node": "Log Failed Sends1", "type": "main", "index": 0 }]
+      ]
+    },
+    "Log Failed Sends1": {
+      "main": [[{ "node": "Batch 100 Recipients1", "type": "main", "index": 0 }]]
+    },
+    "Log Skipped Items1": {
+      "main": [[{ "node": "Batch 100 Recipients1", "type": "main", "index": 0 }]]
+    },
+    "Aggregate All Results1": {
+      "main": [[{ "node": "Build Summary Report1", "type": "main", "index": 0 }]]
+    },
+    "Build Summary Report1": {
+      "main": [[{ "node": "Respond to Webhook1", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "29d6d9e52fe21b0c535cbb7df77313210d68e6c4404865f3476a708e3c046b7f"
+  }
+}

@@ -6,15 +6,24 @@
  * the source file). Values are fictional placeholders, never real people.
  */
 export const WEBHOOK_SAMPLE_PAYLOADS: Record<string, unknown> = {
+  // The workflow sends `paystub_html` as-is — it does NOT build the statement.
+  // The HRIS renders it (src/lib/payroll/paystub-email-html.ts) from the same
+  // view the Payroll Wizard preview and the in-app Pay Stubs modal show, which
+  // is what keeps the three from drifting. n8n skips any item without it.
   paystub_dispatch: {
-    pay_period: { start: '2026-07-19', end: '2026-07-25' },
+    pay_period: { week: { start: '2026-07-19', end: '2026-07-25' }, fx_rate: 61.67, currency: 'PHP' },
     employees: [
       {
         name: 'Jordan Cruz',
         email: 'jordan.cruz@simple.biz',
+        personal_email: 'jordan.cruz@gmail.com',
+        department_name: 'Lead Gen',
         hours: { regular: 40, ot: 5 },
         rates_php: { regular: 125, ot: 187.5 },
-        pay_php: { regular: 5000, ot: 937.5 },
+        pay_php: { regular: 5000, ot: 937.5, final: 5937.5 },
+        pay_period: { week: { start: '2026-07-19', end: '2026-07-25' }, fx_rate: 61.67 },
+        paystub_subject: 'Paystub for Jordan Cruz · Jul 19 – Jul 25, 2026',
+        paystub_html: '<!DOCTYPE html><html>…the complete rendered pay statement…</html>',
       },
     ],
     cycle: { source_file: 'hubstaff_2026-07-19_2026-07-25.csv', cycle_id: 'cyc_2026_07_19' },

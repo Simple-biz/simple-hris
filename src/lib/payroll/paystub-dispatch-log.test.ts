@@ -30,6 +30,8 @@ function row(over: Partial<PaymentDispatchRow> & { id: string }): PaymentDispatc
     note: null,
     payee_type: "employee",
     contractor_invoice_id: null,
+    system_bonus_php: null,
+    system_bonus_label: null,
     created_by: "lennyt@simple.biz",
     created_at: "2026-07-21T02:00:00.000Z",
     ...over,

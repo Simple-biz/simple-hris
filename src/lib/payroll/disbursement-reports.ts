@@ -511,6 +511,9 @@ export async function loadUrgentDispatchRows(): Promise<PaymentDispatchRow[]> {
       // Synthesized from a one-off/MESA urgent payment, not a contractor invoice.
       payee_type: "employee",
       contractor_invoice_id: null,
+      // Synthetic row — these payment types never carry a PAB/Tech bonus.
+      system_bonus_php: null,
+      system_bonus_label: null,
       created_by: o.paid_by ?? o.created_by ?? null,
       created_at: o.created_at,
     });

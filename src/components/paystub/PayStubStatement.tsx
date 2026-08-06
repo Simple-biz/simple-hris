@@ -1,7 +1,16 @@
 'use client';
 
 import React from 'react';
-import type { PayStubView, ProratedLineView } from '@/lib/payroll/paystub-view';
+import {
+  formatCop,
+  formatHours,
+  formatPhp,
+  formatStatementDate,
+  formatUsd,
+  showsOrphanageLine,
+  type PayStubView,
+  type ProratedLineView,
+} from '@/lib/payroll/paystub-view';
 
 /**
  * The pay statement itself — a faithful React port of the emailed paystub
@@ -26,30 +35,13 @@ import type { PayStubView, ProratedLineView } from '@/lib/payroll/paystub-view';
  *     rate and the reason for an adjustment survive on a phone.
  */
 
-function php(n: number): string {
-  return `₱${n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-}
-/** USD carries thousands separators like every other figure here (and like the wizard). */
-function usd(n: number): string {
-  return `$${n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD`;
-}
-/** Native COP for Colombian payees — whole pesos, es-CO dot grouping, exactly the
- *  rendering Payment Dispatch uses (`formatCOP`) so the same figure never appears
- *  in two different shapes ("$COP526.686"). */
-function cop(n: number): string {
-  return `$COP${n.toLocaleString('es-CO', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
-}
-function hrs(n: number): string {
-  return n.toFixed(2);
-}
-
-function formatPaidAt(iso: string | null | undefined): string | null {
-  if (!iso) return null;
-  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso.trim());
-  if (!m) return null;
-  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-  return `${months[Number(m[2]) - 1] ?? ''} ${Number(m[3])}, ${m[1]}`;
-}
+/* Money and hours come from the shared formatters in `paystub-view` — the same
+   ones the emailed HTML prints through, so no figure can appear in two shapes
+   across the two documents describing one payment. */
+const php = formatPhp;
+const usd = formatUsd;
+const cop = formatCop;
+const hrs = formatHours;
 
 const SEC_HEAD =
   'bg-[#334155] px-3 py-[5px] text-[11px] font-extrabold uppercase leading-[13px] tracking-[0.12em] text-white';
@@ -230,7 +222,7 @@ export function PayStubStatement({
    */
   status?: string | null;
 }) {
-  const paidLabel = formatPaidAt(paidAt);
+  const paidLabel = formatStatementDate(paidAt);
   const isPaid = status ? status === 'paid' : Boolean(paidLabel);
   return (
     <div
@@ -421,17 +413,22 @@ export function PayStubStatement({
               label="Adjustment"
               detail={view.adjustmentNote || 'Manual adjustment'}
               amount={php(view.adjustment)}
+              last={!showsOrphanageLine(view)}
             />
-            {/* Orphanage — an accounting extra added on top of pay. Always shown
-                (like the other bonus rows) so the breakdown reconciles; ₱0.00 when
-                unused. Signed + teal to match the emailed statement + wizard preview. */}
-            <EarningRow
-              label="Orphanage"
-              detail="Contribution"
-              amount={`+${php(view.orphanagePay)}`}
-              amountClass="!text-[#0f766e]"
-              last
-            />
+            {/* Orphanage — an accounting extra added on top of pay, and one
+                almost nobody receives, so the row appears only when there is
+                money on it (`showsOrphanageLine`) rather than printing ₱0.00 on
+                every other person's statement. Signed + teal, matching the
+                emailed statement and the wizard preview, which share the rule. */}
+            {showsOrphanageLine(view) && (
+              <EarningRow
+                label="Orphanage"
+                detail="Contribution"
+                amount={`+${php(view.orphanagePay)}`}
+                amountClass="!text-[#0f766e]"
+                last
+              />
+            )}
           </StatementTable>
         </div>
 

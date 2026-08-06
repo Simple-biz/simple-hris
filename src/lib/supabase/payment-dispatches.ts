@@ -41,6 +41,15 @@ export type PaymentDispatchRow = {
   payee_type: 'employee' | 'contractor';
   /** The invoice this row settled. Cleared by trigger if the row is deleted (Undo). */
   contractor_invoice_id: string | null;
+  /**
+   * PHP amount of the Payment Catalog system bonus (PAB / Technology Bonus, or
+   * a custom variant) already included in `amount_php`, snapshotted at Mark
+   * Paid. Null when this dispatch carried no system bonus, or when it predates
+   * `add_system_bonus_to_payment_dispatches.sql`.
+   */
+  system_bonus_php: number | null;
+  /** Human-readable breakdown, e.g. "PAB ₱5,000 + Tech ₱1,850". Null when `system_bonus_php` is null. */
+  system_bonus_label: string | null;
   created_by: string | null;
   created_at: string;
 };
@@ -70,6 +79,9 @@ export interface InsertPaymentDispatchInput {
   /** Defaults to 'employee' so every existing call site keeps its meaning. */
   payee_type?: 'employee' | 'contractor';
   contractor_invoice_id?: string | null;
+  /** See {@link PaymentDispatchRow.system_bonus_php}. Omit/null when this dispatch carries no system bonus. */
+  system_bonus_php?: number | null;
+  system_bonus_label?: string | null;
   created_by?: string | null;
 }
 
@@ -115,6 +127,17 @@ export async function insertPaymentDispatch(
         ? {
             payee_type: "contractor",
             contractor_invoice_id: input.contractor_invoice_id ?? null,
+          }
+        : {}),
+      // Named ONLY when a system bonus is actually present — same PGRST204
+      // reasoning as payee_type above, applied to
+      // add_system_bonus_to_payment_dispatches.sql: naming these unconditionally
+      // would 500 EVERY dispatch insert until that migration is applied, since
+      // most weeks carry no bonus and would otherwise never exercise this path.
+      ...(input.system_bonus_php != null
+        ? {
+            system_bonus_php: input.system_bonus_php,
+            system_bonus_label: input.system_bonus_label ?? null,
           }
         : {}),
       created_by: input.created_by ?? null,

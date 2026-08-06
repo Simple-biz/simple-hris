@@ -124,6 +124,66 @@ export function formatWeekHuman(start: string | null, end: string | null): strin
   return '';
 }
 
+/**
+ * "Jul 28, 2026" — a DATE-only column rendered as a calendar day, no TZ drift.
+ * The paid-pill date on every statement surface.
+ */
+export function formatStatementDate(iso: string | null | undefined): string | null {
+  const d = parseYmd(iso ?? null);
+  return d ? `${MONTHS[d.m - 1] ?? ''} ${d.d}, ${d.y}` : null;
+}
+
+/* ───────────────────────── shared money formatting ─────────────────────────
+ * Every statement surface — the wizard preview, the in-app modal, the emailed
+ * HTML — prints a figure through these and only these. A second `toLocaleString`
+ * call written inline anywhere is how the same peso amount ends up in two
+ * different shapes on two documents describing one payment.
+ */
+
+/** `₱5,927.20` — always 2dp, en-US grouping. */
+export function formatPhp(n: number): string {
+  return `₱${n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+/** `$96.11 USD` — thousands separators like every other figure here. */
+export function formatUsd(n: number): string {
+  return `$${n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD`;
+}
+
+/** `$COP526.686` — whole pesos, es-CO dot grouping, exactly as Payment Dispatch
+ *  renders it, so one figure never appears in two shapes. */
+export function formatCop(n: number): string {
+  return `$COP${n.toLocaleString('es-CO', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
+}
+
+/** `33.87` — hours, always 2dp. */
+export function formatHours(n: number): string {
+  return n.toFixed(2);
+}
+
+/* ─────────────────────── shared line visibility rules ───────────────────────
+ * Which optional lines a statement shows. Kept here, beside the view, so the
+ * three renderers cannot answer the question differently for the same week.
+ */
+
+/** Amounts under half a centavo are rounding dust, not money on the statement. */
+const MONEY_EPSILON = 0.005;
+
+/**
+ * Whether the Orphanage line renders. It's an accounting extra almost nobody
+ * receives, so a `₱0.00` row was noise on every other person's statement — the
+ * line now appears only when there is money on it.
+ *
+ * The Weekend pair follows the same "only when it applies" rule, carried by
+ * {@link PayStubView.hasWeekend} (HSL/Hogan weeks only). Every other line —
+ * Regular, Overtime, Tech, Attendance, Performance, Adjustment, and the MESA
+ * pair — always renders, ₱0.00 included, so the breakdown reconciles to Net the
+ * same way on every document.
+ */
+export function showsOrphanageLine(view: Pick<PayStubView, 'orphanagePay'>): boolean {
+  return Math.abs(view.orphanagePay) >= MONEY_EPSILON;
+}
+
 /** Default HSL weekend premium (₱/h) for payloads that predate carrying it. */
 export const WEEKEND_PREMIUM_PHP_PER_HOUR = 15;
 

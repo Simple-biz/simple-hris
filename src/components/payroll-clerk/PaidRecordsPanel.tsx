@@ -111,6 +111,32 @@ function copyText(value: string) {
 }
 
 /**
+ * "System Bonus" column cell — reads the SNAPSHOT `system_bonus_php` /
+ * `system_bonus_label` the mark-paid path froze onto the row (see BonusChip
+ * in ProcessorQueue.tsx for the Pending-side equivalent), rather than
+ * recomputing from Hubstaff hours. Rows written before
+ * `add_system_bonus_to_payment_dispatches.sql` have neither field, so the
+ * caller renders a dash instead of this.
+ */
+function SystemBonusCell({ amount, label }: { amount: number; label: string | null }) {
+  return (
+    <div className="flex flex-col items-end gap-0.5">
+      <span
+        className="font-mono text-[12px] font-semibold tabular-nums text-emerald-700 dark:text-emerald-300"
+        title="Already included in the PHP Value total"
+      >
+        {formatPHP(amount)}
+      </span>
+      {label && (
+        <span className="max-w-[9.5rem] truncate text-[10px] text-emerald-600/80 dark:text-emerald-400/70" title={label}>
+          {label}
+        </span>
+      )}
+    </div>
+  );
+}
+
+/**
  * "To Recipient Bank" for a logged dispatch — read from the SNAPSHOT the mark-paid
  * path froze onto the row (`recipient_*`), never re-resolved from the employee's
  * current profile, so a historical record keeps showing where the money actually
@@ -494,7 +520,7 @@ export default function PaidRecordsPanel({
         ) : (
           <div className="overflow-x-auto rounded-lg border border-[#ececec] bg-white dark:border-zinc-800 dark:bg-zinc-950">
             <table
-              className={cn('w-full text-xs', showFromBankColumn ? 'min-w-[1520px]' : 'min-w-[1380px]')}
+              className={cn('w-full text-xs', showFromBankColumn ? 'min-w-[1660px]' : 'min-w-[1520px]')}
             >
               <thead className="bg-[#fafaf8] text-[10px] uppercase tracking-wide text-[#71717a] dark:bg-zinc-900 dark:text-zinc-400">
                 <tr>
@@ -509,11 +535,12 @@ export default function PaidRecordsPanel({
                     />
                   </th>
                   {/* Same order as the Pending queue's worksheet: Recipient → the
-                      three currencies → From/To bank → TXN ID → the rest. */}
+                      three currencies → System Bonus → From/To bank → TXN ID → the rest. */}
                   <th className="px-4 py-2.5 text-left font-medium">Recipient</th>
                   <th className="px-4 py-2.5 text-right font-medium">USD Value</th>
                   <th className="px-4 py-2.5 text-right font-medium">PHP Value</th>
                   <th className="px-4 py-2.5 text-right font-medium">COP Value</th>
+                  <th className="px-4 py-2.5 text-right font-medium">System Bonus</th>
                   {showFromBankColumn && (
                     <th className="px-4 py-2.5 text-left font-medium">From Bank</th>
                   )}
@@ -592,6 +619,18 @@ export default function PaidRecordsPanel({
                         )}
                       >
                         {formatCOP(rec.amount_cop)}
+                      </td>
+                      {/* Payment Catalog system bonus (PAB / Tech) snapshotted at Mark
+                          Paid — its own column, not a chip under PHP, so it reads at a
+                          glance across the whole page instead of only on hover. Rows
+                          paid before add_system_bonus_to_payment_dispatches.sql have
+                          neither field and render the dash. */}
+                      <td className="px-4 py-2.5 text-right">
+                        {rec.system_bonus_php != null && rec.system_bonus_php > 0 ? (
+                          <SystemBonusCell amount={rec.system_bonus_php} label={rec.system_bonus_label} />
+                        ) : (
+                          <span className="font-mono text-[11px] text-zinc-300 dark:text-zinc-600">—</span>
+                        )}
                       </td>
                       {showFromBankColumn && (
                         <td className="px-4 py-2.5">

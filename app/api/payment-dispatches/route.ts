@@ -265,6 +265,8 @@ export async function POST(req: NextRequest) {
       payee_type: payeeType,
       contractor_invoice_id: contractorInvoiceId,
       invoice_number: invoiceNumberForNote,
+      system_bonus_php: row.system_bonus_php,
+      system_bonus_label: row.system_bonus_label,
       cycle: {
         cycle_id: row.cycle_id,
         source_file: row.cycle_source_file ?? null,
@@ -412,9 +414,22 @@ export async function POST(req: NextRequest) {
           }
         })();
 
+        // The emailed statement is rendered from THIS view — the reconciled one,
+        // whose total matches the money this row just recorded — so the email,
+        // the Pay Stubs tab, and the payment can't describe the week differently.
+        // `amount_cop` is the figure the dispatcher actually paid a Colombian
+        // payee (null for everyone else), which beats re-deriving the equivalent
+        // from a rate that may have moved since.
+        const emailView =
+          row.amount_cop != null && Number.isFinite(Number(row.amount_cop))
+            ? { ...view, totalPayCop: Number(row.amount_cop) }
+            : view;
+
         const result = await forwardPaystubDispatch({
           pay_period: stubPeriod,
           employees: [stubPayload],
+          views: [emailView],
+          emailOptions: { paidAt: row.sent_date ?? null, status: "paid" },
           cycle: {
             source_file: row.cycle_source_file,
             period_start: row.cycle_period_start ?? null,
@@ -429,12 +444,29 @@ export async function POST(req: NextRequest) {
         // did NOT go out (e.g. Gmail 429 rate-limiting) — record it as a failed
         // send so the row keeps last_error and can be re-sent. Summaries from
         // older workflow versions without these fields fall back to HTTP ok.
+        //
+        // A zero `failed` is NOT delivery either. The workflow SKIPS an item it
+        // can't mail (no valid personal_email, no week range, no rendered
+        // statement) down a separate branch, and a run where the only recipient
+        // was skipped used to come back `{succeeded: 0, failed: 0}` — which
+        // scored as delivered and stamped "paystub sent" on a row that was never
+        // emailed. So a summary that reports a count must also report at least
+        // one success. `succeeded` missing entirely (an older workflow) still
+        // falls back to the HTTP-ok behaviour rather than failing every send.
         const summary =
           result.parsed && typeof result.parsed === "object"
-            ? (result.parsed as { succeeded?: unknown; failed?: unknown; failed_emails?: unknown })
+            ? (result.parsed as {
+                succeeded?: unknown;
+                failed?: unknown;
+                skipped?: unknown;
+                failed_emails?: unknown;
+              })
             : null;
         const summaryFailed = typeof summary?.failed === "number" ? summary.failed : 0;
-        const delivered = result.ok && summaryFailed === 0;
+        const summarySucceeded =
+          typeof summary?.succeeded === "number" ? summary.succeeded : null;
+        const delivered =
+          result.ok && summaryFailed === 0 && (summarySucceeded === null || summarySucceeded > 0);
         if (delivered) {
           paystub.sent = true;
           await markPaystubSent({
@@ -447,7 +479,14 @@ export async function POST(req: NextRequest) {
           let failDetail = result.detail ?? "Paystub send failed";
           if (result.ok) {
             // Pull the Gmail error message out of the summary's failed_emails.
-            failDetail = "Email send failed inside the paystub workflow";
+            // Nothing failed but nothing succeeded either → the workflow skipped
+            // this recipient. Name that, rather than blaming a send that was
+            // never attempted; `failed_emails` overwrites it with the exact
+            // reason when the workflow reports one.
+            failDetail =
+              summaryFailed === 0 && summarySucceeded === 0
+                ? "Recipient was skipped by the paystub workflow — no email was sent"
+                : "Email send failed inside the paystub workflow";
             try {
               const raw = summary?.failed_emails;
               const arr = typeof raw === "string" ? JSON.parse(raw) : raw;
