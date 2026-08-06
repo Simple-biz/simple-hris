@@ -134,6 +134,16 @@ export function resolveDeptCatalogRate(
   fx: FxRates,
 ): ResolvedCatalogRate | null {
   if (!deptRaw) return null;
+  // SUB-department base rates: a namespaced label/key ("hsl:intake_specialist",
+  // "medical_billing:intake_team") carries its OWN base rate — the parent
+  // department's base is only the fallback. This MUST run before
+  // normalizeDeptToKey, which collapses every hsl:* label to hogan_smith_law
+  // and would make sub-department structures unreachable.
+  const namespaced = deptRaw.trim().toLowerCase();
+  if (namespaced.includes(':')) {
+    const sub = index.byDeptKey.get(namespaced);
+    if (sub) return toResolved(sub, fx);
+  }
   // Accept a raw department name or an already-canonical key. In-app
   // departments (Payment Catalog -> Department) key their structures by the
   // slug of their label ("Executive Assistants" -> "executive_assistants"),

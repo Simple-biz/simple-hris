@@ -35,6 +35,7 @@ import { insertAuditLog } from '@/lib/supabase/audit-log';
 import { getSessionActor } from '@/lib/auth/session-actor';
 import {
   slugifyDeptKey,
+  subDeptStructureKey,
   validateCreateDepartmentInput,
   type CreateDepartmentEvent,
   type CreateDepartmentInput,
@@ -135,9 +136,9 @@ export async function POST(request: Request) {
       try {
         // -- Stage 1: the department itself ---------------------------------
         emit({ type: 'stage', stage: 'department', status: 'start' });
-        const subUnits = input.subDepartments.map((subName) => ({
-          key: slugifyDeptKey(subName),
-          name: subName.trim(),
+        const subUnits = input.subDepartments.map((sub) => ({
+          key: slugifyDeptKey(sub.name),
+          name: sub.name.trim(),
         }));
         const mergedSubs = [...(existingEntry?.subDepartments ?? [])];
         for (const sub of subUnits) {
@@ -203,34 +204,60 @@ export async function POST(request: Request) {
           note: others.length > 0 ? `${others.length} member${others.length === 1 ? '' : 's'}` : 'no additional members',
         });
 
-        // -- Stage 4: pay structure ------------------------------------------
+        // -- Stage 4: pay structures -----------------------------------------
+        // Flat department: one department-scoped structure keyed on the dept
+        // key. With sub-departments, base rates live on each sub-department
+        // instead — one structure per sub, keyed `<parentKey>:<subKey>`
+        // (validation guarantees the parent rate is null in that case).
         emit({ type: 'stage', stage: 'rates', status: 'start' });
         let rateSet = false;
-        if (input.payStructure) {
-          // One department-scoped structure per department (partial unique
-          // index) -- reuse its id on a retry instead of colliding.
+        let subRatesSet = 0;
+        const ratedSubs = input.subDepartments.filter((s) => s.payStructure);
+        if (input.payStructure || ratedSubs.length > 0) {
+          // Department-scoped structures are unique per key (partial unique
+          // index) -- reuse ids on a retry instead of colliding.
           const { structures, error: listErr } = await listPayStructures();
           if (listErr) return fail('rates', listErr);
-          const existingStructure = structures.find(
-            (s) => s.scope === 'department' && s.departmentKey === key,
-          );
-          const structure: PayStructure = {
-            id: existingStructure?.id ?? newPayId(),
-            scope: 'department',
-            departmentKey: key,
-            regularRate: input.payStructure.regularRate,
-            otRate: input.payStructure.otRate,
-            currency: input.payStructure.currency,
-          };
-          const { error: rateErr } = await upsertPayStructure(structure, actor);
-          if (rateErr) return fail('rates', rateErr);
-          rateSet = true;
+          const existingIdFor = (structureKey: string) =>
+            structures.find((s) => s.scope === 'department' && s.departmentKey === structureKey)?.id;
+          if (input.payStructure) {
+            const structure: PayStructure = {
+              id: existingIdFor(key) ?? newPayId(),
+              scope: 'department',
+              departmentKey: key,
+              regularRate: input.payStructure.regularRate,
+              otRate: input.payStructure.otRate,
+              currency: input.payStructure.currency,
+            };
+            const { error: rateErr } = await upsertPayStructure(structure, actor);
+            if (rateErr) return fail('rates', rateErr);
+            rateSet = true;
+          }
+          for (const rated of ratedSubs) {
+            const subKey = subDeptStructureKey(key, slugifyDeptKey(rated.name));
+            const structure: PayStructure = {
+              id: existingIdFor(subKey) ?? newPayId(),
+              scope: 'department',
+              departmentKey: subKey,
+              regularRate: rated.payStructure!.regularRate,
+              otRate: rated.payStructure!.otRate,
+              currency: rated.payStructure!.currency,
+            };
+            const { error: rateErr } = await upsertPayStructure(structure, actor);
+            if (rateErr) return fail('rates', `${rated.name.trim()}: ${rateErr}`);
+            subRatesSet += 1;
+          }
         }
         emit({
           type: 'stage',
           stage: 'rates',
           status: 'done',
-          note: rateSet ? undefined : 'skipped -- set it any time in Pay Structure',
+          note:
+            subRatesSet > 0
+              ? `${subRatesSet} sub-department rate${subRatesSet === 1 ? '' : 's'}`
+              : rateSet
+                ? undefined
+                : 'skipped -- set it any time in Pay Structure',
         });
 
         // Audit trail (best-effort, never fails the creation).
@@ -247,6 +274,7 @@ export async function POST(request: Request) {
             managers: managers.map((m) => m.workEmail.trim().toLowerCase()),
             members: others.map((m) => m.workEmail.trim().toLowerCase()),
             rate_set: rateSet,
+            sub_rates_set: ratedSubs.map((s) => s.name.trim()),
           },
         }).catch(() => undefined);
 
@@ -258,6 +286,7 @@ export async function POST(request: Request) {
             managersAdded: managers.length,
             membersAdded: others.length,
             rateSet,
+            subRatesSet,
             warnings: [],
           },
         });

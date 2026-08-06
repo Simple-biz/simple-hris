@@ -9,12 +9,14 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   slugifyDeptKey,
+  subDeptStructureKey,
   resolveDeptKeyWithRegistry,
   rawDeptMatchesEntry,
   validateCreateDepartmentInput,
   type CreateDepartmentInput,
   type DepartmentRegistryEntry,
   type NewDepartmentMember,
+  type NewSubDepartment,
 } from './registry';
 
 const entry: DepartmentRegistryEntry = {
@@ -43,6 +45,10 @@ function input(overrides: Partial<CreateDepartmentInput> = {}): CreateDepartment
     payStructure: null,
     ...overrides,
   };
+}
+
+function sub(name: string, overrides: Partial<NewSubDepartment> = {}): NewSubDepartment {
+  return { name, payStructure: null, ...overrides };
 }
 
 test('slugifyDeptKey normalizes labels to stable keys', () => {
@@ -109,17 +115,65 @@ test('validate: catches duplicate and malformed emails', () => {
 
 test('validate: sub-departments must be unique and assigned subs must exist', () => {
   assert.equal(
-    validateCreateDepartmentInput(input({ subDepartments: ['Intake Team', 'intake  team'] })).ok,
+    validateCreateDepartmentInput(
+      input({ subDepartments: [sub('Intake Team'), sub('intake  team')] }),
+    ).ok,
     false,
   );
   const orphan = validateCreateDepartmentInput(
-    input({ subDepartments: ['Intake Team'], members: [member({ subDepartment: 'other_team' })] }),
+    input({ subDepartments: [sub('Intake Team')], members: [member({ subDepartment: 'other_team' })] }),
   );
   assert.equal(orphan.ok, false);
   const ok = validateCreateDepartmentInput(
-    input({ subDepartments: ['Intake Team'], members: [member({ subDepartment: 'intake_team' })] }),
+    input({ subDepartments: [sub('Intake Team')], members: [member({ subDepartment: 'intake_team' })] }),
   );
   assert.equal(ok.ok, true);
+});
+
+test('validate: per-sub-department base rates', () => {
+  // A valid rate on one sub, none on the other — both fine.
+  assert.equal(
+    validateCreateDepartmentInput(
+      input({
+        subDepartments: [
+          sub('Intake Team', { payStructure: { regularRate: 150, otRate: 225, currency: 'PHP' } }),
+          sub('Filing Team'),
+        ],
+      }),
+    ).ok,
+    true,
+  );
+  // Bad numbers are named per sub-department.
+  const bad = validateCreateDepartmentInput(
+    input({
+      subDepartments: [sub('Intake Team', { payStructure: { regularRate: -5, currency: 'PHP' } })],
+    }),
+  );
+  assert.equal(bad.ok, false);
+  assert.match(bad.error ?? '', /Intake Team/);
+  const badOt = validateCreateDepartmentInput(
+    input({
+      subDepartments: [
+        sub('Intake Team', { payStructure: { regularRate: 100, otRate: -1, currency: 'PHP' } }),
+      ],
+    }),
+  );
+  assert.equal(badOt.ok, false);
+});
+
+test('validate: a department with sub-departments carries NO department-wide rate', () => {
+  const res = validateCreateDepartmentInput(
+    input({
+      subDepartments: [sub('Intake Team')],
+      payStructure: { regularRate: 120, currency: 'PHP' },
+    }),
+  );
+  assert.equal(res.ok, false);
+  assert.match(res.error ?? '', /sub-department/i);
+});
+
+test('subDeptStructureKey namespaces like the HSL convention', () => {
+  assert.equal(subDeptStructureKey('medical_billing', 'intake_team'), 'medical_billing:intake_team');
 });
 
 test('validate: pay structure bounds', () => {

@@ -51,6 +51,7 @@ import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
 import {
   CREATE_DEPARTMENT_STAGES,
   slugifyDeptKey,
+  subDeptStructureKey,
   validateCreateDepartmentInput,
   type CreateDepartmentEvent,
   type CreateDepartmentInput,
@@ -157,6 +158,11 @@ export default function DepartmentsTab({
 
   const deptRate = (key: string) =>
     payStructures.find((s) => s.scope === 'department' && s.departmentKey === key) ?? null;
+  /** A sub-department's own base rate (keyed `<parentKey>:<subKey>`). */
+  const subDeptRate = (parentKey: string, subKey: string) =>
+    payStructures.find(
+      (s) => s.scope === 'department' && s.departmentKey === subDeptStructureKey(parentKey, subKey),
+    ) ?? null;
   const overrideCount = (key: string) =>
     payStructures.filter((s) => s.scope === 'employee' && s.departmentKey === key).length;
 
@@ -247,20 +253,39 @@ export default function DepartmentsTab({
 
                   {entry.subDepartments.length > 0 && (
                     <div className="mt-2.5 flex flex-wrap gap-1">
-                      {entry.subDepartments.map((sub) => (
-                        <span
-                          key={sub.key}
-                          className="rounded-md bg-zinc-100 px-1.5 py-0.5 text-[10.5px] font-medium text-zinc-600 dark:bg-zinc-900 dark:text-zinc-300"
-                        >
-                          {sub.name}
-                        </span>
-                      ))}
+                      {entry.subDepartments.map((sub) => {
+                        const sr = subDeptRate(entry.key, sub.key);
+                        return (
+                          <span
+                            key={sub.key}
+                            className="rounded-md bg-zinc-100 px-1.5 py-0.5 text-[10.5px] font-medium text-zinc-600 dark:bg-zinc-900 dark:text-zinc-300"
+                          >
+                            {sub.name}
+                            {sr && (
+                              <span className="ml-1 font-semibold tabular-nums text-emerald-600 dark:text-emerald-400">
+                                {formatRate(sr.regularRate, sr.currency)}
+                              </span>
+                            )}
+                          </span>
+                        );
+                      })}
                     </div>
                   )}
 
                   <div className="mt-3 flex items-center justify-between border-t border-zinc-100 pt-2.5 dark:border-zinc-900">
                     <span className="text-xs font-semibold tabular-nums text-emerald-600 dark:text-emerald-400">
-                      {rate ? formatRate(rate.regularRate, rate.currency) : (
+                      {rate ? (
+                        formatRate(rate.regularRate, rate.currency)
+                      ) : entry.subDepartments.length > 0 ? (
+                        (() => {
+                          const rated = entry.subDepartments.filter((sub) => subDeptRate(entry.key, sub.key)).length;
+                          return rated > 0 ? (
+                            <>{rated}/{entry.subDepartments.length} sub-department rates</>
+                          ) : (
+                            <span className="font-medium text-zinc-400 dark:text-zinc-500">No rate set</span>
+                          );
+                        })()
+                      ) : (
                         <span className="font-medium text-zinc-400 dark:text-zinc-500">No rate set</span>
                       )}
                       {overrideCount(entry.key) > 0 && (
@@ -406,6 +431,17 @@ function CreateDepartmentButton({ onClick }: { onClick: () => void }) {
 
 type WizardMember = NewDepartmentMember & { id: string };
 
+/** A sub-department row in the wizard: name + its own OPTIONAL base rate.
+ *  Blank `regular` = no rate yet (settable later from Pay Structure under the
+ *  `<parentKey>:<subKey>` entry). Blank `ot` = auto 1.5x regular. */
+type WizardSub = {
+  id: string;
+  name: string;
+  regular: string;
+  ot: string;
+  currency: PayCurrency;
+};
+
 const STEPS = ['Department', 'Sub-departments', 'People', 'Pay & review'] as const;
 
 type StageStatus = 'pending' | 'active' | 'done' | 'failed';
@@ -432,6 +468,8 @@ function freshCreation(input: CreateDepartmentInput): NonNullable<CreationView> 
 
 let wizardMemberSeq = 0;
 const nextMemberId = () => `wm_${++wizardMemberSeq}`;
+let wizardSubSeq = 0;
+const nextSubId = () => `ws_${++wizardSubSeq}`;
 
 function CreateDepartmentWizard({
   open,
@@ -454,9 +492,9 @@ function CreateDepartmentWizard({
 
   // Step 1 -- name
   const [name, setName] = useState('');
-  // Step 2 -- sub-departments
+  // Step 2 -- sub-departments (each with its own optional base rate)
   const [wantsSubs, setWantsSubs] = useState<'no' | 'yes'>('no');
-  const [subs, setSubs] = useState<string[]>([]);
+  const [subs, setSubs] = useState<WizardSub[]>([]);
   // Step 3 -- people
   const [members, setMembers] = useState<WizardMember[]>([]);
   // Step 4 -- pay
@@ -526,7 +564,19 @@ function CreateDepartmentWizard({
     (existingNames.has(trimmedName.toLowerCase()) || normalizeDeptToKey(trimmedName) !== null);
   const nameOk = trimmedName.length > 0 && trimmedName.length <= 60 && !nameCollision && slugifyDeptKey(trimmedName) !== '';
 
-  const subsOk = wantsSubs === 'no' || subs.length > 0;
+  // A sub row's rate is optional (blank regular = no rate yet), but whatever
+  // is typed must be a valid non-negative number.
+  const subRateValid = (s: WizardSub) => {
+    const reg = s.regular.trim();
+    if (reg === '') return true;
+    const regNum = Number(reg);
+    if (!Number.isFinite(regNum) || regNum < 0) return false;
+    const ot = s.ot.trim();
+    if (ot === '') return true;
+    const otNum = Number(ot);
+    return Number.isFinite(otNum) && otNum >= 0;
+  };
+  const subsOk = wantsSubs === 'no' || (subs.length > 0 && subs.every(subRateValid));
   const managerCount = members.filter((m) => m.isManager).length;
   const peopleOk = members.length > 0 && managerCount > 0;
 
@@ -534,7 +584,9 @@ function CreateDepartmentWizard({
   const regularValid = regular.trim() !== '' && Number.isFinite(regularNum) && regularNum >= 0;
   const customOtNum = customOt.trim() === '' ? undefined : Number(customOt);
   const otValid = otMode === 'auto' || customOtNum === undefined || (Number.isFinite(customOtNum) && customOtNum >= 0);
-  const payOk = !wantRate || (regularValid && otValid);
+  // With sub-departments, base rates live ON the subs (set in Step 2) — the
+  // department itself carries no rate, so there is nothing to validate here.
+  const payOk = wantsSubs === 'yes' || !wantRate || (regularValid && otValid);
 
   const stepOk = [nameOk, subsOk, peopleOk, payOk][step] ?? false;
 
@@ -542,19 +594,35 @@ function CreateDepartmentWizard({
 
   const buildInput = (): CreateDepartmentInput => ({
     name: trimmedName,
-    subDepartments: effectiveSubs,
+    subDepartments: effectiveSubs.map((s) => {
+      const reg = s.regular.trim();
+      const ot = s.ot.trim();
+      return {
+        name: s.name,
+        payStructure:
+          reg === ''
+            ? null
+            : {
+                regularRate: Number(reg),
+                otRate: ot === '' ? defaultOtRate(Number(reg)) : Number(ot),
+                currency: s.currency,
+              },
+      };
+    }),
     members: members.map(({ id: _id, ...m }) => ({
       ...m,
       // A sub-department pick is only meaningful when subs are on.
       subDepartment: wantsSubs === 'yes' ? m.subDepartment ?? null : null,
     })),
-    payStructure: wantRate
-      ? {
-          regularRate: regularNum,
-          otRate: otMode === 'auto' ? defaultOtRate(regularNum) : customOtNum,
-          currency,
-        }
-      : null,
+    // Base rates ride the sub-departments when they exist (the HSL model).
+    payStructure:
+      wantsSubs === 'no' && wantRate
+        ? {
+            regularRate: regularNum,
+            otRate: otMode === 'auto' ? defaultOtRate(regularNum) : customOtNum,
+            currency,
+          }
+        : null,
   });
 
   // ----- creation run: consume the ndjson stream -----
@@ -811,7 +879,7 @@ function CreateDepartmentWizard({
                             roster={roster}
                             members={members}
                             onMembers={setMembers}
-                            subs={effectiveSubs}
+                            subs={effectiveSubs.map((s) => s.name)}
                             managerCount={managerCount}
                           />
                         )}
@@ -951,18 +1019,29 @@ function StepSubDepartments({
   deptName: string;
   wantsSubs: 'no' | 'yes';
   onWantsSubs: (v: 'no' | 'yes') => void;
-  subs: string[];
-  onSubs: (v: string[]) => void;
+  subs: WizardSub[];
+  onSubs: (v: WizardSub[]) => void;
 }) {
   const [draft, setDraft] = useState('');
   const draftKey = slugifyDeptKey(draft);
-  const duplicate = draftKey !== '' && subs.some((s) => slugifyDeptKey(s) === draftKey);
+  const duplicate = draftKey !== '' && subs.some((s) => slugifyDeptKey(s.name) === draftKey);
   const canAdd = draft.trim() !== '' && draftKey !== '' && !duplicate;
 
   const add = () => {
     if (!canAdd) return;
-    onSubs([...subs, draft.trim()]);
+    onSubs([...subs, { id: nextSubId(), name: draft.trim(), regular: '', ot: '', currency: 'PHP' }]);
     setDraft('');
+  };
+
+  const patch = (id: string, p: Partial<WizardSub>) =>
+    onSubs(subs.map((s) => (s.id === id ? { ...s, ...p } : s)));
+
+  /** Non-blank but not a valid non-negative number. */
+  const badNumber = (v: string) => {
+    const t = v.trim();
+    if (t === '') return false;
+    const n = Number(t);
+    return !Number.isFinite(n) || n < 0;
   };
 
   return (
@@ -973,7 +1052,9 @@ function StepSubDepartments({
         </p>
         <p className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">
           Like HSL: one department split into internal teams (Callback Team, Case Managers,
-          Medical Records...).
+          Medical Records...). Each sub-department carries its <strong>own base rate</strong> —
+          the fallback for its people unless someone gets an individual rate. The department
+          itself then has no department-wide rate.
         </p>
         <div className="mt-2.5 inline-flex rounded-md border border-zinc-200 p-0.5 dark:border-zinc-800">
           {(['no', 'yes'] as const).map((opt) => (
@@ -1044,30 +1125,88 @@ function StepSubDepartments({
                   Add at least one sub-department (or switch back to &ldquo;No&rdquo;).
                 </p>
               ) : (
-                <motion.div layout className="flex flex-wrap gap-1.5">
+                <motion.div layout className="space-y-2">
                   <AnimatePresence initial={false} mode="popLayout">
-                    {subs.map((sub) => (
-                      <motion.span
-                        key={slugifyDeptKey(sub)}
-                        layout
-                        initial={{ opacity: 0, scale: 0.9 }}
-                        animate={{ opacity: 1, scale: 1 }}
-                        exit={{ opacity: 0, scale: 0.9 }}
-                        transition={{ duration: 0.15, ease: EASE }}
-                        className="inline-flex items-center gap-1 rounded-md bg-orange-100 py-1 pl-2.5 pr-1 text-xs font-medium text-orange-800 dark:bg-blue-950/60 dark:text-blue-200"
-                      >
-                        {sub}
-                        <button
-                          type="button"
-                          onClick={() => onSubs(subs.filter((s) => s !== sub))}
-                          className="rounded p-0.5 transition-colors hover:bg-orange-200/70 dark:hover:bg-blue-900/60"
-                          aria-label={`Remove ${sub}`}
+                    {subs.map((sub) => {
+                      const invalid = badNumber(sub.regular) || badNumber(sub.ot);
+                      return (
+                        <motion.div
+                          key={sub.id}
+                          layout
+                          initial={{ opacity: 0, scale: 0.97 }}
+                          animate={{ opacity: 1, scale: 1 }}
+                          exit={{ opacity: 0, scale: 0.97 }}
+                          transition={{ duration: 0.15, ease: EASE }}
+                          className="rounded-lg border border-zinc-200 p-2.5 dark:border-zinc-800"
                         >
-                          <X className="h-3 w-3" />
-                        </button>
-                      </motion.span>
-                    ))}
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="flex min-w-0 items-center gap-1.5 text-sm font-medium text-zinc-800 dark:text-zinc-200">
+                              <FolderTree className="h-3.5 w-3.5 shrink-0 text-orange-500" />
+                              <span className="truncate">{sub.name}</span>
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => onSubs(subs.filter((s) => s.id !== sub.id))}
+                              className="shrink-0 rounded-md p-1 text-zinc-400 transition-colors hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950/40"
+                              aria-label={`Remove ${sub.name}`}
+                            >
+                              <X className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
+                          <div className="mt-2 flex flex-wrap items-end gap-2.5">
+                            <MiniField label={`Base rate (${CURRENCY_SYMBOL[sub.currency]}/hr)`}>
+                              <Input
+                                type="number"
+                                inputMode="decimal"
+                                min="0"
+                                step="0.01"
+                                value={sub.regular}
+                                onChange={(e) => patch(sub.id, { regular: e.target.value })}
+                                placeholder="Skip for now"
+                                className="h-8 w-32"
+                              />
+                            </MiniField>
+                            <MiniField label={`OT rate (${CURRENCY_SYMBOL[sub.currency]}/hr)`}>
+                              <Input
+                                type="number"
+                                inputMode="decimal"
+                                min="0"
+                                step="0.01"
+                                value={sub.ot}
+                                onChange={(e) => patch(sub.id, { ot: e.target.value })}
+                                placeholder={`${OT_MULTIPLIER}x regular`}
+                                className="h-8 w-28"
+                              />
+                            </MiniField>
+                            <MiniField label="Currency">
+                              <select
+                                value={sub.currency}
+                                onChange={(e) => patch(sub.id, { currency: e.target.value as PayCurrency })}
+                                className="h-8 rounded-md border border-zinc-200 bg-white px-2 text-xs text-zinc-700 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300"
+                                aria-label={`Currency for ${sub.name}`}
+                              >
+                                {PAY_CURRENCIES.map((c) => (
+                                  <option key={c} value={c}>
+                                    {currencyChipLabel(c)}
+                                  </option>
+                                ))}
+                              </select>
+                            </MiniField>
+                          </div>
+                          {invalid && (
+                            <p className="mt-1.5 flex items-center gap-1 text-[11px] font-medium text-red-600 dark:text-red-400">
+                              <AlertTriangle className="h-3 w-3 shrink-0" />
+                              Rates must be non-negative numbers.
+                            </p>
+                          )}
+                        </motion.div>
+                      );
+                    })}
                   </AnimatePresence>
+                  <p className="text-[11px] text-zinc-400 dark:text-zinc-500">
+                    A blank rate just means &ldquo;set it later&rdquo; — each sub-department gets its
+                    own entry on the Pay Structure tab either way.
+                  </p>
                 </motion.div>
               )}
             </div>
@@ -1412,7 +1551,7 @@ function StepPayAndReview({
   onCurrency,
 }: {
   deptName: string;
-  subs: string[];
+  subs: WizardSub[];
   members: WizardMember[];
   wantRate: boolean;
   onWantRate: (v: boolean) => void;
@@ -1429,6 +1568,75 @@ function StepPayAndReview({
   const autoOt = regular.trim() !== '' && Number.isFinite(regularNum) ? defaultOtRate(regularNum) : undefined;
   const otDisplay = otMode === 'auto' ? (autoOt != null ? String(autoOt) : '') : customOt;
   const managers = members.filter((m) => m.isManager);
+  const hasSubs = subs.length > 0;
+  const ratedSubs = subs.filter((s) => s.regular.trim() !== '');
+
+  // With sub-departments, base rates were set per sub in Step 2 — the
+  // department itself carries no rate, so the rate editor gives way to a
+  // read-only recap of what Step 2 configured.
+  if (hasSubs) {
+    return (
+      <div className="space-y-4">
+        <div className="rounded-lg border border-zinc-200 p-3 dark:border-zinc-800">
+          <p className="flex items-center gap-1.5 text-sm font-medium text-zinc-800 dark:text-zinc-200">
+            <Wallet className="h-4 w-4 text-orange-500" />
+            Sub-department base rates
+          </p>
+          <p className="mt-0.5 text-[11px] text-zinc-500 dark:text-zinc-400">
+            {deptName || 'This department'} carries no department-wide rate — each sub-department&apos;s
+            base rate is the fallback for its people (an individual rate always wins). Manage them
+            later from the Pay Structure tab.
+          </p>
+          <ul className="mt-2.5 space-y-1">
+            {subs.map((s) => (
+              <li
+                key={s.id}
+                className="flex items-center justify-between gap-2 rounded-md bg-zinc-50 px-2.5 py-1.5 text-xs dark:bg-zinc-900"
+              >
+                <span className="flex min-w-0 items-center gap-1.5 font-medium text-zinc-700 dark:text-zinc-300">
+                  <FolderTree className="h-3 w-3 shrink-0 text-orange-500" />
+                  <span className="truncate">{s.name}</span>
+                </span>
+                <span className="shrink-0 tabular-nums text-zinc-500 dark:text-zinc-400">
+                  {s.regular.trim() === ''
+                    ? 'No rate yet'
+                    : `${formatRate(Number(s.regular), s.currency)}${
+                        s.ot.trim() === '' ? ` · OT auto ${OT_MULTIPLIER}x` : ` · OT ${formatRate(Number(s.ot), s.currency)}`
+                      }`}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+
+        {/* Review */}
+        <div className="rounded-lg border border-orange-100 bg-orange-50/40 p-3.5 dark:border-blue-950/60 dark:bg-blue-950/10">
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-orange-700/80 dark:text-blue-300/80">
+            Ready to create
+          </p>
+          <p className="mt-1.5 text-sm font-semibold text-zinc-900 dark:text-zinc-100">{deptName}</p>
+          <ul className="mt-2 space-y-1 text-xs text-zinc-600 dark:text-zinc-400">
+            <li className="flex items-center gap-1.5">
+              <Check className="h-3.5 w-3.5 text-emerald-500" />
+              {subs.length} sub-department{subs.length === 1 ? '' : 's'}:{' '}
+              {subs.map((s) => s.name).join(', ')}
+            </li>
+            <li className="flex items-center gap-1.5">
+              <Check className="h-3.5 w-3.5 text-emerald-500" />
+              {members.length} {members.length === 1 ? 'person' : 'people'} ({managers.length}{' '}
+              manager{managers.length === 1 ? '' : 's'}: {managers.map((m) => firstNameOf(m.name)).join(', ')})
+            </li>
+            <li className="flex items-center gap-1.5">
+              <Check className="h-3.5 w-3.5 text-emerald-500" />
+              {ratedSubs.length > 0
+                ? `Base rates on ${ratedSubs.length} of ${subs.length} sub-department${subs.length === 1 ? '' : 's'} — no department-wide rate`
+                : 'No rates yet -- set each sub-department later in Pay Structure'}
+            </li>
+          </ul>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-4">
@@ -1565,9 +1773,7 @@ function StepPayAndReview({
         <ul className="mt-2 space-y-1 text-xs text-zinc-600 dark:text-zinc-400">
           <li className="flex items-center gap-1.5">
             <Check className="h-3.5 w-3.5 text-emerald-500" />
-            {subs.length > 0
-              ? `${subs.length} sub-department${subs.length === 1 ? '' : 's'}: ${subs.join(', ')}`
-              : 'No sub-departments'}
+            No sub-departments
           </li>
           <li className="flex items-center gap-1.5">
             <Check className="h-3.5 w-3.5 text-emerald-500" />
@@ -1662,7 +1868,13 @@ function CreationProgress({
         </h2>
         <p className="mx-auto mt-1 max-w-sm text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">
           {summary
-            ? `${summary.managersAdded} manager${summary.managersAdded === 1 ? '' : 's'} and ${summary.membersAdded} member${summary.membersAdded === 1 ? '' : 's'} added${summary.rateSet ? ', starting rate set' : ''}.`
+            ? `${summary.managersAdded} manager${summary.managersAdded === 1 ? '' : 's'} and ${summary.membersAdded} member${summary.membersAdded === 1 ? '' : 's'} added${
+                summary.subRatesSet > 0
+                  ? `, ${summary.subRatesSet} sub-department rate${summary.subRatesSet === 1 ? '' : 's'} set`
+                  : summary.rateSet
+                    ? ', starting rate set'
+                    : ''
+              }.`
             : error
               ? error.message
               : 'Creating department, adding managers, adding members and setting pay rates.'}

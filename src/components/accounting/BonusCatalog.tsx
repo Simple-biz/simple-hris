@@ -120,7 +120,7 @@ import {
 } from '@/lib/payment-catalog/person-comp';
 import PaymentCatalogOverview from './PaymentCatalogOverview';
 import DepartmentsTab from './DepartmentsTab';
-import { type DepartmentRegistryEntry } from '@/lib/departments/registry';
+import { subDeptStructureKey, type DepartmentRegistryEntry } from '@/lib/departments/registry';
 
 // Always render exactly 2 decimals so the exact amount is shown without ever
 // rounding cents away to a whole number (1500 -> "₱1,500.00", 1500.5 -> "₱1,500.50").
@@ -558,11 +558,20 @@ export default function BonusCatalog({ initialData }: { initialData?: InitialAcc
 
   // Custom departments as {key, name} for the Pay Structure rail + exports --
   // a custom key that ever collides with a built-in is dropped defensively.
+  // Sub-departments follow their parent as `<parentKey>:<subKey>` entries so
+  // their per-sub base rates (the fallback when the parent carries no
+  // department-wide rate) are settable/exportable like any department's.
   const customDepartments = useMemo(() => {
     const builtin = new Set(DEPARTMENTS.map((d) => d.key));
     return deptRegistry
       .filter((entry) => !builtin.has(entry.key))
-      .map((entry) => ({ key: entry.key, name: entry.name }));
+      .flatMap((entry) => [
+        { key: entry.key, name: entry.name },
+        ...entry.subDepartments.map((sub) => ({
+          key: subDeptStructureKey(entry.key, sub.key),
+          name: `${entry.name} — ${sub.name}`,
+        })),
+      ]);
   }, [deptRegistry]);
 
   // Live USD-anchored FX rates — used only to sort the Bonus Library's

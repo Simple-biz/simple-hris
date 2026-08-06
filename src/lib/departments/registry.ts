@@ -31,6 +31,17 @@ export interface DepartmentSubUnit {
   name: string;
 }
 
+/**
+ * Pay-structure department key for a SUB-department: `<parentKey>:<subKey>`
+ * (e.g. "medical_billing:intake_team"). Same namespacing convention as the
+ * built-in HSL sub-teams (`hsl:intake_specialist`), so the rate engine's
+ * namespaced-key lookup resolves both. When a department has sub-departments,
+ * base rates live on these keys — the parent department carries NO base rate.
+ */
+export function subDeptStructureKey(parentKey: string, subKey: string): string {
+  return `${parentKey}:${subKey}`;
+}
+
 /** A person of an in-app department. The registry is their system of record --
  *  they may or may not also exist on the Global Master List, and this feature
  *  neither checks nor cares. Email is the identity key within a department. */
@@ -127,13 +138,23 @@ export interface CreateDepartmentPayStructureInput {
   currency: PayCurrency;
 }
 
+export interface NewSubDepartment {
+  /** Display name; the key is derived server-side via slugifyDeptKey. */
+  name: string;
+  /** This sub-department's BASE rate (the fallback for its people unless they
+   *  get an individual structure), or null to skip — settable later from the
+   *  Pay Structure tab under the `<parentKey>:<subKey>` entry. */
+  payStructure: CreateDepartmentPayStructureInput | null;
+}
+
 export interface CreateDepartmentInput {
   name: string;
-  /** Display names; keys are derived server-side via slugifyDeptKey. */
-  subDepartments: string[];
+  subDepartments: NewSubDepartment[];
   members: NewDepartmentMember[];
   /** Department-wide starting rate, or null to skip (settable later from the
-   *  Pay Structure tab either way). */
+   *  Pay Structure tab either way). Only meaningful for a FLAT department:
+   *  when sub-departments exist, base rates live on them and this must be
+   *  null (validation enforces it). */
   payStructure: CreateDepartmentPayStructureInput | null;
 }
 
@@ -167,7 +188,7 @@ export function validateCreateDepartmentInput(input: CreateDepartmentInput): {
   }
   const subKeys = new Set<string>();
   for (const sub of input.subDepartments) {
-    const subName = sub?.trim() ?? '';
+    const subName = sub?.name?.trim() ?? '';
     if (!subName) return { ok: false, error: 'Sub-department names cannot be empty.' };
     if (subName.length > MAX_NAME_LEN) {
       return { ok: false, error: `Sub-department "${subName}" is too long (max ${MAX_NAME_LEN}).` };
@@ -180,6 +201,26 @@ export function validateCreateDepartmentInput(input: CreateDepartmentInput): {
       return { ok: false, error: `Sub-department "${subName}" is listed twice.` };
     }
     subKeys.add(subKey);
+    const rate = sub.payStructure;
+    if (rate) {
+      if (!Number.isFinite(rate.regularRate) || rate.regularRate < 0) {
+        return { ok: false, error: `${subName}: enter a non-negative regular rate.` };
+      }
+      if (rate.otRate != null && (!Number.isFinite(rate.otRate) || rate.otRate < 0)) {
+        return { ok: false, error: `${subName}: OT rate must be a non-negative number.` };
+      }
+      if (!PAY_CURRENCIES.includes(rate.currency)) {
+        return { ok: false, error: `${subName}: currency must be PHP, USD, or COP.` };
+      }
+    }
+  }
+  // With sub-departments, base rates live ON the sub-departments — the parent
+  // department must not carry its own base rate (the HSL model).
+  if (subKeys.size > 0 && input.payStructure) {
+    return {
+      ok: false,
+      error: 'A department with sub-departments carries no department-wide rate — set base rates per sub-department instead.',
+    };
   }
 
   if (input.members.length === 0) {
@@ -254,6 +295,8 @@ export interface CreateDepartmentSummary {
   managersAdded: number;
   membersAdded: number;
   rateSet: boolean;
+  /** How many sub-departments got their own base rate structure. */
+  subRatesSet: number;
   /** Non-fatal issues worth surfacing. Creation still succeeded. */
   warnings: string[];
 }
