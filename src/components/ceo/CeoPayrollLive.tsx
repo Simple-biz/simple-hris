@@ -12,6 +12,8 @@ import { useCobrowse } from '@/hooks/useCobrowse';
 import CobrowseSurface from '@/components/collab/CobrowseSurface';
 import { getSupabaseBrowserClient } from '@/lib/supabase/browser';
 import { normEmail } from '@/lib/email/norm-email';
+import { playPaymentConfirmed } from '@/lib/sound/ping-chime';
+import { selectNewlyPaidEntries } from '@/lib/ceo/newly-paid-feed';
 
 /**
  * Live payroll oversight modal — opened from the CEO Overview "Payments to send"
@@ -375,8 +377,47 @@ function DepartmentsColumn({ departments }: { departments: PaymentsLiveState['de
 // the running paid/left counter on top. Two columns per row: name + amount (USD
 // leads, PHP small beneath). Fed by usePaymentsLive (Realtime pulse + poll), so
 // new payments animate in the instant anyone marks a worker paid.
+// Staggered so a burst of payments landing in one feed refresh reads as a
+// rapid cascade instead of firing all at once as a single chord.
+const PAID_SOUND_STAGGER_MS = 160;
+
 function PaymentsFeedRail({ payments }: { payments: PaymentsLiveState }) {
   const feed = payments.recent;
+
+  // Recipient emails already accounted for (sounded, or present when this
+  // instance first mounted). Lives for as long as the modal stays open —
+  // PaymentsFeedRail unmounts when the dialog closes, so reopening starts fresh.
+  const seenEmailsRef = useRef<Set<string>>(new Set());
+  const hasSeededRef = useRef(false);
+  const pendingChimesRef = useRef<number[]>([]);
+  const nextChimeAtRef = useRef(0);
+
+  useEffect(() => {
+    if (!hasSeededRef.current) {
+      // The feed can already hold up to 60 past payments when the modal
+      // opens mid-cycle — remember them silently, don't chime for history.
+      hasSeededRef.current = true;
+      feed.forEach((p) => seenEmailsRef.current.add(p.email));
+      return;
+    }
+    const newlyPaid = selectNewlyPaidEntries(feed, seenEmailsRef.current);
+    const now = Date.now();
+    newlyPaid.forEach((p) => {
+      seenEmailsRef.current.add(p.email);
+      const playAt = Math.max(now, nextChimeAtRef.current);
+      pendingChimesRef.current.push(window.setTimeout(playPaymentConfirmed, playAt - now));
+      nextChimeAtRef.current = playAt + PAID_SOUND_STAGGER_MS;
+    });
+  }, [feed]);
+
+  // Unmount only (modal closed): drop any chimes still queued so nothing
+  // plays for a person after the CEO has stopped watching this feed.
+  useEffect(() => {
+    return () => {
+      pendingChimesRef.current.forEach((id) => window.clearTimeout(id));
+    };
+  }, []);
+
   return (
     <aside className="flex min-h-0 shrink-0 flex-col border-t border-zinc-200 max-md:max-h-[42vh] md:w-[300px] md:border-l md:border-t-0 dark:border-zinc-800">
       <div className="shrink-0 border-b border-zinc-200 px-4 py-3 dark:border-zinc-800">
