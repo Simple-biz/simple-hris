@@ -29,6 +29,10 @@ export interface PaymentsLiveState {
   remaining: number;
   /** Most-recently-paid recipients this cycle, newest first. */
   recent: PaidFeedEntry[];
+  /** True once `recent` has been populated from a real fetch at least once —
+   *  NOT the same as `!loading`: a Realtime broadcast or a failed fetch can
+   *  both flip `loading` false without `recent` ever holding real data. */
+  recentHydrated: boolean;
   /** Departments being paid this cycle, with per-dept paid progress. */
   departments: DeptProgress[];
   loading: boolean;
@@ -42,6 +46,7 @@ const EMPTY: PaymentsLiveState = {
   paid: 0,
   remaining: 0,
   recent: [],
+  recentHydrated: false,
   departments: [],
   loading: true,
   error: null,
@@ -124,6 +129,7 @@ export function usePaymentsLive(): PaymentsLiveState {
           recent: Array.isArray(json.recent) ? json.recent : prev.recent,
           departments: Array.isArray(json.departments) ? json.departments : prev.departments,
           loading: false,
+          recentHydrated: true,
         }));
         return;
       }
@@ -136,6 +142,7 @@ export function usePaymentsLive(): PaymentsLiveState {
         recent: Array.isArray(json.recent) ? json.recent : [],
         departments: Array.isArray(json.departments) ? json.departments : [],
         loading: false,
+        recentHydrated: true,
         error: json.error ?? null,
       });
     } catch {
