@@ -394,6 +394,12 @@ function PaymentsFeedRail({ payments }: { payments: PaymentsLiveState }) {
 
   useEffect(() => {
     if (!hasSeededRef.current) {
+      // Wait for the feed's first real snapshot before seeding — usePaymentsLive
+      // starts `loading: true` with `recent: []`, and the card that opens this
+      // modal isn't gated on that flag, so the modal can open before the initial
+      // fetch resolves. Seeding against that placeholder empty array would make
+      // the real backlog "newly paid" the instant it arrives.
+      if (payments.loading) return;
       // The feed can already hold up to 60 past payments when the modal
       // opens mid-cycle — remember them silently, don't chime for history.
       hasSeededRef.current = true;
@@ -408,7 +414,7 @@ function PaymentsFeedRail({ payments }: { payments: PaymentsLiveState }) {
       pendingChimesRef.current.push(window.setTimeout(playPaymentConfirmed, playAt - now));
       nextChimeAtRef.current = playAt + PAID_SOUND_STAGGER_MS;
     });
-  }, [feed]);
+  }, [feed, payments.loading]);
 
   // Unmount only (modal closed): drop any chimes still queued so nothing
   // plays for a person after the CEO has stopped watching this feed.
