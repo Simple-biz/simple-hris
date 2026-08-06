@@ -118,7 +118,17 @@ export function usePaymentsLive(): PaymentsLiveState {
   const refetch = useCallback(async () => {
     try {
       const res = await fetch('/api/ceo/payments-live', { cache: 'no-store' });
-      const json = (await res.json()) as Omit<PaymentsLiveState, 'loading'> & { error?: string };
+      const json = (await res.json()) as Omit<PaymentsLiveState, 'loading' | 'recentHydrated'> & {
+        error?: string;
+      };
+      // Only a genuinely trustworthy snapshot may latch `recentHydrated` true.
+      // A thrown fetch is already ruled out by the surrounding try/catch, but
+      // the route can still return 200/500 with valid JSON that ISN'T a real
+      // snapshot — a 500 from a caught `buildPaymentsLive()` error, a 200 with
+      // `error: 'Supabase client unavailable'`, or an auth-denial body with no
+      // `recent` key at all — every one of those would otherwise shape-check
+      // fine while carrying an empty/missing `recent`.
+      const hydrated = res.ok && !json.error && Array.isArray(json.recent);
       // While a recent Accounting broadcast is authoritative, keep its exact
       // counts and only let the poll refresh the poll-driven parts (the
       // "recently paid" feed + the department breakdown) — don't overwrite
@@ -129,11 +139,11 @@ export function usePaymentsLive(): PaymentsLiveState {
           recent: Array.isArray(json.recent) ? json.recent : prev.recent,
           departments: Array.isArray(json.departments) ? json.departments : prev.departments,
           loading: false,
-          recentHydrated: true,
+          recentHydrated: hydrated || prev.recentHydrated,
         }));
         return;
       }
-      setState({
+      setState((prev) => ({
         sourceFile: json.sourceFile ?? null,
         label: json.label ?? 'Current pay week',
         total: json.total ?? 0,
@@ -142,9 +152,9 @@ export function usePaymentsLive(): PaymentsLiveState {
         recent: Array.isArray(json.recent) ? json.recent : [],
         departments: Array.isArray(json.departments) ? json.departments : [],
         loading: false,
-        recentHydrated: true,
+        recentHydrated: hydrated || prev.recentHydrated,
         error: json.error ?? null,
-      });
+      }));
     } catch {
       setState((prev) => ({ ...prev, loading: false }));
     }

@@ -29,6 +29,15 @@ Purely a presentation-layer effect inside `PaymentsFeedRail`, keyed off the
 `payments.recent` prop it already renders. No changes to `usePaymentsLive`,
 the API route, or the DB.
 
+**Note (added during implementation):** `usePaymentsLive.ts` did end up
+gaining one small addition beyond the above — a `recentHydrated: boolean`
+field, set true only once a genuinely trustworthy snapshot has actually been
+fetched, since `loading` alone can't reliably distinguish that from a
+Realtime broadcast or a failed/erroring response. This was required to
+correctly satisfy the "no replay of the existing backlog on open" behavior
+below; it's purely additive and doesn't affect the hook's other consumer
+(the CEO Overview KPI card).
+
 - A `useRef<Set<string>>` tracks recipient emails already "seen."
 - On the first effect run after mount, seed the set with every email
   currently in `payments.recent` and play nothing — opening the modal
@@ -41,7 +50,7 @@ the API route, or the DB.
   add it to the seen set immediately (not after the timeout) so a re-render
   mid-stagger can't double-schedule the same email.
 - Relies on `PaymentsFeedRail` only being mounted while the modal is open
-  (standard Radix `Dialog`/`DialogContent` behavior, no `forceMount` in use
+  (standard Base UI `Dialog`/`DialogContent` behavior, no `keepMounted` in use
   here) — closing the modal unmounts it, clearing the ref; reopening re-seeds
   fresh with no sound for what's already in the feed.
 
