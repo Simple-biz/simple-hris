@@ -5,7 +5,8 @@ import { getServiceAccountAccessToken } from './auth';
  * someone in-app, so the row persists through the next sync-offboarded-from-sheet
  * cron (which TRUNCATE+INSERTs offboarded_sheet from the sheet).
  *
- * Column matching mirrors the flexible header detection in fetch-offboarded-sheet.ts.
+ * Column matching uses flexible header detection (tolerant of renamed/moved
+ * columns), matching the retired fetch-offboarded-sheet.ts reader.
  * Unknown columns are left blank. Best-effort — callers should not fail the
  * offboard if this throws.
  */
