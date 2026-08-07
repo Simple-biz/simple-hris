@@ -128,6 +128,81 @@ export type PayrollBreakdown = {
   flags: ValidationFlag[];
 };
 
+/**
+ * Row-level problems worth stopping on. Deliberately short: seven codes is already
+ * near the point where a reviewer stops reading them. A flag earns its place only
+ * if it means a number on screen is wrong or will not be paid.
+ *
+ * Proration note: expected pay is never re-derived as hours × rate here. A dated
+ * rate change inside the week makes pay a blend of two rates, so that multiplication
+ * legitimately disagrees with the engine. `gross` is summed from the engine's own
+ * itemised components instead, which stays correct across a mid-week raise.
+ */
+function deriveFlags(
+  input: BreakdownInput,
+  b: Omit<PayrollBreakdown, 'flags'>,
+): ValidationFlag[] {
+  const flags: ValidationFlag[] = [];
+  const hasHours = b.hours.total > 0;
+  const hasRate = input.regularRate != null;
+  const paidSomething = num(input.initialPay) > 0;
+
+  if (hasHours && !hasRate) {
+    flags.push({
+      code: 'no_rate',
+      severity: 'red',
+      message: `${b.hours.total.toFixed(2)}h logged but no pay rate resolved — this line pays nothing.`,
+    });
+  }
+
+  if (hasHours && hasRate && !paidSomething) {
+    flags.push({
+      code: 'hours_without_pay',
+      severity: 'red',
+      message: `${b.hours.total.toFixed(2)}h logged but initial pay is zero.`,
+    });
+  }
+
+  if (!hasHours && b.gross > 0) {
+    flags.push({
+      code: 'pay_without_hours',
+      severity: 'red',
+      message: `${formatPHP(b.gross)} with no hours behind it.`,
+    });
+  }
+
+  if (b.gross < 0) {
+    flags.push({
+      code: 'negative_gross',
+      severity: 'red',
+      message: `Gross is ${formatPHP(b.gross)} — adjustments exceed earnings.`,
+    });
+  }
+
+  if (b.dispatchNet == null) {
+    // No personal email, so `dispatchData` never built a payload. The row shows a
+    // figure that will not be paid to anyone. Not a readiness warning — the pay run
+    // silently omits this person.
+    flags.push({
+      code: 'not_dispatchable',
+      severity: 'red',
+      message: 'No personal email on file — this person is skipped by the pay run entirely.',
+    });
+  } else if (Math.abs(round2(b.gross - b.dispatchNet)) > MONEY_EPSILON_PHP) {
+    const delta = round2(b.dispatchNet - b.gross);
+    flags.push({
+      code: 'gross_mismatch',
+      severity: 'red',
+      message:
+        `Components sum to ${formatPHP(b.gross)} but dispatch will send ` +
+        `${formatPHP(b.dispatchNet)} — a ${formatPHP(Math.abs(delta))} ` +
+        `${delta > 0 ? 'surplus' : 'shortfall'} the itemisation does not explain.`,
+    });
+  }
+
+  return flags;
+}
+
 export function buildValidationBreakdown(input: BreakdownInput): PayrollBreakdown {
   const d = input.dispatch;
 
@@ -171,7 +246,7 @@ export function buildValidationBreakdown(input: BreakdownInput): PayrollBreakdow
       ? { from: input.rateChange.from, to: input.rateChange.to }
       : null;
 
-  return {
+  const partial: Omit<PayrollBreakdown, 'flags'> = {
     email: input.email,
     name: input.name,
     deptKey: input.deptKey,
@@ -185,8 +260,8 @@ export function buildValidationBreakdown(input: BreakdownInput): PayrollBreakdow
     adjustments,
     gross,
     dispatchNet,
-    flags: [],
   };
+  return { ...partial, flags: deriveFlags(input, partial) };
 }
 
 function deriveHours(input: BreakdownInput): PayrollBreakdown['hours'] {

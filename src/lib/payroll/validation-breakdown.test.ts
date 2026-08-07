@@ -140,3 +140,84 @@ test('an HSL row with no per-day data degrades to the base shape', () => {
   assert.equal(b.earnings.weekend, 0);
   assert.equal(b.earnings.otPay, 1590);  // the engine's own otPay
 });
+
+function codes(b: { flags: { code: string }[] }): string[] {
+  return b.flags.map((f) => f.code).sort();
+}
+
+test('no_rate: hours logged but no rate resolved', () => {
+  const b = buildValidationBreakdown(baseInput({
+    regularRate: null, otRate: null, regularPay: null, otPay: null, initialPay: null,
+    dispatch: { final: 0, pab: 0, tech: 0, other: 0, adjustment: 0,
+                mesaDeduction: 0, mesaDisbursement: 0, orphanage: 0 },
+  }));
+  assert.ok(codes(b).includes('no_rate'));
+  assert.equal(b.flags.find((f) => f.code === 'no_rate')?.severity, 'red');
+});
+
+test('hours_without_pay: hours worked, nothing computed', () => {
+  const b = buildValidationBreakdown(baseInput({
+    regularPay: 0, otPay: 0, initialPay: 0,
+    dispatch: { final: 0, pab: 0, tech: 0, other: 0, adjustment: 0,
+                mesaDeduction: 0, mesaDisbursement: 0, orphanage: 0 },
+  }));
+  assert.ok(codes(b).includes('hours_without_pay'));
+});
+
+test('pay_without_hours: money with no hours behind it', () => {
+  const b = buildValidationBreakdown(baseInput({
+    totalHours: 0, regularHours: 0, otHours: 0,
+    regularPay: 0, otPay: 0, initialPay: 0,
+    dispatch: { final: 1000, pab: 0, tech: 0, other: 1000, adjustment: 0,
+                mesaDeduction: 0, mesaDisbursement: 0, orphanage: 0 },
+  }));
+  assert.ok(codes(b).includes('pay_without_hours'));
+});
+
+test('negative_gross: an adjustment larger than the earnings', () => {
+  const b = buildValidationBreakdown(baseInput({
+    dispatch: { final: -1900, pab: 0, tech: 0, other: 0, adjustment: -10500,
+                mesaDeduction: 0, mesaDisbursement: 0, orphanage: 0 },
+  }));
+  assert.ok(codes(b).includes('negative_gross'));
+});
+
+test('gross_mismatch: the parts do not sum to the stated total', () => {
+  // Reproduces the live bug: a MESA disbursement present in the engine total but
+  // missing from the itemisation the table renders.
+  const b = buildValidationBreakdown(baseInput({
+    dispatch: { final: 12000, pab: 0, tech: 0, other: 1000, adjustment: 0,
+                mesaDeduction: 100, mesaDisbursement: 0, orphanage: 0 },
+  }));
+  assert.equal(b.gross, 9500);
+  assert.equal(b.dispatchNet, 12000);
+  assert.ok(codes(b).includes('gross_mismatch'));
+});
+
+test('gross_mismatch tolerates a centavo of rounding', () => {
+  const b = buildValidationBreakdown(baseInput({
+    dispatch: { final: 9500.01, pab: 0, tech: 0, other: 1000, adjustment: 0,
+                mesaDeduction: 100, mesaDisbursement: 0, orphanage: 0 },
+  }));
+  assert.ok(!codes(b).includes('gross_mismatch'));
+});
+
+test('not_dispatchable: the row will never become a payment', () => {
+  const b = buildValidationBreakdown(baseInput({ dispatch: null }));
+  assert.equal(b.dispatchNet, null);
+  assert.ok(codes(b).includes('not_dispatchable'));
+  // gross_mismatch must NOT also fire — there is no total to disagree with.
+  assert.ok(!codes(b).includes('gross_mismatch'));
+});
+
+test('a prorated week does not trip gross_mismatch', () => {
+  const b = buildValidationBreakdown(baseInput({
+    rateChange: { from: 285, to: 305 },
+  }));
+  assert.ok(!codes(b).includes('gross_mismatch'));
+  assert.deepEqual(b.rateChange, { from: 285, to: 305 });
+});
+
+test('a clean row carries no flags', () => {
+  assert.deepEqual(buildValidationBreakdown(baseInput()).flags, []);
+});
