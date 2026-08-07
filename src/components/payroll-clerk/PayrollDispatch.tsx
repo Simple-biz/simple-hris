@@ -54,7 +54,7 @@ import { useDispatchLock } from '@/hooks/useDispatchLock';
 import { useWizardDispatchLock } from '@/hooks/useWizardDispatchLock';
 import { usePaymentsLivePublisher } from '@/hooks/usePaymentsLive';
 
-type TabId = 'all' | 'usd' | 'cop' | 'urgent' | 'done' | 'reports' | 'excluded' | 'orphanage' | 'notifications' | ProcessorId;
+type TabId = 'all' | 'cop' | 'urgent' | 'done' | 'reports' | 'excluded' | 'orphanage' | 'notifications' | ProcessorId;
 
 interface ProcessorVisual {
   Icon: React.ComponentType<{ className?: string }>;
@@ -150,13 +150,6 @@ const URGENT_VISUAL: ProcessorVisual = {
   accent: 'from-amber-500 to-orange-600',
   glow: 'from-amber-100/80 via-orange-50/60 to-white dark:from-amber-950/40 dark:via-orange-950/30 dark:to-zinc-900',
   blurb: 'MESA · pay now',
-};
-
-const USD_VISUAL: ProcessorVisual = {
-  Icon: DollarSign,
-  accent: 'from-green-600 to-emerald-700',
-  glow: 'from-green-100/80 via-emerald-50/60 to-white dark:from-green-950/40 dark:via-emerald-950/30 dark:to-zinc-900',
-  blurb: 'Paid in US dollars',
 };
 
 const COP_VISUAL: ProcessorVisual = {
@@ -361,13 +354,14 @@ export default function PayrollDispatch() {
     }
   }, [activeTab, urgentCount, urgentDispatchedCount]);
 
-  // Non-PHP people (US Managers in USD, Colombian staff in COP, etc.) are carved
-  // OUT of the PHP processor tabs and paid separately in their own currency tab
-  // — each person appears in exactly one place, so there's no double-paying.
-  // Everyone else (PHP) stays in the normal processor queues.
-  const usdPending = useMemo(() => pending.filter((r) => r.payCurrency === 'USD'), [pending]);
+  // COP-paid people (Colombian staff on COP-denominated structures) are carved
+  // OUT of the processor tabs and paid separately in their own currency tab —
+  // each person appears in exactly one place, so there's no double-paying.
+  // EVERYONE else rides the normal processor queues, USD-denominated people
+  // (US-based staff) included: their row already leads with the USD figure the
+  // same way a PHP row does, so a separate USD bucket only hid them.
   const copPending = useMemo(() => pending.filter((r) => r.payCurrency === 'COP'), [pending]);
-  const phpPending = useMemo(() => pending.filter((r) => r.payCurrency === 'PHP'), [pending]);
+  const mainPending = useMemo(() => pending.filter((r) => r.payCurrency !== 'COP'), [pending]);
 
   const counts = useMemo(() => {
     const result: Record<ProcessorId, number> = {
@@ -378,11 +372,11 @@ export default function PayrollDispatch() {
       jeeves: 0,
       wires: 0,
     };
-    for (const row of phpPending) result[row.processor] += 1;
+    for (const row of mainPending) result[row.processor] += 1;
     return result;
-  }, [phpPending]);
+  }, [mainPending]);
 
-  const totalPending = phpPending.length;
+  const totalPending = mainPending.length;
   // "Sent" counts only rows that actually went through (status='paid'). Rows
   // logged with Threshold / Problem are excluded so the headline doesn't lie.
   const paidRows = useMemo(() => paid.filter((p) => p.status === 'paid'), [paid]);
@@ -567,12 +561,12 @@ export default function PayrollDispatch() {
   ]);
 
   const visibleRows = useMemo(() => {
-    if (activeTab === 'all') return phpPending;
+    if (activeTab === 'all') return mainPending;
     if (PROCESSORS.some((p) => p.id === activeTab)) {
-      return phpPending.filter((r) => r.processor === activeTab);
+      return mainPending.filter((r) => r.processor === activeTab);
     }
     return [];
-  }, [phpPending, activeTab]);
+  }, [mainPending, activeTab]);
 
   // Stable references so React.memo on ProcessorQueue / QueueRowItem actually
   // skips re-renders when only sibling state changes (e.g. opening Mark Paid
@@ -943,28 +937,6 @@ export default function PayrollDispatch() {
         />
       );
     }
-    if (activeTab === 'usd') {
-      return (
-        <ProcessorQueue
-          processor={null}
-          rows={usdPending}
-          onMarkPaid={handleOpenMarkPaid}
-          onViewPaystub={handleViewPaystub}
-          periodStart={period.start}
-          periodEnd={period.end}
-          onRefresh={refresh}
-          nativeCurrency="USD"
-          // TXN ID column only — the currency tabs deliberately skip the
-          // Pending/Paid tab strip (Done covers everything paid), so the log comes
-          // in through `txnRecords` rather than `paidRecords`.
-          txnRecords={paid}
-          allLabel={{
-            title: 'USD payments',
-            subtitle: 'People paid in US dollars — handled separately from the peso payroll. Mark each paid as it goes out.',
-          }}
-        />
-      );
-    }
     if (activeTab === 'cop') {
       return (
         <ProcessorQueue
@@ -1271,19 +1243,6 @@ export default function PayrollDispatch() {
                 </motion.div>
               );
             })}
-            <motion.div variants={itemPop} className="w-[176px] shrink-0 lg:w-auto">
-              <ProcessorCard
-                label="USD"
-                subtitle={USD_VISUAL.blurb}
-                count={usdPending.length}
-                Icon={USD_VISUAL.Icon}
-                accent={USD_VISUAL.accent}
-                glow={USD_VISUAL.glow}
-                active={activeTab === 'usd'}
-                onClick={() => setActiveTab('usd')}
-                iconOnlyFallback
-              />
-            </motion.div>
             {copPending.length > 0 && (
               <motion.div variants={itemPop} className="w-[176px] shrink-0 lg:w-auto">
                 <ProcessorCard
@@ -1357,7 +1316,7 @@ export default function PayrollDispatch() {
           <AnimatePresence mode="wait">
             <motion.div
               key={
-                activeTab === 'reports' || activeTab === 'excluded' || activeTab === 'orphanage' || activeTab === 'urgent' || activeTab === 'usd' || activeTab === 'cop'
+                activeTab === 'reports' || activeTab === 'excluded' || activeTab === 'orphanage' || activeTab === 'urgent' || activeTab === 'cop'
                   ? activeTab
                   : activeTab +
                     (loading || !hydrated
