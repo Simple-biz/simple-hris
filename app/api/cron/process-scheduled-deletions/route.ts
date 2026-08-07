@@ -31,9 +31,14 @@ function isAuthorized(req: NextRequest): boolean {
 /**
  * GET/POST /api/cron/process-scheduled-deletions
  *
- * Daily Vercel cron (see vercel.json). Finds off-boarded non-Lead-Gen rows whose
- * 14-day deactivation window has elapsed and fires `offboarding_delete` to
+ * Daily Vercel cron (see vercel.json). Finds off-boarded rows whose 14-day
+ * deactivation window has elapsed and fires `offboarding_delete` to
  * permanently delete the Workspace account.
+ *
+ * LEGACY DRAIN since 2026-08-07: offboards now fire `offboarding_delete`
+ * immediately for every reason/department and never stamp
+ * `scheduled_deletion_at`, so this cron only exists to work off rows stamped
+ * before that change. Once the backlog is empty it will always no-op.
  *
  * Idempotency: rows are row-keyed (not email-keyed) and stamped with
  * `deletion_processed_at` only after the webhook succeeds, so a Vercel cron

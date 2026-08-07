@@ -97,10 +97,14 @@ export const WEBHOOK_SAMPLE_PAYLOADS: Record<string, unknown> = {
     ],
   },
 
+  // The deactivate flow is the suspend/temporary pathway only: fired for the
+  // HR temporary_pause reason (and mirrored by manager_suspend below) with
+  // deletion_mode "none" — never for a real offboard, which always rides
+  // offboarding_delete.
   offboarding_deactivate: {
     event: 'employee.offboarded',
     phase: 'deactivate',
-    deletion_mode: 'delayed_14d',
+    deletion_mode: 'none',
     hubstaff_pay_rate: 0,
     off_boarded_by: 'hr@simple.biz',
     off_boarded_at: '2026-08-03T09:15:00.000Z',
@@ -112,11 +116,11 @@ export const WEBHOOK_SAMPLE_PAYLOADS: Record<string, unknown> = {
         name: 'Jordan Cruz',
         departments: ['Lead Gen - US'],
         start_date: '2026-01-12',
-        reason: 'resigned',
+        reason: 'temporary_pause',
         note: null,
         off_boarded_by: 'hr@simple.biz',
         off_boarded_at: '2026-08-03T09:15:00.000Z',
-        scheduled_deletion_at: '2026-08-17T09:15:00.000Z',
+        scheduled_deletion_at: null,
       },
     ],
   },

@@ -16,7 +16,9 @@ Key files:
 - `app/api/hr/offboard/route.ts` — the actual offboard (single **or** batch), fires teardown webhooks.
 - `src/lib/hr/offboard-webhooks.ts` — slugs, URL resolution, `fireOffboardWebhook`.
 - `src/lib/hr/offboard-rbac.ts` — snapshot / revoke / restore RBAC grants.
-- `app/api/cron/process-scheduled-deletions/route.ts` — fires the delayed delete after 14 days.
+- `app/api/cron/process-scheduled-deletions/route.ts` — legacy drain: fires the delayed delete for
+  rows stamped with `scheduled_deletion_at` before the 2026-08-07 routing change (new offboards
+  never set it).
 
 ---
 
@@ -38,12 +40,11 @@ HR offboarding queue  ── HR processes one-by-one ──▶ POST /api/hr/offb
         │                                              ├─ snapshot + revoke ALL RBAC grants
         │                                              ├─ force-logout live sessions
         │                                              ├─ insert offboarded_sheet + Google Sheet
-        │                                              └─ n8n: offboarding_deactivate / _delete
-        ▼
-(non-Lead-Gen) scheduled_deletion_at = now + 14d
-        │
-        ▼
-daily cron /api/cron/process-scheduled-deletions ──▶ n8n: offboarding_delete
+        │                                              └─ n8n: offboarding_delete (EVERY offboard,
+        │                                                 any reason) · offboarding_deactivate only
+        ▼                                                 for temporary_pause (suspend, never delete)
+(legacy only) daily cron /api/cron/process-scheduled-deletions drains rows whose
+scheduled_deletion_at was stamped before 2026-08-07 ──▶ n8n: offboarding_delete
 ```
 
 ---
@@ -91,19 +92,23 @@ For each person (`offboardOnePerson`, run in parallel, sharing one batch timesta
    the Google "Offboarded" sheet, and cancel any pending hires in `hr_pending_employees`.
 4. **Audit:** `insertAuditLog({ action: "hr.employee.offboarded", ... })`.
 
-### Department-aware teardown
+### Pathway routing (2026-08-07 — delete vs suspend, nothing department-aware)
 
-- **Lead Gen** (every department the person holds normalizes to `lead_gen`) → phase `delete`,
-  `deletion_mode: "immediate"`, fires `offboarding_delete` right away. No timer.
-- **Anyone else** → phase `deactivate`, fires `offboarding_deactivate` immediately (suspend the
-  Workspace account, send the termination email, remove the Hubstaff member at pay rate 0) **and**
-  stamps `scheduled_deletion_at = now + 14 days`. The daily cron
-  (`/api/cron/process-scheduled-deletions`) fires `offboarding_delete` once the timer elapses.
-- **Reason `temporary_pause`** (any department, overrides the Lead-Gen rule) → phase `deactivate`,
-  `deletion_mode: "none"`, fires `offboarding_deactivate` (suspend only) and stamps **no**
-  `scheduled_deletion_at` — the cron never picks the row up, so the account is suspended but never
-  deleted. Intended for approved time-off; the person returns via re-onboarding (which restores the
-  RBAC snapshot and clears the off-boarded stamps).
+- **Every offboard, ANY reason, ANY department** → phase `delete`, `deletion_mode: "immediate"`,
+  fires `offboarding_delete` right away. No timer, no 14-day deferral — the n8n delete-button
+  pathway IS the offboard automation. `scheduled_deletion_at` is never stamped anymore.
+- **Reason `temporary_pause`** (the only exception) → phase `deactivate`, `deletion_mode: "none"`,
+  fires `offboarding_deactivate` (suspend only) and stamps **no** `scheduled_deletion_at` — the
+  account is suspended but never deleted. Intended for approved time-off; the person returns via
+  re-onboarding (which restores the RBAC snapshot and clears the off-boarded stamps). The
+  Manager → My Team **Suspend** button rides this same flow via its own `manager_suspend` slug
+  (see `src/lib/hr/manager-temp-pause-webhooks.ts`) — so the deactivate flow is now exclusively
+  the suspend/temporary pathway.
+
+> Before 2026-08-07 the teardown was department-aware: only all-Lead-Gen people deleted
+> immediately; everyone else got `offboarding_deactivate` + a 14-day `scheduled_deletion_at` timer
+> for the cron. That deferral is retired — the cron remains only to drain rows stamped before the
+> change.
 
 ### RBAC snapshot / restore (`offboard-rbac.ts`)
 
@@ -134,8 +139,8 @@ source of truth) and uses a 25s timeout.
 | Slug | Default endpoint | Fired by |
 |---|---|---|
 | `manager_offboard_notify` | `.../webhook/manager-offboard-notify` | manager submits to the queue |
-| `offboarding_deactivate` | `.../webhook/offboarding-deactivate` | HR offboards a non-Lead-Gen person |
-| `offboarding_delete` | `.../webhook/offboarding-delete` | HR offboards Lead Gen **or** the 14-day cron elapses |
+| `offboarding_deactivate` | `.../webhook/offboarding-deactivate` | suspend/temp-pause ONLY (`temporary_pause` reason; Manager Suspend rides the same flow via `manager_suspend`) |
+| `offboarding_delete` | `.../webhook/offboarding-delete` | EVERY offboard, any reason/department (plus the legacy cron draining pre-2026-08-07 timers) |
 
 ### Manager-offboard notify (count only → alissar@simple.biz)
 
@@ -155,16 +160,16 @@ only — no names, no PII**:
 
 ### Offboard teardown payload (multi-employee)
 
-`/api/hr/offboard` coalesces a batch **by (phase, deletion_mode)** and fires **at most three**
-POSTs (regular `deactivate`, temporary-pause `deactivate` with `deletion_mode: "none"`, and
-`delete`), each carrying an `employees[]` array. The exact envelope emitted
-(`app/api/hr/offboard/route.ts`):
+`/api/hr/offboard` coalesces a batch **by (phase, deletion_mode)** and fires **at most two**
+POSTs (`delete` with `deletion_mode: "immediate"` for every real offboard, and temporary-pause
+`deactivate` with `deletion_mode: "none"`), each carrying an `employees[]` array. The exact
+envelope emitted (`app/api/hr/offboard/route.ts`):
 
 ```jsonc
 {
   "event": "employee.offboarded",
-  "phase": "deactivate",              // or "delete"
-  "deletion_mode": "delayed_14d",     // "immediate" for the delete phase
+  "phase": "delete",                  // "deactivate" only for temporary_pause
+  "deletion_mode": "immediate",       // "none" for temporary_pause
   "hubstaff_pay_rate": 0,
   "off_boarded_by": "hr@simple.biz",  // actor; REQUIRED (see gotchas)
   "off_boarded_at": "2026-07-07T..Z",
@@ -180,7 +185,7 @@ POSTs (regular `deactivate`, temporary-pause `deactivate` with `deletion_mode: "
       "note": null,
       "off_boarded_by": "hr@simple.biz",  // duplicated per-item on purpose
       "off_boarded_at": "2026-07-07T..Z",
-      "scheduled_deletion_at": "2026-07-21T..Z"  // null for immediate delete
+      "scheduled_deletion_at": null       // never stamped anymore
     }
   ]
 }
@@ -190,9 +195,10 @@ POSTs (regular `deactivate`, temporary-pause `deactivate` with `deletion_mode: "
 **Split Out** on `employees`, the per-person email node is self-contained and doesn't have to reach
 back to the parent envelope.
 
-> The **delayed cron** (`process-scheduled-deletions`) fires a *slightly* different `delete`
+> The **legacy delayed cron** (`process-scheduled-deletions`) fires a *slightly* different `delete`
 > payload keyed on `work_email` (`deletion_mode: "delayed_14d"`, `scheduled: true`) — it processes
-> due rows one at a time rather than an `employees[]` batch.
+> due rows one at a time rather than an `employees[]` batch. Only rows whose
+> `scheduled_deletion_at` was stamped before 2026-08-07 can appear there.
 
 ### n8n gotchas (see the n8n webhook-gotchas note)
 
@@ -246,7 +252,8 @@ DB `CHECK` constraint enforcing it:
 
 Marking a pending hire **Did not attend** (a no-show) in the manager's Newly Hired panel already runs
 the *same* offboarding webhooks HR uses — [no-show/route.ts](app/api/manager/pending-hires/[id]/no-show/route.ts)
-fires `offboarding_deactivate` (or `offboarding_delete` for Lead Gen) keyed on the pending row's
+fires `offboarding_delete` (every offboard rides the delete pathway since 2026-08-07, no matter the
+department) keyed on the pending row's
 `work_email`, with **`never_promoted: true`**, `event: "hire.no_show"`, and a defaulted
 **`reason: "ncns"`** — a "did not attend orientation" no-show is by definition a No-Call-No-Show, so
 the payload carries the same canonical `reason` key HR sends from the Offboard dialog, giving the n8n
@@ -254,8 +261,8 @@ automation something to branch on. Because the Hubstaff invite
 only fires at **promote**, `never_promoted:true` tells n8n the Hubstaff removal step is a no-op for a
 hire who never had a seat — Hubstaff is a step *inside* the webhook flow, not a guaranteed per-hire
 effect here. When the pending row has **no** `work_email` yet, nothing is torn down — the row is just
-flipped to `no_show`. Non-Lead-Gen no-shows get the same 14-day `scheduled_deletion_at` timer on the
-pending row (the cron fires the delete later); Lead Gen stamps `deletion_processed_at` immediately.
+flipped to `no_show`. Every no-show stamps `deletion_processed_at` immediately; the 14-day
+`scheduled_deletion_at` timer is no longer set.
 
 The warning copy is now explicit that this is a real offboard:
 [NewlyHiredPanel.tsx](src/components/manager/NewlyHiredPanel.tsx) both the button tooltip, the panel

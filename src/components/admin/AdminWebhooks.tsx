@@ -77,13 +77,13 @@ const KNOWN_SLUGS: Array<{ slug: string; label: string; description: string }> =
     slug: 'offboarding_deactivate',
     label: 'Offboarding - Deactivate (n8n)',
     description:
-      'Fired immediately when a non-Lead-Gen employee is off-boarded: suspends the Workspace account, sends the termination notice, and removes the member from Hubstaff (pay_rate 0).',
+      'The suspend/temporary pathway ONLY: fired for the HR temporary_pause reason (and by Manager Suspend via its own slug) with deletion_mode "none" — disables the Workspace account, nothing is ever deleted. Real offboards never ride this flow.',
   },
   {
     slug: 'offboarding_delete',
     label: 'Offboarding - Delete (n8n)',
     description:
-      'Permanently deletes the Workspace account. Fired immediately for Lead Gen; fired by the scheduled-deletion cron 14 days after deactivation for other departments.',
+      'The offboard pathway: fired immediately for EVERY offboard, no matter the reason or department (HR offboard, manager queue processing, no-shows) — permanently deletes the Workspace account. The scheduled-deletion cron only drains rows stamped before the 2026-08-07 routing change.',
   },
   {
     slug: 'manager_suspend',

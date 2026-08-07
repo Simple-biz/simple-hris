@@ -23,8 +23,8 @@
 --   create_workspace_account  -> HR "Save and stage hire"
 --   hubstaff_invite_user      -> HR Pending-Hires "Promote"
 --   onboarding_send           -> HR Onboarding "Send" (invite email + dept+country pay-plan PDF)
---   offboarding_deactivate    -> Offboard (non-Lead-Gen): suspend account + email + Hubstaff removal
---   offboarding_delete        -> Offboard (Lead Gen now / others after 14d): permanently delete account
+--   offboarding_deactivate    -> Suspend/temp-pause ONLY (deletion_mode "none"): disable account, never delete
+--   offboarding_delete        -> EVERY offboard (any reason/department): permanently delete account now
 --   new_hire_checklist_lock   -> HR New Hire Checklist "Lock in": full locked-week payload
 --
 -- NOTE: the legacy single 'offboarding' slug is retired. If an existing config
@@ -91,14 +91,14 @@ BEGIN
       'label', 'Offboarding - Deactivate (n8n)',
       'url', 'https://simpledotbiz.app.n8n.cloud/webhook/offboarding-deactivate',
       'active', false,
-      'description', 'Fired immediately when a non-Lead-Gen employee is off-boarded: suspends the Workspace account, sends the termination notice, and removes the member from Hubstaff (pay_rate 0).'
+      'description', 'The suspend/temporary pathway ONLY: fired for the HR temporary_pause reason (and by Manager Suspend via its own slug) with deletion_mode "none" -- disables the Workspace account, nothing is ever deleted. Real offboards never ride this flow.'
     ),
     jsonb_build_object(
       'slug', 'offboarding_delete',
       'label', 'Offboarding - Delete (n8n)',
       'url', 'https://simpledotbiz.app.n8n.cloud/webhook/offboarding-delete',
       'active', false,
-      'description', 'Permanently deletes the Workspace account. Fired immediately for Lead Gen; fired by the scheduled-deletion cron 14 days after deactivation for other departments.'
+      'description', 'The offboard pathway: fired immediately for EVERY offboard, no matter the reason or department (HR offboard, manager queue processing, no-shows) -- permanently deletes the Workspace account. The scheduled-deletion cron only drains rows stamped before the 2026-08-07 routing change.'
     ),
     jsonb_build_object(
       'slug', 'manager_suspend',

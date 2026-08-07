@@ -2,20 +2,20 @@ import { resolveWebhookUrl } from "@/lib/webhooks/resolve-webhook";
 import { normalizeDeptToKey } from "@/lib/payroll/normalize-dept-key";
 
 /**
- * Offboarding is a two-phase, department-aware teardown driven entirely by the
- * HRIS (n8n does no waiting):
+ * Two n8n pathways, routed by WHAT happened — not by reason or department:
  *
- *   Lead Gen        -> fire `offboarding_delete` immediately. No timer.
- *   Other depts     -> fire `offboarding_deactivate` immediately (suspend the
- *                      Workspace account, send the termination email, remove the
- *                      Hubstaff member at pay_rate 0) AND stamp
- *                      scheduled_deletion_at = now()+14d. The daily cron
- *                      (/api/cron/process-scheduled-deletions) fires
- *                      `offboarding_delete` once the timer elapses.
- *   temporary_pause -> fire `offboarding_deactivate` (suspend only) with
- *                      deletion_mode: "none" and NO scheduled_deletion_at, for
- *                      ANY department — the account is never deleted; the person
- *                      is expected back via re-onboarding.
+ *   Offboard (ANY reason, ANY department, incl. no-shows)
+ *                   -> fire `offboarding_delete` immediately. No timer, no
+ *                      14-day deferral — the delete-button pathway in n8n IS
+ *                      the offboard automation. (The old deactivate-then-cron
+ *                      deferral is retired; /api/cron/process-scheduled-deletions
+ *                      only drains rows stamped before the 2026-08-07 change.)
+ *   Suspend / temporary_pause
+ *                   -> fire `offboarding_deactivate` (suspend only) with
+ *                      deletion_mode: "none" and NO scheduled_deletion_at —
+ *                      the account is never deleted; the person is expected
+ *                      back (re-onboard or Manager "Reactivation"). This flow
+ *                      is exclusively the suspend/temporary pathway now.
  *
  * The legacy single 'offboarding' slug is retired. URL resolution still goes
  * through the Admin -> Webhooks slug registry (resolveWebhookUrl), so the
@@ -47,21 +47,13 @@ const MANAGER_SUSPEND_DEFAULT_URL = DEACTIVATE_DEFAULT_URL;
 const MANAGER_REACTIVATE_DEFAULT_URL =
   "https://simpledotbiz.app.n8n.cloud/webhook/reactivate-temp-pause";
 
-/** Days a non-Lead-Gen account stays deactivated before the cron deletes it. */
-export const DELETION_DELAY_DAYS = 14;
-
 /**
- * Lead Gen is the only department deleted immediately. Anything that does not
- * normalize to the 'lead_gen' key (incl. unknown department strings) is treated
- * as non-Lead-Gen and gets the safer 14-day deferral.
+ * True when the department normalizes to the 'lead_gen' key. No longer part of
+ * the offboard routing (every offboard deletes immediately) — still used by the
+ * orientation flow for Lead-Gen-only behavior (CallTools provisioning).
  */
 export function isLeadGenDepartment(department: string | null | undefined): boolean {
   return normalizeDeptToKey(department) === "lead_gen";
-}
-
-/** ISO timestamp `days` in the future, computed from `fromIso` (defaults caller-supplied). */
-export function scheduledDeletionFrom(fromIso: string, days = DELETION_DELAY_DAYS): string {
-  return new Date(new Date(fromIso).getTime() + days * 24 * 60 * 60 * 1000).toISOString();
 }
 
 function resolveUrl(slug: string): Promise<string> {

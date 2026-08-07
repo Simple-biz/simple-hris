@@ -7,11 +7,8 @@ import { markPendingHireNoShow } from "@/lib/supabase/hr-pending-employees";
 import { createSupabaseServiceRoleClient } from "@/lib/supabase/server";
 import { insertAuditLog } from "@/lib/supabase/audit-log";
 import {
-  OFFBOARD_DEACTIVATE_SLUG,
   OFFBOARD_DELETE_SLUG,
   fireOffboardWebhook,
-  isLeadGenDepartment,
-  scheduledDeletionFrom,
 } from "@/lib/hr/offboard-webhooks";
 import { requireFeatureEdit } from "@/lib/auth/authorize-feature";
 import { deniedResponse } from "@/lib/auth/authorize-email";
@@ -98,13 +95,14 @@ async function authorizeAndLoad(id: number) {
  * Body: { note?: string }
  *
  * Manager marks a staged hire as "Did not attend orientation": flips the row to
- * status='no_show' and fires the department-aware account teardown keyed by the
- * pending row's work_email (the hire was never promoted, so there is no
- * global_master_list row).
+ * status='no_show' and fires the account teardown keyed by the pending row's
+ * work_email (the hire was never promoted, so there is no global_master_list
+ * row).
  *
- *   Lead Gen        -> fire offboarding_delete now; stamp deletion_processed_at.
- *   Other depts     -> fire offboarding_deactivate now; set the 14-day timer on
- *                      the pending row (the cron fires the delete later).
+ *   Has work_email  -> fire offboarding_delete now (every offboard rides the
+ *                      delete pathway, no matter the department — the
+ *                      deactivate flow is reserved for suspends/temp pauses);
+ *                      stamp deletion_processed_at.
  *   No work_email   -> no account exists yet; just mark no_show, fire nothing.
  *
  * never_promoted:true tells n8n the Hubstaff member was never invited (invite
@@ -139,18 +137,16 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   }
 
   const workEmail = normEmail(row.work_email);
-  const leadGen = isLeadGenDepartment(row.department);
   const nowIso = new Date().toISOString();
 
   // Fire the teardown only when an account actually exists (work email present).
   let webhook: { fired: boolean; status: number | null; error: string | null } | null = null;
   if (workEmail) {
-    const slug = leadGen ? OFFBOARD_DELETE_SLUG : OFFBOARD_DEACTIVATE_SLUG;
-    webhook = await fireOffboardWebhook(slug, {
+    webhook = await fireOffboardWebhook(OFFBOARD_DELETE_SLUG, {
       event: "hire.no_show",
       reason: NO_SHOW_REASON,
-      phase: leadGen ? "delete" : "deactivate",
-      deletion_mode: leadGen ? "immediate" : "delayed_14d",
+      phase: "delete",
+      deletion_mode: "immediate",
       never_promoted: true,
       hubstaff_pay_rate: 0,
       work_email: workEmail,
@@ -162,10 +158,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     });
   }
 
-  // Lead Gen (or no account): nothing left to delete later -> mark processed now.
-  // Non-Lead-Gen with an account: set the 14-day timer for the cron.
-  const scheduledDeletionAt = workEmail && !leadGen ? scheduledDeletionFrom(nowIso) : null;
-  const deletionProcessedAt = !workEmail || leadGen ? nowIso : null;
+  // The delete fires now (or no account existed) -> nothing left for the cron;
+  // mark the row processed immediately and never set a deferred-deletion timer.
+  const scheduledDeletionAt = null;
+  const deletionProcessedAt = nowIso;
 
   const { row: updated, error } = await markPendingHireNoShow(id, {
     markedBy: sessionEmail,
@@ -185,8 +181,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       target_email: workEmail || null,
       department: row.department,
       reason: NO_SHOW_REASON,
-      lead_gen: leadGen,
-      deletion_mode: workEmail ? (leadGen ? "immediate" : "delayed_14d") : "no_account",
+      deletion_mode: workEmail ? "immediate" : "no_account",
       scheduled_deletion_at: scheduledDeletionAt,
       webhook_fired: webhook ? webhook.fired && webhook.error == null : false,
       webhook_status: webhook?.status ?? null,

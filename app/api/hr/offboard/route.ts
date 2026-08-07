@@ -12,8 +12,6 @@ import {
   OFFBOARD_DEACTIVATE_SLUG,
   OFFBOARD_DELETE_SLUG,
   fireOffboardWebhook,
-  isLeadGenDepartment,
-  scheduledDeletionFrom,
 } from "@/lib/hr/offboard-webhooks";
 import { appendOffboardedSheetRow } from "@/lib/google-sheets/append-offboarded-sheet";
 import { snapshotOffboardedBankInfo } from "@/lib/hr/offboard-snapshot";
@@ -26,7 +24,7 @@ export const runtime = "nodejs";
 // The offboarding webhooks respond "when the last node finishes" (deactivate
 // suspends the Workspace account AND sends the termination email synchronously),
 // which can take well over the old 8s budget. Give the function headroom so
-// Vercel doesn't kill it before n8n replies. A batch fires at most three webhooks
+// Vercel doesn't kill it before n8n replies. A batch fires at most two webhooks
 // (one per phase/deletion-mode group) regardless of how many people are in it, so
 // this ceiling still holds — the per-person account teardown is fanned out inside
 // each n8n flow.
@@ -82,7 +80,7 @@ interface OffboardEmployeePayload {
 
 type Phase = "deactivate" | "delete";
 /** "none" = temporary pause: suspended via deactivate, never deleted. */
-type DeletionMode = "immediate" | "delayed_14d" | "none";
+type DeletionMode = "immediate" | "none";
 
 interface OffboardOutcome {
   work_email: string;
@@ -146,60 +144,31 @@ async function offboardOnePerson(
 ): Promise<OffboardOutcome> {
   const { work_email, reason, note } = req;
   const isTemporaryPause = reason === "temporary_pause";
-  const fallbackMode: DeletionMode = isTemporaryPause ? "none" : "delayed_14d";
-  const base: Omit<OffboardOutcome, "phase" | "deletion_mode"> = {
+
+  // Every offboard, no matter the reason or department, rides the DELETE
+  // pathway: fire `offboarding_delete` immediately — no 14-day deferral, no
+  // scheduled-deletion timer. The only thing on the deactivate pathway is a
+  // temporary pause (and the Manager -> My Team "Suspend" button, which mirrors
+  // it): suspend the account (deletion_mode "none"), never delete — the person
+  // is expected back.
+  const phase: Phase = isTemporaryPause ? "deactivate" : "delete";
+  const deletionMode: DeletionMode = isTemporaryPause ? "none" : "immediate";
+
+  const base: OffboardOutcome = {
     work_email,
     ok: false,
     status: 500,
     error: null,
+    phase,
+    deletion_mode: deletionMode,
     rows_updated: 0,
     rbac_revoked: null,
     payload: null,
   };
 
-  // Look at the still-active rows first so we know which departments this person
-  // belongs to before deciding the teardown mode.
-  const { data: activeRows, error: lookupErr } = await supabase
-    .from(MASTER_TABLE)
-    .select('"Department"')
-    .ilike('"Work Email"', work_email)
-    .is("off_boarded_at", null);
-  if (lookupErr) {
-    return { ...base, phase: "deactivate", deletion_mode: fallbackMode, error: lookupErr.message };
-  }
-  if (!activeRows || activeRows.length === 0) {
-    return {
-      ...base,
-      status: 404,
-      phase: "deactivate",
-      deletion_mode: fallbackMode,
-      error:
-        "No active master-list row found for that email. They may already be off-boarded, or the email doesn't exist on the roster.",
-    };
-  }
-
-  const lookupDepartments = (activeRows as Array<{ Department: string | null }>)
-    .map((r) => r.Department)
-    .filter((d): d is string => !!d);
-
-  // Lead Gen (immediate delete) only when EVERY department this person holds is
-  // Lead Gen. If any role is non-Lead-Gen, defer deletion 14 days.
-  // Temporary pause overrides both: suspend the account (deactivate) and never
-  // schedule the delete — the person is expected back. Even an all-Lead-Gen
-  // person is suspended rather than deleted.
-  const allLeadGen =
-    lookupDepartments.length > 0 && lookupDepartments.every(isLeadGenDepartment);
-  const phase: Phase = !isTemporaryPause && allLeadGen ? "delete" : "deactivate";
-  const deletionMode: DeletionMode = isTemporaryPause
-    ? "none"
-    : allLeadGen
-      ? "immediate"
-      : "delayed_14d";
-  const scheduledDeletionAt =
-    deletionMode === "delayed_14d" ? scheduledDeletionFrom(offBoardedAt) : null;
-
-  // Stamp off_boarded_* (and the deletion timer for non-Lead-Gen) on every active
-  // row for this work_email. Covers dual-role employees with multiple rows.
+  // Stamp off_boarded_* on every active row for this work_email. Covers
+  // dual-role employees with multiple rows. scheduled_deletion_at stays null —
+  // deletion happens in the n8n delete flow right now, not via the cron.
   const { data, error } = await supabase
     .from(MASTER_TABLE)
     .update({
@@ -207,7 +176,7 @@ async function offboardOnePerson(
       off_boarded_reason: reason,
       off_boarded_by: actorEmail,
       off_boarded_note: note,
-      scheduled_deletion_at: scheduledDeletionAt,
+      scheduled_deletion_at: null,
       deletion_processed_at: null,
     })
     .ilike('"Work Email"', work_email)
@@ -217,7 +186,7 @@ async function offboardOnePerson(
     );
 
   if (error) {
-    return { ...base, phase, deletion_mode: deletionMode, error: error.message };
+    return { ...base, error: error.message };
   }
 
   const rows = (data ?? []) as Array<{
@@ -238,8 +207,6 @@ async function offboardOnePerson(
     return {
       ...base,
       status: 404,
-      phase,
-      deletion_mode: deletionMode,
       error:
         "No active master-list row found for that email. They may already be off-boarded, or the email doesn't exist on the roster.",
     };
@@ -351,7 +318,7 @@ async function offboardOnePerson(
       note,
       rows_updated: rows.length,
       deletion_mode: deletionMode,
-      scheduled_deletion_at: scheduledDeletionAt,
+      scheduled_deletion_at: null,
       rbac_revoked: rbacRevoked,
       webhook_slug: phase === "delete" ? OFFBOARD_DELETE_SLUG : OFFBOARD_DEACTIVATE_SLUG,
       batched: true,
@@ -377,7 +344,7 @@ async function offboardOnePerson(
       note,
       off_boarded_by: actorEmail,
       off_boarded_at: offBoardedAt,
-      scheduled_deletion_at: scheduledDeletionAt,
+      scheduled_deletion_at: null,
     },
   };
 }
@@ -390,12 +357,13 @@ async function offboardOnePerson(
  *   Batch:                { employees: [{ work_email, reason, note? }, ...] }
  *
  * Marks every matching `global_master_list` row as off-boarded, tears down RBAC,
- * and fires the department-aware account teardown. Firing is COALESCED by
- * (phase, deletion_mode): Lead-Gen people go out in one `offboarding_delete`
- * envelope, regular deactivates in one `offboarding_deactivate` envelope, and
- * temporary pauses in a second `offboarding_deactivate` envelope with
- * `deletion_mode: "none"` — so a batch of any size is at most three webhook
- * POSTs, each carrying an `employees[]` array for n8n's Split Out.
+ * and fires the account teardown. Firing is COALESCED by (phase, deletion_mode):
+ * every offboard — no matter the reason or department — goes out in one
+ * `offboarding_delete` envelope (the n8n delete pathway, immediate), and
+ * temporary pauses in one `offboarding_deactivate` envelope with
+ * `deletion_mode: "none"` (the suspend pathway) — so a batch of any size is at
+ * most two webhook POSTs, each carrying an `employees[]` array for n8n's
+ * Split Out.
  *
  * Response: `{ success, count, results[], webhooks[], webhook }`. `webhook` is
  * the first fired webhook (kept so the single-person dialog toast still works).
@@ -472,12 +440,11 @@ export async function POST(req: Request) {
   const failed = outcomes.filter((o) => !o.ok);
 
   // Coalesce successes by (phase, deletion_mode) and fire at most one webhook
-  // per group. Temporary pauses share the deactivate slug with regular
-  // deactivates but go out in their own envelope (deletion_mode: "none") so the
-  // n8n flow can branch on it — so a batch is at most THREE POSTs.
+  // per group: temporary pauses ride the deactivate/suspend flow
+  // (deletion_mode: "none"); every real offboard rides the delete flow — so a
+  // batch is at most TWO POSTs.
   const groupDefs: Array<{ phase: Phase; deletion_mode: DeletionMode }> = [
     { phase: "deactivate", deletion_mode: "none" },
-    { phase: "deactivate", deletion_mode: "delayed_14d" },
     { phase: "delete", deletion_mode: "immediate" },
   ];
 
