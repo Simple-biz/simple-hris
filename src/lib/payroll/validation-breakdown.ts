@@ -209,7 +209,15 @@ function deriveFlags(
   // underpaid on every overtime hour. Expected to report zero — the value is the next one.
   if (input.isHsl && b.rates != null && b.rates.ot != null && b.rates.otDifferential != null) {
     const expectedOtRate = round2(b.rates.mf + b.rates.otDifferential); // mf × 1.5
-    if (Math.abs(b.rates.ot - expectedOtRate) > RATE_EPSILON_PHP) {
+    // The delta is rounded before comparing because two rounding conventions are both
+    // live in this codebase: the Hogan sheet derives the differential two-step
+    // (mf × 0.5, then + mf, each step rounded — see hogan-week-pay.ts), while
+    // defaultOtRate() in pay-structure.ts computes it single-step (mf × 1.5). At
+    // cent-precision rates the two forms can disagree by exactly ₱0.01, and float64
+    // can push a true ₱0.01 gap fractionally over RATE_EPSILON_PHP. Rounding the delta
+    // first collapses that to exactly 0.01, which the strict `>` then lets through.
+    // Do not "simplify" this back to a bare subtraction.
+    if (Math.abs(round2(b.rates.ot - expectedOtRate)) > RATE_EPSILON_PHP) {
       const ratio = b.rates.mf > 0 ? b.rates.ot / b.rates.mf : 0;
       flags.push({
         code: 'ot_ratio',

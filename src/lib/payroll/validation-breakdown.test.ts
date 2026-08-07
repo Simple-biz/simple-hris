@@ -252,6 +252,14 @@ test('rate_source: paid rate differs from the sheet rate', () => {
   assert.match(f?.message ?? '', /305/);
 });
 
+test('ot_ratio tolerates the centavo gap between the two rounding conventions', () => {
+  // regularRate 2.71: two-step (mf×0.5 rounded, then +mf rounded) gives 4.07;
+  // single-step (mf×1.5 rounded) gives 4.06. Both are legitimate 1.5x rates —
+  // this must not flag as a corrupted ratio.
+  const b = buildValidationBreakdown(hslInput({ regularRate: 2.71, otRate: 4.06 }));
+  assert.ok(!codes(b).includes('ot_ratio'));
+});
+
 test('amber flags never suppress red ones', () => {
   const b = buildValidationBreakdown(hslInput({
     otRate: 280,
