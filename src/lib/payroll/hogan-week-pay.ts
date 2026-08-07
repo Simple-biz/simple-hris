@@ -43,6 +43,16 @@
  * ROUNDING: the sheet multiplies 2-decimal HOURS by the rate. Our previous engine
  * multiplied whole SECONDS (phpHourlyPayFromSeconds), which diverged by ~₱1.14 per
  * stub. The sheet is the payment authority, so this module follows the sheet.
+ *
+ * ⚠ 2026-08-07 POLICY CHANGE (Kane): the weekend OVERTIME rate is gone — a weekend
+ * hour past the 40h cap is plain overtime at the regular OT rate (no +15). Under
+ * the sheet formula above, a weekend OT hour effectively earns (AC+15) + 0.5·AC —
+ * i.e. the OLD policy — because AD (WE Hours) makes no within-cap/past-cap
+ * distinction. The LIVE engine (PayrollWizard calc, current-pay.ts,
+ * prorate-mid-period.ts) now scopes the +15 premium to weekend hours WITHIN the
+ * cap only. This module still mirrors the sheet as verified on 2026-08-05; do not
+ * wire it into the pay run until the sheet itself drops the premium from weekend
+ * OT hours (it needs a new column to express the split), and re-verify then.
  */
 
 /** The +₱15/h HSL weekend premium: "Hogan WE Rate" is always the regular rate + 15. */

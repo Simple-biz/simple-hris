@@ -6,8 +6,15 @@ import { historyMatchesCatalogAsOf, resolveRateAsOfDate } from './rate-history-r
  * transfer, a dated raise). Extracted verbatim from PayrollWizard.tsx so the
  * engine is pure + unit-tested; the wizard imports it back. It mirrors the
  * server dispatch compute (`computeProratedRowPay` in current-pay.ts) EXACTLY:
- * chronological 40h/week regular cap, HSL weekend +15/h folded per day, raw
- * per-day accumulation rounded once at the end.
+ * chronological 40h/week regular cap, HSL weekend +15/h folded per day on the
+ * REGULAR bucket only, raw per-day accumulation rounded once at the end.
+ *
+ * 2026-08-07 (Kane): there is no weekend OVERTIME rate anymore. A weekend hour
+ * past the 40h cap is plain overtime — priced at the regular OT rate, no +15,
+ * and it belongs on the Overtime line, not the Weekend line. The weekend
+ * carve-out therefore only ever contains regular-bucket hours; its OT half is
+ * structurally zero (kept in the shapes so payloads staged before the change
+ * still parse and render exactly as staged).
  *
  * Beyond the pay itself it reports per-rate SEGMENTS — the hours and money each
  * distinct rate actually paid, in pay order — which is what lets a pay
@@ -74,17 +81,21 @@ export interface MidPeriodProrationResult {
    */
   regularRatesUsed: number[];
   otRatesUsed: number[];
-  /** HSL weekend (Sat+Sun) portion of the pay above, accumulated per day at the
-   *  exact same (rate + ₱15) each day paid at — so the paystub's weekend lines
-   *  stay true across a mid-week rate change. All zeros for non-HSL. */
+  /** HSL weekend (Sat+Sun) REGULAR-bucket portion of the pay above, accumulated
+   *  per day at the exact same (rate + ₱15) each day paid at — so the paystub's
+   *  weekend line stays true across a mid-week rate change. All zeros for
+   *  non-HSL. `otHours`/`otPay` are ALWAYS zero since 2026-08-07 (weekend OT is
+   *  plain overtime); the fields survive for shape-compatibility with payloads
+   *  staged before the change. */
   weekend: { regularHours: number; otHours: number; regularPay: number; otPay: number };
   /**
    * Per-rate itemization of the pay, in pay order — the statement's basis line.
    * `regular`/`ot` cover the FULL week (HSL weekend premium money included in
-   * the segment of the rate that paid it); `weekendRegular`/`weekendOt` carve
-   * the Sat+Sun portion out per rate (empty for non-HSL), so a renderer can
+   * the segment of the rate that paid it); `weekendRegular` carves the Sat+Sun
+   * regular-bucket portion out per rate (empty for non-HSL), so a renderer can
    * derive weekday-only segments by subtraction, exactly like the statement's
-   * weekday lines. Segment pay is rounded per segment (2dp) while the line
+   * weekday lines. `weekendOt` is always empty since 2026-08-07 (weekend OT is
+   * plain overtime, no carve). Segment pay is rounded per segment (2dp) while the line
    * totals round once over the raw sum, so the two can drift by a centavo on
    * pathological fractions — hours + rate are the displayed basis, never the
    * per-segment pay.
@@ -155,9 +166,7 @@ export function proratePayForMidPeriodChange(params: {
   let regularPayPHP = 0;
   let otPayPHP = 0;
   let wkndRegSec = 0;
-  let wkndOtSec = 0;
   let wkndRegPayPHP = 0;
-  let wkndOtPayPHP = 0;
   let anyReg = false;
   let anyOt = false;
   let firstReg: number | null | undefined;
@@ -166,7 +175,6 @@ export function proratePayForMidPeriodChange(params: {
   const regSegs: SegmentAcc = [];
   const otSegs: SegmentAcc = [];
   const wkndRegSegs: SegmentAcc = [];
-  const wkndOtSegs: SegmentAcc = [];
 
   for (const d of days) {
     const resolved = resolveRateAsOfDate(empHist, d.date);
@@ -214,17 +222,15 @@ export function proratePayForMidPeriodChange(params: {
       }
     }
     if (ot != null) {
-      const dayOtPay = (dayOtSec / 3600) * (ot + weekendBonus);
+      // No weekend bonus on OT: a weekend hour past the cap is plain overtime
+      // (2026-08-07 — the weekend OT rate is gone), so it prices at `ot` and is
+      // never carved into the weekend buckets.
+      const dayOtPay = (dayOtSec / 3600) * ot;
       otPayPHP += dayOtPay;
-      if (isWeekendDay) {
-        wkndOtSec += dayOtSec;
-        wkndOtPayPHP += dayOtPay;
-      }
       anyOt = true;
       if (dayOtSec > 0) {
         noteRate(otRatesUsed, ot);
         addToSegment(otSegs, ot, dayOtSec, dayOtPay);
-        if (isWeekendDay) addToSegment(wkndOtSegs, ot, dayOtSec, dayOtPay);
       }
     }
   }
@@ -246,15 +252,15 @@ export function proratePayForMidPeriodChange(params: {
     otRatesUsed,
     weekend: {
       regularHours: wkndRegSec / 3600,
-      otHours: wkndOtSec / 3600,
+      otHours: 0,
       regularPay: Math.round(wkndRegPayPHP * 100) / 100,
-      otPay: Math.round(wkndOtPayPHP * 100) / 100,
+      otPay: 0,
     },
     segments: {
       regular: finalizeSegments(regSegs),
       ot: finalizeSegments(otSegs),
       weekendRegular: finalizeSegments(wkndRegSegs),
-      weekendOt: finalizeSegments(wkndOtSegs),
+      weekendOt: [],
     },
   };
 }

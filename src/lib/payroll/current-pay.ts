@@ -524,9 +524,12 @@ export function computeProratedRowPay(
     regularSec += dayRegSec;
     otSec += dayOtSec;
 
-    // HSL weekend premium: all hours on Saturday (6) or Sunday (0) earn +15 PHP/h.
-    // Day-scoped for a mid-week transfer INTO HSL — a weekend day worked before
-    // the transfer's effective date is an old-department day, plain rate.
+    // HSL weekend premium: REGULAR-bucket hours on Saturday (6) or Sunday (0)
+    // earn +15 PHP/h. Weekend hours past the 40h cap are plain overtime — no
+    // premium (2026-08-07: the weekend OT rate is gone; all OT prices at the
+    // regular OT rate). Day-scoped for a mid-week transfer INTO HSL — a weekend
+    // day worked before the transfer's effective date is an old-department day,
+    // plain rate.
     const dow = d.date.getDay();
     const weekendBonus =
       isHsl &&
@@ -536,7 +539,7 @@ export function computeProratedRowPay(
         : 0;
 
     if (reg != null) regularPayPHP += (dayRegSec / 3600) * (reg + weekendBonus);
-    if (ot != null) otPayPHP += (dayOtSec / 3600) * (ot + weekendBonus);
+    if (ot != null) otPayPHP += (dayOtSec / 3600) * ot;
   }
 
   return {

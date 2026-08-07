@@ -629,12 +629,16 @@ type DispatchEmployee = {
   /**
    * HSL-only weekend (Sat+Sun) itemization for the paystub. `hours` above and
    * `pay_php` below stay FULL-week totals (weekend included) — this block only
-   * carves the weekend portion out so statements (in-app + the n8n email) can
-   * render "Weekend Hours" / "Weekend Overtime" lines at the premium rate
-   * (base + ₱15/h). Weekend hours can sit in either bucket: a weekend day past
-   * the 40h cap is weekend OT. Null for non-HSL rows and for rows whose upload
-   * had no daily columns (weekend unknowable). Consumers must treat an absent/
-   * null block as "render the classic two-line earnings section".
+   * carves the weekend portion out so statements (in-app + email) can render
+   * the merged "Weekend Hours" line. Since 2026-08-07 the weekend OT RATE is
+   * gone (Kane): a weekend hour past the 40h cap is plain overtime at the
+   * regular OT rate, so newly staged rows always carry `ot: 0` here and the
+   * premium applies to regular-bucket weekend hours only. The `ot` half of the
+   * shape survives because payloads staged BEFORE the change carry a real
+   * weekend-OT carve (at otRate + ₱15/h) and must keep rendering as staged.
+   * Null for non-HSL rows and for rows whose upload had no daily columns
+   * (weekend unknowable). Consumers must treat an absent/null block as "render
+   * the classic two-line earnings section".
    */
   weekend: {
     hours: { regular: number; ot: number };
@@ -6099,35 +6103,34 @@ export default function PayrollWizard({
 
   /**
    * HSL weekend pay premium: +15 PHP/h for Saturday and Sunday hours within the
-   * HSL (Mon→Sun) pay week, split between the regular and OT buckets chronologically.
-   * Also carries the weekend SECONDS per bucket so the paystub can itemize the
+   * HSL (Mon→Sun) pay week — REGULAR-bucket hours only. Since 2026-08-07 there
+   * is no weekend OVERTIME rate: a weekend hour past the 40h cap is plain
+   * overtime, priced at the regular OT rate and shown on the Overtime line.
+   * Also carries the weekend regular SECONDS so the paystub can itemize the
    * weekend hours themselves (not just the premium). Entries exist only when
-   * weekend hours were actually logged — HSL rows without one stage a zeroed
-   * weekend block.
+   * premium-earning weekend hours were actually logged — HSL rows without any
+   * stage a zeroed weekend block.
    */
-  const weekendPremiumByEmail = useMemo<Map<string, { regPremiumPHP: number; otPremiumPHP: number; regSec: number; otSec: number }>>(() => {
-    const map = new Map<string, { regPremiumPHP: number; otPremiumPHP: number; regSec: number; otSec: number }>();
+  const weekendPremiumByEmail = useMemo<Map<string, { regPremiumPHP: number; regSec: number }>>(() => {
+    const map = new Map<string, { regPremiumPHP: number; regSec: number }>();
     const REG_CAP_SEC = 40 * 3600;
     for (const [em, { isHsl, hslFrom, days }] of payDaysByEmail) {
       if (!isHsl) continue;
-      let usedRegSec = 0, wkndRegSec = 0, wkndOtSec = 0;
+      let usedRegSec = 0, wkndRegSec = 0;
       for (const d of days) {
         const remaining = Math.max(0, REG_CAP_SEC - usedRegSec);
         const dayRegSec = Math.min(d.seconds, remaining);
-        const dayOtSec = d.seconds - dayRegSec;
         usedRegSec += dayRegSec;
         const dow = d.date.getDay();
         // Day-scoped: a weekend day worked BEFORE a mid-week transfer into HSL
         // is an old-department day — plain rate, no premium, no weekend line.
         if ((dow === 0 || dow === 6) && (!hslFrom || d.date.getTime() >= hslFrom.getTime())) {
           wkndRegSec += dayRegSec;
-          wkndOtSec += dayOtSec;
         }
       }
       const regPremiumPHP = phpHourlyPayFromSeconds(15, wkndRegSec);
-      const otPremiumPHP = phpHourlyPayFromSeconds(15, wkndOtSec);
-      if (regPremiumPHP !== 0 || otPremiumPHP !== 0) {
-        map.set(em, { regPremiumPHP, otPremiumPHP, regSec: wkndRegSec, otSec: wkndOtSec });
+      if (regPremiumPHP !== 0) {
+        map.set(em, { regPremiumPHP, regSec: wkndRegSec });
       }
     }
     return map;
@@ -6210,11 +6213,12 @@ export default function PayrollWizard({
       let otPay =
         otSec > 0 ? (otRate != null ? phpHourlyPayFromSeconds(otRate, otSec) : null) : 0;
 
-      // Apply HSL weekend premium (+15 PHP/h for Sat/Sun hours, split by reg/OT bucket)
+      // Apply HSL weekend premium (+15 PHP/h for Sat/Sun REGULAR-bucket hours).
+      // OT gets NO premium: weekend hours past the 40h cap are plain overtime
+      // at the regular OT rate (2026-08-07 — the weekend OT rate is gone).
       const wknd = em ? weekendPremiumByEmail.get(em) : undefined;
       if (wknd) {
         if (regularPay != null) regularPay = Math.round((regularPay + wknd.regPremiumPHP) * 100) / 100;
-        if (otPay != null) otPay = Math.round((otPay + wknd.otPremiumPHP) * 100) / 100;
       }
 
       // ── Mid-period rate change (e.g. a mid-week transfer) ──
@@ -6318,12 +6322,15 @@ export default function PayrollWizard({
       }
 
       // ── Weekend (Sat+Sun) itemization for HSL paystubs ──
-      // The weekend hours/pay are already INSIDE regularPay/otPay (base rate ×
+      // The weekend REGULAR hours/pay are already INSIDE regularPay (base rate ×
       // hours + the ₱15/h premium) — this block only carves them out so the
-      // statement can show them as their own Earnings lines. Prorated weeks take
-      // the exact per-day figures; single-rate weeks price the weekend seconds at
-      // (rate + 15) directly. HSL rows with no daily columns can't know which
-      // hours fell on the weekend → null (statement falls back to two lines).
+      // statement can show them as their own Earnings line. The OT bucket is
+      // structurally ZERO on newly staged rows (2026-08-07): weekend hours past
+      // the 40h cap are plain overtime at the regular OT rate and stay on the
+      // Overtime line. Prorated weeks take the exact per-day figures; single-rate
+      // weeks price the weekend seconds at (rate + 15) directly. HSL rows with no
+      // daily columns can't know which hours fell on the weekend → null
+      // (statement falls back to two lines).
       let weekend: CalcRow['weekend'] = null;
       if (payDay?.isHsl) {
         if (proratedWeekend) {
@@ -6331,22 +6338,16 @@ export default function PayrollWizard({
             regularHours: proratedWeekend.regularHours,
             otHours: proratedWeekend.otHours,
             regularPay: regularPay != null ? proratedWeekend.regularPay : null,
-            otPay: otSec > 0 ? (otPay != null ? proratedWeekend.otPay : null) : 0,
+            otPay: proratedWeekend.otPay,
           };
         } else {
           const wkndRegSec = wknd?.regSec ?? 0;
-          const wkndOtSec = wknd?.otSec ?? 0;
           weekend = {
             regularHours: wkndRegSec / 3600,
-            otHours: wkndOtSec / 3600,
+            otHours: 0,
             regularPay:
               regularRate != null ? phpHourlyPayFromSeconds(regularRate + 15, wkndRegSec) : null,
-            otPay:
-              wkndOtSec > 0
-                ? otRate != null
-                  ? phpHourlyPayFromSeconds(otRate + 15, wkndOtSec)
-                  : null
-                : 0,
+            otPay: 0,
           };
         }
       }
@@ -14239,7 +14240,7 @@ export default function PayrollWizard({
                                 </td>
                                 {(() => {
                                   const wp = weekendPremiumByEmail.get(em);
-                                  const wkndTotal = wp ? Math.round((wp.regPremiumPHP + wp.otPremiumPHP) * 100) / 100 : 0;
+                                  const wkndTotal = wp ? Math.round(wp.regPremiumPHP * 100) / 100 : 0;
                                   return (
                                     <td className="px-3 py-3 text-right font-mono text-[11px] tabular-nums" title="+15 PHP/h for Sat/Sun hours">
                                       {wkndTotal > 0 ? (
@@ -14449,7 +14450,7 @@ export default function PayrollWizard({
                               if (st === 'eligible' && isPabDeptEligible(r.email) && !isPabExcluded(r.email)) totalPab += pabAmountForEmail(r.email);
                               if (techBonusEligible.has(r.email) && isTechDeptEligible(r.email)) totalTech += techAmountForEmail(r.email);
                               const wp = weekendPremiumByEmail.get(em);
-                              if (wp) totalWkndPremium += wp.regPremiumPHP + wp.otPremiumPHP;
+                              if (wp) totalWkndPremium += wp.regPremiumPHP;
                               const memail = normEmail(r.email) ?? '';
                               const memailRateRow = ratesByEmail.get(memail);
                               const disb = mesaDisbursements.get(memail) ?? 0;
@@ -18219,7 +18220,7 @@ export default function PayrollWizard({
           // Weekend premium for this pay week (current source file only)
           const wkndPremiumData = isHsl ? weekendPremiumByEmail.get(normEmpEmail) : undefined;
           const wkndPremiumTotal = wkndPremiumData
-            ? Math.round((wkndPremiumData.regPremiumPHP + wkndPremiumData.otPremiumPHP) * 100) / 100
+            ? Math.round(wkndPremiumData.regPremiumPHP * 100) / 100
             : 0;
           const breakdown = isHsl
             ? (employeeAllDaysHours.get(normEmpEmail) ?? [])
@@ -19152,10 +19153,7 @@ export default function PayrollWizard({
                               </div>
                               {wkndPremiumTotal > 0 ? (
                                 <div className="mt-0.5 text-[11px] leading-snug text-amber-700/90 dark:text-amber-300/80">
-                                  <span className="font-semibold">{formatPHP(wkndPremiumTotal)}</span> applied (+₱15/h for Sat &amp; Sun hours) &mdash; already included in Initial Pay.
-                                  {wkndPremiumData && wkndPremiumData.regPremiumPHP > 0 && wkndPremiumData.otPremiumPHP > 0 && (
-                                    <span> Split: {formatPHP(wkndPremiumData.regPremiumPHP)} regular + {formatPHP(wkndPremiumData.otPremiumPHP)} OT.</span>
-                                  )}
+                                  <span className="font-semibold">{formatPHP(wkndPremiumTotal)}</span> applied (+₱15/h for Sat &amp; Sun hours within the 40h cap &mdash; weekend hours past it are plain overtime) &mdash; already included in Initial Pay.
                                 </div>
                               ) : (
                                 <div className="mt-0.5 text-[11px] text-amber-700/70 dark:text-amber-400/70">
