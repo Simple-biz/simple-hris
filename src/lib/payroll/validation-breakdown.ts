@@ -200,6 +200,42 @@ function deriveFlags(
     });
   }
 
+  // ── Amber: the number is defensible but its SOURCE disagrees with another store.
+  // Never blocking. Shown here rather than only on Step 8 because acting on it after
+  // the lock means unlocking the cycle.
+
+  // A permanent regression net for the reg+15 corruption fixed 2026-08-04, where the
+  // weekend premium had been mis-keyed into the OT rate column and ten HSL people were
+  // underpaid on every overtime hour. Expected to report zero — the value is the next one.
+  if (input.isHsl && b.rates != null && b.rates.ot != null && b.rates.otDifferential != null) {
+    const expectedOtRate = round2(b.rates.mf + b.rates.otDifferential); // mf × 1.5
+    if (Math.abs(b.rates.ot - expectedOtRate) > RATE_EPSILON_PHP) {
+      const ratio = b.rates.mf > 0 ? b.rates.ot / b.rates.mf : 0;
+      flags.push({
+        code: 'ot_ratio',
+        severity: 'amber',
+        message:
+          `OT rate is ${formatPHP(b.rates.ot)}/h against a ${formatPHP(b.rates.mf)}/h ` +
+          `regular rate — ${ratio.toFixed(2)}×, where the sheet derives ` +
+          `${formatPHP(expectedOtRate)}/h (1.50×).`,
+      });
+    }
+  }
+
+  if (input.rateSourceIssue) {
+    const { paidRate, sheetRate, shortfallPhp } = input.rateSourceIssue;
+    const rates =
+      paidRate != null && sheetRate != null
+        ? `paid ${formatPHP(paidRate)}/h, sheet says ${formatPHP(sheetRate)}/h`
+        : 'the paid rate and the sheet rate disagree';
+    const short = shortfallPhp > 0 ? ` — ${formatPHP(shortfallPhp)} short this week.` : '.';
+    flags.push({
+      code: 'rate_source',
+      severity: 'amber',
+      message: `Rate sources disagree: ${rates}${short}`,
+    });
+  }
+
   return flags;
 }
 

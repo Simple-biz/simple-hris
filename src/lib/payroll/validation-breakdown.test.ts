@@ -221,3 +221,42 @@ test('a prorated week does not trip gross_mismatch', () => {
 test('a clean row carries no flags', () => {
   assert.deepEqual(buildValidationBreakdown(baseInput()).flags, []);
 });
+
+test('ot_ratio: the stored OT rate is not 1.5x the regular rate', () => {
+  // The reg+15 corruption: 265 + 15 = 280 sitting in the OT column, where
+  // 265 × 1.5 = 397.50 belongs. Underpays ₱117.50 on every overtime hour.
+  const b = buildValidationBreakdown(hslInput({ otRate: 280 }));
+  assert.ok(codes(b).includes('ot_ratio'));
+  assert.equal(b.flags.find((f) => f.code === 'ot_ratio')?.severity, 'amber');
+});
+
+test('ot_ratio does not fire when the ratio holds', () => {
+  assert.ok(!codes(buildValidationBreakdown(hslInput())).includes('ot_ratio'));
+});
+
+test('ot_ratio is HSL-only', () => {
+  // A base department's OT rate is a free-standing stored value, not a derived
+  // differential — 300 against a 200 regular is 1.5x anyway, but 250 would not be
+  // a defect there the way it is for HSL.
+  const b = buildValidationBreakdown(baseInput({ otRate: 250 }));
+  assert.ok(!codes(b).includes('ot_ratio'));
+});
+
+test('rate_source: paid rate differs from the sheet rate', () => {
+  const b = buildValidationBreakdown(baseInput({
+    rateSourceIssue: { shortfallPhp: 830, sheetRate: 305, paidRate: 285 },
+  }));
+  const f = b.flags.find((x) => x.code === 'rate_source');
+  assert.equal(f?.severity, 'amber');
+  assert.match(f?.message ?? '', /285/);
+  assert.match(f?.message ?? '', /305/);
+});
+
+test('amber flags never suppress red ones', () => {
+  const b = buildValidationBreakdown(hslInput({
+    otRate: 280,
+    dispatch: null,
+  }));
+  assert.ok(codes(b).includes('ot_ratio'));
+  assert.ok(codes(b).includes('not_dispatchable'));
+});
