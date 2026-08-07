@@ -102,6 +102,22 @@ function findUnderpaidLines(employees: unknown[]): string[] {
         }
       | null
       | undefined;
+    // A prorated week stages per-day weekend segments, and the statement renders
+    // THOSE rates rather than (rates_php + premium) — so they are what this guard
+    // must check. Without them it validates a rate the stub never printed.
+    const prorSegs = (emp.proration as { segments?: Record<string, unknown> } | null | undefined)
+      ?.segments;
+    const toSegs = (v: unknown) =>
+      Array.isArray(v)
+        ? v
+            .map((s) => s as Record<string, unknown>)
+            .map((s) => ({
+              ratePhp: Number(s.rate_php),
+              hours: Number(s.hours),
+              payPhp: Number(s.pay_php),
+            }))
+            .filter((s) => [s.ratePhp, s.hours, s.payPhp].every(Number.isFinite))
+        : [];
     const issues = findRateConsistencyIssues({
       hours: emp.hours as { regular?: number | null; ot?: number | null } | null,
       ratesPhp: emp.rates_php as { regular?: number | null; ot?: number | null } | null,
@@ -111,6 +127,12 @@ function findUnderpaidLines(employees: unknown[]): string[] {
             hours: wknd.hours ?? null,
             payPhp: wknd.pay_php ?? null,
             premiumPhpPerHour: wknd.premium_php_per_hour ?? null,
+            segments: prorSegs
+              ? {
+                  regular: toSegs(prorSegs.weekend_regular),
+                  ot: toSegs(prorSegs.weekend_ot),
+                }
+              : null,
           }
         : null,
     }).filter((i) => i.deltaPhp > 0);

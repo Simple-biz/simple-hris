@@ -494,6 +494,103 @@ test('HSL weekend line split across the change shows premium-inclusive rates', (
   assert.equal(v.proration?.regular, null);
 });
 
+// ── The whole weekend on ONE side of the change (Kane, 2026-08-07) ──────────
+// Reported as "her Weekend hour 250 not 240 — is this math error?". It is not:
+// reat@simple.biz worked only Sunday Jul 26, the day BEFORE her ₱235 → ₱225
+// change took effect on Mon Jul 27, so the weekend paid ₱235 + ₱15 = ₱250 while
+// the statement's headline rate had already moved to ₱225. The arithmetic was
+// right and the DISCLOSURE was missing: no bucket "spanned" the change, so the
+// old gate chipped nothing and the stub showed a bare `8.10h × ₱250.00` under a
+// `31.90h × ₱225.00` regular line with no way to reconcile the two. A weekend
+// paid at anything other than the week's CURRENT rate must say so.
+
+test('weekend entirely BEFORE the change still chips — the rate differs from the headline', () => {
+  const p = proratedPayload();
+  // reat@simple.biz, cycle 2026-07-26 → 08-01, scaled to this fixture's shape.
+  p.rates_php = { regular: 225, ot: 337.5 };
+  p.weekend = {
+    hours: { regular: 8.1, ot: 0 },
+    pay_php: { regular: 2024.51, ot: 0 },
+    premium_php_per_hour: 15,
+  };
+  p.proration = {
+    effective_date: '2026-07-27',
+    old_rates_php: { regular: 235, ot: 352.5 },
+    new_rates_php: { regular: 225, ot: 337.5 },
+    segments: {
+      regular: [
+        { rate_php: 235, hours: 8.1, pay_php: 2024.51 },
+        { rate_php: 225, hours: 31.9, pay_php: 7177.94 },
+      ],
+      ot: [{ rate_php: 337.5, hours: 1.68, pay_php: 566.91 }],
+      // The whole weekend sits on the OLD side — one segment, so the old
+      // "did a bucket span the change?" gate saw nothing to disclose.
+      weekend_regular: [{ rate_php: 235, hours: 8.1, pay_php: 2024.51 }],
+      weekend_ot: [],
+    },
+  };
+  const v = mapPayloadToPayStub(p);
+  // The basis is unchanged — ₱250 is genuinely what those 8.1h paid.
+  assert.deepEqual(v.weekendBasis, [{ ratePhp: 250, hours: 8.1 }]);
+  // …but the line now carries the chip and the week's rate change, so the
+  // reader can see WHY ₱250 is not the headline ₱225 + ₱15.
+  assert.deepEqual(v.proration?.weekend, {
+    previousRate: 250,
+    currentRate: 240,
+    segments: [{ ratePhp: 250, hours: 8.1 }],
+  });
+  assert.equal(v.proration?.effectiveHuman, 'Jul 27');
+});
+
+test('weekend entirely AFTER the change stays classic — its rate IS the headline', () => {
+  // Mirror image: the weekend paid at the CURRENT rate, so there is nothing
+  // unexplained on that line and it must not chip.
+  const p = proratedPayload();
+  p.weekend = {
+    hours: { regular: 8, ot: 0 },
+    pay_php: { regular: 1920, ot: 0 },
+    premium_php_per_hour: 15,
+  };
+  (p.proration as Record<string, unknown>).segments = {
+    regular: [
+      { rate_php: 175, hours: 16.25, pay_php: 2843.75 },
+      { rate_php: 225, hours: 23.75, pay_php: 5343.75 },
+    ],
+    ot: [{ rate_php: 281.25, hours: 2.5, pay_php: 703.13 }],
+    weekend_regular: [{ rate_php: 225, hours: 8, pay_php: 1920 }],
+    weekend_ot: [],
+  };
+  const v = mapPayloadToPayStub(p);
+  assert.deepEqual(v.weekendBasis, [{ ratePhp: 240, hours: 8 }]);
+  assert.equal(v.proration?.weekend, null);
+});
+
+test('weekend OT alone on the old side chips against the OT rate pair', () => {
+  // The off-headline rate is in the OT bucket, so the disclosed pair must be
+  // the OT rates (+ premium) — not the regular ones.
+  const p = proratedPayload();
+  p.weekend = {
+    hours: { regular: 0, ot: 4 },
+    pay_php: { regular: 0, ot: 935 },
+    premium_php_per_hour: 15,
+  };
+  (p.proration as Record<string, unknown>).segments = {
+    regular: [
+      { rate_php: 175, hours: 16.25, pay_php: 2843.75 },
+      { rate_php: 225, hours: 23.75, pay_php: 5343.75 },
+    ],
+    ot: [{ rate_php: 218.75, hours: 4, pay_php: 875 }],
+    weekend_regular: [],
+    weekend_ot: [{ rate_php: 218.75, hours: 4, pay_php: 935 }],
+  };
+  const v = mapPayloadToPayStub(p);
+  assert.deepEqual(v.proration?.weekend, {
+    previousRate: 233.75, // 218.75 + 15
+    currentRate: 296.25, //  281.25 + 15
+    segments: [{ ratePhp: 233.75, hours: 4 }],
+  });
+});
+
 test('a reg+OT weekend mix inside a proration week never chips the weekend line', () => {
   // The regular line spans the change (so a proration view exists), but the
   // weekend money is one rate per bucket. Two DIFFERENT rates still appear on

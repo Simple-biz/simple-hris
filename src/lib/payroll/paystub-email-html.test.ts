@@ -80,6 +80,41 @@ test('HSL week renders ONE merged Weekend Hours row with the per-rate basis', ()
   assert.ok(!html.includes('&#8369;480.00'), 'bucket subtotals are not printed as amounts');
 });
 
+test('a weekend paid entirely on the OLD side of a rate change says so', () => {
+  // reat@simple.biz's stub (Kane, 2026-08-07): "why is her Weekend hour 250 not
+  // 240?". Her ₱235 → ₱225 cut took effect Mon Jul 27 and she worked only Sunday
+  // Jul 26, so the weekend correctly paid ₱235 + ₱15. The email must carry the
+  // same disclosure the in-app statement does — preview == dispatch == email.
+  const p = hslPayload();
+  p.rates_php = { regular: 225, ot: 337.5 };
+  p.weekend = {
+    hours: { regular: 8.1, ot: 0 },
+    pay_php: { regular: 2024.51, ot: 0 },
+    premium_php_per_hour: 15,
+  };
+  p.proration = {
+    effective_date: '2026-07-27',
+    old_rates_php: { regular: 235, ot: 352.5 },
+    new_rates_php: { regular: 225, ot: 337.5 },
+    segments: {
+      regular: [
+        { rate_php: 235, hours: 8.1, pay_php: 2024.51 },
+        { rate_php: 225, hours: 31.9, pay_php: 7177.94 },
+      ],
+      ot: [],
+      weekend_regular: [{ rate_php: 235, hours: 8.1, pay_php: 2024.51 }],
+      weekend_ot: [],
+    },
+  };
+  const html = render(p);
+  assert.ok(html.includes('&#8369;250.00'), 'the rate those hours actually paid at');
+  assert.ok(html.includes('Prorated'), 'the line is chipped');
+  assert.ok(
+    html.includes('rate changed to <span style="white-space:nowrap;font-weight:600;color:#556377;">&#8369;240.00</span> on Jul 27'),
+    'the email states why ₱250 is not the headline ₱225 + ₱15',
+  );
+});
+
 test('a weekend that is entirely OT-bucket renders a single-rate Weekend Hours line', () => {
   // The common HSL full-timer week: the 40h cap fills Mon–Fri, so every Sat/Sun
   // hour lands in the OT bucket. ONE weekend line at the OT-bucket rate — no

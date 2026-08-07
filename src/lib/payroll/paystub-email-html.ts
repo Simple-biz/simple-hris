@@ -118,6 +118,28 @@ function multiRateDetail(
 }
 
 /**
+ * Detail cell for a line that paid at ONE rate which is not the week's current
+ * rate — the whole weekend landed on one side of a dated change:
+ * `8.10h × ₱250.00` over `rate changed to ₱240.00 on Jul 27`. Transcribes
+ * `RateChangedDetail`.
+ */
+function rateChangedDetail(
+  hours: number,
+  rate: number,
+  currentRate: number,
+  effectiveHuman: string,
+): string {
+  const on = effectiveHuman ? ` on ${esc(effectiveHuman)}` : '';
+  return (
+    `<span style="white-space:nowrap;">${hrs(hours)}h</span> &times; ` +
+    `<span style="white-space:nowrap;">${php(rate)}</span>` +
+    `<span style="display:block;margin-top:3px;font-size:11px;line-height:14px;color:#7c8798;">` +
+    `rate changed to <span style="white-space:nowrap;font-weight:600;color:#556377;">` +
+    `${php(currentRate)}</span>${on}</span>`
+  );
+}
+
+/**
  * Detail cell for a line that genuinely paid at two rates (a mid-week transfer,
  * a dated raise): `40.00h × ₱175.00 → ₱225.00` with the per-rate hour basis
  * underneath, so the amount stays explicable arithmetic. Transcribes
@@ -253,7 +275,16 @@ export function renderPayStubEmailHtml(
                 view.weekendBasis,
                 pror?.weekend ? pror.effectiveHuman : '',
               )
-            : rateDetail(view.weekendHours, view.weekendBasis[0]?.ratePhp ?? 0),
+            : pror?.weekend
+              ? // One rate, but not the week's current one — the weekend sat
+                // entirely on one side of a dated change.
+                rateChangedDetail(
+                  view.weekendHours,
+                  view.weekendBasis[0]?.ratePhp ?? 0,
+                  pror.weekend.currentRate,
+                  pror.effectiveHuman,
+                )
+              : rateDetail(view.weekendHours, view.weekendBasis[0]?.ratePhp ?? 0),
         amount: php(view.weekendPay),
       }),
     );

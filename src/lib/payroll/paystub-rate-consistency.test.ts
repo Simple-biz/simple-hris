@@ -457,3 +457,112 @@ test('a mid-week rate change downgrades a weekend mismatch to a warning', () => 
   assert.equal(wk.severity, 'warning');
   assert.equal(hasBlockingRateIssue(issues.filter((i) => i.line === 'weekend')), false);
 });
+
+// ── Checking the rate the statement ACTUALLY displays (2026-08-07) ──────────
+// The weekend check derives its displayed rate as `ratesPhp.regular + premium`.
+// That is only the rate the stub shows when the weekend basis comes from the
+// BUCKETS. When a mid-week change staged per-day weekend segments, the stub
+// renders those instead — `weekendBasis` in paystub-view.ts prefers them — so
+// the guard was validating a number nobody could see: it warned on reat@'s
+// correct ₱250 line (against a phantom ₱240) and would have stayed silent had
+// the ₱250 segment itself been wrong. Passing the segments closes both halves.
+
+test('weekend segments: a correct off-headline weekend line is NOT flagged', () => {
+  // reat@simple.biz, cycle 2026-07-26 → 08-01. Rate cut ₱235 → ₱225 effective
+  // Mon Jul 27; she worked only Sunday Jul 26, so the weekend paid ₱235 + ₱15.
+  // 8.098 × 250 = ₱2,024.51 — the line reconciles exactly at what it displays.
+  const issues = findRateConsistencyIssues({
+    hours: { regular: 40, ot: 1.6797 },
+    ratesPhp: { regular: 225, ot: 337.5 },
+    payPhp: { regular: 9202.45, ot: 566.91 },
+    isHsl: true,
+    hasMidPeriodChange: true,
+    weekend: {
+      hours: { regular: 8.0981, ot: 0 },
+      payPhp: { regular: 2024.51, ot: 0 },
+      premiumPhpPerHour: 15,
+      segments: {
+        regular: [{ ratePhp: 235, hours: 8.0981, payPhp: 2024.51 }],
+        ot: [],
+      },
+    },
+  });
+  assert.deepEqual(
+    issues.filter((i) => i.line === 'weekend'),
+    [],
+    'the displayed ₱250 basis reproduces the pay — nothing to report',
+  );
+});
+
+test('weekend segments: a segment whose own arithmetic is wrong IS flagged', () => {
+  // Same shape, but the money is short of what the ₱250 line advertises.
+  const issues = findRateConsistencyIssues({
+    hours: { regular: 40, ot: 0 },
+    ratesPhp: { regular: 225, ot: 337.5 },
+    payPhp: { regular: 9000, ot: 0 },
+    isHsl: true,
+    hasMidPeriodChange: true,
+    weekend: {
+      hours: { regular: 8, ot: 0 },
+      payPhp: { regular: 1920, ot: 0 },
+      premiumPhpPerHour: 15,
+      segments: {
+        // Displays 8h @ ₱250 = ₱2,000 but only ₱1,920 was paid.
+        regular: [{ ratePhp: 235, hours: 8, payPhp: 1920 }],
+        ot: [],
+      },
+    },
+  });
+  const wk = issues.find((i) => i.line === 'weekend');
+  assert.ok(wk, 'the segment the employee can see must be checked');
+  assert.equal(wk.displayedRate, 250);
+  assert.equal(wk.deltaPhp, 80);
+});
+
+test('weekend segments: each segment is checked on its own, not netted', () => {
+  // A shortfall on one rate must not hide behind a surplus on another.
+  const issues = findRateConsistencyIssues({
+    hours: { regular: 40, ot: 0 },
+    ratesPhp: { regular: 225, ot: 337.5 },
+    payPhp: { regular: 9000, ot: 0 },
+    isHsl: true,
+    weekend: {
+      hours: { regular: 8, ot: 0 },
+      payPhp: { regular: 2000, ot: 0 },
+      premiumPhpPerHour: 15,
+      segments: {
+        regular: [
+          { ratePhp: 235, hours: 4, payPhp: 920 }, // shows 4h @ ₱250 = ₱1,000
+          { ratePhp: 225, hours: 4, payPhp: 1080 }, // shows 4h @ ₱240 = ₱960
+        ],
+        ot: [],
+      },
+    },
+  });
+  const wk = issues.filter((i) => i.line === 'weekend');
+  assert.equal(wk.length, 2, 'both segments reported, neither netted away');
+  assert.equal(wk[0].displayedRate, 250);
+  assert.equal(wk[0].deltaPhp, 80);
+  assert.equal(wk[1].displayedRate, 240);
+  assert.equal(wk[1].deltaPhp, -120);
+});
+
+test('weekend segments: empty segments fall back to the bucket check', () => {
+  // No staged segments (single-rate week) → behaviour is exactly as before.
+  const issues = findRateConsistencyIssues({
+    hours: { regular: 40, ot: 0 },
+    ratesPhp: { regular: 225, ot: 337.5 },
+    payPhp: { regular: 9000, ot: 0 },
+    isHsl: true,
+    weekend: {
+      hours: { regular: 8, ot: 0 },
+      payPhp: { regular: 1800, ot: 0 },
+      premiumPhpPerHour: 15,
+      segments: { regular: [], ot: [] },
+    },
+  });
+  const wk = issues.find((i) => i.line === 'weekend');
+  assert.ok(wk);
+  assert.equal(wk.displayedRate, 240);
+  assert.equal(wk.deltaPhp, 120);
+});

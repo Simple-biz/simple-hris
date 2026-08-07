@@ -346,10 +346,16 @@ export interface ProrationView {
   regular: ProratedLineView | null;
   ot: ProratedLineView | null;
   /**
-   * The MERGED Weekend Hours line (both buckets). Non-null ONLY when a bucket
-   * genuinely paid at 2+ rates — i.e. the dated change landed on a Sat/Sun. A
-   * regular-rate segment sitting beside an OT-rate segment is the ordinary
-   * reg/OT mix, which `weekendBasis` already displays without a chip.
+   * The MERGED Weekend Hours line (both buckets). Non-null when the dated change
+   * is visible on this line at all — either a bucket genuinely paid at 2+ rates
+   * (the change landed on a Sat/Sun, so `segments` has both), or the whole
+   * weekend sat on ONE side of it and therefore displays a rate that is not the
+   * week's current one (`segments` has a single entry and `previousRate` /
+   * `currentRate` carry the week's change in premium-inclusive terms).
+   *
+   * A regular-rate segment sitting beside an OT-rate segment is the ordinary
+   * reg/OT mix, NOT a rate change — that stays null, and `weekendBasis` displays
+   * it without a chip.
    */
   weekend: ProratedLineView | null;
 }
@@ -465,13 +471,54 @@ export function deriveProrationFields(
   const ot = toLineView(
     weekend ? minusWeekend(pror.segments.ot, pror.segments.weekendOt) : pror.segments.ot,
   );
-  // Chip gate: a bucket spanned the change on its own.
+  // Chip gate, part 1: a bucket spanned the change on its own.
   const bucketSpannedChange =
     Boolean(toLineView(plusPremium(pror.segments.weekendRegular))) ||
     Boolean(toLineView(plusPremium(pror.segments.weekendOt)));
-  const weekendLine = bucketSpannedChange
-    ? toLineView(plusPremium([...pror.segments.weekendRegular, ...pror.segments.weekendOt]))
-    : null;
+
+  // Chip gate, part 2 — the whole weekend on ONE side of the change.
+  // Sat+Sun are 2 of 7 days, so a dated change very often leaves every weekend
+  // hour on one side of it. No bucket "spans" then, yet the line still displays
+  // the OTHER side's rate: reat@simple.biz worked only Sunday Jul 26, the day
+  // before her ₱235 → ₱225 change, so her stub read `8.10h × ₱250.00` under a
+  // `31.90h × ₱225.00` regular line with no chip and no way to reconcile them.
+  // The money was right; the disclosure was missing. A weekend paid at anything
+  // other than the week's CURRENT rate has to say so.
+  //
+  // Compared PER BUCKET against that bucket's own current rate, which is what
+  // keeps the ordinary reg/OT mix out: a weekend OT hour at (otRate + premium)
+  // beside a weekend regular hour at (mfRate + premium) is two rates without a
+  // rate CHANGE, and must stay unchipped.
+  const offCurrent = (segs: ProrationSegmentFig[], current: number | null) =>
+    current != null &&
+    segs.some(
+      (s) => s.hours > PRORATION_HOURS_EPSILON && Math.abs(s.ratePhp - current) > 0.005,
+    );
+  const regOffCurrent = offCurrent(pror.segments.weekendRegular, pror.newRates.regular);
+  const otOffCurrent = offCurrent(pror.segments.weekendOt, pror.newRates.ot);
+
+  let weekendLine: ProratedLineView | null = null;
+  if (bucketSpannedChange) {
+    weekendLine = toLineView(
+      plusPremium([...pror.segments.weekendRegular, ...pror.segments.weekendOt]),
+    );
+  } else if (regOffCurrent || otOffCurrent) {
+    // One rate on the line, so `previousRate`/`currentRate` can't come from the
+    // segments — they carry the WEEK's change, in weekend (premium-inclusive)
+    // terms, off whichever bucket is the one sitting off its current rate.
+    const prev = regOffCurrent ? pror.oldRates.regular : pror.oldRates.ot;
+    const cur = regOffCurrent ? pror.newRates.regular : pror.newRates.ot;
+    const segs = plusPremium([...pror.segments.weekendRegular, ...pror.segments.weekendOt])
+      .filter((s) => s.hours > PRORATION_HOURS_EPSILON)
+      .map((s) => ({ ratePhp: s.ratePhp, hours: round2(s.hours) }));
+    if (prev != null && cur != null && segs.length > 0) {
+      weekendLine = {
+        previousRate: round2(prev + premium),
+        currentRate: round2(cur + premium),
+        segments: segs,
+      };
+    }
+  }
 
   if (!regular && !ot && !weekendLine) return null;
   return {

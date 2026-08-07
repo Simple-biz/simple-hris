@@ -119,6 +119,25 @@ export interface RateConsistencyInput {
     payPhp?: { regular?: number | null; ot?: number | null } | null;
     /** Defaults to the ₱15 HSL rule when omitted. */
     premiumPhpPerHour?: number | null;
+    /**
+     * The proration block's per-day weekend segments (BASE rates, premium not
+     * yet added), when a mid-week rate change staged them.
+     *
+     * These take over the check because they are what the stub SHOWS: the
+     * statement's `weekendBasis` (paystub-view.ts) prefers the segments over the
+     * `ratesPhp`-derived bucket rates, so without them this guard validates a
+     * rate the employee never sees. That cut both ways — it warned on reat@'s
+     * correct ₱250 line against a phantom ₱240, and it could not have caught a
+     * genuinely wrong ₱250. Each segment states ONE rate against ONE amount, so
+     * each is checked on its own; netting them would let a shortfall on one rate
+     * hide behind a surplus on another.
+     *
+     * Empty/absent → the bucket check runs exactly as before.
+     */
+    segments?: {
+      regular?: Array<{ ratePhp: number; hours: number; payPhp: number }> | null;
+      ot?: Array<{ ratePhp: number; hours: number; payPhp: number }> | null;
+    } | null;
   } | null;
 }
 
@@ -291,6 +310,27 @@ export function findRateConsistencyIssues(
     const premium = finite(weekend.premiumPhpPerHour) ?? HSL_WEEKEND_PREMIUM_PHP_PER_HOUR;
     const baseReg = finite(ratesPhp?.regular);
     const baseOt = finite(ratesPhp?.ot);
+
+    // ── Segment path: check the rates the stub actually prints. ──
+    // A prorated week renders the per-day weekend segments, not `ratesPhp + premium`.
+    const segs = [...(weekend.segments?.regular ?? []), ...(weekend.segments?.ot ?? [])].filter(
+      (s) => s && finite(s.ratePhp) != null && finite(s.hours) != null && finite(s.payPhp) != null,
+    );
+    if (segs.length > 0) {
+      for (const s of segs) {
+        const issue = checkLine(
+          'weekend',
+          s.hours,
+          round(s.ratePhp + premium, 2),
+          s.payPhp,
+          null,
+          false,
+          !!hasMidPeriodChange,
+        );
+        if (issue) out.push(issue);
+      }
+      return out;
+    }
     // `ratesPaid` is deliberately NOT forwarded here. On the regular/ot lines it is the
     // authoritative signal — but it clears a line whenever the DISPLAYED rate appears
     // anywhere among the rates used, even if only some of the hours were paid at it.

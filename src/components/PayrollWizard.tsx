@@ -7650,6 +7650,18 @@ export default function PayrollWizard({
               hours: { regular: r.weekend.regularHours, ot: r.weekend.otHours },
               payPhp: { regular: r.weekend.regularPay, ot: r.weekend.otPay },
               premiumPhpPerHour: 15,
+              // The stub renders these per-day segments in preference to
+              // (rates_php + premium) whenever the week stages a proration
+              // block, so they are the rates to validate. Gated on the SAME
+              // condition as `prorationBlockFromCalcRow` — no block staged
+              // means the statement shows the bucket rates instead.
+              segments:
+                r.rateChange && r.prorationSegments
+                  ? {
+                      regular: r.prorationSegments.weekendRegular,
+                      ot: r.prorationSegments.weekendOt,
+                    }
+                  : null,
             }
           : null,
       });

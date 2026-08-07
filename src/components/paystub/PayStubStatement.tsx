@@ -154,6 +154,43 @@ export function MultiRateDetail({
 }
 
 /**
+ * Detail cell for a line that paid at ONE rate which is nevertheless not the
+ * week's current rate — the whole weekend landed on one side of a dated change:
+ *
+ *     8.10h × ₱250.00
+ *     rate changed to ₱240.00 on Jul 27
+ *
+ * The `₱old → ₱new` arrow would be a lie here (only ₱250 paid any of these
+ * hours) and a bare `8.10h × ₱250.00` was the actual defect — it left a ₱250
+ * weekend sitting under a ₱225 regular line with nothing to reconcile them.
+ * Exported so the wizard preview renders the identical element.
+ */
+export function RateChangedDetail({
+  hours,
+  rate,
+  currentRate,
+  effectiveHuman,
+}: {
+  hours: number;
+  rate: number;
+  currentRate: number;
+  effectiveHuman: string;
+}) {
+  return (
+    <>
+      <span className="whitespace-nowrap">{hrs(hours)}h</span>
+      {' × '}
+      <span className="whitespace-nowrap">{php(rate)}</span>
+      <span className="mt-[3px] block text-[11px] leading-[14px] text-[#7c8798]">
+        rate changed to{' '}
+        <span className="whitespace-nowrap font-semibold text-[#556377]">{php(currentRate)}</span>
+        {effectiveHuman ? ` on ${effectiveHuman}` : ''}
+      </span>
+    </>
+  );
+}
+
+/**
  * Detail cell for a prorated line: `40.00h × ₱175.00 → ₱225.00` (previous rate
  * muted, current rate carrying the weight — no strikethrough, both rates
  * genuinely paid part of the week), then the per-rate basis on its own line so
@@ -411,6 +448,16 @@ export function PayStubStatement({
                       hours={view.weekendHours}
                       segments={view.weekendBasis}
                       effectiveHuman={view.proration?.weekend ? view.proration.effectiveHuman : ''}
+                    />
+                  ) : view.proration?.weekend ? (
+                    // One rate, but not the week's current one — the weekend sat
+                    // entirely on one side of a dated change. Say so, or the
+                    // reader has no way to square it with the Regular line.
+                    <RateChangedDetail
+                      hours={view.weekendHours}
+                      rate={view.weekendBasis[0]?.ratePhp ?? 0}
+                      currentRate={view.proration.weekend.currentRate}
+                      effectiveHuman={view.proration.effectiveHuman}
                     />
                   ) : (
                     <RateDetail hours={view.weekendHours} rate={view.weekendBasis[0]?.ratePhp ?? 0} />
