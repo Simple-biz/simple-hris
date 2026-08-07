@@ -67,15 +67,36 @@ const render = (p: Record<string, unknown>) => renderPayStubEmailHtml(mapPayload
 
 /* ───────────────────────────── weekend rows ───────────────────────────── */
 
-test('HSL week renders both Weekend rows at the premium rate', () => {
+test('HSL week renders ONE merged Weekend Hours row with the per-rate basis', () => {
   const html = render(hslPayload());
   assert.ok(html.includes('Weekend Hours'), 'expected a Weekend Hours row');
-  assert.ok(html.includes('Weekend Overtime'), 'expected a Weekend Overtime row');
-  // base + ₱15/h premium, and the weekend amounts as staged.
-  assert.ok(html.includes('&#8369;240.00'), 'weekend regular rate should be ₱225 + ₱15');
-  assert.ok(html.includes('&#8369;352.50'), 'weekend OT rate should be ₱337.50 + ₱15');
-  assert.ok(html.includes('&#8369;480.00'), 'weekend regular pay');
-  assert.ok(html.includes('&#8369;705.00'), 'weekend OT pay');
+  assert.ok(!html.includes('Weekend Overtime'), 'the OT bucket folds into Weekend Hours');
+  // Merged Sat+Sun hours and money…
+  assert.ok(html.includes('4.00h'), 'merged weekend hours (2 regular-bucket + 2 OT-bucket)');
+  assert.ok(html.includes('&#8369;1,185.00'), 'merged weekend amount (480 + 705)');
+  // …with the two-rate basis keeping the arithmetic explicable.
+  assert.ok(html.includes('&#8369;240.00'), 'regular-bucket rate ₱225 + ₱15');
+  assert.ok(html.includes('&#8369;352.50'), 'OT-bucket rate ₱337.50 + ₱15');
+  assert.ok(!html.includes('&#8369;480.00'), 'bucket subtotals are not printed as amounts');
+});
+
+test('a weekend that is entirely OT-bucket renders a single-rate Weekend Hours line', () => {
+  // The common HSL full-timer week: the 40h cap fills Mon–Fri, so every Sat/Sun
+  // hour lands in the OT bucket. ONE weekend line at the OT-bucket rate — no
+  // ₱0.00 "Weekend Overtime" sibling, no multi-rate basis.
+  const p = hslPayload();
+  p.weekend = {
+    hours: { regular: 0, ot: 2 },
+    pay_php: { regular: 0, ot: 705 },
+    premium_php_per_hour: 15,
+  };
+  (p.pay_php as Record<string, unknown>).regular = 9000; // no weekend money in the regular bucket
+  const html = render(p);
+  assert.ok(html.includes('Weekend Hours'), 'expected the merged Weekend Hours row');
+  assert.ok(!html.includes('Weekend Overtime'), 'no separate Weekend Overtime row');
+  assert.ok(html.includes('2.00h'), 'the OT-bucket hours carry the line');
+  assert.ok(html.includes('&#8369;352.50'), 'classic single-rate detail at ₱337.50 + ₱15');
+  assert.ok(html.includes('&#8369;705.00'), 'the staged weekend amount');
 });
 
 test('non-HSL week renders NO weekend rows', () => {

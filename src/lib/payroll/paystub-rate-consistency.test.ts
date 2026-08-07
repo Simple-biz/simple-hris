@@ -269,7 +269,7 @@ test('erjiee regression: the weekend line that shipped a ₱1,053.33 shortfall i
       premiumPhpPerHour: 15,
     },
   });
-  const wk = issues.find((i) => i.line === 'weekend-regular');
+  const wk = issues.find((i) => i.line === 'weekend');
   assert.ok(wk, 'the weekend line must be flagged');
   assert.equal(wk.displayedRate, 370); // derived as 355 + 15, exactly what the stub shows
   assert.ok(
@@ -296,7 +296,7 @@ test('the weekend check is NOT cleared by ratesPaid containing the displayed rat
     weekend: { hours: { regular: 8.1025 }, payPhp: { regular: 1944.6 }, premiumPhpPerHour: 15 },
   });
   assert.ok(
-    issues.some((i) => i.line === 'weekend-regular'),
+    issues.some((i) => i.line === 'weekend'),
     'ratesPaid must not be able to clear the weekend line',
   );
 });
@@ -334,12 +334,12 @@ test('the weekend line gets NO ₱15/h overpayment headroom — the premium is a
       premiumPhpPerHour: 15,
     },
   });
-  const wk = issues.find((i) => i.line === 'weekend-regular');
+  const wk = issues.find((i) => i.line === 'weekend');
   assert.ok(wk, 'double-counted premium must be flagged, not absorbed as headroom');
   assert.equal(round2(wk.deltaPhp), -150);
 });
 
-test('weekend overtime is checked too, at otRate + premium', () => {
+test('the OT bucket of the merged weekend line is checked at otRate + premium', () => {
   const issues = findRateConsistencyIssues({
     hours: { regular: 40, ot: 6 },
     ratesPhp: { regular: 355, ot: 532.5 },
@@ -351,10 +351,29 @@ test('weekend overtime is checked too, at otRate + premium', () => {
       premiumPhpPerHour: 15,
     },
   });
-  const wk = issues.find((i) => i.line === 'weekend-ot');
+  const wk = issues.find((i) => i.line === 'weekend');
   assert.ok(wk);
-  assert.equal(wk.displayedRate, 547.5); // 532.50 + 15 — matches the stub's label
+  assert.equal(wk.displayedRate, 547.5); // 532.50 + 15 — matches the basis the stub shows
   assert.equal(round2(wk.deltaPhp), round2(6 * 547.5 - 6 * 400));
+  // The statement has ONE weekend line — the message must carry its label.
+  assert.match(wk.message, /^Weekend Hours:/);
+});
+
+test('both weekend buckets wrong → two issues, both on the merged Weekend Hours line', () => {
+  const issues = findRateConsistencyIssues({
+    hours: { regular: 40, ot: 6 },
+    ratesPhp: { regular: 355, ot: 532.5 },
+    payPhp: { regular: 14200, ot: 3195 },
+    isHsl: true,
+    weekend: {
+      hours: { regular: 4, ot: 6 },
+      payPhp: { regular: 4 * 350, ot: 6 * 400 }, // should be 4 × 370 and 6 × 547.50
+      premiumPhpPerHour: 15,
+    },
+  });
+  const weekendIssues = issues.filter((i) => i.line === 'weekend');
+  assert.equal(weekendIssues.length, 2, 'each bucket keeps its own tight arithmetic check');
+  for (const i of weekendIssues) assert.match(i.message, /^Weekend Hours:/);
 });
 
 test('omitting the weekend block leaves behaviour exactly as before', () => {
@@ -390,7 +409,7 @@ test('the weekend premium defaults to ₱15 when the payload omits it', () => {
     isHsl: true,
     weekend: { hours: { regular: 4, ot: 0 }, payPhp: { regular: 4 * 300 } }, // should be 4 × 320
   });
-  const wk = issues.find((i) => i.line === 'weekend-regular');
+  const wk = issues.find((i) => i.line === 'weekend');
   assert.ok(wk, 'an underpaid weekend line must flag');
   assert.equal(wk.displayedRate, 320); // 305 + 15 by default — premium omitted from payload
   assert.equal(round2(wk.deltaPhp), 80); // 4 × (320 − 300)
@@ -433,8 +452,8 @@ test('a mid-week rate change downgrades a weekend mismatch to a warning', () => 
     hasMidPeriodChange: true,
     weekend: { hours: { regular: 8.1025 }, payPhp: { regular: 1944.6 }, premiumPhpPerHour: 15 },
   });
-  const wk = issues.find((i) => i.line === 'weekend-regular');
+  const wk = issues.find((i) => i.line === 'weekend');
   assert.ok(wk);
   assert.equal(wk.severity, 'warning');
-  assert.equal(hasBlockingRateIssue(issues.filter((i) => i.line === 'weekend-regular')), false);
+  assert.equal(hasBlockingRateIssue(issues.filter((i) => i.line === 'weekend')), false);
 });

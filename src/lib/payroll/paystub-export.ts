@@ -80,9 +80,9 @@ function dedupeWeeks(weeks: PayStubWeek[]): PayStubWeek[] {
  *  performance) are itemized as their own columns, so only the netted MESA line
  *  and the weekday/weekend earnings split need deriving here. HSL weeks carry a
  *  weekend carve-out (`hasWeekend`); the columns show the weekday portion in
- *  Regular/Overtime and the Sat+Sun portion in the Weekend columns so a row
- *  still sums exactly to Net. Non-HSL (and pre-split) weeks: weekday === full
- *  and the weekend cells are zero. */
+ *  Regular/Overtime and ALL of Sat+Sun (both pay buckets, merged 2026-08-07)
+ *  in the Weekend columns so a row still sums exactly to Net. Non-HSL (and
+ *  pre-split) weeks: weekday === full and the weekend cells are zero. */
 function derive(w: PayStubWeek) {
   const v = w.view;
   const mesaNet = v.mesaDisbursement - v.mesaDeduction;
@@ -94,9 +94,7 @@ function derive(w: PayStubWeek) {
     weekdayPay: v.weekdayPay ?? v.mfPay,
     weekdayOtPay: v.weekdayOtPay ?? v.otPay,
     weekendHours: hasWeekend ? v.weekendHours : 0,
-    weekendOtHours: hasWeekend ? v.weekendOtHours : 0,
     weekendPay: hasWeekend ? v.weekendPay : 0,
-    weekendOtPay: hasWeekend ? v.weekendOtPay : 0,
   };
 }
 
@@ -104,7 +102,6 @@ interface Totals {
   regular: number;
   ot: number;
   weekendPay: number;
-  weekendOtPay: number;
   techBonus: number;
   attendanceBonus: number;
   performanceBonus: number;
@@ -122,7 +119,6 @@ function sumTotals(weeks: PayStubWeek[]): Totals {
       t.regular += d.weekdayPay;
       t.ot += d.weekdayOtPay;
       t.weekendPay += d.weekendPay;
-      t.weekendOtPay += d.weekendOtPay;
       t.techBonus += w.view.techBonus;
       t.attendanceBonus += w.view.attendanceBonus;
       t.performanceBonus += w.view.performanceBonus;
@@ -137,7 +133,6 @@ function sumTotals(weeks: PayStubWeek[]): Totals {
       regular: 0,
       ot: 0,
       weekendPay: 0,
-      weekendOtPay: 0,
       techBonus: 0,
       attendanceBonus: 0,
       performanceBonus: 0,
@@ -222,11 +217,10 @@ const XLSX_COLS: XlsxCol[] = [
   { header: 'OT Hours', width: 10, value: (w) => round2(derive(w).weekdayOtHours) },
   { header: 'Regular Pay', width: 14, value: (w) => round2(derive(w).weekdayPay), total: (t) => round2(t.regular) },
   { header: 'Overtime', width: 12, value: (w) => round2(derive(w).weekdayOtPay), total: (t) => round2(t.ot) },
-  // HSL weekend carve-out (Sat+Sun at the premium rate) — zero for non-HSL weeks.
+  // HSL weekend carve-out — ALL Sat+Sun hours/pay, both buckets merged
+  // (2026-08-07; the OT bucket pays otRate + premium). Zero for non-HSL weeks.
   { header: 'Weekend Hours', width: 14, value: (w) => round2(derive(w).weekendHours) },
-  { header: 'Weekend OT Hours', width: 16, value: (w) => round2(derive(w).weekendOtHours) },
   { header: 'Weekend Pay', width: 14, value: (w) => round2(derive(w).weekendPay), total: (t) => round2(t.weekendPay) },
-  { header: 'Weekend OT Pay', width: 15, value: (w) => round2(derive(w).weekendOtPay), total: (t) => round2(t.weekendOtPay) },
   { header: 'Tech Allowance', width: 14, value: (w) => round2(w.view.techBonus), total: (t) => round2(t.techBonus) },
   { header: 'Attendance', width: 12, value: (w) => round2(w.view.attendanceBonus), total: (t) => round2(t.attendanceBonus) },
   { header: 'Performance Bonus', width: 16, value: (w) => round2(w.view.performanceBonus), total: (t) => round2(t.performanceBonus) },
@@ -362,10 +356,10 @@ interface PdfColDef {
 }
 
 /** Column catalogue for the PDF summary. "Weekend" carries the HSL Sat+Sun
- *  carve-out (regular + OT combined — the XLSX itemizes the two buckets);
- *  Regular/Overtime then hold the weekday portion so a row still sums across
- *  to Net. Hours columns (Reg/OT/Weekend) are XLSX-only — the PDF summary
- *  shows pay amounts only. */
+ *  carve-out (both pay buckets — the same merged figure the statement's
+ *  Weekend Hours line and the XLSX show); Regular/Overtime then hold the
+ *  weekday portion so a row still sums across to Net. Hours columns
+ *  (Reg/OT/Weekend) are XLSX-only — the PDF summary shows pay amounts only. */
 const PDF_COL_DEFS: PdfColDef[] = [
   {
     header: 'Period Ending', align: 'left',
@@ -385,14 +379,10 @@ const PDF_COL_DEFS: PdfColDef[] = [
   {
     header: 'Weekend', align: 'right', optional: true,
     cell: (w) => {
-      const d = derive(w);
-      const pay = d.weekendPay + d.weekendOtPay;
+      const pay = derive(w).weekendPay;
       return pay !== 0 ? n2(pay) : '-';
     },
-    total: (t) => {
-      const pay = t.weekendPay + t.weekendOtPay;
-      return pay !== 0 ? n2(pay) : '-';
-    },
+    total: (t) => (t.weekendPay !== 0 ? n2(t.weekendPay) : '-'),
   },
   {
     header: 'Tech', align: 'right', optional: true,

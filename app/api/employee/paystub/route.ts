@@ -183,6 +183,31 @@ function buildView(p: {
   const weekdayOtHours = wknd ? Math.max(0, round2(p.otHours - wknd.otHours)) : round2(p.otHours);
   const weekdayPay = wknd ? round2(p.mfPay - wknd.regularPay) : p.mfPay;
   const weekdayOtPay = wknd ? round2(p.otPay - wknd.otPay) : p.otPay;
+  const prorFigures = parseProrationBlock({ proration: p.proration ?? null });
+  // Merged Weekend Hours basis (2026-08-07): prefer the proration block's
+  // per-day weekend segments (rate + ₱15 premium — same preference as the
+  // staged-payload path); otherwise each bucket's EFFECTIVE rate (pay ÷ hours,
+  // premium already inside the snapshot money, matching this path's other
+  // rates). Zero-hours weekend keeps a ₱0.00 single entry so the row still
+  // renders like every other always-on line.
+  const weekendBasis: Array<{ ratePhp: number; hours: number }> = (() => {
+    if (!wknd) return [];
+    const fromProration = prorFigures
+      ? [...prorFigures.segments.weekendRegular, ...prorFigures.segments.weekendOt]
+          .filter((s) => s.hours > 0.005)
+          .map((s) => ({ ratePhp: round2(s.ratePhp + 15), hours: round2(s.hours) }))
+      : [];
+    if (fromProration.length > 0) return fromProration;
+    const buckets: Array<{ ratePhp: number; hours: number }> = [];
+    if (wknd.regularHours > 0) {
+      buckets.push({ ratePhp: round2(wknd.regularPay / wknd.regularHours), hours: round2(wknd.regularHours) });
+    }
+    if (wknd.otHours > 0) {
+      buckets.push({ ratePhp: round2(wknd.otPay / wknd.otHours), hours: round2(wknd.otHours) });
+    }
+    if (buckets.length === 0) buckets.push({ ratePhp: 0, hours: 0 });
+    return buckets;
+  })();
   return {
     name: p.name || "—",
     department: p.department || "—",
@@ -194,8 +219,8 @@ function buildView(p: {
     mfOtHours: round2(p.otHours),
     // Effective rate paid this week (pay ÷ hours) — matches the "h × rate" line.
     // With a weekend split the Regular line shows the WEEKDAY figures, so its
-    // rate is derived from those; the weekend lines get their own effective
-    // rate (premium already inside the weekend pay).
+    // rate is derived from those; the merged weekend line carries its own
+    // per-bucket effective rates in `weekendBasis` (premium already inside).
     mfRate: wknd
       ? weekdayHours > 0
         ? round2(weekdayPay / weekdayHours)
@@ -213,12 +238,9 @@ function buildView(p: {
     mfPay: p.mfPay,
     otPay: p.otPay,
     hasWeekend: wknd != null,
-    weekendHours: wknd ? round2(wknd.regularHours) : 0,
-    weekendOtHours: wknd ? round2(wknd.otHours) : 0,
-    weekendRate: wknd && wknd.regularHours > 0 ? round2(wknd.regularPay / wknd.regularHours) : 0,
-    weekendOtRate: wknd && wknd.otHours > 0 ? round2(wknd.otPay / wknd.otHours) : 0,
-    weekendPay: wknd ? round2(wknd.regularPay) : 0,
-    weekendOtPay: wknd ? round2(wknd.otPay) : 0,
+    weekendHours: wknd ? round2(wknd.regularHours + wknd.otHours) : 0,
+    weekendPay: wknd ? round2(wknd.regularPay + wknd.otPay) : 0,
+    weekendBasis,
     weekdayHours,
     weekdayOtHours,
     weekdayPay,
@@ -239,7 +261,7 @@ function buildView(p: {
     // Same derivation the payload path uses (parse → per-line views), so the
     // fast-path stub shows the identical chip/basis a staged payload would.
     proration: deriveProrationFields(
-      parseProrationBlock({ proration: p.proration ?? null }),
+      prorFigures,
       wknd
         ? {
             hours: wknd.regularHours,

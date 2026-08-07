@@ -28,21 +28,31 @@ export interface PayStubView {
    * the FULL week totals — weekend included — exactly as staged/paid, so every
    * total-summing consumer (lists, exports, the Net figure) is untouched. When
    * `hasWeekend` is true the statement splits the earnings rows instead:
-   * Regular/Overtime render the weekday-only figures and two Weekend rows carry
-   * the Sat+Sun hours at the premium rate (base + ₱15/h). Weekend hours can sit
-   * in EITHER bucket — a weekend day past the 40h cap is weekend OT — which is
-   * why both a regular and an OT weekend line exist. Non-HSL payloads (and
-   * payloads staged before this field existed) have `hasWeekend: false` and all
-   * weekend fields zero; weekday === mf then.
+   * Regular/Overtime render the weekday-only figures and ONE "Weekend Hours"
+   * row carries ALL Sat+Sun hours and money (2026-08-07: the separate "Weekend
+   * Overtime" row folded into it — Kane's call; "Overtime" is the only
+   * OT-labelled line). Weekend hours still sit in EITHER pay bucket — a weekend
+   * day past the 40h cap pays at (otRate + premium), not (base + premium) — so
+   * the merged row's arithmetic is carried by `weekendBasis`, hours per
+   * premium-inclusive rate. The three earnings lines sum exactly back to the
+   * original two. Non-HSL payloads (and payloads staged before this field
+   * existed) have `hasWeekend: false`, zero weekend figures, an empty basis;
+   * weekday === mf then.
    */
   hasWeekend: boolean;
+  /** ALL Sat+Sun hours — both pay buckets merged. */
   weekendHours: number;
-  weekendOtHours: number;
-  /** Effective weekend rates = displayed base rate + the per-hour premium. */
-  weekendRate: number;
-  weekendOtRate: number;
+  /** ALL Sat+Sun money — both pay buckets, premium included. */
   weekendPay: number;
-  weekendOtPay: number;
+  /**
+   * The merged line's hours × rate basis, in pay order (regular bucket first).
+   * One entry → the classic `H × ₱R` detail; two+ → the per-rate list, because
+   * no single rate can honestly explain the amount. Rates are premium-inclusive
+   * (displayed base + ₱15/h). On a prorated week the entries come from the
+   * proration block's per-day segments, so the basis stays truthful even when a
+   * portion paid at a rate the header no longer displays.
+   */
+  weekendBasis: Array<{ ratePhp: number; hours: number }>;
   weekdayHours: number;
   weekdayOtHours: number;
   weekdayPay: number;
@@ -76,8 +86,8 @@ export interface PayStubView {
    * (no block, or every line paid at a single rate): those render the classic
    * lines untouched. When a line's entry is non-null the statement shows the
    * "Prorated" chip + `₱old → ₱new` + the basis in that line's EXISTING cells —
-   * never an extra row. Weekend line rates are premium-inclusive, like
-   * `weekendRate`. See `deriveProrationFields`.
+   * never an extra row. The merged Weekend line's rates are premium-inclusive,
+   * like `weekendBasis`. See `deriveProrationFields`.
    */
   proration: ProrationView | null;
 }
@@ -199,21 +209,30 @@ export interface WeekendFigures {
 /**
  * The weekday/weekend split every renderer shares. Weekend amounts are the
  * staged truth; the weekday lines are derived by SUBTRACTION from the full
- * totals, so the four earnings lines always sum back to exactly
+ * totals, so the three earnings lines always sum back to exactly
  * `mfPay + otPay` no matter how the two sides were rounded when staged.
+ *
+ * The two staged buckets (regular / OT) merge into ONE displayed line here
+ * (2026-08-07): `weekendHours`/`weekendPay` carry both buckets and
+ * `weekendBasis` itemizes hours per premium-inclusive rate, because the
+ * buckets pay at different rates and no single rate can honestly explain the
+ * merged amount. `prorationWeekendSegments` — the payload's per-day weekend
+ * segments, when a mid-week rate change staged them — replaces the
+ * displayed-rate basis with the rates actually paid.
  */
 export function deriveWeekendFields(
   base: { mfHours: number; mfOtHours: number; mfRate: number; otRate: number; mfPay: number; otPay: number },
   weekend: WeekendFigures | null,
+  prorationWeekendSegments?: Pick<
+    ProrationFigures['segments'],
+    'weekendRegular' | 'weekendOt'
+  > | null,
 ): Pick<
   PayStubView,
   | 'hasWeekend'
   | 'weekendHours'
-  | 'weekendOtHours'
-  | 'weekendRate'
-  | 'weekendOtRate'
   | 'weekendPay'
-  | 'weekendOtPay'
+  | 'weekendBasis'
   | 'weekdayHours'
   | 'weekdayOtHours'
   | 'weekdayPay'
@@ -223,26 +242,46 @@ export function deriveWeekendFields(
     return {
       hasWeekend: false,
       weekendHours: 0,
-      weekendOtHours: 0,
-      weekendRate: 0,
-      weekendOtRate: 0,
       weekendPay: 0,
-      weekendOtPay: 0,
+      weekendBasis: [],
       weekdayHours: base.mfHours,
       weekdayOtHours: base.mfOtHours,
       weekdayPay: base.mfPay,
       weekdayOtPay: base.otPay,
     };
   }
-  const round2 = (n: number) => Math.round(n * 100) / 100;
+
+  // Basis preference: the proration block's per-day weekend segments (exact
+  // rates the money actually paid at) over the displayed top-level rates.
+  const basisFromProration = (() => {
+    if (!prorationWeekendSegments) return null;
+    const merged = [
+      ...prorationWeekendSegments.weekendRegular,
+      ...prorationWeekendSegments.weekendOt,
+    ]
+      .filter((s) => s.hours > PRORATION_HOURS_EPSILON)
+      .map((s) => ({ ratePhp: round2(s.ratePhp + weekend.premiumPerHour), hours: round2(s.hours) }));
+    return merged.length > 0 ? merged : null;
+  })();
+
+  const bucketBasis: Array<{ ratePhp: number; hours: number }> = [];
+  if (weekend.hours > PRORATION_HOURS_EPSILON) {
+    bucketBasis.push({ ratePhp: round2(base.mfRate + weekend.premiumPerHour), hours: round2(weekend.hours) });
+  }
+  if (weekend.otHours > PRORATION_HOURS_EPSILON) {
+    bucketBasis.push({ ratePhp: round2(base.otRate + weekend.premiumPerHour), hours: round2(weekend.otHours) });
+  }
+  // A zero-hours weekend still renders its row (₱0.00) — keep a rate on it,
+  // exactly as the pre-merge line did.
+  if (bucketBasis.length === 0) {
+    bucketBasis.push({ ratePhp: round2(base.mfRate + weekend.premiumPerHour), hours: 0 });
+  }
+
   return {
     hasWeekend: true,
-    weekendHours: weekend.hours,
-    weekendOtHours: weekend.otHours,
-    weekendRate: round2(base.mfRate + weekend.premiumPerHour),
-    weekendOtRate: round2(base.otRate + weekend.premiumPerHour),
-    weekendPay: weekend.pay,
-    weekendOtPay: weekend.otPay,
+    weekendHours: round2(weekend.hours + weekend.otHours),
+    weekendPay: round2(weekend.pay + weekend.otPay),
+    weekendBasis: basisFromProration ?? bucketBasis,
     weekdayHours: Math.max(0, round2(base.mfHours - weekend.hours)),
     weekdayOtHours: Math.max(0, round2(base.mfOtHours - weekend.otHours)),
     weekdayPay: round2(base.mfPay - weekend.pay),
@@ -306,8 +345,13 @@ export interface ProrationView {
   effectiveHuman: string;
   regular: ProratedLineView | null;
   ot: ProratedLineView | null;
-  weekendRegular: ProratedLineView | null;
-  weekendOt: ProratedLineView | null;
+  /**
+   * The MERGED Weekend Hours line (both buckets). Non-null ONLY when a bucket
+   * genuinely paid at 2+ rates — i.e. the dated change landed on a Sat/Sun. A
+   * regular-rate segment sitting beside an OT-rate segment is the ordinary
+   * reg/OT mix, which `weekendBasis` already displays without a chip.
+   */
+  weekend: ProratedLineView | null;
 }
 
 function numOrNull(v: unknown): number | null {
@@ -387,8 +431,11 @@ function toLineView(
  *  - with a weekend carve-out, Regular/Overtime show the WEEKDAY portion, so
  *    their basis is weekday-scoped too — full segments minus the weekend
  *    segments, matched per rate;
- *  - the weekend lines display premium-inclusive rates (`weekendRate`), so
- *    their basis rates carry the premium as well.
+ *  - the merged Weekend line displays premium-inclusive rates (like
+ *    `weekendBasis`), so its basis rates carry the premium as well. It counts
+ *    as prorated only when a BUCKET paid at 2+ rates: a regular-rate segment
+ *    beside an OT-rate segment is the ordinary reg/OT mix, not a rate change,
+ *    and must not chip.
  * Null when no line paid at 2+ rates — the whole statement renders classic.
  */
 export function deriveProrationFields(
@@ -418,17 +465,21 @@ export function deriveProrationFields(
   const ot = toLineView(
     weekend ? minusWeekend(pror.segments.ot, pror.segments.weekendOt) : pror.segments.ot,
   );
-  const weekendRegular = toLineView(plusPremium(pror.segments.weekendRegular));
-  const weekendOt = toLineView(plusPremium(pror.segments.weekendOt));
+  // Chip gate: a bucket spanned the change on its own.
+  const bucketSpannedChange =
+    Boolean(toLineView(plusPremium(pror.segments.weekendRegular))) ||
+    Boolean(toLineView(plusPremium(pror.segments.weekendOt)));
+  const weekendLine = bucketSpannedChange
+    ? toLineView(plusPremium([...pror.segments.weekendRegular, ...pror.segments.weekendOt]))
+    : null;
 
-  if (!regular && !ot && !weekendRegular && !weekendOt) return null;
+  if (!regular && !ot && !weekendLine) return null;
   return {
     effectiveDate: pror.effectiveDate,
     effectiveHuman: formatEffectiveHuman(pror.effectiveDate),
     regular,
     ot,
-    weekendRegular,
-    weekendOt,
+    weekend: weekendLine,
   };
 }
 
@@ -483,6 +534,7 @@ export function mapPayloadToPayStub(payload: Json, payPeriod?: Json): PayStubVie
   };
 
   const weekendFigures = parseWeekendBlock(payload);
+  const prorationFigures = parseProrationBlock(payload);
 
   return {
     name: str(p.name),
@@ -492,8 +544,8 @@ export function mapPayloadToPayStub(payload: Json, payPeriod?: Json): PayStubVie
     weekHuman: formatWeekHuman(weekStart, weekEnd),
     salaryDate: period.salary_date ? str(period.salary_date) : null,
     ...baseFigures,
-    ...deriveWeekendFields(baseFigures, weekendFigures),
-    proration: deriveProrationFields(parseProrationBlock(payload), weekendFigures),
+    ...deriveWeekendFields(baseFigures, weekendFigures, prorationFigures?.segments ?? null),
+    proration: deriveProrationFields(prorationFigures, weekendFigures),
     techBonus: num(pay.tech_bonus),
     attendanceBonus: num(pay.perfect_attendance_bonus),
     performanceBonus: num(pay.other_bonuses),

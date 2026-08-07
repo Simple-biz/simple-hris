@@ -91,6 +91,33 @@ function rateDetail(hours: number, rate: number): string {
 }
 
 /**
+ * Detail cell for the merged Weekend Hours line when its hours paid at 2+
+ * rates: total hours up top, per-rate basis underneath. No `₱old → ₱new`
+ * arrow — the regular and OT buckets of one weekend legitimately pay at
+ * different rates without any rate change. `effectiveHuman` only when a dated
+ * mid-week change genuinely hit the weekend. Transcribes `MultiRateDetail`.
+ */
+function multiRateDetail(
+  hours: number,
+  segments: Array<{ ratePhp: number; hours: number }>,
+  effectiveHuman: string,
+): string {
+  const basis = segments
+    .map(
+      (s) =>
+        `<span style="white-space:nowrap;"><span style="font-weight:600;color:#556377;">` +
+        `${hrs(s.hours)}h</span> @ ${php(s.ratePhp)}</span>`,
+    )
+    .join(' &middot; ');
+  const effective = effectiveHuman ? ` &mdash; effective ${esc(effectiveHuman)}` : '';
+  return (
+    `<span style="white-space:nowrap;">${hrs(hours)}h</span>` +
+    `<span style="display:block;margin-top:3px;font-size:11px;line-height:14px;color:#7c8798;">` +
+    `${basis}${effective}</span>`
+  );
+}
+
+/**
  * Detail cell for a line that genuinely paid at two rates (a mid-week transfer,
  * a dated raise): `40.00h × ₱175.00 → ₱225.00` with the per-rate hour basis
  * underneath, so the amount stays explicable arithmetic. Transcribes
@@ -190,10 +217,12 @@ export function renderPayStubEmailHtml(
   const weekHuman = view.weekHuman || '—';
 
   /* Earnings. Regular/Overtime carry the WEEKDAY portion when an HSL week has a
-     weekend carve-out; the two Weekend rows then carry Sat+Sun at the premium
-     rate (base + ₱15/h), and the four lines sum to exactly the old two. Non-HSL
-     weeks have `hasWeekend: false` — no Weekend rows at all, and weekday ===
-     the full-week totals, so those statements are unchanged. */
+     weekend carve-out; ONE Weekend Hours row then carries ALL of Sat+Sun
+     (2026-08-07 — the old Weekend Overtime row folded into it). The buckets pay
+     at different premium-inclusive rates, so a mixed weekend renders the
+     per-rate basis (`weekendBasis`); the three lines sum to exactly the old
+     two. Non-HSL weeks have `hasWeekend: false` — no Weekend row at all, and
+     weekday === the full-week totals, so those statements are unchanged. */
   const earnings: string[] = [
     renderRow({
       label: 'Regular Hours',
@@ -216,19 +245,16 @@ export function renderPayStubEmailHtml(
     earnings.push(
       renderRow({
         label: 'Weekend Hours',
-        prorated: Boolean(pror?.weekendRegular),
-        detail: pror?.weekendRegular
-          ? proratedRateDetail(view.weekendHours, pror.weekendRegular, pror.effectiveHuman)
-          : rateDetail(view.weekendHours, view.weekendRate),
+        prorated: Boolean(pror?.weekend),
+        detail:
+          view.weekendBasis.length > 1
+            ? multiRateDetail(
+                view.weekendHours,
+                view.weekendBasis,
+                pror?.weekend ? pror.effectiveHuman : '',
+              )
+            : rateDetail(view.weekendHours, view.weekendBasis[0]?.ratePhp ?? 0),
         amount: php(view.weekendPay),
-      }),
-      renderRow({
-        label: 'Weekend Overtime',
-        prorated: Boolean(pror?.weekendOt),
-        detail: pror?.weekendOt
-          ? proratedRateDetail(view.weekendOtHours, pror.weekendOt, pror.effectiveHuman)
-          : rateDetail(view.weekendOtHours, view.weekendOtRate),
-        amount: php(view.weekendOtPay),
       }),
     );
   }

@@ -38,7 +38,7 @@
 /**
  * Pay lines that carry an hours × rate basis. Bonuses/adjustments have none.
  *
- * The two `weekend-*` lines were added 2026-08-04 after a preview stub printed
+ * The weekend check was added 2026-08-04 after a preview stub printed
  *
  *     Weekend Hours    8.10h × ₱370.00      ₱1,944.60
  *
@@ -46,8 +46,14 @@
  * (a stale ₱225 base + the ₱15 premium) — a ₱1,053.33 shortfall on a stub that was
  * about to be sent. It slipped because the guard only ever inspected `regular` and
  * `ot`, while the weekend carve-out renders its own hours × rate line.
+ *
+ * 2026-08-07: the statement now renders ONE merged "Weekend Hours" line whose
+ * basis itemizes the regular/OT buckets per premium-inclusive rate, so both
+ * bucket checks report under the single `weekend` line id. Each bucket keeps
+ * its OWN tight arithmetic check — merging them into one sum would let a
+ * shortfall in one bucket hide behind a surplus in the other.
  */
-export type RateLine = 'regular' | 'ot' | 'weekend-regular' | 'weekend-ot';
+export type RateLine = 'regular' | 'ot' | 'weekend';
 
 export interface RateConsistencyIssue {
   line: RateLine;
@@ -143,8 +149,7 @@ function includesRate(rates: number[], rate: number): boolean {
 const LINE_LABELS: Record<RateLine, string> = {
   regular: 'Regular Hours',
   ot: 'Overtime',
-  'weekend-regular': 'Weekend Hours',
-  'weekend-ot': 'Weekend Overtime',
+  weekend: 'Weekend Hours',
 };
 
 function checkLine(
@@ -275,11 +280,13 @@ export function findRateConsistencyIssues(
   );
   if (ot) out.push(ot);
 
-  // ── Weekend carve-out lines ──
-  // These render their own hours × rate at `base + premium`. The displayed rate is
-  // derived here the same way the statement derives it, so the check tests the number
-  // the employee actually sees. `allowPremiumHeadroom` is FALSE: the premium is already
-  // inside the displayed rate, so pay must reproduce hours × rate on BOTH sides.
+  // ── The merged Weekend Hours line ──
+  // The statement renders ONE weekend row; its `weekendBasis` itemizes the
+  // regular/OT buckets at `base + premium` each. Every basis entry is a rate ×
+  // hours claim the employee sees, so each bucket is validated on its own —
+  // both report under the single `weekend` line id. `allowPremiumHeadroom` is
+  // FALSE: the premium is already inside the displayed rate, so pay must
+  // reproduce hours × rate on BOTH sides.
   if (weekend) {
     const premium = finite(weekend.premiumPhpPerHour) ?? HSL_WEEKEND_PREMIUM_PHP_PER_HOUR;
     const baseReg = finite(ratesPhp?.regular);
@@ -289,11 +296,11 @@ export function findRateConsistencyIssues(
     // anywhere among the rates used, even if only some of the hours were paid at it.
     // That is precisely the erjiee case: rates paid were [355, 225] (weekdays at 355,
     // the stranded Sunday at 225), so the weekend equivalents [370, 240] would "contain"
-    // the displayed 370 and clear a ₱1,053.33 shortfall. The weekend line renders ONE
+    // the displayed 370 and clear a ₱1,053.33 shortfall. Each basis entry states ONE
     // rate against ONE amount, so plain arithmetic is both sufficient and stricter.
     // A genuine mid-week rate change still downgrades this to a warning below.
     const wReg = checkLine(
-      'weekend-regular',
+      'weekend',
       weekend.hours?.regular,
       baseReg == null ? null : round(baseReg + premium, 2),
       weekend.payPhp?.regular,
@@ -303,7 +310,7 @@ export function findRateConsistencyIssues(
     );
     if (wReg) out.push(wReg);
     const wOt = checkLine(
-      'weekend-ot',
+      'weekend',
       weekend.hours?.ot,
       baseOt == null ? null : round(baseOt + premium, 2),
       weekend.payPhp?.ot,

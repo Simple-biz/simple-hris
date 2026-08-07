@@ -118,6 +118,42 @@ export function ProratedChip() {
 }
 
 /**
+ * Detail cell for the merged Weekend Hours line when its hours paid at 2+
+ * rates: the total hours up top, then the per-rate basis underneath —
+ * `8.72h @ ₱265.00 · 8.65h @ ₱382.50` — so the amount stays explicable
+ * arithmetic. Two rates appear here without any rate CHANGE: the regular and
+ * OT buckets of the same weekend legitimately pay differently, which is why
+ * there is no `₱old → ₱new` arrow. `effectiveHuman` is set only when a dated
+ * mid-week change genuinely hit the weekend (the line also gets the chip).
+ */
+export function MultiRateDetail({
+  hours,
+  segments,
+  effectiveHuman,
+}: {
+  hours: number;
+  segments: Array<{ ratePhp: number; hours: number }>;
+  effectiveHuman?: string;
+}) {
+  return (
+    <>
+      <span className="whitespace-nowrap">{hrs(hours)}h</span>
+      <span className="mt-[3px] block text-[11px] leading-[14px] text-[#7c8798]">
+        {segments.map((s, i) => (
+          <React.Fragment key={`${s.ratePhp}-${i}`}>
+            {i > 0 && ' · '}
+            <span className="whitespace-nowrap">
+              <span className="font-semibold text-[#556377]">{hrs(s.hours)}h</span> @ {php(s.ratePhp)}
+            </span>
+          </React.Fragment>
+        ))}
+        {effectiveHuman ? ` — effective ${effectiveHuman}` : ''}
+      </span>
+    </>
+  );
+}
+
+/**
  * Detail cell for a prorated line: `40.00h × ₱175.00 → ₱225.00` (previous rate
  * muted, current rate carrying the weight — no strikethrough, both rates
  * genuinely paid part of the week), then the per-rate basis on its own line so
@@ -319,12 +355,15 @@ export function PayStubStatement({
           <div className={SEC_HEAD}>Earnings</div>
           <StatementTable caption="Earnings" detailHead="Hours × Rate">
             {/* HSL weeks split the hours: Regular/Overtime carry the WEEKDAY
-                portion and two Weekend rows carry Sat+Sun at the premium rate
-                (base + ₱15/h). Weekend hours can sit in either bucket — a
-                weekend day past the 40h cap is weekend OT — so both weekend
-                lines exist. The four lines sum exactly to the old two.
-                Non-HSL (and pre-split) stubs: weekday === full totals and the
-                weekend rows don't render, so nothing changes. */}
+                portion and ONE Weekend Hours row carries ALL of Sat+Sun
+                (2026-08-07 — the old Weekend Overtime row folded into it, so
+                "Overtime" is the only OT-labelled line). The buckets still pay
+                at different premium-inclusive rates — a weekend day past the
+                40h cap pays (otRate + ₱15) — so a mixed weekend renders the
+                per-rate basis (`weekendBasis`) instead of a single rate. The
+                three lines sum exactly to the old two. Non-HSL (and pre-split)
+                stubs: weekday === full totals and the weekend row doesn't
+                render, so nothing changes. */}
             {/* A mid-week transfer / dated rate change prorates a line across two
                 rates. Affected lines keep their EXACT row — the "Prorated" chip
                 joins the label and the detail cell shows `₱old → ₱new` plus the
@@ -365,37 +404,19 @@ export function PayStubStatement({
             {view.hasWeekend && (
               <EarningRow
                 label="Weekend Hours"
-                badge={view.proration?.weekendRegular ? <ProratedChip /> : null}
+                badge={view.proration?.weekend ? <ProratedChip /> : null}
                 detail={
-                  view.proration?.weekendRegular ? (
-                    <ProratedRateDetail
+                  view.weekendBasis.length > 1 ? (
+                    <MultiRateDetail
                       hours={view.weekendHours}
-                      line={view.proration.weekendRegular}
-                      effectiveHuman={view.proration.effectiveHuman}
+                      segments={view.weekendBasis}
+                      effectiveHuman={view.proration?.weekend ? view.proration.effectiveHuman : ''}
                     />
                   ) : (
-                    <RateDetail hours={view.weekendHours} rate={view.weekendRate} />
+                    <RateDetail hours={view.weekendHours} rate={view.weekendBasis[0]?.ratePhp ?? 0} />
                   )
                 }
                 amount={php(view.weekendPay)}
-              />
-            )}
-            {view.hasWeekend && (
-              <EarningRow
-                label="Weekend Overtime"
-                badge={view.proration?.weekendOt ? <ProratedChip /> : null}
-                detail={
-                  view.proration?.weekendOt ? (
-                    <ProratedRateDetail
-                      hours={view.weekendOtHours}
-                      line={view.proration.weekendOt}
-                      effectiveHuman={view.proration.effectiveHuman}
-                    />
-                  ) : (
-                    <RateDetail hours={view.weekendOtHours} rate={view.weekendOtRate} />
-                  )
-                }
-                amount={php(view.weekendOtPay)}
               />
             )}
             <EarningRow label="Tech Allowance" detail="Bonus" amount={php(view.techBonus)} />

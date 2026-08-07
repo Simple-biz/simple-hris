@@ -349,17 +349,28 @@ every renderer) carries a regular and an OT pair. Weekend pay = weekend hours ×
 per day at each day's real rate.
 
 Renderers split the earnings rows only when the block is present (`weekend: null`, or a payload
-staged before 2026-07-30, renders the classic two lines):
+staged before 2026-07-30, renders the classic two lines). **2026-08-07 (Kane's call): the two
+weekend DISPLAY rows merged into one** — the statement shows a single **Weekend Hours** line and
+"Overtime" is the only OT-labelled row. The payload block keeps the regular/OT split (the buckets
+pay at different rates), and the wire/snapshot shape is unchanged:
 
 | Line | Hours | Amount |
 |---|---|---|
 | Regular Hours | `hours.regular − weekend.hours.regular` | `pay_php.regular − weekend.pay_php.regular` |
 | Overtime | `hours.ot − weekend.hours.ot` | `pay_php.ot − weekend.pay_php.ot` |
-| Weekend Hours | `weekend.hours.regular` | `weekend.pay_php.regular` |
-| Weekend Overtime | `weekend.hours.ot` | `weekend.pay_php.ot` |
+| Weekend Hours | `weekend.hours.regular + weekend.hours.ot` | `weekend.pay_php.regular + weekend.pay_php.ot` |
 
-Weekday lines are derived by **subtraction**, so the four lines always sum exactly back to the
-original two (rounding residue lands on the weekday line, never the total).
+Weekday lines are derived by **subtraction**, so the three lines always sum exactly back to the
+original two (rounding residue lands on the weekday line, never the total). Because the two
+buckets pay at different premium-inclusive rates (regular at `base + 15`, OT at `otRate + 15`),
+the merged line's detail cell renders from `PayStubView.weekendBasis`: one entry → the classic
+`H × ₱R`; two+ → total hours over a per-rate list (`2.00h @ ₱240.00 · 2.00h @ ₱352.50`), the
+`MultiRateDetail` component / `multiRateDetail` email transcription. On a prorated week the basis
+comes from the proration block's per-day weekend segments, and the line chips ONLY when a bucket
+genuinely spanned the dated change (`ProrationView.weekend`) — a regular-rate segment beside an
+OT-rate segment is the ordinary bucket mix, never a chip. `findRateConsistencyIssues` still
+validates each bucket's arithmetic separately (a shortfall in one bucket must not hide behind a
+surplus in the other) but reports both under the single `weekend` line id.
 
 **Mid-week transfer INTO HSL — day-scoped weekend treatment (2026-07-30).** A transfer applies its
 department label the moment it is released, but the Weekend Hours treatment follows the transfer's
@@ -387,9 +398,10 @@ Where it shows (all driven by `PayStubView`'s `hasWeekend`/`weekday*`/`weekend*`
 - **Shared statement** (`PayStubStatement.tsx`) → Employee Dashboard modal, Employee Profile
   Pay Stubs tab, Salary-Paid notification, and Payment Dispatch's Accounting stub viewer.
 - **Wizard Paystubs preview** (its own inline markup, same split).
-- **Employee exports** (`paystub-export.ts`): XLSX gains Weekend Hours / Weekend OT Hours /
-  Weekend Pay / Weekend OT Pay columns; the PDF gains combined `Wknd Hrs` / `Weekend` columns.
-  Regular/Overtime columns hold the weekday portion so a row still sums across to Net.
+- **Employee exports** (`paystub-export.ts`): XLSX carries merged Weekend Hours / Weekend Pay
+  columns (both buckets — the per-bucket split collapsed 2026-08-07); the PDF's `Weekend` column
+  shows the same merged figure. Regular/Overtime columns hold the weekday portion so a row still
+  sums across to Net.
 - **n8n email** — see below.
 
 Freshness plumbing: `publishFinalPaySnapshot` writes `weekendRegularHours/OtHours/RegularPay/
@@ -539,8 +551,9 @@ whose total matches the money the row just recorded, plus `amount_cop` for Colom
 
 **Line visibility** is decided once, in `paystub-view.ts`, and obeyed by all three surfaces:
 
-- **Weekend Hours / Weekend Overtime** — only when `hasWeekend` (HSL/Hogan weeks carrying a Sat+Sun
-  carve-out). Non-HSL statements have no weekend rows at all.
+- **Weekend Hours** (one merged row since 2026-08-07 — both pay buckets, per-rate basis) — only
+  when `hasWeekend` (HSL/Hogan weeks carrying a Sat+Sun carve-out). Non-HSL statements have no
+  weekend row at all.
 - **Orphanage** — only when there is money on it (`showsOrphanageLine`). It used to print `₱0.00`
   on everyone's statement.
 - **Everything else** — Regular, Overtime, Tech, Attendance, Performance, Adjustment and the MESA
