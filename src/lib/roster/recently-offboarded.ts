@@ -33,6 +33,7 @@ import 'server-only';
 
 import { createSupabaseServiceRoleClient } from '@/lib/supabase/server';
 import { normEmail } from '@/lib/email/norm-email';
+import { sanitizeOffboardDay } from '@/lib/roster/offboard-date-sanity';
 import { applyDeptOverrideToRawRow } from '@/lib/departments/dept-email-overrides';
 import {
   listHubstaffUploads,
@@ -343,6 +344,20 @@ export async function listRecentlyOffboardedPeople(days = 90): Promise<{
   // ── Candidates from every source ──────────────────────────────────────────
   const cands: Cand[] = [];
 
+  /** Evidence that cannot be typo'd: the person appears in the last two
+   *  timesheets (by email, or by near-complete name-token coverage), and NOT
+   *  under an active person's address. The flavor-4 qualifier — also the only
+   *  thing allowed to vouch for a record whose off date failed sanitization. */
+  const hasRecentHours = (name: string, rawEmails: (string | null)[]): boolean => {
+    const emails = rawEmails.map((e) => normEmail(e ?? '')).filter(Boolean) as string[];
+    if (emails.some((e) => hubEmails.has(e) && !activeEmails.has(e))) return true;
+    const toks = nameTokens(name);
+    return (
+      toks.size >= 2 &&
+      hubRows.some((h) => !activeEmails.has(h.email) && h.tokens.size >= 2 && isSubset(h.tokens, toks))
+    );
+  };
+
   for (const raw of gmlRes.rows) {
     const r = applyDeptOverrideToRawRow(raw);
     const w = str(r['Work Email']);
@@ -350,8 +365,29 @@ export async function listRecentlyOffboardedPeople(days = 90): Promise<{
     const name = str(r['Name']);
     if (!name || (!w && !p)) continue;
     const onCurrentUpload = str(r['last_seen_upload_id']) === currentUploadId;
-    const off = toDay(str(r['off_boarded_at']));
-    if (off) {
+    const rawOff = toDay(str(r['off_boarded_at']));
+    const off = sanitizeOffboardDay(rawOff);
+    if (rawOff && !off) {
+      // Stamped, but the date claims the FUTURE — a hand-typo'd year defeats
+      // every recency window at once, because they are all lower-bound checks
+      // (franm@'s sheet row says 2027-04-20 and read as "relevant" to every
+      // week for months). The stamp still says "offboarded", so keep the
+      // person UNDATED, and only on evidence a typo can't fake: recent hours.
+      if (hasRecentHours(name, [w, p])) {
+        cands.push({
+          name,
+          department: str(r['Department']),
+          work_email: w,
+          personal_email: p,
+          alternate_work_email: str(r['Alternate Work Email']),
+          alternate_work_email_2: str(r['Alternate Work Email 2']),
+          start_date: str(r['Start Date']),
+          off: null,
+          off_boarded_reason: str(r['off_boarded_reason']),
+          on_current_upload: onCurrentUpload,
+        });
+      }
+    } else if (off) {
       // Flavor 1/3: stamped row.
       if (off >= cutoff) {
         cands.push({
@@ -375,15 +411,7 @@ export async function listRecentlyOffboardedPeople(days = 90): Promise<{
       // ACTIVE person's email never qualify: a stale row name-matching an
       // active hour-logger is a dupe/lookalike of that active person, not a
       // leaver (the active-name guard below drops most of these anyway).
-      const emails = [w, p].map((e) => normEmail(e ?? '')).filter(Boolean) as string[];
-      let onHub = emails.some((e) => hubEmails.has(e) && !activeEmails.has(e));
-      if (!onHub) {
-        const toks = nameTokens(name);
-        onHub =
-          toks.size >= 2 &&
-          hubRows.some((h) => !activeEmails.has(h.email) && h.tokens.size >= 2 && isSubset(h.tokens, toks));
-      }
-      if (onHub) {
+      if (hasRecentHours(name, [w, p])) {
         cands.push({
           name,
           department: str(r['Department']),
@@ -406,6 +434,12 @@ export async function listRecentlyOffboardedPeople(days = 90): Promise<{
     const w = str(r['employee_work_email']);
     const p = str(r['employee_personal_email']) ?? str(r['employee_email']);
     if (!name || (!w && !p)) continue;
+    // decided_at is server-stamped so a future value should be impossible —
+    // but the same rule applies everywhere: a date that fails sanitization may
+    // not vouch for a candidate; only recent hours may.
+    const rawOff = toDay(str(r['decided_at']));
+    const off = sanitizeOffboardDay(rawOff);
+    if (rawOff && !off && !hasRecentHours(name, [w, p])) continue;
     cands.push({
       name,
       department: str(r['department']),
@@ -414,7 +448,7 @@ export async function listRecentlyOffboardedPeople(days = 90): Promise<{
       alternate_work_email: null,
       alternate_work_email_2: null,
       start_date: null,
-      off: toDay(str(r['decided_at'])),
+      off,
       off_boarded_reason: null,
       on_current_upload: false,
     });
@@ -425,6 +459,15 @@ export async function listRecentlyOffboardedPeople(days = 90): Promise<{
     const w = str(r['work_email']);
     const p = str(r['personal_email']);
     if (!name || (!w && !p)) continue;
+    // THE franm@ path. offboarded_sheet is a snapshot of a hand-edited Google
+    // Sheet tab (replaceOffboardedSheetSnapshot re-copies it every sync), so a
+    // typo'd cell lands here verbatim and outlives any DB-side correction.
+    // A future-dated row may only stay a candidate on recent-hours evidence —
+    // franm@ (2027-04-20, real last hours 2026-04-19) has none, so her row
+    // stops producing a person at all instead of riding every surface to 2027.
+    const rawOff = toDay(str(r['off_boarded_at']));
+    const off = sanitizeOffboardDay(rawOff);
+    if (rawOff && !off && !hasRecentHours(name, [w, p])) continue;
     cands.push({
       name,
       department: str(r['department']),
@@ -433,7 +476,7 @@ export async function listRecentlyOffboardedPeople(days = 90): Promise<{
       alternate_work_email: null,
       alternate_work_email_2: null,
       start_date: null,
-      off: toDay(str(r['off_boarded_at'])),
+      off,
       off_boarded_reason: null,
       on_current_upload: false,
     });
