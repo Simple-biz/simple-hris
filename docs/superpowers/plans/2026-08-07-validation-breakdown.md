@@ -1062,8 +1062,12 @@ export default function ValidationBreakdownTable({
   const payable = rows.filter((r) => !r.excluded);
   const subtotal = payable.reduce((s, r) => s + r.gross, 0);
 
-  // Column count for colSpan on the expanded row and the empty state.
-  const cols = isHsl ? 14 : 12;
+  // Column count for colSpan on the expanded row, the empty state and the footer.
+  // Must equal the sum of the group-header spans below, or the expanded row and
+  // subtotal footer under-span and the table visibly misaligns:
+  //   base: 2 + 2 + 2 + 3 + 3 + 2 = 14
+  //   HSL:  2 + 3 + 3 + 4 + 3 + 2 = 17
+  const cols = isHsl ? 17 : 14;
 
   return (
     <div className="overflow-auto [scrollbar-gutter:stable]" style={{ maxHeight: 'min(62vh, calc(100dvh - 26rem))' }}>
