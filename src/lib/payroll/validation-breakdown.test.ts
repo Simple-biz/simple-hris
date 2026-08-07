@@ -67,3 +67,76 @@ test('bonusParts itemise the dispatch payload', () => {
   assert.equal(b.earnings.bonuses, 2500);
   assert.deepEqual(b.earnings.bonusParts, { kpi: 1000, pab: 1000, tech: 500, other: 0 });
 });
+
+function hslInput(over: Partial<BreakdownInput> = {}): BreakdownInput {
+  // Marie: M-F 38.00 @ ₱265, weekend 6.00 @ ₱280, so 44.00 total → 4.00 OT @ ₱132.50.
+  //   base 38.00 × 265.00 = 10,070.00
+  //   wknd  6.00 × 280.00 =  1,680.00
+  //   OT ½  4.00 × 132.50 =    530.00   → 12,280.00
+  //   + 500 adjustment + 250 orphanage - 100 MESA = 12,930.00
+  return {
+    email: 'marie@hogansmith.com',
+    name: 'Marie C',
+    deptKey: 'hsl',
+    deptName: 'Hogan Smith Law',
+    isHsl: true,
+    excluded: false,
+    totalHours: 44,
+    regularHours: 40,
+    otHours: 4,
+    regularRate: 265,
+    otRate: 397.5,
+    regularPay: 11220,
+    otPay: 1590,
+    initialPay: 12810,
+    weekend: { regularHours: 6, otHours: 0, regularPay: 1680, otPay: 0 },
+    rateChange: null,
+    dispatch: {
+      final: 12930, pab: 0, tech: 0, other: 0, adjustment: 500,
+      mesaDeduction: 100, mesaDisbursement: 0, orphanage: 250,
+    },
+    rateSourceIssue: null,
+    ...over,
+  };
+}
+
+test('HSL derives the weekend rate and OT differential from the M-F rate', () => {
+  const b = buildValidationBreakdown(hslInput());
+  assert.equal(b.rates?.mf, 265);
+  assert.equal(b.rates?.we, 280);              // 265 + 15
+  assert.equal(b.rates?.otDifferential, 132.5); // 265 × 0.5
+});
+
+test('HSL splits M-F from weekend and counts OT across all seven days', () => {
+  const b = buildValidationBreakdown(hslInput());
+  assert.equal(b.hours.we, 6);
+  assert.equal(b.hours.mf, 38);   // 44 total - 6 weekend; INCLUDES its own OT hours
+  assert.equal(b.hours.ot, 4);    // max(0, 44 - 40)
+});
+
+test('HSL gross reconciles to the sheet formula and to dispatch', () => {
+  const b = buildValidationBreakdown(hslInput());
+  assert.equal(b.earnings.base, 10070);
+  assert.equal(b.earnings.weekend, 1680);
+  assert.equal(b.earnings.otPay, 530);
+  assert.equal(b.gross, 12930);
+  assert.equal(b.dispatchNet, 12930);
+});
+
+test('the weekend carve-out is never added on top of regular pay', () => {
+  // regularPay 11,220 already CONTAINS the 1,680 of weekend pay. A naive
+  // base + weekend would report 12,900 of hourly pay instead of 12,280.
+  const b = buildValidationBreakdown(hslInput());
+  const hourly = b.earnings.base + b.earnings.weekend + b.earnings.otPay;
+  assert.equal(hourly, 12280);
+  assert.notEqual(hourly, 12900);
+});
+
+test('an HSL row with no per-day data degrades to the base shape', () => {
+  const b = buildValidationBreakdown(hslInput({ weekend: null }));
+  assert.equal(b.hours.we, 0);
+  assert.equal(b.rates?.we, null);
+  assert.equal(b.earnings.base, 11220);  // the engine's own regularPay
+  assert.equal(b.earnings.weekend, 0);
+  assert.equal(b.earnings.otPay, 1590);  // the engine's own otPay
+});
