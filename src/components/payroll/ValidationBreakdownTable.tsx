@@ -33,6 +33,12 @@ function hrs(n: number): React.ReactNode {
   return <>{n.toFixed(2)}</>;
 }
 
+/** Renders `− ₱100.00` for negatives instead of formatPHP's `₱-100.00`. Shared by
+ *  the main row's MESA cell and WorkedTotal so the two cannot drift apart again. */
+function signedMoney(n: number): React.ReactNode {
+  return n < 0 ? <>− {formatPHP(Math.abs(n))}</> : <>{formatPHP(n)}</>;
+}
+
 function FlagList({ flags }: { flags: ValidationFlag[] }) {
   if (flags.length === 0) return null;
   return (
@@ -73,10 +79,11 @@ function WorkedTotal({ r }: { r: PayrollBreakdown }) {
     if (r.hours.ot > 0)
       lines.push(['Overtime', r.rates?.ot != null ? `${r.hours.ot.toFixed(2)} h × ${formatPHP(r.rates.ot)}` : '—', r.earnings.otPay]);
   }
-  const { kpi, pab, tech } = r.earnings.bonusParts;
+  const { kpi, pab, tech, other } = r.earnings.bonusParts;
   if (kpi) lines.push(['KPI / performance', '', kpi]);
   if (pab) lines.push(['Perfect attendance', '', pab]);
   if (tech) lines.push(['Tech bonus', '', tech]);
+  if (other) lines.push(['Other bonuses', '', other]);
   if (r.adjustments.adjustment) lines.push(['Adjustment', '', r.adjustments.adjustment]);
   if (r.adjustments.orphanage) lines.push(['Orphanage', '', r.adjustments.orphanage]);
   if (r.adjustments.mesaDisbursement) lines.push(['MESA disbursement', '', r.adjustments.mesaDisbursement]);
@@ -93,7 +100,7 @@ function WorkedTotal({ r }: { r: PayrollBreakdown }) {
               <td className="py-0.5 pr-4 text-zinc-600 dark:text-zinc-400">{label}</td>
               <td className="py-0.5 pr-4 font-mono text-zinc-500 dark:text-zinc-500">{basis}</td>
               <td className="py-0.5 text-right font-mono tabular-nums text-zinc-800 dark:text-zinc-200">
-                {amount < 0 ? `− ${formatPHP(Math.abs(amount))}` : formatPHP(amount)}
+                {signedMoney(amount)}
               </td>
             </tr>
           ))}
@@ -121,11 +128,11 @@ export default function ValidationBreakdownTable({
   rows, deptName, isHsl, disabled, onToggleExcluded, onToggleAllExcluded,
 }: Props) {
   const [open, setOpen] = useState<Set<string>>(new Set());
-  const toggleOpen = (email: string) =>
+  const toggleOpen = (rowKey: string) =>
     setOpen((prev) => {
       const next = new Set(prev);
-      if (next.has(email)) next.delete(email);
-      else next.add(email);
+      if (next.has(rowKey)) next.delete(rowKey);
+      else next.add(rowKey);
       return next;
     });
 
@@ -211,13 +218,17 @@ export default function ValidationBreakdownTable({
               </td>
             </tr>
           ) : (
-            rows.map((r) => {
-              const isOpen = open.has(r.email);
+            rows.map((r, i) => {
+              // Keyed by email + index, not email alone: upstream calc results are
+              // not guaranteed to hold one row per email, and two rows sharing an
+              // email must still expand independently.
+              const rowKey = `${r.email}-${i}`;
+              const isOpen = open.has(rowKey);
               const hasRed = r.flags.some((f) => f.severity === 'red');
               const hasAmber = !hasRed && r.flags.some((f) => f.severity === 'amber');
               const dim = r.excluded ? 'opacity-55' : '';
               return (
-                <React.Fragment key={r.email}>
+                <React.Fragment key={rowKey}>
                   <tr
                     className={cn(
                       'hover:bg-zinc-50 dark:hover:bg-zinc-900/30',
@@ -229,7 +240,7 @@ export default function ValidationBreakdownTable({
                     <td className="px-1 align-top">
                       <button
                         type="button"
-                        onClick={() => toggleOpen(r.email)}
+                        onClick={() => toggleOpen(rowKey)}
                         aria-label={isOpen ? `Hide calculation for ${r.name}` : `Show calculation for ${r.name}`}
                         aria-expanded={isOpen}
                         className="flex h-6 w-6 items-center justify-center rounded text-zinc-400 hover:bg-zinc-200 hover:text-zinc-700 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
@@ -280,7 +291,7 @@ export default function ValidationBreakdownTable({
                     <td className={cn(CELL, dim, 'border-l border-zinc-100 dark:border-zinc-800/60')}>
                       {r.adjustments.mesaDeduction || r.adjustments.mesaDisbursement ? (
                         <span className={r.adjustments.mesaDisbursement ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}>
-                          {formatPHP(r.adjustments.mesaDisbursement - r.adjustments.mesaDeduction)}
+                          {signedMoney(r.adjustments.mesaDisbursement - r.adjustments.mesaDeduction)}
                         </span>
                       ) : <span className="text-zinc-300 dark:text-zinc-600">—</span>}
                     </td>
