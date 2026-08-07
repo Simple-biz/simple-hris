@@ -342,11 +342,18 @@ Built in `dispatchData` (a `useMemo` in `PayrollWizard.tsx`) and posted as:
 HSL (`hogan_smith_law`) works a 7-day week, so its paystubs itemize **Weekend Hours** under
 Earnings. The `weekend` payload block carves the Sat+Sun portion OUT of the existing figures —
 `hours.*` and `pay_php.regular/ot` stay the FULL week totals, so nothing that sums payloads
-changed. Weekend hours can sit in **either bucket**: the 40h regular cap is applied
-chronologically, so a weekend day past the cap is weekend **OT** — which is why the block (and
-every renderer) carries a regular and an OT pair. Weekend pay = weekend hours × (base rate +
-₱15/h premium); on a mid-week rate change the wizard's proration accumulates the weekend money
-per day at each day's real rate.
+changed. Weekend pay = weekend hours × (base rate + ₱15/h premium); on a mid-week rate change
+the wizard's proration accumulates the weekend money per day at each day's real rate.
+
+**2026-08-07 (Kane): the weekend OVERTIME rate is gone.** A weekend hour past the chronological
+40h cap is plain overtime — priced at the regular OT rate, no +15 — and it belongs to the
+Overtime line, not the Weekend line. The +15 premium is scoped to weekend hours WITHIN the cap.
+Newly staged payloads therefore always carry `weekend.hours.ot = 0` / `weekend.pay_php.ot = 0`;
+the OT half of the block's shape survives because payloads staged before 2026-08-07 carry a real
+weekend-OT carve (priced at `otRate + 15`) and must keep rendering exactly as staged. The three
+engines are in lockstep: the wizard calc (`weekendPremiumByEmail`, regular bucket only),
+`computeProratedRowPay` (current-pay.ts), and `proratePayForMidPeriodChange`
+(prorate-mid-period.ts, whose `weekend.ot*`/`segments.weekendOt` are structurally empty now).
 
 Renderers split the earnings rows only when the block is present (`weekend: null`, or a payload
 staged before 2026-07-30, renders the classic two lines). **2026-08-07 (Kane's call): the two
@@ -361,8 +368,9 @@ pay at different rates), and the wire/snapshot shape is unchanged:
 | Weekend Hours | `weekend.hours.regular + weekend.hours.ot` | `weekend.pay_php.regular + weekend.pay_php.ot` |
 
 Weekday lines are derived by **subtraction**, so the three lines always sum exactly back to the
-original two (rounding residue lands on the weekday line, never the total). Because the two
-buckets pay at different premium-inclusive rates (regular at `base + 15`, OT at `otRate + 15`),
+original two (rounding residue lands on the weekday line, never the total). Because a pre-2026-08-07
+payload's two buckets pay at different premium-inclusive rates (regular at `base + 15`, OT at
+`otRate + 15` — new payloads only ever fill the regular bucket),
 the merged line's detail cell renders from `PayStubView.weekendBasis`: one entry → the classic
 `H × ₱R`; two+ → total hours over a per-rate list (`2.00h @ ₱240.00 · 2.00h @ ₱352.50`), the
 `MultiRateDetail` component / `multiRateDetail` email transcription. On a prorated week the basis
