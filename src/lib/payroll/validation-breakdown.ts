@@ -1,0 +1,254 @@
+/**
+ * Turns one person's pay week into the itemised breakdown the Payroll Wizard's
+ * Validation step renders — and, for HSL, independently re-derives the total from
+ * hours and rates so the table can prove itself against the engine.
+ *
+ * PURE: no React, no fetch, no Date. Every input is passed in by the caller so the
+ * whole thing is unit-testable and so the wizard and any future server-side check
+ * can run identical arithmetic.
+ *
+ * Why the table does not simply read the staged dispatch payload: `dispatchData`
+ * skips anyone whose personal email cannot be resolved, so sourcing from it would
+ * silently drop people from the one screen that certifies the cycle. The caller
+ * iterates the calc results and joins the payload in; a row with no payload is
+ * flagged `not_dispatchable` rather than hidden.
+ */
+import {
+  HSL_WEEKEND_PREMIUM_PHP,
+  OT_DIFFERENTIAL_MULTIPLIER,
+  REGULAR_WEEK_CAP_HOURS,
+} from '@/lib/payroll/hogan-week-pay';
+import { formatPHP } from '@/lib/format-php';
+
+/** Money tolerance. Per-day accumulation rounds once at the end. */
+const MONEY_EPSILON_PHP = 0.01;
+/** Rates are money; compare to the centavo. */
+const RATE_EPSILON_PHP = 0.01;
+
+export function round2(n: number): number {
+  if (!Number.isFinite(n)) return 0;
+  return Math.round((n + Number.EPSILON) * 100) / 100;
+}
+
+function num(v: number | null | undefined): number {
+  return typeof v === 'number' && Number.isFinite(v) ? v : 0;
+}
+
+export type ValidationFlagCode =
+  | 'no_rate'
+  | 'hours_without_pay'
+  | 'pay_without_hours'
+  | 'negative_gross'
+  | 'gross_mismatch'
+  | 'not_dispatchable'
+  | 'ot_ratio'
+  | 'rate_source';
+
+export type ValidationFlag = {
+  code: ValidationFlagCode;
+  severity: 'red' | 'amber';
+  /** Human-readable one-liner shown on the row. */
+  message: string;
+};
+
+/** The staged dispatch payload's money, flattened. Null when the person has no
+ *  personal email and therefore never becomes a dispatch row. */
+export type BreakdownDispatch = {
+  final: number;
+  pab: number;
+  tech: number;
+  other: number;
+  adjustment: number;
+  mesaDeduction: number;
+  mesaDisbursement: number;
+  orphanage: number;
+};
+
+export type BreakdownInput = {
+  email: string;
+  name: string;
+  deptKey: string | null;
+  deptName: string;
+  isHsl: boolean;
+  excluded: boolean;
+  totalHours: number;
+  regularHours: number;
+  otHours: number;
+  regularRate: number | null;
+  otRate: number | null;
+  regularPay: number | null;
+  otPay: number | null;
+  initialPay: number | null;
+  /** HSL-only carve-out. Its pay is ALREADY inside regularPay/otPay. */
+  weekend: {
+    regularHours: number;
+    otHours: number;
+    regularPay: number | null;
+    otPay: number | null;
+  } | null;
+  rateChange: { from: number | null; to: number | null } | null;
+  dispatch: BreakdownDispatch | null;
+  rateSourceIssue: {
+    shortfallPhp: number;
+    sheetRate: number | null;
+    paidRate: number | null;
+  } | null;
+};
+
+export type PayrollBreakdown = {
+  email: string;
+  name: string;
+  deptKey: string | null;
+  deptName: string;
+  isHsl: boolean;
+  excluded: boolean;
+  hours: { mf: number; we: number; ot: number; total: number };
+  rates: {
+    mf: number;
+    ot: number | null;
+    we: number | null;
+    otDifferential: number | null;
+  } | null;
+  rateChange: { from: number; to: number } | null;
+  earnings: {
+    base: number;
+    weekend: number;
+    otPay: number;
+    bonuses: number;
+    bonusParts: { kpi: number; pab: number; tech: number; other: number };
+  };
+  adjustments: {
+    mesaDeduction: number;
+    mesaDisbursement: number;
+    adjustment: number;
+    orphanage: number;
+  };
+  gross: number;
+  dispatchNet: number | null;
+  flags: ValidationFlag[];
+};
+
+export function buildValidationBreakdown(input: BreakdownInput): PayrollBreakdown {
+  const d = input.dispatch;
+
+  const adjustments = {
+    mesaDeduction: round2(num(d?.mesaDeduction)),
+    mesaDisbursement: round2(num(d?.mesaDisbursement)),
+    adjustment: round2(num(d?.adjustment)),
+    orphanage: round2(num(d?.orphanage)),
+  };
+
+  // The payload's `other_bonuses` carries KPI + departmental performance together;
+  // the wizard has no split for them, so it lands in `kpi` and `other` stays 0.
+  // Keeping the field means a future split needs no shape change here.
+  const bonusParts = {
+    kpi: round2(num(d?.other)),
+    pab: round2(num(d?.pab)),
+    tech: round2(num(d?.tech)),
+    other: 0,
+  };
+  const bonuses = round2(bonusParts.kpi + bonusParts.pab + bonusParts.tech + bonusParts.other);
+
+  const hours = deriveHours(input);
+  const rates = deriveRates(input);
+  const earnings = { ...deriveEarnings(input, hours, rates), bonuses, bonusParts };
+
+  const gross = round2(
+    earnings.base +
+      earnings.weekend +
+      earnings.otPay +
+      earnings.bonuses +
+      adjustments.adjustment +
+      adjustments.orphanage +
+      adjustments.mesaDisbursement -
+      adjustments.mesaDeduction,
+  );
+
+  const dispatchNet = d ? round2(d.final) : null;
+
+  const rateChange =
+    input.rateChange && input.rateChange.from != null && input.rateChange.to != null
+      ? { from: input.rateChange.from, to: input.rateChange.to }
+      : null;
+
+  return {
+    email: input.email,
+    name: input.name,
+    deptKey: input.deptKey,
+    deptName: input.deptName,
+    isHsl: input.isHsl,
+    excluded: input.excluded,
+    hours,
+    rates,
+    rateChange,
+    earnings,
+    adjustments,
+    gross,
+    dispatchNet,
+    flags: [],
+  };
+}
+
+function deriveHours(input: BreakdownInput): PayrollBreakdown['hours'] {
+  const total = round2(num(input.totalHours));
+  const we = input.weekend
+    ? round2(num(input.weekend.regularHours) + num(input.weekend.otHours))
+    : 0;
+  // HSL follows the sheet: M-F is everything that is not weekend, and it INCLUDES
+  // the hours that end up classed as overtime (column AB).
+  const mf = input.isHsl ? round2(total - we) : total;
+  const ot = input.isHsl
+    ? round2(Math.max(0, total - REGULAR_WEEK_CAP_HOURS))
+    : round2(num(input.otHours));
+  return { mf, we, ot, total };
+}
+
+function deriveRates(input: BreakdownInput): PayrollBreakdown['rates'] {
+  if (input.regularRate == null) return null;
+  const mf = input.regularRate;
+  // The sheet DERIVES both of these rather than storing them, which is what makes
+  // an off-ratio OT rate inexpressible. Only meaningful for HSL.
+  const hsl = input.isHsl && input.weekend != null;
+  return {
+    mf,
+    ot: input.otRate,
+    we: hsl ? round2(mf + HSL_WEEKEND_PREMIUM_PHP) : null,
+    otDifferential: input.isHsl ? round2(mf * OT_DIFFERENTIAL_MULTIPLIER) : null,
+  };
+}
+
+function deriveEarnings(
+  input: BreakdownInput,
+  hours: PayrollBreakdown['hours'],
+  rates: PayrollBreakdown['rates'],
+): { base: number; weekend: number; otPay: number } {
+  // HSL renders the sheet's three-stage form, re-derived from hours and rates. This
+  // is the only genuinely independent path in the module: it never reads regularPay
+  // or otPay, so a disagreement with the engine is real signal.
+  //
+  // Requires the weekend carve-out. `CalcRow.weekend` is null for non-HSL rows AND
+  // for HSL rows with no per-day columns, where the M-F / WE split is unknowable —
+  // those degrade to the base shape rather than guessing.
+  if (input.isHsl && input.weekend != null && rates != null && rates.we != null) {
+    return {
+      base: round2(hours.mf * rates.mf),
+      weekend: round2(hours.we * rates.we),
+      otPay: round2(hours.ot * num(rates.otDifferential)),
+    };
+  }
+  // Base shape: the engine's own figures. `regularPay` already contains any weekend
+  // pay, so the weekend column stays 0 — adding it would double-count.
+  return {
+    base: round2(num(input.regularPay)),
+    weekend: 0,
+    otPay: round2(num(input.otPay)),
+  };
+}
+
+export function buildValidationBreakdowns(inputs: BreakdownInput[]): PayrollBreakdown[] {
+  return inputs.map(buildValidationBreakdown);
+}
+
+export function countRedFlags(rows: PayrollBreakdown[]): number {
+  return rows.filter((r) => r.flags.some((f) => f.severity === 'red')).length;
+}
