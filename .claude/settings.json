@@ -737,7 +737,14 @@
       "Bash(TSX_TSCONFIG_PATH=tsconfig.readiness-verify.json npx tsx scripts/tmp-verify-weekend-disclosure.mts)",
       "Bash(./node_modules/.bin/tsx \"C:\\\\Users\\\\Kane\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-Kane-Desktop-simple-hris\\\\62cebdfe-a178-4e0e-bb57-5859f24874f7\\\\scratchpad\\\\check-normalize.ts\")",
       "Bash(node scripts/_tmp-audit-rea-ratechange.mjs)",
-      "Bash(node scripts/_tmp-audit-rea-structure.mjs)"
+      "Bash(node scripts/_tmp-audit-rea-structure.mjs)",
+      "Bash(node \"C:/Users/Kane/AppData/Local/Temp/claude/c--Users-Kane-Desktop-simple-hris/802083f6-dcfb-4b37-85f2-90bd90a289ff/scratchpad/mesa-kaner.mjs\")",
+      "Bash(cp \"C:/Users/Kane/AppData/Local/Temp/claude/c--Users-Kane-Desktop-simple-hris/802083f6-dcfb-4b37-85f2-90bd90a289ff/scratchpad/mesa-kaner.mjs\" scripts/tmp-mesa-kaner.mjs)",
+      "Bash(node scripts/tmp-mesa-kaner.mjs)",
+      "Bash(node scripts/tmp-mesa-kaner2.mjs)",
+      "Bash(node scripts/tmp-mesa-kaner3.mjs)",
+      "Bash(node scripts/tmp-mesa-kaner7.mjs)",
+      "PowerShell(npx tsx --test src/components/payroll-clerk/staged-only-placement.test.ts src/components/payroll-clerk/small-wires-wise.test.ts 2>&1)"
     ],
     "additionalDirectories": [
       "\\tmp",
