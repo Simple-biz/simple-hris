@@ -245,6 +245,12 @@ import {
   parseCycleFxRecord,
   parseOrphanageNoneMarker,
 } from '@/lib/payroll/wizard-setup-steps';
+import ValidationBreakdownTable from '@/components/payroll/ValidationBreakdownTable';
+import {
+  buildValidationBreakdowns,
+  countRedFlags,
+  type BreakdownInput,
+} from '@/lib/payroll/validation-breakdown';
 
 function findHeaderColumn(header: string[], ...labels: string[]): number {
   const norm = header.map((h) => h.trim().toLowerCase());
@@ -7731,6 +7737,99 @@ export default function PayrollWizard({
   ]);
 
   /**
+   * The Validation step's per-person breakdown, built at component scope so the
+   * step body and the Continue-button confirm below read the SAME numbers
+   * instead of recomputing them (and so they can never disagree with each
+   * other about how many red flags exist).
+   *
+   * Left join from `effectiveCalcResults`, never a filter: `dispatchData.rows`
+   * SKIPS anyone whose personal email cannot be resolved, pushing them to
+   * `dispatchData.missing` instead. Sourcing this from `dispatchData.rows`
+   * directly would silently drop exactly the people this table exists to catch
+   * — a row with no staged payload still renders here, flagged
+   * `not_dispatchable` rather than hidden.
+   */
+  const validationBreakdownInputs = useMemo<BreakdownInput[]>(() => {
+    const stagedByEmail = new Map<string, DispatchEmployee>();
+    for (const e of dispatchData.rows) stagedByEmail.set(e.email, e);
+    for (const x of dispatchData.excludedRows) {
+      if (x.payload) stagedByEmail.set(x.email, x.payload);
+    }
+    const rateIssueByEmail = new Map(dispatchData.rateIssues.map((x) => [x.email, x]));
+
+    return effectiveCalcResults.map((r) => {
+      const staged = stagedByEmail.get(r.email) ?? null;
+      const issue = rateIssueByEmail.get(r.email);
+      const deptKey = employeeDepts[r.email] ?? null;
+      // `employeeDepts` values are normally already the collapsed key
+      // ('hogan_smith_law') by the time they land here — the auto-assign
+      // effect runs every raw label through `normalizeDeptToKey` before
+      // storing. The second check is a defensive fallback for a raw `hsl:*`
+      // sub-department key that reached this map uncollapsed; a bare
+      // `normalizeDeptToKey` call alone would MISS the (common) already-
+      // canonical case, since the map has no identity entry for
+      // 'hogan_smith_law' itself.
+      const isHsl =
+        deptKey === 'hogan_smith_law' || normalizeDeptToKey(deptKey ?? '') === 'hogan_smith_law';
+      return {
+        email: r.email,
+        name: r.name,
+        deptKey,
+        deptName: findAdditionsDept(deptKey)?.name ?? '—',
+        isHsl,
+        excluded: excludedEmails.has(normEmail(r.email) ?? ''),
+        totalHours: r.totalHours,
+        regularHours: r.regularHours,
+        otHours: r.otHours,
+        regularRate: r.regularRate,
+        otRate: r.otRate,
+        regularPay: r.regularPay,
+        otPay: r.otPay,
+        initialPay: r.initialPay,
+        weekend: r.weekend ?? null,
+        rateChange: r.rateChange
+          ? { from: r.rateChange.oldRegular, to: r.rateChange.newRegular }
+          : null,
+        dispatch: staged
+          ? {
+              final: staged.pay_php.final ?? 0,
+              pab: staged.pay_php.perfect_attendance_bonus ?? 0,
+              tech: staged.pay_php.tech_bonus ?? 0,
+              other: staged.pay_php.other_bonuses ?? 0,
+              adjustment: staged.pay_php.adjustment ?? 0,
+              mesaDeduction: staged.pay_php.mesa_deduction ?? 0,
+              // Previously dropped here while the dispatch payload and the HSL
+              // tab both included it, so anyone with an approved MESA payout was
+              // understated on the screen that certifies the cycle.
+              mesaDisbursement: staged.pay_php.mesa_disbursement ?? 0,
+              orphanage: staged.pay_php.orphanage_pay ?? 0,
+            }
+          : null,
+        rateSourceIssue: issue
+          ? { shortfallPhp: issue.shortfallPhp, sheetRate: issue.sheetRate, paidRate: issue.paidRate }
+          : null,
+      };
+    });
+  }, [effectiveCalcResults, dispatchData, employeeDepts, excludedEmails, findAdditionsDept]);
+
+  /** Sorted the same way the old `finalPayRows` was, so department-rail order
+   *  and the "first alphabetically" default tab are unchanged. */
+  const validationBreakdowns = useMemo(
+    () =>
+      buildValidationBreakdowns(validationBreakdownInputs).sort((a, b) =>
+        (a.name || '').localeCompare(b.name || ''),
+      ),
+    [validationBreakdownInputs],
+  );
+
+  /** Drives both the Step-7 header badge and the Continue-button confirm — a
+   *  single source so the two can never disagree about how many rows are wrong. */
+  const validationRedFlagCount = useMemo(
+    () => countRedFlags(validationBreakdowns),
+    [validationBreakdowns],
+  );
+
+  /**
    * Publish the wizard's per-employee final pay so the Employee Dashboard's
    * "Estimated Take-Home" matches exactly what payroll computed (incl. KPI/dept
    * bonuses, the Adj. delta, Orphanage pay, MESA deduction + disbursement).
@@ -14804,32 +14903,22 @@ export default function PayrollWizard({
         );
       }
       case 7: {
-        const finalPayRows = effectiveCalcResults
-          .map(r => {
-          const rr = ratesByEmail.get(normEmail(r.email) ?? '');
-          const mesaDed = ((r.initialPay != null) && rr?.mesa_member && !isMesaOptedOut(r.email, rr)) ? 100 : 0;
-          const orphanagePay = orphanageAmounts[r.email] ?? 0;
-          return {
-            ...r,
-            deptKey: employeeDepts[r.email] ?? null,
-            deptName: findAdditionsDept(employeeDepts[r.email])?.name ?? '—',
-            bonusTotal: getEffectiveBonus(r.email),
-            mesaDeduction: mesaDed,
-            orphanagePay,
-            excluded: excludedEmails.has(normEmail(r.email) ?? ''),
-            finalPay: (r.initialPay ?? 0) + getEffectiveBonus(r.email) - mesaDed + orphanagePay,
-          };
-          })
-          .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+        // Sourced from the component-scope `validationBreakdowns` (built once,
+        // shared with the Continue-button confirm below) rather than recomputed
+        // here from `effectiveCalcResults` directly — see that useMemo for why
+        // this must stay a left join from calc results rather than a filter
+        // over `dispatchData.rows`.
+        const finalPayRows = validationBreakdowns;
+        const redFlagCount = validationRedFlagCount;
 
         // Grand totals + outflow count only PAYABLE rows — anyone accounting
         // flagged "do not pay" is staged to Payment Dispatch → Excluded instead.
         const payableFinalRows = finalPayRows.filter(r => !r.excluded);
         const excludedCount = finalPayRows.length - payableFinalRows.length;
-        const grandInitial = payableFinalRows.reduce((s, r) => s + (r.initialPay ?? 0), 0);
-        const grandBonuses = payableFinalRows.reduce((s, r) => s + r.bonusTotal, 0);
-        const grandMesaDeductions = payableFinalRows.reduce((s, r) => s + (r.mesaDeduction ?? 0), 0);
-        const grandFinal   = payableFinalRows.reduce((s, r) => s + r.finalPay, 0);
+        const grandInitial = payableFinalRows.reduce((s, r) => s + r.earnings.base + r.earnings.otPay + r.earnings.weekend, 0);
+        const grandBonuses = payableFinalRows.reduce((s, r) => s + r.earnings.bonuses, 0);
+        const grandMesaDeductions = payableFinalRows.reduce((s, r) => s + r.adjustments.mesaDeduction, 0);
+        const grandFinal   = payableFinalRows.reduce((s, r) => s + r.gross, 0);
         const unassignedCount = payableFinalRows.filter(r => !r.deptKey).length;
 
         // Contractor invoices are kept in their own currency — USD invoices are
@@ -14858,6 +14947,11 @@ export default function PayrollWizard({
                 )}
               </div>
               <div className="flex shrink-0 flex-wrap items-center gap-2">
+                {redFlagCount > 0 && (
+                  <Badge className="border-rose-500/40 bg-rose-500/15 font-semibold text-rose-700 dark:text-rose-300">
+                    {redFlagCount} row{redFlagCount !== 1 ? 's' : ''} cannot be paid as calculated
+                  </Badge>
+                )}
                 {unassignedCount > 0 && (
                   <Badge className="border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400">
                     {unassignedCount} unassigned
@@ -14897,7 +14991,7 @@ export default function PayrollWizard({
                     +{formatPHP(grandBonuses)}
                   </div>
                   <div className="mt-1 text-[10px] text-emerald-600/70 dark:text-emerald-400/70">
-                    {payableFinalRows.filter(r => r.bonusTotal > 0).length} payable employees with bonuses
+                    {payableFinalRows.filter(r => r.earnings.bonuses > 0).length} payable employees with bonuses
                   </div>
                 </CardContent>
               </Card>
@@ -15120,18 +15214,10 @@ export default function PayrollWizard({
                 ? activeGroup.rows.filter(row => [row.name, row.email].join(' ').toLowerCase().includes(vNeedle))
                 : activeGroup.rows;
 
-              // Master "exclude all" state for the active department (operates on
-              // the whole department, not just the search-filtered subset).
-              const deptEmails = activeGroup.rows.map(r => r.email);
+              // Excluded count for the header bar above the table — the "exclude
+              // all" checkbox state and the payable subtotal are now derived by
+              // `ValidationBreakdownTable` itself from `rows`.
               const deptExcludedCount = activeGroup.rows.filter(r => r.excluded).length;
-              const allDeptExcluded = activeGroup.rows.length > 0 && deptExcludedCount === activeGroup.rows.length;
-              const someDeptExcluded = deptExcludedCount > 0 && !allDeptExcluded;
-
-              // Per-department payable subtotal for the table footer.
-              const deptPayable = activeGroup.rows.filter(r => !r.excluded);
-              const deptInitial = deptPayable.reduce((s, r) => s + (r.initialPay ?? 0), 0);
-              const deptBonuses = deptPayable.reduce((s, r) => s + r.bonusTotal, 0);
-              const deptFinal = deptPayable.reduce((s, r) => s + r.finalPay, 0);
 
               return (
                 <div className="flex flex-col gap-4 xl:flex-row xl:items-start">
@@ -15230,119 +15316,14 @@ export default function PayrollWizard({
                         </span>
                       </div>
 
-                      <div
-                        className="overflow-auto [-ms-overflow-style:none] [scrollbar-gutter:stable]"
-                        style={{ maxHeight: 'min(62vh, calc(100dvh - 26rem))' }}
-                      >
-                        <Table>
-                          <TableHeader className="[&_th]:sticky [&_th]:top-0 [&_th]:z-20 [&_th]:bg-zinc-100/95 [&_th]:shadow-[0_1px_0_0_rgb(228_228_231)] dark:[&_th]:bg-zinc-900/95 dark:[&_th]:shadow-[0_1px_0_0_rgb(39_39_42)]">
-                            <TableRow className="border-zinc-200 hover:bg-transparent dark:border-zinc-800">
-                              <TableHead className="min-w-[160px] px-3 text-xs font-medium text-zinc-600 dark:text-zinc-400">Employee</TableHead>
-                              <TableHead className="min-w-[70px] px-2 text-right text-xs font-medium text-zinc-600 dark:text-zinc-400">Hrs</TableHead>
-                              <TableHead className="min-w-[110px] px-2 text-right text-xs font-medium text-zinc-600 dark:text-zinc-400">Initial Pay</TableHead>
-                              <TableHead className="min-w-[110px] px-2 text-right text-xs font-medium text-emerald-600 dark:text-emerald-400">Bonuses</TableHead>
-                              <TableHead className="min-w-[120px] px-2 text-right text-xs font-semibold text-indigo-600 dark:text-indigo-400">Final Pay</TableHead>
-                              <TableHead className="min-w-[96px] px-2 text-center text-xs font-medium text-zinc-600 dark:text-zinc-400">
-                                <div className="flex items-center justify-center gap-1.5">
-                                  <input
-                                    type="checkbox"
-                                    checked={allDeptExcluded}
-                                    ref={(el) => { if (el) el.indeterminate = someDeptExcluded; }}
-                                    onChange={() => setExcludedMany(deptEmails, !allDeptExcluded)}
-                                    disabled={isReplay || activeGroup.rows.length === 0}
-                                    aria-label={`Exclude all employees in ${activeGroup.name} from pay`}
-                                    title={allDeptExcluded
-                                      ? `Include all ${activeGroup.name} in pay`
-                                      : `Exclude all ${activeGroup.name} from pay (do not pay this cycle)`}
-                                    className="h-4 w-4 cursor-pointer rounded border-zinc-300 accent-rose-600 disabled:cursor-not-allowed disabled:opacity-50 dark:border-zinc-600"
-                                  />
-                                  <span>Exclude</span>
-                                </div>
-                              </TableHead>
-                            </TableRow>
-                          </TableHeader>
-                          <TableBody>
-                            {filteredRows.length === 0 ? (
-                              <TableRow>
-                                <TableCell colSpan={6} className="py-10 text-center text-sm text-zinc-400">
-                                  {vNeedle ? <>No employees match &quot;{vNeedle}&quot;</> : 'No employees in this department.'}
-                                </TableCell>
-                              </TableRow>
-                            ) : (
-                              filteredRows.map((row, i) => (
-                                <TableRow
-                                  key={`${row.email}-${i}`}
-                                  className={cn(
-                                    'border-zinc-200 hover:bg-zinc-50 dark:border-zinc-800 dark:hover:bg-zinc-900/30',
-                                    row.excluded && 'bg-rose-50/40 dark:bg-rose-950/15',
-                                  )}
-                                >
-                                  <TableCell className={cn('px-3 py-2.5', row.excluded && 'opacity-55')}>
-                                    <div className="flex items-center gap-1.5">
-                                      <div className="text-xs font-medium text-zinc-800 dark:text-zinc-200 truncate">
-                                        {row.name || '—'}
-                                      </div>
-                                      {row.excluded && (
-                                        <Badge className="shrink-0 border-rose-500/30 bg-rose-500/10 text-[9px] uppercase tracking-wide text-rose-600 dark:text-rose-400">
-                                          Do not pay
-                                        </Badge>
-                                      )}
-                                    </div>
-                                    <div className="font-mono text-[10px] text-zinc-400 truncate">{row.email}</div>
-                                  </TableCell>
-                                  <TableCell className={cn('px-2 py-2.5 text-right font-mono text-xs tabular-nums text-zinc-600 dark:text-zinc-400', row.excluded && 'opacity-55')}>
-                                    {row.totalHours.toFixed(1)}
-                                  </TableCell>
-                                  <TableCell className={cn('px-2 py-2.5 text-right font-mono text-xs tabular-nums text-zinc-700 dark:text-zinc-300', row.excluded && 'opacity-55')}>
-                                    {row.initialPay != null ? formatPHP(row.initialPay) : '—'}
-                                  </TableCell>
-                                  <TableCell className={cn('px-2 py-2.5 text-right font-mono text-xs tabular-nums font-semibold', row.excluded && 'opacity-55')}>
-                                    {row.bonusTotal > 0 ? (
-                                      <span className="text-emerald-600 dark:text-emerald-400">+{formatPHP(row.bonusTotal)}</span>
-                                    ) : (
-                                      <span className="text-zinc-400">—</span>
-                                    )}
-                                  </TableCell>
-                                  <TableCell className={cn('px-2 py-2.5 text-right font-mono text-xs tabular-nums font-bold', row.excluded ? 'text-zinc-400 line-through dark:text-zinc-600' : 'text-indigo-700 dark:text-indigo-300')}>
-                                    {formatPHP(row.finalPay)}
-                                  </TableCell>
-                                  <TableCell className="px-2 py-2.5 text-center">
-                                    <input
-                                      type="checkbox"
-                                      checked={row.excluded}
-                                      onChange={() => toggleExcluded(row.email)}
-                                      disabled={isReplay}
-                                      aria-label={`Exclude ${row.name || row.email} from pay`}
-                                      title={row.excluded ? 'Excluded from pay — untick to pay' : 'Tick to exclude from pay (do not pay this cycle)'}
-                                      className="h-4 w-4 cursor-pointer rounded border-zinc-300 accent-rose-600 disabled:cursor-not-allowed disabled:opacity-50 dark:border-zinc-600"
-                                    />
-                                  </TableCell>
-                                </TableRow>
-                              ))
-                            )}
-                          </TableBody>
-                          {/* Department subtotal footer (payable rows only) */}
-                          {activeGroup.rows.length > 0 && (
-                            <tfoot>
-                              <tr className="border-t-2 border-zinc-300 bg-zinc-100/80 dark:border-zinc-700 dark:bg-zinc-900/60">
-                                <td colSpan={2} className="px-3 py-2.5 text-xs font-bold text-zinc-700 dark:text-zinc-300">
-                                  {activeGroup.name} Subtotal ({deptPayable.length} payable{deptExcludedCount > 0 ? ` · ${deptExcludedCount} excluded` : ''})
-                                </td>
-                                <td className="px-2 py-2.5 text-right font-mono text-xs font-bold tabular-nums text-zinc-800 dark:text-zinc-200">
-                                  {formatPHP(deptInitial)}
-                                </td>
-                                <td className="px-2 py-2.5 text-right font-mono text-xs font-bold tabular-nums text-emerald-600 dark:text-emerald-400">
-                                  +{formatPHP(deptBonuses)}
-                                </td>
-                                <td className="px-2 py-2.5 text-right font-mono text-xs font-bold tabular-nums text-indigo-700 dark:text-indigo-300">
-                                  {formatPHP(deptFinal)}
-                                </td>
-                                <td className="px-2 py-2.5" />
-                              </tr>
-                            </tfoot>
-                          )}
-                        </Table>
-                      </div>
+                      <ValidationBreakdownTable
+                        rows={filteredRows}
+                        deptName={activeGroup.name}
+                        isHsl={filteredRows.some((r) => r.isHsl)}
+                        disabled={isReplay}
+                        onToggleExcluded={toggleExcluded}
+                        onToggleAllExcluded={setExcludedMany}
+                      />
                     </div>
                   </div>
                 </div>
@@ -17167,7 +17148,16 @@ export default function PayrollWizard({
             <div className="flex items-center gap-4">
               <span className="text-xs text-zinc-500 font-mono">Step {currentStep} of {steps.length}</span>
               <Button
-                onClick={nextStep}
+                onClick={() => {
+                  if (currentStep === 7 && validationRedFlagCount > 0) {
+                    const ok = window.confirm(
+                      `${validationRedFlagCount} row${validationRedFlagCount !== 1 ? 's' : ''} cannot be paid as calculated. ` +
+                      `Continue to dispatch anyway?`,
+                    );
+                    if (!ok) return;
+                  }
+                  nextStep();
+                }}
                 disabled={currentStep === steps.length}
                 className="bg-indigo-600 hover:bg-indigo-700 text-white gap-2 px-8"
               >
