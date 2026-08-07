@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { listRecentlyOffboardedPeople } from "@/lib/roster/recently-offboarded";
 import { offboardedRelevantToWeek } from "@/lib/roster/offboarded-week-relevance";
 import { isEligibleForFinalPayReview } from "@/lib/payroll/offboarded-final-pay-eligibility";
+import { loadCycleHoursIndex, personWorkedCycle } from "@/lib/payroll/cycle-hours-index";
 import { resolveCurrentWeek } from "@/lib/payroll/payroll-readiness";
 import type { OffboardedRosterRow } from "@/lib/roster/offboarded-roster-row";
 import { deniedResponse } from "@/lib/auth/authorize-email";
@@ -40,8 +41,12 @@ export async function GET(req: NextRequest) {
   const sourceFile = req.nextUrl.searchParams.get("source_file");
 
   try {
-    const { weekStart } = await resolveCurrentWeek(sourceFile);
-    const { people, hoursWeekFloor, error } = await listRecentlyOffboardedPeople(90);
+    const [{ weekStart }, listRes, hoursIdx] = await Promise.all([
+      resolveCurrentWeek(sourceFile),
+      listRecentlyOffboardedPeople(90),
+      loadCycleHoursIndex(sourceFile),
+    ]);
+    const { people, hoursWeekFloor, error } = listRes;
     if (error) {
       return NextResponse.json({ rows: [], weekStart, hoursWeekFloor: null, error });
     }
@@ -51,7 +56,19 @@ export async function GET(req: NextRequest) {
         (p) =>
           // A suspension is not a departure — never treat one as final pay.
           isEligibleForFinalPayReview(p.off_boarded_reason) &&
-          offboardedRelevantToWeek(p, weekStart, hoursWeekFloor),
+          offboardedRelevantToWeek(p, weekStart, hoursWeekFloor) &&
+          // THE HARD GATE: only people with hours in THIS cycle's timesheet.
+          // Date-based relevance above trusts `off_boarded_at`, and one bad
+          // stamp defeats it (franm@'s 2027 year-typo kept her "relevant" to
+          // every week for months). No hours in the file ⇒ nothing to pay this
+          // week ⇒ not final-pay territory. Fails OPEN on a broken index read
+          // (empty sets + error) — the overlay is annotation-only, so an
+          // ungated list moves no money; the error field says it happened.
+          (hoursIdx.error !== null ||
+            personWorkedCycle(hoursIdx, {
+              emails: [p.hubstaff_email, p.work_email, p.personal_email, p.alternate_work_email, p.alternate_work_email_2],
+              name: p.name,
+            })),
       )
       .map((p) => ({
         name: p.name,
@@ -66,7 +83,9 @@ export async function GET(req: NextRequest) {
         last_hours_week_start: p.last_hours_week_start,
       }));
 
-    return NextResponse.json({ rows, weekStart, hoursWeekFloor, error: null });
+    // hoursIdx.error is surfaced (not swallowed) so a degraded, ungated
+    // response is distinguishable from a clean one.
+    return NextResponse.json({ rows, weekStart, hoursWeekFloor, error: hoursIdx.error });
   } catch (e) {
     return NextResponse.json({
       rows: [],

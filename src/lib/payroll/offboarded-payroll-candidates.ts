@@ -25,6 +25,7 @@ import 'server-only';
  */
 import { listRecentlyOffboardedPeople } from '@/lib/roster/recently-offboarded';
 import { offboardedRelevantToWeek } from '@/lib/roster/offboarded-week-relevance';
+import { loadCycleHoursIndex, personWorkedCycle } from '@/lib/payroll/cycle-hours-index';
 import { resolveCurrentWeek, isOffChannelDept, loadContractorEmails } from '@/lib/payroll/payroll-readiness';
 import { isEligibleForFinalPayReview } from '@/lib/payroll/offboarded-final-pay-eligibility';
 import { loadPeopleRateContext, resolvePeopleRate } from '@/lib/people/people-roster';
@@ -99,7 +100,7 @@ export async function listOffboardedPayrollCandidates(sourceFile: string | null)
 }> {
   const { weekStart, degraded: weekDegraded } = await resolveCurrentWeek(sourceFile);
 
-  const [offboardedRes, rateCtx, idsRes, ratesRes, contractorEmailsRes] = await Promise.all([
+  const [offboardedRes, rateCtx, idsRes, ratesRes, contractorEmailsRes, hoursIdx] = await Promise.all([
     listRecentlyOffboardedPeople(90),
     loadPeopleRateContext(),
     getEmployeeIds().catch(() => ({ rows: [], error: 'unreachable' })),
@@ -108,6 +109,7 @@ export async function listOffboardedPayrollCandidates(sourceFile: string | null)
     // read as missing a rate — never a wrong payment — so it degrades rather
     // than failing the load (same posture as payroll-readiness's own call).
     loadContractorEmails().catch(() => null),
+    loadCycleHoursIndex(sourceFile),
   ]);
 
   if (offboardedRes.error) {
@@ -139,12 +141,38 @@ export async function listOffboardedPayrollCandidates(sourceFile: string | null)
   }
   const ratesByEmail = indexHourlyRatesByEmail(ratesRes.rows);
 
+  if (hoursIdx.error) {
+    degraded.push(
+      'This week’s timesheet couldn’t be read — the list may include leavers with no hours this week.',
+    );
+  }
+
   // Who this tab will actually show, decided BEFORE any snapshot read so the
   // bulk read below covers exactly the shown rows and nobody else.
+  //
+  // The hours gate refines the original "list everyone in the window" call
+  // (Kane, 2026-08-07): final pay is FOR hours worked, so only leavers present
+  // in this cycle's timesheet belong here. Date-based week relevance alone
+  // trusts `off_boarded_at`, and one bad stamp defeats it — franm@'s sheet row
+  // is year-typo'd 2027-04-20, which read as "left during or after" every week
+  // for months after her real last hours (week of 2026-04-19). Fails OPEN when
+  // the index couldn't load (degraded note above): a read hiccup must not hide
+  // someone owed money.
   const eligible = offboardedRes.people.filter(
     (person) =>
       isEligibleForFinalPayReview(person.off_boarded_reason) &&
-      offboardedRelevantToWeek(person, weekStart, offboardedRes.hoursWeekFloor),
+      offboardedRelevantToWeek(person, weekStart, offboardedRes.hoursWeekFloor) &&
+      (hoursIdx.error !== null ||
+        personWorkedCycle(hoursIdx, {
+          emails: [
+            person.hubstaff_email,
+            person.work_email,
+            person.personal_email,
+            person.alternate_work_email,
+            person.alternate_work_email_2,
+          ],
+          name: person.name,
+        })),
   );
 
   // ONE bulk `app_settings` read for every candidate's offboard bank snapshot.

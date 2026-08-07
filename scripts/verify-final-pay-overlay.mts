@@ -34,6 +34,7 @@ dotenv.config();
 const { listRecentlyOffboardedPeople } = await import('../src/lib/roster/recently-offboarded');
 const { offboardedRelevantToWeek } = await import('../src/lib/roster/offboarded-week-relevance');
 const { isEligibleForFinalPayReview } = await import('../src/lib/payroll/offboarded-final-pay-eligibility');
+const { loadCycleHoursIndex, personWorkedCycle } = await import('../src/lib/payroll/cycle-hours-index');
 const { normalizeDeptToKey } = await import('../src/lib/payroll/normalize-dept-key');
 const { slugifyDeptKey } = await import('../src/lib/departments/registry');
 const { resolveCurrentWeek } = await import('../src/lib/payroll/payroll-readiness');
@@ -91,10 +92,35 @@ if (error) {
   console.error(`ERROR building the overlay: ${error}`);
   process.exit(1);
 }
-const overlay = people.filter(
+const dateScoped = people.filter(
   (p) => isEligibleForFinalPayReview(p.off_boarded_reason) && offboardedRelevantToWeek(p, weekStart, hoursWeekFloor),
 );
-console.log(`overlay rows for this week: ${overlay.length} (of ${people.length} recent leavers)\n`);
+// The HARD gate the route applies: hours in this cycle's actual timesheet.
+// Date-based relevance trusts off_boarded_at, and one bad stamp (franm@'s
+// 2027 year-typo) defeats it for months. No hours ⇒ nothing to pay this week.
+const hoursIdx = await loadCycleHoursIndex(sourceFile);
+if (hoursIdx.error) {
+  console.error(`ERROR building the cycle hours index: ${hoursIdx.error}`);
+  process.exit(1);
+}
+const worked = (p: (typeof people)[number]) =>
+  personWorkedCycle(hoursIdx, {
+    emails: [p.hubstaff_email, p.work_email, p.personal_email, p.alternate_work_email, p.alternate_work_email_2],
+    name: p.name,
+  });
+const overlay = dateScoped.filter(worked);
+const droppedByGate = dateScoped.filter((p) => !worked(p));
+console.log(
+  `overlay rows for this week: ${overlay.length} (of ${people.length} recent leavers; ` +
+    `${droppedByGate.length} date-relevant but NO hours in this file — gated out)\n`,
+);
+if (droppedByGate.length > 0) {
+  console.log('gated out (no hours this cycle):');
+  for (const p of droppedByGate) {
+    console.log(`  ${p.name} <${p.work_email ?? p.personal_email ?? '—'}> off=${p.off_boarded_at ?? '—'}`);
+  }
+  console.log('');
+}
 
 // ── Who has hours in this cycle ──────────────────────────────────────────────
 const hours = await pageAll('hubstaff_hours', '"Email","Member"', ((q: never) =>
@@ -182,6 +208,26 @@ if (stranded.length > 0) {
   console.error(`\nFAIL: ${stranded.length} leaver(s) with hours resolve into a pay-paused department.`);
   console.error('      A pause has no arrears path, so for someone who has left it means never paid.');
   for (const l of stranded) console.error(`        ${l.name} <${l.email}> → ${l.resolved}`);
+}
+
+// Future-dated off stamps must never ride the gated list without hours.
+// franm@'s only record anywhere is an offboarded_sheet row stamped 2027-04-20
+// (year-typo for 2026); her real last hours were the week of 2026-04-19. Before
+// the hours gate she was "relevant" to every week until that date passed.
+const GHOSTS = ['franm@simple.biz'];
+for (const email of GHOSTS) {
+  const ghost = overlay.find((x) =>
+    [x.hubstaff_email, x.work_email, x.personal_email].map(norm).includes(email),
+  );
+  if (ghost) {
+    failed = true;
+    console.error(
+      `\nFAIL: ${email} passed the hours gate for ${sourceFile} — either they genuinely` +
+        `\n      worked this week (verify!) or the gate has regressed.`,
+    );
+  } else {
+    console.log(`OK: ${email} (future-dated off stamp, no hours) is gated out.`);
+  }
 }
 
 // The duplicate-row merge must pick the row the sheet still carries.
