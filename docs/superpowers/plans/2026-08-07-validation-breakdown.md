@@ -19,7 +19,7 @@
 - `CalcRow.weekend.regularPay` / `.otPay` are **already inside** `regularPay` / `otPay`. Never add them on top.
 - The new table must render a row for **every** `effectiveCalcResults` entry, including people with no personal email who never become dispatch rows.
 - Tests: `npm test` runs `node --import tsx --test "src/**/*.test.ts"`. Single file: `node --import tsx --test src/lib/payroll/validation-breakdown.test.ts`.
-- Typecheck: `npm run lint` (which is `tsc --noEmit`).
+- Typecheck: `npm run lint` (which is `tsc --noEmit`). **It does not pass on `main`** — there are **22 pre-existing errors**, all in the `PayStubView` weekend carve-out area (`paystub-view.ts`, `PayStubStatement.tsx`, `paystub-email-html.ts`, `paystub-export.ts`, `paystub-view.test.ts`, `app/api/employee/paystub/route.ts`). None are in files this plan touches. The gate for every task is therefore a **baseline delta**: the error count stays at 22, and no error names a file the task touched. Do not attempt to fix the pre-existing 22 — they are out of scope.
 - Do not run `next build` without checking for a running dev server first — they share `.next/`.
 - Commit locally to `main`. Never push. Stage only the files each task names.
 
@@ -733,7 +733,11 @@ function deriveFlags(
       severity: 'red',
       message: 'No personal email on file — this person is skipped by the pay run entirely.',
     });
-  } else if (Math.abs(b.gross - b.dispatchNet) > MONEY_EPSILON_PHP) {
+    // Round the delta BEFORE comparing. `9500.01 - 9500` is 0.010000000000218279
+    // in float64, which clears a bare `> 0.01` and flags a row that is exactly on
+    // tolerance. Corrected during implementation — the brief's original form failed
+    // its own "tolerates a centavo" test.
+  } else if (Math.abs(round2(b.gross - b.dispatchNet)) > MONEY_EPSILON_PHP) {
     const delta = round2(b.dispatchNet - b.gross);
     flags.push({
       code: 'gross_mismatch',

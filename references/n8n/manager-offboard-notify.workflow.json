@@ -1,0 +1,125 @@
+{
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "manager-offboard-notify",
+        "options": {}
+      },
+      "id": "38f56a36-2d79-432d-acf9-c35a07d4dcc5",
+      "name": "Manager Offboard Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        144,
+        1296
+      ],
+      "webhookId": "manager-offboard-notify"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "a0000000-0000-4000-8000-000000000001",
+              "name": "count",
+              "type": "number",
+              "value": "={{ Number($json.body?.count ?? $json.count ?? 0) }}"
+            },
+            {
+              "id": "a0000000-0000-4000-8000-000000000002",
+              "name": "manager",
+              "type": "string",
+              "value": "={{ $json.body?.manager ?? $json.manager ?? 'A manager' }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "02d9b873-ece8-46cd-82a2-51cc74639d35",
+      "name": "Normalize Payload",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        368,
+        1296
+      ]
+    },
+    {
+      "parameters": {
+        "sendTo": "payroll@simple.biz, teal@simple.biz, chadg@simple.biz",
+        "subject": "=⚠️ Offboarding request pending — {{ $json.count }} team member{{ $json.count == 1 ? '' : 's' }}",
+        "emailType": "html",
+        "message": "=<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\" />\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\" />\n<meta name=\"color-scheme\" content=\"light\" />\n<title>Offboarding Request</title>\n</head>\n<body style=\"margin:0;padding:0;height:100%;background-color:#f4f7fb;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;\">\n<table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" width=\"100%\" style=\"background-color:#f4f7fb;padding:20px 16px;\">\n<tr>\n<td align=\"center\" valign=\"middle\">\n<table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" width=\"560\" style=\"width:560px;max-width:560px;background-color:#f97316;border-radius:17px;box-shadow:0 20px 48px rgba(16,32,52,0.16),0 2px 6px rgba(16,32,52,0.07);overflow:hidden;\">\n<tr>\n<td style=\"padding:3px;font-size:0;line-height:0;\">\n<table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" width=\"100%\" style=\"width:100%;background-color:#fbfcfe;border-radius:14px;overflow:hidden;\">\n\n<tr>\n<td align=\"center\" style=\"padding:18px 32px 14px 32px;background-color:#fff;border-bottom:1px solid #eef2f6;text-align:center;\">\n<img src=\"https://host.simple.biz/email/simplelogo.png\" alt=\"Simple\" width=\"112\" style=\"display:block;width:112px;height:auto;border:0;margin:0 auto 8px auto;\" />\n<div style=\"font-size:26px;line-height:32px;font-weight:700;color:#102034;text-align:center;\">Offboarding Request</div>\n<div style=\"font-size:13px;line-height:19px;color:#556377;margin-top:3px;text-align:center;\">Submitted by a manager for HR review</div>\n<div style=\"font-size:11px;line-height:16px;color:#556377;margin-top:5px;text-align:center;\">Confidential HR notification</div>\n</td>\n</tr>\n\n<tr>\n<td style=\"padding:16px 32px 4px 32px;\">\n<table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" width=\"100%\" style=\"background-color:#fffbeb;border:1px solid #fcd34d;border-left:4px solid #f59e0b;border-radius:10px;\">\n<tr>\n<td style=\"padding:12px 16px;font-size:13px;line-height:19px;color:#92400e;\"><strong style=\"color:#b45309;\">⚠️ Warning — action required:</strong> A manager has requested to offboard one or more team members. These requests are <strong>pending your review</strong> and no offboarding has been finalized yet. Please verify each request in the HR Offboarding queue before approving — offboarding revokes access, roles, and permissions and is not automatically reversible.</td>\n</tr>\n</table>\n</td>\n</tr>\n\n<tr>\n<td style=\"padding:8px 32px 12px 32px;\">\n<table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" width=\"100%\" style=\"background-color:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;overflow:hidden;\">\n<tr><td style=\"background-color:#334155;padding:5px 20px;font-size:11px;line-height:13px;font-weight:800;letter-spacing:0.12em;text-transform:uppercase;color:#fff;\">Pending Offboarding Requests</td></tr>\n<tr>\n<td style=\"padding:14px 20px 16px 20px;\">\n<div style=\"font-size:44px;line-height:48px;font-weight:800;color:#102034;text-align:left;font-variant-numeric:tabular-nums;\">{{ $json.count }}</div>\n<div style=\"margin-top:4px;font-size:13px;line-height:18px;color:#556377;\">team member{{ $json.count == 1 ? '' : 's' }} that a manager wants to offboard</div>\n</td>\n</tr>\n</table>\n</td>\n</tr>\n\n<tr>\n<td style=\"padding:0 32px 16px 32px;\">\n<table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" width=\"100%\" style=\"background-color:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;\">\n<tr><td style=\"padding:10px 14px;font-size:11px;line-height:16px;color:#556377;\"><strong style=\"color:#334155;\">Confidential:</strong> Names are intentionally withheld from this notification. Open the HR Offboarding queue in Simple HRIS to see the individual requests and take action.</td></tr>\n</table>\n</td>\n</tr>\n\n<tr>\n<td style=\"background-color:#f8fafc;border-top:1px solid #eef2f6;padding:10px 32px;\">\n<table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" width=\"100%\">\n<tr>\n<td style=\"font-size:11px;line-height:16px;color:#556377;\">Automated dispatch from Simple HRIS</td>\n<td align=\"right\" style=\"font-size:11px;line-height:16px;font-weight:700;color:#334155;white-space:nowrap;\">Simple HR</td>\n</tr>\n</table>\n</td>\n</tr>\n</table>\n</td>\n</tr>\n</table>\n</td>\n</tr>\n</table>\n</body>\n</html>",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "id": "c8f89848-7b37-46c5-b06c-5bf8afe7acac",
+      "name": "Email Alissar",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        592,
+        1296
+      ],
+      "webhookId": "e2ca290f-bf3d-41c4-aed6-32a152da107b",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "p8yqPX6aclTGzx08",
+          "name": "HRIS Gmail"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Manager Offboard Webhook": {
+      "main": [
+        [
+          {
+            "node": "Normalize Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Payload": {
+      "main": [
+        [
+          {
+            "node": "Email Alissar",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {
+    "Manager Offboard Webhook": [
+      {
+        "headers": {
+          "host": "simpledotbiz.app.n8n.cloud",
+          "content-type": "application/json"
+        },
+        "params": {},
+        "query": {},
+        "body": {
+          "test": true,
+          "source": "simple-hris-admin",
+          "slug": "manager_offboard_notify",
+          "count": 3,
+          "manager": "A manager",
+          "at": "2026-07-06T20:29:15.701Z"
+        },
+        "webhookUrl": "https://simpledotbiz.app.n8n.cloud/webhook/manager-offboard-notify",
+        "executionMode": "production"
+      }
+    ]
+  },
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "29d6d9e52fe21b0c535cbb7df77313210d68e6c4404865f3476a708e3c046b7f"
+  }
+}
