@@ -41,6 +41,40 @@ type CachedQueue = {
  * the employee's row (which carries their preferred_processor and the
  * per-processor payout fields they filled in via Settings).
  */
+/**
+ * Hold a USD-denominated payee out of the payable queue.
+ *
+ * US-based staff on a USD pay structure settle on their own track, not from this
+ * screen. They used to ride a dedicated USD queue tab, which meant they counted
+ * against the pending total and pinned the Dispatch Progress strip below 100%
+ * for a week whose entire peso payroll had actually gone out. Holding them in
+ * Excluded keeps the money auditable while leaving every counter on this screen
+ * to the payments it can actually send.
+ *
+ * Deliberately carries NO `payable`: that's what withholds the Excluded tab's
+ * "Pay now" button (see ExcludedQueue's `onMarkPaid` gate), so a US payee can't
+ * be settled through the peso rails by accident.
+ */
+function heldUsdRow(row: QueueRow): ExcludedRow {
+  return {
+    id: row.id,
+    name: row.name,
+    email: row.email,
+    totalHours: row.totalHours,
+    amountUSD: row.amountUSD,
+    amountPHP: row.amountPHP,
+    amountCOP: row.amountCOP,
+    bankPreferredRaw: row.bankPreferredRaw,
+    reasons: ['usd_paid'],
+    departmentKey: row.departmentKey ?? null,
+    departmentName: row.departmentName ?? null,
+    contractorRole: row.contractorRole,
+    payeeKind: row.payeeKind,
+    contractorInvoiceId: row.contractorInvoiceId,
+    invoiceNumber: row.invoiceNumber,
+  };
+}
+
 function buildIdsMap(rows: EmployeeIdRow[]): Map<string, EmployeeIdRow> {
   const m = new Map<string, EmployeeIdRow>();
   for (const r of rows) {
@@ -543,6 +577,8 @@ async function loadAll(
         payable: row,
         paystubSentAt: ex.sentAt,
       });
+    } else if (row.payCurrency === 'USD') {
+      movedExcluded.push(heldUsdRow(row));
     } else {
       pendingQueue.push(row);
     }
@@ -680,7 +716,12 @@ async function loadAll(
       contractorRole:
         contractorRoleEmails.has(email) || (personal ? contractorRoleEmails.has(personal) : false),
     });
-    if (placement.kind === 'pending') {
+    if (placement.kind === 'pending' && placement.row.payCurrency === 'USD') {
+      // Same hold as the rates-row path above. This branch matters MORE than that
+      // one: a US payee is catalog-paid precisely because they have no rates row,
+      // so the staged safety net is the way most of them reach this queue at all.
+      withArrears.push(heldUsdRow(placement.row));
+    } else if (placement.kind === 'pending') {
       // applyWizardFinal for parity with every other pending row: the published
       // snapshot (catalog-staleness-guarded) overrides the staged amount when it
       // exists, and is a no-op otherwise.

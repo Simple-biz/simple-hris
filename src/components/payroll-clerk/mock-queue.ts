@@ -138,7 +138,18 @@ export type ExclusionReason =
    * so the current week's filed invoices show up in Payment Dispatch instead
    * of silently waiting in the Payroll Wizard's Contractors step.
    */
-  | 'pending_approval';
+  | 'pending_approval'
+  /**
+   * A USD-denominated payee (US-based staff on a USD pay structure). NOT payable
+   * from this screen — US staff settle on their own track, outside the peso
+   * payroll — but visible, so the money is auditable rather than vanishing.
+   *
+   * These used to sit in a dedicated USD queue tab, which meant they counted
+   * against the pending total and held the Dispatch Progress strip below 100%
+   * for a week that was, as far as this screen is concerned, fully paid. They
+   * are now held here instead (2026-08-07).
+   */
+  | 'usd_paid';
 
 export interface ExcludedRow {
   id: string;

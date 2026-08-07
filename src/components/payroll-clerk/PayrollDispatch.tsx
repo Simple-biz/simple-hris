@@ -357,11 +357,12 @@ export default function PayrollDispatch() {
   // COP-paid people (Colombian staff on COP-denominated structures) are carved
   // OUT of the processor tabs and paid separately in their own currency tab —
   // each person appears in exactly one place, so there's no double-paying.
-  // EVERYONE else rides the normal processor queues, USD-denominated people
-  // (US-based staff) included: their row already leads with the USD figure the
-  // same way a PHP row does, so a separate USD bucket only hid them.
+  // USD-denominated people never reach `pending` at all: useDispatchQueue holds
+  // them in Excluded under `usd_paid`, so they're off this screen's counters
+  // entirely. The filter here is belt-and-braces against a stale sessionStorage
+  // queue cached before that change.
   const copPending = useMemo(() => pending.filter((r) => r.payCurrency === 'COP'), [pending]);
-  const mainPending = useMemo(() => pending.filter((r) => r.payCurrency !== 'COP'), [pending]);
+  const mainPending = useMemo(() => pending.filter((r) => r.payCurrency === 'PHP'), [pending]);
 
   const counts = useMemo(() => {
     const result: Record<ProcessorId, number> = {

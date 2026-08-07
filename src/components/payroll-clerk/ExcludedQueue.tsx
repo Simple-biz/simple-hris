@@ -160,9 +160,15 @@ const REASON_META: Record<
     tone: 'border-teal-200 bg-teal-50 text-teal-700 dark:border-teal-500/30 dark:bg-teal-500/10 dark:text-teal-300',
     activeTone: 'border-teal-500 bg-teal-500 text-white shadow-sm shadow-teal-500/30 dark:border-teal-400 dark:bg-teal-500 dark:text-white',
   },
+  usd_paid: {
+    label: 'Paid on the US track',
+    Icon: DollarSign,
+    tone: 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-300',
+    activeTone: 'border-emerald-500 bg-emerald-500 text-white shadow-sm shadow-emerald-500/30 dark:border-emerald-400 dark:bg-emerald-500 dark:text-white',
+  },
 };
 
-const REASON_ORDER: ExclusionReason[] = ['claim_stuck', 'pending_approval', 'no_bank', 'no_pay', 'no_hours', 'no_rate', 'do_not_pay'];
+const REASON_ORDER: ExclusionReason[] = ['claim_stuck', 'pending_approval', 'no_bank', 'no_pay', 'no_hours', 'no_rate', 'do_not_pay', 'usd_paid'];
 
 function avatarColors(seed: string) {
   const palettes = [
@@ -214,7 +220,7 @@ export default function ExcludedQueue({ rows, onMarkPaid, onViewPaystub, txnReco
 
   // Aggregate counts per reason for the header summary chips.
   const counts = useMemo(() => {
-    const c: Record<ExclusionReason, number> = { no_bank: 0, no_pay: 0, no_hours: 0, do_not_pay: 0, no_rate: 0, claim_stuck: 0, pending_approval: 0 };
+    const c: Record<ExclusionReason, number> = { no_bank: 0, no_pay: 0, no_hours: 0, do_not_pay: 0, no_rate: 0, claim_stuck: 0, pending_approval: 0, usd_paid: 0 };
     for (const r of rows) for (const reason of r.reasons) c[reason] += 1;
     return c;
   }, [rows]);
