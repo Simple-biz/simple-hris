@@ -66,6 +66,16 @@ export interface RecentlyOffboardedPerson {
    *  scorable for a week they either worked or hadn't yet left). Null whenever
    *  `hubstaff_email` is null. */
   last_hours_week_start: string | null;
+  /** Gsuite aliases from the master row — the same second-inbox bridge
+   *  `active_employees` carries. A leaver's rate/Hubstaff row can be keyed on
+   *  one of these, so consumers matching them back to a person need both. */
+  alternate_work_email: string | null;
+  alternate_work_email_2: string | null;
+  /** Raw master-list "Start Date" (US-format, as stored). Carried so a final
+   *  paycheck can still resolve tenure-gated pay (e.g. the Tech Bonus 30-day
+   *  gate), which is otherwise unreachable once the person leaves the active
+   *  roster. Null when the master row has none. */
+  start_date: string | null;
 }
 
 /** Calendar-date prefix of an ISO timestamp / date string. */
@@ -97,10 +107,18 @@ interface Cand {
   department: string | null;
   work_email: string | null;
   personal_email: string | null;
+  alternate_work_email: string | null;
+  alternate_work_email_2: string | null;
+  start_date: string | null;
   /** Latest known off date (day string), null for flavor-4 rows. */
   off: string | null;
   /** Latest known off_boarded_reason, null for flavor-4/queue/sheet rows. */
   off_boarded_reason: string | null;
+  /** This candidate came from a master row still carried by the CURRENT sheet
+   *  upload. Only stamped flavor-1/3 rows can set it (flavor 4 is defined by a
+   *  stale upload id), and it decides which of a person's DUPLICATE master rows
+   *  describes them today — see the promotion rule in the merge below. */
+  on_current_upload: boolean;
 }
 
 const str = (v: unknown): string | null => {
@@ -168,7 +186,7 @@ export async function listRecentlyOffboardedPeople(days = 90): Promise<{
       supabase
         .from('global_master_list')
         .select(
-          '"Name","Work Email","Personal Email","Alternate Work Email","Alternate Work Email 2","Department",off_boarded_at,off_boarded_reason,last_seen_upload_id',
+          '"Name","Work Email","Personal Email","Alternate Work Email","Alternate Work Email 2","Department","Start Date",off_boarded_at,off_boarded_reason,last_seen_upload_id',
         )
         .range(from, to),
     ).then(
@@ -331,6 +349,7 @@ export async function listRecentlyOffboardedPeople(days = 90): Promise<{
     const p = str(r['Personal Email']);
     const name = str(r['Name']);
     if (!name || (!w && !p)) continue;
+    const onCurrentUpload = str(r['last_seen_upload_id']) === currentUploadId;
     const off = toDay(str(r['off_boarded_at']));
     if (off) {
       // Flavor 1/3: stamped row.
@@ -340,11 +359,15 @@ export async function listRecentlyOffboardedPeople(days = 90): Promise<{
           department: str(r['Department']),
           work_email: w,
           personal_email: p,
+          alternate_work_email: str(r['Alternate Work Email']),
+          alternate_work_email_2: str(r['Alternate Work Email 2']),
+          start_date: str(r['Start Date']),
           off,
           off_boarded_reason: str(r['off_boarded_reason']),
+          on_current_upload: onCurrentUpload,
         });
       }
-    } else if (str(r['last_seen_upload_id']) !== currentUploadId) {
+    } else if (!onCurrentUpload) {
       // Flavor 4: fell off the sheet unstamped. Only counts as "offboarded"
       // when they were logging hours in the last two timesheets — that both
       // filters out non-sheet people (devs/founders with no Hubstaff) and
@@ -366,8 +389,13 @@ export async function listRecentlyOffboardedPeople(days = 90): Promise<{
           department: str(r['Department']),
           work_email: w,
           personal_email: p,
+          alternate_work_email: str(r['Alternate Work Email']),
+          alternate_work_email_2: str(r['Alternate Work Email 2']),
+          start_date: str(r['Start Date']),
           off: null,
           off_boarded_reason: null,
+          // Flavor 4 IS "stale upload id" — never the current upload.
+          on_current_upload: false,
         });
       }
     }
@@ -378,7 +406,18 @@ export async function listRecentlyOffboardedPeople(days = 90): Promise<{
     const w = str(r['employee_work_email']);
     const p = str(r['employee_personal_email']) ?? str(r['employee_email']);
     if (!name || (!w && !p)) continue;
-    cands.push({ name, department: str(r['department']), work_email: w, personal_email: p, off: toDay(str(r['decided_at'])), off_boarded_reason: null });
+    cands.push({
+      name,
+      department: str(r['department']),
+      work_email: w,
+      personal_email: p,
+      alternate_work_email: null,
+      alternate_work_email_2: null,
+      start_date: null,
+      off: toDay(str(r['decided_at'])),
+      off_boarded_reason: null,
+      on_current_upload: false,
+    });
   }
 
   for (const r of sheetRows) {
@@ -386,7 +425,18 @@ export async function listRecentlyOffboardedPeople(days = 90): Promise<{
     const w = str(r['work_email']);
     const p = str(r['personal_email']);
     if (!name || (!w && !p)) continue;
-    cands.push({ name, department: str(r['department']), work_email: w, personal_email: p, off: toDay(str(r['off_boarded_at'])), off_boarded_reason: null });
+    cands.push({
+      name,
+      department: str(r['department']),
+      work_email: w,
+      personal_email: p,
+      alternate_work_email: null,
+      alternate_work_email_2: null,
+      start_date: null,
+      off: toDay(str(r['off_boarded_at'])),
+      off_boarded_reason: null,
+      on_current_upload: false,
+    });
   }
 
   // ── Merge duplicates (same person recorded by several sources / dupe rows) ─
@@ -402,10 +452,36 @@ export async function listRecentlyOffboardedPeople(days = 90): Promise<{
     if (!g) {
       g = { ...c };
       groups.push(g);
+    } else if (c.on_current_upload && !g.on_current_upload) {
+      // PROMOTION. The same person routinely carries several master rows (the
+      // sheet has duplicate person rows, and a transfer or re-add mints a new
+      // one). Filling identity fields first-non-null-wins over arbitrary page
+      // order meant a RETIRED row could describe someone who is described
+      // differently by the row the sheet still carries — and department is not
+      // cosmetic here: it selects the pay week, the HSL weekend premium, the OT
+      // convention, and whether "Pay this week" filters the person out of
+      // dispatch entirely. The row on the CURRENT upload is what the roster
+      // says today, so it wins outright for everything that describes WHO the
+      // person is. (vano@simple.biz carried a retired "Sales" row and a live
+      // "Lead Gen" row, with off_boarded_at stamped on BOTH — the upload id is
+      // the only thing that separates them.)
+      g.on_current_upload = true;
+      g.name = c.name;
+      g.department = c.department;
+      g.start_date = c.start_date;
+      g.alternate_work_email = c.alternate_work_email;
+      g.alternate_work_email_2 = c.alternate_work_email_2;
+      g.work_email = c.work_email ?? g.work_email;
+      g.personal_email = c.personal_email ?? g.personal_email;
+      g.off_boarded_reason = c.off_boarded_reason ?? g.off_boarded_reason;
+      if (c.off && (!g.off || c.off > g.off)) g.off = c.off;
     } else {
       g.department = g.department ?? c.department;
       g.work_email = g.work_email ?? c.work_email;
       g.personal_email = g.personal_email ?? c.personal_email;
+      g.alternate_work_email = g.alternate_work_email ?? c.alternate_work_email;
+      g.alternate_work_email_2 = g.alternate_work_email_2 ?? c.alternate_work_email_2;
+      g.start_date = g.start_date ?? c.start_date;
       g.off_boarded_reason = g.off_boarded_reason ?? c.off_boarded_reason;
       // Latest known departure wins (a dated record beats an undated one).
       if (c.off && (!g.off || c.off > g.off)) g.off = c.off;
@@ -487,6 +563,9 @@ export async function listRecentlyOffboardedPeople(days = 90): Promise<{
       off_boarded_reason: g.off_boarded_reason,
       hubstaff_email,
       last_hours_week_start: hubstaff_email ? hubWeekByEmail.get(hubstaff_email) ?? null : null,
+      alternate_work_email: g.alternate_work_email,
+      alternate_work_email_2: g.alternate_work_email_2,
+      start_date: g.start_date,
     });
   }
 
@@ -497,5 +576,16 @@ export async function listRecentlyOffboardedPeople(days = 90): Promise<{
       (b.off_boarded_at ?? '9999-99-99').localeCompare(a.off_boarded_at ?? '9999-99-99') ||
       a.name.localeCompare(b.name),
   );
-  return { people: people.slice(0, 300), hoursWeekFloor, error: null };
+  // Headroom cap. This started as a picker-sized limit, but the list now also
+  // decides PAY: the Payroll Wizard's final-pay overlay reads it to resolve a
+  // leaver's department, and truncation would silently hand someone back the
+  // stale key this list exists to correct. Callers week-scope AFTER this slice,
+  // so a heavy offboarding fortnight could otherwise push a still-owed person
+  // out. At 289/300 the old cap was eleven departures from doing exactly that.
+  // The 90-day window is the real bound; this is only a runaway guard.
+  const CAP = 1000;
+  if (people.length > CAP) {
+    console.warn(`[recently-offboarded] ${people.length} leavers in ${days}d — truncating to ${CAP}.`);
+  }
+  return { people: people.slice(0, CAP), hoursWeekFloor, error: null };
 }

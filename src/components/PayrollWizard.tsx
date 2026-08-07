@@ -190,6 +190,7 @@ import {
 import { downloadPayrollReportPdf, type PayrollReportRow } from '@/lib/payroll-wizard/report-pdf';
 import { usePabPeriodSettings } from '@/hooks/usePabPeriodSettings';
 import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
+import type { OffboardedRosterRow } from '@/lib/roster/offboarded-roster-row';
 import {
   deptPayPausedSettingKey,
   otDeptSettingKey,
@@ -1596,6 +1597,12 @@ export default function PayrollWizard({
   const [masterEmployees, setMasterEmployees] = useState<EmployeeRow[]>(
     initialData?.employees ?? [],
   );
+  /** Final-pay roster overlay — recently-offboarded people still owed a check
+   *  for the week in view. Kept SEPARATE from masterEmployees (never merged):
+   *  every consumer of the active roster keeps seeing exactly the active roster,
+   *  and this list is only ever consulted after an active lookup has already
+   *  missed. See src/lib/roster/offboarded-roster-row.ts. */
+  const [offboardedRoster, setOffboardedRoster] = useState<OffboardedRosterRow[]>([]);
   const [hubstaffDisplayColumns, setHubstaffDisplayColumns] = useState<string[] | null>(null);
   const [hubstaffDisplayRows, setHubstaffDisplayRows] = useState<Record<string, unknown>[] | null>(null);
   /** All rows across ALL uploaded CSVs — used for full-month PAB eligibility check. */
@@ -2716,7 +2723,15 @@ export default function PayrollWizard({
       // showed no one earning PAB. `null` → live computation takes over.
       const savedPabSnapshot = data.pabStatusSnapshot as Record<string, 'eligible' | 'ineligible' | 'in_progress'> | undefined;
       setLockedPabSnapshot(savedPabSnapshot && Object.keys(savedPabSnapshot).length > 0 ? savedPabSnapshot : null);
-      if (data.employeeDepts) setEmployeeDepts(data.employeeDepts);
+      // Always reset, exactly like employeeDeptsManual below. Guarding this on
+      // truthiness left the PREVIOUS week's grouping in state when switching to
+      // a cycle whose blob carries none, and the next "Lock in additions"
+      // persisted that bleed INTO the new week — which is how a stale key
+      // outlives the transfer that should have replaced it. Dropping to `{}` is
+      // safe because the resolver immediately re-derives every entry from the
+      // master list + the final-pay overlay, and employeeDeptsManual (reset on
+      // the very next line) still wins for deliberate moves.
+      setEmployeeDepts((data.employeeDepts as Record<string, string> | undefined) ?? {});
       // Always reset (no bleed between pay periods); saves that predate the
       // field simply have no manual moves — every entry re-derives from master.
       setEmployeeDeptsManual(
@@ -3049,6 +3064,36 @@ export default function PayrollWizard({
     }
     void reloadMasterEmployees();
   }, [reloadMasterEmployees]);
+
+  /**
+   * Load the final-pay roster overlay for the week in view. Re-fetches whenever
+   * the cycle changes, because the list is week-scoped: a leaver ages off once
+   * the week they left (and last logged hours) is behind the viewed week, which
+   * is what keeps this LAST-PAY only rather than resurrecting people.
+   *
+   * Degrades to `[]` on ANY failure. An empty overlay is a perfectly normal
+   * state — most weeks nobody recently-offboarded logged hours — so a failed
+   * read must land the wizard exactly where it is today, never in a degraded
+   * banner. `masterRosterUnavailable` stays keyed on masterEmployees alone and
+   * is deliberately NOT influenced by this list.
+   */
+  const offboardedRosterSeqRef = useRef(0);
+  useEffect(() => {
+    const seq = ++offboardedRosterSeqRef.current;
+    const qs = calcSourceFile ? `?source_file=${encodeURIComponent(calcSourceFile)}` : '';
+    (async () => {
+      try {
+        const res = await fetch(`/api/payroll-wizard/offboarded-roster${qs}`, { cache: 'no-store' });
+        const json = (await res.json()) as { rows?: OffboardedRosterRow[] };
+        // A response for a cycle the clerk has already switched away from must
+        // never land — it would cohort this week's people off another week's list.
+        if (seq !== offboardedRosterSeqRef.current) return;
+        setOffboardedRoster(res.ok ? json.rows ?? [] : []);
+      } catch {
+        if (seq === offboardedRosterSeqRef.current) setOffboardedRoster([]);
+      }
+    })();
+  }, [calcSourceFile]);
 
   useEffect(() => {
     let cancelled = false;
@@ -3827,6 +3872,71 @@ export default function PayrollWizard({
     }
     return { byWorkEmail, byPersonalEmail, byNameTokens };
   }, [masterEmployees]);
+
+  /**
+   * The same lookup maps over the final-pay overlay — recently-offboarded people
+   * who still have hours in this cycle. Built with masterIndex's exact
+   * first-occurrence-wins + second-pass-alternates structure so matching behaves
+   * identically, and shaped like a master record so it drops straight into the
+   * `master` local at the resolver's call sites.
+   *
+   * A SEPARATE map, never merged into masterIndex, and masterIndex never depends
+   * on it. That separation is the whole safety argument: the overlay is only read
+   * after every active lookup has already missed, so an active person's row can
+   * never be displaced by a leaver's. (`listRecentlyOffboardedPeople` also drops
+   * any candidate whose email or exact name collides with an active row, so the
+   * two sets are disjoint by construction — this is belt and braces.)
+   *
+   * `hubstaff_email` is indexed as a work-email alias because it is the PAYABLE
+   * identity and does not always equal the master work email (master `cathyp@`
+   * vs Hubstaff `cathypa@`) — the calc row is keyed on the Hubstaff address, so
+   * without this the lookup would miss exactly the people it exists to serve.
+   */
+  const offboardedIndex = useMemo(() => {
+    type O = { department: string | null; name: string | null; work_email: string | null; personal_email: string | null; start_date: string | null };
+    const byWorkEmail = new Map<string, O>();
+    const byPersonalEmail = new Map<string, O>();
+    const byNameTokens = new Map<string, O>();
+    const shape = (r: OffboardedRosterRow): O => ({
+      department: r.department,
+      name: r.name,
+      work_email: r.work_email,
+      personal_email: r.personal_email,
+      start_date: r.start_date,
+    });
+    for (const r of offboardedRoster) {
+      const o = shape(r);
+      const we = normEmail(r.work_email);
+      if (we && !byWorkEmail.has(we)) byWorkEmail.set(we, o);
+      const pe = normEmail(r.personal_email);
+      if (pe && !byPersonalEmail.has(pe)) byPersonalEmail.set(pe, o);
+      if (r.name) {
+        const t = normalizeNameTokens(r.name);
+        if (t && !byNameTokens.has(t)) byNameTokens.set(t, o);
+      }
+    }
+    for (const r of offboardedRoster) {
+      const o = shape(r);
+      for (const alt of [r.hubstaff_email, r.alternate_work_email, r.alternate_work_email_2]) {
+        const a = normEmail(alt);
+        if (a && !byWorkEmail.has(a)) byWorkEmail.set(a, o);
+      }
+    }
+    return { byWorkEmail, byPersonalEmail, byNameTokens };
+  }, [offboardedRoster]);
+
+  /** Every email the final-pay overlay knows a leaver by. Used to recognise a
+   *  calc row as a FINAL check — see the pay-pause safety net at Step 7. */
+  const finalPayEmails = useMemo(() => {
+    const s = new Set<string>();
+    for (const r of offboardedRoster) {
+      for (const e of [r.hubstaff_email, r.work_email, r.personal_email, r.alternate_work_email, r.alternate_work_email_2]) {
+        const n = normEmail(e);
+        if (n) s.add(n);
+      }
+    }
+    return s;
+  }, [offboardedRoster]);
 
   /** Raw sheet rates keyed by email — PRE catalog overlay (the People tab's 'sheet' layer). */
   const rawSheetRateIndex = useMemo(() => indexHourlyRatesByEmail(hourlyRateRows), [hourlyRateRows]);
@@ -6418,16 +6528,26 @@ export default function PayrollWizard({
    * Initialize Payroll Data. Zero-rate/no-rate people (salaried US, USEE) are
    * expected to sit unpaid behind a pause and are NOT flagged.
    */
-  const pausedHiddenPayableRows = useMemo<Array<CalcRow & { deptKey: string }>>(() => {
+  const pausedHiddenPayableRows = useMemo<Array<CalcRow & { deptKey: string; finalPay: boolean }>>(() => {
     if (pausedDeptKeys.size === 0) return [];
-    const out: Array<CalcRow & { deptKey: string }> = [];
+    const out: Array<CalcRow & { deptKey: string; finalPay: boolean }> = [];
     for (const row of calcResults) {
       const dk = employeeDepts[row.email] ?? employeeDepts[(row.email ?? '').toLowerCase()];
       if (!dk || !pausedDeptKeys.has(dk)) continue;
-      if (row.totalHours > 0 && (row.regularRate ?? 0) > 0) out.push({ ...row, deptKey: dk });
+      // A LEAVER hidden by a pause is a different failure from an active worker
+      // hidden by one. "Pay this week" off is a suppression, not a deferral —
+      // there is no arrears path, because a paused department's people never get
+      // a staged row for `listExcludedArrears` to find. An active worker is paid
+      // when the pause lifts; someone who has already left has no next week, so
+      // the pause means never. Flag them regardless of rate: a leaver is exactly
+      // the population most likely to have lost their rate row.
+      const finalPay = finalPayEmails.has(normEmail(row.email) ?? '');
+      if (row.totalHours > 0 && (finalPay || (row.regularRate ?? 0) > 0)) {
+        out.push({ ...row, deptKey: dk, finalPay });
+      }
     }
     return out;
-  }, [calcResults, employeeDepts, pausedDeptKeys]);
+  }, [calcResults, employeeDepts, pausedDeptKeys, finalPayEmails]);
 
   /**
    * Orphanage paste tool (step 3): parse pasted "Pay week ⇥ Work email ⇥ Hours" TSV
@@ -6612,8 +6732,22 @@ export default function PayrollWizard({
         if (a && !map.has(a)) map.set(a, sd);
       }
     }
+    // Final-pay overlay: a leaver is absent from `masterEmployees`, so they
+    // resolve no start date and the 30-day gate below rejects them outright —
+    // meaning someone who qualified all along silently loses the bonus on their
+    // LAST check, the one run where it can never be corrected later. Appended
+    // with a `has()` guard (never the unconditional `set` the active loop uses)
+    // so an active person's date can't be moved by an overlay row.
+    for (const p of offboardedRoster) {
+      const sd = p.start_date ? new Date(p.start_date) : null;
+      if (!sd || isNaN(sd.getTime())) continue;
+      for (const e of [p.work_email, p.personal_email, p.hubstaff_email, p.alternate_work_email, p.alternate_work_email_2]) {
+        const n = normEmail(e);
+        if (n && !map.has(n)) map.set(n, sd);
+      }
+    }
     return map;
-  }, [masterEmployees]);
+  }, [masterEmployees, offboardedRoster]);
 
   /**
    * Set of work emails who should receive the Tech Bonus on the current
@@ -7169,7 +7303,19 @@ export default function PayrollWizard({
         const tokens = normalizeNameTokens(r.name);
         if (tokens) master = masterIndex.byNameTokens.get(tokens);
       }
-      return normEmail(master?.personal_email) ?? null;
+      if (master) return normEmail(master.personal_email) ?? null;
+      // Final-pay overlay, same reason as the department resolver: both master
+      // tiers above read the ACTIVE roster, so a leaver resolves no delivery
+      // address and their last paystub is silently never sent. Consulted only
+      // after both have missed, so no active person's address can move.
+      let leaver = em
+        ? offboardedIndex.byWorkEmail.get(em) ?? offboardedIndex.byPersonalEmail.get(em)
+        : undefined;
+      if (!leaver && r.name) {
+        const tokens = normalizeNameTokens(r.name);
+        if (tokens) leaver = offboardedIndex.byNameTokens.get(tokens);
+      }
+      return normEmail(leaver?.personal_email) ?? null;
     };
 
     // Per-employee: a custom currency variant covering the employee's dept
@@ -7545,6 +7691,7 @@ export default function PayrollWizard({
     ratesByEmail,
     masterEmployees,
     masterIndex,
+    offboardedIndex,
     startDateByEmail,
     employeeDepts,
     employeeBonuses,
@@ -8413,8 +8560,35 @@ export default function PayrollWizard({
           if (tokens) master = masterIndex.byNameTokens.get(tokens);
         }
 
+        // ── Tier 1b: the FINAL-PAY overlay ──────────────────────────────────
+        // `active_employees` carries no offboarded rows, so every lookup above
+        // is silent for someone who left — and because tiers 2/3 only ever FILL
+        // BLANKS, whatever key the wizard recorded before they left is frozen
+        // forever, surviving even after HR corrects the master list. That is not
+        // cosmetic: the key selects the HSL Mon–Sun pay week, the +₱15/h weekend
+        // premium, the OT convention and KPI eligibility, so a leaver with hours
+        // in this cycle gets their FINAL check computed on the wrong basis.
+        // (zigfredoa@ transferred Lead Gen → HSL, left 2026-07-31, and stayed
+        // `lead_gen` in the wizard with 12:46 of unpaid HSL hours.)
+        //
+        // Read ONLY after every active lookup has missed, so an active person is
+        // never displaced. Feeding `master` here is what routes these people
+        // into the authoritative-overwrite branch below — which is why a frozen
+        // wrong key HEALS on the next run instead of merely ceasing to worsen.
+        let leaver = !master && em
+          ? offboardedIndex.byWorkEmail.get(em) ?? offboardedIndex.byPersonalEmail.get(em)
+          : undefined;
+        if (!master && !leaver && rateRow?.personal_email) {
+          const normPE = normEmail(rateRow.personal_email);
+          if (normPE) leaver = offboardedIndex.byPersonalEmail.get(normPE);
+        }
+        if (!master && !leaver && calcRow.name) {
+          const tokens = normalizeNameTokens(calcRow.name);
+          if (tokens) leaver = offboardedIndex.byNameTokens.get(tokens);
+        }
+
         // Tier 1: master-list Department (authoritative — may overwrite).
-        const masterRaw: string | null = master?.department ?? null;
+        const masterRaw: string | null = master?.department ?? leaver?.department ?? null;
         let deptRaw: string | null = masterRaw;
 
         // Tier 2: rates-table Department — only when not in the master list.
@@ -8449,7 +8623,7 @@ export default function PayrollWizard({
 
       return changed ? next : prev;
     });
-  }, [calcResults, masterIndex, ratesByEmail, hubstaffByEmail, customDepartments, employeeDeptsManual, isReplay, masterRosterUnavailable]);
+  }, [calcResults, masterIndex, offboardedIndex, ratesByEmail, hubstaffByEmail, customDepartments, employeeDeptsManual, isReplay, masterRosterUnavailable]);
 
   const payrollComparison = useMemo(
     () => comparePayrollToMaster(masterEmployees, hubstaffData),
@@ -15181,9 +15355,21 @@ export default function PayrollWizard({
                   },
                   { label: 'All Employees Dept-Assigned', pass: unassignedCount === 0 },
                   {
-                    label: pausedHiddenPayableRows.length === 0
-                      ? 'No Rated Workers Hidden by "Pay this week"'
-                      : `${pausedHiddenPayableRows.length} Rated Worker${pausedHiddenPayableRows.length !== 1 ? 's' : ''} Hidden by "Pay this week" (see Step 1 → Configuration)`,
+                    // Leavers are called out separately: a pause defers an active
+                    // worker's pay to next week, but it CANCELS a final check —
+                    // there is no next week and no arrears path. Naming them is
+                    // what makes the clerk unpause (or pay them by hand) instead
+                    // of shipping a cycle that silently drops someone's last pay.
+                    label: (() => {
+                      const n = pausedHiddenPayableRows.length;
+                      if (n === 0) return 'No Rated Workers Hidden by "Pay this week"';
+                      const leavers = pausedHiddenPayableRows.filter((r) => r.finalPay);
+                      const base = `${n} Rated Worker${n !== 1 ? 's' : ''} Hidden by "Pay this week" (see Step 1 → Configuration)`;
+                      if (leavers.length === 0) return base;
+                      const named = leavers.slice(0, 3).map((r) => r.name).join(', ');
+                      const more = leavers.length > 3 ? ` +${leavers.length - 3} more` : '';
+                      return `${base} — ${leavers.length} OFFBOARDED and owed a FINAL check: ${named}${more}`;
+                    })(),
                     pass: pausedHiddenPayableRows.length === 0,
                   },
                   {
