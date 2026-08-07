@@ -57,6 +57,7 @@ import { useDispatchLock } from '@/hooks/useDispatchLock';
 import { useWizardDispatchLock } from '@/hooks/useWizardDispatchLock';
 import { useWizardFollow } from '@/hooks/useWizardFollow';
 import { cn } from '@/lib/utils';
+import { formatPHP } from '@/lib/format-php';
 import { formatMoney, normalizeCurrency, sumByCurrency, CONTRACTOR_CURRENCIES } from '@/lib/contractor-currency';
 import { InvoiceViewDialog, type SavedInvoice } from '@/components/contractor/InvoiceReceiptDialog';
 import { isInvoiceInPeriod } from '@/lib/contractor/invoice-period';
@@ -1160,9 +1161,6 @@ type ExcludedDispatchEntry = {
   reason: 'do_not_pay';
 };
 
-function formatPHP(n: number): string {
-  return '₱' + n.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-}
 
 /** USD-equivalent of a PHP amount at the given rate, e.g. "$1,234.56". Empty
  *  when the rate is unusable. USD is the org's conversion anchor (see currency-fx). */
