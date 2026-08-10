@@ -12,6 +12,7 @@ import { isBankPreferredTransitionAllowed } from "@/lib/employee-payment-process
 import { NextResponse } from "next/server";
 import { randomUUID } from "crypto";
 import { authorizeEmailAccess, deniedResponse } from "@/lib/auth/authorize-email";
+import { requireFeatureEditAnyView } from "@/lib/auth/authorize-feature";
 
 /** Fields blocked while Accounting has payroll dispatch locked (employees may still update personal_email). */
 const BLOCKED_WHILE_PAYROLL_LOCKED = new Set([
@@ -341,7 +342,10 @@ export async function POST(req: Request) {
       typeof bootstrapDisplayNameRaw === "string" ? bootstrapDisplayNameRaw.trim() : "";
     // Where the edit originated. Defaults to self-service (the dashboard), which
     // preserves the existing behavior for every caller that doesn't send one.
-    const source = normalizeSource(sourceRaw, EMPLOYEE_DASHBOARD_SOURCE);
+    // NOTE: `source` is caller-supplied and only labels the change feed. It is
+    // reconciled against the session below (a self edit can never claim to be
+    // an accounting-made one), so it can't be used to forge attribution.
+    const requestedSource = normalizeSource(sourceRaw, EMPLOYEE_DASHBOARD_SOURCE);
 
     if (!work_email && !personal_email) {
       return NextResponse.json(
@@ -355,6 +359,23 @@ export async function POST(req: Request) {
     // unauthenticated salary-redirect hole.
     const authz = await authorizeEmailAccess((work_email ?? personal_email) as string);
     if (!authz.ok) return deniedResponse(authz);
+
+    // A CROSS-employee write here touches the same employee_ids bank columns as
+    // PATCH /api/people/[email]/banking, which requires the `people` feature.
+    // Plain elevation is too broad: hr_coordinator is elevated but is
+    // deliberately excluded from rate visibility and the People tab, so without
+    // this it could redirect anyone's salary through the back door.
+    const isSelfEdit =
+      authz.effectiveEmail.toLowerCase() === authz.sessionEmail.toLowerCase();
+    if (!isSelfEdit) {
+      const peopleAuthz = await requireFeatureEditAnyView('people');
+      if (!peopleAuthz.ok) return deniedResponse(peopleAuthz);
+    }
+
+    // An employee editing their OWN row is always self-service, whatever the
+    // body claimed — otherwise a self edit could pass source:"people_tab" and
+    // show up in the People bank-changes feed as an accounting-made change.
+    const source = isSelfEdit ? EMPLOYEE_DASHBOARD_SOURCE : requestedSource;
 
     // Verified actor (email + role) for attribution — the accountant on a
     // staff-made fix, the employee on a self-service edit.

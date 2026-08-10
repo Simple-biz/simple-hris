@@ -123,7 +123,12 @@ export async function resolveEmployeeProcessor(emails: string[]): Promise<string
       preferred_processor?: string | null;
     }>;
     for (const r of rows) {
-      const p = (r.bank_preferred ?? "").trim().toLowerCase();
+      // Map through the SAME text normalizer the legacy cell uses. Stored
+      // bank_preferred values include account-suffix codes ("x1153"), and
+      // returning one raw made isWireProcessor() false — so a wires payee got
+      // the Tuesday (HuruPay) pay date on their stub while Payment Dispatch
+      // paid them Thursday.
+      const p = processorFromBankPreferred(r.bank_preferred);
       if (p) return p;
     }
     for (const r of rows) {

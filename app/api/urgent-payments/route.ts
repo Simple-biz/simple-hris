@@ -4,6 +4,7 @@ import { deniedResponse, requireElevatedSession } from '@/lib/auth/authorize-ema
 import type { ProcessorId, QueueRow } from '@/components/payroll-clerk/mock-queue';
 import {
   buildPayoutDetails,
+  fetchLegacyBankPreferredByEmail,
   fetchPayoutIdsByEmail,
   fetchUsdToPhpRate,
   preferredProcessor,
@@ -27,8 +28,11 @@ interface UrgentPaymentRow {
   created_at: string;
   reviewed_by: string | null;
   reviewed_at: string | null;
-  /** The recipient's saved preferred processor (defaults to 'wise' for MESA). */
-  processor: ProcessorId;
+  /** The rail Payment Dispatch would pay this person on (bank_preferred →
+   *  disbursement pick → legacy rates cell). `null` when none resolves — the
+   *  clerk must then choose, rather than the card guessing a rail the payee
+   *  isn't set up on. */
+  processor: ProcessorId | null;
   /** Per-processor payout detail so Mark Paid pre-fills for whichever processor the clerk picks. */
   details: QueueRow['details'];
 }
@@ -71,17 +75,19 @@ export async function GET() {
 
     // Batch-fetch employee_ids for processor preference + payout pre-fill, and
     // the FX rate for the USD equivalent (one query each, not per row).
-    const [idsByEmail, usdToPhp] = await Promise.all([
+    const [idsByEmail, legacyByEmail, usdToPhp] = await Promise.all([
       fetchPayoutIdsByEmail(supabase, rows.map((r) => r.work_email)),
+      fetchLegacyBankPreferredByEmail(supabase, rows.map((r) => r.work_email)),
       fetchUsdToPhpRate(supabase),
     ]);
 
     const result: UrgentPaymentRow[] = rows.map((r) => {
-      const ids = idsByEmail[r.work_email.trim().toLowerCase()];
+      const key = r.work_email.trim().toLowerCase();
+      const ids = idsByEmail[key];
       return {
         ...r,
         amount_usd: usdFromPhp(r.amount_needed, usdToPhp),
-        processor: preferredProcessor(ids),
+        processor: preferredProcessor(ids, legacyByEmail[key]),
         details: buildPayoutDetails(ids, r.work_email),
       };
     });

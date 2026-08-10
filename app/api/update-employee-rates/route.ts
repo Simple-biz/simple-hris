@@ -8,6 +8,7 @@ import { NextResponse } from "next/server";
 import { getSessionActor } from '@/lib/auth/session-actor';
 import { requireFeatureEdit } from '@/lib/auth/authorize-feature';
 import { deniedResponse } from '@/lib/auth/authorize-email';
+import { rejectWhilePayrollProcessing } from '@/lib/payroll/processing-guard';
 const RATES_TABLE = process.env.NEXT_PUBLIC_SUPABASE_EMPLOYEE_HOURLY_RATES_TABLE?.trim() || 'employee_hourly_rates';
 
 function parseDateOnly(v: unknown): Date | null {
@@ -38,6 +39,12 @@ export async function POST(req: Request) {
   try {
     const authz = await requireFeatureEdit('accounting', 'rates');
     if (!authz.ok) return deniedResponse(authz);
+
+    // A rate change mid-run desyncs the staged amounts Payment Dispatch is
+    // paying from the rate the paystub renders. The per-employee applied bonus
+    // amounts were already lock-guarded; the rate they derive from was not.
+    const locked = await rejectWhilePayrollProcessing('editing pay rates');
+    if (locked) return locked;
 
     const { workEmail, personalEmail, regularRate, otRate, effectiveDate } = await req.json();
 

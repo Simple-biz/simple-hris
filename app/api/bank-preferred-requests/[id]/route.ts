@@ -6,6 +6,7 @@ import { getSessionActor } from '@/lib/auth/session-actor';
 import { deniedResponse } from '@/lib/auth/authorize-email';
 import { requireFeatureEditAnyView } from '@/lib/auth/authorize-feature';
 import { getBankPreferredRequestById } from '@/lib/supabase/bank-preferred-requests';
+import { getPayrollDispatchLock } from '@/lib/supabase/payroll-dispatch-lock';
 import { invalidateRateProfilesCache } from '@/lib/supabase/employee-rate-profiles';
 import { pulseBankChanges } from '@/lib/supabase/app-settings';
 import {
@@ -67,6 +68,23 @@ export async function PATCH(
     // leaves an "approved" request whose value never landed.
     if (status === 'approved') {
       const workEmail = row.work_email.trim().toLowerCase();
+
+      // Approving writes `bank_preferred` — the send-from rail that decides
+      // WHICH processor pays this person. Every other path that writes this
+      // column (people/[email]/banking, update-employee-ids, bank-update/save)
+      // refuses while payroll is processing; without the same check here, an
+      // approval could reroute someone from wires to Hurupay *after* the
+      // dispatch queue was built. Denials stay open — they change nothing.
+      const lock = await getPayrollDispatchLock();
+      if (lock.locked) {
+        return NextResponse.json(
+          {
+            error:
+              'Payroll is being processed right now, so payment routing is temporarily locked. Approve this request once the dispatch completes.',
+          },
+          { status: 423 },
+        );
+      }
 
       // WIRES lock re-check: verify against the CURRENT stored value, not the
       // request's from_value (it may have changed since the request was filed).

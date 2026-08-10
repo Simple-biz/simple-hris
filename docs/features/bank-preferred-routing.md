@@ -236,6 +236,57 @@ by resolving everything People shows through the SAME dispatch-parity helpers:
 Parity is pinned by `src/lib/employee/payout-completeness.test.ts` and the
 audit script's post-fix run: **0 disagreements across 1,498 active people**.
 
+## 9. Routing + lock hardening (2026-08-10)
+
+A follow-up audit found the same drift class on money-*moving* paths, plus the
+locks not covering everything they imply. All fixed in one pass:
+
+- **Urgent Payments preselected the wrong rail.** `preferredProcessor()` in
+  [`urgent-payout-details.ts`](../../src/lib/payroll/urgent-payout-details.ts)
+  read `preferred_processor` alone and **defaulted to `wise`** (retired), so a
+  Hurupay-routed payee's card preselected Wise with no wallet email — and Send
+  records a real dispatch. Now resolves with PD's full precedence (incl. a new
+  `fetchLegacyBankPreferredByEmail` for the sheet tier) and returns **null**
+  when nothing resolves; the card disables Send until the clerk picks a rail.
+  Pinned by `urgent-payout-details.test.ts`.
+- **`pay-schedule.ts`** returned `employee_ids.bank_preferred` **unmapped**, so
+  a stored `x1153` failed `isWireProcessor` and produced a Tuesday pay date for
+  a Thursday-paid wires payee. Now goes through the same text normalizer.
+- **The Wizard's "People Tab · Live · Banking Info" card** claimed to mirror
+  People but used the raw Disbursement pick and no cross-slot fallback. It now
+  shows *Pays via* (effective rail) + *Bank Preferred*, with PD's slot fallback.
+- **`/update-bank-info` prefill** omitted `bank_preferred`, so a
+  `bank_preferred`-routed employee saw an empty picker and had to invent a
+  `preferred_processor` that then disagreed with their real rail.
+- **Lock coverage.** Approving a Bank Preferred request now checks the dispatch
+  lock (it writes the send-from rail; every direct-edit path already did).
+  Rate writes, payment-catalog pay structures, and Hubstaff hours POST/PATCH/
+  DELETE are now lock-guarded too — previously the derived per-employee bonus
+  amounts were guarded but the rates and hours they derive from were not.
+- **`app-settings` POST was a lock + audit bypass.** It gated on
+  `requireElevatedSession()` only, so `hr_coordinator` could POST
+  `payroll.dispatch_locked=false`, drop every bank-edit freeze, and leave no
+  audit row — routing around
+  [`/api/payroll-dispatch-lock`](../../app/api/payroll-dispatch-lock/route.ts),
+  which requires payment_dispatch edit *and* audits. Writes to
+  `payroll.dispatch_lock*` now need payment_dispatch **or** payroll_wizard
+  edit, sensitive keys (`auth.*`, webhook, token) are **admin-only to write**,
+  and all such writes are audit-logged.
+- **Contractor rail brought up to the employee rail's standard.** Profile and
+  invoice routes had **no authorization at all** — a body-supplied
+  `contractor_email` was the write key, and DELETE compared a query param
+  rather than the session. Now self-or-elevated on every verb, payout edits are
+  dispatch-locked, and they write `audit_log` + `bank_update_history`.
+- **`update-employee-ids`** cross-employee writes now require the `people`
+  feature (matching `people/[email]/banking`); a self edit can no longer claim
+  `source: "people_tab"` in the change feed.
+
+> **Still open — needs a product call.** The per-cycle lock
+> (`payroll.dispatch_lock.<sourceFile>`) is read only client-side and gates
+> nothing server-side, so "Accounting locked this cycle" is a UI convention.
+> Making it also freeze bank edits would match the stated intent but could hold
+> employees out for days at a time; deliberately not changed here.
+
 ## Migrations
 
 DDL has **no path from the dev environment** — run these in the **Supabase SQL

@@ -28,6 +28,11 @@ export async function getPayoutPrefill(workEmail: string): Promise<PayoutPrefill
   const { row } = await getEmployeeIdRowByEmail(work);
   if (row) {
     return {
+      // The send-from rail. Carried so the external-link form can show the
+      // employee the rail they're ACTUALLY paid on instead of an empty picker;
+      // without it the form made them re-pick, manufacturing a
+      // preferred_processor that disagreed with their real routing.
+      bank_preferred: row.bank_preferred,
       preferred_processor: row.preferred_processor,
       preferred_bank_slot: row.preferred_bank_slot,
       bank_name: row.bank_name,

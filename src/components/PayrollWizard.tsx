@@ -721,6 +721,10 @@ const CSV_WARN_IGNORED_LS_PREFIX = 'payroll.wizard.csvWarnIgnored.';
 
 /** Masked payout details returned by GET /api/people/[email] (People → Banking). */
 type PreviewPeopleBanking = {
+  /** Send-from rail, and the server-resolved rail Payment Dispatch actually
+   *  routes on (bank_preferred → disbursement pick → legacy rates cell). */
+  bank_preferred: string | null;
+  effective_processor: string | null;
   preferred_processor: string | null;
   preferred_bank_slot: string | null;
   bank_name: string | null;
@@ -940,19 +944,29 @@ function PeoplePreviewSnapshotCard({
           ? 'Catalog · dept base'
           : 'No rate on file';
   const b = banking.banking;
-  // Mirrors the People tab's Banking view exactly: only the CHOSEN processor's
-  // rail is shown; wires/jeeves/wise (or no processor with a bank on file)
-  // surface the preferred bank slot's fields.
+  // Mirrors the People tab's Banking view exactly (PeopleTab.tsx): the rail
+  // shown is the EFFECTIVE one Payment Dispatch routes on — not the raw
+  // Disbursement pick — and bank fields fall back across the primary/alternative
+  // slot the same way PD's queue row does. This card is the pre-dispatch
+  // sanity-check screen, so any divergence here is the most dangerous kind.
   const prefAlt = b?.preferred_bank_slot === 'alternative';
+  const firstOf = (...vals: (string | null | undefined)[]) =>
+    vals.find((v) => v != null && String(v).trim() !== '') ?? null;
   const prefBank = {
-    name: (prefAlt ? b?.alt_bank_name : b?.bank_name) ?? null,
-    holder: (prefAlt ? b?.alt_account_holder_name : b?.account_holder_name) ?? null,
-    account: (prefAlt ? b?.alt_account_number : b?.account_number) ?? null,
-    routing: (prefAlt ? b?.alt_routing_number : b?.routing_number) ?? null,
-    swift: (prefAlt ? null : b?.swift_code) ?? null,
-    address: (prefAlt ? null : b?.full_address) ?? null,
+    name: prefAlt ? firstOf(b?.alt_bank_name, b?.bank_name) : firstOf(b?.bank_name, b?.alt_bank_name),
+    holder: prefAlt
+      ? firstOf(b?.alt_account_holder_name, b?.account_holder_name)
+      : firstOf(b?.account_holder_name, b?.alt_account_holder_name),
+    account: prefAlt
+      ? firstOf(b?.alt_account_number, b?.account_number)
+      : firstOf(b?.account_number, b?.alt_account_number),
+    routing: prefAlt
+      ? firstOf(b?.alt_routing_number, b?.routing_number)
+      : firstOf(b?.routing_number, b?.alt_routing_number),
+    swift: b?.swift_code ?? null,
+    address: b?.full_address ?? null,
   };
-  const proc = (b?.preferred_processor ?? '').trim().toLowerCase();
+  const proc = (b?.effective_processor ?? b?.preferred_processor ?? '').trim().toLowerCase();
   const showBank = proc === 'wires' || proc === 'jeeves' || proc === 'wise' || (!proc && !!prefBank.name);
   return (
     <RateSnapshotShell
@@ -1023,13 +1037,17 @@ function PeoplePreviewSnapshotCard({
         ) : (
           <div className="divide-y divide-zinc-100 dark:divide-zinc-900">
             <SnapshotRow
-              label="Processor"
-              value={
-                b.preferred_processor
-                  ? b.preferred_processor.charAt(0).toUpperCase() + b.preferred_processor.slice(1)
-                  : 'Not set'
-              }
+              label="Pays via"
+              value={proc ? proc.charAt(0).toUpperCase() + proc.slice(1) : 'Not routed'}
             />
+            {/* The send-from rail, when it's what decides the routing — shown so
+                the clerk can see WHY this person pays via that processor. */}
+            {b.bank_preferred && (
+              <SnapshotRow
+                label="Bank Preferred"
+                value={b.bank_preferred.charAt(0).toUpperCase() + b.bank_preferred.slice(1)}
+              />
+            )}
             {showBank && (
               <>
                 <SnapshotRow label={prefAlt ? 'Bank (alt)' : 'Bank'} value={prefBank.name} />

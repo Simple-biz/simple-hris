@@ -15,6 +15,7 @@ import {
   isPayoutComplete,
   type PayoutFields,
 } from '@/components/employee/employee-payout-fields';
+import { resolveEffectivePayoutProcessor } from '@/lib/employee/payout-completeness';
 import type { ProcessorId } from '@/lib/employee-payment-processors';
 
 type Step = 'email' | 'code' | 'edit' | 'done';
@@ -124,8 +125,16 @@ export default function UpdateBankInfoPage() {
       setWorkEmail(json.work_email ?? email.trim().toLowerCase());
       setName(json.name ?? null);
 
-      const draft = payoutDraftFromIdsRow((json.payout ?? {}) as Record<string, unknown>);
-      setPreferredProcessor(draft.preferredProcessor);
+      const payoutRow = (json.payout ?? {}) as Record<string, unknown>;
+      const draft = payoutDraftFromIdsRow(payoutRow);
+      // Seed the picker from the rail the employee is ACTUALLY paid on: their
+      // Disbursement pick if they made one, else their Bank Preferred
+      // send-from rail. Showing an empty picker to a bank_preferred-routed
+      // person made them guess, and their guess then disagreed with payroll.
+      setPreferredProcessor(
+        draft.preferredProcessor ||
+          (resolveEffectivePayoutProcessor(payoutRow) ?? ''),
+      );
       setPayout(draft.payout);
       setStep('edit');
     } catch (err) {

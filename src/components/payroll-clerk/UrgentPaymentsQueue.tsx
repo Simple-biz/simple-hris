@@ -348,9 +348,14 @@ export default function UrgentPaymentsQueue({ onCountChange, onDispatchedCountCh
 
   useEffect(() => { void load(); }, [load]);
 
-  // Resolve the processor chosen for a given MESA row (override → preferred → wise).
+  // Resolve the rail for a MESA row: the clerk's override, else the rail
+  // Payment Dispatch would use (server-resolved with PD's full precedence).
+  // NULL when the recipient has no resolvable rail — the clerk must pick one.
+  // This used to fall back to 'wise', which silently preselected a RETIRED
+  // processor for anyone routed via bank_preferred or the rates sheet, and one
+  // click recorded a real dispatch on a rail they aren't set up on.
   const processorFor = useCallback(
-    (r: UrgentPaymentRow): ProcessorId => processorByRow[r.id] ?? r.processor ?? 'wise',
+    (r: UrgentPaymentRow): ProcessorId | null => processorByRow[r.id] ?? r.processor ?? null,
     [processorByRow],
   );
 
@@ -358,9 +363,9 @@ export default function UrgentPaymentsQueue({ onCountChange, onDispatchedCountCh
     setProcessorByRow((prev) => ({ ...prev, [rowId]: processor }));
   }, []);
 
-  // Same resolution for one-off payment rows (override → preferred → wise).
+  // Same resolution for one-off payment rows.
   const processorForOneOff = useCallback(
-    (r: UrgentOneOffRow): ProcessorId => oneOffProcessorByRow[r.id] ?? r.processor ?? 'wise',
+    (r: UrgentOneOffRow): ProcessorId | null => oneOffProcessorByRow[r.id] ?? r.processor ?? null,
     [oneOffProcessorByRow],
   );
 
@@ -373,6 +378,7 @@ export default function UrgentPaymentsQueue({ onCountChange, onDispatchedCountCh
     const c: Partial<Record<ProcessorId, number>> = {};
     for (const r of rows) {
       const p = processorFor(r);
+      if (!p) continue; // no resolvable rail — counted under no processor tab
       c[p] = (c[p] ?? 0) + 1;
     }
     return c;
@@ -397,6 +403,12 @@ export default function UrgentPaymentsQueue({ onCountChange, onDispatchedCountCh
     const target = rows.find((r) => r.id === payload.rowId);
     if (!target) return;
     const processor = processorFor(target);
+    // No resolvable rail — refuse rather than guess. Recording a dispatch on a
+    // guessed processor sends money down a rail the payee isn't set up on.
+    if (!processor) {
+      toast.error(`${target.full_name} has no payment rail on file — pick one before sending.`);
+      return;
+    }
 
     // Optimistically remove from list
     const nextRows = rows.filter((r) => r.id !== payload.rowId);
@@ -447,6 +459,10 @@ export default function UrgentPaymentsQueue({ onCountChange, onDispatchedCountCh
     const target = oneOffRows.find((r) => r.id === payload.rowId);
     if (!target) return;
     const processor = processorForOneOff(target);
+    if (!processor) {
+      toast.error(`${target.full_name} has no payment rail on file — pick one before sending.`);
+      return;
+    }
 
     // Optimistically remove from list
     const nextRows = oneOffRows.filter((r) => r.id !== payload.rowId);
@@ -631,14 +647,19 @@ export default function UrgentPaymentsQueue({ onCountChange, onDispatchedCountCh
   // inline prop would wipe those fields on any parent re-render (a Refresh, a
   // ping toast, another card's processor change) while the dialog is open. A
   // stable reference (keyed on the open target + chosen processor) keeps them.
-  const markRowQueue = useMemo(
-    () => (markRow ? toQueueRow(markRow, processorFor(markRow)) : null),
-    [markRow, processorFor],
-  );
-  const markOneOffQueue = useMemo(
-    () => (markOneOff ? toQueueRowOneOff(markOneOff, processorForOneOff(markOneOff)) : null),
-    [markOneOff, processorForOneOff],
-  );
+  // A null rail yields no queue row, so Mark Paid stays shut until the clerk
+  // picks a processor on the card — the dialog pre-fills per rail, and there is
+  // no safe rail to pre-fill for someone with none on file.
+  const markRowQueue = useMemo(() => {
+    if (!markRow) return null;
+    const p = processorFor(markRow);
+    return p ? toQueueRow(markRow, p) : null;
+  }, [markRow, processorFor]);
+  const markOneOffQueue = useMemo(() => {
+    if (!markOneOff) return null;
+    const p = processorForOneOff(markOneOff);
+    return p ? toQueueRowOneOff(markOneOff, p) : null;
+  }, [markOneOff, processorForOneOff]);
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-y-auto bg-gradient-to-br from-white via-amber-50/30 to-orange-50/20 p-4 sm:p-6 dark:bg-none dark:bg-[#0d1117]">
@@ -1089,7 +1110,9 @@ function UrgentCard({
   onRemove,
 }: {
   row: UrgentPaymentRow;
-  processor: ProcessorId;
+  /** Null when the recipient has no rail on file — Send stays disabled until
+   *  the clerk picks one, rather than defaulting to a guess. */
+  processor: ProcessorId | null;
   onProcessorChange: (p: ProcessorId) => void;
   onSend: () => void;
   onRemove: () => void;
@@ -1145,11 +1168,12 @@ function UrgentCard({
           <label className="sr-only" htmlFor={`proc-${row.id}`}>Payment processor</label>
           <select
             id={`proc-${row.id}`}
-            value={processor}
+            value={processor ?? ''}
             onChange={(e) => onProcessorChange(e.target.value as ProcessorId)}
             className="h-8 rounded-md border border-amber-200 bg-amber-50/60 px-2 text-[12px] font-medium text-amber-800 outline-none focus:border-amber-400 focus:ring-2 focus:ring-amber-200 dark:border-amber-800/40 dark:bg-amber-950/20 dark:text-amber-200"
             title="Choose which processor to pay through"
           >
+            {!processor && <option value="" disabled>No rail on file — choose one</option>}
             {DISPATCH_PROCESSORS.map((p) => (
               <option key={p.id} value={p.id}>{p.label}</option>
             ))}
@@ -1158,7 +1182,9 @@ function UrgentCard({
             type="button"
             size="sm"
             onClick={onSend}
-            className="gap-1.5 bg-amber-500 text-white hover:bg-amber-600 dark:bg-amber-600 dark:hover:bg-amber-500"
+            disabled={!processor}
+            title={processor ? undefined : 'Choose a payment rail first — this recipient has none on file.'}
+            className="gap-1.5 bg-amber-500 text-white hover:bg-amber-600 disabled:opacity-50 dark:bg-amber-600 dark:hover:bg-amber-500"
           >
             <Send className="h-3.5 w-3.5" />
             Send
@@ -1178,7 +1204,8 @@ function OneOffCard({
   onRemove,
 }: {
   row: UrgentOneOffRow;
-  processor: ProcessorId;
+  /** Null when the recipient has no rail on file — see UrgentCard. */
+  processor: ProcessorId | null;
   onProcessorChange: (p: ProcessorId) => void;
   onSend: () => void;
   onRemove: () => void;
@@ -1218,11 +1245,12 @@ function OneOffCard({
           <label className="sr-only" htmlFor={`oneoff-proc-${row.id}`}>Payment processor</label>
           <select
             id={`oneoff-proc-${row.id}`}
-            value={processor}
+            value={processor ?? ''}
             onChange={(e) => onProcessorChange(e.target.value as ProcessorId)}
             className="h-8 rounded-md border border-amber-200 bg-amber-50/60 px-2 text-[12px] font-medium text-amber-800 outline-none focus:border-amber-400 focus:ring-2 focus:ring-amber-200 dark:border-amber-800/40 dark:bg-amber-950/20 dark:text-amber-200"
             title="Choose which processor to pay through"
           >
+            {!processor && <option value="" disabled>No rail on file — choose one</option>}
             {DISPATCH_PROCESSORS.map((p) => (
               <option key={p.id} value={p.id}>{p.label}</option>
             ))}
@@ -1231,7 +1259,9 @@ function OneOffCard({
             type="button"
             size="sm"
             onClick={onSend}
-            className="gap-1.5 bg-amber-500 text-white hover:bg-amber-600 dark:bg-amber-600 dark:hover:bg-amber-500"
+            disabled={!processor}
+            title={processor ? undefined : 'Choose a payment rail first — this recipient has none on file.'}
+            className="gap-1.5 bg-amber-500 text-white hover:bg-amber-600 disabled:opacity-50 dark:bg-amber-600 dark:hover:bg-amber-500"
           >
             <Send className="h-3.5 w-3.5" />
             Send

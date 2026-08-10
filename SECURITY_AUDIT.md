@@ -5,6 +5,28 @@
 > **Scope:** Full codebase audit — Authentication, Authorization, API Security, Database, Frontend, Infrastructure, HRIS-Specific Risks, Compliance
 > **Raw Findings Collected:** 151 (deduplicated to 80 below)
 
+> ## ⚠ READ THIS FIRST — this report is substantially STALE (re-verified 2026-08-10)
+>
+> **Every "no authentication — curl it with zero credentials" scenario below is
+> no longer reachable.** [`proxy.ts`](proxy.ts) now requires a valid NextAuth
+> token for every `/api/*` path and returns a JSON 401 otherwise; only
+> `/api/bank-update/*`, `/api/onboarding/*`, `/api/auth/*` and secret-bearing
+> `/api/cron/*` are public. Roughly 22 of the "Critical" rows below (#2, 3, 4,
+> 5, 7–13, 16–19, 22, 23, 26, 29, 30, 34) are fixed.
+>
+> **The real threat model today is any signed-in `@simple.biz` account —
+> including a roleless employee — plus elevated roles broader than their blast
+> radius.** Re-read every severity through that lens before acting on it.
+>
+> Fixed in the 2026-08-10 hardening pass: the `app-settings` POST write-gate
+> (finding #6's remaining half), contractor profile/invoice authorization
+> (#35, #62), and disbursement report/export authorization (#31, #36, #43).
+> Finding #5's DELETE was already admin-gated. **Still open** and worth
+> triaging: #1 (secrets on disk), #24 (service-role default), #39–41
+> (vulnerable deps), #42/#44 (encryption at rest, RLS), #47/#48 (retention,
+> DPA compliance), #53 (cron fail-open), #54 (security headers), #55/#56
+> (XSS / file upload).
+
 ---
 
 ## Security Findings Table

@@ -4,6 +4,7 @@ import { deniedResponse, requireElevatedSession } from '@/lib/auth/authorize-ema
 import type { ProcessorId, QueueRow } from '@/components/payroll-clerk/mock-queue';
 import {
   buildPayoutDetails,
+  fetchLegacyBankPreferredByEmail,
   fetchPayoutIdsByEmail,
   fetchUsdToPhpRate,
   preferredProcessor,
@@ -25,8 +26,9 @@ export interface UrgentOneOffRow {
   note: string | null;
   requested_by: string | null;
   requested_at: string;
-  /** Recipient's saved preferred processor (defaults to 'wise'). */
-  processor: ProcessorId;
+  /** The rail Payment Dispatch would pay this person on (bank_preferred →
+   *  disbursement pick → legacy rates cell); `null` when none resolves. */
+  processor: ProcessorId | null;
   /** Per-processor payout detail so Mark Paid pre-fills for the chosen processor. */
   details: QueueRow['details'];
 }
@@ -62,17 +64,19 @@ export async function GET() {
       requested_at: string;
     }>;
 
-    const [idsByEmail, usdToPhp] = await Promise.all([
+    const [idsByEmail, legacyByEmail, usdToPhp] = await Promise.all([
       fetchPayoutIdsByEmail(supabase, rows.map((r) => r.work_email)),
+      fetchLegacyBankPreferredByEmail(supabase, rows.map((r) => r.work_email)),
       fetchUsdToPhpRate(supabase),
     ]);
 
     const result: UrgentOneOffRow[] = rows.map((r) => {
-      const ids = idsByEmail[r.work_email.trim().toLowerCase()];
+      const key = r.work_email.trim().toLowerCase();
+      const ids = idsByEmail[key];
       return {
         ...r,
         amount_usd: usdFromPhp(r.amount_php, usdToPhp),
-        processor: preferredProcessor(ids),
+        processor: preferredProcessor(ids, legacyByEmail[key]),
         details: buildPayoutDetails(ids, r.work_email),
       };
     });

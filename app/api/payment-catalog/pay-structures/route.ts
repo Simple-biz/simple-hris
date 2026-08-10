@@ -6,6 +6,7 @@ import {
 } from '@/lib/supabase/pay-structures-db';
 import { deniedResponse, requireRateVisibilitySession } from '@/lib/auth/authorize-email';
 import { requireFeatureEdit } from '@/lib/auth/authorize-feature';
+import { rejectWhilePayrollProcessing } from '@/lib/payroll/processing-guard';
 import { validatePayStructure, type PayStructure } from '@/lib/payment-catalog/pay-structure';
 import { insertRateHistoryRow } from '@/lib/payroll/rate-history';
 import { insertAuditLog } from '@/lib/supabase/audit-log';
@@ -163,6 +164,11 @@ export async function GET() {
 export async function POST(request: Request) {
   const authz = await requireFeatureEdit('accounting', 'bonus_catalog');
   if (!authz.ok) return deniedResponse(authz);
+  // The catalog is the rate source of truth, so editing a structure mid-run
+  // desyncs the staged amounts from what the paystub renders. Matches the
+  // guard already on the per-employee applied amounts.
+  const locked = await rejectWhilePayrollProcessing('editing the payment catalog');
+  if (locked) return locked;
   const actor = authz.sessionEmail;
 
   let body: { structure?: PayStructure; effectiveDate?: string | null; source?: string };
@@ -225,6 +231,8 @@ export async function POST(request: Request) {
 export async function DELETE(request: Request) {
   const authz = await requireFeatureEdit('accounting', 'bonus_catalog');
   if (!authz.ok) return deniedResponse(authz);
+  const locked = await rejectWhilePayrollProcessing('editing the payment catalog');
+  if (locked) return locked;
 
   const { searchParams } = new URL(request.url);
   const id = searchParams.get('id');

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { insertAuditLog } from '@/lib/supabase/audit-log';
 import { getSessionActor } from '@/lib/auth/session-actor';
+import { authorizeEmailAccess, requireElevatedSession, deniedResponse } from '@/lib/auth/authorize-email';
 
 function errMsg(err: unknown): string {
   if (err instanceof Error) return err.message;
@@ -22,6 +23,10 @@ function getServiceClient() {
 export async function GET(req: NextRequest) {
   const email = req.nextUrl.searchParams.get('email')?.toLowerCase().trim();
   const status = req.nextUrl.searchParams.get('status')?.trim();
+  // Scoped read (?email=) is self-or-elevated; the unscoped/status-only forms
+  // return every contractor's amounts and payment rail, so they need elevation.
+  const authz = email ? await authorizeEmailAccess(email) : await requireElevatedSession();
+  if (!authz.ok) return deniedResponse(authz);
   try {
     const supabase = getServiceClient();
     let q = supabase
@@ -42,6 +47,16 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
+    // The invoice carries both the amount and the destination rail that the
+    // (properly gated) approval route later pays out on, so creating one for
+    // someone else must be authorized — self, or an elevated back-office user.
+    const contractorEmail = String(body.contractorEmail ?? '').toLowerCase().trim();
+    if (!contractorEmail) {
+      return NextResponse.json({ error: 'Missing contractorEmail' }, { status: 400 });
+    }
+    const authz = await authorizeEmailAccess(contractorEmail);
+    if (!authz.ok) return deniedResponse(authz);
+
     const supabase = getServiceClient();
 
     // Optional payment rail attached to the invoice. Validated inline (no shared
@@ -61,7 +76,7 @@ export async function POST(req: NextRequest) {
     const { data, error } = await supabase
       .from('contractor_invoices')
       .insert({
-        contractor_email:  String(body.contractorEmail ?? '').toLowerCase().trim(),
+        contractor_email:  contractorEmail,
         invoice_number:    body.invoiceNumber ?? '',
         invoice_date:      body.invoiceDate || null,
         due_date:          body.dueDate || null,
@@ -96,13 +111,18 @@ export async function POST(req: NextRequest) {
 // DELETE /api/contractor/invoices?id=...&email=...
 // Contractor retracts (withdraws) an invoice they sent to Accounting. Allowed
 // ONLY while the invoice is still 'pending' — once Accounting has approved or
-// rejected it, it can no longer be retracted. Scoped to the owner by email,
-// matching the (unauthenticated) contractor-facing GET/POST on this route.
+// rejected it, it can no longer be retracted.
+//
+// Ownership is checked against the AUTHORIZED email, never the raw query
+// param: `?email=` alone is caller-controlled, so trusting it let any signed-in
+// user retract anyone's pending invoice and silently drop it from the cycle.
 export async function DELETE(req: NextRequest) {
   const id = req.nextUrl.searchParams.get('id')?.trim();
   const email = req.nextUrl.searchParams.get('email')?.toLowerCase().trim();
   if (!id) return NextResponse.json({ error: 'Missing id' }, { status: 400 });
   if (!email) return NextResponse.json({ error: 'Missing email' }, { status: 400 });
+  const authz = await authorizeEmailAccess(email);
+  if (!authz.ok) return deniedResponse(authz);
   try {
     const supabase = getServiceClient();
 
@@ -113,7 +133,9 @@ export async function DELETE(req: NextRequest) {
       .maybeSingle();
     if (fetchErr) throw fetchErr;
     if (!row) return NextResponse.json({ error: 'Invoice not found.' }, { status: 404 });
-    if (row.contractor_email !== email) {
+    // Non-elevated callers may only touch their OWN invoice; authorizeEmailAccess
+    // already pinned effectiveEmail to the session for them.
+    if (!authz.elevated && row.contractor_email !== authz.effectiveEmail) {
       return NextResponse.json({ error: 'You can only retract your own invoices.' }, { status: 403 });
     }
     if (row.status !== 'pending') {

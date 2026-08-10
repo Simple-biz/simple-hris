@@ -31,6 +31,7 @@ import {
 import { normEmail } from "@/lib/email/norm-email";
 import { getSessionActor } from "@/lib/auth/session-actor";
 import { requireFeatureEdit } from "@/lib/auth/authorize-feature";
+import { rejectWhilePayrollProcessing } from "@/lib/payroll/processing-guard";
 import { authorizeEmailAccess, deniedResponse } from "@/lib/auth/authorize-email";
 import { NextRequest, NextResponse } from "next/server";
 import { cleanErrorMessage } from "@/lib/clean-error-message";
@@ -364,6 +365,11 @@ export async function DELETE(req: NextRequest) {
     const authz = await requireFeatureEdit('accounting', 'payroll_wizard');
     if (!authz.ok) return deniedResponse(authz);
 
+    // Hubstaff hours are the payroll SOURCE data. Replacing or deleting them
+    // mid-run changes the amounts Payment Dispatch is actively paying out.
+    const payrollLocked = await rejectWhilePayrollProcessing('changing timesheet hours');
+    if (payrollLocked) return payrollLocked;
+
     if (!process.env.SUPABASE_SERVICE_ROLE_KEY?.trim()) {
       return NextResponse.json(
         {
@@ -441,6 +447,11 @@ export async function PATCH(req: NextRequest) {
   try {
     const authz = await requireFeatureEdit('accounting', 'payroll_wizard');
     if (!authz.ok) return deniedResponse(authz);
+
+    // Hubstaff hours are the payroll SOURCE data. Replacing or deleting them
+    // mid-run changes the amounts Payment Dispatch is actively paying out.
+    const payrollLocked = await rejectWhilePayrollProcessing('changing timesheet hours');
+    if (payrollLocked) return payrollLocked;
 
     if (!process.env.SUPABASE_SERVICE_ROLE_KEY?.trim()) {
       return NextResponse.json(
@@ -525,6 +536,11 @@ export async function POST(req: NextRequest) {
   try {
     const authz = await requireFeatureEdit('accounting', 'payroll_wizard');
     if (!authz.ok) return deniedResponse(authz);
+
+    // Hubstaff hours are the payroll SOURCE data. Replacing or deleting them
+    // mid-run changes the amounts Payment Dispatch is actively paying out.
+    const payrollLocked = await rejectWhilePayrollProcessing('changing timesheet hours');
+    if (payrollLocked) return payrollLocked;
 
     if (!process.env.SUPABASE_SERVICE_ROLE_KEY?.trim()) {
       return NextResponse.json(

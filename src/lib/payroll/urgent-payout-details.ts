@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { ProcessorId, QueueRow } from '@/components/payroll-clerk/mock-queue';
 import { effectiveUsdToPhpRateFromStored } from '@/lib/fx/usd-php';
+import { resolveEffectivePayoutProcessor } from '@/lib/employee/payout-completeness';
 
 // Shared payout pre-fill for the Urgent queue's pending sources (MESA
 // disbursements + People-tab one-off payments). Both need the recipient's saved
@@ -25,6 +26,9 @@ function pickFirst(...values: Array<string | null | undefined>): string | undefi
 // Minimal shape of the employee_ids columns we read for payout pre-fill.
 export type IdsRow = {
   work_email: string | null;
+  /** Send-from rail — wins Payment Dispatch's routing precedence over
+   *  preferred_processor. Must be selected, or the rail resolves wrong. */
+  bank_preferred: string | null;
   preferred_processor: string | null;
   preferred_bank_slot: string | null;
   bank_name: string | null;
@@ -47,7 +51,7 @@ export type IdsRow = {
 };
 
 const IDS_COLUMNS =
-  'work_email, preferred_processor, preferred_bank_slot, bank_name, account_holder_name, account_number, routing_number, alt_bank_name, alt_account_holder_name, alt_account_number, alt_routing_number, hurupay_email, wepay_email, higlobe_email, higlobe_account_name, wise_email, wise_tag, phone_number, swift_code, full_address';
+  'work_email, bank_preferred, preferred_processor, preferred_bank_slot, bank_name, account_holder_name, account_number, routing_number, alt_bank_name, alt_account_holder_name, alt_account_number, alt_routing_number, hurupay_email, wepay_email, higlobe_email, higlobe_account_name, wise_email, wise_tag, phone_number, swift_code, full_address';
 
 export function buildPayoutDetails(ids: IdsRow | undefined, workEmail: string): QueueRow['details'] {
   const slot = ids?.preferred_bank_slot === 'alternative' ? 'alternative' : 'primary';
@@ -80,10 +84,27 @@ export function buildPayoutDetails(ids: IdsRow | undefined, workEmail: string): 
   };
 }
 
-/** The recipient's saved preferred processor, defaulting to 'wise' when unset. */
-export function preferredProcessor(ids: IdsRow | undefined): ProcessorId {
-  const chose = (ids?.preferred_processor ?? '').trim().toLowerCase();
-  return isKnownProcessor(chose) ? chose : 'wise';
+/**
+ * The rail Payment Dispatch would actually pay this person on — resolved with
+ * PD's full precedence (`bank_preferred` → `preferred_processor` → the legacy
+ * rates-sheet cell), NOT the Disbursement pick alone.
+ *
+ * Returns `null` when nothing resolves. That matters: this value pre-selects
+ * the rail on an Urgent payment card whose Send button records a real dispatch,
+ * so a wrong guess sends money down a rail the payee isn't set up on. The old
+ * behavior defaulted to `'wise'` — a retired processor — for anyone routed via
+ * `bank_preferred` or the sheet, silently disagreeing with every other surface.
+ * Callers should treat null as "make the clerk choose", the same way PD holds
+ * an unroutable person in Excluded as `no_bank`.
+ */
+export function preferredProcessor(
+  ids: IdsRow | undefined,
+  legacyBankPreferred?: string | null,
+): ProcessorId | null {
+  return resolveEffectivePayoutProcessor(
+    (ids ?? null) as unknown as Record<string, unknown> | null,
+    { bankPreferredRaw: legacyBankPreferred ?? null },
+  );
 }
 
 /**
@@ -107,6 +128,39 @@ export async function fetchPayoutIdsByEmail(
   for (const row of (data ?? []) as IdsRow[]) {
     const e = row.work_email?.trim().toLowerCase();
     if (e) byEmail[e] = row;
+  }
+  return byEmail;
+}
+
+/**
+ * Batch-fetch the legacy rates-sheet "Bank Preferred" cell — the LAST tier of
+ * Payment Dispatch's routing precedence, and the only routing many people have
+ * (they never picked a processor in-app). Without it an Urgent card would show
+ * no rail for someone payroll pays every week. Best-effort: a failure just
+ * leaves those people unresolved rather than mis-routed.
+ */
+export async function fetchLegacyBankPreferredByEmail(
+  supabase: SupabaseClient,
+  workEmails: string[],
+): Promise<Record<string, string | null>> {
+  const emails = [...new Set(workEmails.map((e) => e.trim().toLowerCase()).filter(Boolean))];
+  const byEmail: Record<string, string | null> = {};
+  if (emails.length === 0) return byEmail;
+  // Prefer the deduped current view (what PD reads); fall back to the base table.
+  for (const source of ['employee_hourly_rates_current', 'employee_hourly_rates']) {
+    const { data, error } = await supabase
+      .from(source)
+      .select('"Work Email", "Personal Email", "Bank Preferred"')
+      .or(emails.map((e) => `"Work Email".ilike.${e},"Personal Email".ilike.${e}`).join(','));
+    if (error) continue;
+    for (const row of (data ?? []) as Record<string, string | null>[]) {
+      const cell = row['Bank Preferred'] ?? null;
+      for (const key of ['Work Email', 'Personal Email']) {
+        const e = (row[key] ?? '').trim().toLowerCase();
+        if (e && byEmail[e] == null) byEmail[e] = cell;
+      }
+    }
+    return byEmail;
   }
   return byEmail;
 }
