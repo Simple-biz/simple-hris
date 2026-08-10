@@ -36,14 +36,18 @@ export interface WizardSetupStep {
 }
 
 export interface WizardSetup {
-  /** Sunday ISO of the pay week the checklist evaluates. */
+  /** Sunday ISO of the pay week the checklist evaluates — ALWAYS the week the
+   *  readiness pane (and its week selector) is on. */
   expectedWeekStart: string;
   weekLabel: string;
   /** The upload whose filename week matches `expectedWeekStart`, if any. */
   matchedSourceFile: string | null;
-  /** True when the rest of the readiness pane resolved a DIFFERENT week (its
-   *  data is a stale file) — the CSV row's detail calls it out. */
-  mismatch: boolean;
+  /** A LATER pay week that has already closed with no Hubstaff CSV uploaded —
+   *  set only while the pane sits on the newest upload. The checklist itself
+   *  stays on the week in view; this is just the nudge that a newer cycle is
+   *  waiting to be started. Null when there's nothing newer to upload. */
+  awaitingWeekStart: string | null;
+  awaitingWeekLabel: string | null;
   steps: WizardSetupStep[];
   doneCount: number;
   totalCount: number;
@@ -52,8 +56,9 @@ export interface WizardSetup {
 export interface WizardSetupInput {
   expectedWeekStart: string;
   weekLabel: string;
-  paneWeekStart: string;
-  paneWeekLabel: string;
+  /** See WizardSetup.awaitingWeekStart — null when nothing newer is pending. */
+  awaitingWeekStart: string | null;
+  awaitingWeekLabel: string | null;
   csvUpload: { sourceFile: string; uploadedAt: string; rowCount: number | null } | null;
   /** The live current upload's filename carries no parseable week range. */
   newestUploadUnparseable: boolean;
@@ -172,7 +177,6 @@ function manilaStampLabel(iso: string | null): string | null {
 }
 
 export function deriveWizardSetupSteps(input: WizardSetupInput): WizardSetup {
-  const mismatch = input.paneWeekStart !== input.expectedWeekStart;
   const steps: WizardSetupStep[] = [];
   const degraded = (key: WizardSetupStepKey) => input.degradedKeys.has(key);
 
@@ -202,7 +206,7 @@ export function deriveWizardSetupSteps(input: WizardSetupInput): WizardSetup {
       stepNo: '1',
       label: 'Hubstaff CSV',
       status: 'blocked',
-      detail: mismatch ? `Not uploaded — sections below show ${input.paneWeekLabel}` : 'Not uploaded yet',
+      detail: 'Not uploaded yet',
     });
   }
 
@@ -339,7 +343,8 @@ export function deriveWizardSetupSteps(input: WizardSetupInput): WizardSetup {
     expectedWeekStart: input.expectedWeekStart,
     weekLabel: input.weekLabel,
     matchedSourceFile: input.csvUpload?.sourceFile ?? null,
-    mismatch,
+    awaitingWeekStart: input.awaitingWeekStart,
+    awaitingWeekLabel: input.awaitingWeekLabel,
     steps,
     doneCount: steps.filter((s) => s.status === 'done').length,
     totalCount: steps.length,

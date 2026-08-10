@@ -2196,14 +2196,12 @@ export default function PayrollWizard({
   }, [calcSourceFile]);
 
   /** Sunday ISO the weekly confirm markers key on. Must match what the
-   *  readiness reader (buildWizardSetup) resolves: the calendar pay week
-   *  (payrollNotesWeekStart) unless the wizard is explicitly REPLAYING an
-   *  older upload — then that file's own week. Anchoring to the loaded file
-   *  outside replay would stamp LAST week's key whenever the new week's CSV
-   *  isn't uploaded yet, and the checklist row would never light up. */
-  const markerWeekStart = isReplay
-    ? (hubstaffWeekStart ?? payrollNotesWeekStart())
-    : payrollNotesWeekStart();
+   *  readiness reader (buildWizardSetup) resolves: the week of the upload in
+   *  view, replay or not, falling back to the calendar pay week only when there
+   *  is no parseable filename to key on. Reader and writer agree by
+   *  construction — the checklist now evaluates the same week the pane shows
+   *  (Kane, 2026-08-10), so there is no longer a replay-only branch here. */
+  const markerWeekStart = hubstaffWeekStart ?? payrollNotesWeekStart();
 
   // The step-3 confirm-none marker for the cycle in view — read-only mirror of
   // what the Readiness checklist shows. Shape mirrors the fx-settings loader

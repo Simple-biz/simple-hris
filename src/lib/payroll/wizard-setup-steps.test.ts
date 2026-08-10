@@ -15,8 +15,8 @@ import {
 const ALL_DONE: WizardSetupInput = {
   expectedWeekStart: '2026-07-26',
   weekLabel: 'Jul 26 – Aug 1',
-  paneWeekStart: '2026-07-26',
-  paneWeekLabel: 'Jul 26 – Aug 1',
+  awaitingWeekStart: null,
+  awaitingWeekLabel: null,
   csvUpload: { sourceFile: 'simple-biz_daily_report_2026-07-26_to_2026-08-01.csv', uploadedAt: '2026-08-02T05:10:00Z', rowCount: 412 },
   newestUploadUnparseable: false,
   fx: { php: 58.9, cop: 4050, by: 'lenny@simple.biz', at: '2026-08-02T06:00:00Z' },
@@ -35,27 +35,37 @@ function step(setup: ReturnType<typeof deriveWizardSetupSteps>, key: string) {
   return s;
 }
 
-test('all set up → 7/7 done, no mismatch', () => {
+test('all set up → 7/7 done, nothing newer awaiting an upload', () => {
   const setup = deriveWizardSetupSteps(ALL_DONE);
   assert.equal(setup.totalCount, 7);
   assert.equal(setup.doneCount, 7);
-  assert.equal(setup.mismatch, false);
+  assert.equal(setup.awaitingWeekStart, null);
+  assert.equal(setup.awaitingWeekLabel, null);
   assert.equal(setup.matchedSourceFile, ALL_DONE.csvUpload!.sourceFile);
   for (const s of setup.steps) assert.equal(s.status, 'done', `${s.key} should be done`);
 });
 
-test('missing CSV → blocked, mismatch called out when the pane shows another week', () => {
-  const setup = deriveWizardSetupSteps({
-    ...ALL_DONE,
-    csvUpload: null,
-    paneWeekStart: '2026-07-19',
-    paneWeekLabel: 'Jul 19 – Jul 25',
-  });
+test('missing CSV → blocked', () => {
+  const setup = deriveWizardSetupSteps({ ...ALL_DONE, csvUpload: null });
   const csv = step(setup, 'csv');
   assert.equal(csv.status, 'blocked');
-  assert.match(csv.detail, /Jul 19 – Jul 25/);
-  assert.equal(setup.mismatch, true);
+  assert.match(csv.detail, /Not uploaded/);
   assert.equal(setup.matchedSourceFile, null);
+});
+
+// The checklist never re-points itself at the newer week — it stays on the week
+// in view (the selector's) and carries the newer one as a separate nudge.
+test('a closed newer week with no CSV rides along as awaiting, not as the week in view', () => {
+  const setup = deriveWizardSetupSteps({
+    ...ALL_DONE,
+    awaitingWeekStart: '2026-08-02',
+    awaitingWeekLabel: 'Aug 2 – Aug 8',
+  });
+  assert.equal(setup.expectedWeekStart, '2026-07-26');
+  assert.equal(setup.weekLabel, 'Jul 26 – Aug 1');
+  assert.equal(setup.awaitingWeekLabel, 'Aug 2 – Aug 8');
+  // The rows still describe the week in view — all still done.
+  assert.equal(setup.doneCount, 7);
 });
 
 test('missing CSV with unparseable newest upload → attention, not blocked', () => {
@@ -92,16 +102,7 @@ test('fx: absent record or both zero → "Rates at 0"; single zero names the mis
 });
 
 test('fx: no matched CSV → waiting for the CSV (not a zero complaint)', () => {
-  const s = step(
-    deriveWizardSetupSteps({
-      ...ALL_DONE,
-      csvUpload: null,
-      paneWeekStart: '2026-07-19',
-      paneWeekLabel: 'Jul 19 – Jul 25',
-      fx: null,
-    }),
-    'fx',
-  );
+  const s = step(deriveWizardSetupSteps({ ...ALL_DONE, csvUpload: null, fx: null }), 'fx');
   assert.equal(s.status, 'attention');
   assert.match(s.detail, /CSV/);
 });

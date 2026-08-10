@@ -1495,19 +1495,23 @@ async function countPendingContractorInvoices(weekStart: string): Promise<number
 }
 
 /**
- * Assemble the Wizard setup checklist for the EXPECTED pay week.
+ * Assemble the Wizard setup checklist for the pay week in view.
  *
- * Expected week rule (the load-bearing part): when the caller is on the live
- * current upload (or there is none), the checklist anchors to
- * `payrollNotesWeekStart()` — the calendar pay week — NOT the upload's week.
- * That is what lets a missing new-week CSV read `blocked` instead of the pane
- * silently showing last week's file as all-green. Only an explicitly selected
- * OLDER upload (readiness week selector / wizard replay) re-anchors the
- * checklist to that file's own week, as a historical view.
+ * Expected week rule (the load-bearing part): the checklist anchors to the week
+ * of the upload the pane is on — the SAME week the Readiness week selector
+ * shows — so the checklist header, its seven rows, and the KPI/rate/bank lists
+ * below it can never disagree about which cycle you are looking at (Kane,
+ * 2026-08-10). Only when there is no usable upload filename at all does it fall
+ * back to `payrollNotesWeekStart()`, the calendar pay week; that fallback is
+ * what makes a fresh environment read "CSV not uploaded" instead of blank.
+ *
+ * It used to anchor to the calendar week ALWAYS, so that a closed week with no
+ * CSV read `blocked` rather than showing last week's file as all-green. That
+ * signal survives as `awaitingWeekStart` — a separate nudge — instead of
+ * silently re-pointing the whole checklist at a week the pane isn't showing.
  */
 async function buildWizardSetup(
   resolvedFile: string | null,
-  paneWeekStart: string,
   kpi: ReadinessKpiDept[],
 ): Promise<{ setup: WizardSetup; degraded: string[] }> {
   const degraded: string[] = [];
@@ -1528,9 +1532,11 @@ async function buildWizardSetup(
       )
     : null;
   const viewingOlderFile = Boolean(resolvedFile && currentFile && resolvedFile !== currentFile);
-  const expectedWeekStart = viewingOlderFile
-    ? (weekKeyFromSourceFile(resolvedFile!) ?? payrollNotesWeekStart())
-    : payrollNotesWeekStart();
+  // The week in view wins. `paneWeekStart` is the same value whenever the file
+  // name parses; it is NOT used directly because its own no-upload fallback is
+  // Monday-anchored (isoWeekStartOf), while every key this checklist reads —
+  // app_settings markers, notes rows, invoice periods — is Sunday-anchored.
+  const expectedWeekStart = (resolvedFile ? weekKeyFromSourceFile(resolvedFile) : null) ?? payrollNotesWeekStart();
 
   // The upload whose filename week matches the expected week. Prefer the
   // is_current batch, else the newest (the list is already newest-first).
@@ -1539,6 +1545,19 @@ async function buildWizardSetup(
   );
   const matched = matching.find((u) => u.is_current) ?? matching[0] ?? null;
   const newestUploadUnparseable = Boolean(currentFile && weekKeyFromSourceFile(currentFile) === null);
+
+  // A pay week that has already closed on the calendar but has no CSV yet. Only
+  // raised while the pane is on the NEWEST upload — replaying an old cycle
+  // obviously has newer weeks after it, and that isn't news. Skipped entirely
+  // when the upload list couldn't be read (we'd be guessing).
+  const calendarWeekStart = payrollNotesWeekStart();
+  const awaitingWeekStart =
+    uploads &&
+    !viewingOlderFile &&
+    calendarWeekStart > expectedWeekStart &&
+    !uploads.some((u) => u.source_file && weekKeyFromSourceFile(u.source_file) === calendarWeekStart)
+      ? calendarWeekStart
+      : null;
 
   const [settings, orphanageRows, notesRes, additionsRaw, contractorsPending] = await Promise.all([
     getAppSettings([
@@ -1617,8 +1636,8 @@ async function buildWizardSetup(
   const setup = deriveWizardSetupSteps({
     expectedWeekStart,
     weekLabel: weekRangeLabel(expectedWeekStart),
-    paneWeekStart,
-    paneWeekLabel: weekRangeLabel(paneWeekStart),
+    awaitingWeekStart,
+    awaitingWeekLabel: awaitingWeekStart ? weekRangeLabel(awaitingWeekStart) : null,
     csvUpload: matched?.source_file
       ? { sourceFile: matched.source_file, uploadedAt: matched.uploaded_at, rowCount: matched.row_count }
       : null,
@@ -1805,7 +1824,7 @@ export async function getPayrollReadiness(
   // The Wizard setup checklist sits BESIDE the score (never inside it — see
   // wizard-setup-steps.ts), but its degraded notes still gate the ready→at_risk
   // override below, so it must run before computeReadinessScore.
-  const wizardSetupRes = await buildWizardSetup(resolvedFile, weekStart, kpi);
+  const wizardSetupRes = await buildWizardSetup(resolvedFile, kpi);
   degraded.push(...wizardSetupRes.degraded);
 
   // The score judges ONLY the people we need to pay THIS WEEK. Rates and KPI

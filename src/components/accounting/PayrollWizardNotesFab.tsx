@@ -3642,6 +3642,22 @@ function PayrollReadinessGlance({
                         {data.wizardSetup.doneCount}/{data.wizardSetup.totalCount} done
                       </span>
                     </div>
+                    {/* A newer pay week has already closed with no CSV uploaded.
+                        The checklist deliberately stays on the week the selector
+                        above shows — this is the only place the next cycle gets
+                        mentioned, so it can't be mistaken for the week in view. */}
+                    {data.wizardSetup.awaitingWeekLabel && (
+                      <div className="mb-2 flex items-start gap-1.5 rounded-lg border border-amber-200 bg-amber-50/70 px-2 py-1.5 text-[11px] text-amber-800 dark:border-amber-900/50 dark:bg-amber-950/25 dark:text-amber-300">
+                        <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" />
+                        <span>
+                          The{" "}
+                          <span className="font-semibold">{data.wizardSetup.awaitingWeekLabel}</span>{" "}
+                          week has closed and its Hubstaff CSV isn&apos;t uploaded yet. Upload it on
+                          Step 1 to start that cycle — this checklist stays on{" "}
+                          {data.wizardSetup.weekLabel} until you do.
+                        </span>
+                      </div>
+                    )}
                     <ul className="space-y-0.5">
                       {data.wizardSetup.steps.map((s) => {
                         const pill = SETUP_STATUS_PILL[s.status];

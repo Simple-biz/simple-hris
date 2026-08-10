@@ -57,19 +57,34 @@ No migration — everything reads existing tables.
   period dropdown). Default = follow the wizard; picking any non-current week
   latches the tab to it; picking "Current" resets to following. Out-of-order
   fetches are discarded via a monotonic request token.
-- The **Wizard Setup checklist resolves a different "expected" week** from
-  everything above (2026-08-03): whenever the pane is on the live current
-  upload (or there is none), the checklist anchors to `payrollNotesWeekStart()`
-  — the calendar pay week — instead of whatever upload the four dimensions
-  resolved. That is deliberate: it's what lets a missing new-week CSV read a
-  rose **blocked** row instead of the checklist quietly reusing last week's
-  (fully green) file. Only an explicitly selected **older** upload (the
-  readiness week selector, or the wizard replaying a past week) re-anchors the
-  checklist to that file's own filename week — a historical view, same
-  date-range-start key rule as above. When the checklist's week and the pane's
-  resolved week disagree, `wizardSetup.mismatch` is `true` and the CSV row's
-  detail names the week the sections below actually show (e.g. "Not uploaded —
-  sections below show Jul 19 – Jul 25").
+- The **Wizard Setup checklist uses the same week as everything else**
+  (2026-08-10). Its `expectedWeekStart` is the week of the upload the pane is
+  on — i.e. whatever the week selector above it shows — falling back to
+  `payrollNotesWeekStart()` (the Sunday-anchored calendar pay week) only when
+  there is no parseable upload filename at all. The pane's own fallback isn't
+  reused for this, because that one is Monday-anchored (`isoWeekStartOf`) while
+  every key the checklist reads — `app_settings` markers, notes rows, invoice
+  periods — is Sunday-anchored.
+  - **It used to differ** (2026-08-03 → 2026-08-10): outside an explicit replay
+    the checklist anchored to the calendar pay week regardless of the selector,
+    so that a closed week with no CSV read a rose **blocked** row rather than
+    reusing last week's fully green file. The side effect was that on any
+    Sunday-rollover where the new CSV hadn't landed yet, the checklist header
+    silently showed a different week from the selector directly above it and
+    from the four lists below (Kane, 2026-08-10).
+  - That signal now rides along as **`wizardSetup.awaitingWeekStart` /
+    `awaitingWeekLabel`** instead: the label of a *later* pay week that has
+    already closed with no CSV uploaded, raised **only** while the pane is on
+    the newest upload (replaying an old cycle obviously has newer weeks after
+    it — not news) and only when the upload list actually read. The pane renders
+    it as an amber note above the seven rows; it never moves the rows
+    themselves. `null` when nothing newer is pending.
+  - Because the reader moved, `markerWeekStart` in `PayrollWizard.tsx` (the
+    Step-3 confirm-none **writer**) moved with it — it is now
+    `hubstaffWeekStart ?? payrollNotesWeekStart()` with no replay branch, so
+    writer and reader agree by construction. Markers stamped under the old rule
+    during a rollover window sit on the calendar-week key and will read
+    unconfirmed on the file's week; re-clicking the button restamps correctly.
 
 ## The four dimensions
 
@@ -325,14 +340,15 @@ save:
 | --- | --- | --- |
 | `payroll.wizard.orphanage_confirmed.<weekStart>` | `{ none: true, by, at }` | Step 3's **"No orphanage hours this week"** button (rendered only while the cycle has zero `orphanage_pay` rows) |
 
-`<weekStart>` is **the calendar pay week** (`payrollNotesWeekStart()`) — *not*
-whatever file is currently loaded in the wizard — unless the wizard is
-explicitly **replaying an older upload**, in which case it's that file's own
-filename Sunday (`markerWeekStart` in `PayrollWizard.tsx`). This mirrors
-`buildWizardSetup`'s expected-week rule exactly, and was corrected during
-implementation review: keying on the loaded file outside replay stamped LAST
-week's key whenever the new week's CSV hadn't landed yet — precisely the
-window the checklist exists to catch — so the row would never light up.
+`<weekStart>` is **the loaded file's own filename Sunday**, replay or not,
+falling back to the calendar pay week (`payrollNotesWeekStart()`) only when no
+filename parses — `markerWeekStart` in `PayrollWizard.tsx`. It mirrors
+`buildWizardSetup`'s expected-week rule exactly, and moved with it on
+2026-08-10 (see **Week resolution**). Under the previous rule this key was the
+calendar week outside replay, which stamped NEXT cycle's key whenever the new
+week's CSV hadn't landed yet — the confirm-none marker went to a week the
+accountant wasn't looking at. Re-clicking the button restamps under the
+current rule.
 
 **Step-1 CSV warning modal** — a related but simpler, separate rule. Whenever
 Step 1 is open, the uploads list has finished loading, and no upload's
@@ -541,7 +557,7 @@ send `READINESS_SOURCE` (`payroll_wizard_readiness`, label "Payroll Wizard
 exact production function behind the API — from the CLI against the live DB
 (read-only), printing the KPI due/submitted split, custom/derived rows,
 degraded notes, counts, the score breakdown, the Wizard setup checklist
-(`N/7`, the expected week + mismatch flag, the matched upload, and every row's
+(`N/7`, the expected week + any awaiting week, the matched upload, and every row's
 status/detail), and the first on-payroll bank blockers. Because
 `payroll-readiness.ts` imports the `server-only` marker
 (which Next shims but plain Node can't resolve), it runs with
