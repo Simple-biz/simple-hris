@@ -7,7 +7,7 @@ import { useSearchParams } from 'next/navigation';
 import { useSession } from 'next-auth/react';
 import AppFooter from '@/components/AppFooter';
 import { useTheme } from 'next-themes';
-import { AnimatePresence, motion } from 'motion/react';
+import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import { Menu } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import Sidebar from './components/Sidebar';
@@ -49,6 +49,20 @@ import PayrollWizardNotesFab from '@/components/accounting/PayrollWizardNotesFab
 function isPlausibleEmail(s: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s.trim());
 }
+
+/**
+ * Tab-switch motion, shared by the animated tab tree and by the Payroll Wizard.
+ * The wizard is kept mounted across switches so it lives OUTSIDE `AnimatePresence`
+ * (see below) — it has to drive these same variants itself to be indistinguishable
+ * from a tab that really does enter and exit.
+ */
+const TAB_MOTION_MS = 280;
+const TAB_EASE: [number, number, number, number] = [0.22, 1, 0.36, 1];
+const TAB_VARIANTS = {
+  enter: (dir: number) => ({ opacity: 0, y: dir * 28 }),
+  center: { opacity: 1, y: 0 },
+  exit: (dir: number) => ({ opacity: 0, y: dir * -20 }),
+};
 
 export default function App({ initialData }: { initialData?: InitialAccountingData | null }) {
   const [activeTab, setActiveTab] = useState('overview');
@@ -197,13 +211,43 @@ export default function App({ initialData }: { initialData?: InitialAccountingDa
   const tabDirRef = useRef<1 | -1>(1);
   const mainRef = useRef<HTMLElement | null>(null);
 
-  // Mount the Payroll Wizard on first visit, then keep it mounted (hidden,
-  // outside the animated tab-switch tree below) so leaving for another tab
-  // and coming back never re-mounts it / re-fetches its data or resets its step.
+  const isWizardTab = activeTab === 'payroll-wizard';
+  const reduceMotion = useReducedMotion() ?? false;
+  const tabTransition = { duration: reduceMotion ? 0 : TAB_MOTION_MS / 1000, ease: TAB_EASE };
+
+  // Mount the Payroll Wizard on first visit, then keep it mounted (parked with
+  // `hidden`, outside the animated tab-switch tree below) so leaving for another
+  // tab and coming back never re-mounts it / re-fetches its data or resets its
+  // step.
+  //
+  // `wizardShown` is what fades it in, and it flips only AFTER the outgoing tab
+  // has finished its exit — exactly the beat `AnimatePresence mode="wait"` gives
+  // every other tab. Delaying the *mount* by the same beat matters just as much
+  // on the first visit: the wizard's first render is ~19k lines of component and
+  // 180-odd hooks, and doing that work while the previous tab is mid-fade
+  // stuttered the animation.
   const [wizardVisited, setWizardVisited] = useState(false);
+  const [wizardShown, setWizardShown] = useState(false);
+  // Parked = `display:none`, so an inactive wizard costs nothing to lay out.
+  // Applied only once the exit animation has finished — parking it mid-fade
+  // would make it vanish instead of leave.
+  const [wizardParked, setWizardParked] = useState(false);
   useEffect(() => {
-    if (activeTab === 'payroll-wizard') setWizardVisited(true);
-  }, [activeTab]);
+    // Leaving: the render below already drives the exit off `isWizardTab`, so
+    // this only has to disarm the latch for next time.
+    if (!isWizardTab) {
+      setWizardShown(false);
+      return;
+    }
+    const t = window.setTimeout(
+      () => {
+        setWizardVisited(true);
+        setWizardShown(true);
+      },
+      reduceMotion ? 0 : TAB_MOTION_MS,
+    );
+    return () => window.clearTimeout(t);
+  }, [isWizardTab, reduceMotion]);
 
   const navigate = (tab: string) => {
     // Only gate once roles + feature-perms have loaded. Before then everything
@@ -373,45 +417,54 @@ export default function App({ initialData }: { initialData?: InitialAccountingDa
             Accounting HRIS
           </span>
         </header>
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+        {/* Both panes below sit in the SAME 1×1 grid cell so they stack instead
+            of competing for height. `AnimatePresence mode="wait"` keeps the
+            outgoing tab mounted while it fades, and as a flex sibling that box
+            used to split the column with the persistent wizard — so switching to
+            the wizard drew it at half height for 280ms and then snapped it to
+            full when the old tab finally unmounted. */}
+        <div className="grid min-h-0 min-w-0 flex-1 grid-cols-1 grid-rows-1 overflow-hidden">
           <AnimatePresence mode="wait" initial={false} custom={tabDirRef.current}>
             <motion.div
               key={activeTab}
               custom={tabDirRef.current}
-              variants={{
-                enter: (dir: number) => ({ opacity: 0, y: dir * 28 }),
-                center: { opacity: 1, y: 0 },
-                exit: (dir: number) => ({ opacity: 0, y: dir * -20 }),
-              }}
+              variants={TAB_VARIANTS}
               initial="enter"
               animate="center"
               exit="exit"
-              transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
-              className={cn(
-                'flex min-h-0 min-w-0 flex-col overflow-hidden',
-                // renderContent() returns null for the payroll-wizard tab (it's
-                // rendered persistently below instead) — without this, an empty
-                // flex-1 box still claims half the column, squeezing the real
-                // wizard content into the remaining space.
-                activeTab === 'payroll-wizard' ? '' : 'flex-1',
-              )}
+              transition={tabTransition}
+              className="col-start-1 row-start-1 flex min-h-0 min-w-0 flex-col overflow-hidden"
             >
-              {isAdmin && activeTab !== 'payroll-wizard' && rawVisibilityOf('accounting', activeTab) === 'construction' && (
+              {isAdmin && !isWizardTab && rawVisibilityOf('accounting', activeTab) === 'construction' && (
                 <ConstructionBanner title={pageLabel('accounting', activeTab)} />
               )}
               {renderContent()}
             </motion.div>
           </AnimatePresence>
-          {/* Mounted once on first visit and kept alive (hidden, not unmounted)
-              behind the animated tab-switch above — the Payroll Wizard has its
-              own multi-step flow and dozens of data fetches, so tearing it down
-              every time the user peeks at another tab and comes back reset its
-              step and re-fetched everything from scratch. */}
+          {/* Mounted once on first visit and kept alive (parked, not unmounted)
+              in the same grid cell as the animated tab above — the Payroll
+              Wizard has its own multi-step flow and dozens of data fetches, so
+              tearing it down every time the user peeks at another tab and comes
+              back reset its step and re-fetched everything from scratch.
+              Being outside `AnimatePresence` it has to run the tab variants
+              itself; on the same timing they're indistinguishable. Un-parking
+              happens the instant the tab changes, a full beat before the fade-in
+              — that hands the browser the dead time to lay the huge subtree back
+              out while it's still at opacity 0. */}
           {wizardVisited && visibilityOf('accounting', 'payroll-wizard') === 'visible' && (
-            <div
+            <motion.div
+              custom={tabDirRef.current}
+              variants={TAB_VARIANTS}
+              initial="enter"
+              animate={isWizardTab && wizardShown ? 'center' : 'exit'}
+              transition={tabTransition}
+              onAnimationComplete={(def) => setWizardParked(def === 'exit')}
               className={cn(
-                'flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden',
-                activeTab === 'payroll-wizard' ? '' : 'hidden',
+                'col-start-1 row-start-1 flex min-h-0 min-w-0 flex-col overflow-hidden',
+                // While it fades out it's still stacked on top of the incoming
+                // tab, so it must not swallow that tab's clicks.
+                !isWizardTab && 'pointer-events-none',
+                !isWizardTab && wizardParked && 'hidden',
               )}
             >
               {isAdmin && rawVisibilityOf('accounting', 'payroll-wizard') === 'construction' && (
@@ -427,7 +480,7 @@ export default function App({ initialData }: { initialData?: InitialAccountingDa
               >
                 <PayrollWizard sessionEmail={sessionEmail} sessionRole={roles[0] ?? null} initialData={initialData} />
               </ReadOnlyTab>
-            </div>
+            </motion.div>
           )}
         </div>
         <AppFooter />
@@ -449,8 +502,12 @@ export default function App({ initialData }: { initialData?: InitialAccountingDa
         {/* Floating carry-over Notes checklist. Mounted OUTSIDE the strict
             ReadOnlyTab wrapper so view-only accountants can still open and
             read it — only `edit` grants (or admin) can change rows, and the
-            notes API enforces the same grant server-side. */}
-        {activeTab === 'payroll-wizard' &&
+            notes API enforces the same grant server-side. Gated on `wizardShown`
+            (not just the tab) because it's fixed-positioned, i.e. outside the
+            fading pane: mounted any earlier it pops in over the tab that's still
+            on its way out. */}
+        {isWizardTab &&
+          wizardShown &&
           permsLoaded &&
           visibilityOf('accounting', 'payroll-wizard') === 'visible' && (
             <PayrollWizardNotesFab
