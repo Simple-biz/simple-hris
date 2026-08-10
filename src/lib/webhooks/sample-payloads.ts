@@ -177,16 +177,16 @@ export const WEBHOOK_SAMPLE_PAYLOADS: Record<string, unknown> = {
     ],
   },
 
-  // Manager -> My Team "Reactivation": re-enable after a temporary pause.
-  // Built by buildManagerReactivatePayload — keep in sync with
-  // src/lib/hr/manager-temp-pause-webhooks.ts.
+  // Manager -> My Team "Reactivation": re-enable after a temporary pause. Its
+  // OWN envelope (hris-reactivate-suspended), not the offboard one — `reason`
+  // is absent and `note` is optional, because the flow only sends a
+  // confirmation email. Built by buildManagerReactivatePayload — keep in sync
+  // with src/lib/hr/manager-temp-pause-webhooks.ts.
   manager_reactivate: {
-    event: 'employee.reactivated',
-    action: 'reactivate',
-    reason: 'temporary_pause',
-    triggered_by: 'alex.rivera@simple.biz',
-    triggered_at: '2026-08-05T10:00:00.000Z',
-    source: 'manager_reactivate',
+    event: 'employee.reactivate',
+    phase: 'reactivate',
+    reactivated_by: 'alex.rivera@simple.biz',
+    reactivated_at: '2026-08-05T10:00:00.000Z',
     count: 1,
     employees: [
       {
@@ -195,10 +195,9 @@ export const WEBHOOK_SAMPLE_PAYLOADS: Record<string, unknown> = {
         name: 'Jordan Cruz',
         departments: ['Lead Gen - US'],
         start_date: '2026-01-12',
-        action: 'reactivate',
-        reason: 'temporary_pause',
-        triggered_by: 'alex.rivera@simple.biz',
-        triggered_at: '2026-08-05T10:00:00.000Z',
+        note: null,
+        reactivated_by: 'alex.rivera@simple.biz',
+        reactivated_at: '2026-08-05T10:00:00.000Z',
       },
     ],
   },

@@ -32,8 +32,10 @@ function normEmail(s: string | null | undefined): string {
  *   suspend    -> fires the offboarding-deactivate flow with the exact HR
  *                 temporary_pause envelope (deletion_mode "none") — the
  *                 Workspace account is DISABLED, nothing is deleted.
- *   reactivate -> fires the reactivate-temp-pause flow — the account is
- *                 re-enabled.
+ *   reactivate -> fires the hris-reactivate-suspended flow with its OWN
+ *                 envelope (event employee.reactivate / phase reactivate /
+ *                 reactivated_by / reactivated_at, no reason or note) — the
+ *                 account is re-enabled and a confirmation email goes out.
  *
  * Neither writes offboard stamps or queue rows — account state lives on the
  * n8n/Workspace side, so the webhook IS the action and a webhook failure

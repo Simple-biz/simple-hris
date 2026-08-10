@@ -12,7 +12,11 @@
  *                   n8n changes. `source` is additive — a future branch can
  *                   tell manager suspends from HR temp pauses.
  *   Reactivation -> slug `manager_reactivate`, default endpoint the
- *                   reactivate-temp-pause flow, which re-enables the account.
+ *                   hris-reactivate-suspended flow, which re-enables the
+ *                   account and emails a confirmation. Its own envelope
+ *                   (event employee.reactivate / phase reactivate /
+ *                   reactivated_by / reactivated_at) — NOT the offboard one;
+ *                   `reason` and `note` are not required by that flow.
  *
  * Neither writes offboard stamps — suspend/reactivate is account state only.
  * Pure builders so the contracts are unit-testable (see the .test.ts) and
@@ -82,20 +86,22 @@ export function buildManagerSuspendPayload(
   };
 }
 
+/** Mirrors the `hris-reactivate-suspended` contract Kane verified on the n8n
+ *  side (2026-08-10). Self-contained per item, like the offboard payloads, so
+ *  n8n's Split Out loses nothing. `note` is carried but never required — the
+ *  flow only sends a confirmation email, and the Reactivation button has no
+ *  note input, so it is always null today. */
 export type ReactivateEmployeePayload = TempPausePerson & {
-  action: 'reactivate';
-  reason: 'temporary_pause';
-  triggered_by: string;
-  triggered_at: string;
+  note: string | null;
+  reactivated_by: string;
+  reactivated_at: string;
 };
 
 export type ReactivateWebhookEnvelope = {
-  event: 'employee.reactivated';
-  action: 'reactivate';
-  reason: 'temporary_pause';
-  triggered_by: string;
-  triggered_at: string;
-  source: 'manager_reactivate';
+  event: 'employee.reactivate';
+  phase: 'reactivate';
+  reactivated_by: string;
+  reactivated_at: string;
   count: number;
   employees: ReactivateEmployeePayload[];
 };
@@ -106,12 +112,10 @@ export function buildManagerReactivatePayload(
   triggeredAt: string,
 ): ReactivateWebhookEnvelope {
   return {
-    event: 'employee.reactivated',
-    action: 'reactivate',
-    reason: 'temporary_pause',
-    triggered_by: triggeredBy,
-    triggered_at: triggeredAt,
-    source: 'manager_reactivate',
+    event: 'employee.reactivate',
+    phase: 'reactivate',
+    reactivated_by: triggeredBy,
+    reactivated_at: triggeredAt,
     count: 1,
     employees: [
       {
@@ -120,10 +124,9 @@ export function buildManagerReactivatePayload(
         name: person.name,
         departments: person.departments,
         start_date: person.start_date,
-        action: 'reactivate',
-        reason: 'temporary_pause',
-        triggered_by: triggeredBy,
-        triggered_at: triggeredAt,
+        note: null,
+        reactivated_by: triggeredBy,
+        reactivated_at: triggeredAt,
       },
     ],
   };

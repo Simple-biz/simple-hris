@@ -110,9 +110,9 @@ BEGIN
     jsonb_build_object(
       'slug', 'manager_reactivate',
       'label', 'Manager Reactivation - Temp Pause (n8n)',
-      'url', 'https://simpledotbiz.app.n8n.cloud/webhook/reactivate-temp-pause',
+      'url', 'https://simpledotbiz.app.n8n.cloud/webhook/hris-reactivate-suspended',
       'active', false,
-      'description', 'Fired by the Manager -> My Team list "Reactivation" button. The reactivate-temp-pause flow re-enables a Workspace account that was disabled by a temporary pause / suspend.'
+      'description', 'Fired by the Manager -> My Team list "Reactivation" button. The hris-reactivate-suspended flow re-enables a Workspace account that was disabled by a temporary pause / suspend and emails a confirmation. Own envelope: event employee.reactivate / phase reactivate / reactivated_by / reactivated_at -- no reason or note required.'
     ),
     jsonb_build_object(
       'slug', 'new_hire_checklist_lock',

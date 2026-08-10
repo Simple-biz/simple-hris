@@ -95,7 +95,7 @@ const KNOWN_SLUGS: Array<{ slug: string; label: string; description: string }> =
     slug: 'manager_reactivate',
     label: 'Manager Reactivation — Temp Pause (n8n)',
     description:
-      'Fired by the Manager → My Team list "Reactivation" button. POSTs an employees[1] envelope (event employee.reactivated, action "reactivate") to the reactivate-temp-pause flow, which re-enables a Workspace account disabled by a temporary pause / suspend. Audit-logged as manager.reactivated.',
+      'Fired by the Manager → My Team list "Reactivation" button. POSTs an employees[1] envelope (event employee.reactivate, phase "reactivate", reactivated_by / reactivated_at) to the hris-reactivate-suspended flow, which re-enables a Workspace account disabled by a temporary pause / suspend and emails a confirmation. No reason / note required. Audit-logged as manager.reactivated.',
   },
   {
     slug: 'new_hire_checklist_lock',

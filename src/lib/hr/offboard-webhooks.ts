@@ -33,8 +33,10 @@ export const MANAGER_OFFBOARD_NOTIFY_SLUG = "manager_offboard_notify";
  *  never deletes, no offboard stamps. Own slug so the endpoint can be
  *  repointed independently in Admin -> Webhooks. */
 export const MANAGER_SUSPEND_SLUG = "manager_suspend";
-/** Manager -> My Team list "Reactivation" button: the n8n reactivate-temp-pause
- *  flow re-enables a previously suspended Workspace account. */
+/** Manager -> My Team list "Reactivation" button: the n8n
+ *  hris-reactivate-suspended flow re-enables a previously suspended Workspace
+ *  account and emails a confirmation. Its own envelope, not the offboard one —
+ *  see buildManagerReactivatePayload. */
 export const MANAGER_REACTIVATE_SLUG = "manager_reactivate";
 
 const DEACTIVATE_DEFAULT_URL =
@@ -45,7 +47,7 @@ const MANAGER_OFFBOARD_NOTIFY_DEFAULT_URL =
   "https://simpledotbiz.app.n8n.cloud/webhook/manager-offboard-notify";
 const MANAGER_SUSPEND_DEFAULT_URL = DEACTIVATE_DEFAULT_URL;
 const MANAGER_REACTIVATE_DEFAULT_URL =
-  "https://simpledotbiz.app.n8n.cloud/webhook/reactivate-temp-pause";
+  "https://simpledotbiz.app.n8n.cloud/webhook/hris-reactivate-suspended";
 
 /**
  * True when the department normalizes to the 'lead_gen' key. No longer part of
