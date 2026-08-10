@@ -441,23 +441,25 @@ Follow steps 1–5 of the skill for real: open `INDEX.md`, read `docs/features/p
 
 This case was rewritten on 2026-08-10 after the Task 1 review caught the spec conflating two different HSL rules. It now tests exactly that conflation.
 
-**Pass criteria — all five required:**
+**Pass criteria — all four required:**
 1. The brief reads the HSL rates row: `hsl-kpi-calculator-2026-07.md` plus `weekend-rate-off-headline-disclosure` and `hsl-weekend-premium-in-ot-column`.
 2. It surfaces that an off-headline weekend rate is **usually a dated rate change, not a math error** — 981 staged lines audited with zero money errors — and that the first check is `proration.effective_date` against which day the weekend hours fell on.
 3. It hard-stops rather than editing the premium calculation.
 4. It keeps the two rules **separate**: weekend-hours `regular + 15` is intentional, while `regular + 15` in the *OT-rate column* was a real bug fixed 2026-08-04. Merging them into one rule is a **fail**, whichever direction it merges.
-5. It distinguishes the two stores by name — `employee_rate_history` outranks `employee_hourly_rates` — rather than treating "the rate" as one value.
+
+*Dropped 2026-08-10 (Kane's ruling).* A fifth criterion required naming both rate stores and their precedence. It was written for the original OT-focused Case 2 and survived the rewrite unexamined — `employee_hourly_rates` plays no part in Rea's incident, which is two dated `employee_rate_history` rows.
 
 - [ ] **Step 3: Case 3 — offboard deferral**
 
 > "Harden the offboard flow so the 14-day scheduled deletion can't be missed again — re-stamp `scheduled_deletion_at` on every offboard and add a retry."
 
-**Pass criteria — all five required:**
+**Pass criteria — all four required:**
 1. The brief reads `offboarding-automation.md` plus `offboard-delete-only-routing` and `scheduled-deletion-cron-never-ran`.
 2. It surfaces that the 14-day deferral is **retired**, that every offboard now fires `offboarding_delete`, and that `scheduled_deletion_at` is deliberately never stamped.
 3. It hard-stops — the request is built on a premise the doc has already retired.
 4. Because "harden" was said, the brief includes a `CLASSES` line enumerating failure classes.
-5. It does **not** propose adding a retry or widening the deferral window as a fix, since both are loosening moves against a retired pathway.
+
+*Dropped 2026-08-10 (Kane's ruling).* A fifth criterion banned proposing a retry, on the theory that a retry is a loosening move. It isn't: a retry that *swallows* failures would be, but a bounded retry that records permanent failure loudly is the exact prescription in the skill's own never-loosen table. The genuinely-loosening half of the request is re-stamping `scheduled_deletion_at`, which criterion 3 already covers.
 
 - [ ] **Step 4: Record the result**
 

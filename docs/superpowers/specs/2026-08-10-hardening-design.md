@@ -185,3 +185,31 @@ real past incidents recorded in memory, where the check should have fired:
 
 If the procedure would not have caught all three, the design is wrong and gets revised
 before implementation.
+
+## Validation result
+
+Ran 2026-08-10. A fresh agent executed all three requests **blind** — given only the skill
+and the request text, never the pass criteria — and a separate scorer graded the output.
+Splitting run from score was a deliberate change from the plan: handing the criteria to the
+agent that runs the cases lets it confirm answers it already knows.
+
+**All three hard-stopped correctly.** 12 of 14 criteria met on the first pass.
+
+The blind run also found two things the spec had not anticipated: a bulk `bank_preferred` seed
+would bypass all four API-layer WIRES-lock enforcement sites, and `offboarding-automation.md`
+contradicts *itself* — line 99 states `scheduled_deletion_at` is never stamped while lines
+86–88 still document the field.
+
+Two criteria scored unmet; both were ruled defective criteria rather than skill defects
+(Kane, 2026-08-10), and dropped:
+
+- **Case 2's fifth criterion** required naming both rate stores and their precedence. It was
+  written for the original OT-focused Case 2 and survived the rewrite unexamined —
+  `employee_hourly_rates` plays no part in Rea's incident.
+- **Case 3's fifth criterion** banned proposing a retry as a loosening move. A retry that
+  swallows failures would be; one that fails loud is what the never-loosen table prescribes.
+
+**Note on this section's own history.** Three separate errors in this spec were caught by the
+build process, all of the same kind: the author read a one-line summary and did not open the
+underlying file. That is the exact failure the skill exists to prevent, which is either
+reassuring or damning depending on your mood.
