@@ -2975,8 +2975,13 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
                 )}
               </div>
 
-              {/* Data ribbon */}
-              <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-3 border-t border-zinc-200/80 pt-3 sm:grid-cols-4 sm:gap-x-6 dark:border-zinc-800/80">
+              {/* Data ribbon — stretches to 5 columns when the week carries a KPI bonus,
+                  so the KPI cell sits inline beside Tech instead of wrapping to a new row. */}
+              <dl
+                className={`mt-3 grid grid-cols-2 gap-x-4 gap-y-3 border-t border-zinc-200/80 pt-3 sm:gap-x-6 dark:border-zinc-800/80 ${
+                  kpiBonusAmount > 0 ? 'sm:grid-cols-5' : 'sm:grid-cols-4'
+                }`}
+              >
                 <div className="min-w-0">
                   <dt className="text-[10px] font-medium uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-500">
                     Regular
