@@ -256,12 +256,27 @@ export default function PayrollDispatch() {
   } | null>(null);
   const [confirmingLockToggle, setConfirmingLockToggle] = useState(false);
   const [togglingLock, setTogglingLock] = useState(false);
+  // ── Close Pay Cycle (the Stop dialog's toggle) ──────────────────────────────
+  // Off by default, EVERY time the dialog opens: closing a week writes a
+  // permanent record that can't be re-filed, so it must be a deliberate act, not
+  // a setting that quietly stays on from last week.
+  const [closeCycleOn, setCloseCycleOn] = useState(false);
+  // Source files that already carry a close-out record. `null` = not loaded yet.
+  const [closedCycles, setClosedCycles] = useState<Set<string> | null>(null);
   // When the Start/Prepare modal closes, fade out the "stage prepped" sound so
   // the long clip doesn't keep playing behind the dashboard. Runs on the
   // open→closed transition (covers success + any dismissal path).
   useEffect(() => {
     if (!confirmingLockToggle) stopStagePrepped();
+    // Closing a cycle is never sticky — every visit to this dialog starts off.
+    if (!confirmingLockToggle) setCloseCycleOn(false);
   }, [confirmingLockToggle]);
+  // Unknown (`null`, the fetch hasn't landed or failed) reads as NOT closed: the
+  // server refuses a duplicate anyway, so the honest failure is "you tried and
+  // were told it already exists", not a UI that hides the control.
+  const cycleAlreadyClosed = Boolean(
+    period.sourceFile && closedCycles?.has(period.sourceFile),
+  );
   // Lenny can only dispatch when she's "started processing" (i.e. lock=true)
   // and a Hubstaff cycle is loaded. The "ready" mental model from the meeting
   // maps cleanly onto: cycle exists AND processing started.
@@ -419,7 +434,7 @@ export default function PayrollDispatch() {
    * them differently — "flagged problem" is wrong copy for a deliberate hold —
    * and because they're the two reasons a week can't read 100%.
    */
-  const { blockedCount, heldCount } = useMemo(() => {
+  const { blockedCount, heldCount, blockedEmails, heldEmails } = useMemo(() => {
     // Someone flagged/held and then paid anyway (the marker row left in place) is
     // already counted as paid — never count them twice.
     const settled = new Set(
@@ -443,7 +458,16 @@ export default function PayrollDispatch() {
     // A person carrying both markers is one head in the denominator: Problem wins,
     // since it's the outcome that still needs work.
     for (const email of blocked) held.delete(email);
-    return { blockedCount: blocked.size, heldCount: held.size };
+    // The SETS travel with the counts on purpose: the cycle close-out has to name
+    // these people, and a second pass re-deriving "who is blocked" would be a
+    // second implementation of the superseded-marker rule, free to drift from the
+    // number on the progress strip.
+    return {
+      blockedCount: blocked.size,
+      heldCount: held.size,
+      blockedEmails: blocked,
+      heldEmails: held,
+    };
   }, [paid, paidRows]);
   usePaymentsLivePublisher({
     enabled:
@@ -560,6 +584,97 @@ export default function PayrollDispatch() {
     totalPaidUSD,
     paidRows,
   ]);
+
+  // ── Cycle close-out ─────────────────────────────────────────────────────────
+  // Which weeks already carry a close-out record, so the Stop dialog can say
+  // "already closed" instead of offering to write a second one (the server
+  // refuses either way — this is so the UI doesn't promise something it can't do).
+  const loadClosedCycles = useCallback(async () => {
+    try {
+      const res = await fetch('/api/payment-dispatches/cycle-closeout');
+      if (!res.ok) return;
+      const json = (await res.json()) as {
+        closeouts?: { source_file?: string }[];
+        error?: string | null;
+      };
+      if (json.error) return;
+      setClosedCycles(
+        new Set((json.closeouts ?? []).map((c) => c.source_file ?? '').filter(Boolean)),
+      );
+    } catch {
+      // Leave `null` (unknown). The dialog then hides the already-closed claim
+      // rather than asserting a week is open when we couldn't check.
+    }
+  }, []);
+  useEffect(() => {
+    void loadClosedCycles();
+  }, [loadClosedCycles]);
+
+  /**
+   * Payable people this cycle who have NOT been paid — the list a close-out
+   * names, and the count its warning leads with.
+   *
+   * "Payable" is Kane's rule: the Excluded tab is deliberately out. Those people
+   * are held on purpose (no bank, no rate, wizard-excluded, USD track), and
+   * calling them "not paid" in a permanent record would turn a deliberate hold
+   * into an apparent failure.
+   *
+   * Three ways to be payable-and-unpaid, matching the progress strip's own
+   * denominator exactly: still in `pending` (never dispatched), flagged Problem,
+   * or held at Threshold. The blocked/held sets come from the SAME memo that
+   * feeds the strip, so this list can never disagree with the number on screen.
+   */
+  const unpaidPayable = useMemo(() => {
+    const out: {
+      name: string | null;
+      email: string;
+      payeeType: 'employee' | 'contractor';
+      reason: 'pending' | 'problem' | 'threshold';
+      amountUSD: number | null;
+      amountPHP: number | null;
+      processor: string | null;
+    }[] = [];
+
+    for (const r of pending) {
+      out.push({
+        name: r.name || null,
+        email: r.email,
+        payeeType: r.payeeKind === 'contractor' ? 'contractor' : 'employee',
+        reason: 'pending',
+        amountUSD: r.amountUSD,
+        amountPHP: r.amountPHP,
+        processor: r.processor,
+      });
+    }
+
+    // Problem / Threshold people left the queue without being paid, so their
+    // details come off the marker row rather than a pending row. Newest marker
+    // wins (`paid` is ordered newest-first) — one entry per person.
+    const seen = new Set(out.map((o) => o.email.trim().toLowerCase()));
+    for (const p of paid) {
+      const email = p.recipient_email.trim().toLowerCase();
+      if (seen.has(email)) continue;
+      const isBlocked = blockedEmails.has(email);
+      const isHeld = heldEmails.has(email);
+      if (!isBlocked && !isHeld) continue;
+      seen.add(email);
+      out.push({
+        name: p.recipient_name || null,
+        email,
+        payeeType: (p.payee_type ?? 'employee') === 'contractor' ? 'contractor' : 'employee',
+        reason: isBlocked ? 'problem' : 'threshold',
+        amountUSD: p.amount_usd ?? null,
+        amountPHP: p.amount_php ?? null,
+        processor: p.processor ?? null,
+      });
+    }
+    return out;
+  }, [pending, paid, blockedEmails, heldEmails]);
+
+  const unpaidPayablePHP = useMemo(
+    () => unpaidPayable.reduce((sum, r) => sum + (r.amountPHP ?? 0), 0),
+    [unpaidPayable],
+  );
 
   const visibleRows = useMemo(() => {
     if (activeTab === 'all') return mainPending;
@@ -978,6 +1093,7 @@ export default function PayrollDispatch() {
     if (togglingLock) return;
     setTogglingLock(true);
     const goingLocked = !lockState.locked;
+    const closingCycle = !goingLocked && closeCycleOn && !cycleAlreadyClosed && Boolean(period.sourceFile);
     // Fire the "stage prepped" alert the instant Start is confirmed — synced
     // with the optimistic retract + the Preparing Dispatch scene. Start only.
     if (goingLocked) playStagePrepped();
@@ -985,6 +1101,49 @@ export default function PayrollDispatch() {
     // gracefully instead of flashing by when the optimistic POST returns fast.
     const minShow = new Promise((r) => setTimeout(r, 1600));
     try {
+      // ── Close-out BEFORE the lock flips ─────────────────────────────────────
+      // The record is the part that can't be re-done: once processing has
+      // stopped, the clerk has no second chance to file it from this dialog. So
+      // if the write fails, nothing else happens and the error is loud — they
+      // can retry, or switch the toggle off and stop plainly.
+      if (closingCycle) {
+        const res = await fetch('/api/payment-dispatches/cycle-closeout', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            source_file: period.sourceFile,
+            cycle_id: period.cycleId,
+            label: period.sourceFile ? formatCycleLabelFromFile(period.sourceFile) : null,
+            period_start: period.start,
+            period_end: period.end,
+            unpaid: unpaidPayable,
+          }),
+        });
+        const json = (await res.json().catch(() => ({}))) as {
+          already?: boolean;
+          error?: string | null;
+        };
+        if (!res.ok || json.error) {
+          throw new Error(
+            json.error ??
+              `Could not close the pay cycle (${res.status}). Processing was NOT stopped — turn the toggle off to stop without closing.`,
+          );
+        }
+        if (period.sourceFile) {
+          const closed = period.sourceFile;
+          setClosedCycles((prev) => new Set(prev ?? []).add(closed));
+        }
+        toast.success(
+          json.already
+            ? 'This pay cycle was already closed — no second record written'
+            : `Pay cycle closed — filed in Reports${
+                unpaidPayable.length > 0
+                  ? ` with ${unpaidPayable.length} unpaid ${unpaidPayable.length === 1 ? 'person' : 'people'}`
+                  : ''
+              }`,
+          { icon: '🗄️' },
+        );
+      }
       await Promise.all([setLocked(goingLocked), minShow]);
       toast.success(
         goingLocked
@@ -1381,6 +1540,24 @@ export default function PayrollDispatch() {
         firstName={firstName}
         onClose={() => setConfirmingLockToggle(false)}
         onConfirm={handleLockToggle}
+        // Only Payment Dispatch offers the close-out; the Payroll Wizard renders
+        // this same dialog without it. Withheld while viewing a past week (the
+        // Stop button is disabled there anyway) and with no cycle loaded, since
+        // there'd be nothing to key the record to.
+        closeOut={
+          viewingPastWeek || !period.sourceFile
+            ? undefined
+            : {
+                enabled: closeCycleOn,
+                onEnabledChange: setCloseCycleOn,
+                alreadyClosed: cycleAlreadyClosed,
+                cycleLabel: formatCycleLabelFromFile(period.sourceFile),
+                unpaidCount: unpaidPayable.length,
+                unpaidPHP: unpaidPayablePHP,
+                paidCount: distinctPaidCount,
+                paidUSD: totalPaidUSD,
+              }
+        }
       />
     </div>
   );

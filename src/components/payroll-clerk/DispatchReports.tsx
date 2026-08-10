@@ -4,6 +4,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { motion } from 'motion/react';
 import {
   AlertTriangle,
+  Archive,
   ArrowLeft,
   CalendarDays,
   CheckCircle2,
@@ -32,6 +33,7 @@ import type {
   PaymentDispatchRow,
   PaymentDispatchStatus,
 } from '@/lib/supabase/payment-dispatches';
+import type { CycleCloseoutRecord } from '@/lib/payroll/cycle-closeout';
 import AnimatedNumber from './AnimatedNumber';
 import ContractorChip from './ContractorChip';
 
@@ -186,6 +188,14 @@ export default function DispatchReports() {
   const [seedError, setSeedError] = useState<string | null>(null);
   /** source_files currently being seeded (individually or via Seed all). */
   const [seedingFiles, setSeedingFiles] = useState<Set<string>>(new Set());
+  /**
+   * Weeks Accounting has declared closed from Payment Dispatch's Stop dialog.
+   * A close-out is a DECLARATION, not a recomputation — the rest of this tab is
+   * derived live and moves whenever a payment is undone, so the badge is the one
+   * thing here that stays put. Empty set = none closed / not loaded; the cards
+   * simply carry no badge, which is the truthful default.
+   */
+  const [closedFiles, setClosedFiles] = useState<Set<string>>(new Set());
 
   const loadReports = React.useCallback(async (signal?: AbortSignal) => {
     setLoading(true);
@@ -223,6 +233,33 @@ export default function DispatchReports() {
     loadReports(controller.signal);
     return () => controller.abort();
   }, [loadReports]);
+
+  // Close-outs load alongside the reports, not inside loadReports: a failure to
+  // read them must never blank the reports list. Worst case the badges are
+  // missing, which understates rather than misleads.
+  useEffect(() => {
+    const controller = new AbortController();
+    (async () => {
+      try {
+        const res = await fetch('/api/payment-dispatches/cycle-closeout', {
+          cache: 'no-store',
+          signal: controller.signal,
+        });
+        if (!res.ok) return;
+        const json = (await res.json()) as {
+          closeouts?: { source_file?: string }[];
+          error?: string | null;
+        };
+        if (controller.signal.aborted || json.error) return;
+        setClosedFiles(
+          new Set((json.closeouts ?? []).map((c) => c.source_file ?? '').filter(Boolean)),
+        );
+      } catch {
+        /* badge-only data — leave the set empty */
+      }
+    })();
+    return () => controller.abort();
+  }, []);
 
   // Restore the clerk's last-used view (cards vs table) after mount so SSR
   // markup stays deterministic.
@@ -511,6 +548,7 @@ export default function DispatchReports() {
             page={page}
             onPageChange={setPage}
             onOpen={openReport}
+            closedFiles={closedFiles}
           />
         )}
       </div>
@@ -569,18 +607,36 @@ function ViewToggle({
   );
 }
 
+/** "Closed" — Accounting declared this week finished from Payment Dispatch. */
+function ClosedBadge({ className }: { className?: string }) {
+  return (
+    <span
+      title="Accounting closed this pay cycle from Payment Dispatch. Open the report for the close-out."
+      className={cn(
+        'inline-flex shrink-0 items-center gap-1 rounded-full border border-violet-200 bg-violet-50 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-[0.14em] text-violet-700 dark:border-violet-900/40 dark:bg-violet-950/40 dark:text-violet-300',
+        className,
+      )}
+    >
+      <Archive className="h-2.5 w-2.5" />
+      Closed
+    </span>
+  );
+}
+
 function PaginatedReportList({
   summaries,
   view,
   page,
   onPageChange,
   onOpen,
+  closedFiles,
 }: {
   summaries: ReportSummary[];
   view: ReportsView;
   page: number;
   onPageChange: (next: number) => void;
   onOpen: (cycleId: string) => void;
+  closedFiles: Set<string>;
 }) {
   const perPage = view === 'table' ? TABLE_ROWS_PER_PAGE : REPORTS_PER_PAGE;
   const total = summaries.length;
@@ -592,7 +648,7 @@ function PaginatedReportList({
   return (
     <div className="flex flex-col gap-4">
       {view === 'table' ? (
-        <ReportTable summaries={visible} onOpen={onOpen} />
+        <ReportTable summaries={visible} onOpen={onOpen} closedFiles={closedFiles} />
       ) : (
         <motion.ul
           key={safePage}
@@ -608,7 +664,12 @@ function PaginatedReportList({
           className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3"
         >
           {visible.map((s) => (
-            <ReportCard key={s.cycleId} report={s} onOpen={() => onOpen(s.cycleId)} />
+            <ReportCard
+              key={s.cycleId}
+              report={s}
+              onOpen={() => onOpen(s.cycleId)}
+              closed={Boolean(s.sourceFile && closedFiles.has(s.sourceFile))}
+            />
           ))}
         </motion.ul>
       )}
@@ -630,9 +691,11 @@ function PaginatedReportList({
 function ReportTable({
   summaries,
   onOpen,
+  closedFiles,
 }: {
   summaries: ReportSummary[];
   onOpen: (cycleId: string) => void;
+  closedFiles: Set<string>;
 }) {
   return (
     <div className="overflow-hidden rounded-2xl border border-[#ececec] bg-white dark:border-zinc-800 dark:bg-zinc-950">
@@ -677,6 +740,7 @@ function ReportTable({
                           Current
                         </span>
                       )}
+                      {s.sourceFile && closedFiles.has(s.sourceFile) && <ClosedBadge />}
                     </div>
                     {s.sourceFile && (
                       <div className="mt-0.5 max-w-[260px] truncate font-mono text-[10px] text-zinc-400 dark:text-zinc-500">
@@ -794,9 +858,11 @@ function Pagination({
 function ReportCard({
   report,
   onOpen,
+  closed,
 }: {
   report: ReportSummary;
   onOpen: () => void;
+  closed: boolean;
 }) {
   const { totals } = report;
   const isUrgent = report.sourceFile?.startsWith('urgent_') ?? false;
@@ -860,6 +926,9 @@ function ReportCard({
                 <span className="truncate">{report.sourceFile}</span>
               </div>
             )}
+            {/* Sits under the title rather than top-right, where Current/Urgent
+                already live — a week can be both current and closed. */}
+            {closed && <ClosedBadge className="mt-1.5" />}
           </div>
         </div>
 
@@ -976,6 +1045,172 @@ function ReportDetailView({
   return <ReportDetail report={report} onBack={onBack} />;
 }
 
+const UNPAID_REASON_STYLE: Record<
+  CycleCloseoutRecord['unpaid']['payees'][number]['reason'],
+  { label: string; tone: string }
+> = {
+  pending: {
+    label: 'Never dispatched',
+    tone: 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-300',
+  },
+  problem: {
+    label: 'Problem',
+    tone: 'border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-900/40 dark:bg-rose-950/30 dark:text-rose-300',
+  },
+  threshold: {
+    label: 'Held · threshold',
+    tone: 'border-sky-200 bg-sky-50 text-sky-700 dark:border-sky-900/40 dark:bg-sky-950/30 dark:text-sky-300',
+  },
+};
+
+/**
+ * The close-out — what Accounting declared when they stopped processing this
+ * week. Everything else on this screen is derived live and moves when a payment
+ * is undone or re-marked; this panel is frozen, which is the whole point of it,
+ * so it says so out loud rather than letting the two quietly disagree.
+ */
+function CloseoutPanel({ closeout }: { closeout: CycleCloseoutRecord }) {
+  const { paid, unpaid } = closeout;
+  const [expanded, setExpanded] = useState(false);
+  const shown = expanded ? unpaid.payees : unpaid.payees.slice(0, 12);
+
+  return (
+    <section className="mb-4 overflow-hidden rounded-2xl border border-violet-200 bg-white dark:border-violet-900/40 dark:bg-zinc-950">
+      <div className="flex flex-wrap items-start justify-between gap-3 border-b border-violet-100 bg-violet-50/70 px-4 py-3 dark:border-violet-900/30 dark:bg-violet-950/20">
+        <div className="min-w-0">
+          <h2 className="flex items-center gap-1.5 text-sm font-semibold text-violet-900 dark:text-violet-200">
+            <Archive className="h-4 w-4" />
+            Pay cycle closed
+          </h2>
+          <p className="mt-0.5 text-[11px] text-violet-700/80 dark:text-violet-300/70">
+            Closed by <span className="font-medium">{closeout.closed_by}</span> ·{' '}
+            {formatTimestamp(closeout.closed_at)}
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="text-right">
+            <p className="text-[9px] font-semibold uppercase tracking-[0.14em] text-violet-700/70 dark:text-violet-300/60">
+              Paid at close
+            </p>
+            <p className="font-mono text-sm font-bold tabular-nums text-emerald-700 dark:text-emerald-400">
+              {formatUSD(paid.paidUSD)}
+            </p>
+            <p className="text-[10px] text-violet-700/70 dark:text-violet-300/60">
+              {paid.payeeCount.toLocaleString()} payees · {paid.dispatchCount.toLocaleString()}{' '}
+              payments
+            </p>
+          </div>
+          <div className="text-right">
+            <p className="text-[9px] font-semibold uppercase tracking-[0.14em] text-violet-700/70 dark:text-violet-300/60">
+              Not paid
+            </p>
+            <p
+              className={cn(
+                'font-mono text-sm font-bold tabular-nums',
+                unpaid.count > 0
+                  ? 'text-rose-600 dark:text-rose-400'
+                  : 'text-zinc-400 dark:text-zinc-500',
+              )}
+            >
+              {(unpaid.count + unpaid.truncated).toLocaleString()}
+            </p>
+            <p className="text-[10px] text-violet-700/70 dark:text-violet-300/60">
+              {formatPHP(unpaid.totalPHP)} owed
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <div className="px-4 py-3">
+        <p className="text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400">
+          These figures are frozen as of the close. The stats below this panel are recomputed live,
+          so they will differ if anything was paid, undone, or re-marked afterwards. People held in{' '}
+          <span className="font-medium">Excluded</span> were never counted as unpaid — they were set
+          aside deliberately.
+        </p>
+
+        {unpaid.payees.length > 0 && (
+          <>
+            <div className="mt-3 flex items-center justify-between">
+              <h3 className="text-[11px] font-semibold uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-400">
+                Payable, not paid
+              </h3>
+              {unpaid.payees.length > 12 && (
+                <button
+                  type="button"
+                  onClick={() => setExpanded((v) => !v)}
+                  className="text-[10px] font-medium text-violet-600 hover:underline dark:text-violet-400"
+                >
+                  {expanded ? 'Show less' : `Show all ${unpaid.payees.length}`}
+                </button>
+              )}
+            </div>
+            <ul className="mt-2 divide-y divide-[#f0f0f0] dark:divide-zinc-800/70">
+              {shown.map((p) => {
+                const style = UNPAID_REASON_STYLE[p.reason];
+                return (
+                  <li
+                    key={`${p.email}-${p.reason}`}
+                    className="flex flex-wrap items-center justify-between gap-2 py-1.5"
+                  >
+                    <div className="min-w-0">
+                      <span className="text-xs font-medium text-zinc-800 dark:text-zinc-200">
+                        {p.name ?? p.email}
+                      </span>
+                      {p.name && (
+                        <span className="ml-1.5 font-mono text-[10px] text-zinc-400 dark:text-zinc-500">
+                          {p.email}
+                        </span>
+                      )}
+                      {p.payeeType === 'contractor' && <ContractorChip className="ml-1.5" />}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span
+                        className={cn(
+                          'inline-flex items-center rounded-full border px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-[0.12em]',
+                          style.tone,
+                        )}
+                      >
+                        {style.label}
+                      </span>
+                      <span className="font-mono text-[11px] font-semibold tabular-nums text-zinc-700 dark:text-zinc-300">
+                        {p.amountPHP != null ? formatPHP(p.amountPHP) : '—'}
+                      </span>
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          </>
+        )}
+
+        {/* Never silent: whatever the record could not carry is stated. */}
+        {(unpaid.truncated > 0 || unpaid.dropped > 0) && (
+          <p className="mt-2 flex items-start gap-1.5 rounded-lg bg-amber-50 px-2 py-1.5 text-[10px] leading-relaxed text-amber-800 dark:bg-amber-950/30 dark:text-amber-300">
+            <AlertTriangle className="mt-px h-3 w-3 shrink-0" />
+            <span>
+              {unpaid.truncated > 0 && (
+                <>
+                  {unpaid.truncated.toLocaleString()} further unpaid{' '}
+                  {unpaid.truncated === 1 ? 'person was' : 'people were'} over the record&apos;s
+                  storage limit and are counted but not listed.{' '}
+                </>
+              )}
+              {unpaid.dropped > 0 && (
+                <>
+                  {unpaid.dropped.toLocaleString()}{' '}
+                  {unpaid.dropped === 1 ? 'entry was' : 'entries were'} dropped as unidentifiable
+                  (no email).
+                </>
+              )}
+            </span>
+          </p>
+        )}
+      </div>
+    </section>
+  );
+}
+
 function ReportDetail({
   report,
   onBack,
@@ -987,6 +1222,32 @@ function ReportDetail({
   const isUrgent = report.sourceFile?.startsWith('urgent_') ?? false;
   const totalPending =
     totals.notPaidCount + totals.thresholdCount + totals.problemCount;
+  // The close-out for this week, fetched in full (the list payload omits the
+  // unpaid rows). null = none, or not loaded — either way nothing is claimed.
+  const [closeout, setCloseout] = useState<CycleCloseoutRecord | null>(null);
+  const sourceFile = report.sourceFile;
+  useEffect(() => {
+    if (!sourceFile) return;
+    const controller = new AbortController();
+    (async () => {
+      try {
+        const res = await fetch(
+          `/api/payment-dispatches/cycle-closeout?source_file=${encodeURIComponent(sourceFile)}`,
+          { cache: 'no-store', signal: controller.signal },
+        );
+        if (!res.ok) return;
+        const json = (await res.json()) as {
+          closeout?: CycleCloseoutRecord | null;
+          error?: string | null;
+        };
+        if (controller.signal.aborted || json.error) return;
+        setCloseout(json.closeout ?? null);
+      } catch {
+        /* the rest of the report stands on its own */
+      }
+    })();
+    return () => controller.abort();
+  }, [sourceFile]);
   const [markingPaid, setMarkingPaid] = useState(false);
   const [markPaidConfirm, setMarkPaidConfirm] = useState(false);
   const [markPaidError, setMarkPaidError] = useState<string | null>(null);
@@ -1131,6 +1392,8 @@ function ReportDetail({
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto bg-[#fafaf8] px-3 py-3 sm:px-6 sm:py-6 dark:bg-[#0d1117]">
+        {closeout && <CloseoutPanel closeout={closeout} />}
+
         {/* Headline stats */}
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 sm:gap-3">
           <DetailStat

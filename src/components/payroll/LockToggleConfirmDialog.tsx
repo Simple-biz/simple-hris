@@ -13,7 +13,7 @@
 
 import { useEffect, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
-import { CheckCircle2, Lock, Play, Send, StopCircle } from 'lucide-react';
+import { AlertTriangle, Archive, CheckCircle2, Lock, Play, Send, StopCircle } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import {
@@ -201,6 +201,159 @@ function PreparingScene({ firstName, stopping }: { firstName: string; stopping: 
   );
 }
 
+/**
+ * The optional "close the pay cycle" half of the STOP dialog.
+ *
+ * Payment Dispatch passes this; the Payroll Wizard does not, so the wizard's
+ * Start/Stop panel keeps the exact dialog it has always had. Closing writes a
+ * permanent close-out record to Payment Dispatch → Reports — see
+ * `src/lib/payroll/cycle-closeout.ts` for why that is a different artifact from
+ * a published pay-cycle report.
+ */
+export interface LockToggleCloseOut {
+  /** Toggle state, owned by the caller so the confirm handler can read it. */
+  enabled: boolean;
+  onEnabledChange: (next: boolean) => void;
+  /** Already closed by an earlier stop — the toggle is shown, locked on, inert. */
+  alreadyClosed: boolean;
+  /** Human label for the week being closed, e.g. "August 3-9, 2026". */
+  cycleLabel: string;
+  /** Payable people with no payment this cycle. EXCLUDES the Excluded tab —
+   *  those are held deliberately and are not "unpaid" in this sense. */
+  unpaidCount: number;
+  unpaidPHP: number;
+  /** Distinct payees already settled, and what went out. */
+  paidCount: number;
+  paidUSD: number;
+}
+
+function formatPHP(n: number): string {
+  return `₱${Math.round(n).toLocaleString('en-PH')}`;
+}
+
+function formatUSD(n: number): string {
+  return `$${n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+function CloseOutBlock({ closeOut }: { closeOut: LockToggleCloseOut }) {
+  const { enabled, alreadyClosed, unpaidCount } = closeOut;
+  const on = alreadyClosed || enabled;
+  return (
+    <div
+      className={cn(
+        'mt-3 rounded-xl border px-3 py-2.5 transition-colors',
+        on
+          ? 'border-violet-300 bg-violet-50/70 dark:border-violet-800/60 dark:bg-violet-950/25'
+          : 'border-zinc-200 bg-zinc-50/70 dark:border-zinc-800 dark:bg-zinc-900/40',
+      )}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="flex items-center gap-1.5 text-[12px] font-semibold text-zinc-800 dark:text-zinc-100">
+            <Archive className={cn('h-3.5 w-3.5', on ? 'text-violet-600 dark:text-violet-400' : 'text-zinc-400')} />
+            {alreadyClosed ? 'Pay cycle already closed' : 'Close the pay cycle'}
+          </p>
+          <p className="mt-0.5 text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400">
+            {alreadyClosed ? (
+              <>
+                <span className="font-medium">{closeOut.cycleLabel}</span> already has a close-out
+                record in Reports. Stopping again won&apos;t write a second one.
+              </>
+            ) : (
+              <>
+                Files a close-out for <span className="font-medium">{closeOut.cycleLabel}</span> in{' '}
+                <span className="font-medium">Reports</span> — who was paid, through which
+                processor, and who wasn&apos;t.
+              </>
+            )}
+          </p>
+        </div>
+        <button
+          type="button"
+          role="switch"
+          aria-checked={on}
+          aria-label="Close the pay cycle"
+          disabled={alreadyClosed}
+          onClick={() => closeOut.onEnabledChange(!enabled)}
+          className={cn(
+            'relative mt-0.5 h-5 w-9 shrink-0 rounded-full transition-colors',
+            on ? 'bg-violet-600' : 'bg-zinc-300 dark:bg-zinc-700',
+            alreadyClosed && 'cursor-not-allowed opacity-60',
+          )}
+        >
+          <motion.span
+            layout
+            transition={{ type: 'spring', stiffness: 500, damping: 32 }}
+            className={cn(
+              'absolute top-0.5 h-4 w-4 rounded-full bg-white shadow-sm',
+              on ? 'left-[1.125rem]' : 'left-0.5',
+            )}
+          />
+        </button>
+      </div>
+
+      <AnimatePresence initial={false}>
+        {on && !alreadyClosed && (
+          <motion.div
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: 'auto' }}
+            exit={{ opacity: 0, height: 0 }}
+            transition={{ duration: 0.28, ease: [0.16, 1, 0.3, 1] }}
+            className="overflow-hidden"
+          >
+            <div className="mt-2.5 grid grid-cols-2 gap-2 border-t border-violet-200/70 pt-2.5 dark:border-violet-800/40">
+              <div>
+                <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-zinc-400">
+                  Paid
+                </p>
+                <p className="text-[13px] font-semibold text-emerald-600 dark:text-emerald-400">
+                  {closeOut.paidCount.toLocaleString()}{' '}
+                  <span className="text-[11px] font-normal text-zinc-500">
+                    · {formatUSD(closeOut.paidUSD)}
+                  </span>
+                </p>
+              </div>
+              <div>
+                <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-zinc-400">
+                  Not paid
+                </p>
+                <p
+                  className={cn(
+                    'text-[13px] font-semibold',
+                    unpaidCount > 0
+                      ? 'text-rose-600 dark:text-rose-400'
+                      : 'text-zinc-500 dark:text-zinc-400',
+                  )}
+                >
+                  {unpaidCount.toLocaleString()}{' '}
+                  <span className="text-[11px] font-normal text-zinc-500">
+                    · {formatPHP(closeOut.unpaidPHP)}
+                  </span>
+                </p>
+              </div>
+            </div>
+
+            {unpaidCount > 0 && (
+              <p className="mt-2 flex items-start gap-1.5 rounded-lg bg-rose-50 px-2 py-1.5 text-[11px] leading-relaxed text-rose-700 dark:bg-rose-950/30 dark:text-rose-300">
+                <AlertTriangle className="mt-px h-3.5 w-3.5 shrink-0" />
+                <span>
+                  <span className="font-semibold">
+                    {unpaidCount.toLocaleString()} payable{' '}
+                    {unpaidCount === 1 ? 'person has' : 'people have'} not been paid
+                  </span>{' '}
+                  ({formatPHP(closeOut.unpaidPHP)} still owed). They&apos;ll be named in the
+                  close-out. People held in <span className="font-medium">Excluded</span> aren&apos;t
+                  counted.
+                </span>
+              </p>
+            )}
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
 export default function LockToggleConfirmDialog({
   open,
   locked,
@@ -208,6 +361,7 @@ export default function LockToggleConfirmDialog({
   firstName,
   onClose,
   onConfirm,
+  closeOut,
 }: {
   open: boolean;
   locked: boolean;
@@ -215,6 +369,9 @@ export default function LockToggleConfirmDialog({
   firstName: string;
   onClose: () => void;
   onConfirm: () => void;
+  /** Payment Dispatch only. Omitted by the Payroll Wizard, which keeps the
+   *  plain Start/Stop dialog. Only ever rendered on the STOP side. */
+  closeOut?: LockToggleCloseOut;
 }) {
   // `useDispatchLock.setLocked` flips `locked` OPTIMISTICALLY the instant the
   // POST starts, which would invert the scene mid-flight (confirming Start
@@ -225,6 +382,9 @@ export default function LockToggleConfirmDialog({
     if (!submitting) setFrozenLocked(locked);
   }, [locked, submitting]);
   const isStarting = !(submitting ? frozenLocked : locked);
+  // A cycle already closed by an earlier stop must NOT re-title the dialog as
+  // "Close Pay Cycle?" — nothing new gets written, so claiming it would be a lie.
+  const closingCycle = !isStarting && Boolean(closeOut?.enabled) && !closeOut?.alreadyClosed;
   return (
     <Dialog
       open={open}
@@ -259,16 +419,28 @@ export default function LockToggleConfirmDialog({
                 <DialogTitle className="flex items-center gap-2 text-lg">
                   {isStarting ? (
                     <Play className="h-5 w-5 text-emerald-500" />
+                  ) : closingCycle ? (
+                    <Archive className="h-5 w-5 text-violet-500" />
                   ) : (
                     <StopCircle className="h-5 w-5 text-rose-500" />
                   )}
-                  {isStarting ? 'Start payroll processing?' : 'Stop payroll processing?'}
+                  {isStarting
+                    ? 'Start payroll processing?'
+                    : closingCycle
+                      ? 'Close Pay Cycle?'
+                      : 'Stop payroll processing?'}
                 </DialogTitle>
                 <DialogDescription className="text-xs leading-relaxed">
                   {isStarting ? (
                     <>
                       Starts the dispatch run for this cycle. Employees&apos; <span className="font-medium">File an Issue</span>{' '}
                       button will be disabled live across all dashboards while processing is active.
+                    </>
+                  ) : closingCycle ? (
+                    <>
+                      Ends processing <span className="font-medium">and closes the whole payroll
+                      cycle</span>. Employees can file issues again, and a close-out record is filed
+                      in Reports. It can&apos;t be re-filed for this week afterwards.
                     </>
                   ) : (
                     <>
@@ -278,6 +450,7 @@ export default function LockToggleConfirmDialog({
                   )}
                 </DialogDescription>
               </DialogHeader>
+              {!isStarting && closeOut && <CloseOutBlock closeOut={closeOut} />}
               <DialogFooter className="mt-4 gap-2">
                 <Button variant="outline" onClick={onClose}>
                   Cancel
@@ -288,11 +461,23 @@ export default function LockToggleConfirmDialog({
                     'gap-2 text-white transition-colors',
                     isStarting
                       ? 'bg-emerald-600 hover:bg-emerald-700'
-                      : 'bg-rose-600 hover:bg-rose-700',
+                      : closingCycle
+                        ? 'bg-violet-600 hover:bg-violet-700'
+                        : 'bg-rose-600 hover:bg-rose-700',
                   )}
                 >
-                  {isStarting ? <Play className="h-4 w-4" /> : <StopCircle className="h-4 w-4" />}
-                  {isStarting ? 'Start processing' : 'Stop processing'}
+                  {isStarting ? (
+                    <Play className="h-4 w-4" />
+                  ) : closingCycle ? (
+                    <Archive className="h-4 w-4" />
+                  ) : (
+                    <StopCircle className="h-4 w-4" />
+                  )}
+                  {isStarting
+                    ? 'Start processing'
+                    : closingCycle
+                      ? 'Stop & close cycle'
+                      : 'Stop processing'}
                 </Button>
               </DialogFooter>
             </motion.div>
