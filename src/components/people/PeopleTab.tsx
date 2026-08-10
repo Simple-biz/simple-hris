@@ -25,6 +25,7 @@ import { BankChangeDetailDialog, timeAgo, type BankChangeEntry } from './bank-ch
 import { getTabCache, setTabCache, TAB_CACHE_KEYS } from '@/lib/accounting/tab-cache';
 import { parseNameParts, composeMasterListName, type NameParts } from '@/lib/name/name-parts';
 import { isHslFamilyLabel, formatDeptLabel } from '@/lib/departments/hsl-subdept';
+import { BANK_PREFERRED_OPTIONS, isWiresPreferred } from '@/lib/employee-payment-processors';
 import {
   buildRosterExport,
   downloadRosterCsv,
@@ -93,6 +94,12 @@ interface MasterProfileFields {
   full_address: string | null;
 }
 interface Banking {
+  /** Send-from rail ("Bank Preferred") — wins Payment Dispatch routing. */
+  bank_preferred: string | null;
+  /** The rail Payment Dispatch actually routes this person on (server-resolved
+   *  with PD's full precedence incl. the legacy rates-sheet fallback). */
+  effective_processor: string | null;
+  effective_processor_source: 'bank_preferred' | 'disbursement' | 'rates_sheet' | null;
   preferred_processor: string | null;
   preferred_bank_slot: string | null;
   bank_name: string | null;
@@ -241,6 +248,7 @@ function initialForm(row: RosterRow): ProfileForm {
  *  the allowlist of PATCH /api/people/[email]/banking — which writes the
  *  canonical employee_ids row every dashboard reads. */
 interface BankForm {
+  bank_preferred: string;
   preferred_processor: string;
   preferred_bank_slot: string;
   bank_name: string;
@@ -267,6 +275,7 @@ interface BankForm {
  *  would put dot-runs into the inputs and save them as literal account numbers. */
 function bankingToForm(b: Banking | null): BankForm {
   return {
+    bank_preferred: (b?.bank_preferred ?? '').trim().toLowerCase(),
     preferred_processor: (b?.preferred_processor ?? '').trim().toLowerCase(),
     preferred_bank_slot: ((b?.preferred_bank_slot ?? '').trim().toLowerCase() || 'primary'),
     bank_name: b?.bank_name ?? '',
@@ -3084,24 +3093,36 @@ function PersonDetailDialog({
     setHistPage((p) => Math.min(histTotalPages, Math.max(1, p + dir)));
   };
 
-  // Show only the bank the employee designated as preferred in their portal
-  // (primary vs alternative slot) — not both. The alternative slot has no
-  // SWIFT/address fields, so those collapse when it's the preferred one.
+  // Preferred bank slot first, falling back to the OTHER slot per field — the
+  // same pickFirst rule Payment Dispatch's queue row uses (buildPayeeDetails in
+  // mock-queue.ts), so a person whose details live only in the non-preferred
+  // slot still shows the account PD pays to instead of a blank.
   const prefAlt = banking?.preferred_bank_slot === 'alternative';
+  const firstOf = (...vals: (string | null | undefined)[]) =>
+    vals.find((v) => v != null && String(v).trim() !== '') ?? null;
   const prefBank = {
-    name: (prefAlt ? banking?.alt_bank_name : banking?.bank_name) ?? null,
-    holder: (prefAlt ? banking?.alt_account_holder_name : banking?.account_holder_name) ?? null,
-    account: (prefAlt ? banking?.alt_account_number : banking?.account_number) ?? null,
-    routing: (prefAlt ? banking?.alt_routing_number : banking?.routing_number) ?? null,
-    swift: (prefAlt ? null : banking?.swift_code) ?? null,
-    address: (prefAlt ? null : banking?.full_address) ?? null,
+    name: prefAlt
+      ? firstOf(banking?.alt_bank_name, banking?.bank_name)
+      : firstOf(banking?.bank_name, banking?.alt_bank_name),
+    holder: prefAlt
+      ? firstOf(banking?.alt_account_holder_name, banking?.account_holder_name)
+      : firstOf(banking?.account_holder_name, banking?.alt_account_holder_name),
+    account: prefAlt
+      ? firstOf(banking?.alt_account_number, banking?.account_number)
+      : firstOf(banking?.account_number, banking?.alt_account_number),
+    routing: prefAlt
+      ? firstOf(banking?.alt_routing_number, banking?.routing_number)
+      : firstOf(banking?.routing_number, banking?.alt_routing_number),
+    swift: banking?.swift_code ?? null,
+    address: banking?.full_address ?? null,
   };
-  // Only the employee's CHOSEN processor's payout details are relevant. Other
-  // columns can hold stale/duplicated data (legacy seeds), so we never show a
-  // rail the employee didn't pick. `wires` → the preferred bank; otherwise the
-  // single processor field. Unknown/empty processor falls back to a bank if one
-  // exists, else nothing.
-  const proc = (banking?.preferred_processor ?? '').trim().toLowerCase();
+  // Show the details of the rail Payment Dispatch ACTUALLY routes this person
+  // on (server-resolved: bank_preferred → Disbursement pick → legacy rates
+  // cell) — not the raw Disbursement pick, which can disagree with how the
+  // person is really paid. Unknown/empty falls back to a bank if one exists.
+  const proc = (banking?.effective_processor ?? banking?.preferred_processor ?? '')
+    .trim()
+    .toLowerCase();
   // wires, jeeves AND wise all carry full bank/wire details (jeeves also shows
   // phone). Wise payees are paid into their bank account, not a Wise handle —
   // same field set as wires (mirrors the Readiness Set-bank editor).
@@ -3515,11 +3536,34 @@ function PersonDetailDialog({
                 <div className="rounded-lg border border-zinc-200 bg-zinc-50/60 p-3 dark:border-zinc-800 dark:bg-zinc-900/40">
                   <div className="grid grid-cols-1 gap-x-6 gap-y-3 sm:grid-cols-2">
                     <div>
-                      <label className="text-[10.5px] uppercase tracking-wide text-zinc-400">Payment method</label>
+                      <label className="text-[10.5px] uppercase tracking-wide text-zinc-400">Bank Preferred (send-from)</label>
+                      <SmoothSelect
+                        value={bankForm.bank_preferred}
+                        onChange={(v) => updBank('bank_preferred', v)}
+                        aria-label="Bank Preferred (send-from rail)"
+                        className="mt-1 w-full"
+                        options={[
+                          { value: '', label: 'Not set' },
+                          // WIRES lock: a wires-preferred person (incl. unset)
+                          // can never be offered Hurupay/HiGlobe — same option
+                          // filter as the employee's own profile dropdown; the
+                          // API re-enforces against the stored value on save.
+                          ...BANK_PREFERRED_OPTIONS.filter(
+                            (o) =>
+                              !isWiresPreferred(bankInitialRef.current.bank_preferred || null) ||
+                              (o.id !== 'hurupay' && o.id !== 'higlobe'),
+                          ).map((o) => ({ value: o.id, label: o.label })),
+                        ]}
+                        portal
+                      />
+                      <p className="mt-1 text-[10.5px] text-zinc-400">The rail Payment Dispatch routes this salary on. Overrides the Disbursement pick.</p>
+                    </div>
+                    <div>
+                      <label className="text-[10.5px] uppercase tracking-wide text-zinc-400">Disbursement (receive via)</label>
                       <SmoothSelect
                         value={bankForm.preferred_processor}
                         onChange={(v) => updBank('preferred_processor', v)}
-                        aria-label="Payment method"
+                        aria-label="Disbursement pick (receive via)"
                         className="mt-1 w-full"
                         options={PROCESSOR_OPTIONS}
                         portal
@@ -3594,7 +3638,36 @@ function PersonDetailDialog({
                   <p className="mb-2 text-[11px] text-zinc-400">Sensitive fields are masked. Reveal is recorded in the audit log.</p>
                 ) : null}
                 <dl className="grid grid-cols-1 gap-x-6 gap-y-1.5 sm:grid-cols-2">
-                  <Field label="Processor" value={banking ? (banking.preferred_processor || 'Not set') : null} cap />
+                  {/* The routing picture, mirrored from Payment Dispatch:
+                      "Pays via" = the rail PD actually routes on; "Sends from" =
+                      the Bank Preferred send-from pick that wins precedence;
+                      "Disbursement pick" = how the employee elected to receive. */}
+                  <Field
+                    label="Pays via (Payment Dispatch)"
+                    value={
+                      banking?.effective_processor
+                        ? banking.effective_processor.charAt(0).toUpperCase() +
+                          banking.effective_processor.slice(1) +
+                          (banking.effective_processor_source === 'rates_sheet'
+                            ? ' — routed by the rates sheet'
+                            : banking.effective_processor_source === 'bank_preferred'
+                              ? ' — via Bank Preferred'
+                              : '')
+                        : banking
+                          ? 'Not routed'
+                          : null
+                    }
+                  />
+                  <Field
+                    label="Bank Preferred (send-from)"
+                    value={banking ? (banking.bank_preferred || 'Not set') : null}
+                    cap
+                  />
+                  <Field
+                    label="Disbursement pick"
+                    value={banking ? (banking.preferred_processor || 'Not set') : null}
+                    cap
+                  />
                   {/* No banking record → show the canonical bank/wires field set as
                       placeholders so the CEO sees where details are expected. */}
                   {(showBank || !banking) && (

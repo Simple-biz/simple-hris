@@ -1,7 +1,8 @@
 # Bank Preferred — send-from routing, approval gate & WIRES lock
 
 *Shipped 2026-07-22; Wise updates + the No-Bank clobber discovery added
-2026-07-25 (§7). Two employee-notification migrations still PENDING (see
+2026-07-25 (§7); People-tab parity + Accounting direct-edit added 2026-08-10
+(§8). Two employee-notification migrations still PENDING (see
 [Migrations](#migrations)).*
 
 "Bank Preferred" is the processor **Accounting sends a salary OUT on** — the
@@ -199,6 +200,42 @@ details back to `employee_ids` via
   run** (Kane's call). One flagged row (Chris Lawang) was a misread — a SELF-row
   shadow, not a clobber.
 
+## 8. People-tab parity & Accounting direct-edit (2026-08-10)
+
+A live audit (`scripts/audit-people-vs-dispatch-banks.mjs`, read-only) found the
+People tab disagreed with Payment Dispatch for ~12% of the routed roster: the
+roster chip read `preferred_processor` alone (133 people chip-less though PD
+routed them, 35 showing the wrong rail), "Missing bank info" ignored the legacy
+rates-row fallbacks (27 false alarms), the profile Banking view hid accounts in
+the non-preferred slot (9), and `bank_preferred` wasn't surfaced at all. Fixed
+by resolving everything People shows through the SAME dispatch-parity helpers:
+
+- **Roster chip + `hasBanking`** ([`people-roster.ts`](../../src/lib/people/people-roster.ts))
+  use `resolveEffectivePayoutProcessor` / `isPayoutComplete` **with**
+  `PayoutLegacyExtras` from the rates row — and the rate context now loads via
+  `getEmployeeHourlyRatesRows()` (the deduped `_current` view PD reads, paged),
+  fixing a silent 1000-row truncation of the old raw select.
+- **Profile Banking view** ([`PeopleTab.tsx`](../../src/components/people/PeopleTab.tsx))
+  shows three routing fields — *Pays via (Payment Dispatch)* (the effective
+  rail + source), *Bank Preferred (send-from)*, *Disbursement pick* — keys field
+  visibility on the **effective** rail, and falls back across bank slots with
+  PD's pickFirst rule. The payload ([`people-banking.ts`](../../src/lib/people/people-banking.ts))
+  carries `bank_preferred`, `effective_processor`, `effective_processor_source`;
+  a sheet-routed person with no `employee_ids` row still gets a synthesized
+  record so their routing shows.
+- **Accounting direct-edit.** The People banking editor now offers a *Bank
+  Preferred (send-from)* dropdown. `PATCH /api/people/[email]/banking` accepts
+  `bank_preferred` **without filing a change request** — the route is gated to
+  the same roles that approve those requests, so the edit *is* the approval.
+  The **WIRES lock still applies**, enforced server-side against the live
+  stored value and mirrored in the dropdown's option filter. The employee
+  self-service path keeps the §3 approval gate unchanged. (A direct edit does
+  not cancel an employee's pending request; the approval PATCH re-checks the
+  lock at approve time as before.)
+
+Parity is pinned by `src/lib/employee/payout-completeness.test.ts` and the
+audit script's post-fix run: **0 disagreements across 1,498 active people**.
+
 ## Migrations
 
 DDL has **no path from the dev environment** — run these in the **Supabase SQL
@@ -228,6 +265,9 @@ breaks other notification inserts).
 | `app/api/payment-dispatch/bank-override/route.ts` | Mark Paid receiving-detail override |
 | `src/lib/payroll/bank-override-mapping.ts` | slot-aware override column mapping (+ tests) |
 | `src/lib/payroll/{mock-queue,pay-schedule,dispatch-export-csv}.ts` | routing-precedence resolvers |
+| `src/lib/employee/payout-completeness.ts` | shared effective-processor + payable resolution (+ tests) |
+| `src/lib/people/{people-roster,people-banking}.ts` + `src/components/people/PeopleTab.tsx` | People-tab parity surfaces (§8) |
+| `scripts/audit-people-vs-dispatch-banks.mjs` | read-only People↔PD parity guard |
 
 See also: [payment-dispatch.md](./payment-dispatch.md) (the queue this routing
 feeds), and the session log

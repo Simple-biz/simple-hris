@@ -12,6 +12,10 @@ import { maskFieldValue } from '@/lib/bank-update/mask-field';
 import { getEmployeeIdRowByEmail } from '@/lib/supabase/employee-ids';
 import { getEmployeeMasterRecord } from '@/lib/supabase/employees';
 import { getPeopleBanking } from '@/lib/people/people-banking';
+import {
+  BANK_PREFERRED_OPTIONS,
+  isBankPreferredTransitionAllowed,
+} from '@/lib/employee-payment-processors';
 import { createSupabaseServiceRoleClient } from '@/lib/supabase/server';
 
 export const dynamic = 'force-dynamic';
@@ -24,6 +28,12 @@ export const runtime = 'nodejs';
  * write different column sets.
  */
 const ALLOWED_FIELDS = [
+  // Send-from rail ("Bank Preferred"). Editable HERE because this route is
+  // already gated to the same roles that approve employee-initiated Bank
+  // Preferred changes (accounting | ceo | admin) — a direct accounting edit IS
+  // the approval. The WIRES lock is still enforced below against the LIVE
+  // stored value: a wires/null person can never be moved onto Hurupay/HiGlobe.
+  'bank_preferred',
   'preferred_processor',
   'bank_name',
   'account_holder_name',
@@ -46,6 +56,8 @@ const ALLOWED_FIELDS = [
 ] as const;
 const ALLOWED_PROCESSORS = new Set(['hurupay', 'wepay', 'higlobe', 'wise', 'jeeves', 'wires']);
 const ALLOWED_BANK_SLOTS = new Set(['primary', 'alternative']);
+/** Valid stored values for the send-from rail — the dropdown's processor ids. */
+const ALLOWED_BANK_PREFERRED = new Set<string>(BANK_PREFERRED_OPTIONS.map((o) => o.id));
 
 interface Body {
   patch?: Record<string, unknown>;
@@ -88,6 +100,9 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ email
     if (key === 'preferred_bank_slot' && trimmed != null && !ALLOWED_BANK_SLOTS.has(trimmed)) {
       return NextResponse.json({ ok: false, error: `Invalid bank slot: ${trimmed}` }, { status: 400 });
     }
+    if (key === 'bank_preferred' && trimmed != null && !ALLOWED_BANK_PREFERRED.has(trimmed as never)) {
+      return NextResponse.json({ ok: false, error: `Invalid Bank Preferred value: ${trimmed}` }, { status: 400 });
+    }
     update[key] = trimmed;
   }
   if (Object.keys(update).length === 0) {
@@ -118,6 +133,24 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ email
   // the known duplicate-email rows).
   const { row, error: rowErr } = await getEmployeeIdRowByEmail(email);
   if (rowErr) return NextResponse.json({ ok: false, error: rowErr }, { status: 500 });
+
+  // WIRES lock (same rule as the employee flow + approval PATCH): a person
+  // whose LIVE bank_preferred is wires-preferred (anything but exactly
+  // hurupay/higlobe, including null/legacy) can never be moved onto
+  // Hurupay/HiGlobe. Checked against the stored value, not the form's.
+  if (Object.prototype.hasOwnProperty.call(update, 'bank_preferred')) {
+    const current = row?.bank_preferred ?? null;
+    if (!isBankPreferredTransitionAllowed(current, update.bank_preferred)) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error:
+            'Blocked by the WIRES lock: a wires-preferred employee cannot be switched to Hurupay/HiGlobe.',
+        },
+        { status: 400 },
+      );
+    }
+  }
 
   const changedFields = Object.keys(update);
   // Snapshot BEFORE values from the resolved row for the masked before→after trail.

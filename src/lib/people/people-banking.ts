@@ -3,10 +3,28 @@ import 'server-only';
 import { normEmail } from '@/lib/email/norm-email';
 import { getEmployeeIdRowByEmail, type EmployeeIdRow } from '@/lib/supabase/employee-ids';
 import { getEmployeeMasterRecord } from '@/lib/supabase/employees';
+import { getEmployeeHourlyRateRowByEmail } from '@/lib/supabase/employee-hourly-rates';
+import {
+  resolveEffectivePayoutProcessor,
+  type PayoutLegacyExtras,
+} from '@/lib/employee/payout-completeness';
+import { isProcessorId, processorIdFromBankPreferredText } from '@/lib/employee-payment-processors';
 import { createSupabaseServiceRoleClient, createSupabaseServerClient } from '@/lib/supabase/server';
+
+/** Which precedence tier resolved the effective (Payment Dispatch) rail. */
+export type EffectiveProcessorSource = 'bank_preferred' | 'disbursement' | 'rates_sheet';
 
 /** Normalized payout details for one person, returned masked or in full. */
 export interface PeopleBanking {
+  /** Send-from rail ("Bank Preferred") — the processor Accounting pays OUT on.
+   *  Wins Payment Dispatch's routing precedence. Distinct from the receiving
+   *  account below; employee-initiated changes go through the approval gate. */
+  bank_preferred: string | null;
+  /** The rail Payment Dispatch actually routes this person on — bank_preferred
+   *  → preferred_processor → legacy rates-sheet cell (same resolver as PD). */
+  effective_processor: string | null;
+  /** Which tier resolved effective_processor (null when unrouted). */
+  effective_processor_source: EffectiveProcessorSource | null;
   preferred_processor: string | null;
   preferred_bank_slot: string | null;
   bank_name: string | null;
@@ -89,6 +107,9 @@ function maskBanking(b: PeopleBanking): PeopleBanking {
 
 function toBanking(row: EmployeeIdRow): PeopleBanking {
   return {
+    bank_preferred: row.bank_preferred,
+    effective_processor: null, // filled by getPeopleBanking (needs the legacy rates row)
+    effective_processor_source: null,
     preferred_processor: row.preferred_processor,
     preferred_bank_slot: row.preferred_bank_slot,
     bank_name: row.bank_name,
@@ -138,10 +159,45 @@ async function fetchBankSelfUpdatedAt(email: string): Promise<string | null> {
   }
 }
 
+/** An all-null record — lets a sheet-routed person with no employee_ids row
+ *  still carry their effective (Payment Dispatch) routing to the UI. */
+function emptyBanking(): PeopleBanking {
+  return {
+    bank_preferred: null,
+    effective_processor: null,
+    effective_processor_source: null,
+    preferred_processor: null,
+    preferred_bank_slot: null,
+    bank_name: null,
+    account_holder_name: null,
+    account_number: null,
+    routing_number: null,
+    swift_code: null,
+    full_address: null,
+    alt_bank_name: null,
+    alt_account_holder_name: null,
+    alt_account_number: null,
+    alt_routing_number: null,
+    hurupay_email: null,
+    wepay_email: null,
+    higlobe_email: null,
+    higlobe_account_name: null,
+    wise_email: null,
+    wise_tag: null,
+    phone_number: null,
+    bank_last_self_updated_at: null,
+    masked: false,
+  };
+}
+
 /**
  * One person's payout details. `reveal=false` (default) redacts account numbers,
  * SWIFT codes, processor emails and phone — only the People reveal endpoint (which
  * audit-logs the access) should pass `reveal=true`.
+ *
+ * Also resolves `effective_processor` — the rail Payment Dispatch routes this
+ * person on — with the SAME precedence and legacy rates-row fallback PD uses,
+ * so the People profile can never disagree with the dispatch queue's tab.
  */
 export async function getPeopleBanking(
   email: string,
@@ -149,9 +205,35 @@ export async function getPeopleBanking(
 ): Promise<{ banking: PeopleBanking | null; error: string | null }> {
   const { row, error } = await getEmployeeIdRowByEmail(email);
   if (error) return { banking: null, error };
-  if (!row) return { banking: null, error: null };
-  const full = toBanking(row);
-  full.bank_last_self_updated_at = await fetchBankSelfUpdatedAt(row.work_email ?? email);
+
+  // Legacy rates row (the `_current` view PD reads) — tier 3 of the routing
+  // precedence. Best-effort: a lookup failure only degrades the source label.
+  const { row: legacyRow } = await getEmployeeHourlyRateRowByEmail(row?.work_email ?? email).catch(
+    () => ({ row: null }),
+  );
+  const extras: PayoutLegacyExtras | undefined = legacyRow
+    ? { bankPreferredRaw: legacyRow.bank_preferred }
+    : undefined;
+  const effective = resolveEffectivePayoutProcessor(
+    (row ?? null) as unknown as Record<string, unknown> | null,
+    extras,
+  );
+  let source: EffectiveProcessorSource | null = null;
+  if (effective) {
+    const viaBankPreferred = processorIdFromBankPreferredText(row?.bank_preferred ?? null);
+    const disb = (row?.preferred_processor ?? '').trim().toLowerCase();
+    source = viaBankPreferred
+      ? 'bank_preferred'
+      : isProcessorId(disb)
+        ? 'disbursement'
+        : 'rates_sheet';
+  }
+
+  if (!row && !effective) return { banking: null, error: null };
+  const full = row ? toBanking(row) : emptyBanking();
+  full.effective_processor = effective;
+  full.effective_processor_source = source;
+  if (row) full.bank_last_self_updated_at = await fetchBankSelfUpdatedAt(row.work_email ?? email);
   return { banking: reveal ? full : maskBanking(full), error: null };
 }
 

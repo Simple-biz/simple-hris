@@ -2,8 +2,16 @@ import 'server-only';
 
 import { normEmail } from '@/lib/email/norm-email';
 import { getEmployeesForAuthorizedServerRoute } from '@/lib/supabase/employees';
-import { getEmployeeIds } from '@/lib/supabase/employee-ids';
-import { isPayoutComplete } from '@/lib/employee/payout-completeness';
+import { getEmployeeIds, type EmployeeIdRow } from '@/lib/supabase/employee-ids';
+import {
+  isPayoutComplete,
+  resolveEffectivePayoutProcessor,
+  type PayoutLegacyExtras,
+} from '@/lib/employee/payout-completeness';
+import {
+  getEmployeeHourlyRatesRows,
+  type EmployeeHourlyRateRow,
+} from '@/lib/supabase/employee-hourly-rates';
 import { createSupabaseServiceRoleClient, createSupabaseServerClient } from '@/lib/supabase/server';
 import { buildFxRates, phpPerUnit, type FxRates } from '@/lib/fx/currency-fx';
 import { listPayStructures } from '@/lib/supabase/pay-structures-db';
@@ -66,6 +74,9 @@ export interface PeopleRosterRow {
   location: string | null;
   rate: PeopleRate;
   hours: PeopleHours;
+  /** The rail Payment Dispatch actually routes this person on — resolved with
+   *  PD's precedence (bank_preferred → preferred_processor → legacy rates
+   *  cell), NOT the raw Disbursement pick. */
   processor: string | null;
   hasBanking: boolean;
 }
@@ -115,6 +126,10 @@ export interface PeopleRateContext {
   catalogIndex: CatalogRateIndex;
   /** email → sheet rate (PHP) from employee_hourly_rates. */
   rateByEmail: Map<string, { reg: number | null; ot: number | null }>;
+  /** email → current rates row — Payment Dispatch's legacy routing/details
+   *  fallback ("Bank Preferred" cell, sheet-side wallet emails). Same deduped
+   *  source PD's queue reads, so People resolves the SAME rail. */
+  legacyByEmail: Map<string, EmployeeHourlyRateRow>;
 }
 
 export async function loadPeopleRateContext(): Promise<PeopleRateContext> {
@@ -125,7 +140,11 @@ export async function loadPeopleRateContext(): Promise<PeopleRateContext> {
       ? supabase.from('app_settings').select('key,value').in('key', ['usd_to_php_rate', 'usd_to_cop_rate'])
       : Promise.resolve({ data: null }),
     listPayStructures(),
-    supabase ? supabase.from('employee_hourly_rates').select('*') : Promise.resolve({ data: null }),
+    // The same loader Payment Dispatch's bulk rates API uses: the deduped
+    // one-row-per-email current view, paginated past the PostgREST 1000-row
+    // cap. The previous raw select('*') here was silently truncated at 1000 of
+    // 22k+ history rows, so sheet rates AND legacy routing were incomplete.
+    getEmployeeHourlyRatesRows(),
   ]);
 
   const fxValues: Record<string, string | null> = {};
@@ -136,15 +155,20 @@ export async function loadPeopleRateContext(): Promise<PeopleRateContext> {
   const catalogIndex = buildCatalogRateIndex(payStructuresRes.structures);
 
   const rateByEmail = new Map<string, { reg: number | null; ot: number | null }>();
-  for (const r of (((ratesRes as { data: Record<string, unknown>[] | null }).data) ?? [])) {
-    const we = normEmail(r['Work Email'] as string | null);
-    const pe = normEmail(r['Personal Email'] as string | null);
-    const entry = { reg: parseRate(r['Regular Rate'] as string | number | null), ot: parseRate(r['OT Rate'] as string | number | null) };
-    if (we) rateByEmail.set(we, entry);
+  const legacyByEmail = new Map<string, EmployeeHourlyRateRow>();
+  for (const r of ratesRes.rows) {
+    const we = normEmail(r.work_email);
+    const pe = normEmail(r.personal_email);
+    const entry = { reg: parseRate(r.regular_rate), ot: parseRate(r.ot_rate) };
+    if (we) {
+      rateByEmail.set(we, entry);
+      legacyByEmail.set(we, r);
+    }
     if (pe && !rateByEmail.has(pe)) rateByEmail.set(pe, entry);
+    if (pe && !legacyByEmail.has(pe)) legacyByEmail.set(pe, r);
   }
 
-  return { fx, catalogIndex, rateByEmail };
+  return { fx, catalogIndex, rateByEmail, legacyByEmail };
 }
 
 /**
@@ -358,21 +382,16 @@ export async function buildPeopleRoster(scope: PeopleRosterScope = {}): Promise<
   ]);
   if (error) return { rows: [], sourceFile: null, summary: EMPTY_SUMMARY, range: null, error };
 
-  // employee_ids → processor + has-banking, keyed by every known email.
-  const idByEmail = new Map<string, { processor: string | null; hasBanking: boolean }>();
+  // employee_ids rows keyed by every known email — same collision rules as
+  // Payment Dispatch's buildIdsMap (useDispatchQueue.ts): work email last-wins,
+  // personal email only fills a free slot. Processor + has-banking are resolved
+  // per PERSON below so the legacy rates-row fallbacks can join in.
+  const idByEmail = new Map<string, EmployeeIdRow>();
   for (const r of idsRes.rows) {
-    // "Has banking" means the SAME thing payroll (and the employee's own portal
-    // nudge) means by payable: a preferred processor is set AND its required
-    // field(s) are filled — NOT merely "some field is non-empty". Reusing the
-    // shared isPayoutComplete keeps the People "Missing bank info" list exactly
-    // in sync with who payroll actually can't disburse to (a partial higlobe or
-    // no-processor-picked row correctly counts as missing).
-    const hasBanking = isPayoutComplete(r as unknown as Record<string, unknown>);
-    const info = { processor: r.preferred_processor ?? null, hasBanking };
-    for (const e of [r.work_email, r.personal_email]) {
-      const em = normEmail(e ?? '');
-      if (em) idByEmail.set(em, info);
-    }
+    const we = normEmail(r.work_email ?? '');
+    const pe = normEmail(r.personal_email ?? '');
+    if (we) idByEmail.set(we, r);
+    if (pe && !idByEmail.has(pe)) idByEmail.set(pe, r);
   }
 
   const today = new Date();
@@ -442,7 +461,26 @@ export async function buildPeopleRoster(scope: PeopleRosterScope = {}): Promise<
       };
     }
 
-    const idInfo = aliases.map((em) => idByEmail.get(em)).find(Boolean) ?? null;
+    const idsRow = aliases.map((em) => idByEmail.get(em)).find(Boolean) ?? null;
+    // Payment Dispatch parity: the displayed processor is the rail PD actually
+    // routes on (bank_preferred → preferred_processor → legacy rates cell), and
+    // "has banking" is judged with the SAME legacy rates-row fallbacks PD uses
+    // to backfill wallet emails. Resolving with only preferred_processor (the
+    // old behavior) showed no/along-the-wrong-rail chips for ~170 people whose
+    // routing lives in bank_preferred or the sheet cell, and false-flagged
+    // sheet-routed people as "Missing bank info".
+    const legacyRow = aliases.map((em) => rateCtx.legacyByEmail.get(em)).find(Boolean) ?? null;
+    const extras: PayoutLegacyExtras | undefined = legacyRow
+      ? {
+          bankPreferredRaw: legacyRow.bank_preferred,
+          hurupayEmail: legacyRow.hurupay_email,
+          higlobeEmail: legacyRow.higlobe_email,
+          higlobeAccountName: legacyRow.higlobe_account_name,
+        }
+      : undefined;
+    const idsRecord = idsRow as unknown as Record<string, unknown> | null;
+    const effectiveProcessor = resolveEffectivePayoutProcessor(idsRecord, extras);
+    const hasBanking = isPayoutComplete(idsRecord, extras);
 
     // Extra work-email aliases (deduped, non-empty) minus the primary — for the
     // profile "cabinet" view. All of these come from the employee record already
@@ -475,8 +513,8 @@ export async function buildPeopleRoster(scope: PeopleRosterScope = {}): Promise<
       location: e.location ?? null,
       rate,
       hours,
-      processor: idInfo?.processor ?? null,
-      hasBanking: idInfo?.hasBanking ?? false,
+      processor: effectiveProcessor,
+      hasBanking,
     };
   });
 
