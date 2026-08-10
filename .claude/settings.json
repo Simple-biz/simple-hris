@@ -805,7 +805,15 @@
       "Bash(awk -F'|' 'length\\($3\\)<=22 && $3 !~ /:/ {print \"  \"$1\"  \"$2\"  \"$3}')",
       "PowerShell(git add -- src/components/manager/DeptBonusCalculator.tsx)",
       "PowerShell(git commit -F \"C:\\\\Users\\\\Kane\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-Kane-Desktop-simple-hris\\\\8186d54a-c118-42e6-be58-9544b9de3716\\\\scratchpad\\\\commitmsg.txt\")",
-      "Bash(awk -F'|' 'NR>=13 && NF>1 {n=NF-2; print NR\": \"n\" columns\"}' docs/features/INDEX.md)"
+      "Bash(awk -F'|' 'NR>=13 && NF>1 {n=NF-2; print NR\": \"n\" columns\"}' docs/features/INDEX.md)",
+      "Bash(grep -c ',\"yes\"$' /c/Users/Kane/Desktop/work-log-aug04-15-2026.csv)",
+      "Bash(grep ',\"yes\"$' /c/Users/Kane/Desktop/work-log-aug04-15-2026.csv)",
+      "Bash(awk -F',' '{print \"  \"$1\" \"$5\" \"$7}')",
+      "Bash(node --import tsx --test src/lib/payroll/tech-bonus-week.test.ts)",
+      "Bash(node --import tsx --test src/lib/hr/offboard-escalation.test.ts src/lib/hr/offboard-reasons.test.ts)",
+      "Bash(node \"C:/Users/Kane/AppData/Local/Temp/claude/c--Users-Kane-Desktop-simple-hris/3b9a7dcd-b7cb-4e28-ad0e-3bd5a708fd5e/scratchpad/probe-tech-and-aiapi.mjs\")",
+      "Bash(node ./probe-tech-and-aiapi.tmp.mjs)",
+      "Bash(node ./probe7.tmp.mjs)"
     ],
     "additionalDirectories": [
       "\\tmp",
