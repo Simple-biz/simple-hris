@@ -730,6 +730,9 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
           value: technologyBonusAmount > 0 ? `+${formatPHP(technologyBonusAmount)}` : formatPHP(0),
         },
       ];
+      if (kpiBonusAmount > 0) {
+        rows.push({ label: 'KPI bonus', value: `+${formatPHP(kpiBonusAmount)}` });
+      }
       if (mesaDeductionPhp > 0) {
         rows.push({ label: 'MESA contribution', value: `−${formatPHP(mesaDeductionPhp)}` });
       }
@@ -3822,6 +3825,18 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
                         {technologyBonusAmount > 0 ? `+${formatPHP(technologyBonusAmount)}` : formatPHP(0)}
                       </div>
                     </div>
+                    {/* KPI / dept bonus — same figure the ribbon shows (published snapshot
+                        when available, else this week's ready/locked KPI Calculator total). */}
+                    {kpiBonusAmount > 0 && (
+                      <div className="rounded-lg border border-violet-200/70 bg-violet-50/50 px-2.5 py-2 dark:border-violet-900/40 dark:bg-violet-950/20">
+                        <div className="text-[9px] font-semibold uppercase tracking-wide text-violet-600/80 dark:text-violet-400/80">
+                          KPI bonus
+                        </div>
+                        <div className="mt-0.5 tabular-nums text-violet-800 dark:text-violet-300">
+                          +{formatPHP(kpiBonusAmount)}
+                        </div>
+                      </div>
+                    )}
                     {mesaDeductionPhp > 0 && (
                       <div className="rounded-lg border border-teal-200/70 bg-teal-50/50 px-2.5 py-2 dark:border-teal-900/40 dark:bg-teal-950/20">
                         <div className="text-[9px] font-semibold uppercase tracking-wide text-teal-600/80 dark:text-teal-400/80">
