@@ -1,6 +1,6 @@
 ---
 name: hardening
-description: Use before editing code on any surface that has a governing doc — payroll, wizard, dispatch, paystubs, MESA, HSL rates, offboarding, bank routing, onboarding, PAB, catalog, roster. Reads the governing docs and memory FIRST, cites the rules it found, and hard-stops with a precise either/or when the request contradicts what is documented. When the user says harden, tighten, lock down, close the gaps, plug the holes, shore up, bulletproof, prevent regressions, or make sure X cannot happen again, it additionally enumerates the failure classes being closed and forbids fixing anything by loosening a type, guard, validation, limit, or test. Correctness and invariants only — for visual or frontend polish use the impeccable skill.
+description: Use before any non-trivial code edit — e.g. payroll, wizard, dispatch, paystubs, MESA, HSL rates, offboarding, bank routing, onboarding, PAB, catalog, roster, and anywhere else a governing doc might exist. Reads the governing docs and memory FIRST, cites the rules it found, and hard-stops with a precise either/or when the request contradicts what is documented. When the user says harden, tighten, lock down, close the gaps, plug the holes, shore up, bulletproof, prevent regressions, or make sure X cannot happen again, it additionally enumerates the failure classes being closed and forbids fixing anything by loosening a type, guard, validation, limit, or test. Correctness and invariants only — for visual or frontend polish use the impeccable skill.
 user-invocable: true
 argument-hint: "[target — file, feature, or surface]"
 ---
@@ -33,6 +33,9 @@ Still nothing → say `READ none — no governing doc for <surface>` out loud an
 **5 — Brief.** Post it. Always, even when clean.
 - Zero contradictions → post the brief and proceed. No confirmation round-trip.
 - One or more → **hard stop.** One precise question each.
+- An `unaddressed` rule on a money, routing, or deletion path is not a footnote — decide it explicitly in the brief and write the resolution back to the doc in the same commit.
+
+**6 — Close scope.** Before committing, diff the changed files against `SCOPE`'s `in:` list — anything outside it is a scope change and gets said out loud.
 
 ## The brief
 

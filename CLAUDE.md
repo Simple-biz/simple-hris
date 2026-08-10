@@ -8,8 +8,9 @@ and stops on contradictions instead of picking a side.
 
 These words additionally demand tightening semantics — *harden, tighten, lock down,
 close the gaps, plug the holes, shore up, bulletproof, prevent regressions, make sure X
-can't happen again*. They mean: enumerate the failure classes, prove each one closed, and
-**never loosen** a type, guard, validation, limit, or test to make an error go away.
+can't happen again* — see `.claude/skills/hardening/SKILL.md` for the full list. They mean:
+enumerate the failure classes, prove each one closed, and **never loosen** a type, guard,
+validation, limit, or test to make an error go away.
 If the only way to satisfy the ask is to loosen something, stop and ask.
 
 ## Git
