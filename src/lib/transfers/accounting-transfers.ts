@@ -5,6 +5,7 @@ import {
 import { listPayStructures } from '@/lib/supabase/pay-structures-db';
 import { buildCatalogRateIndex, type CatalogRateIndex } from '@/lib/payroll/resolve-rate';
 import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
+import { hslSubKeyFromRaw, hslSubDeptLabel } from '@/lib/departments/hsl-subdept';
 import type { PayCurrency, PayStructure } from '@/lib/payment-catalog/pay-structure';
 
 /** The pay-rate change a transfer produces, read from the Payment Catalog: the
@@ -48,6 +49,14 @@ function deptStructure(
   deptRaw: string | null | undefined,
 ): PayStructure | null {
   if (!deptRaw) return null;
+  // Sub-department base first — MUST mirror resolveDeptCatalogRate, or a move
+  // between two HSL sub-teams (or in/out of one) would report the parent's rate
+  // on both sides and read as "no change" when the rate genuinely moves.
+  const subKey = hslSubKeyFromRaw(deptRaw);
+  if (subKey) {
+    const sub = index.byDeptKey.get(hslSubDeptLabel(subKey));
+    if (sub) return sub;
+  }
   // Accept either a raw department name or an already-canonical key.
   const key = normalizeDeptToKey(deptRaw) ?? (index.byDeptKey.has(deptRaw) ? deptRaw : null);
   if (!key) return null;

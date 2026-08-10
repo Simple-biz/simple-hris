@@ -1,14 +1,19 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  HSL_FAMILY_DEPT_LABEL,
   hslSubDeptLabel,
   hslSubKeyFromRaw,
   isHslSubDeptLabel,
   isHslFamilyLabel,
   formatDeptLabel,
+  collapseHslFamilyLabel,
+  isPlaceableDeptLabel,
+  hslSubDeptOptions,
   deptCellMatchesSource,
   deptCellSatisfiesTarget,
 } from './hsl-subdept';
+import { HSL_DEPT_KEYS } from '@/lib/hsl-bonus/schema';
 
 test('hslSubKeyFromRaw parses canonical and sloppy labels', () => {
   assert.equal(hslSubKeyFromRaw('hsl:intake_specialist'), 'intake_specialist');
@@ -49,6 +54,70 @@ test('formatDeptLabel prettifies sub-teams and passes everything else through', 
   assert.equal(formatDeptLabel(null), '');
   // An unknown sub-key has no display name — show the family, not the raw slug.
   assert.equal(formatDeptLabel('hsl:not_a_team'), 'HSL — not_a_team');
+});
+
+test('collapseHslFamilyLabel leaves exactly ONE HSL entry in a picker list', () => {
+  // Every label the live roster carries collapses to the same single entry.
+  for (const raw of [
+    'HSL',
+    'hsl',
+    'Hogan Smith Law',
+    'hogan_smith_law',
+    'hsl:intake_specialist',
+    'hsl:filing_specialist',
+    'hsl:case_managers',
+    'hsl:attestation',
+    'hsl:not_a_team',
+  ]) {
+    assert.equal(collapseHslFamilyLabel(raw), HSL_FAMILY_DEPT_LABEL);
+  }
+  // Non-HSL labels are untouched — this must never become a general rewriter.
+  assert.equal(collapseHslFamilyLabel('Lead Gen'), 'Lead Gen');
+  assert.equal(collapseHslFamilyLabel('  Callback Team '), 'Callback Team');
+  assert.equal(collapseHslFamilyLabel('Sales Assistant'), 'Sales Assistant');
+  assert.equal(collapseHslFamilyLabel(null), '');
+
+  // The whole point: a roster holding five HSL spellings yields one option.
+  const roster = ['HSL', 'hsl:intake_specialist', 'hsl:attestation', 'Lead Gen', 'Hogan Smith Law'];
+  const options = [...new Set(roster.map(collapseHslFamilyLabel))];
+  assert.deepEqual(options, ['HSL', 'Lead Gen']);
+});
+
+test('isPlaceableDeptLabel refuses a bare HSL but accepts every sub-team', () => {
+  // The whole point of the two-step: "HSL" alone is not a placement.
+  assert.equal(isPlaceableDeptLabel('HSL'), false);
+  assert.equal(isPlaceableDeptLabel('hsl'), false);
+  assert.equal(isPlaceableDeptLabel('Hogan Smith Law'), false);
+  assert.equal(isPlaceableDeptLabel('hogan_smith_law'), false);
+  assert.equal(isPlaceableDeptLabel(''), false);
+  assert.equal(isPlaceableDeptLabel('   '), false);
+  assert.equal(isPlaceableDeptLabel(null), false);
+  for (const key of HSL_DEPT_KEYS) {
+    assert.ok(isPlaceableDeptLabel(hslSubDeptLabel(key)), `hsl:${key} must be placeable`);
+  }
+  // Case/whitespace sloppiness still counts as a real sub-team.
+  assert.ok(isPlaceableDeptLabel(' HSL:Intake_Specialist '));
+  // An unknown sub-key is NOT placeable — it would resolve no rate row and is
+  // almost certainly a typo or a stale access grant leaking in.
+  assert.equal(isPlaceableDeptLabel('hsl:not_a_team'), false);
+  // Every non-HSL department is unaffected.
+  assert.ok(isPlaceableDeptLabel('Lead Gen'));
+  assert.ok(isPlaceableDeptLabel('Callback Team'));
+  assert.ok(isPlaceableDeptLabel('Executive Assistants'));
+});
+
+test('hslSubDeptOptions offers every sub-team, canonically valued and prettily labeled', () => {
+  const opts = hslSubDeptOptions();
+  assert.equal(opts.length, HSL_DEPT_KEYS.length);
+  // Values are the canonical cell labels; each round-trips back to its key.
+  for (const o of opts) {
+    assert.ok(isHslSubDeptLabel(o.value), `${o.value} must be a canonical hsl:<key> label`);
+    assert.ok(o.label.startsWith('HSL — '), `${o.label} must use the em-dash display form`);
+    assert.equal(o.label.includes('hsl:'), false, 'no raw slug may reach a human');
+  }
+  // No duplicate values, so a <select> can key on them.
+  assert.equal(new Set(opts.map((o) => o.value)).size, opts.length);
+  assert.ok(opts.some((o) => o.value === 'hsl:intake_specialist'));
 });
 
 test('deptCellMatchesSource is HSL-family-aware and synonym-aware', () => {

@@ -60,6 +60,7 @@ import { DatePicker } from '@/components/ui/date-picker';
 import { Input } from '@/components/ui/input';
 import { DEPARTMENTS } from '@/lib/payroll/department-bonus';
 import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
+import { hslSubDeptOptions } from '@/lib/departments/hsl-subdept';
 import type { InitialAccountingData } from '@/lib/accounting/prefetch';
 import { getSupabaseBrowserClient } from '@/lib/supabase/browser';
 import {
@@ -1967,10 +1968,24 @@ function PayStructureTab({
   onUpsert: (s: PayStructure, effectiveDate?: string) => void;
   onDelete: (id: string) => void;
 }) {
-  // Built-in payroll departments first, then the custom ones (already A-Z).
+  // Built-in payroll departments first, then the HSL sub-teams, then the custom
+  // ones (already A-Z).
+  //
+  // HSL sub-teams each carry their OWN base rate under the canonical
+  // `hsl:<key>` department key — the same string the master Department cell
+  // holds — which `resolveDeptCatalogRate` resolves BEFORE collapsing to the
+  // `hogan_smith_law` parent. Without these rail entries there is no way to set
+  // a sub-team rate at all, so every sub-labeled person silently rides the
+  // parent base. Listed right after the built-ins so they read as sitting under
+  // Hogan Smith Law.
+  //
+  // NOTE: deliberately NOT added to the Bonus Assignments rail — HSL
+  // dept-scoped bonuses stay keyed on the parent `hogan_smith_law`, and
+  // splitting them per sub-team would stop them reaching anyone.
   const allDepts = useMemo(
     () => [
       ...DEPARTMENTS.map((d) => ({ key: d.key, name: d.name })),
+      ...hslSubDeptOptions().map((o) => ({ key: o.value, name: o.label })),
       ...extraDepartments,
     ],
     [extraDepartments],

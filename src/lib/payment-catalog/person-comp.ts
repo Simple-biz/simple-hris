@@ -24,6 +24,7 @@ import type { PayCurrency, PayStructure } from '@/lib/payment-catalog/pay-struct
 import type { BonusAssignment } from '@/lib/bonus-catalog/types';
 import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
 import { slugifyDeptKey } from '@/lib/departments/registry';
+import { hslSubKeyFromRaw, hslSubDeptLabel } from '@/lib/departments/hsl-subdept';
 
 /** Rates sheet row for one person — the engine's middle rate layer. */
 export type SheetRate = { reg: number | null; ot: number | null };
@@ -127,7 +128,20 @@ export function computePersonComp(person: PersonCompSubject, idx: PersonCompInde
   // last resort (only blank/punctuation-only labels resolve to nothing).
   const deptKey =
     resolveRosterDeptKey(person.department, idx.customDepartments) ?? override?.departmentKey ?? null;
-  const deptBase = deptKey ? idx.deptStructByKey.get(deptKey) : undefined;
+
+  // MUST mirror resolveDeptCatalogRate: a namespaced sub-department label
+  // (`hsl:intake_specialist`) carries its OWN base rate and is resolved BEFORE
+  // the collapse to the parent key, with the parent as fallback. This card's
+  // whole contract is that it states what the engine will pay — showing the
+  // parent ₱225 for someone the engine prices off their sub-team rate is
+  // exactly the misstatement the Search tab was built to avoid.
+  //
+  // `deptKey` deliberately stays the PARENT key: it also keys dept-scoped BONUS
+  // assignments below, and HSL bonuses are assigned on `hogan_smith_law`.
+  const subKey = hslSubKeyFromRaw(person.department);
+  const deptBase =
+    (subKey ? idx.deptStructByKey.get(hslSubDeptLabel(subKey)) : undefined) ??
+    (deptKey ? idx.deptStructByKey.get(deptKey) : undefined);
 
   // Engine precedence (current-pay.ts): the individual catalog rate overrides
   // everything; the dept base applies only when there is NO sheet rate.

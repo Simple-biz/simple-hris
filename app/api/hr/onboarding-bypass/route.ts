@@ -12,6 +12,11 @@ import {
 } from "@/lib/supabase/hr-pending-employees";
 import { listPayStructures } from "@/lib/supabase/pay-structures-db";
 import { DEPARTMENTS } from "@/lib/payroll/department-bonus";
+import {
+  hslSubKeyFromRaw,
+  isHslFamilyLabel,
+  isPlaceableDeptLabel,
+} from "@/lib/departments/hsl-subdept";
 import { insertAuditLog } from "@/lib/supabase/audit-log";
 
 export const dynamic = "force-dynamic";
@@ -77,6 +82,21 @@ export async function POST(req: Request) {
   if (!department) {
     return NextResponse.json({ error: "Department is required." }, { status: 400 });
   }
+  // HSL is one department with sub-teams, and the SUB-TEAM carries the base rate
+  // (docs/features/hsl-subdepartments.md). A bare "HSL" / "Hogan Smith Law" would
+  // place the hire on the parent fallback with nobody having chosen it, so this
+  // route — which writes the master list AND the master Sheet — refuses it rather
+  // than trusting the client to have shown the selector.
+  if (!isPlaceableDeptLabel(department)) {
+    return NextResponse.json(
+      {
+        error: isHslFamilyLabel(department)
+          ? "Pick an HSL sub-department — it sets the base rate."
+          : "Department is required.",
+      },
+      { status: 400 },
+    );
+  }
   if (!EMAIL_RE.test(workEmail)) {
     return NextResponse.json({ error: "Enter a valid work email." }, { status: 400 });
   }
@@ -136,12 +156,22 @@ export async function POST(req: Request) {
     const deptKey =
       DEPARTMENTS.find((d) => d.name.trim().toLowerCase() === deptLc)?.key ?? null;
     const { structures } = await listPayStructures();
-    const match = structures.find((s) => {
-      if (s.scope !== "department") return false;
-      if (deptKey && s.departmentKey === deptKey) return true;
-      const nm = DEPARTMENTS.find((d) => d.key === s.departmentKey)?.name ?? s.departmentKey;
-      return nm.trim().toLowerCase() === deptLc;
-    });
+    const deptStructures = structures.filter((s) => s.scope === "department");
+    const byKey = (k: string) =>
+      deptStructures.find((s) => s.departmentKey.trim().toLowerCase() === k);
+    // HSL precedence, mirroring resolveDeptCatalogRate: the chosen SUB-team's own
+    // base rate first, then the parent as fallback. Without the parent leg a
+    // sub-team Accounting hasn't priced yet would seed a null rate, and a plain
+    // "HSL" label never matched at all (the name map holds "Hogan Smith Law").
+    const subLabel = hslSubKeyFromRaw(department) ? deptLc : null;
+    const match =
+      (subLabel ? byKey(subLabel) : undefined) ??
+      (isHslFamilyLabel(department) ? byKey("hogan_smith_law") : undefined) ??
+      deptStructures.find((s) => {
+        if (deptKey && s.departmentKey === deptKey) return true;
+        const nm = DEPARTMENTS.find((d) => d.key === s.departmentKey)?.name ?? s.departmentKey;
+        return nm.trim().toLowerCase() === deptLc;
+      });
     if (match) {
       regularRate = String(match.regularRate);
       otRate = match.otRate != null ? String(match.otRate) : null;

@@ -105,6 +105,14 @@ export async function getDepartmentRateSummaries(): Promise<{
     }
     for (const s of structures) {
       if (s.scope !== "department") continue;
+      // HSL sub-team structures (`hsl:<key>`) deliberately keep their RAW key as
+      // the name, so the entry keys on the canonical master-list cell label.
+      // HR's onboarding dialogs use this `department` field purely as a lookup
+      // key for the compensation checkmark (never displayed), and the sub-team
+      // selector's value IS that canonical label — so a sub-team with its own
+      // base rate reads Ready, while one without correctly reads not-ready
+      // instead of borrowing the parent's checkmark. Prettifying to
+      // "HSL — Intake Specialist" here would silently break that lookup.
       const name = deptName.get(s.departmentKey) ?? s.departmentKey;
       const key = name.trim().toLowerCase();
       const prior = byName.get(key);

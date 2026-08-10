@@ -8,7 +8,11 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { planDepartmentApply, type CandidateMasterRow } from './department-transfer-requests';
+import {
+  planDepartmentApply,
+  managerOwnsSourceDept,
+  type CandidateMasterRow,
+} from './department-transfer-requests';
 
 test('clean path: employee still in source dept -> move that row only', () => {
   const rows: CandidateMasterRow[] = [
@@ -119,4 +123,58 @@ test('blank work email in source cannot collide -> moves normally', () => {
     moveIds: [1],
     deleteIds: [],
   });
+});
+
+// ── managerOwnsSourceDept — who sees a release request in their consent queue ──
+// The master Department cell carries `hsl:<key>`, so a raw case-insensitive
+// compare left sub-team requests with NO owner: nobody could release them.
+
+test('managerOwnsSourceDept: exact match on any ordinary department', () => {
+  assert.ok(managerOwnsSourceDept(['Lead Gen'], 'lead gen'));
+  assert.ok(managerOwnsSourceDept(['Lead Gen', 'QC'], 'QC'));
+  assert.equal(managerOwnsSourceDept(['Lead Gen'], 'QC'), false);
+  assert.equal(managerOwnsSourceDept([], 'Lead Gen'), false);
+  assert.equal(managerOwnsSourceDept(['Lead Gen'], ''), false);
+  assert.equal(managerOwnsSourceDept(['  '], 'Lead Gen'), false);
+});
+
+test('managerOwnsSourceDept: a PARENT HSL grant owns every family spelling', () => {
+  for (const grant of ['Hogan Smith Law', 'HSL', 'hogan_smith_law']) {
+    for (const from of [
+      'HSL',
+      'Hogan Smith Law',
+      'hogan_smith_law',
+      'hsl:intake_specialist',
+      'hsl:filing_specialist',
+      'hsl:case_managers',
+      'hsl:attestation',
+    ]) {
+      assert.ok(
+        managerOwnsSourceDept([grant], from),
+        `grant "${grant}" must own a release out of "${from}"`,
+      );
+    }
+  }
+});
+
+test('managerOwnsSourceDept: a SUB-team grant owns only its own sub-team', () => {
+  assert.ok(managerOwnsSourceDept(['hsl:intake_specialist'], 'hsl:intake_specialist'));
+  // Label-casing variants of the same sub-team still match.
+  assert.ok(managerOwnsSourceDept(['hsl:intake_specialist'], 'HSL:Intake_Specialist'));
+  // …but never a sibling, and never the whole family: a sub-team TL is not the
+  // HSL owner and must not be handed other teams' release decisions.
+  assert.equal(managerOwnsSourceDept(['hsl:intake_specialist'], 'hsl:collections'), false);
+  assert.equal(managerOwnsSourceDept(['hsl:intake_specialist'], 'HSL'), false);
+  assert.equal(managerOwnsSourceDept(['hsl:intake_specialist'], 'Hogan Smith Law'), false);
+  // A non-HSL grant never picks up HSL work.
+  assert.equal(managerOwnsSourceDept(['Lead Gen'], 'hsl:intake_specialist'), false);
+});
+
+test('managerOwnsSourceDept: mixed grant lists take the union', () => {
+  const grants = ['Lead Gen', 'hsl:filing_specialist'];
+  assert.ok(managerOwnsSourceDept(grants, 'Lead Gen'));
+  assert.ok(managerOwnsSourceDept(grants, 'hsl:filing_specialist'));
+  assert.equal(managerOwnsSourceDept(grants, 'hsl:intake_specialist'), false);
+  // Adding the parent grant widens it to the whole family.
+  assert.ok(managerOwnsSourceDept([...grants, 'HSL'], 'hsl:intake_specialist'));
 });

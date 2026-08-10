@@ -17,6 +17,11 @@ import { createWorkspaceAccount, verifyWorkspaceAccount } from "@/lib/hr/workspa
 import { listPayStructures } from "@/lib/supabase/pay-structures-db";
 import { DEPARTMENTS } from "@/lib/payroll/department-bonus";
 import {
+  hslSubKeyFromRaw,
+  isHslFamilyLabel,
+  isPlaceableDeptLabel,
+} from "@/lib/departments/hsl-subdept";
+import {
   consumeAvailableLicenses,
   isLicenseAutoCountConfigured,
 } from "@/lib/google-workspace/licenses";
@@ -101,6 +106,16 @@ export async function POST(
   if (!personalEmail) {
     return NextResponse.json({ error: "This submission has no personal email." }, { status: 400 });
   }
+  // HSL is one department; the SUB-TEAM carries the base rate, so a bare "HSL"
+  // (including one inherited from `invite_department`, which is only asked for
+  // pay-plan matching) is not a placement. See
+  // docs/features/hsl-subdepartments.md.
+  if (isHslFamilyLabel(department) && !isPlaceableDeptLabel(department)) {
+    return NextResponse.json(
+      { error: "Pick an HSL sub-department — it sets the base rate." },
+      { status: 400 },
+    );
+  }
   if (!department) {
     return NextResponse.json(
       { error: "A department is required to stage this hire." },
@@ -157,12 +172,21 @@ export async function POST(
     const deptLc = department.toLowerCase();
     const deptKey = DEPARTMENTS.find((d) => d.name.trim().toLowerCase() === deptLc)?.key ?? null;
     const { structures } = await listPayStructures();
-    const match = structures.find((s) => {
-      if (s.scope !== "department") return false;
-      if (deptKey && s.departmentKey === deptKey) return true;
-      const name = DEPARTMENTS.find((d) => d.key === s.departmentKey)?.name ?? s.departmentKey;
-      return name.trim().toLowerCase() === deptLc;
-    });
+    const deptStructures = structures.filter((s) => s.scope === "department");
+    const byKey = (k: string) =>
+      deptStructures.find((s) => s.departmentKey.trim().toLowerCase() === k);
+    // HSL precedence, mirroring resolveDeptCatalogRate: the chosen SUB-team's own
+    // base rate first, then the parent as fallback (same chain as
+    // onboarding-bypass — keep the two in step).
+    const subLabel = hslSubKeyFromRaw(department) ? deptLc : null;
+    const match =
+      (subLabel ? byKey(subLabel) : undefined) ??
+      (isHslFamilyLabel(department) ? byKey("hogan_smith_law") : undefined) ??
+      deptStructures.find((s) => {
+        if (deptKey && s.departmentKey === deptKey) return true;
+        const name = DEPARTMENTS.find((d) => d.key === s.departmentKey)?.name ?? s.departmentKey;
+        return name.trim().toLowerCase() === deptLc;
+      });
     if (match) {
       catalogRegular = String(match.regularRate);
       catalogOt = match.otRate != null ? String(match.otRate) : null;

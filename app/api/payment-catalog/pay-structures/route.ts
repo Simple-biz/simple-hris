@@ -23,6 +23,7 @@ import { createSupabaseServiceRoleClient } from '@/lib/supabase/server';
 import { normEmail } from '@/lib/email/norm-email';
 import { updateEmployeeRateInSheet } from '@/lib/google-sheets/update-rates-sheet';
 import { updateHslPayPlanRate } from '@/lib/google-sheets/update-hsl-pay-plan-sheet';
+import { isHslSubDeptLabel } from '@/lib/departments/hsl-subdept';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -117,7 +118,12 @@ async function syncRateHistory(
     // Hogan agents only. Surgical (matched by Email; never touches the curated
     // KPI/Scoreboard/Notes columns). Gated on department so non-Hogan saves don't
     // pay to read the large Hogan sheet for a guaranteed no-op.
-    if (s.departmentKey === HOGAN_DEPT_KEY) {
+    //
+    // An HSL SUB-TEAM key (`hsl:intake_specialist`, …) is still Hogan: since the
+    // Pay Structure rail lists the sub-teams, an individual rate can now be saved
+    // while a sub-team is selected, and a bare `=== HOGAN_DEPT_KEY` test would
+    // silently stop mirroring it to the Pay Plan sheet.
+    if (s.departmentKey === HOGAN_DEPT_KEY || isHslSubDeptLabel(s.departmentKey)) {
       void updateHslPayPlanRate({
         workEmail: email,
         regularRate: s.regularRate,

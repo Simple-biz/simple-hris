@@ -56,6 +56,7 @@ import { useLiveRefresh } from '@/hooks/useLiveRefresh';
 import { getHrTabCache, hasHrTabCache, setHrTabCache, HR_TAB_CACHE_KEYS } from '@/lib/hr/tab-cache';
 import { normEmail } from '@/lib/email/norm-email';
 import { cn } from '@/lib/utils';
+import { collapseHslFamilyLabel, formatDeptLabel } from '@/lib/departments/hsl-subdept';
 import { usePresenceDetails, type PresenceDetail } from '@/components/presence/PresenceProvider';
 import { dashboardLabelForPathname } from '@/lib/presence/page-label';
 import { formatLastSeen, TeamAvatar } from '@/components/team/team-ui';
@@ -293,8 +294,11 @@ const RosterCard = memo(function RosterCard({
           </p>
         </div>
         {row.department && (
-          <span className="max-w-[45%] shrink-0 truncate rounded-full border border-zinc-200 bg-zinc-50 px-2 py-0.5 text-[10px] font-medium text-zinc-600 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300">
-            {row.department}
+          <span
+            title={row.department}
+            className="max-w-[45%] shrink-0 truncate rounded-full border border-zinc-200 bg-zinc-50 px-2 py-0.5 text-[10px] font-medium text-zinc-600 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300"
+          >
+            {formatDeptLabel(row.department)}
           </span>
         )}
       </div>
@@ -378,8 +382,12 @@ const RosterRow = memo(function RosterRow({
           </div>
         </div>
       </td>
-      <td data-label="Dept" className="px-4 py-2.5 text-sm text-zinc-700 dark:text-zinc-300">
-        {row.department ?? EM}
+      <td
+        data-label="Dept"
+        title={row.department ?? undefined}
+        className="px-4 py-2.5 text-sm text-zinc-700 dark:text-zinc-300"
+      >
+        {formatDeptLabel(row.department) || EM}
       </td>
       <td data-label="Work email" className="px-4 py-2.5 font-mono text-xs text-zinc-600 dark:text-zinc-300">
         {row.work_email ?? EM}
@@ -492,8 +500,11 @@ function EmployeeDetailDialog({ entry, onClose }: { entry: RosterEntry | null; o
               </p>
               <div className="mt-2 flex flex-wrap items-center gap-1.5">
                 {row?.department && (
-                  <span className="rounded-full border border-zinc-200 bg-zinc-50 px-2 py-0.5 text-[10px] font-medium text-zinc-600 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300">
-                    {row.department}
+                  <span
+                    title={row.department}
+                    className="rounded-full border border-zinc-200 bg-zinc-50 px-2 py-0.5 text-[10px] font-medium text-zinc-600 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300"
+                  >
+                    {formatDeptLabel(row.department)}
                   </span>
                 )}
                 <span
@@ -517,7 +528,7 @@ function EmployeeDetailDialog({ entry, onClose }: { entry: RosterEntry | null; o
 
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
           <DetailField icon={IdCard} label="Employee ID" value={row?.employee_id} mono />
-          <DetailField icon={Building2} label="Department" value={row?.department} />
+          <DetailField icon={Building2} label="Department" value={formatDeptLabel(row?.department) || null} />
           <DetailField icon={Mail} label="Work email" value={row?.work_email} mono />
           <DetailField icon={Mail} label="Personal email" value={row?.personal_email} mono />
           {alternateEmails && <DetailField icon={Mail} label="Alternate emails" value={alternateEmails} mono />}
@@ -1134,7 +1145,11 @@ export default function HrGlobalMasterList() {
     () =>
       roster.map((r) => ({
         r,
-        dept: (r.department ?? '').trim(),
+        // HSL is ONE department here: the cell may read `hsl:intake_specialist`,
+        // but the Dept filter offers a single "HSL" that matches the whole family.
+        // The raw label stays in `hay` below, so searching "intake" still finds
+        // them, and the EXPORT keeps the literal cell (sheet-vs-DB forensics).
+        dept: collapseHslFamilyLabel(r.department),
         startIso: toIsoDate(r.start_date),
         hay: [r.name, r.work_email, r.personal_email, r.department, r.employee_id]
           .filter(Boolean)
@@ -1315,7 +1330,12 @@ export default function HrGlobalMasterList() {
               </p>
             </div>
             <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
-              <DeptFilter rows={roster} getDept={(r) => r.department} value={dept} onChange={handleDeptChange} />
+              <DeptFilter
+                rows={roster}
+                getDept={(r) => collapseHslFamilyLabel(r.department)}
+                value={dept}
+                onChange={handleDeptChange}
+              />
               <RosterSearch
                 value={search}
                 onChange={handleSearchChange}

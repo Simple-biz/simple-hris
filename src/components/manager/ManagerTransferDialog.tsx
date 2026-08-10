@@ -15,7 +15,16 @@ import { Button } from '@/components/ui/button';
 import { DatePicker } from '@/components/ui/date-picker';
 import { SmoothSelect } from '@/components/ui/smooth-select';
 import { cn } from '@/lib/utils';
-import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
+import {
+  deptCellSatisfiesTarget,
+  formatDeptLabel,
+  hslSubDeptLabel,
+  hslSubDeptOptions,
+  hslSubKeyFromRaw,
+  isHslFamilyLabel,
+  isHslSubDeptLabel,
+  isPlaceableDeptLabel,
+} from '@/lib/departments/hsl-subdept';
 
 interface Candidate {
   name: string;
@@ -55,7 +64,53 @@ export default function ManagerTransferDialog({ open, onOpenChange, myDepartment
   const [reason, setReason] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
-  const soleDept = myDepartments.length === 1 ? myDepartments[0] : '';
+  /**
+   * The manager's grants expanded into REAL transfer targets.
+   *
+   * `myDepartments` is the raw `department_managers` grant list — the
+   * ACCESS-CONTROL keyspace. It contains strings like `hsl:intake_specialist`,
+   * and feeding those straight in is how "HSL: Intake Specialist" ended up
+   * written into master `Department` cells and rendered as a bogus department
+   * everywhere: a TL whose only grant was a sub-team got that raw key as the
+   * silent default target for everyone they pulled in.
+   *
+   * Rules:
+   *  - a sub-team grant → that one labeled sub-team target;
+   *  - a PARENT HSL grant → all 12 labeled sub-teams, and NOT the bare family
+   *    label, because a transfer into HSL must land in a specific sub-team (the
+   *    sub-team is what carries the base rate);
+   *  - anything else → itself.
+   * Deduped by value; the submitted `to_department` is always the canonical value.
+   */
+  const targetChoices = useMemo(() => {
+    const out: Array<{ value: string; label: string }> = [];
+    const seen = new Set<string>();
+    const push = (value: string, label: string) => {
+      const v = value.trim();
+      if (!v || seen.has(v.toLowerCase())) return;
+      seen.add(v.toLowerCase());
+      out.push({ value: v, label });
+    };
+    for (const grant of myDepartments) {
+      const g = grant.trim();
+      if (!g) continue;
+      const sub = hslSubKeyFromRaw(g);
+      if (sub) {
+        push(hslSubDeptLabel(sub), formatDeptLabel(hslSubDeptLabel(sub)));
+        continue;
+      }
+      if (isHslFamilyLabel(g)) {
+        for (const o of hslSubDeptOptions()) push(o.value, o.label);
+        continue;
+      }
+      push(g, formatDeptLabel(g));
+    }
+    return out;
+  }, [myDepartments]);
+
+  // Default the target ONLY when there is exactly one real choice. A parent-HSL
+  // manager now has 12 and must pick explicitly — no silent sub-team default.
+  const soleDept = targetChoices.length === 1 ? targetChoices[0].value : '';
 
   // Reset on open; default the target dept when the manager owns exactly one.
   useEffect(() => {
@@ -102,15 +157,23 @@ export default function ManagerTransferDialog({ open, onOpenChange, myDepartment
 
   const currentDept = selected?.department?.trim() ?? '';
 
+  // Drop the target the person is already in. `deptCellSatisfiesTarget` rather
+  // than a raw string compare: a sub-team cell already satisfies a plain-family
+  // target, so an into-HSL move can never be offered as a no-op relabel.
   const targetOptions = useMemo(
-    () => myDepartments.filter((d) => d.toLowerCase() !== currentDept.toLowerCase()),
-    [myDepartments, currentDept],
+    () => targetChoices.filter((o) => !deptCellSatisfiesTarget(currentDept, o.value)),
+    [targetChoices, currentDept],
   );
 
   const canSubmit =
     !!selected &&
     !!toDept &&
-    toDept.toLowerCase() !== currentDept.toLowerCase() &&
+    // A bare "HSL" target is not a placement — the sub-team carries the rate.
+    isPlaceableDeptLabel(toDept) &&
+    // Already satisfying the target is a no-op, and an `hsl:*` cell satisfies a
+    // plain-family target — so this also blocks clobbering a sub-team label back
+    // to the generic one.
+    !deptCellSatisfiesTarget(currentDept, toDept) &&
     !!effectiveDate &&
     !submitting;
 
@@ -257,13 +320,13 @@ export default function ManagerTransferDialog({ open, onOpenChange, myDepartment
                     : 'rounded-md bg-white px-2 py-0.5 font-medium text-zinc-400 ring-1 ring-dashed ring-zinc-300 dark:bg-zinc-900 dark:ring-zinc-700',
                 )}
               >
-                {toDept || 'Select target'}
+                {formatDeptLabel(toDept) || 'Select target'}
               </span>
             </div>
           )}
 
-          {/* Target department (only when the manager owns more than one) */}
-          {myDepartments.length > 1 && (
+          {/* Target department (only when there is a real choice to make) */}
+          {targetChoices.length > 1 && (
             <div>
               <label className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-400">
                 Transfer into
@@ -275,9 +338,14 @@ export default function ManagerTransferDialog({ open, onOpenChange, myDepartment
                 triggerClassName="w-full"
                 options={[
                   { value: '', label: 'Select a department' },
-                  ...targetOptions.map((d) => ({ value: d, label: d })),
+                  ...targetOptions,
                 ]}
               />
+              {isHslFamilyLabel(toDept) && !isHslSubDeptLabel(toDept) && (
+                <p className="mt-1 text-[11px] text-amber-600 dark:text-amber-400">
+                  Pick an HSL sub-department — it sets their base rate.
+                </p>
+              )}
             </div>
           )}
 

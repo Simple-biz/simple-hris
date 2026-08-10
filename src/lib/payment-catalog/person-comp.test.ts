@@ -216,6 +216,85 @@ test('a department-wide bonus this person is excluded from is flagged excluded',
   assert.equal(comp.commonAssignments.find((c) => c.assignment.id === 'a2')?.excluded, false);
 });
 
+// ── HSL sub-department base rates ──────────────────────────────────────────
+// The comp card's contract is that it states what the ENGINE will pay
+// (resolveDeptCatalogRate). That resolver reads an `hsl:<sub>` structure before
+// collapsing the label to `hogan_smith_law`, so this card must too.
+
+const HSL_SUBJECT = {
+  email: 'agent@simple.biz',
+  aliases: ['agent@simple.biz'],
+  department: 'hsl:intake_specialist',
+};
+
+test('a sub-team labeled person resolves their OWN sub-department base, not the parent', () => {
+  const comp = computePersonComp(
+    HSL_SUBJECT,
+    indexes({
+      deptStructByKey: new Map([
+        ['hogan_smith_law', deptStruct('hogan_smith_law', { regularRate: 225, otRate: 337.5 })],
+        ['hsl:intake_specialist', deptStruct('hsl:intake_specialist', { regularRate: 260, otRate: 390 })],
+      ]),
+    }),
+  );
+  assert.equal(comp.rateSource, 'department');
+  assert.equal(winningRate(comp)?.regular, 260);
+  assert.equal(winningRate(comp)?.ot, 390);
+});
+
+test('a sub-team with no structure of its own falls back to the parent HSL base', () => {
+  const comp = computePersonComp(
+    { ...HSL_SUBJECT, department: 'hsl:collections' },
+    indexes({
+      deptStructByKey: new Map([
+        ['hogan_smith_law', deptStruct('hogan_smith_law', { regularRate: 225 })],
+        ['hsl:intake_specialist', deptStruct('hsl:intake_specialist', { regularRate: 260 })],
+      ]),
+    }),
+  );
+  assert.equal(comp.rateSource, 'department');
+  assert.equal(winningRate(comp)?.regular, 225, 'parent fallback — never ₱0 and never a sibling rate');
+});
+
+test('a plain-HSL label keeps resolving the parent base even when sub rates exist', () => {
+  const comp = computePersonComp(
+    { ...HSL_SUBJECT, department: 'HSL' },
+    indexes({
+      deptStructByKey: new Map([
+        ['hogan_smith_law', deptStruct('hogan_smith_law', { regularRate: 225 })],
+        ['hsl:intake_specialist', deptStruct('hsl:intake_specialist', { regularRate: 260 })],
+      ]),
+    }),
+  );
+  assert.equal(winningRate(comp)?.regular, 225);
+});
+
+test('a sheet rate still outranks a sub-department base', () => {
+  const comp = computePersonComp(
+    HSL_SUBJECT,
+    indexes({
+      sheetRateByEmail: new Map([['agent@simple.biz', { reg: 240, ot: 360 }]]),
+      deptStructByKey: new Map([
+        ['hsl:intake_specialist', deptStruct('hsl:intake_specialist', { regularRate: 260 })],
+      ]),
+    }),
+  );
+  assert.equal(comp.rateSource, 'sheet');
+  assert.equal(winningRate(comp)?.regular, 240);
+});
+
+test('a sub-team person keeps PARENT-keyed department bonuses', () => {
+  // HSL dept-scoped bonus assignments live on `hogan_smith_law`. Resolving the
+  // sub-team rate must not re-key bonus matching, or every HSL common bonus
+  // would stop reaching the sub-labeled people.
+  const assignments: BonusAssignment[] = [
+    { id: 'a1', bonusId: 'b1', scope: 'department', departmentKey: 'hogan_smith_law' },
+  ];
+  const comp = computePersonComp(HSL_SUBJECT, indexes({ assignments }));
+  assert.equal(comp.commonAssignments.length, 1);
+  assert.equal(comp.commonAssignments[0]?.assignment.departmentKey, 'hogan_smith_law');
+});
+
 test('resolveRosterDeptKey maps a label, then a custom department, then slugifies', () => {
   assert.equal(resolveRosterDeptKey('Custom Team', [{ key: 'ct_key', name: 'Custom Team' }]), 'ct_key');
   assert.equal(resolveRosterDeptKey('   ', []), null);

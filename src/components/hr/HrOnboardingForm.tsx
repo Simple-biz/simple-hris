@@ -73,6 +73,17 @@ import {
 } from '@/components/ui/dialog';
 import { cn } from '@/lib/utils';
 import {
+  HSL_FAMILY_DEPT_LABEL,
+  collapseHslFamilyLabel,
+  formatDeptLabel,
+  hslSubDeptLabel,
+  hslSubDeptOptions,
+  hslSubKeyFromRaw,
+  isHslFamilyLabel,
+  isHslSubDeptLabel,
+  isPlaceableDeptLabel,
+} from '@/lib/departments/hsl-subdept';
+import {
   buildOnboardingExport,
   downloadOnboardingCsv,
   downloadOnboardingPdf,
@@ -2260,8 +2271,11 @@ function BypassSetupDialog({
   const emailNorm = workEmail.trim().toLowerCase();
   const workEmailValid = isPlausibleEmail(emailNorm) && emailNorm.endsWith('@simple.biz');
   const personalValid = isPlausibleEmail(personalEmail.trim());
+  // `isPlaceableDeptLabel` rather than a bare non-empty check: this dialog writes
+  // straight to the master list + Sheet, and a bare "HSL" would place the hire on
+  // the parent fallback rate with no sub-team chosen.
   const fieldsReady =
-    fullName.trim().length > 0 && personalValid && dept.trim().length > 0 && workEmailValid;
+    fullName.trim().length > 0 && personalValid && isPlaceableDeptLabel(dept) && workEmailValid;
   const verified = verifyState === 'exists';
 
   // Reset everything when the dialog closes so the next open starts clean.
@@ -2453,6 +2467,7 @@ function BypassSetupDialog({
               onChange={setDept}
               departments={departments}
               loading={deptsLoading}
+              hslSubDepartment
             />
             <p className="text-[11px] text-zinc-400 dark:text-zinc-500">
               Required — the worker is added to the master list under this department.
@@ -2577,7 +2592,7 @@ function BypassSetupDialog({
               title={
                 fieldsReady
                   ? 'Check that this Workspace account exists'
-                  : 'Fill in name, personal email, department and a valid @simple.biz work email first'
+                  : 'Fill in name, personal email, department (HSL needs a sub-department) and a valid @simple.biz work email first'
               }
             >
               {verifying ? (
@@ -3589,12 +3604,13 @@ function SetOnboardingWorkEmailDialog({
   const compReady = deptRate?.ready ?? false;
   // Compensation readiness is informational only — a hire can be staged before
   // Accounting sets the Payment Catalog (the rate stays null until they do).
+  // A bare "HSL" is not a placement — the sub-team carries the base rate.
   const canSave =
     !!row &&
     !busy &&
     emailValid &&
     available === true &&
-    dept.trim().length > 0 &&
+    isPlaceableDeptLabel(dept) &&
     projectNames.length > 0;
 
   async function save() {
@@ -3700,6 +3716,7 @@ function SetOnboardingWorkEmailDialog({
                 onChange={setDept}
                 departments={departments}
                 loading={deptsLoading}
+                hslSubDepartment
               />
               <p className="text-[11px] text-zinc-400 dark:text-zinc-500">
                 {deptsLoading ? 'Loading…' : 'Required — carried into the staged hire.'}
@@ -4452,8 +4469,10 @@ function BulkDeptGroup({
   const compReady = typical?.ready ?? false;
 
   // Compensation readiness is informational only — a group can be set before
-  // Accounting fills the Payment Catalog (rate stays null until they do).
-  const configValid = dept.trim().length > 0 && projects.length > 0;
+  // Accounting fills the Payment Catalog (rate stays null until they do). The
+  // DEPARTMENT is not informational: `isPlaceableDeptLabel` refuses a bare "HSL"
+  // so a whole batch can't land on the parent fallback rate un-sub-teamed.
+  const configValid = isPlaceableDeptLabel(dept) && projects.length > 0;
 
   const usableRows = rows.filter((r) => {
     if (doneIds.has(r.id)) return false;
@@ -4486,7 +4505,7 @@ function BulkDeptGroup({
           </span>
           <div>
             <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
-              {needsDept ? 'No department on file' : dept}
+              {needsDept ? 'No department on file' : formatDeptLabel(dept)}
             </h3>
             <p className="text-[11px] text-zinc-500">
               {rows.length} {rows.length === 1 ? 'hire' : 'hires'}
@@ -4501,6 +4520,7 @@ function BulkDeptGroup({
               onChange={setDept}
               departments={departments}
               loading={metaLoading}
+              hslSubDepartment
             />
           </div>
         )}
@@ -4817,16 +4837,33 @@ function BulkWorkEmailField({
   );
 }
 
+/**
+ * Department picker.
+ *
+ * `hslSubDepartment` opts a call site into the HSL two-step: HSL appears exactly
+ * ONCE in the list (the API already collapses `hsl:*` — see
+ * app/api/departments/route.ts), and picking it reveals a REQUIRED sub-department
+ * selector whose choice is composed back into the single canonical value
+ * `hsl:<key>`. That composed string is what `onChange` emits and what lands in
+ * the master `Department` cell, so the sub-team carries its own base rate
+ * (docs/features/hsl-subdepartments.md).
+ *
+ * Opt in only where the value becomes a ROSTER placement. Sites that use the
+ * department to match a pay-plan PDF (invite email, pay-plan upload) stay on the
+ * plain family label — a sub-key there would match no pay plan at all.
+ */
 function DepartmentSelect({
   value,
   onChange,
   departments,
   loading,
+  hslSubDepartment = false,
 }: {
   value: string;
   onChange: (v: string) => void;
   departments: string[];
   loading: boolean;
+  hslSubDepartment?: boolean;
 }) {
   const [query, setQuery] = useState('');
 
@@ -4836,10 +4873,31 @@ function DepartmentSelect({
     return departments.filter((d) => d.toLowerCase().includes(q));
   }, [departments, query]);
 
+  // The trigger shows the FAMILY label; the sub-team rides its own select. The
+  // composed `hsl:<key>` value would match no item in the list and would render
+  // as an empty placeholder.
+  const familyValue = hslSubDepartment ? collapseHslFamilyLabel(value) : value;
+  const subValue = hslSubDepartment && isHslSubDeptLabel(value) ? value : '';
+  const needsSubDept = hslSubDepartment && isHslFamilyLabel(familyValue) && !subValue;
+
+  const pickDepartment = (v: string) => {
+    const next = v ?? '';
+    if (!hslSubDepartment || !isHslFamilyLabel(next)) {
+      onChange(next);
+      return;
+    }
+    // Staying inside the HSL family keeps an already-chosen sub-team; arriving
+    // fresh emits the bare family label so `needsSubDept` forces a real pick
+    // rather than silently defaulting someone into a sub-team.
+    const keep = hslSubKeyFromRaw(value);
+    onChange(keep ? hslSubDeptLabel(keep) : HSL_FAMILY_DEPT_LABEL);
+  };
+
   return (
+    <div className={hslSubDepartment ? 'flex flex-col gap-1.5' : undefined}>
     <SelectPrimitive.Root
-      value={value}
-      onValueChange={(v) => onChange(v ?? '')}
+      value={familyValue}
+      onValueChange={(v) => pickDepartment(v ?? '')}
       disabled={loading}
       onOpenChange={(open) => { if (!open) setQuery(''); }}
     >
@@ -4875,7 +4933,7 @@ function DepartmentSelect({
                     e.stopPropagation();
                     if (e.key === 'Enter' && filtered.length === 1) {
                       e.preventDefault();
-                      onChange(filtered[0]);
+                      pickDepartment(filtered[0]);
                     }
                   }}
                   placeholder="Search departments…"
@@ -4905,7 +4963,7 @@ function DepartmentSelect({
                     )}
                   >
                     <SelectPrimitive.ItemText className="flex-1 truncate pr-2">
-                      {d}
+                      {formatDeptLabel(d)}
                     </SelectPrimitive.ItemText>
                     <SelectPrimitive.ItemIndicator className="flex h-4 w-4 items-center justify-center">
                       <CheckIcon className="h-3.5 w-3.5 text-emerald-600" />
@@ -4918,6 +4976,95 @@ function DepartmentSelect({
         </SelectPrimitive.Positioner>
       </SelectPrimitive.Portal>
     </SelectPrimitive.Root>
+
+    {hslSubDepartment && isHslFamilyLabel(familyValue) && (
+      <SubDepartmentSelect
+        value={subValue}
+        onChange={onChange}
+        needsPick={needsSubDept}
+        disabled={loading}
+      />
+    )}
+    </div>
+  );
+}
+
+/**
+ * The second half of the HSL two-step: which sub-team inside HSL. Its value IS
+ * the canonical master-list Department label (`hsl:<key>`), so the parent select
+ * hands `onChange` straight through — one field, one canonical string, no
+ * composition logic duplicated per call site.
+ *
+ * Required by design: the sub-team is what carries the base rate, so leaving it
+ * unset would put a new hire on the parent fallback rate silently.
+ */
+function SubDepartmentSelect({
+  value,
+  onChange,
+  needsPick,
+  disabled,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  needsPick: boolean;
+  disabled: boolean;
+}) {
+  const options = useMemo(() => hslSubDeptOptions(), []);
+
+  return (
+    <div className="flex flex-col gap-1">
+      <SelectPrimitive.Root
+        value={value}
+        onValueChange={(v) => onChange(v ?? '')}
+        disabled={disabled}
+      >
+        <SelectPrimitive.Trigger
+          className={cn(
+            'flex h-9 w-full items-center justify-between gap-2 rounded-lg border bg-transparent px-3 py-2 text-sm whitespace-nowrap transition-colors outline-none select-none',
+            'data-placeholder:text-muted-foreground',
+            'focus-visible:border-emerald-500 focus-visible:ring-2 focus-visible:ring-emerald-500/20',
+            'disabled:cursor-not-allowed disabled:opacity-50 dark:bg-input/30',
+            needsPick
+              ? 'border-amber-400 dark:border-amber-500/70'
+              : 'border-zinc-300 hover:border-zinc-400 dark:border-input dark:hover:border-zinc-500',
+          )}
+        >
+          <SelectPrimitive.Value placeholder="Select HSL sub-department" className="flex-1 text-left" />
+          <ChevronDownIcon className="h-4 w-4 shrink-0 text-muted-foreground" />
+        </SelectPrimitive.Trigger>
+        <SelectPrimitive.Portal>
+          <SelectPrimitive.Positioner side="bottom" sideOffset={4} alignItemWithTrigger className="isolate z-50">
+            <SelectPrimitive.Popup className="w-(--anchor-width) min-w-56 overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-lg shadow-black/8 dark:border-zinc-700 dark:bg-zinc-900 data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95">
+              <SelectPrimitive.List className="max-h-64 overflow-y-auto p-1">
+                {options.map((o) => (
+                  <SelectPrimitive.Item
+                    key={o.value}
+                    value={o.value}
+                    className={cn(
+                      'relative flex w-full cursor-default items-center justify-between rounded-lg px-3 py-2 text-sm outline-none select-none',
+                      'focus:bg-emerald-50 focus:text-emerald-900 dark:focus:bg-emerald-950/50 dark:focus:text-emerald-100',
+                      'data-highlighted:bg-emerald-50 data-highlighted:text-emerald-900 dark:data-highlighted:bg-emerald-950/50 dark:data-highlighted:text-emerald-100',
+                    )}
+                  >
+                    <SelectPrimitive.ItemText className="flex-1 truncate pr-2">
+                      {o.label}
+                    </SelectPrimitive.ItemText>
+                    <SelectPrimitive.ItemIndicator className="flex h-4 w-4 items-center justify-center">
+                      <CheckIcon className="h-3.5 w-3.5 text-emerald-600" />
+                    </SelectPrimitive.ItemIndicator>
+                  </SelectPrimitive.Item>
+                ))}
+              </SelectPrimitive.List>
+            </SelectPrimitive.Popup>
+          </SelectPrimitive.Positioner>
+        </SelectPrimitive.Portal>
+      </SelectPrimitive.Root>
+      {needsPick && (
+        <p className="text-[10.5px] leading-tight text-amber-600 dark:text-amber-400">
+          Required — the sub-department sets their base rate.
+        </p>
+      )}
+    </div>
   );
 }
 

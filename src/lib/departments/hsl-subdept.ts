@@ -13,6 +13,17 @@
 import { HSL_DEPT_KEYS, HSL_DEPTS, type HslDeptKey } from '@/lib/hsl-bonus/schema';
 import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
 
+/**
+ * The ONE department label that stands for the whole HSL family in every
+ * picker and filter (Kane 2026-08-10: "We need to only have 1 department for
+ * HSL"). Sub-team identity is a SEPARATE selection that composes onto it via
+ * `hslSubDeptLabel`, never a second department in its own right.
+ *
+ * Deliberately the plain roster label, not "Hogan Smith Law": 528 of the 598
+ * active HSL-family master rows already read exactly this.
+ */
+export const HSL_FAMILY_DEPT_LABEL = 'HSL';
+
 /** Canonical master-list Department label for an HSL sub-department. */
 export function hslSubDeptLabel(key: HslDeptKey): string {
   return `hsl:${key}`;
@@ -63,6 +74,48 @@ export function formatDeptLabel(raw: string | null | undefined): string {
   // Unknown `hsl:*` sub-key: still never show the bare slug to a human.
   if (s.toLowerCase().startsWith('hsl:')) return `HSL — ${s.slice(4)}`;
   return s;
+}
+
+/**
+ * Collapse any HSL-family label to the single family label; every other label
+ * passes through trimmed and unchanged.
+ *
+ * This is what keeps department PICKERS and FILTERS at one "HSL" entry while
+ * the master Department cell keeps holding `hsl:<key>`. Use it on the option
+ * list only — never on the value written to the cell, and never inside a
+ * master-sheet sync path (those mirror the sheet verbatim, per
+ * docs/features/sales-dept-split.md).
+ */
+export function collapseHslFamilyLabel(raw: string | null | undefined): string {
+  const s = (raw ?? '').trim();
+  if (!s) return '';
+  return isHslFamilyLabel(s) ? HSL_FAMILY_DEPT_LABEL : s;
+}
+
+/**
+ * Is this department value ready to be written to a master-list `Department`
+ * cell as a NEW placement? Non-empty, and — inside the HSL family — an exact
+ * `hsl:<key>` sub-team.
+ *
+ * The bare family label "HSL" is deliberately NOT placeable: the sub-team is
+ * what carries the base rate, so accepting a bare "HSL" would put a new hire on
+ * the parent fallback with nobody having chosen it. Existing plain-"HSL" rows
+ * are untouched by this — it gates new writes only, never reads.
+ */
+export function isPlaceableDeptLabel(raw: string | null | undefined): boolean {
+  const s = (raw ?? '').trim();
+  if (!s) return false;
+  return isHslFamilyLabel(s) ? isHslSubDeptLabel(s) : true;
+}
+
+/** One `{value,label}` per HSL sub-team, for every sub-department selector.
+ *  Single definition so the onboarding picker, the transfer dialog and the Pay
+ *  Structure rail can never drift on which teams exist or how they read. */
+export function hslSubDeptOptions(): Array<{ value: string; label: string }> {
+  return HSL_DEPT_KEYS.map((key) => ({
+    value: hslSubDeptLabel(key),
+    label: formatDeptLabel(hslSubDeptLabel(key)),
+  }));
 }
 
 /** Family key for comparison: payroll synonym map first, raw lowercased label

@@ -3,6 +3,7 @@ import { createSupabaseServiceRoleClient } from '@/lib/supabase/server';
 import { requireElevatedSession, deniedResponse } from '@/lib/auth/authorize-email';
 import { getDepartmentRegistry } from '@/lib/departments/registry-db';
 import { applyDeptOverrideToRawRow } from '@/lib/departments/dept-email-overrides';
+import { collapseHslFamilyLabel } from '@/lib/departments/hsl-subdept';
 import { selectAllPaged } from '@/lib/supabase/select-all-paged';
 
 export const dynamic = 'force-dynamic';
@@ -15,6 +16,12 @@ export const runtime = 'nodejs';
  * (the registry) so a department is selectable everywhere — HR onboarding,
  * Roles & permissions, transfer targets — even before any roster row carries
  * its label. Sorted A→Z. Auth: any elevated session (admin/HR/payroll).
+ *
+ * **The HSL family collapses to a single "HSL" entry** (`collapseHslFamilyLabel`).
+ * The sub-team lives in the same master cell as `hsl:<key>`, so without this the
+ * list grew one bogus department per sub-team in use. Callers that need the
+ * sub-team render a second selector from `hslSubDeptOptions()` — see
+ * docs/features/hsl-subdepartments.md.
  */
 export async function GET() {
   const authz = await requireElevatedSession();
@@ -55,7 +62,14 @@ export async function GET() {
     set.add(d);
   };
   for (const row of data) {
-    add(String(applyDeptOverrideToRawRow(row)['Department'] ?? ''));
+    // HSL is ONE department. The master cell carries the sub-team as
+    // `hsl:<key>` (intake_specialist, filing_specialist, …), which used to
+    // surface here as four extra top-level departments alongside "HSL" —
+    // raw, unprettified, and pickable as if they were peers. Collapse the
+    // whole family to the single "HSL" entry; the sub-team is a SEPARATE
+    // selection built from HSL_DEPT_KEYS (see hslSubDeptOptions), never a
+    // department of its own.
+    add(collapseHslFamilyLabel(String(applyDeptOverrideToRawRow(row)['Department'] ?? '')));
   }
   // In-app departments (best-effort: a registry read failure must not take
   // down the roster-derived list).

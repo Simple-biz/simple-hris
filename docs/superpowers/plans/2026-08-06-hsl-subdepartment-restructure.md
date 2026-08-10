@@ -20,6 +20,34 @@
 
 ---
 
+## Status (2026-08-10, later) — "one HSL + required sub-department" SHIPPED
+
+Kane's ruling: **"We need to only have 1 department for HSL. When a worker is added to
+the HSL department a manager or acct person should also select the subdepartment so that
+the correct base rate is set."** He chose to keep the sub-team in the master `Department`
+cell (no new column, no Sheet migration). Shipped, documented in
+`docs/features/hsl-subdepartments.md`:
+
+- `/api/departments` collapses the HSL family to ONE `HSL` entry — the four raw `hsl:*`
+  strings were showing up as bogus top-level departments in HR onboarding, the New Hire
+  Checklist and Admin Roles.
+- New helpers: `HSL_FAMILY_DEPT_LABEL`, `collapseHslFamilyLabel`, `hslSubDeptOptions`,
+  `isPlaceableDeptLabel` (a bare "HSL" is not a placement).
+- **Task 4 rail DONE** — the 12 sub-teams are settable on Pay Structure (deliberately NOT
+  on Bonus Assignments: HSL bonuses stay parent-keyed), plus Step 2b's Hogan Pay Plan
+  mirror widening.
+- **Task 3 DONE** — `person-comp` + `accounting-transfers` mirror sub-first precedence;
+  both HR onboarding rate-seeding paths gained the sub→parent chain (a plain "HSL" label
+  previously resolved NO rate there at all).
+- **Task 7 partly DONE** — `managerOwnsSourceDept` + both release-queue list functions;
+  transfer targets expand a parent grant into 12 labeled sub-teams with no silent default,
+  closing the "HSL: Intake Specialist" leak. Task 7's ManagerTransfers/HrTransfers/
+  AccountingTransfers display work had already shipped.
+- Required sub-department selector on the three roster-placing onboarding surfaces, with
+  server-side 400s on `onboarding-bypass` and `set-work-email`.
+
+Still open: Tasks 2-Step-4 (the hard hold below), 5, 8, 9, 10, 11.
+
 ## Status (2026-08-10) — safe slice SHIPPED, with a hard hold on Task 2 Step 4
 
 Live roster at 2026-08-10: **600 active HSL-family people, 70 already sub-labeled** —
@@ -44,8 +72,13 @@ Live roster at 2026-08-10: **600 active HSL-family people, 70 already sub-labele
   ManagerMemberHoursMini, PeopleTab, Overview ×4. All now use `isHslFamilyLabel`.
   Display: `formatDeptLabel` applied on the three transfer surfaces, the transfer
   dialog, the People roster/profile, My Team and the member dialog. Filter and search
-  VALUES stay raw. Admin/HR Global Master List views deliberately keep showing the
-  literal sheet cell.
+  VALUES stay raw. ~~Admin/HR Global Master List views deliberately keep showing the
+  literal sheet cell.~~ **REVERSED 2026-08-10 by Kane** ("HR>GML & Accounting>ALL — we
+  need to only have 1 department for HSL"): HR → Global Master List now renders
+  `formatDeptLabel` and its Dept filter offers a single family-matching "HSL". The raw
+  cell survives as a `title` tooltip and — deliberately — in the CSV/XLSX/PDF **export**,
+  because the sheet-vs-DB clobber sweep compares literal Department strings. See
+  `docs/features/hsl-subdepartments.md` §5.
 
 **Verified NOT broken (do not "fix"):** every payout path already normalized —
 `current-pay.ts:819`, `disbursement-reports.ts:1007`, and the wizard's dept

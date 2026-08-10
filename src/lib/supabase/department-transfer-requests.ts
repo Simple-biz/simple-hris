@@ -1,4 +1,5 @@
 import { createSupabaseServiceRoleClient } from './server';
+import { hslSubKeyFromRaw, isHslFamilyLabel } from '@/lib/departments/hsl-subdept';
 
 export type TransferRequestStatus = 'pending' | 'approved' | 'applied' | 'rejected' | 'cancelled';
 
@@ -187,16 +188,51 @@ export async function hasPendingTransferForEmployee(
 }
 
 /**
+ * Does one of the manager's department grants own release requests whose source
+ * is `fromDepartment`?
+ *
+ * A raw case-insensitive `Set.has` was not enough once the master `Department`
+ * cell started carrying `hsl:<key>`: a request out of `hsl:intake_specialist`
+ * was invisible to the manager granted "Hogan Smith Law", so nobody could
+ * release it and it sat in the queue forever.
+ *
+ *  - raw/exact match always wins;
+ *  - a PARENT Hogan Smith Law grant owns every HSL-family source, sub-teams
+ *    included (any spelling: "HSL", "hogan_smith_law", `hsl:*`);
+ *  - an `hsl:<sub>` grant owns exactly that sub-team — not its siblings, and
+ *    not the whole family, because a sub-team TL is not the HSL owner.
+ */
+export function managerOwnsSourceDept(managedDepts: string[], fromDepartment: string): boolean {
+  const from = (fromDepartment ?? '').trim().toLowerCase();
+  if (!from) return false;
+  const fromSub = hslSubKeyFromRaw(from);
+  const fromIsHslFamily = isHslFamilyLabel(from);
+  for (const d of managedDepts) {
+    const g = (d ?? '').trim().toLowerCase();
+    if (!g) continue;
+    if (g === from) return true;
+    const grantSub = hslSubKeyFromRaw(g);
+    if (grantSub) {
+      // Sub-team grant: only its own sub-team, whatever the label casing.
+      if (fromSub && grantSub === fromSub) return true;
+      continue;
+    }
+    // Parent grant (any alias of Hogan Smith Law that is not itself a sub grant).
+    if (isHslFamilyLabel(g) && fromIsHslFamily) return true;
+  }
+  return false;
+}
+
+/**
  * Pending release requests whose SOURCE department is one the given manager
  * owns — i.e. their consent queue. `departments` is the manager's active
- * department list (case-insensitive match on from_department).
+ * department list (matched via `managerOwnsSourceDept`).
  */
 export async function listIncomingTransfersForDepartments(
   departments: string[],
   limit = 300,
 ): Promise<{ rows: DepartmentTransferRequestRow[]; error: string | null }> {
-  const wanted = new Set(departments.map((d) => d.trim().toLowerCase()).filter(Boolean));
-  if (wanted.size === 0) return { rows: [], error: null };
+  if (departments.filter((d) => d.trim()).length === 0) return { rows: [], error: null };
   const supabase = createSupabaseServiceRoleClient();
   if (!supabase) return { rows: [], error: 'Supabase not configured' };
   const { data, error } = await supabase
@@ -207,7 +243,7 @@ export async function listIncomingTransfersForDepartments(
     .limit(limit);
   if (error) return { rows: [], error: error.message };
   const rows = ((data ?? []) as DepartmentTransferRequestRow[]).filter((r) =>
-    wanted.has(r.from_department.trim().toLowerCase()),
+    managerOwnsSourceDept(departments, r.from_department),
   );
   return { rows, error: null };
 }
@@ -223,8 +259,7 @@ export async function listResolvedTransfersForDepartments(
   departments: string[],
   limit = 300,
 ): Promise<{ rows: DepartmentTransferRequestRow[]; error: string | null }> {
-  const wanted = new Set(departments.map((d) => d.trim().toLowerCase()).filter(Boolean));
-  if (wanted.size === 0) return { rows: [], error: null };
+  if (departments.filter((d) => d.trim()).length === 0) return { rows: [], error: null };
   const supabase = createSupabaseServiceRoleClient();
   if (!supabase) return { rows: [], error: 'Supabase not configured' };
   const { data, error } = await supabase
@@ -237,7 +272,7 @@ export async function listResolvedTransfersForDepartments(
     .limit(limit);
   if (error) return { rows: [], error: error.message };
   const rows = ((data ?? []) as DepartmentTransferRequestRow[]).filter((r) =>
-    wanted.has(r.from_department.trim().toLowerCase()),
+    managerOwnsSourceDept(departments, r.from_department),
   );
   return { rows, error: null };
 }
