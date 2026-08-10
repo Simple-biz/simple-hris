@@ -520,9 +520,36 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
    * (`payroll.wizard.final_pay.<file>`, written when accounting locks the Additions
    * step / dispatches). When present, the hero "Estimated Take-Home" shows this exact
    * figure — incl. KPI/dept bonuses, the accounting Adj. delta, Orphanage pay, and
-   * MESA deduction/disbursement — instead of the client-side auto-estimate.
+   * MESA deduction/disbursement — instead of the client-side auto-estimate. Before
+   * it exists, the auto-estimate folds in the same ready/locked KPI amounts the
+   * wizard will pay (see `kpiBonusAmount`), so a locked KPI week shows up here
+   * without waiting for the payroll run.
    */
   const [payrollFinal, setPayrollFinal] = useState<PayrollFinalEntry | null>(null);
+
+  /**
+   * The employee's own ready/locked KPI periods (`/api/kpi-results` — the same
+   * `hsl_bonus_period_status` gate + `bonus_catalog_applied` amounts the wizard's
+   * "KPI Sub." column pays from, alias-resolved server-side). Draft periods never
+   * appear here, mirroring the wizard.
+   */
+  const [kpiPeriods, setKpiPeriods] = useState<{ period_start: string; total: number }[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`/api/kpi-results?email=${encodeURIComponent(email)}`, { cache: 'no-store' });
+        const json = (await res.json()) as { periods?: { period_start: string; total: number | null }[] };
+        if (cancelled) return;
+        setKpiPeriods(
+          (json.periods ?? []).map((p) => ({ period_start: p.period_start, total: Number(p.total ?? 0) })),
+        );
+      } catch {
+        if (!cancelled) setKpiPeriods([]);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [email]);
   const fetchPayrollFinal = useCallback(async (signal?: AbortSignal) => {
     if (!selectedFile || selectedFile === '__all__') { setPayrollFinal(null); return; }
     try {
@@ -1890,15 +1917,38 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
     ? wizardSnap.techBonus
     : (isTechnologyBonusActive && hasRates && techDeptOk ? techBonusPhpAmt : 0);
 
+  /**
+   * KPI / dept bonus for the selected pay week. Published snapshot figure when
+   * available (`otherBonuses` = the exact dispatched KPI + dept-bonus total);
+   * otherwise the sum of this employee's ready/locked KPI periods whose
+   * `period_start` matches the selected file week — the identical rows the
+   * wizard's "KPI Sub." column pays. Gates mirror the wizard: no rates → every
+   * PHP-side bonus is 0; all-time view has no single pay week, so 0.
+   */
+  const kpiBonusAmount = useMemo(() => {
+    if (wizardSnap && wizardSnap.otherBonuses != null) return wizardSnap.otherBonuses;
+    if (!hasRates) return 0;
+    if (isAllTime || !selectedFileWeek) return 0;
+    const s = selectedFileWeek.start;
+    const iso = `${s.getFullYear()}-${String(s.getMonth() + 1).padStart(2, '0')}-${String(s.getDate()).padStart(2, '0')}`;
+    let sum = 0;
+    for (const p of kpiPeriods) if (p.period_start === iso) sum += p.total;
+    return Math.round(sum * 100) / 100;
+  }, [wizardSnap, hasRates, isAllTime, selectedFileWeek, kpiPeriods]);
+
   const MESA_DEDUCTION_PHP = 100;
   const isMesaMember = !!rate?.mesa_member;
   // Auto-estimate path (no published payroll snapshot): only enrolled members are
   // charged the ₱100 contribution, and there is no disbursement to surface yet.
   const mesaDeductionAmount = isMesaMember && totalPay != null ? MESA_DEDUCTION_PHP : 0;
 
-  // Client-side auto-estimate (initial + PAB + Tech − MESA). Used as the fallback.
+  // Client-side auto-estimate (initial + PAB + Tech + KPI − MESA). Used as the
+  // fallback until the wizard publishes the authoritative final (which already
+  // contains the KPI inside `final` — never add kpiBonusAmount on that path).
   const autoTakeHomePhp =
-    totalPay != null ? totalPay + pabBonusAmount + technologyBonusAmount - mesaDeductionAmount : null;
+    totalPay != null
+      ? totalPay + pabBonusAmount + technologyBonusAmount + kpiBonusAmount - mesaDeductionAmount
+      : null;
   // When the Payroll Wizard has published a final for this employee + file, that
   // exact figure is the authoritative pay (matches what accounting will pay). All-time
   // view has no single payroll final, so it always uses the auto-estimate.
@@ -3025,11 +3075,29 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
                   </dd>
                   <p
                     className="mt-0.5 cursor-help text-[10px] tabular-nums text-zinc-400 underline decoration-dotted underline-offset-2 dark:text-zinc-500"
-                    title="Eligible after 30 days of service — paid on the 3rd paycheck of each month."
+                    title="Eligible after 30 days of service — paid on the month's configured payout week."
                   >
                     {isTechnologyBonusActive ? 'Unlocked' : 'Locked'}
                   </p>
                 </div>
+                {/* KPI / dept bonus — rendered only when this pay week actually carries one,
+                    so the ribbon keeps its familiar 4-cell shape on ordinary weeks. */}
+                {kpiBonusAmount > 0 && (
+                  <div className="min-w-0">
+                    <dt className="text-[10px] font-medium uppercase tracking-[0.14em] text-violet-600 dark:text-violet-400">
+                      KPI Bonus
+                    </dt>
+                    <dd className="mt-1 break-words text-base font-medium tabular-nums leading-tight text-violet-700 sm:text-lg dark:text-violet-300">
+                      +{formatPHP(kpiBonusAmount)}
+                    </dd>
+                    <p
+                      className="mt-0.5 cursor-help text-[10px] tabular-nums text-zinc-400 underline decoration-dotted underline-offset-2 dark:text-zinc-500"
+                      title="Your team's KPI Calculator results for this pay week — see the KPI Results tab for the line-by-line breakdown."
+                    >
+                      {wizardSnap && wizardSnap.otherBonuses != null ? 'Payroll-confirmed' : 'From KPI Calculator'}
+                    </p>
+                  </div>
+                )}
               </dl>
             </div>
           </motion.section>
