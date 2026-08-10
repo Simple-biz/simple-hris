@@ -121,6 +121,7 @@ const PAGED_DEPTS: Record<string, number> = { lead_gen: 8 };
  *  applied rows (the same rows payroll pays). */
 const EXTERNAL_MEMBER_DEPTS = new Set([
   'edit',
+  'callback',
   'client_va',
   'lead_gen',
   'pm_team',
