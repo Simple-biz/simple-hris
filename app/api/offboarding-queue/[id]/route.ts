@@ -6,7 +6,7 @@ import { normEmail } from '@/lib/email/norm-email';
 import { insertAuditLog } from '@/lib/supabase/audit-log';
 import { requireFeatureEdit } from '@/lib/auth/authorize-feature';
 import { deniedResponse } from '@/lib/auth/authorize-email';
-import { offboardReasonLabel } from '@/lib/hr/offboard-reasons';
+import { offboardReasonLabel, isQueueableOffboardReason } from '@/lib/hr/offboard-reasons';
 import {
   getOffboardingQueueById,
   decideOffboardingQueueEntry,
@@ -103,6 +103,20 @@ export async function PATCH(
       row.status === 'cancelled'
     ) {
       return NextResponse.json({ error: `Request is already ${row.status}` }, { status: 409 });
+    }
+    // A manager-raised offboard always rides the DELETE pathway — completing
+    // one as a Temporary Pause (a suspension) is never valid bookkeeping.
+    const completedReason = body.offboard_reason?.trim();
+    if (decision === 'completed' && completedReason && !isQueueableOffboardReason(completedReason)) {
+      return NextResponse.json(
+        {
+          error:
+            completedReason === 'temporary_pause'
+              ? 'A queued offboard cannot complete as Temporary Pause — that is the Suspend flow, not an offboard.'
+              : `Invalid offboard reason: ${completedReason}`,
+        },
+        { status: 400 },
+      );
     }
 
     const { updated, error: decideErr } = await decideOffboardingQueueEntry({

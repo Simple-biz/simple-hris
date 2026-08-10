@@ -50,6 +50,23 @@ export function isValidOffboardReason(v: string | null | undefined): v is Offboa
   return !!v && (VALID_OFFBOARD_REASONS as readonly string[]).includes(v);
 }
 
+/**
+ * Reasons a MANAGER-raised offboard (the My Team Offboard action → offboarding
+ * queue → HR processor) may carry. Everything in the queue rides the DELETE
+ * pathway when HR processes it, so `temporary_pause` — a suspension, owned by
+ * the Suspend action / HR's own dialog — is not queueable. Enforced server-side
+ * at POST /api/offboarding-queue and at the queue-completion PATCH; the manager
+ * dialog and the HR queue processor consume this too so all four surfaces share
+ * one gate.
+ */
+export type QueueableOffboardReason = Exclude<OffboardReason, 'temporary_pause'>;
+
+export function isQueueableOffboardReason(
+  v: string | null | undefined,
+): v is QueueableOffboardReason {
+  return isValidOffboardReason(v) && v !== 'temporary_pause';
+}
+
 export function offboardReasonLabel(v: string | null | undefined): string {
   if (!v) return '—';
   return OFFBOARD_REASON_LABELS[v] ?? v;

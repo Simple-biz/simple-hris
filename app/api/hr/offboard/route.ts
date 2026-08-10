@@ -16,6 +16,7 @@ import {
 import { appendOffboardedSheetRow } from "@/lib/google-sheets/append-offboarded-sheet";
 import { snapshotOffboardedBankInfo } from "@/lib/hr/offboard-snapshot";
 import { offboardReasonLabel } from "@/lib/hr/offboard-reasons";
+import { classifyZeroStampOffboard } from "@/lib/hr/offboard-escalation";
 import { snapshotAndRevokeRbacGrants } from "@/lib/hr/offboard-rbac";
 import { bumpForceLogoutFor } from "@/lib/auth/force-logout";
 
@@ -180,7 +181,9 @@ async function offboardOnePerson(
       deletion_processed_at: null,
     })
     .ilike('"Work Email"', work_email)
-    .is("off_boarded_at", null) // don't re-stamp already-offboarded rows
+    // Don't re-stamp already-offboarded rows — EXCEPT a temporary-pause
+    // suspension being escalated to a real offboard (handled below on 0 rows).
+    .is("off_boarded_at", null)
     .select(
       'id, "Name", "Personal Email", "Work Email", "Department", "Start Date", city, province, full_address, "Location", "Phone Number"',
     );
@@ -189,7 +192,7 @@ async function offboardOnePerson(
     return { ...base, error: error.message };
   }
 
-  const rows = (data ?? []) as Array<{
+  type MasterRow = {
     id: unknown;
     Name: string | null;
     "Personal Email": string | null;
@@ -201,15 +204,85 @@ async function offboardOnePerson(
     full_address: string | null;
     Location: string | null;
     "Phone Number": string | null;
-  }>;
+  };
+  let rows = (data ?? []) as MasterRow[];
+  let escalatedFromPause = false;
 
   if (rows.length === 0) {
-    return {
-      ...base,
-      status: 404,
-      error:
-        "No active master-list row found for that email. They may already be off-boarded, or the email doesn't exist on the roster.",
-    };
+    // Nothing active to stamp. Either the email isn't on the roster, or every
+    // row is already off-boarded. A temporary-pause SUSPENSION must still ride
+    // the delete pathway when a real offboard lands (the account exists and
+    // was never torn down — "every offboard fires offboarding_delete"), so
+    // that case escalates instead of 404ing. A person already off-boarded
+    // with a real reason stays a hard no-op: the delete automation already
+    // ran, and re-firing it would send duplicate teardown emails.
+    const { data: existing, error: existErr } = await supabase
+      .from(MASTER_TABLE)
+      .select("off_boarded_reason, off_boarded_at")
+      .ilike('"Work Email"', work_email);
+    if (existErr) return { ...base, error: existErr.message };
+
+    const outcome = classifyZeroStampOffboard(
+      reason,
+      (existing ?? []) as Array<{ off_boarded_reason: string | null; off_boarded_at: string | null }>,
+    );
+
+    if (outcome.kind === "not_found") {
+      return {
+        ...base,
+        status: 404,
+        error:
+          "No active master-list row found for that email. The email doesn't exist on the roster.",
+      };
+    }
+    if (outcome.kind === "pause_on_offboarded") {
+      return {
+        ...base,
+        status: 409,
+        error:
+          "This person is already off-boarded or suspended — a Temporary Pause can't be applied on top. Reactivate or re-onboard them instead.",
+      };
+    }
+    if (outcome.kind === "already_offboarded") {
+      return {
+        ...base,
+        status: 409,
+        error: `Already off-boarded (${offboardReasonLabel(outcome.reason)}${
+          outcome.off_boarded_at ? `, ${outcome.off_boarded_at.slice(0, 10)}` : ""
+        }) — the delete automation already ran, so nothing was re-fired to avoid duplicate teardown emails.`,
+      };
+    }
+
+    // escalate_paused: convert the suspension into this real offboard —
+    // re-stamp ONLY the temporary-pause rows (guarded in the WHERE so a
+    // concurrent escalation can't double-run) and continue down the normal
+    // delete pathway with them.
+    const { data: esc, error: escErr } = await supabase
+      .from(MASTER_TABLE)
+      .update({
+        off_boarded_at: offBoardedAt,
+        off_boarded_reason: reason,
+        off_boarded_by: actorEmail,
+        off_boarded_note: note,
+        scheduled_deletion_at: null,
+        deletion_processed_at: null,
+      })
+      .ilike('"Work Email"', work_email)
+      .eq("off_boarded_reason", "temporary_pause")
+      .not("off_boarded_at", "is", null)
+      .select(
+        'id, "Name", "Personal Email", "Work Email", "Department", "Start Date", city, province, full_address, "Location", "Phone Number"',
+      );
+    if (escErr) return { ...base, error: escErr.message };
+    if (!esc || esc.length === 0) {
+      return {
+        ...base,
+        status: 409,
+        error: "Someone else just processed this person — refresh and check their current state.",
+      };
+    }
+    rows = esc as MasterRow[];
+    escalatedFromPause = true;
   }
 
   const first = rows[0]!;
@@ -322,6 +395,7 @@ async function offboardOnePerson(
       rbac_revoked: rbacRevoked,
       webhook_slug: phase === "delete" ? OFFBOARD_DELETE_SLUG : OFFBOARD_DEACTIVATE_SLUG,
       batched: true,
+      escalated_from_temporary_pause: escalatedFromPause,
     },
   });
 

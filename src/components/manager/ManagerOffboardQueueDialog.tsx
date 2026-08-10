@@ -16,8 +16,10 @@ import {
   type OffboardReason,
 } from '@/lib/hr/offboard-reasons';
 
-// Temporary Pause only suspends the account (no actual offboarding) — that
-// call belongs to HR, so managers see it greyed out here rather than in the queue.
+// Temporary Pause only suspends the account (no actual offboarding) — that's
+// the Suspend action's job, so managers see it greyed out here. The server
+// also rejects it (POST /api/offboarding-queue): everything queued via
+// Offboard rides the DELETE pathway when HR processes it.
 const REASON_OPTIONS: SmoothSelectOption<OffboardReason | ''>[] = [
   { value: '', label: 'Select a reason' },
   ...OFFBOARD_REASON_OPTIONS.map((r) => ({

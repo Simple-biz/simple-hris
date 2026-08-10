@@ -8,7 +8,7 @@ import { listDepartmentsForManager } from '@/lib/supabase/department-managers';
 import { departmentMatchesManagedAssignments } from '@/lib/managed-department-scope';
 import { requireFeatureEdit } from '@/lib/auth/authorize-feature';
 import { deniedResponse } from '@/lib/auth/authorize-email';
-import { isValidOffboardReason } from '@/lib/hr/offboard-reasons';
+import { isValidOffboardReason, isQueueableOffboardReason } from '@/lib/hr/offboard-reasons';
 import { fireOffboardWebhook, MANAGER_OFFBOARD_NOTIFY_SLUG } from '@/lib/hr/offboard-webhooks';
 import {
   insertOffboardingQueueEntries,
@@ -136,6 +136,17 @@ export async function POST(request: Request) {
       if (!isValidOffboardReason(reason)) {
         return NextResponse.json(
           { error: `Invalid reason for ${it.employee_name ?? identifying}` },
+          { status: 400 },
+        );
+      }
+      // Everything in this queue is a real offboard and rides the DELETE
+      // pathway when HR processes it. A Temporary Pause is a suspension —
+      // that's the Suspend action (/api/manager/temp-pause), never the queue.
+      if (!isQueueableOffboardReason(reason)) {
+        return NextResponse.json(
+          {
+            error: `Temporary Pause is a suspension, not an offboard (${it.employee_name ?? identifying}). Use the Suspend action instead — offboarding always deletes the account.`,
+          },
           { status: 400 },
         );
       }

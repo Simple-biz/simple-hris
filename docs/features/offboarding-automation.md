@@ -55,6 +55,9 @@ A department manager multi-selects teammates in **My Team** and submits. `POST /
 (gated by `requireFeatureEdit`; managers can only offboard people in departments they manage — enforced
 via `listDepartmentsForManager` + `departmentMatchesManagedAssignments`):
 
+- **Rejects `temporary_pause`.** Everything in this queue rides the DELETE pathway when HR
+  processes it, so a Temporary Pause (a suspension) is a 400 here — that's the manager Suspend
+  button's job (`isQueueableOffboardReason` in `offboard-reasons.ts` is the shared gate).
 - **De-dupes in-flight work.** Anyone already holding a pending/processing queue row is skipped
   (`findEmailsWithActiveOffboarding`); the response reports `inserted` vs `skipped`.
 - **Inserts** the survivors into the `offboarding_queue` table (`insertOffboardingQueueEntries`),
@@ -84,8 +87,11 @@ endpoint.
 For each person (`offboardOnePerson`, run in parallel, sharing one batch timestamp):
 
 1. **Stamp `global_master_list`.** Sets `off_boarded_at`, `off_boarded_reason`, `off_boarded_by`,
-   `off_boarded_note`, `scheduled_deletion_at` on **every** still-active row for that work email
-   (covers dual-role employees with multiple rows). Rows already off-boarded are not re-stamped.
+   `off_boarded_note` on **every** still-active row for that work email (covers dual-role employees
+   with multiple rows) and **clears** `scheduled_deletion_at` / `deletion_processed_at` —
+   `scheduled_deletion_at` is never stamped anymore (retired 2026-08-07). Rows already off-boarded
+   are not re-stamped, with ONE exception: a **temporary-pause suspension being escalated to a real
+   offboard** (see pathway routing below) is re-stamped with the new reason/date.
 2. **Revoke ALL RBAC + force-logout.** `snapshotAndRevokeRbacGrants(work_email)` (below), then
    `bumpForceLogoutFor(work_email)` kills any live JWT session so a stale token can't stay privileged.
 3. **Side-effects (best-effort, non-blocking):** insert into `offboarded_sheet`, append the row to
@@ -104,6 +110,22 @@ For each person (`offboardOnePerson`, run in parallel, sharing one batch timesta
   Manager → My Team **Suspend** button rides this same flow via its own `manager_suspend` slug
   (see `src/lib/hr/manager-temp-pause-webhooks.ts`) — so the deactivate flow is now exclusively
   the suspend/temporary pathway.
+- **`temporary_pause` never enters the manager offboard pathway** (2026-08-10). The manager
+  Offboard action (Cards/List → queue → HR processor) always means DELETE, whatever the reason —
+  so `temporary_pause` is greyed out in the manager dialog, **rejected server-side** at
+  `POST /api/offboarding-queue` (`isQueueableOffboardReason`), excluded from the HR queue
+  processor's editable reason dropdown (legacy-seeded pauses coerce to unset), and rejected by the
+  queue-completion PATCH. Suspensions belong to the Suspend button (`manager_suspend`) or HR's own
+  Offboard dialog.
+- **Escalation: offboarding someone who is currently suspended** (2026-08-10). A person off-boarded
+  earlier with `temporary_pause` still has a live (suspended) account, so a later real offboard
+  must not vanish: when the guarded stamp UPDATE matches zero active rows,
+  `classifyZeroStampOffboard` (`src/lib/hr/offboard-escalation.ts`) checks the existing stamps —
+  temporary-pause rows are **re-stamped with the new reason/date and ride the delete pathway**
+  (`offboarding_delete` fires; audit row carries `escalated_from_temporary_pause: true`). A person
+  already off-boarded with a **real** reason stays a hard no-op (409): the delete automation
+  already ran, and re-firing it would send duplicate teardown/termination emails. Applying a
+  Temporary Pause to an already-offboarded person is also rejected (409).
 
 > Before 2026-08-07 the teardown was department-aware: only all-Lead-Gen people deleted
 > immediately; everyone else got `offboarding_deactivate` + a 14-day `scheduled_deletion_at` timer

@@ -26,8 +26,16 @@ import {
 import { cn } from '@/lib/utils';
 import {
   OFFBOARD_REASON_OPTIONS,
+  isQueueableOffboardReason,
   type OffboardReason,
 } from '@/lib/hr/offboard-reasons';
+
+// A queued (manager-raised) offboard always rides the DELETE pathway, so
+// Temporary Pause — the suspend flow — is not offered here. Suspensions go
+// through the manager Suspend button or HR's own Offboard dialog.
+const QUEUE_REASON_OPTIONS = OFFBOARD_REASON_OPTIONS.filter((r) =>
+  isQueueableOffboardReason(r.value),
+);
 import type { OffboardingQueueRow } from '@/lib/supabase/offboarding-queue';
 
 interface Props {
@@ -65,7 +73,9 @@ export default function HrOffboardQueueProcessor({ open, items, onOpenChange, on
     const r: Record<string, OffboardReason | ''> = {};
     const n: Record<string, string> = {};
     for (const it of items) {
-      r[it.id] = (it.reason as OffboardReason) || '';
+      // Legacy rows could still carry temporary_pause — coerce it (and anything
+      // else non-queueable) to unset so HR must pick a real offboard reason.
+      r[it.id] = isQueueableOffboardReason(it.reason) ? it.reason : '';
       n[it.id] = it.note ?? '';
     }
     setReasonById(r);
@@ -111,7 +121,9 @@ export default function HrOffboardQueueProcessor({ open, items, onOpenChange, on
         if (isHandled(it.id)) return false;
         if (!it.employee_work_email) return false;
         const reason = reasonById[it.id];
-        if (!reason) return false;
+        // isQueueableOffboardReason also rejects temporary_pause — a queued
+        // offboard always deletes; suspensions are the Suspend flow.
+        if (!isQueueableOffboardReason(reason)) return false;
         if (reason === 'other' && !(noteById[it.id] ?? '').trim()) return false;
         return true;
       }),
@@ -230,8 +242,12 @@ export default function HrOffboardQueueProcessor({ open, items, onOpenChange, on
     if (!current) return;
     const reason = reasonById[current.id] || '';
     const note = (noteById[current.id] ?? '').trim();
-    if (!reason) {
-      toast.error('Pick a reason before offboarding');
+    if (!isQueueableOffboardReason(reason)) {
+      toast.error(
+        reason === 'temporary_pause'
+          ? 'Temporary Pause is a suspension, not an offboard — a queued offboard always deletes'
+          : 'Pick a reason before offboarding',
+      );
       return;
     }
     if (reason === 'other' && !note) {
@@ -498,7 +514,7 @@ export default function HrOffboardQueueProcessor({ open, items, onOpenChange, on
                           <SelectValue placeholder="Select a reason" />
                         </SelectTrigger>
                         <SelectContent side="bottom" alignItemWithTrigger={false} className="border-zinc-800 bg-zinc-900">
-                          {OFFBOARD_REASON_OPTIONS.map((r) => (
+                          {QUEUE_REASON_OPTIONS.map((r) => (
                             <SelectItem key={r.value} value={r.value} className="text-zinc-300 focus:bg-zinc-800 focus:text-zinc-100">
                               {r.label}
                             </SelectItem>
