@@ -373,8 +373,12 @@ wizard (both gates), `current-pay.ts`, `member-monthly-pay.ts`,
 `hsl-week-snapshot.ts`, Employee Dashboard, and My Hours. A month with no
 entry keeps the legacy **3rd-week salary date** rule byte-for-byte; malformed
 entries parse away to that default (`parseTechBonusWeekOverrides` drops
-non-Mondays and salary-month misfiles). Tests:
-`src/lib/payroll/tech-bonus-week.test.ts`.
+non-Mondays and salary-month misfiles). **The week is presented Sun–Sat**
+(Kane 2026-08-10: "the techbonus week should follow Sunday to Saturday"):
+each `TechWeekOption` carries `weekStart`/`weekEnd` = the real Sunday→Saturday
+pay week around the owning Monday (`[Mon − 1, Mon + 5]`) and the modal pills
+display that span — the stored Monday remains purely the internal gate key.
+Tests: `src/lib/payroll/tech-bonus-week.test.ts`.
 
 ### 6.1 Custom system bonuses (COP / USD variants) *(added 2026-07-30)*
 

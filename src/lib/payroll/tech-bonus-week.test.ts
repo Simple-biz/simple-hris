@@ -107,6 +107,16 @@ test("week options cover the month, include the auto week exactly once, and all 
     assert.equal(opts.filter((o) => o.isAuto).length, 1, `${y}-${m}: auto count`);
     for (const o of opts) {
       assert.equal(o.monday.getDay(), 1);
+      // Kane 2026-08-10: the tech bonus week follows SUNDAY → SATURDAY. The
+      // displayable span wraps the owning Monday: [Mon − 1, Mon + 5].
+      // (Calendar comparisons, not ms deltas — a Mar/Nov week crossing a DST
+      // shift isn't exactly 6×24h in local time.)
+      assert.equal(o.weekStart.getDay(), 0, `${y}-${m}: weekStart not a Sunday`);
+      assert.equal(o.weekEnd.getDay(), 6, `${y}-${m}: weekEnd not a Saturday`);
+      const expectStart = new Date(o.monday.getFullYear(), o.monday.getMonth(), o.monday.getDate() - 1);
+      const expectEnd = new Date(o.monday.getFullYear(), o.monday.getMonth(), o.monday.getDate() + 5);
+      assert.equal(o.weekStart.toDateString(), expectStart.toDateString(), `${y}-${m}: weekStart`);
+      assert.equal(o.weekEnd.toDateString(), expectEnd.toDateString(), `${y}-${m}: weekEnd`);
       assert.equal(o.salaryDate.getMonth(), m - 1, `${y}-${m}: salary month`);
       // Every offered option must survive the parser when saved under this month.
       const key = `${y}-${String(m).padStart(2, "0")}`;

@@ -11920,7 +11920,7 @@ export default function PayrollWizard({
                                   const sel = techOptions.find((o) => o.mondayIso === selectedIso);
                                   return sel ? (
                                     <span className="font-mono font-semibold tabular-nums text-zinc-800 dark:text-zinc-100">
-                                      {fmtShort(sel.monday)} – {fmtShort(sel.weekEnd)} · salary {fmtShort(sel.salaryDate)}
+                                      {fmtShort(sel.weekStart)} – {fmtShort(sel.weekEnd)} · salary {fmtShort(sel.salaryDate)}
                                     </span>
                                   ) : (
                                     <span className="font-mono font-semibold tabular-nums text-zinc-800 dark:text-zinc-100">
@@ -11959,7 +11959,7 @@ export default function PayrollWizard({
                                       // future rule change never fights a redundant pin.
                                       void saveTechWeekOverride(o.isAuto ? null : o.mondayIso);
                                     }}
-                                    title={`Pay period ${fmtShort(o.monday)} – ${fmtShort(o.weekEnd)} · salary date ${fmtShort(o.salaryDate)}${o.isAuto ? ' · the automatic 3rd-week pick' : ''}`}
+                                    title={`Pay week ${fmtShort(o.weekStart)} – ${fmtShort(o.weekEnd)} (Sun–Sat) · salary date ${fmtShort(o.salaryDate)}${o.isAuto ? ' · the automatic 3rd-week pick' : ''}`}
                                     className={cn(
                                       'flex flex-col items-start gap-0.5 rounded-lg border px-3 py-2 text-left text-xs font-semibold transition disabled:cursor-not-allowed',
                                       isSelected
@@ -11968,7 +11968,7 @@ export default function PayrollWizard({
                                     )}
                                   >
                                     <span className="font-mono tabular-nums">
-                                      {fmtShort(o.monday)} – {fmtShort(o.weekEnd)}
+                                      {fmtShort(o.weekStart)} – {fmtShort(o.weekEnd)}
                                     </span>
                                     <span className="flex items-center gap-1.5 text-[10px] font-medium text-zinc-500 dark:text-zinc-400">
                                       salary {fmtShort(o.salaryDate)}
@@ -13411,7 +13411,7 @@ export default function PayrollWizard({
                                       ? 'Manually granted by Accounting this session.'
                                       : techBonusWeekInfo.isOverridden
                                         ? `Auto-applied: this is the Technology Bonus payout week picked in System Bonus settings (salary date ${techBonusWeekInfo.salaryDate?.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) ?? ''}).`
-                                        : `Auto-applied: salary date ${techBonusWeekInfo.salaryDate?.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) ?? ''} lands in the 3rd full Mon–Sun week.`
+                                        : `Auto-applied: salary date ${techBonusWeekInfo.salaryDate?.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) ?? ''} lands in the month's automatic 3rd-week pick.`
                                     : isManualRevoke
                                       ? 'Manually revoked this session — click to restore.'
                                       : !techBonusWeekInfo.isTechBonusWeek

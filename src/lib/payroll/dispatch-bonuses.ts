@@ -505,10 +505,17 @@ export function resolveIsTechBonusWeek(
 }
 
 export interface TechWeekOption {
-  /** Pay-period Monday (the value stored in the overrides map). */
+  /** Owning Monday (the INTERNAL key stored in the overrides map). */
   mondayIso: string;
   monday: Date;
-  /** Pay-period Sunday (Monday + 6). */
+  /**
+   * The pay week as people actually experience it runs SUNDAY → SATURDAY
+   * (Hubstaff upload weeks; Kane 2026-08-10: "the techbonus week should
+   * follow Sunday to Saturday"). The owning Monday sits inside that window,
+   * so the displayable span is [Monday − 1, Monday + 5].
+   */
+  weekStart: Date;
+  /** Pay-week Saturday (Monday + 5). */
   weekEnd: Date;
   /** Salary Tuesday that pays this period (Monday + 8). */
   salaryDate: Date;
@@ -517,10 +524,10 @@ export interface TechWeekOption {
 }
 
 /**
- * The pay weeks selectable as a month's Tech Bonus payout week: every Mon–Sun
- * period whose salary date (Monday + 8) lands inside the month. Exactly one
- * carries `isAuto` — the 3rd-week heuristic's pick, the default when no
- * override is saved.
+ * The pay weeks selectable as a month's Tech Bonus payout week: every pay
+ * week whose salary date (owning Monday + 8) lands inside the month, spanned
+ * for display as the real Sun–Sat pay week. Exactly one carries `isAuto` —
+ * the 3rd-week heuristic's pick, the default when no override is saved.
  */
 export function listTechBonusWeekOptions(year: number, month: number): TechWeekOption[] {
   const first = new Date(year, month, 1);
@@ -543,7 +550,9 @@ export function listTechBonusWeekOptions(year: number, month: number): TechWeekO
       options.push({
         mondayIso: formatIsoFromLocalDate(monday),
         monday,
-        weekEnd: new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + 6),
+        // Displayable Sun–Sat pay week around the owning Monday.
+        weekStart: new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() - 1),
+        weekEnd: new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + 5),
         salaryDate,
         isAuto: isTechBonusWeek(monday),
       });
