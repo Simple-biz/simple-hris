@@ -280,5 +280,5 @@ rows and must not be told a union of aliases.
 
 ---
 
-See also: `docs/reference/system-architecture.md` decision #8;
+See also: `docs/reference/system-architecture.md` decision #10;
 `docs/implementation-plans/implementation-plan-rbac.md` for the original plan.

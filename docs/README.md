@@ -20,7 +20,7 @@ docs/
 | Doc | Covers |
 |---|---|
 | [llm-context.md](./reference/llm-context.md) | Read-first overview + quick facts + documentation index |
-| [system-architecture.md](./reference/system-architecture.md) | Stack, repo structure, routing model (8 role dashboards), auth/RBAC, design system, key decisions |
+| [system-architecture.md](./reference/system-architecture.md) | Stack, repo structure, routing model (ten dashboard views + `/payroll-clerk`), auth/RBAC, upstream Sheets + n8n, design system, key decisions, retired behavior |
 | [components.md](./reference/components.md) | Every UI component across all dashboards (Dashboard Map, Auth/RBAC routing, per-dashboard reference, shared components) |
 | [api-reference.md](./reference/api-reference.md) | REST API endpoints: methods, request/response shapes, tables, service-role requirements |
 | [data-sources.md](./reference/data-sources.md) | Supabase tables/views, data flow, CSV dedup, email normalization, PAB column resolution |

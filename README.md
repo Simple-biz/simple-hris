@@ -115,7 +115,7 @@ npm run lint        # tsc --noEmit (type-check only)
 
 ### 6. Sign in
 
-Visit `http://localhost:3000/login` and sign in with Google. SSO is restricted to the company Workspace domain via `src/lib/auth/auth-options.ts`; for solo local dev, either grant yourself a role in the `employee_roles` table or use the legacy email + password path (see [`docs/reference/system-architecture.md`](docs/reference/system-architecture.md#key-architectural-decisions), decision 10).
+Visit `http://localhost:3000/login` and sign in with Google. SSO is restricted to the company Workspace domain via `src/lib/auth/auth-options.ts`; for solo local dev, either grant yourself a role in the `employee_roles` table or use the legacy email + password path (see [`docs/reference/system-architecture.md`](docs/reference/system-architecture.md#key-architectural-decisions), decision 13 — note its only UI client is now dead code, so the path is API-only).
 
 ---
 

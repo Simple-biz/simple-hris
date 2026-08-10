@@ -222,7 +222,7 @@ Flat analytic table — one row per (Hubstaff cycle, employee). Backs the Weekly
 - `GET /api/payment-dispatches/reports/[cycleId]` → `getDisbursementReportDetail()`
 
 **Who writes it:**
-- `references/seed_disbursement_records.sql` (seed + re-seed via `ON CONFLICT … DO UPDATE`)
+- `references/sql/seed/seed_disbursement_records.sql` (seed + re-seed via `ON CONFLICT … DO UPDATE`); the triggers live in `references/sql/seed/seed_disbursement_records_sync.sql`
 - `payment_dispatches_sync_disbursement` trigger (status updates)
 - `payment_dispatches_unsync_disbursement` trigger (revert on delete)
 - Manual SQL UPDATEs (e.g. mass mark-as-paid for demo data) — these use the `bank_used = 'BACKFILL'` sentinel so they can be reverted in bulk.
