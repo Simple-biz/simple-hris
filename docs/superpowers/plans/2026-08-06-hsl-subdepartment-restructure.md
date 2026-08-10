@@ -20,6 +20,60 @@
 
 ---
 
+## Status (2026-08-10) — safe slice SHIPPED, with a hard hold on Task 2 Step 4
+
+Live roster at 2026-08-10: **600 active HSL-family people, 70 already sub-labeled** —
+53 `hsl:intake_specialist`, 11 `hsl:filing_specialist`, 5 `hsl:case_managers`,
+1 `hsl:attestation`, 530 still plain `HSL`. Every label in use is a valid
+`HSL_DEPT_KEYS` member (no junk strings to clean up). Zero `hsl:*` rows exist in
+`payment_catalog_pay_structures` — only `hogan_smith_law: 225 / 337.50 PHP`.
+
+**Shipped today (e70757d, 06bad5e, 7b46843, b96897a):**
+- **Task 1 complete** — `src/lib/departments/hsl-subdept.ts` + tests, exactly the
+  Produces block below, plus one addition: **`isHslFamilyLabel(raw)`**. It also
+  accepts the already-normalized `hogan_smith_law` key, because `normalizeDeptToKey`
+  has no entry for its own output (the reason PayrollWizard.tsx:7773 needs two clauses).
+- **Task 6 complete** — within-family transfers no longer reset the weekend-premium
+  effective date; `from_department` added to `HslTransferRowLike` and the fetch select
+  (the `/api/payroll/hsl-transfers-bulk` route delegates to that fetch, so both
+  engines inherit it).
+- **New work, not in the original task list:** ten surfaces tested
+  `department === 'hsl'` EXACTLY and so dropped all 70 sub-labeled people out of the
+  HSL cohort — `member-monthly-pay` (employee monthly week enumeration),
+  `people-roster`, `hsl-week-snapshot`, EmployeeDashboard, EmployeeMyHours,
+  ManagerMemberHoursMini, PeopleTab, Overview ×4. All now use `isHslFamilyLabel`.
+  Display: `formatDeptLabel` applied on the three transfer surfaces, the transfer
+  dialog, the People roster/profile, My Team and the member dialog. Filter and search
+  VALUES stay raw. Admin/HR Global Master List views deliberately keep showing the
+  literal sheet cell.
+
+**Verified NOT broken (do not "fix"):** every payout path already normalized —
+`current-pay.ts:819`, `disbursement-reports.ts:1007`, and the wizard's dept
+derivation (PayrollWizard.tsx:6996/8722) all run `normalizeDeptToKey`. The 70
+sub-labeled people have been paid the correct parent rate throughout.
+
+> **HOLD on Task 2 Step 4 (the `current-pay`/`disbursement-reports` label
+> preference).** All 177 HSL rows in `employee_hourly_rates` still carry the
+> flattened `"Hogan Smith Law"`, and preferring the rates-row label is exactly what
+> keeps the 70 sub-labeled people resolving the parent base rate. Flipping to
+> master-label-first BEFORE the 12 sub-rate rows exist would strand them with no
+> department base at all. That edit ships in the SAME change as
+> `seed-hsl-subdept-rates.mts --apply`, at cutover — never on its own.
+
+**Open items found while scanning (not fixed today):**
+- Weekend-premium damage from the five July within-family relabels was **₱0** —
+  nadinec/isaact/miaj/mayi/chrism have zero Sat/Sun hours in every Hubstaff week
+  from March to August. Nothing to recover.
+- `christiane@simple.biz` Lead Gen → HSL, **approved 2026-06-29, never applied**.
+  `clear-stuck-transfers.mts` resolves it `satisfied` (already in HSL). It is one of
+  6 stuck approved transfers; the script has no per-person filter and one of the
+  other five is a real MOVE (`Demaisip, Rey` Lead Gen → Client VA), so it needs
+  Kane's go-ahead before `--apply`.
+- **56 of the 70 sub-labeled people are absent from `hsl_team_members` entirely**,
+  and 278 of its 565 rows have `dept_key = null` — the HSL roster sheet is well
+  behind master. One live conflict: `rafa@simple.biz` is `attestation` in master,
+  `filing_specialist` in KPI. Relevant to KPI bonus eligibility, not to base pay.
+
 ## Status / re-scope (2026-08-06, Kane)
 
 Kane redirected the starting point: **the Payment Catalog pipeline leads.** Create a Department (Department tab) Step 2 "Sub-departments" now carries a base rate PER sub-department; a department with sub-departments carries NO department-wide rate (the HSL model); Payroll Wizard grouping stays parent-level (hsl:* still lands under the HSL step).
