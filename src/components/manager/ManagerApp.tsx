@@ -46,6 +46,7 @@ import type { EmployeeRow } from '@/lib/supabase/employees';
 import { normEmail } from '@/lib/email/norm-email';
 import { SESSION_EMAIL_KEY, type Role } from '@/lib/rbac/views';
 import { cn } from '@/lib/utils';
+import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
 import ManagerSidebar, { type ManagerTab } from './ManagerSidebar';
 import LeaveRequestsPanel from '@/components/LeaveRequestsPanel';
 import type { LeaveRequestRow } from '@/lib/supabase/leave-requests';
@@ -4024,7 +4025,7 @@ function TeamPanelInner({ members, teamGate, viewerEmail, focusEmail, onFocusCon
               <div className="flex items-center justify-between gap-4 text-[13px]">
                 <span className="text-zinc-500 dark:text-zinc-400">Department</span>
                 <span className="font-medium text-zinc-900 dark:text-zinc-100">
-                  {member.department ?? '—'}
+                  {formatDeptLabel(member.department) || '—'}
                 </span>
               </div>
               {isSuspend ? (

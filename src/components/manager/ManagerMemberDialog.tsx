@@ -22,6 +22,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { cn } from '@/lib/utils';
+import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
 import type { EmployeeRow } from '@/lib/supabase/employees';
 import { SkillBlock, TeamAvatar } from '@/components/team/team-ui';
 import { formatCurrentProjects } from '@/lib/skill-set-titles';
@@ -385,7 +386,7 @@ export default function ManagerMemberDialog({
                   <DialogDescription className="mt-1.5 flex flex-wrap items-center justify-center gap-1.5">
                     {member.department && (
                       <span className="rounded-md border border-blue-200 bg-white/70 px-1.5 py-0.5 text-[10px] font-medium text-blue-700 dark:border-blue-500/30 dark:bg-blue-500/10 dark:text-blue-300">
-                        {member.department}
+                        {formatDeptLabel(member.department)}
                       </span>
                     )}
                     {member.mesa_member && (

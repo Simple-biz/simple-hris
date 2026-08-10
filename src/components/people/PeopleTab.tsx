@@ -1081,7 +1081,7 @@ export default function PeopleTab({
                       )}
                     </td>
                     <td className="px-3 py-2.5 text-zinc-600 dark:text-zinc-300" data-label="Department">
-                      {r.department ?? '—'}
+                      {formatDeptLabel(r.department) || '—'}
                     </td>
                     <td className="px-3 py-2.5" data-label={rangeMode ? 'Hours in range' : 'Hours this week'}>
                       <HoursCell hours={r.hours} />
@@ -1439,7 +1439,7 @@ function ExcludedPayoutDialog({
                         <div className="min-w-0 flex-1">
                           <div className="truncate text-[13px] font-medium text-zinc-900 dark:text-zinc-100">{r.name ?? '—'}</div>
                           <div className="truncate text-[11px] text-zinc-400">
-                            {r.department ?? '—'} · {r.work_email ?? r.employee_id ?? ''}
+                            {formatDeptLabel(r.department) || '—'} · {r.work_email ?? r.employee_id ?? ''}
                           </div>
                         </div>
                         <div className="flex shrink-0 flex-wrap items-center justify-end gap-1">
@@ -1626,7 +1626,7 @@ function MissingBankInfoDialog({
                           <div className="min-w-0 flex-1">
                             <div className="truncate text-[13px] font-medium text-zinc-900 dark:text-zinc-100">{r.name ?? '—'}</div>
                             <div className="truncate text-[11px] text-zinc-400">
-                              {r.department ?? '—'} · {r.work_email ?? r.employee_id ?? ''}
+                              {formatDeptLabel(r.department) || '—'} · {r.work_email ?? r.employee_id ?? ''}
                             </div>
                           </div>
                         </button>

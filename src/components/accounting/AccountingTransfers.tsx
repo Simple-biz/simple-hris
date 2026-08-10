@@ -22,6 +22,7 @@ import {
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
+import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
 import { getTabCache, hasFetchedThisSession, markFetchedThisSession, setTabCache, TAB_CACHE_KEYS } from '@/lib/accounting/tab-cache';
 import { useLiveRefresh } from '@/hooks/useLiveRefresh';
 import type { AccountingTransferRow, TransferRateChange } from '@/lib/transfers/accounting-transfers';
@@ -642,11 +643,11 @@ export default function AccountingTransfers() {
                     <td className="px-3 py-2.5">
                       <div className="flex items-center gap-1.5 text-xs">
                         <span className="rounded bg-zinc-100 px-1.5 py-0.5 font-medium text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
-                          {r.from_department}
+                          {formatDeptLabel(r.from_department)}
                         </span>
                         <ArrowRight className="h-3 w-3 text-zinc-400" />
                         <span className="rounded bg-orange-600 px-1.5 py-0.5 font-semibold text-white">
-                          {r.to_department}
+                          {formatDeptLabel(r.to_department)}
                         </span>
                       </div>
                     </td>

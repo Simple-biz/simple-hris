@@ -25,6 +25,7 @@ import {
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
+import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
 import { getHrTabCache, hasHrTabCache, setHrTabCache, HR_TAB_CACHE_KEYS } from '@/lib/hr/tab-cache';
 import type {
   DepartmentTransferRequestRow,
@@ -311,8 +312,9 @@ export default function HrTransfers() {
                 className={SELECT_CLASS}
               >
                 <option value="" className={OPTION_CLASS}>All departments</option>
+                {/* Label prettified, VALUE stays the raw cell so filtering still matches rows. */}
                 {departmentOptions.map((d) => (
-                  <option key={d} value={d} className={OPTION_CLASS}>{d}</option>
+                  <option key={d} value={d} className={OPTION_CLASS}>{formatDeptLabel(d)}</option>
                 ))}
               </select>
             </SelectWrapper>
@@ -399,11 +401,11 @@ export default function HrTransfers() {
                         <td className="px-4 py-3">
                           <div className="flex flex-wrap items-center gap-1.5 text-xs">
                             <span className="rounded-md bg-zinc-100 px-2 py-0.5 font-medium text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
-                              {r.from_department}
+                              {formatDeptLabel(r.from_department)}
                             </span>
                             <ArrowRight className="h-3.5 w-3.5 text-zinc-400" />
                             <span className="rounded-md bg-emerald-600 px-2 py-0.5 font-semibold text-white">
-                              {r.to_department}
+                              {formatDeptLabel(r.to_department)}
                             </span>
                           </div>
                         </td>
@@ -580,14 +582,14 @@ function TransferDetailsModal({
           <div className="relative mt-4 flex items-center gap-2 rounded-xl bg-white/15 p-2.5 ring-1 ring-white/20 backdrop-blur-sm">
             <div className="min-w-0 flex-1 text-center">
               <p className="text-[10px] font-medium uppercase tracking-wide text-emerald-50/70">From</p>
-              <p className="truncate text-sm font-semibold">{row.from_department}</p>
+              <p className="truncate text-sm font-semibold">{formatDeptLabel(row.from_department)}</p>
             </div>
             <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-white/25">
               <ArrowRight className="h-4 w-4" />
             </div>
             <div className="min-w-0 flex-1 text-center">
               <p className="text-[10px] font-medium uppercase tracking-wide text-emerald-50/70">To</p>
-              <p className="truncate text-sm font-semibold">{row.to_department}</p>
+              <p className="truncate text-sm font-semibold">{formatDeptLabel(row.to_department)}</p>
             </div>
           </div>
 

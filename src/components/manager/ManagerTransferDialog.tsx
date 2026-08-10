@@ -15,6 +15,7 @@ import { Button } from '@/components/ui/button';
 import { DatePicker } from '@/components/ui/date-picker';
 import { SmoothSelect } from '@/components/ui/smooth-select';
 import { cn } from '@/lib/utils';
+import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
 
 interface Candidate {
   name: string;
@@ -168,7 +169,7 @@ export default function ManagerTransferDialog({ open, onOpenChange, myDepartment
                     {selected.name}
                   </div>
                   <div className="truncate text-[11px] text-zinc-500 dark:text-zinc-400">
-                    {selected.department || 'No department'}
+                    {formatDeptLabel(selected.department) || 'No department'}
                     {selected.work_email ? ` · ${selected.work_email}` : ''}
                   </div>
                 </div>
@@ -203,7 +204,8 @@ export default function ManagerTransferDialog({ open, onOpenChange, myDepartment
                     searchPlaceholder="Search departments…"
                     options={[
                       { value: '', label: `All departments${departments.length ? ` (${departments.length})` : ''}` },
-                      ...departments.map((d) => ({ value: d, label: d })),
+                      // Label prettified, VALUE stays raw — it is sent as the API filter.
+                      ...departments.map((d) => ({ value: d, label: formatDeptLabel(d) })),
                     ]}
                   />
                 </div>
@@ -229,7 +231,7 @@ export default function ManagerTransferDialog({ open, onOpenChange, myDepartment
                             {c.name}
                           </span>
                           <span className="block truncate text-[11px] text-zinc-400">
-                            {c.department || 'No department'}
+                            {formatDeptLabel(c.department) || 'No department'}
                             {c.work_email ? ` · ${c.work_email}` : ''}
                           </span>
                         </span>
@@ -245,7 +247,7 @@ export default function ManagerTransferDialog({ open, onOpenChange, myDepartment
           {selected && (
             <div className="flex items-center gap-2 text-xs">
               <span className="rounded-md bg-white px-2 py-0.5 font-medium text-zinc-600 ring-1 ring-zinc-200 dark:bg-zinc-900 dark:text-zinc-300 dark:ring-zinc-700">
-                {currentDept || 'No department'}
+                {formatDeptLabel(currentDept) || 'No department'}
               </span>
               <ArrowRight className="h-3.5 w-3.5 text-zinc-400" />
               <span

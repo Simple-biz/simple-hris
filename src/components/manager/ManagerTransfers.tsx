@@ -41,6 +41,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { DatePicker } from '@/components/ui/date-picker';
 import { cn } from '@/lib/utils';
+import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
 import { useLiveRefresh } from '@/hooks/useLiveRefresh';
 import ManagerTransferDialog from '@/components/manager/ManagerTransferDialog';
 import { TransferExportMenu, TransferKpiCard } from '@/components/transfers/TransferToolbar';
@@ -1368,11 +1369,11 @@ export default function ManagerTransfers({ myDepartments, canInitiate }: Props) 
                             {/* Line 2 — move chips + meta */}
                             <div className="mt-1 flex min-w-0 items-center gap-1.5 text-[11px]">
                               <span className="shrink-0 rounded bg-zinc-100 px-1.5 py-0.5 font-medium text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
-                                {r.from_department}
+                                {formatDeptLabel(r.from_department)}
                               </span>
                               <ArrowRight className="h-3 w-3 shrink-0 text-zinc-400" />
                               <span className="shrink-0 rounded bg-blue-600 px-1.5 py-0.5 font-semibold text-white">
-                                {r.to_department}
+                                {formatDeptLabel(r.to_department)}
                               </span>
                               <span className="min-w-0 truncate text-zinc-400 dark:text-zinc-500">
                                 {r.proposed_effective_date ? `· eff ${r.proposed_effective_date} ` : ''}
@@ -1445,9 +1446,9 @@ export default function ManagerTransfers({ myDepartments, canInitiate }: Props) 
                                   {r.employee_name ?? r.employee_email}
                                 </div>
                                 <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[11px] text-zinc-500">
-                                  <span>{r.from_department}</span>
+                                  <span>{formatDeptLabel(r.from_department)}</span>
                                   <ArrowRight className="h-3 w-3" />
-                                  <span>{r.to_department}</span>
+                                  <span>{formatDeptLabel(r.to_department)}</span>
                                   {(r.effective_date || r.proposed_effective_date) && (
                                     <span className="text-zinc-400">
                                       · eff {r.effective_date ?? r.proposed_effective_date}
@@ -1616,11 +1617,11 @@ export default function ManagerTransfers({ myDepartments, canInitiate }: Props) 
                                   <td className="px-4 py-3" data-label="Move">
                                     <span className="inline-flex items-center gap-1.5">
                                       <span className="rounded bg-zinc-100 px-1.5 py-0.5 font-medium text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
-                                        {r.from_department}
+                                        {formatDeptLabel(r.from_department)}
                                       </span>
                                       <ArrowRight className="h-3 w-3 shrink-0 text-zinc-400" />
                                       <span className="rounded bg-blue-600 px-1.5 py-0.5 font-medium text-white">
-                                        {r.to_department}
+                                        {formatDeptLabel(r.to_department)}
                                       </span>
                                     </span>
                                   </td>
@@ -1833,11 +1834,11 @@ export default function ManagerTransfers({ myDepartments, canInitiate }: Props) 
 
                     <div className="mt-3 flex items-center gap-1.5 text-[11px]">
                       <span className="min-w-0 truncate rounded bg-white/90 px-1.5 py-0.5 font-medium text-zinc-700 ring-1 ring-inset ring-zinc-200/80 dark:bg-zinc-800 dark:text-zinc-200 dark:ring-zinc-700/60">
-                        {viewRow.from_department}
+                        {formatDeptLabel(viewRow.from_department)}
                       </span>
                       <ArrowRight className="h-3 w-3 shrink-0 text-blue-500 dark:text-blue-400" />
                       <span className="min-w-0 truncate rounded bg-blue-600 px-1.5 py-0.5 font-semibold text-white">
-                        {viewRow.to_department}
+                        {formatDeptLabel(viewRow.to_department)}
                       </span>
                     </div>
 
@@ -1942,8 +1943,8 @@ export default function ManagerTransfers({ myDepartments, canInitiate }: Props) 
               Edit transfer record
             </DialogTitle>
             <DialogDescription>
-              {editRow?.employee_name ?? editRow?.employee_email} — {editRow?.from_department} →{' '}
-              {editRow?.to_department}
+              {editRow?.employee_name ?? editRow?.employee_email} — {formatDeptLabel(editRow?.from_department)} →{' '}
+              {formatDeptLabel(editRow?.to_department)}
             </DialogDescription>
           </DialogHeader>
 
