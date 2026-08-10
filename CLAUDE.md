@@ -1,10 +1,19 @@
 # Simple HRIS — project rules
 
-## Before changing code
+## Before writing code
 
-Any non-trivial edit: use the **`hardening`** skill first. It resolves the surface via
-`docs/features/INDEX.md`, reads the governing docs and memory, cites the rules it found,
-and stops on contradictions instead of picking a side.
+Two skills, split by whether the thing already exists.
+
+**Building something new** — a dashboard, page, tab, route, table, report, export,
+notification, integration, or script: use the **`blueprint`** skill first. It scopes the
+surface against the governing docs and the nearest shipped precedent, posts a `BLUEPRINT`
+brief, and **hard-stops for approval before any code is written**. After the build it writes
+the feature doc, the `docs/features/INDEX.md` row, and the memory entry into the same commit.
+A feature without its doc is unfinished.
+
+**Changing something that exists** — any non-trivial edit: use the **`hardening`** skill first.
+It resolves the surface via `docs/features/INDEX.md`, reads the governing docs and memory,
+cites the rules it found, and stops on contradictions instead of picking a side.
 
 These words additionally demand tightening semantics — *harden, tighten, lock down,
 close the gaps, plug the holes, shore up, bulletproof, prevent regressions, make sure X
