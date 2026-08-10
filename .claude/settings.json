@@ -813,7 +813,24 @@
       "Bash(node --import tsx --test src/lib/hr/offboard-escalation.test.ts src/lib/hr/offboard-reasons.test.ts)",
       "Bash(node \"C:/Users/Kane/AppData/Local/Temp/claude/c--Users-Kane-Desktop-simple-hris/3b9a7dcd-b7cb-4e28-ad0e-3bd5a708fd5e/scratchpad/probe-tech-and-aiapi.mjs\")",
       "Bash(node ./probe-tech-and-aiapi.tmp.mjs)",
-      "Bash(node ./probe7.tmp.mjs)"
+      "Bash(node ./probe7.tmp.mjs)",
+      "Bash(awk 'NR>=9400 && NR<=9800 && \\(/currentStep ===/ || /step === /|| /Step [0-9]/ || /═══/\\)' src/components/PayrollWizard.tsx)",
+      "Bash(awk -F: '$1<9797')",
+      "Bash(awk -F: '$1>9000 && $1<9900')",
+      "Bash(awk -F: '$1>9000 && $1<9800')",
+      "Bash(awk 'NR>=9500 && NR<=9800 && /^\\\\s*\\\\{|function |const .* = \\\\\\(\\\\\\) =>|<section|Step|title=/' src/components/PayrollWizard.tsx)",
+      "Bash(cd /c/Users/Kane/Desktop/simple-hris *)",
+      "Edit(/.claude/skills/blueprint/**)",
+      "Bash(awk -F: '$1>1850 && $1<2100')",
+      "Bash(awk -F: '$1>2300 && $1<2620')",
+      "Bash(awk -F: '$1>4400 && $1<4700')",
+      "PowerShell(npx tsx --test src/lib/hr/manager-temp-pause-webhooks.test.ts)",
+      "Bash(node \"C:/Users/Kane/AppData/Local/Temp/claude/c--Users-Kane-Desktop-simple-hris/91f98f4e-bcdf-4105-ba49-931293f2a4ee/scratchpad/probe-kpi-depts.mjs\")",
+      "Bash(NODE_PATH=\"c:/Users/Kane/Desktop/simple-hris/node_modules\" node \"C:/Users/Kane/AppData/Local/Temp/claude/c--Users-Kane-Desktop-simple-hris/91f98f4e-bcdf-4105-ba49-931293f2a4ee/scratchpad/probe-kpi-depts.mjs\")",
+      "Bash(cp \"C:/Users/Kane/AppData/Local/Temp/claude/c--Users-Kane-Desktop-simple-hris/91f98f4e-bcdf-4105-ba49-931293f2a4ee/scratchpad/probe-kpi-depts.mjs\" scripts/_tmp-probe-kpi-depts.mjs)",
+      "Bash(node scripts/_tmp-probe-kpi-depts.mjs)",
+      "Bash(cd c:/Users/Kane/Desktop/simple-hris && rm -f scripts/_tmp-probe-kpi-depts.mjs scripts/_tmp-probe-usmb.mjs && git status --short)",
+      "Bash(node -e \"console.log\\(JSON.stringify\\(require\\('./package.json'\\).scripts,null,2\\)\\)\")"
     ],
     "additionalDirectories": [
       "\\tmp",
@@ -824,7 +841,9 @@
       "\\",
       "C:\\Users\\Kane\\Desktop\\simple-hris",
       "C:\\Users\\Kane\\AppData\\Local\\Temp\\claude\\c--Users-Kane-Desktop-simple-hris\\f5f2bfd7-3595-4a03-8588-71a730e59895\\scratchpad",
-      "c:\\Users\\Kane\\Desktop\\simple-hris\\.claude\\skills\\hardening"
+      "c:\\Users\\Kane\\Desktop\\simple-hris\\.claude\\skills\\hardening",
+      "C:\\Users\\Kane\\Desktop\\simple-hris\\scripts",
+      "c:\\Users\\Kane\\Desktop\\simple-hris\\scripts"
     ]
   }
 }
