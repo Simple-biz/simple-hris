@@ -142,6 +142,16 @@ same null-for-unknown contract as `normalizeDeptToKey`.
   assigned under it are appliable, and **Mark Ready feeds the same status
   table Readiness reads**. `ManagerApp`'s "no departments assigned" gate and
   `ManagerBonusHistory` recognize them too.
+
+  > **Exception (2026-08-10):** a slug listed in
+  > `KPI_CALCULATOR_RETIRED_DEPT_KEYS` gets **no card**, even when it is a real
+  > registry department — `executive_assistants` is one of the eleven retired
+  > keys. All three sites that walk the grant-slug path
+  > (`customManagedKeys`, `use-bonus-scoring-queue`, `ManagerApp`) funnel
+  > through `isKpiCalculatorDeptKey`, so they cannot drift. The department
+  > itself, its members, its pay structure and its manager grants are
+  > unaffected — only the calculator card is gone. See
+  > [bonus-catalog.md §3.1](./bonus-catalog.md).
 - **Department dropdowns everywhere** (`896f865`) — `GET /api/departments`
   returns active-roster labels **unioned with registry names**, so an in-app
   department is selectable in HR onboarding, Roles & permissions, transfer

@@ -65,7 +65,7 @@ import {
 } from '@/lib/manager/use-bonus-scoring-queue';
 import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
 import { slugifyDeptKey } from '@/lib/departments/registry';
-import { DEPT_INPUT_CONFIG } from '@/lib/payroll/department-bonus';
+import { DEPT_INPUT_CONFIG, isKpiCalculatorDeptKey } from '@/lib/payroll/department-bonus';
 import { isLeadGenDepartment } from '@/lib/hr/calltools-username';
 import ManagerMemberDialog from '@/components/manager/ManagerMemberDialog';
 import ManagerTransfers from '@/components/manager/ManagerTransfers';
@@ -498,8 +498,15 @@ export default function ManagerApp() {
                     // In-app (Payment Catalog -> Department) departments miss
                     // the alias map; the calculator renders them as
                     // catalog-driven cards. `hsl:*` strings are HSL access
-                    // keys, not departments.
-                    return !!dStr && !dStr.includes(':') && slugifyDeptKey(dStr) !== '';
+                    // keys, not departments. Retired departments render no card
+                    // at all, so they must not unlock the tab either — else a
+                    // manager who holds only those grants lands on an empty
+                    // calculator instead of the "no departments" explainer.
+                    return (
+                      !!dStr &&
+                      !dStr.includes(':') &&
+                      isKpiCalculatorDeptKey(slugifyDeptKey(dStr))
+                    );
                   });
                 if (!hslVisible && !deptVisible) {
                   return (
@@ -526,7 +533,7 @@ export default function ManagerApp() {
                     if (dStr.toLowerCase().startsWith('hsl:')) return 'hsl';
                     const k = normalizeDeptToKey(dStr);
                     if (k && k in DEPT_INPUT_CONFIG) return 'dept';
-                    if (!k && !dStr.includes(':') && slugifyDeptKey(dStr)) return 'dept';
+                    if (!k && !dStr.includes(':') && isKpiCalculatorDeptKey(slugifyDeptKey(dStr))) return 'dept';
                   }
                   return 'hsl';
                 })();

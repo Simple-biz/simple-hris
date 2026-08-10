@@ -224,24 +224,72 @@ export const DEPT_INPUT_CONFIG: Record<string, DeptInputConfig> = {
     deptFields: [{ key: 'newHires', label: 'New Hires (passed 4 weeks)', hint: 'pool ÷ new hires' }],
     formula: 'Pool = (billable members, excluding Teal) × ₱1,000 ÷ new hires. Everyone gets an equal share.',
   },
-  // US sales team — no peso KPI formula; the ₱150/sale rule belongs to the
-  // PH Sales Assistant cohort below. Roster-only keeps the dept first-class
-  // on the manager calculator + Readiness (auto-Ready via 'no_bonus').
-  sales: { employeeFields: [], deptFields: [], formula: 'No bonus formula defined yet — roster only.' },
+  // NOTE: `sales`, `smm` (Social Media) and `smm_freelancer` were REMOVED from
+  // this map on 2026-08-10 — see KPI_CALCULATOR_RETIRED_DEPT_KEYS below. They
+  // remain first-class in `DEPARTMENTS` (wizard Additions tabs, dept colours,
+  // Hubstaff exemptions); they simply no longer have a KPI Calculator card.
   sales_assistant: {
     employeeFields: [{ key: 'salesLastWeek', label: 'Sales (last week)', hint: '₱150 each' }],
     deptFields: [],
     formula: '₱150 per sale last week.',
   },
-  smm: { employeeFields: [], deptFields: [], formula: 'No bonus formula defined yet — roster only.' },
-  smm_freelancer: { employeeFields: [], deptFields: [], formula: 'No bonus formula defined yet — roster only.' },
   pm_team: { employeeFields: [], deptFields: [], formula: 'No bonus formula defined yet — roster only.' },
   client_va: { employeeFields: [], deptFields: [], formula: 'No bonus formula defined yet — roster only.' },
   site_building: { employeeFields: [], deptFields: [], formula: 'No bonus formula defined yet — roster only.' },
 };
 
-/** Department keys that appear in the manager KPI Calculator (excludes smart_staff + hogan_smith_law). */
-export const MANAGER_BONUS_DEPT_KEYS = Object.keys(DEPT_INPUT_CONFIG);
+/**
+ * Departments that must NEVER render a KPI Calculator card — Kane, 2026-08-10:
+ * "All of those departments should be removed from KPI Calculator permanently."
+ * They have no formal bonus structure, or are not run through HRIS at all.
+ *
+ * The calculator draws its cards from TWO sources, so retiring a department
+ * takes both of them:
+ *
+ *  1. Built-in keys — `MANAGER_BONUS_DEPT_KEYS` (the keys of `DEPT_INPUT_CONFIG`).
+ *     `sales`, `smm` and `smm_freelancer` were deleted from that map outright.
+ *  2. Grant-derived keys — a `department_managers` grant whose label misses the
+ *     `normalizeDeptToKey` alias map is slugified into a catalog-driven card
+ *     (`slugifyDeptKey`). The remaining eight only ever reached the calculator
+ *     this way, so they are filtered here instead: revoking the grants would
+ *     also strip those managers' My Team / transfers / leave-approval reach,
+ *     which is a different decision entirely.
+ *
+ * Every consumer of rule 2 funnels through `isKpiCalculatorDeptKey` so the
+ * calculator, the Overview "Bonuses to score" queue, and the Manager tab gate
+ * can never drift apart. `kpi-calculator-depts.test.ts` pins both halves.
+ *
+ * Keys are `slugifyDeptKey(<the master-list / grant label>)`.
+ */
+export const KPI_CALCULATOR_RETIRED_DEPT_KEYS: ReadonlySet<string> = new Set([
+  'sales',                          // Sales (US team)
+  'smm',                            // Social Media
+  'smm_freelancer',                 // SMM Freelancer
+  'executive_assistant_to_the_ceo', // Executive Assistant to the CEO
+  'executive_assistants',           // Executive Assistants (in-app registry dept)
+  'manager',                        // Manager
+  'orphan_ministry',                // Orphan Ministry
+  'site_building_ph_freelancer',    // Site Building (PH - Freelancer)
+  'site_building_us_freelance',     // Site Building (US - Freelance)
+  'us_manager_bonus',               // US Manager Bonus (retired 2026-07-07)
+  'usee',                           // USEE / US Employees — paid off-channel
+]);
+
+/**
+ * True when a department key may render a KPI Calculator card. Retired keys are
+ * refused outright; anything else is allowed (a catalog-driven card is the
+ * default for an in-app department, per payment-catalog-departments.md §4).
+ */
+export function isKpiCalculatorDeptKey(key: string | null | undefined): boolean {
+  return !!key && !KPI_CALCULATOR_RETIRED_DEPT_KEYS.has(key);
+}
+
+/**
+ * Department keys that appear in the manager KPI Calculator (excludes
+ * smart_staff + hogan_smith_law, which live in the HSL calculator, and every
+ * `KPI_CALCULATOR_RETIRED_DEPT_KEYS` entry).
+ */
+export const MANAGER_BONUS_DEPT_KEYS = Object.keys(DEPT_INPUT_CONFIG).filter(isKpiCalculatorDeptKey);
 
 /** Short "what this team does" blurb shown on each department's KPI card. */
 export const DEPT_DESCRIPTION: Record<string, string> = {
@@ -253,10 +301,7 @@ export const DEPT_DESCRIPTION: Record<string, string> = {
   qc: 'Quality-checks finished units before they ship, protecting output standards.',
   discovery: 'Runs discovery calls and surfaces fresh sales opportunities each week.',
   hr: 'Recruits, onboards, and supports the workforce, keeping new talent flowing in.',
-  sales: 'The US sales team — closes deals and owns client acquisition end to end.',
   sales_assistant: 'PH-based assistants backing up the US sales team and closing assisted deals week over week.',
-  smm: 'Runs the social channels and grows audience, reach, and engagement.',
-  smm_freelancer: 'Freelance social-media creators producing content on a per-deliverable basis.',
   pm_team: 'Coordinates projects across teams and keeps delivery on schedule.',
   client_va: 'Dedicated virtual assistants embedded directly with client accounts.',
   site_building: 'Builds and launches client websites end to end.',

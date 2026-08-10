@@ -74,7 +74,7 @@ import { offboardedRelevantToWeek } from '@/lib/roster/offboarded-week-relevance
 import type { EmployeeRow } from '@/lib/supabase/employees';
 import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
 import { slugifyDeptKey } from '@/lib/departments/registry';
-import { DEPARTMENTS, DEPT_DESCRIPTION, MANAGER_BONUS_DEPT_KEYS } from '@/lib/payroll/department-bonus';
+import { DEPARTMENTS, DEPT_DESCRIPTION, MANAGER_BONUS_DEPT_KEYS, isKpiCalculatorDeptKey } from '@/lib/payroll/department-bonus';
 import { catalogDeptColor as deptColor, humanizeDeptKey } from '@/lib/departments/dept-identity';
 import { isFinalPayrollWeekOfMonth } from '@/lib/payroll/bonus-cadence';
 import { QC_DEPT_KEYS, isQcDeptKey } from '@/lib/qc/constants';
@@ -126,8 +126,8 @@ const EXTERNAL_MEMBER_DEPTS = new Set([
   'lead_gen',
   'pm_team',
   'site_building',
-  'smm',
-  'smm_freelancer',
+  // `smm` / `smm_freelancer` were dropped 2026-08-10 with their calculator
+  // cards (KPI_CALCULATOR_RETIRED_DEPT_KEYS) — there is no panel to add into.
 ]);
 
 /** Per-member, per-bonus applied state. `vars` holds formula inputs as strings. */
@@ -832,12 +832,14 @@ export default function DeptBonusCalculator({
   // their grant strings miss the built-in alias map, and their catalog key is
   // the slug of the label ("Executive Assistants" -> "executive_assistants").
   // `hsl:*` grant strings are namespaced HSL access keys, never departments.
+  // Retired departments are refused here rather than by revoking the grant —
+  // the grant still governs My Team / transfers / leave approvals.
   const customManagedKeys = useMemo(() => {
     const keys = new Set<string>();
     for (const d of managedDepts) {
       if (!d || d.includes(':') || normalizeDeptToKey(d)) continue;
       const slug = slugifyDeptKey(d);
-      if (slug) keys.add(slug);
+      if (slug && isKpiCalculatorDeptKey(slug)) keys.add(slug);
     }
     return keys;
   }, [managedDepts]);

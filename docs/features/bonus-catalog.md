@@ -141,15 +141,80 @@ Example: `IF(tickets >= 10, 500, 250) * tickets` -> variables `[tickets]`; with
   paid in dollars). `DeptBonusCalculator.tsx` keys this off `FORCED_DEPT_CURRENCY`
   (a `Record<string, PayCurrency>`, currently `{ us_manager_bonus: 'USD' }`) via
   `effectiveCurrency(deptKey, bonus)` — the single resolver every cell, column
-  subtotal, member total, and department total funnels through. So the
-  **US - Manager Bonus** department renders entirely in `$` (totals included), and
-  `saveDept` converts those amounts to PHP on save exactly as an explicitly-typed
-  bonus would (`computeAmount(..., effectiveCurrency(...))`), so the Payroll Wizard
+  subtotal, member total, and department total funnels through. A forced
+  department renders entirely in `$` (totals included), and `saveDept` converts
+  those amounts to PHP on save exactly as an explicitly-typed bonus would
+  (`computeAmount(..., effectiveCurrency(...))`), so the Payroll Wizard
   "KPI Sub." stays PHP and round-trips back to the native currency in the Payment
   Dispatch USD/COP tab. Add an entry to `FORCED_DEPT_CURRENCY` (e.g. a Colombian
   team → `'COP'`) to force more.
 
-  > **Note (2026-06-18):** the `us_manager_bonus` department is now **labelled "US Team"** (the internal key is unchanged). All US-based staff — not just the former *US Manager Bonus* members — fold into it. See the "US Team department consolidation" section in `docs/reference/business-logic.md`.
+  > **Superseded (2026-08-10):** `us_manager_bonus` was the only department this
+  > ever applied to, and it is now **retired from the KPI Calculator** (see
+  > §3.1). Its `FORCED_DEPT_CURRENCY` entry is dead code kept as the worked
+  > example for the next forced department. The mechanism is unchanged.
+  >
+  > *(Earlier note, 2026-06-18: the department was relabelled "US Team", internal
+  > key unchanged. The label was retired again 2026-07-07 — the people are
+  > record-only on the master list as "US Employees" and `normalizeDeptToKey`
+  > deliberately maps them to no payroll key.)*
+
+### 3.1 Departments retired from the KPI Calculator *(2026-08-10)*
+
+The calculator builds its card list from **two** sources, and retiring a
+department takes both:
+
+1. **Built-in keys** — `Object.keys(DEPT_INPUT_CONFIG)`, exported as
+   `MANAGER_BONUS_DEPT_KEYS` (`src/lib/payroll/department-bonus.ts`).
+2. **Grant-derived keys** — a `department_managers` grant label that misses the
+   `normalizeDeptToKey` alias map is slugified (`slugifyDeptKey`) into a generic
+   catalog-driven card. Three files apply this rule and **must agree**, or the
+   Manager Overview's "Bonuses to score" tile counts departments the calculator
+   will not render: `DeptBonusCalculator.tsx` (`customManagedKeys`),
+   `use-bonus-scoring-queue.ts` (`catalogDepts`), and `ManagerApp.tsx`
+   (`deptVisible` / `firstAssigned`).
+
+`KPI_CALCULATOR_RETIRED_DEPT_KEYS` + `isKpiCalculatorDeptKey(key)` are the single
+source of truth; all three grant-derived sites funnel through the predicate.
+Retired on Kane's instruction ("*All of those departments should be removed from
+KPI Calculator permanently*"): **Sales · Social Media · SMM Freelancer ·
+Executive Assistant to the CEO · Executive Assistants · Manager · Orphan
+Ministry · Site Building (PH - Freelancer) · Site Building (US - Freelance) ·
+US Manager Bonus · USEE**.
+
+- **Retiring the card does NOT retire the department.** `sales`, `smm` and
+  `smm_freelancer` stay in `DEPARTMENTS`, so their Payroll Wizard Additions
+  tabs, department colours and `HUBSTAFF_EXEMPT_DEPTS` entries are untouched.
+- **No `department_managers` grant was revoked.** The grants still govern My
+  Team, transfers and leave approvals — which is why the exclusion lives in
+  code rather than in the data.
+- **`sales_assistant` is a different department** (split 2026-07-27, ₱825k of
+  KPI history) and keeps both its card and its ₱150/sale formula. Plain
+  **Site Building** (₱147k of history) was *not* retired — only the two
+  freelancer variants.
+- **Open item — `us_manager_bonus` was NOT dormant.** A USD formula bonus named
+  "Jackie" (`bonus_mqh5rnwo07n4ai26`), assigned to `jackie@simple.biz`, was
+  applied here every week: 9 rows / ₱118,112, most recently period `2026-08-02`.
+  The assignment and all applied rows were left **in the database untouched** —
+  already-applied weeks still pay through the wizard — but there is no longer
+  any surface on which to apply it for a future week. Her weekly bonus needs
+  another route (Adjustment column or a one-off Urgent payment) or the
+  assignment should be deleted.
+- Pinned by `src/lib/payroll/kpi-calculator-depts.test.ts` (label → key for all
+  eleven, alias smuggling, `DEPARTMENTS` preservation, description/card parity).
+
+**Payroll Notes → KPI Submissions is deliberately NOT filtered** (Kane,
+2026-08-10). That list is built by `buildKpiReadiness`
+([payroll-readiness.md](./payroll-readiness.md)), which has its own second path:
+any active master-roster label that isn't an enumerated key joins as a
+**master-derived row** (`source: 'custom'`, "In-app" chip, not clickable,
+auto-Ready `no_bonus`). So Accounting still sees every department accounted for.
+The only visible change there is that **Sales · SMM Freelancer · Social Media
+Team** move from clickable `'general'` rows to non-clickable `'custom'` rows —
+correct, because there is no longer a calculator behind them. *Executive
+Assistant to the CEO* and *US Manager Bonus* have no active roster rows and
+never appeared on that list at all. The **readiness score is unaffected**:
+`no_bonus` already counts as settled, so none of these were ever pending.
 - **Assign:** an "Add common" picker assigns a bonus department-wide; an employee
   picker (optionally filtered to one department) assigns to a single person.
   Remove via the trash icon on each assignment row.

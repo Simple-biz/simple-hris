@@ -554,7 +554,10 @@ Storage keys: `pab_period_overrides` (JSON map), `pab_period_active_month` (`"YY
 **Toggle-based** (on/off per employee):
 - **US-Manager Bonus**: Leadership Bonus ₱3,500, Team Performance ₱3,000
 - **Hogan Smith Law**: Case Resolution Bonus ₱3,000, Compliance & Accuracy ₱2,500
-- Social Media, PM Team, Client VA, Site Building: have toggle UI but no specific bonuses defined yet
+- PM Team, Client VA, Site Building: have toggle UI but no specific bonuses defined yet
+- *Social Media, SMM Freelancer, Sales, US-Manager Bonus and six other teams were
+  retired from the KPI Calculator on 2026-08-10 — see
+  [bonus-catalog.md §3.1](../features/bonus-catalog.md).*
 
 **Formula-based** (requires metric input):
 

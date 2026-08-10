@@ -70,13 +70,20 @@ verbatim — plus HSL-only email sets and identity/email-only lookups.
 
 ## The new `sales` department
 
-- Added to `DEPARTMENTS`, `DEPT_INPUT_CONFIG` (roster-only, no formula),
-  `DEPT_DESCRIPTION` in
+- Added to `DEPARTMENTS` in
   [`department-bonus.ts`](../../src/lib/payroll/department-bonus.ts). NOT in
   `FORMULA_DEPT_KEYS`; no `calculateDepartmentBonus` case — the ₱150/sale
   rule **stays on `sales_assistant`** (all ₱751.5k of KPI history belongs to
   the PH cohort, verified by email — the 12 US-email rows are all ₱0, so no
   history re-key was needed).
+
+  > **Amended 2026-08-10:** `sales` was also given a roster-only
+  > `DEPT_INPUT_CONFIG` / `DEPT_DESCRIPTION` entry so it appeared on the manager
+  > KPI Calculator. Both were **removed** when Sales was retired from that
+  > calculator (`KPI_CALCULATOR_RETIRED_DEPT_KEYS` — see
+  > [bonus-catalog.md §3.1](./bonus-catalog.md)); it never had a bonus assigned
+  > or an applied row. Its `DEPARTMENTS` entry, wizard tab, colour and Hubstaff
+  > exemption are unchanged, and `sales_assistant` is untouched.
 - SystemSettings' local dept list, both dept color maps
   (`DeptBonusCalculator` `#ef4444`, `ManagerBonusHistory` mirror), and
   `skill-set-titles.ts` gained `sales` entries.
@@ -85,9 +92,12 @@ verbatim — plus HSL-only email sets and identity/email-only lookups.
   keep the exemption (the PH cohort's effective label changed out from under
   the old single `sales` entry).
 - The US team is salaried outside PHP payroll (no Hubstaff rows), so the
-  wizard's Sales tab is a read-only roster card, its Readiness KPI row
-  auto-reads Ready (`no_bonus`), and `sales` is intentionally absent from the
-  PAB/Tech system-bonus allowlists.
+  wizard's Sales tab is a read-only roster card and `sales` is intentionally
+  absent from the PAB/Tech system-bonus allowlists. Since 2026-08-10 it is no
+  longer a `MANAGER_BONUS_DEPT_KEYS` member, so its Readiness KPI row is now a
+  **master-derived** row (`source: 'custom'`, "In-app" chip, not clickable)
+  instead of a `'general'` one — same auto-Ready (`no_bonus`) outcome, so the
+  readiness score is unchanged.
 
 ## Data-side (scripts/split-sales-dept.mjs)
 

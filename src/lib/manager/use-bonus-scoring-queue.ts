@@ -30,7 +30,7 @@ import {
   type BonusStatus,
   type HslDeptKey,
 } from '@/lib/hsl-bonus/schema';
-import { MANAGER_BONUS_DEPT_KEYS } from '@/lib/payroll/department-bonus';
+import { MANAGER_BONUS_DEPT_KEYS, isKpiCalculatorDeptKey } from '@/lib/payroll/department-bonus';
 import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
 import { slugifyDeptKey } from '@/lib/departments/registry';
 import { catalogDeptColor, catalogDeptName } from '@/lib/departments/dept-identity';
@@ -155,9 +155,11 @@ export function useBonusScoringQueue({
       const k = normalizeDeptToKey(d);
       if (k && MANAGER_BONUS_DEPT_KEYS.includes(k)) keys.add(k);
       // In-app (Payment Catalog -> Department) departments key on their slug.
+      // Retired departments have no calculator card, so the tile must not count
+      // them — otherwise "Bonuses to score" outstanding never reaches zero.
       else if (!k) {
         const slug = slugifyDeptKey(d);
-        if (slug) keys.add(slug);
+        if (slug && isKpiCalculatorDeptKey(slug)) keys.add(slug);
       }
     }
     return Array.from(keys);
