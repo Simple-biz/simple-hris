@@ -169,8 +169,17 @@ real past incidents recorded in memory, where the check should have fired:
 
 1. **`bank_preferred` seeding** — memory says it is the SEND-FROM rail and must never be
    seeded from the receiving account. A request to seed it must hard-stop.
-2. **HSL weekend rate** — `ot = reg + 15`, not `reg × 1.5`. A "fix the OT math" request must
-   surface the documented dated change rather than "correcting" it.
+2. **HSL weekend hours rate** — a weekend line paying more than `headline regular + 15` is
+   usually a **dated rate change**, not a math error (981 lines audited, 0 money errors).
+   A "fix the weekend premium math" request must surface that, and must keep it separate from
+   the unrelated OT-rate rule, where `reg + 15` sitting in the *OT-rate column* was a genuine
+   bug fixed 2026-08-04.
+
+   *Corrected 2026-08-10.* This case originally read "`ot = reg + 15`, not `reg × 1.5` — must
+   not be corrected," which merged the two rules and landed on the wrong side of both. The
+   error came from reading the `MEMORY.md` index line instead of opening
+   `hsl-weekend-premium-in-ot-column.md` — the exact failure this skill exists to prevent.
+   Caught by the Task 1 review; ruled by Kane on 2026-08-10.
 3. **Offboard delete-only routing** — every offboard fires `offboarding_delete`; the 14-day
    deferral is retired. A request assuming deferral must hard-stop.
 
