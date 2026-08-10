@@ -35,6 +35,7 @@ import {
 } from '@/components/ui/dialog';
 import { normEmail } from '@/lib/email/norm-email';
 import type { EmployeeHourlyRateRow } from '@/lib/supabase/employee-hourly-rates';
+import type { KpiResultPeriod } from '@/lib/supabase/employee-kpi-results';
 import {
   resolveSystemBonuses,
   isDeptEligible,
@@ -531,18 +532,21 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
    * The employee's own ready/locked KPI periods (`/api/kpi-results` — the same
    * `hsl_bonus_period_status` gate + `bonus_catalog_applied` amounts the wizard's
    * "KPI Sub." column pays from, alias-resolved server-side). Draft periods never
-   * appear here, mirroring the wizard.
+   * appear here, mirroring the wizard. Typed with the route's own
+   * `KpiResultPeriod` (type-only import, erased at build) so a field-name drift
+   * is a compile error, not a silent ₱0 — reading `period_start` off the
+   * camelCase payload was exactly how the first version shipped broken.
    */
-  const [kpiPeriods, setKpiPeriods] = useState<{ period_start: string; total: number }[]>([]);
+  const [kpiPeriods, setKpiPeriods] = useState<{ periodStart: string; total: number }[]>([]);
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
         const res = await fetch(`/api/kpi-results?email=${encodeURIComponent(email)}`, { cache: 'no-store' });
-        const json = (await res.json()) as { periods?: { period_start: string; total: number | null }[] };
+        const json = (await res.json()) as { periods?: KpiResultPeriod[] };
         if (cancelled) return;
         setKpiPeriods(
-          (json.periods ?? []).map((p) => ({ period_start: p.period_start, total: Number(p.total ?? 0) })),
+          (json.periods ?? []).map((p) => ({ periodStart: p.periodStart, total: Number(p.total ?? 0) })),
         );
       } catch {
         if (!cancelled) setKpiPeriods([]);
@@ -1932,7 +1936,7 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
     const s = selectedFileWeek.start;
     const iso = `${s.getFullYear()}-${String(s.getMonth() + 1).padStart(2, '0')}-${String(s.getDate()).padStart(2, '0')}`;
     let sum = 0;
-    for (const p of kpiPeriods) if (p.period_start === iso) sum += p.total;
+    for (const p of kpiPeriods) if (p.periodStart === iso) sum += p.total;
     return Math.round(sum * 100) / 100;
   }, [wizardSnap, hasRates, isAllTime, selectedFileWeek, kpiPeriods]);
 
