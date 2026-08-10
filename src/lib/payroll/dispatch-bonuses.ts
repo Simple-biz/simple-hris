@@ -42,6 +42,12 @@ import {
 } from "@/lib/hubstaff/calendar-column-dedupe";
 import { normEmail } from "@/lib/email/norm-email";
 import { orphanageCoversDay } from "@/lib/payroll/orphanage-pab-coverage";
+import {
+  formatIsoFromLocalDate,
+  parseLocalDateFromIso,
+  parseYearMonthKey,
+  yearMonthKey,
+} from "@/lib/pab-period-settings";
 
 export const PAB_BONUS_PHP = 5000;
 export const TECH_BONUS_PHP = 1850;
@@ -422,6 +428,131 @@ export function isTechBonusWeekSunSat(weekSunday: Date): boolean {
   );
   const t = salary.getTime();
   return t >= thirdSun.getTime() && t < fourthSun.getTime();
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * Configurable Tech Bonus payout week (wizard "System Bonus" modal).
+ *
+ * `app_settings.tech_bonus_week_overrides` = JSON map
+ * `{ "YYYY-MM": "YYYY-MM-DD" }` — for each month, the pay-period MONDAY of the
+ * week that pays the Tech Bonus. A month is keyed by the SALARY date's month
+ * (period Monday + 8 days), the same attribution the 3rd-week heuristic uses,
+ * so every payable week belongs to exactly one month key and a saved pick can
+ * never double-fire. Months without an entry keep the legacy 3rd-week rule
+ * (`isTechBonusWeek`) unchanged; malformed entries are dropped on parse, so
+ * the safe default is always the heuristic.
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+export const TECH_BONUS_WEEK_OVERRIDES_KEY = "tech_bonus_week_overrides";
+
+/** "YYYY-MM" (salary-date month) → "YYYY-MM-DD" (pay-period week Monday). */
+export type TechWeekOverridesMap = Map<string, string>;
+
+/** The "YYYY-MM" month that owns a pay week for Tech purposes: its salary date's month. */
+export function techSalaryMonthKey(weekMonday: Date): string {
+  const salary = new Date(
+    weekMonday.getFullYear(),
+    weekMonday.getMonth(),
+    weekMonday.getDate() + 8,
+  );
+  return yearMonthKey(salary.getFullYear(), salary.getMonth());
+}
+
+/**
+ * Parse the `tech_bonus_week_overrides` JSON blob. Silently drops malformed
+ * entries: bad month keys, non-ISO dates, non-Monday dates, and entries whose
+ * week doesn't belong to the month it's keyed under (salary-month mismatch —
+ * the class of misfile that bit `pab_period_overrides`, see the May/June
+ * landmine in that parser). A dropped entry means that month falls back to
+ * the legacy 3rd-week heuristic everywhere.
+ */
+export function parseTechBonusWeekOverrides(
+  value: string | null | undefined,
+): TechWeekOverridesMap {
+  const map: TechWeekOverridesMap = new Map();
+  if (value == null || String(value).trim() === "") return map;
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return map;
+    for (const [k, v] of Object.entries(parsed as Record<string, unknown>)) {
+      if (!parseYearMonthKey(k)) continue;
+      if (typeof v !== "string") continue;
+      const monday = parseLocalDateFromIso(v);
+      if (!monday) continue;
+      if (monday.getDay() !== 1) continue;
+      if (techSalaryMonthKey(monday) !== k) continue;
+      map.set(k, formatIsoFromLocalDate(monday));
+    }
+  } catch {
+    // malformed JSON → empty map → heuristic everywhere
+  }
+  return map;
+}
+
+/**
+ * Override-aware Tech Bonus week gate — THE gate every engine must call
+ * (wizard, current-pay, member-monthly-pay, hsl-week-snapshot, employee
+ * surfaces). A month with a saved override pays Tech ONLY on the configured
+ * week; a month without one keeps the legacy 3rd-week rule byte-for-byte.
+ */
+export function resolveIsTechBonusWeek(
+  weekMonday: Date,
+  overrides: TechWeekOverridesMap,
+): boolean {
+  const configured = overrides.get(techSalaryMonthKey(weekMonday));
+  if (configured !== undefined) return configured === formatIsoFromLocalDate(weekMonday);
+  return isTechBonusWeek(weekMonday);
+}
+
+export interface TechWeekOption {
+  /** Pay-period Monday (the value stored in the overrides map). */
+  mondayIso: string;
+  monday: Date;
+  /** Pay-period Sunday (Monday + 6). */
+  weekEnd: Date;
+  /** Salary Tuesday that pays this period (Monday + 8). */
+  salaryDate: Date;
+  /** True for the week the legacy 3rd-week heuristic auto-detects. */
+  isAuto: boolean;
+}
+
+/**
+ * The pay weeks selectable as a month's Tech Bonus payout week: every Mon–Sun
+ * period whose salary date (Monday + 8) lands inside the month. Exactly one
+ * carries `isAuto` — the 3rd-week heuristic's pick, the default when no
+ * override is saved.
+ */
+export function listTechBonusWeekOptions(year: number, month: number): TechWeekOption[] {
+  const first = new Date(year, month, 1);
+  // Earliest candidate Monday: the one whose salary date could reach the 1st.
+  const earliest = new Date(year, month, 1 - 8);
+  const daysBackToMon = (earliest.getDay() + 6) % 7;
+  let monday = new Date(
+    earliest.getFullYear(),
+    earliest.getMonth(),
+    earliest.getDate() - daysBackToMon,
+  );
+  const options: TechWeekOption[] = [];
+  for (let i = 0; i < 7; i++) {
+    const salaryDate = new Date(
+      monday.getFullYear(),
+      monday.getMonth(),
+      monday.getDate() + 8,
+    );
+    if (salaryDate.getFullYear() === first.getFullYear() && salaryDate.getMonth() === month) {
+      options.push({
+        mondayIso: formatIsoFromLocalDate(monday),
+        monday,
+        weekEnd: new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + 6),
+        salaryDate,
+        isAuto: isTechBonusWeek(monday),
+      });
+    } else if (options.length > 0) {
+      break; // walked past the month
+    }
+    monday = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + 7);
+  }
+  return options;
 }
 
 /**

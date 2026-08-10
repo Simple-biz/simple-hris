@@ -19,6 +19,7 @@ export function usePabPeriodSettings() {
     overrides: new Map() as PabOverridesMap,
     exclusions: new Map(),
     activeMonth: null,
+    techWeekOverridesValue: null,
   });
 
   const refresh = useCallback(async () => {

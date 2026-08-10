@@ -59,6 +59,11 @@ import {
   parseUsHolidaysList,
   getEnabledHolidayMap,
 } from '@/lib/us-holidays';
+import {
+  parseTechBonusWeekOverrides,
+  TECH_BONUS_WEEK_OVERRIDES_KEY,
+  type TechWeekOverridesMap,
+} from '@/lib/payroll/dispatch-bonuses';
 import HiddenValue from './HiddenValue';
 import TimeAdjustmentDialog from './TimeAdjustmentDialog';
 import type { TimeAdjustmentRow } from '@/lib/supabase/time-adjustments';
@@ -570,6 +575,9 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
   // default `getPabMonthRange()` window. Keeps My Hours' PAB evaluation in lockstep
   // with the wizard + Employee Dashboard.
   const [pabOverrides, setPabOverrides] = useState<PabOverridesMap>(new Map());
+  // Per-month Tech Bonus payout-week picks from the wizard's System Bonus modal
+  // (`tech_bonus_week_overrides`). Empty map → the automatic 3rd-week rule.
+  const [techWeekOverrides, setTechWeekOverrides] = useState<TechWeekOverridesMap>(new Map());
   const [rate, setRate] = useState<EmployeeHourlyRateRow | null>(null);
   const [rateHistory, setRateHistory] = useState<RateHistoryEntry[]>([]);
   const [usdToPhpRate, setUsdToPhpRate] = useState(OFFICIAL_USD_TO_PHP_RATE);
@@ -939,7 +947,7 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
     void (async () => {
       try {
         const res = await fetch(
-          `/api/app-settings?keys=${encodeURIComponent([US_HOLIDAYS_ENABLED_KEY, US_HOLIDAYS_LIST_KEY, PAB_PERIOD_OVERRIDES_KEY].join(','))}`,
+          `/api/app-settings?keys=${encodeURIComponent([US_HOLIDAYS_ENABLED_KEY, US_HOLIDAYS_LIST_KEY, PAB_PERIOD_OVERRIDES_KEY, TECH_BONUS_WEEK_OVERRIDES_KEY].join(','))}`,
           { cache: 'no-store' },
         );
         const json = (await res.json()) as { values?: Record<string, string | null> };
@@ -949,10 +957,12 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
           values[US_HOLIDAYS_ENABLED_KEY] == null ? true : values[US_HOLIDAYS_ENABLED_KEY] === 'true';
         setUsHolidayDates(getEnabledHolidayMap(parseUsHolidaysList(values[US_HOLIDAYS_LIST_KEY] ?? null), enabled));
         setPabOverrides(parsePabPeriodOverrides(values[PAB_PERIOD_OVERRIDES_KEY] ?? null));
+        setTechWeekOverrides(parseTechBonusWeekOverrides(values[TECH_BONUS_WEEK_OVERRIDES_KEY] ?? null));
       } catch {
         if (!cancelled) {
           setUsHolidayDates(new Map());
           setPabOverrides(new Map());
+          setTechWeekOverrides(new Map());
         }
       }
     })();
@@ -1323,13 +1333,25 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
   }, [monthEnd]);
 
   /**
-   * Tech Bonus pay period for the displayed month. Salary Date = Tuesday in the
-   * 3rd Mon–Sun week of the month (week 1 = the week CONTAINING the 1st — a
-   * partial leading week counts as week 1, so week 1's Monday may fall in the
-   * previous month); pay-period Monday = Salary Date − 8 days. Mirrors
-   * `dispatch-bonuses.ts → isTechBonusWeek`.
+   * Tech Bonus pay period for the displayed month. A payout-week pick saved in
+   * the wizard's System Bonus modal (`tech_bonus_week_overrides`) wins;
+   * otherwise the automatic rule: Salary Date = Tuesday in the 3rd Mon–Sun week
+   * of the month (week 1 = the week CONTAINING the 1st — a partial leading week
+   * counts as week 1, so week 1's Monday may fall in the previous month);
+   * pay-period Monday = Salary Date − 8 days. Mirrors
+   * `dispatch-bonuses.ts → resolveIsTechBonusWeek`.
    */
   const techBonusPayPeriod = useMemo(() => {
+    const monthKey = `${viewYear}-${String(viewMonth + 1).padStart(2, '0')}`;
+    const overrideIso = techWeekOverrides.get(monthKey);
+    if (overrideIso) {
+      const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(overrideIso);
+      if (m) {
+        const weekStart = new Date(+m[1], +m[2] - 1, +m[3]);
+        const salaryDate = new Date(weekStart.getFullYear(), weekStart.getMonth(), weekStart.getDate() + 8);
+        return { salaryDate, weekStart };
+      }
+    }
     const first = new Date(viewYear, viewMonth, 1);
     const dow = first.getDay();
     // Rule B: week 1 = the week CONTAINING the 1st → Monday on/before the 1st
@@ -1340,7 +1362,7 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
     const salaryDate = new Date(week3Mon.getFullYear(), week3Mon.getMonth(), week3Mon.getDate() + 1);
     const weekStart = new Date(salaryDate.getFullYear(), salaryDate.getMonth(), salaryDate.getDate() - 8);
     return { salaryDate, weekStart };
-  }, [viewYear, viewMonth]);
+  }, [viewYear, viewMonth, techWeekOverrides]);
 
   /**
    * Tech Bonus eligibility (UI estimate — every calendar month gets one Tech Bonus).

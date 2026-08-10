@@ -359,9 +359,22 @@ Each row has an editable **amount** (PHP), an **enabled** toggle, and a
 employees whose normalized department key is in the list. The seed lists every
 `DEPARTMENTS` key **except `us_manager_bonus`**, so US managers (paid in USD)
 no longer pick up these PHP bonuses, while every other department's behavior is
-unchanged. **Timing/eligibility is NOT configurable** -- PAB still fires the
-final week of the PAB period (perfect-attendance check); Tech still fires the
-3rd-week salary date (30-day service check).
+unchanged. **Per-person eligibility is NOT configurable here** -- PAB still
+requires perfect attendance over the PAB period; Tech still requires 30 days of
+service. PAB timing is also fixed (the final week of the PAB period, whose
+window IS configurable in the wizard's System Bonus modal). **Tech timing
+became configurable 2026-08-10**: the wizard's **System Bonus** modal (the
+renamed "PAB settings" on the Additions tab) lets Accounting pick, per month,
+which pay week pays the Technology Bonus. The pick is stored in
+`app_settings.tech_bonus_week_overrides` (JSON map `{"YYYY-MM": "<pay-period
+Monday ISO>"}`, month = the SALARY date's month) and read by every engine
+through `dispatch-bonuses.resolveIsTechBonusWeek(weekMonday, overrides)` --
+wizard (both gates), `current-pay.ts`, `member-monthly-pay.ts`,
+`hsl-week-snapshot.ts`, Employee Dashboard, and My Hours. A month with no
+entry keeps the legacy **3rd-week salary date** rule byte-for-byte; malformed
+entries parse away to that default (`parseTechBonusWeekOverrides` drops
+non-Mondays and salary-month misfiles). Tests:
+`src/lib/payroll/tech-bonus-week.test.ts`.
 
 ### 6.1 Custom system bonuses (COP / USD variants) *(added 2026-07-30)*
 

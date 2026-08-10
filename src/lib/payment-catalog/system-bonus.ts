@@ -13,7 +13,9 @@
 // same engine-timed bonus for specific departments -- e.g. a USD Technology
 // Bonus for the US team or a COP Perfect Attendance Bonus for a Colombian
 // department. A variant keeps the built-in TIMING (PAB fires the final PAB
-// week; Tech fires the 3rd-week salary) but overrides the AMOUNT for the
+// week; Tech fires the month's payout week — the wizard System Bonus pick in
+// `tech_bonus_week_overrides`, defaulting to the 3rd-week salary rule; see
+// dispatch-bonuses.resolveIsTechBonusWeek) but overrides the AMOUNT for the
 // departments in its allowlist; its native amount is converted to PHP at the
 // live USD-anchored FX rate at resolve time (the pay engine stays PHP-pivot,
 // same as Pay Structures / catalog bonuses). No schema change was needed --

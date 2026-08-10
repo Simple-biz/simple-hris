@@ -1089,7 +1089,7 @@ export default function BonusCatalog({ initialData }: { initialData?: InitialAcc
 
 const SYSTEM_BASE_TIMING: Record<SystemBonusBase, string> = {
   pab: 'Pays like PAB — final week of the PAB period, perfect attendance required.',
-  tech: 'Pays like Tech — 3rd-week salary date, after 30 days of service.',
+  tech: 'Pays like Tech — the month’s payout week (wizard System Bonus pick, default 3rd-week salary date), after 30 days of service.',
 };
 
 function SystemBonusesTab({
@@ -1128,10 +1128,11 @@ function SystemBonusesTab({
       <div className="mb-5 rounded-lg border border-orange-100 bg-orange-50/40 p-3 text-xs leading-relaxed text-zinc-600 dark:border-blue-950/60 dark:bg-blue-950/10 dark:text-zinc-400">
         These built-in bonuses pay automatically based on attendance and tenure. Set each
         amount and choose which departments receive it — a department that is unticked (e.g.{' '}
-        <span className="font-medium">US - Manager Bonus</span>) is never paid that bonus. The
-        timing is fixed: PAB pays on the final week of the PAB period; the Technology Bonus pays
-        on the 3rd-week salary date. Changes apply across the Payroll Wizard, Payment Dispatch,
-        Summary, and every employee dashboard.
+        <span className="font-medium">US - Manager Bonus</span>) is never paid that bonus. PAB
+        pays on the final week of the PAB period; the Technology Bonus pays on the month&apos;s
+        payout week — picked in the Payroll Wizard&apos;s System Bonus settings, defaulting to the
+        3rd-week salary date. Changes apply across the Payroll Wizard, Payment Dispatch, Summary,
+        and every employee dashboard.
       </div>
       <SystemBonusCard
         code="pab"
@@ -1145,7 +1146,7 @@ function SystemBonusesTab({
         row={byCode('tech')}
         deptOptions={deptOptions}
         onUpsert={onUpsert}
-        subtitle="Paid on the 3rd-week salary date to employees past 30 days of service."
+        subtitle="Paid on the month's payout week (wizard System Bonus pick; default 3rd-week salary date) to employees past 30 days of service."
       />
 
       {/* ---- Custom currency variants ---------------------------------- */}

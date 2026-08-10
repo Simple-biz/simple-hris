@@ -53,9 +53,11 @@ import {
   getHslAdjustedEnd,
   hasThirtyDaysFromStart,
   isFinalPabWeek as gateIsFinalPabWeek,
-  isTechBonusWeek as gateIsTechBonusWeek,
   pabMonthFromWeekStart,
   parseMasterStartDate,
+  parseTechBonusWeekOverrides,
+  resolveIsTechBonusWeek,
+  TECH_BONUS_WEEK_OVERRIDES_KEY,
 } from "@/lib/payroll/dispatch-bonuses";
 import {
   HSL_WEEK_MODEL_CUTOVER_KEY,
@@ -600,6 +602,7 @@ export async function computeCurrentPay(
       USD_TO_COP_SETTINGS_KEY,
       PAB_PERIOD_OVERRIDES_KEY,
       PAB_PERIOD_EXCLUSIONS_KEY,
+      TECH_BONUS_WEEK_OVERRIDES_KEY,
       US_HOLIDAYS_ENABLED_KEY,
       US_HOLIDAYS_LIST_KEY,
       HSL_WEEK_MODEL_CUTOVER_KEY,
@@ -631,6 +634,9 @@ export async function computeCurrentPay(
 
   const pabOverridesValue = appSettings[PAB_PERIOD_OVERRIDES_KEY];
   const pabExclusionsValue = appSettings[PAB_PERIOD_EXCLUSIONS_KEY];
+  const techWeekOverrides = parseTechBonusWeekOverrides(
+    appSettings[TECH_BONUS_WEEK_OVERRIDES_KEY],
+  );
   const usHolidaysEnabledValue = appSettings[US_HOLIDAYS_ENABLED_KEY];
   const usHolidaysListValue = appSettings[US_HOLIDAYS_LIST_KEY];
   const hslWeekModelCutoverValue = appSettings[HSL_WEEK_MODEL_CUTOVER_KEY];
@@ -757,7 +763,9 @@ export async function computeCurrentPay(
       // week re-attaches PAB (see isFinalPabWeek).
       weekIsFinalPab = gateIsFinalPabWeek(periodStart, periodEnd, pabRange.end);
     }
-    weekIsTechBonus = gateIsTechBonusWeek(weekMonday);
+    // Override-aware: a saved wizard "System Bonus" payout-week pick for this
+    // month replaces the 3rd-week heuristic (see resolveIsTechBonusWeek).
+    weekIsTechBonus = resolveIsTechBonusWeek(weekMonday, techWeekOverrides);
   }
 
   // Now that we know whether this is the final PAB week, pull the full-table

@@ -37,9 +37,11 @@ import {
   getHslAdjustedEnd,
   hasThirtyDaysFromStart,
   isFinalPabWeek as gateIsFinalPabWeek,
-  isTechBonusWeek as gateIsTechBonusWeek,
   pabMonthFromWeekStart,
   parseMasterStartDate,
+  parseTechBonusWeekOverrides,
+  resolveIsTechBonusWeek,
+  TECH_BONUS_WEEK_OVERRIDES_KEY,
 } from '@/lib/payroll/dispatch-bonuses';
 import { listSystemBonuses } from '@/lib/supabase/system-bonuses-db';
 import { listAllOrphanagePayHours } from '@/lib/supabase/orphanage-pay-db';
@@ -481,12 +483,13 @@ export async function computeMemberMonthlyPay(args: {
 
   // Step 1: Fetch master + rates + PAB overrides in parallel. We need the master
   // row first to know this employee's alias emails before querying Hubstaff.
-  const [masterMin, rates, pabOverridesValue, pabExclusionsValue, rateHistory, holidaySettings, fxValues, payStructuresResult, systemBonusesResult] =
+  const [masterMin, rates, pabOverridesValue, pabExclusionsValue, techWeekOverridesValue, rateHistory, holidaySettings, fxValues, payStructuresResult, systemBonusesResult] =
     await Promise.all([
       fetchMasterRowsForEmail(new Set([emailNorm])),
       getEmployeeHourlyRatesRows(),
       getAppSetting(PAB_PERIOD_OVERRIDES_KEY),
       getAppSetting(PAB_PERIOD_EXCLUSIONS_KEY),
+      getAppSetting(TECH_BONUS_WEEK_OVERRIDES_KEY),
       fetchAllRateHistory(),
       getAppSettings([US_HOLIDAYS_ENABLED_KEY, US_HOLIDAYS_LIST_KEY]),
       getAppSettings(['usd_to_php_rate', USD_TO_COP_SETTINGS_KEY]),
@@ -628,6 +631,7 @@ export async function computeMemberMonthlyPay(args: {
   // for every PAB month touched by these weeks once (eligibility is
   // per-employee per-PAB-month, not per-week).
   const overrides = parsePabPeriodOverrides(pabOverridesValue);
+  const techWeekOverrides = parseTechBonusWeekOverrides(techWeekOverridesValue);
   // Accountant exclusions (Payroll Wizard → PAB settings). An excluded month
   // forfeits PAB for this employee even when attendance passes — mirror dispatch.
   const exclusions = parsePabPeriodExclusions(pabExclusionsValue);
@@ -806,8 +810,10 @@ export async function computeMemberMonthlyPay(args: {
     // also passed `weekEnd >= end` and PAB was double-counted after an
     // override ended mid-month.
     const isFinalPab = pabBelongsToViewedMonth && gateIsFinalPabWeek(weekMon, weekEnd, pabRange.end);
-    // Tech bonus timing uses the Monday of the week regardless of Sun-Sat vs Mon-Sun.
-    const isTechWeek = gateIsTechBonusWeek(weekMonForPab);
+    // Tech bonus timing uses the Monday of the week regardless of Sun-Sat vs
+    // Mon-Sun. Override-aware: honors the wizard "System Bonus" payout-week
+    // pick for the month, falling back to the 3rd-week heuristic.
+    const isTechWeek = resolveIsTechBonusWeek(weekMonForPab, techWeekOverrides);
     // Salary date = week's Monday + 8 days.
     const salaryDate = new Date(weekMonForPab.getFullYear(), weekMonForPab.getMonth(), weekMonForPab.getDate() + 8);
     const techSalaryReached = todayMid.getTime() >= salaryDate.getTime();

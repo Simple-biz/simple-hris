@@ -24,6 +24,12 @@ export const PAB_PERIOD_OVERRIDES_KEY = 'pab_period_overrides';
 export const PAB_PERIOD_ACTIVE_MONTH_KEY = 'pab_period_active_month';
 /** Per-month list of emails the accountant has excluded from that month's PAB. */
 export const PAB_PERIOD_EXCLUSIONS_KEY = 'pab_period_exclusions';
+/**
+ * Mirror of dispatch-bonuses.TECH_BONUS_WEEK_OVERRIDES_KEY (string constant
+ * only — importing it would create a module cycle, see the note on
+ * `techWeekOverridesValue`). Guarded by a test in tech-bonus-week.test.ts.
+ */
+const TECH_BONUS_WEEK_OVERRIDES_SETTING_KEY = 'tech_bonus_week_overrides';
 
 /** Parse YYYY-MM-DD as a local calendar date (no UTC shift). */
 export function parseLocalDateFromIso(value: string | null | undefined): Date | null {
@@ -76,6 +82,13 @@ export type PabPeriodFetchResult = {
   exclusions: PabExclusionsMap;
   /** Which month the wizard is currently viewing (null → defaults to today's PAB month at resolution time). */
   activeMonth: { year: number; month: number } | null;
+  /**
+   * Raw `tech_bonus_week_overrides` JSON blob (per-month Tech Bonus payout-week
+   * picks from the wizard's System Bonus modal). Kept unparsed here: the parser
+   * lives in `dispatch-bonuses.ts` next to the gate it feeds, and this module is
+   * imported BY dispatch-bonuses (date helpers) — parsing here would be a cycle.
+   */
+  techWeekOverridesValue: string | null;
 };
 
 /** Legacy validity check — kept so existing callers (dashboard) keep working. */
@@ -220,6 +233,7 @@ export async function fetchPabPeriodSettings(): Promise<PabPeriodFetchResult> {
     PAB_PERIOD_OVERRIDES_KEY,
     PAB_PERIOD_ACTIVE_MONTH_KEY,
     PAB_PERIOD_EXCLUSIONS_KEY,
+    TECH_BONUS_WEEK_OVERRIDES_SETTING_KEY,
   ] as const;
 
   // Each key is fetched independently and degrades to `{ value: null }` on a
@@ -228,7 +242,7 @@ export async function fetchPabPeriodSettings(): Promise<PabPeriodFetchResult> {
   // settings instead of an unhandled rejection that pops the Next dev overlay and
   // blocks navigation. Callers get sensible defaults; real values return once the
   // API is reachable again.
-  const [mj, sj, ej, ov, am, ex] = await Promise.all(
+  const [mj, sj, ej, ov, am, ex, tw] = await Promise.all(
     keys.map((key) =>
       fetch(`/api/app-settings?key=${encodeURIComponent(key)}`, { cache: 'no-store' })
         .then((res) => (res.ok ? (res.json() as Promise<{ value: string | null }>) : { value: null }))
@@ -259,5 +273,6 @@ export async function fetchPabPeriodSettings(): Promise<PabPeriodFetchResult> {
     overrides,
     exclusions,
     activeMonth: parseYearMonthKey(am.value),
+    techWeekOverridesValue: tw.value,
   };
 }

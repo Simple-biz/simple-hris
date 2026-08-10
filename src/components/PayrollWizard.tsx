@@ -52,6 +52,7 @@ import {
   Landmark,
   Wallet,
   Columns3,
+  Cpu,
 } from 'lucide-react';
 import { useDispatchLock } from '@/hooks/useDispatchLock';
 import { useWizardDispatchLock } from '@/hooks/useWizardDispatchLock';
@@ -216,7 +217,14 @@ import {
   totalRateShortfallPhp,
   type RateConsistencyIssue,
 } from '@/lib/payroll/paystub-rate-consistency';
-import { isFinalPabWeek as gateIsFinalPabWeek } from '@/lib/payroll/dispatch-bonuses';
+import {
+  isFinalPabWeek as gateIsFinalPabWeek,
+  listTechBonusWeekOptions,
+  parseTechBonusWeekOverrides,
+  resolveIsTechBonusWeek,
+  techSalaryMonthKey,
+  TECH_BONUS_WEEK_OVERRIDES_KEY,
+} from '@/lib/payroll/dispatch-bonuses';
 import { parseLocalDateFromIso, resolvePabRangeForMonth, yearMonthKey } from '@/lib/pab-period-settings';
 import {
   US_HOLIDAYS_ENABLED_KEY,
@@ -2101,6 +2109,13 @@ export default function PayrollWizard({
   const [pabSaveState, setPabSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [pabRefreshing, setPabRefreshing] = useState(false);
   const [pabSettingsOpen, setPabSettingsOpen] = useState(false);
+  /**
+   * Two-phase System Bonus modal open: the popup shell + header animate in on a
+   * cheap first frame, then the heavy body (12-month grid, exclusions roster,
+   * holidays list) mounts one painted frame later and fades in. Mounting it all
+   * in the click frame made the open animation visibly hitch.
+   */
+  const [pabModalBodyReady, setPabModalBodyReady] = useState(false);
   const [pabHolSaveState, setPabHolSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [pabHolNewDate, setPabHolNewDate] = useState('');
   const [pabHolNewName, setPabHolNewName] = useState('');
@@ -2623,12 +2638,23 @@ export default function PayrollWizard({
 
   // Reset the modal's edit month to the effective month each time it opens, so it
   // always lands on the currently-evaluated month rather than a stale selection.
+  // Also stages the two-phase open: the heavy body mounts only after the popup
+  // shell has had a painted frame to start its open animation (double rAF).
   useEffect(() => {
     if (pabSettingsOpen) {
       setPabEditMonth(null);
       setPabExclusionSearch('');
       setPabExclusionPage(0);
+      let raf2 = 0;
+      const raf1 = requestAnimationFrame(() => {
+        raf2 = requestAnimationFrame(() => setPabModalBodyReady(true));
+      });
+      return () => {
+        cancelAnimationFrame(raf1);
+        if (raf2) cancelAnimationFrame(raf2);
+      };
     }
+    setPabModalBodyReady(false);
   }, [pabSettingsOpen]);
 
   /**
@@ -2876,6 +2902,54 @@ export default function PayrollWizard({
       setTimeout(() => setPabSaveState('idle'), 3000);
     }
   }, [writeOverridesBlob, pabPeriodSettings, editMonthKey, isReplay]);
+
+  /**
+   * Per-month Tech Bonus payout-week overrides (System Bonus modal). Parsed from
+   * the same settings fetch that carries the PAB overrides; empty map = every
+   * month uses the legacy 3rd-week heuristic.
+   */
+  const techWeekOverrides = useMemo(
+    () => parseTechBonusWeekOverrides(pabPeriodSettings.techWeekOverridesValue),
+    [pabPeriodSettings.techWeekOverridesValue],
+  );
+
+  /**
+   * Save (or clear, with `null`) the edit month's Tech Bonus payout-week pick.
+   * Whole-blob read-patch-write like `writeOverridesBlob`; every pay engine
+   * (wizard, current-pay, member-monthly-pay, hsl-week-snapshot, employee
+   * surfaces) reads the same key through `resolveIsTechBonusWeek`.
+   */
+  const saveTechWeekOverride = React.useCallback(
+    async (mondayIso: string | null) => {
+      if (isReplay) { toast.error('Replaying a past period is view-only'); return; }
+      const next: Record<string, string> = {};
+      for (const [k, v] of techWeekOverrides.entries()) {
+        if (k === editMonthKey) continue;
+        next[k] = v;
+      }
+      if (mondayIso) next[editMonthKey] = mondayIso;
+      setPabSaveState('saving');
+      try {
+        await savePabSetting(TECH_BONUS_WEEK_OVERRIDES_KEY, JSON.stringify(next));
+        await pabPeriodSettings.refresh();
+        setPabSaveState('saved');
+        toast.success(
+          mondayIso ? 'Tech Bonus week saved' : 'Tech Bonus week reset',
+          {
+            description: mondayIso
+              ? `This month's Technology Bonus pays on the week starting ${mondayIso}.`
+              : 'Reverted to the automatic 3rd-week rule for this month.',
+          },
+        );
+        setTimeout(() => setPabSaveState('idle'), 2000);
+      } catch (e) {
+        setPabSaveState('error');
+        toast.error('Save failed', { description: e instanceof Error ? e.message : 'Unknown error' });
+        setTimeout(() => setPabSaveState('idle'), 3000);
+      }
+    },
+    [techWeekOverrides, editMonthKey, savePabSetting, pabPeriodSettings, isReplay],
+  );
 
   /**
    * Toggle a single person's PAB exclusion for the month the modal is editing.
@@ -6708,25 +6782,33 @@ export default function PayrollWizard({
    * see it. The dispatch step's per-row formula still works because it ORs in
    * `toggles.tech_bonus`, which the auto-toggle effect below flips on.
    *
-   * Salary date = weekStart + 8 days (Tuesday after the pay-period Sunday).
-   * The 3rd full Mon-Sun week of salaryDate's month = the Tech Bonus week.
+   * Gate: `resolveIsTechBonusWeek` on the week's OWNING MONDAY (derived the
+   * way current-pay.ts derives it, so a Sunday-start upload can never miss a
+   * saved override) — a System Bonus modal payout-week pick for the month
+   * wins; months without one keep the legacy 3rd-week rule (salary date =
+   * Monday + 8, the Tuesday after the pay-period Sunday, landing in the 3rd
+   * Mon–Sun week of its month).
    */
   const techBonusWeekInfo = useMemo(() => {
     const fromFile = calcSourceFile ? parseDateRangeFromFilename(calcSourceFile) : null;
     const weekStartDate = fromFile?.start ?? null;
-    if (!weekStartDate) return { isTechBonusWeek: false, weekStartDate: null as Date | null, salaryDate: null as Date | null };
-    const salaryDate = new Date(weekStartDate.getFullYear(), weekStartDate.getMonth(), weekStartDate.getDate() + 8);
-    const first = new Date(salaryDate.getFullYear(), salaryDate.getMonth(), 1);
-    const dow = first.getDay();
-    // Rule B: week 1 = the week CONTAINING the 1st → Monday on/before the 1st.
-    const daysBackToMon = (dow + 6) % 7;
-    const firstMon = new Date(first.getFullYear(), first.getMonth(), first.getDate() - daysBackToMon);
-    const thirdWeekMon = new Date(firstMon.getFullYear(), firstMon.getMonth(), firstMon.getDate() + 14);
-    const fourthWeekMon = new Date(firstMon.getFullYear(), firstMon.getMonth(), firstMon.getDate() + 21);
-    const t = salaryDate.getTime();
-    const isTechBonusWeek = t >= thirdWeekMon.getTime() && t < fourthWeekMon.getTime();
-    return { isTechBonusWeek, weekStartDate, salaryDate };
-  }, [calcSourceFile]);
+    if (!weekStartDate) {
+      return {
+        isTechBonusWeek: false,
+        isOverridden: false,
+        weekStartDate: null as Date | null,
+        salaryDate: null as Date | null,
+      };
+    }
+    // Owning Monday, same derivation as current-pay.ts (mon_sun walks a
+    // Sunday file-start FORWARD to its Monday — see pabMonthFromWeekStart
+    // convention in the PAB payout-week fix).
+    const weekMonday = payWeekFromUploadStart(weekStartDate, true, 'mon_sun').start;
+    const salaryDate = new Date(weekMonday.getFullYear(), weekMonday.getMonth(), weekMonday.getDate() + 8);
+    const isOverridden = techWeekOverrides.has(techSalaryMonthKey(weekMonday));
+    const isTechBonusWeek = resolveIsTechBonusWeek(weekMonday, techWeekOverrides);
+    return { isTechBonusWeek, isOverridden, weekStartDate, salaryDate };
+  }, [calcSourceFile, techWeekOverrides]);
 
   /**
    * Per-employee `start_date + 30d` map. An employee needs 30 days of service
@@ -7441,43 +7523,21 @@ export default function PayrollWizard({
       return gateIsFinalPabWeek(weekStartDate, weekEndDate, periodEnd);
     })();
     /**
-     * Tech Bonus rule: paid in the *3rd paycheck* of the month (the weekly pay
-     * period whose Monday is the 3rd calendar week of the month — week 1 = the
-     * Mon–Sun week containing the 1st, even if partial). Equality, not ≥.
+     * Tech Bonus week — the SAME override-aware gate every engine uses
+     * (`resolveIsTechBonusWeek` on the week's owning Monday): a System Bonus
+     * modal payout-week pick for the month wins; months without one keep the
+     * legacy 3rd-paycheck rule (salary Tuesday = owning Monday + 8, landing in
+     * the 3rd Mon–Sun week of its month — week 1 = the week CONTAINING the
+     * 1st, even if partial; see dispatch-bonuses.isTechBonusWeek for the
+     * worked examples). Must stay in lockstep with `techBonusWeekInfo` above
+     * and current-pay.ts, or staged pay disagrees with dispatched pay.
      */
-    /**
-     * Salary date = the Tuesday after the pay period's Sunday (i.e. weekStart + 8).
-     * Tech bonus attaches to the paycheck whose salary date lands in the **3rd
-     * Mon–Sun week** of its month, where week 1 = the week CONTAINING the 1st
-     * (a partial leading week counts as week 1; its Monday may be in the prior month).
-     *
-     * Examples:
-     *   March 2026 (1st = Sun) → week 1 = Feb 23–Mar 1 → 3rd week Mar 9–15
-     *     → salary Tue Mar 10 pays pay-period Mar 2–8 ✅
-     *   May 2026 (1st = Fri)   → week 1 = Apr 27–May 3 → 3rd week May 11–17
-     *     → salary Tue May 12 pays pay-period May 4–10 ✅
-     *   July 2026 (1st = Wed)  → week 1 = Jun 29–Jul 5 → 3rd week Jul 13–19
-     *     → salary Tue Jul 14 pays pay-period Jul 6–12 ✅
-     *   June 2026 (1st = Mon)  → week 1 = Jun 1–7 → 3rd week Jun 15–21
-     *     → salary Tue Jun 16 pays pay-period Jun 8–14 (unchanged) ✅
-     */
-    const salaryDate = weekStartDate
-      ? new Date(weekStartDate.getFullYear(), weekStartDate.getMonth(), weekStartDate.getDate() + 8)
+    const techWeekMonday = weekStartDate
+      ? payWeekFromUploadStart(weekStartDate, true, 'mon_sun').start
       : null;
-    const isTechBonusWeek = (() => {
-      if (!salaryDate) return false;
-      const techMonth = { year: salaryDate.getFullYear(), month: salaryDate.getMonth() };
-      const first = new Date(techMonth.year, techMonth.month, 1);
-      const dow = first.getDay();
-      // Rule B: week 1 = the week CONTAINING the 1st → Monday on/before the 1st
-      // (may be in the previous month). Days back to that Monday: Mon=1→0, … Sun=0→6.
-      const daysBackToMon = (dow + 6) % 7;
-      const firstMon = new Date(first.getFullYear(), first.getMonth(), first.getDate() - daysBackToMon);
-      const thirdWeekMon = new Date(firstMon.getFullYear(), firstMon.getMonth(), firstMon.getDate() + 14);
-      const fourthWeekMon = new Date(firstMon.getFullYear(), firstMon.getMonth(), firstMon.getDate() + 21);
-      const t = salaryDate.getTime();
-      return t >= thirdWeekMon.getTime() && t < fourthWeekMon.getTime();
-    })();
+    const isTechBonusWeek = techWeekMonday
+      ? resolveIsTechBonusWeek(techWeekMonday, techWeekOverrides)
+      : false;
     /**
      * Reuse the component-scoped `startDateByEmail` (work/personal/alternate
      * work emails → Date) so the 30-day Tech Bonus gate here matches the
@@ -7743,6 +7803,9 @@ export default function PayrollWizard({
     // this dep the staged dispatch keeps gating PAB against the overrides that were
     // loaded when the memo last ran (e.g. the empty pre-fetch map).
     pabPeriodSettings.overrides,
+    // Same class of bug for the Tech Bonus payout-week pick: the inline
+    // isTechBonusWeek gate reads this map.
+    techWeekOverrides,
     pabAmountForEmail,
     techAmountForEmail,
     isPabDeptEligible,
@@ -11442,7 +11505,7 @@ export default function PayrollWizard({
               </div>
               </div>
 
-              {/* ── PAB settings trigger — opens the full picker in a modal so the Additions table has more room ── */}
+              {/* ── System Bonus trigger — PAB period + Tech payout week live in a modal so the Additions table has more room ── */}
               {(() => {
                 const activeHasOverride = pabPeriodSettings.overrides.has(effectiveMonthKey);
                 return (
@@ -11451,10 +11514,10 @@ export default function PayrollWizard({
                       type="button"
                       onClick={() => setPabSettingsOpen(true)}
                       className="inline-flex items-center gap-2 rounded-md border border-indigo-300 bg-white px-3 py-1.5 text-xs font-semibold text-indigo-700 shadow-sm transition hover:bg-indigo-50 dark:border-indigo-800/60 dark:bg-zinc-900 dark:text-indigo-300 dark:hover:bg-indigo-950/40"
-                      title="Open PAB period settings"
+                      title="Open System Bonus settings — PAB period + Technology Bonus payout week"
                     >
                       <CalendarDays className="h-3.5 w-3.5" />
-                      <span>PAB settings</span>
+                      <span>System Bonus</span>
                     </button>
                     <span className="text-xs text-zinc-600 dark:text-zinc-400">
                       <span className="font-semibold text-zinc-800 dark:text-zinc-200">
@@ -11470,6 +11533,28 @@ export default function PayrollWizard({
                         <span className="ml-1.5 inline-flex items-center gap-1 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-700 dark:bg-amber-900/50 dark:text-amber-300">
                           <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />
                           Custom
+                        </span>
+                      )}
+                      {/* Tech Bonus payout-week readout for the current file's week. */}
+                      {techBonusWeekInfo.weekStartDate && (
+                        <span className="ml-2 inline-flex items-center gap-1">
+                          <span className="text-zinc-400">·</span>
+                          <span
+                            className={cn(
+                              'inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-bold',
+                              techBonusWeekInfo.isTechBonusWeek
+                                ? 'bg-sky-100 text-sky-700 dark:bg-sky-900/50 dark:text-sky-300'
+                                : 'bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400',
+                            )}
+                            title={
+                              techBonusWeekInfo.isOverridden
+                                ? 'Technology Bonus payout week set in System Bonus settings for this month.'
+                                : 'Automatic rule: the week whose salary date lands in the 3rd Mon–Sun week of the month.'
+                            }
+                          >
+                            Tech {techBonusWeekInfo.isTechBonusWeek ? 'pays this week' : 'not this week'}
+                            {techBonusWeekInfo.isOverridden ? ' · custom' : ''}
+                          </span>
                         </span>
                       )}
                     </span>
@@ -11581,13 +11666,21 @@ export default function PayrollWizard({
                       <DialogHeader className="shrink-0 border-b border-zinc-200 bg-gradient-to-br from-white via-zinc-50/70 to-indigo-50/40 px-6 py-4 dark:border-zinc-800 dark:from-zinc-950 dark:via-zinc-900/40 dark:to-indigo-950/30">
                         <DialogTitle className="flex items-center gap-2 text-base text-zinc-900 dark:text-white">
                           <CalendarDays className="h-5 w-5 text-indigo-500" />
-                          PAB period settings
+                          System Bonus settings
                         </DialogTitle>
                         <DialogDescription className="text-xs text-zinc-500 dark:text-zinc-400">
-                          Pick which month Additions evaluates, edit its start/end, or auto-calculate the canonical Mon–Fri window.
+                          The system bonuses live here: the PAB evaluation period (pick which month Additions evaluates, edit its start/end, or auto-calculate the canonical Mon–Fri window) and the Technology Bonus payout week.
                         </DialogDescription>
                       </DialogHeader>
                       <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
+                    {!pabModalBodyReady ? (
+                      // Lightweight first frame — lets the popup's open animation
+                      // run unblocked before the heavy body mounts below.
+                      <div className="flex h-72 items-center justify-center">
+                        <Loader2 className="h-6 w-6 animate-spin text-indigo-400" />
+                      </div>
+                    ) : (
+                    <div className="duration-200 animate-in fade-in-0">
                     {/* Header row */}
                     <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
                       <div className="flex min-w-0 items-center gap-1.5">
@@ -11801,6 +11894,110 @@ export default function PayrollWizard({
                           </span>
                         )}
                       </div>
+                    </div>
+
+                    {/* ── Technology Bonus payout week ─────────────────────────────────
+                        Which pay week of the edit month pays the Tech Bonus. Stored in
+                        app_settings `tech_bonus_week_overrides` and read by every pay
+                        engine through resolveIsTechBonusWeek — no more guessing the
+                        "3rd week". No pick = the automatic 3rd-week rule. */}
+                    <div className="mt-3 border-t border-sky-200/60 pt-3 dark:border-sky-900/40">
+                      {(() => {
+                        const techOptions = listTechBonusWeekOptions(editMonth.year, editMonth.month);
+                        const savedIso = techWeekOverrides.get(editMonthKey) ?? null;
+                        const selectedIso = savedIso ?? techOptions.find((o) => o.isAuto)?.mondayIso ?? null;
+                        const fmtShort = (d: Date) =>
+                          d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+                        return (
+                          <>
+                            <div className="mb-2 flex flex-wrap items-center gap-x-2 gap-y-1 rounded-md bg-sky-50/70 px-3 py-2 text-xs dark:bg-sky-950/30">
+                              <Cpu className="h-3.5 w-3.5 shrink-0 text-sky-500" />
+                              <span className="font-semibold text-sky-800 dark:text-sky-200">
+                                {MONTH_NAMES[editMonth.month]} {editMonth.year} Technology Bonus week:
+                              </span>
+                              {selectedIso ? (
+                                (() => {
+                                  const sel = techOptions.find((o) => o.mondayIso === selectedIso);
+                                  return sel ? (
+                                    <span className="font-mono font-semibold tabular-nums text-zinc-800 dark:text-zinc-100">
+                                      {fmtShort(sel.monday)} – {fmtShort(sel.weekEnd)} · salary {fmtShort(sel.salaryDate)}
+                                    </span>
+                                  ) : (
+                                    <span className="font-mono font-semibold tabular-nums text-zinc-800 dark:text-zinc-100">
+                                      week of {selectedIso}
+                                    </span>
+                                  );
+                                })()
+                              ) : (
+                                <span className="italic text-zinc-500">no payable week</span>
+                              )}
+                              <span
+                                className={cn(
+                                  'rounded px-1.5 py-px text-[10px] font-bold uppercase tracking-wide',
+                                  savedIso
+                                    ? 'bg-amber-100 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300'
+                                    : 'bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300',
+                                )}
+                              >
+                                {savedIso ? 'Custom pick' : 'Auto (3rd week)'}
+                              </span>
+                              <span className="text-zinc-500 dark:text-zinc-400">
+                                · paid once per month to everyone past 30 days of service
+                              </span>
+                            </div>
+                            <div className="flex flex-wrap items-center gap-2">
+                              {techOptions.map((o) => {
+                                const isSelected = o.mondayIso === selectedIso;
+                                return (
+                                  <button
+                                    key={o.mondayIso}
+                                    type="button"
+                                    disabled={pabSaveState === 'saving'}
+                                    onClick={() => {
+                                      if (isSelected) return;
+                                      // Picking the auto week = clearing the override, so a
+                                      // future rule change never fights a redundant pin.
+                                      void saveTechWeekOverride(o.isAuto ? null : o.mondayIso);
+                                    }}
+                                    title={`Pay period ${fmtShort(o.monday)} – ${fmtShort(o.weekEnd)} · salary date ${fmtShort(o.salaryDate)}${o.isAuto ? ' · the automatic 3rd-week pick' : ''}`}
+                                    className={cn(
+                                      'flex flex-col items-start gap-0.5 rounded-lg border px-3 py-2 text-left text-xs font-semibold transition disabled:cursor-not-allowed',
+                                      isSelected
+                                        ? 'border-sky-500 bg-sky-50 text-sky-700 shadow-sm ring-1 ring-sky-500/25 dark:border-sky-400 dark:bg-sky-950/60 dark:text-sky-200'
+                                        : 'border-zinc-200 bg-white text-zinc-700 hover:border-sky-300 hover:bg-sky-50/60 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:border-sky-700 dark:hover:bg-sky-950/20',
+                                    )}
+                                  >
+                                    <span className="font-mono tabular-nums">
+                                      {fmtShort(o.monday)} – {fmtShort(o.weekEnd)}
+                                    </span>
+                                    <span className="flex items-center gap-1.5 text-[10px] font-medium text-zinc-500 dark:text-zinc-400">
+                                      salary {fmtShort(o.salaryDate)}
+                                      {o.isAuto && (
+                                        <span className="rounded bg-zinc-100 px-1 py-[1px] font-bold uppercase leading-none text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
+                                          Auto
+                                        </span>
+                                      )}
+                                      {isSelected && <Check className="h-3 w-3 text-sky-500" />}
+                                    </span>
+                                  </button>
+                                );
+                              })}
+                              {savedIso && (
+                                <button
+                                  type="button"
+                                  onClick={() => void saveTechWeekOverride(null)}
+                                  disabled={pabSaveState === 'saving'}
+                                  className="inline-flex shrink-0 items-center gap-1 rounded-md border border-amber-300 bg-white px-2.5 py-1 text-xs font-medium text-amber-700 hover:bg-amber-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-amber-800/60 dark:bg-zinc-900 dark:text-amber-300 dark:hover:bg-amber-950/30"
+                                  title="Remove this month's pick — the automatic 3rd-week rule takes over"
+                                >
+                                  <X className="h-3.5 w-3.5" />
+                                  <span>Reset to auto</span>
+                                </button>
+                              )}
+                            </div>
+                          </>
+                        );
+                      })()}
                     </div>
 
                     {/* Legend */}
@@ -12210,6 +12407,8 @@ export default function PayrollWizard({
                     </div>
                     {/* /grid: Exclude + Holidays */}
                     </div>
+                    </div>
+                    )}
                       </div>
                     </DialogContent>
                   </Dialog>
@@ -13022,7 +13221,9 @@ export default function PayrollWizard({
                               <TableHead className="min-w-[80px] px-1 py-2 text-center text-[9px] font-medium leading-tight text-sky-600 dark:text-sky-400">
                                 Tech<br />
                                 <span className="font-mono font-normal text-zinc-400">
-                                  {techBonusWeekInfo.isTechBonusWeek ? 'week 3 - ' : ''}
+                                  {techBonusWeekInfo.isTechBonusWeek
+                                    ? techBonusWeekInfo.isOverridden ? 'pay week - ' : 'week 3 - '
+                                    : ''}
                                   {formatPHP(techAmountForDept(activeDeptTab))}
                                 </span>
                               </TableHead>
@@ -13208,7 +13409,9 @@ export default function PayrollWizard({
                                   const titleText = techOn
                                     ? isManualGrant
                                       ? 'Manually granted by Accounting this session.'
-                                      : `Auto-applied: salary date ${techBonusWeekInfo.salaryDate?.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) ?? ''} lands in the 3rd full Mon–Sun week.`
+                                      : techBonusWeekInfo.isOverridden
+                                        ? `Auto-applied: this is the Technology Bonus payout week picked in System Bonus settings (salary date ${techBonusWeekInfo.salaryDate?.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) ?? ''}).`
+                                        : `Auto-applied: salary date ${techBonusWeekInfo.salaryDate?.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) ?? ''} lands in the 3rd full Mon–Sun week.`
                                     : isManualRevoke
                                       ? 'Manually revoked this session — click to restore.'
                                       : !techBonusWeekInfo.isTechBonusWeek
@@ -14438,7 +14641,7 @@ export default function PayrollWizard({
                                 <td className="px-3 py-3 text-center">
                                   {techOn ? (
                                     <span
-                                      title={techBonusManualGrants.has(r.email) ? 'Manually granted by Accounting this session.' : 'Auto-applied: salary date lands in the 3rd full Mon–Sun week.'}
+                                      title={techBonusManualGrants.has(r.email) ? 'Manually granted by Accounting this session.' : techBonusWeekInfo.isOverridden ? 'Auto-applied: this is the Technology Bonus payout week picked in System Bonus settings.' : 'Auto-applied: salary date lands in the 3rd full Mon–Sun week.'}
                                       className="inline-flex items-center gap-1 rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-semibold leading-none text-sky-700 ring-1 ring-sky-400/40 dark:bg-sky-900/40 dark:text-sky-300 dark:ring-sky-500/30"
                                     >
                                       +{formatPHP(techAmountForEmail(r.email))}

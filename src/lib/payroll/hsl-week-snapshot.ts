@@ -26,6 +26,11 @@ import {
   getPabMonthRange,
   payWeekFromUploadStart,
 } from "@/lib/hubstaff/calendar-column-dedupe";
+import {
+  parseTechBonusWeekOverrides,
+  resolveIsTechBonusWeek,
+  TECH_BONUS_WEEK_OVERRIDES_KEY,
+} from "@/lib/payroll/dispatch-bonuses";
 
 export const HSL_WEEK_SNAPSHOT_TABLE = "hsl_week_model_snapshot";
 export const PRE_CHANGE_WEEK_MODEL = "mon_sun" as const;
@@ -154,7 +159,7 @@ export interface SnapshotFileResult {
  */
 export async function snapshotSourceFile(
   sourceFile: string,
-  opts: { hslEmails?: Set<string>; capturedBy?: string | null; pabOverridesValue?: string | null } = {},
+  opts: { hslEmails?: Set<string>; capturedBy?: string | null; pabOverridesValue?: string | null; techWeekOverridesValue?: string | null } = {},
 ): Promise<SnapshotFileResult> {
   const supabase = createSupabaseServiceRoleClient();
   if (!supabase) {
@@ -199,7 +204,13 @@ export async function snapshotSourceFile(
         localMidnight(periodStart) <= localMidnight(pabRange.end) &&
         localMidnight(periodEnd) >= localMidnight(pabRange.end);
     }
-    weekIsTechBonus = isTechBonusWeekMonSun(weekMonday);
+    // Override-aware shared gate: a saved wizard "System Bonus" payout-week
+    // pick must flag the same week here as computeCurrentPay pays, or the
+    // recorded week_is_tech_bonus contradicts the money the row snapshots.
+    weekIsTechBonus = resolveIsTechBonusWeek(
+      weekMonday,
+      parseTechBonusWeekOverrides(opts.techWeekOverridesValue),
+    );
   }
 
   const rows: Record<string, unknown>[] = [];
@@ -284,9 +295,10 @@ export async function runHslWeekSnapshot(
 
   const [hslEmails, settings] = await Promise.all([
     fetchHslEmailSet(supabase),
-    getAppSettings(["pab_period_overrides"]),
+    getAppSettings(["pab_period_overrides", TECH_BONUS_WEEK_OVERRIDES_KEY]),
   ]);
   const pabOverridesValue = settings["pab_period_overrides"] ?? null;
+  const techWeekOverridesValue = settings[TECH_BONUS_WEEK_OVERRIDES_KEY] ?? null;
 
   let files = opts.sourceFiles;
   if (!files || files.length === 0) {
@@ -299,6 +311,7 @@ export async function runHslWeekSnapshot(
       hslEmails,
       capturedBy: opts.capturedBy ?? null,
       pabOverridesValue,
+      techWeekOverridesValue,
     });
     perFile.push(res);
     total += res.hslRowsWritten;
@@ -336,19 +349,8 @@ function parsePabOverrides(value: string | null | undefined): Map<string, { star
   return map;
 }
 
-/**
- * Mon→Sun Tech-bonus-week test (mirror of dispatch-bonuses.isTechBonusWeek).
- * Inlined to avoid coupling the snapshot to that module's evolving exports.
- */
-function isTechBonusWeekMonSun(weekMonday: Date): boolean {
-  const salary = new Date(weekMonday.getFullYear(), weekMonday.getMonth(), weekMonday.getDate() + 8);
-  const first = new Date(salary.getFullYear(), salary.getMonth(), 1);
-  const dow = first.getDay();
-  // Rule B: week 1 = the week CONTAINING the 1st → Monday on/before the 1st.
-  const daysBackToMon = (dow + 6) % 7;
-  const firstMon = new Date(first.getFullYear(), first.getMonth(), first.getDate() - daysBackToMon);
-  const thirdMon = new Date(firstMon.getFullYear(), firstMon.getMonth(), firstMon.getDate() + 14);
-  const fourthMon = new Date(firstMon.getFullYear(), firstMon.getMonth(), firstMon.getDate() + 21);
-  const t = salary.getTime();
-  return t >= thirdMon.getTime() && t < fourthMon.getTime();
-}
+// The Tech-bonus-week test used to be inlined here as a mirror of
+// dispatch-bonuses.isTechBonusWeek. Once the payout week became configurable
+// (tech_bonus_week_overrides), a frozen mirror would silently disagree with
+// the engine paying the money, so the snapshot now imports the shared
+// resolveIsTechBonusWeek instead.
