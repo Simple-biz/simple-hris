@@ -20,6 +20,7 @@
 import { DEPARTMENTS } from '@/lib/payroll/department-bonus';
 import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
 import { slugifyDeptKey } from '@/lib/departments/registry';
+import { formatDeptLabel, isHslSubDeptLabel } from '@/lib/departments/hsl-subdept';
 import { phpPerUnit, type FxRates } from '@/lib/fx/currency-fx';
 import type { PayStructure, PayCurrency } from '@/lib/payment-catalog/pay-structure';
 import type { BonusDef, BonusAssignment, BonusKind } from '@/lib/bonus-catalog/types';
@@ -196,8 +197,14 @@ export interface CatalogOverview {
 const norm = (s: string | null | undefined) => (s ?? '').trim().toLowerCase();
 // Unknown keys are custom (Department-tab) departments whose slug derives from
 // the display name -- humanize it back ("medical_billing" -> "Medical Billing").
+// HSL sub-team keys are namespaced, not slugs: `hsl:intake_specialist` would
+// humanize to the nonsense "Hsl:intake Specialist", so they resolve through
+// formatDeptLabel first ("HSL — Intake Specialist").
 const deptName = (key: string) =>
-  DEPT_NAME.get(key) ?? key.replace(/_+/g, ' ').replace(/(^|\s)[a-z]/g, (c) => c.toUpperCase());
+  DEPT_NAME.get(key) ??
+  (isHslSubDeptLabel(key)
+    ? formatDeptLabel(key)
+    : key.replace(/_+/g, ' ').replace(/(^|\s)[a-z]/g, (c) => c.toUpperCase()));
 
 function nameForEmail(
   email: string,

@@ -101,6 +101,21 @@ on `departmentKey === 'hogan_smith_law' || isHslSubDeptLabel(departmentKey)`. A 
 `=== HOGAN_DEPT_KEY` test there silently stops mirroring. Department-scope saves never
 call `syncRateHistory` at all, so a rail entry cannot touch PHP rate history.
 
+### Anything listing departments by key must include the sub-teams
+
+`hsl:<key>` is a real `payment_catalog_pay_structures.department_key`, so every list that
+enumerates departments has to carry it or the rate goes missing:
+
+| Surface | Handling |
+|---|---|
+| Pay Structure rail | `hslSubDeptOptions()` — where the rate is set |
+| Catalog **export** (CSV/XLSX/PDF) | `hslSubDeptOptions()` — the builder matches structures by `dept.key`, so an omitted key **silently drops the rate row**. Pinned by `catalog-export.test.ts`, including a regression witness for the pre-fix list |
+| Summary tab charts | `deptName()` routes `hsl:*` through `formatDeptLabel`; the generic slug-humanizer would render `Hsl:intake Specialist` |
+| Bonus Assignments rail | **excluded on purpose** — HSL bonuses stay on `hogan_smith_law` |
+
+The rail and the export both derive from `hslSubDeptOptions()` deliberately: one source,
+so they cannot drift.
+
 ## 4. Where the sub-department is chosen
 
 | Surface | Behavior |

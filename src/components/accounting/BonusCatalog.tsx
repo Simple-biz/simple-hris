@@ -401,8 +401,13 @@ function ExportMenu({
       payStructures,
       bonuses,
       assignments,
+      // Must include the HSL sub-teams: the export matches structures by
+      // `dept.key`, so a sub-team's base rate would be silently ABSENT from the
+      // CSV/XLSX/PDF if its key never appears in this list. Same list shape as
+      // the Pay Structure rail — keep the two in step.
       departments: [
         ...DEPARTMENTS.map((d) => ({ key: d.key, name: d.name })),
+        ...hslSubDeptOptions().map((o) => ({ key: o.value, name: o.label })),
         ...extraDepartments,
       ],
       resolveName: (email) => nameByEmail.get(email.toLowerCase()),
