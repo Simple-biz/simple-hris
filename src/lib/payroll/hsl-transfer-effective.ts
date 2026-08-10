@@ -1,5 +1,6 @@
 import { createSupabaseServiceRoleClient, createSupabaseServerClient } from '@/lib/supabase/server';
 import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
+import { isHslFamilyLabel } from '@/lib/departments/hsl-subdept';
 import { normEmail } from '@/lib/email/norm-email';
 
 /**
@@ -17,6 +18,7 @@ import { normEmail } from '@/lib/email/norm-email';
 export interface HslTransferRowLike {
   employee_email: string | null;
   employee_work_email: string | null;
+  from_department: string | null;
   to_department: string | null;
   effective_date: string | null;
   status: string | null;
@@ -28,6 +30,12 @@ export interface HslTransferRowLike {
  * hogan_smith_law count (covers 'HSL', 'hsl:intake_specialist', 'Hogan Smith
  * Law', …). When a person has several, the LATEST effective date wins — that
  * is the transfer their current HSL label came from.
+ *
+ * Moves that STARTED inside the HSL family are skipped entirely: a sub-team
+ * reshuffle or a plain-HSL → `hsl:<sub>` relabel is not an entry into HSL, and
+ * counting one reset a long-tenured person's weekend-premium day-scoping to the
+ * relabel date. (Five people were relabeled HSL → hsl:case_managers in July
+ * 2026; the map read them as brand-new HSL arrivals that week.)
  */
 export function buildHslTransferEffectiveMap(rows: HslTransferRowLike[]): Map<string, string> {
   const out = new Map<string, string>();
@@ -35,6 +43,7 @@ export function buildHslTransferEffectiveMap(rows: HslTransferRowLike[]): Map<st
     const status = (r.status ?? '').trim().toLowerCase();
     if (status !== 'applied' && status !== 'approved') continue;
     if (normalizeDeptToKey(r.to_department ?? '') !== 'hogan_smith_law') continue;
+    if (isHslFamilyLabel(r.from_department)) continue;
     const eff = (r.effective_date ?? '').slice(0, 10);
     if (!/^\d{4}-\d{2}-\d{2}$/.test(eff)) continue;
     for (const raw of [r.employee_email, r.employee_work_email]) {
@@ -57,7 +66,7 @@ export async function fetchHslTransferEffectiveByEmail(): Promise<Map<string, st
   for (let from = 0; ; from += PAGE) {
     const { data, error } = await supabase
       .from('department_transfer_requests')
-      .select('employee_email, employee_work_email, to_department, effective_date, status')
+      .select('employee_email, employee_work_email, from_department, to_department, effective_date, status')
       .in('status', ['applied', 'approved'])
       .range(from, from + PAGE - 1);
     if (error || !data) break;
