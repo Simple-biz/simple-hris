@@ -25,6 +25,7 @@ import {
   effectiveUsdToPhpRateFromStored,
 } from '@/lib/fx/usd-php';
 import { phpHourlyPayFromSeconds } from '@/lib/payroll/money-php';
+import { isHslFamilyLabel } from '@/lib/departments/hsl-subdept';
 import type { MemberMonthlyPay } from '@/lib/payroll/member-monthly-pay';
 import {
   buildOrphanageHoursIndex,
@@ -1106,7 +1107,9 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
     return covered;
   }, [orphanageHoursIndex, email, mergedHoursByDateKey]);
 
-  const isHsl = (memberPay?.department ?? '').trim().toLowerCase() === 'hsl';
+  // Family-aware — an `hsl:<sub>` sub-team label is still HSL (Mon–Sun weeks,
+  // overnight combination).
+  const isHsl = isHslFamilyLabel(memberPay?.department);
 
   /** For HSL: ISO dates where overnight combination (today + tomorrow OR yesterday + today) reaches ≥ 7h. */
   const hslOvernightIsos = useMemo(() => {

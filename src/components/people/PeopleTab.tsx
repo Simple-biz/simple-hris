@@ -24,6 +24,7 @@ import PeopleBankChanges from './PeopleBankChanges';
 import { BankChangeDetailDialog, timeAgo, type BankChangeEntry } from './bank-change-detail';
 import { getTabCache, setTabCache, TAB_CACHE_KEYS } from '@/lib/accounting/tab-cache';
 import { parseNameParts, composeMasterListName, type NameParts } from '@/lib/name/name-parts';
+import { isHslFamilyLabel, formatDeptLabel } from '@/lib/departments/hsl-subdept';
 import {
   buildRosterExport,
   downloadRosterCsv,
@@ -2891,7 +2892,7 @@ function PersonDetailDialog({
   const [revealing, setRevealing] = useState(false);
   // Banking & payout stays hidden until the viewer explicitly reveals it.
   const [showBanking, setShowBanking] = useState(false);
-  const isHsl = (row.department ?? '').trim().toLowerCase() === 'hsl';
+  const isHsl = isHslFamilyLabel(row.department);
   const [histPage, setHistPage] = useState(1);
   const histDirRef = useRef<1 | -1>(1);
   const [bankHistPage, setBankHistPage] = useState(1);

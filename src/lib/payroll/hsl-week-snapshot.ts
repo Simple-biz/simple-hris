@@ -21,6 +21,7 @@ import { createSupabaseServiceRoleClient } from "@/lib/supabase/server";
 import { getAppSettings } from "@/lib/supabase/app-settings";
 import { normEmail } from "@/lib/email/norm-email";
 import { selectAllPaged } from "@/lib/supabase/select-all-paged";
+import { isHslFamilyLabel } from "@/lib/departments/hsl-subdept";
 import {
   getPabMonthRange,
   payWeekFromUploadStart,
@@ -59,8 +60,9 @@ function pabMonthFromMonday(weekMonday: Date): { year: number; month: number } {
 /**
  * The set of normalized emails (work + personal) of HSL employees, derived the
  * same way {@link computeCurrentPay} derives its internal `hslEmails` set
- * (`active_employees.Department === 'hsl'`). This is exactly the population that
- * received Mon→Sun pay windowing, so the snapshot captures the same people.
+ * (any HSL-family `active_employees.Department` — 'HSL', 'Hogan Smith Law' or an
+ * `hsl:<sub>` sub-team label). This is exactly the population that received
+ * Mon→Sun pay windowing, so the snapshot captures the same people.
  */
 export async function fetchHslEmailSet(supabase: ServiceClient): Promise<Set<string>> {
   // Paged: the roster passed 1,000 people and the dept filter runs in JS AFTER
@@ -79,8 +81,8 @@ export async function fetchHslEmailSet(supabase: ServiceClient): Promise<Set<str
     return set;
   }
   for (const r of data) {
-    const dept = typeof r["Department"] === "string" ? (r["Department"] as string).trim().toLowerCase() : "";
-    if (dept !== "hsl") continue;
+    const dept = typeof r["Department"] === "string" ? (r["Department"] as string) : "";
+    if (!isHslFamilyLabel(dept)) continue;
     const we = normEmail(typeof r["Work Email"] === "string" ? (r["Work Email"] as string) : null);
     const pe = normEmail(typeof r["Personal Email"] === "string" ? (r["Personal Email"] as string) : null);
     if (we) set.add(we);

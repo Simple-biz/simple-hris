@@ -66,6 +66,7 @@ import {
 } from '@/lib/supabase/employee-hourly-rates';
 import type { PayrollHubstaffRow } from '@/lib/supabase/hubstaff-hours';
 import { normEmail } from '@/lib/email/norm-email';
+import { isHslFamilyLabel } from '@/lib/departments/hsl-subdept';
 import { phpHourlyPayFromSeconds, splitRegularOvertimeSeconds } from '@/lib/payroll/money-php';
 import {
   getCurrentPabMonth,
@@ -1671,7 +1672,7 @@ function SimpleView({
                               return (
                                 <button
                                   type="button"
-                                  onClick={() => { if (email) openPabCalendar(email, (row.department ?? '').trim().toLowerCase() === 'hsl'); }}
+                                  onClick={() => { if (email) openPabCalendar(email, isHslFamilyLabel(row.department)); }}
                                   disabled={!email}
                                   title="Open PAB calendar"
                                   className={cn(
@@ -2382,7 +2383,8 @@ function PagerEdgeBtn({
 function hslEmailsKeyFromEmployees(employees: EmployeeRow[]): string {
   const ems: string[] = [];
   for (const e of employees) {
-    if (e.department?.trim().toLowerCase() === 'hsl') {
+    // Family-aware: sub-team labels ('hsl:intake_specialist', …) are HSL too.
+    if (isHslFamilyLabel(e.department)) {
       const em = normEmail(e.personal_email ?? null) ?? normEmail(e.work_email ?? null);
       if (em) ems.push(em);
     }
@@ -3646,7 +3648,7 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
             mergedRow['Job type'] ?? mergedRow['job_type'] ?? mergedRow['Job Type'] ??
             mergedRow['department'] ?? mergedRow['Department'] ?? ''
           ).trim().toLowerCase();
-          const isHsl = hslMasterEmails.has(email) || rawDept === 'hsl';
+          const isHsl = hslMasterEmails.has(email) || isHslFamilyLabel(rawDept);
 
           let isEligible: boolean;
           if (isHsl) {
@@ -4833,7 +4835,7 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
                                 return (
                                   <button
                                     type="button"
-                                    onClick={() => { if (rowEmail) openPabCalendar(rowEmail, (row.department ?? '').trim().toLowerCase() === 'hsl'); }}
+                                    onClick={() => { if (rowEmail) openPabCalendar(rowEmail, isHslFamilyLabel(row.department)); }}
                                     disabled={!rowEmail}
                                     title="Open PAB calendar"
                                     className={cn(

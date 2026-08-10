@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { CalendarDays, ChevronLeft, ChevronRight, Loader2 } from 'lucide-react';
 import { normEmail } from '@/lib/email/norm-email';
+import { isHslFamilyLabel } from '@/lib/departments/hsl-subdept';
 import {
   buildCalendarMonthWeeksIncludingWeekends,
   columnsAreAllCanonical,
@@ -309,7 +310,8 @@ export default function ManagerMemberHoursMini({
     [viewYear, viewMonth],
   );
 
-  const isHslMember = (department ?? '').trim().toLowerCase() === 'hsl';
+  // Family-aware — an `hsl:<sub>` sub-team label is still HSL.
+  const isHslMember = isHslFamilyLabel(department);
 
   const calendarWeeks = useMemo<PabCalendarDay[][] | null>(() => {
     const w = buildCalendarMonthWeeksIncludingWeekends(monthStart, monthEnd, hoursByDateKey);

@@ -43,6 +43,7 @@ import {
   type ResolvedSystemBonuses,
 } from '@/lib/payment-catalog/system-bonus';
 import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
+import { isHslFamilyLabel } from '@/lib/departments/hsl-subdept';
 import { downloadPaySnapshotPdf, type PaySnapshotPdfRow } from '@/lib/payroll/pay-snapshot-pdf';
 import { isFinalPabWeek as gateIsFinalPabWeek } from '@/lib/payroll/dispatch-bonuses';
 import {
@@ -1090,7 +1091,8 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
   }, [sourceFiles, email, aliasEmails]);
 
   // Hogan (HSL) keeps Mon–Sun weeks; all other departments use Sun–Sat.
-  const isHsl = (profileForShipping.department ?? '').trim().toLowerCase() === 'hsl';
+  // Family-aware — an `hsl:<sub>` sub-team label is still HSL.
+  const isHsl = isHslFamilyLabel(profileForShipping.department);
 
   const isAllTime = selectedFile === '__all__';
 

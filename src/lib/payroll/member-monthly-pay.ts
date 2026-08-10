@@ -49,6 +49,7 @@ import {
 } from '@/lib/payroll/orphanage-pab-coverage';
 import { resolveSystemBonuses, isDeptEligible, systemBonusAmountForDept } from '@/lib/payment-catalog/system-bonus';
 import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
+import { isHslFamilyLabel } from '@/lib/departments/hsl-subdept';
 import {
   buildPabCalendarWeeks,
   checkHslPabEligibility,
@@ -330,7 +331,11 @@ async function fetchMasterRowsForEmail(
     const pe = normEmail(m.personal_email);
     const a1 = normEmail(m.alternate_work_email);
     const a2 = normEmail(m.alternate_work_email_2);
-    if (m.department && m.department.trim().toLowerCase() === 'hsl') {
+    // Family-aware: the sub-team labels ('hsl:intake_specialist', …) are HSL
+    // too. The old exact === 'hsl' test dropped every sub-labeled person out of
+    // this set, so their monthly view enumerated Sun–Sat weeks while their
+    // paystub was cut on Mon–Sun ones.
+    if (isHslFamilyLabel(m.department)) {
       if (we) allHsl.add(we);
       if (pe) allHsl.add(pe);
     }

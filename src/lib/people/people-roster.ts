@@ -17,6 +17,7 @@ import { listHubstaffUploads, fetchHubstaffRowsBySourceFile, rowsToPayrollRows }
 import { parseHoursToDecimal, mapHubstaffHoursRow } from '@/lib/supabase/hubstaff-hours';
 import { parseDateRangeFromFilename, payWeekFromUploadStart, resolveCanonicalColumnsToIso } from '@/lib/hubstaff/calendar-column-dedupe';
 import { projectOvertime } from './overtime-projection';
+import { isHslFamilyLabel } from '@/lib/departments/hsl-subdept';
 import type { PayCurrency } from '@/lib/payment-catalog/pay-structure';
 
 /** Pay rate resolved for one person, shown in their NATIVE currency. */
@@ -401,7 +402,8 @@ export async function buildPeopleRoster(scope: PeopleRosterScope = {}): Promise<
       .map((a) => normEmail(a ?? ''))
       .filter(Boolean) as string[];
 
-    const isHsl = (e.department ?? '').trim().toLowerCase() === 'hsl';
+    // Family-aware — an `hsl:<sub>` label is still HSL (Mon–Sun weeks).
+    const isHsl = isHslFamilyLabel(e.department);
     const rate = resolvePeopleRate(rateCtx, aliases, e.department ?? null);
 
     let hours: PeopleHours;
