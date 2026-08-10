@@ -47,6 +47,8 @@ import { isHslFamilyLabel } from '@/lib/departments/hsl-subdept';
 import { downloadPaySnapshotPdf, type PaySnapshotPdfRow } from '@/lib/payroll/pay-snapshot-pdf';
 import {
   isFinalPabWeek as gateIsFinalPabWeek,
+  listTechBonusWeekOptions,
+  owningMondayOf,
   parseTechBonusWeekOverrides,
   resolveIsTechBonusWeek,
 } from '@/lib/payroll/dispatch-bonuses';
@@ -85,6 +87,7 @@ import type { PabCalendarDay } from '@/lib/hubstaff/calendar-column-dedupe';
 import { periodLabelFromFilename } from '@/lib/hubstaff/period-label';
 import { usePabPeriodSettings } from '@/hooks/usePabPeriodSettings';
 import {
+  parseLocalDateFromIso,
   resolvePabMonthFromColumns,
   resolvePabRangeForMonth,
 } from '@/lib/pab-period-settings';
@@ -1874,21 +1877,12 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
     })();
     if (refMonday.getTime() < eligibleFrom.getTime()) return false;
 
-    // Salary Date = the Tuesday after the pay-period Sunday (refMonday + 8).
-    // Tech bonus fires when salary date falls in the 3rd Mon–Sun week of its
-    // month — week 1 = the week containing the 1st (partial leading week counts).
-    const salaryDate = new Date(refMonday.getFullYear(), refMonday.getMonth(), refMonday.getDate() + 8);
-    const first = new Date(salaryDate.getFullYear(), salaryDate.getMonth(), 1);
-    const dow = first.getDay();
-    // Rule B: week 1 = the week CONTAINING the 1st → Monday on/before the 1st
-    // (may be in the previous month). Days back to that Monday: Mon=1→0, … Sun=0→6.
-    const daysBackToMon = (dow + 6) % 7;
-    const firstMon = new Date(first.getFullYear(), first.getMonth(), first.getDate() - daysBackToMon);
-    const thirdWeekMon = new Date(firstMon.getFullYear(), firstMon.getMonth(), firstMon.getDate() + 14);
-    const fourthWeekMon = new Date(firstMon.getFullYear(), firstMon.getMonth(), firstMon.getDate() + 21);
-    const t = salaryDate.getTime();
-    return t >= thirdWeekMon.getTime() && t < fourthWeekMon.getTime();
-  }, [employeeStartDate, selectedFileWeek]);
+    // Override-aware shared gate on the week's OWNING MONDAY. A Sun–Sat file
+    // week's owning Monday is the NEXT day (the pab-payout-week convention) —
+    // matching against a stored Monday pick with the raw Sunday start would
+    // silently never fire. No override for the month → legacy 3rd-week rule.
+    return resolveIsTechBonusWeek(owningMondayOf(refMonday), techWeekOverrides);
+  }, [employeeStartDate, selectedFileWeek, techWeekOverrides]);
 
   // Same reasoning as pabBonusAmount above: prefer the wizard-confirmed figure once
   // one is published, instead of always re-deriving from the client-side week gate.
@@ -1962,17 +1956,9 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
       return new Date(thisMon.getFullYear(), thisMon.getMonth(), thisMon.getDate() + 7);
     })();
     if (refMonday.getTime() < eligibleFrom.getTime()) return false;
-    const salaryDate = new Date(refMonday.getFullYear(), refMonday.getMonth(), refMonday.getDate() + 8);
-    const first = new Date(salaryDate.getFullYear(), salaryDate.getMonth(), 1);
-    const dow = first.getDay();
-    // Rule B: week 1 = the week CONTAINING the 1st → Monday on/before the 1st.
-    const daysBackToMon = (dow + 6) % 7;
-    const firstMon = new Date(first.getFullYear(), first.getMonth(), first.getDate() - daysBackToMon);
-    const thirdWeekMon = new Date(firstMon.getFullYear(), firstMon.getMonth(), firstMon.getDate() + 14);
-    const fourthWeekMon = new Date(firstMon.getFullYear(), firstMon.getMonth(), firstMon.getDate() + 21);
-    const t = salaryDate.getTime();
-    return t >= thirdWeekMon.getTime() && t < fourthWeekMon.getTime();
-  }, [isTechnologyBonusActive, employeeStartDate, selectedFileWeek]);
+    // Same override-aware shared gate as isTechnologyBonusActive, one week out.
+    return resolveIsTechBonusWeek(owningMondayOf(refMonday), techWeekOverrides);
+  }, [isTechnologyBonusActive, employeeStartDate, selectedFileWeek, techWeekOverrides]);
 
   /**
    * True when the PAB month's tech bonus week is already past relative to the
@@ -2012,18 +1998,13 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
     const mo = pabMonthRange ? pabMonthRange.start.getMonth() : refMonday.getMonth();
     const monthKey = `${yr}-${String(mo + 1).padStart(2, '0')}`;
     const overrideIso = techWeekOverrides.get(monthKey);
-    const payMonday = (() => {
-      if (overrideIso) {
-        const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(overrideIso);
-        if (m) return new Date(+m[1], +m[2] - 1, +m[3]);
-      }
-      const first = new Date(yr, mo, 1);
-      // Rule B: week 1 = the week CONTAINING the 1st → Monday on/before the 1st.
-      const daysBackToMon = (first.getDay() + 6) % 7;
-      const firstMon = new Date(yr, mo, 1 - daysBackToMon);
-      const week3Mon = new Date(firstMon.getFullYear(), firstMon.getMonth(), firstMon.getDate() + 14);
-      return new Date(week3Mon.getFullYear(), week3Mon.getMonth(), week3Mon.getDate() - 7);
-    })();
+    // Shared source for the month's tech pay Monday: the override pick when
+    // saved, else the auto (3rd-week) option — never re-derived inline here.
+    const payMonday =
+      (overrideIso ? parseLocalDateFromIso(overrideIso) : null) ??
+      listTechBonusWeekOptions(yr, mo).find((o) => o.isAuto)?.monday ??
+      null;
+    if (!payMonday) return false;
     // "Past" once the current file week starts strictly after the tech bonus week's Monday.
     const pastPivot = new Date(payMonday.getFullYear(), payMonday.getMonth(), payMonday.getDate() + 7);
     return refMonday.getTime() > pastPivot.getTime();

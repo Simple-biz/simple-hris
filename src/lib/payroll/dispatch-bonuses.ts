@@ -448,6 +448,24 @@ export const TECH_BONUS_WEEK_OVERRIDES_KEY = "tech_bonus_week_overrides";
 /** "YYYY-MM" (salary-date month) → "YYYY-MM-DD" (pay-period week Monday). */
 export type TechWeekOverridesMap = Map<string, string>;
 
+/**
+ * The OWNING MONDAY of a pay week, from any day the caller has for the week's
+ * start. Overrides are stored as Monday ISO dates, so every consumer must
+ * normalize before matching — a raw Sunday file-start compared against a
+ * stored Monday silently never fires. Convention (see the PAB payout-week
+ * fix): a SUNDAY week-start's owning Monday is the NEXT day (Sun–Sat weeks
+ * wrap their Monday); any other day walks BACK to its week's Monday.
+ */
+export function owningMondayOf(weekStart: Date): Date {
+  const dow = weekStart.getDay(); // Sun=0..Sat=6
+  const shift = dow === 0 ? 1 : 1 - dow;
+  return new Date(
+    weekStart.getFullYear(),
+    weekStart.getMonth(),
+    weekStart.getDate() + shift,
+  );
+}
+
 /** The "YYYY-MM" month that owns a pay week for Tech purposes: its salary date's month. */
 export function techSalaryMonthKey(weekMonday: Date): string {
   const salary = new Date(

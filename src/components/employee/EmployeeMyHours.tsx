@@ -60,6 +60,7 @@ import {
   getEnabledHolidayMap,
 } from '@/lib/us-holidays';
 import {
+  listTechBonusWeekOptions,
   parseTechBonusWeekOverrides,
   TECH_BONUS_WEEK_OVERRIDES_KEY,
   type TechWeekOverridesMap,
@@ -1341,27 +1342,22 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
    * pay-period Monday = Salary Date − 8 days. Mirrors
    * `dispatch-bonuses.ts → resolveIsTechBonusWeek`.
    */
-  const techBonusPayPeriod = useMemo(() => {
+  const techBonusPayPeriod = useMemo<{ salaryDate: Date | null; weekStart: Date | null }>(() => {
     const monthKey = `${viewYear}-${String(viewMonth + 1).padStart(2, '0')}`;
     const overrideIso = techWeekOverrides.get(monthKey);
-    if (overrideIso) {
-      const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(overrideIso);
-      if (m) {
-        const weekStart = new Date(+m[1], +m[2] - 1, +m[3]);
-        const salaryDate = new Date(weekStart.getFullYear(), weekStart.getMonth(), weekStart.getDate() + 8);
-        return { salaryDate, weekStart };
-      }
-    }
-    const first = new Date(viewYear, viewMonth, 1);
-    const dow = first.getDay();
-    // Rule B: week 1 = the week CONTAINING the 1st → Monday on/before the 1st
-    // (may be in the previous month). Days back to that Monday: Mon=1→0, … Sun=0→6.
-    const daysBackToMon = (dow + 6) % 7;
-    const firstMon = new Date(viewYear, viewMonth, 1 - daysBackToMon);
-    const week3Mon = new Date(firstMon.getFullYear(), firstMon.getMonth(), firstMon.getDate() + 14);
-    const salaryDate = new Date(week3Mon.getFullYear(), week3Mon.getMonth(), week3Mon.getDate() + 1);
-    const weekStart = new Date(salaryDate.getFullYear(), salaryDate.getMonth(), salaryDate.getDate() - 8);
-    return { salaryDate, weekStart };
+    const options = listTechBonusWeekOptions(viewYear, viewMonth);
+    // Override pick when saved, else the auto (3rd-week) option — the month's
+    // pay-week math lives ONLY in listTechBonusWeekOptions, never inline here.
+    const chosen =
+      (overrideIso ? options.find((o) => o.mondayIso === overrideIso) : undefined) ??
+      options.find((o) => o.isAuto) ??
+      options[0] ??
+      null;
+    if (chosen) return { salaryDate: chosen.salaryDate, weekStart: chosen.monday };
+    // Unreachable: every month yields 4–5 options with exactly one auto pick
+    // (pinned by tech-bonus-week.test.ts). Null = "no period" — the 30-day
+    // gate below treats it as not-yet-eligible rather than fabricating dates.
+    return { salaryDate: null, weekStart: null };
   }, [viewYear, viewMonth, techWeekOverrides]);
 
   /**
@@ -1379,6 +1375,8 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
     if (!hasRates) return false;
     if (!techDeptOk) return false;
     if (!monthHasEnded) return false;
+    // No resolvable pay period (unreachable in practice) → no bonus claimed.
+    if (!techBonusPayPeriod.weekStart) return false;
     if (!employeeStartDate) return true;
     const eligibleFrom = new Date(
       employeeStartDate.getFullYear(),

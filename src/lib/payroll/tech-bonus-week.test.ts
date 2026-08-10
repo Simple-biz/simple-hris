@@ -1,8 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readdirSync, readFileSync, statSync } from "node:fs";
+import { join } from "node:path";
 import {
   isTechBonusWeek,
   listTechBonusWeekOptions,
+  owningMondayOf,
   parseTechBonusWeekOverrides,
   resolveIsTechBonusWeek,
   techSalaryMonthKey,
@@ -126,6 +129,48 @@ test("week options cover the month, include the auto week exactly once, and all 
       assert.equal(roundTrip.get(key), o.mondayIso, `${y}-${m}: ${o.mondayIso} rejected`);
     }
   }
+});
+
+test("owningMondayOf normalizes any week-start day onto the overrides' Monday key", () => {
+  // Sunday start (Sun–Sat upload week) → the NEXT day.
+  assert.equal(owningMondayOf(d(2026, 8, 2)).toDateString(), d(2026, 8, 3).toDateString());
+  // Monday start → unchanged.
+  assert.equal(owningMondayOf(d(2026, 8, 3)).toDateString(), d(2026, 8, 3).toDateString());
+  // Mid-week dates walk BACK to their week's Monday.
+  assert.equal(owningMondayOf(d(2026, 8, 5)).toDateString(), d(2026, 8, 3).toDateString());
+  assert.equal(owningMondayOf(d(2026, 8, 8)).toDateString(), d(2026, 8, 3).toDateString());
+});
+
+test("HARDENING GUARD: no surface calls the raw tech-week heuristic — everything goes through resolveIsTechBonusWeek", () => {
+  // The configurable payout week only works if EVERY consumer asks the
+  // override-aware gate. A direct isTechBonusWeek* call silently ignores the
+  // wizard's System Bonus pick (the exact bug found on the Employee
+  // Dashboard, 2026-08-10). Only the gate's own module and this test may
+  // reference the raw heuristics.
+  const FORBIDDEN = /\bisTechBonusWeek(?:SunSat|MonSun)?\s*\(/;
+  const ALLOWED = new Set(["dispatch-bonuses.ts", "tech-bonus-week.test.ts"]);
+  const offenders: string[] = [];
+  const walk = (dir: string) => {
+    for (const name of readdirSync(dir)) {
+      const p = join(dir, name);
+      if (statSync(p).isDirectory()) {
+        if (name === "node_modules") continue;
+        walk(p);
+        continue;
+      }
+      if (!/\.(ts|tsx)$/.test(name) || ALLOWED.has(name)) continue;
+      const src = readFileSync(p, "utf8");
+      if (FORBIDDEN.test(src)) offenders.push(p);
+    }
+  };
+  // Tests run from the repo root (`npm test`), so anchor on cwd — __dirname
+  // is unavailable under tsx's ESM loader.
+  walk(join(process.cwd(), "src"));
+  assert.deepEqual(
+    offenders,
+    [],
+    `raw tech-week heuristic call outside dispatch-bonuses.ts — route through resolveIsTechBonusWeek(weekMonday, overrides): ${offenders.join(", ")}`,
+  );
 });
 
 test("the auto option matches the documented examples from the wizard comment", () => {
