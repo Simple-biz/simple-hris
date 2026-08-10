@@ -62,7 +62,8 @@ import { formatPHP } from '@/lib/format-php';
 import { formatMoney, normalizeCurrency, sumByCurrency, CONTRACTOR_CURRENCIES } from '@/lib/contractor-currency';
 import { InvoiceViewDialog, type SavedInvoice } from '@/components/contractor/InvoiceReceiptDialog';
 import { isInvoiceInPeriod } from '@/lib/contractor/invoice-period';
-import { KPI_BONUS_ID, DEPARTMENTS, FORMULA_DEPT_KEYS, MANAGER_BONUS_DEPT_KEYS, ACCOUNTING_WEEKDAY_METRICS, calcLeadGenBonus, isDevsDelivery, isDevsChecking, isJeromeRosero, isTeal } from '@/lib/payroll/department-bonus';
+import { KPI_BONUS_ID, DEPARTMENTS, FORMULA_DEPT_KEYS, WIZARD_PAYABLE_KPI_DEPT_KEYS, ACCOUNTING_WEEKDAY_METRICS, calcLeadGenBonus, isDevsDelivery, isDevsChecking, isJeromeRosero, isTeal } from '@/lib/payroll/department-bonus';
+import { shouldFreezeReplayBonusToggles, resolveBonusToggle, kpiAmountsMatchWeek, type KpiLoadMarker } from '@/lib/payroll/replay-bonus-toggles';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -2142,6 +2143,47 @@ export default function PayrollWizard({
    *  final-pay snapshot publisher is gated on this matching {@link calcSourceFile}
    *  so a publish can never fire with half-hydrated (zeroed) additions. */
   const [additionsHydratedFor, setAdditionsHydratedFor] = useState<string | null>(null);
+  /**
+   * The source file whose hydrated Additions blob carried a **non-empty**
+   * `employeeBonuses` map — i.e. the week saved its own PAB / Tech / dept-toggle
+   * verdicts. While replaying that week those saved toggles are authoritative and
+   * the two auto-toggle effects must NOT re-derive them from today's eligibility
+   * data (see {@link replayBonusTogglesFrozen}).
+   *
+   * `null` — no blob, or a blob with no toggles in it — means the live
+   * computation takes over. That fallback is the point: the exact
+   * null-when-empty rule {@link lockedPabSnapshot} uses on the next line, and the
+   * reason a payout week with an empty snapshot no longer reads ₱0 for everyone
+   * (`docs/reference/business-logic.md` "Replay", 2026-07-17).
+   */
+  const [savedBonusTogglesFor, setSavedBonusTogglesFor] = useState<string | null>(null);
+  /**
+   * True when the screen is replaying a past week that saved its own bonus
+   * toggles — the two auto-toggle effects stand down and the blob's verdicts hold.
+   *
+   * Why it has to exist: both effects re-derive `perfect_attendance` /
+   * `tech_bonus` from TODAY's inputs (live PAB exclusions, the current holiday
+   * list, the current dispute/time-adjustment set, the current master start
+   * dates), and they run on replay too — so they overwrote the hydrated blob a
+   * beat after it landed. Replaying a closed week showed the bonuses that week
+   * WOULD earn if it were run today, not the ones it was paid, and any post-hoc
+   * change to those inputs silently rewrote history. `docs/reference/business-logic.md`
+   * already requires the opposite ("historical replays of past periods stay
+   * accurate"), and the paystub recovery path reaches the same conclusion from the
+   * other end: read what was paid, never re-derive it.
+   *
+   * Both orderings are safe. An auto-toggle that fires BEFORE hydration is
+   * overwritten by it (the load replaces the whole map); one that fires after sees
+   * this flag already true. Never frozen on the live week — that is where
+   * re-deriving is the entire job.
+   *
+   * Rule + truth table live in `replay-bonus-toggles.ts` (unit-tested).
+   */
+  const replayBonusTogglesFrozen = shouldFreezeReplayBonusToggles(
+    isReplay,
+    savedBonusTogglesFor,
+    calcSourceFile,
+  );
   const [lockedPabSnapshot, setLockedPabSnapshot] = useState<Record<string, 'eligible' | 'ineligible' | 'in_progress'> | null>(null);
   const [validationSearch, setValidationSearch] = useState('');
   /** Active department in the Validation step's per-department final-pay view. */
@@ -2329,16 +2371,47 @@ export default function PayrollWizard({
   // who were transferred mid-cycle and earned a KPI in two departments.
   const [managerBonusByDeptRaw, setManagerBonusByDeptRaw] = useState<Record<string, Record<string, number>>>({});
   const [managerBonusMeta, setManagerBonusMeta] = useState<Record<string, { period_start: string; status: string }>>({});
+  /**
+   * The pay week the four `managerBonus*` maps above actually hold data for, or
+   * `null` while a load is in flight or after one failed. Wrapped in an object so
+   * "loaded for the no-file case" (`{ week: null }`) is distinguishable from "not
+   * loaded" (`null`) without a sentinel string — `hubstaffWeekStart` is legitimately
+   * null before a Hubstaff file is selected.
+   *
+   * Gate, not decoration: KPI amounts are money, and until this matches
+   * {@link hubstaffWeekStart} the maps either belong to a week nobody is looking at
+   * or are empty for a reason nobody has been told. {@link publishFinalPaySnapshot}
+   * refuses to write while that is true.
+   */
+  const [managerBonusLoaded, setManagerBonusLoaded] = useState<KpiLoadMarker>(null);
+  /** {@link managerBonusLoaded}'s twin for `hslKpiAmounts` / `hslKpiPeriod`. */
+  const [hslKpiLoaded, setHslKpiLoaded] = useState<KpiLoadMarker>(null);
 
   useEffect(() => {
     let cancelled = false;
+    // Blank the previous week's amounts BEFORE awaiting anything. Without this the
+    // old week's KPI Sub. figures stay on screen — and inside `dispatchData` — for
+    // the whole width of two round trips after a week switch, which the 1.5s
+    // debounced publisher is long enough to persist into the NEW week's final-pay
+    // snapshot (the one Payment Dispatch prices from). Same reason the HSL twin
+    // below clears instead of holding.
+    setManagerBonusLoaded(null);
+    setManagerBonusMeta({});
+    setManagerBonusRaw({});
+    setManagerBonusRowsRaw({});
+    setManagerBonusByDeptRaw({});
     (async () => {
       try {
         const statusRes = await fetch('/api/hsl-bonus/period-status', { cache: 'no-store' });
         const statusJson = (await statusRes.json()) as {
           rows?: { department: string; period_start: string; period_end: string; status: string }[];
         };
-        const managerKeys = new Set(MANAGER_BONUS_DEPT_KEYS);
+        // Paying a week is not the same question as offering a card for it, so this
+        // reads the payment-side set — every current card PLUS every retired one.
+        // Keyed off MANAGER_BONUS_DEPT_KEYS, the 2026-08-10 card retirement would
+        // have silently stopped paying `sales` / `smm` / `smm_freelancer` rows that
+        // were already applied, replay included. See WIZARD_PAYABLE_KPI_DEPT_KEYS.
+        const managerKeys = WIZARD_PAYABLE_KPI_DEPT_KEYS;
         // When the Hubstaff week is known, pin to that week.
         // Otherwise take the latest ready/locked per department (locked beats ready).
         const chosen = new Map<string, { period_start: string; status: string }>();
@@ -2413,8 +2486,17 @@ export default function PayrollWizard({
         setManagerBonusRaw(raw);
         setManagerBonusRowsRaw(rowsByEmail);
         setManagerBonusByDeptRaw(byDept);
-      } catch {
-        // Silent — no manager submissions surface; depts fall back to local entry.
+        setManagerBonusLoaded({ week: hubstaffWeekStart });
+      } catch (e) {
+        // A failed read is NOT "no manager submissions" — the maps were cleared at
+        // the top of this effect, so leaving them empty here is already the safe
+        // state, and `managerBonusLoaded` stays null so the final-pay publisher
+        // won't write a week whose KPI amounts are unknown. The old empty `catch`
+        // let the PREVIOUS week's amounts survive onto the new week; its HSL twin
+        // below already refused to do that ("clear rather than keep a
+        // possibly-stale other-week amount"). Never silent — an unreadable money
+        // input has to be visible somewhere.
+        console.error('[managerBonus] load failed — KPI submissions unavailable', e);
       }
     })();
     return () => {
@@ -2425,6 +2507,13 @@ export default function PayrollWizard({
   useEffect(() => {
     let cancelled = false;
     setHslKpiLoading(true);
+    // This loader already refused to KEEP a stale other-week amount on failure;
+    // it still showed one for the width of the fetch after a week switch. Clear
+    // synchronously, before the first await, for the same reason as the manager
+    // twin above — the spinner (`hslKpiLoading`) already covers the gap in the UI.
+    setHslKpiLoaded(null);
+    setHslKpiPeriod(null);
+    setHslKpiAmounts({});
     (async () => {
       try {
         // No processed week yet → nothing auto-dispatches. Requiring the pinned
@@ -2434,6 +2523,7 @@ export default function PayrollWizard({
           if (!cancelled) {
             setHslKpiPeriod(null);
             setHslKpiAmounts({});
+            setHslKpiLoaded({ week: null });
           }
           return;
         }
@@ -2469,6 +2559,9 @@ export default function PayrollWizard({
           if (!cancelled) {
             setHslKpiPeriod(null);
             setHslKpiAmounts({});
+            // Genuinely nothing ready/locked for this week — a KNOWN empty, unlike
+            // the failure branch below. Publishing may proceed.
+            setHslKpiLoaded({ week: hubstaffWeekStart });
           }
           return;
         }
@@ -2507,6 +2600,7 @@ export default function PayrollWizard({
           period_end: picks.find((p) => p.period_end)?.period_end ?? '',
           status: picks.every((p) => p.status === 'locked') ? 'locked' : 'ready',
         });
+        setHslKpiLoaded({ week: hubstaffWeekStart });
       } catch {
         // On failure, clear rather than keep a possibly-stale other-week amount.
         if (!cancelled) {
@@ -2727,6 +2821,9 @@ export default function PayrollWizard({
     // a publish mid-load would write zeroed adjustments/orphanage over the
     // snapshot that Payment Dispatch prices from and the paystub merge trusts.
     setAdditionsHydratedFor(null);
+    // Same reason: until this file's own toggles are on file, a marker left over
+    // from the previously-viewed week must not authorize freezing anything.
+    setSavedBonusTogglesFor(null);
     // Snapshot what a fresh payload is allowed to overwrite. Anything written
     // locally while this read is in flight is NEWER than the blob on file, so
     // it survives the hydration (see additionsEditGenRef).
@@ -2762,7 +2859,16 @@ export default function PayrollWizard({
       setOrphanageAmounts(data.orphanageAmounts ?? {});
       setEmployeeMetrics(data.employeeMetrics ?? {});
       setDeptMetrics(data.deptMetrics ?? {});
-      setEmployeeBonuses(data.employeeBonuses ?? {});
+      // The week's own PAB / Tech / dept-bonus verdicts as the clerk locked them in.
+      // On a replay these are the answer — see `savedBonusTogglesFor`, which records
+      // whether there were any so the auto-toggle effects know to stand down.
+      // Non-empty ONLY: a blob written before any dept was assigned (an
+      // orphanage-only save, say) carries `{}`, and freezing an empty map would
+      // replay every bonus as ₱0 — the failure mode business-logic.md's 2026-07-17
+      // "Replay" note already recorded once for `lockedPabSnapshot`.
+      const savedBonusToggles = (data.employeeBonuses ?? {}) as Record<string, Record<string, boolean>>;
+      setEmployeeBonuses(savedBonusToggles);
+      setSavedBonusTogglesFor(Object.keys(savedBonusToggles).length > 0 ? sourceFile : null);
       setTechBonusManualGrants(new Set(data.techBonusManualGrants ?? []));
       setTechBonusManualRevokes(new Set(data.techBonusManualRevokes ?? []));
       // Only lock verdicts when the saved payload actually carries a non-empty
@@ -5169,6 +5275,9 @@ export default function PayrollWizard({
    * Auto-apply / remove perfect_attendance toggle whenever eligibility is
    * recomputed. Only updates employees that are already assigned to a dept;
    * manual overrides made AFTER this effect are respected on next reload.
+   *
+   * Never on a replay whose own toggles are on file — see
+   * {@link replayBonusTogglesFrozen}.
    */
   useEffect(() => {
     setEmployeeBonuses(prev => {
@@ -5176,17 +5285,23 @@ export default function PayrollWizard({
       let changed = false;
       for (const email of Object.keys(employeeDepts)) {
         const normE = normEmail(email) ?? email.toLowerCase();
-        const eligible = perfectAttendanceEligible.has(normE);
-        const current = next[email]?.['perfect_attendance'] ?? false;
-        if (eligible !== current) {
-          next[email] = { ...(next[email] ?? {}), perfect_attendance: eligible };
+        // `null` = leave it alone. While frozen that covers every employee the
+        // blob has a verdict for; gaps (joined after the lock-in) still resolve
+        // live. Truth table in replay-bonus-toggles.test.ts.
+        const resolved = resolveBonusToggle(
+          replayBonusTogglesFrozen,
+          next[email]?.['perfect_attendance'],
+          perfectAttendanceEligible.has(normE),
+        );
+        if (resolved !== null) {
+          next[email] = { ...(next[email] ?? {}), perfect_attendance: resolved };
           changed = true;
         }
       }
       return changed ? next : prev;
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [perfectAttendanceEligible]);
+  }, [perfectAttendanceEligible, replayBonusTogglesFrozen]);
 
   // ── Audit: stable ref holding the latest values referenced by the
   // additions/adjustments handlers. Lets handlers stay `useCallback([])`
@@ -6883,25 +6998,32 @@ export default function PayrollWizard({
 
   /**
    * Auto-apply / remove tech_bonus toggle whenever the week-eligibility set
-   * changes. Mirrors the perfect_attendance auto-toggle. Without this, the
-   * Additions tab + Validation totals never reflect the week-detected bonus.
+   * changes. Mirrors the perfect_attendance auto-toggle — including standing down
+   * on a replay whose own toggles are on file ({@link replayBonusTogglesFrozen}).
+   * Without this, the Additions tab + Validation totals never reflect the
+   * week-detected bonus.
    */
   useEffect(() => {
     setEmployeeBonuses(prev => {
       const next = { ...prev };
       let changed = false;
       for (const email of Object.keys(employeeDepts)) {
-        const eligible = techBonusEligible.has(email);
-        const current = next[email]?.['tech_bonus'] ?? false;
-        if (eligible !== current) {
-          next[email] = { ...(next[email] ?? {}), tech_bonus: eligible };
+        // Same shared rule as the perfect_attendance twin above — gap-fill only
+        // while frozen.
+        const resolved = resolveBonusToggle(
+          replayBonusTogglesFrozen,
+          next[email]?.['tech_bonus'],
+          techBonusEligible.has(email),
+        );
+        if (resolved !== null) {
+          next[email] = { ...(next[email] ?? {}), tech_bonus: resolved };
           changed = true;
         }
       }
       return changed ? next : prev;
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [techBonusEligible]);
+  }, [techBonusEligible, replayBonusTogglesFrozen]);
 
   // NOTE: the HSL KPI bonus is auto-applied UNCONDITIONALLY in `bonusTotals` (a
   // dedicated hogan_smith_law pass), not via the toggle — so there is no
@@ -7926,6 +8048,22 @@ export default function PayrollWizard({
     // dispatchData would still carry zeroed adjustments/orphanage/bonus toggles,
     // and Payment Dispatch prices (and the paystub merge trusts) this snapshot.
     if (additionsHydratedFor !== calcSourceFile) return;
+    // Same rule, applied to the OTHER two money inputs the additions gate above
+    // never covered: the manager KPI submissions and the HSL KPI entries. Both are
+    // keyed on the pay week, and both load on their own clock — so a week switch
+    // leaves a window where `dispatchData` prices the new week's rows against
+    // whatever the loaders last held. This snapshot is what Payment Dispatch and
+    // the Employee Dashboard read, so publishing inside that window is how one
+    // week's KPI bonuses end up on another week's pay. A failed load also lands
+    // here (marker stays null), which deliberately holds the previous snapshot
+    // rather than overwriting it with a KPI-less total that understates pay.
+    if (
+      !kpiAmountsMatchWeek(managerBonusLoaded, hubstaffWeekStart) ||
+      !kpiAmountsMatchWeek(hslKpiLoaded, hubstaffWeekStart)
+    ) {
+      console.warn('[publishFinalPaySnapshot] held — KPI amounts not resolved for', hubstaffWeekStart);
+      return;
+    }
     // Never publish while this cycle's FX legs are still the 0 placeholders —
     // USD/COP-denominated comp resolves through fx 0 to ₱0 "present" rates, and
     // the Employee Dashboard reads this snapshot live. A new file has no prior
@@ -8030,7 +8168,7 @@ export default function PayrollWizard({
     } catch (e) {
       console.warn('[publishFinalPaySnapshot]', e);
     }
-  }, [calcSourceFile, dispatchData, savePabSetting, isReplay, usdToPhpRate, usdToCopRate, globalPhpRate, additionsHydratedFor]);
+  }, [calcSourceFile, dispatchData, savePabSetting, isReplay, usdToPhpRate, usdToCopRate, globalPhpRate, additionsHydratedFor, managerBonusLoaded, hslKpiLoaded, hubstaffWeekStart]);
 
   /**
    * Lock in the parsed Orphanage paste: write each resolved amount into the per-employee
@@ -17175,7 +17313,13 @@ export default function PayrollWizard({
           <Eye className="h-3.5 w-3.5 shrink-0" />
           <span className="font-semibold">Replaying {formatPeriodLabel(calcSourceFile)} — view-only.</span>
           <span className="opacity-80">
-            Showing the adjustments, notes, bonuses and final pay saved for this period.
+            {/* Say which it is. The old copy promised "the bonuses saved for this
+                period" unconditionally — including for a week that never saved any,
+                where the figures are a fresh re-derivation and can differ from what
+                was paid. A replay that quietly guesses is worse than one that says so. */}
+            {replayBonusTogglesFrozen
+              ? 'Showing the adjustments, notes, bonuses and final pay saved for this period.'
+              : 'Showing the adjustments and notes saved for this period. This week never locked in its bonus toggles, so PAB / Tech are re-derived from current data and may differ from what was paid.'}
             {replayDispatched ? ' This period was dispatched.' : ' This period was not dispatched.'}
             {' '}Saving and dispatch are disabled.
           </span>

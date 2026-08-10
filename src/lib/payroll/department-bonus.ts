@@ -291,6 +291,31 @@ export function isKpiCalculatorDeptKey(key: string | null | undefined): boolean 
  */
 export const MANAGER_BONUS_DEPT_KEYS = Object.keys(DEPT_INPUT_CONFIG).filter(isKpiCalculatorDeptKey);
 
+/**
+ * Departments whose ready/locked KPI submissions the **Payroll Wizard pays** —
+ * deliberately a SUPERSET of {@link MANAGER_BONUS_DEPT_KEYS} and deliberately
+ * NOT filtered by {@link isKpiCalculatorDeptKey}.
+ *
+ * Retiring a calculator card is a decision about what a manager may score NEXT
+ * week; it says nothing about weeks that were already scored. Wiring the
+ * wizard's `bonus_catalog_applied` reader to the card registry made the two
+ * inseparable: the day `sales` / `smm` / `smm_freelancer` left
+ * `DEPT_INPUT_CONFIG` (2026-08-10) the wizard silently stopped reading their
+ * applied rows — on the live week AND on every replay of a week they had been
+ * paid in. Nothing was displayed, nothing warned; the KPI Sub. column just went
+ * blank and Final dropped by the bonus.
+ *
+ * So the payment reader keeps the union of the current cards and every retired
+ * key. The HSL family is absent from both halves by construction and must stay
+ * absent — `hogan_smith_law` / `hsl:*` / `smart_staff` are paid from
+ * `hsl_bonus_entries` by a separate loader, so admitting one here would
+ * double-pay it. `kpi-calculator-depts.test.ts` pins that.
+ */
+export const WIZARD_PAYABLE_KPI_DEPT_KEYS: ReadonlySet<string> = new Set([
+  ...Object.keys(DEPT_INPUT_CONFIG),
+  ...KPI_CALCULATOR_RETIRED_DEPT_KEYS,
+]);
+
 /** Short "what this team does" blurb shown on each department's KPI card. */
 export const DEPT_DESCRIPTION: Record<string, string> = {
   accounting: 'Tracks daily collections and reconciles the books, chasing the weekly collection targets.',

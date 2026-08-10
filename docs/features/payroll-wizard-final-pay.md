@@ -7,6 +7,13 @@ the **Additions** table (step 3), and the **HSL** table (step 5).
 Source: [`src/components/PayrollWizard.tsx`](../../src/components/PayrollWizard.tsx).
 Last substantive update: **2026-07-29**.
 
+> **Replaying a past week is a different contract.** Everything below describes
+> the live cycle. What the header's pay-period selector is allowed to show for a
+> closed week — which values are read verbatim from that week's saved state, which
+> fall back to live computation, and the one thing (bonus **amounts**) that still
+> resolves from today's catalog — is owned by
+> [payroll-wizard-week-replay.md](./payroll-wizard-week-replay.md).
+
 ---
 
 ## 2026-07-29 updates

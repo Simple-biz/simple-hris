@@ -5,9 +5,11 @@ import {
   DEPT_INPUT_CONFIG,
   DEPT_DESCRIPTION,
   MANAGER_BONUS_DEPT_KEYS,
+  WIZARD_PAYABLE_KPI_DEPT_KEYS,
   KPI_CALCULATOR_RETIRED_DEPT_KEYS,
   isKpiCalculatorDeptKey,
 } from './department-bonus';
+import { HSL_DEPT_KEYS } from '../hsl-bonus/schema';
 import { normalizeDeptToKey } from './normalize-dept-key';
 import { slugifyDeptKey } from '../departments/registry';
 
@@ -107,6 +109,44 @@ test('the calculator dept list stays internally consistent', () => {
     assert.ok(
       MANAGER_BONUS_DEPT_KEYS.includes(key),
       `"${key}" has a DEPT_DESCRIPTION but no calculator card`,
+    );
+  }
+});
+
+// ── Paying a scored week vs. offering a card for it ──────────────────────────
+//
+// These two questions were the same code path until 2026-08-11, so retiring a
+// card silently stopped the Payroll Wizard from reading that department's
+// already-applied `bonus_catalog_applied` rows — on the live week and on every
+// replay of a week it had been paid in.
+
+test('the wizard still pays every retired department', () => {
+  for (const key of KPI_CALCULATOR_RETIRED_DEPT_KEYS) {
+    assert.ok(
+      WIZARD_PAYABLE_KPI_DEPT_KEYS.has(key),
+      `"${key}" lost its card AND its pay — the wizard can no longer read weeks already scored under it`,
+    );
+  }
+});
+
+test('every current card is payable', () => {
+  for (const key of MANAGER_BONUS_DEPT_KEYS) {
+    assert.ok(
+      WIZARD_PAYABLE_KPI_DEPT_KEYS.has(key),
+      `"${key}" offers a card the wizard would never pay`,
+    );
+  }
+});
+
+test('the HSL family never enters the payable KPI set', () => {
+  // HSL amounts come from `hsl_bonus_entries` via a separate wizard loader, so a
+  // key admitted to BOTH sets is paid twice. `smart_staff` and
+  // `hogan_smith_law` are absent by construction today; this fails the moment a
+  // future retirement or config entry smuggles one in.
+  for (const key of [...HSL_DEPT_KEYS, 'hogan_smith_law', 'smart_staff', 'hsl']) {
+    assert.ok(
+      !WIZARD_PAYABLE_KPI_DEPT_KEYS.has(key),
+      `"${key}" is in WIZARD_PAYABLE_KPI_DEPT_KEYS — it would be paid twice (catalog + HSL entries)`,
     );
   }
 });

@@ -185,6 +185,22 @@ US Manager Bonus · USEE**.
 - **Retiring the card does NOT retire the department.** `sales`, `smm` and
   `smm_freelancer` stay in `DEPARTMENTS`, so their Payroll Wizard Additions
   tabs, department colours and `HUBSTAFF_EXEMPT_DEPTS` entries are untouched.
+- **Retiring the card does NOT stop the wizard paying already-applied rows**
+  (enforced 2026-08-11 — until then this was only an intention). Whether a
+  manager may score a department NEXT week and whether the wizard reads a week it
+  was ALREADY scored in are different questions, and they shared one code path:
+  the wizard's `bonus_catalog_applied` loader filtered on
+  `MANAGER_BONUS_DEPT_KEYS`, so the moment `sales` / `smm` / `smm_freelancer`
+  left `DEPT_INPUT_CONFIG` the wizard silently stopped reading their applied
+  rows — on the live week **and on every replay of a week they had been paid
+  in**. Nothing warned; the KPI Sub. column went blank and Final dropped by the
+  bonus. The loader now reads **`WIZARD_PAYABLE_KPI_DEPT_KEYS`** (same file) =
+  every current card **∪** every retired key. The HSL family is absent from both
+  halves and must stay absent — `hogan_smith_law` / `hsl:*` / `smart_staff` are
+  paid from `hsl_bonus_entries` by a separate loader, so a key in both sets is
+  paid twice. All three properties are pinned in
+  `kpi-calculator-depts.test.ts`. **Retiring a future card is never a reason to
+  narrow this set.**
 - **No `department_managers` grant was revoked.** The grants still govern My
   Team, transfers and leave approvals — which is why the exclusion lives in
   code rather than in the data.
