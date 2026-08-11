@@ -842,7 +842,27 @@
       "Bash(node --import tsx --test src/lib/payroll/hogan-week-pay.test.ts)",
       "Skill(schedule)",
       "Skill(schedule:*)",
-      "Bash(node --import tsx --test \"c:\\\\Users\\\\Kane\\\\Desktop\\\\simple-hris\\\\src\\\\lib\\\\payroll\\\\paystub-fresh.test.ts\")"
+      "Bash(node --import tsx --test \"c:\\\\Users\\\\Kane\\\\Desktop\\\\simple-hris\\\\src\\\\lib\\\\payroll\\\\paystub-fresh.test.ts\")",
+      "Bash(node C:/Users/Kane/AppData/Local/Temp/claude/c--Users-Kane-Desktop-simple-hris/f83cc977-6a54-468f-aaa6-b9643b5fa150/scratchpad/probe.mjs)",
+      "Bash(node C:/Users/Kane/AppData/Local/Temp/claude/c--Users-Kane-Desktop-simple-hris/f83cc977-6a54-468f-aaa6-b9643b5fa150/scratchpad/probe2.mjs)",
+      "Bash(node C:/Users/Kane/AppData/Local/Temp/claude/c--Users-Kane-Desktop-simple-hris/f83cc977-6a54-468f-aaa6-b9643b5fa150/scratchpad/probe3.mjs)",
+      "Bash(xargs grep -ln \"migration #\")",
+      "Bash(grep -rn -i \"webhook slug\\\\|KNOWN_SLUGS\\\\|slug \\\\`\" .)",
+      "Bash(echo \"EXIT_1a133ca=$?\")",
+      "Bash(echo \"EXIT_7d14e04=$?\")",
+      "Bash(echo \"EXIT_0a731ed=$?\")",
+      "Bash(echo \"EXIT_c97d0b5=$?\")",
+      "Bash(grep -iE '\\\\.sql$|scripts/apply-|references/sql')",
+      "Bash(echo \"EXIT_GREP: $?\")",
+      "Bash(echo \"SQL/N8N-HITS-EXIT=$?\")",
+      "Bash(grep -Ei '\\\\.sql$|scripts/|n8n|migration')",
+      "Bash(echo \"EXIT_54e91a1=$?\")",
+      "Bash(sed -n '/^## Migrations/,/^## /p' docs/features/bank-preferred-routing.md | head -50; echo \"=== dispatch doc diff 265eb64 ===\"; git show 265eb64 -- docs/features/payment-dispatch.md; echo \"=== 684b305 doc ===\"; git show 684b305 -- docs/features/payment-dispatch.md)",
+      "Bash(grep -n \"^#\\\\{1,4\\\\} \\\\|^### 3.1\" docs/features/bonus-catalog.md)",
+      "Bash(echo \"grep-exit=$?\")",
+      "Bash(node C:/Users/Kane/AppData/Local/Temp/claude/c--Users-Kane-Desktop-simple-hris/f83cc977-6a54-468f-aaa6-b9643b5fa150/scratchpad/sum.mjs)",
+      "Bash(node C:/Users/Kane/AppData/Local/Temp/claude/c--Users-Kane-Desktop-simple-hris/f83cc977-6a54-468f-aaa6-b9643b5fa150/scratchpad/sum3.mjs)",
+      "Bash(node C:/Users/Kane/AppData/Local/Temp/claude/c--Users-Kane-Desktop-simple-hris/f83cc977-6a54-468f-aaa6-b9643b5fa150/scratchpad/csv.mjs)"
     ],
     "additionalDirectories": [
       "\\tmp",
@@ -855,7 +875,8 @@
       "C:\\Users\\Kane\\AppData\\Local\\Temp\\claude\\c--Users-Kane-Desktop-simple-hris\\f5f2bfd7-3595-4a03-8588-71a730e59895\\scratchpad",
       "c:\\Users\\Kane\\Desktop\\simple-hris\\.claude\\skills\\hardening",
       "C:\\Users\\Kane\\Desktop\\simple-hris\\scripts",
-      "c:\\Users\\Kane\\Desktop\\simple-hris\\scripts"
+      "c:\\Users\\Kane\\Desktop\\simple-hris\\scripts",
+      "C:\\Users\\Kane\\Desktop\\simple-hris\\docs\\features"
     ]
   }
 }
