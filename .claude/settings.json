@@ -838,7 +838,11 @@
       "Bash(node --import tsx --test src/lib/payroll/bonus-cadence.test.ts)",
       "Bash(node --import tsx \"C:/Users/Kane/AppData/Local/Temp/claude/c--Users-Kane-Desktop-simple-hris/49f872cf-db2c-49cd-8c19-7ada8d2d850b/scratchpad/check-hsl-monthly-periods.mts\")",
       "Bash(sed -i \"s|'../../../../../../Users/Kane/Desktop/simple-hris/src/lib/payroll/bonus-cadence'|'../src/lib/payroll/bonus-cadence'|\" scripts/tmp-check-hsl-monthly.mts)",
-      "Bash(node --import tsx scripts/tmp-check-hsl-monthly.mts)"
+      "Bash(node --import tsx scripts/tmp-check-hsl-monthly.mts)",
+      "Bash(node --import tsx --test src/lib/payroll/hogan-week-pay.test.ts)",
+      "Skill(schedule)",
+      "Skill(schedule:*)",
+      "Bash(node --import tsx --test \"c:\\\\Users\\\\Kane\\\\Desktop\\\\simple-hris\\\\src\\\\lib\\\\payroll\\\\paystub-fresh.test.ts\")"
     ],
     "additionalDirectories": [
       "\\tmp",
