@@ -43,8 +43,9 @@ inside `/api/payment-dispatches` forward through the shared `forwardPaystubDispa
 
 ### Staging table — `paystub_dispatch_queue`
 
-Migration #72: `references/seed_paystub_dispatch_queue.sql` (idempotent). **PENDING** — until
-it's run, the wizard's "Lock & Send" 500s. One row per
+Migration #72: `references/seed_paystub_dispatch_queue.sql` (idempotent). **APPLIED** —
+verified against production 2026-08-11 by `scripts/audit-pending-migrations.mts`
+(9,815 rows). One row per
 `UNIQUE (cycle_source_file, recipient_email)`:
 
 - `recipient_email` is the **work** email (the match key against
@@ -191,8 +192,8 @@ Dispatch" posts `{ source_file, pay_period, entries[] }` here.
 - `GET /api/paystub-dispatch-queue/arrears` (view-gated) returns the cross-cycle owed rollup
   (see [Excluded tab](#excluded-tab--cross-cycle-arrears-ledger)).
 
-> **Migration #72 (`paystub_dispatch_queue`) is PENDING.** Until it's run in the Supabase
-> SQL editor, "Lock & Send" **500s** (the table doesn't exist).
+> **Migration #72 (`paystub_dispatch_queue`) is APPLIED** — verified against production 2026-08-11 by `scripts/audit-pending-migrations.mts`
+> (9,815 rows). This doc claimed PENDING long after it had run.
 
 ### Per-employee send — inside `POST /api/payment-dispatches`
 
@@ -665,7 +666,7 @@ an amber "Unlocked — Payment Dispatch stays empty…" note otherwise.
 
 ## References
 
-- Migration: `references/seed_paystub_dispatch_queue.sql` (`paystub_dispatch_queue` — **PENDING**, migration #72).
+- Migration: `references/seed_paystub_dispatch_queue.sql` (`paystub_dispatch_queue` — **APPLIED**, migration #72, verified 2026-08-11).
 - Workflow JSON: `references/n8n_paystub_dispatch.json`.
 - Business rules: `Documentation/BUSINESS_LOGIC.md`.
 - Routes: `app/api/paystub-dispatch-queue/route.ts` (+ `arrears/`), `app/api/payment-dispatches/route.ts` (per-employee send on Mark Paid), `app/api/dispatch-paystubs/route.ts` (legacy batch, no callers).

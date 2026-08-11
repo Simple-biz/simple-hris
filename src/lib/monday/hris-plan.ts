@@ -201,6 +201,15 @@ export const PLAN_EPICS: PlanEpic[] = [
   { code: 'HRIS-19', title: 'Bank Preferred Governance & WIRES Lock', sp: 20, quarter: 'Q3', status: 'Shipped' },
   { code: 'HRIS-20', title: 'Payroll Readiness Dashboard', sp: 12, quarter: 'Q3', status: 'Shipped' },
   { code: 'HRIS-21', title: 'Payroll Notes & Adjustments Bridge', sp: 14, quarter: 'Q3', status: 'Shipped' },
+  // DRIFT, adjudicated 2026-08-11: the board says `Cancelled`, this says `Shipped`, and the
+  // reconciler writes epic Status at CREATE only — so the board wins until someone fixes it BY HAND.
+  // The evidence says Shipped and the board is wrong: the live-API ingest runs every Sunday via
+  // `/api/cron/sync-hubstaff-week` (docs/features/hubstaff-weekly-auto-sync.md, built Jul 25 2026)
+  // and `NEXT_PUBLIC_HUBSTAFF_API_ENABLED` is "true" in production. What WAS cancelled on Jul 29 is
+  // only the on-demand path — the wizard's "Sync from Hubstaff" button and the `api_sync` branch on
+  // POST /api/hubstaff-hours — dropped because Hubstaff's 1000 req/hour cap made it unreliable. The
+  // weekly cron is now the ONLY live-API ingest path, and it works. Leave this `Shipped`; the board
+  // row costs 12 SP of SP Completed until Kane flips it (a board write needs his approval).
   { code: 'HRIS-22', title: 'Hubstaff Live API Integration', sp: 12, quarter: 'Q3', status: 'Shipped' },
   { code: 'HRIS-23', title: 'People Directory & Pay Governance', sp: 25, quarter: 'Q3', status: 'Shipped' },
   { code: 'HRIS-24', title: 'New Hire Checklist & Hiring Analytics', sp: 20, quarter: 'Q3', status: 'Shipped' },

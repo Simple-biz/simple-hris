@@ -1,7 +1,8 @@
 # Onboarding Gmail Surname
 
-> **Status:** Built. Requires **PENDING migration #81** before it persists in
-> production — see [Pending migration](#pending-migration).
+> **Status:** Built and **live**. Migration #81 is **APPLIED** — verified
+> against production 2026-08-11 by `scripts/audit-pending-migrations.mts`
+> ([probe](../audits/2026-08-11-pending-migrations-probe.md)).
 
 The public onboarding paperwork shows a **read-only, auto-derived "Gmail
 Surname"**: the minimal last-name slice that makes `<first><slice>@simple.biz`
@@ -141,16 +142,13 @@ slice would needlessly lengthen around a ghost).
 
 ---
 
-## Pending migration
+## Migration (APPLIED)
 
-> **Migration #81 — PENDING** as of 2026-06-19. The field does not persist until
+> **Migration #81 — APPLIED** (verified against production 2026-08-11 by
+> `scripts/audit-pending-migrations.mts`). It was:
 > [`references/sql/alter/add_gmail_surname_to_onboarding.sql`](../../references/sql/alter/add_gmail_surname_to_onboarding.sql)
-> is run in the Supabase SQL editor. It is idempotent:
+> — idempotent:
 > `ALTER TABLE hr_onboarding_submissions ADD COLUMN IF NOT EXISTS gmail_surname TEXT`.
->
-> Until it runs, the live derivation still works (the endpoint reads the roster),
-> but a submit cannot store `gmail_surname`, so `set-work-email` falls back to the
-> last-name initial.
 
 ---
 
@@ -165,4 +163,4 @@ slice would needlessly lengthen around a ghost).
 | [`app/api/hr/onboarding-submissions/[id]/set-work-email/route.ts`](../../app/api/hr/onboarding-submissions/[id]/set-work-email/route.ts) | Sends Gmail Surname as `lastName` to the workspace webhook |
 | [`app/api/onboarding/[token]/route.ts`](../../app/api/onboarding/[token]/route.ts) | Persists `gmail_surname` on submit; returns it in `priorData` |
 | [`src/lib/supabase/hr-onboarding-submissions.ts`](../../src/lib/supabase/hr-onboarding-submissions.ts) | Row type + `gmail_surname` write |
-| [`references/sql/alter/add_gmail_surname_to_onboarding.sql`](../../references/sql/alter/add_gmail_surname_to_onboarding.sql) | **PENDING** migration #81 |
+| [`references/sql/alter/add_gmail_surname_to_onboarding.sql`](../../references/sql/alter/add_gmail_surname_to_onboarding.sql) | Migration #81 — **APPLIED** (verified 2026-08-11) |

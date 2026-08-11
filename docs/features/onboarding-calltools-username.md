@@ -1,8 +1,12 @@
 # Onboarding CallTools Username (Lead Gen)
 
-> **Status:** Built. Requires the **PENDING migration**
-> `references/sql/alter/add_calltools_username_to_onboarding.sql` before the
-> fields persist — see [Pending migration](#pending-migration).
+> **Status:** Built and **live**. The migration
+> `references/sql/alter/add_calltools_username_to_onboarding.sql` is **APPLIED**
+> — verified against production 2026-08-11 by
+> `scripts/audit-pending-migrations.mts`
+> ([probe](../audits/2026-08-11-pending-migrations-probe.md)). This doc claimed
+> PENDING long after it had run; re-run the probe before ever believing a
+> pending claim in this repo.
 
 Lead Gen hires work on the **CallTools** dialer under a nickname of their own
 choosing. On the onboarding paperwork their **Nickname field is editable** (it
@@ -255,8 +259,13 @@ worker was provisioned outside the system; a no-show has no dialer account).
 
 ---
 
-## Pending migration
+## Migration (APPLIED)
 
+> **APPLIED** — verified against production 2026-08-11 by
+> `scripts/audit-pending-migrations.mts`
+> ([probe](../audits/2026-08-11-pending-migrations-probe.md)). Kept for the record
+> of what it did; nothing here is outstanding.
+>
 > `references/sql/alter/add_calltools_username_to_onboarding.sql` — idempotent:
 > `ALTER TABLE hr_onboarding_submissions ADD COLUMN IF NOT EXISTS
 > calltools_nickname TEXT, ADD COLUMN IF NOT EXISTS calltools_username TEXT;`
@@ -282,7 +291,7 @@ worker was provisioned outside the system; a no-show has no dialer account).
 | [`app/api/manager/calltools-username/route.ts`](../../app/api/manager/calltools-username/route.ts) | `PATCH` — inline backfill: upsert/clear the per-employee store, scoped like the roster read |
 | [`src/components/manager/ManagerApp.tsx`](../../src/components/manager/ManagerApp.tsx) | My Team → Roster **list** view: Lead-Gen-gated, **inline-editable** "CallTools Username" column (`CallToolsUsernameCell`) |
 | [`scripts/import-calltools-usernames.mjs`](../../scripts/import-calltools-usernames.mjs) | Bulk backfill importer — CSV → `employee_calltools_usernames`, email/name matching, dry-run by default |
-| [`references/sql/migrate/2026-07-20_employee_calltools_usernames.sql`](../../references/sql/migrate/2026-07-20_employee_calltools_usernames.sql) | **PENDING** — creates the per-employee `employee_calltools_usernames` store |
+| [`references/sql/migrate/2026-07-20_employee_calltools_usernames.sql`](../../references/sql/migrate/2026-07-20_employee_calltools_usernames.sql) | **APPLIED** (verified 2026-08-11) — creates the per-employee `employee_calltools_usernames` store |
 | [`app/api/onboarding/[token]/calltools-username/route.ts`](../../app/api/onboarding/[token]/calltools-username/route.ts) | PREVIEW-ONLY live derivation (elevated session; other tokens 404) |
 | [`app/onboarding/[token]/page.tsx`](../../app/onboarding/[token]/page.tsx) | Editable Lead Gen nickname; preview-only username field + Lead Gen switches |
 | [`app/api/onboarding/[token]/route.ts`](../../app/api/onboarding/[token]/route.ts) | Mints `calltools_username` server-side at submit; returns only the nickname in `priorData` |
@@ -293,4 +302,4 @@ worker was provisioned outside the system; a no-show has no dialer account).
 | [`src/components/manager/NewlyHiredPanel.tsx`](../../src/components/manager/NewlyHiredPanel.tsx) | Copyable CallTools-username badge per Lead Gen card; toasts when the mark saved but the n8n webhook failed (single + bulk) |
 | [`app/api/manager/pending-hires/route.ts`](../../app/api/manager/pending-hires/route.ts) | Attaches `calltools_username` per pending hire (`loadCallToolsUsernamesByPendingIds`) |
 | [`src/components/admin/AdminWebhooks.tsx`](../../src/components/admin/AdminWebhooks.tsx) | `call_tools_creation` slug registry entry |
-| [`references/sql/alter/add_calltools_username_to_onboarding.sql`](../../references/sql/alter/add_calltools_username_to_onboarding.sql) | **PENDING** migration |
+| [`references/sql/alter/add_calltools_username_to_onboarding.sql`](../../references/sql/alter/add_calltools_username_to_onboarding.sql) | Migration — **APPLIED** (verified 2026-08-11) |

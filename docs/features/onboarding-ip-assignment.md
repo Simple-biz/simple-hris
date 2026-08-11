@@ -1,7 +1,10 @@
 # Onboarding IP Assignment + form preview mode
 
-> **Status:** Built 2026-06-16. Requires **PENDING migration #73** before it works in
-> production — see [Pending migration](#pending-migration).
+> **Status:** Built 2026-06-16 and **live**. Migration #73 is **APPLIED** —
+> verified against production 2026-08-11 by `scripts/audit-pending-migrations.mts`
+> ([probe](../audits/2026-08-11-pending-migrations-probe.md)). The file also
+> moved: it lives under `references/sql/alter/`, not the path the section below
+> cites.
 
 A standalone **"Intellectual Property Assignment, Talent Release, and Copyright
 Waiver"** is now the **first step** of the public onboarding flow, signed before
@@ -242,17 +245,18 @@ file path; HR fetches a signed URL on demand.
 
 ---
 
-## Pending migration
+## Migration (APPLIED)
 
-> **Migration #73 — PENDING.** The feature does **not** work in production until
+> **Migration #73 — APPLIED** (verified against production 2026-08-11 by
+> `scripts/audit-pending-migrations.mts`; the file now lives under
+> `references/sql/alter/`). It was, when written:
 > [`references/migrations/add_ip_assignment_to_onboarding.sql`](../../references/migrations/add_ip_assignment_to_onboarding.sql)
-> is run. It `ALTER TABLE public.hr_onboarding_submissions ADD COLUMN IF NOT
-> EXISTS` for the six columns above. Until it runs, a live submit cannot persist
-> the IP fields.
+> an `ALTER TABLE public.hr_onboarding_submissions ADD COLUMN IF NOT EXISTS` for
+> the six columns above.
 >
-> **Preview mode needs no migration** — `/onboarding/preview` and
+> **Preview mode never needed it** — `/onboarding/preview` and
 > `POST /api/onboarding/ip-assignment-preview` touch neither the table nor the
-> bucket, so HR can preview the document before #73 lands.
+> bucket.
 
 ---
 
@@ -269,6 +273,6 @@ file path; HR fetches a signed URL on demand.
 | [`app/api/hr/onboarding-submissions/[id]/route.ts`](../../app/api/hr/onboarding-submissions/[id]/route.ts) | Signed IP/W-8BEN URLs for HR review |
 | [`src/lib/supabase/hr-onboarding-submissions.ts`](../../src/lib/supabase/hr-onboarding-submissions.ts) | Row type, upload + signed-URL helpers |
 | [`src/components/hr/HrOnboardingForm.tsx`](../../src/components/hr/HrOnboardingForm.tsx) | HR Summary block + IP Assignment tab + template link |
-| [`references/migrations/add_ip_assignment_to_onboarding.sql`](../../references/migrations/add_ip_assignment_to_onboarding.sql) | **PENDING** migration #73 |
+| [`references/migrations/add_ip_assignment_to_onboarding.sql`](../../references/migrations/add_ip_assignment_to_onboarding.sql) | Migration #73 — **APPLIED** (verified 2026-08-11) |
 </content>
 </invoke>

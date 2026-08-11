@@ -1,7 +1,9 @@
 # Onboarding Pay Plans
 
-> **Status:** Requires **PENDING migration #80** (two files) before it works in
-> production — see [Pending migrations](#pending-migrations).
+> **Status:** **Live.** Migration #80 (both files) is **APPLIED** —
+> `onboarding_pay_plans` held 5 rows when verified against production
+> 2026-08-11 by `scripts/audit-pending-migrations.mts`
+> ([probe](../audits/2026-08-11-pending-migrations-probe.md)).
 
 HR uploads **one pay-plan PDF per (Department, Country)** from a "Pay Plans" modal on
 the HR Onboarding Form. When HR generates an onboarding link and picks that
@@ -143,10 +145,10 @@ It is **distinct** from the `country` column added by `add_country_to_onboarding
 
 ---
 
-## Pending migrations
+## Migrations (APPLIED)
 
-> **Migration #80 — PENDING (two files).** The feature does not work in production until
-> both run (Supabase SQL editor):
+> **Migration #80 — APPLIED (both files).** verified against production 2026-08-11 by `scripts/audit-pending-migrations.mts`
+> (`onboarding_pay_plans` held 5 rows). Kept for the record of what they did:
 >
 > - [`references/sql/create/create_onboarding_pay_plans.sql`](../../references/sql/create/create_onboarding_pay_plans.sql)
 >   — creates the table + the dept/country unique index.
@@ -165,5 +167,5 @@ It is **distinct** from the `country` column added by `add_country_to_onboarding
 | [`app/api/hr/pay-plans/[id]/route.ts`](../../app/api/hr/pay-plans/[id]/route.ts) | `DELETE` a plan |
 | [`app/api/hr/onboarding-submissions/[id]/send/route.ts`](../../app/api/hr/onboarding-submissions/[id]/send/route.ts) | Invite send: matches the plan, signs a 14-day URL, adds the email card + `attachments[]` + `pay_plan` |
 | [`src/components/hr/HrOnboardingForm.tsx`](../../src/components/hr/HrOnboardingForm.tsx) | `PayPlansDialog` config modal + invite-dialog Country picker → `invite_country` |
-| [`references/sql/create/create_onboarding_pay_plans.sql`](../../references/sql/create/create_onboarding_pay_plans.sql) | **PENDING** #80 file A |
-| [`references/sql/alter/add_invite_country_to_onboarding.sql`](../../references/sql/alter/add_invite_country_to_onboarding.sql) | **PENDING** #80 file B |
+| [`references/sql/create/create_onboarding_pay_plans.sql`](../../references/sql/create/create_onboarding_pay_plans.sql) | #80 file A — **APPLIED** (verified 2026-08-11) |
+| [`references/sql/alter/add_invite_country_to_onboarding.sql`](../../references/sql/alter/add_invite_country_to_onboarding.sql) | #80 file B — **APPLIED** (verified 2026-08-11) |

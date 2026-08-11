@@ -2,8 +2,8 @@
 
 *Shipped 2026-07-22; Wise updates + the No-Bank clobber discovery added
 2026-07-25 (§7); People-tab parity + Accounting direct-edit added 2026-08-10
-(§8). Two employee-notification migrations still PENDING (see
-[Migrations](#migrations)).*
+(§8). Migration status re-verified against production 2026-08-11 — see
+[Migrations](#migrations).*
 
 "Bank Preferred" is the processor **Accounting sends a salary OUT on** — the
 *send-from rail*. It is a first-class, employee-owned field that wins Payment
@@ -296,8 +296,8 @@ editor**:
 |---|---|---|
 | `references/sql/alter/2026-07-22_add_bank_preferred_to_employee_ids.sql` | applied (column pre-existed; adds CHECK) | the `bank_preferred` column + constraint |
 | `references/sql/create/bank_preferred_change_requests.sql` | applied (verified present) | the approval-gate requests table |
-| `references/sql/alter/2026-07-22_employee_notifications_add_bank_preferred_type.sql` | **PENDING** | allows `bank_preferred.decided`; until run, approve/deny won't notify |
-| `references/sql/alter/2026-07-22_employee_notifications_add_bank_override_type.sql` | **PENDING** | allows `people.banking.overridden`; until run, the Mark Paid override notification no-ops (the override itself works) |
+| `references/sql/alter/2026-07-22_employee_notifications_add_bank_preferred_type.sql` | **APPLIED** (verified 2026-08-11 — a `bank_preferred.decided` row exists) | allows `bank_preferred.decided` |
+| `references/sql/alter/2026-07-22_employee_notifications_add_bank_override_type.sql` | **UNVERIFIED** — a CHECK constraint's allowed values are not readable through PostgREST, and no `people.banking.overridden` row exists yet, which proves nothing either way | allows `people.banking.overridden`; if it has NOT run, the Mark Paid override notification no-ops (the override itself works) |
 
 Both notification migrations restate the **full** `employee_notifications.type`
 CHECK list and append the new type — never hand-pick a subset (a subset silently

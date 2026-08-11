@@ -243,8 +243,10 @@ Two behaviours worth knowing:
   never exempted — i.e. hide a real payday blocker.
 
 Storage: `payroll_bank_exemptions`
-(`references/sql/create/create_payroll_bank_exemptions.sql` — **run this
-migration before the feature works**), accessed via
+(`references/sql/create/create_payroll_bank_exemptions.sql` — **APPLIED**,
+verified against production 2026-08-11 by `scripts/audit-pending-migrations.mts`
+with 3 rows present; this doc carried a stale "run this first" for a week),
+accessed via
 `src/lib/supabase/payroll-bank-exemptions.ts`, mutated through
 `app/api/payroll-wizard/bank-exemptions/route.ts` (`view` to read, `edit` to
 file/undo — the same grant behind the inline fixers). Undo is a **soft delete**
